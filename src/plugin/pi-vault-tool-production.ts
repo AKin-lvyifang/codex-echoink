@@ -69,7 +69,7 @@ export interface PiVaultApprovalConfirmationInput {
   readonly piSessionId: string;
   readonly productRunId: string;
   readonly toolCallId: string;
-  readonly toolId: PiVaultToolId;
+  readonly toolId: PiVaultToolId | "obsidian_cli";
   readonly target: JsonValue;
   readonly preview: JsonValue;
   readonly signal: AbortSignal | undefined;
@@ -313,6 +313,14 @@ export async function recoverPiVaultDomainReceipts(input: {
   const now = input.now ?? Date.now;
   const pending = await input.receipts.listPendingRecovery();
   for (const view of pending) {
+    if (view.toolId === "obsidian_cli") {
+      // Public CLI has no atomic operation ID/readback protocol. Never replay an interrupted action.
+      const inspection = await input.receipts.inspectRecovery(view.operationIdentity);
+      const readback = { checkedAt: now(), readbackVerified: false, observedTargetVersion: null, safeSummary: "Interrupted native action was not replayed" };
+      if (inspection.state === "not_started") await input.receipts.persistReceipt({ operationIdentity: view.operationIdentity, status: "cancelled", safeSummary: "recovered_before_side_effect", readback });
+      else if (inspection.state === "readback_required") await input.receipts.recoverMissingReceipt(view.operationIdentity, async () => ({ status: "uncertain", safeSummary: "obsidian_cli_result_uncertain_do_not_retry", readback }));
+      continue;
+    }
     if (isMcpApprovalToolId(view.toolId)) continue;
     const inspection = await input.receipts.inspectRecovery(
       view.operationIdentity

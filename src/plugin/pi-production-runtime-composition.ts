@@ -120,6 +120,7 @@ import {
 import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { createPiObsidianToolDefinitions, PiObsidianToolSecurity, PI_OBSIDIAN_TOOL_IDS } from "../harness/pi-native/pi-obsidian-tools";
 import { createObsidianNativePort } from "./obsidian-native-tools";
+import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import {
   secureVaultToolResult,
@@ -245,6 +246,7 @@ import {
 
 export interface PiProductionPluginHost {
   readonly app: App;
+  readonly lifestyle?: { readonly finance: LifestyleFinanceService };
   prepareWikiFolderNamesForMaintenance?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   readonly settings: CodexForObsidianSettings;
   resolveOpenAICodexAccessToken(): Promise<string>;
@@ -1834,7 +1836,19 @@ async function createProductionAgentSession(input: {
     }
   });
   const userQuestionSecurity = new PiUserQuestionToolSecurity();
-  const obsidianSecurity = new PiObsidianToolSecurity();
+  const obsidianSecurity = new PiObsidianToolSecurity({
+    currentAccess: () => input.input.currentWorkspaceAccess?.(),
+    currentRunIdentity: () => {
+      const context = input.input.currentToolExecutionContext();
+      return { vaultId: context.vaultId, conversationId: context.conversationId, piSessionId: context.piSessionId, productRunId: context.productRunId };
+    },
+    approvals: input.approvals, receipts: input.receipts,
+    userId: localPiVaultUserId(input.deviceScope.deviceIdDigest), deviceId: input.deviceScope.deviceIdDigest,
+    confirmation: { async confirm(request) {
+      if (input.input.currentTaskPlanTurnContext()?.mode !== "agent") return await vaultModalConfirmation.confirm(request);
+      return await input.approvalBroker.waitForDecision({ requestId: request.requestId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: request.toolCallId, target: canonicalJsonStringify(request.target), preview: canonicalJsonStringify(request.preview), signal: request.signal });
+    } }
+  });
   const personalMemorySecurity = new PiPersonalMemoryToolSecurity({
     currentRuntime: () => {
       const execution = input.input.currentToolExecutionContext();
@@ -1913,7 +1927,7 @@ async function createProductionAgentSession(input: {
     writeExecution: input.writeExecution
   });
   const obsidianTools = createPiObsidianToolDefinitions(
-    createObsidianNativePort(input.plugin.app, input.vaultAdapter, () => input.plugin.settings.journalDirectory),
+    createObsidianNativePort(input.plugin.app, input.vaultAdapter, () => input.plugin.settings.journalDirectory, { finance: input.plugin.lifestyle?.finance }),
     obsidianSecurity
   );
   const maintenanceTool = createPiKnowledgeMaintenanceToolDefinition({

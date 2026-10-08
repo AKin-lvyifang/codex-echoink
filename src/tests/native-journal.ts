@@ -1,6 +1,6 @@
 import { KNOWLEDGE_ROOT_NAMES, resolveKnowledgePath } from "../knowledge-base/root-paths";
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, readFile, rm } from "node:fs/promises";
+import { mkdtemp, realpath, readFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -21,6 +21,7 @@ import { createPiVaultToolDefinitions } from "../harness/pi-native/pi-vault-tool
 import { FileApprovalTicketStore } from "../harness/pi-native/tool-authorization";
 import { FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
 import { createPiVaultProductionAuthorizationPort, createPiVaultProductionWriteExecutionPort } from "../plugin/pi-vault-tool-production";
+import { officialCliFixture, runOfficialCliTests } from "./obsidian-cli";
 
 export async function runNativeJournalTests(): Promise<void> {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "echoink-native-journal-")));
@@ -94,6 +95,9 @@ export async function runNativeJournalTests(): Promise<void> {
     assert.equal(fixture.providerCalls(), 0);
     section.dispose();
     await assertNativeToolsAndManagedWrites(fixture, root);
+    const cliRoot = path.join(root, "cli-fixture");
+    await mkdir(cliRoot, { recursive: true });
+    await runOfficialCliTests(cliRoot);
     console.log("PASS native initialization/ready repair, current journal settings, calendar/template parity, CLI and managed formats");
   } finally { await rm(root, { recursive: true, force: true }); }
 }
@@ -101,7 +105,8 @@ export async function runNativeJournalTests(): Promise<void> {
 async function assertNativeToolsAndManagedWrites(fixture: Awaited<ReturnType<typeof nativeJournalFixture>>, root: string) {
   const adapter = new ObsidianVaultDomainAdapter(fixture.app, "native-vault", root);
   const service = new VaultDomainService(adapter);
-  const port = createObsidianNativePort(fixture.app, adapter, () => "old-directory");
+  const publicCli = officialCliFixture(fixture, root);
+  const port = createObsidianNativePort(fixture.app, adapter, () => "old-directory", { transport: publicCli.transport });
   const nativeSecurity = new PiObsidianToolSecurity();
   const identity = { vaultId: adapter.vaultId, conversationId: "native-conversation", piSessionId: "native-session", productRunId: "native-run" };
   const approvals = new FileApprovalTicketStore({ storageRootPath: path.join(root, ".test-approvals"), vaultId: adapter.vaultId });
@@ -128,22 +133,23 @@ async function assertNativeToolsAndManagedWrites(fixture: Awaited<ReturnType<typ
   };
   const value = (result: any) => JSON.parse(result.content[0].text);
   assert.equal(value(await call("obsidian_context", {})).folder, "My journal");
-  assert.equal(value(await call("obsidian_cli", { command: "version" })).engine, "obsidian-native-cli");
-  assert.deepEqual(fixture.nativeCalls.at(-1), { command: "version", args: {} });
+  assert.equal(value(await call("obsidian_cli", { command: "version" })).engine, "obsidian-official-cli");
+  assert.deepEqual(publicCli.calls.at(-1), ["version"]);
   assert.equal(value(await call("obsidian_cli", { command: "search", query: "diary", path: "My journal", limit: 3 })).available, true);
-  assert.deepEqual(fixture.nativeCalls.at(-1), { command: "search", args: { query: "diary", path: "My journal", limit: "3" } });
-  const beforeRejected = fixture.nativeCalls.length;
+  assert.deepEqual(publicCli.calls.at(-1), ["search", "query=diary", "path=My journal", "limit=3"]);
+  const beforeRejected = publicCli.calls.length;
   for (const input of [{ command: "eval", code: "1+1" }, { command: "read" }, { command: "read", path: "../outside.md" }, { command: "version", vault: "other" }, { command: "daily:append", content: "text" }]) {
     const rejected = await call("obsidian_cli", input);
     assert.ok(rejected.block || rejected.isError);
   }
-  assert.equal(fixture.nativeCalls.length, beforeRejected);
-  fixture.handlers.delete("version");
+  assert.equal(publicCli.calls.length, beforeRejected);
+  publicCli.state.available = false;
   assert.equal(value(await call("obsidian_cli", { command: "version" })).available, false);
-  assert.equal(fixture.nativeCalls.length, beforeRejected, "unavailable does not execute PATH or any substitute");
+  assert.equal(fixture.nativeCalls.length, 0, "internal handlers never substitute for public CLI");
   const originalBasePath = fixture.app.vault.adapter.getBasePath;
   fixture.app.vault.adapter.getBasePath = () => path.join(root, "other-vault");
-  assert.equal((await call("obsidian_cli", { command: "files" })).isError, true);
+  const mismatched = await call("obsidian_cli", { command: "files" });
+  assert.ok(mismatched.block || mismatched.isError);
   fixture.app.vault.adapter.getBasePath = originalBasePath;
   assert.deepEqual(await call("note_create", { relativePath: "journal/2099-01/2099-01-01.md", content: "blocked" }), { block: true, reason: "tool_policy_blocked" });
   assert.equal(confirmations, 0);

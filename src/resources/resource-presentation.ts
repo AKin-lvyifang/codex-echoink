@@ -51,7 +51,7 @@ const ENGLISH_SKILLS: Record<BuiltinSkillId, { name: string; description: string
   },
   "obsidian-cli": {
     name: "Obsidian CLI",
-    description: "Use when you explicitly request Obsidian CLI or native commands to read, list, or search the current Vault."
+    description: "Read and search the current Vault, open notes and Bases, save daily notes, inspect or restore local history, and search or manage plugins through the approved Obsidian CLI tools."
   },
   "obsidian-markdown": {
     name: "Obsidian Markdown",

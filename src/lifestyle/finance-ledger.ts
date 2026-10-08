@@ -132,6 +132,7 @@ export class FinanceLedger {
   paths(): { directory: string; base: string; embed: string } {
     return { directory: this.directory, base: this.basePath, embed: `![[${this.basePath}#本笔账目]]` };
   }
+  pathForNewEntry(id: string): string { return `${this.directory}/${fileName(id)}`; }
   watches(path: string): boolean { return path.startsWith(`${this.directory}/`) && path.endsWith(".md"); }
 
   onRename(oldPath: string, newPath: string): void {

@@ -1,5 +1,6 @@
 import type { PermissionMode } from "../../types/app-server";
 import type { PiChatMode, PiConversationMemoryMode } from "./contracts";
+import { normalizeObsidianCliRequest, obsidianCliEffect } from "./obsidian-cli-policy";
 
 export interface PiWorkspaceAccess {
   readonly permission: PermissionMode;
@@ -15,7 +16,7 @@ export function normalizePiWorkspacePermission(value: unknown): PermissionMode {
 
 const CONTENT_READ_TOOLS = new Set([
   "vault_search", "note_read", "knowledge_search", "knowledge_read",
-  "memory_search", "memory_read", "task_update", "user_question", "obsidian_context", "obsidian_cli"
+  "memory_search", "memory_read", "task_update", "user_question", "obsidian_context", "obsidian_cli", "obsidian_plugin_search"
 ]);
 
 /** Commands describe intent. Only this turn's access and tool metadata grant capability. */
@@ -24,7 +25,15 @@ export function piWorkspaceAllowsTool(input: PiWorkspaceAccess & Readonly<{
   planToolNames: readonly string[];
   memoryToolNames: readonly string[];
   externalReadToolNames: readonly string[];
+  toolArguments?: Record<string, unknown>;
 }>): boolean {
+  // Tool publication admits its read capability; dispatch checks the actual command again.
+  if (input.toolName === "obsidian_cli" && input.toolArguments) {
+    try {
+      if (obsidianCliEffect(normalizeObsidianCliRequest(input.toolArguments)) !== "read"
+        && (input.mode === "plan" || input.permission === "read-only")) return false;
+    } catch { return false; }
+  }
   if (input.memoryMode === "no_memory" && input.memoryToolNames.includes(input.toolName)) {
     return false;
   }

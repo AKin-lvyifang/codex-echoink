@@ -214,16 +214,29 @@ export class LifestyleFinanceService {
   cancelAll(): void { for (const flight of this.flights.values()) flight.controller.abort(); }
 
   async addManual(entry: Omit<FinanceEntry, "id" | "source" | "sourceId">): Promise<FinanceEntry> {
+    return await this.prepareManual(entry).create();
+  }
+
+  /** Prepare the real service-generated identity before conversation approval. No write here. */
+  prepareManual(entry: Omit<FinanceEntry, "id" | "source" | "sourceId">) {
     requireProPlugin(this.access);
     if (entry.billPlanId != null) this.access.requireCapability("finance.bill_plan.write");
-    await this.initialize();
     if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(entry.date)) throw new Error("交易日期无效");
     if (!entry.merchant.trim()) throw new Error("请填写商户或对方名称");
     if (!Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) throw new Error("金额无效");
     this.validateBillPlanId(entry.billPlanId);
     const created: FinanceEntry = { ...entry, id: lifeId("entry"), source: "manual", sourceId: lifeId("manual") };
-    await this.ledger.add(created);
-    return created;
+    let consumed = false;
+    return { entry: Object.freeze(created), relativePath: this.ledger.pathForNewEntry(created.id), create: async () => {
+      if (consumed) throw new Error("finance_manual_operation_already_consumed");
+      consumed = true;
+      requireProPlugin(this.access);
+      if (created.billPlanId != null) this.access.requireCapability("finance.bill_plan.write");
+      this.validateBillPlanId(created.billPlanId);
+      await this.initialize();
+      await this.ledger.add(created);
+      return created;
+    } };
   }
 
   previewImport(rows: readonly FinanceImportRow[]) { return this.ledger.previewImport(rows); }
