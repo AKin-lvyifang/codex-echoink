@@ -69,13 +69,14 @@ export function normalizeObsidianCliRequest(args: Record<string, unknown>): Obsi
     } else if (key === "finance") { result[key] = normalizeFinanceInput(value); continue; }
     else if (typeof value !== "string" || !value.trim() || value.length > (key === "content" ? 24_000 : 1_000) || (key === "content" ? /\0/u : /[\0\r\n]/u).test(value)) throw new Error("obsidian_invalid_request");
     result[key] = value;
-    if (key === "content") result[key] = String(value).replaceAll("\r\n", "\n");
+    if (key === "content" && typeof value === "string") result[key] = value.replaceAll("\r\n", "\n");
   }
   const request = result as unknown as ObsidianCliRequest;
   if (request.path && request.file) throw new Error("obsidian_cli_target_ambiguous");
   if (FILE_COMMANDS.has(request.command) && !request.path && !request.file) throw new Error("obsidian_cli_exact_target_required");
   for (const key of request.command.startsWith("plugin") && request.command !== "plugins" && request.command !== "plugins:enabled" ? ["id"] : []) {
-    if (!result[key] || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u.test(String(result[key]))) throw new Error("obsidian_invalid_plugin_id");
+    const value = result[key];
+    if (typeof value !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u.test(value)) throw new Error("obsidian_invalid_plugin_id");
   }
   if (["folder", "base:views"].includes(request.command) && !request.path) throw new Error("obsidian_cli_exact_target_required");
   if (["search", "search:context"].includes(request.command) && !request.query) throw new Error("obsidian_invalid_request");
@@ -98,7 +99,10 @@ export function normalizeObsidianCliRequest(args: Record<string, unknown>): Obsi
     tasks: ["json", "tsv", "csv"], plugins: ["json", "tsv", "csv"], "plugins:enabled": ["json", "tsv", "csv"]
   };
   if (request.format && !formats[request.command]?.includes(request.format)) throw new Error("obsidian_invalid_request");
-  for (const [key, values] of Object.entries(enums)) if (result[key] !== undefined && values.length && !values.includes(String(result[key]))) throw new Error("obsidian_invalid_request");
+  for (const [key, values] of Object.entries(enums)) {
+    const value = result[key];
+    if (value !== undefined && values.length && (typeof value !== "string" || !values.includes(value))) throw new Error("obsidian_invalid_request");
+  }
   if (request.status !== undefined && request.status.length !== 1) throw new Error("obsidian_invalid_request");
   return Object.freeze(request);
 }

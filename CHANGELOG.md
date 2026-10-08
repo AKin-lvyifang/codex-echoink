@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.6.1 - 2026-10-09
+
+![EchoInk 2.6.1](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.6.1/assets/releases/echoink-agent-2.6.1-release.png)
+
+### 中文
+
+- 接入 Obsidian 官方 CLI：可在对话中打开笔记与新标签页、操作 Bases、追加日记、读取或恢复本地历史，以及查询和管理插件。
+- 修复默认日记路径识别，以及 `/` 菜单连续输入、关闭重开后 Skill 候选丢失的问题；中英文名称均可搜索。
+
+CLI 功能需要桌面端已安装并启用官方 Obsidian CLI。写入和插件管理沿用确认流程；插件搜索从 GitHub 下载官方公开目录，在本地筛选，不向目录服务上传笔记或搜索词。升级时替换下方三个插件文件，保留设置与数据。
+
+### English
+
+- Added official Obsidian CLI support for opening notes and tabs, working with Bases, appending daily notes, reading or restoring local history, and finding and managing plugins through chat.
+- Fixed default daily-note paths and Skills disappearing from the `/` menu after typing or reopening it. Chinese and English names remain searchable.
+
+CLI features require the official Obsidian CLI to be installed and enabled on desktop. Writes and plugin management follow the confirmation flow. Plugin search downloads the official public directory from GitHub and filters it locally; notes and search terms are not uploaded to the directory service. To upgrade, replace the three plugin files below and keep your settings and data.
+
 ## 2.6.0 - 2026-10-09
 
 ![EchoInk 2.6.0：官网正式上线](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.6.0/assets/releases/echoink-agent-2.6.0-release.png)

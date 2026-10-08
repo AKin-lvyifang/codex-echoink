@@ -14,13 +14,17 @@ export class ObsidianPluginDirectory {
     const raw = await this.load();
     if (signal?.aborted) throw new Error("obsidian_plugin_search_cancelled");
     if (!Array.isArray(raw) || raw.length > 30_000) throw new Error("obsidian_plugin_directory_invalid");
+    const candidates: readonly unknown[] = raw;
     const entries: ObsidianCommunityPlugin[] = [];
     const ids = new Set<string>();
-    for (const entry of raw) {
-      if (!entry || typeof entry !== "object" || typeof entry.id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u.test(entry.id) || ids.has(entry.id)
-        || !["name", "author", "description", "repo"].every(key => typeof entry[key] === "string") || !/^[\w.-]+\/[\w.-]+$/u.test(entry.repo)) throw new Error("obsidian_plugin_directory_invalid");
-      ids.add(entry.id);
-      entries.push(Object.freeze({ id: entry.id, name: entry.name, author: entry.author, description: entry.description, repo: entry.repo }));
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== "object") throw new Error("obsidian_plugin_directory_invalid");
+      const { id, name, author, description, repo } = candidate as Record<string, unknown>;
+      if (typeof id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u.test(id) || ids.has(id)
+        || typeof name !== "string" || typeof author !== "string" || typeof description !== "string" || typeof repo !== "string"
+        || !/^[\w.-]+\/[\w.-]+$/u.test(repo)) throw new Error("obsidian_plugin_directory_invalid");
+      ids.add(id);
+      entries.push(Object.freeze({ id, name, author, description, repo }));
     }
     this.cached = { at: Date.now(), entries: Object.freeze(entries) };
     return this.cached.entries;

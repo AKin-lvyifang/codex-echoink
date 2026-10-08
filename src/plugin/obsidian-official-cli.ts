@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { access, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
+import { execFile } from "node:child_process";
 
 export interface ObsidianCliProcessResult {
   status: "completed" | "failed" | "cancelled" | "truncated" | "unavailable";
@@ -38,8 +39,6 @@ export function createOfficialObsidianCliTransport(vaultRootPath: string): Obsid
       if (signal?.aborted) return { status: "cancelled", started: false, output: "", reason: "obsidian_cli_cancelled" };
       const executable = await findObsidianCliExecutable();
       if (!executable) return { status: "unavailable", started: false, output: "", reason: "Obsidian CLI binary missing. Install Obsidian 1.12.7+ and enable Settings > General > Command line interface." };
-      // Obsidian's app:// renderer cannot dynamically import Node ESM modules.
-      const { execFile } = require("node:child_process") as typeof import("node:child_process");
       return await new Promise<ObsidianCliProcessResult>((resolve) => {
         let started = false;
         // Public CLI selects the Vault containing cwd. The caller verifies `vault info=path`

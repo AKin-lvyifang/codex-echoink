@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { readNativeJournalContext, nativeJournalPathForDate, readNativeJournalSettings } from "../home/native-journal";
 import { normalizeObsidianCliRequest, type ObsidianNativePort, type PreparedObsidianOperation, type ObsidianCliResult } from "../harness/pi-native/pi-obsidian-tools";
-import { obsidianCliArgv, obsidianCliEffect, type ObsidianCliRequest } from "../harness/pi-native/obsidian-cli-policy";
+import { obsidianCliArgv, obsidianCliEffect } from "../harness/pi-native/obsidian-cli-policy";
 import type { VaultDomainAdapter } from "../harness/pi-native/vault-domain-service";
 import { VaultTargetResolver } from "../harness/pi-native/vault-target-resolver";
 import { normalizeJsonValue, canonicalJsonStringify, type JsonValue } from "../harness/pi-native/tool-authorization";
@@ -39,9 +39,9 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
   const version = async (relativePath: string) => (await snapshot(relativePath))?.version ?? null;
   const run = async (argv: string[], signal?: AbortSignal): Promise<ObsidianCliResult> => {
     const result = await transport.run(argv, signal);
-    const rawContent = ["read", "daily:read", "template:read", "history:read", "search:context", "diff", "property:read", "properties", "outline", "base:query", "aliases"].includes(argv[0]!);
+    const rawContent = ["read", "daily:read", "template:read", "history:read", "search:context", "diff", "property:read", "properties", "outline", "base:query", "aliases"].includes(argv[0]);
     const unsupported = !rawContent && /^(?:unknown command|command not found|not supported)/iu.test(result.output);
-    return { available: result.status !== "unavailable", engine: effectEngine, command: argv[0]!, status: unsupported ? "unsupported" : result.status === "completed" && !result.output.trim() ? "empty" : result.status, output: result.output, ...(result.reason ? { reason: result.reason } : {}) };
+    return { available: result.status !== "unavailable", engine: effectEngine, command: argv[0], status: unsupported ? "unsupported" : result.status === "completed" && !result.output.trim() ? "empty" : result.status, output: result.output, ...(result.reason ? { reason: result.reason } : {}) };
   };
   const requireOutput = (result: ObsidianCliResult) => {
     if (!["completed", "empty"].includes(result.status)) throw new Error(result.reason ?? `obsidian_cli_${result.status}`);
@@ -58,14 +58,14 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
     return (await targetFor(relativePath, false)).relativePath;
   };
   const fileNameTarget = (name: string) => {
-    const matches = app.vault.getFiles().filter(file => file.path === name || file.path.replace(/\.[^.\/]+$/u, "") === name || file.path.split("/").at(-1) === name || file.path.split("/").at(-1)?.replace(/\.[^.]+$/u, "") === name);
+    const matches = app.vault.getFiles().filter(file => file.path === name || file.path.replace(/\.[^./]+$/u, "") === name || file.path.split("/").at(-1) === name || file.path.split("/").at(-1)?.replace(/\.[^.]+$/u, "") === name);
     if (matches.length !== 1) throw new Error("obsidian_cli_file_name_not_unique_use_path");
-    return matches[0]!.path;
+    return matches[0].path;
   };
   const pluginState = async (id: string, signal?: AbortSignal) => {
     const parseIds = (text: string): Set<string> => {
       const value: unknown = JSON.parse(text);
-      if (Array.isArray(value)) return new Set(value.map(entry => typeof entry === "string" ? entry : entry?.id).filter((value): value is string => typeof value === "string"));
+      if (Array.isArray(value)) return new Set(value.map((entry: unknown) => typeof entry === "string" ? entry : entry && typeof entry === "object" && "id" in entry ? entry.id : undefined).filter((value): value is string => typeof value === "string"));
       if (value && typeof value === "object") return new Set(Object.keys(value));
       throw new Error("obsidian_cli_plugin_list_invalid");
     };
@@ -106,9 +106,9 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
       if (request.ref) {
         const match = /^(.*):(\d+)$/u.exec(request.ref);
         if (!match) throw new Error("obsidian_invalid_task_reference");
-        request.path = (await targetFor(match[1]!)).relativePath;
+        request.path = (await targetFor(match[1])).relativePath;
         request.line = Number(match[2]); delete request.ref;
-        if (!Number.isSafeInteger(request.line) || request.line! < 1) throw new Error("obsidian_invalid_task_reference");
+        if (!Number.isSafeInteger(request.line) || request.line < 1) throw new Error("obsidian_invalid_task_reference");
       }
       if (request.path) request.path = (await targetFor(request.path, true, ["folder", "search", "search:context"].includes(request.command) ? "directory" : "file")).relativePath;
       if (request.folder) request.folder = (await targetFor(request.folder, true, "directory")).relativePath;
@@ -253,8 +253,8 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
             verified = request.command === "plugin:uninstall" ? !after.installed : request.command === "plugin:disable" ? after.installed && !after.enabled : request.command === "plugin:enable" ? after.installed && after.enabled : request.command === "plugin:reload" ? after.installed && (!!reloadInstance && pluginInstance(request.id!) !== reloadInstance) : after.installed && (!request.enable || after.enabled);
             observed = normalizeJsonValue(after);
           } else if (recordPaths) {
-            const added = app.vault.getFiles().filter(file => !recordPaths!.has(file.path) && file.path.split("/").at(-1)?.replace(/\.md$/iu, "") === request.name!.replace(/\.md$/iu, ""));
-            if (added.length === 1) { const after = await snapshot(added[0]!.path); verified = !!after && (!request.content || after.content.includes(request.content)); observed = normalizeJsonValue({ path: added[0]!.path, version: after?.version ?? null }); }
+            const added = app.vault.getFiles().filter(file => !recordPaths.has(file.path) && file.path.split("/").at(-1)?.replace(/\.md$/iu, "") === request.name!.replace(/\.md$/iu, ""));
+            if (added.length === 1) { const after = await snapshot(added[0].path); verified = !!after && (!request.content || after.content.includes(request.content)); observed = normalizeJsonValue({ path: added[0].path, version: after?.version ?? null }); }
           }
           return { ...result, status: verified ? "completed" : "uncertain", readbackVerified: verified, target, observedTargetVersion: observed, ...(verified ? {} : { reason: "obsidian_cli_readback_unverified_do_not_retry" }) };
         }
