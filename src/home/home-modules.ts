@@ -16,6 +16,7 @@ export const ECHOINK_HOME_MODULES: readonly EchoInkHomeModuleDefinition[] = [
   { id: "recent-notes", selector: ".recent-section", zhName: "最近笔记", enName: "Recent notes", defaultVisible: true },
   { id: "calendar", selector: ".calendar", zhName: "日记与足迹日历", enName: "Journal & activity calendar", defaultVisible: true },
   { id: "knowledge", selector: ".knowledge-section", zhName: "知识卡片区", enName: "Knowledge cards", defaultVisible: true },
+  { id: "finance", selector: ".echoink-life-card-finance", zhName: "财务", enName: "Finance", defaultVisible: true },
   { id: "todos", selector: ".todo-section", zhName: "待办", enName: "To-dos", defaultVisible: true }
 ];
 

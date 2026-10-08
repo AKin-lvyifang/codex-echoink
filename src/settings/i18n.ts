@@ -40,7 +40,8 @@ const ZH_CN = {
     resources: "Skills & MCP",
     knowledgeBase: "知识库管理",
     review: "复盘",
-    todos: "待办"
+    todos: "待办",
+    account: "账号与会员"
   } satisfies Record<SettingsTab, string>,
   general: {
     settingsLanguage: "设置语言",
@@ -187,7 +188,7 @@ const ZH_CN = {
     refreshModels: "刷新模型",
     modelListIdle: "未获取模型列表",
     modelListLoading: "正在获取模型列表…",
-    modelListAvailable: (count: number) => `已获取 ${count} 个模型，请从下拉列表选择`,
+    modelListAvailable: (count: number) => `已获取 ${count} 个模型，请勾选并指定默认模型`,
     modelListUnsupported: "该服务未提供可读取的模型列表，请使用右侧 + 添加 Model ID",
     modelListApiKeyError: "API Key 无效或没有模型列表权限，请检查后重试",
     modelListRateOrServiceError: "Provider 正在限流或服务暂时异常，请稍后重试。已保存模型不会受影响。",
@@ -298,7 +299,8 @@ const EN: SettingsCopy = {
     resources: "Skills & MCP",
     knowledgeBase: "Knowledge",
     review: "Review",
-    todos: "To-dos"
+    todos: "To-dos",
+    account: "Account & membership"
   },
   general: {
     settingsLanguage: "Settings language",
@@ -446,7 +448,7 @@ const EN: SettingsCopy = {
     refreshModels: "Refresh models",
     modelListIdle: "Model list not loaded",
     modelListLoading: "Loading models…",
-    modelListAvailable: (count) => `${count} models loaded; choose one from the list`,
+    modelListAvailable: (count) => `${count} models loaded; enable models and choose a default`,
     modelListUnsupported: "This service does not expose a readable model list. Use + to add a Model ID.",
     modelListApiKeyError: "The API key is invalid or cannot list models. Check it and retry.",
     modelListRateOrServiceError: "The provider is rate-limited or temporarily unavailable. Try again later; saved models are unchanged.",

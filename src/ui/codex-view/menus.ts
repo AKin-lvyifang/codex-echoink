@@ -1,6 +1,7 @@
 import { Menu, Notice, setIcon } from "obsidian";
 import type { SettingsLanguage } from "../../settings/settings";
 import { filterSkillResources } from "../../resources/registry";
+import { resourcePresentation } from "../../resources/resource-presentation";
 import type { EchoInkResource } from "../../resources/types";
 import type { ReasoningEffort, UiMode } from "../../types/app-server";
 import { knowledgeCommandOptions, type KnowledgeBaseCommandOption } from "../../knowledge-base/commands";
@@ -300,13 +301,14 @@ export function renderSkillMatches(container: HTMLElement, query: string, state:
   container.empty();
   const matches = filterSkillResources(state.skills, query);
   for (const skill of matches) {
+    const presentation = resourcePresentation(skill, language);
     const item = container.createDiv({ cls: "codex-skill-item" });
     item.toggleClass("is-selected", state.selectedSkill?.id === skill.id);
     const heading = item.createDiv({ cls: "codex-skill-heading" });
     const icon = heading.createSpan({ cls: "codex-skill-icon" });
     setIcon(icon, "box");
-    heading.createDiv({ cls: "codex-skill-name", text: skill.name });
-    item.createDiv({ cls: "codex-skill-desc", text: skill.description || skill.contentPath || skill.source });
+    heading.createDiv({ cls: "codex-skill-name", text: presentation.name });
+    item.createDiv({ cls: "codex-skill-desc", text: presentation.description || skill.contentPath || skill.source });
     item.onclick = () => callbacks.onSelectSkill(skill);
   }
   if (matches.length === 0) {
@@ -715,6 +717,7 @@ function createSlashSkillItem(
   onSelectSkill: (skill: EchoInkResource) => void,
   language: SettingsLanguage
 ): HTMLElement {
+  const presentation = resourcePresentation(skill, language);
   const item = document.createElement("button");
   item.setAttribute("type", "button");
   item.setAttribute("role", "option");
@@ -725,10 +728,10 @@ function createSlashSkillItem(
   const icon = item.createSpan({ cls: "codex-command-icon" });
   setIcon(icon, "box");
   const body = item.createDiv({ cls: "codex-command-body" });
-  body.createSpan({ cls: "codex-command-text", text: skill.name });
+  body.createSpan({ cls: "codex-command-text", text: presentation.name });
   body.createSpan({
     cls: "codex-command-desc",
-    text: skill.description || skill.contentPath || conversationUiText(language, "已启用 Skill", "Enabled Skill")
+    text: presentation.description || skill.contentPath || conversationUiText(language, "已启用 Skill", "Enabled Skill")
   });
   item.createSpan({
     cls: "codex-command-shortcut",

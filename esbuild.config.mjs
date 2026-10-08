@@ -589,6 +589,8 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
   // Controlled Chat never uses Pi's package-relative CLI assets or extensions.
   define: {
     "process.env.NODE_ENV": JSON.stringify(isProd ? "production" : "development"),
+    __ECHOINK_MEMBERSHIP_API_URL__: JSON.stringify(process.env.ECHOINK_MEMBERSHIP_API_URL || "https://echoink.cn"),
+    __ECHOINK_MEMBERSHIP_WEBSITE_URL__: JSON.stringify(process.env.ECHOINK_MEMBERSHIP_WEBSITE_URL || "https://echoink.cn"),
     "import.meta.url": "__echoInkPiModuleUrl"
   },
   entryPoints: [

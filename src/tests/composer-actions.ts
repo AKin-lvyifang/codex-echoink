@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Platform, TFile, type App } from "obsidian";
 import { openTestNoticeMessages } from "./obsidian-shim";
+import type { EchoInkResource } from "../resources/types";
 import {
   renderComposerAttachments,
   renderComposerNoteMentionMenu,
@@ -129,6 +130,27 @@ export async function runComposerActionTests(): Promise<void> {
     assert.equal(commandMenu.getAttribute("aria-label"), "Commands and enabled Skills");
     assert.equal(persistentResourcePanel.getAttribute("aria-label"), "Add resources");
     assert.equal(noteMentionPanel.getAttribute("aria-label"), "Mention notes");
+
+    const selectedBuiltinSkill: EchoInkResource = {
+      id: "echoink-local:skill:knowledge-review", kind: "skill", source: "echoink-local",
+      name: "knowledge-review", description: "", enabled: true, bridgeMode: "prompt-only",
+      contentPath: ".echoink/resources/skills/knowledge-review/SKILL.md",
+      metadata: { resourceId: "knowledge-review" }
+    };
+    const skillChips = new ComposerTestElement("div");
+    const selectedSkillState = {
+      selectedSkill: selectedBuiltinSkill, noteMentions: [], attachments: [], attachmentResolver: {} as never
+    };
+    const skillCallbacks = {
+      onRemoveSkill: () => {}, onRemoveNoteMention: () => {}, onRemoveAttachment: () => {}, onOpenAttachment: () => {}
+    };
+    renderComposerAttachments(skillChips as unknown as HTMLElement, { ...selectedSkillState, language: "zh-CN" }, skillCallbacks);
+    assert.equal(skillChips.querySelector(".codex-skill-token-name")?.textContent, "知识复盘");
+    renderComposerAttachments(skillChips as unknown as HTMLElement, { ...selectedSkillState, language: "en" }, skillCallbacks);
+    assert.equal(skillChips.querySelector(".codex-skill-token-name")?.textContent, "Knowledge Review");
+    assert.equal(selectedSkillState.selectedSkill, selectedBuiltinSkill, "language changes preserve the selected Skill object");
+    assert.equal(selectedBuiltinSkill.name, "knowledge-review", "display labels preserve the runtime Skill name");
+    assert.equal(persistentDraft.value, "这段用户输入必须保持不变");
 
     const attachmentContainer = new ComposerTestElement("div");
     const removedAttachments: string[] = [];

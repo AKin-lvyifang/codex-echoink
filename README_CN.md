@@ -1,244 +1,65 @@
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
-    <img width="1024" alt="EchoInk Agent 2.5.0 发布图" src="assets/releases/echoink-agent-2.5.0-release.png">
+  <a href="https://echoink.cn">
+    <img width="1024" alt="EchoInk 2.6.0：官网正式上线，注册送激活码" src="assets/releases/echoink-agent-2.6.0-release.png">
   </a>
 </p>
 
 <h1 align="center">EchoInk Agent</h1>
 
-<p align="center">管理你的 Obsidian 知识，也在每次使用中更懂你。</p>
+<p align="center">你的笔记，有了 AI 搭档。住在 Obsidian 里。</p>
 
 <p align="center">
-  <a href="#252-亮点">2.5.2 亮点</a> ·
-  <a href="#主要功能">主要功能</a> ·
-  <a href="#安装">安装</a> ·
-  <a href="#快速开始桌面端">快速开始</a> ·
-  <a href="#把图片文档和笔记加入对话">对话附件</a> ·
+  <a href="https://echoink.cn">官方网站</a> ·
+  <a href="https://echoink.cn/install">下载与安装</a> ·
+  <a href="#260-更新">2.6.0 更新</a> ·
   <a href="#隐私与数据">隐私与数据</a> ·
   <a href="README.md">English</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/latest">
-    <img src="https://img.shields.io/badge/platform-Desktop_%2B_Mobile_Beta-7C3AED?style=flat-square&logo=obsidian&logoColor=white" alt="平台：桌面端与移动端 Beta">
-    <img src="https://img.shields.io/badge/version-2.5.2-0EA5E9?style=flat-square" alt="版本 2.5.2">
-    <img src="https://img.shields.io/badge/license-MIT-10B981?style=flat-square" alt="MIT 开源许可证">
-  </a>
+  <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="桌面端与移动端 Beta">
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.6.0"><img src="https://img.shields.io/badge/version-2.6.0-0EA5E9?style=flat-square" alt="版本 2.6.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Source%20Available-475569?style=flat-square" alt="源码可见，许可范围见 LICENSE"></a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.2"><strong>下载 2.5.2</strong></a>
-</p>
+<p align="center"><a href="https://echoink.cn"><strong>访问官网 echoink.cn</strong></a></p>
 
-EchoInk Agent 是一个运行在 Obsidian 中的个人知识 Agent。它能持续对话，整理和维护当前 Vault，把长期有用的信息保存为可查看、可修正的记忆，并随着使用逐渐形成自己的工作方式。无需安装 Codex CLI；连接一个支持的模型服务后即可开始使用。
+EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理知识、保留可查看和修正的长期记忆，也记录自己的日常。笔记留在你的 Vault，AI 功能连接你自己的模型服务；正常安装无需 Codex CLI。
 
-## 2.5.2 亮点
+## 2.6.0 更新
 
-**修复 Codex 授权与对话兼容。** 修复部分 Codex 请求参数、登录令牌和流式回答格式的兼容问题；连接测试改用较低推理强度，等待上限延长至 60 秒。参数被拒绝、模型不可用、额度受限、网络故障与授权失效会分别提示，减少误报“返回格式不符合协议”或要求重新登录的情况。
+**EchoInk 有官网了：[echoink.cn](https://echoink.cn)。** 产品介绍、下载、使用说明和账号管理，都可以从这里找到。
 
-**修复 Codex 对话连接。** 修复桌面端 OpenAI Codex Beta 已授权并保存模型后，发送消息仍提示“网络连接中断”的问题。其余功能沿用 2.5.0。
+- **支持注册、登录和 PRO 激活。** 使用邮箱验证码或已有密码登录。目前内测活动为“注册送激活码”：注册并验证邮箱后领取，数量与有效期以活动页面为准。在桌面插件登录后，点击“使用兑换码”即可激活。
+- **财务，从记账到安排计划。** 支持微信、支付宝账单导入，商户、账户与分类管理，月度预算、持续目标，以及账单计划和记录关联。连接自己的模型后，可辅助整理账单、生成财务分析。
+- **英文日记，写生活，也积累表达。** 直接编辑 Markdown 原稿，生成自然英文，在表达库中搜索和回顾本篇收获；可以选择原文中允许发给模型的部分。
+- **更顺手的工作区。** 新增主题颜色、首页分区导航、英文日记快捷入口，以及按年、月筛选的活动热力图。
+- **会员状态更清楚。** 兑换时显示联网进度，授权成功后显示 PRO。订阅到期后，已启用的 PRO 插件保留已有资料阅读，开关与新增、导入、修改、生成操作禁用；普通对话、知识库和原始 Markdown 仍可使用。
+- **模型与平板适配。** 更新模型发现与 DeepSeek 请求兼容，增加 iPad 宽屏布局和分栏。移动端仍处于 Beta。
 
-**桌面端新增联网搜索与会话自动归档。** 查资料时可以让 EchoInk 搜索网页，闲置对话也能按你选择的期限收进归档。
+财务和英文日记属于 PRO 插件，**PRO 不包含模型调用额度**。目前内测尚未开放付费购买，活动与订阅说明以[官网](https://echoink.cn/plans)为准。
 
-- **搜索网页并查看来源：** 在 **API Provider → tool 工具** 填写自己的 Tavily API Key，测试连接并自主开启联网搜索。模型会按问题需要调用搜索，结合返回的链接回答。
-- **模型与工具分开配置：** Provider 顶部区分“大模型 API”和“tool 工具”。搜索使用独立的 Tavily Key，你可以继续使用已有对话模型。
-- **让旧对话自动归档：** 在 **复盘 → 管理 → 自动归档** 选择 7、14、30 或 90 天。使用中的对话会被跳过，归档后仍可恢复。默认关闭，不需要模型或 API Key。
-- **小窗口也能正常操作：** 修复 Tavily 说明与开关在窄窗口下错位的问题。
+## 下载与说明
 
-联网搜索和自动归档本版仅用于桌面端。移动端继续保留已有 Beta 功能；iOS 与 Android 尚未完成真机验证。Tavily 需要单独的账号和 API Key，连接测试会执行一次 basic 搜索并消耗 1 credit；额度与价格以 [Tavily 官方政策](https://docs.tavily.com/documentation/api-credits) 为准。查看 [2.5.2 更新介绍与用法](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.2)。
+前往 [echoink.cn](https://echoink.cn) 查看[安装方法](https://echoink.cn/install)、[功能介绍](https://echoink.cn/features)和[帮助与支持](https://echoink.cn/support)。仓库的 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases) 继续提供官方插件文件。
 
-## 主要功能
+需要 **Obsidian 1.11.4 及以上**。上述账号、财务与英文日记功能用于桌面端。移动 Beta 支持对话、Markdown 笔记读取与新建、本地记忆及平板布局；暂不包含桌面会员、财务、英文日记、附件、CLI 和完整 Skills/MCP 能力。iOS 与 Android 真机验证仍未完成。
 
-以下介绍桌面端体验。移动 Beta 当前支持对话、Markdown 笔记读取与新建、本地记忆和欢迎语设置；暂不包含跨设备记忆同步、后台任务、CLI、附件以及完整桌面 Skills/MCP 能力。
-
-### 持久会话与清楚的对话过程
-
-- 支持新建、重命名、归档、恢复和软删除会话；读取本地历史不依赖 Provider。
-- 模型思考、工具过程、授权请求、任务计划、文件变化和最终回答显示在同一条时间线中。
-- 思考过程可实时展开。手动上滚后不会被强制拉到底部，回到底部时会恢复跟随。
-- 从输入区 `+` 打开 **计划模式**，让复杂任务先列出步骤；工具需要权限时，可直接在对话中批准或拒绝。
-- 已归档会话在 **设置 → EchoInk Agent → 复盘 → 已归档会话** 中管理。
-
-### Agent 身份与长期成长
-
-- 新版五步引导会带你找到 Agent 画像入口，可在基础设置中选择风格、名称和头像。名称最多 24 个字符；头像可使用 15 个内置选项或自定义 SVG。
-- 长期记忆默认开启。Agent 可以在普通对话中新增或更新值得长期保留的信息，不需要每次手动要求“记住”。
-- **离线记忆整理（做梦）** 默认每天运行 3 次，可设为 1–6 次。它会连接相关经历，并逐步更新 Agent 画像、用户画像和长期相处习惯。
-- 在 **设置 → EchoInk Agent → 基础设置 → 长期记忆 / 身份与用户画像** 中查看画像、调整频率或更换起始风格。修改名称和头像不会重置人格或记忆。
-- 关闭离线整理后，普通的记忆写入和召回仍然可用；关闭长期记忆后，名称、头像和基础风格仍会保留。
-
-### 图片、文档与笔记背景
-
-- 粘贴或拖入图片，或者从输入区 `+` 添加图片和文件。
-- 支持 PNG、JPEG、GIF、WebP；BMP、HEIC、HEIF、SVG 会在可转换时转成 PNG。当前模型不支持图片时，发送前会明确提示。
-- 支持 PDF、DOC、DOCX、Markdown 和 HTML。每轮最多 8 个文档，单文件不超过 20 MiB，合计不超过 50 MiB。
-- 加密、损坏或超出当前模型剩余上下文的文档会被拒绝，不会静默丢失内容。扫描版 PDF 暂不支持 OCR。
-- 输入 `@` 可按文件名、路径、别名、拼音或首字母搜索当前 Vault 的 Markdown 笔记。
-- 发送后的图片和文档会保留为缩略图或文件卡片，并可从对话中打开原文件。
-
-### Provider 与模型
-
-- 内置 OpenAI Codex Beta、通义千问、通义千问 Token Plan、智谱开放平台、Kimi 中国版、MiniMax 中国版、DeepSeek、Ollama 本地和 Custom 入口。
-- 支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 协议。
-- 同一种 Provider 可以保存多个实例；每个实例可以启用多个模型、选择默认模型、获取模型列表或手动添加 Model ID。
-- 深度思考选项会按当前模型的实际能力显示，避免把不支持的参数发送给 Provider。
-- 普通 Provider 的 API Key 与 OpenAI Codex Beta 的登录凭据保存在当前 Vault 的插件设置中；Ollama 本地入口默认不需要 API Key。
-
-### Vault 知识维护
-
-- `/ask` 优先围绕当前知识库回答，并显示本轮使用的知识来源。
-- `/maintain` 提炼 Raw 笔记，把可复用内容写入 Wiki 或 Projects，再回读确认结果。
-- 维护开始前会锁定目标版本；生成期间笔记发生变化时，本轮不会覆盖新内容。
-- 是否写入由工作区读写设置和你的要求决定，`/ask` 与 `/maintain` 不授予或收回文件权限；普通对话也可以按你的明确要求保存日记。
-- 初始化可选默认方案，将现有资料整理到 Raw；也可选自定义方案，先查看并调整笔记分配。点击“开始初始化”后才执行整理。缺少固定目录时可以只补目录，不移动、删除或重写已有笔记。
-
-### 可查看、可修正的长期记忆
-
-- 当前记忆按事实、观点、决定、进行中和经历五类展示，每条记录包含标题、内容和“何时可能想起”。
-- 修正时会同时保留原记忆、你的纠正说明和修正后预览。生成预览不会改动原记录，只有点击保存才会创建新版本。
-- 停止、关闭、生成失败、迟到结果或版本冲突都不会覆盖当前记忆。
-
-### 复盘、Skills 与 MCP
-
-- 手动生成 Agent 周报或知识库周报，可选择上一完整周或本周至今、Vault 内输出目录，以及生成后是否打开 HTML。
-- 在设置中管理当前 Vault 可用的插件资源、Skills 与 MCP 连接。
-- 只读 MCP 工具通过当前对话执行，并遵循各连接的启用和信任设置。
-- 在编辑器中选中文本后，可通过右键菜单使用当前默认 Provider 翻译成英文。
-
-## 安装
-
-### Obsidian 社区插件
-
-如果 EchoInk Agent 已出现在 Obsidian 社区插件目录中：
-
-1. 打开 **设置 → 第三方插件 → 浏览**。
-2. 搜索 `EchoInk Agent`。
-3. 安装并启用插件。
-
-### 手动安装
-
-1. 从 [2.5.2 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.5.2) 下载 `main.js`、`manifest.json` 和 `styles.css`。
-2. 在 Vault 中创建目录：
-
-```text
-<vault>/.obsidian/plugins/codex-echoink/
-```
-
-3. 将三个文件放入该目录。
-4. 重启 Obsidian，在第三方插件中启用 `EchoInk Agent`。
-
-> **同步说明：** Obsidian Sync Standard 有 5 MiB 单文件上限；文件需符合限制，且各设备需开启社区插件同步。
-
-### 移动端 Beta
-
-在手机 Vault 中安装同一套插件文件，启用 EchoInk 后运行 **“打开移动对话”**。进入 **设置 → API Provider → 模型与提供商**，填写 API Key、接口地址和模型 ID，再选择模型，即可提问、引用笔记或要求新建 Markdown 笔记。
-
-在 **复盘 → 记忆** 管理本地记忆，在 **基础设置** 修改欢迎语。移动与桌面的会话、记忆分别保存，本版不会合并或同步两端历史。
-
-## 快速开始（桌面端）
-
-首次使用时，五步引导会带你找到下面这些入口；可以返回、跳步或随时退出：
-
-1. 点击 Obsidian 左侧栏的羽毛图标，打开首页和 EchoInk Agent 侧栏。
-2. 点击 EchoInk 侧栏右上角的齿轮，进入设置。
-3. 在 **API Provider** 中连接一个模型服务。
-4. 在 **知识库管理** 中选择默认或自定义方案；自定义方案可先调整笔记分配，再点击“开始初始化”。
-5. 在 **基础设置** 中选择 Agent 的起始风格、名称和头像。
-
-完成后即可新建会话。普通会话第一次发送前，需要用输入区的文件夹按钮选择一个本机工作区。输入 `/ask` 查询知识库，输入 `/maintain` 提炼笔记；需要图片、文档、笔记背景或计划模式时，使用输入区 `+` 或 `@`。
-
-## 把图片、文档和笔记加入对话
-
-| 操作 | 结果 |
-| --- | --- |
-| 粘贴或拖入图片 | 把图片加入当前输入 |
-| `+ → 添加图片` | 从本机选择图片 |
-| `+ → 文件和文件夹` | 从本机选择一个或多个受支持文件；当前版本不读取整个文件夹 |
-| `+ → 添加当前笔记` | 加入编辑器中当前打开的 Markdown 笔记 |
-| 输入 `@` | 搜索并加入当前 Vault 的 Markdown 笔记 |
-| `+ → 计划模式` | 让复杂任务先显示任务计划 |
-
-附件只属于当前发送内容。发送前移除卡片即可取消；处理失败时整轮会停下并显示原因，不会偷偷发送残缺内容。
-
-## 配置 Provider 与模型
-
-打开 **设置 → EchoInk Agent → API Provider → 添加模型**：
-
-- 使用 API Key 时，选择对应 Provider，填写 API URL、API Key，获取或添加模型，勾选需要启用的模型并指定默认模型。
-- 使用 **OpenAI Codex Beta** 时，进入 **登录账户** 分组，选择该入口并点击 **使用 OpenAI 登录**。浏览器没有自动返回时，把回调地址或授权码粘贴回设置弹窗，然后点击 **完成授权**。
-- 通义千问普通 API 与通义千问 Token Plan 是两个独立入口，请按自己的账号方式选择。
-- 需要退出 OpenAI Codex Beta 时，在同一 Provider 弹窗中点击 **退出登录**。
-
-## 知识维护
-
-`/maintain` 有三种定位方式：
-
-| 输入方式 | 作用范围 |
-| --- | --- |
-| `/maintain` | 全局检查当前可维护的 Raw 笔记 |
-| 在输入区选择一篇 `raw/**.md`，再执行 `/maintain` | 只维护这篇 Raw 笔记 |
-| `/maintain 笔记名称` | 模糊搜索相关 Raw 笔记，并在候选范围内维护 |
-
-单篇模式一次只接受一篇当前 Vault 内的 Raw Markdown。名称没有可靠匹配时不会自动回退到全局维护。已经提炼且没有新变化的内容会正常结束，不会重复写入。
-
-## 复盘与记忆修正
-
-进入 **设置 → EchoInk Agent → 复盘**：
-
-- 在“生成周报”中选择统计周期、输出文件夹和生成后是否打开 HTML。
-- 在“已归档会话”中搜索、恢复或软删除会话；原始会话记录仍会保留。
-- 在“记忆修正”中按类别查看记录，生成修正后预览，再决定是否保存。
-
-## 升级说明
-
-### 从 2.1.0 或 2.0.3 升级
-
-- 可直接覆盖升级，无需重建会话、知识库或长期记忆；已保存的 Provider 与模型配置会自动升级。
-- 2.5.2 不会改写旧会话中已经保存的内容。如果某个旧会话已经留下重复回答或失败记录，升级后建议新建会话继续。
-- 已完成引导的旧用户不一定会在升级后再次看到引导；需要重看时，在 Obsidian 社区插件中禁用再启用 EchoInk，完成页也支持“再看一遍”。
-
-### 从 1.x 升级
-
-- 2.x 直接保存 Provider API Key。如果旧配置只有已退役的 Credential 引用，需要在 Provider 设置中重新输入一次 API Key。
-- 2.x 不读取或迁移已退役的 Codex、OpenCode、Hermes 会话，以及旧 Cognitive、Reflection 或 Memory 数据，也不会主动删除这些旧文件。
-- 建议升级前按自己的 Vault 备份习惯保留一份快照。
+插件文件超过 Obsidian Sync Standard 的单文件 5 MB 限制。请在各设备上通过官方下载或社区插件分别安装、更新，不要依赖 Sync Standard 传输该文件。
 
 ## 隐私与数据
 
-- EchoInk 通过 Obsidian API 访问当前 Vault；桌面保留既有能力，移动 Beta 的笔记操作限于当前 Vault。
-- 会话、知识文件、记忆和周报保存在本地 Vault 中。
-- API Key、Provider 配置与 OpenAI Codex Beta 登录凭据保存在当前 Vault 的插件设置中。请只在可信设备和可信 Vault 中配置。
-- 在桌面端，你为会话选择的本机工作区可以位于 Vault 外。输入区的文件权限可设为“只读”“工作区可写”或“完全访问权限”；完全访问会解除工作区文件边界，只应在可信任务中使用。EchoInk 还会读取你明确选择、拖入或粘贴的 Vault 外附件。
-- 远程 Provider 会接收完成当前请求所需的 Prompt、会话、知识、记忆、笔记、附件和工具结果；EchoInk 不会默认上传整个 Vault 或整个工作区。
-- 桌面端 Tavily 联网搜索默认关闭。开启后，搜索词会发送到 Tavily（`api.tavily.com`），返回的网页摘要和链接交给当前模型用于回答；搜索词可能包含当前问题的内容。连接测试也会向 Tavily 发送一次公开查询并消耗积分。Tavily Key 保存在本地插件设置中，服务条款、额度和价格以 [Tavily](https://www.tavily.com/) 为准。
-- Custom Provider 与 MCP 连接还受对应服务、服务器和命令的条款约束。只配置你信任的服务和本机命令。
-- EchoInk 没有自己的遥测服务。
+- 对话、笔记、知识、记忆、日记和财务记录保存在本地；插件不会默认上传整个 Vault。
+- **https://echoink.cn** 提供注册、登录、邮箱验证、兑换、订阅与设备授权服务，接收完成这些请求所需的账号资料和授权数据，包括生成的设备标识。PRO 插件需要 EchoInk 账号与有效权益；普通对话和知识库无需 EchoInk 账号。
+- 桌面端的账号会话和设备授权加密保存在 Vault 外的 **`~/.echoink/membership/`**，避免随笔记同步设备凭据；加密密钥使用 Obsidian 的安全存储。持久安全存储不可用时，仅在当前会话内存中保存授权。
+- Provider API Key 与 OpenAI Codex Beta 登录凭据保存在当前 Vault 的插件设置中，请在可信设备和 Vault 中配置。
+- 你选择的模型服务会接收当前 AI 请求所需的提示词、笔记、附件、记忆和工具结果。模型服务可能要求独立账号并另行收费；图片输入需要支持视觉的模型。
+- 桌面对话可以选择 Vault 外的本地工作区。文件访问遵循所选权限；“完全访问”会解除工作区边界。Vault 外附件仅在你明确选择、拖入或粘贴时读取。
+- Tavily 联网搜索默认关闭。开启后，搜索词发送至 `api.tavily.com`，返回的摘要与链接交给当前模型。Tavily 需要单独账号和 Key；连接测试也会执行一次 basic 搜索并消耗 1 credit，详见[官方计费说明](https://docs.tavily.com/documentation/api-credits)。
+- 自定义 Provider 与 MCP 会访问你配置的服务或本机命令。插件不采集客户端使用遥测；官网与账号服务的数据处理见[隐私政策](https://echoink.cn/support#privacy)。
 
-## 使用要求
+## 许可声明
 
-- Obsidian 1.11.4 或更高版本。桌面保留既有界面，移动功能为 Beta。
-- 云端 Provider 需要自己的 API Key 或账号，并可能产生 Provider 费用。
-- 图片输入需要当前模型支持视觉能力。
-- 移动端需要使用 API Key 的 OpenAI Chat Completions 或 Responses 模型接口；iOS/Android 真机验证尚待完成。
-- Node.js 只用于本地开发，不是普通安装的前置条件。
+从 2.6.0 起，新授予许可的 EchoInk 自有内容采用 **EchoInk 源码可见参考许可 1.0**。源码供个人学习与参考，**不属于 OSI 定义的开源许可**。允许个人、非商业使用未经修改的官方发行版；未经另行书面许可，不得修改、再分发、复制源码制作衍生产品或商业使用，具体例外以 [LICENSE](LICENSE) 为准。
 
-## 本地开发
-
-推荐使用 Node.js 22.19.0 或更高版本：
-
-```bash
-npm install
-npm run test
-npm run typecheck
-npm run build
-```
-
-生成本地手动安装包：
-
-```bash
-npm run package
-```
-
-## 许可证
-
-EchoInk 使用 [MIT License](LICENSE) 开源，第三方组件署名见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本声明不撤回旧版 MIT 已授予的权利，不改变第三方组件许可，也不排除法律不能限制的权利。对侵犯受保护内容的行为，权利人保留依法追究责任的权利。完整条款见 [LICENSE](LICENSE)；第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

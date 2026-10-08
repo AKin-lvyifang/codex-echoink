@@ -106,3 +106,12 @@
 @media (prefers-reduced-motion:reduce) {
   .echoink-origin-control[data-slot=switch],.echoink-origin-control [data-slot=switch-thumb] {transition:none}
 }
+
+/* Origin pagination is scoped to finance, without a Tailwind preflight. */
+.echoink-finance-workspace .echoink-origin-pagination ul{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:4px;list-style:none;margin:0;padding:0}
+.echoink-finance-workspace .echoink-origin-pagination li{margin:0;padding:0}
+.echoink-finance-workspace .echoink-origin-pagination :is(button,[data-slot=pagination-ellipsis]){display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:4px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text-muted);font-size:12px;line-height:1;box-shadow:none}
+.echoink-finance-workspace .echoink-origin-pagination button[aria-current=page]{border-color:transparent;color:var(--text-normal);font-weight:600;background:var(--background-secondary)}
+.echoink-finance-workspace .echoink-origin-pagination button:is(:hover,:focus-visible){background:var(--background-modifier-hover);outline:none;box-shadow:none}
+.echoink-finance-workspace .echoink-origin-pagination button:disabled{opacity:.45;cursor:default}
+.echoink-finance-workspace .echoink-origin-pagination svg{width:16px;height:16px}

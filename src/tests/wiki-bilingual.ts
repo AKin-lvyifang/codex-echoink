@@ -173,34 +173,20 @@ export function runTodoCalendarStatisticsTests(): void {
   history = reconcileTodoCompletions(history, [{ id: "a", done: true }], [{ id: "a", done: false }], true, two);
   const stats = todoCompletionStatistics(history, two);
   assert.equal(stats.total, 3); assert.equal(stats.today, 1); assert.equal(stats.unknown, 1);
-  assert.equal(stats.days.find((day) => day.date === "2026-09-17")?.count, 1);
-  assert.equal(stats.days.length, 365);
-  assert.equal(new Set(stats.days.map((day) => day.date)).size, 365);
-  assert.equal(stats.days[0].date, "2026-01-01");
-  assert.equal(stats.days.at(-1)?.date, "2026-12-31");
-  assert.equal(stats.yearTotal, 2);
-  const annualHistory = { unknown: null, leap: "2024-02-29", previous: "2025-12-31", today: "2026-01-01" };
+  assert.deepEqual(stats.activity, [{ date: "2026-09-17", count: 1 }, { date: "2026-09-18", count: 1 }], "re-completion moves only that task to its new date");
+  const annualHistory = { unknown: null, leap: "2024-02-29", leapSecond: "2024-02-29", previous: "2025-12-31", previousSecond: "2025-12-31", today: "2026-01-01" };
   const newYear = new Date(2026, 0, 1, 0, 1);
-  const currentYear = todoCompletionStatistics(annualHistory, newYear);
-  const leapYear = todoCompletionStatistics(annualHistory, newYear, 2024);
-  const previousYear = todoCompletionStatistics(annualHistory, newYear, 2025);
-  assert.deepEqual(currentYear.years, [2026, 2025, 2024]);
-  assert.equal(currentYear.year, 2026);
-  assert.equal(currentYear.days[0].date, "2026-01-01");
-  assert.equal(currentYear.days.at(-1)?.date, "2026-12-31");
-  assert.equal(leapYear.days.length, 366, "a leap year includes February 29");
-  assert.equal(leapYear.days.find((day) => day.date === "2024-02-29")?.count, 1);
-  assert.equal(new Set(leapYear.days.map((day) => day.date)).size, 366);
-  assert.equal(previousYear.days.length, 365);
-  assert.equal(previousYear.days.at(-1)?.count, 1, "December 31 belongs only to its local calendar year");
-  for (const year of [currentYear, leapYear, previousYear]) {
-    assert.equal(year.total, 4, "the all-time total is independent of the displayed year");
-    assert.equal(year.today, 1, "today is independent of the displayed year");
-    assert.equal(year.unknown, 1);
-    assert.equal(year.yearTotal, 1, "undated completions do not enter a year total");
-  }
-  const emptyYear = todoCompletionStatistics({}, newYear);
-  assert.deepEqual(emptyYear.years, [2026], "the current year remains selectable without dated records");
-  assert.equal(emptyYear.days.length, 365);
-  assert.equal(todoCompletionStatistics({ leap: "2024-02-29" }, newYear).years.includes(2026), true);
+  const allTime = todoCompletionStatistics(annualHistory, newYear);
+  assert.deepEqual(allTime.activity, [
+    { date: "2024-02-29", count: 2 }, { date: "2025-12-31", count: 2 }, { date: "2026-01-01", count: 1 }
+  ], "one sparse entry per recorded date preserves cross-year and leap-day counts");
+  assert.equal(allTime.total, 6);
+  assert.equal(allTime.today, 1);
+  assert.equal(allTime.unknown, 1);
+  assert.equal(allTime.activity.reduce((sum, day) => sum + day.count, 0), allTime.total - allTime.unknown, "each dated task is counted once and undated tasks stay outside the heatmap");
+  const previousDay = todoCompletionStatistics(annualHistory, new Date(2025, 11, 31, 23, 59));
+  assert.equal(previousDay.today, 2);
+  assert.deepEqual(previousDay.activity, allTime.activity, "changing today does not clip historical activity");
+  assert.deepEqual(todoCompletionStatistics({}, newYear), { total: 0, today: 0, unknown: 0, activity: [] });
+  assert.deepEqual(todoCompletionStatistics({ unknown: null }, newYear), { total: 1, today: 0, unknown: 1, activity: [] });
 }

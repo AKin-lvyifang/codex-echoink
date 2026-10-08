@@ -3,6 +3,14 @@
 type Options = { cls?: string; text?: string; attr?: Record<string, unknown>; value?: string };
 export function createOriginInput(parent: any, options: Options = {}) { return parent.createEl("input", options); }
 export function createOriginButton(parent: any, options: Options = {}) { return parent.createEl("button", options); }
+export function createOriginPagination(parent: any, _page: number, pages: number, onChange: (page: number) => void) {
+  const nav = parent.createEl("nav");
+  for (let page = 1; page <= pages; page++) {
+    const button = nav.createEl("button", { text: String(page) });
+    button.onclick = () => onChange(page);
+  }
+  return nav;
+}
 export function createOriginCheck(parent: any, options: Options = {}) { return parent.createEl("input", { ...options, attr: { ...options.attr, type: "checkbox" } }); }
 export const createOriginSwitch = createOriginCheck;
 export function disposeOriginControls(_container: unknown): void {}

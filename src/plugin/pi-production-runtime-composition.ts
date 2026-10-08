@@ -1,3 +1,4 @@
+import type { DiscoveredProviderModel } from "../settings/provider-model-discovery";
 import { PiWebSearchSecurity, createWebSearchTool, WEB_SEARCH_TOOL_NAME, WEB_SEARCH_INSTRUCTIONS } from "../harness/pi-native/pi-web-search";
 import { KNOWLEDGE_ASK_PROTOCOL, knowledgeReadingState } from "../harness/pi-native/knowledge-ask-protocol";
 import { knowledgeRolePath } from "../knowledge-base/root-paths";
@@ -343,7 +344,8 @@ function createPiProductionModelDefinitionFromResolved(
       contextWindow: configured.contextWindow,
       maxOutputTokens: configured.modelMaxTokens,
       reasoning: configured.reasoning,
-      imageInput: configured.imageInput
+      imageInput: configured.imageInput,
+      discovery: configured.discovery
     }
   });
   try {
@@ -2496,6 +2498,7 @@ function resolveProvider(
   toolCalling: boolean;
   imageInput: boolean;
   reasoning: boolean;
+  discovery?: DiscoveredProviderModel;
   contextWindow: number;
   modelMaxTokens: number;
   maxOutputTokens: number;
@@ -2621,10 +2624,12 @@ function resolveProvider(
     toolCalling: model.toolCalling,
     imageInput: apiProviderModelSupportsImage(model),
     reasoning: model.reasoning,
+    discovery: model.discovery,
     contextWindow: model.contextWindow,
     modelMaxTokens: model.modelMaxTokens,
     maxOutputTokens: model.maxOutputTokens,
     ...(provider.apiProtocol === "anthropic-messages"
+      || model.discovery?.modelMaxTokens !== undefined
       || model.limitsOverride?.maxOutputTokens !== undefined
       ? { requestMaxOutputTokens: model.maxOutputTokens }
       : {})

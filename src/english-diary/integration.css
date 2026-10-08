@@ -1,0 +1,18 @@
+.echoink-settings-demo .echoink-english-settings :is(button:not(.todo-heatmap-cell),.echoink-origin-control[data-slot]):focus-visible { outline: none; box-shadow: none; }
+.echoink-settings-demo .echoink-english-settings :is(button:not(.todo-heatmap-cell),.echoink-origin-control[data-slot]):not([data-slot=switch]):focus-visible { background-color: var(--background-modifier-hover); }
+.echoink-settings-demo .echoink-english-settings .setting-item:has([data-slot=switch]:focus-visible) { background-color: var(--background-modifier-hover); }
+.echoink-diary-progress { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,150px),1fr)); gap: 14px; margin: 0; }
+.echoink-diary-progress > div { min-width: 0; padding: 18px 21px; border: 1px solid var(--line); border-radius: var(--radius,10px); background: var(--bg); }
+.echoink-diary-progress dt { margin: 0; color: var(--secondary); font-size: calc(var(--font-text-size,16px)*.75); font-weight: 500; line-height: 1.6; }
+.echoink-diary-progress dd { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px; margin: 9px 0 0; color: var(--text); line-height: 1.6; }
+.echoink-diary-progress dd strong { min-width: 0; overflow-wrap: anywhere; font-size: calc(var(--font-text-size,16px)*1.3125); font-weight: 500; font-variant-numeric: tabular-nums; }
+.echoink-diary-progress dd span { color: var(--secondary); font-size: calc(var(--font-text-size,16px)*.6875); }
+.echoink-settings-demo .echoink-diary-activity { min-width: 0; }
+.echoink-settings-demo .echoink-diary-activity > .echoink-diary-progress { margin-bottom: 16px; }
+.echoink-settings-demo .echoink-diary-activity p { margin: 0 0 8px; }
+.echoink-settings-demo .echoink-diary-activity-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.echoink-settings-demo .echoink-diary-activity-heading p { margin: 0; }
+.echoink-settings-demo .echoink-diary-activity-summary { font-size: calc(var(--font-text-size,16px)*.6875); line-height: 1.85; color: var(--text); }
+.echoink-diary-modal.echoink-diary-shortcut-modal { width: min(480px,calc(100vw - 32px)); }
+.echoink-diary-shortcut-modal .modal-title { font-size: calc(var(--font-text-size,16px)*1.3125); font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
+.echoink-diary-shortcut-modal .echoink-diary-actions > button { min-width: 0; overflow-wrap: anywhere; }

@@ -20,7 +20,8 @@ export const ANIMATED_SETTINGS_TAB_ICON_NAMES = [
   "list-todo",
   "package",
   "blocks",
-  "sparkles"
+  "sparkles",
+  "feather"
 ] as const;
 
 export type AnimatedSettingsTabIconName =
@@ -58,7 +59,13 @@ const ICON_RENDERERS: Record<
   "list-todo": renderListTodoIcon,
   package: renderPackageIcon,
   blocks: renderBlocksIcon,
-  sparkles: renderSparklesIcon
+  sparkles: renderSparklesIcon,
+  "feather": (doc) => {
+    const svg = createIconSvg("feather", doc);
+    appendSvg(svg, "path", { d: "M20.24 12.24a6 6 0 0 0-8.48-8.48L3 12.5V21h8.5z" });
+    appendSvg(svg, "path", { d: "M16 8 2 22M9 15h8" });
+    return svg;
+  }
 };
 
 function renderSettingsIcon(doc: Document): SVGSVGElement {

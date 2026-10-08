@@ -1,5 +1,10 @@
+import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
+import { mountAccountMembership } from "./account-membership";
+import { createUnavailableAccountAdapter } from "./account-membership-model";
 import { renderTavilySettings, renderProviderTabs } from "./tavily-settings";
 import { renderTodoStatistics } from "./todo-statistics";
+import { renderEnglishDiaryActivity } from "./english-diary-activity";
+import { renderAppearancePicker } from "./appearance-picker";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { OriginSetting } from "./origin-setting";
 import { createOriginInput, createOriginButton, createOriginSwitch, createOriginSlider, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
@@ -30,6 +35,9 @@ import type {
 import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { normalizeJournalDirectory } from "../home/journal-directory";
 import { ECHOINK_HOME_MODULES } from "../home/home-modules";
+import { LifestyleSettingsPanel } from "../lifestyle/settings-panel";
+import { createPluginEditionBadge } from "./plugin-edition-badge";
+import type { LifestyleKind } from "../lifestyle/settings";
 import { TODO_SOURCE_PATH } from "../home/todo-store";
 import { formatAcceleratorForDisplay, normalizeAccelerator, recordAcceleratorFromEvent } from "../core/quick-hotkey";
 import type { QuickChatRegistrationResult } from "../plugin/quick-chat-window";
@@ -41,6 +49,7 @@ import {
   type EchoInkOnboardingCoachmarkHandle
 } from "../ui/onboarding-coachmark";
 import { buildActiveEchoInkResourceCatalog } from "../resources/registry";
+import { builtinPluginPresentation, resourcePresentation } from "../resources/resource-presentation";
 import {
   mcpConnectionStatus,
   mcpConnectionStatusLabel,
@@ -237,6 +246,17 @@ export class CodexSettingTab extends PluginSettingTab {
   private settingsFocusIntent: string | null = null;
   private settingsActionErrors: Partial<Record<SettingsActionContext, string>> = {};
   private settingsDetail: SettingsDetail = null;
+  private membershipRowsDisposers: (() => void)[] = [];
+  private lifestyleSettingsPanel: LifestyleSettingsPanel | null = null;
+
+  openLifestyleDetail(kind: LifestyleKind): void {
+    const enabled = this.plugin.settings.lifestyle[kind].enabled;
+    if (!getProPluginAccess(this.plugin.accountService ?? unavailableCapabilityAccess, enabled).canEnter) return;
+    this.lifestyleSettingsPanel?.dispose();
+    this.settingsDetail = { kind: "lifestyle", lifeKind: kind };
+    this.lifestyleSettingsPanel = new LifestyleSettingsPanel(this.plugin, kind, () => void this.closeSettingsDetail(), () => this.scheduleDisplay());
+    this.scheduleDisplay();
+  }
   private knowledgeMaintenanceHistoryDate = "";
   private archivedConversations: readonly Readonly<PiConversationCatalogEntry>[] | null = null;
   private archivedConversationsLoading = false;
@@ -256,7 +276,9 @@ export class CodexSettingTab extends PluginSettingTab {
   private onboardingRestoreFocusEl: HTMLElement | null = null;
   private onboardingRefreshGeneration = 0;
   private developerPanel: DeveloperModePanel | null = null;
+  private accountPage: { dispose: () => void } | null = null;
   private disposeTodoStatistics: (() => void) | null = null;
+  private disposeDiaryActivity: (() => void) | null = null;
   private inlineEditor: { tab: VisibleSettingsTab; host: HTMLElement; dispose: () => void } | null = null;
   private nativeSettingsNavigation: NativeSettingsNavigation | null = null;
 
@@ -286,6 +308,7 @@ export class CodexSettingTab extends PluginSettingTab {
     setting: Setting,
     group: SettingGroup
   ): () => void {
+    this.plugin.applyAppearanceTheme(group.listEl.ownerDocument);
     if (this.nativeSettingsNavigation?.listEl !== group.listEl) {
       this.disposeSettingsView();
       const workspaceEl = group.listEl.parentElement;
@@ -376,6 +399,12 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private disposeSettingsView(): void {
+    this.membershipRowsDisposers.splice(0).forEach(dispose => dispose());
+    this.lifestyleSettingsPanel?.dispose();
+    this.disposeDiaryActivity?.();
+    this.disposeDiaryActivity = null;
+    this.accountPage?.dispose();
+    this.accountPage = null;
     this.disposeTodoStatistics?.();
     this.disposeTodoStatistics = null;
     const navigation = this.nativeSettingsNavigation;
@@ -417,6 +446,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderSettingsShell(): void {
     this.disconnectSettingsTabsResizeObserver();
     const { containerEl } = this;
+    this.plugin.applyAppearanceTheme(containerEl.ownerDocument);
     containerEl.removeClass("echoink-settings-demo");
     containerEl.addClass("echoink-settings-host");
     disposeOriginControls(containerEl);
@@ -446,6 +476,11 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderSettingsContent(): void {
+    this.membershipRowsDisposers.splice(0).forEach(dispose => dispose());
+    this.disposeDiaryActivity?.();
+    this.disposeDiaryActivity = null;
+    this.accountPage?.dispose();
+    this.accountPage = null;
     this.disposeTodoStatistics?.();
     this.disposeTodoStatistics = null;
     this.developerPanel?.dispose();
@@ -506,6 +541,18 @@ export class CodexSettingTab extends PluginSettingTab {
         this.renderKnowledgeBaseSettings(bodyEl);
       } else if (activeTab === "review") {
         this.renderReviewSettings(bodyEl);
+      } else if (activeTab === "account") {
+        const provider = getActiveApiProvider(this.plugin.settings);
+        const adapter = this.plugin.accountService ?? createUnavailableAccountAdapter(
+          provider && apiProviderHasUsableCredential(provider, this.plugin.settings.openAICodexCredential)
+            ? "configured" : "missing"
+        );
+        this.accountPage = mountAccountMembership(bodyEl, {
+          app: this.app, viewModel: adapter.read(), actions: adapter.actions,
+          subscribe: adapter.subscribe ? listener => adapter.subscribe!(listener) : undefined, read: () => adapter.read(),
+          language: this.plugin.settings.settingsLanguage,
+          openProviders: () => { void this.activateSettingsTab("providers", true); }
+        });
       } else if (activeTab === "todos") {
         this.renderTodosSettings(bodyEl);
       } else {
@@ -514,7 +561,9 @@ export class CodexSettingTab extends PluginSettingTab {
     } finally {
       const tab = visibleSettingsTab(this.plugin.settings.settingsTab);
       const location = JSON.stringify([tab, this.settingsDetail,
-        tab === "resources" ? this.plugin.settings.resourceManagementTab : null]);
+        tab === "resources" ? this.plugin.settings.resourceManagementTab : null,
+        typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "lifestyle"
+          ? this.lifestyleSettingsPanel?.navigationKey() : null]);
       const inlineHost = this.inlineEditor?.host ?? null;
       if (location !== this.renderedSettingsLocation || inlineHost !== this.renderedInlineHost) {
         // A new page starts at its heading; background refreshes keep their position.
@@ -870,6 +919,14 @@ export class CodexSettingTab extends PluginSettingTab {
         ? "调整 EchoInk 的界面语言、启动方式、长期记忆和个性化。"
         : "Choose EchoInk's language, startup behavior, long-term memory, and personalization."
     });
+    const appearanceSection = createSettingsSection(page, { surface: "group" });
+    appearanceSection.addClass("echoink-appearance-section");
+    const appearanceRow = applySettingsRow(new OriginSetting(appearanceSection)
+      .setName(zh ? "外观" : "Appearance")
+      .setDesc(zh
+        ? "选择主题颜色，浅色与深色跟随 Obsidian。"
+        : "Choose a color theme. Light and dark modes follow Obsidian."));
+    renderAppearancePicker(appearanceRow.controlEl, this.plugin, zh);
     const interfaceSection = createSettingsSection(page, {
       title: zh ? "界面与启动" : "Interface and startup",
       surface: "group"
@@ -1420,6 +1477,15 @@ export class CodexSettingTab extends PluginSettingTab {
 
     // --- Action buttons row ---
     const actions = card.createDiv({ cls: "echoink-about-actions" });
+
+    const website = actions.createEl("a", {
+      cls: "echoink-about-btn echoink-about-btn-surface",
+      attr: { href: membershipWebsiteLink("plugin.about"), target: "_blank", rel: "noopener noreferrer" }
+    });
+    const websiteIcon = website.createSpan();
+    websiteIcon.setAttribute("aria-hidden", "true");
+    setIcon(websiteIcon, "globe");
+    website.createSpan({ text: zh ? "访问官网" : "Visit website" });
 
     // Star on GitHub button (sparkle animation)
     const starBtn = actions.createEl("a", {
@@ -2065,7 +2131,8 @@ export class CodexSettingTab extends PluginSettingTab {
           this.knowledgeDashboardExpanded = !this.knowledgeDashboardExpanded;
           this.renderKnowledgeSettingsDashboard();
         }
-      }
+      },
+      this.app
     );
   }
 
@@ -3474,6 +3541,8 @@ export class CodexSettingTab extends PluginSettingTab {
       this.resetKnowledgePreferenceDraft();
     }
     this.settingsDetail = null;
+    this.lifestyleSettingsPanel?.dispose();
+    this.lifestyleSettingsPanel = null;
     this.clearBuiltinSkillEditor();
     if (typeof detail === "object" && detail?.kind === "resource") {
       this.settingsFocusIntent = `explicit:resource:${detail.resourceId}:detail`;
@@ -3482,6 +3551,8 @@ export class CodexSettingTab extends PluginSettingTab {
       && detail?.kind === "review-memory-category"
     ) {
       this.settingsFocusIntent = `explicit:review:memory:${detail.category}`;
+    } else if (detail === "english-diary") {
+      this.settingsFocusIntent = "explicit:english-diary:settings";
     } else if (detail === "knowledge-preferences") {
       this.settingsFocusIntent = "explicit:knowledge:preferences";
     } else if (detail === "knowledge-maintenance-history") {
@@ -4124,6 +4195,15 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private renderWorkspaceResourceManager(container: HTMLElement): void {
     const copy = this.copy;
+    if (this.settingsDetail === "english-diary") {
+      this.renderEnglishDiarySettings(container);
+      return;
+    }
+    if (typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "lifestyle") {
+      if (!this.lifestyleSettingsPanel) this.lifestyleSettingsPanel = new LifestyleSettingsPanel(this.plugin, this.settingsDetail.lifeKind, () => void this.closeSettingsDetail(), () => this.scheduleDisplay());
+      this.lifestyleSettingsPanel.render(container);
+      return;
+    }
     const detailId = typeof this.settingsDetail === "object"
       && this.settingsDetail?.kind === "resource"
       ? this.settingsDetail.resourceId
@@ -4223,7 +4303,7 @@ export class CodexSettingTab extends PluginSettingTab {
     wrapper.createEl("p", {
       cls: "settings-note resources-tab-hint",
       text: activeTab === "plugins"
-        ? (english ? "Manage tool bundles available to EchoInk." : "管理可供 EchoInk 使用的工具包。")
+        ? (english ? "Manage EchoInk plugins." : "管理 EchoInk 的插件。")
         : activeTab === "mcp"
           ? (english ? "Connect external services and manage server and tool availability." : "连接外部服务，并管理 Server 与 Tool 的可用范围。")
           : (english ? "Manage how the Agent approaches tasks. Enable or adjust instructions as needed." : "管理 Agent 处理问题的方式，按需要启用或调整指令。")
@@ -4242,7 +4322,7 @@ export class CodexSettingTab extends PluginSettingTab {
         "aria-busy": String(isLoading)
       }
     });
-    if (isLoading) {
+    if (isLoading && activeTab !== "plugins") {
       createSettingsState(body, copy.resources.loadingTab(activeMeta ? copy.resources.tabs[activeMeta.id] : copy.tabs.resources));
     }
     if (loadError) {
@@ -4254,11 +4334,11 @@ export class CodexSettingTab extends PluginSettingTab {
         "error"
       );
     }
-    if (!this.resourceLoaded[activeTab] && !isLoading && !loadError) {
+    if (activeTab !== "plugins" && !this.resourceLoaded[activeTab] && !isLoading && !loadError) {
       createSettingsState(body, copy.resources.notLoaded);
     }
     const hasSavedCatalog = this.currentEchoInkResourceCatalog(this.resourceSnapshot).some((resource) => resource.kind === resourceKindForResourceTab(activeTab));
-    if ((this.resourceSnapshot || hasSavedCatalog) && (this.resourceLoaded[activeTab] || isLoading || hasSavedCatalog)) {
+    if (activeTab === "plugins" || ((this.resourceSnapshot || hasSavedCatalog) && (this.resourceLoaded[activeTab] || isLoading || hasSavedCatalog))) {
       this.renderActiveResourceTab(body, this.resourceSnapshot ?? emptyWorkspaceResourceSnapshot());
     }
     if (!this.resourceLoaded[activeTab] && !isLoading && !loadError) void this.loadWorkspaceResources(false, activeTab);
@@ -4287,9 +4367,10 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private renderResourceDetail(container: HTMLElement, resource: EchoInkResource): void {
     const english = this.plugin.settings.settingsLanguage === "en";
+    const presentation = resourcePresentation(resource, this.plugin.settings.settingsLanguage);
     const page = createSettingsPage(container, {
-      title: resource.kind === "skill" ? `/${resource.name}` : resource.name,
-      description: resource.description || (english ? "Resource details" : "资源详情"),
+      title: presentation.name,
+      description: presentation.description || (english ? "Resource details" : "资源详情"),
       detail: true,
       backLabel: english ? "Back to Skills and MCP" : "返回 Skills 与 MCP",
       onBack: () => {
@@ -4303,7 +4384,7 @@ export class CodexSettingTab extends PluginSettingTab {
       : "not-mcp";
     if (resource.kind !== "mcp-server") {
       const status = createSettingsSection(page, {
-        title: resource.name,
+        title: presentation.name,
         description: resourceDisplayMeta(resource, this.plugin.settings.resources, this.plugin.settings.settingsLanguage),
         surface: "group"
       });
@@ -4313,7 +4394,7 @@ export class CodexSettingTab extends PluginSettingTab {
         ? (english ? "Enabled" : "已启用") : (english ? "Disabled" : "已停用") });
       if (resource.kind === "skill") {
         const toggle = createOriginSwitch(statusActions, { cls: "codex-resource-toggle", attr: {
-          type: "checkbox", "aria-label": english ? `Enable ${resource.name}` : `启用 ${resource.name}`,
+          type: "checkbox", "aria-label": english ? `Enable ${presentation.name}` : `启用 ${presentation.name}`,
           "data-echoink-focus-key": `resource:${resource.id}:enabled`
         } });
         toggle.checked = resource.enabled;
@@ -4837,6 +4918,7 @@ export class CodexSettingTab extends PluginSettingTab {
       name: row.dataset.resourceName ?? "",
       meta: row.dataset.resourceMeta ?? "",
       desc: row.dataset.resourceDesc ?? "",
+      aliases: [row.dataset.resourceAliases ?? ""],
       row
     }));
     const query = this.resourceSearchQuery[tab];
@@ -4877,7 +4959,14 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderActiveResourceTab(container: HTMLElement, snapshot: WorkspaceResourceSnapshot): void {
     const catalog = this.currentEchoInkResourceCatalog(snapshot);
     if (this.plugin.settings.resourceManagementTab === "plugins") {
-      this.renderEchoInkResources(container, catalog.filter((resource) => resource.kind === "tool-bundle"), snapshot.errors.plugins);
+      const bundles = catalog.filter((resource) => resource.kind === "tool-bundle");
+      const diary = builtinPluginPresentation("english-diary", this.plugin.settings.settingsLanguage);
+      this.renderEchoInkResources(container, [{
+        id: "echoink:english-diary", kind: "tool-bundle", source: "echoink-local", bridgeMode: "plugin-tool",
+        name: "English Diary",
+        description: diary.description,
+        enabled: this.plugin.settings.englishDiary.enabled
+      }, ...bundles], snapshot.errors.plugins);
       return;
     }
     if (this.plugin.settings.resourceManagementTab === "mcp") {
@@ -4887,29 +4976,204 @@ export class CodexSettingTab extends PluginSettingTab {
     this.renderEchoInkResources(container, catalog.filter((resource) => resource.kind === "skill"), snapshot.errors.skills);
   }
 
+  private renderEnglishDiarySettings(container: HTMLElement): void {
+    const diary = builtinPluginPresentation("english-diary", this.plugin.settings.settingsLanguage);
+    const page = createSettingsPage(container, {
+      title: diary.name, description: diary.description,
+      detail: true, backLabel: "返回插件", onBack: () => { void this.closeSettingsDetail(); }
+    });
+    page.addClass("echoink-english-settings");
+    const activity = createSettingsSection(page, { title: "日记足迹", surface: "flat" });
+    const statistics = activity.createDiv();
+    const repository = this.plugin.englishDiary?.api.repository;
+    const renderStatistics = () => { if (statistics.isConnected) void renderEnglishDiaryActivity(statistics, repository, this.app); };
+    void renderEnglishDiaryActivity(statistics, repository, this.app);
+    this.disposeDiaryActivity = repository?.subscribe?.(renderStatistics) ?? null;
+    const section = createSettingsSection(page, { title: "模型", surface: "flat" });
+    const group = createSettingsGroup(section);
+    const current = this.plugin.settings.englishDiary;
+    const value = current.providerSettingsId ? providerModelSelectionValue(current.providerSettingsId, current.modelId) : "";
+    const modelSetting = applySettingsRow(new OriginSetting(group)
+      .setName("英文生成模型")
+      .setDesc(`当前：${this.plugin.englishDiaryProviderLabel().replace(/[。.!！]+$/u, "")}。右侧普通对话沿用对话栏选择的模型。`)
+      .addOriginDropdown(this.app, (dropdown) => {
+        dropdown.selectEl.setAttr("aria-label", "英文生成模型");
+        dropdown.addOption("", "跟随 EchoInk 默认模型");
+        let found = !value;
+        for (const provider of this.plugin.settings.apiProviders) {
+          const ready = apiProviderHasUsableCredential(provider, this.plugin.settings.openAICodexCredential);
+          const providerName = apiProviderConfiguredDisplayName(normalizeApiProviderId(provider.providerId, provider.baseUrl, provider.name), provider.name, this.plugin.settings.settingsLanguage);
+          for (const model of provider.models) {
+            const key = providerModelSelectionValue(provider.id, model.id);
+            if (key === value) found = true;
+            dropdown.addOption(key, `${providerName} · ${model.displayName}${ready ? "" : "（需配置授权）"}`);
+            dropdown.setOptionDisabled(key, !ready);
+          }
+        }
+        if (!found) dropdown.addOption(value, "原模型已移除，请重新选择");
+        dropdown.setValue(value).onChange(async (next) => {
+          const selection = next ? parseProviderModelSelectionValue(next) : { providerSettingsId: "", modelId: "" };
+          if (!selection) return;
+          dropdown.setDisabled(true);
+          try {
+            await this.plugin.setEnglishDiaryModel(selection.providerSettingsId, selection.modelId);
+            this.scheduleDisplay();
+          } catch (error) {
+            dropdown.setValue(value);
+            new Notice(error instanceof Error ? error.message : String(error));
+          } finally { dropdown.setDisabled(false); }
+        });
+      }));
+    this.decorateSetting(modelSetting, "brain-circuit");
+    const files = createSettingsGroup(createSettingsSection(page, { title: "文件与内容", description: "原稿可正常编辑；英文稿与词条由插件维护并隐藏保存，请勿直接修改，以免影响关联。分类与备注请在表达库内修改。", surface: "flat" }));
+    const native = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory);
+    applySettingsRow(new OriginSetting(files).setName("日记原稿").setDesc(`沿用 Obsidian 日记：${native.folder || "Vault 根目录"}，可正常编辑。在日记原稿页的“发送范围”中选择允许生成的段落。`));
+    applySettingsRow(new OriginSetting(files).setName("英文稿位置").setDesc(current.englishDirectory));
+    applySettingsRow(new OriginSetting(files).setName("表达库位置").setDesc(current.expressionDirectory));
+    const openLibrary = async () => {
+      try {
+        if (!current.enabled) { new Notice("请先在插件列表中启用英文日记。"); return; }
+        await this.plugin.englishDiary?.openLibrary();
+        (this.app as unknown as { setting: { close(): void } }).setting.close();
+      } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+    };
+    createSettingsNavigationRow(files, { title: "表达库", description: "搜索已收录的表达，查看出处、修改分类与备注。", actionLabel: "打开", onActivate: () => { void openLibrary(); } });
+    const zh = this.plugin.settings.settingsLanguage !== "en";
+    const shortcutLabel = zh ? "首页快捷入口" : "Home shortcut";
+    applySettingsRow(new OriginSetting(files)
+      .setName(shortcutLabel)
+      .setDesc(zh ? "将首页“快速记录”替换为“写英文日记”。" : "Replace “Quick note” on Home with “Write English diary”.")
+      .addOriginToggle((toggle) => {
+        labelSettingsToggle(toggle, shortcutLabel);
+        toggle.toggleEl.setAttr("data-echoink-focus-key", "english-diary:home-shortcut");
+        toggle.setValue(this.plugin.settings.englishDiary.homeShortcut === "english-diary").onChange(async (enabled) => {
+          toggle.setDisabled(true);
+          try {
+            if (!this.plugin.englishDiary) throw new Error(zh ? "英文日记尚未就绪，请稍后重试。" : "English Diary is not ready. Please try again.");
+            await this.plugin.englishDiary.setHomeShortcut(enabled ? "english-diary" : "quick-record");
+          } catch (error) {
+            const message = error instanceof Error ? error.message : (zh ? "首页快捷入口未保存，请重试。" : "The home shortcut was not saved. Please try again.");
+            new Notice(message);
+            this.announceSettingsStatus(message);
+          } finally {
+            toggle.setValue(this.plugin.settings.englishDiary.homeShortcut === "english-diary");
+            toggle.setDisabled(false);
+          }
+        });
+      }));
+  }
+
+  private renderBuiltinPluginRow(
+    container: HTMLElement,
+    kind: LifestyleKind,
+    visible: boolean,
+    searchRow: { key: string; name: string; meta: string; desc: string; aliases?: readonly string[] }
+  ): void {
+    const english = this.plugin.settings.settingsLanguage === "en";
+    const row = container.createDiv({
+      cls: `codex-resource-row codex-resource-builtin-plugin ${visible ? "" : "is-search-hidden"}`,
+      attr: {
+        "data-resource-key": searchRow.key,
+        "data-resource-name": searchRow.name,
+        "data-resource-meta": searchRow.meta,
+        "data-resource-desc": searchRow.desc,
+        "data-resource-aliases": searchRow.aliases?.join("\n") ?? ""
+      }
+    });
+    setIcon(row.createSpan({ cls: "codex-resource-row-icon" }), "wallet");
+    const content = row.createDiv({ cls: "codex-resource-row-content" });
+    const title = content.createDiv({ cls: "codex-resource-row-title" });
+    const name = createOriginButton(title, {
+      cls: "codex-resource-row-name", text: searchRow.name,
+      attr: { type: "button", "data-echoink-focus-key": `${searchRow.key}:detail` }
+    });
+    name.onclick = () => this.openLifestyleDetail(kind);
+    createPluginEditionBadge(title, "pro", this.plugin.settings.settingsLanguage);
+    content.createDiv({ cls: "codex-resource-row-desc", text: searchRow.desc });
+    const actions = row.createDiv({ cls: "codex-resource-row-actions" });
+    const settings = createOriginButton(actions, {
+      cls: "text-button",
+      text: english ? "Settings" : "设置",
+      attr: { type: "button", "data-echoink-focus-key": `${searchRow.key}:settings` }
+    });
+    settings.onclick = () => this.openLifestyleDetail(kind);
+    const toggle = createOriginSwitch(row, {
+      cls: "codex-resource-toggle",
+      attr: { "aria-label": this.copy.resources.toggleAria(searchRow.name), "data-echoink-focus-key": `${searchRow.key}:enabled` }
+    });
+    let pending = false;
+    const access = this.plugin.accountService ?? unavailableCapabilityAccess;
+    const updateState = () => {
+      const enabled = this.plugin.settings.lifestyle[kind].enabled;
+      const policy = getProPluginAccess(access, enabled);
+      toggle.disabled = pending || !policy.canToggle;
+      toggle.checked = enabled;
+      row.toggleClass("is-enabled", enabled);
+      row.toggleClass("is-disabled", !enabled);
+      name.disabled = settings.disabled = pending || !policy.canEnter;
+    };
+    updateState();
+    this.membershipRowsDisposers.push(access.subscribe(updateState));
+    toggle.onchange = async () => {
+      pending = true;
+      const enabled = toggle.checked;
+      toggle.disabled = true;
+      name.disabled = settings.disabled = true;
+      try {
+        await this.plugin.lifestyle.setEnabled(kind, enabled);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : (english ? "The plugin setting was not saved." : "插件状态保存失败");
+        new Notice(message);
+        this.announceSettingsStatus(message);
+      } finally {
+        pending = false;
+        updateState();
+        this.updateResourceSummaryCounts();
+      }
+    };
+  }
+
   private renderEchoInkResources(container: HTMLElement, resources: EchoInkResource[], error?: string): void {
     const copy = this.copy;
     const activeTab = this.plugin.settings.resourceManagementTab;
-    const rows = resources.map((resource) => ({
-      key: resource.id,
-      name: resource.kind === "skill" ? `/${resource.name}` : resource.name,
-      meta: resourceDisplayMeta(resource, this.plugin.settings.resources, this.plugin.settings.settingsLanguage),
-      desc: resource.description || resource.contentPath || resource.configPath || copy.resources.noDesc,
-      resource
-    }));
+    const rows: Array<{ key: string; name: string; meta: string; desc: string; aliases: readonly string[]; enabled: boolean; resource?: EchoInkResource; lifeKind?: LifestyleKind }> = resources.map((resource) => {
+      const presentation = resourcePresentation(resource, this.plugin.settings.settingsLanguage);
+      return {
+        key: resource.id,
+        name: presentation.name,
+        aliases: presentation.aliases,
+        meta: [resourceDisplayMeta(resource, this.plugin.settings.resources, this.plugin.settings.settingsLanguage), resource.kind === "tool-bundle" ? "PRO" : ""].filter(Boolean).join(" "),
+        desc: presentation.description || resource.contentPath || resource.configPath || copy.resources.noDesc,
+        enabled: resource.enabled,
+        resource
+      };
+    });
+    if (activeTab === "plugins") {
+      const english = this.plugin.settings.settingsLanguage === "en";
+      const finance = builtinPluginPresentation("finance", this.plugin.settings.settingsLanguage);
+      rows.unshift({
+        key: "builtin-plugin:finance",
+        name: finance.name,
+        aliases: finance.aliases,
+        meta: english ? "Built-in plugin PRO" : "内置插件 PRO",
+        desc: finance.description,
+        enabled: this.plugin.settings.lifestyle.finance.enabled,
+        lifeKind: "finance"
+      });
+    }
     const query = this.resourceSearchQuery[activeTab];
-    const enabled = resources.filter((resource) => resource.enabled).length;
+    const enabled = rows.filter((row) => row.enabled).length;
     const filtered = filterWorkspaceResourceRows(rows, query);
     this.renderResourceSummary(
       container,
-      resources.length,
+      rows.length,
       enabled,
       error,
       filtered.length,
       query,
       copy.resources.tabs[activeTab]
     );
-    if (!resources.length) {
+    if (!rows.length) {
       const emptyText = activeTab === "plugins" ? copy.resources.noPlugins : activeTab === "mcp" ? copy.resources.noMcp : copy.resources.noSkills;
       this.renderResourceEmpty(container, emptyText, resourceEmptyNextStep(activeTab, this.plugin.settings.settingsLanguage), "layers");
       return;
@@ -4922,7 +5186,10 @@ export class CodexSettingTab extends PluginSettingTab {
     const clear = createOriginButton(empty, { cls: "text-button", text: copy.resources.clearSearch });
     clear.onclick = () => this.containerEl.querySelector<HTMLButtonElement>(".codex-resource-search-clear")?.click();
     const visibleKeys = new Set(filtered.map((row) => row.key));
-    for (const row of rows) this.renderResourceRow(container, row.resource, visibleKeys.has(row.key), row);
+    for (const row of rows) {
+      if (row.lifeKind) this.renderBuiltinPluginRow(container, row.lifeKind, visibleKeys.has(row.key), row);
+      else if (row.resource) this.renderResourceRow(container, row.resource, visibleKeys.has(row.key), row);
+    }
   }
 
   private renderResourceEmpty(container: HTMLElement, title: string, description: string, icon: string): HTMLElement {
@@ -4967,22 +5234,25 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
-  private renderResourceRow(container: HTMLElement, resource: EchoInkResource, visible = true, searchRow?: { key: string; name: string; meta?: string; desc?: string }): void {
+  private renderResourceRow(container: HTMLElement, resource: EchoInkResource, visible = true, searchRow?: { key: string; name: string; meta?: string; desc?: string; aliases?: readonly string[] }): void {
     const copy = this.copy;
+    const presentation = resourcePresentation(resource, this.plugin.settings.settingsLanguage);
+    const isEnglishDiary = resource.id === "echoink:english-diary";
     const resourceEnabled = resource.enabled;
     const row = container.createDiv({
       cls: `codex-resource-row ${resourceEnabled ? "is-enabled" : "is-disabled"} ${visible ? "" : "is-search-hidden"}`,
       attr: {
         "data-resource-key": searchRow?.key ?? resource.id,
-        "data-resource-name": searchRow?.name ?? (resource.kind === "skill" ? `/${resource.name}` : resource.name),
+        "data-resource-name": searchRow?.name ?? presentation.name,
         "data-resource-meta": searchRow?.meta ?? "",
-        "data-resource-desc": searchRow?.desc ?? ""
+        "data-resource-desc": searchRow?.desc ?? "",
+        "data-resource-aliases": (searchRow?.aliases ?? presentation.aliases).join("\n")
       }
     });
     const icon = row.createSpan({ cls: "codex-resource-row-icon" });
-    setIcon(icon, resource.kind === "skill" ? "sparkles" : resource.kind === "mcp-server" ? "blocks" : "package");
+    setIcon(icon, isEnglishDiary ? "languages" : resource.kind === "skill" ? "sparkles" : resource.kind === "mcp-server" ? "blocks" : "package");
     const content = row.createDiv({ cls: "codex-resource-row-content" });
-    const name = resource.kind === "skill" ? `/${resource.name}` : resource.name;
+    const name = presentation.name;
     const connectionStatus = resource.kind === "mcp-server" ? mcpConnectionStatus(resource, this.plugin.settings.resources) : "not-mcp";
     const meta = resourceDisplayMeta(resource, this.plugin.settings.resources, this.plugin.settings.settingsLanguage);
     const title = content.createDiv({ cls: "codex-resource-row-title" });
@@ -4997,7 +5267,10 @@ export class CodexSettingTab extends PluginSettingTab {
           : `打开 ${name} 详情`
       }
     });
-    nameButton.onclick = () => this.openSettingsDetail({ kind: "resource", resourceId: resource.id });
+    nameButton.onclick = () => this.openSettingsDetail(isEnglishDiary ? "english-diary" : { kind: "resource", resourceId: resource.id });
+    if (resource.kind === "tool-bundle") {
+      createPluginEditionBadge(title, isEnglishDiary && resource.metadata?.edition === "basic" ? "basic" : "pro", this.plugin.settings.settingsLanguage);
+    }
     const builtinSkillId = builtinSkillIdForResource(resource);
     if (builtinSkillId) {
       title.createSpan({
@@ -5026,9 +5299,16 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }
     }
-    const desc = resource.description || resource.contentPath || resource.configPath || copy.resources.noDesc;
+    const desc = presentation.description || resource.contentPath || resource.configPath || copy.resources.noDesc;
     const description = [desc, meta].filter(Boolean).join(" · ");
     if (description) content.createDiv({ cls: "codex-resource-row-desc", text: description });
+    let diarySettings: HTMLButtonElement | undefined;
+    if (isEnglishDiary) {
+      const actions = row.createDiv({ cls: "codex-resource-row-actions" });
+      const settings = createOriginButton(actions, { cls: "text-button", text: this.plugin.settings.settingsLanguage === "en" ? "Settings" : "设置", attr: { type: "button", "data-echoink-focus-key": "english-diary:settings" } });
+      diarySettings = settings;
+      settings.onclick = () => this.openSettingsDetail("english-diary");
+    }
     const toggle = createOriginSwitch(row, {
       cls: "codex-resource-toggle",
       attr: {
@@ -5038,23 +5318,39 @@ export class CodexSettingTab extends PluginSettingTab {
       }
     });
     toggle.checked = resourceEnabled;
+    const currentEnabled = () => isEnglishDiary ? this.plugin.settings.englishDiary.enabled
+      : this.plugin.settings.resources.catalog.find((candidate) => candidate.id === resource.id)?.enabled ?? false;
+    let diaryPending = false;
+    const updateDiaryAccess = () => {
+      if (!isEnglishDiary) return;
+      const enabled = currentEnabled();
+      const policy = getProPluginAccess(this.plugin.accountService ?? unavailableCapabilityAccess, enabled);
+      toggle.checked = enabled;
+      toggle.disabled = diaryPending || !policy.canToggle;
+      nameButton.disabled = !!diaryPending || !policy.canEnter;
+      if (diarySettings) diarySettings.disabled = nameButton.disabled;
+      row.toggleClass("is-enabled", enabled); row.toggleClass("is-disabled", !enabled);
+    };
+    updateDiaryAccess();
+    if (isEnglishDiary) this.membershipRowsDisposers.push((this.plugin.accountService ?? unavailableCapabilityAccess).subscribe(updateDiaryAccess));
     toggle.onchange = async () => {
       const enabled = toggle.checked;
+      if (isEnglishDiary) { diaryPending = true; updateDiaryAccess(); }
       try {
-        if (resource.kind === "mcp-server") {
+        if (isEnglishDiary) {
+          await this.plugin.englishDiary!.setEnabled(enabled);
+        } else if (resource.kind === "mcp-server") {
           await this.plugin.setEchoInkMcpServerEnabled(resource.id, enabled);
         } else {
           await this.plugin.setEchoInkSkillResourceEnabled(resource.id, enabled);
         }
-        const authoritativeEnabled = this.plugin.settings.resources.catalog
-          .find((candidate) => candidate.id === resource.id)?.enabled ?? false;
+        const authoritativeEnabled = currentEnabled();
         toggle.checked = authoritativeEnabled;
         row.toggleClass("is-enabled", authoritativeEnabled);
         row.toggleClass("is-disabled", !authoritativeEnabled);
         this.updateResourceSummaryCounts();
       } catch {
-        const authoritativeEnabled = this.plugin.settings.resources.catalog
-          .find((candidate) => candidate.id === resource.id)?.enabled ?? false;
+        const authoritativeEnabled = currentEnabled();
         toggle.checked = authoritativeEnabled;
         row.toggleClass("is-enabled", authoritativeEnabled);
         row.toggleClass("is-disabled", !authoritativeEnabled);
@@ -5063,6 +5359,8 @@ export class CodexSettingTab extends PluginSettingTab {
           : "资源开关未保存，请重试。";
         new Notice(message);
         this.announceSettingsStatus(message);
+      } finally {
+        if (isEnglishDiary) { diaryPending = false; updateDiaryAccess(); }
       }
     };
     void connectionStatus;
@@ -5344,11 +5642,13 @@ type VisibleSettingsTab = SettingsTab;
 type SettingsActionContext = "knowledge" | "review" | "resources" | "providers";
 
 type SettingsDetail =
+  | "english-diary"
   | "knowledge-preferences"
   | "knowledge-maintenance-history"
   | "review-archives"
   | "review-memory"
   | { readonly kind: "resource"; readonly resourceId: string }
+  | { readonly kind: "lifestyle"; readonly lifeKind: LifestyleKind }
   | {
       readonly kind: "review-memory-category";
       readonly category: PersonalMemoryCorrectionCategory;
@@ -5487,7 +5787,8 @@ const SETTINGS_TABS: Array<{
   { id: "resources", icon: "layout-list" },
   { id: "knowledgeBase", icon: "book-open-check" },
   { id: "review", icon: "clipboard-check" },
-  { id: "todos", icon: "list-todo" }
+  { id: "todos", icon: "list-todo" },
+  { id: "account", icon: "feather" }
 ];
 
 function visibleSettingsTab(tab: SettingsTab): VisibleSettingsTab {
@@ -5669,3 +5970,4 @@ function parseQueryParams(value: string): Record<string, string> {
   }
   return params;
 }
+import { membershipWebsiteLink } from "../membership/website-links";

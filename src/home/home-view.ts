@@ -4,13 +4,16 @@ import type { SettingsLanguage } from "../settings/settings";
 import type { KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { homeEntryIndexPath, HomeWorkbenchDataService, type HomeEntrySummary, type HomeWorkbenchData } from "./home-workbench-data";
 import { readNativeJournalSettings } from "./native-journal";
-import { dateKey, journalDateFromPath, type HomeVaultFileRecord } from "./home-workbench-model";
+import { dateKey, isHomeRecentNotePath, journalDateFromPath, type HomeVaultFileRecord } from "./home-workbench-model";
 import { homeConversationMessage, homeReviewPrompt, type HomeConversationAction } from "./home-conversation-actions";
 import { JournalTemplateModal } from "./journal-template-modal";
+import { chooseEnglishDiaryHomeShortcut } from "./english-diary-shortcut-modal";
 import { formatHomeFullDate, formatHomeRelativeTime, homeCopy, type HomeCopy } from "./home-i18n";
 import { openObsidianLocalGraphLeaf } from "./open-native-graph";
 import { homeWorkspaceMarkup } from "./home-workspace-template";
+import { bindHomeBentoMagnet } from "./home-bento-magnet";
 import { HomeSearchService, type HomeSearchMatch } from "./home-search";
+import { isHomeNotePath } from "./home-note-visibility";
 import { type HomeActivityEvent, type HomeActivityKind } from "./home-activity-service";
 import { ECHOINK_HOME_MODULES } from "./home-modules";
 import { sortOpenTodos } from "./home-todos";
@@ -57,12 +60,18 @@ export class EchoInkHomeView extends ItemView {
   private categoryFilterScrollHandler: (() => void) | null = null;
   private activityModal: Modal | null = null;
   private captureBusy = false;
+  private shortcutChoiceAbort: AbortController | null = null;
   private searchOpen = false;
+  private disposeBentoMagnet: (() => void) | null = null;
+  private activeShortNavigationId: string | null = null;
+  private shortNavigationFrame: number | null = null;
+  private shortNavigationObserver: ResizeObserver | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
-    this.dataService = new HomeWorkbenchDataService(plugin.app, () => plugin.settings.journalDirectory, plugin.homeActivity);
-    this.searchService = new HomeSearchService(plugin.app);
+    const includeNotePath = (path: string) => isHomeNotePath(path, plugin.settings.englishDiary);
+    this.dataService = new HomeWorkbenchDataService(plugin.app, () => plugin.settings.journalDirectory, plugin.homeActivity, includeNotePath);
+    this.searchService = new HomeSearchService(plugin.app, includeNotePath);
   }
   getViewType(): string { return VIEW_TYPE_ECHOINK_HOME; }
   getDisplayText(): string { return this.copy.viewTitle; }
@@ -72,7 +81,9 @@ export class EchoInkHomeView extends ItemView {
   private t(zh: string, en: string): string { return this.language === "en" ? en : zh; }
   private el(selector: string): HTMLElement { return this.contentEl.querySelector<HTMLElement>(selector)!; }
   private field(name: string): HTMLElement { return this.el(`[data-home="${name}"]`); }
-  private get events(): readonly HomeActivityEvent[] { return this.plugin.homeActivity?.snapshot().events ?? []; }
+  private get events(): readonly HomeActivityEvent[] {
+    return (this.plugin.homeActivity?.snapshot().events ?? []).filter((event) => isHomeNotePath(event.path, this.plugin.settings.englishDiary));
+  }
   private kind(kind: HomeActivityKind): string { return this.t({ created: "新建", modified: "修改", reopened: "重读" }[kind], { created: "Created", modified: "Modified", reopened: "Reopened" }[kind]); }
 
   async onOpen(): Promise<void> {
@@ -90,6 +101,7 @@ export class EchoInkHomeView extends ItemView {
     this.registerEvent(this.app.vault.on("delete", () => this.scheduleRefresh()));
     this.registerDomEvent(this.contentEl, "click", (e) => { void this.handleClick(e).catch((error) => new Notice(errorMessage(error))); });
     this.registerDomEvent(this.contentEl, "keydown", (e) => this.handleKeys(e));
+    this.registerDomEvent(this.contentEl, "scroll", () => this.scheduleShortNavigation(), { passive: true });
     this.registerDomEvent(this.contentEl, "input", (e) => {
       if ((e.target as HTMLElement).dataset.home === "search-input" && !(e as InputEvent).isComposing) this.scheduleSearch();
     });
@@ -108,6 +120,9 @@ export class EchoInkHomeView extends ItemView {
   }
   async onClose(): Promise<void> {
     this.closed = true; this.refreshVersion++;
+    this.shortcutChoiceAbort?.abort();
+    this.disposeBentoMagnet?.(); this.disposeBentoMagnet = null;
+    this.disposeShortNavigation();
     this.closeCategoryFilterPop(false);
     const win = this.contentEl.ownerDocument.defaultView;
     if (this.refreshTimer !== null) win?.clearTimeout(this.refreshTimer);
@@ -143,19 +158,28 @@ export class EchoInkHomeView extends ItemView {
     for (const module of ECHOINK_HOME_MODULES) {
       const root = this.contentEl.querySelector<HTMLElement>(module.selector);
       if (!root) continue;
-      const hidden = visibility[module.id] === false;
+      const hidden = visibility[module.id] === false
+        || (module.id === "finance" && !this.plugin.settings.lifestyle.finance.enabled);
       root.toggleClass("echoink-module-hidden", hidden);
       root.toggleAttribute("aria-hidden", hidden);
     }
+    this.renderShortNavigation();
   }
   /** Lightweight re-render for settings-driven changes (modules + todos). */
   refreshHomeSurfaces(): void {
     if (this.closed) return;
+    this.renderCaptureShortcut();
+    this.renderFinanceCard();
     this.applyModuleVisibility();
     this.renderTodos();
   }
   private renderShell(): void {
+    this.disposeBentoMagnet?.();
+    this.disposeShortNavigation();
     markup(this.contentEl, homeWorkspaceMarkup(this.language));
+    this.renderCaptureShortcut();
+    this.renderFinanceCard();
+    this.disposeBentoMagnet = bindHomeBentoMagnet(this.contentEl);
     for (const node of Array.from(this.contentEl.querySelectorAll<HTMLElement>("[data-home]"))) node.id = `${this.id}-${node.dataset.home}`;
     for (const node of Array.from(this.contentEl.querySelectorAll<HTMLElement>("[aria-controls], [aria-labelledby], [for]"))) {
       for (const attr of ["aria-controls", "aria-labelledby", "for"]) if (node.hasAttribute(attr)) node.setAttribute(attr, node.getAttribute(attr)!.split(" ").map((id) => `${this.id}-${id}`).join(" "));
@@ -163,9 +187,118 @@ export class EchoInkHomeView extends ItemView {
     this.el(".date-caption").setText(new Intl.DateTimeFormat(this.language, { month: "short", day: "numeric", weekday: "long" }).format(new Date()));
     this.field("recent-subtitle").setText(this.t("按文件创建 / 修改时间排序", "Sorted by file creation / modification time"));
     this.searchOpen = false;
+    this.applyModuleVisibility();
+    if (typeof ResizeObserver !== "undefined") {
+      this.shortNavigationObserver = new ResizeObserver(() => this.scheduleShortNavigation());
+      this.shortNavigationObserver.observe(this.contentEl);
+      this.shortNavigationObserver.observe(this.el(".home-content"));
+    }
+  }
+  private renderCaptureShortcut(): void {
+    const settings = this.plugin.settings.englishDiary;
+    if (!settings.enabled || settings.homeShortcut !== "ask") this.shortcutChoiceAbort?.abort();
+    const button = this.contentEl.querySelector<HTMLButtonElement>('[data-action="capture"]');
+    if (!button) return;
+    const english = settings.enabled && settings.homeShortcut === "english-diary";
+    const label = english ? this.t("写英文日记", "Write English diary") : this.t("快速记录", "Quick note");
+    // Keep the existing icon and keyboard hint in the Home action button.
+    const text = Array.from(button.childNodes).find((node) => node.nodeType === 3 && node.textContent?.trim());
+    if (text) text.textContent = label;
+    button.title = english
+      ? this.t("打开今天的双语日记", "Open today's bilingual diary")
+      : this.t("自己直接写，保存到 Inbox", "Write directly and save to Inbox");
+  }
+  private renderFinanceCard(): void {
+    this.contentEl.querySelector(".echoink-life-card-finance")?.remove();
+    if (!this.plugin.settings.lifestyle?.finance.enabled) return;
+    const card = this.contentEl.ownerDocument.createElement("section");
+    card.className = "echoink-life-card echoink-life-card-finance";
+    const heading = card.createDiv({ cls: "echoink-life-card-heading" });
+    heading.createEl("small", { text: "LIFE / ECHOINK" });
+    heading.createEl("h2", { text: this.t("财务", "Finance") });
+    card.createEl("p", { text: this.t("这个月的钱，清楚地看一眼", "A clear look at your money this month") });
+    const button = card.createEl("button", { text: this.t("打开财务", "Open finance") });
+    button.onclick = () => void this.plugin.lifestyle.open("finance");
+    this.el(".page-footer").insertAdjacentElement("beforebegin", card);
+  }
+  private renderShortNavigation(): void {
+    const header = this.contentEl.querySelector<HTMLElement>(".page-heading");
+    if (!header) return;
+    // DOM order is the current home layout; do not import the other worktree's
+    // independent module-order settings or create a second navigation order.
+    const modules = Array.from(this.contentEl.querySelectorAll<HTMLElement>(ECHOINK_HOME_MODULES.map((module) => module.selector).join(",")))
+      .filter((target) => !target.classList.contains("echoink-module-hidden") && !target.hidden)
+      .map((target) => ECHOINK_HOME_MODULES.find((module) => target.matches(module.selector))!);
+    let nav = this.contentEl.querySelector<HTMLElement>(".echoink-home-shortnav");
+    if (!nav) {
+      nav = this.contentEl.ownerDocument.createElement("nav");
+      nav.className = "echoink-home-shortnav";
+      header.insertAdjacentElement("afterend", nav);
+    }
+    nav.setAttribute("aria-label", this.t("首页快捷导航", "Home quick navigation"));
+    nav.hidden = modules.length === 0;
+    const signature = `${this.language}:${modules.map((module) => module.id).join(",")}`;
+    if (nav.dataset.modules !== signature) {
+      const hadFocus = nav.contains(nav.ownerDocument.activeElement);
+      const scrollLeft = nav.scrollLeft;
+      nav.empty(); nav.dataset.modules = signature;
+      for (const module of modules) {
+        const button = nav.createEl("button", { text: this.language === "en" ? module.enName : module.zhName, attr: { type: "button", "data-module-id": module.id } });
+        button.onclick = () => {
+          const target = this.contentEl.querySelector<HTMLElement>(module.selector);
+          if (!target || target.classList.contains("echoink-module-hidden")) return;
+          this.activeShortNavigationId = module.id;
+          this.setShortNavigationActive(nav);
+          const top = this.contentEl.scrollTop + target.getBoundingClientRect().top - this.contentEl.getBoundingClientRect().top - nav.getBoundingClientRect().height - 16;
+          const reduce = this.contentEl.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          this.contentEl.scrollTo({ top: Math.max(0, top), behavior: reduce ? "auto" : "smooth" });
+        };
+      }
+      nav.scrollLeft = scrollLeft;
+      this.updateShortNavigation();
+      if (hadFocus) (nav.querySelector<HTMLButtonElement>('[aria-current="location"]') ?? nav.querySelector<HTMLButtonElement>("button"))?.focus({ preventScroll: true });
+    } else this.updateShortNavigation();
+  }
+  private setShortNavigationActive(nav: HTMLElement): void {
+    for (const button of Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-module-id]"))) {
+      const active = button.dataset.moduleId === this.activeShortNavigationId;
+      button.classList.toggle("is-active", active);
+      if (active) button.setAttribute("aria-current", "location"); else button.removeAttribute("aria-current");
+      if (active) {
+        const bounds = button.getBoundingClientRect(), track = nav.getBoundingClientRect();
+        if (bounds.right > track.right) nav.scrollLeft += bounds.right - track.right;
+        else if (bounds.left < track.left) nav.scrollLeft -= track.left - bounds.left;
+      }
+    }
+  }
+  private updateShortNavigation(): void {
+    const nav = this.contentEl.querySelector<HTMLElement>(".echoink-home-shortnav");
+    if (!nav || nav.hidden) return;
+    const cutoff = nav.getBoundingClientRect().bottom + 17;
+    const positions = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-module-id]")).map((button) => {
+      const module = ECHOINK_HOME_MODULES.find((item) => item.id === button.dataset.moduleId)!;
+      return { id: module.id, top: this.contentEl.querySelector(module.selector)?.getBoundingClientRect().top ?? Infinity };
+    });
+    const passed = positions.filter((item) => item.top <= cutoff);
+    const nearestTop = Math.max(...passed.map((item) => item.top));
+    const nearest = passed.filter((item) => Math.abs(item.top - nearestTop) <= 8);
+    const atBottom = this.contentEl.scrollHeight > this.contentEl.clientHeight && this.contentEl.scrollTop + this.contentEl.clientHeight >= this.contentEl.scrollHeight - 2;
+    this.activeShortNavigationId = (atBottom ? positions.at(-1)?.id : nearest.find((item) => item.id === this.activeShortNavigationId)?.id ?? nearest[0]?.id ?? positions[0]?.id) ?? null;
+    this.setShortNavigationActive(nav);
+  }
+  private scheduleShortNavigation(): void {
+    if (this.closed || this.shortNavigationFrame !== null) return;
+    const win = this.contentEl.ownerDocument.defaultView;
+    if (win) this.shortNavigationFrame = win.requestAnimationFrame(() => { this.shortNavigationFrame = null; this.updateShortNavigation(); });
+  }
+  private disposeShortNavigation(): void {
+    this.shortNavigationObserver?.disconnect(); this.shortNavigationObserver = null;
+    if (this.shortNavigationFrame !== null) this.contentEl.ownerDocument.defaultView?.cancelAnimationFrame(this.shortNavigationFrame);
+    this.shortNavigationFrame = null;
   }
   private records(): HomeVaultFileRecord[] {
-    const records = this.data?.records ?? [];
+    const journalDirectory = this.dataService.getJournalDirectory();
+    const records = (this.data?.records ?? []).filter((record) => isHomeRecentNotePath(record.path, journalDirectory));
     if (!this.selectedDate) return [...records].sort((a, b) => Math.max(b.ctime ?? 0, b.mtime) - Math.max(a.ctime ?? 0, a.mtime));
     const events = this.events.filter((e) => e.date === this.selectedDate);
     const paths = [...new Set(events.map((e) => e.path))];
@@ -426,9 +559,26 @@ export class EchoInkHomeView extends ItemView {
     }
   }
   private async capture(): Promise<void> {
-    if (this.captureBusy) return;
+    if (this.captureBusy || this.closed) return;
     this.captureBusy = true;
     try {
+      const diary = this.plugin.englishDiary;
+      if (diary?.enabled()) {
+        if (this.plugin.settings.englishDiary.homeShortcut === "ask") {
+          const abort = new AbortController();
+          this.shortcutChoiceAbort = abort;
+          let choice: "english-diary" | "quick-record" | null;
+          try { choice = await chooseEnglishDiaryHomeShortcut(this.app, this.language, abort.signal); }
+          finally { if (this.shortcutChoiceAbort === abort) this.shortcutChoiceAbort = null; }
+          if (!choice || abort.signal.aborted || this.closed || !diary.enabled()) return;
+          await diary.setHomeShortcut(choice);
+          if (this.closed || !diary.enabled()) return;
+        }
+        if (this.plugin.settings.englishDiary.homeShortcut === "english-diary") {
+          await diary.openToday();
+          return;
+        }
+      }
       const file = await this.dataService.createBlankInboxNote(this.language);
       const leaf = this.app.workspace.getLeaf("tab");
       await leaf.openFile(file, { active: true });
@@ -625,6 +775,7 @@ export class EchoInkHomeView extends ItemView {
   }
 
   private async openJournal(date: Date): Promise<void> {
+    if (this.plugin.settings.englishDiary.enabled) { this.openJournalTemplate(date); return; }
     const existing = this.dataService.existingJournalForDate(date);
     if (existing instanceof TFile) {
       await this.app.workspace.getLeaf("tab").openFile(existing, { active: true });
@@ -641,6 +792,9 @@ export class EchoInkHomeView extends ItemView {
       customTemplates: [...customTemplates],
       date,
       language: this.language,
+      onEnglish: this.plugin.settings.englishDiary.enabled ? async (file) => { await this.plugin.englishDiary?.openDiary(file.path); } : undefined,
+      englishAccess: this.plugin.accountService ?? undefined,
+      englishEnabled: () => this.plugin.settings.englishDiary.enabled,
       onCreated: () => void this.refresh()
     }).open();
   }

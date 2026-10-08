@@ -1,0 +1,160 @@
+.echoink-diary-view,.echoink-diary-modal {
+  --bg:var(--echoink-theme-bg,var(--background-primary));
+  --text:var(--echoink-theme-text,var(--text-normal));
+  --secondary:var(--echoink-theme-secondary,var(--text-muted));
+  --muted:var(--echoink-theme-muted,var(--text-faint));
+  --line:var(--echoink-theme-line,var(--background-modifier-border));
+  --soft:var(--echoink-theme-raised,var(--background-secondary));
+  --accent:var(--echoink-theme-accent,var(--interactive-accent));
+  --accent-bg:var(--echoink-theme-active,var(--background-modifier-hover));
+  --diary-selected:color-mix(in srgb,var(--text-normal) 8%,var(--bg));
+  color:var(--text);background:var(--bg);font-family:var(--font-interface);
+  font-size:calc(var(--font-text-size,16px)*.75);line-height:1.7;
+}
+.echoink-diary-view {container-type:inline-size;padding:0!important;overflow:auto;}
+.echoink-diary-page {display:flex;flex-direction:column;gap:24px;max-width:1240px;margin:0 auto;padding:24px;min-width:0;box-sizing:border-box;}
+.echoink-diary-view :is(h2,h3,h4,p),.echoink-diary-modal :is(h2,h3,h4,p) {margin:0;}
+.echoink-diary-view h2.echoink-diary-title,.echoink-diary-modal h2 {font-size:calc(var(--font-text-size,16px)*1.3125);font-weight:600;line-height:1.55;}
+.echoink-diary-title {min-width:0;overflow-wrap:anywhere;}
+.echoink-diary-view h3 {font-size:calc(var(--font-text-size,16px)*.875);font-weight:550;line-height:1.6;}
+.echoink-diary-header,.echoink-diary-row,.echoink-diary-column-header,.echoink-diary-section-header,.echoink-diary-card-header {display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;}
+.echoink-diary-header,.echoink-diary-row,.echoink-diary-section-header,.echoink-diary-card-header {flex-wrap:wrap;}
+.echoink-diary-actions {display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;min-width:0;}
+.echoink-diary-header>.echoink-diary-actions {margin-left:auto;}
+.echoink-diary-view .echoink-origin-control[data-slot=button],.echoink-diary-modal .echoink-origin-control[data-slot=button] {
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;height:auto;width:auto;max-width:100%;
+  padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);
+  box-shadow:none;font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);font-weight:500;line-height:1.55;white-space:normal;
+}
+.echoink-diary-view .echoink-origin-control[data-slot=button].mod-cta,.echoink-diary-modal .echoink-origin-control[data-slot=button].mod-cta {background:var(--accent);border-color:var(--accent);color:var(--echoink-theme-on-accent,var(--text-on-accent));}
+.echoink-diary-view .echoink-origin-control[data-slot=button].is-tertiary,.echoink-diary-modal .echoink-origin-control[data-slot=button].is-tertiary {background:transparent;border-color:transparent;}
+.echoink-diary-view .echoink-origin-control[data-slot=button]:hover:not(:disabled),.echoink-diary-modal .echoink-origin-control[data-slot=button]:hover:not(:disabled) {background:var(--soft);}
+.echoink-diary-view .echoink-origin-control[data-slot=button].mod-cta:hover:not(:disabled),.echoink-diary-modal .echoink-origin-control[data-slot=button].mod-cta:hover:not(:disabled) {background:var(--accent);filter:brightness(.96);}
+.echoink-diary-view .echoink-origin-control[data-slot=button].is-danger {color:var(--text-error);}
+.echoink-diary-view .echoink-origin-control:disabled,.echoink-diary-modal .echoink-origin-control:disabled {opacity:.45;cursor:default;}
+.echoink-diary-view .echoink-origin-control:is([data-slot=input],[data-slot=select-trigger]),.echoink-diary-modal .echoink-origin-control:is([data-slot=input],[data-slot=select-trigger]) {
+  min-width:0;max-width:100%;min-height:32px;height:auto;margin:0;padding:7px 10px;border:1px solid var(--line);border-radius:6px;
+  background:var(--bg);color:var(--text);box-shadow:none;font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);line-height:1.55;
+}
+.echoink-diary-view .echoink-origin-control[data-slot=select-trigger],.echoink-diary-modal .echoink-origin-control[data-slot=select-trigger] {--accent-bg:var(--diary-selected);--accent:var(--text);display:inline-flex;align-items:center;justify-content:space-between;gap:8px;text-align:start;}
+:is(.echoink-diary-view,.echoink-diary-modal) :is(button,input,textarea,summary,[tabindex],.echoink-origin-control[data-slot=button]):focus-visible {outline:none;box-shadow:none;background-color:var(--diary-selected);color:var(--text);}
+:is(.echoink-diary-view,.echoink-diary-modal) :is(input,textarea,.echoink-origin-control:is([data-slot=input],[data-slot=select-trigger])):focus {outline:none;box-shadow:none;background-color:var(--diary-selected);border-color:var(--line);}
+.echoink-diary-view .echoink-origin-control[data-slot=button].is-selected {background:var(--diary-selected);font-weight:600;}
+.echoink-diary-columns {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:stretch;}
+.echoink-diary-column {display:flex;flex-direction:column;min-width:0;border:1px solid var(--line);border-radius:10px;background:var(--echoink-theme-card,var(--bg));overflow:hidden;}
+.echoink-diary-column-header {padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+.echoink-diary-source-heading {display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;min-width:0;}
+.echoink-diary-source-hint {color:var(--secondary);font-size:calc(var(--font-text-size,16px)*.6875);line-height:1.7;}
+.echoink-diary-reading {min-width:0;min-height:320px;padding:20px;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:4;font-family:var(--font-text,var(--font-interface));font-size:var(--font-text-size,16px);line-height:1.85;}
+.echoink-diary-view textarea.echoink-diary-editor {display:block;box-sizing:border-box;width:100%;min-height:360px;flex:1;resize:vertical;margin:0;padding:20px;border:0;border-radius:0;box-shadow:none;background:transparent;color:var(--text);font-family:var(--font-monospace);font-size:var(--font-text-size,16px);line-height:1.85;tab-size:4;}
+.echoink-diary-empty {padding:28px 16px;color:var(--secondary);font-size:calc(var(--font-text-size,16px)*.8125);line-height:1.7;text-align:center;}
+.echoink-diary-reading>.echoink-diary-empty {white-space:normal;padding:24px 0;}
+.echoink-diary-notice {display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--soft);color:var(--secondary);font-size:calc(var(--font-text-size,16px)*.75);line-height:1.8;}
+.echoink-diary-notice.is-error {color:var(--text-error);border-color:color-mix(in srgb,var(--text-error) 35%,var(--line));}
+.echoink-diary-warnings {font-size:calc(var(--font-text-size,16px)*.75);color:var(--secondary);}
+.echoink-diary-warnings>p {padding:8px 12px;}
+.echoink-diary-mark {border-radius:2px;cursor:pointer;box-decoration-break:clone;-webkit-box-decoration-break:clone;}
+.echoink-diary-mark.is-translation {text-decoration:underline;text-decoration-color:var(--muted);text-underline-offset:4px;text-decoration-thickness:1px;}
+.echoink-diary-mark.is-correction {text-decoration:underline dashed;text-decoration-color:var(--muted);text-underline-offset:4px;text-decoration-thickness:1px;}
+.echoink-diary-mark.is-connection {text-decoration:underline dotted;text-decoration-color:var(--muted);text-underline-offset:4px;text-decoration-thickness:1px;}
+.echoink-diary-mark.is-emphasized {background:var(--diary-selected);}
+.echoink-diary-alignment-note {display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border:1px solid var(--line);border-radius:6px;padding:12px 16px;background:var(--soft);font-size:calc(var(--font-text-size,16px)*.75);line-height:1.8;}
+.echoink-diary-alignment-note[hidden] {display:none;}
+.echoink-diary-alignment-copy {display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere;}
+.echoink-diary-change {display:flex;flex-direction:column;gap:4px;color:var(--secondary);}
+.tooltip.echoink-diary-tooltip {max-width:320px;font-family:var(--font-interface);font-size:calc(var(--font-text-size,16px)*.75);line-height:1.8;}
+.echoink-diary-expressions {display:flex;flex-direction:column;gap:12px;}
+.echoink-diary-filters {display:flex;gap:5px;flex-wrap:wrap;}
+.echoink-diary-expression {display:flex;flex-direction:column;gap:10px;width:100%;min-width:0;box-sizing:border-box;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--echoink-theme-card,var(--bg));}
+.echoink-diary-expression.is-locatable {cursor:pointer;}
+.echoink-diary-expression.is-locatable:hover:not(.is-selected) {background:var(--soft);}
+.echoink-diary-expression.is-selected {background:var(--diary-selected);}
+.echoink-diary-card-heading {display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;min-width:0;}
+.echoink-diary-card-heading h4 {font-size:calc(var(--font-text-size,16px)*.8125);font-weight:600;line-height:1.6;overflow-wrap:anywhere;}
+.echoink-diary-badge,.echoink-diary-count {font-size:calc(var(--font-text-size,16px)*.625);font-weight:400;line-height:1.4;color:var(--secondary);}
+.echoink-diary-badge {padding:3px 6px;background:var(--soft);border:1px solid var(--line);border-radius:4px;white-space:nowrap;}
+.echoink-diary-badge.is-review {color:var(--text-warning,var(--secondary));}
+.echoink-diary-category {font-size:calc(var(--font-text-size,16px)*.6875);line-height:1.7;color:var(--secondary);overflow-wrap:anywhere;}
+.echoink-diary-meaning {font-size:calc(var(--font-text-size,16px)*.75);line-height:1.8;color:var(--secondary);overflow-wrap:anywhere;}
+.echoink-diary-field {display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;align-items:baseline;}
+.echoink-diary-label,.echoink-diary-field-label {font-size:calc(var(--font-text-size,16px)*.75);font-weight:500;line-height:1.6;}
+.echoink-diary-field-label {color:var(--secondary);}
+.echoink-diary-field-value {font-size:calc(var(--font-text-size,16px)*.8125);line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;}
+.echoink-diary-view summary {cursor:pointer;font-size:calc(var(--font-text-size,16px)*.6875);line-height:1.7;color:var(--secondary);}
+.echoink-diary-description {font-size:calc(var(--font-text-size,16px)*.75);line-height:1.9;color:var(--secondary);}
+.echoink-diary-modal {width:min(760px,calc(100vw - 32px));max-width:calc(100vw - 32px);}
+.echoink-diary-modal .modal-content {display:flex;flex-direction:column;gap:20px;}
+.echoink-diary-privacy-list {display:flex;flex-direction:column;gap:12px;max-height:55vh;overflow:auto;}
+.echoink-diary-privacy-block {border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;}
+.echoink-diary-privacy-block .echoink-diary-row>.echoink-origin-control {flex:0 1 190px;}
+.echoink-diary-privacy-text {max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:calc(var(--font-text-size,16px)*.8125);line-height:1.8;}
+.echoink-expression-tools {display:flex;gap:12px;flex-wrap:wrap;}
+.echoink-expression-tools .echoink-expression-search {flex:1;min-width:200px;max-width:365px;}
+.echoink-expression-browser-tools {display:flex;flex-direction:column;gap:12px;}
+.echoink-expression-categories .echoink-diary-count {font-variant-numeric:tabular-nums;}
+.echoink-expression-list {display:flex;flex-direction:column;gap:12px;}
+.echoink-diary-view .echoink-origin-control[data-slot=button].echoink-expression-list-item {display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:8px;width:100%;min-width:0;min-height:0;padding:16px;border:1px solid var(--line);border-radius:10px;box-sizing:border-box;text-align:left;font-weight:400;cursor:pointer;}
+.echoink-diary-view .echoink-origin-control[data-slot=button].echoink-expression-list-item:is(:hover,:focus-visible) {background:var(--diary-selected);outline:none;box-shadow:none;}
+.echoink-diary-view .echoink-origin-control[data-slot=button].echoink-expression-list-item:active {background:color-mix(in srgb,var(--text-normal) 12%,var(--bg));}
+.echoink-expression-list-item>.echoink-diary-row {justify-content:flex-start;}
+.echoink-expression-list-title {font-size:calc(var(--font-text-size,16px)*.8125);font-weight:600;line-height:1.6;overflow-wrap:anywhere;}
+.echoink-expression-note-preview {font-size:calc(var(--font-text-size,16px)*.75);line-height:1.8;white-space:pre-wrap;color:var(--secondary);overflow-wrap:anywhere;}
+.echoink-expression-detail-nav {justify-content:flex-start;}
+.echoink-expression-detail-nav .echoink-origin-control[data-slot=button] {padding-left:0;}
+.echoink-expression-summary {display:flex;flex-direction:column;gap:12px;min-width:0;}
+.echoink-expression-dictionary-heading {display:flex;align-items:baseline;flex-wrap:wrap;gap:10px;min-width:0;}
+.echoink-expression-dictionary-heading h2 {max-width:100%;overflow-wrap:anywhere;}
+.echoink-expression-dictionary-meaning {font-size:calc(var(--font-text-size,16px)*.875);line-height:1.8;color:var(--secondary);overflow-wrap:anywhere;}
+.echoink-expression-metadata {display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.echoink-expression-usage-summary {display:flex;flex-direction:column;gap:8px;margin-top:4px;padding:16px 18px;border:1px solid var(--line);border-radius:10px;background:var(--accent-bg);min-width:0;}
+.echoink-expression-usage-summary p {font-size:calc(var(--font-text-size,16px)*.875);line-height:1.85;overflow-wrap:anywhere;}
+.echoink-expression-summary-examples {display:flex;flex-direction:column;gap:6px;margin-top:4px;padding-top:12px;border-top:1px solid var(--line);min-width:0;}
+.echoink-expression-usage-summary p.echoink-expression-summary-example {font-size:calc(var(--font-text-size,16px)*.8125);line-height:1.8;}
+.echoink-expression-usage-summary p.echoink-expression-example-usage {font-size:calc(var(--font-text-size,16px)*.75);line-height:1.8;color:var(--secondary);}
+.echoink-expression-additional-example {display:flex;flex-direction:column;gap:4px;margin-top:12px;}
+.echoink-expression-personal-note {display:flex;flex-direction:column;gap:5px;padding:4px 0;color:var(--secondary);font-size:calc(var(--font-text-size,16px)*.8125);line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;}
+.echoink-expression-edit {display:flex;flex-direction:column;gap:16px;padding:16px;border:1px solid var(--line);border-radius:10px;}
+.echoink-diary-form-field {display:flex;flex-direction:column;gap:8px;min-width:0;}
+.echoink-diary-form-field>input {width:230px;}
+.echoink-expression-view textarea.echoink-expression-note {width:100%;min-height:100px;box-sizing:border-box;resize:vertical;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font-family:inherit;font-size:calc(var(--font-text-size,16px)*.8125);line-height:1.8;}
+.echoink-expression-occurrences {display:flex;flex-direction:column;gap:20px;min-width:0;}
+.echoink-expression-timeline {display:flex;flex-direction:column;gap:24px;min-width:0;}
+.echoink-expression-timeline-day {display:grid;position:relative;grid-template-columns:calc(var(--font-text-size,16px)*6.5) minmax(0,1fr);gap:24px;min-width:0;}
+.echoink-expression-timeline-day::before {content:"";position:absolute;left:calc(var(--font-text-size,16px)*6.5 - 1px);top:14px;bottom:-38px;border-left:1px solid var(--line);}
+.echoink-expression-timeline-day:last-child::before {bottom:0;}
+.echoink-expression-timeline-date {position:relative;padding-top:5px;padding-right:18px;font-size:calc(var(--font-text-size,16px)*.75);line-height:1.6;color:var(--secondary);overflow-wrap:anywhere;}
+.echoink-expression-timeline-date::after {content:"";position:absolute;top:11px;right:-3px;width:7px;height:7px;border-radius:50%;background:var(--secondary);border:2px solid var(--bg);box-sizing:border-box;}
+.echoink-expression-timeline-items {display:flex;flex-direction:column;gap:20px;min-width:0;}
+.echoink-expression-occurrence {display:flex;flex-direction:column;gap:8px;min-width:0;padding-bottom:20px;border-bottom:1px solid var(--line);}
+.echoink-expression-timeline-items>.echoink-expression-occurrence:last-child {padding-bottom:0;border-bottom:0;}
+.echoink-expression-occurrence-heading {display:flex;align-items:center;gap:8px;min-width:0;}
+.echoink-expression-occurrence-heading>.echoink-diary-label {min-width:0;overflow-wrap:anywhere;}
+.echoink-expression-view .echoink-origin-control.echoink-expression-occurrence-menu {margin-left:auto;flex:0 0 30px;width:30px;min-height:30px;padding:0;}
+.echoink-expression-occurrence-menu svg {width:14px;height:14px;}
+.echoink-expression-occurrence-body {display:flex;flex-direction:column;gap:12px;min-width:0;}
+.echoink-expression-view blockquote.echoink-expression-english-quote {margin:0;padding:0;border:0;color:var(--text);font-size:var(--font-text-size,16px);line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;}
+@container (max-width:760px) {
+  .echoink-diary-page {padding:20px;gap:20px;}
+  .echoink-diary-columns {grid-template-columns:minmax(0,1fr);}
+  .echoink-diary-reading {min-height:160px;}
+}
+@container (max-width:520px) {
+  .echoink-diary-page {padding:16px;gap:16px;}
+  .echoink-diary-view h2.echoink-diary-title {font-size:calc(var(--font-text-size,16px)*1.1875);}
+  .echoink-diary-header {align-items:flex-start;}
+  .echoink-diary-header>.echoink-diary-actions {width:100%;}
+  .echoink-diary-reading,.echoink-diary-view textarea.echoink-diary-editor {padding:16px;}
+  .echoink-diary-field {grid-template-columns:minmax(0,1fr);gap:4px;}
+  .echoink-diary-alignment-note {flex-direction:column;}
+  .echoink-expression-tools .echoink-expression-search {flex-basis:100%;max-width:none;min-width:0;width:100%;}
+  .echoink-diary-form-field>input {width:100%;}
+  .echoink-expression-usage-summary {padding:14px;}
+  .echoink-expression-timeline-day {grid-template-columns:12px minmax(0,1fr);gap:12px;}
+  .echoink-expression-timeline-day::before {left:3px;top:10px;bottom:-34px;}
+  .echoink-expression-timeline-date {grid-column:2;padding:0;}
+  .echoink-expression-timeline-date::after {left:-24px;right:auto;top:6px;}
+  .echoink-expression-timeline-items {grid-column:2;}
+}
+@media (prefers-reduced-motion:reduce) {
+  .echoink-diary-view *, .echoink-diary-modal * {scroll-behavior:auto;}
+}

@@ -12,6 +12,10 @@ import {
 } from "./home-workbench-data";
 import { homeCopy } from "./home-i18n";
 import type { SettingsLanguage } from "../settings/settings";
+import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
+import { getProPluginAccess, requireProPlugin, unavailableCapabilityAccess } from "../membership/access";
+import type { CapabilityAccess } from "../membership/types";
+import { ProPluginControls } from "../ui/pro-plugin-controls";
 
 interface JournalTemplateModalOptions {
   service: HomeWorkbenchDataService;
@@ -19,6 +23,9 @@ interface JournalTemplateModalOptions {
   date: Date;
   language: SettingsLanguage;
   onCreated?: (file: TFile) => void;
+  onEnglish?: (file: TFile) => Promise<void>;
+  englishAccess?: CapabilityAccess;
+  englishEnabled?: () => boolean;
 }
 
 export class JournalTemplateModal extends Modal {
@@ -31,6 +38,7 @@ export class JournalTemplateModal extends Modal {
   private status = "";
   private safeCopyPath = "";
   private submitting = false;
+  private englishControls: ProPluginControls | null = null;
 
   constructor(app: App, private readonly options: JournalTemplateModalOptions) {
     super(app);
@@ -42,12 +50,18 @@ export class JournalTemplateModal extends Modal {
   }
 
   onClose(): void {
+    this.englishControls?.dispose();
+    this.englishControls = null;
+    disposeOriginControls(this.contentEl);
     this.contentEl.empty();
   }
 
   private render(focusChoice?: string): void {
+    this.englishControls?.dispose();
+    this.englishControls = null;
     const copy = this.copy;
     const { contentEl } = this;
+    disposeOriginControls(contentEl);
     contentEl.empty();
     const head = contentEl.createDiv({ cls: "echoink-journal-modal-head" });
     const headCopy = head.createDiv();
@@ -135,6 +149,16 @@ export class JournalTemplateModal extends Modal {
     });
     use.disabled = this.submitting || this.importState === "reading" || this.importState === "saving";
     use.onclick = () => void this.createJournal();
+    if (this.options.onEnglish) {
+      const english = createOriginButton(actions, {
+        text: this.options.language === "en" ? "Write English diary" : "写英文日记",
+        attr: { "aria-label": this.options.language === "en" ? "Write an English diary using the selected template" : "使用当前模板写英文日记" }
+      });
+      const access = this.options.englishAccess ?? unavailableCapabilityAccess;
+      this.englishControls = new ProPluginControls(access, () => getProPluginAccess(access, this.options.englishEnabled?.() ?? false));
+      this.englishControls.bind(english, { businessDisabled: () => this.submitting || this.importState === "reading" || this.importState === "saving" || !this.options.englishEnabled?.() });
+      english.onclick = () => void this.createJournal(true);
+    }
     if (focusChoice) {
       window.requestAnimationFrame(() => {
         this.contentEl.querySelector<HTMLButtonElement>(`[data-template-choice="${CSS.escape(focusChoice)}"]`)?.focus();
@@ -212,14 +236,21 @@ export class JournalTemplateModal extends Modal {
     this.render();
   }
 
-  private async createJournal(): Promise<void> {
+  private async createJournal(english = false): Promise<void> {
     if (this.submitting) return;
+    if (english) {
+      try {
+        requireProPlugin(this.options.englishAccess ?? unavailableCapabilityAccess);
+        if (!this.options.englishEnabled?.()) throw new Error("英文日记已停用。");
+      } catch (error) { new Notice(errorMessage(error)); return; }
+    }
     this.submitting = true;
     this.status = this.copy.modal.creatingJournal;
     this.render();
     try {
       const result = await this.options.service.createOrOpenJournal(this.selected, this.options.date, this.options.language);
-      await this.app.workspace.getLeaf("tab").openFile(result.file, { active: true });
+      if (english && this.options.onEnglish) await this.options.onEnglish(result.file);
+      else await this.app.workspace.getLeaf("tab").openFile(result.file, { active: true });
       new Notice(result.created ? this.copy.modal.journalCreated(result.file.path) : this.copy.modal.journalAlreadyExists(result.file.path));
       this.options.onCreated?.(result.file);
       this.close();

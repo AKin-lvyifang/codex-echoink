@@ -86,6 +86,7 @@ import {
   selectComposerMode as selectComposerModeAction,
   type CodexComposerHost
 } from "./codex-view/composer-controller";
+import { knowledgeCommandQueryForInput } from "../knowledge-base/commands";
 import {
   addContextCompactionMessage as addContextCompactionMessageAction,
   addMessageToSession as addMessageToSessionAction,
@@ -404,6 +405,10 @@ export class CodexView extends ItemView {
     this.renderTabs();
     this.renderMessages({ preserveScroll: true });
     this.renderToolbar();
+    const skillQuery = knowledgeCommandQueryForInput(this.inputEl.value);
+    if (skillQuery !== null && this.knowledgeCommandMenuEl?.hasClass("is-visible")) {
+      this.renderKnowledgeCommandMatches(skillQuery);
+    }
     const session = this.sessionById(this.plugin.settings.activeSessionId) ?? this.ensureSession();
     this.renderTaskPlanDock(session);
     this.renderInteractionDock(session);
@@ -748,6 +753,18 @@ export class CodexView extends ItemView {
 
   focusInput(): void {
     window.setTimeout(() => this.inputEl?.focus(), 50);
+  }
+  prepareComposerDraft(text: string): boolean {
+    // Keep the current conversation, attachments and any existing draft intact.
+    if (this.inputEl.value.trim() || this.promptEnhancerRunning) {
+      this.focusInput();
+      return false;
+    }
+    this.inputEl.value = text;
+    this.onInputChanged();
+    this.inputEl.setSelectionRange(text.length, text.length);
+    this.focusInput();
+    return true;
   }
 
   async createDraftSession(title: string, draft: string): Promise<StoredSession> {

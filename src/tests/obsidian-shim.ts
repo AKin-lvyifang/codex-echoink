@@ -48,8 +48,19 @@ export class FileSystemAdapter {
 }
 
 export class Component {
+  loaded = false;
+  unloaded = false;
+  load(): void { this.loaded = true; }
+  unload(): void { this.unloaded = true; }
   registerDomEvent(): void {}
   registerEvent(): void {}
+}
+
+export const openTestMarkdownRenders: { markdown: string; element: HTMLElement; component: Component }[] = [];
+export class MarkdownRenderer {
+  static async render(_app: App, markdown: string, element: HTMLElement, _sourcePath: string, component: Component): Promise<void> {
+    openTestMarkdownRenders.push({ markdown, element, component });
+  }
 }
 
 export class WorkspaceLeaf {
@@ -113,17 +124,21 @@ export class Menu {
 export const openTestModals: Modal[] = [];
 
 export class Modal {
+  containerEl = document.createElement("div");
   modalEl = document.createElement("div");
   titleEl = document.createElement("div");
   contentEl = document.createElement("div");
   private opened = false;
   constructor(public readonly app: App) {
     this.modalEl.append(this.titleEl, this.contentEl);
+    this.containerEl.appendChild(this.modalEl);
   }
+  setTitle(title: string): this { this.titleEl.setText(title); return this; }
   open(): void {
     if (this.opened) return;
     this.opened = true;
     openTestModals.push(this);
+    this.containerEl.ownerDocument.body.appendChild(this.containerEl);
     this.onOpen();
   }
   close(): void {
@@ -132,6 +147,7 @@ export class Modal {
     const index = openTestModals.lastIndexOf(this);
     if (index >= 0) openTestModals.splice(index, 1);
     this.onClose();
+    this.containerEl.remove();
   }
   onOpen(): void {}
   onClose(): void {}

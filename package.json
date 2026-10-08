@@ -1,6 +1,6 @@
 {
   "name": "echoink-agent",
-  "version": "2.5.2",
+  "version": "2.6.0",
   "description": "A personal knowledge agent for Obsidian that builds editable memory and grows to understand you better.",
   "main": "dist/main.js",
   "scripts": {
@@ -18,8 +18,10 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
+    "test:english-diary": "node scripts/english-diary-tests.mjs",
     "test:react-dom-resources": "node scripts/react-dom-script-resources-tests.mjs",
     "test:provider-settings": "node scripts/provider-settings-tests.mjs",
+    "test:account-membership": "node --enable-source-maps scripts/account-membership-tests.mjs",
     "test:settings-search": "node --enable-source-maps scripts/native-settings-search-tests.mjs",
     "test:conversation-ui": "node scripts/conversation-ui-tests.mjs",
     "test:personal-memory": "node src/tests/personal-memory-tests.mjs",
@@ -33,7 +35,12 @@
     "test:mcp-vault": "node scripts/mcp-vault-tests.mjs",
     "verify:obsidian": "npm run check:public && npm run lint && npm run test && npm run typecheck && npm run build && npm run check:bundle && npm run test:mobile",
     "package": "npm run build && node scripts/package.mjs",
-    "deploy": "npm run build && node scripts/deploy.mjs"
+    "deploy": "npm run build && node scripts/deploy.mjs",
+    "test:finance": "node scripts/finance-tests.mjs",
+    "test:finance-bill-plans": "node scripts/finance-bill-plan-tests.mjs",
+    "test:finance-ui": "node scripts/finance-ui-tests.mjs",
+    "test:finance-budget": "node scripts/finance-budget-tests.mjs",
+    "test:membership-gates": "node scripts/membership-gate-tests.mjs"
   },
   "keywords": [
     "obsidian",
@@ -43,7 +50,7 @@
     "memory"
   ],
   "author": "AKin-lvyifang",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@eslint/json": "^0.14.0",
@@ -55,6 +62,7 @@
     "eslint": "^9.39.5",
     "eslint-plugin-obsidianmd": "^0.4.1",
     "globals": "^17.7.0",
+    "jsdom": "26.1.0",
     "obsidian": "^1.8.7",
     "postcss": "8.5.6",
     "postcss-prefix-selector": "2.1.1",
@@ -74,10 +82,12 @@
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "framer-motion": "12.23.24",
+    "number-flow": "0.2.3",
     "pinyin-pro": "3.29.3",
     "radix-ui": "1.6.7",
     "react": "19.1.1",
     "react-dom": "19.1.1",
+    "read-excel-file": "9.3.10",
     "tailwind-merge": "3.3.1",
     "typebox": "1.1.38",
     "word-extractor": "1.0.4"

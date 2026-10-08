@@ -1391,7 +1391,7 @@ function builtinTrigger(
   requiresFreshnessVerification: boolean;
 }> {
   const hit = (pattern: RegExp) => pattern.test(text);
-  if (id === "daily-journal") {
+  if (id === "daily-journal" || id === "english-diary") {
     return trigger(false, 0);
   }
   if (id === "obsidian-cli") return trigger(hit(/obsidian.?cli|原生.*命令|命令行.*obsidian/iu), 84);

@@ -1,3 +1,4 @@
+import { withEchoInkProviderReasoningWirePolicy } from "./provider-reasoning-wire-policy";
 import type {
   Api,
   AssistantMessageEventStream,
@@ -98,7 +99,7 @@ export function createPiProviderModelDefinition(input: {
       requiresReasoningContentOnAssistantMessages: false
     };
   }
-  return model;
+  return withEchoInkProviderReasoningWirePolicy(model);
 }
 
 function boundedInteger(

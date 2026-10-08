@@ -2,6 +2,7 @@ import { App, TFile, normalizePath } from "obsidian";
 import type { SettingsLanguage } from "../settings/settings";
 import type { HomeActivityService } from "./home-activity-service";
 import { homeCopy } from "./home-i18n";
+import { isHomeNotePath, type HomeNoteVisibility } from "./home-note-visibility";
 import { nativeJournalPathForDate, readNativeJournalContext, readNativeJournalSettings } from "./native-journal";
 import {
   DEFAULT_JOURNAL_DIRECTORY,
@@ -84,7 +85,8 @@ export class HomeWorkbenchDataService {
   constructor(
     private readonly app: App,
     private readonly journalDirectoryProvider: () => string = () => DEFAULT_JOURNAL_DIRECTORY,
-    private readonly activityService?: HomeActivityService | null
+    private readonly activityService?: HomeActivityService | null,
+    private readonly includeNotePath: HomeNoteVisibility = isHomeNotePath
   ) {}
 
   getJournalDirectory(): string {
@@ -111,11 +113,12 @@ export class HomeWorkbenchDataService {
 
   async build(visibleMonth = new Date()): Promise<HomeWorkbenchData> {
     const journalDirectory = this.getJournalDirectory();
-    const records = this.app.vault.getMarkdownFiles().map((file) =>
+    const records = this.app.vault.getMarkdownFiles().filter((file) => this.includeNotePath(file.path)).map((file) =>
       this.recordForFile(file, journalDirectory)
     );
     const byDate = new Map<string, HomeActivityDay>();
     for (const event of this.activityService?.snapshot().events ?? []) {
+      if (!this.includeNotePath(event.path)) continue;
       const day = byDate.get(event.date) ?? { date: event.date, count: 0, fileCount: 0, checkCount: 0, level: "low" as const };
       day.count++; day.fileCount++;
       byDate.set(event.date, day);
@@ -163,8 +166,14 @@ export class HomeWorkbenchDataService {
       ? (await readNativeJournalContext(this.app, { now: date, legacyDirectory: this.journalDirectoryProvider() })).templateContent
       : applyJournalTemplate(await this.readTemplate(choice, language), date);
     await this.ensureFolder(path.slice(0, path.lastIndexOf("/")), language);
-    const file = await this.app.vault.create(path, content);
-    return { file, created: true };
+    try {
+      const file = await this.app.vault.create(path, content);
+      return { file, created: true };
+    } catch (error) {
+      const concurrent = this.app.vault.getAbstractFileByPath(path);
+      if (concurrent instanceof TFile) return { file: concurrent, created: false };
+      throw error;
+    }
   }
 
   previewImportedTemplate(

@@ -40,7 +40,7 @@ export function resolveComposerReasoningState(
   const capabilities = resolveEchoInkPiReasoningCapabilities(
     provider.runtimeProviderId,
     model.id,
-    model.reasoning
+    model
   );
   const supported = capabilities.supported;
   const enabled = supported

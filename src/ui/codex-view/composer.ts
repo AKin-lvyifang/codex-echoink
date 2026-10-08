@@ -5,6 +5,7 @@ import {
 } from "../../settings/provider-brand-icons";
 import type { EchoInkResource } from "../../resources/types";
 import { enabledSkillResources } from "../../resources/registry";
+import { resourcePresentation } from "../../resources/resource-presentation";
 import { mcpConnectionStatus, mcpConnectionStatusLabel } from "../../resources/mcp-connections";
 import type { EchoInkResourceSettings } from "../../resources/types";
 import type {
@@ -557,11 +558,12 @@ export function renderComposerResourcePanel(
   const skills = enabledSkillResources(state.resources);
   if (skills.length) {
     for (const skill of skills) {
+      const presentation = resourcePresentation(skill, state.language ?? "zh-CN");
       createResourcePanelRow(
         skillGroup,
         "box",
-        skill.name,
-        skill.description || skill.contentPath || copy("已启用 Skill", "Enabled Skill"),
+        presentation.name,
+        presentation.description || skill.contentPath || copy("已启用 Skill", "Enabled Skill"),
         () => callbacks.onSelectSkill(skill),
         state.selectedSkill?.id === skill.id
       );
@@ -1041,14 +1043,15 @@ export function renderComposerAttachments(container: HTMLElement, state: Compose
     !state.selectedSkill && state.noteMentions.length === 0 && state.attachments.length === 0
   );
   if (state.selectedSkill) {
+    const presentation = resourcePresentation(state.selectedSkill, language);
     const chip = container.createDiv({ cls: "codex-skill-token" });
     const icon = chip.createSpan({ cls: "codex-skill-token-icon" });
     setIcon(icon, "box");
-    chip.createSpan({ cls: "codex-skill-token-name", text: state.selectedSkill.name });
+    chip.createSpan({ cls: "codex-skill-token-name", text: presentation.name });
     const remove = chip.createEl("button", {
       attr: {
         type: "button",
-        "aria-label": conversationUiText(language, `移除 Skill：${state.selectedSkill.name}`, `Remove Skill: ${state.selectedSkill.name}`),
+        "aria-label": conversationUiText(language, `移除 Skill：${presentation.name}`, `Remove Skill: ${presentation.name}`),
         title: conversationUiText(language, "移除 Skill", "Remove Skill")
       }
     });
@@ -1470,7 +1473,7 @@ function queuedTurnMeta(item: QueuedTurnItem, language: SettingsLanguage): strin
       : conversationUiText(language, "未选择", "Not selected"),
     compactReasoningLabel(item.turnOptions.reasoning, language)
   ];
-  if (item.skill) parts.push(`Skill ${item.skill.name}`);
+  if (item.skill) parts.push(`Skill ${resourcePresentation(item.skill, language).name}`);
   if (item.attachments.length) parts.push(conversationUiText(language, `${item.attachments.length} 个附件`, `${item.attachments.length} attachment${item.attachments.length === 1 ? "" : "s"}`));
   if (item.noteMentions?.length) parts.push(conversationUiText(language, `${item.noteMentions.length} 篇笔记`, `${item.noteMentions.length} note${item.noteMentions.length === 1 ? "" : "s"}`));
   return parts.join(" · ");

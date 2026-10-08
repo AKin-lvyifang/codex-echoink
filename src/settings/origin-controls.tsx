@@ -9,6 +9,7 @@ import { Checkbox } from "../ui/components/origin/checkbox";
 import { Slider } from "../ui/components/origin/slider";
 import { RadioGroup, RadioGroupItem } from "../ui/components/origin/radio-group";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../ui/components/origin/select";
+import { OriginPagination } from "../ui/components/origin/pagination";
 
 type ElementOptions = { cls?: string; text?: string; attr?: Record<string, string | number | boolean>; type?: string; value?: string };
 type Island = { root: Root; element: HTMLElement | null; document: Document; disposed: boolean; cleanup?: () => void };
@@ -71,12 +72,19 @@ export function createOriginInput(parent: HTMLElement, options: ElementOptions =
   return element;
 }
 
-export function createOriginButton(parent: HTMLElement, options: ElementOptions = {}): HTMLButtonElement {
+export function createOriginButton(parent: HTMLElement, options: ElementOptions = {}, onDispose?: () => void): HTMLButtonElement {
   const island = createIsland(parent);
+  if (onDispose) island.onDispose(onDispose);
   island.render(<Button ref={island.ref} className={`echoink-origin-control${options.cls ? "" : " echoink-origin-button"}`} type="button" variant="outline" />);
   const element = island.element() as HTMLButtonElement;
   decorate(element, options);
   return element;
+}
+
+export function createOriginPagination(parent: HTMLElement, page: number, pages: number, onChange: (page: number) => void): HTMLElement {
+  const island = createIsland(parent);
+  island.render(<OriginPagination page={page} pages={pages} onChange={onChange} navRef={island.ref} />);
+  return island.element();
 }
 
 export type OriginCheckElement = HTMLButtonElement & { checked: boolean; indeterminate: boolean };

@@ -67,13 +67,21 @@ const originSource = await readFile(path.join(rootDir, "src/styles/origin-contro
 const settingsGenerated = [settingsStart, settingsSource.trim(), originSource.trim(), settingsEnd].join("\n");
 const settingsIndex = styles.indexOf(settingsStart);
 const settingsCurrent = settingsIndex < 0 ? "" : styles.slice(settingsIndex, styles.indexOf(settingsEnd, settingsIndex) + settingsEnd.length);
+const diaryStart = "/* ECHOINK_ENGLISH_DIARY_CSS_START */";
+const diaryEnd = "/* ECHOINK_ENGLISH_DIARY_CSS_END */";
+const diaryCss = await Promise.all(["ui.css", "integration.css"].map((name) => readFile(path.join(rootDir, "src/english-diary", name), "utf8")));
+const diaryGenerated = `${diaryStart}\n${diaryCss.map((css) => css.trim()).join("\n\n")}\n${diaryEnd}`;
+const diaryIndex = styles.indexOf(diaryStart);
+const diaryCurrent = diaryIndex < 0 ? "" : styles.slice(diaryIndex, styles.indexOf(diaryEnd, diaryIndex) + diaryEnd.length);
 
 if (checkOnly) {
+  if (diaryCurrent !== diaryGenerated) throw new Error("Generated English Diary CSS is stale. Run node scripts/build-home-magic-ui-css.mjs");
   if (current !== generated) throw new Error("Generated Magic UI CSS is stale. Run node scripts/build-home-magic-ui-css.mjs");
   if (settingsCurrent !== settingsGenerated) throw new Error("Generated workspace settings CSS is stale");
   console.log("Home Magic UI and workspace settings CSS: PASS");
 } else {
   let next = styles.replace(current, generated);
+  next = diaryCurrent ? next.replace(diaryCurrent, diaryGenerated) : `${next.trimEnd()}\n\n${diaryGenerated}\n`;
   next = settingsCurrent ? next.replace(settingsCurrent, settingsGenerated) : `${next.trimEnd()}\n\n${settingsGenerated}\n`;
   if (next !== styles) await writeFile(stylesPath, next, "utf8");
   console.log("Home Magic UI CSS: updated");

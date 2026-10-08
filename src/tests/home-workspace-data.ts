@@ -3,6 +3,7 @@ import { EchoInkHomeView } from "../home/home-view";
 import { homeWorkspaceMarkup } from "../home/home-workspace-template";
 import { HomeSearchService } from "../home/home-search";
 import { HomeWorkbenchDataService } from "../home/home-workbench-data";
+import { isHomeNotePath } from "../home/home-note-visibility";
 import assert from "node:assert/strict";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
@@ -13,6 +14,7 @@ import { DEFAULT_SETTINGS, normalizeSettingsData } from "../settings/settings";
 import { recordProductionMaintenanceTerminal } from "../plugin/knowledge-maintenance-history";
 import { ProductionPiKnowledgeMaintenanceToolPort, type KnowledgeMaintenanceTerminalEvent } from "../plugin/pi-knowledge-maintenance-production";
 import { createKnowledgeMaintenanceResultEnvelope } from "../knowledge-base/knowledge-maintenance-result";
+import type { HomeVaultFileRecord } from "../home/home-workbench-model";
 
 export async function runHomeWorkspaceDataTests(): Promise<void> {
   assert.match(homeWorkspaceMarkup("en"), /What stayed with you this week/);
@@ -86,6 +88,7 @@ export async function runHomeWorkspaceDataTests(): Promise<void> {
     snapshot = await buildKnowledgeBaseDashboardSnapshot(root, settings);
     assert.equal(snapshot.checkFreshness.lastCheckAt, yesterday, "failed checks do not refresh last successful confirmation");
     assert.equal(snapshot.health.lastCheckAt, yesterday);
+    await assertKnowledgeCheckHistoryAcrossYears(root);
     settings.healthHistory = [];
     const limited = await buildKnowledgeBaseDashboardSnapshot(root, settings, { maxTotalRawFingerprintBytes: 1 });
     assert.equal(limited.health.assessment, "limited");
@@ -117,6 +120,7 @@ export async function runHomeWorkspaceDataTests(): Promise<void> {
     assert.equal(terminalSettings.healthHistory.length, 0);
     const withMaintenance = await buildKnowledgeBaseDashboardSnapshot(root, terminalSettings);
     assert(withMaintenance.checkHeatmap.every((day) => day.status === "none"));
+    assert.deepEqual(withMaintenance.checkActivity, [], "ordinary maintenance does not create historical check records");
     assert.equal(withMaintenance.activity.days.reduce((sum, day) => sum + (day.maintenance ?? 0), 0), 5, "maintenance activity stays separate from checks and excludes cancellation");
     assert.equal(normalizeSettingsData({ ...structuredClone(DEFAULT_SETTINGS), knowledgeBase: terminalSettings }).settings.knowledgeBase.maintenanceHistory.length, 6);
 
@@ -129,9 +133,139 @@ export async function runHomeWorkspaceDataTests(): Promise<void> {
     await port.execute({ ...input, signal: undefined, toolCallId: "invalid" });
     assert.equal(received[1]?.result.maintenanceResult?.status, "failed");
     await assertInboxAndSearch();
+    await assertDerivedDiaryNotesStayOutOfHome();
     await assertHomeCaptureAndPendingSearch();
+    await assertHomeRecentNotesPreserveFullData();
     console.log("Home activity, health evidence, search, empty Inbox and maintenance terminal: PASS");
   } finally { await fsp.rm(root, { recursive: true, force: true }); }
+}
+
+async function assertKnowledgeCheckHistoryAcrossYears(root: string): Promise<void> {
+  const settings = structuredClone(DEFAULT_SETTINGS.knowledgeBase);
+  const year = new Date().getFullYear();
+  const currentDate = `${year}-01-01`;
+  const previousDates = [`${year - 1}-12-30`, `${year - 1}-12-31`];
+  settings.healthHistory = [
+    { date: currentDate, status: "success", at: new Date(`${currentDate}T12:00:00`).getTime() },
+    { date: previousDates[1], status: "success", at: new Date(`${previousDates[1]}T10:00:00`).getTime() },
+    { date: previousDates[0], status: "success", at: new Date(`${previousDates[0]}T12:00:00`).getTime() },
+    { date: previousDates[1], status: "failed", at: new Date(`${previousDates[1]}T14:00:00`).getTime() }
+  ];
+  const snapshot = await buildKnowledgeBaseDashboardSnapshot(root, settings);
+  assert.deepEqual(snapshot.checkActivity, [
+    { date: previousDates[0], status: "success" },
+    { date: previousDates[1], status: "failed" },
+    { date: currentDate, status: "success" }
+  ], "all historical check dates remain available, with the existing per-day status resolution");
+  assert.equal(snapshot.checkHeatmap.length, new Date(year, 1, 29).getMonth() === 1 ? 366 : 365);
+  assert.equal(snapshot.checkHeatmap[0].date, currentDate);
+  assert.equal(snapshot.checkHeatmap.at(-1)?.date, `${year}-12-31`);
+  assert.deepEqual(snapshot.checkHeatmap.filter((day) => day.status !== "none"), [{ date: currentDate, status: "success" }], "Home and chat retain the current-year heatmap");
+}
+
+async function assertDerivedDiaryNotesStayOutOfHome(): Promise<void> {
+  const settings = {
+    settingsLanguage: "zh-CN",
+    journalDirectory: "Daily",
+    englishDiary: { ...DEFAULT_SETTINGS.englishDiary, enabled: false, englishDirectory: "资料/英文稿", expressionDirectory: "资料/表达",
+      legacyEnglishDirectories: ["以前/英文"], legacyExpressionDirectories: ["以前/表达"] }
+  };
+  const originalPath = "Daily/2026-10/2026-10-06.md";
+  const derivedPaths = ["资料/英文稿/2026-10-06.md", "资料/英文稿/嵌套/另一篇.md", "资料/表达/情绪/take-a-breath.md",
+    "outputs/.english-diary/diaries/a.md", "输出（outputs）/.english-diary/expressions/a.md", "以前/英文/a.md", "以前/表达/a.md"];
+  const visiblePaths = [originalPath, "EchoInk/普通笔记.md", "资料/英文稿备份/记录.md", "资料/表达方式/记录.md", "其他/资料/英文稿/记录.md", "资料/英文稿.md",
+    "outputs/普通总结.md", "输出（outputs）/普通总结.md", "outputs/.english-diary-backup/a.md", "以前/英文备份/a.md"];
+  const paths = [...visiblePaths, ...derivedPaths];
+  const files = paths.map((path, index) => Object.assign(new TFile(path), {
+    basename: path.split("/").at(-1)!.replace(/\.md$/u, ""),
+    parent: { path: path.slice(0, path.lastIndexOf("/")) },
+    stat: { mtime: index + 1, ctime: index + 1, size: 20 }
+  }));
+  const events = paths.map((path, index) => ({ path, kind: "created" as const, at: index + 1, date: "2026-10-06" }));
+  const storedEvents = structuredClone(events);
+  const activity = { snapshot: () => ({ startedAt: 1, events, error: null }) };
+  const readPaths: string[] = [];
+  const app = {
+    vault: {
+      getMarkdownFiles: () => files,
+      getAbstractFileByPath: (path: string) => files.find((file) => file.path === path) ?? null,
+      cachedRead: async (file: TFile) => { readPaths.push(file.path); return file.path === originalPath || derivedPaths.includes(file.path) ? "每日原稿与系统资料" : "普通笔记"; }
+    },
+    metadataCache: { getFileCache: () => null }
+  };
+  const visible = (path: string) => isHomeNotePath(path, settings.englishDiary);
+  const data = await new HomeWorkbenchDataService(app as never, () => settings.journalDirectory, activity as never, visible).build(new Date(2026, 9, 6));
+  assert.deepEqual(data.records.map((record) => record.path), visiblePaths, "configured generated directories are excluded while source, sibling prefixes and other EchoInk notes remain");
+  assert.equal(data.activity.find((day) => day.date === "2026-10-06")?.count, visiblePaths.length, "generated writes do not increase daily activity");
+  assert.equal(data.journalDays.find((day) => day.date === "2026-10-06")?.path, originalPath, "the canonical journal still appears in the calendar");
+  assert.equal(data.entries.find((entry) => entry.id === "journal")?.count, 1);
+
+  const home = new EchoInkHomeView(new WorkspaceLeaf(), { app, settings, homeActivity: activity } as never) as any;
+  home.data = data;
+  assert.deepEqual(new Set(home.events.map((event: { path: string }) => event.path)), new Set(visiblePaths), "historical event display uses the same filter even while English Diary is disabled");
+  assert(home.records().every((record: { path: string }) => !derivedPaths.includes(record.path)), "newest generated files cannot enter the recent list");
+  home.selectedDate = "2026-10-06";
+  assert(home.records().some((record: { path: string }) => record.path === originalPath), "day-selected recent notes keep the original journal");
+  assert.deepEqual(events, storedEvents, "filtering does not delete or rewrite stored history");
+
+  const search = new HomeSearchService(app as never, visible);
+  const result = await search.search("每日", new AbortController().signal);
+  assert.deepEqual(result.matches.map((match) => match.path), [originalPath], "home search keeps the journal but excludes generated resources");
+  assert(readPaths.every((path) => !derivedPaths.includes(path)), "excluded resources are filtered before body reads");
+  assert.equal(await search.excerpt(derivedPaths[0]), "");
+  assert.equal(isHomeNotePath("EchoInk/英文日记/a.md"), false);
+  assert.equal(isHomeNotePath("EchoInk/表达库/日常/a.md"), false);
+  assert.equal(isHomeNotePath(".echoink/english-diary/expressions/a.md"), false);
+  assert.equal(isHomeNotePath("EchoInk/英文日记备份/a.md"), true);
+  assert.equal(isHomeNotePath("EchoInk/说明.md"), true);
+  assert.equal(isHomeNotePath("资料\\英文稿\\a.md", settings.englishDiary), false, "directory boundaries normalize Windows separators");
+}
+
+async function assertHomeRecentNotesPreserveFullData(): Promise<void> {
+  const files = [
+    ["finance/latest.md", 100, 100], ["health/latest.md", 99, 99], ["wiki-backup/latest.md", 98, 98],
+    ["wiki/knowledge.md", 10, 1], ["raw/material.md", 7, 25], ["outputs/result.md", 9, 1],
+    ["Notes/Daily/archive/journal.md", 8, 1], ["legacy-journal/old.md", 97, 97]
+  ].map(([path, mtime, ctime]) => {
+    const file = new TFile(String(path));
+    Object.assign(file, { basename: String(path).split("/").at(-1)!.replace(/\.md$/, ""), stat: { mtime, ctime, size: 50 } });
+    return file;
+  });
+  const selectedDate = "2026-09-06";
+  const events = ["finance/latest.md", "raw/material.md", "wiki/knowledge.md", "raw/material.md", "health/latest.md"]
+    .map((path, index) => ({ path, date: selectedDate, kind: "modified" as const, at: index }));
+  events.push({ path: "finance/latest.md", date: "2026-09-07", kind: "modified", at: 6 });
+  const app = {
+    internalPlugins: { plugins: { "daily-notes": { instance: { options: { folder: "Notes/Daily" } } } } },
+    vault: { getAllLoadedFiles: () => files, getMarkdownFiles: () => files,
+      cachedRead: async (file: TFile) => file.path === "finance/latest.md" ? "searchable finance marker" : "ordinary note" },
+    metadataCache: { getFileCache: () => null }
+  };
+  const plugin = { app, settings: { settingsLanguage: "zh-CN", journalDirectory: "legacy-journal" },
+    homeActivity: { snapshot: () => ({ events }) } };
+  const service = new HomeWorkbenchDataService(app as never, () => plugin.settings.journalDirectory, plugin.homeActivity as never);
+  assert.equal(service.getJournalDirectory(), "Notes/Daily", "native journal configuration wins over the old EchoInk folder");
+  const data = await service.build(new Date(2026, 8, 6));
+  const view = new EchoInkHomeView(new WorkspaceLeaf(), plugin as never);
+  const mutable = view as unknown as { data: typeof data; selectedDate: string | null; records(): HomeVaultFileRecord[] };
+  mutable.data = data;
+  const originalPaths = data.records.map((record) => record.path);
+  const activityBefore = JSON.stringify(data.activity);
+  const recent = mutable.records();
+  assert.deepEqual(recent.map((record) => record.path), ["raw/material.md", "wiki/knowledge.md", "outputs/result.md", "Notes/Daily/archive/journal.md"]);
+  assert.deepEqual(recent.slice(0, 3).map((record) => record.path), ["raw/material.md", "wiki/knowledge.md", "outputs/result.md"],
+    "new finance/health notes cannot displace eligible notes; creation/modification ordering stays intact");
+  mutable.selectedDate = selectedDate;
+  assert.deepEqual(mutable.records().map((record) => record.path), ["raw/material.md", "wiki/knowledge.md"],
+    "date mode applies the same scope while preserving activity order and path deduplication");
+  mutable.selectedDate = "2026-09-07";
+  assert.deepEqual(mutable.records(), [], "a day containing only finance notes has no recent-note candidates for the existing empty state");
+  assert.deepEqual(data.records.map((record) => record.path), originalPaths, "the full dataset is not filtered or reordered");
+  assert.equal(data.records.length, files.length);
+  assert.equal(JSON.stringify(data.activity), activityBefore, "activity counts retain all recorded events");
+  assert.equal(data.activity.reduce((sum, day) => sum + day.count, 0), events.length);
+  const result = await new HomeSearchService(app as never).search("finance marker", new AbortController().signal);
+  assert.equal(result.matches[0]?.path, "finance/latest.md", "full-Vault search still finds excluded recent-note directories");
 }
 
 async function assertHomeCaptureAndPendingSearch(): Promise<void> {

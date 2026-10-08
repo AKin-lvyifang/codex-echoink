@@ -1,4 +1,8 @@
-import { closeComposerParameterMenu, openModelMenu, type ModelMenuState } from "../ui/codex-view/menus";
+import { closeComposerParameterMenu, openModelMenu, renderKnowledgeCommandMatches, renderSkillMatches, type ModelMenuState } from "../ui/codex-view/menus";
+import { getBuiltinSkillDefinition } from "../harness/resources/builtin-skills";
+import { resourcePresentation } from "../resources/resource-presentation";
+import { filterSkillResources } from "../resources/registry";
+import type { EchoInkResource } from "../resources/types";
 import { installComposerMenuDomHelpers } from "./composer-menu-dom-host";
 
 const assert = (condition: unknown, message: string) => { if (!condition) throw new Error(message); };
@@ -10,7 +14,7 @@ export async function runComposerMenuDom(): Promise<void> {
   const errors: string[] = [];
   window.addEventListener("error", (event) => errors.push(event.message));
   const run = async (name: string, owner: Document) => {
-    try { await assertComposerMenu(owner); results.push(`PASS ${name}`); }
+    try { await assertComposerMenu(owner); assertSkillPresentation(owner); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${String(error)}`); }
     finally { closeComposerParameterMenu(); }
   };
@@ -27,6 +31,7 @@ export async function runComposerMenuDom(): Promise<void> {
   report.dataset.result = results.some((result) => result.startsWith("FAIL")) || errors.length ? "failed" : "passed";
   report.textContent = [...results, ...errors.map((error) => `ERROR ${error}`),
     "Checks per document: open; internal pointer; hover/submenu; outside cancellation; model/reasoning selection; ArrowLeft/Escape; disabled; trigger toggle; detached-anchor cleanup.",
+    "Skill checks: bilingual slash search and labels; original selection identity; stable Obsidian names; unchanged custom resources and edited descriptions.",
     "Boundary: real browser DOM and production menu, synthetic input; no Obsidian, Provider or Vault."
   ].join("\n");
 }
@@ -99,6 +104,49 @@ async function assertComposerMenu(owner: Document): Promise<void> {
   assert(!root() && !submenu(), "detaching anchor left the menu mounted");
   host.prepend(anchor); pointer(outside);
   assert(selected.length === 2, "cleanup left a selection handler active");
+}
+
+function assertSkillPresentation(owner: Document): void {
+  const host = owner.querySelector<HTMLElement>("#fixture")!;
+  const input = owner.createElement("textarea");
+  const menu = owner.createElement("div");
+  // Obsidian supplies empty(); keep the rest of the DOM and events native.
+  menu.empty = () => menu.replaceChildren();
+  menu.id = "localized-skill-menu";
+  host.append(input, menu);
+  const definition = getBuiltinSkillDefinition("knowledge-review")!;
+  const skill: EchoInkResource = {
+    id: "echoink-local:skill:knowledge-review", kind: "skill", source: "echoink-local",
+    name: definition.id, description: definition.description, enabled: true,
+    bridgeMode: "prompt-only", contentPath: ".echoink/resources/skills/knowledge-review/SKILL.md",
+    metadata: { resourceId: definition.id }
+  };
+  const original = JSON.stringify(skill);
+  const selected: EchoInkResource[] = [];
+  const callbacks = { onSelectSkill: (value: EchoInkResource) => selected.push(value), onFillCommand: () => {} };
+  input.value = "/知识";
+  renderKnowledgeCommandMatches(menu, input, "知识复盘", { language: "zh-CN", skills: [skill], selectedSkill: null }, callbacks);
+  assert(menu.querySelector(".codex-command-text")?.textContent === "知识复盘", "Chinese slash query did not show the Chinese Skill name");
+  menu.querySelector<HTMLButtonElement>(".codex-command-skill")!.click();
+  assert(selected[0] === skill && selected[0].name === "knowledge-review", "localized selection changed the resource or runtime name");
+  input.value = "保留这段草稿";
+  renderKnowledgeCommandMatches(menu, input, "知识复盘", { language: "en", skills: [skill], selectedSkill: skill }, callbacks);
+  assert(menu.querySelector(".codex-command-text")?.textContent === "Knowledge Review", "English slash menu did not retain Chinese alias search");
+  assert(!/[\u4e00-\u9fff]/u.test(menu.querySelector(".codex-command-desc")?.textContent ?? ""), "English Skill description was not translated");
+  assert(input.value === "保留这段草稿", "changing Skill labels changed the draft");
+  renderSkillMatches(menu, "Knowledge Review", { language: "zh-CN", skills: [skill], selectedSkill: skill }, callbacks);
+  assert(menu.querySelector(".codex-skill-name")?.textContent === "知识复盘", "Chinese Skill menu did not retain English alias search");
+  assert(JSON.stringify(skill) === original, "presentation mutated the selected resource");
+  assert(filterSkillResources([skill], "knowledge-review")[0] === skill, "stable English id no longer matches search");
+  const obsidian = { ...skill, id: "echoink-local:skill:obsidian-markdown", name: "obsidian-markdown", metadata: { resourceId: "obsidian-markdown" } };
+  assert(resourcePresentation(obsidian, "zh-CN").name === "Obsidian Markdown", "Obsidian's original product name changed");
+  const custom = { ...skill, id: "manual:skill:knowledge-review", source: "manual" as const, name: "My Review" };
+  assert(resourcePresentation(custom, "zh-CN").name === "My Review", "same-id custom Skill was localized as built-in");
+  const mcp = { ...skill, kind: "mcp-server" as const, name: "knowledge-review" };
+  assert(resourcePresentation(mcp, "zh-CN").name === "knowledge-review", "same-name MCP resource was localized as a Skill");
+  const edited = { ...skill, description: "我的自定义复盘说明" };
+  assert(resourcePresentation(edited, "en").description === edited.description, "user-edited description was overwritten");
+  input.remove(); menu.remove();
 }
 
 void runComposerMenuDom().catch((error) => {

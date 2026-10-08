@@ -79,7 +79,6 @@ export interface KnowledgeBaseDashboardHeatmapDay {
   status: KnowledgeBaseDashboardCheckStatus;
 }
 
-export type KnowledgeBaseDashboardActivityLevel = "none" | "low" | "mid" | "high" | "bad";
 export type KnowledgeBaseDashboardCardKind = "raw" | "wiki" | "inbox" | "outputs";
 export type KnowledgeBaseDashboardLogTone = "green" | "blue" | "orange" | "purple" | "red" | "muted";
 
@@ -94,20 +93,6 @@ export interface KnowledgeBaseDashboardActivityDay {
   failures: number;
   total: number;
   status: KnowledgeBaseDashboardCheckStatus;
-}
-
-export interface KnowledgeBaseDashboardHeatmapCell {
-  startDate: string;
-  endDate: string;
-  count: number;
-  level: KnowledgeBaseDashboardActivityLevel;
-  status: KnowledgeBaseDashboardCheckStatus;
-}
-
-export interface KnowledgeBaseDashboardHeatmapRow {
-  id: "health" | "wiki" | "raw" | "maintenance";
-  label: string;
-  cells: KnowledgeBaseDashboardHeatmapCell[];
 }
 
 export interface KnowledgeBaseDashboardActivityLog {
@@ -174,9 +159,9 @@ export interface KnowledgeBaseDashboardSnapshot {
   health: KnowledgeBaseDashboardHealth;
   checkFreshness: KnowledgeBaseDashboardCheckFreshness;
   checkHeatmap: KnowledgeBaseDashboardHeatmapDay[];
+  checkActivity?: KnowledgeBaseDashboardHeatmapDay[];
   activity: {
     days: KnowledgeBaseDashboardActivityDay[];
-    heatmapRows: KnowledgeBaseDashboardHeatmapRow[];
     logs: KnowledgeBaseDashboardActivityLog[];
   };
   recommendations: {
@@ -344,9 +329,9 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     health,
     checkFreshness,
     checkHeatmap: buildCheckHeatmap(settings.healthHistory ?? [], generatedAt, maintenanceHistory),
+    checkActivity: Array.from(statusByCheckDate(settings.healthHistory ?? [], maintenanceHistory), ([date, status]) => ({ date, status })),
     activity: {
       days: activityDays,
-      heatmapRows: buildActivityHeatmapRows(activityDays),
       logs: buildActivityLogs({
         generatedAt,
         rawChangedCount,
@@ -596,47 +581,6 @@ function buildActivityDays(input: ActivityDaysInput): KnowledgeBaseDashboardActi
     day.total = day.raw + day.wiki + day.inbox + day.outputs + day.checks + (day.maintenance ?? 0);
   }
   return Array.from(byDate.values());
-}
-
-function buildActivityHeatmapRows(days: KnowledgeBaseDashboardActivityDay[]): KnowledgeBaseDashboardHeatmapRow[] {
-  return [
-    { id: "health", label: "知识健康度", cells: buildWeeklyCells(days, (day) => day.checks, true) },
-    { id: "wiki", label: "Wiki 变更", cells: buildWeeklyCells(days, (day) => day.wiki, false) },
-    { id: "raw", label: "Raw 变更", cells: buildWeeklyCells(days, (day) => day.raw, false) },
-    { id: "maintenance", label: "维护记录", cells: buildWeeklyCells(days, (day) => day.maintenance ?? 0, false) }
-  ];
-}
-
-function buildWeeklyCells(
-  days: KnowledgeBaseDashboardActivityDay[],
-  countForDay: (day: KnowledgeBaseDashboardActivityDay) => number,
-  includeStatus: boolean
-): KnowledgeBaseDashboardHeatmapCell[] {
-  const result: KnowledgeBaseDashboardHeatmapCell[] = [];
-  const cellCount = 52;
-  for (let index = 0; index < cellCount; index += 1) {
-    const start = Math.floor((index * days.length) / cellCount);
-    const end = Math.max(start + 1, Math.floor(((index + 1) * days.length) / cellCount));
-    const slice = days.slice(start, end);
-    const count = slice.reduce((sum, day) => sum + countForDay(day), 0);
-    const failed = includeStatus && slice.some((day) => day.failures > 0);
-    const success = includeStatus && slice.some((day) => day.checks > 0);
-    result.push({
-      startDate: slice[0]?.date ?? "",
-      endDate: slice.at(-1)?.date ?? "",
-      count,
-      level: failed ? "bad" : activityLevelForCount(count),
-      status: failed ? "failed" : success ? "success" : "none"
-    });
-  }
-  return result;
-}
-
-function activityLevelForCount(count: number): KnowledgeBaseDashboardActivityLevel {
-  if (count >= 6) return "high";
-  if (count >= 3) return "mid";
-  if (count >= 1) return "low";
-  return "none";
 }
 
 interface ActivityLogsInput {

@@ -159,7 +159,9 @@ export function poolDesktopStrings(source, markers = desktopBundleMarkers()) {
       || ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)
       || (ts.isElementAccessExpression(parent) && parent.argumentExpression === node)
       || isModulePath(node) || /^[A-Za-z0-9+/=]{800,}$/u.test(node.text)
-      || node.text.startsWith("data:image/")
+      // Inline SVG is compressible text. Raster/base64 image payloads remain
+      // literal; pooling them adds work without reducing their stored bytes.
+      || (node.text.startsWith("data:image/") && !node.text.startsWith("data:image/svg+xml,"))
       || markers.some(marker => node.text.includes(marker) || node.getText(file).includes(marker))
       || protectedRanges.some(([from, to]) => start >= from && node.end <= to)) return;
     candidates.push({ start, end: node.end, value: node.text });

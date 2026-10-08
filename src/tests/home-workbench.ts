@@ -17,6 +17,7 @@ import {
   homeContributionLevel,
   importedTemplatePath,
   isKnowledgeBaseReviewPath,
+  isHomeRecentNotePath,
   journalDateFromPath,
   journalPathForDate,
   mergeHomeActivityDays,
@@ -65,6 +66,7 @@ import { EchoInkHomeView } from "../home/home-view";
 export async function runHomeWorkbenchTests(): Promise<void> {
   assertFixedEntryAndTemplateContracts();
   assertActivityAndJournalCalendar();
+  assertRecentNoteDirectoryScope();
   assertSmoothUiContributionGrid();
   assertImageExtraction();
   assertTemplateImportAndPlaceholderPreservation();
@@ -75,6 +77,22 @@ export async function runHomeWorkbenchTests(): Promise<void> {
   await assertHomeConversationLaunchFlow();
   await assertCustomJournalDirectoryBehavior();
   await assertNativeGraphBehavior();
+}
+
+function assertRecentNoteDirectoryScope(): void {
+  const journalDirectory = "Notes/Daily";
+  for (const path of ["wiki/a.md", "Wiki/nested/b.md", "知识库（wiki）/a.md", "raw/source.md",
+    "原始资料（raw）/nested/source.md", "outputs/result.md", "输出（outputs）/nested/result.md",
+    "Notes/Daily/today.md", "Notes/Daily/archive/older.md", "Notes\\Daily\\nested\\note.md"]) {
+    assert.equal(isHomeRecentNotePath(path, journalDirectory), true, path);
+  }
+  for (const path of ["finance/a.md", "财务/账目.md", "health/a.md", "projects/a.md", "inbox/a.md", "other/a.md",
+    "wiki-backup/a.md", "raw-materials/a.md", "outputs-old/a.md", "知识库（wiki）备份/a.md",
+    "Notes/Daily-old/a.md", "Notes/Daily.md", "journal/a.md", "日记（journal）/a.md"]) {
+    assert.equal(isHomeRecentNotePath(path, journalDirectory), false, path);
+  }
+  assert.equal(isHomeRecentNotePath("日记（journal）/2026-09/note.md", "日记（journal）"), true);
+  assert.equal(isHomeRecentNotePath("journal/note.md", "日记（journal）"), false, "journal follows the actual selected directory");
 }
 
 async function assertHomeConversationLaunchFlow(): Promise<void> {

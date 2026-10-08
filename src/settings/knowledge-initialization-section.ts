@@ -543,7 +543,7 @@ export class KnowledgeInitializationSection {
         tabindex: "0", "data-echoink-focus-key": `knowledge:init-folder:${role}`
       } });
       setIcon(chip.createSpan(), "folders"); chip.createSpan({ text: name });
-      attachSettingsTooltip(chip, description);
+      attachSettingsTooltip(chip, description, chip, { interactive: false });
     };
     for (const directory of KNOWLEDGE_INIT_DIRECTORIES) {
       addChip(directory.labelEn, this.zh ? directory.descriptionZh : directory.descriptionEn, directory.role);
@@ -689,7 +689,7 @@ export class KnowledgeInitializationSection {
       setIcon(toggle.createSpan({ cls: "directory-icon", attr: { "aria-hidden": "true" } }), "folders");
       const name = toggle.createSpan({ cls: "directory-name", text: zh ? directory.labelZh : directory.labelEn });
       name.createEl("small", { text: descriptions[index] });
-      attachSettingsTooltip(toggle, description);
+      attachSettingsTooltip(toggle, description, toggle, { interactive: false });
       const count = row.createSpan({ cls: "directory-count", text: String(assigned.length), attr: {
         "aria-label": zh ? `${directory.labelEn} 已分配 ${assigned.length} 篇` : `${assigned.length} notes assigned to ${directory.labelEn}`
       } });

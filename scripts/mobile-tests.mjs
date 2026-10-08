@@ -10,7 +10,7 @@ const build = await esbuild.build(mobileBuildOptions("tests/mobile/entry.ts"));
 const module = { exports: {} };
 const globals = { module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, setTimeout, clearTimeout, structuredClone, crypto: webcrypto, console, require: id => { if (id !== "obsidian") throw new Error(`Node import on mobile: ${id}`); return { setIcon() {} }; } };
 vm.runInNewContext(build.outputFiles[0].text, globals);
-const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel } = module.exports;
+const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, MobileWorkspace } = module.exports;
 const memoryArgs = { kind: "view", title: "解释偏好", content: "解释技术问题时先说结论。", recallWhen: "解释技术问题", basis: "explicit" };
 let passed = 0;
 async function test(name, run) { await run(); passed++; console.log(`OK ${name}`); }
@@ -118,7 +118,71 @@ await test("queued snapshots preserve the latest draft and independent settings"
   assert.equal(state.store.state.memories.length, 0);
 });
 
-await test("production mobile bundle loads and initializes without process, Buffer or Node", async () => {
+await test("public workspace navigation preserves panes, reuses readers and recovers closed pairs", async () => {
+  const rootSplit = {}; const leaves = []; const splits = []; let recent;
+  const leaf = (type, path, pinned = false) => {
+    const state = { type, state: { file: path }, pinned };
+    const item = { parent: {}, view: { containerEl: { clientWidth: 1024 }, getViewType: () => state.type }, getViewState: () => state, getRoot: () => rootSplit,
+      async setViewState(next) { item.sets++; Object.assign(state, next); }, sets: 0,
+      async openFile(file) { state.type = "markdown"; state.state = { file: file.path }; } };
+    leaves.push(item); return item;
+  };
+  const workspace = { rootSplit, containerEl: { clientWidth: 1024, querySelector: () => null },
+    iterateAllLeaves: callback => leaves.forEach(callback), getLeavesOfType: type => leaves.filter(l => l.view.getViewType() === type),
+    getMostRecentLeaf: () => recent, getLeaf: type => { assert.equal(type, "tab"); return leaf("empty"); },
+    createLeafBySplit: (source, direction, before) => { splits.push({ source, direction, before }); return leaf("empty"); },
+    async revealLeaf(item) { recent = item; }
+  };
+  const original = leaf("markdown", "source.md"); recent = original;
+  const navigation = new MobileWorkspace(workspace, true);
+  await Promise.all([navigation.open(), navigation.open(), navigation.open()]);
+  assert.equal(leaves.length, 2); assert.equal(splits[0].source, original); assert.equal(splits[0].direction, "vertical");
+  const chat = recent; assert.equal(chat.sets, 1); assert.equal(original.getViewState().state.file, "source.md");
+  await navigation.openNote({ path: "source.md" }, chat); assert.equal(leaves.length, 2);
+  await navigation.openNote({ path: "other.md" }, chat); assert.equal(leaves.length, 2); assert.equal(original.getViewState().state.file, "other.md");
+  original.getViewState().pinned = true;
+  await navigation.openNote({ path: "third.md" }, chat); assert.equal(leaves.length, 3); assert.equal(original.getViewState().state.file, "other.md");
+  const reader = recent; assert.equal(splits.at(-1).before, true);
+  reader.getViewState().state.file = "unrelated.md";
+  await navigation.openNote({ path: "fourth.md" }, chat); assert.equal(reader.getViewState().state.file, "unrelated.md");
+  const fourth = recent; leaves.splice(leaves.indexOf(fourth), 1);
+  await Promise.all([navigation.openNote({ path: "fifth.md" }, chat), navigation.openNote({ path: "fifth.md" }, chat)]);
+  assert.equal(leaves.length, 4); assert.equal(splits.length, 4);
+  leaves.splice(leaves.indexOf(chat), 1); recent = original;
+  await navigation.open(); assert.equal(recent.view.getViewType(), "echoink-mobile"); assert.equal(original.getViewState().pinned, true);
+  workspace.containerEl.clientWidth = 393;
+  recent.view.containerEl.clientWidth = 393;
+  const before = splits.length; await navigation.openNote({ path: "narrow.md" }, recent); assert.equal(splits.length, before);
+  leaves.splice(leaves.findIndex(l => l.view.getViewType() === "echoink-mobile"), 1);
+  recent.view.containerEl.clientWidth = 393;
+  await navigation.open(); assert.equal(splits.length, before);
+  workspace.containerEl.clientWidth = 1024;
+  const phone = new MobileWorkspace(workspace, false); await phone.openNote({ path: "phone.md" }, recent); assert.equal(splits.length, before);
+  // A wide root cannot justify splitting an already narrow view.
+  recent.view.containerEl.clientWidth = 512;
+  await navigation.openNote({ path: "already-split.md" }, recent); assert.equal(splits.length, before);
+  const currentChat = leaves.find(l => l.view.getViewType() === "echoink-mobile");
+  const sameTab = leaf("markdown", "same-tab.md", true); sameTab.parent = currentChat.parent;
+  currentChat.view.containerEl.clientWidth = 1024;
+  const sameGroupNavigation = new MobileWorkspace(workspace, true);
+  await sameGroupNavigation.openNote({ path: "same-tab.md" }, currentChat);
+  assert.equal(splits.length, before + 1); assert.notEqual(recent.parent, currentChat.parent);
+  assert.equal(sameTab.getViewState().pinned, true);
+  await sameGroupNavigation.openNote({ path: "same-tab.md" }, currentChat); assert.equal(splits.length, before + 1);
+  const otherTab = leaf("markdown", "narrow-tab.md"); otherTab.parent = currentChat.parent;
+  currentChat.view.containerEl.clientWidth = 512;
+  await navigation.openNote({ path: "narrow-tab.md" }, currentChat); assert.equal(recent, otherTab); assert.equal(splits.length, before + 1);
+  // Reopening from a same-group source after widening retains the same chat UI.
+  otherTab.view.containerEl.clientWidth = 1024;
+  const reopen = new MobileWorkspace(workspace, true); const chatSets = currentChat.sets;
+  await Promise.all([reopen.open(), reopen.open()]);
+  assert.equal(recent, currentChat); assert.equal(currentChat.sets, chatSets);
+  assert.equal(splits.length, before + 2); assert.equal(splits.at(-1).before, true);
+  const duplicate = leaves.find(item => item.parent !== currentChat.parent && item.getViewState().state.file === "narrow-tab.md");
+  assert.ok(duplicate); recent = otherTab; await reopen.open(); assert.equal(splits.length, before + 2);
+});
+
+for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, { isMobileApp: true, isMobile: false, isTablet: true }]) await test(`production mobile bundle initializes without Node: ${platform.isTablet ? "tablet desktop UI" : "phone"}`, async () => {
   const code = await fs.readFile("dist/main.js", "utf8"); const host = createHost(); const imported = []; const commands = [];
   class Plugin {
     constructor() { this.app = host.app; this.manifest = { id: "codex-echoink", dir: "plugin" }; }
@@ -131,7 +195,7 @@ await test("production mobile bundle loads and initializes without process, Buff
   class Component {}
   const exports = { exports: {} };
   const context = vm.createContext({ module: exports, exports: exports.exports, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, console, setTimeout, clearTimeout,
-    require(id) { imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: { isMobile: true }, Plugin, ItemView: class {}, Component, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
+    require(id) { imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, Component, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
   });
   vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports; const plugin = new MobilePlugin(); await plugin.onload();
   assert.ok(commands.includes("open-echoink-mobile")); assert.ok(plugin.store); assert.equal(plugin.settings.apiProviders.length, 0);

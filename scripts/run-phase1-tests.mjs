@@ -64,6 +64,9 @@ await esbuild.build({
   platform: "node",
   target: "node22",
   format: "esm",
+  // Preserve Node's CommonJS bridge for bundled CJS dependencies such as
+  // read-excel-file/unzipper; the test entry itself still uses top-level await.
+  banner: { js: 'import { createRequire as createConversationTestRequire } from "node:module"; const require = createConversationTestRequire(import.meta.url);' },
   external: [
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",

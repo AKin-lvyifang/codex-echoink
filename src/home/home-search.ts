@@ -1,16 +1,17 @@
 import { type App, TFile } from "obsidian";
+import { isHomeNotePath, type HomeNoteVisibility } from "./home-note-visibility";
 
 export interface HomeSearchMatch { path: string; title: string; mtime: number; snippet: string }
 /** Metadata first, then on-demand content; new input cancels old work between reads. */
 export class HomeSearchService {
   private readonly cache = new Map<string, { mtime: number; text: string }>();
   private readonly contentCache = new Map<string, { mtime: number; text: string }>();
-  constructor(private readonly app: App) {}
+  constructor(private readonly app: App, private readonly includeNotePath: HomeNoteVisibility = isHomeNotePath) {}
   async search(query: string, signal: AbortSignal): Promise<{ matches: HomeSearchMatch[]; count: number; failed: number }> {
     const terms = query.toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean);
     const matches: HomeSearchMatch[] = [];
     let failed = 0;
-    const files = this.app.vault.getMarkdownFiles();
+    const files = this.app.vault.getMarkdownFiles().filter((file) => this.includeNotePath(file.path));
     const paths = new Set(files.map((f) => f.path));
     for (const p of this.cache.keys()) if (!paths.has(p)) { this.cache.delete(p); this.contentCache.delete(p); }
     for (let i = 0; i < files.length; i++) {
@@ -64,6 +65,7 @@ export class HomeSearchService {
     return { matches: visible, count: matches.length, failed };
   }
   async excerpt(path: string): Promise<string> {
+    if (!this.includeNotePath(path)) return "";
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile) || file.stat.size > 262_144) return "";
     const text = await this.app.vault.cachedRead(file);

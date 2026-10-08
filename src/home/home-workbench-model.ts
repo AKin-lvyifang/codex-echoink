@@ -2,6 +2,7 @@ import type { SettingsLanguage } from "../settings/settings";
 import { moment } from "obsidian";
 import { DEFAULT_JOURNAL_DATE_FORMAT, QUICK_JOURNAL_TEMPLATE, renderNativeJournalTemplate } from "./native-journal";
 import { homeContributionMonthLabel, homeCopy } from "./home-i18n";
+import { knowledgeRootRole } from "../knowledge-base/root-paths";
 import {
   DEFAULT_JOURNAL_DIRECTORY,
   normalizeJournalDirectory
@@ -18,6 +19,14 @@ export interface HomeVaultFileRecord {
   ctime?: number;
   firstImagePath?: string;
   firstImageUrl?: string;
+}
+
+/** Recent notes use core knowledge roots and the actual configured journal folder. */
+export function isHomeRecentNotePath(path: string, journalDirectory: string): boolean {
+  const relativePath = path.replace(/\\/gu, "/");
+  const role = knowledgeRootRole(relativePath);
+  return role === "wiki" || role === "raw" || role === "outputs"
+    || relativePath.startsWith(`${normalizeJournalDirectory(journalDirectory)}/`);
 }
 
 export interface HomeActivityDay {

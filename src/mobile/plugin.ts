@@ -1,14 +1,16 @@
-import { ItemView, MarkdownRenderer, Component, Notice, Plugin, requestUrl, type TFile, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, type TFile, type WorkspaceLeaf } from "obsidian";
 import { MobileStore } from "./store";
 import { loadMobileSettings, type MobileSettings } from "./settings";
 import { MobileRuntime } from "./runtime";
 import { MobileUI } from "../ui/mobile/mobile-ui";
+import { MobileWorkspace, MOBILE_VIEW } from "./workspace";
 
-export const MOBILE_VIEW = "echoink-mobile";
+export { MOBILE_VIEW } from "./workspace";
 export default class EchoInkMobilePlugin extends Plugin {
   store!: MobileStore;
   settings!: MobileSettings;
   runtime!: MobileRuntime;
+  navigation!: MobileWorkspace;
   private settingsWrites: Promise<void> = Promise.resolve();
   async onload(): Promise<void> {
     try {
@@ -16,6 +18,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.store = new MobileStore(this.app.vault.adapter, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       await this.store.load();
       this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl);
+      this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
       this.registerView(MOBILE_VIEW, leaf => new EchoInkMobileView(leaf, this));
       this.addRibbonIcon("bot", "打开 EchoInk", () => { void this.open().catch(error => new Notice(String(error))); });
       this.addCommand({ id: "open-echoink-mobile", name: "打开移动对话", callback: () => { void this.open().catch(error => new Notice(String(error))); } });
@@ -33,9 +36,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     return write;
   }
   async open(): Promise<void> {
-    const leaf = this.app.workspace.getLeavesOfType(MOBILE_VIEW)[0] ?? this.app.workspace.getLeaf(false);
-    await leaf.setViewState({ type: MOBILE_VIEW, active: true });
-    await this.app.workspace.revealLeaf(leaf);
+    await this.navigation.open();
   }
   onunload(): void { this.runtime?.stop(); }
 }
@@ -51,12 +52,13 @@ class EchoInkMobileView extends ItemView {
     this.addChild(this.markdown);
     this.ui = new MobileUI(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime,
+      isTablet: Platform.isTablet,
       settings: () => this.plugin.settings,
       saveSettings: () => this.plugin.saveSettings(),
       openNote: async path => {
         const file = this.app.vault.getAbstractFileByPath(path);
         if (!file || !("extension" in file)) throw new Error("笔记不存在。");
-        await this.app.workspace.getLeaf("tab").openFile(file as TFile);
+        await this.plugin.navigation.openNote(file as TFile, this.leaf);
       },
       beginRender: () => { this.removeChild(this.markdown); this.markdown = new Component(); this.addChild(this.markdown); },
       renderMarkdown: (text, element) => { void MarkdownRenderer.render(this.app, text, element, this.plugin.store.session.notePath, this.markdown); }

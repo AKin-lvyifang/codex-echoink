@@ -20,7 +20,7 @@ import {
   type Model,
   type ModelThinkingLevel
 } from "@earendil-works/pi-ai";
-import { safeProviderFailureCode } from "../pi/provider-failure";
+import { assistantProviderFailureText, type AssistantProviderFailure, safeProviderFailureCode } from "../pi/provider-failure";
 import {
   routeKnowledgeConversationCommand,
   type KnowledgeConversationCommand
@@ -148,7 +148,7 @@ import { stableHashedIdentity as stableId } from "../../core/mapping";
 import {
   isEchoInkReasoningEffort,
   isEchoInkPiReasoningEffortSupported,
-  resolveEchoInkPiReasoningCapabilities
+  resolveEchoInkPiModelReasoningCapabilities
 } from "../../settings/pi-model-catalog";
 import type {
   DreamPublicExperienceInput,
@@ -5128,11 +5128,7 @@ function validatedPiThinkingLevel(
       "本轮没有合法的冻结思考强度，已在 Provider 请求前停止。"
     );
   }
-  const capabilities = resolveEchoInkPiReasoningCapabilities(
-    model.provider,
-    model.id,
-    model.reasoning
-  );
+  const capabilities = resolveEchoInkPiModelReasoningCapabilities(model);
   if (!isEchoInkPiReasoningEffortSupported(capabilities, reasoning)) {
     throw new PiNativeConversationRuntimeError(
       "reasoning_level_invalid",
@@ -5779,6 +5775,8 @@ function safeProductRunErrorCode(
     }
   }
   if (promptError) return knowledgeErrorDetail(promptError);
+  const providerAssistant: AssistantProviderFailure | undefined = assistant;
+  if (providerAssistant?.echoInkProviderFailure) return assistantProviderFailureText(providerAssistant);
   if (assistant?.errorMessage) return knowledgeErrorDetail(assistant.errorMessage);
   const providerFailure = safeProviderFailureCode(assistant?.errorMessage);
   if (providerFailure) return providerFailure;

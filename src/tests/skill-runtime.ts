@@ -14,7 +14,7 @@ import {
   SkillRuntimeCoordinator
 } from "../harness/resources/skill-runtime";
 import { loadVaultSkill } from "../harness/resources/skill-loader";
-import { EchoInkResourceCatalogService } from "../plugin/resource-catalog-service";
+import { EchoInkResourceCatalogService, requireAvailableEchoInkSkillResource } from "../plugin/resource-catalog-service";
 import { defaultResourceSettings } from "../resources/registry";
 
 export async function runSkillRuntimeScenarios(): Promise<void> {
@@ -36,8 +36,8 @@ export async function runSkillRuntimeScenarios(): Promise<void> {
       assert.equal(loaded.frontmatter.id, definition.id);
       assert.equal(loaded.frontmatter.permissions.length, 0);
       assert.match(loaded.instruction, new RegExp(definition.title, "u"));
-      assert.match(loaded.instruction, /## 用途与触发/u);
-      assert.match(loaded.instruction, /## 边界/u);
+      assert.equal(loaded.instruction, `# ${definition.title}\n\n${definition.body}`.trim(),
+        "installed Skills retain their complete current guidance");
     }
     const knowledgeReview = BUILTIN_SKILLS.find(
       (definition) => definition.id === "knowledge-review"
@@ -504,6 +504,28 @@ async function assertBuiltinSkillCatalogDegradesPerEntry(): Promise<void> {
     };
     const catalog = await new EchoInkResourceCatalogService(plugin as never)
       .buildRuntimeCatalog();
+    const finance = requireAvailableEchoInkSkillResource(catalog, "finance-bill-import");
+    assert.ok(finance.contentPath?.endsWith("finance-bill-import/SKILL.md"));
+    await coordinator.resolveById("finance-bill-import");
+    assert.match((await coordinator.inspectBuiltinSkill("finance-bill-import")).content, /五项语义属性/u);
+    const analysis = requireAvailableEchoInkSkillResource(catalog, "finance-analysis");
+    assert.ok(analysis.contentPath?.endsWith("finance-analysis/SKILL.md"));
+    await coordinator.resolveById("finance-analysis");
+    const analysisContent = (await coordinator.inspectBuiltinSkill("finance-analysis")).content;
+    const analysisDefinition = getBuiltinSkillDefinition("finance-analysis");
+    assert.ok(analysisDefinition);
+    assert.equal(analysisContent, renderBuiltinSkill(analysisDefinition),
+      "the runtime reads the current built-in analysis guidance");
+    const editedAnalysis = `${analysisContent}\n\n## 我的消费安排\n优先讨论可以执行的消费调整。\n`;
+    const savedAnalysis = await coordinator.saveBuiltinSkillContent("finance-analysis", editedAnalysis);
+    assert.equal(savedAnalysis.userModified, true, "finance analysis is editable through the existing Skill runtime");
+    assert.equal((await coordinator.inspectBuiltinSkill("finance-analysis")).content, editedAnalysis);
+    resources.catalog = catalog.map((resource) => resource.id === analysis.id ? { ...resource, enabled: false } : resource);
+    const disabledAnalysisCatalog = await new EchoInkResourceCatalogService(plugin as never).buildRuntimeCatalog();
+    assert.throws(() => requireAvailableEchoInkSkillResource(disabledAnalysisCatalog, "finance-analysis"), /已停用/u);
+    resources.catalog = catalog.map((resource) => resource.id === finance.id ? { ...resource, enabled: false } : resource);
+    const disabledCatalog = await new EchoInkResourceCatalogService(plugin as never).buildRuntimeCatalog();
+    assert.throws(() => requireAvailableEchoInkSkillResource(disabledCatalog, "finance-bill-import"), /已停用/u);
     assert.equal(
       catalog.filter((resource) => resource.kind === "skill").length,
       BUILTIN_SKILLS.length,

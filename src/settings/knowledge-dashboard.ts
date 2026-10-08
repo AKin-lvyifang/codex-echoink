@@ -1,4 +1,6 @@
-import { setIcon } from "obsidian";
+import { setIcon, type App } from "obsidian";
+import { renderActivityHeatmap } from "./activity-heatmap";
+import { disposeOriginControls } from "./origin-controls";
 import {
   knowledgeDashboardHealthReasonText,
   knowledgeRunStatusLabel,
@@ -10,13 +12,15 @@ import {
 export function renderSettingsKnowledgeDashboard(
   container: HTMLElement,
   state: KnowledgeDashboardRenderState,
-  actions: KnowledgeDashboardActions & { onOpenHistory: () => void; onOpenRaw: () => void }
+  actions: KnowledgeDashboardActions & { onOpenHistory: () => void; onOpenRaw: () => void },
+  app?: Pick<App, "keymap" | "scope">
 ): void {
   const zh = state.language !== "en";
   const t = (cn: string, en: string) => zh ? cn : en;
   const time = (at: number) => at ? new Date(at).toLocaleString(zh ? "zh-CN" : "en-US", {
     month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
   }) : t("暂无记录", "No record");
+  disposeOriginControls(container);
   container.empty();
   container.addClass("settings-knowledge-dashboard", "dashboard-section");
   container.setAttr("aria-busy", String(state.loading));
@@ -135,40 +139,18 @@ export function renderSettingsKnowledgeDashboard(
   const history = container.createEl("section", { cls: "history-panel" });
   const historyHeading = history.createDiv({ cls: "panel-heading" });
   const historyTitle = historyHeading.createEl("h3");
-  setIcon(historyTitle.createSpan(), "calendar-days"); historyTitle.createSpan({ text: t("全年体检记录", "Checks throughout the year") });
-  const year = new Date(snapshot.generatedAt).getFullYear();
-  historyHeading.createSpan({ cls: "history-period", text: t(`${year} 年 · ${snapshot.checkHeatmap.filter((day) => day.status !== "none").length} 天有体检记录`, `${year} · ${snapshot.checkHeatmap.filter((day) => day.status !== "none").length} days with checks`) });
-  const historyBody = history.createDiv();
-  const collapse = button(historyHeading, t("收起", "Collapse"), "chevron-up", () => {
-    historyBody.hidden = !historyBody.hidden;
-    collapse.setAttr("aria-expanded", String(!historyBody.hidden));
-    collapse.setAttr("aria-label", historyBody.hidden ? t("展开", "Expand") : t("收起", "Collapse"));
-    collapse.lastElementChild?.setText(historyBody.hidden ? t("展开", "Expand") : t("收起", "Collapse"));
-    setIcon(collapse.firstElementChild as HTMLElement, historyBody.hidden ? "chevron-down" : "chevron-up");
+  setIcon(historyTitle.createSpan(), "calendar-days"); historyTitle.createSpan({ text: t("体检记录", "Check history") });
+  const labels = { none: t("无记录", "No record"), success: t("成功", "Successful"), failed: t("失败", "Failed") };
+  const footer = renderActivityHeatmap(history, historyHeading, container, {
+    days: (snapshot.checkActivity ?? snapshot.checkHeatmap).map((day) => ({ date: day.date, level: day.status, label: `${day.date} · ${labels[day.status]}` })),
+    legend: Object.entries(labels).map(([level, label]) => ({ level, label })),
+    title: t("每日体检状态", "Daily check results"), zh, stateKey: "knowledgeHeatmap", app,
+    emptyLevel: "none", label: (date) => `${date} · ${labels.none}`,
+    summary: (days) => {
+      const count = days.filter((day) => day.level === "success" || day.level === "failed").length;
+      return t(`${count} 天有体检记录`, `${count} days with checks`);
+    }
   });
-  collapse.setAttr("aria-expanded", "true");
-  const first = new Date(year, 0, 1, 12);
-  const grid = historyBody.createDiv({ cls: "heatmap-scroll" }).createDiv({ cls: "heatmap" });
-  const week = (date: Date) => Math.floor((Math.round((date.getTime() - first.getTime()) / 86400000) + first.getDay()) / 7);
-  for (let month = 0; month < 12; month++) {
-    const date = new Date(year, month, 1, 12);
-    const label = grid.createSpan({ cls: "heatmap-month", text: date.toLocaleString(zh ? "zh-CN" : "en-US", { month: "short" }) });
-    label.style.gridColumn = String(week(date) + 2);
-  }
-  for (const [weekday, cn, en] of [[1, "一", "Mon"], [3, "三", "Wed"], [5, "五", "Fri"]] as const) {
-    const label = grid.createSpan({ cls: "heatmap-weekday", text: t(cn, en) });
-    label.style.gridRow = String(weekday + 2);
-  }
-  for (const day of snapshot.checkHeatmap) {
-    const date = new Date(`${day.date}T12:00:00`);
-    const label = `${day.date} · ${day.status === "success" ? t("成功", "Successful") : day.status === "failed" ? t("失败", "Failed") : t("无记录", "No record")}`;
-    const cell = grid.createSpan({ cls: `heatmap-cell is-${day.status}`, attr: { title: label, "aria-label": label } });
-    cell.style.gridColumn = String(week(date) + 2); cell.style.gridRow = String(date.getDay() + 2);
-  }
-  const footer = historyBody.createDiv({ cls: "heatmap-footer" });
-  footer.createSpan({ text: t("已完成的体检会显示在对应日期。", "Completed checks appear on their dates.") });
-  const legend = footer.createDiv({ cls: "heatmap-legend" });
-  for (const [cls, text] of [["", t("无记录", "No record")], ["success", t("成功", "Successful")], ["failure", t("失败", "Failed")]]) { const item = legend.createSpan(); item.createEl("b", { cls }); item.createSpan({ text }); }
   button(footer, t("查看维护日志", "Maintenance history"), "arrow-up-right", actions.onOpenHistory);
 }
 

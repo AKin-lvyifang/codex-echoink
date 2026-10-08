@@ -1,4 +1,5 @@
 import { knowledgeRootRole, knowledgeRolePath, rebaseKnowledgePathRecords } from "./root-paths";
+import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgeErrorDetail } from "./initialization-error";
 import { createHash, randomUUID } from "node:crypto";
 import * as fsp from "node:fs/promises";
@@ -411,9 +412,22 @@ export class KnowledgeBaseInitializer {
         return null;
       }
     };
+    const financeRoots = new Set<string>();
+    for (const file of files) {
+      const parts = normalizeRelativePath(file.path).split("/");
+      if (parts.length !== 2 || parts[1] !== "ledger.base" || knowledgeRootRole(parts[0])) continue;
+      const content = await this.host.readText(file.path);
+      if (content && isEchoInkFinanceBase(content)) financeRoots.add(parts[0]);
+    }
     for (const file of files) {
       const relativePath = normalizeRelativePath(file.path);
       if (!relativePath || shouldExcludeFile(relativePath, file)) {
+        ignored += 1;
+        continue;
+      }
+      const firstSegment = relativePath.split("/")[0];
+      if (isFinanceRootName(firstSegment) || financeRoots.has(firstSegment) || isLegacyFinancePath(relativePath)) {
+        // Optional finance data is managed by Lifestyle, not ingested into Raw.
         ignored += 1;
         continue;
       }

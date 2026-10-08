@@ -1,5 +1,67 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
+export interface ProviderFailureDetail {
+  status?: number;
+  code?: string;
+  param?: string;
+  reason?: "unsupported" | "invalid" | "required" | "out_of_range";
+}
+
+export type AssistantProviderFailure = AssistantMessage & {
+  echoInkProviderFailure?: ProviderFailureDetail;
+};
+
+/** Never retain raw bodies or arbitrary message text. Reasons are a finite vocabulary. */
+export function sanitizeProviderFailureDetail(status: number | null, raw: unknown, secrets: readonly string[] = []): ProviderFailureDetail | undefined {
+  const text = typeof raw === "string" ? raw.slice(0, 8192) : "";
+  let candidate: Record<string, unknown> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) candidate = raw as Record<string, unknown>;
+  else {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try { candidate = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>; } catch { /* no reliable structured body */ }
+    }
+  }
+  if (candidate?.error && typeof candidate.error === "object" && !Array.isArray(candidate.error)) candidate = candidate.error as Record<string, unknown>;
+  const safeField = (value: unknown): string | undefined => {
+    if (typeof value !== "string" || !/^[A-Za-z][A-Za-z0-9_.[\]-]{0,63}$/u.test(value)) return undefined;
+    if (secrets.some((secret) => secret && value.includes(secret)) || /^(?:authorization|api.?key|access_token|refresh_token|secret|password|prompt|messages|request|content|body)$/iu.test(value)) return undefined;
+    return value;
+  };
+  const message = typeof candidate?.message === "string" ? candidate.message : text;
+  const param = safeField(candidate?.param) ?? safeField(message.match(/(?:parameter|param)\s*[:=]?\s*[`'"]?([A-Za-z][A-Za-z0-9_.-]*)/iu)?.[1]);
+  const code = safeField(candidate?.code);
+  const reason = /unsupported|not supported|unknown parameter/iu.test(message) ? "unsupported"
+    : /must|range|exceed|maximum|limit/iu.test(message) ? "out_of_range"
+    : /required|missing/iu.test(message) ? "required"
+    : /invalid/iu.test(message) ? "invalid" : undefined;
+  const effectiveStatus = status ?? (Number(text.match(/^(?:HTTP\s+)?([1-5]\d{2})(?:[:\s]|$)/u)?.[1]) || null);
+  const detail: ProviderFailureDetail = {
+    ...(Number.isInteger(effectiveStatus) && effectiveStatus! >= 100 && effectiveStatus! <= 599 ? { status: effectiveStatus! } : {}),
+    ...(code ? { code } : {}),
+    ...(param ? { param } : {}),
+    ...(reason && (param || code) ? { reason } : {})
+  };
+  return Object.keys(detail).length ? detail : undefined;
+}
+
+export function providerFailureDetailText(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  const raw = value as ProviderFailureDetail;
+  const detail = sanitizeProviderFailureDetail(raw.status ?? null, { code: raw.code, param: raw.param });
+  if (!detail) return "";
+  const reason = { unsupported: "不支持该参数", invalid: "参数无效", required: "缺少必填参数", out_of_range: "参数超出允许范围" };
+  return [detail.status ? `HTTP ${detail.status}` : "", detail.code, detail.param,
+    raw.reason && Object.hasOwn(reason, raw.reason) ? reason[raw.reason] : ""].filter(Boolean).join(" · ");
+}
+
+export function assistantProviderFailureText(message: { errorMessage?: string; echoInkProviderFailure?: unknown }): string {
+  const generic = providerFailureText(message.errorMessage) ?? "Provider 请求失败，请检查服务与请求设置。";
+  const detail = providerFailureDetailText(message.echoInkProviderFailure);
+  return detail ? `${generic}\n${detail}` : generic;
+}
+
 const PROVIDER_FAILURE_CODES = new Set([
   "context_length_exceeded",
   "controlled_transport_aborted",

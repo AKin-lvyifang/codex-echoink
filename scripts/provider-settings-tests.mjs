@@ -189,6 +189,7 @@ await esbuild.build({
   platform: "node",
   target: "node22",
   format: "esm",
+  banner: { js: 'import { createRequire as createSettingsTestRequire } from "node:module"; const require = createSettingsTestRequire(import.meta.url);' },
   external: [
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",

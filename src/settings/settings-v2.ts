@@ -23,7 +23,7 @@ export interface SettingsNavigationRowOptions {
   readonly title: string;
   readonly description?: string;
   readonly value?: string;
-  readonly actionLabel: string;
+  readonly actionLabel?: string;
   readonly focusKey?: string;
   readonly onActivate: () => void;
 }
@@ -110,11 +110,20 @@ export function addSettingsHelp(setting: Setting, summary: string, explanation: 
   attachSettingsTooltip(button, explanation, wrapper);
 }
 
-export function attachSettingsTooltip(trigger: HTMLElement, explanation: string, wrapper = trigger): void {
+export function attachSettingsTooltip(
+  trigger: HTMLElement,
+  explanation: string,
+  wrapper = trigger,
+  options: { readonly interactive?: boolean } = {}
+): void {
+  const interactive = options.interactive ?? true;
   const id = `echoink-settings-help-${++settingsHelpSequence}`;
   trigger.setAttr("aria-describedby", id);
   const panel = wrapper.createDiv({ cls: "echoink-settings-help-panel", text: explanation, attr: { id, role: "tooltip" } });
   panel.hidden = true;
+  // Short directory labels must not intercept the next row during a pointer sweep.
+  // Long help panels keep their hover grace period so their content can be scrolled.
+  if (!interactive) panel.addClass("is-noninteractive");
   const view = wrapper.ownerDocument.defaultView;
   let hideTimer: number | undefined;
   let detachObserver: MutationObserver | undefined;
@@ -160,9 +169,9 @@ export function attachSettingsTooltip(trigger: HTMLElement, explanation: string,
   };
   wrapper.onmouseenter = show;
   const scheduleHide = () => { cancelHide(); hideTimer = view?.setTimeout(hide, 120); };
-  wrapper.onmouseleave = scheduleHide;
-  panel.onmouseenter = cancelHide;
-  panel.onmouseleave = scheduleHide;
+  wrapper.onmouseleave = interactive ? scheduleHide : hide;
+  panel.onmouseenter = interactive ? cancelHide : null;
+  panel.onmouseleave = interactive ? scheduleHide : null;
   trigger.onfocus = show;
   trigger.onblur = hide;
   trigger.onclick = show;
@@ -222,7 +231,7 @@ export function createSettingsNavigationRow(
     cls: "echoink-settings-navigation-row setting-row",
     attr: {
       type: "button",
-      "aria-label": `${options.title}，${options.actionLabel}`,
+      "aria-label": `${options.title}，${options.actionLabel || "进入"}`,
       "data-echoink-focus-key": options.focusKey ?? `navigation:${options.title}`
     }
   });
@@ -238,7 +247,7 @@ export function createSettingsNavigationRow(
   if (options.value) {
     trailing.createSpan({ cls: "echoink-settings-navigation-value", text: options.value });
   }
-  trailing.createSpan({ cls: "echoink-settings-navigation-action", text: options.actionLabel });
+  if (options.actionLabel) trailing.createSpan({ cls: "echoink-settings-navigation-action", text: options.actionLabel });
   const icon = trailing.createSpan({ cls: "echoink-settings-navigation-icon" });
   setIcon(icon, "chevron-right");
   applyAmicroButton(row, { variant: "tertiary", motion: "slide" });

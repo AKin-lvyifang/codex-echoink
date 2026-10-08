@@ -29,6 +29,20 @@ await test("strings restore exact UTF-16 values, including escapes and lone surr
   assert.deepEqual([...run(pooled.code)], strings);
 });
 
+await test("inline SVG data URLs restore exactly while raster and base64 payloads stay literal", async () => {
+  const svg = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">\n'
+    + '<title>图标 🖋️ &amp; test</title><path fill="%23fff" d="M2 2h20v20H2z"/></svg>';
+  const images = [svg, "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+    "data:image/webp;base64,UklGRgAAAABXRUJQ",
+    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4="];
+  const source = `module.exports=${JSON.stringify(images)};`;
+  const pooled = poolDesktopStrings(source);
+  assert.equal(pooled.count, 1);
+  for (const rasterOrBase64 of images.slice(1)) assert.ok(pooled.code.includes(rasterOrBase64));
+  const minified = await esbuild.transform(pooled.code, { minify: true, charset: "utf8", target: "es2022" });
+  assert.deepEqual([...run(minified.code)], images);
+});
+
 await test("directives, keys, module paths, tagged templates and dynamic code stay literal", () => {
   const source = String.raw`"use strict";
 const object = {"a-long-property-name": "ordinary pooled field value", ["a-computed-property-name"]: true};

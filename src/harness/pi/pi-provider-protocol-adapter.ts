@@ -37,6 +37,7 @@ import {
 } from "../../settings/pi-model-catalog";
 import {
   assistantHasPartialOutput,
+  sanitizeProviderFailureDetail,
   preventProviderRetryAfterPartial,
   providerFailureCodeFromError,
   safeProviderFailureCode
@@ -292,7 +293,8 @@ implements ControlledPiStreamPort {
               responseStatus = null;
               return dispatchRequest(fallbackContext, false);
             }
-          : undefined
+          : undefined,
+        [apiKey]
       );
     } catch (error) {
       return failedStream(
@@ -372,7 +374,8 @@ function sanitizeProviderStream(
   fallback?: (
     error: AssistantMessage,
     status: number | null
-  ) => AssistantMessageEventStream | null
+  ) => AssistantMessageEventStream | null,
+  secrets: readonly string[] = []
 ): AssistantMessageEventStream {
   const output = createAssistantMessageEventStream();
   void (async () => {
@@ -407,15 +410,15 @@ function sanitizeProviderStream(
           output.push({
             type: "error",
             reason: event.reason,
-            error: {
-              ...event.error,
+            error: Object.assign({}, event.error, {
+              echoInkProviderFailure: sanitizeProviderFailureDetail(responseStatus(), event.error.errorMessage, secrets),
               errorMessage: runtimeProviderFailureCode(
                 responseStatus(),
                 event.error.errorMessage ?? "",
                 event.error,
                 model.contextWindow
               )
-            }
+            })
           });
         }
       };

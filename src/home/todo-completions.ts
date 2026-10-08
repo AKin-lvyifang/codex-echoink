@@ -32,28 +32,13 @@ export function reconcileTodoCompletions(
   return next;
 }
 
-export function todoCompletionStatistics(history: TodoCompletionHistory, now = new Date(), selectedYear = now.getFullYear()) {
+export function todoCompletionStatistics(history: TodoCompletionHistory, now = new Date()) {
   const counts = new Map<string, number>();
-  const availableYears = new Set([now.getFullYear()]);
   let unknown = 0;
   for (const date of Object.values(history)) {
     if (date === null) unknown++;
-    else {
-      counts.set(date, (counts.get(date) ?? 0) + 1);
-      availableYears.add(Number(date.slice(0, 4)));
-    }
+    else counts.set(date, (counts.get(date) ?? 0) + 1);
   }
-  const years = [...availableYears].sort((a, b) => b - a);
-  const year = availableYears.has(selectedYear) ? selectedYear : now.getFullYear();
-  const days: { date: string; count: number }[] = [];
-  const cursor = new Date(year, 0, 1, 12);
-  let yearTotal = 0;
-  while (cursor.getFullYear() === year) {
-    const date = localTodoDate(cursor);
-    const count = counts.get(date) ?? 0;
-    days.push({ date, count });
-    yearTotal += count;
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return { total: Object.keys(history).length, today: counts.get(localTodoDate(now)) ?? 0, unknown, year, years, yearTotal, days };
+  const activity = Array.from(counts, ([date, count]) => ({ date, count }));
+  return { total: Object.keys(history).length, today: counts.get(localTodoDate(now)) ?? 0, unknown, activity };
 }

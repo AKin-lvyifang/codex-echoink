@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
+import { transformSync } from "esbuild";
 import { parseDocument } from "yaml";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
@@ -59,8 +61,32 @@ function validateManifest(value) {
 
 function validatePlatformBoundary() {
   const entry = fs.readFileSync(path.join(rootDir, "src/platform-entry.ts"), "utf8");
-  check(/module\.exports\s*=\s*Platform\.isMobile\s*\?\s*loadMobile\(\)\s*:\s*loadDesktop\(\)/u.test(entry),
-    "platform entry must select the mobile loader before evaluating the desktop loader.");
+  // Verify the executed selector, including tablets that use the desktop UI
+  // while still lacking Node. The unused loader must never be evaluated.
+  const code = transformSync(entry, { loader: "ts", format: "cjs", target: "es2022" }).code;
+  for (const [name, platform, expected] of [
+    ["phone", { isMobileApp: true, isMobile: true, isTablet: false }, "mobile"],
+    ["tablet desktop UI", { isMobileApp: true, isMobile: false, isTablet: true }, "mobile"],
+    ["desktop", { isMobileApp: false, isMobile: false, isTablet: false }, "desktop"]
+  ]) {
+    const calls = [];
+    const module = { exports: {} };
+    try {
+      vm.runInNewContext(code, {
+        module, exports: module.exports,
+        require(id) {
+          if (id !== "obsidian") throw new Error(`Unexpected platform import: ${id}`);
+          return { Platform: platform };
+        },
+        loadMobile() { calls.push("mobile"); return "mobile"; },
+        loadDesktop() { calls.push("desktop"); return "desktop"; }
+      }, { timeout: 1000 });
+      check(calls.length === 1 && calls[0] === expected && module.exports === expected,
+        `platform entry must evaluate only the ${expected} loader on ${name}.`);
+    } catch (error) {
+      check(false, `platform entry failed on ${name}: ${error.message}`);
+    }
+  }
   check(packageJson.scripts?.["test:mobile"] === "node scripts/mobile-tests.mjs",
     "test:mobile must run the mobile integration and production no-Node entry checks.");
   const verify = packageJson.scripts?.["verify:obsidian"] ?? "";

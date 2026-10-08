@@ -56,6 +56,7 @@ if (!caseName) {
     get(_target, property) {
       if (property === "__esModule") return true;
       if (property === "default") return shim;
+      if (property === "Platform") return { isMobileApp: false, isMobile: false, isTablet: false };
       return class {};
     }
   });

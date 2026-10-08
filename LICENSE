@@ -1,3 +1,218 @@
+EchoInk Source-Available Reference License 1.0
+EchoInk 源码可见参考许可 1.0
+
+Custom identifier: LicenseRef-EchoInk-Source-Available-1.0
+Copyright (c) 2026 EchoInk Agent contributors. All rights reserved,
+except for the permissions and existing rights expressly preserved below.
+Project maintainer: AKin-lvyifang
+Official website: https://echoink.cn
+
+This is a custom source-available license, not an MIT, GPL, or OSI-approved
+open-source license. Publishing source code does not grant general permission
+to reuse, modify, redistribute, or commercialize it.
+
+1. Scope and existing rights
+
+This license accompanies EchoInk 2.6.0 and subsequent versions that expressly
+include it. It applies only to material the relevant copyright holders are
+entitled to license on these terms (the "Covered Material"), including source
+code, first-party assets, documentation, and official plugin packages.
+
+This license does not revoke, replace, or narrow any permission already granted
+for material previously distributed under the MIT License or another license.
+That material remains usable under its original terms, including when it also
+appears in this repository or a later release. Existing MIT grants are not
+converted into this license merely by updating this file.
+
+Third-party code, dependencies, assets, and notices retain their own licenses.
+See THIRD_PARTY_NOTICES.md and the relevant files and upstream packages. This
+license does not restrict rights granted by those licenses. The historical MIT
+notice is reproduced below for material to which that grant applies.
+
+2. Permitted source reference
+
+You may view and study the Covered Material for your own non-commercial
+reference. You may make the limited local copies technically necessary for
+that reading and study, while retaining copyright and license notices.
+
+Rights granted by GitHub's applicable terms for a public repository, including
+viewing and forking through GitHub's service, are not restricted by this
+license. Such platform rights do not themselves authorize use outside their
+scope, or grant permission under this license to modify, commercialize, or
+redistribute the Covered Material elsewhere.
+
+3. Personal use of official plugin packages
+
+You may download, install, run, and keep reasonable backup copies of unmodified
+official EchoInk plugin packages on your own devices for personal,
+non-commercial use. Official packages are those distributed by the maintainer
+through https://echoink.cn or official release channels identified there.
+Normal configuration and use of supported plugin features are permitted.
+
+This permission does not activate paid or account-based features, bypass
+access controls, or replace separate terms applicable to online services.
+Your notes, data, and other independently owned content remain yours; this
+license claims no ownership of them.
+
+3a. Limited permission for Obsidian review and official distribution
+
+Obsidian and its designated reviewers and review systems may copy, inspect,
+build, run, and verify this release's source code and official plugin packages
+solely as necessary for security and community-plugin review, including
+reproducing and verifying builds of the unmodified release source.
+
+Obsidian may host, cache, and distribute unmodified official EchoInk plugin
+packages through official community channels approved by the maintainer,
+including the Community directory and its official installation and update
+channels when the maintainer submits or maintains EchoInk there. Copyright,
+license, and attribution notices must be preserved.
+
+These limited permissions do not authorize derivative products, distribution
+of modified builds, or other commercial uses of the Covered Material.
+
+4. Reserved rights and restrictions
+
+Unless an exception in this license, an existing license, applicable law, or
+separate written permission from the relevant rights holder allows it, you
+may not:
+
+- Copy or reuse Covered Material beyond the permissions above, including by
+  incorporating it into another project or using protected expression from it
+  to create a copycat or derivative implementation.
+- Modify, adapt, translate, or create derivative works of Covered Material,
+  including modified builds of the plugin.
+- Publish, redistribute, sublicense, sell, rent, or otherwise supply Covered
+  Material or official plugin packages to others, including repackaged copies
+  and mirrors outside the platform rights preserved in section 2.
+- Use Covered Material or official plugin packages for commercial purposes,
+  including a paid product or service, a commercial deployment, or operating
+  a business, without separate written permission.
+- Remove copyright, license, or attribution notices, or claim that an
+  unofficial product is an official EchoInk release.
+
+These restrictions concern material protected by applicable intellectual
+property law. They do not claim exclusive rights over ideas, functionality,
+methods, or other unprotected matter, and do not prohibit an independently
+created implementation merely because it has similar functionality. Nothing
+here limits mandatory statutory rights, exceptions, or limitations that cannot
+lawfully be excluded, or rights preserved in section 1.
+
+5. Additional permission and enforcement
+
+Rights not expressly granted are reserved. Contact the maintainer through the
+official website or repository to request separate written permission for
+commercial use, modifications, redistribution, or other uses outside this
+license. A subscription or activation code alone is not such permission.
+
+Permission granted by this license terminates if you breach its conditions;
+this does not terminate separate rights preserved in section 1 or rights that
+cannot lawfully be terminated. Copyright holders may pursue remedies available
+under applicable law for unauthorized acts. This clause does not promise a
+particular legal outcome or create penalties beyond those allowed by law.
+
+6. No warranty
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE COVERED MATERIAL IS
+PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+THE AUTHORS AND COPYRIGHT HOLDERS ARE NOT LIABLE FOR CLAIMS, DAMAGES, OR OTHER
+LIABILITY ARISING FROM THE COVERED MATERIAL OR ITS USE. THIS DOES NOT EXCLUDE
+LIABILITY OR CONSUMER RIGHTS THAT CANNOT LAWFULLY BE EXCLUDED.
+
+中文条款
+
+本许可为自定义的“源码可见、仅供参考”许可，不是 MIT、GPL 或经 OSI 认可的
+开源许可。公开源码不代表允许任意复用、修改、再分发或商业利用。
+
+一、范围与既有授权
+
+本许可随 EchoInk 2.6.0 及明确采用本许可的后续版本发布，仅适用于相应著作权人
+有权按本条款授权的内容（“受许可内容”），包括源码、自有素材、文档及官方
+插件包。
+
+本许可不撤回、不替代、不缩减此前已按 MIT 或其他许可发布内容的既有授权。
+这些内容即使仍存在于本仓库或后续版本，也继续适用其原有授权；更新本文件
+不会把已有 MIT 授权变成本许可。第三方代码、依赖、素材及声明继续适用各自
+许可，具体见 THIRD_PARTY_NOTICES.md、相关文件及上游软件包。本许可不限制
+这些许可授予的权利。文末保留历史 MIT 声明，供适用该授权的内容使用。
+
+二、源码参考
+
+允许为个人、非商业参考目的查看和学习受许可内容，并在保留版权和许可声明
+的前提下，制作阅读和学习在技术上必需的有限本地副本。
+
+本许可不限制 GitHub 适用条款对公开仓库授予的权利，包括在 GitHub 服务内查看
+和 fork。平台权利本身不授权超出其范围的使用，也不意味着本许可允许修改、
+商业利用受许可内容，或将其再分发到其他地方。
+
+三、官方插件的个人使用
+
+允许从 https://echoink.cn 或官网指明的官方发布渠道下载未经修改的官方
+EchoInk 插件包，在自己的设备上安装、运行并保留合理备份，用于个人、非商业
+用途。正常配置和使用插件支持的功能不受禁止。
+
+该许可不会自动开通付费或账号功能，不允许绕过访问控制，也不替代线上服务
+另行适用的条款。你的笔记、数据及其他自行拥有的内容仍归你所有，本许可不
+主张这些内容的所有权。
+
+三之一、Obsidian 审核与官方分发的有限许可
+
+允许 Obsidian 官方及其指定的审核方和审核系统，仅为安全与社区插件审核所
+必需的目的，复制、检查、构建、运行和验证本发行版的源码及官方插件包，
+包括复现并验证未经修改的发行源码的构建结果。
+
+允许 Obsidian 通过维护者认可的官方社区渠道托管、缓存和分发未经修改的
+EchoInk 官方插件包，包括维护者提交或维护 EchoInk 时所使用的 Community
+目录及其官方安装、更新渠道。必须保留版权、许可和署名声明。
+
+这些有限许可不授权制作衍生产品、分发修改版构建产物，或将受许可内容用于
+其他商业用途。
+
+四、保留权利与限制
+
+除本许可的例外、既有许可、适用法律或相应权利人的另行书面授权允许外，不得：
+
+- 超出上述许可复制或复用受许可内容，包括将其并入其他项目，或使用其中受
+  保护的具体表达制作仿制品、衍生实现。
+- 修改、改编、翻译受许可内容或制作衍生作品，包括修改版插件。
+- 向他人发布、再分发、转授权、出售、出租或提供受许可内容及官方插件包，
+  包括重新打包或在第二条保留的平台权利范围之外建立镜像。
+- 将受许可内容或官方插件包用于商业目的，包括付费产品或服务、商业部署
+  或经营业务；此类用途须获得另行书面授权。
+- 移除版权、许可或署名声明，或把非官方产品宣称为 EchoInk 官方版本。
+
+以上限制针对适用知识产权法律保护的内容，不主张垄断思想、功能、方法或
+其他不受保护的内容，也不因功能相似而禁止独立完成的实现。本许可不排除
+法律上不能排除的法定权利、例外或限制，也不缩减第一条保留的既有权利。
+
+五、额外授权与维权
+
+未明确授予的权利均予保留。商业使用、修改、再分发或其他超出本许可的用途，
+请通过官网或仓库联系维护者申请另行书面授权。仅订阅或取得激活码不构成
+这类授权。
+
+违反本许可条件时，本许可授予的权限终止，但不影响第一条保留的独立权利
+或依法不能终止的权利。著作权人可就未经授权的行为依法追究责任；本条不
+承诺特定诉讼结果，也不设定超出法律允许范围的处罚。
+
+六、免责
+
+在适用法律允许的最大范围内，受许可内容按“现状”提供，不附带任何明示或
+默示保证，包括适销性、特定用途适用性或不侵权保证。作者与著作权人不对
+因受许可内容或其使用产生的请求、损害或其他责任负责。本条不排除依法
+不得排除的责任或消费者权利。
+
+Language / 语言
+
+The Chinese and English sections express the same license. If an interpretation
+conflict cannot be reconciled, the English text controls to the extent permitted
+by applicable law.
+中英文条款表达同一许可；如存在无法协调的解释冲突，在适用法律允许范围内
+以英文条款为准。
+
+Historical MIT notice — only for material previously licensed under MIT
+历史 MIT 声明——仅适用于此前已获 MIT 授权的内容
+
 MIT License
 
 Copyright (c) 2026 EchoInk Agent contributors

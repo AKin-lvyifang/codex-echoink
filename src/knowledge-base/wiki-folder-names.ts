@@ -1,4 +1,5 @@
 import { KNOWLEDGE_ROOT_NAMES, knowledgeRootRole } from "./root-paths";
+import { FINANCE_BILINGUAL_ROOT, FINANCE_BILINGUAL_TRANSACTIONS, isFinanceRootName, isFinanceTransactionsName } from "../lifestyle/finance-paths";
 /** A name is a single portable folder segment; the model never chooses paths. */
 const ENGLISH = /^[a-z][a-z0-9]*(?:[-_ ][a-z0-9]+)*$/iu;
 const BILINGUAL = /^([^（）]+)（([a-z][a-z0-9]*(?:[-_ ][a-z0-9]+)*)）$/iu;
@@ -20,6 +21,8 @@ export function isBilingualWikiFolder(name: string): boolean {
 
 export function wikiFolderNeedsTranslation(relativePath: string): boolean {
   const parts = relativePath.split("/");
+  if (parts.length === 1 && relativePath === "finance") return true;
+  if (parts.length === 2 && isFinanceRootName(parts[0]) && parts[1] === "transactions") return true;
   return (parts.length === 1 || knowledgeRootRole(relativePath) === "wiki")
     && !parts.some((part) => part.startsWith(".") || ["node_modules", "echoink"].includes(part.toLowerCase()) || (parts.length > 1 && ASSETS.has(part.toLowerCase())))
     && ENGLISH.test(parts.at(-1)!);
@@ -62,7 +65,8 @@ export async function optimizeWikiFolderNames(
     const batch = candidates.slice(offset, offset + 30);
     onProgress(`正在理解目录名称 ${offset + 1}–${offset + batch.length} / ${candidates.length}`);
     host.assertActive?.();
-    const translated = batch.filter((folder) => folder.path.includes("/") || !knowledgeRootRole(folder.path));
+    const translated = batch.filter((folder) => !isFinanceRootName(folder.path.split("/")[0])
+      && (folder.path.includes("/") || !knowledgeRootRole(folder.path)));
     let text = "{}";
     let translationError = "";
     try {
@@ -86,7 +90,11 @@ export async function optimizeWikiFolderNames(
     }
     for (const [id, folder] of batch.entries()) {
       const role = !folder.path.includes("/") ? knowledgeRootRole(folder.path) : null;
-      const name = role ? KNOWLEDGE_ROOT_NAMES[role] : bilingualWikiFolderName(folder.path.split("/").at(-1)!, names[String(id)]);
+      const name = role ? KNOWLEDGE_ROOT_NAMES[role]
+        : folder.path === "finance" ? FINANCE_BILINGUAL_ROOT
+          : folder.path.split("/").length === 2 && isFinanceRootName(folder.path.split("/")[0]) && isFinanceTransactionsName(folder.path.split("/")[1])
+            ? FINANCE_BILINGUAL_TRANSACTIONS
+            : bilingualWikiFolderName(folder.path.split("/").at(-1)!, names[String(id)]);
       const parent = folder.path.includes("/") ? folder.path.slice(0, folder.path.lastIndexOf("/")) : "";
       const to = parent ? `${parent}/${name ?? ""}` : name ?? "";
       const duplicate = host.folders().find((existing) => existing.path !== folder.path

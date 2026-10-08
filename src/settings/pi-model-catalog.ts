@@ -1,3 +1,4 @@
+import type { DiscoveredProviderModel } from "./provider-model-discovery";
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -78,7 +79,7 @@ export interface EchoInkPiReasoningOption {
 }
 
 export interface EchoInkPiReasoningCapabilities {
-  readonly source: "catalog" | "manual" | "unknown";
+  readonly source: "catalog" | "manual" | "unknown" | "discovery";
   /** Whether Pi exposes at least one real enabled reasoning state. */
   readonly supported: boolean;
   /** Whether Pi exposes a real off request for this model. */
@@ -107,11 +108,20 @@ export function resolveEchoInkPiCatalogModel(
 export function resolveEchoInkPiReasoningCapabilities(
   runtimeProviderId: string,
   modelId: string,
-  manuallyConfiguredReasoning = false
+  configured: boolean | { reasoning: boolean; discovery?: DiscoveredProviderModel; metadataSource?: string } = false
 ): Readonly<EchoInkPiReasoningCapabilities> {
+  const manuallyConfiguredReasoning = typeof configured === "boolean" ? configured : configured.reasoning;
+  if (typeof configured !== "boolean" && configured.discovery) {
+    const declared = declaredReasoningCapabilities(configured.reasoning, configured.discovery);
+    if (declared) return declared;
+    // An effective false (including a user override) must not be replaced by catalog true.
+    if (!configured.reasoning) return frozenCapabilities("discovery", [], null);
+  }
   const model = resolveEchoInkPiCatalogModel(runtimeProviderId, modelId);
   if (model) {
-    return resolveEchoInkPiModelReasoningCapabilities(model);
+    return resolveEchoInkPiModelReasoningCapabilities(typeof configured !== "boolean" && configured.discovery
+      ? { ...model, reasoning: configured.reasoning }
+      : model);
   }
   if (!manuallyConfiguredReasoning) {
     return frozenCapabilities("unknown", [], null);
@@ -181,6 +191,11 @@ export function resolveEchoInkPiReasoningCapabilities(
 export function resolveEchoInkPiModelReasoningCapabilities(
   model: Model<Api>
 ): Readonly<EchoInkPiReasoningCapabilities> {
+  const metadata = (model as Model<Api> & { echoInkReasoningMetadata?: DiscoveredProviderModel }).echoInkReasoningMetadata;
+  if (metadata) {
+    const declared = declaredReasoningCapabilities(model.reasoning, metadata);
+    if (declared) return declared;
+  }
   if (!model.reasoning) {
     return frozenCapabilities("catalog", [], null);
   }
@@ -233,6 +248,31 @@ export function resolveEchoInkPiModelReasoningCapabilities(
       ?? enabledOptions[0]?.effort
       ?? null;
   return frozenCapabilities("catalog", options, defaultEffort);
+}
+
+export function withDiscoveredPiReasoningModel(model: Model<Api>, discovery?: DiscoveredProviderModel): Model<Api> {
+  if (!discovery) return model;
+  const levels = discovery.reasoningLevels;
+  const mapped = levels ? Object.fromEntries(ECHOINK_PI_REASONING_LEVELS
+    .filter((entry) => entry.piLevel !== "off")
+    .map((entry) => [entry.piLevel, levels.includes(entry.effort as Exclude<ReasoningEffort, "none">) ? entry.piLevel : null])) : model.thinkingLevelMap;
+  return {
+    ...structuredClone(model),
+    ...(mapped ? { thinkingLevelMap: mapped } : {}),
+    echoInkReasoningMetadata: structuredClone(discovery)
+  } as Model<Api>;
+}
+
+function declaredReasoningCapabilities(reasoning: boolean, discovery: DiscoveredProviderModel): Readonly<EchoInkPiReasoningCapabilities> | null {
+  if (!reasoning) return frozenCapabilities("discovery", [], null);
+  if (!discovery.reasoningLevels?.length) return null;
+  const levels = discovery.reasoningLevels;
+  const defaultEffort = discovery.defaultReasoningEffort ?? levels[0];
+  const options: EchoInkPiReasoningOption[] = [
+    { effort: "none", piLevel: "off", display: "off", wireValueKey: "discovery:off" },
+    ...levels.map((level) => ({ effort: level, piLevel: level, display: "level" as const, wireValueKey: `discovery:${level}` }))
+  ];
+  return frozenCapabilities("discovery", options, defaultEffort);
 }
 
 export function withEchoInkResolvedPiReasoningModel<TApi extends Api>(

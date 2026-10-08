@@ -1,3 +1,4 @@
+import { runProviderModelDiscoveryRegression } from "./provider-model-discovery-behavior";
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
 import { todoCompletionStatistics } from "../home/todo-completions";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
@@ -253,8 +254,10 @@ import {
   OpenAICodexSettingsCredentialStore
 } from "../plugin/openai-codex-oauth-service";
 import { resolvePiProductionSkillById } from "../plugin/pi-production-runtime-composition";
+import { runEnglishDiaryProviderTests } from "./english-diary-provider";
 
 export async function runProviderSettingsBehaviorTests(): Promise<void> {
+  await runEnglishDiaryProviderTests(installProviderModalDomFixture);
   await runSettingsWindowRefreshTest();
   await assertInlineEditorAsyncRetirement();
   await assertReviewFolderInlineLifecycle();
@@ -498,7 +501,8 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
     ["resources", "layout-list"],
     ["knowledgeBase", "book-open-check"],
     ["review", "clipboard-check"],
-    ["todos", "list-todo"]
+    ["todos", "list-todo"],
+    ["account", "feather"]
   ] as const;
   const icons = tab.containerEl.querySelectorAll<ProviderModalTestElement>(
     ".codex-settings-tab-icon"
@@ -542,7 +546,7 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
   await flushProviderModalTasks();
 
   const review = tab.containerEl.querySelector<ProviderModalTestElement>(
-    '[data-settings-tab="todos"]'
+    '[data-settings-tab="account"]'
   );
   assert.equal(review?.getAttribute("aria-selected"), "true");
   assert.equal(review?.getAttribute("tabindex"), "0");
@@ -566,7 +570,7 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
   assert.ok(mutableTab.settingsTabIconAnimation);
   mutableTab.settingsTabIconAnimation.startedAtMs = Date.now() - 400;
   mutableTab.renderSettingsContent();
-  const continuedIcon = tab.containerEl.querySelector('[data-settings-tab="todos"]')
+  const continuedIcon = tab.containerEl.querySelector('[data-settings-tab="account"]')
     ?.querySelector<ProviderModalTestElement>(".codex-settings-tab-icon");
   assert.equal(continuedIcon?.hasClass("is-animating"), true);
   assert.ok(
@@ -577,12 +581,12 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
     "same-tab rerenders continue the original timeline instead of replaying it"
   );
   mutableTab.settingsTabIconAnimation = {
-    tabId: "todos",
+    tabId: "account",
     startedAtMs: Date.now() - 1_300
   };
   mutableTab.renderSettingsContent();
   assert.equal(
-    tab.containerEl.querySelector('[data-settings-tab="todos"]')
+    tab.containerEl.querySelector('[data-settings-tab="account"]')
       ?.querySelector(".codex-settings-tab-icon")?.hasClass("is-animating"),
     false,
     "the tab icon animation ends after its bounded window"
@@ -2585,7 +2589,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
       reasons: []
     },
     checkHeatmap: [{ date: "2026-08-25", status: "success" }],
-    activity: { days: [], heatmapRows: [], logs: [] },
+    activity: { days: [], logs: [] },
     recommendations: { cards: [] },
     warnings: []
   } as const;
@@ -3057,7 +3061,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
     "体检新鲜度",
     "Wiki 结构",
     "Raw / Inbox 状态",
-    "全年体检记录"
+    "体检记录"
   ]) {
     assert.match(dashboard!.textContent, new RegExp(label, "u"));
   }
@@ -3299,7 +3303,7 @@ async function assertProviderModalModelAccessibleNameIncludesValue(): Promise<vo
     preflight: {
       listModels: async () => ({
         status: "available",
-        models: provider.models.map((model) => model.id)
+        models: provider.models.map((model) => ({ id: model.id }))
       }),
       testConnection: async () => ({ status: "available" })
     },
@@ -3486,7 +3490,7 @@ function assertSettingsV53MigrationContract(): void {
   };
 
   check("fresh install does not select a Provider without a usable API Key", () => {
-    assert.equal(DEFAULT_SETTINGS.settingsVersion, 53);
+    assert.equal(DEFAULT_SETTINGS.settingsVersion, 54);
     assert.equal(DEFAULT_SETTINGS.activeApiProviderId, "");
     assert.equal(DEFAULT_SETTINGS.memory.useLongTermMemory, true);
     assert.equal(DEFAULT_SETTINGS.memory.dreamEnabled, true);
@@ -6187,6 +6191,9 @@ async function assertKnowledgeInitDefaultTabAndOneClickStart(): Promise<void> {
   assert.equal(rawTooltip.hidden, false);
   assert.equal(rawTooltip.parentElement?.hasClass("echoink-settings-demo"), true);
   assert.equal(panel.contains(rawTooltip), false, "the existing tooltip escapes the directory row's clipping context");
+  rawChip.fireEvent("mouseleave");
+  assert.equal(rawTooltip.hidden, true, "directory explanations disappear immediately when the pointer leaves");
+  rawChip.fireEvent("mouseenter");
   rawChip.fireEvent("keydown", { key: "Escape" });
   assert.equal(rawTooltip.hidden, true);
   rawChip.fireEvent("focus");
@@ -6270,6 +6277,16 @@ async function assertKnowledgeInitCustomTabDirectoriesAndAssignments(): Promise<
   assert.deepEqual(calls, []);
   const rows = panel.querySelectorAll<ProviderModalTestElement>(".directory-row");
   assert.equal(rows.length, 9);
+  const explanations: ProviderModalTestElement[] = [];
+  for (const row of rows) {
+    const toggle = row.querySelector<ProviderModalTestElement>(".directory-reveal")!;
+    const tooltip = toggle.querySelector<ProviderModalTestElement>('[role="tooltip"]')!;
+    explanations.push(tooltip);
+    toggle.fireEvent("mouseenter");
+    assert.equal(explanations.filter(item => !item.hidden).length, 1, "rapidly sweeping directory rows never stacks earlier explanations");
+    toggle.fireEvent("mouseleave");
+    assert.equal(tooltip.hidden, true, "directory row tooltip closes synchronously without a hover tail");
+  }
   const counts = () => panel.querySelectorAll<ProviderModalTestElement>(".directory-count").map(element => element.textContent);
   assert.deepEqual(counts(), ["2", "1", "1", "0", "0", "0", "0", "0", "0"]);
   assert.match(panel.querySelector(".directory-attachments")?.textContent ?? "", /Assets/u);
@@ -8487,7 +8504,7 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
         "openai-completions": adapter
       })
     });
-    assert.deepEqual(result, { status: "failed", failure: entry.failure });
+    assert.deepEqual(result, { status: "failed", failure: entry.failure, detail: { status: entry.status } });
     assert.equal(JSON.stringify(result).includes(fixtureKey), false);
   }
   const overflowTransport = new PiProviderProtocolTransport({
@@ -8572,7 +8589,7 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
       )
     })
   });
-  assert.deepEqual(malformed, { status: "failed", failure: "protocol" });
+  assert.deepEqual(malformed, { status: "failed", failure: "protocol", detail: { status: 200 } });
 
   const incomplete = await testProviderConnection({
     draft,
@@ -8592,7 +8609,7 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
       )
     })
   });
-  assert.deepEqual(incomplete, { status: "failed", failure: "protocol" });
+  assert.deepEqual(incomplete, { status: "failed", failure: "protocol", detail: { status: 200 } });
   const partialFailureStream = createQwenTokenPlanOpenAICompletionsAdapter(
     async () => ({
       status: 200,
@@ -8679,7 +8696,7 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
       )
     })
   });
-  assert.deepEqual(oversized, { status: "failed", failure: "protocol" });
+  assert.deepEqual(oversized, { status: "failed", failure: "protocol", detail: { status: 200 } });
 
   const timedOut = await testProviderConnection({
     draft,
@@ -9037,7 +9054,8 @@ async function assertProviderModelDiscoveryRequestContract(): Promise<void> {
   });
   assert.deepEqual(available, {
     status: "available",
-    models: ["model-a", "model-b"]
+    models: [{ id: "model-a" }, { id: "model-b" }],
+    source: "remote"
   });
   assert.equal(requestedUrl, "https://current.example/v1/models");
   assert.equal(requestedInit?.method, "GET");
@@ -10039,11 +10057,11 @@ async function assertSavedBindingPreflightLifecycle(): Promise<void> {
   assert.equal(modelListAttempt, 1);
   resolveRequested({
     status: "available",
-    models: [model.id]
+    models: [{ id: model.id }]
   });
   await requested;
   assert.equal(preflight.state.status, "available");
-  assert.deepEqual(preflight.state.models, [model.id]);
+  assert.deepEqual(preflight.state.models, [{ id: model.id }]);
 
   await preflight.discoverModels(draft);
   assert.equal(preflight.state.status, "temporary_failure");
@@ -10335,7 +10353,7 @@ async function assertOpenAICodexModalLifecycle(): Promise<void> {
         modelListCalls += 1;
         return {
           status: "available",
-          models: provider.models.map((model) => model.id)
+          models: provider.models.map((model) => ({ id: model.id }))
         };
       },
       testConnection: async () => {
@@ -10380,7 +10398,10 @@ async function assertOpenAICodexModalLifecycle(): Promise<void> {
     modal.titleEl.querySelector(".codex-provider-protocol-pill"),
     null
   );
-  assert.match(modal.contentEl.textContent, /GPT-5\.6 Sol/u);
+  assert.ok(provider.models.length > 0);
+  for (const model of provider.models) {
+    assert.equal(providerModalElementByFocusKey(modal, `model-enabled:${model.id}`)?.checked, true);
+  }
   assert.equal(providerModalElementByFocusKey(modal, "save")?.disabled, true);
 
   const login = Array.from(modal.contentEl.querySelectorAll("button"))
@@ -10464,7 +10485,7 @@ async function assertFreshCustomModelDiscoveryLifecycle(): Promise<void> {
     preflight: {
       listModels: async (draft) => {
         calls.push(structuredClone(draft));
-        return { status: "available", models: ["current-custom-model"] };
+        return { status: "available", models: [{ id: "current-custom-model" }] };
       },
       testConnection: async () => ({ status: "available" })
     },
@@ -10729,7 +10750,7 @@ async function assertProviderModelModalPreflightLifecycle(): Promise<void> {
     `model-enabled:${primaryModelId}`
   )?.closest<ProviderModalTestElement>(".codex-provider-model-choice");
   assert.ok(primaryModelRow);
-  const capabilityTags = primaryModelRow.querySelectorAll<ProviderModalTestElement>(
+  const capabilityTags = primaryModelRow.querySelector(".codex-provider-model-capabilities")!.querySelectorAll<ProviderModalTestElement>(
     ".codex-provider-model-tag"
   );
   assert.equal(capabilityTags.length, 4);
@@ -10777,7 +10798,7 @@ async function assertProviderModelModalPreflightLifecycle(): Promise<void> {
   assert.ok(nextModel);
   discovery.resolve({
     status: "available",
-    models: [primaryProviderModel(provider).id, nextModel]
+    models: [{ id: primaryProviderModel(provider).id }, { id: nextModel }]
   });
   await flushProviderModalTasks();
   assert.deepEqual(
@@ -10883,7 +10904,7 @@ async function assertProviderModelModalCloseCancelsPendingPreflight(): Promise<v
   providerModalElementByFocusKey(modal, "model-discover")?.click();
   assert.equal(attempt, 1);
   modal.close();
-  first.resolve({ status: "available", models: [closedRequestModel] });
+  first.resolve({ status: "available", models: [{ id: closedRequestModel }] });
   await flushProviderModalTasks();
 
   modal.open();
@@ -10899,7 +10920,7 @@ async function assertProviderModelModalCloseCancelsPendingPreflight(): Promise<v
   );
   reopened.resolve({
     status: "available",
-    models: [primaryProviderModel(provider).id]
+    models: [{ id: primaryProviderModel(provider).id }]
   });
   await flushProviderModalTasks();
   modal.close();
@@ -11485,7 +11506,11 @@ function assertAboutGitHubActionsContract(): void {
   const actions = about!.querySelectorAll<ProviderModalTestElement>(
     ".echoink-about-btn"
   );
-  assert.equal(actions.length, 2, "about card keeps only Star and issue actions");
+  assert.equal(actions.length, 3, "about card exposes website, Star and issue actions");
+  const website = actions.find(action => /访问官网|Visit website/u.test(action.textContent));
+  assert.ok(website);
+  assert.equal(website!.getAttribute("href"), "https://echoink.cn/?entry=plugin.about");
+  assert.equal(website!.getAttribute("rel"), "noopener noreferrer");
   const star = actions.find((action) => action.textContent.includes("Star on GitHub"));
   const issue = actions.find((action) => /反馈问题|Report Issue/u.test(action.textContent));
   assert.ok(star && issue, "Star and issue actions both render");
@@ -13087,12 +13112,13 @@ function matchesSimpleSelector(
   const base = selector.replace(/:not\([^)]+\)/gu, "");
   if (base.includes(":disabled") && !element.disabled) return false;
   const withoutPseudos = base.replace(/:disabled/gu, "");
-  const tag = withoutPseudos.match(/^[a-z][a-z0-9-]*/iu)?.[0];
+  const withoutAttributes = withoutPseudos.replace(/\[[^\]]*\]/gu, "");
+  const tag = withoutAttributes.match(/^[a-z][a-z0-9-]*/iu)?.[0];
   if (tag && element.localName !== tag.toLowerCase()) return false;
-  for (const id of withoutPseudos.matchAll(/#([a-z0-9_-]+)/giu)) {
+  for (const id of withoutAttributes.matchAll(/#([a-z0-9_-]+)/giu)) {
     if (element.id !== id[1]) return false;
   }
-  for (const className of withoutPseudos.matchAll(/\.([a-z0-9_-]+)/giu)) {
+  for (const className of withoutAttributes.matchAll(/\.([a-z0-9_-]+)/giu)) {
     if (!element.hasClass(className[1] ?? "")) return false;
   }
   for (const attribute of withoutPseudos.matchAll(
@@ -13119,6 +13145,7 @@ function dataAttributeKey(name: string): string {
 function withSettingsTabDefaults<T extends object>(plugin: T) {
   return {
     register: () => undefined,
+    applyAppearanceTheme: () => undefined,
     onConversationCatalogChanged: () => () => undefined,
     getEchoInkKnowledgeInitializationState: async () => null,
     getEchoInkKnowledgeBaseStructure: async () =>
@@ -13195,7 +13222,50 @@ async function writeSettingsVisualFixtures(): Promise<void> {
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "codex-connection") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-discovery-related") {
+  assertProviderModelReasoningOverrideBoundary();
+  await runHarnessV2PiObsidianSecretStorageTests();
+  await runHarnessV2PiProviderSecurityTests();
+  await runPiNativeControlledProviderTests();
+  assertSettingsV53MigrationContract();
+  assertPiReasoningCapabilityContract();
+  assertKnowledgeMaintenanceSubmitSnapshotContract();
+  await assertPiReasoningPayloadContract();
+  assertProviderScopedRollbackPreservesConcurrentSettings();
+  await assertProviderApiKeyPersistenceLifecycle();
+  await runApiProviderActivationServiceTests();
+  await assertProviderActivationMainTransactionContract();
+  assertAllOpenComposersSynchronizeAfterActivation();
+  await assertProviderTextGenerationCompletionContract();
+  await assertCodexConnectionTestContract();
+  assertPresetRequestMappings();
+  assertAnthropicProviderContract();
+  assertQwenProviderContract();
+  await assertQwenTokenPlanTransportContract();
+  await assertPiAgentSessionPartialAwareRetryContract();
+  await assertProviderModelDiscoveryRequestContract();
+  assertCustomProtocolContract();
+  assertOpenAICodexSseAdapterContract();
+  await assertProviderRequestLimitDispatchContract();
+  await assertProtocolPayloadLimitContract();
+  await assertSpecialProviderPayloadLimitContract();
+  await assertAnthropicDocumentTransportContract();
+  await assertProviderAuthResolutionFailureContract();
+  assertSavedModelLifecycle();
+  await assertProviderLimitOverrideRoundTrip();
+  await assertProviderModelModalPreflightLifecycle();
+  await assertProviderApiKeyEditLifecycle();
+  await assertProviderModalModelAccessibleNameIncludesValue();
+  await assertProviderModelModalCloseCancelsPendingPreflight();
+  await assertFreshCustomModelDiscoveryLifecycle();
+  await runProviderModelDiscoveryRegression(installProviderModalDomFixture);
+  console.log("PASS relevant Provider settings, activation, limits, reasoning, request/failure/partial and dynamic discovery regressions");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "dynamic-discovery") {
+  await runProviderModelDiscoveryRegression(installProviderModalDomFixture);
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "english-diary") {
+  await runEnglishDiaryProviderTests(installProviderModalDomFixture);
+  console.log("PASS English Diary saved Provider selection, rollback, credential reuse and recipient consent");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "codex-connection") {
   await assertCodexConnectionTestContract();
   await assertProviderAuthResolutionFailureContract();
   console.log("PASS Codex connection timeout, low reasoning, complete answers and safe auth failures");

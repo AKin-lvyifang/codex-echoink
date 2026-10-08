@@ -10,6 +10,8 @@ import {
   type PiProviderConnectionFailureKind
 } from "../harness/pi/pi-provider-protocol-adapter";
 import {
+  sanitizeProviderFailureDetail,
+  type ProviderFailureDetail,
   providerFailureCodeFromError
 } from "../harness/pi/provider-failure";
 import {
@@ -44,7 +46,7 @@ import {
 
 const PROVIDER_REQUEST_TIMEOUT_MS = 10_000;
 const CODEX_CONNECTION_TIMEOUT_MS = 60_000;
-const PROVIDER_MODEL_LIMIT = 200;
+import { parseProviderModelResponse, type DiscoveredProviderModel } from "../settings/provider-model-discovery";
 
 export interface PiProviderConfigurationDraft {
   readonly providerSettingsId: string;
@@ -58,6 +60,7 @@ export interface PiProviderConfigurationDraft {
   readonly toolCalling: boolean;
   readonly imageInput: boolean;
   readonly reasoning: boolean;
+  readonly discovery?: DiscoveredProviderModel;
   readonly contextWindow: number;
   readonly modelMaxTokens: number;
   readonly maxOutputTokens: number;
@@ -65,6 +68,7 @@ export interface PiProviderConfigurationDraft {
 
 export type PiProviderModelListStatus =
   | "available"
+  | "incomplete"
   | "unsupported"
   | "api_key_error"
   | "rate_or_service_error"
@@ -74,7 +78,8 @@ export type PiProviderModelListStatus =
 
 export interface PiProviderModelListResult {
   readonly status: PiProviderModelListStatus;
-  readonly models: readonly string[];
+  readonly models: readonly DiscoveredProviderModel[];
+  readonly source?: "remote" | "catalog";
 }
 
 export type PiProviderConnectionFailure =
@@ -85,6 +90,7 @@ export type PiProviderConnectionTestResult =
   | {
     readonly status: "failed";
     readonly failure: PiProviderConnectionFailure;
+    readonly detail?: ProviderFailureDetail;
   };
 
 export interface PiProviderTextGenerationInput {
@@ -124,8 +130,9 @@ export class PiProviderConfigurationService {
     if (normalized.providerId === "openai-codex") {
       return {
         status: "available",
+        source: "catalog",
         models: getApiProviderPreset("openai-codex")
-          .models.map((model) => model.id)
+          .models.map((model) => ({ id: model.id }))
       };
     }
     let apiKey: string;
@@ -327,10 +334,10 @@ export async function requestProviderModels(input: {
     } catch {
       return { status: "response_format_error", models: [] };
     }
-    const models = modelIdsFromResponse(body);
-    return models === null
+    const parsed = parseProviderModelResponse(body);
+    return parsed === null
       ? { status: "response_format_error", models: [] }
-      : { status: "available", models };
+      : { status: parsed.incomplete ? "incomplete" : "available", models: parsed.models, source: "remote" };
   } catch {
     return { status: "network_error", models: [] };
   } finally {
@@ -445,16 +452,20 @@ export async function testProviderConnection(input: {
     ) {
       return { status: "available" };
     }
+    const detail = sanitizeProviderFailureDetail(responseStatus, message.errorMessage, [input.apiKey]);
     return {
       status: "failed",
+      ...(detail ? { detail } : {}),
       failure: classifyPiProviderConnectionFailure(
         responseStatus,
         message.errorMessage ?? ""
       )
     };
   } catch (error) {
+    const detail = sanitizeProviderFailureDetail(responseStatus, error instanceof Error ? error.message : "", [input.apiKey]);
     return {
       status: "failed",
+      ...(detail ? { detail } : {}),
       failure: controller.signal.aborted
         ? "timeout"
         : classifyPiProviderConnectionFailure(
@@ -487,7 +498,8 @@ function createProviderModelFromDraft(
       contextWindow: draft.contextWindow,
       maxOutputTokens: draft.modelMaxTokens,
       reasoning: draft.reasoning,
-      imageInput: draft.imageInput
+      imageInput: draft.imageInput,
+      discovery: draft.discovery
     }
   });
 }
@@ -541,25 +553,11 @@ function normalizeDraft(
     toolCalling: draft.toolCalling,
     imageInput: draft.imageInput,
     reasoning: draft.reasoning,
+    discovery: draft.discovery,
     contextWindow: draft.contextWindow,
     modelMaxTokens: draft.modelMaxTokens,
     maxOutputTokens: draft.maxOutputTokens
   });
-}
-
-function modelIdsFromResponse(value: unknown): string[] | null {
-  if (!isRecord(value) || !Array.isArray(value.data)) return null;
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const entry of value.data) {
-    if (!isRecord(entry) || typeof entry.id !== "string") continue;
-    const id = entry.id.trim();
-    if (!isValidApiProviderModelId(id) || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-    if (ids.length >= PROVIDER_MODEL_LIMIT) break;
-  }
-  return ids;
 }
 
 function assistantText(message: AssistantMessage): string {
@@ -567,10 +565,4 @@ function assistantText(message: AssistantMessage): string {
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object"
-    && value !== null
-    && !Array.isArray(value);
 }

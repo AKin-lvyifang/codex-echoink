@@ -52,7 +52,9 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
       new Notice("已打开 EchoInk Agent，可点击 + 新建会话");
     }
   });
-  plugin.addSettingTab(new CodexSettingTab(plugin));
+  const settingTab = new CodexSettingTab(plugin);
+  plugin.setSettingsTabInstance(settingTab);
+  plugin.addSettingTab(settingTab);
   plugin.registerEvent(plugin.app.workspace.on(
     "editor-menu",
     (menu, editor) => {

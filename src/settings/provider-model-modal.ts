@@ -1,3 +1,4 @@
+import { providerFailureDetailText } from "../harness/pi/provider-failure";
 import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, createOriginSelect, createOriginRadioGroup, disposeOriginControls } from "./origin-controls";
 import { App, Modal, setIcon, setTooltip } from "obsidian";
 import type {
@@ -16,6 +17,7 @@ import {
   apiProviderModelSupportsImage,
   createApiProviderConfig,
   createApiProviderModelConfig,
+  createDiscoveredApiProviderModelConfig,
   getApiProviderModel,
   getDefaultApiProviderModel,
   isValidApiProviderModelConfig,
@@ -140,10 +142,20 @@ export class ProviderModelModal extends Modal {
   constructor(private readonly options: ProviderModelModalOptions) {
     super(options.app);
     this.draft = structuredClone(options.draft);
+    if (!options.editing && this.draft.authMode !== "oauth") {
+      this.draft.models = [];
+      this.draft.defaultModelId = "";
+    }
     this.preflight = new ProviderPreflightSession(
       options.preflight,
       (state) => {
         if (this.closed) return;
+        if (state.operation === "model_list" && (state.status === "available" || state.status === "incomplete") && state.source !== "catalog") {
+          this.draft.models = this.draft.models.map((model) => {
+            const discovered = state.models.find((candidate) => candidate.id === model.id);
+            return discovered ? createDiscoveredApiProviderModelConfig(this.providerId, model.id, this.draft.runtimeProviderId, discovered, model) : model;
+          });
+        }
         this.announce(this.modelStatusText());
         if (this.invalidatingPreflightInPlace && state.status === "idle") {
           this.refreshPreflightStatus();
@@ -591,6 +603,10 @@ export class ProviderModelModal extends Modal {
     }
     const replacement = createApiProviderConfig(providerId, this.draft.id);
     this.draft = { ...replacement, apiKey: "" };
+    if (!this.options.editing && this.draft.authMode !== "oauth") {
+      this.draft.models = [];
+      this.draft.defaultModelId = "";
+    }
     this.numberDrafts.clear();
     this.formErrors = {};
     this.apiKeyInput = "";
@@ -661,7 +677,7 @@ export class ProviderModelModal extends Modal {
     input.value = this.apiKeyInput;
     input.oninput = () => {
       this.apiKeyInput = input.value;
-      this.invalidatePreflight();
+      this.invalidatePreflight(true);
       this.clearFieldError("apiKey", input);
     };
     const reveal = createOriginButton(controls, {
@@ -994,11 +1010,7 @@ export class ProviderModelModal extends Modal {
 
   private renderModelChoice(container: HTMLElement, modelId: string, group: ReturnType<typeof createOriginRadioGroup>): void {
     const enabled = getApiProviderModel(this.draft, modelId);
-    const model = enabled ?? createApiProviderModelConfig(
-      this.providerId,
-      modelId,
-      this.draft.runtimeProviderId
-    );
+    const model = enabled ?? this.discoveredModelConfig(modelId);
     const row = container.createDiv({
       cls: `codex-provider-model-choice ${enabled ? "is-enabled" : ""}`
     });
@@ -1018,6 +1030,10 @@ export class ProviderModelModal extends Modal {
       this.setModelEnabled(modelId, checkbox.checked);
     };
     enabledLabel.createSpan({ text: model.displayName || model.id });
+    if (model.displayName !== model.id) enabledLabel.createSpan({ cls: "codex-provider-model-tag", text: model.id });
+    if (enabled && this.preflight.state.source === "remote" && !this.preflight.state.models.some((candidate) => candidate.id === modelId)) {
+      row.createDiv({ cls: "codex-provider-modal-description", text: this.label("已保存；此次列表未返回（保留选择）", "Saved; absent from this list (selection retained)") });
+    }
     const actions = selection.createDiv({ cls: "codex-provider-model-choice-actions" });
     const defaultLabel = actions.createEl("label", {
       cls: "codex-provider-model-choice-default"
@@ -1046,11 +1062,7 @@ export class ProviderModelModal extends Modal {
   private setModelEnabled(modelId: string, enabled: boolean): void {
     const index = this.draft.models.findIndex((model) => model.id === modelId);
     if (enabled && index < 0) {
-      this.draft.models.push(createApiProviderModelConfig(
-        this.providerId,
-        modelId,
-        this.draft.runtimeProviderId
-      ));
+      this.draft.models.push(this.discoveredModelConfig(modelId));
       if (!this.draft.defaultModelId) this.draft.defaultModelId = modelId;
     } else if (!enabled && index >= 0) {
       this.draft.models.splice(index, 1);
@@ -1161,6 +1173,7 @@ export class ProviderModelModal extends Modal {
       model.toolCalling,
       (value) => {
         model.toolCalling = value;
+        model.capabilityOverrides = { ...model.capabilityOverrides, toolCalling: value };
         model.metadataSource = "manual";
         refreshCapabilityCopy();
       }
@@ -1172,6 +1185,7 @@ export class ProviderModelModal extends Modal {
       apiProviderModelSupportsImage(model),
       (value) => {
         model.input = value ? ["text", "image"] : ["text"];
+        model.capabilityOverrides = { ...model.capabilityOverrides, input: model.input };
         model.metadataSource = "manual";
         refreshCapabilityCopy();
       }
@@ -1179,9 +1193,10 @@ export class ProviderModelModal extends Modal {
     const reasoningCapabilities = resolveEchoInkPiReasoningCapabilities(
       this.draft.runtimeProviderId,
       model.id,
-      model.reasoning
+      model
     );
-    const knownCapability = reasoningCapabilities.source === "catalog"
+    const knownCapability = model.discovery?.reasoning !== undefined
+      || reasoningCapabilities.source === "catalog"
       || Boolean(getApiProviderModelPreset(this.providerId, model.id));
     const reasoningSupported = knownCapability
       ? reasoningCapabilities.supported
@@ -1202,6 +1217,7 @@ export class ProviderModelModal extends Modal {
       (value) => {
         if (!knownCapability && value) {
           model.reasoning = true;
+          model.capabilityOverrides = { ...model.capabilityOverrides, reasoning: true };
           model.reasoningEnabled = true;
           model.metadataSource = "manual";
           refreshCapabilityCopy();
@@ -1306,6 +1322,14 @@ export class ProviderModelModal extends Modal {
       hint.toggleClass("codex-provider-field-error", Boolean(invalid));
       if (invalid) { hint.setText(invalid.message); return; }
       const formattedValue = this.formatModelLimit(model[key]);
+      const requested = model.limitsOverride?.[key];
+      if (requested !== undefined && requested !== model[key]) {
+        hint.setText(this.label(
+          `手动值 ${this.formatModelLimit(requested)} 已保留；受当前模型限制，生效值为 ${formattedValue}。`,
+          `Manual value ${this.formatModelLimit(requested)} is retained; the current model limit makes the effective value ${formattedValue}.`
+        ));
+        return;
+      }
       hint.setText(model.limitsOverride?.[key] === undefined
         ? this.label(
           `留空即自动使用默认值 ${formattedValue}，无需填写。`,
@@ -1370,6 +1394,10 @@ export class ProviderModelModal extends Modal {
         "These capabilities include your saved manual settings."
       );
     }
+    if (model.metadataSource === "discovery") return this.label(
+      "优先使用接口明确声明的能力与限制；缺项由已知目录补齐，仍未声明的能力保持待确认。DeepSeek 缺失的工具能力由官方兼容资料补齐。",
+      "Provider declarations take priority; the catalog fills missing fields. Undeclared capabilities remain unverified. Official DeepSeek compatibility supplies missing tool capability."
+    );
     return model.metadataSource === "catalog"
       ? this.label(
         "能力来自固定 Pi 模型目录，可按 Provider 文档覆盖。",
@@ -1382,35 +1410,49 @@ export class ProviderModelModal extends Modal {
   }
 
   private modelCapabilityTags(model: ApiProviderModelConfig): string[] {
-    const source = model.metadataSource === "unknown"
+    const source = model.metadataSource === "discovery"
+      ? this.label("接口发现", "API discovery")
+      : model.metadataSource === "unknown"
       ? this.label("能力待确认", "Capabilities unverified")
       : model.metadataSource === "manual"
         ? this.label("手动配置", "Manual configuration")
         : model.metadataSource === "catalog"
           ? this.label("Pi 目录", "Pi catalog")
           : this.label("内置预设", "Built-in preset");
-    const input = apiProviderModelSupportsImage(model)
+    const unknown = model.metadataSource === "unknown" || (model.discovery && createApiProviderModelConfig(this.providerId, model.id, this.draft.runtimeProviderId).metadataSource === "unknown");
+    const input = unknown && !model.discovery?.input && !model.capabilityOverrides?.input
+      ? this.label("输入类型未声明", "Input types undeclared")
+      : apiProviderModelSupportsImage(model)
       ? this.label("图片输入", "Image input")
       : this.label("仅文字", "text only");
     const reasoningCapabilities = resolveEchoInkPiReasoningCapabilities(
       this.draft.runtimeProviderId,
       model.id,
-      model.reasoning
+      model
     );
-    const knownCapability = reasoningCapabilities.source === "catalog"
+    const knownCapability = model.discovery?.reasoning !== undefined
+      || reasoningCapabilities.source === "catalog"
       || Boolean(getApiProviderModelPreset(this.providerId, model.id));
     const reasoning = knownCapability
       ? reasoningCapabilities.supported
         ? this.label("支持深度思考", "Deep reasoning supported")
         : this.label("不支持深度思考", "Deep reasoning unsupported")
-      : model.reasoning
+      : unknown && model.capabilityOverrides?.reasoning === undefined
+        ? this.label("深度思考未声明", "Deep reasoning undeclared")
+        : model.reasoning
         ? this.label("支持深度思考", "Deep reasoning supported")
-        : this.label("深度思考待确认", "Deep reasoning unverified");
+        : model.capabilityOverrides?.reasoning === false
+          ? this.label("不支持深度思考", "Deep reasoning unsupported")
+          : this.label("深度思考待确认", "Deep reasoning unverified");
     return [
       source,
       input,
-      model.toolCalling
-        ? this.label("工具调用", "Tool calling")
+      unknown && model.discovery?.toolCalling === undefined && model.capabilityOverrides?.toolCalling === undefined && !(this.providerId === "deepseek" && model.discovery)
+        ? this.label("工具能力未声明", "Tool capability undeclared")
+        : model.toolCalling
+        ? (this.providerId === "deepseek" && model.discovery && model.discovery.toolCalling === undefined && model.capabilityOverrides?.toolCalling === undefined
+          ? this.label("工具调用（官方兼容）", "Tool calling (official compatibility)")
+          : this.label("工具调用", "Tool calling"))
         : this.label("无工具调用", "No tool calling"),
       reasoning
     ];
@@ -1491,20 +1533,16 @@ export class ProviderModelModal extends Modal {
     if (test) test.disabled = !this.canTestConnection() || this.preflight.state.status === "loading" || this.saving;
   }
 
+  private discoveredModelConfig(modelId: string): ApiProviderModelConfig {
+    const discovery = this.preflight.state.source !== "catalog"
+      ? this.preflight.state.models.find((model) => model.id === modelId)
+      : undefined;
+    return createApiProviderModelConfig(this.providerId, modelId, this.draft.runtimeProviderId, discovery);
+  }
+
   private modelChoices(): string[] {
-    const presetModels = getApiProviderPreset(this.providerId).models.map(
-      (model) => model.id
-    );
-    const discoveredModels = this.preflight.state.models.filter(
-      isValidApiProviderModelId
-    );
-    const source = discoveredModels.length > 0
-      ? discoveredModels
-      : presetModels;
-    return unique([
-      ...source,
-      ...this.draft.models.map((model) => model.id)
-    ].filter(Boolean));
+    const source = this.preflight.state.models.map((model) => model.id);
+    return unique([...source, ...this.draft.models.map((model) => model.id)]);
   }
 
   private modelStatusText(): string {
@@ -1526,9 +1564,9 @@ export class ProviderModelModal extends Modal {
             "OpenAI Codex authorization expired. Sign in again."
           );
         }
-        return this.options.copy.providers.connectionFailures[
-          state.connectionFailure
-        ];
+        const generic = this.options.copy.providers.connectionFailures[state.connectionFailure];
+        const detail = providerFailureDetailText(state.connectionDetail);
+        return detail ? `${generic} ${detail}` : generic;
       }
     }
     if (state.status === "loading") {
@@ -1536,7 +1574,12 @@ export class ProviderModelModal extends Modal {
         ? this.label("正在读取本机模型…", "Loading local models…")
         : this.options.copy.providers.modelListLoading;
     }
+    if (state.status === "incomplete") return this.label(
+      `已读取 ${state.models.length} 个模型，列表未完整返回（分页或数量上限）；可手动添加缺少的 ID。`,
+      `Read ${state.models.length} models; the list is incomplete (pagination or limit). Add missing IDs manually.`
+    );
     if (state.status === "available") {
+      if (state.source === "catalog") return this.label("模型来自内置 Pi 目录；未联网发现。", "Models come from the pinned Pi catalog; no online discovery.");
       if (state.models.length === 0) {
         return this.label(
           "Provider 没有返回可选模型。请确认权限或直接输入已知 Model ID。",
@@ -1607,7 +1650,7 @@ export class ProviderModelModal extends Modal {
     endpointInput.oninput = () => {
       this.draft.baseUrl = endpointInput.value;
       this.clearFieldError("endpoint", endpointInput);
-      this.invalidatePreflight();
+      this.invalidatePreflight(true);
       this.syncCurrentProviderUrlTooltips();
     };
     this.renderFieldError(endpoint, "endpoint");
@@ -1634,7 +1677,7 @@ export class ProviderModelModal extends Modal {
       this.focusIntent = "protocol";
       this.draft.apiProtocol = select.value as ApiProviderProtocol;
       delete this.formErrors.protocol;
-      this.invalidatePreflight();
+      this.invalidatePreflight(true);
       this.updateProtocolPill();
       this.restoreFocusIntent();
     };
@@ -1959,12 +2002,34 @@ export class ProviderModelModal extends Modal {
     return null;
   }
 
-  private invalidatePreflight(): void {
+  private invalidatePreflight(identityChanged = false): void {
+    const refreshModelCard = identityChanged && (this.preflight.state.models.length > 0 || this.draft.models.some((model) => model.discovery));
+    if (identityChanged) this.draft.models = this.draft.models.map((model) => {
+      if (!model.discovery) return model;
+      const baseline = createApiProviderModelConfig(this.providerId, model.id, this.draft.runtimeProviderId);
+      if (model.capabilityOverrides) Object.assign(baseline, model.capabilityOverrides, { capabilityOverrides: model.capabilityOverrides, metadataSource: "manual" });
+      // Keep field ownership through an identity change, even when no capability
+      // was overridden. It also protects explicit limits from baseline pruning.
+      baseline.capabilityOverrides = structuredClone(model.capabilityOverrides ?? {});
+      baseline.reasoningEnabled = baseline.reasoning && model.reasoningEnabled;
+      baseline.reasoningEffort = model.reasoningEffort;
+      applyApiProviderModelLimitsOverride(baseline, this.providerId, this.draft.runtimeProviderId, model.limitsOverride);
+      return baseline;
+    });
     this.invalidatingPreflightInPlace = true;
     try {
-      this.preflight.invalidate();
+      this.preflight.invalidate(identityChanged);
     } finally {
       this.invalidatingPreflightInPlace = false;
+    }
+    if (refreshModelCard) {
+      const form = this.contentEl.querySelector<HTMLElement>(".codex-provider-modal-form");
+      const card = form?.querySelector<HTMLElement>(".provider-model-card");
+      if (form && card) {
+        disposeOriginControls(card);
+        card.remove();
+        this.renderModelSelectionField(form);
+      }
     }
   }
 
@@ -2005,6 +2070,7 @@ export class ProviderModelModal extends Modal {
       toolCalling: model.toolCalling,
       imageInput: apiProviderModelSupportsImage(model),
       reasoning: model.reasoning,
+      discovery: model.discovery,
       contextWindow: model.contextWindow,
       modelMaxTokens: model.modelMaxTokens,
       maxOutputTokens: model.maxOutputTokens

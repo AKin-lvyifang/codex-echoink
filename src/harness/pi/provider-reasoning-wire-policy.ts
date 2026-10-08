@@ -54,6 +54,18 @@ export function resolveEchoInkProviderReasoningWirePolicy(
 export function withEchoInkProviderReasoningWirePolicy<TApi extends Api>(
   model: Model<TApi>
 ): Model<TApi> {
+  if (model.provider === "deepseek" && model.api === "openai-completions") {
+    return {
+      ...structuredClone(model),
+      compat: {
+        ...(model as Model<"openai-completions">).compat,
+        maxTokensField: "max_tokens",
+        requiresReasoningContentOnAssistantMessages: true,
+        thinkingFormat: "deepseek",
+        supportsReasoningEffort: true
+      }
+    } as Model<TApi>;
+  }
   const policy = resolveEchoInkProviderReasoningWirePolicy(
     model.provider,
     model.id

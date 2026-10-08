@@ -10,6 +10,7 @@ import { MobileRuntime } from "../../mobile/runtime";
 
 export interface MobileUIHost {
   app: App;
+  isTablet?: boolean;
   store: MobileStore;
   runtime: MobileRuntime;
   settings(): MobileSettings;
@@ -44,6 +45,7 @@ export class MobileUI {
   private page: Page = "chat";
   private stack: Page[] = [];
   private scroll = new Map<string, number>();
+  private sidebarScroll = new Map<string, number>();
   private providerDraft?: ApiProviderConfig;
   private memoryId = "";
   private memoryDrafts = new Map<string, { title: string; content: string }>();
@@ -55,10 +57,11 @@ export class MobileUI {
   private error = "";
   private saving = false;
   private mounted = false;
+  private content!: HTMLElement;
   private timer?: number;
-  private onRuntimeChange = () => { if (this.page === "chat") this.refreshChat(); };
+  private onRuntimeChange = () => { if (this.page === "chat" || (this.host.isTablet && this.page === "history")) this.refreshChat(); };
   constructor(private root: HTMLElement, private host: MobileUIHost) {}
-  mount() { this.mounted = true; this.root.classList.add("echoink-mobile"); this.host.runtime.onChange = this.onRuntimeChange; this.render(); this.timer = window.setInterval(() => this.updateTimers(), 250); }
+  mount() { this.mounted = true; this.root.classList.add("echoink-mobile"); this.root.classList.toggle("em-tablet", !!this.host.isTablet); this.host.runtime.onChange = this.onRuntimeChange; this.render(); this.timer = window.setInterval(() => this.updateTimers(), 250); }
   destroy() { this.mounted = false; window.clearInterval(this.timer); if (this.host.runtime.onChange === this.onRuntimeChange) this.host.runtime.onChange = () => {}; this.root.replaceChildren(); }
   private async act(action: () => void | Promise<void>) {
     try { this.error = ""; this.showError(); await action(); }
@@ -76,14 +79,27 @@ export class MobileUI {
   }
   private scrollKey() { return this.page === "memory" ? `memory:${this.memoryId}` : this.page; }
   private captureScroll() { const body = this.root.querySelector<HTMLElement>(".em-body"); if (body) this.scroll.set(this.scrollKey(), body.scrollTop); }
-  private go(page: Page) { this.captureScroll(); this.stack.push(this.page); this.page = page; this.error = ""; this.render(); }
+  private go(page: Page) {
+    this.captureScroll(); this.stack.push(this.page); this.page = page; this.error = "";
+    if (this.host.isTablet && this.root.clientWidth >= 760) {
+      if (page === "settings") { this.stack.push("settings"); this.page = "basic"; }
+      if (page === "memories" && this.host.store.state.memories.length) {
+        if (!this.host.store.state.memories.some(record => record.id === this.memoryId)) this.memoryId = this.host.store.state.memories[0].id;
+        this.memoryEditing = this.memoryDrafts.has(this.memoryId); this.stack.push("memories"); this.page = "memory";
+      }
+    }
+    this.render();
+  }
   private back() { this.captureScroll(); this.page = this.stack.pop() ?? "chat"; this.error = ""; this.render(); }
   private showError() {
     const box = this.root.querySelector<HTMLElement>(".em-error");
     if (box) { box.textContent = this.error; box.hidden = !this.error; }
   }
   private render() {
+    const previousSidebar = this.root.querySelector<HTMLElement>(".em-sidebar");
+    if (previousSidebar) this.sidebarScroll.set(previousSidebar.getAttribute("aria-label") ?? "", previousSidebar.scrollTop);
     this.host.beginRender(); this.root.replaceChildren();
+    this.root.dataset.page = this.page;
     const header = el(this.root, "header", "em-header");
     if (this.page !== "chat") this.iconButton(header, "返回", "chevron-left", () => this.back());
     else icon(header, "bot");
@@ -94,7 +110,34 @@ export class MobileUI {
       this.iconButton(header, "设置", "settings-2", () => this.go("settings"));
     }
     const error = el(this.root, "div", "em-error"); error.setAttribute("role", "alert"); this.showError();
-    const body = el(this.root, "main", "em-body");
+    const workspace = el(this.root, "div", "em-workspace");
+    if (this.host.isTablet) {
+      const navigation = el(workspace, "nav", "em-navigation"); navigation.setAttribute("aria-label", "EchoInk 导航");
+      for (const [page, label, name] of [["chat", "对话", "message-square"], ["memories", "记忆", "brain"], ["settings", "设置", "settings-2"]] as const) {
+        const button = this.button(navigation, label, () => this.go(page), name);
+        const selected = page === "chat" ? this.page === "chat" || this.page === "history" : page === "memories" ? this.page === "memories" || this.page === "memory" : ["settings", "basic", "providers", "provider", "review"].includes(this.page);
+        button.setAttribute("aria-current", selected ? "page" : "false");
+      }
+    }
+    const panels = el(workspace, "div", "em-panels");
+    this.content = el(panels, "section", "em-content");
+    // If a narrow list was widened, keep the revealed detail once interacted with.
+    const retainDetail = () => {
+      if (!this.host.isTablet || this.root.clientWidth < 760) return;
+      if (this.page !== "settings" && this.page !== "memories") return;
+      this.stack.push(this.page); this.page = this.page === "settings" ? "basic" : "memory";
+      this.root.dataset.page = this.page;
+    };
+    this.content.addEventListener("pointerdown", retainDetail);
+    this.content.addEventListener("focusin", retainDetail);
+    const body = el(this.content, "main", "em-body");
+    if (this.host.isTablet && this.tabletPanels(panels, body)) {
+      body.addEventListener("scroll", retainDetail);
+      const aside = panels.querySelector<HTMLElement>(".em-sidebar");
+      if (aside) aside.scrollTop = this.sidebarScroll.get(aside.getAttribute("aria-label") ?? "") ?? 0;
+      body.scrollTop = this.scroll.get(this.scrollKey()) ?? 0;
+      return;
+    }
     switch (this.page) {
       case "chat": this.chat(body); break;
       case "settings": this.settings(body); break;
@@ -111,6 +154,35 @@ export class MobileUI {
     }
     body.scrollTop = this.scroll.get(this.scrollKey()) ?? 0;
   }
+  private tabletPanels(panels: HTMLElement, body: HTMLElement): boolean {
+    const sidebar = (label: string) => {
+      const aside = document.createElement("aside"); aside.className = "em-sidebar"; aside.setAttribute("aria-label", label);
+      panels.prepend(aside); el(aside, "h3", "em-sidebar-title", label); return aside;
+    };
+    if (this.page === "chat" || this.page === "history") {
+      this.history(sidebar("历史对话")); this.chat(body); return true;
+    }
+    if (this.page === "memories" || this.page === "memory") {
+      if (!this.host.store.state.memories.some(record => record.id === this.memoryId)) {
+        this.memoryId = this.host.store.state.memories[0]?.id ?? "";
+        this.memoryEditing = this.memoryDrafts.has(this.memoryId);
+      }
+      this.memories(sidebar("记忆"));
+      if (this.memoryId) this.memory(body); else el(body, "p", "em-empty", "还没有记忆");
+      return true;
+    }
+    if (["settings", "basic", "providers", "provider", "review"].includes(this.page)) {
+      const navigation = sidebar("设置"); this.settings(navigation);
+      if (this.page === "providers") this.providers(body);
+      else if (this.page === "provider") this.provider(body);
+      else if (this.page === "review") this.row(body, "记忆", "查看、修正和忘记", "brain", () => this.go("memories"));
+      else this.basic(body);
+      const category = this.page === "settings" ? "基础设置" : this.page === "provider" ? "API Provider" : this.page === "providers" ? "API Provider" : this.page === "review" ? "复盘" : "基础设置";
+      navigation.querySelectorAll<HTMLButtonElement>(".em-row").forEach(row => row.setAttribute("aria-current", row.querySelector("strong")?.textContent === category ? "page" : "false"));
+      return true;
+    }
+    return false;
+  }
   private row(parent: HTMLElement, title: string, description: string, iconName: string, action: () => void | Promise<void>) {
     const row = this.button(parent, "", action, undefined, "em-row"); icon(row, iconName);
     const label = el(row, "span", "em-row-label"); el(label, "strong", "", title); if (description) el(label, "small", "", description);
@@ -126,7 +198,7 @@ export class MobileUI {
   }
   private chat(body: HTMLElement) {
     body.classList.add("em-messages"); this.messages(body);
-    const compose = el(this.root, "footer", "em-compose");
+    const compose = el(this.content, "footer", "em-compose");
     const quick = el(compose, "div", "em-quick");
     const newButton = this.button(quick, "新对话", async () => { if (this.host.runtime.busy) return; await this.host.store.createSession(); this.scroll.delete("chat"); this.render(); }, "square-pen"); newButton.disabled = this.host.runtime.busy;
     this.button(quick, "引用笔记", () => this.go("notes"), "file-text");
@@ -167,11 +239,16 @@ export class MobileUI {
     const send = this.root.querySelector<HTMLButtonElement>(".em-send");
     if (send) { send.replaceChildren(); icon(send, this.host.runtime.busy ? "square" : "arrow-up"); send.setAttribute("aria-label", this.host.runtime.busy ? "停止回答" : "发送消息"); }
     const newButton = this.root.querySelector<HTMLButtonElement>(".em-quick button"); if (newButton) newButton.disabled = this.host.runtime.busy;
+    this.root.querySelectorAll<HTMLButtonElement>(".em-session-row").forEach(row => {
+      row.disabled = this.host.runtime.busy;
+      const session = this.host.store.state.sessions.find(item => item.id === row.dataset.sessionId);
+      if (session) { const title = row.querySelector("strong"); const time = row.querySelector("small"); if (title) title.textContent = session.title; if (time) time.textContent = new Date(session.updatedAt).toLocaleString(); }
+    });
     const status = this.root.querySelector<HTMLElement>(".em-status"); if (status) status.textContent = this.host.runtime.busy ? "正在等待模型或执行工具…" : "";
     this.error = this.host.runtime.error; this.showError();
   }
   private updateTimers() {
-    if (!this.host.runtime.busy || this.page !== "chat") return;
+    if (!this.host.runtime.busy || (this.page !== "chat" && !(this.host.isTablet && this.page === "history"))) return;
     for (const element of Array.from(this.root.querySelectorAll<HTMLElement>(".em-tool-timer"))) {
       const timing = this.host.store.session.tools[element.dataset.callId ?? ""];
       if (timing && timing.elapsedMs === undefined) element.textContent = `${((Date.now() - timing.startedAt) / 1000).toFixed(1)} 秒 · 进行中`;
@@ -343,8 +420,10 @@ export class MobileUI {
     this.button(body, "模型与提供商设置", () => this.go("providers"), "settings-2", "em-wide-action");
   }
   private history(body: HTMLElement) {
+    if (!this.host.store.state.sessions.length) el(body, "p", "em-empty", "还没有历史对话");
     for (const session of this.host.store.state.sessions) {
-      const row = this.row(body, session.title, new Date(session.updatedAt).toLocaleString(), "message-square", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); this.host.store.state.activeSessionId = session.id; await this.host.store.save(); this.stack = []; this.page = "chat"; this.scroll.delete("chat"); this.render(); }); row.disabled = this.host.runtime.busy;
+      const row = this.row(body, session.title, new Date(session.updatedAt).toLocaleString(), "message-square", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); this.captureScroll(); this.host.store.state.activeSessionId = session.id; await this.host.store.save(); this.stack = []; this.page = "chat"; this.scroll.delete("chat"); this.render(); }); row.disabled = this.host.runtime.busy;
+      row.classList.add("em-session-row"); row.dataset.sessionId = session.id; row.setAttribute("aria-current", session.id === this.host.store.state.activeSessionId ? "page" : "false");
     }
   }
   private search(parent: HTMLElement, label: string, value: string, update: (value: string) => void) {
@@ -364,7 +443,10 @@ export class MobileUI {
       rows.replaceChildren(); const category = memoryCategories.find(c => c.id === this.memoryCategory)!;
       const items = this.host.store.state.memories.filter(r => (category.id === "all" || (category.kinds as readonly string[]).includes(r.kind)) && `${r.title}\n${r.content}`.toLocaleLowerCase().includes(this.memoryQuery.toLocaleLowerCase()));
       if (!items.length) el(rows, "p", "em-empty", search.value ? "没有找到相关记忆" : "还没有记忆");
-      for (const record of items) this.row(rows, record.title, memoryCategories.find(c => (c.kinds as readonly string[]).includes(record.kind))?.label ?? "", "brain", () => { this.memoryId = record.id; this.memoryEditing = this.memoryDrafts.has(record.id); this.go("memory"); });
+      for (const record of items) {
+        const row = this.row(rows, record.title, memoryCategories.find(c => (c.kinds as readonly string[]).includes(record.kind))?.label ?? "", "brain", () => { this.captureScroll(); this.memoryId = record.id; this.memoryEditing = this.memoryDrafts.has(record.id); this.stack.push(this.page); this.page = "memory"; this.error = ""; this.render(); });
+        row.setAttribute("aria-current", record.id === this.memoryId ? "page" : "false");
+      }
     }; renderRows();
   }
   private memory(body: HTMLElement) {

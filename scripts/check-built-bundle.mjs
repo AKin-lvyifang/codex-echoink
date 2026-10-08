@@ -1,11 +1,12 @@
 /**
  * Post-build gate for the EchoInk Obsidian bundle.
  *
- * Guards four Obsidian community-review requirements that a plain `npm run
- * build` cannot express:
+ * Guards EchoInk's project budget and Obsidian review/runtime requirements
+ * that a plain `npm run build` cannot express:
  *
- *   1. `dist/main.js` must be below the 5,000,000-byte project budget.
- *      The 4,500,000-byte internal target leaves room for future changes.
+ *   1. `dist/main.js` must be below the 7,000,000-byte project budget.
+ *      Bundles above Obsidian Sync Standard's per-file limit must be
+ *      installed independently on each device instead of synced.
  *   2. The bundle must not contain Pi CLI / self-update / tool-download code
  *      (ZIP extraction, `Expand-Archive`, `windows-self-update`, the fd/rg
  *      downloader). EchoInk ships a narrowed Pi runtime; see esbuild.config.mjs.
@@ -30,7 +31,7 @@ import { findDynamicScriptCreations, SCRIPT_RESOURCE_DISABLED } from "./react-do
 const DIST_MAIN_JS = path.join(process.cwd(), "dist", "main.js");
 
 /** Project hard limit, in decimal bytes; reaching it fails the build gate. */
-const HARD_LIMIT_BYTES = 5_000_000;
+const HARD_LIMIT_BYTES = 7_000_000;
 /** Internal target, reported without relaxing the hard limit. */
 const TARGET_LIMIT_BYTES = 4_500_000;
 

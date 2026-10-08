@@ -1,4 +1,9 @@
+import { normalizeDiscoveredProviderModel, type DiscoveredProviderModel } from "./provider-model-discovery";
+import { DEFAULT_ENGLISH_DIARY_SETTINGS, LEGACY_HIDDEN_EXPRESSION_DIRECTORY } from "../english-diary/types";
+import { knowledgeRootRole } from "../knowledge-base/root-paths";
+import { DEFAULT_LIFESTYLE_SETTINGS, normalizeLifestyleSettings, type LifestyleSettings } from "../lifestyle/settings";
 import { normalizeTavilySettings, type TavilySettings } from "../tools/tavily-search";
+import { normalizeEchoInkColorTheme, type EchoInkColorTheme } from "../ui/appearance-theme";
 import { normalizeTodoCompletions, type TodoCompletionHistory } from "../home/todo-completions";
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, TokenUsage, UiMode } from "../types/app-server";
 import { DEFAULT_QUICK_CHAT_HOTKEY, normalizeAccelerator } from "../core/quick-hotkey";
@@ -237,7 +242,7 @@ export type StoredSession = EchoInkConversationSessionShell<
   piDocumentReplay?: StoredPiDocumentReplayByEntry;
 };
 
-export type SettingsTab = "general" | "layout" | "providers" | "resources" | "knowledgeBase" | "review" | "todos";
+export type SettingsTab = "general" | "layout" | "providers" | "resources" | "knowledgeBase" | "review" | "todos" | "account";
 export type ProviderMode = "custom-api";
 export type ResourceManagementTab = "plugins" | "mcp" | "skills";
 export type KnowledgeBaseRunStatus = "idle" | "running" | "success" | "failed" | "canceled";
@@ -373,7 +378,8 @@ export type ApiProviderModelMetadataSource =
   | "preset"
   | "catalog"
   | "unknown"
-  | "manual";
+  | "manual"
+  | "discovery";
 
 export interface ApiProviderModelLimitsOverride {
   contextWindow?: number;
@@ -400,6 +406,8 @@ export interface ApiProviderModelConfig {
   /** User-entered limits only. Missing fields inherit effective metadata. */
   limitsOverride?: ApiProviderModelLimitsOverride;
   metadataSource: ApiProviderModelMetadataSource;
+  discovery?: DiscoveredProviderModel;
+  capabilityOverrides?: Partial<Pick<ApiProviderModelConfig, "input" | "toolCalling" | "reasoning">>;
 }
 
 const INVALID_STORED_REASONING_EFFORT_MODELS = new WeakSet<
@@ -482,9 +490,11 @@ export interface EchoInkTodoItem {
 }
 
 export interface CodexForObsidianSettings {
+  englishDiary: import("../english-diary/types").EnglishDiarySettings;
   productGeneration: "pi-agent-product-v1";
   settingsVersion: number;
   settingsLanguage: SettingsLanguage;
+  colorTheme: EchoInkColorTheme;
   settingsTab: SettingsTab;
   proxyEnabled: boolean;
   proxyUrl: string;
@@ -503,6 +513,7 @@ export interface CodexForObsidianSettings {
   autoOpenHome: boolean;
   quickChat: QuickChatSettings;
   homeModules: Record<string, boolean>;
+  lifestyle: LifestyleSettings;
   todos: EchoInkTodoItem[];
   todoCompletions: TodoCompletionHistory;
   todoCategories: EchoInkTodoCategory[];
@@ -525,9 +536,11 @@ export interface CodexForObsidianSettings {
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
+  englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS },
   productGeneration: "pi-agent-product-v1",
-  settingsVersion: 53,
+  settingsVersion: 54,
   settingsLanguage: "zh-CN",
+  colorTheme: "green",
   settingsTab: "providers",
   proxyEnabled: false,
   proxyUrl: "http://127.0.0.1:7890",
@@ -549,6 +562,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     hotkey: DEFAULT_QUICK_CHAT_HOTKEY
   },
   homeModules: defaultHomeModuleVisibility(),
+  lifestyle: DEFAULT_LIFESTYLE_SETTINGS,
   todos: [],
   todoCompletions: {},
   todoCategories: [
@@ -632,6 +646,33 @@ export function normalizeQuickChatSettings(input: unknown): QuickChatSettings {
   };
 }
 
+function normalizeEnglishDiarySettings(input: unknown): CodexForObsidianSettings["englishDiary"] {
+  const data = settingsRecord(input) ?? {};
+  const directory = (value: unknown, fallback: string) => {
+    if (typeof value !== "string") return fallback;
+    const normalized = value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+    const parts = normalized.split("/");
+    const managed = normalized === LEGACY_HIDDEN_EXPRESSION_DIRECTORY
+      || (knowledgeRootRole(normalized) === "outputs" && parts.length === 3
+        && parts[1] === ".english-diary" && ["diaries", "expressions"].includes(parts[2]));
+    return normalized && !/[\p{Cc}:]/u.test(normalized)
+      && parts.every((part) => part && part !== "." && part !== ".." && (managed || !part.startsWith("."))) ? normalized : fallback;
+  };
+  const legacyDirectories = (value: unknown) => [...new Set((Array.isArray(value) ? value : [])
+    .map((item) => directory(item, "")).filter(Boolean))];
+  return {
+    enabled: data.enabled === true,
+    homeShortcut: data.homeShortcut === "quick-record" || data.homeShortcut === "english-diary" ? data.homeShortcut : "ask",
+    englishDirectory: directory(data.englishDirectory, DEFAULT_SETTINGS.englishDiary.englishDirectory),
+    expressionDirectory: directory(data.expressionDirectory, DEFAULT_SETTINGS.englishDiary.expressionDirectory),
+    legacyEnglishDirectories: legacyDirectories(data.legacyEnglishDirectories),
+    legacyExpressionDirectories: legacyDirectories(data.legacyExpressionDirectories),
+    providerSettingsId: typeof data.providerSettingsId === "string" ? data.providerSettingsId.trim() : "",
+    modelId: typeof data.modelId === "string" ? data.modelId.trim() : "",
+    approvedProvider: typeof data.approvedProvider === "string" ? data.approvedProvider : ""
+  };
+}
+
 export function normalizeSettingsData(input: unknown): { settings: CodexForObsidianSettings; changed: boolean } {
   const data = settingsRecord(input) ?? {};
   const retiredDataPresent = hasRetiredSettingsData(data);
@@ -651,12 +692,14 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     ...currentData,
     productGeneration: DEFAULT_SETTINGS.productGeneration,
     settingsLanguage: normalizedLanguage,
+    colorTheme: normalizeEchoInkColorTheme(data.colorTheme),
     settingsTab: normalizeSettingsTab(data?.settingsTab),
     tavily: normalizeTavilySettings(data.tavily),
     autoArchiveDays: normalizeAutoArchiveDays(data.autoArchiveDays),
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,
     journalDirectory: normalizeJournalDirectory(data?.journalDirectory),
+    englishDiary: normalizeEnglishDiarySettings(data.englishDiary),
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
     apiProviders: normalizeApiProviders(
       data?.apiProviders,
@@ -678,6 +721,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     memory: normalizeMemorySettings(data?.memory),
     quickChat: normalizeQuickChatSettings(data?.quickChat),
     homeModules: normalizeHomeModules(data?.homeModules),
+    lifestyle: normalizeLifestyleSettings(data?.lifestyle),
     todos: normalizeTodos(data?.todos),
     todoCompletions: normalizeTodoCompletions(data?.todoCompletions),
     todoCategories: normalizeTodoCategories(data?.todoCategories),
@@ -748,11 +792,13 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     settings,
     changed: previousVersion !== DEFAULT_SETTINGS.settingsVersion
       || languageChanged
+      || data.colorTheme !== settings.colorTheme
       || !currentProductData
       || sessionBoundaryChanged
       || welcomeSettingsChanged
       || retiredDataPresent
       || legacyTokenPlanCustomPresent
+      || JSON.stringify(data.englishDiary) !== JSON.stringify(settings.englishDiary)
   };
 }
 
@@ -901,8 +947,10 @@ export function createApiProviderConfig(
 export function createApiProviderModelConfig(
   providerId: ApiProviderId,
   modelId: string,
-  runtimeProviderId = getApiProviderPreset(providerId).runtimeProviderId
+  runtimeProviderId = getApiProviderPreset(providerId).runtimeProviderId,
+  discovery?: DiscoveredProviderModel
 ): ApiProviderModelConfig {
+  if (discovery) return createDiscoveredApiProviderModelConfig(providerId, modelId, runtimeProviderId, discovery);
   const id = modelId.trim();
   const preset = getApiProviderModelPreset(providerId, id);
   if (preset) {
@@ -963,6 +1011,45 @@ export function createApiProviderModelConfig(
   };
 }
 
+export function createDiscoveredApiProviderModelConfig(
+  providerId: ApiProviderId,
+  modelId: string,
+  runtimeProviderId: string,
+  value: DiscoveredProviderModel,
+  previous?: ApiProviderModelConfig
+): ApiProviderModelConfig {
+  const discovery = normalizeDiscoveredProviderModel(value);
+  const baseline = createApiProviderModelConfig(providerId, modelId, runtimeProviderId);
+  if (!discovery || discovery.id !== baseline.id) return baseline;
+  const model: ApiProviderModelConfig = {
+    ...baseline,
+    displayName: discovery.displayName ?? baseline.displayName,
+    input: discovery.input ?? baseline.input,
+    // Official DeepSeek compatibility fills only an absent declaration.
+    toolCalling: discovery.toolCalling ?? (providerId === "deepseek" ? true : baseline.toolCalling),
+    reasoning: discovery.reasoning ?? baseline.reasoning,
+    contextWindow: discovery.contextWindow ?? baseline.contextWindow,
+    modelMaxTokens: discovery.modelMaxTokens ?? baseline.modelMaxTokens,
+    discovery,
+    metadataSource: "discovery"
+  };
+  model.reasoningEnabled = previous?.reasoningEnabled ?? model.reasoning;
+  model.maxOutputTokens = Math.min(model.contextWindow, model.modelMaxTokens,
+    discovery.modelMaxTokens ?? baseline.maxOutputTokens);
+  const overrides = previous?.capabilityOverrides ?? (previous?.metadataSource === "manual"
+    ? { input: previous.input, toolCalling: previous.toolCalling, reasoning: previous.reasoning }
+    : undefined);
+  if (overrides) {
+    model.capabilityOverrides = structuredClone(overrides);
+    Object.assign(model, overrides);
+    model.metadataSource = "manual";
+  }
+  model.reasoningEnabled = model.reasoning && model.reasoningEnabled;
+  if (previous?.reasoningEffort) model.reasoningEffort = previous.reasoningEffort;
+  if (previous?.limitsOverride) applyApiProviderModelLimitsOverride(model, providerId, runtimeProviderId, previous.limitsOverride);
+  return model;
+}
+
 export function applyApiProviderModelLimitsOverride(
   model: ApiProviderModelConfig,
   providerId: ApiProviderId,
@@ -973,14 +1060,12 @@ export function applyApiProviderModelLimitsOverride(
   const baseline = createApiProviderModelConfig(
     providerId,
     model.id,
-    runtimeProviderId
+    runtimeProviderId,
+    model.discovery
   );
-  if (limitsOverride.contextWindow === baseline.contextWindow) {
-    delete limitsOverride.contextWindow;
-  }
-  if (limitsOverride.modelMaxTokens === baseline.modelMaxTokens) {
-    delete limitsOverride.modelMaxTokens;
-  }
+  const preserveExplicitOverrides = Boolean(model.discovery) || model.capabilityOverrides !== undefined;
+  if (!preserveExplicitOverrides && limitsOverride.contextWindow === baseline.contextWindow) delete limitsOverride.contextWindow;
+  if (!preserveExplicitOverrides && limitsOverride.modelMaxTokens === baseline.modelMaxTokens) delete limitsOverride.modelMaxTokens;
   const contextWindow = limitsOverride.contextWindow
     ?? baseline.contextWindow;
   const modelMaxTokens = limitsOverride.modelMaxTokens
@@ -991,17 +1076,7 @@ export function applyApiProviderModelLimitsOverride(
     modelMaxTokens,
     1_000_000
   );
-  if (
-    limitsOverride.maxOutputTokens !== undefined
-    && Math.min(
-      limitsOverride.maxOutputTokens,
-      contextWindow,
-      modelMaxTokens,
-      1_000_000
-    ) === automaticMaxOutputTokens
-  ) {
-    delete limitsOverride.maxOutputTokens;
-  }
+  if (!preserveExplicitOverrides && limitsOverride.maxOutputTokens !== undefined && Math.min(limitsOverride.maxOutputTokens, contextWindow, modelMaxTokens, 1_000_000) === automaticMaxOutputTokens) delete limitsOverride.maxOutputTokens;
   const requestedMaxOutputTokens = limitsOverride.maxOutputTokens
     ?? baseline.maxOutputTokens;
   model.contextWindow = contextWindow;
@@ -1075,6 +1150,23 @@ export function getActiveApiProviderModel(
   if (!provider) return null;
   const model = getApiProviderModel(provider, settings.defaultModel);
   return model ? { provider, model } : null;
+}
+
+export function getEnglishDiaryApiProviderModel(
+  settings: Pick<CodexForObsidianSettings, "englishDiary" | "activeApiProviderId" | "apiProviders" | "defaultModel">
+): NonNullable<ReturnType<typeof getActiveApiProviderModel>> {
+  const { providerSettingsId, modelId } = settings.englishDiary;
+  if (!providerSettingsId && !modelId) {
+    const active = getActiveApiProviderModel(settings);
+    if (!active) throw new Error("尚未设置默认模型，请在 API Provider 或英文日记设置中选择模型。");
+    return active;
+  }
+  if (!providerSettingsId || !modelId) throw new Error("英文日记模型配置不完整，请重新选择 Provider 和模型。");
+  const provider = settings.apiProviders.find((candidate) => candidate.id === providerSettingsId);
+  if (!provider) throw new Error("英文日记所选的 API Provider 已不存在，请在英文日记设置中重新选择。");
+  const model = getApiProviderModel(provider, modelId);
+  if (!model) throw new Error("英文日记所选模型已不存在，请在英文日记设置中重新选择。");
+  return { provider, model };
 }
 
 export function setApiProviderDefaultModel(
@@ -1353,7 +1445,7 @@ export function isValidApiProviderModelConfig(
         || model.reasoningEffort === "none"
       )
     )
-    || !["preset", "catalog", "unknown", "manual"].includes(String(model.metadataSource))
+    || !["preset", "catalog", "unknown", "manual", "discovery"].includes(String(model.metadataSource))
     || !isValidApiProviderModelLimitsOverride(model.limitsOverride)
   ) return false;
   const contextWindow = model.contextWindow;
@@ -1496,6 +1588,7 @@ function normalizeSettingsTab(value: unknown): SettingsTab {
     || value === "knowledgeBase"
     || value === "review"
     || value === "todos"
+    || value === "account"
     || value === "layout"
     || value === "general"
     ? value
@@ -1897,7 +1990,7 @@ export function sanitizeStoredPiDocumentReplay(
         const kind = item.kind;
         const sha256 = normalizeOptionalText(item.sha256).toLowerCase();
         const text = typeof item.text === "string"
-          ? item.text.replace(/\u0000/gu, "").trim()
+          ? item.text.replaceAll("\0", "").trim()
           : item.text === null
             ? null
             : undefined;
@@ -2642,7 +2735,10 @@ function normalizeStoredApiProviderModel(
   migrateLegacyLimits: boolean
 ): ApiProviderModelConfig {
   const id = String(record.id).trim();
-  const normalized = record.metadataSource === "manual"
+  const discovery = normalizeDiscoveredProviderModel(record.discovery);
+  const normalized = discovery?.id === id
+    ? createDiscoveredApiProviderModelConfig(providerId, id, runtimeProviderId, discovery)
+    : record.metadataSource === "manual"
     ? normalizeManualApiProviderModel(
       record,
       providerId,
@@ -2651,11 +2747,27 @@ function normalizeStoredApiProviderModel(
       migrateLegacyLimits
     )
     : createApiProviderModelConfig(providerId, id, runtimeProviderId);
+  if (settingsRecord(record.capabilityOverrides) || (discovery?.id === id && record.metadataSource === "manual")) {
+    const rawOverrides = settingsRecord(record.capabilityOverrides);
+    const overrides: NonNullable<ApiProviderModelConfig["capabilityOverrides"]> = {};
+    if (rawOverrides) {
+      if (typeof rawOverrides.toolCalling === "boolean") overrides.toolCalling = rawOverrides.toolCalling;
+      if (typeof rawOverrides.reasoning === "boolean") overrides.reasoning = rawOverrides.reasoning;
+      if (Array.isArray(rawOverrides.input)) overrides.input = normalizeApiProviderModelInput(rawOverrides.input, false);
+    } else {
+      overrides.input = normalizeApiProviderModelInput(record.input, false);
+      if (typeof record.toolCalling === "boolean") overrides.toolCalling = record.toolCalling;
+      if (typeof record.reasoning === "boolean") overrides.reasoning = record.reasoning;
+    }
+    Object.assign(normalized, overrides);
+    normalized.capabilityOverrides = overrides;
+    if (Object.keys(overrides).length) normalized.metadataSource = "manual";
+  }
   if (normalized.metadataSource === "unknown") {
     normalized.displayName = normalizeText(record.displayName, id);
   }
   if (
-    record.metadataSource !== "manual"
+    (record.metadataSource !== "manual" || discovery || normalized.capabilityOverrides)
     && Object.hasOwn(record, "limitsOverride")
   ) {
     applyApiProviderModelLimitsOverride(
@@ -2665,7 +2777,7 @@ function normalizeStoredApiProviderModel(
       record.limitsOverride
     );
   }
-  if (record.metadataSource === "manual") {
+  if (record.metadataSource === "manual" && !discovery && !normalized.capabilityOverrides) {
     const catalogModel = resolveEchoInkPiCatalogModel(runtimeProviderId, id);
     const presetModel = getApiProviderModelPreset(providerId, id);
     if (catalogModel) normalized.reasoning = catalogModel.reasoning;
@@ -2746,7 +2858,8 @@ function normalizeManualApiProviderModel(
     contextWindow: baseline.contextWindow,
     modelMaxTokens: baseline.modelMaxTokens,
     maxOutputTokens: baseline.maxOutputTokens,
-    metadataSource: "manual"
+    metadataSource: "manual",
+    ...(settingsRecord(record.capabilityOverrides) ? { capabilityOverrides: {} } : {})
   };
   const limitsOverride = Object.hasOwn(record, "limitsOverride")
     ? record.limitsOverride

@@ -1,0 +1,1283 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-02T17:13:08.229783+00:00",
+  "purpose": "Local EchoInk finance brand supplement; selectable icons only, no automatic merchant creation.",
+  "count": 35,
+  "repositories": {
+    "simple-icons": {
+      "repo": "simple-icons/simple-icons",
+      "commit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "license": "CC0-1.0",
+      "licensePath": "LICENSE.md",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt"
+    },
+    "svg-logos": {
+      "repo": "gilbarbara/logos",
+      "commit": "37a6b807fd71c622efea27a9309b5d4edc792969",
+      "license": "CC0-1.0",
+      "licensePath": "LICENSE.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/gilbarbara/logos/37a6b807fd71c622efea27a9309b5d4edc792969/LICENSE.txt",
+      "licenseFile": "licenses/svg-logos-LICENSE.txt"
+    },
+    "bank-logos": {
+      "repo": "icongo/bank-logos",
+      "commit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "license": "MIT",
+      "licensePath": "LICENSE",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt"
+    }
+  },
+  "matchingNotes": [
+    "Brand aliases are suggestions, not merchant match rules.",
+    "Bank and payment platform text identifies accounts; never infer a merchant from an account or channel alone.",
+    "Apply aliases only in the relevant merchant/account field; short bank abbreviations require token-aware matching."
+  ],
+  "rightsNote": "Repository licenses apply to contributed assets; brand names and trademarks remain the property of their owners. This collection does not grant trademark authorization.",
+  "assets": [
+    {
+      "id": "alipay",
+      "displayName": "支付宝",
+      "aliases": [
+        "支付宝",
+        "Alipay"
+      ],
+      "group": "支付与账户",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/alipay.svg",
+      "sourceTitle": "Alipay",
+      "sourceDesignUrl": "https://global.alipay.com/docs/ac/website_hk/design",
+      "guidelinesUrl": "https://global.alipay.com/docs/ac/website_hk/design",
+      "brandHex": "#1677FF",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "file": "svg/alipay.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/alipay.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 802,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "kfc",
+      "displayName": "肯德基",
+      "aliases": [
+        "肯德基",
+        "KFC",
+        "Kentucky Fried Chicken"
+      ],
+      "group": "餐饮",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/kfc.svg",
+      "sourceTitle": "KFC",
+      "sourceDesignUrl": "https://global.kfc.com/asset-library/",
+      "guidelinesUrl": null,
+      "brandHex": "#F40027",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/kfc.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/kfc.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 1696,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "mcdonalds",
+      "displayName": "麦当劳",
+      "aliases": [
+        "麦当劳",
+        "McDonald’s",
+        "McDonald's",
+        "McDonalds"
+      ],
+      "group": "餐饮",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/mcdonalds.svg",
+      "sourceTitle": "McDonald's",
+      "sourceDesignUrl": "https://www.mcdonalds.com/gb/en-gb/newsroom.html",
+      "guidelinesUrl": null,
+      "brandHex": "#FBC817",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/mcdonalds.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/mcdonalds.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 402,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "starbucks",
+      "displayName": "星巴克",
+      "aliases": [
+        "星巴克",
+        "Starbucks"
+      ],
+      "group": "餐饮",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/starbucks.svg",
+      "sourceTitle": "Starbucks",
+      "sourceDesignUrl": "https://starbucks.com",
+      "guidelinesUrl": "https://creative.starbucks.com",
+      "brandHex": "#006241",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/starbucks.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/starbucks.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 7708,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "burgerking",
+      "displayName": "汉堡王",
+      "aliases": [
+        "汉堡王",
+        "Burger King"
+      ],
+      "group": "餐饮",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/burgerking.svg",
+      "sourceTitle": "Burger King",
+      "sourceDesignUrl": "https://www.bk.com",
+      "guidelinesUrl": "https://www.bk.com/trademarks",
+      "brandHex": "#D62300",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/burgerking.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/burgerking.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 4355,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "uniqlo",
+      "displayName": "优衣库",
+      "aliases": [
+        "优衣库",
+        "UNIQLO"
+      ],
+      "group": "购物",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/uniqlo.svg",
+      "sourceTitle": "Uniqlo",
+      "sourceDesignUrl": "https://www.uniqlo.com",
+      "guidelinesUrl": null,
+      "brandHex": "#FF0000",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/uniqlo.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/uniqlo.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 996,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "ikea",
+      "displayName": "宜家",
+      "aliases": [
+        "宜家",
+        "IKEA"
+      ],
+      "group": "购物",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/ikea.svg",
+      "sourceTitle": "IKEA",
+      "sourceDesignUrl": "https://www.ikea.com",
+      "guidelinesUrl": null,
+      "brandHex": "#0058A3",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/ikea.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/ikea.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 1770,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "carrefour",
+      "displayName": "家乐福",
+      "aliases": [
+        "家乐福",
+        "Carrefour"
+      ],
+      "group": "购物",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/carrefour.svg",
+      "sourceTitle": "Carrefour",
+      "sourceDesignUrl": "https://en.wikipedia.org/wiki/File:Carrefour_logo_no_tag.svg",
+      "guidelinesUrl": null,
+      "brandHex": "#004E9F",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/carrefour.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/carrefour.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 1068,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "nike",
+      "displayName": "耐克",
+      "aliases": [
+        "耐克",
+        "NIKE"
+      ],
+      "group": "购物",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/nike.svg",
+      "sourceTitle": "Nike",
+      "sourceDesignUrl": "https://www.nike.com",
+      "guidelinesUrl": null,
+      "brandHex": "#111111",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/nike.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/nike.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 397,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "adidas",
+      "displayName": "阿迪达斯",
+      "aliases": [
+        "阿迪达斯",
+        "Adidas"
+      ],
+      "group": "购物",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/adidas.svg",
+      "sourceTitle": "Adidas",
+      "sourceDesignUrl": "https://www.adidas.com",
+      "guidelinesUrl": null,
+      "brandHex": "#000000",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/adidas.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/adidas.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 243,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "zara",
+      "displayName": "ZARA",
+      "aliases": [
+        "ZARA",
+        "飒拉"
+      ],
+      "group": "购物",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/zara.svg",
+      "sourceTitle": "Zara",
+      "sourceDesignUrl": "https://www.zara.com",
+      "guidelinesUrl": null,
+      "brandHex": "#000000",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/zara.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/zara.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 1187,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "airchina",
+      "displayName": "中国国际航空",
+      "aliases": [
+        "中国国际航空",
+        "中国国航",
+        "Air China"
+      ],
+      "group": "交通出行",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/airchina.svg",
+      "sourceTitle": "Air China",
+      "sourceDesignUrl": "https://www.airchina.com.cn/en/investor_relations",
+      "guidelinesUrl": null,
+      "brandHex": "#E30E17",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/airchina.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/airchina.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 1241,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "chinaeasternairlines",
+      "displayName": "中国东方航空",
+      "aliases": [
+        "中国东方航空",
+        "东方航空",
+        "China Eastern Airlines"
+      ],
+      "group": "交通出行",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/chinaeasternairlines.svg",
+      "sourceTitle": "China Eastern Airlines",
+      "sourceDesignUrl": "https://uk.ceair.com/newCMS/uk/en/content/en_Footer/Support/201904/t20190404_5763.html",
+      "guidelinesUrl": null,
+      "brandHex": "#1A2477",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/chinaeasternairlines.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/chinaeasternairlines.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 718,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "chinasouthernairlines",
+      "displayName": "中国南方航空",
+      "aliases": [
+        "中国南方航空",
+        "南方航空",
+        "China Southern Airlines"
+      ],
+      "group": "交通出行",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/chinasouthernairlines.svg",
+      "sourceTitle": "China Southern Airlines",
+      "sourceDesignUrl": "https://www.csair.com/en/about/investor/yejibaogao/2020/",
+      "guidelinesUrl": null,
+      "brandHex": "#008BCB",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/chinasouthernairlines.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/chinasouthernairlines.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 2800,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "chinarailway",
+      "displayName": "中国铁路",
+      "aliases": [
+        "中国铁路",
+        "铁路12306",
+        "12306",
+        "China Railway"
+      ],
+      "group": "交通出行",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/chinarailway.svg",
+      "sourceTitle": "China Railway",
+      "sourceDesignUrl": "https://commons.wikimedia.org/wiki/File:China_Railways.svg",
+      "guidelinesUrl": null,
+      "brandHex": "#FF2600",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/chinarailway.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/chinarailway.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 649,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "bookingdotcom",
+      "displayName": "Booking.com",
+      "aliases": [
+        "Booking.com",
+        "Booking",
+        "缤客"
+      ],
+      "group": "旅行住宿",
+      "sourceKey": "simple-icons",
+      "sourcePath": "icons/bookingdotcom.svg",
+      "sourceTitle": "Booking.com",
+      "sourceDesignUrl": "https://www.bookingholdings.com/media-room",
+      "guidelinesUrl": "https://www.bookingholdings.com/media-room",
+      "brandHex": "#003A9A",
+      "rendering": "monochrome-brand-color",
+      "suggestedUsage": [
+        "merchant"
+      ],
+      "file": "svg/bookingdotcom.svg",
+      "sourceRepository": "https://github.com/simple-icons/simple-icons",
+      "sourceCommit": "1089fb7d2bf0e323f834c205ab76265005a6d5e8",
+      "sourceFileUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/icons/bookingdotcom.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/simple-icons/simple-icons/1089fb7d2bf0e323f834c205ab76265005a6d5e8/LICENSE.md",
+      "licenseFile": "licenses/simple-icons-LICENSE.txt",
+      "modified": false,
+      "bytes": 674,
+      "viewBox": "0 0 24 24",
+      "svgTags": [
+        "path",
+        "svg",
+        "title"
+      ]
+    },
+    {
+      "id": "bank-icbc",
+      "displayName": "中国工商银行",
+      "aliases": [
+        "中国工商银行",
+        "工商银行",
+        "工行",
+        "ICBC"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/icbc-rect.svg",
+      "sourceTitle": "中国工商银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-icbc.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/icbc-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "http://www.icbc.com.cn/icbc",
+      "upstreamDisplayName": "中国工商银行",
+      "bytes": 791,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-ccb",
+      "displayName": "中国建设银行",
+      "aliases": [
+        "中国建设银行",
+        "建设银行",
+        "建行",
+        "CCB"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/ccb-rect.svg",
+      "sourceTitle": "中国建设银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-ccb.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/ccb-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "http://www.ccb.com",
+      "upstreamDisplayName": "中国建设银行",
+      "bytes": 755,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-boc",
+      "displayName": "中国银行",
+      "aliases": [
+        "中国银行",
+        "中行",
+        "Bank of China",
+        "BOC"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/boc-rect.svg",
+      "sourceTitle": "中国银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-boc.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/boc-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.boc.cn",
+      "upstreamDisplayName": "中国银行",
+      "bytes": 908,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-abchina",
+      "displayName": "中国农业银行",
+      "aliases": [
+        "中国农业银行",
+        "农业银行",
+        "农行",
+        "ABC"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/abchina-rect.svg",
+      "sourceTitle": "中国农业银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-abchina.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/abchina-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.abchina.com",
+      "upstreamDisplayName": "中国农业银行",
+      "bytes": 2667,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-cmbchina",
+      "displayName": "招商银行",
+      "aliases": [
+        "招商银行",
+        "招行",
+        "CMB"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/cmbchina-rect.svg",
+      "sourceTitle": "招商银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-cmbchina.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/cmbchina-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.cmbchina.com",
+      "upstreamDisplayName": "招商银行",
+      "bytes": 2571,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-bankcomm",
+      "displayName": "交通银行",
+      "aliases": [
+        "交通银行",
+        "交行",
+        "Bank of Communications"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/bankcomm-rect.svg",
+      "sourceTitle": "交通银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-bankcomm.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/bankcomm-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "http://www.bankcomm.com",
+      "upstreamDisplayName": "交通银行",
+      "bytes": 837,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-psbc",
+      "displayName": "中国邮政储蓄银行",
+      "aliases": [
+        "中国邮政储蓄银行",
+        "邮政储蓄银行",
+        "邮储银行",
+        "邮储",
+        "PSBC"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/psbc-rect.svg",
+      "sourceTitle": "中国邮政储蓄银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-psbc.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/psbc-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.psbc.com/cn",
+      "upstreamDisplayName": "中国邮政储蓄银行",
+      "bytes": 808,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-spdb",
+      "displayName": "浦发银行",
+      "aliases": [
+        "上海浦东发展银行",
+        "浦发银行",
+        "浦发",
+        "SPDB"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/spdb-rect.svg",
+      "sourceTitle": "浦发银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-spdb.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/spdb-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.spdb.com.cn",
+      "upstreamDisplayName": "浦发银行",
+      "bytes": 723,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-cmbc",
+      "displayName": "中国民生银行",
+      "aliases": [
+        "中国民生银行",
+        "民生银行",
+        "民生",
+        "CMBC"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/cmbc-rect.svg",
+      "sourceTitle": "中国民生银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-cmbc.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/cmbc-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.cmbc.com.cn",
+      "upstreamDisplayName": "中国民生银行",
+      "bytes": 1099,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-cib",
+      "displayName": "兴业银行",
+      "aliases": [
+        "兴业银行",
+        "兴业",
+        "CIB"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/cib-rect.svg",
+      "sourceTitle": "兴业银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-cib.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/cib-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.cib.com.cn",
+      "upstreamDisplayName": "兴业银行",
+      "bytes": 1069,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-citicbank",
+      "displayName": "中信银行",
+      "aliases": [
+        "中信银行",
+        "中信",
+        "CITIC Bank"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/citicbank-rect.svg",
+      "sourceTitle": "中信银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-citicbank.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/citicbank-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.citicbank.com",
+      "upstreamDisplayName": "中信银行",
+      "bytes": 2039,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-cebbank",
+      "displayName": "中国光大银行",
+      "aliases": [
+        "中国光大银行",
+        "光大银行",
+        "光大",
+        "CEB"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/cebbank-rect.svg",
+      "sourceTitle": "中国光大银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-cebbank.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/cebbank-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "http://www.cebbank.com",
+      "upstreamDisplayName": "中国光大银行",
+      "bytes": 1655,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-cgbchina",
+      "displayName": "广发银行",
+      "aliases": [
+        "广发银行",
+        "广发",
+        "CGB"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/cgbchina-rect.svg",
+      "sourceTitle": "广发银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-cgbchina.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/cgbchina-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "http://www.cgbchina.com.cn",
+      "upstreamDisplayName": "广发银行",
+      "bytes": 1604,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-pingan",
+      "displayName": "平安银行",
+      "aliases": [
+        "平安银行",
+        "Ping An Bank"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/pingan-rect.svg",
+      "sourceTitle": "平安银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-pingan.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/pingan-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://bank.pingan.com",
+      "upstreamDisplayName": "平安银行",
+      "bytes": 11225,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-hxb",
+      "displayName": "华夏银行",
+      "aliases": [
+        "华夏银行",
+        "华夏",
+        "HXB"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/hxb-rect.svg",
+      "sourceTitle": "华夏银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-hxb.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/hxb-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.hxb.com.cn",
+      "upstreamDisplayName": "华夏银行",
+      "bytes": 1723,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-czbank",
+      "displayName": "浙商银行",
+      "aliases": [
+        "浙商银行",
+        "浙商",
+        "CZBank"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/czbank-rect.svg",
+      "sourceTitle": "浙商银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-czbank.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/czbank-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "http://www.czbank.com",
+      "upstreamDisplayName": "浙商银行",
+      "bytes": 2200,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-hfbank",
+      "displayName": "恒丰银行",
+      "aliases": [
+        "恒丰银行",
+        "恒丰",
+        "Hengfeng Bank"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/hfbank-rect.svg",
+      "sourceTitle": "恒丰银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-hfbank.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/hfbank-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "https://www.hfbank.com.cn",
+      "upstreamDisplayName": "恒丰银行",
+      "bytes": 1194,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "bank-cbhb",
+      "displayName": "渤海银行",
+      "aliases": [
+        "渤海银行",
+        "渤海",
+        "China Bohai Bank"
+      ],
+      "group": "银行",
+      "sourceKey": "bank-logos",
+      "sourcePath": "logos/cbhb-rect.svg",
+      "sourceTitle": "渤海银行",
+      "sourceDesignUrl": null,
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "sourceNote": "Upstream README identifies each logo and its bank website; original design source is not separately stated.",
+      "file": "svg/bank-cbhb.svg",
+      "sourceRepository": "https://github.com/icongo/bank-logos",
+      "sourceCommit": "ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1",
+      "sourceFileUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/logos/cbhb-rect.svg",
+      "license": "MIT",
+      "licenseUrl": "https://raw.githubusercontent.com/icongo/bank-logos/ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1/LICENSE",
+      "licenseFile": "licenses/bank-logos-LICENSE.txt",
+      "modified": false,
+      "brandWebsite": "http://www.cbhb.com.cn",
+      "upstreamDisplayName": "渤海银行",
+      "bytes": 705,
+      "viewBox": "0 0 1024 1024",
+      "svgTags": [
+        "path",
+        "svg"
+      ]
+    },
+    {
+      "id": "unionpay",
+      "displayName": "银联",
+      "aliases": [
+        "银联",
+        "中国银联",
+        "UnionPay"
+      ],
+      "group": "支付与账户",
+      "sourceKey": "svg-logos",
+      "sourcePath": "logos/unionpay.svg",
+      "sourceTitle": "UnionPay",
+      "sourceDesignUrl": "https://www.unionpayintl.com/",
+      "brandHex": null,
+      "rendering": "original-color",
+      "suggestedUsage": [
+        "account"
+      ],
+      "file": "svg/unionpay.svg",
+      "sourceRepository": "https://github.com/gilbarbara/logos",
+      "sourceCommit": "37a6b807fd71c622efea27a9309b5d4edc792969",
+      "sourceFileUrl": "https://raw.githubusercontent.com/gilbarbara/logos/37a6b807fd71c622efea27a9309b5d4edc792969/logos/unionpay.svg",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://raw.githubusercontent.com/gilbarbara/logos/37a6b807fd71c622efea27a9309b5d4edc792969/LICENSE.txt",
+      "licenseFile": "licenses/svg-logos-LICENSE.txt",
+      "modified": false,
+      "bytes": 17610,
+      "viewBox": "0 0 256 160",
+      "svgTags": [
+        "g",
+        "path",
+        "svg"
+      ]
+    }
+  ]
+}

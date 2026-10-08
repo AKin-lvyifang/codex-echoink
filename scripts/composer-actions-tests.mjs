@@ -16,6 +16,7 @@ if (process.argv.includes("--dom")) {
   await esbuild.build({
     entryPoints: ["src/tests/composer-menu-dom.ts"], absWorkingDir: rootDir,
     bundle: true, platform: "browser", format: "esm", outfile: path.join(directory, "regression.js"),
+    loader: { ".md": "text" },
     alias: { obsidian: path.join(rootDir, "src/tests/composer-menu-dom-host.ts") },
     plugins: [{ name: "production-menu-label-only", setup(build) {
       // Keep the whole production menus module; its composer dependency only

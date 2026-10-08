@@ -1,3 +1,5 @@
+import type { ProviderFailureDetail } from "../harness/pi/provider-failure";
+import type { DiscoveredProviderModel } from "./provider-model-discovery";
 import type {
   PiProviderConfigurationDraft,
   PiProviderConnectionFailure,
@@ -19,7 +21,9 @@ export type ProviderPreflightOperation = "model_list" | "connection";
 export interface ProviderPreflightSnapshot {
   readonly status: ProviderPreflightStatus;
   readonly operation: ProviderPreflightOperation;
-  readonly models: readonly string[];
+  readonly models: readonly DiscoveredProviderModel[];
+  readonly source?: "remote" | "catalog";
+  readonly connectionDetail?: ProviderFailureDetail;
   readonly connectionFailure: PiProviderConnectionFailure | null;
 }
 
@@ -64,12 +68,13 @@ export class ProviderPreflightSession {
     return this.current;
   }
 
-  invalidate(): void {
+  invalidate(clearModels = false): void {
     this.generation += 1;
     this.publish({
       status: "idle",
       operation: "model_list",
-      models: this.current.models,
+      models: clearModels ? [] : this.current.models,
+      source: clearModels ? undefined : this.current.source,
       connectionFailure: null
     });
   }
@@ -96,6 +101,7 @@ export class ProviderPreflightSession {
       status: "loading",
       operation: "model_list",
       models: this.current.models,
+      source: this.current.source,
       connectionFailure: null
     });
     try {
@@ -104,9 +110,10 @@ export class ProviderPreflightSession {
       this.publish({
         status: result.status,
         operation: "model_list",
-        models: result.status === "available"
+        models: result.status === "available" || result.status === "incomplete"
           ? result.models
-          : this.current.models,
+          : [],
+        source: result.source,
         connectionFailure: null
       });
     } catch {
@@ -114,7 +121,7 @@ export class ProviderPreflightSession {
       this.publish({
         status: "temporary_failure",
         operation: "model_list",
-        models: this.current.models,
+        models: [],
         connectionFailure: null
       });
     }
@@ -128,12 +135,13 @@ export class ProviderPreflightSession {
       status: "loading",
       operation: "connection",
       models: this.current.models,
+      source: this.current.source,
       connectionFailure: null
     });
     try {
       const result = await this.service.testConnection(draft);
       if (generation !== this.generation) return;
-      this.publish(connectionSnapshot(result, this.current.models));
+      this.publish({ ...connectionSnapshot(result, this.current.models), source: this.current.source });
     } catch {
       if (generation !== this.generation) return;
       this.publish({
@@ -153,7 +161,7 @@ export class ProviderPreflightSession {
 
 function connectionSnapshot(
   result: PiProviderConnectionTestResult,
-  models: readonly string[]
+  models: readonly DiscoveredProviderModel[]
 ): ProviderPreflightSnapshot {
   if (result.status === "available") {
     return snapshot({
@@ -167,6 +175,7 @@ function connectionSnapshot(
     status: connectionFailureStatus(result.failure),
     operation: "connection",
     models,
+    connectionDetail: result.detail,
     connectionFailure: result.failure
   });
 }

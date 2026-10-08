@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.6.0 - 2026-10-09
+
+![EchoInk 2.6.0：官网正式上线](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.6.0/assets/releases/echoink-agent-2.6.0-release.png)
+
+### 中文
+
+**EchoInk 官网正式上线：[echoink.cn](https://echoink.cn)。**
+
+这次更新把账号、PRO 插件和日常记录带到一起。官网集中提供产品介绍、下载、使用说明与账号管理。
+
+- **注册登录与免费内测激活。** 支持邮箱验证码和密码登录。目前活动为“注册送激活码”：注册并验证邮箱后领取，数量与有效期以官网为准。在桌面插件中登录、使用兑换码，即可自动完成本机授权；联网与成功状态清楚可见。
+- **财务插件。** 导入微信、支付宝账单，管理商户、账户与分类，设置默认月预算或单月预算、持续目标，创建账单计划并关联记录。连接自己的模型后，可以辅助整理账单、生成财务分析。
+- **英文日记插件。** 在 Markdown 原稿旁生成自然英文，回看原文对照与表达收获，并在跨日表达库中检索。可选择允许发送给模型的段落，首页快捷入口与插件设置联动。
+- **工作区与平板布局。** 新增可选主题颜色、首页分区导航、活动热力图按年／月筛选，以及 iPad 宽屏分栏与窄窗回落布局。
+- **模型兼容。** 更新动态模型发现、模型能力与 DeepSeek 请求处理，减少模型配置和请求参数不匹配。
+- **Skill 双语名称。** 内置 Skill 与插件名称随界面语言切换，支持中英文搜索；对话栏输入 `/` 时也能用中文找到并选择 Skill，原英文名称继续可用。
+- **到期保留阅读。** 财务、英文日记按 PRO 插件控制。到期后，已启用插件保留原有入口和资料，开关及新增、导入、修改、生成操作禁用；普通对话、知识库与原始 Markdown 仍可使用。移除多余活动框和历史兑换码明文，仅在异常或离线时提供直接刷新验证。
+- **仓库说明与许可。** README 固定链接官网，使用说明统一前往官网。新增内容采用源码可见参考许可，保留旧版 MIT 和第三方许可已经授予的权利；详见 [LICENSE](https://github.com/AKin-lvyifang/codex-echoink/blob/2.6.0/LICENSE)。
+
+#### 下载与升级
+
+前往 **[官网下载安装](https://echoink.cn/install)**。需要 Obsidian 1.11.4 及以上；手动升级时只替换官方的 `main.js`、`manifest.json`、`styles.css`，保留原有设置和数据文件。
+
+账号、会员、财务与英文日记本次用于桌面端；移动端继续为 Beta，iOS／Android 真机验证尚未完成。财务与英文日记需要有效 PRO；PRO 不含模型额度，AI 仍使用自己的模型服务。目前未开放付费购买，内测活动以官网为准。插件文件超过 Obsidian Sync Standard 的单文件 5 MB 限制，请在各设备独立安装或更新。
+
+### English
+
+**The official EchoInk website is live: [echoink.cn](https://echoink.cn).**
+
+This release brings accounts, PRO plugins, and everyday records together. The website is the permanent home for product tours, downloads, documentation, and account management.
+
+- **Sign in and activate the free beta.** Sign in with an email verification code or password. The current campaign offers an activation code after registration and email verification, subject to availability and the terms on the website. Redeem it in the desktop plugin to authorize this device automatically, with visible progress and success feedback.
+- **Finance.** Import WeChat Pay and Alipay statements, manage merchants, accounts, and categories, set default or per-month budgets and ongoing goals, and link records to bill plans. Connect your own model for assisted organization and financial summaries.
+- **English Diary.** Generate a natural English version beside your Markdown original, review aligned text and useful expressions, and search your expression library across days. Select the passages the model may receive, and connect the home shortcut to your plugin settings.
+- **Workspace and tablet layouts.** Choose a color theme, navigate home sections, filter activity heatmaps by year or month, and use iPad split layouts that return to a single column in narrow windows.
+- **Model compatibility.** Updated model discovery, capability handling, and DeepSeek requests to reduce mismatches between model settings and request parameters.
+- **Bilingual Skill names.** Built-in Skill and plugin names follow your interface language and support searches in either language. Type `/` in chat to find and select Skills by their Chinese names; original English names remain available.
+- **Keep reading after expiry.** Finance and English Diary are PRO plugins. Previously enabled plugins keep their existing content and entry points after expiry; toggles and new, import, edit, and generation actions are disabled. Ordinary chat, Knowledge, and original Markdown remain available. Redundant campaign panels and plaintext past codes have been removed; direct verification refresh appears only for abnormal or offline states.
+- **Repository and licensing.** The README permanently links to the website for documentation. Newly licensed material uses a source-available reference license, preserving earlier MIT grants and third-party licenses. See [LICENSE](https://github.com/AKin-lvyifang/codex-echoink/blob/2.6.0/LICENSE).
+
+#### Download and upgrade
+
+Visit **[the official download and installation page](https://echoink.cn/install)**. Requires Obsidian 1.11.4 or later. For manual upgrades, replace only the official `main.js`, `manifest.json`, and `styles.css`; preserve your settings and data files.
+
+Accounts, membership, Finance, and English Diary are desktop features in this release. Mobile remains Beta, with real iOS and Android device validation pending. Finance and English Diary require active PRO; model credits are not included, and AI uses your own model service. Paid purchasing is not open during the current beta; campaign details are on the website. The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit; install or update it independently on each device.
+
 ## 2.5.2 - 2026-09-27
 
 ![EchoInk Agent 2.5.0：桌面端联网搜索与自动归档](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.5.0/assets/releases/echoink-agent-2.5.0-release.png)

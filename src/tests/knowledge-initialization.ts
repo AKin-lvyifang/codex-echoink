@@ -177,6 +177,7 @@ async function assertCustomPreviewIncludesCurrentManagedMarkdown(): Promise<void
     host.addFile("2-root.md", "two");
     host.addFile("wiki/Alpha.md", "wiki");
     host.addFile("raw/9.md", "raw");
+    host.addFile("raw/ledger.base", 'properties:\n  note.echoink_id: {}\n');
     host.addFile("inbox/Beta.md", "inbox");
     host.addFile("assets/readme.md", "asset markdown is not assignable");
 

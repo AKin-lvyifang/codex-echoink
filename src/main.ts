@@ -1,6 +1,13 @@
+import { createPluginAccountService } from "./membership/plugin-service";
+import type { AccountService } from "./membership/account-service";
+import { requireProPlugin, unavailableCapabilityAccess } from "./membership/access";
 import { ConversationAutoArchive } from "./plugin/conversation-auto-archive";
+import { EchoInkAppearance } from "./ui/appearance-theme";
 import { knowledgeRolePath } from "./knowledge-base/root-paths";
 import { HomeActivityService } from "./home/home-activity-service";
+import { LifestyleService } from "./lifestyle/service";
+import type { LifestyleKind } from "./lifestyle/settings";
+import type { CodexSettingTab } from "./settings/settings-tab";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { Notice, Plugin } from "obsidian";
@@ -21,6 +28,7 @@ import {
   apiProviderHasUsableCredential,
   getActiveApiProvider,
   getActiveApiProviderModel,
+  getEnglishDiaryApiProviderModel,
   type ChatMessage,
   type CodexForObsidianSettings,
   type KnowledgeBaseSettings,
@@ -29,10 +37,13 @@ import {
 } from "./settings/settings";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./plugin/bootstrap";
+import { EnglishDiaryController } from "./english-diary/controller";
+import { confirmModal } from "./ui/modals";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
 import { EchoInkTodoStore } from "./home/todo-store";
 import {
   EchoInkSettingsStore,
+  SettingsPersistenceError,
   restoreApiProviderSettings,
   snapshotApiProviderSettings,
   type SettingsLoadResult,
@@ -167,6 +178,8 @@ extends ActivatePiNativeConversationOptions {
 export default class CodexForObsidianPlugin extends Plugin {
   settings!: CodexForObsidianSettings;
   homeActivity: HomeActivityService | null = null;
+  lifestyle!: LifestyleService;
+  private settingsTabInstance: CodexSettingTab | null = null;
   private knowledgeBase: EchoInkKnowledgeSurfaceService | null = null;
   private review: ReviewManager | null = null;
   private settingsStore: EchoInkSettingsStore | null = null;
@@ -202,6 +215,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   private readonly piSubmittingConversations = new Set<string>();
   private readonly apiProviderActivation = new ApiProviderActivationService();
   private editorTranslation: EditorTranslationService | null = null;
+  englishDiary: EnglishDiaryController | null = null;
+  accountService: AccountService | null = null;
   private personalMemoryCorrection: PersonalMemoryCorrectionService | null = null;
   private readonly productActivity = new ProductActivityGate();
   private developerMemoryChanging = false;
@@ -211,11 +226,18 @@ export default class CodexForObsidianPlugin extends Plugin {
   private onboardingRibbonAnchor: HTMLElement | null = null;
   private onboardingWorkspaceCoachmark: EchoInkOnboardingCoachmarkHandle | null = null;
   private onboardingDesktopWaitCleanup: (() => void) | null = null;
+  private appearance: EchoInkAppearance | null = null;
   async onload(): Promise<void> {
     const enabledAfterLayoutReady = this.app.workspace.layoutReady;
     const dataRoot = await preparePluginDataRoot(this.getVaultPath(), this.manifest, this.app.vault.configDir);
     this.register(() => dataRoot.dispose());
     const settingsLoad = await this.loadSettings();
+    this.appearance = new EchoInkAppearance(this.app, () => this.settings.colorTheme);
+    this.appearance.refresh();
+    this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, win) => {
+      this.appearance?.applyToDocument(win.document);
+    }));
+    this.register(() => { this.appearance?.dispose(); this.appearance = null; });
     if (dataRoot.usingPreviousRoot) {
       new Notice(this.settings.settingsLanguage === "en"
         ? `EchoInk is keeping your existing conversations, memory and activity in their previous folder. You can keep using them without moving files.\nIn use: ${dataRoot.rootPath}${dataRoot.installRootHasData ? `\nThe installation folder also has data; it has been kept unchanged: ${dataRoot.installRootPath}` : ""}`
@@ -234,6 +256,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     this.homeActivity = new HomeActivityService(path.join(pluginDataDir(this.getVaultPath(), this.getPluginDataDirName()), "home-activity.json"));
     await this.homeActivity.initialize();
+    this.accountService = await createPluginAccountService(this);
+    this.lifestyle = new LifestyleService(this);
+    await this.lifestyle.initialize();
     this.app.workspace.onLayoutReady(() => {
       const activity = this.homeActivity;
       if (!activity) return;
@@ -251,6 +276,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     void this.getCognitiveSystem().catch((error) => {
       console.error("EchoInk cognitive system init failed", error);
     });
+    this.englishDiary = new EnglishDiaryController(this);
+    this.englishDiary.register();
+    this.register(this.accountService.subscribe(() => this.notifyHomeSurfacesChanged()));
     const controllers = registerEchoInkPluginFeatures(this);
     this.knowledgeBase = controllers.knowledgeBase;
     this.review = controllers.review;
@@ -269,6 +297,10 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   private async performUnload(): Promise<void> {
+    this.accountService?.dispose();this.accountService=null;
+    this.englishDiary?.dispose();
+    this.englishDiary = null;
+    this.lifestyle?.dispose();
     await this.autoArchive?.dispose();
     this.autoArchive = null;
     this.quickChatWindow?.dispose();
@@ -302,7 +334,22 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async activateHomeAndSidebar(): Promise<void> { return this.getViewService().activateHomeAndSidebar(); }
+  applyAppearanceTheme(ownerDocument?: Document): void {
+    if (ownerDocument) this.appearance?.applyToDocument(ownerDocument);
+    this.appearance?.refresh();
+  }
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
+  setSettingsTabInstance(tab: CodexSettingTab): void { this.settingsTabInstance = tab; }
+  async openLifestyleSettings(kind: LifestyleKind): Promise<void> {
+    this.settings.settingsTab = "resources";
+    this.settings.resourceManagementTab = "plugins";
+    this.settingsTabInstance?.openLifestyleDetail(kind);
+    await this.saveSettings(true);
+    const setting = (this.app as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
+    if (!setting?.open || !setting.openTabById) { new Notice("无法打开 EchoInk 设置页"); return; }
+    setting.open();
+    setting.openTabById(this.manifest.id);
+  }
   /** Push settings-driven home changes (module visibility, todos) to open home views. */
   notifyHomeSurfacesChanged(): void {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) {
@@ -1511,12 +1558,96 @@ export default class CodexForObsidianPlugin extends Plugin {
       timeoutMs: 60_000, maxTokens: 4_096
     });
   }
+  englishDiaryProviderLabel(): string {
+    try {
+      const active = getEnglishDiaryApiProviderModel(this.settings);
+      return `${active.provider.name} · ${active.model.id}`;
+    } catch (error) {
+      return error instanceof Error ? error.message : "请在英文日记设置中选择模型。";
+    }
+  }
+  async setEnglishDiaryModel(providerSettingsId: string, modelId: string): Promise<void> {
+    providerSettingsId = providerSettingsId.trim();
+    modelId = modelId.trim();
+    if (this.piRunConversations.size > 0 || this.piSubmittingConversations.size > 0) {
+      throw new Error("EchoInk 正在回答，英文日记模型暂时不能切换。");
+    }
+    this.productActivity.beginSwitch();
+    try {
+      if (providerSettingsId || modelId) {
+        getEnglishDiaryApiProviderModel({ ...this.settings, englishDiary: {
+          ...this.settings.englishDiary, providerSettingsId, modelId
+        } });
+      }
+      const current = this.settings.englishDiary;
+      if (current.providerSettingsId === providerSettingsId && current.modelId === modelId) return;
+      const previous = { providerSettingsId: current.providerSettingsId, modelId: current.modelId,
+        approvedProvider: current.approvedProvider };
+      Object.assign(current, { providerSettingsId, modelId, approvedProvider: "" });
+      try {
+        await this.saveSettings(true, { flushConversationStore: false });
+      } catch (error) {
+        Object.assign(this.settings.englishDiary, previous);
+        throw new Error(error instanceof SettingsPersistenceError && error.persistenceStatus === "unknown"
+          ? "保存状态未能确认，请重载 EchoInk 后检查英文日记模型设置。"
+          : "英文日记模型设置未保存，已保留原选择，请稍后重试。", { cause: error });
+      }
+    } finally {
+      this.productActivity.endSwitch();
+    }
+  }
+  async generateEnglishDiaryText(input: { systemPrompt: string; userPrompt: string; signal: AbortSignal }): Promise<string> {
+    return await this.withProductActivity(async () => {
+      requireProPlugin(this.accountService ?? unavailableCapabilityAccess);
+      (this.accountService ?? unavailableCapabilityAccess).requireCapability("diary.explanation.generate");
+      if (!this.settings.englishDiary.enabled) throw new Error("英文日记已停用。");
+      if (input.signal.aborted) throw new Error("已取消，未发送日记内容。");
+      const active = getEnglishDiaryApiProviderModel(this.settings);
+      if (!apiProviderHasUsableCredential(active.provider, this.settings.openAICodexCredential)) {
+        throw new Error(active.provider.authMode === "oauth"
+          ? "英文日记所选 Provider 需要登录，请在 API Provider 设置中完成登录。"
+          : "英文日记所选 Provider 缺少 API Key，请在 API Provider 设置中补充。");
+      }
+      const draft = this.activePiProviderConfigurationDraft(active);
+      const identity = JSON.stringify([draft.providerSettingsId, draft.providerId, draft.baseUrl, draft.modelId]);
+      if (this.settings.englishDiary.approvedProvider !== identity) {
+        let recipient: string = draft.providerId;
+        try { if (draft.baseUrl) recipient = new URL(draft.baseUrl).origin; } catch { /* Provider validation reports invalid endpoints before sending. */ }
+        const accepted = await confirmModal(this.app, "确认英文日记使用的模型", `本次使用 ${active.provider.name} · ${active.model.id}。\n接收方：${recipient}\n\n生成英文会发送你允许处理的日记段落；标记为“不发送”的段落始终留在本地。`, "确认并继续", "取消", { signal: input.signal });
+        if (!accepted || input.signal.aborted) throw new Error("已取消，未发送日记内容。");
+        requireProPlugin(this.accountService ?? unavailableCapabilityAccess);
+        (this.accountService ?? unavailableCapabilityAccess).requireCapability("diary.explanation.generate");
+        this.settings.englishDiary.approvedProvider = identity;
+        await this.saveSettings(true);
+      }
+      if (input.signal.aborted || !this.settings.englishDiary.enabled) throw new Error("已取消，未发送日记内容。");
+      requireProPlugin(this.accountService ?? unavailableCapabilityAccess);
+      (this.accountService ?? unavailableCapabilityAccess).requireCapability("diary.explanation.generate");
+      try {
+        return await this.getPiProviderConfigurationService().generateText({
+          draft, ...input, timeoutMs: 120_000, maxTokens: 12_000
+        });
+      } catch (error) {
+        const failures: Record<string, string> = {
+          provider_api_key_missing: "英文日记所选 Provider 缺少 API Key，请在 API Provider 设置中补充。",
+          provider_oauth_missing: "英文日记所选 Provider 需要登录，请在 API Provider 设置中完成登录。",
+          provider_model_invalid: "英文日记所选模型无效，请在 API Provider 设置中检查模型。",
+          provider_model_metadata_invalid: "英文日记所选模型配置不完整，请在 API Provider 设置中检查模型。",
+          provider_text_generation_aborted: "英文日记生成已取消。",
+          provider_text_generation_timeout: "英文日记生成超时，请稍后重试。"
+        };
+        throw new Error(failures[error instanceof Error ? error.message : ""]
+          ?? "英文日记生成失败，请检查所选 API Provider 的连接与模型设置后重试。", { cause: error });
+      }
+    });
+  }
   async prepareWikiFolderNamesForMaintenance(input: { initialization: boolean; assertActive(): void }): Promise<string> {
     const result = await this.requireKnowledgeSurfaceService().optimizeFolderNames(undefined, input.initialization, { ...input, authorized: true });
     return `${result.message ?? `目录优化：改名 ${result.renamed.length}，跳过 ${result.skipped.length}。`}${JSON.stringify(result.skipped)}`;
   }
-  private activePiProviderConfigurationDraft(): PiProviderConfigurationDraft {
-    const active = getActiveApiProviderModel(this.settings);
+  private activePiProviderConfigurationDraft(
+    active = getActiveApiProviderModel(this.settings)
+  ): PiProviderConfigurationDraft {
     if (!active) throw new Error("请先在 API Provider 中选择可用模型。");
     const { provider, model } = active;
     return {
@@ -1622,6 +1753,18 @@ export default class CodexForObsidianPlugin extends Plugin {
   /** Independent post-task Skill review; unavailable without a configured Provider. */
   createSkillReviewLlmPort(): DreamLlmPort | null {
     return this.createDreamLlmPort();
+  }
+
+  async generateLifestyleText(systemPrompt: string, userPrompt: string, maxTokens = 1400, signal?: AbortSignal): Promise<string> {
+    if (!getActiveApiProviderModel(this.settings)) throw new Error("请先在 EchoInk 模型设置中配置当前 Provider。当前记录仍可手动使用。");
+    return await this.withProductActivity(async () => await this.getPiProviderConfigurationService().generateText({
+      draft: this.activePiProviderConfigurationDraft(),
+      systemPrompt,
+      userPrompt,
+      timeoutMs: 120_000,
+      maxTokens,
+      signal
+    }));
   }
 
   private getPersonalMemoryCorrectionService(): PersonalMemoryCorrectionService {

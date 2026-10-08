@@ -1,5 +1,18 @@
 # Third-Party Notices
 
+## Finance brand SVG supplement
+
+The 35 selectable brand SVGs under `assets/finance-brands/svg/` are bundled
+from the following pinned upstream revisions. Per-asset source paths, names,
+and license details are recorded in `assets/finance-brands/sources.json`.
+
+- Simple Icons, commit `1089fb7d2bf0e323f834c205ab76265005a6d5e8`, CC0-1.0; license copy: `assets/finance-brands/licenses/simple-icons-LICENSE.txt`.
+- gilbarbara/logos, commit `37a6b807fd71c622efea27a9309b5d4edc792969`, CC0-1.0; license copy: `assets/finance-brands/licenses/svg-logos-LICENSE.txt`.
+- icongo/bank-logos, commit `ffca539a043900fbf2a4fd6a5d32f1706ae5dfd1`, MIT; license copy: `assets/finance-brands/licenses/bank-logos-LICENSE.txt`.
+
+Brand names and marks remain the property of their owners. These assets are
+optional artwork choices, not merchant identity or payment-account matching rules.
+
 ## React DOM
 
 EchoInk bundles React DOM 19.1.1 with a targeted build-time adaptation that

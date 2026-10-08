@@ -1,3 +1,4 @@
+import type { DiscoveredProviderModel } from "../../settings/provider-model-discovery";
 import {
   createAssistantMessageEventStream,
   type Api,
@@ -15,6 +16,7 @@ import type {
 } from "../pi/production-pi-model-resolver";
 import type { ApiProviderProtocol } from "../../settings/provider-presets";
 import {
+  withDiscoveredPiReasoningModel,
   withEchoInkResolvedPiReasoningModel
 } from "../../settings/pi-model-catalog";
 
@@ -102,25 +104,22 @@ export function createPiNativeModelFromConfiguration(input: {
     maxOutputTokens: number;
     reasoning: boolean;
     imageInput: boolean;
+    discovery?: DiscoveredProviderModel;
   };
 }): Model<Api> {
-  const configuredModel = withEchoInkResolvedPiReasoningModel(
-    createConfiguredPiNativeModel(input)
-  );
-  if (!input.catalogModel) return configuredModel;
-  const catalogModel = withEchoInkResolvedPiReasoningModel(
-    createPiNativeModelFromCatalog({
-      catalogModel: input.catalogModel,
-      provider: input.provider
-    })
-  );
-  return withEchoInkResolvedPiReasoningModel(
-    withResolvedPiModelImageCapability(deepFreeze({
-      ...structuredClone(catalogModel),
-      contextWindow: input.configured.contextWindow,
-      maxTokens: input.configured.maxOutputTokens
-    }), input.configured.imageInput)
-  );
+  const configuredModel = createConfiguredPiNativeModel(input);
+  const catalogModel = input.catalogModel ? createPiNativeModelFromCatalog({ catalogModel: input.catalogModel, provider: input.provider }) : undefined;
+  const model: Model<Api> = {
+    ...structuredClone(catalogModel ?? configuredModel),
+    name: input.configured.discovery?.displayName ?? catalogModel?.name ?? configuredModel.name,
+    contextWindow: input.configured.contextWindow,
+    maxTokens: input.configured.maxOutputTokens,
+    reasoning: input.configured.discovery ? input.configured.reasoning : catalogModel?.reasoning ?? input.configured.reasoning,
+    input: input.configured.discovery
+      ? input.configured.imageInput ? ["text", "image"] : ["text"]
+      : withResolvedPiModelImageCapability(catalogModel ?? configuredModel, input.configured.imageInput).input
+  };
+  return withEchoInkResolvedPiReasoningModel(withDiscoveredPiReasoningModel(model, input.configured.discovery));
 }
 
 function createConfiguredPiNativeModel(input: {
@@ -131,6 +130,7 @@ function createConfiguredPiNativeModel(input: {
     maxOutputTokens: number;
     reasoning: boolean;
     imageInput: boolean;
+    discovery?: DiscoveredProviderModel;
   };
 }): Model<Api> {
   const configured = input.configured;

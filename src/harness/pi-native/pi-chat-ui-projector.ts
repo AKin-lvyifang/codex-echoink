@@ -1,3 +1,4 @@
+import { assistantProviderFailureText } from "../pi/provider-failure";
 import {
   extractProcessFileRefs,
   stableHashedIdentity,
@@ -140,6 +141,7 @@ export interface PiSessionMessageView {
   readonly model?: string;
   readonly stopReason?: string;
   readonly errorMessage?: string;
+  readonly echoInkProviderFailure?: unknown;
   readonly toolCallId?: string;
   readonly toolName?: string;
   readonly details?: unknown;
@@ -2186,7 +2188,7 @@ function assistantFailure(message: PiSessionMessageView): {
       itemType: "error",
       status: "failed",
       title: "回答失败",
-      text: assistantFailureText(message.errorMessage)
+      text: message.echoInkProviderFailure ? assistantProviderFailureText(message) : assistantFailureText(message.errorMessage)
     };
   }
   if (stopReason === "aborted" || stopReason === "cancelled" || stopReason === "canceled") {

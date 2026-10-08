@@ -1,5 +1,6 @@
 import type { WorkspaceResourceToggles } from "../settings/settings";
 import type { EchoInkResource, EchoInkResourceSettings } from "./types";
+import { resourcePresentation } from "./resource-presentation";
 
 export interface BuildEchoInkResourceCatalogInput {
   manual?: EchoInkResource[];
@@ -51,7 +52,10 @@ export function filterSkillResources(skills: EchoInkResource[], query: string): 
   return skills
     .filter((skill) => {
       if (!q) return true;
-      return skill.name.toLowerCase().includes(q) || (skill.description || "").toLowerCase().includes(q) || (skill.contentPath || "").toLowerCase().includes(q);
+      const chinese = resourcePresentation(skill, "zh-CN");
+      const english = resourcePresentation(skill, "en");
+      return [...chinese.aliases, chinese.description, english.description, skill.contentPath || ""]
+        .some((value) => value.toLowerCase().includes(q));
     })
     .filter((skill) => {
       const key = `${skill.source}:${skill.name}`.trim().toLowerCase();

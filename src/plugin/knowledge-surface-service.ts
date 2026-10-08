@@ -73,7 +73,7 @@ export function resolveKnowledgeMaintenanceSubmitSnapshot(
   const capabilities = resolveEchoInkPiReasoningCapabilities(
     active.provider.runtimeProviderId,
     active.model.id,
-    active.model.reasoning
+    active.model
   );
   if (
     !capabilities.supported
@@ -297,6 +297,7 @@ export class EchoInkKnowledgeSurfaceService {
       return await this.withStructureMutation(async () => {
         await this.initializerReady;
         const result = await this.directoryHistory.restore(onProgress);
+        await this.plugin.lifestyle?.finance.reconcileAfterDirectoryRestore();
         await this.initializer.markDirectoryRestored();
         this.plugin.settings.knowledgeBase.initialization.status = "not-started";
         await this.plugin.saveSettings(true);

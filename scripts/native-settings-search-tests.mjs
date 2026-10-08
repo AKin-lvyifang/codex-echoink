@@ -27,7 +27,10 @@ try {
     Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? win : win[name] });
   globalThis.getComputedStyle = win.getComputedStyle.bind(win);
   const test = await import(pathToFileURL(entry).href);
-  try { await test.runSettingsSearchDomTests(win, () => new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true })); }
+  try {
+    if (process.argv.includes("--plugin-rows")) await test.runBuiltinPluginRowDomTests(win);
+    else await test.runSettingsSearchDomTests(win, () => new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true }));
+  }
   finally { dom.window.close(); }
 } finally {
   await rm(directory, { recursive: true, force: true });
