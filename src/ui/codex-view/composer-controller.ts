@@ -1020,7 +1020,9 @@ export function renderKnowledgeCommandMatches(
   void host.plugin.ensureEchoInkSkillResourcesLoaded(true).then((skills) => {
     const currentQuery = knowledgeCommandQueryForInput(host.inputEl.value);
     if (currentQuery !== null) renderKnowledgeCommandMatches(host, currentQuery, skills);
-  }).catch(() => undefined);
+  }).catch(() => {
+    host.skillsRequested = false;
+  });
 }
 
 export async function stopTurnFromComposer(

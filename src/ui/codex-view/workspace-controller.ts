@@ -149,7 +149,12 @@ export function currentTurnOptions(host: CodexWorkspaceHost, session?: StoredSes
 }
 
 export function currentEchoInkResourceCatalog(host: CodexWorkspaceHost): EchoInkResource[] {
-  return buildActiveEchoInkResourceCatalog({ settings: host.plugin.settings.resources });
+  const settings = host.plugin.settings.resources;
+  return buildActiveEchoInkResourceCatalog({
+    settings,
+    // The UI reuses the last scanned catalog; execution still loads the live catalog.
+    manual: settings.catalog.filter((resource) => resource.source === "echoink-local")
+  });
 }
 
 export function effectiveModel(host: CodexWorkspaceHost): string {

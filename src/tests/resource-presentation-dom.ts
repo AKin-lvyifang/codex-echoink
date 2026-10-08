@@ -6,6 +6,17 @@ import { fixture, prepareDocument } from "./settings-search-dom";
 import { paidTestAccess } from "./membership-access";
 import { renderKnowledgeCommandMatches } from "../ui/codex-view/menus";
 import { resourcePresentation } from "../resources/resource-presentation";
+import { enabledSkillResources } from "../resources/registry";
+import {
+  onInputChanged,
+  renderKnowledgeCommandMatches as renderComposerSlashMatches,
+  type CodexComposerHost
+} from "../ui/codex-view/composer-controller";
+import {
+  currentEchoInkResourceCatalog,
+  type CodexWorkspaceHost
+} from "../ui/codex-view/workspace-controller";
+import { handleKnowledgeCommandMenuKeyDown } from "../ui/knowledge-command-menu";
 
 /** Exercise real settings rows and their DOM search index without opening a Vault. */
 export async function runResourcePresentationDomTests(win: Window & typeof globalThis) {
@@ -98,11 +109,85 @@ export async function runResourcePresentationDomTests(win: Window & typeof globa
     assert.equal(resourcePresentation({ ...original, kind: "mcp-server" }, "zh-CN").name, original.name, "MCP names stay user owned");
     assert.equal(resourcePresentation({ ...original, description: "我的自定义说明" }, "en").description, "我的自定义说明");
     assert.equal(f.saved.length, 0, "presentation and filtering never save resource content");
+    await checkComposerSlashLifecycle(win, resources);
     return snapshots;
   } finally {
     f.tab.hide();
     f.registrations.forEach(cleanup => cleanup());
     f.tab.containerEl.remove();
     await scheduler.flush();
+  }
+}
+
+async function checkComposerSlashLifecycle(win: Window & typeof globalThis, resources: EchoInkResource[]): Promise<void> {
+  const root = win.document.body.createDiv();
+  const input = root.createEl("textarea");
+  const menu = root.createDiv({ cls: "codex-knowledge-command-menu" });
+  menu.id = "composer-slash-lifecycle";
+  let loads = 0;
+  let failNextLoad = false;
+  const plugin = {
+    settings: { settingsLanguage: "zh-CN" as "zh-CN" | "en", resources: { catalog: [] as EchoInkResource[] } },
+    async ensureEchoInkSkillResourcesLoaded() {
+      loads++;
+      if (failNextLoad) {
+        failNextLoad = false;
+        throw new Error("temporary resource scan failure");
+      }
+      // The production catalog service saves the scanned resources before returning them.
+      plugin.settings.resources.catalog = structuredClone(resources);
+      return enabledSkillResources(plugin.settings.resources.catalog);
+    }
+  };
+  const host = {
+    plugin, inputEl: input, knowledgeCommandMenuEl: menu, skillMenuEl: root.createDiv(),
+    skillsRequested: false, selectedSkill: null, resourcePanelOpen: false,
+    renderToolbar() {}, renderAttachments() {},
+    currentEchoInkResourceCatalog: () => currentEchoInkResourceCatalog(host),
+    renderKnowledgeCommandMatches: (query: string) => renderComposerSlashMatches(host, query)
+  } as unknown as CodexComposerHost & CodexWorkspaceHost;
+  const type = (value: string) => { input.value = value; onInputChanged(host); };
+  const settle = () => new Promise<void>(resolve => win.setTimeout(resolve, 0));
+  const skillNames = () => [...menu.querySelectorAll(".codex-command-skill .codex-command-text")].map(item => item.textContent);
+  try {
+    type("/");
+    await settle();
+    assert.equal(skillNames().length, 16, "first scan populates the slash menu");
+    type("/知识");
+    assert.ok(skillNames().includes("知识复盘"), "partial Chinese queries retain the loaded Skills");
+    type("/知识复盘");
+    assert.deepEqual(skillNames(), ["知识复盘"], "typing after loading retains Skills and searches Chinese aliases");
+    type("/knowledge-review");
+    assert.deepEqual(skillNames(), ["知识复盘"], "original English names remain searchable");
+    handleKnowledgeCommandMenuKeyDown(new win.KeyboardEvent("keydown", { key: "Escape" }), input, menu);
+    assert.equal(menu.hasClass("is-visible"), false);
+    type("/");
+    assert.equal(skillNames().length, 16, "reopening the menu retains all enabled Skills");
+    plugin.settings.settingsLanguage = "en";
+    type("/知识复盘");
+    assert.deepEqual(skillNames(), ["Knowledge Review"], "language refresh retains the loaded Skills");
+    const review = plugin.settings.resources.catalog.find(item => item.name === "knowledge-review")!;
+    review.enabled = false;
+    type("/");
+    assert.equal(skillNames().length, 15, "saved enablement changes immediately reach the composer");
+    review.enabled = true;
+    type("/知识复盘");
+    menu.querySelector<HTMLButtonElement>(".codex-command-skill")!.click();
+    assert.equal(host.selectedSkill?.name, "knowledge-review", "selection preserves runtime identity");
+    assert.equal(input.value, "");
+    assert.equal(loads, 1, "typing and reopening do not rescan on every keystroke");
+
+    plugin.settings.resources.catalog = [];
+    host.skillsRequested = false;
+    failNextLoad = true;
+    type("/");
+    await settle();
+    type("/");
+    await settle();
+    assert.equal(skillNames().length, 16, "a failed initial scan can retry when the menu is used again");
+    assert.equal(loads, 3);
+    console.log("PASS composer slash lifecycle: loading, repeated input, Escape/reopen, language, enablement, selection and retry");
+  } finally {
+    root.remove();
   }
 }
