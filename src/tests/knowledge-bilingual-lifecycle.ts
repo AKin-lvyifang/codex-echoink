@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import { createRequire } from "node:module";
 import { nativeJournalFixture } from "./native-journal-fixture";
+import { setRequestUrlForTests } from "./obsidian-shim";
 import { EchoInkKnowledgeSurfaceService, createKnowledgeInitializationHost } from "../plugin/knowledge-surface-service";
 import { KNOWLEDGE_ROOT_NAMES, knowledgeRolePath, resolveKnowledgePath, resolveKnowledgePathFromRoots, rebaseKnowledgePathRecords } from "../knowledge-base/root-paths";
 import { KnowledgeBaseInitializer } from "../knowledge-base/initializer";
@@ -23,6 +25,7 @@ import type { PiTurnInteractionIdentity } from "../plugin/pi-turn-interaction-br
 export async function runKnowledgeBilingualLifecycleTests(): Promise<void> {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "echoink-bilingual-lifecycle-")));
   try {
+    await assertBuiltInWeChatCapture(path.join(root, "wechat-capture"));
     const vault = path.join(root, "existing");
     const fixture = await nativeJournalFixture(vault);
     fixture.plugin.settings.defaultPermission = "workspace-write";
@@ -158,6 +161,48 @@ export async function runKnowledgeBilingualLifecycleTests(): Promise<void> {
     assert.equal(rebased.rawPath, source);
     console.log("PASS real filesystem bilingual roots: rename, conflicts, maintenance, tracker, capture, reload/index, journal, initialization and restore; Windows/Linux path simulation");
   } finally { await fs.rm(root, { recursive: true, force: true }); }
+}
+
+async function assertBuiltInWeChatCapture(vaultPath: string): Promise<void> {
+  const fixture = await nativeJournalFixture(vaultPath);
+  const capture = new KnowledgeBaseCaptureService(fixture.plugin);
+  const { JSDOM } = createRequire(import.meta.url)("jsdom");
+  const dom = new JSDOM();
+  const previousGlobals = ["DOMParser", "Node"].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
+  globalThis.DOMParser = dom.window.DOMParser;
+  globalThis.Node = dom.window.Node;
+  const url = "https://mp.weixin.qq.com/s/fixture-article";
+  let html = '<html><head><title>收藏测试</title></head><body><h1 id="activity-name">收藏测试</h1><div id="js_content"><p>BUILT_IN_CAPTURE_TOKEN</p></div></body></html>';
+  let requests = 0;
+  const restore = setRequestUrlForTests((request) => {
+    assert.ok(typeof request !== "string");
+    assert.equal(request.url, url);
+    assert.equal(request.method, "GET");
+    assert.match(request.headers?.["User-Agent"] ?? "", /MicroMessenger/u);
+    requests++;
+    return { status: 200, headers: {}, text: html, arrayBuffer: new ArrayBuffer(0), json: undefined };
+  });
+  try {
+    const paths = await capture.captureChatInput("raw-articles", url, []);
+    assert.equal(paths.length, 1);
+    assert.match(paths[0], /articles\/微信公众号\//u);
+    const saved = await fs.readFile(path.join(vaultPath, paths[0]), "utf8");
+    assert.match(saved, /BUILT_IN_CAPTURE_TOKEN/u);
+    assert.ok(saved.includes(`url: ${url}`));
+    const directory = path.dirname(path.join(vaultPath, paths[0]));
+    const before = await fs.readdir(directory);
+    html = '<html><body>环境异常，请完成验证</body></html>';
+    await assert.rejects(capture.captureChatInput("raw-articles", url, []), /需要验证或登录/u);
+    assert.deepEqual(await fs.readdir(directory), before, "verification pages must not be saved as articles");
+    assert.equal(requests, 2, "both captures use the built-in Obsidian request path");
+  } finally {
+    restore();
+    for (const [name, descriptor] of previousGlobals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+    dom.window.close();
+  }
 }
 
 async function assertInitializationSubmitAndQuestion(plugin: any): Promise<void> {

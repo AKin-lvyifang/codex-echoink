@@ -35,3 +35,8 @@ const codexOAuthResult = spawnSync(process.execPath, ["scripts/codex-oauth-compa
   stdio: "inherit"
 });
 if (codexOAuthResult.status !== 0) process.exit(codexOAuthResult.status ?? 1);
+
+const financeCatalogResult = spawnSync(process.execPath, ["scripts/finance-catalog-tests.mjs"], {
+  stdio: "inherit"
+});
+if (financeCatalogResult.status !== 0) process.exit(financeCatalogResult.status ?? 1);

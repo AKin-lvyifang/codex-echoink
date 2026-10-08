@@ -1,4 +1,4 @@
-import { ItemView, MarkdownView, Notice, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ChatMessage, StoredAttachment, StoredSession } from "../settings/settings";
 import { newId, providerConnectionLabel } from "../settings/settings";
@@ -13,11 +13,9 @@ import {
   type EchoInkTurnInteraction
 } from "../types/conversation-turn";
 import { diagnoseProviderError, type ProviderErrorDiagnostic } from "../core/provider-diagnostics";
-import { buildUserInput } from "../core/mapping";
-import { composerPrimaryActionForState, type ComposerPrimaryActionState } from "./composer-state";
-import { canStartQueuedTurn, RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
-import { clearPromptEnhanceReview } from "./codex-view/composer";
-import { CodexMessageListRenderer, isProcessItemType } from "./codex-view/message-list";
+import type { ComposerPrimaryActionState } from "./composer-state";
+import { RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
+import { CodexMessageListRenderer } from "./codex-view/message-list";
 import { loadMcpPanelView } from "./codex-view/mcp-panel";
 import { enabledSkillResources, mcpResourceEnablement } from "../resources/registry";
 import { MessageScrollFollowController, type MessageRenderScheduleOptions } from "./codex-view/message-scroll-follow";
@@ -58,7 +56,6 @@ import {
   renderAttachmentsView,
   type CodexAttachmentHost
 } from "./codex-view/attachments";
-import { normalizeWorkspacePath } from "./codex-view/workspace-utils";
 import {
   currentEchoInkResourceCatalog as currentEchoInkResourceCatalogAction,
   currentTurnOptions as currentTurnOptionsAction,

@@ -1,12 +1,11 @@
 import { resolveKnowledgePath } from "./root-paths";
-import { execFile } from "child_process";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { StoredAttachment } from "../settings/settings";
 import { SUPPORTED_RAW_EXTENSIONS } from "./discovery";
-import { exists, formatDateForFile, pad } from "./utils";
+import { formatDateForFile, pad } from "./utils";
 import {
   extractArticleMarkdown,
   extractFirstUrl,
@@ -139,19 +138,6 @@ export class KnowledgeBaseCaptureService {
     const vaultPath = this.plugin.getVaultPath();
     const dest = path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "articles", "微信公众号");
     await fsp.mkdir(dest, { recursive: true });
-    const skillScript = path.join(process.env.HOME || "", ".codex", "skills", "wechat-article-to-obsidian-raw", "scripts", "wechat_capture.mjs");
-    if (await exists(skillScript)) {
-      try {
-        const { stdout } = await execFilePromise("node", [skillScript, url, "--dest", dest], {
-          maxBuffer: 30 * 1024 * 1024
-        });
-        const parsed = JSON.parse(stdout.trim());
-        if (parsed?.notePath) return [normalizePath(path.relative(vaultPath, parsed.notePath))];
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (/verification|captcha|环境异常|验证/i.test(message)) throw new Error(`公众号收集失败：微信验证拦截。${message}`);
-      }
-    }
     return [await this.captureHtmlLikePage(url, dest, "微信公众号")];
   }
 
@@ -236,19 +222,6 @@ export class KnowledgeBaseCaptureService {
     }
     return copied;
   }
-}
-
-function execFilePromise(command: string, args: string[], options: { maxBuffer: number }): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(command, args, options, (error, stdout, stderr) => {
-      if (error) {
-        const message = stderr || error.message;
-        reject(new Error(message));
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
-  });
 }
 
 function formatDateTimeForFile(date: Date): string {

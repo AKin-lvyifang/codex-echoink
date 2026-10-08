@@ -17940,7 +17940,7 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
   --echoink-turn-nav-gutter: 44px;
 }
 
-.codex-messages-shell:has(.codex-turn-nav-mount:not([hidden])) > .codex-messages {
+.codex-messages-shell:has(> .codex-turn-nav-mount:not([hidden])) > .codex-messages {
   padding-right: var(--echoink-turn-nav-gutter);
 }
 

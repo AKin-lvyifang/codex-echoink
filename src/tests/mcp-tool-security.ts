@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
+import { setRequestUrlForTests } from "./obsidian-shim";
 import {
   mcpToolContractFingerprint,
   normalizeMcpConnectionRecord
@@ -19,7 +21,7 @@ import {
 import { EchoInkResourceCatalogService } from "../plugin/resource-catalog-service";
 import { EchoInkMcpSettingsService } from "../plugin/mcp-settings-service";
 import { EchoInkMcpBrokerService } from "../resources/mcp-broker-service";
-import { closeMcpBrokerConnectionPool } from "../resources/mcp-broker";
+import { closeMcpBrokerConnectionPool, EchoInkMcpBroker, EchoInkMcpBrokerError } from "../resources/mcp-broker";
 import { recoverProductionPiMcpDomainReceipts } from "../plugin/pi-production-runtime-composition";
 import { FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
 import {
@@ -44,6 +46,8 @@ import type {
 } from "../resources/types";
 
 export async function runMcpToolSecurityTests(): Promise<void> {
+  await assertHttpMcpTransportLifecycle();
+  await assertSharedHttpInitializationWaiterCancellation();
   assertSavedGlobalResourceStateOverridesRuntimeDiscovery();
   await assertResourceCatalogServiceDistinguishesFailureFromDeletion();
   await assertResourceCatalogPersistenceReadbackConsistency();
@@ -58,6 +62,175 @@ export async function runMcpToolSecurityTests(): Promise<void> {
   await assertExplicitTrustAndPolicyAreRequired();
   await assertChangedContractRequiresRetrust();
   await assertMcpAgentApprovalUsesExistingTicketChain();
+}
+
+async function assertSharedHttpInitializationWaiterCancellation(): Promise<void> {
+  for (const operation of ["list", "call"] as const) {
+    const methods: string[] = [];
+    let releaseInitialize!: () => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    await withHttpMcpFixture((_request, message) => {
+      methods.push(message.method);
+      if (message.method === "initialize") {
+        return new Promise<RequestUrlResponse>((resolve) => {
+          releaseInitialize = () => resolve(httpMcpResponse('{"result":{}}'));
+          markStarted();
+        });
+      }
+      return message.method === "notifications/initialized"
+        ? httpMcpResponse("", 202)
+        : httpMcpResponse('{"result":{"tools":[]}}');
+    }, async (broker, resource) => {
+      const first = broker.listTools(resource, 1000);
+      await started;
+      const controller = new AbortController();
+      const second = operation === "list"
+        ? broker.listTools(resource, 1000, controller.signal)
+        : broker.callTool({ resource, toolName: "write_item", timeoutMs: 1000, signal: controller.signal });
+      const cancelled = assert.rejects(second, { name: "AbortError" });
+      // Let the second call enter the pool wait before cancelling its own signal.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      controller.abort();
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          cancelled,
+          new Promise<never>((_resolve, reject) => {
+            deadline = setTimeout(() => reject(new Error("shared initialization waiter did not cancel promptly")), 100);
+          })
+        ]);
+        assert.deepEqual(methods, ["initialize"], "cancelled waiter must not initialize or call tools");
+      } finally {
+        clearTimeout(deadline);
+        releaseInitialize();
+        await Promise.allSettled([first, cancelled]);
+      }
+      assert.deepEqual(await first, { tools: [] }, "cancelling another waiter must preserve the first caller");
+      assert.deepEqual(await broker.listTools(resource), { tools: [] }, "the surviving connection remains reusable");
+      assert.deepEqual(methods, ["initialize", "notifications/initialized", "tools/list", "tools/list"]);
+    });
+  }
+}
+
+function httpMcpResponse(text: string, status = 200, headers: Record<string, string> = {}): RequestUrlResponse {
+  return { status, headers, text, arrayBuffer: new ArrayBuffer(0), json: undefined };
+}
+
+async function withHttpMcpFixture(
+  handler: (request: RequestUrlParam, message: { method: string; id?: number; params?: unknown }) => RequestUrlResponse | Promise<RequestUrlResponse>,
+  run: (broker: EchoInkMcpBroker, resource: EchoInkResource) => Promise<void>
+): Promise<void> {
+  await closeMcpBrokerConnectionPool();
+  const restore = setRequestUrlForTests((request) => {
+    assert.ok(typeof request !== "string");
+    assert.equal(request.method, "POST");
+    assert.equal(request.throw, false, "HTTP errors must reach the broker's safe error mapping");
+    assert.equal(request.headers?.Authorization, "Bearer fixture");
+    return handler(request, JSON.parse(String(request.body)));
+  });
+  const resource = mcpResource();
+  const broker = new EchoInkMcpBroker({ connections: {
+    [resource.id]: normalizeMcpConnectionRecord({
+      transport: "http", url: "https://example.invalid/mcp", headers: { Authorization: "Bearer fixture" }
+    })!
+  } });
+  try {
+    await run(broker, resource);
+  } finally {
+    await closeMcpBrokerConnectionPool();
+    restore();
+  }
+}
+
+async function assertHttpMcpTransportLifecycle(): Promise<void> {
+  const methods: string[] = [];
+  await withHttpMcpFixture((request, message) => {
+    methods.push(message.method);
+    if (message.method === "initialize") {
+      assert.equal(request.headers?.["Mcp-Session-Id"], undefined);
+      return httpMcpResponse('{"jsonrpc":"2.0","result":{}}', 200, { "MCP-Session-Id": "fixture-session" });
+    }
+    assert.equal(request.headers?.["Mcp-Session-Id"], "fixture-session");
+    if (message.method === "notifications/initialized") {
+      assert.equal(message.id, undefined);
+      return httpMcpResponse("", 202);
+    }
+    if (message.method === "tools/list") return httpMcpResponse('{"result":{"tools":[]}}');
+    assert.deepEqual(message.params, { name: "write_item", arguments: { id: "sample" } });
+    return httpMcpResponse('event: message\ndata: {"result":{"ok":true}}\n\ndata: [DONE]\n', 200, { "Content-Type": "text/event-stream" });
+  }, async (broker, resource) => {
+    assert.deepEqual(await broker.listTools(resource), { tools: [] });
+    assert.deepEqual(await broker.callTool({ resource, toolName: "write_item", arguments: { id: "sample" } }), { content: { ok: true } });
+  });
+  assert.deepEqual(methods, ["initialize", "notifications/initialized", "tools/list", "tools/call"]);
+
+  for (const [response, code] of [
+    [httpMcpResponse("", 401), "authentication_failed"],
+    [httpMcpResponse("", 403), "authentication_failed"],
+    [httpMcpResponse("", 503), "connection_failed"],
+    [httpMcpResponse("not json"), "schema_invalid"],
+    [httpMcpResponse("") , "schema_invalid"],
+    [httpMcpResponse("event: message\n", 200, { "content-type": "text/event-stream" }), "schema_invalid"],
+    [httpMcpResponse('{"result":{}}', 200, { "mcp-session-id": "invalid\nsession" }), "schema_invalid"],
+    [httpMcpResponse('{"error":{"message":"tool failed"}}'), "call_failed"]
+  ] as const) {
+    await withHttpMcpFixture(() => response, async (broker, resource) => {
+      await assert.rejects(broker.listTools(resource), (error: unknown) => error instanceof EchoInkMcpBrokerError && error.code === code);
+    });
+  }
+
+  let requests = 0;
+  await withHttpMcpFixture(() => { requests++; return httpMcpResponse("{}"); }, async (broker, resource) => {
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(broker.listTools(resource, 1000, controller.signal), { name: "AbortError" });
+  });
+  assert.equal(requests, 0, "an already cancelled call must not send any HTTP request");
+
+  // Exercise each awaited HTTP step. Settling the physical request after cancellation
+  // must neither continue initialization nor replay a possibly mutating tool call.
+  for (const method of ["initialize", "notifications/initialized", "tools/call"]) {
+    for (const ending of ["abort-success", "abort-failure", "timeout"] as const) {
+      const observed: Array<{ method: string; session?: string }> = [];
+      let settleLate!: () => void;
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      let block = true;
+      await withHttpMcpFixture((request, message) => {
+        observed.push({ method: message.method, session: request.headers?.["Mcp-Session-Id"] });
+        if (message.method === method && block) {
+          block = false;
+          return new Promise<RequestUrlResponse>((resolve, reject) => {
+            settleLate = () => ending === "abort-failure"
+              ? reject(new Error("late network failure"))
+              : resolve(httpMcpResponse('{"result":{}}', 200, { "mcp-session-id": "late-session" }));
+            markStarted();
+          });
+        }
+        return message.method === "notifications/initialized"
+          ? httpMcpResponse("", 202)
+          : httpMcpResponse('{"result":{"tools":[]}}');
+      }, async (broker, resource) => {
+        const controller = new AbortController();
+        const failed = assert.rejects(broker.callTool({
+          resource, toolName: "write_item", timeoutMs: ending === "timeout" ? 20 : 1000, signal: controller.signal
+        }), (error: unknown) => ending === "timeout"
+          ? error instanceof EchoInkMcpBrokerError && error.code === "timeout"
+          : error instanceof Error && error.name === "AbortError");
+        await started;
+        if (ending !== "timeout") controller.abort();
+        await failed;
+        const requestCount = observed.length;
+        settleLate();
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        assert.equal(observed.length, requestCount, "late replies must not continue or retry a cancelled operation");
+        await broker.listTools(resource);
+        assert.equal(observed[requestCount].method, "initialize", "the next explicit call gets a fresh connection");
+        assert.equal(observed.slice(requestCount).some((request) => request.session === "late-session"), false);
+      });
+    }
+  }
 }
 
 async function assertMcpAgentApprovalUsesExistingTicketChain(): Promise<void> {
