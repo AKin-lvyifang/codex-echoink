@@ -24,7 +24,8 @@ import type { CapabilityAccess } from "../membership/types";
 type Fixture = Awaited<ReturnType<typeof nativeJournalFixture>>;
 export function officialCliFixture(fixture: Fixture, root: string) {
   const calls: string[][] = [];
-  const state = { available: true, failAfterDailyWrite: false, truncate: false, mismatch: false, advertised: [...OBSIDIAN_CLI_COMMANDS], historyContent: "Restored snapshot\n", enabled: new Set<string>(), installed: new Set(["sample-plugin"]), activeFile: "", activeView: "markdown" };
+  const state = { available: true, failAfterDailyWrite: false, truncate: false, mismatch: false, dailyPath: undefined as string | undefined, advertised: [...OBSIDIAN_CLI_COMMANDS], historyContent: "Restored snapshot\n", enabled: new Set<string>(), installed: new Set(["sample-plugin"]), activeFile: "", activeView: "markdown" };
+  const dailyPath = () => state.dailyPath ?? nativeJournalPathForDate(fixture.app, new Date(), "old-directory");
   const app = fixture.app as any;
   app.workspace.getActiveFile = () => app.vault.getFileByPath(state.activeFile);
   app.workspace.activeLeaf = { view: { getViewType: () => state.activeView } };
@@ -41,7 +42,8 @@ export function officialCliFixture(fixture: Fixture, root: string) {
     if (command === "version") return done("1.13.7 (installer 1.12.7)");
     if (command === "read") return done(await readFile(path.join(root, values.path!), "utf8"));
     if (command === "diff") return done("local versions");
-    if (command === "daily:path") return done(nativeJournalPathForDate(fixture.app, new Date(), "old-directory"));
+    if (command === "daily:path") return done(dailyPath());
+    if (command === "daily:read") return done(await readFile(path.join(root, dailyPath()), "utf8"));
     if (command === "history") return done("1\t2026-10-09\n");
     if (command === "history:read") return done(state.historyContent);
     if (command === "history:restore") { await fixture.write(values.path!, state.historyContent); return done("Restored"); }
@@ -56,7 +58,7 @@ export function officialCliFixture(fixture: Fixture, root: string) {
     }
     if (command === "open" || command === "tab:open") { state.activeFile = values.path ?? values.file!; state.activeView = state.activeFile.endsWith(".base") ? "bases" : "markdown"; return done("Opened"); }
     if (command === "daily" || command === "daily:append" || command === "daily:prepend") {
-      const relativePath = nativeJournalPathForDate(fixture.app, new Date(), "old-directory");
+      const relativePath = dailyPath();
       let old = ""; try { old = await readFile(path.join(root, relativePath), "utf8"); } catch {}
       const next = command === "daily" ? old || "# Daily\n" : command === "daily:append" ? old + (argv.includes("inline") ? "" : "\n") + values.content! : values.content! + "\n" + old;
       await fixture.write(relativePath, next);
@@ -69,6 +71,48 @@ export function officialCliFixture(fixture: Fixture, root: string) {
     return done(command === "search" ? "" : "result");
   } };
   return { transport, calls, state };
+}
+export async function runOfficialDailyTargetTests(root: string): Promise<void> {
+  const fixture = await nativeJournalFixture(root);
+  const fake = officialCliFixture(fixture, root);
+  const adapter = new ObsidianVaultDomainAdapter(fixture.app, "daily-target-vault", root);
+  const port = createObsidianNativePort(fixture.app, adapter, () => "old-directory", { transport: fake.transport });
+  fake.state.dailyPath = "2026-10-09.md";
+  assert.notEqual(fake.state.dailyPath, nativeJournalPathForDate(fixture.app, new Date(), "old-directory"));
+  const located = await port.cli({ command: "daily:path" });
+  assert.equal(located.status, "completed");
+  assert.equal(located.output, fake.state.dailyPath, "official CLI owns its daily target even without local daily-note settings");
+  assert.deepEqual(fake.calls.slice(0, 2), [["vault", "info=path"], ["daily:path"]], "verify current Vault before resolving the official target");
+  const approvedPath = fake.state.dailyPath;
+  const prepared = await port.prepare({ command: "daily:append", content: "Official daily target" });
+  assert.deepEqual(prepared.target, { command: "daily:append", dailyPath: approvedPath });
+  let effectsStarted = 0;
+  const saved = await prepared.execute(undefined, async () => { effectsStarted++; });
+  assert.equal(saved.status, "completed");
+  assert.equal(saved.readbackVerified, true);
+  assert.equal(effectsStarted, 1);
+  const read = await port.cli({ command: "daily:read" });
+  assert.match(read.output!, /Official daily target/);
+  await assert.rejects(readFile(path.join(root, nativeJournalPathForDate(fixture.app, new Date(), "old-directory")), "utf8"), { code: "ENOENT" });
+  await port.cli({ command: "tasks", daily: true });
+  assert.deepEqual(fake.calls.at(-1), ["tasks", `path=${approvedPath}`], "daily task queries bind the same official target");
+  for (const changedPath of ["Changed settings/2026-10-09.md", "2026-10-10.md"]) {
+    const pending = await port.prepare({ command: "daily:append", content: "Must not follow changed target" });
+    fake.state.dailyPath = changedPath;
+    const writesBefore = fake.calls.filter(argv => argv[0] === "daily:append").length;
+    await assert.rejects(pending.execute(undefined, async () => { effectsStarted++; }), /obsidian_cli_daily_target_changed/);
+    assert.equal(fake.calls.filter(argv => argv[0] === "daily:append").length, writesBefore, "setting changes and midnight rollover must stop before writing");
+    assert.equal(effectsStarted, 1);
+    fake.state.dailyPath = approvedPath;
+  }
+  fake.state.dailyPath = "../outside.md";
+  await assert.rejects(port.prepare({ command: "daily:append", content: "Unsafe target" }), /path|traversal/iu);
+  fake.state.dailyPath = approvedPath;
+  fake.state.mismatch = true;
+  const pathsBefore = fake.calls.filter(argv => argv[0] === "daily:path").length;
+  await assert.rejects(port.cli({ command: "daily:path" }), /obsidian_cli_vault_mismatch/);
+  assert.equal(fake.calls.filter(argv => argv[0] === "daily:path").length, pathsBefore);
+  console.log("PASS official daily target defaults, write/readback, frozen target changes and current Vault boundaries");
 }
 export async function runOfficialCliTests(root: string): Promise<void> {
   const fixture = await nativeJournalFixture(root);
@@ -185,11 +229,7 @@ export async function runOfficialCliTests(root: string): Promise<void> {
   assert.equal((await call({ command: "files" })).value.status, "truncated");
   await assertInterruptedReceiptRecovery(approvals, receipts, identity, adapter);
   await assertFinanceAdapter(fixture, root, adapter, approvals, receipts, identity);
-  // The actual current machine may lack the binary; this read-only call never launches a GUI fallback.
-  const actualPort = createObsidianNativePort(fixture.app, adapter, () => "old-directory");
-  const actual = await actualPort.cli({ command: "version" });
-  assert.equal(actual.engine, "obsidian-official-cli");
-  console.log(`Actual public CLI availability: ${actual.status}; ${actual.reason ?? "available"}`);
+  await runOfficialDailyTargetTests(path.join(root, "official-daily-target"));
   console.log("PASS official CLI command parameters, raw Error text, current Vault, Plan/read-only, exact approvals/Receipts, daily/history/Base/plugin readback, cancellation and no uncertain retry");
 }
 async function assertFinanceAdapter(fixture: Fixture, root: string, adapter: ObsidianVaultDomainAdapter, approvals: FileApprovalTicketStore, receipts: FileDomainReceiptStore, identity: any) {

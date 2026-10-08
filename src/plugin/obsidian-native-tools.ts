@@ -53,6 +53,10 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
     if (!["completed", "empty"].includes(located.status)) return located;
     if (path.resolve((located.output ?? "").trim()) !== path.resolve(adapter.vaultRootPath)) throw new Error("obsidian_cli_vault_mismatch");
   };
+  const officialDailyTarget = async (signal?: AbortSignal): Promise<string> => {
+    const relativePath = requireOutput(await run(["daily:path"], signal)).trim();
+    return (await targetFor(relativePath, false)).relativePath;
+  };
   const fileNameTarget = (name: string) => {
     const matches = app.vault.getFiles().filter(file => file.path === name || file.path.replace(/\.[^.\/]+$/u, "") === name || file.path.split("/").at(-1) === name || file.path.split("/").at(-1)?.replace(/\.[^.]+$/u, "") === name);
     if (matches.length !== 1) throw new Error("obsidian_cli_file_name_not_unique_use_path");
@@ -115,7 +119,16 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
       }
       if (request.command === "diff") request.filter = "local";
       let dailyPath: string | undefined;
-      if (request.command.startsWith("daily") || request.daily) dailyPath = (await targetFor(nativeJournalPathForDate(app, new Date(), legacyDirectory()), false)).relativePath;
+      if (request.command.startsWith("daily") || request.daily) {
+        const unavailable = await preflight(signal);
+        if (unavailable) {
+          const target = normalizeJsonValue({ command: request.command });
+          const failure = { ...unavailable, command: request.command };
+          return { effect, target, targetVersion: null, preview: target, unavailable: failure, execute: async () => failure };
+        }
+        // The public CLI owns its defaults; EchoInk's journal fallback may differ.
+        dailyPath = await officialDailyTarget(signal);
+      }
       if (request.daily && ["tasks", "task"].includes(request.command)) { request.path = dailyPath; delete request.daily; await targetFor(request.path!); }
       if (request.command === "template:read") {
         const settings = readNativeJournalSettings(app, legacyDirectory());
@@ -155,7 +168,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
           if (app.vault.getFiles().some(file => file.path.split("/").at(-1)?.replace(/\.md$/iu, "") === name)) throw new Error("obsidian_cli_record_name_already_exists");
         }
       }
-      const unavailable = financePrepared ? undefined : await preflight(signal);
+      const unavailable = financePrepared || dailyPath ? undefined : await preflight(signal);
       if (unavailable) return { effect, target, targetVersion, preview: target, unavailable: { ...unavailable, command: request.command }, execute: async () => ({ ...unavailable, command: request.command }) };
       if (!financePrepared) {
         const help = await run(["help"], signal);
@@ -163,10 +176,6 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
           const failure: ObsidianCliResult = { available: true, engine: effectEngine, command: request.command, status: "unsupported", reason: "Installed public CLI does not advertise this command." };
           return { effect, target, targetVersion, preview: target, unavailable: failure, execute: async () => failure };
         }
-      }
-      if (dailyPath && !financePrepared) {
-        const actualDaily = requireOutput(await run(["daily:path"], signal)).trim();
-        if (actualDaily !== dailyPath) throw new Error("obsidian_cli_daily_target_mismatch");
       }
       if (request.command === "history:restore") {
         const versions = requireOutput(await run(["history", `path=${request.path}`], signal));
@@ -199,7 +208,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
           }
           if (request.path) await targetFor(request.path, true, ["folder", "search", "search:context"].includes(request.command) ? "directory" : "file");
           if (request.command === "base:views" && !activeBase(request.path!)) throw new Error("obsidian_cli_active_base_mismatch_open_target_first");
-          if (dailyPath && nativeJournalPathForDate(app, new Date(), legacyDirectory()) !== dailyPath) throw new Error("obsidian_cli_daily_target_changed");
+          if (dailyPath && await officialDailyTarget(executionSignal) !== dailyPath) throw new Error("obsidian_cli_daily_target_changed");
           if (writing && before && await version(request.path ?? dailyPath!) !== before.version) throw new Error("obsidian_cli_target_changed_since_approval");
           if (writing && dailyPath && !before && await version(dailyPath) !== null) throw new Error("obsidian_cli_target_changed_since_approval");
           if (pluginBefore && !isDeepStrictEqual(pluginBefore, await pluginState(request.id!, executionSignal))) throw new Error("obsidian_cli_plugin_changed_since_approval");
