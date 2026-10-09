@@ -317,7 +317,9 @@ function addKnowledgeDashboardHealthTooltip(
   state: KnowledgeDashboardTooltipState,
   language: SettingsLanguage
 ): void {
-  ensureKnowledgeDashboardHealthTooltipDelegates(state);
+  const document = container.ownerDocument;
+  const window = document.defaultView!;
+  ensureKnowledgeDashboardHealthTooltipDelegates(state, document);
   const placementClass = placement === "summary" ? "codex-kb-health-tooltip-placement-summary" : "codex-kb-health-tooltip-placement-meter";
   const wrapper = container.createSpan({ cls: `codex-kb-health-tooltip ${placementClass}` });
   const tooltipId = newId("codex-kb-health-tooltip");
@@ -333,8 +335,9 @@ function addKnowledgeDashboardHealthTooltip(
       "aria-expanded": "false"
     }
   });
-  const bridge = document.body.createDiv({ cls: "codex-kb-health-tooltip-bridge" });
-  const panel = document.body.createDiv({ cls: "codex-kb-health-tooltip-panel", attr: { id: tooltipId, role: "tooltip" } });
+  const owner = button.ownerDocument;
+  const bridge = owner.body.createDiv({ cls: "codex-kb-health-tooltip-bridge" });
+  const panel = owner.body.createDiv({ cls: "codex-kb-health-tooltip-panel", attr: { id: tooltipId, role: "tooltip" } });
   state.panels.push(bridge);
   state.panels.push(panel);
   panel.createDiv({ cls: "codex-kb-health-tooltip-title", text: conversationUiText(language, "健康分解释", "Health score explanation") });
@@ -401,7 +404,7 @@ function addKnowledgeDashboardHealthTooltip(
     event.clientY
   );
   const isTooltipTarget = (target: EventTarget | null) => {
-    if (!(target instanceof Node)) return false;
+    if (!(target instanceof window.Node)) return false;
     return button.contains(target) || panel.contains(target) || bridge.contains(target);
   };
   const isPointerCurrentlyInsideTooltip = () => {
@@ -491,7 +494,8 @@ function addKnowledgeDashboardHealthTooltip(
   bridge.onpointerleave = (event) => scheduleCloseIfOutside(event);
 }
 
-function ensureKnowledgeDashboardHealthTooltipDelegates(state: KnowledgeDashboardTooltipState): void {
+function ensureKnowledgeDashboardHealthTooltipDelegates(state: KnowledgeDashboardTooltipState, document: Document): void {
+  const window = document.defaultView!;
   if (state.cleanups.length) return;
   const repositionOpenHealthTooltipPanels = () => {
     for (const tooltip of state.tooltips) {
@@ -525,6 +529,7 @@ function ensureKnowledgeDashboardHealthTooltipDelegates(state: KnowledgeDashboar
 }
 
 function positionKnowledgeDashboardHealthTooltip(button: HTMLElement, panel: HTMLElement, bridge: HTMLElement, placement: "summary" | "meter"): void {
+  const window = button.ownerDocument.defaultView!;
   const trigger = button.getBoundingClientRect();
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;

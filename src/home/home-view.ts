@@ -672,6 +672,7 @@ export class EchoInkHomeView extends ItemView {
   private showActivity(dayOnly: boolean, help = false): void {
     this.activityModal?.close();
     const modal = new Modal(this.app); this.activityModal = modal;
+    modal.modalEl.addClass("echoink-theme-boundary");
     modal.contentEl.addClass("echoink-home-activity-dialog");
     modal.titleEl.setText(help ? this.t("留痕组件 · 七日书脊", "Activity · Seven days of book spines") : this.t(dayOnly ? "当天全部足迹" : "这一周留下的足迹", dayOnly ? "All activity for this day" : "This week's activity"));
     if (help) {

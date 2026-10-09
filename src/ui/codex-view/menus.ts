@@ -1,3 +1,4 @@
+import {showEchoInkMenu} from "../theme-boundary";
 import { Menu, Notice, setIcon } from "obsidian";
 import type { SettingsLanguage } from "../../settings/settings";
 import { filterSkillResources } from "../../resources/registry";
@@ -177,7 +178,7 @@ export function openAddMenu(
       .setIcon("blocks")
       .onClick(callbacks.onToggleMcpPanel)
   );
-  menu.showAtMouseEvent(event);
+  showEchoInkMenu( (event.currentTarget as HTMLElement | null)?.ownerDocument ?? document, () => menu.showAtMouseEvent(event));
 }
 
 export function openWorkspaceMenu(
@@ -218,7 +219,7 @@ export function openWorkspaceMenu(
         .onClick(callbacks.onClearWorkspace)
     );
   }
-  menu.showAtMouseEvent(event);
+  showEchoInkMenu( (event.currentTarget as HTMLElement | null)?.ownerDocument ?? document, () => menu.showAtMouseEvent(event));
 }
 
 export function openKnowledgeCommandMenu(
@@ -237,7 +238,7 @@ export function openKnowledgeCommandMenu(
         .onClick(() => onFillCommand(command.text))
     );
   }
-  menu.showAtMouseEvent(event);
+  showEchoInkMenu( (event.currentTarget as HTMLElement | null)?.ownerDocument ?? document, () => menu.showAtMouseEvent(event));
 }
 
 export function openModelMenu(event: MouseEvent, state: ModelMenuState, callbacks: ModelMenuCallbacks): void {
@@ -293,7 +294,7 @@ export function openSessionMenu(
       .setWarning(true)
       .onClick(callbacks.onDelete)
   );
-  menu.showAtMouseEvent(event);
+  showEchoInkMenu( (event.currentTarget as HTMLElement | null)?.ownerDocument ?? document, () => menu.showAtMouseEvent(event));
 }
 
 export function renderSkillMatches(container: HTMLElement, query: string, state: SkillMatchesState, callbacks: SkillMatchesCallbacks): void {

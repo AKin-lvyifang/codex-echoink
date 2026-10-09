@@ -108,6 +108,10 @@ export class KnowledgeNotePickerModal extends Modal {
       const value = computed?.getPropertyValue?.(name);
       if (value?.trim()) this.modalEl.style.setProperty(name, value);
     }
+    if (computed) {
+      this.modalEl.style.setProperty("--font-interface", computed.fontFamily);
+      this.modalEl.style.colorScheme = computed.colorScheme;
+    }
     this.titleEl.setText(targetRole === "raw"
       ? (zh ? "移回 Raw" : "Move notes back to Raw")
       : (zh ? `添加笔记到 ${targetLabel}` : `Add notes to ${targetLabel}`));

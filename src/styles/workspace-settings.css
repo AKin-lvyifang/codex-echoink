@@ -875,7 +875,7 @@
 .echoink-settings-demo .setting-item-description{font-size:calc(var(--font-text-size,16px)*.6875);color:var(--secondary);margin-top:4px;line-height:1.85}
 .echoink-settings-demo .setting-item-control{flex:none;gap:12px;min-width:0;max-width:48%;flex-wrap:wrap}
 .echoink-settings-demo input:not([type=checkbox]):not([type=range]):not([type=radio]),.echoink-settings-demo select{min-width:0;max-width:100%;height:34px;box-shadow:none;border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:7px 10px;font-size:calc(var(--font-text-size,16px)*.6875);color:var(--text)}
-.echoink-settings-demo input:focus,.echoink-settings-demo select:focus,.echoink-settings-demo textarea:focus{border-color:var(--accent);outline:2px solid var(--accent-bg);outline-offset:1px}
+.echoink-settings-demo input:not([type=checkbox]):not([type=radio]):not([type=range]):focus,.echoink-settings-demo select:focus,.echoink-settings-demo textarea:focus{border-color:var(--line);outline:none;box-shadow:none}
 .echoink-settings-demo input[type=range]{accent-color:var(--accent);max-width:170px}
 .echoink-settings-demo [data-slot=checkbox],.echoink-settings-demo input[type=radio]{accent-color:var(--accent)}
 .echoink-settings-demo button:not(:where(.echoink-account .heat-cell)):not(.codex-settings-tab):not(.codex-resource-tab):not(.text-button):not(.todo-heatmap-cell):not(.provider-group-button):not(.codex-provider-combobox-option):not(.echoink-about-logo):not(.echoink-settings-navigation-row):not(.echoink-origin-control):not(.codex-resource-row-name):not(:where(.directory-planner button)){font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);height:auto;min-height:30px;box-shadow:none}

@@ -15,6 +15,65 @@ const obsidianShimPath = path.join(
 );
 
 await mkdir(outputDir, { recursive: true });
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "theme-isolation") {
+  const ts = await import("typescript");
+  const { execFileSync } = await import("node:child_process");
+  const ast = ts.createSourceFile("provider-model-modal.ts", await readFile(path.join(rootDir, "src/settings/provider-model-modal.ts"), "utf8"), ts.ScriptTarget.Latest, true);
+  const declaration = ast.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "ProviderModelModal");
+  const methods = ["createField", "renderProviderNameField", "renderApiKeyField"].map(name => {
+    const method = declaration.members.find(node => ts.isMethodDeclaration(node) && node.name.getText(ast) === name);
+    if (!method) throw new Error(`Production provider field missing: ${name}`);
+    return method.getText(ast);
+  }).join("\n");
+  const directory = path.join(outputDir, "theme-isolation");
+  await mkdir(directory, { recursive: true });
+  await esbuild.build({
+    stdin: { contents: `
+      import {runThemeIsolation} from "./src/tests/theme-isolation-dom";
+      import {createOriginInput,createOriginButton} from "./src/settings/origin-controls";
+      import {apiProviderConfiguredNameOverride,apiProviderPresetDisplayName} from "./src/settings/provider-presets";
+      import {setIcon} from "obsidian";
+      class ProviderFields {
+        draft={name:"",apiKey:""}; providerId="deepseek"; apiKeyInput="";
+        options={copy:{providers:{keyPlaceholder:"API key",savedKeyPlaceholder:"Saved key",showKey:"Show key",hideKey:"Hide key"}}};
+        label(zh,en){return zh;} controlId(key){return "provider-fixture-"+key;}
+        applyFieldAccessibility(){} renderFieldError(){} invalidatePreflight(){} clearFieldError(){}
+        ${methods}
+        render(parent){this.renderProviderNameField(parent);this.renderApiKeyField(parent);}
+      }
+      runThemeIsolation(ProviderFields).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});
+    `, resolveDir: rootDir, loader: "ts" },
+    bundle: true, format: "esm", platform: "browser", define: { "process.env.NODE_ENV": '"development"' },
+    outfile: path.join(directory, "regression.js"), logLevel: "silent", loader: {".md":"text",".txt":"text",".svg":"text"},
+    plugins: [{name:"theme-isolation-host",setup(build){
+      build.onResolve({filter:/^node:/},args=>({path:args.path,namespace:"theme-fixture"}));
+      build.onResolve({filter:/core\/mapping$/},()=>({path:"format",namespace:"theme-fixture"}));
+      build.onResolve({filter:/^obsidian$/},()=>({path:"host",namespace:"theme-fixture"}));
+      build.onLoad({filter:/.*/,namespace:"theme-fixture"},async({path:name})=>{
+        if(name.startsWith("node:")) return {contents:'export function createHash(){throw new Error("No backend in UI fixture");} export function existsSync(){throw new Error("No filesystem in UI fixture");} export function fileURLToPath(){throw new Error("No filesystem in UI fixture");}',loader:"js"};
+        if(name==="format") {
+          const ast=ts.createSourceFile("mapping.ts",await readFile(path.join(rootDir,"src/core/mapping.ts"),"utf8"),ts.ScriptTarget.Latest,true);
+          const method=ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="formatContextTokenCount");
+          return {contents:method.getText(ast),loader:"ts"};
+        }
+        return {contents:`export {Scope,Setting} from "./src/tests/origin-obsidian-dom-shim";
+          import {Modal as HostModal} from "./src/tests/provider-discovery-dom-host";
+          export class Modal extends HostModal {
+            constructor(app){super(app);if(app.fixtureDocument) app.fixtureDocument.adoptNode(this.containerEl);}
+            open(){this.modalEl.ownerDocument.body.append(this.containerEl);this.onOpen();}
+          }
+          export function setIcon(){}; export class TFile{}; export const Platform={isMobile:false}; export function normalizePath(path){return path;}; export function requestUrl(){throw new Error("Fixture cannot request network");}`,resolveDir:rootDir,loader:"js"};
+      });
+    }}]
+  });
+  // This committed source is immutable even after implementation/build rewrites.
+  const baseline = execFileSync("git", ["show", "5eaba656d8d1c41dc930d316cb6dc61f1797eff9:styles.css"], {cwd:rootDir,encoding:"utf8",maxBuffer:4*1024*1024});
+  await writeFile(path.join(directory,"baseline.css"),baseline);
+  await writeFile(path.join(directory,"styles.css"),await readFile(path.join(rootDir,"styles.css")));
+  await writeFile(path.join(directory,"index.html"),'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EchoInk immutable theme comparison</title><link rel="stylesheet" href="obsidian-app.css"><style id="shell">body{display:block;position:relative;contain:none;overflow:auto;width:100%;height:auto;min-height:100vh;margin:0;padding:16px}#fixture{width:900px;max-width:100%;margin:auto}#report{white-space:pre-wrap;font:12px/1.6 monospace}.echoink-settings-demo{padding:18px}.codex-container{height:200px}</style><style id="theme-before"></style><style id="product"></style><style id="theme-after"></style><main id="fixture"></main><pre id="report">Running…</pre><script type="module" src="regression.js"></script>');
+  console.log(`Open ${path.join(directory,"index.html")}; report[data-result=passed] requires actual browser execution.`);
+  process.exit(0);
+}
 if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "wiki-todo-dom") {
   const ts = await import("typescript");
   const source = await readFile(path.join(rootDir, "src/settings/settings-tab.ts"), "utf8");

@@ -2751,6 +2751,7 @@ export class CodexSettingTab extends PluginSettingTab {
       .sort((left, right) => left.localeCompare(right, "zh-CN"));
     const selected = await new Promise<string | null>((resolve) => {
       const picker = new Modal(this.app);
+      picker.modalEl.addClass("echoink-theme-boundary");
       picker.onOpen = () => {
         picker.titleEl.setText(zh ? "选择周报保存文件夹" : "Choose report folder");
         const list = picker.contentEl.createDiv({ cls: "settings-card settings-stack" });

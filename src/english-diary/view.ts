@@ -1,3 +1,4 @@
+import {showEchoInkMenu} from "../ui/theme-boundary";
 import { getProPluginAccess, capabilityMessage, unavailableCapabilityAccess } from "../membership/access";
 import { ItemView, Menu, Notice, setTooltip, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { disposeOriginControls } from "../settings/origin-controls";
@@ -345,14 +346,16 @@ export class EnglishDiaryView extends ItemView {
     card.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      this.expressionMenu(expression).showAtMouseEvent(event);
+      const menu=this.expressionMenu(expression);
+      showEchoInkMenu(card.ownerDocument,()=>menu.showAtMouseEvent(event));
     });
     card.addEventListener("keydown", (event) => {
       if (event.target === card && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
         event.preventDefault();
         event.stopPropagation();
         const rect = card.getBoundingClientRect();
-        this.expressionMenu(expression).showAtPosition({ x: rect.left + 12, y: rect.top + 12 }, card.ownerDocument);
+        const menu=this.expressionMenu(expression);
+        showEchoInkMenu(card.ownerDocument,()=>menu.showAtPosition({ x: rect.left + 12, y: rect.top + 12 }, card.ownerDocument));
       }
     });
     if (canLocate) {

@@ -58,6 +58,7 @@ export class AgentIdentityModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl.addClass("echoink-theme-boundary");
     const zh = this.options.language !== "en";
     const content = this.contentEl;
     content.empty();
