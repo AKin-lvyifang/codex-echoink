@@ -151,7 +151,12 @@ export async function runThemeIsolation(ProviderFields: new()=>{render(parent: H
   const inputs=[tavily,...provider.querySelectorAll<HTMLInputElement>("input")];
   const tracked=[settings,primary,...page.querySelectorAll<HTMLElement>("[role=tab],input,label,.codex-provider-modal-description,.setting-item-info"),
     ...home.querySelectorAll<HTMLElement>("button,input"),...conversation.querySelectorAll<HTMLElement>("button,select,textarea"),...scopes.flatMap(scope=>Array.from(fixture.querySelectorAll<HTMLElement>(`.${scope} button,.${scope} strong,.${scope} em,.${scope} .echoink-finance-currency`))),...fixture.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6")];
-  const snapshots=()=>tracked.map(element=>({style:read(element),after:element.matches(".codex-resource-tab")?read(element,"::after"):null}));
+  const readPlaceholder=(element:HTMLElement)=>{
+    const pseudo=element.ownerDocument.defaultView!.getComputedStyle(element,"::placeholder");
+    return {color:pseudo.color,opacity:pseudo.opacity,fontFamily:pseudo.fontFamily,fontSize:pseudo.fontSize};
+  };
+  const snapshots=()=>tracked.map(element=>({style:read(element),after:element.matches(".codex-resource-tab")?read(element,"::after"):null,
+    placeholder:element.matches("input,textarea")?readPlaceholder(element):null}));
   const equal=(expected:ReturnType<typeof snapshots>,actual:ReturnType<typeof snapshots>,phase:string)=>{
     expected.forEach((item,index)=>{
       for(const [property,value] of Object.entries(item.style)) {
@@ -160,8 +165,27 @@ export async function runThemeIsolation(ProviderFields: new()=>{render(parent: H
         assert(actual[index].style[property]===value,`${phase}: ${tracked[index].className} ${property}: ${value} -> ${actual[index].style[property]}`);
       }
       assert(JSON.stringify(actual[index].after)===JSON.stringify(item.after),`${phase}: navigation underline changed`);
+      assert(JSON.stringify(actual[index].placeholder)===JSON.stringify(item.placeholder),`${phase}: placeholder changed`);
     });
   };
+  if(new URLSearchParams(location.search).has("placeholder")){
+    const fields=tracked.filter(element=>element.matches("input,textarea"));
+    const capture=()=>fields.map(element=>({placeholder:readPlaceholder(element),caretColor:getComputedStyle(element).caretColor}));
+    for(const mode of ["theme-light","theme-dark"])for(const theme of ["green","violet"])for(const size of [16,24])await run(`${mode}/${theme}/H=${size}: production placeholder and caret`,async()=>{
+      document.body.className=mode+" mod-macos";document.body.dataset.echoinkTheme=theme;document.body.style.setProperty("--font-text-size",`${size}px`);
+      document.body.style.setProperty("--font-interface-override",size===24?"Georgia":"'??'");
+      before.textContent=after.textContent="";product.textContent=baseline;outside.focus();await frame();const original=capture();
+      product.textContent=current;await frame();assert(JSON.stringify(capture())===JSON.stringify(original),"default placeholder/caret changed");
+      for(const order of [before,after]){
+        order.textContent=interference;await frame();const actual=capture();
+        fields.forEach((field,index)=>assert(JSON.stringify(actual[index])===JSON.stringify(original[index]),`${field.getAttribute("aria-label")??field.className}: ${JSON.stringify(original[index])} -> ${JSON.stringify(actual[index])}`));order.textContent="";
+      }
+    });
+    document.body.className="theme-light mod-macos";document.body.dataset.echoinkTheme="green";document.body.style.setProperty("--font-text-size","16px");document.body.style.setProperty("--font-interface-override","'??'");product.textContent=current;after.textContent=interference;
+    report.dataset.result=results.some(result=>result.startsWith("FAIL"))?"failed":"passed";report.textContent=results.join("\n")+"\nBoundary: incremental production placeholder pseudo-element/caret comparison; native acceptance remains with control.";
+    fixture.style.removeProperty("pointer-events");
+    return;
+  }
   for(const mode of ["theme-light","theme-dark"])for(const theme of ["green","violet"])for(const size of [16,24]) {
     await run(`${mode}/${theme}/H=${size}: immutable baseline + theme load order`,async()=>{
       document.body.className=mode+" mod-macos";document.body.dataset.echoinkTheme=theme;document.body.style.setProperty("--font-text-size",`${size}px`);

@@ -31,6 +31,7 @@
   --menu-background:#f6f6f6;--menu-border-color:#dadada;--menu-radius:var(--radius-m);--menu-shadow:var(--shadow-s);
   --modal-background:#fff;--modal-border-color:#dadada;--modal-radius:var(--radius-l);--modal-shadow:none;
   --dropdown-background:#fff;--dropdown-background-hover:#fafafa;
+  --input-placeholder-color:#ababab;
   --echoink-host-macos-control-bg:#e4e4e4;
   --tooltip-background:color-mix(in oklch,black 90%,transparent);--tooltip-color:#fafafa;--tooltip-radius:var(--radius-l);--tooltip-shadow:var(--shadow-s);
   --radius-s:4px;--radius-m:8px;--radius-l:12px;--radius-xl:24px;
@@ -84,6 +85,7 @@
     .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-account-tooltip,.codex-kb-health-tooltip-panel,.echoink-onboarding-coachmark,.echoink-diary-tooltip) {
   --menu-background:#282828;--menu-border-color:#3f3f3f;--modal-background:#1c1c1c;--modal-border-color:#3f3f3f;
   --dropdown-background:#333;--dropdown-background-hover:#3f3f3f;
+  --input-placeholder-color:#666;
   --echoink-host-macos-control-bg:#333;
   --color-base-00:#1c1c1c;--color-base-05:#212121;--color-base-10:#232323;
   --color-base-20:#282828;--color-base-25:#2e2e2e;--color-base-30:#333;
