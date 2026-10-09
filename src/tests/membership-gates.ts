@@ -16,9 +16,11 @@ import type { DiaryFilePort, DiarySource } from "../english-diary/types";
 import type { CapabilityAccess } from "../membership/types";
 import { getProPluginAccess } from "../membership/access";
 import { runMembershipAccountServiceTests } from "./membership-account-service";
+import { runMembershipStorageTests } from "./membership-storage";
 
 export async function runMembershipGateTests() {
   await runMembershipAccountServiceTests();
+  await runMembershipStorageTests();
   let paid = false,
     modelCalls = 0;
   let deniedCapability = "";

@@ -5,7 +5,8 @@ import {
   apiProviderHasUsableCredential,
 } from "../settings/settings";
 import { AccountService, MembershipApiError } from "./account-service";
-import { createMembershipStorage } from "./storage";
+import { createMembershipStorage, type DeviceEncryptionPort } from "./storage";
+import { getElectronRemote } from "../core/quick-window-bridge";
 import { membershipWebsiteUrl } from "./website-links";
 declare const __ECHOINK_MEMBERSHIP_API_URL__: string;
 export async function createPluginAccountService(
@@ -31,6 +32,7 @@ export async function createPluginAccountService(
     plugin.app.secretStorage,
     Platform.isDesktopApp,
     apiUrl || "disabled",
+    { encryption: getMembershipDeviceEncryption() },
   );
   const service = new AccountService(
     storage,
@@ -92,4 +94,10 @@ export async function createPluginAccountService(
   plugin.registerDomEvent(window, "focus", refresh);
   plugin.registerInterval(window.setInterval(refresh, 300000));
   return service;
+}
+
+function getMembershipDeviceEncryption(): DeviceEncryptionPort | undefined {
+  if (!Platform.isDesktopApp) return undefined;
+  const remote = getElectronRemote() as { safeStorage?: DeviceEncryptionPort } | null;
+  return remote?.safeStorage;
 }

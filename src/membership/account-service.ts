@@ -433,8 +433,20 @@ export class AccountService implements CapabilityAccess {
         verifiedTime: rights.serverTime,
       };
       if (!["active", "lifetime"].includes(rights.state)) this.clearLease();
-      else if (this.state.deviceId)
-        await this.deviceRequest("/api/devices/lease", operation);
+      else {
+        try {
+          // The persistent device key also recovers an existing binding after
+          // login or from another Vault, where no local deviceId is available.
+          await this.deviceRequest("/api/devices/lease", operation);
+        } catch (error) {
+          this.assertCurrent(operation);
+          if (!(error instanceof MembershipApiError) || error.code !== "DEVICE_REVOKED")
+            throw error;
+          // An unknown or unbound device needs explicit activation. Keep the
+          // account's valid rights and never recreate a removed binding here.
+          this.clearLease();
+        }
+      }
       this.assertCurrent(operation);
       await this.persist();
     } catch (error) {
