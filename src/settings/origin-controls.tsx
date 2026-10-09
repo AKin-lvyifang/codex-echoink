@@ -87,17 +87,6 @@ export function createOriginPagination(parent: HTMLElement, page: number, pages:
   return island.element();
 }
 
-/** Carry only the settings boundary across a body portal in the same window. */
-function getSettingsOverlayStyle(source: HTMLElement): CSSProperties | null {
-  if (!source.closest(".echoink-settings-demo,.echoink-settings-overlay")) return null;
-  const computed = source.ownerDocument.defaultView!.getComputedStyle(source);
-  const properties = ["--accent", "--accent-bg", "--line", "--bg", "--text", "--soft", "--secondary", "--muted",
-    "--font-text-size", "--echoink-settings-hover", "--echoink-settings-focus", "--echoink-settings-selected", "--echoink-settings-error"];
-  return { ...Object.fromEntries(properties.map((name) => [name, computed.getPropertyValue(name)]).filter(([, value]) => value.trim())),
-    "--font-interface": computed.fontFamily, "--echoink-settings-on-accent": computed.getPropertyValue("--echoink-theme-on-accent").trim() || "#fff",
-    fontFamily: computed.fontFamily, colorScheme: computed.colorScheme } as CSSProperties;
-}
-
 export type OriginCheckElement = HTMLButtonElement & { checked: boolean; indeterminate: boolean };
 
 export function createOriginSwitch(parent: HTMLElement, options: ElementOptions = {}) {
@@ -153,11 +142,7 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
   // Settings' size containment and native scrollport must not clip fixed content.
   const portalHost = parent.ownerDocument.body;
   let popupTheme: CSSProperties = {};
-  let settingsPopup = false;
   const capturePopupTheme = () => {
-    const settingsStyle = getSettingsOverlayStyle(island.element());
-    settingsPopup = Boolean(settingsStyle);
-    if (settingsStyle) { popupTheme = settingsStyle; return; }
     const computed = parent.ownerDocument.defaultView!.getComputedStyle(island.element());
     const properties = ["--accent", "--accent-bg", "--line", "--bg", "--text", "--soft", "--secondary", "--font-text-size", "--font-interface"];
     popupTheme = Object.fromEntries(properties.map((name) => [name, computed.getPropertyValue(name)]).filter(([, value]) => value.trim())) as CSSProperties;
@@ -207,7 +192,7 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
     element.dispatchEvent(new (element.ownerDocument.defaultView!.Event)("change", { bubbles: true }));
   }}>
     <SelectTrigger ref={island.ref} className="echoink-origin-control"><SelectValue /></SelectTrigger>
-    <SelectContent ref={setPopupElement} container={portalHost} className={`echoink-origin-control${settingsPopup ? " echoink-settings-overlay" : ""}`} position="popper" style={popupTheme}
+    <SelectContent ref={setPopupElement} container={portalHost} className="echoink-origin-control" position="popper" style={popupTheme}
       onFocusCapture={(event) => {
         const content = event.currentTarget;
         // Radix's fallback focus loop reads the main document. In a detached

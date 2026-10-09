@@ -4,8 +4,6 @@ import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
 import type { ApiProviderConfig, CodexForObsidianSettings } from "../settings/settings";
 import { getApiProviderPreset, type ApiProviderId } from "../settings/provider-presets";
 import { renderProviderBrandIcon } from "../settings/provider-brand-icons";
-import { KnowledgeNotePickerModal } from "../settings/knowledge-note-picker-modal";
-import { installProviderBrowserHost } from "./provider-discovery-dom-host";
 
 type AsyncFixture = {
   activations: number;
@@ -13,15 +11,10 @@ type AsyncFixture = {
   runMcpToggleAction(toggle: OriginCheckElement, action: (checked: boolean) => Promise<void>): Promise<void>;
 };
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-const settleControl = async (element: HTMLElement) => {
-  await frame();
-  await Promise.all(element.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
-};
 const key = (element: HTMLElement, value: string, modifiers: KeyboardEventInit = {}) => element.dispatchEvent(new (element.ownerDocument.defaultView!.KeyboardEvent)("keydown", { key: value, bubbles: true, cancelable: true, ...modifiers }));
 const assert = (condition: unknown, message: string) => { if (!condition) throw new Error(message); };
 
 export async function runOriginControlsDom(Fixture: new () => AsyncFixture) {
-  installProviderBrowserHost();
   const results: string[] = [];
   const main = document.querySelector<HTMLElement>("#fixture")!;
   const report = document.querySelector<HTMLElement>("#report")!;
@@ -202,29 +195,6 @@ export async function runOriginControlsDom(Fixture: new () => AsyncFixture) {
     iframe.remove();
   });
   createOriginButton(section("Button"), { text: "Save", cls: "echoink-amicro-button mod-cta" });
-  await run("settings style boundary: external CSS before/after, four palettes, normal/enlarged narrow layout, unlabelled switches", async () => {
-    for (const order of ["before", "after"] as const) {
-      for (const theme of ["green", "violet"] as const) {
-        for (const dark of [false, true]) {
-          for (const size of [16, 24]) await assertSettingsStyleBoundary({ order, theme, dark, size });
-        }
-      }
-    }
-  });
-  await run("settings note picker production search, selection, failure, Escape, focus and disposal", assertSettingsNotePicker);
-  // Leave a compact production-control preview for visual review after tests.
-  disposeOriginControls(main); main.replaceChildren();
-  const params = new URLSearchParams(location.search);
-  document.body.dataset.echoinkTheme = params.get("theme") ?? "green";
-  document.body.classList.toggle("theme-dark", params.get("dark") === "1");
-  main.style.setProperty("--font-interface", params.get("font") === "24" ? "Georgia, serif" : "system-ui, sans-serif");
-  main.style.setProperty("--font-text-size", params.get("font") === "24" ? "24px" : "16px");
-  const shell = main.closest<HTMLElement>(".modal.mod-settings")!;
-  shell.style.height = "auto"; shell.style.width = params.get("narrow") === "1" ? "390px" : "736px";
-  const preview = createSettingsStylePreview(document, main);
-  createUnlabelledSwitchRows(document, main);
-  const pickerTrigger = createOriginButton(preview.actions, { text: "Open note picker" });
-  pickerTrigger.onclick = () => createSettingsPicker(document, pickerTrigger, () => {}).open();
   const failed = results.some((item) => item.startsWith("FAIL")) || errors.length > 0;
   report.dataset.result = failed ? "failed" : "passed";
   report.textContent = [...results, ...errors.map((error) => `ERROR ${error}`), "Boundary: native browser DOM, synthetic input; no Obsidian, OS IME, Provider or Vault."].join("\n");
@@ -260,7 +230,7 @@ async function assertCurrentModelIcons(Fixture: new () => AsyncFixture, owner: D
     const artwork = (svg: Element | null) => svg?.innerHTML.replace(/echoink-provider-deepseek-\d+-/gu, "instance-");
     assert(artwork(selectedIcon) === artwork(providerIcon), "selected DeepSeek artwork differs from Provider renderer");
     const bounds = selectedIcon.getBoundingClientRect();
-    assert(bounds.width === 16 && bounds.height === 16, `brand icon is missing its fixed size: ${bounds.width}×${bounds.height}; CSS ${owner.defaultView!.getComputedStyle(selectedIcon).width}×${owner.defaultView!.getComputedStyle(selectedIcon).height}`);
+    assert(bounds.width === 16 && bounds.height === 16, "brand icon is missing its fixed size");
     select.focus(); key(select, "Enter"); await frame();
     const options = Array.from(popup()!.querySelectorAll<HTMLElement>('[role=option]'));
     assert(options.length === 3, "production model options changed");
@@ -349,188 +319,4 @@ async function assertSelectPointerCancellation(owner: Document, parent: HTMLElem
   } finally {
     disposeOriginControls(host); keyboardHost.dispose(); host.remove();
   }
-}
-
-const externalControlCss = `
-  :root {--background-modifier-hover:#ff00ff;--interactive-accent:#ff0000;--background-modifier-border:#ff0000}
-  body input, body button, body select {height:18px;padding:2px 24px;border:3px solid red;border-radius:99px;font:8px/1 serif;box-shadow:0 0 0 4px magenta}
-  body :is(input,button,select,textarea):focus {outline:4px solid magenta;box-shadow:0 0 0 6px red;border-color:magenta;background:yellow}
-  body [role=option] {display:block;min-height:50px;padding:20px;border:3px solid red;background:yellow;font:8px serif}
-  body [role=option]:focus {outline:4px solid red;box-shadow:0 0 0 6px magenta}
-`;
-const styleOf = (element: HTMLElement) => element.ownerDocument.defaultView!.getComputedStyle(element);
-const noRing = (element: HTMLElement) => {
-  const style = styleOf(element);
-  assert(style.outlineStyle === "none" && style.boxShadow === "none", `${element.getAttribute("aria-label") ?? element.className}: outline ${style.outline}, shadow ${style.boxShadow}`);
-};
-const structure = (element: HTMLElement) => {
-  const s = styleOf(element);
-  return [s.height, s.minHeight, s.padding, s.borderWidth, s.borderRadius, s.fontSize, s.fontFamily, s.lineHeight, s.display].join("|");
-};
-
-function createSettingsStylePreview(owner: Document, root: HTMLElement) {
-  const page = owner.createElement("div"); page.className = "echoink-settings-page echoink-settings-inline-editor"; root.append(page);
-  const nav = owner.createElement("div"); nav.className = "codex-settings-tabs"; page.append(nav);
-  const tab = owner.createElement("button"); tab.className = "codex-settings-tab is-active"; tab.textContent = "Provider"; tab.setAttribute("aria-selected", "true"); nav.append(tab);
-  const resourceManager = owner.createElement("div"); resourceManager.className = "codex-resource-manager"; page.append(resourceManager);
-  const resourceTabs = owner.createElement("div"); resourceTabs.className = "codex-resource-tabs"; resourceManager.append(resourceTabs);
-  const resourceTab = owner.createElement("button"); resourceTab.className = "codex-resource-tab is-active"; resourceTab.textContent = "MCP"; resourceTab.setAttribute("aria-selected", "true"); resourceTabs.append(resourceTab);
-  const card = owner.createElement("section"); card.className = "echoink-settings-section settings-card provider-connection-card"; page.append(card);
-  const grid = owner.createElement("div"); grid.className = "provider-connection-grid"; card.append(grid);
-  const field = (label: string, type = "text") => {
-    const parent = owner.createElement("div"); parent.className = "codex-provider-modal-field provider-field"; grid.append(parent);
-    const copy = owner.createElement("label"); copy.textContent = label; parent.append(copy);
-    return createOriginInput(parent, { value: type === "password" ? "fixture-only" : "Team Provider", attr: { type, "aria-label": label } });
-  };
-  const name = field("Provider name"), apiKey = field("API Key", "password");
-  const mcp = field("MCP server URL"); mcp.parentElement!.classList.add("codex-mcp-server-form");
-  const selectHost = owner.createElement("div"); selectHost.className = "codex-provider-modal-field"; grid.append(selectHost);
-  const select = createOriginSelect(selectHost, { attr: { "aria-label": "Provider type" } }, [{value:"a",label:"Provider A"},{value:"b",label:"Provider B"}], "a").element;
-  const controls = owner.createElement("div"); controls.className = "setting-item"; card.append(controls);
-  const toggleLabel = owner.createElement("label"); toggleLabel.textContent = "Enabled "; controls.append(toggleLabel);
-  const toggle = createOriginSwitch(toggleLabel, { attr: { "aria-label": "Enabled" } }); toggle.checked = true;
-  const checkLabel = owner.createElement("label"); checkLabel.textContent = " Models "; controls.append(checkLabel);
-  const check = createOriginCheck(checkLabel, { attr: { "aria-label": "Models" } }); check.indeterminate = true;
-  const radioGroup = createOriginRadioGroup(card, "a", "Default model", () => {});
-  const radioLabel = owner.createElement("label"); radioLabel.textContent = "Default model "; radioGroup.element.append(radioLabel);
-  const radio = radioGroup.addItem(radioLabel, "a", false);
-  const range = owner.createElement("div"); range.className = "general-range setting-item-control"; card.append(range);
-  const slider = createOriginSlider(range, {value:3,min:1,max:6,step:1,label:"Range",onValueChange(){},onValueCommit(){}});
-  const actions = owner.createElement("div"); actions.className = "echoink-settings-inline-actions"; card.append(actions);
-  const save = createOriginButton(actions, { text: "Save", cls: "echoink-amicro-button mod-cta" });
-  const help = owner.createElement("button"); help.className = "settings-help"; help.textContent = "?"; help.setAttribute("aria-label", "Provider help"); actions.append(help);
-  const navigation = owner.createElement("button"); navigation.className = "echoink-settings-navigation-row"; navigation.textContent = "Provider details →"; page.append(navigation);
-  return { name, apiKey, mcp, select, toggle, check, radio, slider, save, tab, resourceTab, help, navigation, actions };
-}
-
-async function assertSettingsStyleBoundary(options: {order:"before"|"after";theme:"green"|"violet";dark:boolean;size:number}) {
-  const iframe = document.createElement("iframe"); iframe.title = "Settings style matrix";
-  iframe.style.cssText = `width:${options.size === 24 ? 390 : 736}px;height:900px;border:0;max-width:100%`;
-  document.body.append(iframe);
-  const context = JSON.stringify(options);
-  await new Promise<void>((resolve) => { iframe.onload = () => resolve(); iframe.srcdoc = `<!doctype html><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="styles.css"><style>body{margin:0}.setting-item{display:flex}main{padding:18px!important}</style><main class="echoink-settings-demo"></main>`; });
-  const owner = iframe.contentDocument!;
-  const root = owner.querySelector<HTMLElement>("main")!;
-  owner.body.classList.toggle("theme-dark", options.dark); owner.body.dataset.echoinkTheme = options.theme;
-  root.style.setProperty("--font-text-size", `${options.size}px`); root.style.setProperty("--font-interface", "Georgia, serif");
-  try {
-    const preview = createSettingsStylePreview(owner, root);
-    const unlabelled = createUnlabelledSwitchRows(owner, root);
-    const covered = [preview.name, preview.apiKey, preview.mcp, preview.select, preview.toggle, preview.check, preview.radio, preview.save, preview.tab, preview.resourceTab, preview.navigation, ...unlabelled.map(item=>item.toggle)];
-    await frame();
-    const original = covered.map(structure);
-    for (const selected of [preview.tab,preview.resourceTab]) assert(styleOf(selected).backgroundColor === (options.dark ? "rgb(52, 52, 55)" : "rgb(237, 237, 238)"), `selected navigation lacks neutral background: ${context}`);
-    const foreignStyle = owner.createElement("style"); foreignStyle.textContent = externalControlCss;
-    if (options.order === "before") owner.head.prepend(foreignStyle); else owner.head.append(foreignStyle);
-    await frame();
-    assert(covered.every((element,index) => structure(element) === original[index]), `host CSS changed structure: ${context}; ${covered.map((el,i) => structure(el) === original[i] ? "" : `${el.className}: ${original[i]} -> ${structure(el)}`).join("\n")}`);
-    const control = owner.createElement("input"); control.setAttribute("aria-label", "Host control"); owner.body.append(control);
-    control.focus(); await frame();
-    assert(styleOf(control).outlineWidth === "4px" && styleOf(control).borderTopWidth === "3px", `outside control lost host CSS: ${context}`);
-    for (const input of [preview.name,preview.apiKey,preview.mcp]) {
-      const border = styleOf(input).borderColor; const background = styleOf(input).backgroundColor;
-      input.focus(); await frame(); noRing(input);
-      assert(owner.activeElement === input && styleOf(input).borderColor === border && styleOf(input).backgroundColor !== background, `input focus missing or border changed: ${context}`);
-      assert(styleOf(input).fontSize === `${options.size * .6875}px` && styleOf(input).fontFamily.includes("Georgia"), `input did not follow user font/size: ${context}`);
-      assert(input.getBoundingClientRect().height >= parseFloat(styleOf(input).lineHeight) + 14, `input text clipped: ${context}`);
-      input.value = "changed fixture"; input.setSelectionRange(2,5);
-      assert(input.selectionStart === 2 && input.selectionEnd === 5 && styleOf(input).caretColor !== "rgba(0, 0, 0, 0)", "input selection/caret lost");
-    }
-    preview.name.setAttribute("aria-invalid","true"); preview.name.focus(); await frame();
-    assert(styleOf(preview.name).borderColor !== styleOf(preview.apiKey).borderColor, `invalid input lost error border: ${context}`); noRing(preview.name);
-    for (const target of [preview.save,preview.tab,preview.resourceTab,preview.navigation,preview.help,preview.toggle,preview.check,preview.radio,preview.slider.querySelector<HTMLElement>('[role=slider]')!]) {
-      target.focus(); await settleControl(target); noRing(target);
-      const foreground = styleOf(target).backgroundColor;
-      const surface = target.closest<HTMLElement>("label,.setting-item,[data-slot=slider]");
-      assert(foreground === (options.dark ? "rgb(58, 58, 62)" : "rgb(231, 231, 233)") || (surface && styleOf(surface).backgroundColor === (options.dark ? "rgb(58, 58, 62)" : "rgb(231, 231, 233)")), `focus background invisible: ${target.className}; focus-visible=${target.matches(":focus-visible")}; bg=${foreground}; ${context}`);
-    }
-    assert(preview.toggle.checked && preview.check.indeterminate && Boolean(preview.check.querySelector("svg")) && preview.radio.getAttribute("aria-checked") === "true", `checked/mixed semantics lost: ${context}`);
-    for (const {row,toggle} of unlabelled) {
-      assert(!toggle.closest("label,.setting-item"), "unlabelled production structure was accidentally wrapped in a standard focus host");
-      for (const checked of [false,true]) {
-        toggle.checked=checked;await settleControl(toggle);const track=styleOf(toggle).backgroundColor;
-        toggle.focus();await settleControl(row);noRing(toggle);
-        assert(toggle.matches(":focus-visible") && styleOf(row).backgroundColor === (options.dark ? "rgb(58, 58, 62)" : "rgb(231, 231, 233)"), `unlabelled switch has no focus surface: ${row.className}; ${context}`);
-        assert(toggle.checked===checked && styleOf(toggle).backgroundColor===track,`unlabelled switch focus changed its checked track color: ${row.className}; ${track} -> ${styleOf(toggle).backgroundColor}; ${context}`);
-        preview.name.focus();await settleControl(row);
-      }
-    }
-    preview.select.focus(); key(preview.select,"Enter"); await frame();
-    const popup = owner.querySelector<HTMLElement>('[data-slot=select-content]')!;
-    assert(popup?.classList.contains("echoink-settings-overlay") && !root.contains(popup) && popup.ownerDocument === owner, `portal settings marker/owner wrong: ${context}`);
-    assert(styleOf(popup).fontSize === styleOf(preview.select).fontSize && styleOf(popup).fontFamily === styleOf(preview.select).fontFamily && styleOf(popup).colorScheme === styleOf(root).colorScheme, `portal font/scheme drift: ${context}`);
-    const checked = popup.querySelector<HTMLElement>('[data-state=checked]')!;
-    assert(Boolean(checked.querySelector("svg")), `selected item indicator missing: ${context}`);
-    const bounds = popup.getBoundingClientRect();
-    assert(bounds.left >= 0 && bounds.right <= owner.documentElement.clientWidth + 1, `popup spills narrow window: ${context}`);
-    noRing(checked); assert(styleOf(checked).fontSize === `${options.size * .6875}px` && styleOf(checked).paddingLeft === "28px", `option changed by host CSS: ${context}`);
-    key(owner.activeElement as HTMLElement,"ArrowDown"); await frame(); key(owner.activeElement as HTMLElement,"Enter"); await frame();
-    assert(preview.select.value === "b" && owner.activeElement === preview.select, `portal keyboard selection/focus failed: ${context}`);
-    preview.select.focus(); key(preview.select,"Enter"); await frame(); key(owner.activeElement as HTMLElement,"Escape"); await frame();
-    assert(!owner.querySelector('[data-slot=select-content]') && owner.activeElement === preview.select, `portal Escape/focus failed: ${context}`);
-    assert(root.scrollWidth <= root.clientWidth + 1 && owner.documentElement.scrollWidth <= owner.documentElement.clientWidth + 1, `settings horizontal overflow: ${context}`);
-    disposeOriginControls(root);
-    // Shared Origin use outside settings must not acquire the settings marker.
-    const outside = createOriginSelect(owner.body, {}, [{value:"a",label:"Outside settings"}], "a").element;
-    outside.focus(); key(outside,"Enter"); await frame();
-    assert(!owner.querySelector('[data-slot=select-content]')?.classList.contains("echoink-settings-overlay"), "outside Select was marked as settings");
-    disposeOriginControls(owner.body);
-  } finally { disposeOriginControls(owner.body); iframe.remove(); }
-}
-
-function createUnlabelledSwitchRows(owner: Document, root: HTMLElement) {
-  const card=owner.createElement("section");card.className="echoink-settings-section settings-card";root.append(card);
-  const mcp=owner.createElement("div");mcp.className="codex-mcp-server-toggle-row";card.append(mcp);
-  const copy=owner.createElement("div");copy.className="codex-mcp-server-toggle-copy";mcp.append(copy);
-  const title=owner.createElement("div");title.className="codex-mcp-server-toggle-title";title.textContent="MCP server enabled";copy.append(title);
-  const header=owner.createElement("div");header.className="settings-card-header";card.append(header);
-  const skill=owner.createElement("div");skill.className="resources-status-actions";header.append(skill);
-  const status=owner.createElement("span");status.className="status healthy";status.textContent="Skill enabled";skill.append(status);
-  const resource=owner.createElement("div");resource.className="codex-resource-row is-enabled";card.append(resource);
-  const content=owner.createElement("div");content.className="codex-resource-row-content";content.textContent="Resource enabled";resource.append(content);
-  return [mcp,skill,resource].map((row,index)=>{
-    const toggle=createOriginSwitch(row,{cls:index ? "codex-resource-toggle" : "",attr:{"aria-label":["MCP toggle","Skill toggle","Resource toggle"][index]}});toggle.checked=true;
-    return {row,toggle};
-  });
-}
-
-function createSettingsPicker(owner: Document, trigger: HTMLElement, onConfirm: () => void | Promise<void>) {
-  return new KnowledgeNotePickerModal({fixtureDocument:owner} as unknown as App, {
-    zh:false,targetRole:"wiki",targetLabel:"Wiki",triggerEl:trigger,
-    notes:[{sourcePath:"Raw/First note.md",role:"raw"},{sourcePath:"Reviews/Second note.md",role:"review"}],onConfirm
-  });
-}
-
-async function assertSettingsNotePicker() {
-  const iframe = document.createElement("iframe"); document.body.append(iframe);
-  await new Promise<void>((resolve) => { iframe.onload=()=>resolve(); iframe.srcdoc='<link rel="stylesheet" href="styles.css"><style>body{margin:0}.modal-container{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}</style><main class="echoink-settings-demo"></main>'; });
-  const owner=iframe.contentDocument!;
-  // Same host DOM conveniences, installed into the independent realm.
-  const proto=owner.defaultView!.HTMLElement.prototype;
-  for(const name of ["createEl","createDiv","createSpan","empty","addClass","removeClass","hasClass","toggleClass","setAttr","setText"]) Object.defineProperty(proto,name,Object.getOwnPropertyDescriptor(HTMLElement.prototype,name)!);
-  owner.body.classList.add("theme-dark"); owner.body.dataset.echoinkTheme="violet";
-  const root=owner.querySelector<HTMLElement>("main")!; root.style.setProperty("--font-interface","Georgia, serif");root.style.setProperty("--font-text-size","24px");
-  iframe.style.cssText="width:390px;height:700px;border:0";
-  const trigger=createOriginButton(root,{text:"Add notes"});
-  const picker=createSettingsPicker(owner,trigger,async()=>{throw new Error("fixture save failure")});
-  try {
-    trigger.focus();picker.open();await frame();
-    const modal=picker.modalEl, search=modal.querySelector<HTMLInputElement>("input")!;
-    assert(modal.ownerDocument===owner && modal.classList.contains("echoink-settings-overlay") && owner.activeElement===search,"picker owner/initial focus wrong");
-    noRing(search);noRing(search.parentElement!);
-    assert(styleOf(search).fontFamily.includes("Georgia") && styleOf(search).fontSize==="18px" && styleOf(modal).getPropertyValue("--bg").trim()===styleOf(root).getPropertyValue("--bg").trim(),"picker theme/scale boundary drift");
-    const first=modal.querySelector<OriginCheckElement>(".echoink-knowledge-note-picker-checkbox")!;first.click();await frame();
-    assert(picker.selectedCount===1 && first.getAttribute("aria-checked")==="true","picker checkbox draft selection failed");
-    first.focus();await frame();noRing(first);noRing(first.closest<HTMLElement>("label")!);
-    search.value="Second";search.dispatchEvent(new owner.defaultView!.Event("input",{bubbles:true}));await frame();
-    assert(picker.selectedCount===1 && modal.querySelectorAll(".echoink-knowledge-note-picker-row").length===1,"picker search lost draft");
-    const confirm=modal.querySelector<HTMLButtonElement>(".echoink-knowledge-note-picker-confirm")!;confirm.click();await frame();
-    assert(!picker.isSubmitting && modal.querySelector('[role=alert]')?.textContent?.includes("weren't saved") && picker.selectedCount===1,"picker failed save lost draft/error/retry");
-    const bounds=modal.getBoundingClientRect();const footer=modal.querySelector<HTMLElement>(".echoink-knowledge-note-picker-footer")!.getBoundingClientRect();
-    assert(modal.scrollWidth<=modal.clientWidth+1 && bounds.width<=390 && footer.bottom<=bounds.bottom+1,"picker narrow enlarged layout overflow");
-    search.focus();key(search,"Tab");await frame();assert(modal.contains(owner.activeElement),"picker Tab escaped modal");
-    key(owner.activeElement as HTMLElement,"Escape");await frame();
-    assert(!modal.isConnected && owner.activeElement===trigger,"picker Escape did not close/restore focus");
-    assert(!modal.querySelector("[data-slot]"),"picker close left Origin roots");
-  } finally { if(picker.modalEl.isConnected)picker.close();disposeOriginControls(owner.body);iframe.remove(); }
 }

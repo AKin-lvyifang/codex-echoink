@@ -100,21 +100,14 @@ export class KnowledgeNotePickerModal extends Modal {
 
   onOpen(): void {
     const { zh, targetLabel, targetRole, triggerEl } = this.options;
-    this.modalEl.addClass("echoink-knowledge-note-picker", "echoink-settings-overlay");
+    this.modalEl.addClass("echoink-knowledge-note-picker");
     // Modal lives outside settings; inherit that window's effective theme/scale.
     const source = triggerEl?.closest<HTMLElement>(".echoink-settings-demo");
     const computed = source?.ownerDocument.defaultView?.getComputedStyle?.(source);
-    for (const name of ["--bg", "--text", "--secondary", "--muted", "--line", "--soft", "--accent", "--accent-bg", "--font-text-size",
-      "--echoink-settings-hover", "--echoink-settings-focus", "--echoink-settings-selected", "--echoink-settings-error"]) {
+    for (const name of ["--bg", "--text", "--secondary", "--muted", "--line", "--soft", "--accent", "--accent-bg", "--font-text-size"]) {
       const value = computed?.getPropertyValue?.(name);
       if (value?.trim()) this.modalEl.style.setProperty(name, value);
     }
-    if (computed?.fontFamily) {
-      this.modalEl.style.setProperty("--font-interface", computed.fontFamily);
-      this.modalEl.style.fontFamily = computed.fontFamily;
-    }
-    if (computed?.colorScheme) this.modalEl.style.colorScheme = computed.colorScheme;
-    this.modalEl.style.setProperty("--echoink-settings-on-accent", computed?.getPropertyValue?.("--echoink-theme-on-accent").trim() || "#fff");
     this.titleEl.setText(targetRole === "raw"
       ? (zh ? "移回 Raw" : "Move notes back to Raw")
       : (zh ? `添加笔记到 ${targetLabel}` : `Add notes to ${targetLabel}`));

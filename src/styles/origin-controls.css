@@ -1,17 +1,5 @@
 /* MIT Origin UI primitive styling, scoped to the actual library controls.
    EchoInk maps Origin's utility styles to the approved Demo tokens. No preflight. */
-:is(.echoink-settings-demo,.echoink-settings-overlay) {
-  --echoink-settings-hover:#f1f1f2;
-  --echoink-settings-focus:#e7e7e9;
-  --echoink-settings-selected:#ededee;
-  --echoink-settings-error:#b44f4f;
-}
-.theme-dark :is(.echoink-settings-demo,.echoink-settings-overlay) {
-  --echoink-settings-hover:#303033;
-  --echoink-settings-focus:#3a3a3e;
-  --echoink-settings-selected:#343437;
-  --echoink-settings-error:#da999d;
-}
 .echoink-origin-control {
   --origin-accent:var(--accent,var(--interactive-accent,#7860b3));
   --origin-line:var(--line,var(--background-modifier-border,#e6e7eb));
@@ -21,13 +9,13 @@
   --origin-muted:var(--secondary,var(--text-muted,#73767e));
   box-sizing:border-box;
 }
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control[data-slot=switch] {
+:is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=switch] {
   appearance:none;position:relative;display:inline-flex;align-items:center;flex:0 0 36px;
   width:36px;min-width:36px;max-width:36px;height:21px;min-height:21px;max-height:21px;
   margin:0;padding:0;border:1px solid transparent;border-radius:20px;box-shadow:none;
   background:var(--origin-line);vertical-align:middle;cursor:pointer;transition:background .16s;
 }
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control[data-slot=switch][data-state=checked] {background:var(--origin-accent)}
+:is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=switch][data-state=checked] {background:var(--origin-accent)}
 .echoink-origin-control[data-slot=switch]::before,.echoink-origin-control[data-slot=switch]::after {content:none}
 .echoink-origin-control [data-slot=switch-thumb] {
   position:absolute;display:block;top:2px;left:2px;width:15px;height:15px;margin:0;
@@ -35,25 +23,25 @@
   transform:translateX(0);transition:transform .16s;
 }
 .echoink-origin-control [data-slot=switch-thumb][data-state=checked] {transform:translateX(15px)}
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control:is([data-slot=checkbox],[data-slot=radio-group-item]) {
+:is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=checkbox],[data-slot=radio-group-item]) {
   appearance:none;display:inline-flex;position:relative;align-items:center;justify-content:center;flex:0 0 16px;
   width:16px;min-width:16px;height:16px;min-height:16px;margin:0;padding:0;border:1px solid var(--origin-line);
   border-radius:4px;background:var(--origin-bg);box-shadow:none;vertical-align:middle;cursor:pointer;
 }
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control[data-slot=radio-group-item] {border-radius:50%}
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control:is([data-slot=checkbox],[data-slot=radio-group-item]):is([data-state=checked],[data-state=indeterminate]) {
+:is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=radio-group-item] {border-radius:50%}
+:is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=checkbox],[data-slot=radio-group-item]):is([data-state=checked],[data-state=indeterminate]) {
   background:var(--origin-accent);border-color:var(--origin-accent);color:#fff;
 }
 .echoink-origin-control:is([data-slot=checkbox],[data-slot=radio-group-item])>span {display:grid;place-items:center}
 .echoink-origin-control[data-slot=checkbox] svg {width:9px;height:9px;fill:currentColor;stroke:none}
 .echoink-origin-control[data-slot=radio-group-item] svg {width:6px;height:6px;fill:currentColor;stroke:none}
 .echoink-origin-radio-group {display:flex;flex-direction:column;gap:inherit;min-width:0}
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control:is([data-slot=input],[data-slot=select-trigger]) {
+:is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=input],[data-slot=select-trigger]) {
   min-width:0;max-width:100%;min-height:32px;height:auto;margin:0;padding:7px 10px;
   border:1px solid var(--origin-line);border-radius:6px;background:var(--origin-bg);box-shadow:none;
   font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);line-height:1.55;color:var(--origin-text);
 }
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control[data-slot=select-trigger] {
+:is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=select-trigger] {
   display:inline-flex;align-items:center;justify-content:space-between;gap:8px;text-align:start;cursor:pointer;
 }
 .echoink-origin-control[data-slot=select-trigger]>[data-slot=select-value] {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -94,65 +82,20 @@
 .echoink-origin-control [data-slot=slider-range] {position:absolute;height:100%;background:var(--origin-accent)}
 .echoink-origin-control [data-slot=slider-thumb] {display:block;width:16px;height:16px;border:0;border-radius:50%;background:var(--origin-accent);box-shadow:none;cursor:grab}
 .echoink-origin-control [data-slot=slider-thumb]:active {cursor:grabbing}
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control[data-slot=button]:is(.echoink-origin-button,.echoink-amicro-button,.mod-cta,.button) {
+:is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=button]:is(.echoink-origin-button,.echoink-amicro-button,.mod-cta,.button) {
   display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;height:auto;
   padding:7px 10px;border:1px solid var(--origin-line);border-radius:6px;font-size:calc(var(--font-text-size,16px)*.6875);line-height:1.55;
   background:var(--origin-bg);color:var(--origin-text);box-shadow:none;
 }
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control[data-slot=button]:is(.mod-cta,.is-primary) {background:var(--origin-accent);border-color:var(--origin-accent);color:#fff}
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control[data-slot=button]:is(.is-tertiary,.is-icon) {background:transparent;border-color:transparent}
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control[data-slot=button]:is(.settings-danger,.is-danger,.mod-warning) {color:var(--text-error,#b44f4f)}
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control[data-slot=button]:disabled {opacity:.45;cursor:default}
-.modal .echoink-origin-control:is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item],[data-slot=select-trigger]):focus-visible,
+:is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=button]:is(.mod-cta,.is-primary) {background:var(--origin-accent);border-color:var(--origin-accent);color:#fff}
+:is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=button]:is(.is-tertiary,.is-icon) {background:transparent;border-color:transparent}
+:is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=button]:is(.settings-danger,.is-danger,.mod-warning) {color:var(--text-error,#b44f4f)}
+:is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=button]:disabled {opacity:.45;cursor:default}
+:is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item],[data-slot=select-trigger]):focus-visible,
 .echoink-origin-control [data-slot=slider-thumb]:focus-visible {outline:2px solid var(--origin-accent);outline-offset:3px}
-:is(.echoink-settings-demo,.modal,.echoink-settings-overlay) .echoink-origin-control:is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item],[data-slot=select-trigger]):disabled {opacity:.45;cursor:default}
+:is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item],[data-slot=select-trigger]):disabled {opacity:.45;cursor:default}
 .echoink-settings-demo .codex-provider-custom-toggle>[data-slot=switch] {order:2;margin-left:auto}
 .echoink-settings-demo .codex-provider-custom-toggle-copy {min-width:0}
-
-/* Settings owns control states; unrelated Origin consumers keep their styling.
-   Repeated boundary classes outrank ordinary host controls in either load order.
-   Only ring removal is important, including Origin's utility focus shadows. */
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) :is(button,input,select,textarea,a,summary,[tabindex]),
-.echoink-settings-overlay.echoink-origin-control[data-slot=select-content] {
-  outline:none!important;box-shadow:none!important;
-}
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea) {
-  height:auto;caret-color:var(--text);border-color:var(--line);
-}
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) .echoink-origin-control:is([data-slot=input],[data-slot=button],[data-slot=select-trigger]) {font-family:inherit}
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea):is(:hover,:focus,:focus-visible),
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) .echoink-origin-control[data-slot=select-trigger]:is(:hover,:focus-visible,[data-state=open]) {
-  background:var(--echoink-settings-focus);border-color:var(--line);
-}
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) :is(button,a,summary):not(:disabled):not(.echoink-origin-control):not(.todo-heatmap-cell):not(.heat-cell):is(:hover,:focus-visible) {
-  background-color:var(--echoink-settings-focus);
-}
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) .echoink-origin-control[data-slot=button]:not(:disabled):is(:hover,:focus-visible) {
-  background:var(--echoink-settings-focus);color:var(--text);
-}
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) .echoink-origin-control[data-slot=button]:is(.settings-danger,.is-danger,.mod-warning) {color:var(--echoink-settings-error)}
-.echoink-settings-demo.echoink-settings-demo .codex-resource-tabs>button {height:auto}
-.echoink-settings-demo.echoink-settings-demo .codex-resource-tabs>button:is(.is-active,[aria-selected=true]) {background:var(--echoink-settings-selected);color:var(--text)}
-.echoink-settings-demo.echoink-settings-demo .codex-settings-tabs .codex-settings-tab:is(.is-active,.active,[aria-selected=true]) {background:var(--echoink-settings-selected);color:var(--text)}
-.echoink-settings-overlay .echoink-origin-control:is([data-slot=checkbox],[data-slot=radio-group-item]):is([data-state=checked],[data-state=indeterminate]) {color:var(--echoink-settings-on-accent,#fff)}
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) :is(.setting-item,label,.codex-mcp-server-toggle-row,.resources-status-actions,.codex-resource-row,.echoink-origin-control[data-slot=slider]):has(:focus-visible) {
-  background-color:var(--echoink-settings-focus);
-}
-:is(.echoink-settings-demo.echoink-settings-demo,.echoink-settings-overlay.echoink-settings-overlay) :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea)[aria-invalid=true] {
-  border-color:var(--echoink-settings-error);
-}
-.echoink-settings-overlay.echoink-origin-control[data-slot=select-content] {
-  font:calc(var(--font-text-size,16px)*.6875)/1.55 var(--font-interface,system-ui);
-  color:var(--text);background:var(--bg);border:1px solid var(--line);
-  box-shadow:0 6px 24px #0002!important;
-}
-.echoink-settings-overlay.echoink-origin-control[data-slot=select-content] .echoink-origin-control[data-slot=select-item] {
-  display:flex;position:relative;align-items:center;gap:0;min-height:0;width:auto;height:auto;margin:0;
-  padding:7px 10px 7px 28px;border:0;border-radius:4px;background:transparent;color:var(--text);font:inherit;
-}
-.echoink-settings-overlay.echoink-origin-control[data-slot=select-content] .echoink-origin-control[data-slot=select-item]:is([data-highlighted],:focus) {
-  background:var(--echoink-settings-focus);color:var(--text);
-}
 @container settings (max-width:760px) {
   .echoink-settings-demo .setting-item-control>.echoink-origin-control[data-slot=input] {width:200px}
 }
