@@ -105,10 +105,20 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "origin-dom") {
       }
       runOriginControlsDom(Fixture).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});`, resolveDir: rootDir, loader: "ts" },
     bundle: true, format: "esm", platform: "browser", define: { "process.env.NODE_ENV": '"development"' },
-    alias: { obsidian: path.join(rootDir, "src/tests/origin-obsidian-dom-shim.ts") },
+    plugins: [{ name: "origin-dom-host", setup(build) {
+      build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "host", namespace: "origin-dom-host" }));
+      build.onLoad({ filter: /.*/, namespace: "origin-dom-host" }, () => ({ contents: `
+        export * from "./src/tests/provider-discovery-dom-host";
+        export {Setting} from "./src/tests/origin-obsidian-dom-shim";
+        import {Modal as HostModal} from "./src/tests/provider-discovery-dom-host";
+        export class Modal extends HostModal {
+          constructor(app){super(app);if(app.fixtureDocument) app.fixtureDocument.adoptNode(this.containerEl);}
+          open(){this.modalEl.ownerDocument.body.append(this.containerEl);this.onOpen();}
+        }`, resolveDir: rootDir, loader: "js" }));
+    } }],
     outfile: path.join(directory, "regression.js"), logLevel: "silent"
   });
-  await writeFile(path.join(directory, "index.html"), '<!doctype html><meta charset="utf-8"><title>Origin controls regression</title><link rel="stylesheet" href="styles.css"><style>body{margin:0;padding:20px}:root{--font-text-size:16px}.modal.mod-settings{width:700px;max-width:100%;height:520px;margin:20px auto;overflow:hidden}.vertical-tab-content-container{height:100%}#fixture{max-width:656px}#report{white-space:pre-wrap;padding:20px;font:12px/1.8 monospace}.setting-item{display:flex}.echoink-settings-demo{padding:18px}</style><div class="modal mod-settings"><div class="vertical-tab-content-container"><div class="vertical-tab-content echoink-settings-host"><main id="fixture" class="echoink-settings-demo"></main></div></div></div><pre id="report">Running…</pre><script type="module" src="regression.js"></script>');
+  await writeFile(path.join(directory, "index.html"), '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Origin controls regression</title><link rel="stylesheet" href="styles.css"><style>body{margin:0;padding:20px}.modal-container:has(.echoink-knowledge-note-picker){position:fixed;inset:0;z-index:1000;background:#0005;display:flex;align-items:center;justify-content:center}:root{--font-text-size:16px}.modal.mod-settings{width:700px;max-width:100%;height:520px;margin:20px auto;overflow:hidden}.vertical-tab-content-container{height:100%}#fixture{max-width:656px}#report{white-space:pre-wrap;padding:20px;font:12px/1.8 monospace}.setting-item{display:flex}.echoink-settings-demo{padding:18px}</style><div class="modal mod-settings"><div class="vertical-tab-content-container"><div class="vertical-tab-content echoink-settings-host"><main id="fixture" class="echoink-settings-demo"></main></div></div></div><pre id="report">Running…</pre><script type="module" src="regression.js"></script>');
   await writeFile(path.join(directory, "styles.css"), await readFile(path.join(rootDir, "styles.css")));
   console.log(`Open ${path.join(directory, "index.html")}; #report[data-result=passed] is the browser result.`);
   process.exit(0);
