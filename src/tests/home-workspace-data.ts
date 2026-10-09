@@ -1,5 +1,6 @@
 import { TFile, WorkspaceLeaf } from "obsidian";
 import { EchoInkHomeView } from "../home/home-view";
+import { EchoInkViewService } from "../plugin/view-service";
 import { homeWorkspaceMarkup } from "../home/home-workspace-template";
 import { HomeSearchService } from "../home/home-search";
 import { HomeWorkbenchDataService } from "../home/home-workbench-data";
@@ -136,8 +137,175 @@ export async function runHomeWorkspaceDataTests(): Promise<void> {
     await assertDerivedDiaryNotesStayOutOfHome();
     await assertHomeCaptureAndPendingSearch();
     await assertHomeRecentNotesPreserveFullData();
+    await assertHomeProgressiveLoading();
     console.log("Home activity, health evidence, search, empty Inbox and maintenance terminal: PASS");
   } finally { await fsp.rm(root, { recursive: true, force: true }); }
+}
+
+async function assertHomeProgressiveLoading(): Promise<void> {
+  const deferred = <T>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: Error) => void;
+    const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+    return { promise, resolve, reject };
+  };
+  const create = () => {
+    const timers = new Map<number, () => void>();
+    const listeners = new Map<string, () => void>();
+    const fields = new Map<string, { text: string; setText(value: string): void; removeAttribute(): void; querySelector(): HTMLElement | null }>();
+    const dataLoads: ReturnType<typeof deferred<any>>[] = [];
+    const healthLoads: ReturnType<typeof deferred<any>>[] = [];
+    const renders: string[] = [];
+    let nextTimer = 0;
+    let active = false;
+    const leaf = new WorkspaceLeaf();
+    const daily = { folder: "journal", format: "YYYY-MM-DD" };
+    const app = {
+      internalPlugins: { plugins: { "daily-notes": { instance: { options: daily } } } },
+      vault: {
+        getRoot: () => ({ children: [{ path: "journal" }, { path: "templates" }] }),
+        on: (event: string, callback: () => void) => { listeners.set(event, callback); return {}; }
+      },
+      workspace: {
+        rightSplit: { collapsed: true },
+        getLeavesOfType: () => active ? [leaf] : [],
+        getLeaf: () => leaf,
+        setActiveLeaf: () => undefined
+      }
+    };
+    const plugin = {
+      app, settings: structuredClone(DEFAULT_SETTINGS),
+      homeActivity: { subscribe: () => () => undefined },
+      getTodoStore: () => ({ subscribe: () => () => undefined }),
+      getKnowledgeSurfaceService: () => ({ getDashboardSnapshot: () => {
+        const load = deferred<any>(); healthLoads.push(load); return load.promise;
+      } })
+    };
+    const view = new EchoInkHomeView(leaf, plugin as never) as any;
+    view.app = app;
+    view.contentEl = {
+      addClass: () => undefined, removeClass: () => undefined, empty: () => undefined,
+      ownerDocument: { defaultView: {
+        setTimeout: (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; },
+        clearTimeout: (id: number) => timers.delete(id)
+      } }
+    };
+    view.field = (name: string) => {
+      if (!fields.has(name)) fields.set(name, { text: "", setText(value) { this.text = value; }, removeAttribute() {}, querySelector: () => null });
+      return fields.get(name)!;
+    };
+    for (const method of ["renderShell", "renderRecent", "renderActivity", "renderCalendar", "renderEntries", "renderTodos", "renderHealth", "renderDataPlaceholders", "applyModuleVisibility"]) {
+      view[method] = () => renders.push(method);
+    }
+    view.dataService = { build: () => {
+      const load = deferred<any>(); dataLoads.push(load); return load.promise;
+    } };
+    let flight!: Promise<void>;
+    const refresh = view.refresh.bind(view);
+    view.refresh = () => flight = refresh();
+    leaf.setViewState = async () => { active = true; leaf.view = view; await view.onOpen(); };
+    const runScheduled = () => {
+      assert.equal(timers.size, 1, "one data load is scheduled even when opening/revealing twice");
+      const [id, callback] = timers.entries().next().value!;
+      timers.delete(id); callback(); return flight;
+    };
+    return { view, service: new EchoInkViewService(plugin as never), timers, listeners, fields, dataLoads, healthLoads, renders, daily, runScheduled };
+  };
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  const fixture = create();
+  // Navigation resolves with only the shell present; no data/health work has
+  // started in the workspace restoration task itself.
+  await fixture.service.activateHomeView();
+  await fixture.service.activateHomeView();
+  assert.equal(fixture.dataLoads.length, 0);
+  assert.equal(fixture.renders.filter((name) => name === "renderShell").length, 1);
+  const first = fixture.runScheduled();
+  const firstData = { records: [{ path: "wiki/first.md" }] };
+  fixture.dataLoads[0].resolve(firstData);
+  await settle();
+  assert.equal(fixture.view.data, firstData);
+  assert(fixture.renders.includes("renderRecent"));
+  assert(fixture.renders.includes("renderCalendar"));
+  assert.equal(fixture.view.healthLoading, true, "notes and calendar render while health is still pending");
+  await fixture.service.activateHomeView();
+  assert.equal(fixture.timers.size, 0, "revealing unchanged content does not restart the scan");
+
+  fixture.daily.folder = "Daily";
+  await fixture.service.activateHomeView();
+  const second = fixture.runScheduled();
+  const secondData = { records: [{ path: "Daily/today.md" }] };
+  fixture.dataLoads[1].resolve(secondData);
+  fixture.healthLoads[1].resolve({ health: { score: 88 } });
+  await second;
+  const recentRenders = fixture.renders.filter((name) => name === "renderRecent").length;
+  fixture.healthLoads[0].resolve({ health: { score: 12 } });
+  await first;
+  assert.equal(fixture.view.snapshot.health.score, 88, "late health data cannot replace a newer refresh");
+  assert.equal(fixture.view.data, secondData, "native journal changes are reflected on return");
+  assert.equal(fixture.renders.filter((name) => name === "renderRecent").length, recentRenders,
+    "health updates leave the current note/calendar DOM alone");
+
+  fixture.listeners.get("modify")!(); fixture.listeners.get("modify")!();
+  const third = fixture.runScheduled();
+  await fixture.view.onClose();
+  const renderedBeforeClose = fixture.renders.length;
+  fixture.dataLoads[2].resolve(firstData);
+  fixture.healthLoads[2].resolve({ health: { score: 99 } });
+  await third;
+  assert.equal(fixture.renders.length, renderedBeforeClose, "pending work never renders into a closed home");
+
+  const failure = create();
+  await failure.service.activateHomeView();
+  const failedLoad = failure.runScheduled();
+  failure.dataLoads[0].resolve(firstData);
+  failure.healthLoads[0].reject(new Error("health unavailable"));
+  await failedLoad;
+  assert.equal(failure.view.data, firstData, "a health failure does not discard usable notes");
+  assert.equal(failure.view.healthLoading, false);
+  assert.equal(failure.view.snapshot, null);
+  const failedNotes = failure.view.refresh();
+  failure.dataLoads[1].reject(new Error("notes unavailable"));
+  failure.healthLoads[1].resolve(null);
+  await failedNotes;
+  assert.match(failure.fields.get("recent-subtitle")!.text, /笔记读取失败/u);
+  assert(!failure.renders.includes("renderDataPlaceholders"), "refresh failure preserves already rendered notes");
+  failure.fields.get("recent-notes")!.querySelector = () => ({}) as HTMLElement;
+  const failedLanguage = failure.view.refreshLanguage();
+  failure.dataLoads[2].reject(new Error("notes unavailable after rebuilding the shell"));
+  failure.healthLoads[2].resolve(null);
+  await failedLanguage;
+  assert(failure.renders.includes("renderDataPlaceholders"), "a rebuilt shell exits loading even if earlier data is cached");
+  await failure.view.onClose();
+
+  const invalidSettings = create();
+  invalidSettings.daily.folder = "../outside";
+  await invalidSettings.service.activateHomeView();
+  const invalidLoad = invalidSettings.runScheduled();
+  invalidSettings.healthLoads[0].resolve(null);
+  await invalidLoad;
+  assert.equal(invalidSettings.dataLoads.length, 0);
+  assert.match(invalidSettings.fields.get("recent-subtitle")!.text, /笔记读取失败/u);
+  assert(invalidSettings.renders.includes("renderDataPlaceholders"), "invalid native settings exit the initial loading state");
+  invalidSettings.daily.folder = "journal";
+  await invalidSettings.service.activateHomeView();
+  const recoveredLoad = invalidSettings.runScheduled();
+  invalidSettings.dataLoads[0].resolve(firstData);
+  invalidSettings.healthLoads[1].resolve(null);
+  await recoveredLoad;
+  assert.equal(invalidSettings.view.data, firstData);
+  invalidSettings.daily.folder = "../outside";
+  await invalidSettings.service.activateHomeView();
+  const invalidReturn = invalidSettings.runScheduled();
+  invalidSettings.healthLoads[2].resolve(null);
+  await invalidReturn;
+  assert.equal(invalidSettings.view.data, firstData, "invalid settings on return preserve the last usable notes and do not block navigation");
+  await invalidSettings.view.onClose();
+
+  const closed = create();
+  await closed.service.activateHomeView();
+  await closed.view.onClose();
+  assert.equal(closed.timers.size, 0, "closing before first paint cancels the scheduled data work");
+  assert.equal(closed.dataLoads.length, 0);
 }
 
 async function assertKnowledgeCheckHistoryAcrossYears(root: string): Promise<void> {

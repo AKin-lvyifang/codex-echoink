@@ -38,7 +38,9 @@ export class EchoInkHomeView extends ItemView {
   private readonly searchService: HomeSearchService;
   private searchResolvedQuery: string | null = null;
   private snapshot: KnowledgeBaseDashboardSnapshot | null = null;
+  private healthLoading = true;
   private data: HomeWorkbenchData | null = null;
+  private dataSettingsSignature = "";
   private selectedDate: string | null = null;
   private month = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   private readonly id = `echoink-home-${++nextHomeId}`;
@@ -116,7 +118,9 @@ export class EchoInkHomeView extends ItemView {
     this.registerDomEvent(this.contentEl.ownerDocument, "pointerdown", (e) => {
       if (!this.field("header-search").contains(e.target as Node)) this.closeSearch(false);
     });
-    await this.refresh();
+    // Workspace restoration must finish before starting the data work. A timer
+    // yields to the host instead of running an async function's synchronous body.
+    this.scheduleRefresh(0);
   }
   async onClose(): Promise<void> {
     this.closed = true; this.refreshVersion++;
@@ -130,23 +134,71 @@ export class EchoInkHomeView extends ItemView {
     this.searchAbort?.abort(); this.activityUnsubscribe?.(); this.todoUnsubscribe?.(); this.activityModal?.close();
     this.contentEl.empty(); this.contentEl.removeClass("echoink-home-workspace");
   }
-  private scheduleRefresh(): void {
+  private scheduleRefresh(delay = 220): void {
     const win = this.contentEl.ownerDocument.defaultView;
     if (!win || this.closed) return;
     if (this.refreshTimer !== null) win.clearTimeout(this.refreshTimer);
-    this.refreshTimer = win.setTimeout(() => { this.refreshTimer = null; void this.refresh(); }, 220);
+    this.refreshTimer = win.setTimeout(() => {
+      this.refreshTimer = null;
+      void this.refresh().catch((error) => console.warn("EchoInk 首页刷新失败", error));
+    }, delay);
   }
   async refreshLanguage(): Promise<void> { this.renderShell(); await this.refresh(); }
+  refreshIfSettingsChanged(): void {
+    if (this.closed || this.refreshTimer !== null) return;
+    try {
+      if (this.data && this.dataSettingsSignature === this.currentDataSettingsSignature()) return;
+    } catch { /* Let refresh show the data error without blocking navigation. */ }
+    this.scheduleRefresh(0);
+  }
+  private currentDataSettingsSignature(): string {
+    return JSON.stringify({
+      journal: readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory),
+      diary: this.plugin.settings.englishDiary
+    });
+  }
   async refresh(): Promise<void> {
+    if (this.closed) return;
+    if (this.refreshTimer !== null) {
+      this.contentEl.ownerDocument.defaultView?.clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
     const version = ++this.refreshVersion;
-    const [data, health] = await Promise.allSettled([this.dataService.build(this.month), this.plugin.getKnowledgeSurfaceService()?.getDashboardSnapshot()]);
+    this.healthLoading = true;
+    this.renderHealth();
+    const dataFlight = (async () => {
+      const settingsSignature = this.currentDataSettingsSignature();
+      const data = await this.dataService.build(this.month);
+      return { data, settingsSignature };
+    })().then(({ data, settingsSignature }) => {
+      if (this.closed || version !== this.refreshVersion) return;
+      this.data = data;
+      this.dataSettingsSignature = settingsSignature;
+      this.field("recent-notes").removeAttribute("aria-busy");
+      this.renderRecent(); this.renderActivity(); this.renderCalendar(); this.renderEntries(); this.renderTodos();
+      this.applyModuleVisibility();
+    }, () => {
+      if (this.closed || version !== this.refreshVersion) return;
+      const message = this.t("笔记读取失败，请稍后重试", "Could not read notes. Try again.");
+      this.field("recent-subtitle").setText(message);
+      this.field("recent-notes").removeAttribute("aria-busy");
+      if (!this.data || this.field("recent-notes").querySelector(".echoink-home-skeleton")) {
+        this.field("recent-notes").setText(message);
+        this.renderDataPlaceholders(this.t("暂不可用", "Unavailable"));
+      }
+    });
+    // The health scan can read many files. Its result only updates its own
+    // surface and never delays recent notes, the calendar or navigation.
+    await Promise.all([dataFlight, this.refreshHealth(version)]);
+  }
+  private async refreshHealth(version: number): Promise<void> {
+    let snapshot: KnowledgeBaseDashboardSnapshot | null = null;
+    try { snapshot = await this.plugin.getKnowledgeSurfaceService()?.getDashboardSnapshot() ?? null; }
+    catch { /* Keep the existing unavailable state for a failed health scan. */ }
     if (this.closed || version !== this.refreshVersion) return;
-    if (data.status === "fulfilled") this.data = data.value;
-    if (health.status === "fulfilled") this.snapshot = health.value ?? null;
-    else this.snapshot = null;
-    this.renderRecent(); this.renderActivity(); this.renderCalendar(); this.renderEntries(); this.renderTodos();
-    this.applyModuleVisibility();
-    if (data.status === "rejected") this.field("recent-subtitle").setText(this.t("笔记读取失败，请稍后重试", "Could not read notes. Try again."));
+    this.snapshot = snapshot;
+    this.healthLoading = false;
+    this.renderHealth();
   }
   /**
    * Fixed-slot entry visibility: each of the four home entries has its own
@@ -188,11 +240,33 @@ export class EchoInkHomeView extends ItemView {
     this.field("recent-subtitle").setText(this.t("按文件创建 / 修改时间排序", "Sorted by file creation / modification time"));
     this.searchOpen = false;
     this.applyModuleVisibility();
+    this.renderLoadingState();
     if (typeof ResizeObserver !== "undefined") {
       this.shortNavigationObserver = new ResizeObserver(() => this.scheduleShortNavigation());
       this.shortNavigationObserver.observe(this.contentEl);
       this.shortNavigationObserver.observe(this.el(".home-content"));
     }
+  }
+  private renderLoadingState(): void {
+    this.field("recent-subtitle").setText(this.t("正在加载笔记…", "Loading notes…"));
+    const recent = this.field("recent-notes");
+    recent.setAttribute("aria-busy", "true");
+    const lines = '<span class="echoink-home-skeleton-line"></span><span class="echoink-home-skeleton-line is-short"></span>';
+    markup(recent, `<div class="note-feature echoink-home-skeleton" aria-hidden="true">${lines}</div><div class="small-note-list" aria-hidden="true"><div class="small-note echoink-home-skeleton">${lines}</div><div class="small-note echoink-home-skeleton">${lines}</div></div>`);
+    this.renderDataPlaceholders(this.t("正在加载…", "Loading…"));
+    this.renderTodos();
+    this.renderHealth();
+  }
+  private renderDataPlaceholders(label: string): void {
+    this.field("trace-count").setText("—");
+    this.el(".week-range").setText("");
+    this.el(".trace-legend").empty();
+    this.field("trace-caption").setText(label);
+    this.field("month-record-count").setText(label);
+    this.field("journal-hint").setText(label);
+    this.el(".wiki-count").setText("—");
+    this.field("inbox-count").setText("—");
+    for (const node of Array.from(this.contentEl.querySelectorAll<HTMLElement>(".wiki .bento-meta, .outputs .bento-meta, .projects .bento-meta, .journal .bento-meta, .bento-line, .project-line"))) node.setText(label);
   }
   private renderCaptureShortcut(): void {
     const settings = this.plugin.settings.englishDiary;
@@ -363,15 +437,19 @@ export class EchoInkHomeView extends ItemView {
     this.field("inbox-count").setText(String(count("inbox")));
     this.el(".journal-date").setText(new Intl.DateTimeFormat(this.language, { month: "long", day: "numeric" }).format(new Date()));
     const prefix = dateKey(new Date()).slice(0, 7);
+    const journalSettings = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory);
     const journals = records.filter((r) => {
-      const parsed = journalDateFromPath(r.path, this.dataService.getJournalDirectory(), readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).format);
+      const parsed = journalDateFromPath(r.path, journalSettings.folder, journalSettings.format);
       return parsed?.startsWith(prefix);
     }).length;
     this.el(".journal .bento-meta").setText(this.t(`这个月，留下了 ${journals} 篇日记`, `${journals} journal pages this month`));
+    this.renderHealth();
+  }
+  private renderHealth(): void {
     const health = this.snapshot?.health;
     const score = health && health.status !== "unknown" ? String(health.score) : "—";
     this.el(".review-score strong").setText(score);
-    const status = !health ? this.t("健康状态暂不可用", "Health is unavailable") : health.assessment === "uninitialized" ? this.t("初始化知识库", "Initialize knowledge") : health.assessment === "unavailable" ? this.t("健康状态无法评估", "Health cannot be assessed") : this.t(`本地结构 ${score} 分${health.assessment === "limited" ? " · 检查受限" : ""}`, `Local structure ${score}${health.assessment === "limited" ? " · Limited" : ""}`);
+    const status = this.healthLoading ? this.t("正在检查知识库…", "Checking knowledge…") : !health ? this.t("健康状态暂不可用", "Health is unavailable") : health.assessment === "uninitialized" ? this.t("初始化知识库", "Initialize knowledge") : health.assessment === "unavailable" ? this.t("健康状态无法评估", "Health cannot be assessed") : this.t(`本地结构 ${score} 分${health.assessment === "limited" ? " · 检查受限" : ""}`, `Local structure ${score}${health.assessment === "limited" ? " · Limited" : ""}`);
     markup(this.el(".health"), `<b></b>${esc(status)}${icon("chevron-right")}`);
   }
   private renderTodos(): void {

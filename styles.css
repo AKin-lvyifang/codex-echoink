@@ -19506,6 +19506,17 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
 /* Card alignment is owned here, independent of native button centering. */
 .echoink-home-workspace .small-note,.echoink-home-workspace .bento:not(.review) { align-items:stretch; }
 .echoink-home-workspace .note-feature,.echoink-home-workspace .bento { justify-content:flex-start; }
+.echoink-home-workspace .echoink-home-skeleton { pointer-events:none; }
+.echoink-home-workspace .echoink-home-skeleton-line {
+  display:block;
+  width:80%;
+  height:1em;
+  margin-block:12px;
+  border-radius:4px;
+  background:var(--text-muted);
+  opacity:.12;
+}
+.echoink-home-workspace .echoink-home-skeleton-line.is-short { width:52%; }
 .echoink-home-workspace button.icon-button { height:30px; }
 .echoink-home-workspace button.tiny { height:23px; }
 .echoink-home-workspace .workspace { min-height:0; }

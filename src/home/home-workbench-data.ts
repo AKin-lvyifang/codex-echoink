@@ -112,9 +112,11 @@ export class HomeWorkbenchDataService {
   }
 
   async build(visibleMonth = new Date()): Promise<HomeWorkbenchData> {
-    const journalDirectory = this.getJournalDirectory();
-    const records = this.app.vault.getMarkdownFiles().filter((file) => this.includeNotePath(file.path)).map((file) =>
-      this.recordForFile(file, journalDirectory)
+    const journalSettings = readNativeJournalSettings(this.app, this.journalDirectoryProvider());
+    const journalDirectory = journalSettings.folder;
+    const files = this.app.vault.getMarkdownFiles();
+    const records = files.filter((file) => this.includeNotePath(file.path)).map((file) =>
+      this.recordForFile(file, journalDirectory, journalSettings.format)
     );
     const byDate = new Map<string, HomeActivityDay>();
     for (const event of this.activityService?.snapshot().events ?? []) {
@@ -125,8 +127,8 @@ export class HomeWorkbenchDataService {
     }
     const activity = [...byDate.values()];
     const journalDays = buildHomeJournalDays(records, activity, visibleMonth, journalDirectory,
-      readNativeJournalSettings(this.app, this.journalDirectoryProvider()).format);
-    const customTemplates = this.listCustomTemplates();
+      journalSettings.format);
+    const customTemplates = this.listCustomTemplates(files);
     return {
       records,
       activity,
@@ -184,9 +186,9 @@ export class HomeWorkbenchDataService {
     return parseImportedJournalTemplate(fileName, content, language);
   }
 
-  listCustomTemplates(): HomeCustomTemplateSummary[] {
+  listCustomTemplates(files: readonly TFile[] = this.app.vault.getMarkdownFiles()): HomeCustomTemplateSummary[] {
     const prefix = `${JOURNAL_TEMPLATE_DIRECTORY}/`;
-    return this.app.vault.getMarkdownFiles()
+    return files
       .filter((file) => file.path.toLocaleLowerCase().startsWith(prefix))
       .sort((left, right) => left.basename.localeCompare(right.basename, "zh-Hans"))
       .map((file) => ({ id: `custom:${file.path}`, name: file.basename, path: file.path }));
@@ -219,9 +221,8 @@ export class HomeWorkbenchDataService {
     return { status: "saved", path: targetPath, file };
   }
 
-  private recordForFile(file: TFile, journalDirectory: string): HomeVaultFileRecord {
-    const cache = journalDateFromPath(file.path, journalDirectory,
-      readNativeJournalSettings(this.app, this.journalDirectoryProvider()).format)
+  private recordForFile(file: TFile, journalDirectory: string, journalFormat: string): HomeVaultFileRecord {
+    const cache = journalDateFromPath(file.path, journalDirectory, journalFormat)
       ? this.app.metadataCache.getFileCache(file)
       : null;
     const imageFile = (cache?.embeds ?? [])

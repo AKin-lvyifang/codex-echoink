@@ -4,6 +4,7 @@ import { mkdtemp, realpath, readFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { TFile, type App } from "obsidian";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { readNativeJournalContext, readNativeJournalSettings, QUICK_JOURNAL_TEMPLATE } from "../home/native-journal";
@@ -24,6 +25,8 @@ import { createPiVaultProductionAuthorizationPort, createPiVaultProductionWriteE
 import { officialCliFixture, runOfficialCliTests } from "./obsidian-cli";
 
 export async function runNativeJournalTests(): Promise<void> {
+  assertJournalRootSnapshots();
+  await assertHomeJournalBuildSnapshots();
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "echoink-native-journal-")));
   try {
     const fixture = await nativeJournalFixture(root);
@@ -100,6 +103,101 @@ export async function runNativeJournalTests(): Promise<void> {
     await runOfficialCliTests(cliRoot);
     console.log("PASS native initialization/ready repair, current journal settings, calendar/template parity, CLI and managed formats");
   } finally { await rm(root, { recursive: true, force: true }); }
+}
+
+function assertJournalRootSnapshots(): void {
+  const daily = { folder: "journal", format: "YYYY-MM-DD", template: "templates/Explicit" };
+  const templates = { folder: "templates" };
+  let roots = ["journal", "templates", KNOWLEDGE_ROOT_NAMES.journal, KNOWLEDGE_ROOT_NAMES.templates];
+  let allFileReads = 0;
+  let rootReads = 0;
+  const vault = {
+    getRoot: undefined as undefined | (() => { children: { path: string }[] }),
+    getAllLoadedFiles: () => {
+      allFileReads++;
+      return roots.flatMap((root) => [{ path: root }, { path: `${root}/nested/example.md` }]);
+    }
+  };
+  const app = {
+    vault,
+    internalPlugins: { plugins: {
+      "daily-notes": { instance: { options: daily } },
+      templates: { instance: { options: templates } }
+    } }
+  } as unknown as App;
+
+  const legacy = readNativeJournalSettings(app);
+  assert.equal(legacy.folder, "journal", "explicit existing English roots win when bilingual roots coexist");
+  assert.equal(legacy.template, "templates/Explicit.md");
+  assert.equal(allFileReads, 1, "hosts without getRoot enumerate loaded files once per settings read");
+
+  vault.getRoot = () => {
+    rootReads++;
+    return { children: roots.map((root) => ({ path: root })) };
+  };
+  roots = [KNOWLEDGE_ROOT_NAMES.journal, KNOWLEDGE_ROOT_NAMES.templates];
+  const bilingual = readNativeJournalSettings(app);
+  assert.equal(bilingual.folder, KNOWLEDGE_ROOT_NAMES.journal);
+  assert.equal(bilingual.template, `${KNOWLEDGE_ROOT_NAMES.templates}/Explicit.md`);
+  assert.equal(rootReads, 1);
+  assert.equal(allFileReads, 1, "native root children avoid full-Vault enumeration");
+
+  roots.push("journal", "templates");
+  assert.equal(readNativeJournalSettings(app).folder, "journal", "root changes take effect on the next read");
+  daily.folder = KNOWLEDGE_ROOT_NAMES.journal;
+  daily.format = "YYYY/[month]MM/DD";
+  templates.folder = KNOWLEDGE_ROOT_NAMES.templates;
+  const changed = readNativeJournalSettings(app);
+  assert.equal(changed.folder, KNOWLEDGE_ROOT_NAMES.journal, "explicit bilingual roots also win when roots coexist");
+  assert.equal(changed.templatesFolder, KNOWLEDGE_ROOT_NAMES.templates);
+  assert.equal(changed.template, "templates/Explicit.md", "explicit template roots are preserved independently");
+  assert.equal(changed.format, "YYYY/[month]MM/DD", "native settings changes are not hidden by a cache");
+  assert.equal(rootReads, 3, "each settings read uses one fresh root snapshot");
+  assert.equal(allFileReads, 1);
+}
+
+async function assertHomeJournalBuildSnapshots(): Promise<void> {
+  const daily = { folder: "journal", format: "YYYY-MM-DD" };
+  const makeFile = (filePath: string) => Object.assign(new TFile(filePath), {
+    basename: path.posix.basename(filePath, ".md"),
+    parent: { path: path.posix.dirname(filePath) },
+    stat: { mtime: 1, ctime: 1 }
+  });
+  const journal = makeFile("journal/2026-09-06.md");
+  const customJournal = makeFile("Custom daily/2026/month09/06.md");
+  const template = makeFile("templates/journal/Personal.md");
+  let files = [journal, customJournal, template];
+  let rootReads = 0;
+  let markdownReads = 0;
+  const app = {
+    vault: {
+      getRoot: () => {
+        rootReads++;
+        return { children: ["journal", "templates", "Custom daily", "raw"].map((root) => ({ path: root })) };
+      },
+      getAllLoadedFiles: () => { throw new Error("Home build must not scan all loaded files when root children are available"); },
+      getMarkdownFiles: () => { markdownReads++; return files; }
+    },
+    metadataCache: { getFileCache: () => null },
+    internalPlugins: { plugins: { "daily-notes": { instance: { options: daily } } } }
+  } as unknown as App;
+  const home = new HomeWorkbenchDataService(app);
+  const first = await home.build(new Date(2026, 8, 6));
+  assert.equal(first.journalDays.find((day) => day.date === "2026-09-06")?.path, journal.path);
+  assert.equal(first.customTemplates[0]?.path, template.path);
+  assert.equal(rootReads, 1);
+  assert.equal(markdownReads, 1, "notes and custom templates share one file snapshot");
+
+  files = [...files, ...Array.from({ length: 2000 }, (_, index) => makeFile(`raw/note-${index}.md`))];
+  daily.folder = "Custom daily";
+  daily.format = "YYYY/[month]MM/DD";
+  const next = await home.build(new Date(2026, 8, 6));
+  assert.equal(next.records.length, files.length);
+  assert.equal(next.journalDays.find((day) => day.date === "2026-09-06")?.path, customJournal.path);
+  assert.deepEqual(next.customTemplates, first.customTemplates);
+  assert.equal(rootReads, 2, "settings enumeration stays constant as note count grows");
+  assert.equal(markdownReads, 2, "each rebuild gets fresh files without redundant enumeration");
+  console.log("PASS native journal root snapshots and home build enumeration stay bounded with 2,000 extra notes");
 }
 
 async function assertNativeToolsAndManagedWrites(fixture: Awaited<ReturnType<typeof nativeJournalFixture>>, root: string) {

@@ -26,7 +26,9 @@ export class EchoInkViewService {
       await leaf.setViewState({ type: VIEW_TYPE_ECHOINK_HOME, active: true });
     }
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
-    await this.getHomeView()?.refresh();
+    // onOpen and Vault events own data loading. Native journal settings can
+    // change while away, but merely revealing an unchanged home is free.
+    if (leaf.view instanceof EchoInkHomeView) leaf.view.refreshIfSettingsChanged();
   }
 
   async activateView(): Promise<void> {
@@ -140,10 +142,6 @@ export class EchoInkViewService {
       return;
     }
     if (!rightSplit.collapsed) rightSplit.collapse();
-  }
-
-  private getHomeView(): EchoInkHomeView | null {
-    return this.getViewInstance(VIEW_TYPE_ECHOINK_HOME, EchoInkHomeView);
   }
 
   private getReviewPreviewView(): ReviewPreviewView | null {

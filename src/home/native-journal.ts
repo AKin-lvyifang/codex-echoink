@@ -60,8 +60,7 @@ function relativePath(value: string): string {
   return normalized;
 }
 
-function actualJournalPath(app: App, value: string): string {
-  const roots = app.vault.getAllLoadedFiles?.().map((file) => file.path.split("/")[0]).filter(Boolean) ?? [];
+function actualJournalPath(value: string, roots: readonly string[]): string {
   return resolveKnowledgePathFromRoots(relativePath(value), roots);
 }
 
@@ -86,10 +85,13 @@ export async function rebaseNativeJournalPaths(app: App, from: string, to: strin
 export function readNativeJournalSettings(app: App, legacyDirectory?: string) {
   const daily = optionsOf(app, "daily-notes");
   const templates = optionsOf(app, "templates");
-  const templatesFolder = actualJournalPath(app, nonempty(templates.folder) ?? DEFAULT_TEMPLATES_DIRECTORY);
-  const template = actualJournalPath(app, nonempty(daily.template) ?? `${templatesFolder}/此刻速记.md`);
+  // Resolve against one current root snapshot, without walking every descendant.
+  const entries = app.vault.getRoot?.()?.children ?? app.vault.getAllLoadedFiles?.() ?? [];
+  const roots = [...new Set(entries.map((file) => file.path.split("/")[0]).filter(Boolean))];
+  const templatesFolder = actualJournalPath(nonempty(templates.folder) ?? DEFAULT_TEMPLATES_DIRECTORY, roots);
+  const template = actualJournalPath(nonempty(daily.template) ?? `${templatesFolder}/此刻速记.md`, roots);
   return Object.freeze({
-    folder: actualJournalPath(app, nonempty(daily.folder) ?? normalizeJournalDirectory(legacyDirectory)),
+    folder: actualJournalPath(nonempty(daily.folder) ?? normalizeJournalDirectory(legacyDirectory), roots),
     format: nonempty(daily.format) ?? DEFAULT_JOURNAL_DATE_FORMAT,
     template: /\.md$/iu.test(template) ? template : `${template}.md`,
     templatesFolder,
