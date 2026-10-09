@@ -19,7 +19,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="桌面端与移动端 Beta">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.6.0"><img src="https://img.shields.io/badge/version-2.6.0-0EA5E9?style=flat-square" alt="版本 2.6.0"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Source%20Available-475569?style=flat-square" alt="源码可见，许可范围见 LICENSE"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
 
 <p align="center"><a href="https://echoink.cn"><strong>访问官网 echoink.cn</strong></a></p>
@@ -60,6 +60,8 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 
 ## 许可声明
 
-从 2.6.0 起，新授予许可的 EchoInk 自有内容采用 **EchoInk 源码可见参考许可 1.0**。源码供个人学习与参考，**不属于 OSI 定义的开源许可**。允许个人、非商业使用未经修改的官方发行版；未经另行书面许可，不得修改、再分发、复制源码制作衍生产品或商业使用，具体例外以 [LICENSE](LICENSE) 为准。
+EchoInk 按组件分别授权：基础部分采用标准的 [MIT 开源许可](licenses/MIT.txt)；财务、英文日记、会员与激活服务，以及 [LICENSE](LICENSE) 列明的其他 PRO 文件，采用 [EchoInk PRO 商业许可](licenses/PRO-LICENSE.txt)。整个插件包并非全部采用 MIT，也不能整体称为 OSI 开源软件。两套许可分别约束对应内容，不是对整套产品任选其一。
 
-本声明不撤回旧版 MIT 已授予的权利，不改变第三方组件许可，也不排除法律不能限制的权利。对侵犯受保护内容的行为，权利人保留依法追究责任的权利。完整条款见 [LICENSE](LICENSE)；第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+MIT 基础部分允许修改、再分发和商用。PRO 源码允许个人、非商业阅读与学习；持有有效 PRO 权益的用户，可以正常使用未经修改的官方发行版处理个人事务、工作和企业内部业务，但不得绕过激活，也不因此获得修改、分发 PRO 代码或将其用于其他商业产品的权利。这些用途须另行取得书面授权。订阅或激活码授予的是产品使用权，不是源码转售权。
+
+两部分由同一个官方插件包提供，激活无需再次安装。此前的 MIT 授权和第三方许可继续有效。你的笔记及独立创作的成果，不会仅因使用 EchoInk 而自动受到 PRO 许可约束。完整范围、素材例外与既有权利见 [LICENSE](LICENSE)，第三方材料见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

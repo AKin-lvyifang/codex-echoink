@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-EchoInk-Pro
+// Scope and preserved rights: ../../LICENSE
 /** Account display and action contracts; service owns authentication and entitlements. */
 import type { MembershipCurrency, MembershipPlanId } from "./account-membership-pricing";
 export type MembershipState = "unavailable" | "anonymous" | "free" | "active" | "lifetime" | "offline-valid" | "verification-required" | "expired" | "revoked" | "device-limit" | "device-required" | "scheduled";

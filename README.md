@@ -19,7 +19,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="Desktop and Mobile Beta">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.6.0"><img src="https://img.shields.io/badge/version-2.6.0-0EA5E9?style=flat-square" alt="Version 2.6.0"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Source%20Available-475569?style=flat-square" alt="Source Available — see LICENSE"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT base + Commercial PRO — see LICENSE"></a>
 </p>
 
 <p align="center"><a href="https://echoink.cn"><strong>Visit echoink.cn</strong></a></p>
@@ -60,6 +60,8 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 
 ## License
 
-From 2.6.0, newly licensed EchoInk material uses the **EchoInk Source-Available Reference License 1.0**. Source is visible for personal study and reference; it is **not an OSI open-source license**. Unmodified official releases may be used personally and non-commercially. Modification, redistribution, source-derived copies, and commercial use require separate written permission, subject to the exceptions in [LICENSE](LICENSE).
+EchoInk uses **component-based licensing**: the base is open source under the standard [MIT License](licenses/MIT.txt); Finance, English Diary, membership/activation and the other PRO paths listed in [LICENSE](LICENSE) use the [EchoInk PRO License](licenses/PRO-LICENSE.txt). The complete plugin package is not wholly MIT-licensed or wholly OSI open source. The licenses apply to different components, not as alternatives for the entire product.
 
-This does not revoke rights already granted under earlier MIT releases, change third-party licenses, or restrict rights that cannot lawfully be excluded. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The MIT base permits modification, redistribution and commercial use. PRO source is available for personal, noncommercial study. A valid PRO entitlement permits normal personal, work and internal business use of unmodified official releases; it does not permit bypassing activation, modifying or redistributing PRO code, or incorporating it into another commercial product. Those uses require a separate written license. A subscription or activation code is a product-use entitlement, not a source-code resale license.
+
+Both parts ship in the same official plugin; activation does not require another installation. Earlier MIT grants and third-party rights remain in force. Your own notes and independently created outputs do not become subject to the PRO license merely because you used EchoInk. See [LICENSE](LICENSE) for the exact scope, asset exceptions and preserved rights, and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party material.

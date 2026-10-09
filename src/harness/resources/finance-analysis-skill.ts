@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-EchoInk-Pro
+// Scope and preserved rights: ../../../LICENSE
 /** Display requirements are appended by the caller, independently of the editable analysis Skill. */
 export const FINANCE_ANALYSIS_OUTPUT_PROTOCOL = `只输出一个完整 JSON 对象，不输出代码围栏或其他文字。结构版本固定为 8：
 {"version":8,"sections":[{"title":"章节标题","blocks":[{"type":"text","markdown":"正文"}]}]}

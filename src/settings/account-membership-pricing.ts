@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-EchoInk-Pro
+// Scope and preserved rights: ../../LICENSE
 export type MembershipCurrency = "CNY" | "USD";
 export type MembershipPlanId = "early" | "month" | "quarter" | "year";
 

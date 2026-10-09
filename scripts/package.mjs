@@ -15,6 +15,11 @@ fs.mkdirSync(pluginDir, { recursive: true });
 copy("dist/main.js", "main.js");
 copy("manifest.json", "manifest.json");
 copy("styles.css", "styles.css");
+copy("LICENSE", "LICENSE");
+copy("THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md");
+fs.mkdirSync(path.join(pluginDir, "licenses"), { recursive: true });
+copy("licenses/MIT.txt", "licenses/MIT.txt");
+copy("licenses/PRO-LICENSE.txt", "licenses/PRO-LICENSE.txt");
 
 if (fs.existsSync(zipPath)) fs.rmSync(zipPath);
 const result = spawnSync("zip", ["-qr", zipName, manifest.id], {

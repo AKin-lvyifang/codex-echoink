@@ -1,5 +1,9 @@
 # Third-Party Notices
 
+EchoInk's first-party base and PRO components have separate licenses, as
+described in [LICENSE](LICENSE). Those terms do not replace or restrict the
+licenses below, including third-party material embedded in PRO components.
+
 ## Finance brand SVG supplement
 
 The 35 selectable brand SVGs under `assets/finance-brands/svg/` are bundled

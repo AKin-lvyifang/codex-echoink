@@ -30,6 +30,14 @@ export async function assemblePlatformBundle(desktopCode, minify) {
     code = (await esbuild.transform(code, { minify: true, charset: "utf8", target: "es2022", format: "cjs", legalComments: "inline" })).code;
     assertDesktopMarkersPreserved(desktopCode, code);
   }
+  // Community installs fetch main.js, manifest.json and styles.css only.
+  // Keep the complete component terms with the artifact, outside executable code.
+  const licenseFiles = ["LICENSE", "licenses/MIT.txt", "licenses/PRO-LICENSE.txt", "THIRD_PARTY_NOTICES.md"];
+  const notices = await Promise.all(licenseFiles.map(async file =>
+    `--- ${file} ---\n${await fs.readFile(new URL(`../${file}`, import.meta.url), "utf8")}`));
+  const notice = notices.join("\n\n");
+  if (notice.includes("*/")) throw new Error("License notice contains a JavaScript comment terminator.");
+  code = `/*! EchoInk component licenses and third-party notices\n${notice}\n*/\n${code}`;
   await fs.writeFile("dist/main.js", code);
   console.log(`Mobile browser bundle: ${mobile.outputFiles[0].contents.length} bytes; combined main.js: ${Buffer.byteLength(code)} bytes`);
 }

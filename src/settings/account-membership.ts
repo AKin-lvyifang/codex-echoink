@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-EchoInk-Pro
+// Scope and preserved rights: ../../LICENSE
 import { Modal, Notice, setIcon, type App } from "obsidian";
 import { createOriginButton, createOriginInput, disposeOriginControls } from "./origin-controls";
 import type { AccountActions, AccountAvatar, AccountMembershipViewModel, AccountRank, MembershipState } from "./account-membership-model";

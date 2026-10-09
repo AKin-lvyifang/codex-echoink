@@ -1,0 +1,303 @@
+EchoInk PRO License 1.0
+EchoInk PRO 商业软件许可 1.0
+
+License identifier: LicenseRef-EchoInk-Pro
+Copyright (c) 2026 EchoInk Agent contributors. All rights reserved,
+except for the permissions and existing rights expressly preserved below.
+Project maintainer: AKin-lvyifang
+Official website: https://echoink.cn
+
+This is a proprietary, source-available software license. It is not an
+OSI-approved open-source license. Source availability does not grant general
+permission to modify, redistribute, or commercially reuse the source code.
+
+本许可为源码可见的专有商业软件许可，不是经 OSI 认可的开源许可。公开源码
+不代表允许任意修改、再分发或商业复用源码。
+
+1. Scope and existing rights / 适用范围与既有权利
+
+This license applies only to first-party EchoInk PRO material expressly
+designated as subject to LicenseRef-EchoInk-Pro by the repository's root
+LICENSE, and only to the extent that the relevant copyright holders are
+entitled to license that material on these terms (the "Covered Material").
+The presence of this file, inclusion in the same repository or package, or use
+together with PRO functionality does not place other material under this
+license. The root LICENSE determines the boundary between the MIT-licensed
+base and the Covered Material.
+
+This license does not revoke, replace, or narrow rights already granted under
+MIT or another license, including for material previously distributed under
+those terms that also appears in the Covered Material. Third-party code,
+dependencies, assets, and notices retain their own licenses. See the root
+LICENSE, THIRD_PARTY_NOTICES.md, relevant files, and upstream packages.
+
+本许可仅适用于仓库根目录 LICENSE 明确指定采用 LicenseRef-EchoInk-Pro 的
+EchoInk 第一方 PRO 内容，且以相应著作权人有权按本条款授权的范围为限
+（“受许可内容”）。仅因本文件存在、内容位于同一仓库或软件包，或与 PRO
+功能一起使用，不会使其他内容自动适用本许可。MIT 基础部分与受许可内容
+的边界以根目录 LICENSE 为准。
+
+本许可不撤回、不替代、不缩减此前已按 MIT 或其他许可授予的权利，包括
+此前按这些条款发布、后来也出现在受许可内容中的材料。第三方代码、依赖、
+素材和声明继续适用各自许可。具体见根目录 LICENSE、THIRD_PARTY_NOTICES.md、
+相关文件及上游软件包。
+
+2. Limited source reference / 有限源码参考
+
+You may read and study publicly available Covered Material solely for your
+own personal, non-commercial learning and reference. You may make only the
+limited local copies technically necessary for that reading and study,
+retaining copyright, license, and attribution notices. This permission does
+not authorize modifying the Covered Material, creating derivative works,
+redistributing it, or incorporating it into another project.
+
+Rights granted by GitHub's applicable terms for a public repository, including
+viewing and forking through GitHub's service, are preserved. Such platform
+rights do not themselves authorize use outside their scope.
+
+允许仅为个人、非商业学习和参考目的，阅读和研究已公开的受许可内容，并在
+保留版权、许可和署名声明的前提下，制作阅读和研究在技术上必需的有限本地
+副本。本项许可不授权修改受许可内容、制作衍生作品、再分发或将其并入其他
+项目。
+
+本许可保留 GitHub 适用条款对公开仓库授予的权利，包括通过 GitHub 服务查看
+和 fork。平台权利本身不授权超出其范围的使用。
+
+3. Use of official software / 官方软件使用
+
+An "Official Distribution" is an unmodified EchoInk package supplied by the
+maintainer through https://echoink.cn or official release channels identified
+there, including authorized Obsidian installation and update channels.
+
+A "Valid Entitlement" is a right to use specified PRO functionality lawfully
+granted by the maintainer or an authorized provider. It may arise from a paid
+purchase, subscription, free trial, gift, or other express grant. Its scope is
+limited to the applicable user or organization, accounts, devices, features,
+and term communicated with that grant. Payment alone does not determine
+whether an entitlement is valid or what it covers.
+
+An individual or organization with a Valid Entitlement may download, install,
+run, and make reasonable backup copies of Official Distributions to use the
+authorized functionality for personal purposes, work, and internal commercial
+activities. Normal settings, supported configuration, and use of supported
+features are permitted. Working with your own data or producing your own
+independent output in the ordinary use of the product is not, by itself,
+commercial reuse of the Covered Material's source code.
+
+Anyone may download and install an Official Distribution for the limited
+unactivated activities described here. Without an active Valid Entitlement,
+permission to run Covered Material is limited to normal sign-in and
+activation, previews expressly offered as free,
+and reading existing user information through functionality the product
+expressly makes available without activation. Merely receiving or installing
+an Official Distribution does not grant access to PRO functionality. These
+permissions do not promise any new functionality or extend a trial or other
+entitlement beyond its stated scope. Separate online-service terms continue
+to apply; this license does not itself grant accounts, service access, or
+service credits.
+
+“官方发行版”是维护者通过 https://echoink.cn 或官网指明的官方发布渠道
+提供的未经修改的 EchoInk 软件包，包括获准的 Obsidian 安装和更新渠道。
+
+“有效授权”是维护者或获授权提供方依法授予的特定 PRO 功能使用权，可来自
+付费购买、订阅、免费试用、赠送或其他明确授予。授权范围以授予时告知的
+用户或组织、账号、设备、功能及期限为限。是否付费本身不决定授权是否有效
+或授权的具体范围。
+
+取得有效授权的个人或组织，可以下载、安装、运行官方发行版并制作合理备份，
+在授权范围内将获授功能正常用于个人用途、工作及内部商业活动。允许正常
+设置、受支持的配置及受支持功能的使用。正常使用产品处理自己的数据或产生
+独立创作输出，本身不属于对受许可内容源码的商业复用。
+
+任何人均可为本段所述的有限未激活活动下载和安装官方发行版。未持有处于
+有效期内的有效授权时，对受许可内容的运行许可仅限于正常登录和激活、明确
+免费提供的预览，以及产品明确保留为无需激活即可使用的既有用户
+资料读取功能。仅获取或安装官方发行版，不会自动获得 PRO 功能使用权。
+这些许可不承诺新增功能，也不延长或扩大试用及其他授权的既定范围。线上
+服务的独立条款继续适用；本许可本身不授予账号、服务访问权或服务额度。
+
+4. Separate commercial permission / 另行商业授权
+
+Unless an exception in this license, rights preserved by section 1, applicable
+law, or separate written permission from the relevant rights holder allows
+it, you may not:
+
+- Reuse Covered Material in another product, project, or service, commercially
+  or otherwise, beyond the source-reference permission in section 2.
+- Modify, adapt, translate, or create derivative works of Covered Material,
+  or distribute modified versions.
+- Publish, redistribute, sublicense, sell, resell, rent, or otherwise supply
+  Covered Material or the PRO portions of Official Distributions to others,
+  or offer them as a hosted or managed service to third parties.
+- Transfer, resell, or share PRO entitlements beyond their expressly granted
+  user, account, device, organization, or other scope.
+
+Commercial source reuse, authorized modifications or redistribution, resale,
+and third-party hosting require separate written permission that expressly
+covers the proposed activity. An ordinary product purchase, subscription, or
+activation code grants only the applicable product-use entitlement; it does
+not grant these additional rights. Contact the maintainer through the official
+website or repository to request such permission. Section 3 expressly permits
+normal internal commercial use of the authorized official product and does
+not require a separate source-reuse license for that use.
+
+除本许可的例外、第一条保留的权利、适用法律或相应权利人的另行书面授权
+允许外，不得：
+
+- 超出第二条的源码参考许可，将受许可内容复用于其他产品、项目或服务，
+  无论该复用是否出于商业目的。
+- 修改、改编、翻译受许可内容，制作衍生作品或分发修改版。
+- 向他人发布、再分发、转授权、出售、转售、出租或提供受许可内容及官方
+  发行版中的 PRO 部分，或将其作为托管、代管服务提供给第三方。
+- 超出明确授予的用户、账号、设备、组织或其他范围，转让、转售或共享
+  PRO 授权。
+
+源码商业复用、修改或再分发、转售以及向第三方提供托管服务，须取得明确
+涵盖拟进行活动的另行书面授权。普通产品购买、订阅或激活码仅授予相应的
+产品使用权，不授予上述额外权利。可通过官网或仓库联系维护者申请。第三条
+已明确允许获授权官方产品的正常内部商业使用，该使用无需另行取得源码
+复用许可。
+
+5. Activation, notices, and independent rights / 激活、声明与独立权利
+
+Subject to the exceptions and existing rights preserved in this license, you
+may not remove, disable, change, or circumvent license-key functionality,
+membership checks, or other PRO entitlement checks in the Covered Material;
+forge or falsify an entitlement; evade authorized account, device, feature,
+or time limits; or use a modified version to enable functionality for which
+you have not obtained a Valid Entitlement.
+
+You may not remove or obscure required copyright, license, or attribution
+notices, or represent an unofficial product, distribution, or service as
+official or endorsed by EchoInk. This license does not grant trademark rights
+beyond uses permitted by applicable law.
+
+These restrictions apply to legally protected material and rights. They do
+not claim exclusive rights over ideas, functionality, methods, or other
+unprotected matter, or prohibit an independently created implementation merely
+because it has similar functionality. Nothing in this license excludes
+mandatory statutory rights, exceptions, or limitations that cannot lawfully
+be excluded, or narrows independently obtained rights preserved by section 1.
+Possession of such independent software rights does not itself grant access
+to EchoInk accounts or remote services.
+
+在本许可保留的例外和既有权利范围之外，不得移除、停用、更改或绕过受许可
+内容中的许可密钥功能、会员校验或其他 PRO 授权校验；不得伪造或虚构授权，
+规避获授账号、设备、功能或期限限制，或通过修改版开启未取得有效授权的
+功能。
+
+不得移除或掩盖应保留的版权、许可和署名声明，也不得将非官方产品、发行版
+或服务宣称为 EchoInk 官方提供或认可。本许可不授予超出适用法律允许范围
+的商标使用权。
+
+这些限制针对依法受保护的内容和权利，不主张垄断思想、功能、方法或其他
+不受保护的内容，也不因功能相似而禁止独立完成的实现。本许可不排除依法
+不能排除的法定权利、例外或限制，也不缩减第一条保留的合法独立权利。
+取得这些独立的软件权利，本身不授予 EchoInk 账号或远程服务的访问权。
+
+6. Obsidian review and official distribution / Obsidian 审核与官方分发
+
+Obsidian and its designated reviewers and review systems may copy, inspect,
+build, run, and verify Covered Material and Official Distributions solely as
+necessary for security and community-plugin review, including reproducing and
+verifying builds from unmodified release source. This is a limited exception
+to sections 2 through 4 for those review activities, not a grant of general
+PRO use or permission to circumvent activation checks.
+
+When the maintainer submits or maintains EchoInk in Obsidian's community
+channels, Obsidian may host, cache, and distribute unmodified Official
+Distributions through the approved directory and its official installation
+and update channels. Copyright, license, and attribution notices must be
+preserved. These permissions do not authorize derivative products, public
+distribution of modified builds, or other source commercialization.
+
+允许 Obsidian 官方及其指定的审核方和审核系统，仅为安全与社区插件审核
+所必需的目的，复制、检查、构建、运行和验证受许可内容及官方发行版，
+包括复现并验证未经修改的发行源码的构建结果。这是针对上述审核活动对
+第二至第四条的有限例外，不授予一般 PRO 使用权，也不允许绕过激活校验。
+
+维护者向 Obsidian 社区渠道提交或维护 EchoInk 时，允许 Obsidian 通过获准
+目录及其官方安装、更新渠道托管、缓存和分发未经修改的官方发行版。必须
+保留版权、许可和署名声明。这些许可不授权制作衍生产品、公开分发修改版
+构建产物或开展其他源码商业化活动。
+
+7. User data and independent output / 用户数据与独立创作输出
+
+Your notes, personal data, and other content that you independently own are
+not Covered Material merely because you store or process them with EchoInk.
+This license does not claim ownership of them. Independently created output,
+including an independently created Obsidian plugin, does not become Covered
+Material merely because EchoInk was used in its creation.
+
+Output that incorporates Covered Material, third-party material, or protected
+templates remains subject to the applicable rights and licenses for those
+incorporated portions. Using EchoInk to create output does not itself grant
+permission to copy its PRO source, assets, or protected templates into that
+output, and does not guarantee ownership of third-party material.
+
+你的笔记、个人数据及其他自行拥有的内容，不会仅因使用 EchoInk 存储或处理
+就成为受许可内容；本许可不主张其所有权。独立创作输出，包括独立创作的
+Obsidian 插件，不会仅因使用 EchoInk 参与创作就自动成为受许可内容。
+
+如果输出包含受许可内容、第三方材料或受保护模板，其中被纳入的部分仍须
+遵守其原有权利和许可。使用 EchoInk 创作输出，本身不授予将其 PRO 源码、
+素材或受保护模板复制到输出中的权利，也不保证取得第三方材料的所有权。
+
+8. Term, termination, and retained data / 期限、终止与原有数据
+
+Product-use rights for PRO functionality last only for the term and scope of
+the applicable Valid Entitlement. If you breach this license, the permissions
+it grants terminate to the extent permitted by applicable law, subject to any
+mandatory notice or cure requirements. This does not terminate independent
+rights preserved by section 1 or rights that cannot lawfully be terminated.
+
+Expiry or termination does not transfer ownership of your original notes,
+data, or independent output, and does not require their deletion or authorize
+their deletion by EchoInk. The limited permission in section 3 to read existing
+user information through functionality expressly available without activation
+survives expiry or termination. This does not grant continued use of other PRO
+functionality or promise a new recovery or export feature.
+
+Rights not expressly granted are reserved. Rights holders may seek remedies
+available under applicable law for unauthorized acts. This license establishes
+no fixed penalty, promises no particular legal outcome, and specifies no
+exclusive court or jurisdiction.
+
+PRO 功能的产品使用权仅在相应有效授权的期限和范围内有效。违反本许可时，
+本许可授予的权限在适用法律允许的范围内终止，并遵守法律强制要求的通知
+或补救程序；这不终止第一条保留的独立权利或依法不能终止的权利。
+
+授权到期或终止不转移你的原有笔记、数据或独立创作输出的所有权，也不要求
+删除这些内容或授权 EchoInk 删除这些内容。第三条对产品明确保留的无需激活
+即可使用的既有用户资料读取功能的有限许可，在到期或终止后继续有效。
+这不授予其他 PRO 功能的继续使用权，也不承诺新增恢复或导出功能。
+
+未明确授予的权利均予保留。权利人可就未经授权的行为寻求适用法律允许的
+救济。本许可不设定固定处罚，不承诺特定法律结果，也不指定专属法院或
+管辖地。
+
+9. Warranty and liability / 保证与责任
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, AND EXCEPT FOR EXPRESS
+COMMITMENTS IN A SEPARATE AGREEMENT WITH YOU, THE COVERED MATERIAL IS PROVIDED
+"AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+TO THAT SAME EXTENT, THE AUTHORS AND COPYRIGHT HOLDERS ARE NOT LIABLE FOR
+CLAIMS, DAMAGES, OR OTHER LIABILITY ARISING FROM THE COVERED MATERIAL OR ITS
+USE. NOTHING HERE EXCLUDES LIABILITY, CONSUMER RIGHTS, OR OTHER PROTECTIONS
+THAT CANNOT LAWFULLY BE EXCLUDED.
+
+在适用法律允许的最大范围内，且除与你另行签订的协议中的明确承诺外，
+受许可内容按“现状”提供，不附带任何明示或默示保证，包括适销性、特定
+用途适用性或不侵权保证。在同样范围内，作者与著作权人不对因受许可内容
+或其使用产生的请求、损害或其他责任负责。本条不排除依法不得排除的责任、
+消费者权利或其他保护。
+
+10. Language / 语言
+
+The Chinese and English text express the same license. If an interpretation
+conflict cannot be reconciled, the English text controls to the extent
+permitted by applicable law.
+
+中英文条款表达同一许可；如存在无法协调的解释冲突，在适用法律允许范围内
+以英文条款为准。

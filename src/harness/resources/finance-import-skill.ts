@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-EchoInk-Pro
+// Scope and preserved rights: ../../../LICENSE
 /** Product-owned procedure. The Vault copy remains editable through Skill settings. */
 export const FINANCE_IMPORT_SKILL = `## 用途与触发
 
