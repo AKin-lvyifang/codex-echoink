@@ -25,14 +25,26 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "theme-isolation") {
     if (!method) throw new Error(`Production provider field missing: ${name}`);
     return method.getText(ast);
   }).join("\n");
+  const avatarAst=ts.createSourceFile("agent-identity-modal.ts",await readFile(path.join(rootDir,"src/ui/agent-identity-modal.ts"),"utf8"),ts.ScriptTarget.Latest,true);
+  const avatarClass=avatarAst.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==="AgentIdentityModal");
+  const avatarMethod=avatarClass.members.find(node=>ts.isMethodDeclaration(node)&&node.name.getText(avatarAst)==="renderAvatarOption").getText(avatarAst);
+  const avatarEquals=avatarAst.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="avatarEquals").getText(avatarAst);
   const directory = path.join(outputDir, "theme-isolation");
   await mkdir(directory, { recursive: true });
   await esbuild.build({
     stdin: { contents: `
-      import {runThemeIsolation} from "./src/tests/theme-isolation-dom";
+      import {runThemeIsolation,runThemeIsolationExtras} from "./src/tests/theme-isolation-dom";
       import {createOriginInput,createOriginButton} from "./src/settings/origin-controls";
       import {apiProviderConfiguredNameOverride,apiProviderPresetDisplayName} from "./src/settings/provider-presets";
       import {setIcon} from "obsidian";
+      import {AGENT_AVATAR_PRESETS} from "./src/ui/agent-avatar-presets";
+      ${avatarEquals}
+      class AvatarFields {
+        avatarValue={kind:"default"};radioGroupName="fixture-avatar";avatarErrorEl=null;avatarGridEl=null;
+        refreshAvatarSelection(){}
+        ${avatarMethod}
+        render(parent){this.avatarGridEl=parent.createDiv({cls:"echoink-agent-avatar-grid"});this.renderAvatarOption("default","默认头像","data:image/svg+xml;charset=utf-8,"+encodeURIComponent(AGENT_AVATAR_PRESETS[0].assetPath),{kind:"default"});}
+      }
       class ProviderFields {
         draft={name:"",apiKey:""}; providerId="deepseek"; apiKeyInput="";
         options={copy:{providers:{keyPlaceholder:"API key",savedKeyPlaceholder:"Saved key",showKey:"Show key",hideKey:"Hide key"}}};
@@ -41,7 +53,8 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "theme-isolation") {
         ${methods}
         render(parent){this.renderProviderNameField(parent);this.renderApiKeyField(parent);}
       }
-      runThemeIsolation(ProviderFields).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});
+      const test=new URLSearchParams(location.search).has("extras")?runThemeIsolationExtras(AvatarFields):runThemeIsolation(ProviderFields);
+      test.catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});
     `, resolveDir: rootDir, loader: "ts" },
     bundle: true, format: "esm", platform: "browser", define: { "process.env.NODE_ENV": '"development"' },
     outfile: path.join(directory, "regression.js"), logLevel: "silent", loader: {".md":"text",".txt":"text",".svg":"text"},

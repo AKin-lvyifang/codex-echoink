@@ -22,6 +22,9 @@
   --font-interface-theme:'??';--font-text-theme:'??';--default-font:'??';
   --font-interface:var(--font-interface-override),var(--font-interface-theme),var(--default-font),var(--font-default);
   --font-text:var(--font-text-override),var(--font-text-theme),var(--font-default);
+  --font-monospace-theme:'??';
+  --font-monospace-default:ui-monospace,SFMono-Regular,"Cascadia Mono","Roboto Mono","DejaVu Sans Mono","Liberation Mono",Menlo,Monaco,"Consolas","Source Code Pro",monospace;
+  --font-monospace:var(--font-monospace-override),var(--font-monospace-theme),var(--font-monospace-default);
   --font-ui-smaller:12px;--font-ui-small:13px;--font-ui-medium:15px;--font-ui-large:20px;
   /* These aliases originally resolve on body, before page color mappings.
      Keep those resolved host defaults instead of recomputing with page tokens. */
@@ -118,3 +121,8 @@
 .echoink-chat-surface,.codex-review-preview{background:var(--background-primary)}
 /* This search wrapper is the real picker field, not a whole setting row. */
 .modal.echoink-knowledge-note-picker .picker-search:focus-within{border-color:var(--line);box-shadow:none}
+/* Owned UI image primitives only: keep existing avatar clipping/rounding and
+   finance icon size/object-fit. Markdown images and report iframes are outside
+   these selectors, as are images belonging to the host or another plugin. */
+:where(body:not(.is-mobile)) :is(.echoink-finance-icon-art,.echoink-agent-avatar-option,.echoink-agent-profile-avatar,.codex-agent-avatar) img {box-shadow:none}
+:where(body:not(.is-mobile)) :is(.echoink-finance-icon-art,.echoink-agent-profile-avatar) img {border-radius:0}

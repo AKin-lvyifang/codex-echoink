@@ -10,6 +10,8 @@ import type {StoredSession} from "../settings/settings";
 import {Modal,type App} from "obsidian";
 import {KnowledgeNotePickerModal} from "../settings/knowledge-note-picker-modal";
 import {showEchoInkMenu} from "../ui/theme-boundary";
+import {renderFinanceIcon} from "../lifestyle/finance-icon-picker";
+import {FINANCE_BRAND_ASSETS} from "../lifestyle/finance-brand-assets";
 
 // The real styles transition colors/borders for 160–200ms. Compare endpoints,
 // not an in-between frame when switching the same DOM between stylesheets.
@@ -58,6 +60,45 @@ function installDomMethods(owner: Window) {
   const elementPrototype=(owner as typeof window).Element.prototype;
   elementPrototype.addClass=prototype.addClass;
   elementPrototype.setAttr=prototype.setAttr;
+}
+
+/** Incremental proof for the two confirmed gaps, without replaying other checks. */
+export async function runThemeIsolationExtras(AvatarFields:new()=>{render(parent:HTMLElement):void}) {
+  installDomMethods(window);
+  const fixture=document.querySelector<HTMLElement>("#fixture")!,report=document.querySelector<HTMLElement>("#report")!;
+  const product=document.querySelector<HTMLStyleElement>("#product")!,before=document.querySelector<HTMLStyleElement>("#theme-before")!,after=document.querySelector<HTMLStyleElement>("#theme-after")!;
+  const [baseline,current,interference]=await Promise.all(["baseline.css","styles.css","things-theme.css"].map(path=>fetch(path).then(response=>response.text())));
+  fixture.style.pointerEvents="none";
+  const finance=fixture.createDiv({cls:"echoink-finance-dialog"});finance.createEl("h3",{text:"财务品牌图标"});
+  const art=finance.createSpan({cls:"echoink-finance-icon-art"});renderFinanceIcon(art,FINANCE_BRAND_ASSETS[0].id);
+  const avatar=fixture.createDiv({cls:"echoink-theme-boundary"});avatar.createEl("h3",{text:"身份头像选项"});new AvatarFields().render(avatar);
+  const settings=fixture.createDiv({cls:"echoink-settings-demo"});settings.createEl("h3",{text:"设置等宽输入"});const settingEditor=settings.createEl("textarea");settingEditor.value="const note = 'EchoInk';";
+  const diary=fixture.createDiv({cls:"echoink-diary-view"});diary.createEl("h3",{text:"英文日记等宽输入"});const diaryEditor=diary.createEl("textarea",{cls:"echoink-diary-editor"});diaryEditor.value="Today I made a little progress.";
+  const content=diary.createDiv({cls:"echoink-diary-reading"}).createEl("img",{attr:{src:art.querySelector<HTMLImageElement>("img")!.src,alt:"User content control"}});
+  content.style.width="22px";
+  const outside=fixture.createEl("img",{attr:{src:content.src,alt:"Host image control"}});outside.style.width="22px";
+  const images=[art.querySelector<HTMLImageElement>("img")!,avatar.querySelector<HTMLImageElement>("img")!],editors=[settingEditor,diaryEditor];
+  const results:string[]=[];
+  const run=async(name:string,test:()=>Promise<void>)=>{try{await test();results.push(`PASS ${name}`);}catch(error){results.push(`FAIL ${name}: ${String(error)}`);}report.textContent=results.join("\n");};
+  for(const mode of ["theme-light","theme-dark"]){
+    await run(`${mode}: production UI images preserve default shape/shadow`,async()=>{
+      document.body.className=mode+" mod-macos";document.body.dataset.echoinkTheme="green";before.textContent=after.textContent="";product.textContent=baseline;await frame();const original=images.map(image=>read(image));
+      product.textContent=current;await frame();assert(JSON.stringify(images.map(image=>read(image)))===JSON.stringify(original),"default image geometry/style changed");
+      for(const order of [before,after]){
+        order.textContent=interference;await frame();
+        images.forEach((image,index)=>assert(JSON.stringify(read(image))===JSON.stringify(original[index]),`${image.parentElement!.className}: ${JSON.stringify(original[index])} -> ${JSON.stringify(read(image))}`));
+        assert(getComputedStyle(outside).boxShadow!=="none"&&getComputedStyle(content).boxShadow!=="none","UI image reset leaked into host/user content");order.textContent="";
+      }
+    });
+    for(const override of ["'??'","'Courier New'"])for(const size of [16,24])await run(`${mode}/mono=${override}/H=${size}: default and user override chain`,async()=>{
+      document.body.className=mode+" mod-macos";document.body.style.setProperty("--font-monospace-override",override);document.body.style.setProperty("--font-text-size",`${size}px`);
+      before.textContent=after.textContent="";product.textContent=baseline;await frame();const original=editors.map(editor=>read(editor));
+      product.textContent=current;await frame();assert(JSON.stringify(editors.map(editor=>read(editor)))===JSON.stringify(original),"default monospace style changed");
+      for(const order of [before,after]){order.textContent=interference;await frame();editors.forEach((editor,index)=>assert(JSON.stringify(read(editor))===JSON.stringify(original[index]),`monospace chain changed: ${original[index].fontFamily} -> ${read(editor).fontFamily}`));order.textContent="";}
+    });
+  }
+  document.body.className="theme-light mod-macos";document.body.style.setProperty("--font-monospace-override","'??'");document.body.style.setProperty("--font-text-size","16px");fixture.style.removeProperty("pointer-events");product.textContent=current;after.textContent=interference;
+  report.dataset.result=results.some(result=>result.startsWith("FAIL"))?"failed":"passed";report.textContent=results.join("\n")+"\nBoundary: incremental image/monospace proof, production renderers and exact immutable default CSS; native acceptance remains with control.";
 }
 
 export async function runThemeIsolation(ProviderFields: new()=>{render(parent: HTMLElement):void}) {
