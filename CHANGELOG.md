@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.6.2 - 2026-10-10
+
+![EchoInk 2.6.2](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.6.2/assets/releases/echoink-agent-2.6.2-release.png)
+
+### 中文
+
+- 修复桌面端同设备跨仓库启用报错，登录后自动恢复已有设备授权；优化首页加载与工作区恢复。
+- 明确 MIT 基础代码与商业许可 PRO 的范围，保留既有许可和第三方权利，详见 [LICENSE](https://github.com/AKin-lvyifang/codex-echoink/blob/2.6.2/LICENSE)。
+
+升级后先打开此前成功启用的仓库一次，完成旧设备凭据迁移。手动升级只替换下方三个插件文件，保留设置与数据。
+
+### English
+
+- Fixed activation errors across vaults on the same desktop device and restored existing device authorization after sign-in. Improved Home loading and workspace restoration.
+- Clarified the scope of the MIT-licensed base and commercially licensed PRO components, preserving existing grants and third-party rights. See [LICENSE](https://github.com/AKin-lvyifang/codex-echoink/blob/2.6.2/LICENSE).
+
+After upgrading, open the vault where you previously activated this device once to migrate its existing credentials. For manual upgrades, replace only the three plugin files below and keep your settings and data.
+
 ## 2.6.1 - 2026-10-09
 
 ![EchoInk 2.6.1](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.6.1/assets/releases/echoink-agent-2.6.1-release.png)
