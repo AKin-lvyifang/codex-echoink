@@ -84,6 +84,11 @@ export async function createPluginAccountService(
         : "missing";
     },
   );
+  const usageStore = plugin.usageStore;
+  if (usageStore) service.setStatisticsSource({
+    read: () => usageStore.readStatistics(),
+    subscribe: listener => usageStore.subscribe(listener),
+  });
   void service.initialize();
   const refresh = () => {
     void service.refresh();

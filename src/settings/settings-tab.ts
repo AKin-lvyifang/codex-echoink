@@ -6,6 +6,7 @@ import { renderTodoStatistics } from "./todo-statistics";
 import { renderEnglishDiaryActivity } from "./english-diary-activity";
 import { renderAppearancePicker } from "./appearance-picker";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
+import { renderManualDreamAction } from "./manual-dream-action";
 import { OriginSetting } from "./origin-setting";
 import { createOriginInput, createOriginButton, createOriginSwitch, createOriginSlider, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
 import { renderSettingsKnowledgeDashboard } from "./knowledge-dashboard";
@@ -1106,6 +1107,7 @@ export class CodexSettingTab extends PluginSettingTab {
           for (const session of this.plugin.settings.sessions) session.defaultMemoryMode = mode;
           await this.plugin.saveSettings(true);
           this.plugin.getCodexView()?.refreshPersonalizationUi();
+          this.scheduleDisplay();
         });
       }));
 
@@ -1122,26 +1124,31 @@ export class CodexSettingTab extends PluginSettingTab {
         toggle.setValue(this.plugin.settings.memory.dreamEnabled).onChange(async (enabled) => {
           this.plugin.settings.memory.dreamEnabled = enabled;
           await this.plugin.saveSettings();
+          this.scheduleDisplay();
         });
       }));
 
     addSettingsHelp(dreamToggle, zh ? "Obsidian 打开期间，定时整理 Memory，更新用户画像与 Agent 长期形成的处事方式。" : "While Obsidian is open, consolidate Memory and update the user profile and the Agent’s learned ways of working.", dreamToggle.descEl.textContent ?? "");
 
-    const runsSetting = applySettingsRow(new OriginSetting(memoryGroup)
-      .setName(zh ? "每日整理次数" : "Runs per day")
-      .setDesc(zh ? "每天执行几次离线整理（1–6 次）。" : "Choose how many consolidation runs to schedule each day (1–6)."));
-    runsSetting.controlEl.addClass("general-range");
-    const runsOutput = runsSetting.controlEl.createEl("output", { text: zh ? `${this.plugin.settings.memory.dreamRunsPerDay} 次/天` : `${this.plugin.settings.memory.dreamRunsPerDay}/day` });
-    const slider = createOriginSlider(runsSetting.controlEl, {
-      value: this.plugin.settings.memory.dreamRunsPerDay, min: 1, max: 6, step: 1,
-      label: zh ? "每日整理次数" : "Runs per day",
-      onValueChange: (value) => { runsOutput.setText(zh ? `${value} 次/天` : `${value}/day`); },
-      onValueCommit: (value) => {
-        this.plugin.settings.memory.dreamRunsPerDay = value;
-        void this.plugin.saveSettings();
-      }
-    });
-    runsSetting.controlEl.insertBefore(slider, runsOutput);
+    if (this.plugin.settings.memory.useLongTermMemory && this.plugin.settings.memory.dreamEnabled) {
+      const dreamOptions = memoryGroup.createDiv({ cls: "echoink-dream-options" });
+      renderManualDreamAction(dreamOptions, this.plugin, this.plugin.settings.settingsLanguage, () => this.scheduleDisplay());
+      const runsSetting = applySettingsRow(new OriginSetting(dreamOptions)
+        .setName(zh ? "每日整理次数" : "Runs per day")
+        .setDesc(zh ? "每天执行几次离线整理（1–6 次）。" : "Choose how many consolidation runs to schedule each day (1–6)."));
+      runsSetting.controlEl.addClass("general-range");
+      const runsOutput = runsSetting.controlEl.createEl("output", { text: zh ? `${this.plugin.settings.memory.dreamRunsPerDay} 次/天` : `${this.plugin.settings.memory.dreamRunsPerDay}/day` });
+      const slider = createOriginSlider(runsSetting.controlEl, {
+        value: this.plugin.settings.memory.dreamRunsPerDay, min: 1, max: 6, step: 1,
+        label: zh ? "每日整理次数" : "Runs per day",
+        onValueChange: (value) => { runsOutput.setText(zh ? `${value} 次/天` : `${value}/day`); },
+        onValueCommit: (value) => {
+          this.plugin.settings.memory.dreamRunsPerDay = value;
+          void this.plugin.saveSettings();
+        }
+      });
+      runsSetting.controlEl.insertBefore(slider, runsOutput);
+    }
 
     this.renderFilePersonalizationSettings(page);
     this.renderDeveloperModeSettings(page);

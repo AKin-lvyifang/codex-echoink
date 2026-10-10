@@ -2,6 +2,7 @@ import {
   createUnavailableAccountAdapter,
   type AccountActions,
   type AccountMembershipViewModel,
+  type AccountStatistics,
   type MembershipState,
 } from "../settings/account-membership-model";
 import type {
@@ -55,6 +56,10 @@ interface Operation {
   token?: string;
   accountId?: string;
 }
+export interface AccountStatisticsSource {
+  read(): AccountStatistics;
+  subscribe(listener: () => void): () => void;
+}
 function isMembershipState(state: string): state is MembershipState {
   return ["unavailable", "anonymous", "free", "active", "lifetime", "expired", "revoked", "scheduled", "verification-required", "device-required", "device-limit", "offline-valid"].includes(state);
 }
@@ -73,6 +78,8 @@ export class AccountService implements CapabilityAccess {
   private refreshGeneration = -1;
   private products: MembershipProduct[] = [];
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+  private statisticsSource: AccountStatisticsSource | null = null;
+  private unsubscribeStatistics: (() => void) | null = null;
   readonly actions: AccountActions;
 
   constructor(
@@ -537,6 +544,7 @@ export class AccountService implements CapabilityAccess {
       state = "verification-required";
     return {
       ...empty,
+      statistics: this.statisticsSource?.read() ?? empty.statistics,
       identity: this.state.account
         ? {
             ...this.state.account,
@@ -616,8 +624,18 @@ export class AccountService implements CapabilityAccess {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+  setStatisticsSource(source: AccountStatisticsSource | null): void {
+    this.unsubscribeStatistics?.();
+    this.unsubscribeStatistics = null;
+    this.statisticsSource = this.closed ? null : source;
+    if (this.statisticsSource) this.unsubscribeStatistics = this.statisticsSource.subscribe(() => this.emit());
+    this.emit();
+  }
   dispose(): void {
     this.closed = true;
+    this.unsubscribeStatistics?.();
+    this.unsubscribeStatistics = null;
+    this.statisticsSource = null;
     if (this.expiryTimer) clearTimeout(this.expiryTimer);
     this.expiryTimer = null;
     ++this.generation;

@@ -8,6 +8,7 @@ import {
   type SessionManager
 } from "@earendil-works/pi-coding-agent";
 import type { Context, Message, Model } from "@earendil-works/pi-ai";
+import { estimateTokenValue, ESTIMATED_IMAGE_TOKENS } from "../usage/token-estimator";
 import {
   calculatePiEffectiveInputBudget,
   PiContextBudgetError,
@@ -140,6 +141,8 @@ export interface BuildPiContextLedgerInput {
   readonly model: Pick<Model<any>, "provider" | "id">;
   readonly budget: Readonly<PiEffectiveInputBudget>;
   readonly context: Readonly<Context>;
+  /** Native attachments added to the wire payload outside text Context. */
+  readonly additionalInputTokens?: number;
   readonly contextEntries: readonly SessionEntry[];
   readonly transientContextMessages?: readonly AgentMessage[];
   readonly vaultToolNames: ReadonlySet<string>;
@@ -232,7 +235,8 @@ export class PiContextLedgerRecorder {
 
   recordProviderRequest(
     context: Readonly<Context>,
-    execution: Readonly<PiContextLedgerExecutionIdentity>
+    execution: Readonly<PiContextLedgerExecutionIdentity>,
+    additionalInputTokens = 0
   ): PiContextLedger | null {
     if (execution.conversationId !== this.options.conversationId) {
       return null;
@@ -253,6 +257,7 @@ export class PiContextLedgerRecorder {
       model: this.options.model,
       budget: this.options.budget,
       context,
+      additionalInputTokens,
       contextEntries: this.options.sessionManager.buildContextEntries(),
       transientContextMessages: requestKind === "agent"
         ? this.transientContextMessages
@@ -290,6 +295,12 @@ export function buildPiContextLedger(
 ): PiContextLedger {
   const counter = input.tokenCounter ?? estimatePiContextTokens;
   const accumulator = new CategoryAccumulator(counter);
+  if (input.additionalInputTokens) {
+    accumulator.addMeasurement("temporary_materials", {
+      tokens: input.additionalInputTokens,
+      accuracy: "estimated"
+    });
+  }
   const memoryToolNames = input.memoryToolNames ?? new Set<string>();
   const systemPrompt = input.context.systemPrompt ?? "";
   if (systemPrompt) {
@@ -378,7 +389,7 @@ export function buildPiContextLedger(
   );
   const diagnostics = [
     ...(accuracy === "estimated"
-      ? ["当前 Provider 未提供可按分类回读的精确 Tokenizer 计数，以下用量为估算。"]
+      ? ["按 EchoInk 通用 Token 标准估算输入内容；不等同于服务商账单。"]
       : []),
     ...(overBudgetTokens > 0
       ? ["本轮输入估算已超过 effectiveInputBudget，Pi 将按同一边界触发原生 Compaction。"]
@@ -421,19 +432,8 @@ export function buildPiContextLedger(
 export function estimatePiContextTokens(
   value: unknown
 ): PiContextTokenMeasurement {
-  const { serializable, imageCount } = replaceImagesForEstimate(value);
-  const text = typeof serializable === "string"
-    ? serializable
-    : stableStringify(serializable);
-  let han = 0;
-  let other = 0;
-  for (const character of text) {
-    if (/\p{Script=Han}/u.test(character)) han += 1;
-    else other += 1;
-  }
-  const tokens = han + Math.ceil(other / 4) + (imageCount * 1_200);
   return Object.freeze({
-    tokens: Math.max(0, tokens),
+    tokens: estimateTokenValue(value),
     accuracy: "estimated"
   });
 }
@@ -805,7 +805,7 @@ function addConversationMessage(
   if (imageCount > 0) {
     const temporaryTokens = Math.min(
       Math.max(0, full.tokens - assignedTokens),
-      imageCount * 1_200
+      imageCount * ESTIMATED_IMAGE_TOKENS
     );
     assignedTokens += temporaryTokens;
     accumulator.addMeasurement("temporary_materials", {
@@ -1021,28 +1021,6 @@ function unexpectedToolDiagnostics(
     `发现未归类的 Pi Tool Schema，暂计入 Vault Tool Schema：${visible}${remainder}`
       .slice(0, 1_000)
   ];
-}
-
-function replaceImagesForEstimate(value: unknown): {
-  serializable: unknown;
-  imageCount: number;
-} {
-  let imageCount = 0;
-  const visit = (item: unknown): unknown => {
-    if (Array.isArray(item)) return item.map(visit);
-    if (!recordValue(item)) return item;
-    if (item.type === "image" && typeof item.data === "string") {
-      imageCount += 1;
-      return {
-        ...item,
-        data: "[image bytes omitted from estimated text tokens]"
-      };
-    }
-    return Object.fromEntries(
-      Object.entries(item).map(([key, nested]) => [key, visit(nested)])
-    );
-  };
-  return { serializable: visit(value), imageCount };
 }
 
 function stableStringify(value: unknown): string {

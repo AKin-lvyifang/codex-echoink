@@ -9,7 +9,7 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { App, Modal, TFile, TFolder, openTestModals } from "obsidian";
+import { App, Modal, TFile, TFolder, openTestModals, openTestNoticeMessages } from "obsidian";
 import type {
   Api,
   AssistantMessage,
@@ -127,6 +127,8 @@ import {
   PiProviderProtocolTransport,
 } from "../harness/pi/pi-provider-protocol-adapter";
 import { preventProviderRetryAfterPartial, providerFailureText } from "../harness/pi/provider-failure";
+import { estimateUsageInputTokens } from "../harness/usage/token-estimator";
+import type { UsageRequestEvent } from "../harness/usage/usage-stream";
 import {
   createPiProviderModelDefinition
 } from "../harness/pi/production-pi-model-resolver";
@@ -9608,6 +9610,8 @@ async function assertAnthropicDocumentTransportContract(): Promise<void> {
   let calls = 0;
   const payloads: unknown[] = [];
   const contexts: Context[] = [];
+  const usageEvents: UsageRequestEvent[] = [];
+  const observedContexts: Readonly<Context>[] = [];
   const fallbackAdapter = providerStreamFixture(async (
     requestedModel,
     requestContext,
@@ -9626,6 +9630,8 @@ async function assertAnthropicDocumentTransportContract(): Promise<void> {
     authorityId: "document-transport-authority",
     storeSetId: "document-transport-store",
     resolveAuthToken: async () => "fixture-document-key",
+    recordUsage: (event) => { usageEvents.push(event); },
+    observeRequest: (context) => { observedContexts.push(structuredClone(context)); },
     dispatcher: new PiProviderProtocolDispatcher({
       "anthropic-messages": fallbackAdapter
     }),
@@ -9656,6 +9662,10 @@ async function assertAnthropicDocumentTransportContract(): Promise<void> {
   ).result();
   assert.equal(afterToolResult.stopReason, "stop");
   assert.equal(calls, 3, "tool continuation adds one text-only Provider request");
+  assert.equal(usageEvents.length, 2, "rejected native PDF has no fabricated usage; fallback and tool continuation each count once");
+  assert.equal(new Set(usageEvents.map((event) => event.requestId)).size, 2);
+  assert.deepEqual(usageEvents.map((event) => event.inputTokens), contexts.slice(1).map(estimateUsageInputTokens));
+  assert.deepEqual(observedContexts, contexts, "sidebar observes each actual dispatched context, including PDF fallback");
   assert.match(JSON.stringify(payloads[0]), /"type":"document"/u);
   assert.doesNotMatch(JSON.stringify(payloads[1]), /"type":"document"/u);
   assert.doesNotMatch(JSON.stringify(payloads[2]), /"type":"document"/u);
@@ -9777,6 +9787,25 @@ async function assertAnthropicDocumentTransportContract(): Promise<void> {
     1,
     "fallback context over budget must not dispatch a second request"
   );
+}
+
+async function assertUsageGenerationWiring(): Promise<void> {
+  const usage: UsageRequestEvent[] = [];
+  const contexts: Context[] = [];
+  const adapter = providerStreamFixture(async (_model, context) => {
+    contexts.push(structuredClone(context));
+    return { status: "done", partialText: "统一统计 OK" };
+  });
+  const draft = { ...providerModelDiscoveryDraft("openai-completions"), modelId: "usage-fixture", apiKey: "fixture-key" };
+  const service = new PiProviderConfigurationService({ app: new App(), settings: structuredClone(DEFAULT_SETTINGS), getVaultPath: () => "/fixture-vault" } as never, {
+    adapters: { "openai-completions": adapter },
+    recordUsage: (event) => { usage.push(event); }
+  });
+  assert.equal(await service.generateText({ draft, systemPrompt: "Context", userPrompt: "测试中文 input", timeoutMs: 1_000 }), "统一统计 OK");
+  assert.equal((await service.testConnection(draft)).status, "available");
+  assert.deepEqual(usage.map((event) => event.source), ["background", "connection-test"]);
+  assert.deepEqual(usage.map((event) => event.inputTokens), contexts.map(estimateUsageInputTokens));
+  assert.ok(usage.every((event) => event.outputTokens > 0 && event.standard === "echoink-o200k-v1"));
 }
 
 function providerStreamFixture(
@@ -11398,6 +11427,85 @@ async function assertAgentIdentityCardPlacementAndCopy(): Promise<void> {
     );
   }
   console.log("PASS settings: merged resume-style Agent profile exposes only the public projection");
+}
+
+async function assertManualDreamSettingsUi(): Promise<void> {
+  installProviderModalDomFixture();
+  const state = createIdentityFixtureState();
+  const { plugin } = createIdentityTestPlugin(state);
+  plugin.saveSettings = async () => undefined;
+  let calls = 0;
+  let complete: ((value: any) => void) | undefined;
+  let nextResult: any = null;
+  let deferred = true;
+  const system = { ...createCognitiveSystemStub(), forceDreamRun: async () => {
+    calls += 1;
+    if (deferred) return await new Promise(resolve => { complete = resolve; });
+    if (nextResult instanceof Error) throw nextResult;
+    return nextResult;
+  } };
+  plugin.getCognitiveSystem = async () => system;
+  const tab = new CodexSettingTab(withSettingsTabDefaults(plugin) as never);
+  (tab as any).personalMemoryState = state;
+  const findButton = () => tab.containerEl.querySelectorAll<ProviderModalTestElement>("button")
+    .find(button => ["立即做梦", "整理中…", "Dream now", "Consolidating…"].includes(button.textContent));
+  const result = { startedAt: 1, finishedAt: 2, processedMemoryIds: ["fixture"], failedMemoryIds: [],
+    factsCreated: 1, factsReused: 0, factsRetired: 0, decayed: 0, autoDisabled: 0,
+    agentUpdated: false, userUpdated: false, providerUnavailable: false, committed: true, error: null };
+  openTestNoticeMessages.length = 0;
+  tab.display();
+  assert.ok(findButton(), "enabled Dream exposes the normal settings action");
+  findButton()!.click();
+  findButton()!.click();
+  await settleMicrotasks();
+  assert.equal(calls, 1, "double click starts exactly one production Dream call");
+  tab.display();
+  assert.equal(findButton()?.disabled, true, "redrawing settings preserves the running state");
+  assert.equal(findButton()?.textContent, "整理中…");
+  findButton()!.click();
+  assert.equal(calls, 1, "redrawn button cannot dispatch a duplicate run");
+  complete!(result);
+  await flushProviderModalTasks();
+  tab.display();
+  assert.equal(findButton()?.disabled, false);
+  assert.equal(openTestNoticeMessages.length, 1, "one native Notice reports one run");
+  assert.match(openTestNoticeMessages.at(-1)!, /完成|已整理/u);
+
+  deferred = false;
+  for (const [value, expected] of [
+    [null, /忙|稍后|未运行/u],
+    [{ ...result, providerUnavailable: true, committed: false }, /模型|Provider/u],
+    [{ ...result, processedMemoryIds: [], factsCreated: 0, committed: false }, /无需|暂无|没有/u],
+    [{ ...result, failedMemoryIds: ["failed"] }, /失败|未完成|待重试/u],
+    [{ ...result, committed: false, error: "fixture_error" }, /失败|未完成/u],
+    [new Error("fixture failure"), /失败|未完成/u]
+  ] as const) {
+    nextResult = value;
+    findButton()!.click();
+    await flushProviderModalTasks();
+    tab.display();
+    assert.match(openTestNoticeMessages.at(-1)!, expected);
+    assert.equal(findButton()?.disabled, false, "every result releases the manual action");
+  }
+  nextResult = { ...result, processedMemoryIds: [], factsCreated: 0, userUpdated: true };
+  findButton()!.click();
+  await flushProviderModalTasks();
+  assert.doesNotMatch(openTestNoticeMessages.at(-1)!, /暂无|无需整理/u,
+    "experience-only profile updates are not mislabeled as an empty run");
+
+  plugin.settings.memory.dreamEnabled = false;
+  tab.display();
+  assert.equal(findButton(), undefined, "disabled Dream hides the manual action");
+  plugin.settings.memory.dreamEnabled = true;
+  plugin.settings.memory.useLongTermMemory = false;
+  tab.display();
+  assert.equal(findButton(), undefined, "disabled long-term memory hides the manual action");
+  plugin.settings.memory.useLongTermMemory = true;
+  plugin.settings.settingsLanguage = "en";
+  tab.display();
+  assert.equal(findButton()?.textContent, "Dream now");
+  tab.hide();
+  console.log("PASS manual Dream: production settings entry, deduplication across redraws, outcomes and toggle gates");
 }
 
 async function assertCustomWelcomeSettingsUi(): Promise<void> {
@@ -13222,7 +13330,13 @@ async function writeSettingsVisualFixtures(): Promise<void> {
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-discovery-related") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "manual-dream") {
+  await assertManualDreamSettingsUi();
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "usage") {
+  await assertUsageGenerationWiring();
+  await assertAnthropicDocumentTransportContract();
+  console.log("PASS usage wiring: background generation, connection check, actual dispatch, PDF fallback and tool continuation");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-discovery-related") {
   assertProviderModelReasoningOverrideBoundary();
   await runHarnessV2PiObsidianSecretStorageTests();
   await runHarnessV2PiProviderSecurityTests();

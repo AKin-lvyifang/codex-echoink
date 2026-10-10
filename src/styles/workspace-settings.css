@@ -67,6 +67,7 @@
 
 /* General responds to the available settings pane, independent of browser width. */
 .echoink-settings-demo .general-page{container:general-page / inline-size}
+.echoink-settings-demo .echoink-dream-options{padding-inline-start:18px;min-width:0}
 .echoink-settings-demo .echoink-agent-profile-card{container:general-profile / inline-size}
 .echoink-settings-demo .echoink-agent-profile-card-body{grid-template-columns:minmax(170px,.66fr) minmax(0,2fr)}
 .echoink-settings-demo .echoink-agent-profile-identity{min-width:0}
@@ -1299,7 +1300,7 @@
 .echoink-settings-demo .health-explanation[hidden],.echoink-settings-demo .history-panel [hidden]{display:none!important}
 .echoink-settings-demo .health-explanation>.panel-heading{align-items:flex-start;gap:16px;margin-bottom:14px}
 .echoink-settings-demo .health-explanation>.panel-heading button{margin-left:auto;flex:none}
-.echoink-settings-demo .wiki-share{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.echoink-settings-demo .wiki-share{display:flex;align-items:center;justify-content:flex-end;gap:7px;white-space:nowrap}
 .echoink-settings-demo .wiki-share-track{height:4px;width:42px;flex:none;border-radius:3px;background:var(--soft);overflow:hidden}
 .echoink-settings-demo .wiki-share-track>span{display:block;height:100%;background:var(--accent);border-radius:inherit}
 .echoink-settings-demo button.queue-count{display:inline-flex;align-items:center;justify-content:center;min-width:25px;padding:2px 7px;border-radius:4px;background:var(--accent-bg);color:var(--accent);line-height:1.5;font-variant-numeric:tabular-nums}

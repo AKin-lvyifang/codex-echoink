@@ -1,8 +1,10 @@
 import type {
   AssistantMessage,
+  Context,
   ProviderResponse,
   ProviderStreams
 } from "@earendil-works/pi-ai";
+import { observeUsageStream, type UsageRequestEvent } from "../harness/usage/usage-stream";
 import { requestUrl } from "obsidian";
 import {
   PiProviderProtocolDispatcher,
@@ -119,6 +121,7 @@ export class PiProviderConfigurationService {
       adapters?: Readonly<Partial<Record<ApiProviderProtocol, ProviderStreams>>>;
       textGenerationDispatcher?: Pick<PiProviderProtocolDispatcher, "stream">;
       resolveOAuthAccessToken?: () => Promise<string>;
+      recordUsage?(event: UsageRequestEvent): void | Promise<void>;
       timeoutMs?: number;
     } = {}
   ) {}
@@ -176,7 +179,8 @@ export class PiProviderConfigurationService {
       dispatcher: this.options.adapters
         ? new PiProviderProtocolDispatcher(this.options.adapters)
         : createConfiguredPiProviderProtocolDispatcher(normalized),
-      timeoutMs: this.options.timeoutMs
+      timeoutMs: this.options.timeoutMs,
+      recordUsage: this.options.recordUsage
     });
   }
 
@@ -207,17 +211,19 @@ export class PiProviderConfigurationService {
         ?? (this.options.adapters
           ? new PiProviderProtocolDispatcher(this.options.adapters)
           : createConfiguredPiProviderProtocolDispatcher(normalized));
-      const stream = dispatcher.stream({
-        model: createProviderModelFromDraft(normalized),
-        context: {
-          systemPrompt: input.systemPrompt,
-          messages: [{
-            role: "user",
-            content: input.userPrompt,
-            timestamp: Date.now()
-          }],
-          tools: []
-        },
+      const model = createProviderModelFromDraft(normalized);
+      const context: Context = {
+        systemPrompt: input.systemPrompt,
+        messages: [{
+          role: "user",
+          content: input.userPrompt,
+          timestamp: Date.now()
+        }],
+        tools: []
+      };
+      const upstream = dispatcher.stream({
+        model,
+        context,
         apiKey,
         options: {
           signal: controller.signal,
@@ -231,6 +237,11 @@ export class PiProviderConfigurationService {
           timeoutMs
         }
       });
+      const stream = this.options.recordUsage ? observeUsageStream(upstream, {
+        context, provider: model.provider, model: model.id, source: "background",
+        recordUsage: this.options.recordUsage,
+        onRecordError: () => console.error("EchoInk background usage could not be recorded")
+      }) : upstream;
       const message = await stream.result();
       const text = assistantText(message);
       if (
@@ -403,6 +414,7 @@ export async function testProviderConnection(input: {
   apiKey: string;
   dispatcher: PiProviderProtocolDispatcher;
   timeoutMs?: number;
+  recordUsage?(event: UsageRequestEvent): void | Promise<void>;
 }): Promise<PiProviderConnectionTestResult> {
   const controller = new AbortController();
   const codex = input.draft.providerId === "openai-codex";
@@ -417,17 +429,18 @@ export async function testProviderConnection(input: {
       ? resolveEchoInkPiModelReasoningCapabilities(model)
         .enabledOptions[0]?.piLevel
       : undefined;
-    const stream = input.dispatcher.stream({
+    const context: Context = {
+      systemPrompt: "Connection check. Reply with OK only.",
+      messages: [{
+        role: "user",
+        content: "只回复 OK",
+        timestamp: Date.now()
+      }],
+      tools: []
+    };
+    const upstream = input.dispatcher.stream({
       model,
-      context: {
-        systemPrompt: "Connection check. Reply with OK only.",
-        messages: [{
-          role: "user",
-          content: "只回复 OK",
-          timestamp: Date.now()
-        }],
-        tools: []
-      },
+      context,
       apiKey: input.apiKey,
       options: {
         signal: controller.signal,
@@ -442,6 +455,11 @@ export async function testProviderConnection(input: {
         }
       }
     });
+    const stream = input.recordUsage ? observeUsageStream(upstream, {
+      context, provider: model.provider, model: model.id, source: "connection-test",
+      recordUsage: input.recordUsage,
+      onRecordError: () => console.error("EchoInk connection check usage could not be recorded")
+    }) : upstream;
     const message = await stream.result();
     if (controller.signal.aborted) {
       return { status: "failed", failure: "timeout" };

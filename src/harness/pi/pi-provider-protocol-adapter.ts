@@ -43,6 +43,8 @@ import {
   safeProviderFailureCode
 } from "./provider-failure";
 import { validProviderHistory } from "./provider-stream-codec";
+import { observeUsageStream, type UsageRequestEvent } from "../usage/usage-stream";
+import { estimateTokenValue } from "../usage/token-estimator";
 import type { PiChatPreparedDocument } from "../pi-native/contracts";
 import {
   applyPiAnthropicDocumentPayload,
@@ -170,6 +172,8 @@ implements ControlledPiStreamPort {
     storeSetId: string;
     resolveAuthToken(): string | Promise<string>;
     dispatcher?: PiProviderProtocolDispatcher;
+    recordUsage?(event: UsageRequestEvent): void | Promise<void>;
+    observeRequest?(context: Readonly<Context>, execution: ControlledPiStreamInput, additionalInputTokens: number): void;
     documentInput?: Readonly<{
       currentDocuments(): readonly Readonly<PiChatPreparedDocument>[];
       capabilityTarget: Readonly<PiDocumentCapabilityTarget>;
@@ -216,7 +220,12 @@ implements ControlledPiStreamPort {
       const dispatchRequest = (
         context: Context,
         injectNativeDocuments: boolean
-      ): AssistantMessageEventStream => dispatcher.streamSimple({
+      ): AssistantMessageEventStream => {
+        const additionalInputTokens = injectNativeDocuments
+          ? nativeDocuments.reduce((sum, document) => sum + Math.max(1_200, estimateTokenValue(document.text ?? "")), 0)
+          : 0;
+        this.options.observeRequest?.(context, input, additionalInputTokens);
+        const upstream = dispatcher.streamSimple({
         model: input.model,
         context,
         apiKey,
@@ -246,7 +255,17 @@ implements ControlledPiStreamPort {
             responseStatus = response.status;
           }
         }
-      });
+        });
+        return this.options.recordUsage ? observeUsageStream(upstream, {
+          context,
+          provider: input.model.provider,
+          model: input.model.id,
+          source: "conversation",
+          recordUsage: this.options.recordUsage,
+          additionalInputTokens,
+          onRecordError: () => console.error("EchoInk request usage could not be recorded")
+        }) : upstream;
+      };
       let requestContext = providerContext;
       if (fallbackLocked) {
         if (nativeDocuments.some((document) => !document.text?.trim())) {

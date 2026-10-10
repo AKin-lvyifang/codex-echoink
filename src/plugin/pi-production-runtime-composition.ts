@@ -236,6 +236,7 @@ import {
 } from "../harness/pi-native/pi-personal-memory-tools";
 import type { CallEchoInkMcpToolInput } from "../resources/mcp-broker-service";
 import type { EchoInkResource } from "../resources/types";
+import type { UsageRequestEvent } from "../harness/usage/usage-stream";
 import { isMcpBrokerConnectable } from "../resources/mcp-broker";
 import { redactEchoInkLocalSecretsV1 } from "../harness/pi-native/vault-tool-result-safety";
 import {
@@ -249,6 +250,7 @@ export interface PiProductionPluginHost {
   readonly lifestyle?: { readonly finance: LifestyleFinanceService };
   prepareWikiFolderNamesForMaintenance?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   readonly settings: CodexForObsidianSettings;
+  recordModelUsage?(event: UsageRequestEvent): Promise<void>;
   resolveOpenAICodexAccessToken(): Promise<string>;
   createSkillReviewLlmPort(): SkillReviewLlmPort | null;
   getSkillRuntimeCoordinator?(): SkillRuntimeCoordinator;
@@ -1701,6 +1703,10 @@ async function createProductionAgentSession(input: {
   const controlledStream = new PiProviderProtocolTransport({
     authorityId: binding.authorityId,
     storeSetId: binding.pluginData.rootBindingDigest,
+    recordUsage: input.plugin.recordModelUsage?.bind(input.plugin),
+    observeRequest: (context, execution, additionalInputTokens) => {
+      contextLedger.recordProviderRequest(context, execution, additionalInputTokens);
+    },
     resolveAuthToken: async () =>
       await preparedProvider.resolveAuthToken(),
     documentInput: {
@@ -1999,10 +2005,7 @@ async function createProductionAgentSession(input: {
     model,
     maxTokens: configured.requestMaxOutputTokens,
     supportsToolCalling: configured.toolCalling,
-    currentExecutionContext: () => input.input.currentExecutionContext(),
-    observeRequest: ({ execution, context }) => {
-      contextLedger.recordProviderRequest(context, execution);
-    }
+    currentExecutionContext: () => input.input.currentExecutionContext()
   }));
   const inlineExtension = createPiKnowledgeInlineExtension({
     vaultSecurity: security.inlineExtension,

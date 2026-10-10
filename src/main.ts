@@ -1,5 +1,6 @@
 import { createPluginAccountService } from "./membership/plugin-service";
 import type { AccountService } from "./membership/account-service";
+import { UsageStore, type UsageRequestEvent } from "./harness/usage/usage-store";
 import { requireProPlugin, unavailableCapabilityAccess } from "./membership/access";
 import { ConversationAutoArchive } from "./plugin/conversation-auto-archive";
 import { EchoInkAppearance } from "./ui/appearance-theme";
@@ -218,6 +219,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private editorTranslation: EditorTranslationService | null = null;
   englishDiary: EnglishDiaryController | null = null;
   accountService: AccountService | null = null;
+  usageStore: UsageStore | null = null;
   private personalMemoryCorrection: PersonalMemoryCorrectionService | null = null;
   private readonly productActivity = new ProductActivityGate();
   private developerMemoryChanging = false;
@@ -258,6 +260,13 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     this.homeActivity = new HomeActivityService(path.join(pluginDataDir(this.getVaultPath(), this.getPluginDataDirName()), "home-activity.json"));
     await this.homeActivity.initialize();
+    try {
+      const usage = new UsageStore(path.join(pluginDataDir(this.getVaultPath(), this.getPluginDataDirName()), "usage-statistics.json"));
+      await usage.initialize();
+      this.usageStore = usage;
+    } catch (error) {
+      console.error("EchoInk local usage statistics could not initialize", error);
+    }
     this.accountService = await createPluginAccountService(this);
     this.lifestyle = new LifestyleService(this);
     await this.lifestyle.initialize();
@@ -323,6 +332,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.review?.unload();
     await this.cancelAllPiConversationActivations();
     await this.piRuntimeBundle?.runtime.shutdown();
+    await this.usageStore?.flush().catch((error) => console.error("EchoInk usage statistics could not be saved", error));
     this.piActivatedConversationId = null;
     this.piRunConversations.clear();
     await this.persistPiNativeSettings();
@@ -786,6 +796,11 @@ export default class CodexForObsidianPlugin extends Plugin {
         await this.waitForPiConversationActivation(conversationId);
         const bundle = await this.ensurePiProductionRuntime();
         const handle = await bundle.runtime.submit(request);
+        void handle.result.then(async (result) => {
+          if (result.terminalState === "completed") {
+            await this.usageStore?.recordCompletedTurn(result.productRunId, result.settledAt ?? result.updatedAt);
+          }
+        }).catch((error) => console.error("EchoInk conversation usage could not be recorded", error));
         this.piRunConversations.set(
           handle.productRunId,
           handle.conversationId
@@ -1557,11 +1572,15 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (!this.piProviderConfigurationService) {
       this.piProviderConfigurationService =
         new PiProviderConfigurationService(this, {
+          recordUsage: (event) => this.recordModelUsage(event),
           resolveOAuthAccessToken: async () =>
             await this.resolveOpenAICodexAccessToken()
         });
     }
     return this.piProviderConfigurationService;
+  }
+  async recordModelUsage(event: UsageRequestEvent): Promise<void> {
+    await this.usageStore?.recordUsage(event);
   }
   async generateWikiFolderNames(systemPrompt: string, userPrompt: string): Promise<string> {
     return await this.getPiProviderConfigurationService().generateText({

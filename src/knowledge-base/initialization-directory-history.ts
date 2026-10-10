@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { knowledgeErrorDetail } from "./initialization-error";
 
 interface Position { original: string; current: string; identity: string }
+interface FolderPosition { original: string; current: string }
 interface DirectoryHistory {
   version: 1;
   createdAt: number;
@@ -11,7 +12,8 @@ interface DirectoryHistory {
   folders: string[];
   files: Position[];
   createdFolders: string[];
-  pending: { from: string; to: string; identity: string } | null;
+  folderRenames?: FolderPosition[];
+  pending: { from: string; to: string; identity: string; folderOriginal?: string } | null;
 }
 export interface DirectoryRestoreResult {
   restored: number;
@@ -23,6 +25,7 @@ export interface DirectoryHistoryHost {
   mkdir(relativePath: string): Promise<void>;
   rename(from: string, to: string, restoring?: boolean): Promise<void>;
   removeEmptyFolder(relativePath: string): Promise<void>;
+  restoreFolderLinks?(from: string, to: string): Promise<void>;
 }
 
 /** Position journal, never a content backup. Callers serialize all mutations. */
@@ -54,7 +57,9 @@ export class InitializationDirectoryHistory {
       if (value.version !== 1 || !Array.isArray(value.files) || !Array.isArray(value.folders) || !Array.isArray(value.createdFolders)) throw new Error("初始化目录索引损坏，未执行位置操作");
       for (const item of value.files) { this.absolute(item.original); this.absolute(item.current); if (typeof item.identity !== "string") throw new Error("目录索引身份无效"); }
       for (const folder of [...value.folders, ...value.createdFolders]) this.absolute(folder);
-      if (value.pending) { this.absolute(value.pending.from); this.absolute(value.pending.to); }
+      if (value.folderRenames !== undefined && !Array.isArray(value.folderRenames)) throw new Error("初始化目录改名索引损坏");
+      for (const folder of value.folderRenames ?? []) { this.absolute(folder.original); this.absolute(folder.current); }
+      if (value.pending) { this.absolute(value.pending.from); this.absolute(value.pending.to); if (value.pending.folderOriginal) this.absolute(value.pending.folderOriginal); }
       return value;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -110,6 +115,18 @@ export class InitializationDirectoryHistory {
 
   private async applyMove(record: DirectoryHistory, from: string, to: string): Promise<void> {
     const rebase = (value: string) => value === from ? to : value.startsWith(`${from}/`) ? to + value.slice(from.length) : value;
+    const folderOriginal = record.pending?.folderOriginal;
+    if (folderOriginal) {
+      const positions = record.folderRenames ??= [];
+      for (const original of record.folders) {
+        if (original !== folderOriginal && !original.startsWith(`${folderOriginal}/`)) continue;
+        if (positions.some((item) => item.original === original)) continue;
+        const current = from + original.slice(folderOriginal.length);
+        const stat = await fs.lstat(this.absolute(rebase(current))).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+        if (stat?.isDirectory() && !stat.isSymbolicLink()) positions.push({ original, current });
+      }
+    }
+    for (const item of record.folderRenames ?? []) item.current = rebase(item.current);
     for (const item of record.files) {
       if (rebase(item.current) === item.current) continue;
       item.current = rebase(item.current);
@@ -119,6 +136,9 @@ export class InitializationDirectoryHistory {
     record.createdFolders = record.createdFolders.map(rebase);
     // Bilingual folders made from original folders also belong to this operation.
     if (record.folders.includes(from) && !record.folders.includes(to) && !record.createdFolders.includes(to)) record.createdFolders.push(to);
+    for (const item of record.folderRenames ?? []) {
+      if (item.current !== item.original && !record.folders.includes(item.current) && !record.createdFolders.includes(item.current)) record.createdFolders.push(item.current);
+    }
     record.pending = null;
     await this.save(record);
   }
@@ -153,7 +173,18 @@ export class InitializationDirectoryHistory {
     const identity = await this.identity(from);
     if (!identity) throw new Error(`源路径缺失：${from}`);
     if (await this.identity(to)) throw new Error(`原位置已被占用：${to}`);
-    if (record) { record.pending = { from, to, identity }; await this.save(record); }
+    if (record) {
+      let folderOriginal: string | undefined;
+      if ((await fs.stat(this.absolute(from))).isDirectory()) {
+        const parent = [...(record.folderRenames ?? [])].filter((item) => from === item.current || from.startsWith(`${item.current}/`))
+          .sort((a, b) => b.current.length - a.current.length)[0];
+        const original = parent ? parent.original + from.slice(parent.current.length) : from;
+        const known = record.folderRenames?.find((item) => item.original === original);
+        if (record.folders.includes(original) && (!known || known.current === from)) folderOriginal = original;
+      }
+      record.pending = { from, to, identity, ...(folderOriginal ? { folderOriginal } : {}) };
+      await this.save(record);
+    }
     assertActive?.();
     await this.host.rename(from, to);
     if (await this.identity(to) !== identity || await this.identity(from) !== null) throw new Error(`移动位置未确认：${from} → ${to}`);
@@ -194,7 +225,23 @@ export class InitializationDirectoryHistory {
     for (const folder of [...record.createdFolders].sort((a, b) => b.split("/").length - a.split("/").length)) {
       if (record.folders.includes(folder)) continue;
       const children = await fs.readdir(this.absolute(folder)).catch(() => null);
-      if (children?.length === 0) await this.host.removeEmptyFolder(folder);
+      if (children?.length === 0) {
+        const original = record.folderRenames?.find((item) => item.current === folder)?.original;
+        if (original && original !== folder && this.host.restoreFolderLinks) {
+          const target = await fs.lstat(this.absolute(original)).catch(() => null);
+          const members = record.files.filter((item) => item.original.startsWith(`${original}/`));
+          const restored = target?.isDirectory() && !target.isSymbolicLink()
+            && (await Promise.all(members.map(async (item) => item.current === item.original && await this.identity(item.original) === item.identity))).every(Boolean);
+          if (!restored) continue;
+          try { await this.host.restoreFolderLinks(folder, original); }
+          catch (error) { result.skipped.push({ path: folder, reason: `目录已恢复，链接同步未完成：${knowledgeErrorDetail(error)}` }); continue; }
+        }
+        if (original) {
+          const position = record.folderRenames?.find((item) => item.current === folder);
+          if (position) { position.current = original; await this.save(record); }
+        }
+        await this.host.removeEmptyFolder(folder);
+      }
     }
     return result;
   }

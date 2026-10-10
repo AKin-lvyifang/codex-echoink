@@ -43,6 +43,7 @@ import {
 import { optimizeWikiFolderNames, type WikiFolderNameResult } from "../knowledge-base/wiki-folder-names";
 import { pluginDataDir } from "./plugin-data-paths";
 import { initializeNativeJournal, rebaseNativeJournalPaths } from "../home/native-journal";
+import { captureFolderLinkRenames, applyFolderLinkRenames } from "../knowledge-base/folder-link-renames";
 
 export type KnowledgeMaintenanceSurfaceStatus = Readonly<{
   state: "ready";
@@ -125,6 +126,10 @@ export class EchoInkKnowledgeSurfaceService {
       vaultRoot: plugin.getVaultPath(), privateRoot: host.privateRootPath,
       mkdir: (folder) => host.createFolder(folder),
       rename: (from, to, restoring) => this.renameWithLinks(from, to, restoring),
+      restoreFolderLinks: async (from, to) => {
+        const links = await captureFolderLinkRenames(plugin.app, from, to);
+        await applyFolderLinkRenames(plugin.app, links);
+      },
       removeEmptyFolder: async (relative) => {
         const folder = plugin.app.vault.getAbstractFileByPath(relative);
         if (folder instanceof TFolder && folder.children.length === 0) await plugin.app.vault.delete(folder);
@@ -225,8 +230,8 @@ export class EchoInkKnowledgeSurfaceService {
     });
     const autoLinks = (this.plugin.app.vault as unknown as { getConfig(key: string): unknown }).getConfig("alwaysUpdateLinks");
     if ((linked.length || relativeOutgoing) && autoLinks !== true) return "请在 Obsidian 开启自动更新内部链接，再重试此目录";
-    const names = new Set(targets.map((file) => file.basename));
-    if (Object.values(cache.unresolvedLinks).some((links) => Object.keys(links).some((link) => link.includes(source) || names.has(link)))) return "存在无法确认目标的引用，已保留原路径";
+    // Unresolved links can be old broken links, folder links, or unrelated names.
+    // Their presence does not establish that renaming this folder is unsafe.
     return null;
   }
 
@@ -243,8 +248,10 @@ export class EchoInkKnowledgeSurfaceService {
     if (!file) throw new Error(`源路径不存在：${source}`);
     if (this.plugin.app.vault.getAbstractFileByPath(target)) throw new Error(`目标已存在：${target}`);
     const isFolder = file instanceof TFolder;
+    const folderLinks = await captureFolderLinkRenames(this.plugin.app, source, target);
     await this.plugin.app.fileManager.renameFile(file, target);
     if (isFolder || restoring) await this.syncRenamedPaths(source, target);
+    await applyFolderLinkRenames(this.plugin.app, folderLinks);
   }
 
   private async syncRenamedPaths(from: string, to: string): Promise<void> {

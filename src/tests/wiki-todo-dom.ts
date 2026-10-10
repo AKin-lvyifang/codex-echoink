@@ -7,11 +7,17 @@ import { disposeOriginControls } from "../settings/origin-controls";
 import { renderActivityHeatmap } from "../settings/activity-heatmap";
 import { renderEnglishDiaryActivity } from "../settings/english-diary-activity";
 
-type FixtureService = { getOriginalDirectoryStatus(): Promise<{ createdAt: number; files: number } | null> };
+type FixtureService = {
+  getOriginalDirectoryStatus(): Promise<{ createdAt: number; files: number } | null>;
+  optimizeCalls: number;
+  restoreCalls: number;
+  optimizeMode: "partial" | "noop" | "failed";
+  restoreFails: boolean;
+};
 const assert = (condition: unknown, message: string) => { if (!condition) throw new Error(message); };
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
-export async function runWikiTodoDom(Fixture: new () => { mountKnowledgeDashboard(page: HTMLElement, zh: boolean): void; refreshes: number; plugin: { getKnowledgeSurfaceService(): FixtureService } }) {
+export async function runWikiTodoDom(Fixture: new () => { mountKnowledgeDashboard(page: HTMLElement, zh: boolean): void; refreshes: number; plugin: { settings: { settingsLanguage: string }; getKnowledgeSurfaceService(): FixtureService } }, notices: readonly string[]) {
   const create = function (this: HTMLElement, tag: string, options: { cls?: string; text?: string; attr?: Record<string, string> } = {}) {
     const el = this.ownerDocument.createElement(tag);
     if (options.cls) el.className = options.cls;
@@ -95,26 +101,71 @@ export async function runWikiTodoDom(Fixture: new () => { mountKnowledgeDashboar
       }
     }
   }
+  const service = fixture.plugin.getKnowledgeSurfaceService();
+  const optimize = rows[0].querySelector<HTMLButtonElement>("button")!;
   const restore = rows[1].querySelector<HTMLButtonElement>("button")!;
-  assert(restore.textContent === "复原" && !restore.disabled, "restore available while initialization dashboard hidden");
-  restore.click();
-  assert(rows[0].querySelector<HTMLButtonElement>("button")!.disabled && restore.disabled, "directory actions disabled together while running");
+  const initialNoticeCount = notices.length;
+  optimize.click(); optimize.click();
+  assert(optimize.disabled && restore.disabled && optimize.textContent === "优化中…", "optimization disables both actions and shows busy text");
+  assert(notices.length === initialNoticeCount, "optimization does not emit progress notices");
   await tick();
-  assert(fixture.refreshes === 1, "partial restoration refreshes page");
+  assert(service.optimizeCalls === 1 && fixture.refreshes === 1, "repeated clicks run one optimization and one refresh");
+  assert(notices.length === initialNoticeCount + 1 && notices.at(-1) === "已改名 14 个目录，39 项需处理。", "partial optimization emits one concise native notice");
+  assert(!optimize.disabled && !restore.disabled && optimize.textContent === "优化名称", "optimization restores buttons after completion");
+  const assertCleanFeedback = () => assert(!/已改名|已恢复|项需处理|无需优化|Renamed \d|Restored \d|no optimization needed|did not complete|wiki\/unresolved-|old\.md|测试优化失败|测试复原失败/u.test(page.textContent ?? ""), "folder results and detail paths never fill the settings page");
+  assertCleanFeedback();
+  assert(restore.textContent === "复原" && !restore.disabled, "restore available while initialization dashboard hidden");
+  restore.click(); restore.click();
+  assert(optimize.disabled && restore.disabled && restore.textContent === "复原中…", "restoration disables both actions and shows busy text");
+  await tick();
+  assert(service.restoreCalls === 1 && fixture.refreshes === 2, "repeated clicks run one restoration and one refresh");
+  assert(notices.length === initialNoticeCount + 2 && notices.at(-1) === "已恢复 1 个文件，1 项需处理。", "partial restoration emits one concise native notice");
+  assertCleanFeedback();
   disposeOriginControls(page); page.empty(); fixture.mountKnowledgeDashboard(page, true);
   await tick();
   const retry = [...page.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "复原")!;
+  const optimizeRetry = [...page.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "优化名称")!;
   assert(retry && !retry.disabled, "restore remains available to retry a conflict");
-  assert(retry.closest(".setting-row")?.textContent?.includes("未恢复 1"), "conflict remains in restore row after rerender");
-  assert(!page.querySelector(".setting-row")?.textContent?.includes("未恢复 1"), "restore result does not appear on optimize row");
-  fixture.plugin.getKnowledgeSurfaceService().getOriginalDirectoryStatus = async () => null;
+  assertCleanFeedback();
+  assert(notices.length === initialNoticeCount + 2, "rerender does not repeat result notices");
+  const expectNotice = async (button: HTMLButtonElement, expected: string) => {
+    const before = notices.length;
+    button.click(); await tick();
+    assert(notices.length === before + 1 && notices.at(-1) === expected, `one notice: ${expected}`);
+    assert(!button.disabled, "settled operation restores its button");
+    assertCleanFeedback();
+  };
+  service.optimizeMode = "noop";
+  await expectNotice(optimizeRetry, "目录已采用可读名称，无需优化。");
+  service.optimizeMode = "failed";
+  await expectNotice(optimizeRetry, "名称优化未完成：测试优化失败");
+  assert(!retry.disabled && optimizeRetry.textContent === "优化名称", "failed optimization restores both controls");
+  service.restoreFails = true;
+  await expectNotice(retry, "仓库复原未完成：测试复原失败");
+  assert(!optimizeRetry.disabled && retry.textContent === "复原", "failed restoration restores both controls");
+  fixture.plugin.settings.settingsLanguage = "en";
+  disposeOriginControls(page); page.empty(); fixture.mountKnowledgeDashboard(page, false); await tick();
+  const englishOptimize = [...page.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Optimize names")!;
+  const englishRestore = [...page.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Restore")!;
+  service.optimizeMode = "partial";
+  await expectNotice(englishOptimize, "Renamed 14 folders; 39 items need attention.");
+  service.optimizeMode = "noop";
+  await expectNotice(englishOptimize, "Folder names are already readable; no optimization needed.");
+  service.optimizeMode = "failed";
+  await expectNotice(englishOptimize, "Folder name optimization did not complete: 测试优化失败");
+  service.restoreFails = false;
+  await expectNotice(englishRestore, "Restored 1 file; 1 item needs attention.");
+  service.optimizeMode = "partial";
+  fixture.plugin.settings.settingsLanguage = "zh";
+  disposeOriginControls(page); page.empty(); fixture.mountKnowledgeDashboard(page, true); await tick();
+  service.getOriginalDirectoryStatus = async () => null;
   const missing = host.createDiv(); fixture.mountKnowledgeDashboard(missing, true); await tick();
   assert([...missing.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "复原")?.disabled, "no record disables restore");
   assert(missing.textContent?.includes("暂无初始化前目录记录"), "no record explains unavailable restore");
   disposeOriginControls(missing); missing.remove();
   const report = document.querySelector<HTMLElement>("#report")!;
   report.dataset.result = "passed";
-  report.textContent = "PASS: three shared heatmaps retain count/status legends and titles; arrow/Home/End navigation, inclusive year/month ranges, draft validation/cancel, leap days and per-range scroll; full year, 12 months, hover/focus counts; 320/480/600/900px square cells and aligned rows; separate action feedback, busy state, restore retry and missing-record state. Range selector is available below for native interaction.";
+  report.textContent = "PASS: three shared heatmaps retain count/status legends and titles; arrow/Home/End navigation, inclusive year/month ranges, draft validation/cancel, leap days and per-range scroll; full year, 12 months, hover/focus counts; 320/480/600/900px square cells and aligned rows; concise folder notices in Chinese/English, 14 renamed/39 pending without inline details, no-op/failure recovery, repeated-click protection, restore retry and missing-record state. Range selector is available below for native interaction.";
 }
 
 export async function runActivityHeatmapDom(host: HTMLElement, settings: HTMLElement, app?: Pick<App, "keymap" | "scope">): Promise<void> {

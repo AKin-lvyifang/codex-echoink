@@ -26,16 +26,24 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "wiki-todo-dom") {
   await esbuild.build({
     stdin: { contents: `import {runWikiTodoDom} from "./src/tests/wiki-todo-dom";
       import {renderKnowledgeFolderActions} from "./src/settings/knowledge-folder-actions";
+      import {noticeMessages} from "obsidian";
       class Fixture {
         refreshes=0; knowledgeInitSection={showDashboard:false}; knowledgeDashboardSnapshot=null; knowledgeDashboardEl=null;
         service={folderOperationBusy:false,directoryWritable:true,folderOperationMessage:"",
+          optimizeCalls:0,restoreCalls:0,optimizeMode:"partial",restoreFails:false,
           async getOriginalDirectoryStatus(){return {createdAt:1,files:2}},
-          async restoreOriginalDirectories(){return {restored:1,skipped:[{path:"old.md",reason:"原位置已被占用"}]}},
-          async optimizeFolderNames(){return {renamed:[],skipped:[]}}};
+          async restoreOriginalDirectories(){this.restoreCalls++;if(this.restoreFails)throw new Error("测试复原失败");return {restored:1,skipped:[{path:"old.md",reason:"原位置已被占用"}]}},
+          async optimizeFolderNames(){
+            this.optimizeCalls++;
+            if(this.optimizeMode==="failed")throw new Error("测试优化失败");
+            if(this.optimizeMode==="noop")return {renamed:[],skipped:[]};
+            return {renamed:Array.from({length:14},(_,i)=>({from:"folder-"+i,to:"目录-"+i})),
+              skipped:Array.from({length:39},(_,i)=>({path:"wiki/unresolved-"+i,reason:"存在无法确认目标的引用，已保留原路径"}))};
+          }};
         plugin={settings:{settingsLanguage:"zh"},getKnowledgeSurfaceService:()=>this.service};
         scheduleDisplay(){this.refreshes++}; ${method}
       }
-      runWikiTodoDom(Fixture).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});`, resolveDir: rootDir, loader: "ts" },
+      runWikiTodoDom(Fixture,noticeMessages).catch(error=>{document.querySelector("#report").textContent=error.stack;document.querySelector("#report").dataset.result="failed";});`, resolveDir: rootDir, loader: "ts" },
     bundle: true, format: "esm", platform: "browser", outfile: path.join(directory, "regression.js"), logLevel: "silent",
     define: { "process.env.NODE_ENV": '"production"' },
     plugins: [{ name: "wiki-todo-dom-host", setup(build) {
@@ -43,6 +51,8 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "wiki-todo-dom") {
       build.onLoad({ filter: /.*/, namespace: "wiki-todo-fixture" }, () => ({ contents: `
         export {Scope} from "./src/tests/origin-obsidian-dom-shim";
         export function setIcon(){};
+        export const noticeMessages=[];
+        export class Notice {constructor(message){noticeMessages.push(message)}};
         export class Setting {
           constructor(parent){
             this.settingEl=parent.createDiv({cls:"setting-item"});

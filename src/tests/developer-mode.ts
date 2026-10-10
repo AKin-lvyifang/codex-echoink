@@ -588,6 +588,6 @@ async function schedulerDisposeDuringDueRead(): Promise<void> {
   console.log("PASS scheduler disposed during asynchronous due check");
 }
 
-await settingsDomLifecycle();
+if (process.env.ECHOINK_DEVELOPER_MODE_CASE !== "dream") await settingsDomLifecycle();
 await repositoryAndLifecycle();
 await schedulerDisposeDuringDueRead();

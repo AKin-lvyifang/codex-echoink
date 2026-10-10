@@ -11,6 +11,7 @@ try {
   await esbuild.build({
     entryPoints: ["src/tests/developer-mode.ts"], absWorkingDir: root,
     bundle: true, platform: "node", target: "node22", format: "esm",
+    banner: { js: 'import { createRequire as createDeveloperTestRequire } from "node:module"; const require = createDeveloperTestRequire(import.meta.url);' },
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
     external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml"],
     plugins: [{ name: "obsidian-fixture", setup(build) {

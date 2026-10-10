@@ -1,11 +1,12 @@
+import { Notice } from "obsidian";
 import type { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { createOriginButton } from "./origin-controls";
 import { OriginSetting } from "./origin-setting";
 import { applySettingsRow, createSettingsGroup, createSettingsSection } from "./settings-v2";
 
 type Operation = "optimize" | "restore";
-type OperationState = { optimize: string; restore: string; running: Operation | null };
-// Keep each action's feedback with its row across settings rerenders.
+type OperationState = { running: Operation | null };
+// Keep actions disabled across settings rerenders while an operation is running.
 const operationStates = new WeakMap<EchoInkKnowledgeSurfaceService, OperationState>();
 
 export function renderKnowledgeFolderActions(
@@ -15,7 +16,7 @@ export function renderKnowledgeFolderActions(
   refresh: () => Promise<void>
 ): void {
   const zh = language !== "en";
-  const state = operationStates.get(service) ?? { optimize: "", restore: "", running: null };
+  const state = operationStates.get(service) ?? { running: null };
   operationStates.set(service, state);
   const section = createSettingsSection(container, { title: zh ? "目录管理" : "Folder management", surface: "flat" });
   section.addClass("standard-section", "echoink-knowledge-folder-actions");
@@ -25,7 +26,6 @@ export function renderKnowledgeFolderActions(
     .setName(zh ? "文件夹名称优化" : "Folder names")
     .setDesc(zh ? "将知识库英文文件夹改为中英文名称。" : "Rename English knowledge folders with Chinese and English names."));
   const button = createOriginButton(optimizeRow.controlEl, { text: zh ? "优化名称" : "Optimize names" });
-  const optimizeStatus = optimizeRow.infoEl.createDiv({ cls: "setting-item-description", attr: { role: "status", "aria-live": "polite" } });
   const restoreCard = createSettingsGroup(section);
   restoreCard.addClass("settings-card");
   const restoreRow = applySettingsRow(new OriginSetting(restoreCard)
@@ -33,15 +33,6 @@ export function renderKnowledgeFolderActions(
     .setDesc(zh ? "恢复初始化前的目录结构，保留最新内容和新增文件。" : "Restore the original folder structure, keeping current content and new files."));
   const restore = createOriginButton(restoreRow.controlEl, { text: zh ? "复原" : "Restore" });
   const original = restoreRow.infoEl.createDiv({ cls: "setting-item-description" });
-  const restoreStatus = restoreRow.infoEl.createDiv({ cls: "setting-item-description", attr: { role: "status", "aria-live": "polite" } });
-  const statuses = { optimize: optimizeStatus, restore: restoreStatus };
-  const setStatus = (operation: Operation, message: string) => {
-    state[operation] = message;
-    statuses[operation].setText(message);
-    statuses[operation].hidden = !message;
-  };
-  setStatus("optimize", state.optimize);
-  setStatus("restore", state.restore);
   let hasRecord = false;
   const syncControls = () => {
     const busy = state.running !== null || service.folderOperationBusy;
@@ -63,14 +54,15 @@ export function renderKnowledgeFolderActions(
   const run = async (operation: Operation, action: () => Promise<string>) => {
     if (state.running || service.folderOperationBusy || !service.directoryWritable) return;
     state.running = operation;
-    setStatus(operation, operation === "optimize"
-      ? (zh ? "正在检查知识库文件夹…" : "Checking knowledge folders…")
-      : (zh ? "正在复原仓库…" : "Restoring vault…"));
     syncControls();
     try {
-      setStatus(operation, await action());
+      new Notice(await action());
     } catch (error: unknown) {
-      setStatus(operation, error instanceof Error ? error.message : String(error));
+      const detail = (error instanceof Error ? error.message : String(error)).replace(/\s+/gu, " ").trim();
+      const summary = operation === "optimize"
+        ? (zh ? "名称优化未完成" : "Folder name optimization did not complete")
+        : (zh ? "仓库复原未完成" : "Vault restoration did not complete");
+      new Notice(detail ? `${summary}${zh ? "：" : ": "}${detail.length > 160 ? `${detail.slice(0, 160)}…` : detail}` : summary);
     } finally {
       state.running = null;
       syncControls();
@@ -79,19 +71,22 @@ export function renderKnowledgeFolderActions(
   };
   button.onclick = () => {
     void run("optimize", async () => {
-      const result = await service.optimizeFolderNames((message) => setStatus("optimize", message));
+      const result = await service.optimizeFolderNames();
+      if (!result.renamed.length && !result.skipped.length) return zh
+        ? "目录已采用可读名称，无需优化。"
+        : "Folder names are already readable; no optimization needed.";
       return zh
-        ? `${result.message ?? `已改名 ${result.renamed.length} 个目录；跳过 ${result.skipped.length}。`}${result.skipped.map((item) => `${item.path}：${item.reason}`).join("；")}`
-        : `Renamed ${result.renamed.length}; skipped ${result.skipped.length}. ${result.skipped.map((item) => `${item.path}: ${item.reason}`).join("; ")}`;
+        ? `已改名 ${result.renamed.length} 个目录${result.skipped.length ? `，${result.skipped.length} 项需处理` : ""}。`
+        : `Renamed ${result.renamed.length} folder${result.renamed.length === 1 ? "" : "s"}${result.skipped.length ? `; ${result.skipped.length} item${result.skipped.length === 1 ? " needs" : "s need"} attention` : ""}.`;
     });
   };
   restore.onclick = () => {
     if (!hasRecord) return;
     void run("restore", async () => {
-      const result = await service.restoreOriginalDirectories((message) => setStatus("restore", message));
+      const result = await service.restoreOriginalDirectories();
       return zh
-        ? `已恢复 ${result.restored} 个文件；未恢复 ${result.skipped.length}。${result.skipped.map((item) => `${item.path}：${item.reason}`).join("；")}`
-        : `Restored ${result.restored}; unresolved ${result.skipped.length}. ${result.skipped.map((item) => `${item.path}: ${item.reason}`).join("; ")}`;
+        ? `已恢复 ${result.restored} 个文件${result.skipped.length ? `，${result.skipped.length} 项需处理` : ""}。`
+        : `Restored ${result.restored} file${result.restored === 1 ? "" : "s"}${result.skipped.length ? `; ${result.skipped.length} item${result.skipped.length === 1 ? " needs" : "s need"} attention` : ""}.`;
     });
   };
 }

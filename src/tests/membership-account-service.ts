@@ -3,6 +3,7 @@ import { AccountService, MembershipApiError, type MembershipTransport } from "..
 import { deviceIdentity, encode, keyHash } from "../membership/crypto";
 import { PRO_CAPABILITIES, type LeaseClaims, type LocalAccountState, type MembershipStorage } from "../membership/types";
 import { getProPluginAccess } from "../membership/access";
+import type { AccountStatistics } from "../settings/account-membership-model";
 
 /** In-memory server and real ES256 leases; no network, mail, model or Vault. */
 export async function runMembershipAccountServiceTests(): Promise<void> {
@@ -61,6 +62,37 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     await service.initialize();
     return { service, storage, calls, bindings: () => [...activeDevices], offline(value: boolean) { offline = value; }, limit(value: boolean) { limit = value; }, invalid(value: boolean) { invalidLease = value; }, wall(value: number) { wall = value; }, failIdentity(error: Error | null) { identityError = error; }, waitRights(value: (() => Promise<void>) | null) { waitRights = value; }, waitLease(value: (() => Promise<void>) | null) { waitLease = value; } };
   }
+  const localUsage = await fixture({ anonymous: true });
+  const usageListeners = new Set<() => void>();
+  const replacementListeners = new Set<() => void>();
+  let statistics: AccountStatistics = { ...localUsage.service.read().statistics,
+    totalTokens: 1200, totalTurns: 2, coverage: "2026-10-08 起记录 · Token 估算",
+    days: [{ date: "2026-10-08", tokens: 1200, turns: 2, input: 1000, output: 200 }] };
+  let usageUpdates = 0;
+  const stopUsageUpdates = localUsage.service.subscribe(() => { usageUpdates++; });
+  try {
+    localUsage.service.setStatisticsSource({ read: () => statistics,
+      subscribe: listener => { usageListeners.add(listener); return () => { usageListeners.delete(listener); }; } });
+    assert.equal(localUsage.service.read().identity, null);
+    assert.equal(localUsage.service.checkCapability("finance.export"), false);
+    assert.deepEqual(localUsage.service.read().statistics, statistics, "local usage is available without login or PRO");
+    const beforeUpdate = usageUpdates;
+    statistics = { ...statistics, totalTokens: 1320 };
+    usageListeners.forEach(listener => listener());
+    assert.equal(usageUpdates, beforeUpdate + 1, "usage changes notify the existing account subscription");
+    assert.equal(localUsage.service.read().statistics.totalTokens, 1320);
+    await localUsage.service.actions.signOut!();
+    assert.equal(localUsage.service.read().statistics.totalTokens, 1320, "sign-out does not reset vault usage");
+    localUsage.service.setStatisticsSource({ read: () => statistics,
+      subscribe: listener => { replacementListeners.add(listener); return () => { replacementListeners.delete(listener); }; } });
+    assert.equal(usageListeners.size, 0, "replacing the source releases its previous subscription");
+    assert.equal(replacementListeners.size, 1);
+  } finally {
+    localUsage.service.dispose();
+    stopUsageUpdates();
+  }
+  assert.equal(replacementListeners.size, 0, "account disposal releases the usage subscription");
+
   const f = await fixture();
   try {
     assert.equal(f.service.read().membership.state, "free");
@@ -194,5 +226,5 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     assert.deepEqual(lateLease.bindings(), ["A"], "recovering B cannot register it automatically");
     assert.ok(!lateLease.calls.includes("/api/devices/activate"));
   } finally { lateLease.service.dispose(); }
-  console.log("PASS membership signed account service: activation, offline restart/expiry, device recovery across login and fresh sessions, unbound/full/removed devices, identity failures and late account/lease responses");
+  console.log("PASS membership signed account service: local usage without login, usage updates/cleanup, activation, offline restart/expiry, device recovery across login and fresh sessions, unbound/full/removed devices, identity failures and late account/lease responses");
 }

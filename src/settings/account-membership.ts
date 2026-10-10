@@ -284,23 +284,25 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const overview = heading(page, t("我的使用概览", "My usage"));
   const scope = el(overview, "div", "scope", t("当前 Vault · 本地", "This vault · local"));
   const statsInfo = button(scope, "", "icon-button", () => show(t("统计口径", "About statistics"), body => {
-    copy(body, t("统计仅覆盖当前知识库。", "Statistics cover this vault only."));
-    copy(body, t("Token 为模型返回的输入 + 输出，缓存和思考明细包含在其中，不重复累加。", "Tokens are reported input + output. Cache and reasoning subsets are included, not added again."));
+    copy(body, t("统计保存在当前知识库，不依赖登录或会员。从启用统计之日起记录，此前历史不补算。", "Statistics stay in this vault and work without an account or membership. Recording starts when statistics are enabled; earlier activity is not reconstructed."));
+    copy(body, t("所有模型调用统一按 EchoInk 的 o200k 标准估算实际输入与可见输出。工具往返产生的每次追加调用分别累加。", "EchoInk uses the same o200k standard to estimate the actual input and visible output of every model call. Each additional call in a tool exchange is counted separately."));
+    copy(body, t("图片和文档按可见内容近似估算，不含厂商未返回的隐藏思考；这里的数字不代表厂商计费账单。", "Images and documents are approximated from available content. Hidden reasoning that the provider does not return is excluded. These estimates are not a provider billing statement."));
+    copy(body, t("完成的对话轮次按已完成的用户对话统计，一轮中的多次模型调用仍只算一轮。连续使用按完成对话的日期统计。", "Completed turns count finished user turns. Multiple model calls within one turn still count as one turn. Streaks are based on days with completed conversations."));
   })); icon(statsInfo, "circle-help"); statsInfo.setAttribute("aria-label", t("查看统计口径", "About statistics"));
   const metrics = el(page, "section", "metrics");
   const stats = vm.statistics;
   const metricRows = [
-    [t("累计 Token", "Total tokens"), stats.totalTokens, t("输入 + 输出", "Input + output"), ""],
-    [t("完成的对话轮次", "Completed turns"), stats.totalTurns, stats.coverage ?? t("从首次记录起", "Since first record"), ""],
-    [t("当前连续使用", "Current streak"), stats.currentStreak, stats.coverage ?? t("仅已记录主动操作", "Recorded user activity"), t("天", "days")],
-    [t("最长连续使用", "Longest streak"), stats.bestStreak, stats.coverage ?? t("仅已记录主动操作", "Recorded user activity"), t("天", "days")]
+    [t("累计估算 Token", "Total estimated tokens"), stats.totalTokens, ""],
+    [t("完成的对话轮次", "Completed turns"), stats.totalTurns, ""],
+    [t("当前连续使用", "Current streak"), stats.currentStreak, t("天", "days")],
+    [t("最长连续使用", "Longest streak"), stats.bestStreak, t("天", "days")]
   ] as const;
-  for (const [label, value, note, unit] of metricRows) {
+  for (const [label, value, unit] of metricRows) {
     const card = el(metrics, "div"); el(card, "span", "metric-label", label);
     const big = el(card, "strong", "", value != null && label === metricRows[0][0] && value >= 1e6 ? (value / 1e6).toFixed(2) : number(value));
     if (value != null && label === metricRows[0][0] && value >= 1e6) el(big, "span", "unit", "M");
     if (value != null && unit) el(big, "span", "unit", unit);
-    el(card, "small", "", value == null ? t("暂无统计", "No statistics") : note);
+    if (value == null) el(card, "small", "", t("暂无统计", "No statistics"));
   }
 
   const activity = el(page, "section", "panel activity-panel");
@@ -331,7 +333,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       cell.onblur = cell.onmouseleave = hideTip;
       cell.onclick = () => show(`${date} · ${t("使用记录", "Usage")}`, body => {
         if (!day) copy(body, missing);
-        else { copy(body, `${t("完成对话", "Completed turns")} ${number(day.turns)}`); copy(body, `${t("输入", "Input")} ${number(day.input)} Token · ${t("输出", "Output")} ${number(day.output)} Token`); copy(body, `${t("合计", "Total")} ${number(day.tokens)} Token`); }
+        else { copy(body, `${t("完成对话", "Completed turns")} ${number(day.turns)}`); copy(body, `${t("估算输入", "Estimated input")} ${number(day.input)} Token · ${t("估算输出", "Estimated output")} ${number(day.output)} Token`); copy(body, `${t("估算合计", "Estimated total")} ${number(day.tokens)} Token`); }
       });
       cell.onkeydown = event => {
         const delta: Record<string, number> = { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -7, ArrowRight: 7 };
