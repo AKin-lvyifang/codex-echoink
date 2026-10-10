@@ -146,6 +146,7 @@ export interface DiaryFilePort {
 export interface DiaryGenerationDay { date: string; expressionCount: number; generationCount: number }
 export interface DiaryRepository {
   subscribe?(listener: () => void): () => void;
+  affectsExpressions?(path: string): boolean;
   listGenerationActivity(): Promise<DiaryGenerationDay[]>;
   get(source: DiarySource): Promise<DiaryRecord>;
   acquireExpressionPermit?(operationId: string): object;

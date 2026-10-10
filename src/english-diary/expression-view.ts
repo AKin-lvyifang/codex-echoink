@@ -6,6 +6,8 @@ import { ENGLISH_EXPRESSION_VIEW, type DiaryGenerationDay, type ExpressionEntry,
 import type { EnglishDiaryViewHost } from "./view-host";
 import { diaryButton, diaryError, diaryField } from "./ui";
 import { renderDiaryProgress } from "./activity";
+import { ForegroundView } from "../ui/foreground-view";
+import { filterExpressions, pathsOverlap } from "./expression-search";
 
 type ExpressionViewState = { query?: string; category?: string; expressionId?: string };
 interface ExpressionDraft { id: string; category: string; note: string; initialCategory: string; initialNote: string }
@@ -29,6 +31,10 @@ export class EnglishExpressionView extends ItemView {
   private closed = false;
   private refreshSequence = 0;
   private timer: number | null = null;
+  private foreground: ForegroundView | null = null;
+  private refreshPending = false;
+  private renderPending = false;
+  private sourcePaths = new Set<string>();
 
   constructor(leaf: WorkspaceLeaf, private readonly host: EnglishDiaryViewHost) { super(leaf); }
   getViewType(): string { return ENGLISH_EXPRESSION_VIEW; }
@@ -46,6 +52,7 @@ export class EnglishExpressionView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.closed = false;
+    this.foreground = new ForegroundView(this, (active) => this.foregroundChanged(active));
     this.register((this.host.api.access ?? unavailableCapabilityAccess).subscribe(() => this.render()));
     this.contentEl.addClass("echoink-diary-view", "echoink-expression-view");
     const retained = unsavedExpressionDrafts.get(this.host);
@@ -53,10 +60,13 @@ export class EnglishExpressionView extends ItemView {
     const changed = () => this.scheduleRefresh();
     const unsubscribe = this.host.api.repository.subscribe?.(changed);
     if (unsubscribe) this.register(unsubscribe);
-    this.registerEvent(this.app.vault.on("modify", changed));
-    this.registerEvent(this.app.vault.on("create", changed));
-    this.registerEvent(this.app.vault.on("delete", changed));
-    this.registerEvent(this.app.vault.on("rename", changed));
+    const fileChanged = (file: { path: string }, oldPath?: string) => {
+      if (this.affectsExpressions(file.path) || (oldPath !== undefined && this.affectsExpressions(oldPath))) changed();
+    };
+    this.registerEvent(this.app.vault.on("modify", fileChanged));
+    this.registerEvent(this.app.vault.on("create", fileChanged));
+    this.registerEvent(this.app.vault.on("delete", fileChanged));
+    this.registerEvent(this.app.vault.on("rename", fileChanged));
     await this.refresh();
   }
 
@@ -66,19 +76,46 @@ export class EnglishExpressionView extends ItemView {
       new Notice("未保存的分类和备注已暂存在本次会话，重新打开可继续。退出 Obsidian 前请保存。", 8000);
     }
     this.closed = true;
+    this.foreground?.dispose(); this.foreground = null;
     this.refreshSequence++;
-    if (this.timer !== null) window.clearTimeout(this.timer);
+    if (this.timer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.timer);
+    this.timer = null;
     disposeOriginControls(this.contentEl);
     this.contentEl.empty();
   }
 
-  private scheduleRefresh(): void {
+  private isForeground(): boolean { return !this.closed && (this.foreground?.isActive() ?? true); }
+
+  private affectsExpressions(path: string): boolean {
+    return (this.host.api.repository.affectsExpressions?.(path) ?? true)
+      || [...this.sourcePaths].some((source) => pathsOverlap(path, source));
+  }
+
+  private foregroundChanged(active: boolean): void {
     if (this.closed) return;
-    if (this.timer !== null) window.clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => { this.timer = null; void this.refresh(); }, 200);
+    if (!active) {
+      if (this.timer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.timer);
+      this.timer = null;
+      if (this.loading) { this.refreshSequence++; this.loading = false; this.refreshPending = true; }
+    } else if (this.refreshPending) this.scheduleRefresh(0);
+    else if (this.renderPending) this.render();
+  }
+
+  private scheduleRefresh(delay = 200): void {
+    if (this.closed) return;
+    this.refreshPending = true;
+    if (!this.isForeground()) return;
+    const win = this.contentEl.ownerDocument.defaultView;
+    if (this.timer !== null) win?.clearTimeout(this.timer);
+    this.timer = win?.setTimeout(() => { this.timer = null; void this.refresh(); }, delay) ?? null;
   }
 
   async refresh(): Promise<void> {
+    if (this.closed) return;
+    if (!this.isForeground()) { this.refreshPending = true; return; }
+    if (this.timer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.timer);
+    this.timer = null;
+    this.refreshPending = false;
     const sequence = ++this.refreshSequence;
     this.loading = true;
     try {
@@ -86,10 +123,11 @@ export class EnglishExpressionView extends ItemView {
         this.host.api.repository.listExpressions(),
         this.host.api.repository.listGenerationActivity().catch(() => null)
       ]);
-      const entries = this.query || this.category ? await this.host.api.repository.listExpressions(this.query, this.category || undefined) : all;
       if (this.closed || sequence !== this.refreshSequence) return;
-      this.entries = entries;
+      if (!this.isForeground()) { this.refreshPending = true; return; }
       this.allEntries = all;
+      this.entries = filterExpressions(all, this.query, this.category);
+      this.sourcePaths = new Set(all.flatMap((entry) => entry.occurrences.map((item) => item.sourcePath)));
       this.activity = activity;
       const counts = new Map<string, number>();
       for (const entry of all) counts.set(entry.category, (counts.get(entry.category) || 0) + 1);
@@ -115,6 +153,8 @@ export class EnglishExpressionView extends ItemView {
 
   private render(): void {
     if (this.closed) return;
+    if (!this.isForeground()) { this.renderPending = true; return; }
+    this.renderPending = false;
     const active = this.contentEl.ownerDocument.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
     const field = active?.dataset.expressionField;
     const focusedCategory = active?.dataset.expressionCategory;
@@ -167,7 +207,7 @@ export class EnglishExpressionView extends ItemView {
     const tools = browserTools.createDiv({ cls: "echoink-expression-tools" });
     const search = createOriginInput(tools, { cls: "echoink-expression-search", value: this.query, attr: { type: "search", placeholder: "搜索表达、意思、日期或日记", "aria-label": "搜索表达库" } });
     search.dataset.expressionField = "search";
-    const searchChanged = () => { this.query = search.value; this.app.workspace.requestSaveLayout(); this.scheduleRefresh(); };
+    const searchChanged = () => { this.query = search.value; this.app.workspace.requestSaveLayout(); this.filterLoadedEntries(); };
     search.addEventListener("input", (event) => { if (!(event as InputEvent).isComposing) searchChanged(); });
     search.addEventListener("compositionend", searchChanged);
     const categories = browserTools.createDiv({ cls: "echoink-diary-filters echoink-expression-categories", attr: { role: "group", "aria-label": "按分类筛选" } });
@@ -175,7 +215,7 @@ export class EnglishExpressionView extends ItemView {
       const button = diaryButton(categories, "", async () => {
         this.category = category.name;
         this.app.workspace.requestSaveLayout();
-        await this.refresh();
+        this.filterLoadedEntries();
       }, { tertiary: true });
       button.dataset.expressionCategory = category.name;
       button.setAttribute("aria-pressed", String(this.category === category.name));
@@ -183,6 +223,11 @@ export class EnglishExpressionView extends ItemView {
       button.createSpan({ text: category.name || "全部分类" });
       button.createSpan({ cls: "echoink-diary-count", text: String(category.count) });
     }
+  }
+
+  private filterLoadedEntries(): void {
+    this.entries = filterExpressions(this.allEntries, this.query, this.category);
+    this.render();
   }
 
   private renderList(page: HTMLElement): void {

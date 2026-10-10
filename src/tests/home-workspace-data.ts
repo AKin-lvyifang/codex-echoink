@@ -167,6 +167,7 @@ async function assertHomeProgressiveLoading(): Promise<void> {
         on: (event: string, callback: () => void) => { listeners.set(event, callback); return {}; }
       },
       workspace: {
+        on: () => ({}),
         rightSplit: { collapsed: true },
         getLeavesOfType: () => active ? [leaf] : [],
         getLeaf: () => leaf,
@@ -182,14 +183,17 @@ async function assertHomeProgressiveLoading(): Promise<void> {
       } })
     };
     const view = new EchoInkHomeView(leaf, plugin as never) as any;
+    view.register = () => undefined;
     view.app = app;
     view.contentEl = {
       addClass: () => undefined, removeClass: () => undefined, empty: () => undefined,
-      ownerDocument: { defaultView: {
+      ownerDocument: { hidden: false, hasFocus: () => true, addEventListener() {}, removeEventListener() {}, defaultView: {
+        addEventListener() {}, removeEventListener() {},
         setTimeout: (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; },
         clearTimeout: (id: number) => timers.delete(id)
       } }
     };
+    view.containerEl = { ownerDocument: view.contentEl.ownerDocument, isConnected: true, getClientRects: () => [{}] };
     view.field = (name: string) => {
       if (!fields.has(name)) fields.set(name, { text: "", setText(value) { this.text = value; }, removeAttribute() {}, querySelector: () => null });
       return fields.get(name)!;

@@ -7,6 +7,7 @@ import type {
   ExpressionEntry, ExpressionOccurrence
 } from "./types";
 import { diaryWikiLink, expressionIdentity, migrateExpressionMarkdown, parseExpressionMarkdown, patchExpressionMarkdown, renderDiaryMarkdown, renderExpressionMarkdown } from "./markdown";
+import { filterExpressions, normalizedExpressionKey as normalizedKey, pathsOverlap } from "./expression-search";
 
 export type EnglishDiaryRepositoryErrorCode =
   | "INVALID_PATH" | "INVALID_STATE" | "FILE_MODIFIED" | "CONFLICT"
@@ -79,7 +80,6 @@ function replaceDiaryLinks(content: string, from: string, to: string): string {
   const oldTarget = diaryWikiLink(from).slice(2, -2), newTarget = diaryWikiLink(to).slice(2, -2);
   return content.replaceAll(`[[${oldTarget}|`, `[[${newTarget}|`).replaceAll(`[[${oldTarget}]]`, `[[${newTarget}]]`);
 }
-const normalizedKey = (value: string): string => value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 
 function expressionMetadata(content: string, path: string): { legacy: ExpressionEntry | null; id: string | null } {
   let legacy: ExpressionEntry | null;
@@ -171,12 +171,18 @@ export class EnglishDiaryRepository implements DiaryRepository {
     return () => { this.listeners.delete(listener); };
   }
 
-  private exclusive<T>(operation: () => Promise<T>, notify = false): Promise<T> {
+  affectsExpressions(path: string): boolean {
+    return [this.options.stateDirectory, this.options.expressionDirectory, this.options.englishDirectory,
+      ...(this.options.legacyExpressionDirectories ?? []), ...(this.options.legacyEnglishDirectories ?? [])]
+      .some((directory) => pathsOverlap(path, directory));
+  }
+
+  private exclusive<T>(operation: () => Promise<T>, notify: boolean | (() => boolean) = false): Promise<T> {
     const run = async () => {
       await this.recoverOperation();
       await this.migrateEnglish();
       const result = await operation();
-      if (notify) for (const listener of this.listeners) {
+      if (typeof notify === "function" ? notify() : notify) for (const listener of this.listeners) {
         try { listener(); } catch { /* UI listeners cannot invalidate a completed save. */ }
       }
       return result;
@@ -781,14 +787,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
 
   async listExpressions(query = "", category?: string): Promise<ExpressionEntry[]> {
     return this.exclusive(async () => {
-    const search = normalizedKey(query);
-    return (await this.entryFiles()).map((file) => file.entry)
-      .filter((entry) => (!category || entry.category === category)
-        && (!search || normalizedKey([
-          entry.term, entry.meaning, entry.category, entry.note,
-          ...entry.occurrences.flatMap((item) => [item.date, item.sourcePath, item.sourceTitle, item.scene, item.reason])
-        ].join("\n")).includes(search)))
-      .sort((left, right) => left.term.localeCompare(right.term));
+      return filterExpressions((await this.entryFiles()).map((file) => file.entry), query, category);
     });
   }
 
@@ -867,6 +866,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   async renameSource(oldPath: string, newPath: string): Promise<void> {
+    let renamed = false;
     return this.exclusive(async () => {
       const oldSource = normalizeDiaryPath(oldPath);
       const newSource = normalizeDiaryPath(newPath);
@@ -904,6 +904,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
       // Rename preserves pending generation and uses expected writes; no source body is copied.
       changes.push({ path: this.statePath(value.id), before: state.raw, after: serialize(value) });
       await this.applyChanges(changes, undefined, value.id);
-    }, true);
+      renamed = true;
+    }, () => renamed);
   }
 }

@@ -21,6 +21,7 @@ import { EchoInkTodoFormModal } from "./todo-edit-modal";
 import { renderTodoTable, todoTableCopy } from "./todo-table";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { confirmModal } from "../ui/modals";
+import { ForegroundView } from "../ui/foreground-view";
 
 export const VIEW_TYPE_ECHOINK_HOME = "codex-echoink-home";
 let nextHomeId = 0;
@@ -45,6 +46,11 @@ export class EchoInkHomeView extends ItemView {
   private month = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   private readonly id = `echoink-home-${++nextHomeId}`;
   private closed = false;
+  private foreground: ForegroundView | null = null;
+  private refreshPending = false;
+  private refreshRunning = false;
+  private surfacesPending = false;
+  private shellPending = false;
   private refreshVersion = 0;
   private refreshTimer: number | null = null;
   private searchTimer: number | null = null;
@@ -93,9 +99,11 @@ export class EchoInkHomeView extends ItemView {
     this.contentEl.addClass("echoink-home-workspace");
     this.contentEl.tabIndex = -1;
     this.renderShell();
+    this.foreground = new ForegroundView(this, (active) => this.foregroundChanged(active));
     this.activityUnsubscribe = this.plugin.homeActivity?.subscribe(() => this.scheduleRefresh()) ?? null;
     this.todoUnsubscribe = this.plugin.getTodoStore().subscribe(() => {
-      if (!this.closed) this.renderTodos();
+      if (this.closed) return;
+      if (this.isForeground()) this.renderTodos(); else this.surfacesPending = true;
     });
     this.registerEvent(this.app.vault.on("create", () => this.scheduleRefresh()));
     this.registerEvent(this.app.vault.on("modify", () => this.scheduleRefresh()));
@@ -124,6 +132,8 @@ export class EchoInkHomeView extends ItemView {
   }
   async onClose(): Promise<void> {
     this.closed = true; this.refreshVersion++;
+    this.foreground?.dispose(); this.foreground = null;
+    this.stopSearchWork();
     this.shortcutChoiceAbort?.abort();
     this.disposeBentoMagnet?.(); this.disposeBentoMagnet = null;
     this.disposeShortNavigation();
@@ -137,13 +147,36 @@ export class EchoInkHomeView extends ItemView {
   private scheduleRefresh(delay = 220): void {
     const win = this.contentEl.ownerDocument.defaultView;
     if (!win || this.closed) return;
+    this.refreshPending = true;
+    if (!this.isForeground()) return;
     if (this.refreshTimer !== null) win.clearTimeout(this.refreshTimer);
     this.refreshTimer = win.setTimeout(() => {
       this.refreshTimer = null;
       void this.refresh().catch((error) => console.warn("EchoInk 首页刷新失败", error));
     }, delay);
   }
-  async refreshLanguage(): Promise<void> { this.renderShell(); await this.refresh(); }
+  private isForeground(): boolean { return !this.closed && (this.foreground?.isActive() ?? true); }
+  private foregroundChanged(active: boolean): void {
+    if (this.closed) return;
+    if (!active) {
+      if (this.refreshTimer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+      if (this.shortNavigationFrame !== null) this.contentEl.ownerDocument.defaultView?.cancelAnimationFrame(this.shortNavigationFrame);
+      this.shortNavigationFrame = null;
+      if (this.refreshRunning) { this.refreshPending = true; this.refreshRunning = false; this.refreshVersion++; }
+      this.stopSearchWork();
+      return;
+    }
+    if (this.shellPending) { this.shellPending = false; this.renderShell(); }
+    if (this.surfacesPending) this.refreshHomeSurfaces();
+    if (this.refreshPending) this.scheduleRefresh(0);
+    if (this.searchOpen) this.scheduleSearch();
+    this.scheduleShortNavigation();
+  }
+  async refreshLanguage(): Promise<void> {
+    if (!this.isForeground()) { this.shellPending = true; this.refreshPending = true; return; }
+    this.stopSearchWork(); this.renderShell(); await this.refresh();
+  }
   refreshIfSettingsChanged(): void {
     if (this.closed || this.refreshTimer !== null) return;
     try {
@@ -159,6 +192,9 @@ export class EchoInkHomeView extends ItemView {
   }
   async refresh(): Promise<void> {
     if (this.closed) return;
+    if (!this.isForeground()) { this.refreshPending = true; return; }
+    this.refreshPending = false;
+    this.refreshRunning = true;
     if (this.refreshTimer !== null) {
       this.contentEl.ownerDocument.defaultView?.clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
@@ -171,14 +207,14 @@ export class EchoInkHomeView extends ItemView {
       const data = await this.dataService.build(this.month);
       return { data, settingsSignature };
     })().then(({ data, settingsSignature }) => {
-      if (this.closed || version !== this.refreshVersion) return;
+      if (!this.canFinishRefresh(version)) return;
       this.data = data;
       this.dataSettingsSignature = settingsSignature;
       this.field("recent-notes").removeAttribute("aria-busy");
       this.renderRecent(); this.renderActivity(); this.renderCalendar(); this.renderEntries(); this.renderTodos();
       this.applyModuleVisibility();
     }, () => {
-      if (this.closed || version !== this.refreshVersion) return;
+      if (!this.canFinishRefresh(version)) return;
       const message = this.t("笔记读取失败，请稍后重试", "Could not read notes. Try again.");
       this.field("recent-subtitle").setText(message);
       this.field("recent-notes").removeAttribute("aria-busy");
@@ -190,12 +226,18 @@ export class EchoInkHomeView extends ItemView {
     // The health scan can read many files. Its result only updates its own
     // surface and never delays recent notes, the calendar or navigation.
     await Promise.all([dataFlight, this.refreshHealth(version)]);
+    if (version === this.refreshVersion) this.refreshRunning = false;
+  }
+  private canFinishRefresh(version: number): boolean {
+    if (this.closed || version !== this.refreshVersion) return false;
+    if (!this.isForeground()) { this.refreshPending = true; return false; }
+    return true;
   }
   private async refreshHealth(version: number): Promise<void> {
     let snapshot: KnowledgeBaseDashboardSnapshot | null = null;
     try { snapshot = await this.plugin.getKnowledgeSurfaceService()?.getDashboardSnapshot() ?? null; }
     catch { /* Keep the existing unavailable state for a failed health scan. */ }
-    if (this.closed || version !== this.refreshVersion) return;
+    if (!this.canFinishRefresh(version)) return;
     this.snapshot = snapshot;
     this.healthLoading = false;
     this.renderHealth();
@@ -220,6 +262,8 @@ export class EchoInkHomeView extends ItemView {
   /** Lightweight re-render for settings-driven changes (modules + todos). */
   refreshHomeSurfaces(): void {
     if (this.closed) return;
+    if (!this.isForeground()) { this.surfacesPending = true; return; }
+    this.surfacesPending = false;
     this.renderCaptureShortcut();
     this.renderFinanceCard();
     this.applyModuleVisibility();
@@ -361,7 +405,7 @@ export class EchoInkHomeView extends ItemView {
     this.setShortNavigationActive(nav);
   }
   private scheduleShortNavigation(): void {
-    if (this.closed || this.shortNavigationFrame !== null) return;
+    if (!this.isForeground() || this.shortNavigationFrame !== null) return;
     const win = this.contentEl.ownerDocument.defaultView;
     if (win) this.shortNavigationFrame = win.requestAnimationFrame(() => { this.shortNavigationFrame = null; this.updateShortNavigation(); });
   }
@@ -391,7 +435,11 @@ export class EchoInkHomeView extends ItemView {
     const first = records[0];
     markup(host, `<button class="note-feature" data-note="${esc(first.path)}"><span class="note-kicker">${icon("file-text")}${esc(first.folder)}<span class="resume-chip">${esc(label(first))}</span></span><h3>${esc(first.title)}</h3><p class="note-excerpt"></p><span class="note-feature-bottom"><span>${esc(time(first))}</span><span>${this.t("打开笔记", "Open note")}${icon("arrow-up-right")}</span></span></button><div class="small-note-list">${records.slice(1, 3).map((r) => `<button class="small-note" data-note="${esc(r.path)}"><span class="small-note-label">${icon("file-text")}${esc(r.folder)}<span class="resume-chip">${esc(label(r))}</span></span><h3>${esc(r.title)}</h3><span class="small-note-time"><span>${esc(time(r))}</span>${icon("arrow-up-right")}</span></button>`).join("")}${selected && records.length > 3 ? `<button class="small-note" data-action="all-day"><span class="small-note-label">${this.t("查看当天全部", "View all for this day")} ${records.length}</span></button>` : ""}</div>`);
     const target = host.querySelector<HTMLElement>(".note-excerpt")!;
-    void this.searchService.excerpt(first.path).then((text) => { if (target.isConnected) target.setText(text || first.path); }).catch(() => { if (target.isConnected) target.setText(this.t("摘要读取失败", "Could not read excerpt")); });
+    const showExcerpt = (text: string) => {
+      if (!target.isConnected) return;
+      if (this.isForeground()) target.setText(text); else this.refreshPending = true;
+    };
+    void this.searchService.excerpt(first.path).then((text) => showExcerpt(text || first.path)).catch(() => showExcerpt(this.t("摘要读取失败", "Could not read excerpt")));
   }
   private weekDates(): string[] {
     const today = new Date(); today.setHours(0, 0, 0, 0); today.setDate(today.getDate() - (today.getDay() + 6) % 7);
@@ -412,11 +460,13 @@ export class EchoInkHomeView extends ItemView {
     markup(weekdays, Array.from({ length: 7 }, (_, i) => `<span>${esc(new Intl.DateTimeFormat(this.language, { weekday: "narrow" }).format(new Date(2024, 0, i + 1)))}</span>`).join(""));
     const first = new Date(this.month.getFullYear(), this.month.getMonth(), 1); const offset = (first.getDay() + 6) % 7;
     const cells = Math.ceil((new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate() + offset) / 7) * 7;
+    const counts = new Map<string, number>();
+    for (const event of this.events) counts.set(event.date, (counts.get(event.date) ?? 0) + 1);
     markup(this.field("calendar-days"), Array.from({ length: cells }, (_, i) => {
-      const date = new Date(first.getFullYear(), first.getMonth(), i - offset + 1); const key = dateKey(date); const count = this.events.filter((e) => e.date === key).length;
+      const date = new Date(first.getFullYear(), first.getMonth(), i - offset + 1); const key = dateKey(date); const count = counts.get(key) ?? 0;
       return `<button data-date="${key}" class="${date.getMonth() !== first.getMonth() ? "outside" : ""} ${key === dateKey(new Date()) ? "today" : ""} ${key === this.selectedDate ? "selected" : ""} ${count ? "has-record" : ""}" aria-pressed="${key === this.selectedDate}" aria-label="${esc(formatHomeFullDate(date, this.language))} · ${count}" ${key === dateKey(new Date()) ? 'aria-current="date"' : ""}>${date.getDate()}</button>`;
     }).join(""));
-    const prefix = dateKey(first).slice(0, 7); const count = new Set(this.events.filter((e) => e.date.startsWith(prefix)).map((e) => e.date)).size;
+    const prefix = dateKey(first).slice(0, 7); const count = [...counts.keys()].filter((date) => date.startsWith(prefix)).length;
     this.field("month-record-count").setText(this.t(`本月 ${count} 天`, `${count} days this month`));
     const key = this.selectedDate ?? dateKey(new Date());
     this.field("journal-label").setText(this.t(`${this.shortDate(key)}的日记`, `Journal · ${this.shortDate(key)}`));
@@ -710,6 +760,8 @@ export class EchoInkHomeView extends ItemView {
     input.focus(); this.scheduleSearch();
   }
   private closeSearch(focus: boolean): void {
+    this.stopSearchWork();
+    this.searchMatches = []; this.searchIndex = -1; this.searchResolvedQuery = null;
     if (!this.searchOpen) return;
     this.searchOpen = false; this.searchAbort?.abort();
     this.field("header-search").removeClass("is-open"); this.el(".page-heading").removeClass("search-open"); this.field("search-suggestions").hidden = true;
@@ -718,8 +770,14 @@ export class EchoInkHomeView extends ItemView {
     this.el(".search-trigger").setAttribute("aria-expanded", "false"); this.el(".search-close").tabIndex = -1;
     if (focus) this.el(".search-trigger").focus();
   }
+  private stopSearchWork(): void {
+    if (this.searchTimer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.searchTimer);
+    this.searchTimer = null;
+    this.searchAbort?.abort(); this.searchAbort = null;
+    this.searchService.clear();
+  }
   private scheduleSearch(): void {
-    if (!this.searchOpen) return;
+    if (!this.searchOpen || !this.isForeground()) return;
     this.searchAbort?.abort();
     this.searchResolvedQuery = null; this.searchMatches = []; this.searchIndex = -1;
     this.field("search-input").removeAttribute("aria-activedescendant");
@@ -731,12 +789,13 @@ export class EchoInkHomeView extends ItemView {
     this.searchTimer = win?.setTimeout(() => { this.searchTimer = null; void this.runSearch(); }, 100) ?? null;
   }
   private async runSearch(): Promise<void> {
+    if (!this.searchOpen || !this.isForeground()) return;
     const abort = new AbortController(); this.searchAbort = abort;
     this.field("search-results-heading").setText(this.t("正在查找…", "Searching…"));
     try {
       const query = (this.field("search-input") as HTMLInputElement).value;
       const result = await this.searchService.search(query, abort.signal);
-      if (abort.signal.aborted || !this.searchOpen || this.closed) return;
+      if (abort.signal.aborted || !this.searchOpen || !this.isForeground()) return;
       if (query !== (this.field("search-input") as HTMLInputElement).value) return;
       this.searchResolvedQuery = query;
       this.searchMatches = result.matches; this.searchIndex = -1;

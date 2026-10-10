@@ -879,6 +879,11 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     const reads: Promise<unknown>[] = [];
     const unsubscribe = repo.subscribe(() => { notifications++; reads.push(repo.listGenerationActivity()); });
     const removeBrokenListener = repo.subscribe(() => { throw new Error("broken UI listener"); });
+    assert.equal(repo.affectsExpressions("unrelated/note.md"), false);
+    assert.equal(repo.affectsExpressions(options.expressionDirectory), true);
+    assert.equal(repo.affectsExpressions(`${options.stateDirectory}/record.json`), true);
+    await repo.renameSource("unrelated/old.md", "unrelated/new.md");
+    assert.equal(notifications, 0, "unrelated renames do not notify expression views");
     let record = await repo.get(input);
     await repo.listExpressions();
     await repo.listGenerationActivity();

@@ -2,18 +2,49 @@ import { type App, TFile } from "obsidian";
 import { isHomeNotePath, type HomeNoteVisibility } from "./home-note-visibility";
 
 export interface HomeSearchMatch { path: string; title: string; mtime: number; snippet: string }
+interface CachedSearchText { mtime: number; text: string }
+
+/** Bound retained text, not just result count. Character budgets use UTF-16 units. */
+class SearchTextCache extends Map<string, CachedSearchText> {
+  private characters = 0;
+  constructor(private readonly maxEntries: number, private readonly maxCharacters: number, private readonly maxFileCharacters: number) { super(); }
+  override get(path: string): CachedSearchText | undefined {
+    const value = super.get(path);
+    if (value) { super.delete(path); super.set(path, value); }
+    return value;
+  }
+  override set(path: string, value: CachedSearchText): this {
+    this.delete(path);
+    if (value.text.length > this.maxFileCharacters) return this;
+    super.set(path, value);
+    this.characters += value.text.length;
+    for (const path of this.keys()) {
+      if (this.size <= this.maxEntries && this.characters <= this.maxCharacters) break;
+      this.delete(path);
+    }
+    return this;
+  }
+  override delete(path: string): boolean {
+    const value = super.get(path);
+    if (value) this.characters -= value.text.length;
+    return super.delete(path);
+  }
+  override clear(): void { super.clear(); this.characters = 0; }
+}
+
 /** Metadata first, then on-demand content; new input cancels old work between reads. */
 export class HomeSearchService {
-  private readonly cache = new Map<string, { mtime: number; text: string }>();
-  private readonly contentCache = new Map<string, { mtime: number; text: string }>();
+  private readonly cache = new SearchTextCache(256, 128_000, 8_192);
+  private readonly contentCache = new SearchTextCache(64, 1_000_000, 262_144);
   constructor(private readonly app: App, private readonly includeNotePath: HomeNoteVisibility = isHomeNotePath) {}
+  clear(): void { this.cache.clear(); this.contentCache.clear(); }
   async search(query: string, signal: AbortSignal): Promise<{ matches: HomeSearchMatch[]; count: number; failed: number }> {
     const terms = query.toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean);
     const matches: HomeSearchMatch[] = [];
     let failed = 0;
     const files = this.app.vault.getMarkdownFiles().filter((file) => this.includeNotePath(file.path));
     const paths = new Set(files.map((f) => f.path));
-    for (const p of this.cache.keys()) if (!paths.has(p)) { this.cache.delete(p); this.contentCache.delete(p); }
+    for (const cache of [this.cache, this.contentCache]) for (const p of cache.keys()) if (!paths.has(p)) cache.delete(p);
     for (let i = 0; i < files.length; i++) {
       if (signal.aborted) return { matches: [], count: 0, failed: 0 };
       const file = files[i];
