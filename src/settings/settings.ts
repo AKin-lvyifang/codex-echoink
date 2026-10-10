@@ -257,6 +257,7 @@ export type SettingsLanguage = "zh-CN" | "en";
 
 export interface SetupSettings {
   completedAt: number;
+  paperGuideDismissedAt: number;
   lastCheckedAt: number;
   dismissedVersion: string;
   tutorialVersion: string;
@@ -575,6 +576,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   customWelcomeSubtitle: DEFAULT_ECHOINK_WELCOME_SUBTITLE,
   setup: {
     completedAt: 0,
+    paperGuideDismissedAt: 0,
     lastCheckedAt: 0,
     dismissedVersion: "",
     tutorialVersion: "",
@@ -1736,6 +1738,7 @@ function normalizeSetupSettings(input: unknown): SetupSettings {
   const tutorialStep = value?.tutorialStep;
   return {
     completedAt: normalizeNonNegativeNumber(value?.completedAt),
+    paperGuideDismissedAt: normalizeNonNegativeNumber(value?.paperGuideDismissedAt),
     lastCheckedAt: normalizeNonNegativeNumber(value?.lastCheckedAt),
     dismissedVersion: normalizeOptionalText(value?.dismissedVersion),
     tutorialVersion: normalizeOptionalText(value?.tutorialVersion),

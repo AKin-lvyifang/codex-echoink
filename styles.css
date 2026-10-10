@@ -21275,6 +21275,339 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
 .echoink-finance-workspace .echoink-origin-pagination button:is(:hover,:focus-visible){background:var(--background-modifier-hover);outline:none;box-shadow:none}
 .echoink-finance-workspace .echoink-origin-pagination button:disabled{opacity:.45;cursor:default}
 .echoink-finance-workspace .echoink-origin-pagination svg{width:16px;height:16px}
+.modal.echoink-paper-guide-modal {
+  --paper-guide-bg: var(--echoink-theme-card, var(--background-primary));
+  --paper-guide-ink: var(--echoink-theme-text, var(--text-normal));
+  --paper-guide-secondary: var(--echoink-theme-secondary, var(--text-muted));
+  --paper-guide-line: var(--echoink-theme-line, var(--background-modifier-border));
+  --paper-guide-soft: var(--echoink-theme-raised, var(--background-secondary));
+  --paper-guide-accent: var(--echoink-theme-accent, var(--text-accent));
+  --paper-guide-active: var(--echoink-theme-active, var(--background-secondary));
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 30px 28px 18px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--paper-guide-line);
+  border-radius: 12px;
+  background: var(--paper-guide-bg);
+  color: var(--paper-guide-ink);
+  font-family: var(--font-interface);
+}
+
+.echoink-paper-guide-modal .modal-title {
+  flex: 0 0 auto;
+  margin: 0 14px 22px;
+  color: var(--paper-guide-ink);
+  font-size: calc(var(--font-text-size, 16px) * 1.3125);
+  font-weight: 600;
+  line-height: 1.55;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.echoink-paper-guide-modal .modal-close-button {
+  width: 30px;
+  height: 30px;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--paper-guide-secondary);
+}
+
+.echoink-paper-guide-modal .modal-close-button:hover,
+.echoink-paper-guide-modal .modal-close-button:focus-visible {
+  background: var(--paper-guide-soft);
+  color: var(--paper-guide-ink);
+  outline: none;
+  box-shadow: none;
+}
+
+.echoink-paper-guide-modal .modal-close-button[aria-disabled="true"] {
+  opacity: .45;
+  cursor: wait;
+}
+
+.echoink-paper-guide-modal .echoink-paper-guide-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.echoink-paper-guide-choices {
+  display: grid;
+  gap: 9px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.echoink-paper-guide-modal button.echoink-paper-guide-choice {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: auto;
+  min-height: 56px;
+  padding: 12px 13px;
+  margin: 0;
+  border: 1px solid var(--paper-guide-line);
+  border-radius: 8px;
+  background: var(--paper-guide-bg);
+  color: var(--paper-guide-ink);
+  box-shadow: none;
+  font-family: inherit;
+  font-size: calc(var(--font-text-size, 16px) * .8125);
+  font-weight: 400;
+  line-height: 1.6;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.echoink-paper-guide-modal button.echoink-paper-guide-choice:hover,
+.echoink-paper-guide-modal button.echoink-paper-guide-choice:focus-visible {
+  border-color: var(--paper-guide-line);
+  background: var(--paper-guide-soft);
+  outline: none;
+  box-shadow: none;
+}
+
+.echoink-paper-guide-modal button.echoink-paper-guide-choice:active {
+  background: var(--paper-guide-active);
+}
+
+.echoink-paper-guide-icon,
+.echoink-paper-guide-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.echoink-paper-guide-icon {
+  color: var(--paper-guide-accent);
+}
+
+.echoink-paper-guide-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.echoink-paper-guide-arrow {
+  color: var(--paper-guide-secondary);
+}
+
+.echoink-paper-guide-arrow svg {
+  width: 16px;
+  height: 16px;
+}
+
+.echoink-paper-guide-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+
+.echoink-paper-guide-choice-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+}
+
+.echoink-paper-guide-choice-title {
+  font-weight: 600;
+}
+
+.echoink-paper-guide-badge {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--paper-guide-active);
+  color: var(--paper-guide-accent);
+  font-size: calc(var(--font-text-size, 16px) * .625);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* The shared edition badge normally sits inside settings; preserve it here. */
+.echoink-paper-guide-modal .echoink-plugin-edition-badge {
+  gap: 5px;
+}
+
+.echoink-paper-guide-modal .echoink-plugin-edition-badge.is-pro {
+  color: #f3d995;
+  background: #1f1b13;
+  border: 1px solid #786334;
+}
+
+.echoink-paper-guide-description {
+  color: var(--paper-guide-secondary);
+  font-size: calc(var(--font-text-size, 16px) * .6875);
+  line-height: 1.7;
+}
+
+.echoink-paper-guide-footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.echoink-paper-guide-feedback {
+  color: var(--paper-guide-secondary);
+  font-size: calc(var(--font-text-size, 16px) * .6875);
+  line-height: 1.7;
+  text-align: center;
+}
+
+.echoink-paper-guide-feedback[hidden] {
+  display: none;
+}
+
+.echoink-paper-guide-feedback.is-error {
+  color: var(--text-error);
+}
+
+.echoink-paper-guide-modal button.echoink-paper-guide-skip {
+  height: auto;
+  min-height: 34px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--paper-guide-secondary);
+  box-shadow: none;
+  font-family: inherit;
+  font-size: calc(var(--font-text-size, 16px) * .6875);
+  font-weight: 400;
+  line-height: 1.55;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.echoink-paper-guide-modal button.echoink-paper-guide-skip:hover,
+.echoink-paper-guide-modal button.echoink-paper-guide-skip:focus-visible {
+  background: var(--paper-guide-soft);
+  color: var(--paper-guide-ink);
+  outline: none;
+  box-shadow: none;
+}
+
+.echoink-paper-guide-modal button.echoink-paper-guide-choice:disabled,
+.echoink-paper-guide-modal button.echoink-paper-guide-skip:disabled {
+  opacity: .45;
+  cursor: wait;
+}
+
+/* The accepted paper mascot is decorative; no remote images or looping motion. */
+.echoink-paper-guide-mascot {
+  --paper-guide-mascot-size: 62px;
+  position: relative;
+  display: block;
+  width: var(--paper-guide-mascot-size);
+  height: calc(var(--paper-guide-mascot-size) * .88);
+  margin: 4px auto 21px;
+  border: 2px solid var(--paper-guide-ink);
+  border-radius: 5px 15px 6px 7px;
+  background: var(--paper-guide-bg);
+  transform: rotate(6deg);
+}
+
+.echoink-paper-guide-mascot::before {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: -1px;
+  width: 20%;
+  height: 20%;
+  border: 1px solid var(--paper-guide-ink);
+  border-radius: 0 10px 0 0;
+  background: var(--paper-guide-soft);
+}
+
+.echoink-paper-guide-mascot::after {
+  content: "";
+  position: absolute;
+  right: -10%;
+  top: 42%;
+  width: 17%;
+  height: 26%;
+  border: 2px solid var(--paper-guide-ink);
+  border-left: 0;
+  border-bottom: 0;
+  border-radius: 0 80% 0 0;
+  transform: rotate(-22deg);
+}
+
+.echoink-paper-guide-eyes {
+  position: absolute;
+  left: 25%;
+  top: 40%;
+  width: 10%;
+  height: 14%;
+  border-radius: 50%;
+  background: var(--paper-guide-ink);
+  box-shadow: calc(var(--paper-guide-mascot-size) * .28) 0 0 var(--paper-guide-ink);
+}
+
+.echoink-paper-guide-mouth {
+  position: absolute;
+  top: 62%;
+  left: 46%;
+  width: 16%;
+  height: 10%;
+  border-bottom: 2px solid var(--paper-guide-ink);
+  border-radius: 0 0 50% 50%;
+  transform: rotate(-4deg);
+}
+
+.echoink-paper-guide-feet {
+  position: absolute;
+  bottom: -9%;
+  left: 18%;
+  width: 19%;
+  height: 16%;
+  border-radius: 60%;
+  background: var(--paper-guide-ink);
+  box-shadow: calc(var(--paper-guide-mascot-size) * .44) 0 0 var(--paper-guide-ink);
+}
+
+@media (max-width: 520px) {
+  .modal.echoink-paper-guide-modal {
+    padding: 28px 18px 14px;
+  }
+
+  .echoink-paper-guide-modal .modal-title {
+    font-size: calc(var(--font-text-size, 16px) * 1.1875);
+  }
+}
+
+@media (pointer: coarse) {
+  .echoink-paper-guide-modal button.echoink-paper-guide-skip,
+  .echoink-paper-guide-modal .modal-close-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .echoink-paper-guide-modal button.echoink-paper-guide-choice {
+    transition: none;
+  }
+}
 /* ECHOINK_WORKSPACE_SETTINGS_END */
 
 /* ===== EchoInk 快捷 AI 小窗（quick chat popout）===== */

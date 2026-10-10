@@ -21,6 +21,7 @@
     "test:english-diary": "node scripts/english-diary-tests.mjs",
     "test:react-dom-resources": "node scripts/react-dom-script-resources-tests.mjs",
     "test:provider-settings": "node scripts/provider-settings-tests.mjs",
+    "test:paper-guide": "node scripts/paper-guide-tests.mjs",
     "test:account-membership": "node --enable-source-maps scripts/account-membership-tests.mjs",
     "test:settings-search": "node --enable-source-maps scripts/native-settings-search-tests.mjs",
     "test:conversation-ui": "node scripts/conversation-ui-tests.mjs",

@@ -856,6 +856,7 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.plugin.activateHomeAndSidebar();
       this.clearOnboardingCoachmark(false);
       (this.app as unknown as { setting?: { close: () => void } }).setting?.close();
+      await this.plugin.openPaperGuideAfterOnboarding();
     };
     this.onboardingCoachmarkHandle = mountEchoInkOnboardingCoachmark({
       app: this.app,

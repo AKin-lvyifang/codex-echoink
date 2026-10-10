@@ -40,6 +40,7 @@ import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./pl
 import { EnglishDiaryController } from "./english-diary/controller";
 import { confirmModal } from "./ui/modals";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
+import { PaperGuideController } from "./plugin/paper-guide-controller";
 import { EchoInkTodoStore } from "./home/todo-store";
 import {
   EchoInkSettingsStore,
@@ -223,6 +224,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   readonly developerMode = new DeveloperModeAccess();
   private developerService: DeveloperModeService | null = null;
   private onboardingRequested = false;
+  private paperGuide: PaperGuideController | null = null;
   private onboardingRibbonAnchor: HTMLElement | null = null;
   private onboardingWorkspaceCoachmark: EchoInkOnboardingCoachmarkHandle | null = null;
   private onboardingDesktopWaitCleanup: (() => void) | null = null;
@@ -334,6 +336,15 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async activateHomeAndSidebar(): Promise<void> { return this.getViewService().activateHomeAndSidebar(); }
+  async openPaperGuideAfterOnboarding(): Promise<void> {
+    if (!this.paperGuide) {
+      this.paperGuide = new PaperGuideController(this, () =>
+        this.app.workspace.getActiveViewOfType(EchoInkHomeView)?.contentEl ?? null);
+      this.register(() => { this.paperGuide?.dispose(); this.paperGuide = null; });
+    }
+    await this.paperGuide.showAfterOnboarding();
+  }
+  async openEchoInkAccountSettings(): Promise<void> { await this.getViewService().openEchoInkSettings("account"); }
   applyAppearanceTheme(ownerDocument?: Document): void {
     if (ownerDocument) this.appearance?.applyToDocument(ownerDocument);
     this.appearance?.refresh();
