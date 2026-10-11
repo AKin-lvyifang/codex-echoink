@@ -93,6 +93,13 @@
 :is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=button]:disabled {opacity:.45;cursor:default}
 :is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item],[data-slot=select-trigger]):focus-visible,
 .echoink-origin-control [data-slot=slider-thumb]:focus-visible {outline:2px solid var(--origin-accent);outline-offset:3px}
+/* Desktop focus stays inside the control. Preserve mobile controls and previews. */
+body:not(.is-mobile) :is(.echoink-settings-demo,.modal) .echoink-origin-control:not(.echoink-mobile-finance-settings *):is([data-slot=input],[data-slot=select-trigger]):is(:focus,:focus-visible) {outline:none;box-shadow:none;border-color:var(--origin-line);background:var(--background-modifier-hover,var(--origin-soft))}
+body:not(.is-mobile) :is(.echoink-settings-demo,.modal) .echoink-origin-control:not(.echoink-mobile-finance-settings *):is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item]):focus-visible,
+body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-settings *) [data-slot=slider-thumb]:focus-visible {outline:none;box-shadow:none}
+body:not(.is-mobile) :is(.echoink-settings-demo,.modal) .echoink-origin-control:not(.echoink-mobile-finance-settings *)[data-slot=switch]:focus-visible [data-slot=switch-thumb] {background:color-mix(in srgb,var(--origin-soft) 85%,var(--origin-muted))}
+body:not(.is-mobile) :is(.echoink-settings-demo,.modal) .echoink-origin-control:not(.echoink-mobile-finance-settings *):is([data-slot=checkbox],[data-slot=radio-group-item]):focus-visible {background:var(--origin-soft);color:var(--origin-accent)}
+body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-settings *) [data-slot=slider-thumb]:focus-visible {background:var(--origin-soft)}
 :is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item],[data-slot=select-trigger]):disabled {opacity:.45;cursor:default}
 .echoink-settings-demo .codex-provider-custom-toggle>[data-slot=switch] {order:2;margin-left:auto}
 .echoink-settings-demo .codex-provider-custom-toggle-copy {min-width:0}

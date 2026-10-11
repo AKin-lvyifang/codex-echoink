@@ -114,6 +114,10 @@ function renderRow(
       cls: emphasized ? `echoink-due echoink-due-${state}` : "echoink-due",
       text: label ? `${label} · ${record.dueDate}` : record.dueDate
     });
+    if (record.dueTime) {
+      dueCell.createEl("br");
+      dueCell.createEl("time", { text: record.dueTime, attr: { datetime: `${record.dueDate}T${record.dueTime}` } });
+    }
   }
 
   const categoryName = record.categoryName || copy.uncategorized;
