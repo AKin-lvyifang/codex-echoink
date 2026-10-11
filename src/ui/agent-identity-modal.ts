@@ -4,7 +4,7 @@ import {
   countUnicodeChars,
   normalizeAgentDisplayName,
   type AgentAvatarState
-} from "../harness/memory/agent-identity-state";
+} from "../harness/memory/agent-identity-model";
 import { applyAmicroButton } from "../settings/amicro-buttons";
 import {
   AvatarProcessingError,

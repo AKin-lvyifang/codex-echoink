@@ -10,6 +10,7 @@ import { MobileServices } from "../../src/mobile/services";
 import { MobileStore } from "../../src/mobile/store";
 import { MobileRuntime } from "../../src/mobile/runtime";
 import { loadMobileSettings } from "../../src/mobile/settings";
+import { AgentIdentityModal } from "../../src/ui/agent-identity-modal";
 import { createHost, answer } from "./host.mjs";
 
 const host = createHost({ "笔记/来源.md": "项目决定：先完成手机本地问答。", "Wiki/项目/产品草稿.md": "# 产品草稿\n\n本周聚焦真实场景。", "Wiki/项目/工作复盘.md": "# 工作复盘\n\n记录决定、证据与行动。", "Wiki/项目/手机验收.md": "# 知识", "Raw/资料.md": "# 原始资料", "Inbox/记录.md": "# Inbox" });
@@ -23,12 +24,14 @@ if (keyboard > 0) {
   document.querySelector<HTMLElement>(".fixture-navbar")!.style.bottom = `${keyboard}px`;
 }
 Platform.isMobileApp = Platform.isMobile = !params.has("desktop"); Platform.isTablet = params.has("tablet") && Platform.isMobile;
-const fixturePrefix = params.has("host") ? "echoink-ipad-beta7-host-fixture" : params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
+const fixturePrefix = params.has("review") ? `echoink-pre-main-profile-${params.get("review") || "initial"}-v1` : params.has("host") ? "echoink-ipad-beta7-host-fixture" : params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
 const persisted = localStorage.getItem(`${fixturePrefix}-files`);
 if (persisted) { host.files.clear(); for (const [key, value] of JSON.parse(persisted)) host.files.set(key, value); }
+if (params.has("profile-error")) host.files.set(".echoink/agents/echoink/AGENT.md", "用户既有资料，缺少有效控制区域。\n");
 const persist = () => localStorage.setItem(`${fixturePrefix}-files`, JSON.stringify([...host.files]));
 const write = host.adapter.write.bind(host.adapter);
 host.adapter.write = async (path, text) => { await write(path, text); persist(); };
+for (const method of ["rename", "remove", "rmdir"] as const) { const original = host.adapter[method].bind(host.adapter); host.adapter[method] = async (...args: any[]) => { await (original as any)(...args); persist(); }; }
 const create = host.app.vault.create.bind(host.app.vault);
 host.app.vault.create = async (path, text) => { const file = await create(path, text); persist(); return file; };
 let slowRead = false;
@@ -124,6 +127,9 @@ document.querySelector("#fixture-home-tab")!.addEventListener("click", () => { v
 document.querySelector("#fixture-close-settings")!.addEventListener("click", () => { void workspaceFixture.closeSettings(); });
 window.addEventListener("pagehide", () => { void desktopDispose?.(); void workspaceFixture.dispose(); }, { once: true });
 Object.assign(window, { mobileFixture: { store, settings, runtime, host, requests, plugin, services, workspaceFixture } });
+if (params.has("desktop") && params.has("identity-modal")) {
+  new AgentIdentityModal(host.app as any, { initialName: "桌面墨墨", initialAvatar: { kind: "preset", presetId: "lin" }, language: "zh", mode: "edit", onConfirm: async () => {} }).open();
+}
 
 if (params.has("finance")) {
   settings.lifestyle.finance.enabled = true;

@@ -79,19 +79,21 @@ export class MobileUI {
   private mounted = false;
   private content!: HTMLElement;
   private timer?: number;
+  private unsubscribeIdentity?: () => void;
   private chatSessionId?: string;
   private onRuntimeChange = () => { if (this.page === "chat" || (this.host.isTablet && this.page === "history")) this.refreshChat(); };
-  constructor(private root: HTMLElement, private host: MobileUIHost) { this.host.applyAppearance = () => this.applyAppearance(); this.settingPages = new MobileSettingsPages(host, { go: page => this.go(page), sheet: (title, render) => this.openSheet(title, render), row: (parent, title, desc, name, action) => this.row(parent, title, desc, name, action), button: (parent, title, action, name, cls) => this.button(parent, title, action, name, cls), field: (parent, title, value, update, type) => this.field(parent, title, value, update, type), act: action => this.act(action) }); }
+  constructor(private root: HTMLElement, private host: MobileUIHost) { this.host.applyAppearance = () => this.applyAppearance(); this.settingPages = new MobileSettingsPages(host, { go: page => this.go(page), sheet: (title, render) => this.openSheet(title, render), closeSheet: () => this.closeSheet(), row: (parent, title, desc, name, action) => this.row(parent, title, desc, name, action), button: (parent, title, action, name, cls) => this.button(parent, title, action, name, cls), field: (parent, title, value, update, type) => this.field(parent, title, value, update, type), act: action => this.act(action) }); }
   showPage(page: MobileSettingsRoute) { this.go(page, page === "settings"); }
   showChat() { if (this.host.settingsOnly) return; if (this.page !== "chat") this.go("chat"); else this.refreshChat(); }
   mount() {
     this.mounted = true; this.root.classList.add("echoink-mobile"); this.root.classList.toggle("em-tablet", !!this.host.isTablet); this.root.classList.toggle("em-settings-surface", !!this.host.settingsOnly);
     if (this.host.settingsOnly) this.page = "settings";
     else { this.host.runtime.onChange = this.onRuntimeChange; this.timer = window.setInterval(() => this.updateTimers(), 250); }
+    this.unsubscribeIdentity = this.host.services?.subscribeIdentity(() => { this.syncHeader(); this.settingPages.refreshIdentity(); });
     this.render(); this.viewport = new MobileViewport(this.root); this.applyAppearance();
   }
   refreshSettings() { this.applyAppearance(); this.updateComposerLabels(); if (!this.host.settingsOnly) this.refreshChat(); }
-  destroy() { this.viewport?.dispose(); this.settingPages.dispose(); this.closeSheet(false); this.mounted = false; window.clearInterval(this.timer); if (this.host.runtime.onChange === this.onRuntimeChange) this.host.runtime.onChange = () => {}; this.root.replaceChildren(); }
+  destroy() { this.unsubscribeIdentity?.(); this.unsubscribeIdentity = undefined; this.viewport?.dispose(); this.settingPages.dispose(); this.closeSheet(false); this.mounted = false; window.clearInterval(this.timer); if (this.host.runtime.onChange === this.onRuntimeChange) this.host.runtime.onChange = () => {}; this.root.replaceChildren(); }
   private async act(action: () => void | Promise<void>) {
     try { this.error = ""; this.showError(); await action(); }
     catch (error) { this.error = error instanceof Error ? error.message : String(error); if (this.mounted) this.showError(); }
@@ -127,22 +129,26 @@ export class MobileUI {
   private showError() {
     this.root.querySelectorAll<HTMLElement>(".em-error,.em-sheet-error").forEach(box => { box.textContent = this.error; box.hidden = !this.error; });
   }
-  private render() {
-    this.settingPages.dispose();
-    const previousSidebar = this.root.querySelector<HTMLElement>(".em-sidebar");
-    if (previousSidebar) this.sidebarScroll.set(previousSidebar.getAttribute("aria-label") ?? "", previousSidebar.scrollTop);
-    this.host.beginRender(); this.root.replaceChildren();
-    this.root.dataset.page = this.page;
-    const header = el(this.root, "header", "em-header");
+  private syncHeader() {
+    const header = this.root.querySelector<HTMLElement>(".em-header") ?? el(this.root, "header", "em-header");
+    header.replaceChildren();
     if (this.page !== "chat" && !(this.host.settingsOnly && this.page === "settings")) this.iconButton(header, "返回", "chevron-left", () => this.back());
     else if (this.page === "chat") el(header, "span", "em-agent-avatar"); else icon(header, "settings-2");
-    const titles: Record<Page, string> = { ...this.settingPages.titles, chat: (this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName, settings: "设置", basic: "基础设置", providers: "模型与提供商", provider: "配置提供商", models: "选择模型", permissions: "工作区权限", history: "历史对话", review: "复盘", memories: "记忆", memory: "记忆详情", notes: "引用笔记" };
+    const titles: Record<Page, string> = { ...this.settingPages.titles, "profile-agent": `${(this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName} 档案`, chat: (this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName, settings: "设置", basic: "基础设置", providers: "模型与提供商", provider: "配置提供商", models: "选择模型", permissions: "工作区权限", history: "历史对话", review: "复盘", memories: "记忆", memory: "记忆详情", notes: "引用笔记" };
     el(header, "h2", "em-title", this.host.settingsOnly && this.page === "settings" ? "EchoInk 设置" : titles[this.page]);
     if (this.page === "chat") {
       this.updateIdentity();
       this.iconButton(header, "历史对话", "history", () => this.openSheet("历史对话", body => this.history(body)));
       const settingsButton = this.iconButton(header, "设置", "settings-2", () => this.go("settings")); settingsButton.replaceChildren(); renderSettingsGearIcon(settingsButton);
     }
+  }
+  private render() {
+    this.settingPages.dispose();
+    const previousSidebar = this.root.querySelector<HTMLElement>(".em-sidebar");
+    if (previousSidebar) this.sidebarScroll.set(previousSidebar.getAttribute("aria-label") ?? "", previousSidebar.scrollTop);
+    this.host.beginRender(); this.root.replaceChildren();
+    this.root.dataset.page = this.page;
+    this.syncHeader();
     const error = el(this.root, "div", "em-error"); error.setAttribute("role", "alert"); this.showError();
     const workspace = el(this.root, "div", "em-workspace");
     if (this.host.isTablet && !this.host.settingsOnly) {
@@ -160,7 +166,7 @@ export class MobileUI {
       if (!this.host.isTablet || this.root.clientWidth < 760) return;
       if (this.page !== "settings" && this.page !== "memories") return;
       this.stack.push(this.page); this.page = this.page === "settings" ? "basic" : "memory";
-      this.root.dataset.page = this.page;
+      this.root.dataset.page = this.page; this.syncHeader();
     };
     this.content.addEventListener("pointerdown", retainDetail);
     this.content.addEventListener("focusin", retainDetail);

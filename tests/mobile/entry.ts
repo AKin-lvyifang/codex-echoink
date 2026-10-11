@@ -23,3 +23,7 @@ export { mobileGenerateText } from "../../src/mobile/transport";
 export { readFinanceBill } from "../../src/lifestyle/finance-domain";
 export { sha256Hex } from "../../src/utils/sha256";
 export { FinanceWorkspace } from "../../src/lifestyle/finance-view";
+export { MobileProfileProtocol, renderPersonalMemoryOverview } from "../../src/harness/memory/mobile-profile-protocol";
+export { renderAgentMarkdown, agentSelfFromTemplate, parseAgentCurrentSelf, stableSelfKey } from "../../src/harness/memory/agent-self-model";
+export { emptyAgentSelfMetadata } from "../../src/harness/memory/agent-self-metadata-model";
+export { getAgentTemplate } from "../../src/harness/memory/agent-templates";

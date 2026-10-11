@@ -1,4 +1,8 @@
-import novaAvatar from "../../../assets/nova.svg";
+import { defaultAgentIdentityState } from "../../harness/memory/agent-identity-model";
+import { AgentIdentityModal } from "../agent-identity-modal";
+import { resolveAgentAvatarUrl } from "../agent-avatar-presets";
+import { AGENT_TEMPLATES, getAgentTemplate, type AgentTemplateId } from "../../harness/memory/agent-templates";
+import type { MobileAgentProfile } from "../../harness/memory/mobile-profile-protocol";
 import { TFile, setIcon } from "obsidian";
 import type { MobileUIHost } from "./mobile-ui";
 import { newId } from "../../core/new-id";
@@ -20,6 +24,7 @@ export type MobileSettingsRoute = MobileSettingsPage | "settings" | "providers";
 interface Controls {
   go(page: MobileSettingsPage | "memories" | "providers" | "chat"): void;
   sheet(title: string, render: (body: HTMLElement) => void): void;
+  closeSheet(): void;
   row(parent: HTMLElement, title: string, description: string, icon: string, action: () => void | Promise<void>): HTMLButtonElement;
   button(parent: HTMLElement, title: string, action: () => void | Promise<void>, icon?: string, cls?: string): HTMLButtonElement;
   field(parent: HTMLElement, title: string, value: string, update: (value: string) => void, type?: string): HTMLInputElement;
@@ -39,18 +44,33 @@ export class MobileSettingsPages {
     { page: "todos-settings", title: "待办", icon: SETTINGS_TAB_ICONS.todos },
     { page: "account", title: "账号与会员", icon: SETTINGS_TAB_ICONS.account }
   ];
-  readonly titles: Record<MobileSettingsPage, string> = { basic: "基础设置", layout: "布局与外观", resources: "Skills & MCP", knowledge: "知识库管理", review: "复盘", "todos-settings": "待办设置", todos: "待办", "profile-agent": "Nova 档案", "profile-user": "用户画像", archives: "已归档会话", account: "账号与会员", "finance-settings": "财务设置" };
+  readonly titles: Record<MobileSettingsPage, string> = { basic: "基础设置", layout: "布局与外观", resources: "Skills & MCP", knowledge: "知识库管理", review: "复盘", "todos-settings": "待办设置", todos: "待办", "profile-agent": "Agent 档案", "profile-user": "用户画像", archives: "已归档会话", account: "账号与会员", "finance-settings": "财务设置" };
   private knowledgeMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   private resourceTab = "plugins";
   private todoStatus = "open";
   private todoCategory = "";
   private todoDate = "all";
   private profileScroll = new Map<string, number>();
+  private identityLink?: HTMLButtonElement;
+  private agentArticle?: HTMLElement;
   private unsubscribe?: () => void;
   constructor(private host: MobileUIHost, private ui: Controls) {}
   private accountPage?: { dispose(): void };
   private financeCatalog?: FinanceCatalogPanel;
-  dispose() { this.unsubscribe?.(); this.unsubscribe = undefined; this.accountPage?.dispose(); this.accountPage = undefined; this.financeCatalog?.dispose(); this.financeCatalog = undefined; }
+  dispose() { this.identityLink = undefined; this.agentArticle = undefined; this.unsubscribe?.(); this.unsubscribe = undefined; this.accountPage?.dispose(); this.accountPage = undefined; this.financeCatalog?.dispose(); this.financeCatalog = undefined; }
+  refreshIdentity() { if (this.identityLink?.isConnected) this.fillIdentityLink(this.identityLink); if (this.agentArticle?.isConnected) void this.loadAgentProfile(this.agentArticle); }
+  private avatar(parent: HTMLElement, profile: MobileAgentProfile["identity"], cls: string) {
+    const box = node(parent, "span", cls); box.setAttribute("aria-hidden", "true");
+    const url = resolveAgentAvatarUrl(profile.avatar);
+    if (url) { const image = node(box, "img"); image.src = url; image.alt = ""; image.addEventListener("error", () => { image.remove(); setIcon(box, "bot"); }, { once: true }); }
+    else setIcon(box, "bot");
+    return box;
+  }
+  private fillIdentityLink(link: HTMLButtonElement) {
+    const identity = this.host.services?.agentIdentity ?? defaultAgentIdentityState();
+    link.querySelector(".em-avatar")?.remove(); link.prepend(this.avatar(link, identity, "em-avatar"));
+    link.querySelector(".em-row-label strong")!.textContent = identity.displayName;
+  }
   private get services(): MobileServices { if (!this.host.services) throw new Error("当前预览尚未提供 Vault 服务。"); return this.host.services; }
   private help(parent: HTMLElement, text: string) { return node(parent, "p", "em-help", text); }
   private heading(parent: HTMLElement, title: string) { return node(parent, "h3", "em-section-title", title); }
@@ -66,8 +86,8 @@ export class MobileSettingsPages {
       this.ui.button(part, "查看记忆", () => this.ui.go("memories"), "brain", "em-wide-action");
     }));
     this.heading(body, "身份与用户画像");
-    const profile = this.ui.row(body, "Nova", "EchoInk Agent", "user", () => this.ui.go("profile-agent")); profile.classList.add("em-profile-link");
-    const image = node(profile, "img", "em-avatar"); image.src = novaAvatar; image.alt = "Nova 头像"; profile.prepend(image); profile.querySelector(".em-icon")?.remove();
+    const profile = this.ui.row(body, (this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName, "EchoInk Agent", "user", () => this.ui.go("profile-agent")); profile.classList.add("em-profile-link");
+    this.identityLink = profile; profile.querySelector(".em-icon")?.remove(); this.fillIdentityLink(profile);
     this.ui.row(body, "用户画像", "", "file-text", () => this.ui.go("profile-user"));
   }
   basicGeneral(body: HTMLElement) {
@@ -275,14 +295,78 @@ export class MobileSettingsPages {
     });
   }
   private profile(body: HTMLElement, kind: "agent" | "user") {
+    if (kind === "agent") {
+      this.agentArticle = node(body, "article", "em-agent-profile");
+      void this.loadAgentProfile(this.agentArticle); return;
+    }
     const article = node(body, "article", "em-profile-reader markdown-rendered"); article.tabIndex = 0;
-    this.heading(article, kind === "agent" ? "认识 Nova" : "用户画像");
+    this.heading(article, "用户画像");
     void this.ui.act(async () => {
       const content = await this.services.readProfile(kind); if (!article.isConnected) return;
       if (content === null) this.help(article, "当前笔记库还没有这份档案。"); else this.host.renderMarkdown(content, article);
       article.scrollTop = this.profileScroll.get(kind) ?? 0;
     });
     article.addEventListener("scroll", () => this.profileScroll.set(kind, article.scrollTop), { passive: true });
+  }
+  private async loadAgentProfile(article: HTMLElement) {
+    const restore = article.contains(article.ownerDocument.activeElement);
+    try {
+      const data = await this.services.readAgentProfile(); if (!article.isConnected) return;
+      article.replaceChildren();
+      const header = node(article, "header", "em-profile-actions"); node(header, "h3", "", "Agent 画像");
+      const select = this.ui.button(header, data.templateId ? "重新选择人格模板" : "选择人格模板", () => this.selectAgentTemplate(data), "users"); select.classList.add("em-profile-template");
+      const card = node(article, "section", "echoink-agent-profile-card-body");
+      const identity = node(card, "div", "echoink-agent-profile-identity");
+      const avatarButton = this.ui.button(identity, "", () => this.editAgentIdentity(data), undefined, "em-profile-avatar-button"); avatarButton.setAttribute("aria-label", "编辑身份");
+      this.avatar(avatarButton, data.identity, "echoink-agent-profile-avatar");
+      node(identity, "strong", "echoink-agent-profile-name", data.identity.displayName);
+      node(identity, "span", "echoink-agent-profile-personality", `初始风格：${getAgentTemplate(data.templateId)?.labelZh ?? "尚未选择"}`);
+      this.ui.button(identity, "编辑身份", () => this.editAgentIdentity(data), "user-round-pen", "em-profile-edit");
+      const content = node(card, "section", "echoink-agent-profile-content"); node(content, "h4", "echoink-agent-profile-content-title", "我的公开画像");
+      if (data.profile) {
+        const fields = node(content, "dl", "echoink-agent-profile-current-fields");
+        for (const [label, text] of [["思考方式", data.profile.thinkingMethod], ["回答语气", data.profile.answerTone], ["回答结构", data.profile.answerStructure]]) {
+          const field = node(fields, "div", "echoink-agent-profile-field"); node(field, "dt", "echoink-agent-profile-field-label", label); node(field, "dd", "echoink-agent-profile-field-value", text);
+        }
+        node(content, "h4", "echoink-agent-profile-section-title", "长期形成的习惯");
+        if (data.profile.representativeHabits.length) { const list = node(content, "ul", "echoink-agent-profile-habit-list"); data.profile.representativeHabits.forEach(text => node(list, "li", "", text)); }
+        else node(content, "p", "echoink-agent-profile-growth-empty", "我还没有需要长期保留的后天习惯。");
+      } else this.help(content, "尚未设置人格。选择一种初始风格，开始建立你的 Agent 画像。");
+      node(content, "p", "echoink-agent-profile-growth-note", "我会随着与你的长期对话持续学习，逐步调整自己的处事方式。");
+      if (restore) select.focus({ preventScroll: true });
+    } catch {
+      if (!article.isConnected) return;
+      article.replaceChildren(); this.heading(article, "Agent 画像");
+      this.help(article, "人格资料读取失败或尚未完成同步。原资料已保留。");
+      this.ui.button(article, "重新读取人格", () => this.loadAgentProfile(article));
+    }
+  }
+  private editAgentIdentity(data: MobileAgentProfile, templateId?: AgentTemplateId) {
+    const restore = this.agentArticle?.querySelector<HTMLElement>(".em-profile-edit");
+    const modal = new AgentIdentityModal(this.host.app, { initialName: data.identity.displayName, initialAvatar: data.identity.avatar, language: "zh", mode: data.identity.revision === 0 ? "first-run" : "edit",
+      onConfirm: async identity => { await this.services.saveAgentProfile({ identity, ...(templateId ? { templateId } : {}) }, data.version); if (templateId) this.ui.closeSheet(); } });
+    modal.modalEl.classList.add("echoink-mobile-identity-modal"); modal.modalEl.classList.toggle("em-large-text", this.host.settings().mobileUi.largeText);
+    const close = modal.onClose.bind(modal) as () => void; modal.onClose = () => { close(); const target = restore?.isConnected ? restore : this.agentArticle?.querySelector<HTMLElement>(".em-profile-template"); target?.focus({ preventScroll: true }); };
+    modal.open();
+  }
+  private selectAgentTemplate(data: MobileAgentProfile) {
+    this.ui.sheet("选择人格模板", body => {
+      this.help(body, "只调整基础风格，长期形成的习惯会保留。");
+      const list = node(body, "div", "em-template-list");
+      let busy = false;
+      for (const template of AGENT_TEMPLATES) {
+        const row = this.ui.row(list, template.labelZh, template.tone, "users", async () => {
+          if (busy) return;
+          if (data.templateId === template.id) { this.ui.closeSheet(); return; }
+          if (data.identity.revision === 0) { this.editAgentIdentity(data, template.id); return; }
+          busy = true; list.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = true; });
+          try { await this.services.saveAgentProfile({ templateId: template.id }, data.version); this.ui.closeSheet(); }
+          finally { busy = false; list.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = false; }); }
+        });
+        row.setAttribute("aria-current", data.templateId === template.id ? "true" : "false");
+      }
+      this.ui.button(body, "取消", () => this.ui.closeSheet(), undefined, "em-wide-action");
+    });
   }
   private review(body: HTMLElement) {
     this.heading(body, "生成周报"); const group = this.group(body);

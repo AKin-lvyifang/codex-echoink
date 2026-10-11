@@ -6,10 +6,11 @@ import { createHash, webcrypto } from "node:crypto";
 import { JSDOM } from "jsdom";
 import esbuild from "esbuild";
 import { mobileBuildOptions } from "./mobile-build.mjs";
+import { profileScenarios } from "../tests/mobile/profile-scenarios.mjs";
 import { createHost, answer, FixtureTFile } from "../tests/mobile/host.mjs";
 
 const build = await esbuild.build(mobileBuildOptions("tests/mobile/entry.ts"));
-const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVisual: true });
+const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVisual: true, url: "https://fixture.example" });
 dom.window.SVGElement.prototype.addClass = function (...names) { this.classList.add(...names); };
 dom.window.HTMLElement.prototype.setAttr = function (name, value) { this.setAttribute(name, String(value)); };
 dom.window.HTMLElement.prototype.toggleClass = function (name, enabled) { this.classList.toggle(name, enabled); };
@@ -33,6 +34,8 @@ async function setup(protocol, request) {
   const config = settings(protocol); const runtime = new MobileRuntime(host.app, store, () => config, request);
   return { ...host, store, config, runtime };
 }
+
+await profileScenarios(module.exports, test, settings);
 
 for (const protocol of ["openai-completions", "openai-responses"]) await test(`${protocol}: real Agent read → memory + Markdown tools → answer; reopen and recall`, async () => {
   let requests = 0;
@@ -304,6 +307,25 @@ await test("iPad settings: formal central leaf reuse, isolated listener, local s
   } finally { await fixture.dispose(); home.remove(); central.remove(); platform.isTablet = previousTablet; dom.window.setInterval = interval; }
 });
 
+await test("iPad retained default detail synchronizes Header without replacing focus or body", async () => {
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+  const root = dom.window.document.querySelector("#app"); let width = 800;
+  Object.defineProperty(root, "clientWidth", { get: () => width, configurable: true });
+  const ui = new MobileUI(root, { app: state.app, isTablet: true, settingsOnly: true, store: state.store, runtime: state.runtime, settings: () => state.config, saveSettings: async () => {}, openNote: async () => {}, beginRender() {}, renderMarkdown() {} });
+  try {
+    ui.mount(); assert.equal(root.dataset.page, "settings");
+    for (let round = 0; round < 2; round++) {
+      width = 800;
+      const body = root.querySelector(".em-body"), toggle = body.querySelector("input");
+      toggle.focus(); assert.equal(root.dataset.page, "basic");
+      assert.equal(root.querySelector(".em-body"), body); assert.equal(dom.window.document.activeElement, toggle);
+      assert.equal(root.querySelector(".em-header .em-title").textContent, "基础设置");
+      width = 460; root.querySelector('[aria-label="返回"]').click();
+      assert.equal(root.dataset.page, "settings"); assert.ok(!root.querySelector('[aria-label="返回"]'));
+    }
+  } finally { ui.destroy(); delete root.clientWidth; }
+});
+
 await test("provider branded picker: every brand, nested cancel, keyboard, same-key retention and saved selection", async () => {
   const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
   state.config.apiProviders[0].providerId = "deepseek";
@@ -509,6 +531,16 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
   vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports; const plugin = new MobilePlugin(); await plugin.onload();
   assert.ok(commands.includes("open-echoink-mobile")); assert.ok(plugin.store); assert.equal(plugin.settings.apiProviders.length, 0);
   assert.ok(imported.every(id => id === "obsidian")); assert.equal(vm.runInContext("typeof process + ':' + typeof Buffer", context), "undefined:undefined");
+  const initialProfile = await plugin.services.readAgentProfile();
+  const savedProfile = await plugin.services.saveAgentProfile({ identity: { displayName: "生产墨墨😀", avatar: { kind: "preset", presetId: "lin" } }, templateId: "executor" }, initialProfile.version);
+  assert.equal(savedProfile.identity.displayName, "生产墨墨😀"); assert.equal(savedProfile.templateId, "executor");
+  assert.equal(plugin.services.agentIdentity.revision, savedProfile.identity.revision);
+  const parsedProfile = module.exports.parseAgentCurrentSelf(host.files.get(".echoink/agents/echoink/AGENT.md"));
+  assert.equal(parsedProfile.kind, "ok");
+  assert.equal(JSON.stringify(parsedProfile.state), JSON.stringify(module.exports.agentSelfFromTemplate(module.exports.getAgentTemplate("executor"))));
+  assert.equal(JSON.stringify(savedProfile.profile), JSON.stringify((await plugin.services.readAgentProfile()).profile));
+  assert.match(await plugin.services.context(), /生产墨墨😀/u);
+  assert.match(await plugin.services.context(), /最短行动链/u);
   plugin.onunload(); dom.window.clearInterval(plugin.interval);
 });
 console.log(`${passed} mobile integration checks passed (real Pi Agent; Provider and Obsidian API fixtures).`);

@@ -91,7 +91,81 @@ export function agentAvatarAssetsPlugin(shared = false) {
     build.onLoad({ filter: /.*/, namespace: "echoink-agent-avatars" }, async () => ({ contents: await agentAvatarAssetsSource(), loader: "js", resolveDir: process.cwd() }));
   } };
 }
+const profileStringFiles = ["src/harness/memory/agent-templates.ts", "src/harness/memory/agent-self-model.ts", "src/ui/agent-identity-modal.ts", "src/ui/agent-avatar-processor.ts"];
+async function profileStringData() {
+  const values = [], sources = new Map();
+  for (const file of profileStringFiles) {
+    const source = await fs.readFile(file, "utf8"), tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true), literals = [];
+    const visit = node => {
+      if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && Buffer.byteLength(node.text) >= 64
+        && node.parent.name !== node && !ts.isLiteralTypeNode(node.parent) && !ts.isImportDeclaration(node.parent) && !ts.isExportDeclaration(node.parent)) {
+        let index = values.indexOf(node.text); if (index < 0) { index = values.length; values.push(node.text); }
+        literals.push({ start: node.getStart(tree), end: node.end, index });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(tree); sources.set(path.resolve(file), { source, literals });
+  }
+  return { values, sources };
+}
+async function profileStringsSource() {
+  const { values } = await profileStringData();
+  const bytes = JSON.stringify(values), encoded = deflateRawSync(Buffer.from(bytes), { level: 9 }).toString("base64");
+  return `import {inflateSync as profileInflate,strFromU8 as profileString} from "fflate";let profileText;export function profileStrings(){return profileText??=(JSON.parse(profileString(profileInflate(Uint8Array.from(atob(${JSON.stringify(encoded)}),c=>c.charCodeAt(0))))));}`;
+}
+/** Same template/current-self/avatar text restored once for both platform loaders. */
+export function profileStringsPlugin(shared = false) {
+  return { name: "echoink-shared-profile-text", setup(build) {
+    let data;
+    build.onLoad({ filter: /[\\/]src[\\/](?:harness[\\/]memory[\\/]agent-(?:templates|self-model)|ui[\\/]agent-(?:identity-modal|avatar-processor))\.ts$/ }, async args => {
+      const { sources } = await (data ??= profileStringData()), item = sources.get(args.path); if (!item) return;
+      let contents = shared ? "const __echoinkProfileText=__echoinkSharedAssets.profileStrings();\n" : 'import {profileStrings} from "echoink-profile-text";const __echoinkProfileText=profileStrings();\n'; let cursor = 0;
+      for (const literal of item.literals) { contents += item.source.slice(cursor, literal.start) + `__echoinkProfileText[${literal.index}]`; cursor = literal.end; }
+      return { contents: contents + item.source.slice(cursor), loader: "ts", resolveDir: path.dirname(args.path) };
+    });
+    build.onResolve({ filter: /^echoink-profile-text$/ }, () => ({ path: "profile-text", namespace: "echoink-profile-text" }));
+    build.onLoad({ filter: /.*/, namespace: "echoink-profile-text" }, async () => ({ contents: await profileStringsSource(), loader: "js", resolveDir: process.cwd() }));
+  } };
+}
+// Only this browser-safe identity/Profile surface is shared. Names are explicit
+// so a new public API cannot silently expand the common runtime.
+export const profileSharedModules = new Map([
+  ["src/harness/memory/agent-identity-model.ts", ["AGENT_IDENTITY_STATE_SCHEMA", "AGENT_IDENTITY_RELATIVE_PATH", "DEFAULT_AGENT_DISPLAY_NAME", "AGENT_DISPLAY_NAME_MAX_CHARS", "AGENT_AVATAR_DATA_URL_MAX_CHARS", "countUnicodeChars", "normalizeAgentDisplayName", "normalizeAgentAvatar", "defaultAgentIdentityState", "parseAgentIdentityState"]],
+  ["src/harness/memory/agent-templates.ts", ["AGENT_TEMPLATE_IDS", "isAgentTemplateId", "AGENT_TEMPLATES", "getAgentTemplate"]],
+  ["src/harness/memory/agent-self-model.ts", ["AGENT_MD_HARD_MAX_BYTES", "USER_MD_HARD_MAX_BYTES", "CURRENT_SELF_START", "CURRENT_SELF_END", "EMPTY_HABITS_SENTINEL", "stableSelfKey", "normalizeAgentSelf", "agentSelfFromTemplate", "applyAgentSelfOperations", "renderCurrentSelfBlock", "renderAgentMarkdown", "parseAgentCurrentSelf", "replaceAgentCurrentSelf", "renderBaseAgentMarkdown", "publicAgentSelfProfile", "assertUtf8HardLimit"]],
+  ["src/harness/memory/agent-self-metadata-model.ts", ["AGENT_SELF_METADATA_SCHEMA", "AGENT_SELF_METADATA_RELATIVE_PATH", "emptyAgentSelfMetadata", "parseAgentSelfMetadata", "agentSelfMetadataJson", "reconcileAgentSelfDerivationSources"]],
+  ["src/ui/agent-identity-modal.ts", ["AgentIdentityModal"]],
+  ["src/ui/agent-avatar-processor.ts", ["AGENT_AVATAR_SOURCE_MAX_BYTES", "AGENT_AVATAR_SOURCE_MAX_EDGE", "AGENT_AVATAR_OUTPUT_EDGE", "AGENT_AVATAR_OUTPUT_MAX_DATA_URL_CHARS", "AGENT_AVATAR_WEBP_QUALITY", "AGENT_AVATAR_ACCEPTED_TYPES", "AvatarProcessingError", "validateAvatarSourceType", "validateAvatarSourceSize", "validateAvatarDataUrl", "validateAgentAvatarSvg", "processAgentAvatar", "createBrowserAvatarRenderer"]],
+  // These are the existing Modal's small DOM helpers, without business changes.
+  ["src/ui/agent-avatar-presets.ts", ["DEFAULT_AGENT_AVATAR_PRESET_ID", "AGENT_AVATAR_PRESETS", "resolveAgentAvatarPresetAsset", "resolveAgentAvatarUrl"]],
+  ["src/settings/amicro-buttons.ts", ["applyAmicroButton", "applyParticleButton", "triggerParticleButton", "setAmicroButtonPending", "confirmAmicroButton"]],
+  ["src/ui/animate-icon.ts", ["renderAnimateIcon"]],
+  ["src/utils/sha256.ts", ["sha256Hex"]]
+]);
+
+export function profileModulesPlugin() {
+  const proxies = new Map([...profileSharedModules].map(([file, names], index) => [path.resolve(file),
+    `const profile=__echoinkSharedAssets.profileModules().m${index};\n${names.map(name => `export const ${name}=profile.${name};`).join("\n")}`]));
+  return { name: "echoink-shared-profile-modules", setup(build) {
+    build.onLoad({ filter: /[\\/]src[\\/].*\.ts$/ }, args => {
+      const contents = proxies.get(args.path);
+      if (contents) return { contents, loader: "js" };
+    });
+  } };
+}
+
+async function profileModulesSource(minify) {
+  const contents = [...profileSharedModules].map(([file, names], index) =>
+    `import {${names.join(",")}} from ${JSON.stringify(path.resolve(file))}; export const m${index}={${names.join(",")}};`).join("\n");
+  const result = await esbuild.build({ stdin: { contents, resolveDir: process.cwd(), sourcefile: "shared-profile.js" }, bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian"], loader: { ".svg": "dataurl" }, plugins: [agentAvatarAssetsPlugin(true), profileStringsPlugin(true)], minify, metafile: true, logLevel: "silent" });
+  await fs.mkdir(".tmp", { recursive: true });
+  await fs.writeFile(".tmp/profile-production-metafile.json", JSON.stringify(result.metafile));
+  // A normal function keeps Obsidian imports and module initialization lazy.
+  // It contains compiled code directly; no evaluation or serialized code.
+  return `let profileModulesCache;export function profileModules(){return profileModulesCache??=(function(){var module={exports:{}};var exports=module.exports;\n${result.outputFiles[0].text}\nreturn module.exports;})();}`;
+}
+
 export async function sharedAssetsBundle(minify) {
-  const result = await esbuild.build({ stdin: { contents: `${await financeBrandsSource()}\n${await agentAvatarAssetsSource()}`, resolveDir: process.cwd(), sourcefile: "shared-artwork.js" }, bundle: true, write: false, format: "iife", globalName: "__echoinkSharedAssets", platform: "browser", target: "es2022", minify });
+  const result = await esbuild.build({ stdin: { contents: `${await financeBrandsSource()}\n${await agentAvatarAssetsSource()}\n${await profileStringsSource()}\n${await profileModulesSource(minify)}`, resolveDir: process.cwd(), sourcefile: "shared-artwork.js" }, bundle: true, write: false, format: "iife", globalName: "__echoinkSharedAssets", platform: "browser", target: "es2022", external: ["obsidian"], minify });
   return result.outputFiles[0].text;
 }

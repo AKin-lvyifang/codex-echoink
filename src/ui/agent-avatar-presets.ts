@@ -1,4 +1,4 @@
-import type { AgentAvatarState } from "../harness/memory/agent-identity-state";
+import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
 import ayaAvatar from "../../assets/avatars/monochrome-round-set-01/aya.svg";
 import boAvatar from "../../assets/avatars/monochrome-round-set-01/bo.svg";
 import cleoAvatar from "../../assets/avatars/monochrome-round-set-01/cleo.svg";

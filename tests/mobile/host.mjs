@@ -12,6 +12,7 @@ export function createHost(seed = { "笔记/来源.md": "项目决定：先完�
     async read(path) { if (!files.has(path)) throw new Error(`Missing ${path}`); return files.get(path); },
     async write(path, content) { writes.push(path); files.set(path, content); },
     async rename(from, to) { if (!files.has(from)) throw new Error("Missing temporary file"); files.set(to, files.get(from)); files.delete(from); },
+    async rmdir(path) { for (const key of [...files.keys()]) if (key.startsWith(path + "/")) files.delete(key); for (const key of [...folders]) if (key === path || key.startsWith(path + "/")) folders.delete(key); },
     async mkdir(path) { folders.add(path); }, async remove(path) { files.delete(path); },
     async stat(path) { return files.has(path) ? { type: "file", size: files.get(path).length } : await this.exists(path) ? { type: "folder", size: 0 } : null; },
     async list(path) { const prefix = path + "/"; const childFolders = new Set(); const childFiles = []; for (const key of files.keys()) { if (!key.startsWith(prefix)) continue; const rest = key.slice(prefix.length); if (rest.includes("/")) childFolders.add(prefix + rest.split("/")[0]); else childFiles.push(key); } return { files: childFiles, folders: [...childFolders] }; }

@@ -17,6 +17,9 @@ import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { mobileAtomicFilePort } from "./finance-store";
 import { MobileLifestyleService } from "./finance";
 import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
+import { MobileProfileProtocol, type MobileAgentProfile } from "../harness/memory/mobile-profile-protocol";
+import type { AgentTemplateId } from "../harness/memory/agent-templates";
+import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
 import { AGENT_IDENTITY_RELATIVE_PATH, defaultAgentIdentityState, parseAgentIdentityState } from "../harness/memory/agent-identity-model";
 
 export interface MobileServicesHost {
@@ -37,18 +40,26 @@ export class MobileServices implements HomeHost {
   private readonly todos: EchoInkTodoStore;
   private skillStateWrites: Promise<void> = Promise.resolve();
   agentIdentity = defaultAgentIdentityState();
+  private readonly identityListeners = new Set<() => void>();
+  private profileProtocol: MobileProfileProtocol;
+  subscribeIdentity(listener: () => void) { this.identityListeners.add(listener); return () => { this.identityListeners.delete(listener); }; }
+  async readAgentProfile(): Promise<MobileAgentProfile> { return this.profileProtocol.profile(); }
+  async saveAgentProfile(change: { identity?: { displayName: string; avatar: AgentAvatarState }; templateId?: AgentTemplateId }, version: string) {
+    const profile = await this.profileProtocol.save(change, version); this.agentIdentity = profile.identity;
+    this.identityListeners.forEach(listener => listener()); this.host.runtime.onChange(); return profile;
+  }
   async refreshAgentIdentity() {
     try {
       const path = `.echoink/${AGENT_IDENTITY_RELATIVE_PATH}`, adapter = this.app.vault.adapter;
       const raw: unknown = await adapter.exists(path) ? JSON.parse(await adapter.read(path)) : null;
       this.agentIdentity = raw && typeof raw === "object" && !Array.isArray(raw) ? parseAgentIdentityState(raw as Record<string, unknown>) ?? defaultAgentIdentityState() : defaultAgentIdentityState();
     } catch { this.agentIdentity = defaultAgentIdentityState(); }
-    this.host.runtime.onChange();
+    this.identityListeners.forEach(listener => listener()); this.host.runtime.onChange();
   }
   readonly homeUnavailableReason = "移动端尚未接通知识健康扫描；笔记数量来自当前笔记库";
   constructor(private host: MobileServicesHost, readonly directory: string) {
     this.app = host.app; this.preferenceRoot = directory.replace(/\/mobile$/u, "");
-    const adapter = this.app.vault.adapter;
+    const adapter = this.app.vault.adapter; this.profileProtocol = new MobileProfileProtocol(adapter);
     this.homeActivity = new HomeActivityCore({ read: async () => await adapter.exists(`${directory}/home-activity.json`) ? adapter.read(`${directory}/home-activity.json`) : null,
       write: bytes => adapter.write(`${directory}/home-activity.json`, bytes) });
     this.todos = new EchoInkTodoStore(this);
@@ -182,10 +193,11 @@ export class MobileServices implements HomeHost {
   }
   readonly defaultPreferences = ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
   async context(): Promise<string> {
+    const profile = await this.profileProtocol.context(this.host.store.state.memoryEnabled);
     const skillId = this.host.store.session.skillId;
     const skill = skillId ? await this.requireAvailableEchoInkSkill(skillId) : "";
     const preference = await this.readPreferences() ?? this.defaultPreferences;
-    return `${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify({ wiki: this.knowledgePath("wiki"), raw: this.knowledgePath("raw"), inbox: this.knowledgePath("inbox") })}`;
+    return `${profile}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify({ wiki: this.knowledgePath("wiki"), raw: this.knowledgePath("raw"), inbox: this.knowledgePath("inbox") })}`;
   }
   plugins() {
     return [{ id: "echoink:finance", name: "财务", description: "账目、预算、账单计划与分析", enabled: this.settings.lifestyle.finance.enabled, mobileStatus: "复用当前笔记库的财务账本" },
