@@ -23595,6 +23595,7 @@ body.is-mobile .modal.echoink-todo-form-modal .echoink-todo-form-field :is(input
 /* Native switches use their full label as the touch target. */
 .echoink-mobile .echoink-mobile-finance-settings label.em-row { min-height:44px; }
 .echoink-mobile .echoink-mobile-finance-settings input[role=switch] { min-height:27px!important;height:27px; }
+.echoink-mobile .echoink-mobile-finance-settings .echoink-life-settings-page>.em-setting-group { margin-inline:-4px; }
 .echoink-mobile .echoink-mobile-finance-settings .em-setting-group>button.em-row { padding:14px 4px; border:0; border-bottom:1px solid var(--em-line); border-radius:0; background:transparent; }
 .echoink-mobile .echoink-mobile-finance-settings .em-setting-group>button.em-row:last-child { border-bottom:0; }
 .echoink-mobile-finance-dialog { width:min(680px,calc(100vw - 24px)); max-height:calc(100dvh - var(--em-bottom-compensation,max(var(--view-bottom-spacing,env(safe-area-inset-bottom,0px)),var(--em-viewport-occlusion,0px))) - 24px); margin-bottom:var(--em-bottom-compensation,max(var(--view-bottom-spacing,env(safe-area-inset-bottom,0px)),var(--em-viewport-occlusion,0px))); }
