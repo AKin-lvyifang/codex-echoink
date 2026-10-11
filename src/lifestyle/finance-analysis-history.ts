@@ -94,19 +94,30 @@ export function buildFinanceAnalysisHistory(month: string, ledger: readonly Fina
     return net;
   };
   const nowCategories=categoryNet(currentRows),beforeCategories=categoryNet(previousRows);
-  const changes=previousRows.length ? { 当前:currentSummary, 前月:previousSummary,
+  const hasCurrentRecords=currentSummary.有效收支笔数>0,hasPreviousRecords=previousSummary.有效收支笔数>0;
+  const comparableRecords=hasCurrentRecords && hasPreviousRecords && current.天数>0 && previousDays>0;
+  const currentDaily=comparableRecords?currentSummary.净支出元/current.天数:null;
+  const previousDaily=comparableRecords?previousSummary.净支出元/previousDays:null;
+  const changes=comparableRecords ? { 当前:currentSummary, 前月:previousSummary,
     净支出变化元:Math.round((currentSummary.净支出元-previousSummary.净支出元)*100)/100,
     收入变化元:Math.round((currentSummary.收入元-previousSummary.收入元)*100)/100,
     收支差额变化元:Math.round((currentSummary.收支差额元-previousSummary.收支差额元)*100)/100,
-    当前每日记录净支出元:current.天数?currentSummary.净支出元/current.天数:null,
-    前月每日记录净支出元:previousDays?previousSummary.净支出元/previousDays:null,
-    分类变化:[...new Set([...nowCategories.keys(),...beforeCategories.keys()])].map(name=>({分类:financeAnalysisLabel(name),
-      当前净支出元:(nowCategories.get(name)??0)/100,前月净支出元:(beforeCategories.get(name)??0)/100,
-      变化元:((nowCategories.get(name)??0)-(beforeCategories.get(name)??0))/100,
-      当前该类有记录:nowCategories.has(name),前月该类有记录:beforeCategories.has(name)})),
-    说明:"仅为两边范围内已记录金额的变化，完整性未知；天数不同须看日均。不能单凭金额差异断言消费习惯改善。" } : null;
-  return { 下一统计月份:nextPlanning, 确定计算的前后变化:changes, 统计范围: current, 上个自然月可比: { 当前范围: current, 历史范围: comparable, 缺少记录: !previousRows.length,
-    汇总: previousRows.length ? summary(previousRows) : null, 相关账目引用:previousRows.length?{历史月份:previous,字段:"最近三个已有历史月.原始相关账目",筛选起日:comparable.起日,筛选止日:comparable.止日}:null },
+    当前每日记录净支出元:currentDaily,
+    前月每日记录净支出元:previousDaily,
+    每日记录净支出变化元:currentDaily!-previousDaily!,
+    分类变化:[...new Set([...nowCategories.keys(),...beforeCategories.keys()])].map(name=>{
+      const now=(nowCategories.get(name)??0)/100,before=(beforeCategories.get(name)??0)/100;
+      const nowDaily=now/current.天数,beforeDaily=before/previousDays;
+      return {分类:financeAnalysisLabel(name),当前净支出元:now,前月净支出元:before,
+        变化元:((nowCategories.get(name)??0)-(beforeCategories.get(name)??0))/100,
+        当前每日记录净支出元:nowDaily,前月每日记录净支出元:beforeDaily,
+        每日记录净支出变化贡献元:nowDaily-beforeDaily,
+        当前该类有记录:nowCategories.has(name),前月该类有记录:beforeCategories.has(name),
+        当前覆盖:current.覆盖,前月覆盖:comparable.覆盖};
+    }),
+    说明:"总额变化与日均变化是不同口径；日均分别除以两边可比范围天数，各分类日均变化贡献合计为总日均变化。仅为范围内已记录金额的变化，完整性未知；分类无记录时的0仅用于核算，不代表真实消费为0。记录变化不自动证明行为因果，不能单凭金额差异断言消费习惯改善。" } : null;
+  return { 下一统计月份:nextPlanning, 确定计算的前后变化:changes, 统计范围: current, 上个自然月可比: { 当前范围: current, 历史范围: comparable, 缺少记录: !hasPreviousRecords,
+    汇总: hasPreviousRecords ? previousSummary : null, 相关账目引用:hasPreviousRecords?{历史月份:previous,字段:"最近三个已有历史月.原始相关账目",筛选起日:comparable.起日,筛选止日:comparable.止日}:null },
     最近三个已有历史月: months, 历史月份连续:recordedMonths.length>=2?recordedMonths.every((m,i)=>!i||monthIndex(m)-monthIndex(recordedMonths[i-1])===1):null, 缺月: missing, 持续目标: goals, 前次成功报告: reports,
     比较边界: "记录完整性均未知；缺记录不等于零消费，非相邻月份不称连续。日数不同应按日均等可比口径。补账、修正分类用途、收入变化及预算/目标调整不证明消费习惯改善。" };
 }

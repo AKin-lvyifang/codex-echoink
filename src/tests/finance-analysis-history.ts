@@ -34,6 +34,8 @@ export async function runFinanceAnalysisHistoryTests(){
   assert.equal(equalDaily.上个自然月可比.相关账目引用.历史月份,"2026-08");
   assert.equal(equalDaily.确定计算的前后变化.当前每日记录净支出元,100);
   assert.equal(equalDaily.确定计算的前后变化.前月每日记录净支出元,100);
+  assert.equal(equalDaily.确定计算的前后变化.每日记录净支出变化元,0);
+  assertHistoricalDailyChanges();
   const before=buildFinanceAnalysisInput("2026-10",[row("old",10000,"expense","餐饮",{date:"2026-10-01"})],{month:"2026-10",totalCents:100000,allocations:{}},"2026-10-12",{});
   const oldReport={id:"earlier",kind:"finance",period:"2026-10",createdAt:1,provider:"合成",promptVersion:"old",inputFingerprint:before.fingerprint,inputSummary:"",text:"旧模型解释"};
   const changed=JSON.parse(buildFinanceAnalysisInput("2026-10",[row("old",10000,"expense","餐饮",{date:"2026-10-01"}),row("backfill",50000,"expense","餐饮",{date:"2026-10-05"})],{month:"2026-10",totalCents:200000,allocations:{}},"2026-10-12",{previousReports:[{report:oldReport,input:before.text}]}).text);
@@ -55,6 +57,52 @@ export async function runFinanceAnalysisHistoryTests(){
   }
   assertAdjustmentScenarios();
   console.log("PASS analysis inputs: next-month actual calendar and configured/unknown budget, whole-month/month-to-date comparison, missing history/income, sixth budget, same-purpose accumulation, equal daily spending, stored prior input and stable data fingerprint");
+}
+
+function assertHistoricalDailyChanges() {
+  const prepare=(month:string,rows:FinanceEntry[],asOf="2026-10-12")=>
+    JSON.parse(buildFinanceAnalysisInput(month,rows,null,asOf,{}).text);
+  const calendarRows=[row("aug-dining",310000,"expense","餐饮",{date:"2026-08-01"}),
+    row("sep-dining",300000,"expense","餐饮",{date:"2026-09-01"}),row("reading",9900,"expense","阅读")];
+  const calendar=prepare("2026-09",calendarRows),changes=calendar.确定计算的前后变化;
+  assert.equal(changes.净支出变化元,-1);
+  assert.equal(changes.当前每日记录净支出元,103.3);assert.equal(changes.前月每日记录净支出元,100);
+  assert.ok(Math.abs(changes.每日记录净支出变化元-3.3)<1e-12);
+  const dining=changes.分类变化.find((item:any)=>item.分类==="餐饮");
+  assert.deepEqual([dining.当前每日记录净支出元,dining.前月每日记录净支出元,dining.每日记录净支出变化贡献元],[100,100,0]);
+  const reading=changes.分类变化.find((item:any)=>item.分类==="阅读");
+  assert.deepEqual([reading.当前每日记录净支出元,reading.前月每日记录净支出元,reading.每日记录净支出变化贡献元],[3.3,0,3.3]);
+  assert.deepEqual([reading.当前该类有记录,reading.前月该类有记录,reading.当前覆盖,reading.前月覆盖],[true,false,"unknown","unknown"]);
+  assert.match(changes.说明,/总额变化与日均变化是不同口径/);assert.match(changes.说明,/不代表真实消费为0/);
+  assert.match(changes.说明,/记录变化不自动证明行为因果/);
+  const assertContributions=(value:any)=>assert.ok(Math.abs(value.分类变化.reduce((sum:number,item:any)=>
+    sum+item.每日记录净支出变化贡献元,0)-value.每日记录净支出变化元)<1e-12,"complete category contributions reconcile before rounding");
+  assertContributions(changes);
+  const fractionalRows=[...Array.from({length:8},(_,i)=>row(`sep-${i}`,i+1,"expense",`分类${i}`,{date:"2026-09-01"})),
+    ...Array.from({length:8},(_,i)=>row(`aug-${i}`,i+2,"expense",`分类${i}`,{date:"2026-08-01"})),
+    row("refund",4,"refund","分类0"),row("old-only",3,"expense","前月独有",{date:"2026-08-01"}),
+    row("zero-expense",5,"expense","抵消分类"),row("zero-refund",5,"refund","抵消分类")];
+  const fractional=prepare("2026-09",fractionalRows).确定计算的前后变化;
+  assert.equal(fractional.分类变化.length,10,"daily contributions include all categories, without Top5 merging");
+  const negative=fractional.分类变化.find((item:any)=>item.分类==="分类0");
+  assert.equal(negative.当前每日记录净支出元,-.03/30);assert.equal(negative.前月每日记录净支出元,.02/31);
+  assert.deepEqual(["前月独有","抵消分类"].map(name=>fractional.分类变化.find((item:any)=>item.分类===name))
+    .map((item:any)=>[item.当前净支出元,item.当前该类有记录,item.前月该类有记录]),[[0,false,true],[0,true,false]]);
+  assertContributions(fractional);
+  const midmonth=prepare("2026-10",[row("previous",120000,"expense","餐饮",{date:"2026-09-01"}),
+    row("outside",60000,"expense","餐饮",{date:"2026-09-13"}),
+    row("current",60000,"expense","餐饮",{date:"2026-10-01"}),row("current-refund",12000,"refund","餐饮",{date:"2026-10-12"})]);
+  assert.deepEqual([midmonth.统计范围.天数,midmonth.上个自然月可比.历史范围.天数],[12,12]);
+  assert.deepEqual([midmonth.确定计算的前后变化.当前每日记录净支出元,midmonth.确定计算的前后变化.前月每日记录净支出元,
+    midmonth.确定计算的前后变化.每日记录净支出变化元],[40,100,-60]);
+  assertContributions(midmonth.确定计算的前后变化);
+  for(const rows of [[],[calendarRows[0]],[calendarRows[1]],
+    [calendarRows[0],row("current-transfer",10000,"transfer")],
+    [calendarRows[1],row("previous-transfer",10000,"transfer","餐饮",{date:"2026-08-01"})]])
+    assert.equal(prepare("2026-09",rows).确定计算的前后变化,null,"a missing period, including transfers only, is not zero spending");
+  const future=prepare("2026-10",calendarRows,"2026-09-30");
+  assert.equal(future.统计范围.天数,0);assert.equal(future.确定计算的前后变化,null,"zero days never produce a daily comparison");
+  console.log("PASS history daily changes: 31/30-day dining stays 100/day, reading contributes the whole 3.3/day increase, complete unrounded/refunded category reconciliation, missing categories versus periods and month-to-date ranges");
 }
 
 function assertAdjustmentScenarios() {
