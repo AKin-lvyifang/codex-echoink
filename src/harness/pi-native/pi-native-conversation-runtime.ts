@@ -5668,21 +5668,29 @@ function collectMaintenanceReadPaths(entries: readonly SessionEntry[]): string[]
 
 function maintenanceOutcome(execution: ActiveProductRun, entries: readonly SessionEntry[], terminalState: PiProductRunTerminalState, providedSourcePaths: readonly string[] = []): NonNullable<PiProductRunRecord["maintenance"]> {
   const read = new Set([...providedSourcePaths, ...collectMaintenanceReadPaths(entries)]);
-  const warnings: string[] = [];
+  let issues: Array<{ message: string; path?: string; uncertain: boolean }> = [];
   for (const entry of entries) {
     if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== PI_KNOWLEDGE_MAINTAIN_TOOL_ID) continue;
     const result = knowledgeMaintenanceEnvelopeFromToolResult(entry.message);
     const details = safeRecord(entry.message.details);
-    if (result && ["completed", "noop", "partial"].includes(result.status)) {
+    if (result && !entry.message.isError && ["completed", "noop", "partial"].includes(result.status)) {
+      const resolvedPaths = new Set(result.notes.map((note) => knowledgeRolePath(note.path)));
       for (const value of Array.isArray(details?.processedSourcePaths) ? details.processedSourcePaths : []) if (typeof value === "string") read.add(value);
+      for (const value of Array.isArray(details?.processedSourcePaths) ? details.processedSourcePaths : []) if (typeof value === "string") resolvedPaths.add(knowledgeRolePath(value));
+      // Keep the original tool failure in the transcript, but only unresolved
+      // issues belong in the final summary. Uncertain writes are never erased.
+      issues = issues.filter((issue) => issue.uncertain || !issue.path || !resolvedPaths.has(knowledgeRolePath(issue.path)));
     }
-    if (result) warnings.push(...result.issues.map((issue) => knowledgeErrorDetail(issue.message)));
+    if (result) issues.push(...result.issues.map((issue) => ({
+      message: knowledgeErrorDetail(issue.message), path: issue.path,
+      uncertain: result.status === "write_uncertain"
+    })));
   }
   const scope = execution.maintenanceScope ?? (execution.knowledgeWorkflow?.kind === "maintain" ? execution.knowledgeWorkflow.command.scope : undefined);
   const expected = scope && (scope.mode === "exact" || scope.mode === "batch") ? scope.sourcePaths : [...read].filter((value) => knowledgeRolePath(value).startsWith("raw/"));
   const analysisOnly = execution.permission === "read-only" || execution.mode === "plan";
   const processedSourcePaths = terminalState === "completed" ? expected.filter((source) => read.has(source)) : [];
-  return Object.freeze({ analysisOnly, processedSourcePaths, pendingSourcePaths: expected.filter((source) => !processedSourcePaths.includes(source)), warnings: [...new Set(warnings)] });
+  return Object.freeze({ analysisOnly, processedSourcePaths, pendingSourcePaths: expected.filter((source) => !processedSourcePaths.includes(source)), warnings: [...new Set(issues.map((issue) => issue.message))] });
 }
 
 function collectKnowledgeMaintenanceToolCallIds(
@@ -6187,14 +6195,15 @@ function normalizePiKnowledgeMaintenanceScope(
     });
   }
   if (value.mode === "batch") {
+    // Initialization supplies instructions as well as a frozen source list.
+    // Unlike a query name, that text does not select or widen the batch scope.
     if (
-      request.trim()
-      || value.sourcePaths.length === 0
+      value.sourcePaths.length === 0
       || value.sourcePaths.length > 20
     ) {
       throw new PiNativeConversationRuntimeError(
         "agent_session_invalid",
-        "Knowledge maintenance batch scope is invalid"
+        `本批知识分析包含 ${value.sourcePaths.length} 篇笔记，每批必须为 1–20 篇。尚未开始分析，已完成的整理保留。`
       );
     }
     const sourcePaths = value.sourcePaths.map(
@@ -6203,7 +6212,7 @@ function normalizePiKnowledgeMaintenanceScope(
     if (new Set(sourcePaths).size !== sourcePaths.length) {
       throw new PiNativeConversationRuntimeError(
         "agent_session_invalid",
-        "Knowledge maintenance batch scope contains duplicate Raw paths"
+        "本批知识分析重复列出了同一篇笔记。尚未开始分析，已完成的整理保留。"
       );
     }
     return Object.freeze({

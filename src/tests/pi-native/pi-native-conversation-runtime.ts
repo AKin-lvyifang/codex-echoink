@@ -87,6 +87,9 @@ import {
   updateReasoningActivity
 } from "../../harness/pi-native/pi-reasoning-summary";
 import { routeKnowledgeConversationCommand } from "../../knowledge-base/commands";
+import { createKnowledgeInitializationHost } from "../../plugin/knowledge-surface-service";
+import { nativeJournalFixture } from "../native-journal-fixture";
+import { createApiProviderConfig } from "../../settings/settings";
 import {
   createKnowledgeMaintenanceResultEnvelope
 } from "../../knowledge-base/knowledge-maintenance-result";
@@ -125,10 +128,127 @@ const QUERY_MAINTENANCE_SCOPE = Object.freeze({
 
 export async function runKnowledgeMaintenanceRuntimeTests(): Promise<void> {
   assertPersistedMaintenanceSourceVersions();
+  await assertInitializationHostUsesRealMaintenanceRuntime();
+  await assertMaintenanceScopeEntryContracts();
+  await assertOnlyUnresolvedMaintenanceWarningsSurvive();
   await assertNaturalMaintenanceAndCorrection();
   await assertKnowledgeMaintenanceSettlementRequiresUniqueDurableResult();
   await assertTrustedKnowledgeMaintenanceResultsSurviveSettlementAndReopen();
-  console.log("Pi maintenance natural completion, corrections, multiple submissions, trailing failure and durable reopen: PASS");
+  console.log("Production initialization requests, maintenance scope boundaries, resolved warnings, corrections and durable reopen: PASS");
+}
+
+async function assertOnlyUnresolvedMaintenanceWarningsSurvive(): Promise<void> {
+  for (const uncertain of [false, true]) {
+    await withFixture([], async (fixture) => {
+      await createAndActivateMaintenanceConversation(fixture, "corrected-warnings");
+      const handle = await fixture.submit({ conversationId: "corrected-warnings", text: "/maintain",
+        maintenanceScope: { mode: "batch", sourcePaths: ["raw/a.md"] }, submittedAt: 3 });
+      const session = fixture.latestSession();
+      session.finishTool("rejected-candidates", "knowledge_maintain", { details: {
+        maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: uncertain ? "write_uncertain" : "failed", issues: [
+          { code: "candidate_skipped", path: "wiki/a.md", message: "A 候选缺少来源" },
+          { code: "candidate_skipped", path: "wiki/b.md", message: "B 候选尚未解决" },
+          { code: "other", message: "无法归属的警告" }
+        ] })
+      } }, true);
+      session.finishTool("corrected-a", "knowledge_maintain", { details: { processedSourcePaths: ["raw/a.md"],
+        maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "completed", notes: [
+          { operation: "created", path: "知识库（wiki）/a.md", title: "A", summary: "已回读验证" }
+        ] })
+      } }, false);
+      session.finishSuccessful("A 已完成。");
+      const result = await handle.result;
+      assert.equal(result.terminalState, uncertain ? "failed" : "completed");
+      assert.deepEqual(result.maintenance?.warnings, uncertain
+        ? ["A 候选缺少来源", "B 候选尚未解决", "无法归属的警告"]
+        : ["B 候选尚未解决", "无法归属的警告"]);
+      assert.ok(session.sessionManager.getEntries().some((entry) => entry.type === "message"
+        && entry.message.role === "toolResult" && entry.message.toolCallId === "rejected-candidates" && entry.message.isError),
+      "the historical failure remains available in the work trace");
+    }, { knowledge: maintenanceKnowledgeFixture() });
+  }
+}
+
+async function assertInitializationHostUsesRealMaintenanceRuntime(): Promise<void> {
+  for (const rawRoot of ["raw", "原始资料（raw）"]) {
+    await withFixture([], async (fixture) => {
+      const native = await nativeJournalFixture(fixture.root);
+      const plugin = native.plugin;
+      const provider = createApiProviderConfig("deepseek", "fixture");
+      provider.apiKey = "fixture-only";
+      plugin.settings.apiProviders = [provider];
+      plugin.settings.activeApiProviderId = provider.id;
+      plugin.settings.defaultModel = provider.defaultModelId;
+      plugin.settings.defaultPermission = "workspace-write";
+      const sources = [`${rawRoot}/a.md`, `${rawRoot}/b.markdown`];
+      for (const source of sources) await native.write(source, "# Initialization source\n");
+      await createAndActivateMaintenanceConversation(fixture, "initialization");
+      Object.assign(fixture.latestSession().model, { provider: provider.runtimeProviderId, id: provider.defaultModelId });
+      fixture.configureFactoryTools({ registered: ["note_read", "knowledge_maintain"], defaults: [], planAllowed: [] });
+      let calls = 0;
+      let releases = 0;
+      plugin.submitPiChat = async (request: PiChatSubmitRequest) => {
+        // Exercise the production host's complete request, not a hand-written /maintain.
+        const handle = await fixture.submit(request);
+        const command = await fixture.currentMaintenanceCommand!();
+        assert.equal(command.scope.mode, "batch");
+        assert.deepEqual(command.scope, request.maintenanceScope);
+        assert.ok(command.request.includes("用户已确认知识库初始化"));
+        assert.ok(command.request.includes(sources[0]));
+        const paths = request.maintenanceScope?.mode === "batch" ? request.maintenanceScope.sourcePaths : [];
+        fixture.latestSession().finishTool(`read-${++calls}`, "note_read", {
+          details: { type: "echoink.knowledge-references.v1", schemaVersion: 1,
+            references: paths.map((vaultRelativePath) => ({ vaultRelativePath })) }
+        }, false);
+        fixture.latestSession().finishSuccessful("已阅读本批笔记，无需新增知识。");
+        return handle;
+      };
+      plugin.subscribePiRun = (id: string, listener: Parameters<typeof fixture.runtime.subscribeProductRun>[1]) => fixture.runtime.subscribeProductRun(id, listener);
+      plugin.releasePiProductionRun = () => { releases += 1; };
+      const host = createKnowledgeInitializationHost(plugin);
+      for (const sourcePaths of [sources, sources.slice(0, 1)]) {
+        const result = await host.runMaintenanceBatch({
+          conversationId: "initialization", sourcePaths, batchIndex: calls,
+          expectedBatches: 2, signal: new AbortController().signal
+        });
+        assert.equal(result.status, "completed", result.message);
+        assert.deepEqual(result.processedSourcePaths, sourcePaths);
+        assert.deepEqual(result.pendingSourcePaths, []);
+      }
+      assert.equal(calls, 2, "continued batches must use the same valid production request contract");
+      assert.equal(releases, 2);
+    }, { knowledge: maintenanceKnowledgeFixture() });
+  }
+}
+
+async function assertMaintenanceScopeEntryContracts(): Promise<void> {
+  await withFixture([], async (fixture) => {
+    await createAndActivateMaintenanceConversation(fixture, "scope-contracts");
+    for (const [text, maintenanceScope] of [
+      ["/maintain", { mode: "global" }],
+      ["/maintain", { mode: "exact", sourcePaths: ["raw/a.md"] }],
+      ["/maintain a", { mode: "query", candidatePaths: ["raw/a.md"] }],
+      ["/maintain 请整理指定来源", { mode: "batch", sourcePaths: Array.from({ length: 20 }, (_, index) => `raw/${index}.md`) }]
+    ] as const) {
+      const handle = await fixture.submit({ conversationId: "scope-contracts", text, maintenanceScope, submittedAt: 3 });
+      assert.deepEqual((await fixture.currentMaintenanceCommand!()).scope, maintenanceScope);
+      fixture.latestSession().finishSuccessful("本轮检查完成。");
+      await handle.result;
+    }
+    for (const [text, maintenanceScope] of [
+      ["/maintain a", { mode: "global" }],
+      ["/maintain a", { mode: "exact", sourcePaths: ["raw/a.md"] }],
+      ["/maintain", { mode: "query", candidatePaths: ["raw/a.md"] }],
+      ["/maintain 批次说明", { mode: "batch", sourcePaths: [] }],
+      ["/maintain 批次说明", { mode: "batch", sourcePaths: ["raw/a.md", "raw/a.md"] }],
+      ["/maintain 批次说明", { mode: "batch", sourcePaths: ["wiki/a.md"] }],
+      ["/maintain 批次说明", { mode: "batch", sourcePaths: ["raw/../a.md"] }],
+      ["/maintain 批次说明", { mode: "batch", sourcePaths: Array.from({ length: 21 }, (_, index) => `raw/${index}.md`) }]
+    ] as const) {
+      await assert.rejects(fixture.submit({ conversationId: "scope-contracts", text, maintenanceScope, submittedAt: 4 }),
+        (error: unknown) => error instanceof PiNativeConversationRuntimeError && error.code === "agent_session_invalid");
+    }
+  }, { knowledge: maintenanceKnowledgeFixture() });
 }
 
 function assertPersistedMaintenanceSourceVersions(): void {

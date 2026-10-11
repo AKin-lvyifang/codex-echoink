@@ -236,7 +236,7 @@ async function assertMaintenanceScopeSecurityIsFailClosed(): Promise<void> {
   const batchPaths = ["raw/a.md", "raw/b.markdown"];
   const batch = await authorize({
     name: "batch",
-    request: "",
+    request: "用户已确认初始化，请提炼本批来源。",
     scope: { mode: "batch", sourcePaths: batchPaths },
     arguments: { candidateActions: [], sourcePaths: batchPaths }
   });
@@ -256,7 +256,7 @@ async function assertMaintenanceScopeSecurityIsFailClosed(): Promise<void> {
   })).blocked, undefined);
   assert.deepEqual((await authorize({
     name: "batch-outside",
-    request: "",
+    request: "请额外处理 raw/c.md",
     scope: { mode: "batch", sourcePaths: batchPaths },
     arguments: { candidateActions: [], sourcePaths: ["raw/a.md", "raw/c.md"] }
   })).blocked, { block: true, reason: "tool_policy_blocked" });
@@ -491,6 +491,18 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
     });
     await port.initialize();
     const writesBeforeRejectedCandidate = domain.formalWrites.length;
+    await fsp.writeFile(path.join(vaultRootPath, "raw/b.md"), "second source");
+    const missingSources = await port.execute({
+      vaultId: VAULT_ID, conversationId: "missing-sources", piSessionId: "missing-sources",
+      productRunId: "missing-sources", toolCallId: "missing-sources", mode: "maintain", request: "",
+      sourcePaths: [rawPath, "raw/b.md"], preferenceSnapshot: PREFERENCE,
+      candidateActions: [{ targetPath: "wiki/missing-sources.md", content: "No source relation", expectedTarget: { kind: "missing" } }]
+    });
+    assert.equal(missingSources.status, "failed");
+    assert.deepEqual(missingSources.maintenanceResult?.issues.map((issue) => issue.path), ["wiki/missing-sources.md"],
+      "the all-candidates-rejected path must retain target identity for later correction");
+    assert.equal(domain.formalWrites.length, writesBeforeRejectedCandidate);
+    await fsp.rm(path.join(vaultRootPath, "raw/b.md"));
     const rejectedCandidate = await port.execute({
       vaultId: VAULT_ID,
       conversationId: "conversation-production-missing-assessment",

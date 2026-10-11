@@ -185,6 +185,7 @@ implements PiKnowledgeMaintenanceToolPort {
   private async executeMaintenance(
     input: Readonly<PiKnowledgeMaintenanceToolInput>
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
+    const issues: { code: string; message: string; path?: string }[] = [];
     try {
       this.assertIdentity(input);
       if (input.sourceBodyFingerprints) input = { ...input, sourceBodyFingerprints: Object.fromEntries(Object.entries(input.sourceBodyFingerprints).map(([relative, revision]) => [resolveKnowledgePath(this.vaultRootPath, relative, false), revision])) };
@@ -212,7 +213,6 @@ implements PiKnowledgeMaintenanceToolPort {
         }
       }
       const sourcePaths: string[] = [];
-      const issues: { code: string; message: string; path?: string }[] = [];
       const refreshedSources: Record<string, string> = {};
       const changed: string[] = [];
       for (const relativePath of requestedSources) {
@@ -343,7 +343,10 @@ implements PiKnowledgeMaintenanceToolPort {
             && error.code === "write_uncertain"
             ? "write_uncertain"
             : "failed",
-          issues: [{
+          // Preserve per-candidate paths when the proposal rejects every item.
+          // Settlement can then match a later successful correction precisely.
+          issues: error instanceof Phase3MaintenanceError && error.code === "proposal_invalid" && issues.length
+            ? issues : [{
             code: error instanceof Phase3MaintenanceError
               ? error.code
               : "knowledge_maintenance_failed",

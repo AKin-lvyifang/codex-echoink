@@ -435,6 +435,7 @@ export interface PiChatPreparedDocument {
 export type PiKnowledgeMaintenanceScope = Readonly<
   | { mode: "global" }
   | { mode: "exact"; sourcePaths: readonly [string] }
+  /** Explicit source list is authoritative; /maintain may also carry batch instructions. */
   | { mode: "batch"; sourcePaths: readonly string[] }
   | { mode: "query"; candidatePaths: readonly string[] }
 >;
