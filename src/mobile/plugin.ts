@@ -3,7 +3,7 @@ import { MobileStore } from "./store";
 import { loadMobileSettings, type MobileSettings } from "./settings";
 import { MobileRuntime } from "./runtime";
 import { MobileUI } from "../ui/mobile/mobile-ui";
-import { MobileWorkspace, MOBILE_VIEW } from "./workspace";
+import { MobileWorkspace, MOBILE_VIEW, MOBILE_SETTINGS_VIEW } from "./workspace";
 import { mobilePluginDataRoot } from "./data-root";
 import { MobileServices } from "./services";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
@@ -11,6 +11,7 @@ import { MobileViewport } from "../ui/mobile/viewport";
 import { createMobileAccountService } from "./account";
 import type { AccountService } from "../membership/account-service";
 import { LifestyleView, LIFE_VIEW_TYPES } from "../lifestyle/view";
+import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
 
 export { MOBILE_VIEW } from "./workspace";
 export default class EchoInkMobilePlugin extends Plugin {
@@ -43,8 +44,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.registerDomEvent(document, "visibilitychange", () => { if (document.visibilityState === "visible") void this.accountService.refresh(); });
       this.registerDomEvent(window, "focus", () => { void this.accountService.refresh(); });
       this.registerInterval(window.setInterval(() => { void this.accountService.refresh(); }, 300000));
-      this.registerView(MOBILE_VIEW, leaf => new EchoInkMobileView(leaf, this));
-      this.registerView(VIEW_TYPE_ECHOINK_HOME, leaf => new EchoInkMobileHomeView(leaf, this.services));
+      this.registerWorkspaceViews();
       this.addRibbonIcon("bot", "打开 EchoInk", () => { void this.open().catch(error => new Notice(String(error))); });
       this.addCommand({ id: "open-echoink-mobile", name: "打开移动对话", callback: () => { void this.open().catch(error => new Notice(String(error))); } });
       this.addCommand({ id: "open-echoink-mobile-home", name: "打开首页", callback: () => { void this.navigation.openHome().catch(error => new Notice(String(error))); } });
@@ -59,13 +59,24 @@ export default class EchoInkMobilePlugin extends Plugin {
     const snapshot: unknown = JSON.parse(JSON.stringify(this.settings));
     const write = this.settingsWrites.catch(() => {}).then(() => this.saveData(snapshot));
     this.settingsWrites = write;
-    return write;
+    await write;
+    for (const leaf of this.app.workspace.getLeavesOfType(MOBILE_VIEW)) if (leaf.view instanceof EchoInkMobileView) leaf.view.refreshSettings();
+  }
+  registerWorkspaceViews(): void {
+    this.registerView(MOBILE_VIEW, leaf => new EchoInkMobileView(leaf, this));
+    this.registerView(MOBILE_SETTINGS_VIEW, leaf => new EchoInkMobileView(leaf, this, true));
+    this.registerView(VIEW_TYPE_ECHOINK_HOME, leaf => new EchoInkMobileHomeView(leaf, this.services));
   }
   async open(): Promise<void> {
     if (Platform.isTablet) await this.navigation.openHome();
     await this.navigation.open();
   }
-  async showPage(page: "settings" | "basic" | "knowledge" | "resources" | "finance-settings"): Promise<void> {
+  async showPage(page: MobileSettingsRoute): Promise<void> {
+    if (Platform.isTablet) {
+      const leaf = await this.navigation.openSettings();
+      if (leaf.view instanceof EchoInkMobileView) leaf.view.showPage(page);
+      return;
+    }
     await this.navigation.open();
     const view = this.app.workspace.getLeavesOfType(MOBILE_VIEW)[0]?.view;
     if (view instanceof EchoInkMobileView) view.showPage(page);
@@ -79,19 +90,29 @@ class EchoInkMobileFinanceView extends LifestyleView {
   async onClose(): Promise<void> { await super.onClose(); this.viewport?.dispose(); this.contentEl.removeClass("echoink-mobile-finance"); }
 }
 
-class EchoInkMobileView extends ItemView {
+export class EchoInkMobileView extends ItemView {
   private ui?: MobileUI;
+  private requestedPage?: MobileSettingsRoute;
   private markdown = new Component();
-  constructor(leaf: WorkspaceLeaf, private plugin: EchoInkMobilePlugin) { super(leaf); }
-  getViewType() { return MOBILE_VIEW; }
-  getDisplayText() { return "EchoInk"; }
-  getIcon() { return "bot"; }
-  showPage(page: "settings" | "basic" | "knowledge" | "resources" | "finance-settings") { this.ui?.showPage(page); }
+  constructor(leaf: WorkspaceLeaf, private plugin: EchoInkMobilePlugin, private settingsOnly = false) { super(leaf); }
+  getViewType() { return this.settingsOnly ? MOBILE_SETTINGS_VIEW : MOBILE_VIEW; }
+  getDisplayText() { return this.settingsOnly ? "EchoInk 设置" : "EchoInk"; }
+  getIcon() { return this.settingsOnly ? "settings-2" : "bot"; }
+  showPage(page: MobileSettingsRoute) {
+    if (this.settingsOnly && page === "settings") return;
+    if (page !== "settings") this.requestedPage = page;
+    this.ui?.showPage(page);
+  }
+  refreshSettings() { this.ui?.refreshSettings(); }
+  showChat() { this.ui?.showChat(); }
   async onOpen(): Promise<void> {
     this.addChild(this.markdown);
     this.ui = new MobileUI(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime,
       isTablet: Platform.isTablet,
+      settingsOnly: this.settingsOnly,
+      openSettings: page => this.plugin.showPage(page),
+      openChat: async () => { await this.plugin.navigation.open(); for (const leaf of this.app.workspace.getLeavesOfType(MOBILE_VIEW)) if (leaf.view instanceof EchoInkMobileView) leaf.view.showChat(); },
       services: this.plugin.services, version: this.plugin.manifest.version, accountService: this.plugin.accountService,
       settings: () => this.plugin.settings,
       saveSettings: () => this.plugin.saveSettings(),
@@ -104,9 +125,11 @@ class EchoInkMobileView extends ItemView {
       renderMarkdown: (text, element) => { void MarkdownRenderer.render(this.app, text, element, this.plugin.store.session.notePath, this.markdown); }
     });
     this.ui.mount();
+    if (this.requestedPage) this.ui.showPage(this.requestedPage);
   }
   async onClose(): Promise<void> {
     this.ui?.destroy();
+    this.ui = undefined;
     await this.plugin.store.save();
   }
 }

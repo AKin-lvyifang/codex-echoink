@@ -16,6 +16,7 @@ import { requestUrl } from "obsidian";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { mobileAtomicFilePort } from "./finance-store";
 import { MobileLifestyleService } from "./finance";
+import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
 
 export interface MobileServicesHost {
   app: App;
@@ -26,7 +27,7 @@ export interface MobileServicesHost {
   accountService?: CapabilityAccess;
   saveSettings(): Promise<void>;
   registerEvent(event: EventRef): void;
-  showPage(page: "settings" | "basic" | "knowledge" | "resources" | "finance-settings"): Promise<void>;
+  showPage(page: MobileSettingsRoute): Promise<void>;
 }
 export class MobileServices implements HomeHost {
   readonly app: App;
@@ -102,9 +103,17 @@ export class MobileServices implements HomeHost {
   openEchoInkSkillSettings(_id: string) { return this.host.showPage("resources"); }
   activateView() { return this.host.navigation.open(); }
   getCodexView() { return {
-    startHomeConversation: async (input: { title: string; message: string; defaultSkillId?: string }) => this.start(input.title, input.message, input.defaultSkillId),
-    createAndStartGuidedSession: async (input: { title: string; prompt: string; defaultSkillId: string }) => this.start(input.title, input.prompt, input.defaultSkillId)
+    startHomeConversation: async (input: { title: string; message: string; defaultSkillId?: string }) => input.defaultSkillId === "daily-journal" ? this.prepareJournal(input.title, true) : this.start(input.title, input.message, input.defaultSkillId),
+    createAndStartGuidedSession: async (input: { title: string; prompt: string; defaultSkillId: string }) => input.defaultSkillId === "daily-journal" ? this.prepareJournal(input.title, true) : this.start(input.title, input.prompt, input.defaultSkillId)
   }; }
+  async prepareJournal(title?: string, newSession = false) {
+    if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
+    await this.requireAvailableEchoInkSkill("daily-journal");
+    const session = newSession ? await this.host.store.createSession() : this.host.store.session;
+    if (title) session.title = title;
+    session.skillId = "daily-journal";
+    await this.host.store.save(); this.host.runtime.onChange();
+  }
   private async start(title: string, prompt: string, skill?: string) {
     if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
     if (skill) await this.requireAvailableEchoInkSkill(skill);

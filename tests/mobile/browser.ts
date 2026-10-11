@@ -1,10 +1,12 @@
-import { Platform } from "./browser-obsidian";
+import { MarkdownRenderer, Platform } from "./browser-obsidian";
 import { LifestyleView } from "../../src/lifestyle/view";
 import { MobileViewport } from "../../src/ui/mobile/viewport";
 import { createMobileAccountService } from "../../src/mobile/account";
+import EchoInkMobilePlugin from "../../src/mobile/plugin";
+import { mobileWorkspaceFixture } from "./workspace-fixture";
 import { EchoInkHomeView } from "../../src/home/home-view";
+import { mountAccountMembership } from "../../src/settings/account-membership";
 import { MobileServices } from "../../src/mobile/services";
-import { MobileUI } from "../../src/ui/mobile/mobile-ui";
 import { MobileStore } from "../../src/mobile/store";
 import { MobileRuntime } from "../../src/mobile/runtime";
 import { loadMobileSettings } from "../../src/mobile/settings";
@@ -14,7 +16,7 @@ const host = createHost({ "笔记/来源.md": "项目决定：先完成手机本
 host.app.workspace.containerEl = document.body;
 const params = new URLSearchParams(location.search);
 Platform.isMobileApp = Platform.isMobile = !params.has("desktop"); Platform.isTablet = params.has("tablet") && Platform.isMobile;
-const fixturePrefix = params.has("host") ? "echoink-ipad-beta5-host-v2-fixture" : params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
+const fixturePrefix = params.has("host") ? "echoink-ipad-beta6-host-fixture" : params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
 const persisted = localStorage.getItem(`${fixturePrefix}-files`);
 if (persisted) { host.files.clear(); for (const [key, value] of JSON.parse(persisted)) host.files.set(key, value); }
 const persist = () => localStorage.setItem(`${fixturePrefix}-files`, JSON.stringify([...host.files]));
@@ -59,23 +61,14 @@ const runtime = new MobileRuntime(host.app as any, store, () => settings, async 
 }, () => services.context());
 const accountService = await createMobileAccountService(host.app as any, () => settings);
 const financeAccess = { checkCapability: () => !params.has("expired"), requireCapability: () => { if (params.has("expired")) throw new Error("替身：授权已失效"); }, subscribe: () => () => {} };
-let ui: MobileUI;
-const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: {} as any, registerEvent() {}, showPage: async page => {
-  if (params.has("home") && !params.has("tablet") && Platform.isMobile) { document.querySelector<HTMLElement>("#home")!.hidden = true; root.hidden = false; }
-  ui.showPage(page);
-}, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); } }, "plugin/mobile");
+const plugin = new EchoInkMobilePlugin(host.app as any, { id: "codex-echoink", version: "2.6.3-beta.6 fixture" } as any);
+const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) } as any, registerEvent() {}, showPage: page => plugin.showPage(page), saveSettings: () => plugin.saveSettings() }, "plugin/mobile");
 await services.initialize();
 await services.initializeFinance();
 const root = document.querySelector<HTMLElement>("#app")!;
-if (params.has("home")) {
-  const element = document.querySelector<HTMLElement>("#home")!; element.hidden = false;
-  if (!params.has("tablet") && Platform.isMobile) root.hidden = true;
-  const homeView = new EchoInkHomeView({ app: host.app, containerEl: element, contentEl: element } as any, services);
-  await homeView.onOpen();
-  if (Platform.isMobile) { element.classList.add("echoink-mobile-home"); const homeViewport = new MobileViewport(element); window.addEventListener("pagehide", () => homeViewport.dispose(), { once: true }); }
-  Object.assign(window, { homeView });
-}
-ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tablet"), services, accountService, version: "2.6.2 fixture", store, runtime, settings: () => settings, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); }, openNote: async path => { await host.app.workspace.getLeaf().openFile({ path }); document.querySelector("#opened")!.textContent = `已通过打开接口进入：${path}\n${host.files.get(path)}`; }, beginRender() { root.dataset.renders = String(++renders); }, renderMarkdown(text, element) {
+Object.assign(plugin, { app: host.app, settings, store, runtime, services, accountService });
+plugin.saveData = async data => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(data)); };
+MarkdownRenderer.render = async (_app, text, element) => {
   // A synthetic renderer for layout only; real MarkdownRenderer is host-owned.
   for (const part of text.split(/(```[\s\S]*?```)/u)) {
     if (part.startsWith("```")) { const pre = document.createElement("pre"); const code = document.createElement("code"); code.textContent = part.replace(/^```[^\n]*\n|```$/gu, ""); pre.append(code); element.append(pre); }
@@ -86,9 +79,23 @@ ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tablet"), 
       element.append(table);
     } else { const paragraph = document.createElement("p"); paragraph.textContent = part; paragraph.style.whiteSpace = "pre-wrap"; element.append(paragraph); }
   }
-} });
-ui.mount();
-Object.assign(window, { mobileFixture: { store, settings, runtime, host, requests, ui, services } });
+};
+const workspaceFixture = mobileWorkspaceFixture(plugin, { chat: root, home: document.querySelector<HTMLElement>("#home")!, settings: document.querySelector<HTMLElement>("#settings")! }, params.has("tablet"));
+let desktopDispose: (() => void | Promise<void>) | undefined;
+if (params.has("desktop") && params.has("account")) {
+  const account = mountAccountMembership(root, { app: host.app as any, viewModel: accountService.read(), actions: accountService.actions, read: () => accountService.read(), language: "zh-CN", openProviders() {} });
+  root.style.overflow = "auto"; desktopDispose = () => account.dispose();
+} else if (params.has("desktop") && params.has("home")) {
+  const element = document.querySelector<HTMLElement>("#home")!; const view = new EchoInkHomeView({ app: host.app, contentEl: element, containerEl: element } as any, services);
+  element.hidden = false; root.hidden = true; await view.onOpen(); desktopDispose = () => view.onClose();
+} else {
+  await plugin.navigation.open();
+  if (params.has("home")) await plugin.navigation.openHome();
+}
+document.querySelector("#fixture-home-tab")!.addEventListener("click", () => { void plugin.navigation.openHome(); });
+document.querySelector("#fixture-close-settings")!.addEventListener("click", () => { void workspaceFixture.closeSettings(); });
+window.addEventListener("pagehide", () => { void desktopDispose?.(); void workspaceFixture.dispose(); }, { once: true });
+Object.assign(window, { mobileFixture: { store, settings, runtime, host, requests, plugin, services, workspaceFixture } });
 
 if (params.has("finance")) {
   settings.lifestyle.finance.enabled = true;
@@ -101,7 +108,7 @@ if (params.has("finance")) {
     for (let i = 0; i < 25; i++) await finance.addManual({ date: `${month}-${String(i % 10 + 1).padStart(2,"0")} 10:00:00`, merchant: i % 2 ? "合成餐饮" : "合成购物", category: i % 2 ? "餐饮" : "购物", kind: "expense", amountCents: 1000 + i * 123, status: "completed", account: "替身账户", description: "内部验收合成记录", currency: "CNY", note: "", ...(i < 3 ? { billPlanId: "fixture-plan" } : {}) });
   }
   const element = params.has("tablet") ? document.querySelector<HTMLElement>("#home")! : root;
-  if (!params.has("tablet")) { ui.destroy(); root.classList.remove("echoink-mobile", "em-tablet"); }
+  if (!params.has("tablet")) { await workspaceFixture.dispose(); root.classList.remove("echoink-mobile", "em-tablet"); }
   element.hidden = false; element.classList.add("echoink-mobile-finance");
   element.style.setProperty("--view-bottom-spacing", params.has("tablet") ? "0px" : "68px");
   const viewport = new MobileViewport(element);

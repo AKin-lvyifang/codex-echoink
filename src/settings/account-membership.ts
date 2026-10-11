@@ -276,13 +276,14 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     button(profileActions, t("退出登录", "Sign out"), "quiet", () => show(t("退出登录", "Sign out"), (body, modal) => { const form = el(body, "form"); submit(form, t("退出登录", "Sign out"), actions.signOut, modal); }));
   } else {
     const identity = el(profileCopy, "div"); el(identity, "h2", "", t("未登录", "Signed out"));
-    button(profileActions, t("登录 / 注册", "Sign in / register"), "primary", () => login());
+    button(profileActions, t("登录 / 注册", "Sign in / register"), "primary account-login-action", () => login());
     el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
   }
   const heading = (parent: HTMLElement, title: string, caption?: string) => {
     const row = el(parent, "div", "section-heading"); el(row, "h2", "", title); if (caption) el(row, "span", "muted", caption); return row;
   };
   const overview = heading(page, t("我的使用概览", "My usage"));
+  overview.classList.add("account-overview-heading");
   const scope = el(overview, "div", "scope", t("当前 Vault · 本地", "This vault · local"));
   const statsInfo = button(scope, "", "icon-button", () => show(t("统计口径", "About statistics"), body => {
     copy(body, t("统计保存在当前知识库，不依赖登录或会员。从启用统计之日起记录，此前历史不补算。", "Statistics stay in this vault and work without an account or membership. Recording starts when statistics are enabled; earlier activity is not reconstructed."));
@@ -307,7 +308,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   }
 
   const activity = el(page, "section", "panel activity-panel");
-  const activityHead = el(activity, "div", "section-heading compact"); const activityTitle = el(activityHead, "div", "heading-inline"); el(activityTitle, "h3", "", t("使用足迹", "Activity")); el(activityTitle, "span", "muted", stats.coverage ?? missing);
+  const activityHead = el(activity, "div", "section-heading compact account-activity-heading"); const activityTitle = el(activityHead, "div", "heading-inline"); el(activityTitle, "h3", "", t("使用足迹", "Activity")); el(activityTitle, "span", "muted", stats.coverage ?? missing);
   const segments = el(activityHead, "div", "segments"); let heatMode: "tokens" | "turns" = "tokens";
   const heatButtons = [button(segments, "Token", "quiet", () => changeHeat("tokens")), button(segments, t("对话轮次", "Turns"), "quiet", () => changeHeat("turns"))];
   const layout = el(activity, "div", "heatmap-layout"); const weekdays = el(layout, "div", "week-labels"); weekdays.setAttribute("aria-hidden", "true");

@@ -4,6 +4,8 @@ export { mobileTools, checkedNotePath } from "../../src/mobile/tools";
 export { loadMobileSettings, mobileProvider, mobileModel, mobilePresets } from "../../src/mobile/settings";
 export { MobileUI } from "../../src/ui/mobile/mobile-ui";
 export { MobileWorkspace } from "../../src/mobile/workspace";
+export { default as EchoInkMobilePlugin, EchoInkMobileView } from "../../src/mobile/plugin";
+export { mobileWorkspaceFixture } from "./workspace-fixture";
 
 export { MobileServices } from "../../src/mobile/services";
 export { HomeActivityCore } from "../../src/home/home-activity-core";

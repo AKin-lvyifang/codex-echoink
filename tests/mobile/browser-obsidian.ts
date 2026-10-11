@@ -20,6 +20,11 @@ export function setIcon(element: HTMLElement, name: string) {
 
 export { FixtureTFile as TFile } from "./host.mjs";
 export class Component { addChild() {} removeChild() {} register() {} load() {} unload() {} }
+export class Plugin extends Component {
+  constructor(public app: any, public manifest: any) { super(); }
+  registerView(type: string, factory: unknown) { this.app.workspace.registerView(type, factory); }
+  async saveData(_data: unknown) {}
+}
 export class ItemView {
   app: any; containerEl: HTMLElement; contentEl: HTMLElement;
   constructor(public leaf: any) { this.app = leaf.app; this.containerEl = leaf.containerEl; this.contentEl = leaf.contentEl; }

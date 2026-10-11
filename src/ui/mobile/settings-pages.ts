@@ -7,7 +7,7 @@ import { TODO_SOURCE_PATH } from "../../home/todo-store";
 import type { ParsedTodoRecord } from "../../home/todo-markdown";
 import type { MobileServices } from "../../mobile/services";
 import { SETTINGS_TAB_ICONS } from "../../settings/settings-tab-icons";
-import { renderAnimatedSettingsTabIcon, type AnimatedSettingsTabIconName } from "../../settings/animated-settings-tab-icon";
+import type { AnimatedSettingsTabIconName } from "../../settings/animated-settings-tab-icon";
 import { mountAccountMembership } from "../../settings/account-membership";
 import { MOBILE_ACTIVATION_NOTICE } from "../../membership/mobile-storage";
 import { membershipWebsiteLink } from "../../membership/website-links";
@@ -16,6 +16,7 @@ import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
 import { FinanceCatalogPanel, type CatalogKind } from "../../lifestyle/finance-catalog-dialog";
 
 export type MobileSettingsPage = "basic" | "layout" | "resources" | "knowledge" | "review" | "todos-settings" | "todos" | "profile-agent" | "profile-user" | "archives" | "account" | "finance-settings";
+export type MobileSettingsRoute = MobileSettingsPage | "settings" | "providers";
 interface Controls {
   go(page: MobileSettingsPage | "memories" | "providers" | "chat"): void;
   sheet(title: string, render: (body: HTMLElement) => void): void;
@@ -35,7 +36,8 @@ export class MobileSettingsPages {
     { page: "resources", title: "Skills & MCP", icon: SETTINGS_TAB_ICONS.resources },
     { page: "knowledge", title: "知识库管理", icon: SETTINGS_TAB_ICONS.knowledgeBase },
     { page: "review", title: "复盘", icon: SETTINGS_TAB_ICONS.review },
-    { page: "todos-settings", title: "待办", icon: SETTINGS_TAB_ICONS.todos }
+    { page: "todos-settings", title: "待办", icon: SETTINGS_TAB_ICONS.todos },
+    { page: "account", title: "账号与会员", icon: SETTINGS_TAB_ICONS.account }
   ];
   readonly titles: Record<MobileSettingsPage, string> = { basic: "基础设置", layout: "布局与外观", resources: "Skills & MCP", knowledge: "知识库管理", review: "复盘", "todos-settings": "待办设置", todos: "待办", "profile-agent": "Nova 档案", "profile-user": "用户画像", archives: "已归档会话", account: "账号与会员", "finance-settings": "财务设置" };
   private knowledgeMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -70,19 +72,15 @@ export class MobileSettingsPages {
   }
   basicGeneral(body: HTMLElement) {
     this.heading(body, "通用");
-    const accountRow = this.ui.row(body, "账号与会员", "登录、授权与设备管理", "feather", () => this.ui.go("account"));
-    const accountIcon = accountRow.querySelector<HTMLElement>(".em-icon")!;
-    accountIcon.classList.add("codex-settings-tab-icon"); renderAnimatedSettingsTabIcon(accountIcon, SETTINGS_TAB_ICONS.account, null);
     const language = node(body, "div", "em-row"); node(language, "strong", "em-row-label", "设置语言"); node(language, "span", "em-row-value", "简体中文");
     this.ui.row(body, "关于 EchoInk", "", "circle-help", () => this.ui.sheet("关于 EchoInk", part => {
       node(part, "h2", "em-about-title", "EchoInk"); this.help(part, `版本 ${this.host.version ?? "本地测试包"}`);
       this.help(part, "你的思考，在这里积累。");
-      if (this.host.version?.includes("beta")) this.help(part, "测试版本，设备效果仍在验证。");
       this.help(part, "作者：AKin-lvyifang · Copyright © 2026 EchoInk Agent contributors");
       const website = node(part, "a", "em-wide-action", "官网 echoink.cn"); website.href = membershipWebsiteLink("plugin.about"); website.target = "_blank"; website.rel = "noopener noreferrer";
       this.help(part, "基础部分采用 MIT 许可；PRO 功能遵循单独许可，需有效授权。模型与账号操作会按所选服务发送请求。");
       for (const [title, content] of [["组件许可", license], ["第三方许可", thirdPartyNotices]]) {
-        const details = node(part, "details"); node(details, "summary", "", title); node(details, "pre", "em-license", content);
+        const details = node(part, "details", "em-about-license"); node(details, "summary", "", title); node(details, "pre", "em-license", content);
       }
     }));
   }
@@ -281,7 +279,7 @@ export class MobileSettingsPages {
     this.ui.row(manage, "已归档会话", "", "history", () => this.ui.go("archives")); this.ui.row(manage, "记忆修正", "", "brain", () => this.ui.go("memories"));
     this.ui.button(body, "归档当前会话", async () => {
       if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
-      this.host.store.session.archivedAt = Date.now(); await this.host.store.createSession(); this.ui.go("archives");
+      this.host.store.session.archivedAt = Date.now(); await this.host.store.createSession(); this.host.runtime.onChange(); this.ui.go("archives");
     }, "archive", "em-wide-action");
   }
   private reportConfig(kind: "agent" | "knowledge") {
@@ -312,7 +310,7 @@ export class MobileSettingsPages {
           const bubble = node(article, "div", message.role === "user" ? "em-user-message" : "em-answer markdown-rendered");
           if (message.role === "user") bubble.textContent = content; else this.host.renderMarkdown(content, bubble);
         }
-        this.ui.button(article, "恢复会话", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); delete session.archivedAt; this.host.store.state.activeSessionId = session.id; await this.host.store.save(); this.ui.go("chat"); }, "rotate-ccw", "em-wide-action");
+        this.ui.button(article, "恢复会话", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); delete session.archivedAt; this.host.store.state.activeSessionId = session.id; await this.host.store.save(); this.host.runtime.onChange(); this.ui.go("chat"); }, "rotate-ccw", "em-wide-action");
       });
     }
   }

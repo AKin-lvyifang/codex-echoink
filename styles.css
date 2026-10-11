@@ -23556,3 +23556,24 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-mobile .em-provider-brand { width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;flex:none; }
 .echoink-mobile .em-provider-brand :is(svg,img) { width:24px;height:24px; }
 .echoink-mobile .em-provider-picker [aria-selected=true] { color:var(--em-green); }
+
+/* Keep mobile touch targets independent from the visible fill. */
+.echoink-home-workspace.echoink-mobile-home .echoink-home-shortnav button { position:relative;isolation:isolate;min-height:44px;background:transparent; }
+.echoink-home-workspace.echoink-mobile-home .echoink-home-shortnav button::before { content:"";position:absolute;inset:8px 0;border-radius:6px;z-index:-1; }
+.echoink-home-workspace.echoink-mobile-home .echoink-home-shortnav button:is(:hover,:focus-visible,.is-active) { background:transparent; }
+.echoink-home-workspace.echoink-mobile-home .echoink-home-shortnav button:is(:hover,:focus-visible,.is-active)::before { background:var(--background-modifier-hover); }
+.echoink-mobile .echoink-account.echoink-account .profile-actions { flex-direction:row;align-items:center;gap:6px; }
+.echoink-mobile .echoink-account.echoink-account .registration-gift-tag { flex:none;align-self:center;line-height:1.55;padding:3px 7px;animation:none; }
+.echoink-mobile .echoink-account.echoink-account :is(.account-overview-heading,.account-activity-heading) { align-items:center; }
+.echoink-mobile .echoink-account.echoink-account :is(.account-login-action,.account-activity-heading .segments button) { position:relative;isolation:isolate;min-height:44px;background:transparent;box-shadow:none; }
+.echoink-mobile .echoink-account.echoink-account :is(.account-login-action,.account-activity-heading .segments button)::before { content:"";position:absolute;inset:6px 0;border-radius:6px;z-index:-1; }
+.echoink-mobile .echoink-account.echoink-account .account-login-action::before { background:var(--accent); }
+.echoink-mobile .echoink-account.echoink-account .account-login-action:focus-visible::before { background:var(--chart); }
+.echoink-mobile .echoink-account.echoink-account .account-activity-heading .segments button:is([aria-pressed=true],:hover,:focus-visible)::before { background:var(--active); }
+.echoink-mobile .em-provider-back { justify-content:flex-start; }
+.echoink-mobile .em-provider-actions { display:flex;flex-wrap:wrap;gap:10px;margin-block:14px; }
+.echoink-mobile .em-provider-actions button { flex:1 1 190px; }
+.echoink-mobile .em-about-license { margin-block:14px; }
+.echoink-mobile .em-about-license summary { min-height:44px;padding:10px 0;line-height:1.5;cursor:pointer; }
+.echoink-mobile .em-about-license .em-license { margin-block:8px 16px; }
+.echoink-mobile.em-tablet :is(.em-provider-form,.em-provider-picker) { max-width:720px;margin-inline:auto; }

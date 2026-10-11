@@ -10,13 +10,16 @@ import { type MobilePermission, MobileStore } from "../../mobile/store";
 import { MobileRuntime } from "../../mobile/runtime";
 import type { MobileServices } from "../../mobile/services";
 import { MobileViewport } from "./viewport";
-import { MobileSettingsPages, type MobileSettingsPage } from "./settings-pages";
+import { MobileSettingsPages, type MobileSettingsPage, type MobileSettingsRoute } from "./settings-pages";
 import novaAvatar from "../../../assets/nova.svg";
 import type { AccountService } from "../../membership/account-service";
 
 export interface MobileUIHost {
   app: App;
   isTablet?: boolean;
+  settingsOnly?: boolean;
+  openSettings?(page: MobileSettingsRoute): Promise<void>;
+  openChat?(): Promise<void>;
   services?: MobileServices;
   version?: string;
   accountService?: AccountService;
@@ -74,10 +77,18 @@ export class MobileUI {
   private mounted = false;
   private content!: HTMLElement;
   private timer?: number;
+  private chatSessionId?: string;
   private onRuntimeChange = () => { if (this.page === "chat" || (this.host.isTablet && this.page === "history")) this.refreshChat(); };
   constructor(private root: HTMLElement, private host: MobileUIHost) { this.host.applyAppearance = () => this.applyAppearance(); this.settingPages = new MobileSettingsPages(host, { go: page => this.go(page), sheet: (title, render) => this.openSheet(title, render), row: (parent, title, desc, name, action) => this.row(parent, title, desc, name, action), button: (parent, title, action, name, cls) => this.button(parent, title, action, name, cls), field: (parent, title, value, update, type) => this.field(parent, title, value, update, type), act: action => this.act(action) }); }
-  showPage(page: MobileSettingsPage | "settings") { this.go(page, page === "settings"); }
-  mount() { this.mounted = true; this.root.classList.add("echoink-mobile"); this.root.classList.toggle("em-tablet", !!this.host.isTablet); this.host.runtime.onChange = this.onRuntimeChange; this.render(); this.viewport = new MobileViewport(this.root); this.applyAppearance(); this.timer = window.setInterval(() => this.updateTimers(), 250); }
+  showPage(page: MobileSettingsRoute) { this.go(page, page === "settings"); }
+  showChat() { if (this.host.settingsOnly) return; if (this.page !== "chat") this.go("chat"); else this.refreshChat(); }
+  mount() {
+    this.mounted = true; this.root.classList.add("echoink-mobile"); this.root.classList.toggle("em-tablet", !!this.host.isTablet); this.root.classList.toggle("em-settings-surface", !!this.host.settingsOnly);
+    if (this.host.settingsOnly) this.page = "settings";
+    else { this.host.runtime.onChange = this.onRuntimeChange; this.timer = window.setInterval(() => this.updateTimers(), 250); }
+    this.render(); this.viewport = new MobileViewport(this.root); this.applyAppearance();
+  }
+  refreshSettings() { this.applyAppearance(); this.updateComposerLabels(); if (!this.host.settingsOnly) this.refreshChat(); }
   destroy() { this.viewport?.dispose(); this.settingPages.dispose(); this.closeSheet(false); this.mounted = false; window.clearInterval(this.timer); if (this.host.runtime.onChange === this.onRuntimeChange) this.host.runtime.onChange = () => {}; this.root.replaceChildren(); }
   private async act(action: () => void | Promise<void>) {
     try { this.error = ""; this.showError(); await action(); }
@@ -96,8 +107,10 @@ export class MobileUI {
   private scrollKey() { return this.page === "memory" ? `memory:${this.memoryId}` : this.page; }
   private captureScroll() { const body = this.root.querySelector<HTMLElement>(".em-body"); if (body) this.scroll.set(this.scrollKey(), body.scrollTop); }
   private go(page: Page, fromHome = false) {
+    if (this.host.settingsOnly && page === "chat") { this.closeSheet(false); if (this.host.openChat) void this.act(() => this.host.openChat!()); return; }
+    if (!this.host.settingsOnly && this.host.isTablet && this.host.openSettings && (page === "settings" || page === "finance-settings" || this.settingPages.categories.some(item => item.page === page))) { this.closeSheet(false); void this.act(() => this.host.openSettings!(page as MobileSettingsRoute)); return; }
     this.captureScroll();
-    if (fromHome) this.stack = ["chat"]; else if (page !== this.page) this.stack.push(this.page);
+    if (fromHome) this.stack = [this.host.settingsOnly ? "settings" : "chat"]; else if (page !== this.page) this.stack.push(this.page);
     this.page = page; this.error = "";
     if (this.host.isTablet && this.root.clientWidth >= 760) {
       if (page === "settings") { this.stack.push("settings"); this.page = "basic"; }
@@ -108,7 +121,7 @@ export class MobileUI {
     }
     this.closeSheet(false); this.render();
   }
-  private back() { if (this.overlay) { this.closeSheet(); return; } this.captureScroll(); this.page = this.stack.pop() ?? "chat"; this.error = ""; this.render(); }
+  private back() { if (this.overlay) { this.closeSheet(); return; } this.captureScroll(); this.page = this.stack.pop() ?? (this.host.settingsOnly ? "settings" : "chat"); this.error = ""; this.render(); }
   private showError() {
     this.root.querySelectorAll<HTMLElement>(".em-error,.em-sheet-error").forEach(box => { box.textContent = this.error; box.hidden = !this.error; });
   }
@@ -119,17 +132,17 @@ export class MobileUI {
     this.host.beginRender(); this.root.replaceChildren();
     this.root.dataset.page = this.page;
     const header = el(this.root, "header", "em-header");
-    if (this.page !== "chat") this.iconButton(header, "返回", "chevron-left", () => this.back());
-    else icon(header, "bot");
+    if (this.page !== "chat" && !(this.host.settingsOnly && this.page === "settings")) this.iconButton(header, "返回", "chevron-left", () => this.back());
+    else icon(header, this.host.settingsOnly ? "settings-2" : "bot");
     const titles: Record<Page, string> = { ...this.settingPages.titles, chat: "Nova", settings: "设置", basic: "基础设置", providers: "模型与提供商", provider: "配置提供商", models: "选择模型", permissions: "工作区权限", history: "历史对话", review: "复盘", memories: "记忆", memory: "记忆详情", notes: "引用笔记" };
-    el(header, "h2", "em-title", titles[this.page]);
+    el(header, "h2", "em-title", this.host.settingsOnly && this.page === "settings" ? "EchoInk 设置" : titles[this.page]);
     if (this.page === "chat") {
       this.iconButton(header, "历史对话", "history", () => this.openSheet("历史对话", body => this.history(body)));
       this.iconButton(header, "设置", "settings-2", () => this.go("settings"));
     }
     const error = el(this.root, "div", "em-error"); error.setAttribute("role", "alert"); this.showError();
     const workspace = el(this.root, "div", "em-workspace");
-    if (this.host.isTablet) {
+    if (this.host.isTablet && !this.host.settingsOnly) {
       const navigation = el(workspace, "nav", "em-navigation"); navigation.setAttribute("aria-label", "EchoInk 导航");
       for (const [page, label, name] of [["chat", "对话", "message-square"], ["memories", "记忆", "brain"], ["settings", "设置", "settings-2"]] as const) {
         const button = this.button(navigation, label, () => this.go(page), name);
@@ -221,15 +234,17 @@ export class MobileUI {
     const quick = el(compose, "div", "em-quick");
     const newButton = this.button(quick, "新对话", async () => { if (this.host.runtime.busy) return; await this.host.store.createSession(); this.scroll.delete("chat"); this.render(); }, "square-pen"); newButton.disabled = this.host.runtime.busy;
     this.button(quick, "引用笔记", () => this.openSheet("引用笔记", body => this.notes(body)), "file-text");
-    this.button(quick, "写日记", () => { const area = this.root.querySelector<HTMLTextAreaElement>(".em-input")!; area.value = "帮我整理今天的记录，生成一篇 Markdown 日记并保存。\n"; this.updateDraft(area.value); area.focus(); }, "notebook-pen");
+    const journal = async () => { if (!this.host.services) throw new Error("日记服务尚未就绪。"); await this.host.services.prepareJournal(); this.closeSheet(); this.root.querySelector<HTMLTextAreaElement>(".em-input")?.focus(); };
+    this.button(quick, "写日记", journal, "notebook-pen");
     const session = this.host.store.session;
+    this.chatSessionId = session.id;
     const context = el(compose, "div", "em-context");
     this.refreshContext(context);
     const composer = el(compose, "div", "em-composer");
     const input = el(composer, "textarea", "em-input"); input.placeholder = "和 Nova 说说你的想法…"; input.setAttribute("aria-label", "消息草稿"); input.rows = 2; input.value = session.draft;
     input.addEventListener("input", () => this.updateDraft(input.value));
     const controls = el(composer, "div", "em-composer-tools");
-    this.iconButton(controls, "添加到对话", "plus", () => this.openSheet("添加到对话", body => { this.row(body, "引用笔记", "", "file-text", () => this.openSheet("引用笔记", part => this.notes(part))); this.row(body, "写日记", "", "notebook-pen", () => { this.closeSheet(); input.value = "帮我整理今天的记录，生成一篇 Markdown 日记并保存。\n"; this.updateDraft(input.value); input.focus(); }); this.row(body, "选择 Skill", "", "sparkles", () => this.go("resources")); }));
+    this.iconButton(controls, "添加到对话", "plus", () => this.openSheet("添加到对话", body => { this.row(body, "引用笔记", "", "file-text", () => this.openSheet("引用笔记", part => this.notes(part))); this.row(body, "写日记", "", "notebook-pen", journal); this.row(body, "选择 Skill", "", "sparkles", () => this.go("resources")); }));
     this.iconButton(controls, `工作区权限：${permissions.find(p => p[0] === this.host.store.state.permission)?.[1]}`, "shield-check", () => this.openSheet("工作区权限", body => this.permissionPage(body)));
     const model = selectedModel(this.host.settings());
     const picker = this.button(controls, "", () => this.openSheet("选择模型", body => this.models(body)), undefined, "em-model"); picker.setAttribute("aria-label", "选择模型");
@@ -256,9 +271,14 @@ export class MobileUI {
     // Preserve keyboard focus and draft while only message and status regions change.
     const body = this.root.querySelector<HTMLElement>(".em-messages");
     if (!body) return;
+    const changedSession = this.chatSessionId !== this.host.store.session.id;
+    if (changedSession) {
+      this.chatSessionId = this.host.store.session.id; this.scroll.delete("chat"); this.refreshContext();
+      this.root.querySelectorAll<HTMLElement>(".em-session-list").forEach(list => { list.replaceChildren(); this.history(list); });
+    }
     const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 90;
     this.host.beginRender(); body.replaceChildren(); this.messages(body);
-    if (nearBottom) body.scrollTop = body.scrollHeight;
+    if (nearBottom || changedSession) body.scrollTop = body.scrollHeight;
     const input = this.root.querySelector<HTMLTextAreaElement>(".em-input");
     if (input && input.value !== this.host.store.session.draft) input.value = this.host.store.session.draft;
     const send = this.root.querySelector<HTMLButtonElement>(".em-send");
@@ -266,6 +286,7 @@ export class MobileUI {
     const newButton = this.root.querySelector<HTMLButtonElement>(".em-quick button"); if (newButton) newButton.disabled = this.host.runtime.busy;
     this.root.querySelectorAll<HTMLButtonElement>(".em-session-row").forEach(row => {
       row.disabled = this.host.runtime.busy;
+      row.setAttribute("aria-current", row.dataset.sessionId === this.host.store.state.activeSessionId ? "page" : "false");
       const session = this.host.store.state.sessions.find(item => item.id === row.dataset.sessionId);
       if (session) { const title = row.querySelector("strong"); const time = row.querySelector("small"); if (title) title.textContent = session.title; if (time) time.textContent = new Date(session.updatedAt).toLocaleString(); }
     });
@@ -405,7 +426,7 @@ export class MobileUI {
   }
   private provider(body: HTMLElement) {
     const draft = this.providerDraft!;
-    const form = el(body, "div", "em-form");
+    const form = el(body, "div", "em-form em-provider-form");
     const presetLabel = el(form, "div", "em-field"); el(presetLabel, "span", "", "供应商");
     const presets = this.button(presetLabel, "", () => {
       const scroll = body.scrollTop;
@@ -413,7 +434,7 @@ export class MobileUI {
       const picker = el(body, "section", "em-provider-picker");
       const close = () => { this.providerPickerBack = undefined; picker.remove(); form.hidden = false; presets.setAttribute("aria-expanded", "false"); body.scrollTop = scroll; presets.focus({ preventScroll: true }); };
       this.providerPickerBack = close;
-      this.button(picker, "返回配置", close, "chevron-left", "em-wide-action");
+      this.button(picker, "返回配置", close, "chevron-left", "em-provider-back");
       el(picker, "h3", "em-section-title", "选择供应商");
       const list = el(picker, "div"); list.setAttribute("role", "listbox"); list.setAttribute("aria-label", "供应商");
       for (const preset of mobilePresets) {
@@ -466,8 +487,9 @@ export class MobileUI {
       } finally { this.saving = false; }
     };
     this.button(form, "检查填写", () => { validateMobileProvider(draft); let feedback = form.querySelector<HTMLElement>(".em-provider-feedback"); if (!feedback) feedback = el(form, "p", "em-provider-feedback"); feedback.setAttribute("role", "status"); feedback.textContent = "填写检查通过；尚未请求供应商。"; }, "check", "em-wide-action");
-    this.button(form, "保存并设为当前", () => persist(true), "check", "em-primary em-wide-action");
-    this.button(form, "保存", () => persist(false), undefined, "em-wide-action");
+    const actions = el(form, "div", "em-provider-actions");
+    this.button(actions, "保存并设为当前", () => persist(true), "check", "em-primary");
+    this.button(actions, "保存", () => persist(false));
     if (this.host.settings().apiProviders.some(p => p.id === draft.id)) {
       this.button(form, "删除提供商", () => this.confirmAction(form, `删除「${draft.name}」的本地配置？`, "确认删除", async () => {
         const settings = this.host.settings(); settings.apiProviders = settings.apiProviders.filter(p => p.id !== draft.id);
@@ -487,6 +509,7 @@ export class MobileUI {
     this.button(body, "模型与提供商设置", () => this.go("providers"), "settings-2", "em-wide-action");
   }
   private history(body: HTMLElement) {
+    body.classList.add("em-session-list");
     if (!this.host.store.state.sessions.length) el(body, "p", "em-empty", "还没有历史对话");
     for (const session of this.host.store.state.sessions.filter(item => !item.archivedAt)) {
       const row = this.row(body, session.title, new Date(session.updatedAt).toLocaleString(), "message-square", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); this.captureScroll(); this.host.store.state.activeSessionId = session.id; await this.host.store.save(); this.stack = []; this.page = "chat"; this.scroll.delete("chat"); this.closeSheet(false); this.render(); }); row.disabled = this.host.runtime.busy;
@@ -564,7 +587,9 @@ export class MobileUI {
   private updateComposerLabels() {
     const model = selectedModel(this.host.settings());
     const label = this.root.querySelector(".em-model-label"); if (label) label.textContent = model?.model.displayName || "配置模型";
-    const brand = this.root.querySelector<HTMLElement>(".em-brand"); if (brand && model) renderProviderBrandIcon(brand, model.provider.providerId === "openai" ? "openai-codex" : model.provider.providerId ?? "custom");
+    const picker = this.root.querySelector<HTMLElement>(".em-model"); let brand = picker?.querySelector<HTMLElement>(".em-brand");
+    if (!model) brand?.remove();
+    else if (picker) { if (!brand) { brand = el(picker, "span", "em-brand"); picker.prepend(brand); } renderProviderBrandIcon(brand, model.provider.providerId === "openai" ? "openai-codex" : model.provider.providerId ?? "custom"); }
     const permission = this.root.querySelector<HTMLButtonElement>('button[aria-label^="工作区权限："]'); if (permission) permission.setAttribute("aria-label", `工作区权限：${permissions.find(item => item[0] === this.host.store.state.permission)?.[1]}`);
   }
   private applyAppearance() {

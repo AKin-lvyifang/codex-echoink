@@ -18,7 +18,7 @@ const hostBuild = await esbuild.build({ entryPoints: ["tests/mobile/browser-obsi
 vm.runInNewContext(hostBuild.outputFiles[0].text, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, DOMParser: dom.window.DOMParser, module: obsidian, exports: obsidian.exports, console });
 const globals = { window: dom.window, document: dom.window.document, DOMParser: dom.window.DOMParser, MutationObserver: dom.window.MutationObserver, HTMLElement: dom.window.HTMLElement, module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, setTimeout, clearTimeout, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, require: id => { if (id !== "obsidian") throw new Error(`Node import on mobile: ${id}`); return { ...obsidian.exports, TFile: FixtureTFile }; } };
 vm.runInNewContext(build.outputFiles[0].text, globals);
-const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, mobilePresets, MobileUI, MobileWorkspace, MobileServices, HomeActivityCore, mobilePluginDataRoot, SETTINGS_TAB_ICONS, renderAnimatedSettingsTabIcon, createMobileMembershipStorage, AccountService, MembershipApiError, keyHash, mobileLifestyleStore, mobileGenerateText, readFinanceBill, sha256Hex, FinanceWorkspace } = module.exports;
+const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, mobilePresets, MobileUI, MobileWorkspace, MobileServices, HomeActivityCore, mobilePluginDataRoot, SETTINGS_TAB_ICONS, renderAnimatedSettingsTabIcon, createMobileMembershipStorage, AccountService, MembershipApiError, keyHash, mobileLifestyleStore, mobileGenerateText, readFinanceBill, sha256Hex, FinanceWorkspace, EchoInkMobilePlugin, mobileWorkspaceFixture } = module.exports;
 const memoryArgs = { kind: "view", title: "解释偏好", content: "解释技术问题时先说结论。", recallWhen: "解释技术问题", basis: "explicit" };
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 let passed = 0;
@@ -198,7 +198,7 @@ await test("shared activity extraction preserves desktop history, rename, delete
   assert.equal(JSON.stringify(after.snapshot()), JSON.stringify(before.snapshot())); assert.equal(afterBytes, beforeBytes); await before.dispose(); await after.dispose();
 });
 
-await test("formal DOM: sheet preserves draft node and focus, seven settings and local save", async () => {
+await test("formal DOM: sheet preserves draft node and focus, eight settings and local save", async () => {
   const host = createHost(); host.app.workspace.containerEl = dom.window.document.body;
   const store = new MobileStore(host.adapter, "plugin/mobile"); await store.load(); const config = settings(); let saved = "";
   const runtime = new MobileRuntime(host.app, store, () => config, async () => answer("openai-completions", "ok"));
@@ -215,11 +215,50 @@ await test("formal DOM: sheet preserves draft node and focus, seven settings and
   button("当前笔记笔记/来源.md").click(); await settle(); assert.equal(root.querySelector(".em-input"), input); assert.equal(input.value, "保留中文草稿"); assert.equal(dom.window.document.activeElement, input); assert.equal(store.session.notePath, "笔记/来源.md");
   const viewport = new dom.window.EventTarget(); viewport.scale = 1; viewport.height = 552; viewport.offsetTop = 0; Object.defineProperty(dom.window, "visualViewport", { value: viewport, configurable: true }); root.getBoundingClientRect = () => ({ bottom: 852 });
   dom.window.dispatchEvent(new dom.window.Event("resize")); await new Promise(resolve => setTimeout(resolve, 35)); assert.equal(root.style.getPropertyValue("--em-viewport-occlusion"), "300px"); assert.equal(root.querySelector(".em-input"), input); assert.equal(root.style.getPropertyValue("--view-bottom-spacing"), "68px");
-  button("设置").click(); assert.equal(root.querySelectorAll(".em-body>.em-row").length, 7); button("布局与外观").click(); const large = root.querySelector('[aria-label="放大正文"]'); large.checked = true; large.dispatchEvent(new dom.window.Event("change")); await settle(); assert.equal(loadMobileSettings(JSON.parse(saved)).mobileUi.largeText, true); ui.showPage("layout"); button("返回").click(); assert.equal(root.dataset.page, "settings");
+  button("设置").click(); assert.equal(root.querySelectorAll(".em-body>.em-row").length, 8); button("布局与外观").click(); const large = root.querySelector('[aria-label="放大正文"]'); large.checked = true; large.dispatchEvent(new dom.window.Event("change")); await settle(); assert.equal(loadMobileSettings(JSON.parse(saved)).mobileUi.largeText, true); ui.showPage("layout"); button("返回").click(); assert.equal(root.dataset.page, "settings");
   store.state.memories.push({ id: "edit-fixture", kind: "view", title: "待修正记忆", content: "原文", recallWhen: "解释", basis: "explicit", date: new Date().toISOString(), revision: 1, contentOrigin: "user_edit" });
   ui.showPage("memories"); [...root.querySelectorAll(".em-row")].find(row => row.textContent.includes("待修正记忆")).click(); button("编辑").click(); const editor = root.querySelector('[aria-label="记忆内容"]'); editor.value = "修正后正文"; editor.dispatchEvent(new dom.window.Event("input")); button("预览修改").click(); assert.equal(store.state.memories.at(-1).content, "原文"); assert.ok(root.querySelector('[role="dialog"]').textContent.includes("修改前")); button("应用修改").click(); await settle(); assert.equal(store.state.memories.at(-1).content, "修正后正文"); assert.equal(store.state.memories.at(-1).revision, 2);
   const oldId = store.session.id; ui.showPage("review"); button("归档当前会话").click(); await settle(); assert.ok(store.state.sessions.find(session => session.id === oldId).archivedAt); root.querySelector(".em-archive summary").click(); await settle(); button("恢复会话").click(); await settle(); assert.equal(store.session.id, oldId); assert.equal(store.session.archivedAt, undefined);
   ui.destroy(); await services.dispose();
+});
+
+await test("journal entries wait for input and retain old, quick and plus-menu drafts", async () => {
+  const state = await setup("openai-completions", async () => { throw new Error("journal must not request a provider"); }); let sends = 0; state.runtime.send = async () => { sends++; };
+  state.config.apiProviders = []; const root = dom.window.document.querySelector("#app"); const services = new MobileServices({ ...state, settings: state.config, navigation: new MobileWorkspace(state.app.workspace, false), registerEvent() {}, saveSettings: async () => {}, showPage: async () => {} }, "plugin/mobile");
+  const old = state.store.session; old.draft = "帮我整理今天的记录，生成一篇 Markdown 日记并保存。\n";
+  const view = services.getCodexView(); await view.startHomeConversation({ title: "今日记录", message: "示例句", defaultSkillId: "daily-journal" }); assert.notEqual(state.store.session.id, old.id); assert.equal(old.draft, "帮我整理今天的记录，生成一篇 Markdown 日记并保存。\n"); assert.equal(state.store.session.draft, ""); assert.equal(state.store.session.skillId, "daily-journal"); assert.equal(sends, 0);
+  const ui = new MobileUI(root, { app: state.app, store: state.store, runtime: state.runtime, services, settings: () => state.config, saveSettings: async () => {}, openNote: async () => {}, beginRender() {}, renderMarkdown(text, element) { element.textContent = text; } }); ui.mount();
+  const input = root.querySelector(".em-input"); const click = (label, selector = "button") => [...root.querySelectorAll(selector)].find(b => b.getAttribute("aria-label") === label || b.textContent.trim() === label).click();
+  click("写日记"); await settle(); await settle(); assert.equal(input.value, ""); assert.equal(dom.window.document.activeElement, input);
+  input.value = "用户未完成的记录"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true })); click("写日记"); await settle(); await settle(); assert.equal(input.value, "用户未完成的记录"); click("添加到对话"); click("写日记", ".em-sheet button"); await settle(); await settle(); assert.equal(input.value, "用户未完成的记录"); assert.equal(root.querySelector(".em-input"), input); assert.ok(!root.querySelector(".em-sheet-overlay")); assert.equal(sends, 0);
+  await view.createAndStartGuidedSession({ title: "显式复盘", prompt: "开始复盘", defaultSkillId: "knowledge-review" }); assert.equal(sends, 1); assert.equal(state.store.session.draft, "开始复盘");
+  ui.destroy(); await services.dispose();
+});
+
+await test("iPad settings: formal central leaf reuse, isolated listener, local sync and close/reopen", async () => {
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+  const platform = obsidian.exports.Platform; const previousTablet = platform.isTablet; platform.isTablet = true;
+  const root = dom.window.document.querySelector("#app"), home = dom.window.document.body.appendChild(dom.window.document.createElement("div")), central = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  Object.defineProperty(central, "clientWidth", { value: 800, configurable: true });
+  const plugin = new EchoInkMobilePlugin(state.app, { id: "codex-echoink", version: "2.6.3-beta.6" });
+  Object.assign(plugin, { store: state.store, runtime: state.runtime, settings: state.config }); plugin.saveData = async () => {};
+  const fixture = mobileWorkspaceFixture(plugin, { chat: root, home, settings: central }, true);
+  const services = new MobileServices({ ...plugin, app: state.app, settings: state.config, store: state.store, runtime: state.runtime, navigation: plugin.navigation, registerEvent() {}, saveSettings: () => plugin.saveSettings(), showPage: page => plugin.showPage(page) }, "plugin/mobile"); plugin.services = services;
+  let intervals = 0; const interval = dom.window.setInterval; dom.window.setInterval = (...args) => { intervals++; return interval(...args); };
+  try {
+    await plugin.navigation.open(); const input = root.querySelector(".em-input"); input.value = "保持输入和焦点"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true })); input.focus(); const listener = state.runtime.onChange;
+    await Promise.all([services.openEchoInkGeneralSettings(), plugin.showPage("settings")]); assert.equal(fixture.leaves.filter(leaf => leaf.view.getViewType() === "echoink-mobile-settings").length, 1); assert.equal(state.runtime.onChange, listener); assert.equal(intervals, 1); assert.ok(!central.querySelector(".em-input,.em-navigation")); assert.equal(root.querySelector(".em-input"), input); assert.equal(central.querySelectorAll(".em-sidebar .em-row").length, 8);
+    await plugin.showPage("providers"); [...central.querySelectorAll("button")].find(b => b.textContent.trim() === "添加提供商").click(); const key = central.querySelector('[aria-label="API Key"]'); key.value = "synthetic-settings-key"; key.dispatchEvent(new dom.window.Event("input")); await plugin.showPage("settings"); assert.equal(central.querySelector('[aria-label="API Key"]'), key); assert.equal(key.value, "synthetic-settings-key");
+    key.focus(); state.config.customWelcomeEnabled = true; state.config.customWelcomeTitle = "设置即时同步"; state.config.mobileUi.largeText = true; await plugin.saveSettings(); assert.equal(root.querySelector(".em-input"), input); assert.equal(dom.window.document.activeElement, key); assert.equal(input.value, "保持输入和焦点"); assert.ok(root.classList.contains("em-large-text")); assert.equal(root.querySelector(".em-welcome h1").textContent, "设置即时同步");
+    await fixture.leaves.find(leaf => leaf.view.getViewType() === "echoink-mobile-settings").detach(); assert.equal(state.runtime.onChange, listener); assert.equal(intervals, 1); state.store.session.messages.push({ role: "user", content: "设置关闭后仍更新", timestamp: Date.now() }); state.runtime.onChange(); assert.ok(root.textContent.includes("设置关闭后仍更新")); assert.equal(root.querySelector(".em-input"), input);
+    await plugin.showPage("settings"); assert.equal(intervals, 1); assert.equal(state.runtime.onChange, listener); assert.ok(!central.querySelector(".em-input")); Object.defineProperty(central, "clientWidth", { value: 460, configurable: true }); await plugin.showPage("basic"); central.querySelector('[aria-label="返回"]').click(); assert.equal(central.dataset.page, "settings"); assert.ok(!central.querySelector('[aria-label="返回"]'));
+    const click = (surface, label) => { const button = [...surface.querySelectorAll("button")].find(b => b.getAttribute("aria-label") === label || b.textContent.trim() === label); assert.ok(button, label); button.click(); };
+    click(root, "选择模型"); assert.ok(root.querySelector(".em-sheet-overlay")); click(root, "模型与提供商设置"); await settle(); await settle(); assert.equal(central.dataset.page, "providers"); assert.ok(!root.querySelector(".em-sheet-overlay")); assert.ok([...root.children].every(child => !child.inert)); assert.equal(root.querySelector(".em-input"), input);
+    click(root, "添加到对话"); assert.ok(root.querySelector(".em-sheet-overlay")); click(root, "选择 Skill"); await settle(); await settle(); assert.equal(central.dataset.page, "resources"); assert.ok(!root.querySelector(".em-sheet-overlay")); assert.ok([...root.children].every(child => !child.inert)); assert.equal(input.value, "保持输入和焦点");
+    const oldSession = state.store.session; click(root, "历史对话"); await plugin.showPage("review"); click(central, "归档当前会话"); await settle(); await settle(); assert.notEqual(state.store.session.id, oldSession.id); assert.equal(input.value, ""); assert.ok(!root.textContent.includes("设置关闭后仍更新")); assert.ok(root.querySelector(".em-context").hidden); assert.equal(root.querySelector('.em-session-row[aria-current="page"]').dataset.sessionId, state.store.session.id); assert.ok(!root.querySelector(`[data-session-id="${oldSession.id}"]`)); click(root, "关闭弹层");
+    central.querySelector(".em-archive summary").click(); await settle(); click(central, "恢复会话"); await settle(); await settle(); assert.equal(state.store.session.id, oldSession.id); assert.equal(input.value, oldSession.draft); assert.equal(root.querySelector(".em-input"), input); assert.ok(root.textContent.includes("设置关闭后仍更新")); assert.ok(root.querySelector(".em-context").textContent.includes("笔记/来源.md")); click(root, "历史对话"); assert.equal(root.querySelector('.em-session-row[aria-current="page"]').dataset.sessionId, oldSession.id); click(root, "关闭弹层");
+    await fixture.leaves.find(leaf => leaf.view.getViewType() === "echoink-mobile-settings").detach(); const deferred = fixture.restoreDeferredSettings(); await plugin.showPage("account"); assert.equal(fixture.active, deferred); assert.equal(central.dataset.page, "account"); assert.equal(state.runtime.onChange, listener); assert.equal(intervals, 1);
+  } finally { await fixture.dispose(); home.remove(); central.remove(); platform.isTablet = previousTablet; dom.window.setInterval = interval; }
 });
 
 await test("provider branded picker: every brand, nested cancel, keyboard, same-key retention and saved selection", async () => {
@@ -260,16 +299,16 @@ await test("mobile full finance: same ledger, budget, plans, real workspace, CSV
   workspace.detach(); root.replaceChildren(); await services.dispose();
 });
 
-await test("phone/tablet settings reuse all seven desktop SVGs in static mode", async () => {
-  const expected = ["settings", "blocks", "key-round", "layout-list", "book-open-check", "clipboard-check", "list-todo"];
-  assert.deepEqual(Object.values(SETTINGS_TAB_ICONS).slice(0, 7), expected);
+await test("phone/tablet settings reuse all eight desktop SVGs in static mode", async () => {
+  const expected = ["settings", "blocks", "key-round", "layout-list", "book-open-check", "clipboard-check", "list-todo", "feather"];
+  assert.deepEqual(Object.values(SETTINGS_TAB_ICONS), expected);
   for (const isTablet of [false, true]) {
     const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
     const root = dom.window.document.querySelector("#app");
     const ui = new MobileUI(root, { app: state.app, isTablet, store: state.store, runtime: state.runtime, settings: () => state.config, saveSettings: async () => {}, openNote: async () => {}, beginRender() {}, renderMarkdown() {} });
     ui.mount(); ui.showPage("settings");
     const selector = `${isTablet ? ".em-sidebar" : ".em-body"} .em-row>.codex-settings-tab-icon`;
-    assert.equal(root.querySelectorAll(selector).length, 7);
+    assert.equal(root.querySelectorAll(selector).length, 8);
     for (const [index, iconName] of expected.entries()) {
       const icon = root.querySelectorAll(selector)[index];
       const desktop = dom.window.document.createElement("span");

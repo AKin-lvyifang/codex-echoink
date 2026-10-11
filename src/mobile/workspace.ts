@@ -2,6 +2,7 @@ import type { TFile, Workspace, WorkspaceLeaf } from "obsidian";
 import { VIEW_TYPE_ECHOINK_HOME } from "../home/view-type";
 
 export const MOBILE_VIEW = "echoink-mobile";
+export const MOBILE_SETTINGS_VIEW = "echoink-mobile-settings";
 
 /** Explicit navigation only: the host owns sidebar pinning, drawers and splits. */
 export class MobileWorkspace {
@@ -39,6 +40,14 @@ export class MobileWorkspace {
       if (!leaf) { leaf = this.workspace.getLeaf("tab"); await leaf.setViewState({ type: VIEW_TYPE_ECHOINK_HOME, active: true }); }
       await this.workspace.revealLeaf(leaf);
     });
+  }
+  openSettings(): Promise<WorkspaceLeaf> {
+    let leaf: WorkspaceLeaf;
+    return this.serial(async () => {
+      leaf = this.workspace.getLeavesOfType(MOBILE_SETTINGS_VIEW).find(item => item.getRoot() === this.workspace.rootSplit)!;
+      if (!leaf) { leaf = this.workspace.getLeaf("tab"); await leaf.setViewState({ type: MOBILE_SETTINGS_VIEW, active: true }); }
+      await this.workspace.revealLeaf(leaf);
+    }).then(() => leaf);
   }
   openNote(file: TFile, _conversation?: WorkspaceLeaf): Promise<void> {
     return this.serial(async () => {
