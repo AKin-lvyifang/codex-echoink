@@ -191,6 +191,35 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
   const assertCode = (body: string, code: FinanceAnalysisErrorCode): void => {
     assert.throws(() => parseFinanceAnalysisResponse(body, input), (error: unknown) => error instanceof FinanceAnalysisValidationError && error.code === code);
   };
+  const overviewBlock = { type: "text", markdown: "仅比较已记录金额，完整性未知。" };
+  const budgetBlock = { type: "table", id: "budget", explanation: "完整分类预算核对。" };
+  const standardSections = [{ title: "总览", blocks: [overviewBlock] }, { title: "预算核对", blocks: [budgetBlock] }];
+  const standardParsed = parseFinanceAnalysisResponse(JSON.stringify({ version: 8, sections: standardSections }), input);
+  for (const extra of [{ blocks_placeholder: null }, { blocks_note: "", blocks_placeholder: "" },
+    { blocks_note: "__UNUSED_SECTION_METADATA__", html: "<script>alert(1)</script>", link: "https://example.com", instructions: { execute: true } }]) {
+    const normalized = parseFinanceAnalysisResponse(JSON.stringify({ version: 8, sections: [
+      { title: "总览", blocks: overviewBlock }, { title: "预算核对", blocks: budgetBlock, ...extra }
+    ] }), input);
+    assert.deepEqual(normalized, standardParsed, "both actual singleton shapes and ignored section metadata preserve the standard snapshot");
+  }
+  const sectionResponse = (blocks: unknown): string => JSON.stringify({ version: 8, sections: [{ title: "分析", blocks }] });
+  for (const blocks of [null, "正文", 1, true, [], {}, [[overviewBlock]],
+    { type: "unknown", markdown: "正文" }, { type: "text" }, { type: "text", markdown: "正文", tone: "fact" },
+    { type: "highlight", tone: "invalid", markdown: "正文" }, { type: "actions", items: [1] },
+    { type: "chart", id: "daily" }, { type: "table", id: "absent", explanation: "核对表。" },
+    { type: "text", markdown: "<script>alert(1)</script>" },
+    { type: "chart", id: "daily", explanation: "<b>图表说明</b>" },
+    { type: "table", id: "budget", explanation: "<b>核对表</b>" },
+    { type: "actions", items: ["<b>不安全建议</b>"] },
+    Array.from({ length: 13 }, () => overviewBlock)]) assertCode(sectionResponse(blocks), "invalid-structure");
+  assertCode(sectionResponse({ type: "chart", id: "absent", explanation: "图表说明。" }), "invalid-chart");
+  assertCode(sectionResponse({ type: "text", markdown: "{{unknown}}" }), "unknown-reference");
+  for (const body of [JSON.stringify({ version: 8, sections: standardSections, blocks_placeholder: null }),
+    JSON.stringify({ version: 8, sections: standardSections[0] }),
+    JSON.stringify({ version: 8, sections: Array.from({ length: 9 }, () => standardSections[0]) }),
+    JSON.stringify({ version: 8, sections: [{ title: "", blocks: overviewBlock }] }), "null", "[]"])
+    assertCode(body, "invalid-structure");
+  assertCode('{"version":8,"sections":[', "invalid-json");
   const report = (conclusion: string): string => JSON.stringify({ conclusion,
     charts: [{ id: "daily", explanation: "支出有起伏。" }], suggestions: [] });
   const naturalInput = buildFinanceAnalysisInput("2026-09", [row("natural-a", 120_000, "expense", "餐饮", { date: "2026-09-07" }),

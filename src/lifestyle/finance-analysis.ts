@@ -262,10 +262,11 @@ export function parseFinanceAnalysisResponse(raw: string, input: FinanceAnalysis
     const sections: FinanceReportSection[] = value.sections.map((unknownSection) => {
       if (!unknownSection || typeof unknownSection !== "object" || Array.isArray(unknownSection)) invalid("invalid-structure");
       const section = unknownSection as Record<string, unknown>;
-      if (Object.keys(section).some((key) => !["title", "blocks"].includes(key)) || !Array.isArray(section.blocks) ||
-        !section.blocks.length || section.blocks.length > 12) invalid("invalid-structure");
+      const sectionBlocks = Array.isArray(section.blocks) ? section.blocks
+        : section.blocks && typeof section.blocks === "object" ? [section.blocks] : null;
+      if (!sectionBlocks || !sectionBlocks.length || sectionBlocks.length > 12) invalid("invalid-structure");
       const title = resolve(section.title);
-      const blocks: FinanceReportBlock[] = section.blocks.map((unknownBlock) => {
+      const blocks: FinanceReportBlock[] = sectionBlocks.map((unknownBlock) => {
         if (!unknownBlock || typeof unknownBlock !== "object" || Array.isArray(unknownBlock)) invalid("invalid-structure");
         const block = unknownBlock as Record<string, unknown>;
         if (block.type === "text" || block.type === "highlight") {
