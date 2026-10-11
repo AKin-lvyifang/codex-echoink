@@ -161,6 +161,7 @@ export interface MessageListRenderInput {
   onScheduleMeasure: (forceBottom?: boolean) => void;
   onScheduleRunProgress: () => void;
   shouldFollowBottom?: () => boolean;
+  onProcessDisclosureToggle?: () => void;
   options?: MessageListRenderOptions;
 }
 
@@ -268,6 +269,11 @@ export function knowledgeBaseRunProgressStateFromEvents(status: string | undefin
 
 export function messageListVirtualHeight(contentHeight: number, viewportHeight: number): number {
   return Math.max(Math.max(0, contentHeight) + MESSAGE_LIST_BOTTOM_SPACER_PX, Math.max(1, viewportHeight));
+}
+
+/** Start a short answer halfway down the viewport, then let it grow to 75%. */
+export function answerReadingSpacer(viewportHeight: number, answerTailHeight: number): number {
+  return Math.max(0, viewportHeight * 0.25, viewportHeight * 0.5 - Math.max(0, answerTailHeight));
 }
 
 export function scrollTopForMessageListBottom(contentHeight: number, viewportHeight: number): number {
@@ -391,6 +397,9 @@ export class CodexMessageListRenderer {
   private openKnowledgeBaseCitations = new Map<string, boolean>();
   private openKnowledgeBaseReportSections = new Map<string, boolean>();
   private openTaskPlans = new Map<string, boolean>();
+  private openTurnProcesses = new Map<string, boolean>();
+  private answerReadingTail: { rowId: string; height: number } | null = null;
+  private virtualLayoutHeight = 0;
   private reasoningDisclosureStates = new Map<string, ReasoningDisclosureState>();
   private disclosureAutoFoldTimers = new Map<string, DisclosureAutoFoldRegistration>();
   private env: MessageListEnvironment | null = null;
@@ -411,12 +420,15 @@ export class CodexMessageListRenderer {
       this.cancelAllDisclosureAutoFolds();
       this.virtualSessionId = env.sessionId;
       this.virtualRowHeights.clear();
+      this.openTurnProcesses.clear();
+      this.answerReadingTail = null;
       this.failedAttachmentResourceUris.clear();
       this.cancelVirtualRerenderTrailing(true);
       this.resetVirtualRerenderThrottle();
     }
     const previousScrollTop = messagesEl.scrollTop;
     const shouldPinBottom = shouldPinMessageListBottom(env.options, this.isNearBottom(messagesEl, virtualListEl));
+    const readingAnchor = !shouldPinBottom ? this.captureReadingAnchor() : null;
     this.disconnectVisibleRowsObserver();
     virtualListEl.empty();
     if (messages.length === 0) {
@@ -469,6 +481,7 @@ export class CodexMessageListRenderer {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     } else if (env.options.fromScroll || env.options.preserveScroll) {
       messagesEl.scrollTop = previousScrollTop;
+      this.restoreReadingAnchor(readingAnchor);
     }
   }
 
@@ -487,6 +500,9 @@ export class CodexMessageListRenderer {
         changed = true;
       }
     }
+    // Update offsets and the scroll range together, before a native scroll event
+    // can mistake an automatic fold/stream update for the reader scrolling away.
+    const layoutChanged = this.layoutMeasuredRows(messagesEl, virtualListEl);
     if (changed && forceBottom && (this.virtualRerenderScheduled || this.virtualRerenderTrailingTimer !== null)) {
       this.virtualRerenderPendingForceBottom = true;
     }
@@ -494,10 +510,63 @@ export class CodexMessageListRenderer {
     if (!changed) {
       this.resetVirtualRerenderThrottle();
     }
-    if (changed && forceBottom) {
+    if ((changed || layoutChanged) && forceBottom) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
     return changed;
+  }
+
+  private layoutMeasuredRows(messagesEl: HTMLElement, virtualListEl: HTMLElement): boolean {
+    const last = this.currentRows.at(-1);
+    const hasAnswer = last?.kind === "assistantTurn"
+      && Boolean(last.turn.finalAnswer && displayTextForMessage(last.turn.finalAnswer).trim());
+    const renderedRows = new Map(Array.from(virtualListEl.children).map((child) => [
+      (child as HTMLElement).dataset.rowId, child as HTMLElement
+    ]));
+    const lastElement = last ? renderedRows.get(last.id) : undefined;
+    const answer = hasAnswer ? lastElement?.querySelector<HTMLElement>(".codex-assistant-turn-final") : null;
+    if (answer && lastElement && last) {
+      const height = lastElement.getBoundingClientRect().bottom - answer.getBoundingClientRect().top;
+      if (Number.isFinite(height) && height > 0) this.answerReadingTail = { rowId: last.id, height };
+    }
+    if (!hasAnswer) this.answerReadingTail = null;
+    const spacer = hasAnswer && this.answerReadingTail?.rowId === last?.id
+      ? answerReadingSpacer(messagesEl.clientHeight, this.answerReadingTail.height)
+      : 0;
+    let top = 0;
+    for (const row of this.currentRows) {
+      renderedRows.get(row.id)?.setCssStyles({ transform: `translateY(${top}px)` });
+      top += this.virtualRowHeightFor(row.id);
+    }
+    const height = messageListVirtualHeight(top + spacer, messagesEl.clientHeight);
+    virtualListEl.setCssStyles({ height: `${height}px` });
+    const changed = this.virtualLayoutHeight !== height;
+    this.virtualLayoutHeight = height;
+    return changed;
+  }
+
+  private captureReadingAnchor(): { rowId: string; answer: boolean; top: number } | null {
+    if (!this.env) return null;
+    const viewport = this.env.messagesEl.getBoundingClientRect();
+    for (const child of Array.from(this.env.virtualListEl.children)) {
+      const row = child as HTMLElement;
+      const rect = row.getBoundingClientRect();
+      if (!Number.isFinite(rect.top) || !Number.isFinite(rect.bottom)) continue;
+      if (rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
+      const answer = row.querySelector<HTMLElement>(".codex-assistant-turn-final");
+      const answerRect = answer?.getBoundingClientRect();
+      const useAnswer = Boolean(answerRect && answerRect.top < viewport.bottom && answerRect.bottom > viewport.top);
+      return { rowId: row.dataset.rowId!, answer: useAnswer, top: useAnswer ? answerRect!.top : rect.top };
+    }
+    return null;
+  }
+
+  private restoreReadingAnchor(anchor: ReturnType<CodexMessageListRenderer["captureReadingAnchor"]>): void {
+    if (!anchor || !this.env) return;
+    const row = Array.from(this.env.virtualListEl.children)
+      .find((child) => (child as HTMLElement).dataset.rowId === anchor.rowId) as HTMLElement | undefined;
+    const target = anchor.answer ? row?.querySelector<HTMLElement>(".codex-assistant-turn-final") : row;
+    if (target) this.env.messagesEl.scrollTop += target.getBoundingClientRect().top - anchor.top;
   }
 
   tryUpdateMessage(message: ChatMessage, messages?: ChatMessage[]): boolean {
@@ -586,6 +655,8 @@ export class CodexMessageListRenderer {
     this.cancelAllDisclosureAutoFolds();
     this.virtualSessionId = "";
     this.virtualRowHeights.clear();
+    this.openTurnProcesses.clear();
+    this.answerReadingTail = null;
     this.failedAttachmentResourceUris.clear();
     this.cancelVirtualRerenderTrailing(true);
     this.resetVirtualRerenderThrottle();
@@ -832,6 +903,8 @@ export class CodexMessageListRenderer {
     const turn = projection.turn;
     const turnRoot = renderedRow.querySelector<HTMLElement>(".codex-assistant-turn");
     if (!turnRoot) return false;
+    const following = env.shouldFollowBottom?.() ?? true;
+    const readingAnchor = !following ? this.captureReadingAnchor() : null;
 
     const knownNodes: HTMLElement[] = [
       ...Array.from(turnRoot.querySelectorAll<HTMLElement>(".codex-assistant-turn-node")),
@@ -906,7 +979,12 @@ export class CodexMessageListRenderer {
       if (!item || !matchingAction || !this.patchActionItem(matchingAction, item)) return false;
     }
 
-    env.onScheduleMeasure(env.shouldFollowBottom?.() ?? true);
+    const disclosureChanged = this.patchAssistantTurnDisclosure(turnRoot, turn);
+    const row = this.currentRows.find((item) => item.kind === "assistantTurn" && item.turn.key === turn.key);
+    if (row?.kind === "assistantTurn") row.turn = turn;
+    if (disclosureChanged) this.measureVisibleVirtualRows(env.messagesEl, env.virtualListEl, following);
+    this.restoreReadingAnchor(readingAnchor);
+    env.onScheduleMeasure(following);
     return true;
   }
 
@@ -2107,11 +2185,19 @@ export class CodexMessageListRenderer {
     turn: AgentTurnView
   ): void {
     const disclosureStatus = isTerminalTurnStatus(turn.status) ? turn.status : "running";
-    const elements = createAIElementsChainOfThought(container, {
+    const process = container.createDiv({ cls: "codex-assistant-turn-process" });
+    const button = process.createEl("button", {
+      cls: "codex-assistant-turn-process-toggle",
+      attr: { type: "button" }
+    });
+    button.createSpan({ cls: "codex-assistant-turn-process-duration" });
+    setIcon(button.createSpan({ cls: "codex-assistant-turn-process-caret", attr: { "aria-hidden": "true" } }), "chevron-right");
+    const elements = createAIElementsChainOfThought(process, {
       status: aiElementsStatus(disclosureStatus)
     });
     const root = elements.root;
-    root.addClass("codex-assistant-turn-process");
+    root.id = stableDomId(`codex-turn-process-${this.requireEnv().sessionId}-${turn.key}`);
+    button.setAttribute("aria-controls", root.id);
     root.addClass(`is-${turn.status}`);
     root.setAttribute("data-turn-status", turn.status);
     const body = elements.body;
@@ -2124,6 +2210,43 @@ export class CodexMessageListRenderer {
         this.renderAssistantTurnProcessNode(body, turn, node);
       }
     }
+    this.patchAssistantTurnDisclosure(process, turn);
+    button.onclick = () => {
+      const env = this.requireEnv();
+      if (button.hidden) return;
+      env.onProcessDisclosureToggle?.();
+      const top = button.getBoundingClientRect().top;
+      this.openTurnProcesses.set(turn.key, root.hidden);
+      root.hidden = !root.hidden;
+      button.setAttribute("aria-expanded", String(!root.hidden));
+      this.measureVisibleVirtualRows(env.messagesEl, env.virtualListEl, false);
+      env.messagesEl.scrollTop += button.getBoundingClientRect().top - top;
+      env.onScheduleMeasure(false);
+    };
+  }
+
+  private patchAssistantTurnDisclosure(container: HTMLElement, turn: AgentTurnView): boolean {
+    const button = container.querySelector<HTMLButtonElement>(".codex-assistant-turn-process-toggle");
+    const body = container.querySelector<HTMLElement>(".codex-ai-elements-chain-of-thought");
+    if (!button || !body) return false;
+    const complete = turn.status === "completed"
+      && Boolean(turn.finalAnswer && displayTextForMessage(turn.finalAnswer).trim())
+      && (!turn.finalAnswer?.status || turn.finalAnswer.status === "completed");
+    // An active/resumed run must reveal its work again. A completed turn only
+    // defaults closed once; subsequent renders preserve the reader's choice.
+    if (!complete) this.openTurnProcesses.delete(turn.key);
+    const open = !complete || (this.openTurnProcesses.get(turn.key) ?? false);
+    const changed = button.hidden !== !complete || body.hidden !== !open;
+    button.hidden = !complete;
+    body.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+    const seconds = Math.max(1, Math.round(turn.durationMs / 1000));
+    const minutes = Math.floor(seconds / 60);
+    const duration = conversationUiText(this.requireEnv().settingsLanguage,
+      minutes ? `用时 ${minutes}分${seconds % 60}秒` : `用时 ${seconds}秒`,
+      minutes ? `Worked for ${minutes}m ${seconds % 60}s` : `Worked for ${seconds}s`);
+    button.querySelector<HTMLElement>(".codex-assistant-turn-process-duration")?.setText(duration);
+    return changed;
   }
 
   private renderAssistantTurnActionNode(

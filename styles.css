@@ -18100,6 +18100,49 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
   background: transparent;
 }
 
+.codex-assistant-turn-process > [hidden] {
+  display: none !important;
+}
+
+button.codex-assistant-turn-process-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  max-width: 100%;
+  padding: 4px 0;
+  border: 0;
+  border-radius: var(--echoink-conversation-radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--echoink-conversation-font-label-primary);
+  font-weight: 400;
+  line-height: var(--echoink-conversation-line-label);
+  text-align: left;
+  cursor: pointer;
+}
+
+button.codex-assistant-turn-process-toggle:is(:hover, :focus-visible) {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.codex-assistant-turn-process-caret,
+.codex-assistant-turn-process-caret svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
+.codex-assistant-turn-process-toggle[aria-expanded="true"] .codex-assistant-turn-process-caret {
+  transform: rotate(90deg);
+}
+
+@media (pointer: coarse) {
+  button.codex-assistant-turn-process-toggle { min-height: 44px; }
+}
+
 .codex-assistant-turn-resource > summary::-webkit-details-marker {
   display: none;
 }

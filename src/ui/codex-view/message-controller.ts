@@ -143,6 +143,7 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     onScheduleMeasure: (forceBottom) => host.scheduleMeasureVirtualRows(forceBottom),
     onScheduleRunProgress: () => host.scheduleKnowledgeBaseRunProgress(),
     shouldFollowBottom: () => !host.messagesBottomFollowPaused,
+    onProcessDisclosureToggle: () => host.messageScrollFollow.pauseFromUser(),
     options: renderOptions
   });
   host.renderTaskPlanDock(session);

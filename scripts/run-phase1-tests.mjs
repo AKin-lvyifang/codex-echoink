@@ -49,8 +49,10 @@ await esbuild.build({
       "await runTurnNavigatorTests();",
       "await runQuickChatWindowTests();",
       "await runHomeTodoTests();",
-      'console.log("Current Pi Conversation acceptance: PASS");'
-    ].filter((line) => !process.argv.includes("--daily-journal") || line.startsWith("import ") || line.includes("runDailyJournalPipelineTests") || line.includes("console.log")).join("\n"),
+      `console.log(${JSON.stringify(process.argv.includes("--conversation-ui") ? "Conversation UI targeted acceptance: PASS" : "Current Pi Conversation acceptance: PASS")});`
+    ].filter((line) => !process.argv.includes("--daily-journal") || line.startsWith("import ") || line.includes("runDailyJournalPipelineTests") || line.includes("console.log"))
+      .filter((line) => !process.argv.includes("--conversation-ui") || line.startsWith("import ") || /run(?:SmoothConversationUi|MessageListIdentity|TurnNavigator)Tests|console\.log/u.test(line))
+      .join("\n"),
     resolveDir: rootDir,
     sourcefile: "pi-conversation-test-entry.ts",
     loader: "ts"

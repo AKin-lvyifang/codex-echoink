@@ -10,6 +10,7 @@ import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
 import { renderRichText } from "../ui/render-message";
 import {
   CodexMessageListRenderer,
+  answerReadingSpacer,
   isReasoningScrollNearBottom,
   nextReasoningDisclosureState,
   preserveTextSelectionDuringMutation,
@@ -72,6 +73,7 @@ export class FakeElement {
   boundingLeft = 0;
   boundingWidth = 56;
   disabled = false;
+  hidden = false;
   focusVisible = false;
   focused = false;
   id = "";
@@ -1043,6 +1045,9 @@ function taskPlanMessage(
 }
 
 export async function runSmoothConversationUiTests(): Promise<void> {
+  assert.equal(answerReadingSpacer(800, 50), 350, "short answers begin at viewport midpoint");
+  assert.equal(answerReadingSpacer(800, 250), 200, "growing answers keep a quarter viewport free");
+  assert.equal(answerReadingSpacer(400, 1000), 100, "long answers retain space in short windows");
   const paragraphContext = createTestContext();
   const firstSentence = `${"甲".repeat(70)}。`;
   const secondSentence = `${"乙".repeat(55)}！`;
@@ -2569,6 +2574,63 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     );
     assert.ok(conversationVirtualList.findByClass("codex-ai-elements-response"));
     assert.equal(conversationVirtualList.findAllByClass("codex-smooth-ai-loader").length, 0);
+
+    const foldRenderer = new CodexMessageListRenderer();
+    const foldList = new FakeElement("div");
+    let foldPaused = false;
+    const foldProcess: ChatMessage = {
+      id: "fold-process", role: "assistant", itemType: "thinking", text: "正在核对笔记",
+      runId: "fold-run", createdAt: 1000, completedAt: 2000, status: "completed"
+    };
+    const foldAnswer: ChatMessage = {
+      id: "fold-answer", role: "assistant", text: "第一段回答", runId: "fold-run",
+      createdAt: 2000, status: "running"
+    };
+    const foldInput = {
+      app: context.app as never, component: context.component as never,
+      messagesEl: new FakeElement("div") as unknown as HTMLElement,
+      virtualListEl: foldList as unknown as HTMLElement, sessionId: "fold-session",
+      welcomeCopy: { title: "EchoInk", subtitle: "" }, settingsLanguage: "zh-CN" as SettingsLanguage,
+      messages: [foldProcess, foldAnswer], vaultPath: "/test-vault",
+      readRawMessageText: async () => "", onScheduleMeasure: () => undefined,
+      onScheduleRunProgress: () => undefined, shouldFollowBottom: () => !foldPaused,
+      onProcessDisclosureToggle: () => { foldPaused = true; }
+    };
+    foldRenderer.render(foldInput);
+    assert.equal(foldList.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false,
+      "tool completion and the first answer delta must not collapse an active turn");
+    assert.equal(foldList.findByClass("codex-assistant-turn-process-toggle")?.hidden, true);
+    foldAnswer.status = "completed";
+    foldAnswer.completedAt = 139000;
+    foldRenderer.render(foldInput);
+    assert.equal(foldList.findByClass("codex-ai-elements-chain-of-thought")?.hidden, true);
+    assert.equal(foldList.findByClass("codex-assistant-turn-process-duration")?.textContent, "用时 2分18秒");
+    assert.ok(foldList.findByClass("codex-assistant-turn-final"), "answer remains outside the folded process");
+    clickElement(foldList.findByClass("codex-assistant-turn-process-toggle")!);
+    assert.equal(foldPaused, true, "manual review pauses automatic following");
+    assert.equal(foldList.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false);
+    foldRenderer.render(foldInput);
+    assert.equal(foldList.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false,
+      "virtual rerenders preserve a manually expanded completed process");
+    clickElement(foldList.findByClass("codex-assistant-turn-process-toggle")!);
+    assert.equal(foldList.findByClass("codex-ai-elements-chain-of-thought")?.hidden, true);
+    for (const status of ["failed", "interrupted", "cancelled", "running", "waiting_approval"]) {
+      foldAnswer.status = status;
+      foldRenderer.render(foldInput);
+      assert.equal(foldList.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false,
+        `${status} turns keep their process visible`);
+    }
+    foldAnswer.status = "completed";
+    foldAnswer.text = "";
+    foldRenderer.render(foldInput);
+    assert.equal(foldList.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false,
+      "completion without an answer does not conceal the process");
+    foldAnswer.text = "已完成";
+    foldRenderer.resetVirtualWindow();
+    foldRenderer.render(foldInput);
+    assert.equal(foldList.findByClass("codex-ai-elements-chain-of-thought")?.hidden, true,
+      "reopened history defaults to a collapsed completed process");
+    foldRenderer.dispose();
 
     const structuredAnswered: ChatMessage = {
       ...structuredRunning,
