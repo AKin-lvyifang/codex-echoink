@@ -14,8 +14,8 @@ export const piBraceExpansionPlugin = {
       if (!piMinimatchImporter.test(args.importer.replaceAll("\\", "/"))) return;
       const packagePath = path.join(projectRoot, "node_modules/brace-expansion/package.json");
       const installed = JSON.parse(await fs.promises.readFile(packagePath, "utf8"));
-      if (installed.version !== "5.0.9") {
-        throw new Error(`EchoInk requires root brace-expansion 5.0.9; found ${installed.version}`);
+      if (installed.version !== "5.0.12") {
+        throw new Error(`EchoInk requires root brace-expansion 5.0.12; found ${installed.version}`);
       }
       // No original importer: re-enter normal resolution at the project root,
       // preserving ESM/CJS export conditions without re-triggering this rule.

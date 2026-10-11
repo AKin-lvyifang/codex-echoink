@@ -1,3 +1,4 @@
+import { requestUrl, type RequestUrlResponse } from "obsidian";
 import type {
   EchoInkMcpConnectionConfig,
   EchoInkMcpConnectionRecords,
@@ -25,7 +26,8 @@ export interface EchoInkMcpBrokerTransport {
   notify?(
     method: string,
     params?: Record<string, unknown>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs?: number
   ): Promise<void>;
   close(): Promise<void>;
 }
@@ -98,8 +100,9 @@ export class EchoInkMcpBroker {
     if (!publicConfig) throw brokerError("connection_failed", "MCP 资源没有 EchoInk broker 连接配置。");
     const config = await this.resolveRuntimeConfig(resource, publicConfig);
     throwIfMcpAborted(signal);
+    let transport: EchoInkMcpBrokerTransport | undefined;
     try {
-      const transport = await getPooledMcpTransport(
+      transport = await getPooledMcpTransport(
         config,
         this.options.transportFactory ?? createDefaultMcpTransport,
         timeoutMs,
@@ -119,7 +122,7 @@ export class EchoInkMcpBroker {
       const tools = (result as any).tools;
       return { tools };
     } catch (error) {
-      await closePooledMcpTransport(config, "close MCP broker transport after listTools failure", this.poolKey(resource, publicConfig));
+      if (transport) await closePooledMcpTransport(config, "close MCP broker transport after listTools failure", this.poolKey(resource, publicConfig));
       throw normalizeBrokerError(error, "connection_failed");
     }
   }
@@ -131,8 +134,9 @@ export class EchoInkMcpBroker {
     }
     const config = await this.resolveRuntimeConfig(invocation.resource, publicConfig);
     throwIfMcpAborted(invocation.signal);
+    let transport: EchoInkMcpBrokerTransport | undefined;
     try {
-      const transport = await getPooledMcpTransport(
+      transport = await getPooledMcpTransport(
         config,
         this.options.transportFactory ?? createDefaultMcpTransport,
         invocation.timeoutMs,
@@ -150,7 +154,7 @@ export class EchoInkMcpBroker {
       );
       return { content };
     } catch (error) {
-      await closePooledMcpTransport(config, "close MCP broker transport after callTool failure", this.poolKey(invocation.resource, publicConfig));
+      if (transport) await closePooledMcpTransport(config, "close MCP broker transport after callTool failure", this.poolKey(invocation.resource, publicConfig));
       throw normalizeBrokerError(error, "call_failed");
     }
   }
@@ -193,6 +197,7 @@ async function getPooledMcpTransport(
   throwIfMcpAborted(signal);
   const key = safePoolKey ?? mcpTransportPoolKey(config);
   let transportPromise = transportPool.get(key);
+  const shared = Boolean(transportPromise);
   if (!transportPromise) {
     transportPromise = createInitializedMcpTransport(
       config,
@@ -205,7 +210,23 @@ async function getPooledMcpTransport(
       if (transportPool.get(key) === transportPromise) transportPool.delete(key);
     });
   }
-  const transport = await transportPromise;
+  // A later caller may cancel its own wait without closing the shared initialization.
+  // Failed initialization already closes its transport and removes its pool entry.
+  let transport: EchoInkMcpBrokerTransport;
+  if (signal && shared) {
+    let rejectAbort!: (error: Error) => void;
+    const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
+    const onAbort = () => rejectAbort(mcpAbortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      throwIfMcpAborted(signal);
+      transport = await Promise.race([transportPromise, aborted]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+  } else {
+    transport = await transportPromise;
+  }
   throwIfMcpAborted(signal);
   return transport;
 }
@@ -269,7 +290,7 @@ async function initializeMcpClient(
     signal
   );
   throwIfMcpAborted(signal);
-  await transport.notify?.("notifications/initialized", {}, signal);
+  await transport.notify?.("notifications/initialized", {}, signal, timeoutMs);
 }
 
 async function createDefaultMcpTransport(config: EchoInkMcpConnectionConfig): Promise<EchoInkMcpBrokerTransport> {
@@ -280,6 +301,8 @@ async function createDefaultMcpTransport(config: EchoInkMcpConnectionConfig): Pr
 class HttpMcpTransport implements EchoInkMcpBrokerTransport {
   private nextId = 1;
   private sessionId = "";
+  private closed = false;
+  private readonly pending = new Set<() => void>();
   constructor(private readonly config: Extract<EchoInkMcpConnectionConfig, { transport: "http" }>) {}
 
   async request(
@@ -288,76 +311,96 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
     timeoutMs = 30000,
     signal?: AbortSignal
   ): Promise<unknown> {
-    throwIfMcpAborted(signal);
-    const controller = new AbortController();
-    const onAbort = () => controller.abort();
-    signal?.addEventListener("abort", onAbort, { once: true });
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
     try {
-      const response = await fetch(this.config.url, {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method, params: params ?? {} }),
-        signal: controller.signal
-      });
-      if (response.status === 401 || response.status === 403) {
-        throw brokerError("authentication_failed", "MCP 认证失败，请检查 Credential。 ");
-      }
-      if (!response.ok) {
-        throw brokerError("connection_failed", `MCP HTTP ${response.status}。`);
-      }
-      const returnedSessionId = response.headers.get("mcp-session-id")?.trim() ?? "";
+      const response = await this.post({ jsonrpc: "2.0", id: this.nextId++, method, params: params ?? {} }, timeoutMs, signal);
+      this.assertOpen(signal);
+      const returnedSessionId = mcpHttpHeader(response, "mcp-session-id").trim();
       if (returnedSessionId) {
         if (!/^[\x21-\x7e]{1,256}$/u.test(returnedSessionId)) {
           throw brokerError("schema_invalid", "MCP Server 返回了非法 Session ID。");
         }
-        this.sessionId = returnedSessionId;
       }
-      const data = await parseMcpHttpResponse(response);
+      const data = parseMcpHttpResponse(response);
       if (data?.error) {
         throw brokerError("call_failed", safeJsonRpcError(data.error));
       }
+      if (returnedSessionId) this.sessionId = returnedSessionId;
       return data?.result;
     } catch (error) {
-      if (timedOut) throw brokerError("timeout", `MCP 请求超时：${method}。`);
-      if (signal?.aborted) throw mcpAbortError();
       throw normalizeBrokerError(error, "connection_failed");
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
     }
   }
 
   async notify(
     method: string,
     params?: Record<string, unknown>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs = 30000
   ): Promise<void> {
-    throwIfMcpAborted(signal);
     try {
-      const response = await fetch(this.config.url, {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify({ jsonrpc: "2.0", method, params: params ?? {} }),
-        signal
-      });
-      if (response.status === 401 || response.status === 403) {
-        throw brokerError("authentication_failed", "MCP 认证失败，请检查 Credential。");
-      }
-      if (!response.ok && response.status !== 202) {
-        throw brokerError("connection_failed", `MCP HTTP ${response.status}。`);
-      }
+      await this.post({ jsonrpc: "2.0", method, params: params ?? {} }, timeoutMs, signal);
+      this.assertOpen(signal);
     } catch (error) {
-      throwIfMcpAborted(signal);
       throw normalizeBrokerError(error, "connection_failed");
     }
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.closed = true;
+    for (const cancel of this.pending) cancel();
+  }
+
+  private assertOpen(signal?: AbortSignal): void {
+    throwIfMcpAborted(signal);
+    if (this.closed) throw brokerError("disconnected", "MCP Server 已断线。");
+  }
+
+  private post(
+    message: { method: string } & Record<string, unknown>,
+    timeoutMs: number,
+    signal?: AbortSignal
+  ): Promise<RequestUrlResponse> {
+    this.assertOpen(signal);
+    // Obsidian's CORS-free requestUrl cannot abort the underlying HTTP request.
+    // Only the local wait is cancelled; late responses must have no effects here.
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (action: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        this.pending.delete(onClose);
+        action();
+      };
+      const onAbort = () => finish(() => reject(mcpAbortError()));
+      const onClose = () => finish(() => reject(brokerError("disconnected", "MCP Server 已断线。")));
+      const timer = setTimeout(() => finish(() => reject(
+        brokerError("timeout", `MCP 请求超时：${message.method}。`)
+      )), timeoutMs);
+      this.pending.add(onClose);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        void requestUrl({
+          url: this.config.url,
+          method: "POST",
+          headers: this.headers(),
+          body: JSON.stringify(message),
+          throw: false
+        }).then((response) => finish(() => {
+          if (response.status === 401 || response.status === 403) {
+            reject(brokerError("authentication_failed", "MCP 认证失败，请检查 Credential。"));
+          } else if (response.status < 200 || response.status >= 300) {
+            reject(brokerError("connection_failed", `MCP HTTP ${response.status}。`));
+          } else {
+            resolve(response);
+          }
+        }), (error: unknown) => finish(() => reject(normalizeBrokerError(error, "connection_failed"))));
+      } catch (error) {
+        finish(() => reject(normalizeBrokerError(error, "connection_failed")));
+      }
+    });
+  }
 
   private headers(): Record<string, string> {
     return {
@@ -468,9 +511,13 @@ class StdioMcpTransport extends JsonRpcStdioTransport implements EchoInkMcpBroke
   }
 }
 
-async function parseMcpHttpResponse(response: Response): Promise<any> {
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  const text = await response.text();
+function mcpHttpHeader(response: RequestUrlResponse, name: string): string {
+  return Object.entries(response.headers).find(([key]) => key.toLowerCase() === name)?.[1] ?? "";
+}
+
+function parseMcpHttpResponse(response: RequestUrlResponse): any {
+  const contentType = mcpHttpHeader(response, "content-type").toLowerCase();
+  const text = response.text;
   if (!text.trim()) {
     throw brokerError("schema_invalid", "MCP Server 返回了空响应。");
   }

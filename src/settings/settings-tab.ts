@@ -90,8 +90,7 @@ import {
   type KnowledgeBaseMaintenanceHistoryEntry,
   type ReviewReportKind,
   type ResourceManagementTab,
-  type SettingsTab,
-  type WorkspaceResourceToggles
+  type SettingsTab
 } from "./settings";
 import {
   apiProviderApiKeyRequired,
@@ -101,7 +100,6 @@ import {
   normalizeApiProviderId
 } from "./provider-presets";
 import type { WorkspaceResourceSnapshot } from "../types/app-server";
-import { CODEX_MEMORY_LITE_URL } from "../knowledge-base/constants";
 import {
   ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_STEPS
 } from "../knowledge-base/knowledge-maintenance-protocol";
@@ -2014,7 +2012,7 @@ export class CodexSettingTab extends PluginSettingTab {
     refs: AgentProfileCardRefs;
     zh: boolean;
   }>): void {
-    const { templateId, templateLabel, panel, refs, zh } = context;
+    const { templateId, templateLabel, refs, zh } = context;
     let confirmed = false;
     const modal = new AgentIdentityModal(this.plugin.app, {
       initialName: "",
@@ -5227,7 +5225,6 @@ export class CodexSettingTab extends PluginSettingTab {
     query = "",
     label = this.copy.tabs.resources
   ): void {
-    const copy = this.copy;
     const searching = Boolean(query.trim());
     const summary = container.createDiv({
       cls: "codex-resource-summary resources-list-heading",
@@ -5962,30 +5959,4 @@ function resourceSummaryText(
     : `${category} · 已启用 ${enabled} / ${total}`;
 }
 
-function pluginInstallDir(plugin: CodexForObsidianPlugin): string {
-  const dir = "dir" in plugin.manifest && typeof plugin.manifest.dir === "string"
-    ? plugin.manifest.dir
-    : "";
-  return dir ? `${dir}/` : ".obsidian/plugins/codex-echoink/";
-}
-
-function formatQueryParams(params?: Record<string, string>): string {
-  return Object.entries(params ?? {})
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n");
-}
-
-function parseQueryParams(value: string): Record<string, string> {
-  const params: Record<string, string> = {};
-  for (const line of value.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const separator = trimmed.indexOf("=");
-    if (separator <= 0) continue;
-    const key = trimmed.slice(0, separator).trim();
-    const paramValue = trimmed.slice(separator + 1).trim();
-    if (/^[A-Za-z0-9_-]+$/.test(key) && paramValue) params[key] = paramValue;
-  }
-  return params;
-}
 import { membershipWebsiteLink } from "../membership/website-links";

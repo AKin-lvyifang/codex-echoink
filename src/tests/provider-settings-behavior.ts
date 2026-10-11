@@ -13251,6 +13251,17 @@ function dataAttributeKey(name: string): string {
 }
 
 function withSettingsTabDefaults<T extends object>(plugin: T) {
+  const todoReminderService = {
+    status: () => ({
+      enabled: (plugin as { settings?: typeof DEFAULT_SETTINGS }).settings?.todoReminders?.enabled ?? false,
+      permission: "unavailable" as const,
+      busy: false,
+      error: "" as const
+    }),
+    subscribe: () => () => undefined,
+    setEnabled: async () => ({ ok: false, error: "unavailable" as const }),
+    testNotification: async () => ({ ok: false, error: "unavailable" as const })
+  };
   return {
     register: () => undefined,
     applyAppearanceTheme: () => undefined,
@@ -13270,6 +13281,7 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
     applyQuickChatSettings: () => ({ ok: false, reason: "unavailable" as const }),
     returnQuickChatToSidebar: async () => undefined,
     toggleQuickChatWindow: async () => undefined,
+    getTodoReminderService: () => todoReminderService,
     getTodoStore: () => ({
       completionStatistics: () => todoCompletionStatistics({}),
       subscribe: () => () => undefined,

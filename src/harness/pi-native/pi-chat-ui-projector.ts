@@ -2392,33 +2392,6 @@ function diagnosticFromCustomEntry(
   };
 }
 
-function optionalVisibleFields(data: Record<string, unknown>): {
-  readonly title?: string;
-  readonly details?: string;
-  readonly itemType?: string;
-} {
-  const title = visibleText(data.title);
-  const details = visibleText(data.details);
-  const itemType = visibleText(data.itemType);
-  return {
-    ...(title ? { title } : {}),
-    ...(details ? { details } : {}),
-    ...(itemType ? { itemType } : {})
-  };
-}
-
-function strictIdentity(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function optionalString(value: unknown): boolean {
-  return value === undefined || typeof value === "string";
-}
-
-function isFiniteTime(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
-}
-
 function diagnosticMessage(scope: string, diagnostic: PiConversationDiagnostic): ChatMessage {
   return {
     id: diagnosticMessageId(scope, diagnostic.diagnosticId),

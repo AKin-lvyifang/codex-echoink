@@ -14,8 +14,10 @@ import { FileConversationCatalog } from "../../harness/pi-native/file-conversati
 import { FileProductRunStore } from "../../harness/pi-native/file-product-run-store";
 import CodexForObsidianPlugin from "../../main";
 import type {
+  PiChatRunHandle,
   PiConversationCatalogEntry,
-  PiConversationProjection
+  PiConversationProjection,
+  PiProductRunRecord
 } from "../../harness/pi-native/contracts";
 import {
   createDurablePiSession,
@@ -516,11 +518,14 @@ Promise<void> {
         events.push(`release-if-idle:${conversationId}`);
         return true;
       },
-      submit: async () => {
+      submit: async (): Promise<PiChatRunHandle> => {
         events.push("submit");
         return {
           productRunId: "background-send-run",
-          conversationId: first.catalog.conversationId
+          conversationId: first.catalog.conversationId,
+          piSessionId: first.catalog.piSessionId,
+          userEntryId: "background-send-user",
+          result: deferred<Readonly<PiProductRunRecord>>().promise
         };
       }
     }
@@ -702,11 +707,14 @@ Promise<void> {
   const submitted: string[] = [];
   const aborted: string[] = [];
   const runtime = {
-    submit: async (request: { conversationId: string }) => {
+    submit: async (request: { conversationId: string }): Promise<PiChatRunHandle> => {
       submitted.push(request.conversationId);
       return {
         productRunId: `run-${request.conversationId}`,
-        conversationId: request.conversationId
+        conversationId: request.conversationId,
+        piSessionId: `pi-${request.conversationId}`,
+        userEntryId: `user-${request.conversationId}`,
+        result: deferred<Readonly<PiProductRunRecord>>().promise
       };
     },
     abort: async (conversationId: string) => { aborted.push(conversationId); },

@@ -1,3 +1,4 @@
+import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
 export { Scope } from "./origin-obsidian-dom-shim";
 export { default as moment } from "moment";
 
@@ -336,7 +337,17 @@ export function setTooltip(
   _options?: unknown
 ): void {}
 
-export async function requestUrl(): Promise<{ text: string }> {
+type RequestUrlHandler = (request: RequestUrlParam | string) => RequestUrlResponse | Promise<RequestUrlResponse>;
+let requestUrlForTests: RequestUrlHandler | undefined;
+
+export function setRequestUrlForTests(handler: RequestUrlHandler): () => void {
+  const previous = requestUrlForTests;
+  requestUrlForTests = handler;
+  return () => { requestUrlForTests = previous; };
+}
+
+export async function requestUrl(request: RequestUrlParam | string): Promise<RequestUrlResponse> {
+  if (requestUrlForTests) return await requestUrlForTests(request);
   throw new Error("requestUrl is not available in unit tests");
 }
 

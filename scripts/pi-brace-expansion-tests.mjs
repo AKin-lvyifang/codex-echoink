@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
 const directory = path.join(root, ".tmp/pi-brace-expansion-tests");
 const fixedVersion = require("brace-expansion/package.json").version;
-assert.equal(fixedVersion, "5.0.9");
+assert.equal(fixedVersion, "5.0.12");
 const legacyMinimatch = require(path.join(root, "node_modules/@earendil-works/pi-coding-agent/node_modules/minimatch/dist/commonjs/index.js"));
 const patterns = ["{a,b}.md", "note-{01..03}.md", "{c..a}", "{a,{b,c}}", "{,x}", "a\\{b,c\\}", "普通笔记.md", "${name}"];
 await mkdir(directory, { recursive: true });

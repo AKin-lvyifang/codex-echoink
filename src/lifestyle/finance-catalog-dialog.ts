@@ -4,6 +4,7 @@ import type { LifestylePluginHost, LifestyleHost } from "./host";
 import { openFinanceIconPicker, financeIconOptions, renderFinanceIcon, type FinanceIconScope } from "./finance-icon-picker";
 import type { FinanceSettings, FinanceAccountSetting, FinanceCategorySetting, FinanceMerchantSetting } from "./settings";
 import { createOriginSwitch } from "../settings/origin-controls";
+import { confirmModal } from "../ui/modals";
 
 export type CatalogKind = "merchants" | "accounts" | "categories";
 type CatalogItem = FinanceMerchantSetting | FinanceAccountSetting | FinanceCategorySetting;
@@ -36,7 +37,11 @@ function choice(parent: HTMLElement, label: string, options: readonly [string, s
 /** Kept by LifestyleSettingsPanel across redraws; the list and editor are separate pages. */
 export class FinanceCatalogPanel {
   private controls: ProPluginControls | null = null;
-  dispose(): void { this.controls?.dispose(); this.controls = null; }
+  private deletionAbort: AbortController | null = null;
+  dispose(): void {
+    this.deletionAbort?.abort(); this.deletionAbort = null;
+    this.controls?.dispose(); this.controls = null;
+  }
   private editing: number | null = null;
   private pending = false;
   private focusName = false;
@@ -57,6 +62,28 @@ export class FinanceCatalogPanel {
   private async update(items: CatalogItem[]): Promise<void> {
     await this.plugin.lifestyle.finance.saveCatalog(this.kind, items as FinanceSettings[CatalogKind]);
   }
+  private async removeItem(item: CatalogItem): Promise<void> {
+    if (this.pending || !this.plugin.lifestyle.finance.accessState().canWrite) return;
+    const controller = new AbortController();
+    this.deletionAbort = controller;
+    this.pending = true; this.controls?.refresh();
+    let saved = false;
+    try {
+      const accepted = await confirmModal(this.plugin.app, `删除${labels[this.kind]}`,
+        `删除「${item.name}」？已有账目和预算不会删除。`, "删除", "取消", { signal: controller.signal });
+      if (!accepted || controller.signal.aborted) return;
+      const items = this.items();
+      if (!items.includes(item)) return;
+      await this.update(items.filter((current) => current !== item));
+      saved = true;
+    } catch (error) {
+      new Notice(errorText(error));
+    } finally {
+      if (this.deletionAbort === controller) this.deletionAbort = null;
+      this.pending = false; this.controls?.refresh();
+      if (saved && !controller.signal.aborted) this.redraw();
+    }
+  }
   private openEditor(index: number): void {
     if (this.pending) return;
     this.editing = index; this.focusName = true; this.redraw();
@@ -64,6 +91,8 @@ export class FinanceCatalogPanel {
   render(content: HTMLElement): void {
     this.dispose();
     this.controls = new ProPluginControls(this.plugin.lifestyle.finance.access, () => this.plugin.lifestyle.finance.accessState());
+    const back = content.querySelector<HTMLButtonElement>(":scope > .echoink-life-settings-back");
+    if (back) this.controls.bind(back, { businessDisabled: () => this.pending, needsWrite: () => false });
     content.addClass("echoink-finance-catalog-page");
     if (this.editing === null) this.renderList(content);
     else this.renderEditor(content);
@@ -95,13 +124,7 @@ export class FinanceCatalogPanel {
       };
       const remove = row.createEl("button", { text: "删除", attr: { type: "button" } });
       this.controls?.bind(remove, { businessDisabled: () => this.pending });
-      remove.onclick = () => {
-        if (this.pending || !window.confirm(`删除${labels[this.kind]}「${item.name}」？已有账目和预算不会删除。`)) return;
-        this.pending = true; this.controls?.refresh();
-        void this.update(this.items().filter((_, position) => position !== index))
-          .then(() => { this.pending = false; this.redraw(); })
-          .catch((error) => { this.pending = false; this.controls?.refresh(); new Notice(errorText(error)); });
-      };
+      remove.onclick = () => { void this.removeItem(item); };
     }
     const add = content.createEl("button", { text: `新增${labels[this.kind]}`, cls: "echoink-finance-catalog-add", attr: { type: "button" } });
     this.controls?.bind(add, { businessDisabled: () => this.pending });
