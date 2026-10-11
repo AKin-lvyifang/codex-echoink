@@ -92,7 +92,7 @@ export class MobileUI {
   private scrollKey() { return this.page === "memory" ? `memory:${this.memoryId}` : this.page; }
   private captureScroll() { const body = this.root.querySelector<HTMLElement>(".em-body"); if (body) this.scroll.set(this.scrollKey(), body.scrollTop); }
   private go(page: Page) {
-    this.captureScroll(); this.stack.push(this.page); this.page = page; this.error = "";
+    this.captureScroll(); if (page !== this.page) this.stack.push(this.page); this.page = page; this.error = "";
     if (this.host.isTablet && this.root.clientWidth >= 760) {
       if (page === "settings") { this.stack.push("settings"); this.page = "basic"; }
       if (page === "memories" && this.host.store.state.memories.length) {
