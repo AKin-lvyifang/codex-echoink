@@ -1,5 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
+import assert from "node:assert/strict";
+import vm from "node:vm";
+import { originalAgentAvatarAssets, agentAvatarAssetsSource, agentAvatarAssetsPlugin } from "../../scripts/bundle-shared-assets.mjs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +12,32 @@ const rootDir = fileURLToPath(new URL("../../", import.meta.url));
 const outputDir = await mkdtemp(path.join(os.tmpdir(), "echoink-identity-paths-test-"));
 
 try {
+  const original = await originalAgentAvatarAssets();
+  const packed = await esbuild.build({ stdin: { contents: await agentAvatarAssetsSource(), resolveDir: rootDir }, bundle: true, write: false, format: "cjs", platform: "browser", logLevel: "silent" });
+  const shared = { exports: {} };
+  vm.runInNewContext(packed.outputFiles[0].text, { module: shared, exports: shared.exports, atob, TextDecoder });
+  const restored = shared.exports.agentAvatarAssets();
+  assert.deepEqual(Array.from(restored), Array.from(original.assets));
+  for (let i = 0; i < restored.length; i++) {
+    const url = restored[i];
+    const svg = url.startsWith("data:image/svg+xml;base64,") ? Buffer.from(url.split(",")[1], "base64") : Buffer.from(decodeURIComponent(url.slice(url.indexOf(",") + 1)));
+    assert.deepEqual(svg, await readFile(original.paths[i]), "SVG source bytes must remain exact");
+  }
+  for (const sharedMode of [false, true]) {
+    const built = await esbuild.build({ entryPoints: [path.join(rootDir, "src/ui/agent-avatar-presets.ts")], bundle: true, write: false, format: "cjs", platform: "browser", plugins: [agentAvatarAssetsPlugin(sharedMode)], logLevel: "silent" });
+    const catalog = { exports: {} };
+    vm.runInNewContext(built.outputFiles[0].text, { module: catalog, exports: catalog.exports, atob, TextDecoder, __echoinkSharedAssets: shared.exports });
+    assert.equal(catalog.exports.AGENT_AVATAR_PRESETS.length, 15);
+    for (const preset of catalog.exports.AGENT_AVATAR_PRESETS) {
+      const index = original.paths.findIndex(file => path.basename(file) === preset.id + ".svg");
+      assert.equal(preset.assetPath, original.assets[index]);
+      assert.equal(catalog.exports.resolveAgentAvatarUrl({ kind: "preset", presetId: preset.id }), preset.assetPath);
+    }
+    assert.equal(catalog.exports.resolveAgentAvatarUrl({ kind: "default" }), null);
+    assert.equal(catalog.exports.resolveAgentAvatarUrl({ kind: "preset", presetId: "missing" }), null);
+    assert.equal(catalog.exports.resolveAgentAvatarUrl({ kind: "custom", dataUrl: "data:image/png;base64,YQ==" }), "data:image/png;base64,YQ==");
+  }
+  console.log("PASS all 15 avatar URLs and SVG bytes: original loader, standalone mobile and shared desktop/mobile");
   const outputFile = path.join(outputDir, "identity-paths.mjs");
   await esbuild.build({
     stdin: {

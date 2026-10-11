@@ -1,5 +1,5 @@
 import novaAvatar from "../../../assets/nova.svg";
-import { TFile } from "obsidian";
+import { TFile, setIcon } from "obsidian";
 import type { MobileUIHost } from "./mobile-ui";
 import { newId } from "../../core/new-id";
 import { EchoInkTodoFormModal } from "../../home/todo-edit-modal";
@@ -220,11 +220,23 @@ export class MobileSettingsPages {
       for (const file of files[kind]) this.ui.row(part, file.basename, file.path, "file-text", () => this.host.openNote(file.path));
     });
     const title = node(body, "div", "kb-title-row"); node(title, "span", "em-help", `更新于 ${today.toLocaleTimeString()}`); this.ui.button(title, "", () => this.ui.go("knowledge"), "refresh-cw", "kb-icon-button").setAttribute("aria-label", "刷新状态");
-    const health = node(body, "section", "kb-health"); const healthOpen = this.ui.button(health, "", () => this.ui.sheet("评分与检查范围", part => this.help(part, "移动端尚未接通结构健康扫描。目录、笔记数量与已有记录来自当前笔记库；评分、Tracker 与来源状态尚未检查。")), undefined, "kb-health-open");
-    const copy = node(healthOpen, "span", "kb-health-copy"); node(copy, "span", "", "结构健康度"); const score = node(copy, "strong", "", "—"); node(score, "small", "", " / 100"); node(healthOpen, "span", "kb-health-state", "尚未接通 ›");
-    node(health, "div", "kb-health-meter"); const freshness = node(health, "div", "kb-freshness"); node(freshness, "span", "", "体检新鲜度"); node(freshness, "strong", "", checks[0]?.date ?? "暂无记录");
+    const latestCheck = checks.filter(check => check.status === "success" && Number.isFinite(check.at)).sort((a, b) => b.at - a.at)[0];
+    const latestMaintenance = logs.filter(log => Number.isFinite(log.at)).sort((a, b) => b.at - a.at)[0];
+    const health = node(body, "section", "kb-health");
+    const overview = node(health, "div", "kb-health-overview");
+    const healthCard = node(overview, "article", "kb-health-card");
+    const label = node(healthCard, "div", "kb-card-label"); node(label, "h3", "", "结构健康度"); node(label, "span", "kb-status-neutral", "尚未接通");
+    const score = node(healthCard, "div", "kb-health-score"); node(score, "strong", "", "—"); node(score, "small", "", "/ 100");
+    this.ui.button(score, "评分说明", () => this.ui.sheet("评分与检查范围", part => this.help(part, "移动端尚未接通结构健康扫描。目录、笔记数量与已有记录来自当前笔记库；评分、Tracker 与来源状态尚未检查。")), "info", "kb-health-open");
+    node(healthCard, "p", "", "接通本地结构扫描后显示评分；当前未评估知识库健康。" );
+    const freshness = node(overview, "article", "kb-freshness-card");
+    const freshLabel = node(freshness, "div", "kb-card-label"); node(freshLabel, "h3", "", "体检新鲜度"); node(freshLabel, "span", "kb-status-neutral", latestCheck ? "已有记录" : "待确认");
+    const freshTitle = node(freshness, "div", "kb-freshness-title"); const calendarIcon = node(freshTitle, "span"); setIcon(calendarIcon, "calendar-days");
+    node(freshTitle, "strong", "", latestCheck?.date ?? "暂无成功体检记录");
+    node(freshness, "p", "", latestCheck ? "仅以成功的体检记录计算，失败和普通维护不会刷新确认时间。" : "这代表缺少确认，不代表知识库已经损坏。");
+    this.ui.button(freshness, "维护成功不等于完成全库体检。", () => this.ui.sheet("体检新鲜度", part => this.help(part, "新鲜度取已有成功体检的最近时间，普通维护与失败体检不会刷新它。")), "circle-help", "kb-freshness-note");
     const facts = node(health, "dl", "kb-health-facts");
-    for (const [label, value] of [["最近成功体检", checks.find(check => check.status === "success")?.date ?? "—"], ["连续体检", "—"], ["最近维护", logs[0]?.date ?? "—"], ["Tracker", "尚未检查"]]) { const row = node(facts, "div"); node(row, "dt", "", label); node(row, "dd", "", value); }
+    for (const [label, value] of [["最近成功体检", latestCheck?.date ?? "—"], ["连续体检", "—"], ["最近维护", latestMaintenance?.date ?? "—"], ["Tracker", "尚未检查"]]) { const row = node(facts, "div"); node(row, "dt", "", label); node(row, "dd", "", value); }
     const counts = node(health, "div", "kb-counts");
     for (const [kind, label] of [["wiki", "Wiki"], ["raw", "Raw"], ["inbox", "Inbox"]] as const) { const card = node(counts, "div"); this.ui.button(card, label, () => list(kind)); node(card, "strong", "", String(files[kind].length)); node(card, "small", "", `今日 +${added(files[kind])}`); }
     const structure = section("Wiki 结构", `${files.wiki.length} 篇内容`);

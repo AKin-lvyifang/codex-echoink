@@ -17,6 +17,7 @@ import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { mobileAtomicFilePort } from "./finance-store";
 import { MobileLifestyleService } from "./finance";
 import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
+import { AGENT_IDENTITY_RELATIVE_PATH, defaultAgentIdentityState, parseAgentIdentityState } from "../harness/memory/agent-identity-model";
 
 export interface MobileServicesHost {
   app: App;
@@ -35,6 +36,15 @@ export class MobileServices implements HomeHost {
   private preferenceRoot: string;
   private readonly todos: EchoInkTodoStore;
   private skillStateWrites: Promise<void> = Promise.resolve();
+  agentIdentity = defaultAgentIdentityState();
+  async refreshAgentIdentity() {
+    try {
+      const path = `.echoink/${AGENT_IDENTITY_RELATIVE_PATH}`, adapter = this.app.vault.adapter;
+      const raw: unknown = await adapter.exists(path) ? JSON.parse(await adapter.read(path)) : null;
+      this.agentIdentity = raw && typeof raw === "object" && !Array.isArray(raw) ? parseAgentIdentityState(raw as Record<string, unknown>) ?? defaultAgentIdentityState() : defaultAgentIdentityState();
+    } catch { this.agentIdentity = defaultAgentIdentityState(); }
+    this.host.runtime.onChange();
+  }
   readonly homeUnavailableReason = "移动端尚未接通知识健康扫描；笔记数量来自当前笔记库";
   constructor(private host: MobileServicesHost, readonly directory: string) {
     this.app = host.app; this.preferenceRoot = directory.replace(/\/mobile$/u, "");
@@ -49,11 +59,12 @@ export class MobileServices implements HomeHost {
   getTodoStore() { return this.todos; }
   getKnowledgeSurfaceService() { return null; }
   async initialize() {
+    await this.refreshAgentIdentity();
     await this.homeActivity.initialize(); await this.todos.initialize();
     this.homeActivity.restoreOpen(this.app.workspace.getActiveFile()?.path ?? null);
     this.registerEvent(this.app.workspace.on("file-open", file => this.homeActivity.open(file?.path ?? null)));
     this.registerEvent(this.app.vault.on("create", file => { if (file instanceof TFile) this.homeActivity.record(file.path, "created"); }));
-    this.registerEvent(this.app.vault.on("modify", file => { if (file instanceof TFile) this.homeActivity.record(file.path, "modified"); }));
+    this.registerEvent(this.app.vault.on("modify", file => { if (file instanceof TFile) { this.homeActivity.record(file.path, "modified"); if (file.path === `.echoink/${AGENT_IDENTITY_RELATIVE_PATH}`) void this.refreshAgentIdentity(); } }));
     this.registerEvent(this.app.vault.on("rename", (file, old) => this.homeActivity.rename(old, file.path)));
     this.registerEvent(this.app.vault.on("delete", file => this.homeActivity.delete(file.path)));
   }

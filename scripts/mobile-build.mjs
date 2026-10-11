@@ -2,7 +2,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import esbuild from "esbuild";
 import { poolDesktopStrings, assertDesktopMarkersPreserved } from "./desktop-string-pool.mjs";
-import { financeBrandsPlugin, sharedAssetsBundle } from "./bundle-shared-assets.mjs";
+import { financeBrandsPlugin, agentAvatarAssetsPlugin, sharedAssetsBundle } from "./bundle-shared-assets.mjs";
 
 // Keep Pi's real Agent, event stream and tool validation. Exclude the Node
 // provider/auth catalog: mobile always injects its own requestUrl streamFn.
@@ -23,10 +23,10 @@ export const mobilePiPlugin = {
   }
 };
 export function mobileBuildOptions(entry = "src/mobile/plugin.ts") {
-  return { entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian"], loader: { ".md": "text", ".svg": "dataurl" }, plugins: [mobilePiPlugin, financeBrandsPlugin()], logLevel: "silent" };
+  return { entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian"], loader: { ".md": "text", ".svg": "dataurl" }, plugins: [mobilePiPlugin, financeBrandsPlugin(), agentAvatarAssetsPlugin()], logLevel: "silent" };
 }
 export async function assemblePlatformBundle(desktopCode, minify) {
-  const mobile = await esbuild.build({ ...mobileBuildOptions(), plugins: [mobilePiPlugin, financeBrandsPlugin(true)], metafile: true, minify });
+  const mobile = await esbuild.build({ ...mobileBuildOptions(), plugins: [mobilePiPlugin, financeBrandsPlugin(true), agentAvatarAssetsPlugin(true)], metafile: true, minify });
   const selector = await esbuild.build({ ...mobileBuildOptions("src/platform-entry.ts"), minify });
   const wrap = (name, code) => `function ${name}(){var module={exports:{}};var exports=module.exports;\n${code}\nreturn module.exports;}\n`;
   const desktop = minify ? poolDesktopStrings(desktopCode).code : desktopCode;

@@ -11,7 +11,9 @@ import { MobileRuntime } from "../../mobile/runtime";
 import type { MobileServices } from "../../mobile/services";
 import { MobileViewport } from "./viewport";
 import { MobileSettingsPages, type MobileSettingsPage, type MobileSettingsRoute } from "./settings-pages";
-import novaAvatar from "../../../assets/nova.svg";
+import { defaultAgentIdentityState } from "../../harness/memory/agent-identity-model";
+import { resolveAgentAvatarUrl } from "../agent-avatar-presets";
+import { renderSettingsGearIcon } from "../codex-icon";
 import type { AccountService } from "../../membership/account-service";
 
 export interface MobileUIHost {
@@ -133,12 +135,13 @@ export class MobileUI {
     this.root.dataset.page = this.page;
     const header = el(this.root, "header", "em-header");
     if (this.page !== "chat" && !(this.host.settingsOnly && this.page === "settings")) this.iconButton(header, "返回", "chevron-left", () => this.back());
-    else icon(header, this.host.settingsOnly ? "settings-2" : "bot");
-    const titles: Record<Page, string> = { ...this.settingPages.titles, chat: "Nova", settings: "设置", basic: "基础设置", providers: "模型与提供商", provider: "配置提供商", models: "选择模型", permissions: "工作区权限", history: "历史对话", review: "复盘", memories: "记忆", memory: "记忆详情", notes: "引用笔记" };
+    else if (this.page === "chat") el(header, "span", "em-agent-avatar"); else icon(header, "settings-2");
+    const titles: Record<Page, string> = { ...this.settingPages.titles, chat: (this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName, settings: "设置", basic: "基础设置", providers: "模型与提供商", provider: "配置提供商", models: "选择模型", permissions: "工作区权限", history: "历史对话", review: "复盘", memories: "记忆", memory: "记忆详情", notes: "引用笔记" };
     el(header, "h2", "em-title", this.host.settingsOnly && this.page === "settings" ? "EchoInk 设置" : titles[this.page]);
     if (this.page === "chat") {
+      this.updateIdentity();
       this.iconButton(header, "历史对话", "history", () => this.openSheet("历史对话", body => this.history(body)));
-      this.iconButton(header, "设置", "settings-2", () => this.go("settings"));
+      const settingsButton = this.iconButton(header, "设置", "settings-2", () => this.go("settings")); settingsButton.replaceChildren(); renderSettingsGearIcon(settingsButton);
     }
     const error = el(this.root, "div", "em-error"); error.setAttribute("role", "alert"); this.showError();
     const workspace = el(this.root, "div", "em-workspace");
@@ -241,7 +244,7 @@ export class MobileUI {
     const context = el(compose, "div", "em-context");
     this.refreshContext(context);
     const composer = el(compose, "div", "em-composer");
-    const input = el(composer, "textarea", "em-input"); input.placeholder = "和 Nova 说说你的想法…"; input.setAttribute("aria-label", "消息草稿"); input.rows = 2; input.value = session.draft;
+    const input = el(composer, "textarea", "em-input"); input.placeholder = `和 ${(this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName} 说说你的想法…`; input.setAttribute("aria-label", "消息草稿"); input.rows = 2; input.value = session.draft;
     input.addEventListener("input", () => this.updateDraft(input.value));
     const controls = el(composer, "div", "em-composer-tools");
     this.iconButton(controls, "添加到对话", "plus", () => this.openSheet("添加到对话", body => { this.row(body, "引用笔记", "", "file-text", () => this.openSheet("引用笔记", part => this.notes(part))); this.row(body, "写日记", "", "notebook-pen", journal); this.row(body, "选择 Skill", "", "sparkles", () => this.go("resources")); }));
@@ -266,8 +269,20 @@ export class MobileUI {
     this.iconButton(container, "移除笔记引用", "x", async () => { session.notePath = ""; await this.host.store.save(); this.refreshContext(container); });
   }
   private updateDraft(text: string) { this.host.store.session.draft = text; void this.act(() => this.host.store.save()); }
+  private updateIdentity() {
+    const avatar = this.root.querySelector<HTMLElement>(".em-agent-avatar"); if (!avatar) return;
+    const identity = this.host.services?.agentIdentity ?? defaultAgentIdentityState();
+    const title = this.root.querySelector<HTMLElement>(".em-header .em-title"); if (title) title.textContent = identity.displayName;
+    const input = this.root.querySelector<HTMLTextAreaElement>(".em-input"); if (input) input.placeholder = `和 ${identity.displayName} 说说你的想法…`;
+    const url = resolveAgentAvatarUrl(identity.avatar);
+    if (avatar.dataset.avatarUrl === (url ?? "")) return;
+    avatar.dataset.avatarUrl = url ?? ""; avatar.replaceChildren();
+    if (url) { const image = el(avatar, "img"); image.src = url; image.alt = ""; image.draggable = false; image.decoding = "async"; }
+    else icon(avatar, "bot");
+  }
   private refreshChat() {
     if (!this.mounted) return;
+    this.updateIdentity();
     // Preserve keyboard focus and draft while only message and status regions change.
     const body = this.root.querySelector<HTMLElement>(".em-messages");
     if (!body) return;
@@ -303,7 +318,7 @@ export class MobileUI {
   private messages(body: HTMLElement) {
     const session = this.host.store.session;
     if (!session.messages.length) {
-      const welcome = el(body, "section", "em-welcome"); const identity = el(welcome, "div", "em-identity"); const avatar = el(identity, "img", "em-avatar"); avatar.src = novaAvatar; avatar.alt = "Nova 头像"; const name = el(identity, "div"); el(name, "strong", "", "Nova"); el(name, "small", "", "EchoInk Agent");
+      const welcome = el(body, "section", "em-welcome");
       const settings = this.host.settings();
       const title = settings.customWelcomeEnabled ? settings.customWelcomeTitle.trim() : "";
       const subtitle = settings.customWelcomeEnabled ? settings.customWelcomeSubtitle.trim() : "";

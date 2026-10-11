@@ -3,6 +3,7 @@ import path from "node:path";
 import ts from "typescript";
 import esbuild from "esbuild";
 import { deflateRawSync } from "node:zlib";
+import vm from "node:vm";
 
 function literal(node) {
   if (ts.isStringLiteral(node)) return node.text;
@@ -52,7 +53,45 @@ export function financeBrandsPlugin(shared = false) {
     build.onLoad({ filter: /.*/, namespace: "echoink-assets" }, async () => ({ contents: await financeBrandsSource(), loader: "js", resolveDir: process.cwd() }));
   } };
 }
+export async function originalAgentAvatarAssets() {
+  const source = await fs.readFile("src/ui/agent-avatar-presets.ts", "utf8");
+  const syntax = ts.createSourceFile("agent-avatar-presets.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const paths = syntax.statements.filter(ts.isImportDeclaration).map(node => node.moduleSpecifier.text).filter(file => file.endsWith(".svg")).map(file => path.resolve("src/ui", file));
+  if (paths.length !== 15 || new Set(paths).size !== 15) throw new Error("Agent avatar catalog changed; review sharing");
+  const contents = paths.map((file, i) => `import a${i} from ${JSON.stringify(file)};`).join("\n") + `\nexport const assets=[${paths.map((_, i) => `a${i}`).join(",")}];`;
+  const build = await esbuild.build({ stdin: { contents, resolveDir: process.cwd(), loader: "js" }, loader: { ".svg": "dataurl" }, bundle: true, write: false, format: "cjs", logLevel: "silent" });
+  const module = { exports: {} }; vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports });
+  return { paths, assets: module.exports.assets };
+}
+export async function agentAvatarAssetsSource() {
+  const { assets } = await originalAgentAvatarAssets();
+  // SVG paths alternate x/y coordinates. Store exact integer text as deltas
+  // from the preceding coordinate on the same axis before the existing deflate.
+  // Noncanonical integers stay literal, preserving leading zeros and all bytes.
+  const text = JSON.stringify(assets), numbers = [], deltas = [];
+  if (text.includes("\0")) throw new Error("Unexpected null in avatar URL");
+  const template = text.replace(/\d+/g, token => {
+    const value = Number(token), previous = numbers[numbers.length - 2] ?? 0;
+    deltas.push(Number.isSafeInteger(value) && String(value) === token ? value - previous : token);
+    numbers.push(value); return "\0";
+  });
+  const encoded = deflateRawSync(Buffer.from(JSON.stringify([template, deltas])), { level: 9 }).toString("base64");
+  return `import {inflateSync as avatarInflate,strFromU8 as avatarString} from "fflate";
+let avatars;export function agentAvatarAssets(){if(!avatars){const [template,deltas]=JSON.parse(avatarString(avatarInflate(Uint8Array.from(atob(${JSON.stringify(encoded)}),c=>c.charCodeAt(0)))));const numbers=[];for(const delta of deltas)numbers.push(typeof delta==="string"?delta:String(delta+Number(numbers[numbers.length-2]??0)));let index=0;avatars=JSON.parse(template.replace(/\\0/g,()=>numbers[index++]));}return avatars;}`;
+}
+export function agentAvatarAssetsPlugin(shared = false) {
+  return { name: "echoink-agent-avatar-storage", setup(build) {
+    let original;
+    build.onLoad({ filter: /[\\/]assets[\\/]avatars[\\/]monochrome-round-set-01[\\/].*\.svg$/ }, async args => {
+      const { paths } = await (original ??= originalAgentAvatarAssets()); const index = paths.indexOf(args.path);
+      if (index < 0) return;
+      return { contents: `${shared ? "" : 'import {agentAvatarAssets} from "echoink-agent-avatar-artwork";'}export default ${shared ? "__echoinkSharedAssets.agentAvatarAssets()" : "agentAvatarAssets()"}[${index}];`, loader: "js" };
+    });
+    build.onResolve({ filter: /^echoink-agent-avatar-artwork$/ }, () => ({ path: "agent-avatars", namespace: "echoink-agent-avatars" }));
+    build.onLoad({ filter: /.*/, namespace: "echoink-agent-avatars" }, async () => ({ contents: await agentAvatarAssetsSource(), loader: "js", resolveDir: process.cwd() }));
+  } };
+}
 export async function sharedAssetsBundle(minify) {
-  const result = await esbuild.build({ stdin: { contents: await financeBrandsSource(), resolveDir: process.cwd(), sourcefile: "finance-artwork.js" }, bundle: true, write: false, format: "iife", globalName: "__echoinkSharedAssets", platform: "browser", target: "es2022", minify });
+  const result = await esbuild.build({ stdin: { contents: `${await financeBrandsSource()}\n${await agentAvatarAssetsSource()}`, resolveDir: process.cwd(), sourcefile: "shared-artwork.js" }, bundle: true, write: false, format: "iife", globalName: "__echoinkSharedAssets", platform: "browser", target: "es2022", minify });
   return result.outputFiles[0].text;
 }

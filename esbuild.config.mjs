@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "process";
 import { reactDomScriptResourcesPlugin } from "./scripts/react-dom-script-resources.mjs";
 import { assemblePlatformBundle } from "./scripts/mobile-build.mjs";
-import { financeBrandsPlugin } from "./scripts/bundle-shared-assets.mjs";
+import { financeBrandsPlugin, agentAvatarAssetsPlugin } from "./scripts/bundle-shared-assets.mjs";
 import { piBraceExpansionPlugin } from "./scripts/pi-brace-expansion.mjs";
 import { radixIconsEsmPlugin, pinyinDictionaryCompressionPlugin } from "./scripts/bundle-static-data.mjs";
 import { piCodexDesktopTransportPlugin } from "./scripts/pi-codex-desktop-transport.mjs";
@@ -645,6 +645,7 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
   treeShaking: true,
   plugins: [
     financeBrandsPlugin(true),
+    agentAvatarAssetsPlugin(true),
     radixIconsEsmPlugin,
     pinyinDictionaryCompressionPlugin,
     reactDomScriptResourcesPlugin,

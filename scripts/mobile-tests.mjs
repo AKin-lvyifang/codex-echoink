@@ -10,15 +10,16 @@ import { createHost, answer, FixtureTFile } from "../tests/mobile/host.mjs";
 
 const build = await esbuild.build(mobileBuildOptions("tests/mobile/entry.ts"));
 const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVisual: true });
+dom.window.SVGElement.prototype.addClass = function (...names) { this.classList.add(...names); };
 dom.window.HTMLElement.prototype.setAttr = function (name, value) { this.setAttribute(name, String(value)); };
 dom.window.HTMLElement.prototype.toggleClass = function (name, enabled) { this.classList.toggle(name, enabled); };
 const module = { exports: {} };
 const obsidian = { exports: {} };
 const hostBuild = await esbuild.build({ entryPoints: ["tests/mobile/browser-obsidian.ts"], bundle: true, write: false, platform: "browser", format: "cjs", logLevel: "silent" });
-vm.runInNewContext(hostBuild.outputFiles[0].text, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, DOMParser: dom.window.DOMParser, module: obsidian, exports: obsidian.exports, console });
-const globals = { window: dom.window, document: dom.window.document, DOMParser: dom.window.DOMParser, MutationObserver: dom.window.MutationObserver, HTMLElement: dom.window.HTMLElement, module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, setTimeout, clearTimeout, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, require: id => { if (id !== "obsidian") throw new Error(`Node import on mobile: ${id}`); return { ...obsidian.exports, TFile: FixtureTFile }; } };
+vm.runInNewContext(hostBuild.outputFiles[0].text, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, SVGElement: dom.window.SVGElement, DOMParser: dom.window.DOMParser, module: obsidian, exports: obsidian.exports, console });
+const globals = { window: dom.window, document: dom.window.document, DOMParser: dom.window.DOMParser, MutationObserver: dom.window.MutationObserver, HTMLElement: dom.window.HTMLElement, SVGElement: dom.window.SVGElement, module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, setTimeout, clearTimeout, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, require: id => { if (id !== "obsidian") throw new Error(`Node import on mobile: ${id}`); return { ...obsidian.exports, TFile: FixtureTFile }; } };
 vm.runInNewContext(build.outputFiles[0].text, globals);
-const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, mobilePresets, MobileUI, MobileWorkspace, MobileServices, HomeActivityCore, mobilePluginDataRoot, SETTINGS_TAB_ICONS, renderAnimatedSettingsTabIcon, createMobileMembershipStorage, AccountService, MembershipApiError, keyHash, mobileLifestyleStore, mobileGenerateText, readFinanceBill, sha256Hex, FinanceWorkspace, EchoInkMobilePlugin, mobileWorkspaceFixture } = module.exports;
+const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, mobilePresets, MobileUI, MobileWorkspace, MobileServices, MobileViewport, AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl, HomeActivityCore, mobilePluginDataRoot, SETTINGS_TAB_ICONS, renderAnimatedSettingsTabIcon, createMobileMembershipStorage, AccountService, MembershipApiError, keyHash, mobileLifestyleStore, mobileGenerateText, readFinanceBill, sha256Hex, FinanceWorkspace, EchoInkMobilePlugin, mobileWorkspaceFixture } = module.exports;
 const memoryArgs = { kind: "view", title: "解释偏好", content: "解释技术问题时先说结论。", recallWhen: "解释技术问题", basis: "explicit" };
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 let passed = 0;
@@ -149,7 +150,7 @@ await test("native right chat coexists with outline; Home and protected central 
 await test("Vault services: shared preferences, actual knowledge, Todo persistence and real activity", async () => {
   const host = createHost({ "笔记/来源.md": "note", "Wiki/主题/知识.md": "# knowledge", ".echoink/shared-user/USER.md": "# Real profile" });
   const store = new MobileStore(host.adapter, "plugin/mobile"); await store.load(); const config = settings();
-  const services = new MobileServices({ app: host.app, settings: config, store, runtime: { busy: false }, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile"); await services.initialize();
+  const services = new MobileServices({ app: host.app, settings: config, store, runtime: { busy: false, onChange() {} }, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile"); await services.initialize();
   assert.equal(services.knowledgeFiles("wiki").length, 1); assert.equal(await services.readProfile("user"), "# Real profile"); assert.equal(await services.readProfile("agent"), null); assert.equal(services.preferencesPath, "plugin/pi-agent-product-v1/knowledge/preferences.md");
   assert.ok(services.defaultPreferences.includes("关注维度")); assert.ok((await services.context()).includes(services.defaultPreferences));
   store.session.skillId = "two-layer-explanation"; assert.ok((await services.context()).includes(await services.requireAvailableEchoInkSkill("two-layer-explanation"))); config.resources.legacyEnabledOverrides = { "two-layer-explanation": false }; await assert.rejects(services.context(), /停用/u); delete store.session.skillId;
@@ -157,6 +158,27 @@ await test("Vault services: shared preferences, actual knowledge, Todo persisten
   const todo = services.getTodoStore(); await todo.addTodo({ title: "真实待办", dueDate: "2026-10-11", categoryName: "工作", people: "" }); assert.equal(todo.snapshot()[0].title, "真实待办"); await todo.toggleDone(todo.snapshot()[0], true); assert.equal(todo.snapshot()[0].done, true); assert.ok([...host.files.values()].some(text => text.includes("真实待办")));
   await services.dispose(); assert.ok(host.files.has("plugin/mobile/home-activity.json"));
 });
+await test("mobile reads existing identity only: defaults, every preset, custom and malformed fallback", async () => {
+  const host = createHost(), store = new MobileStore(host.adapter, "plugin/mobile"); await store.load();
+  const config = settings(), runtime = new MobileRuntime(host.app, store, () => config, async () => answer("openai-completions", "ok"));
+  const services = new MobileServices({ app: host.app, settings: config, store, runtime, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile");
+  const path = ".echoink/agents/echoink/agent-identity.json";
+  const state = avatar => ({ schema: "echoink.agent-identity.v1", revision: 3, displayName: "墨墨", avatar, updatedAt: 42 });
+  await services.initialize(); assert.equal(services.agentIdentity.displayName, "EchoInk"); assert.equal(services.agentIdentity.avatar.kind, "default");
+  for (const preset of AGENT_AVATAR_PRESETS) {
+    host.files.set(path, JSON.stringify(state({ kind: "preset", presetId: preset.id }))); await services.refreshAgentIdentity();
+    assert.equal(services.agentIdentity.displayName, "墨墨"); assert.equal(resolveAgentAvatarUrl(services.agentIdentity.avatar), preset.assetPath);
+  }
+  const custom = { kind: "custom", mimeType: "image/png", dataUrl: "data:image/png;base64,YQ==", width: 256, height: 256 };
+  host.files.set(path, JSON.stringify(state(custom))); await services.refreshAgentIdentity(); assert.equal(resolveAgentAvatarUrl(services.agentIdentity.avatar), custom.dataUrl);
+  host.files.set(path, JSON.stringify({ ...state({ kind: "broken" }), displayName: "bad\nname" })); await services.refreshAgentIdentity(); assert.equal(services.agentIdentity.displayName, "EchoInk"); assert.equal(services.agentIdentity.avatar.kind, "default");
+  for (const invalid of ["{broken", "[]", JSON.stringify({ ...state(custom), schema: "future" }), JSON.stringify({ ...state(custom), revision: -1 })]) {
+    host.files.set(path, invalid); await services.refreshAgentIdentity(); assert.equal(services.agentIdentity.displayName, "EchoInk"); assert.equal(services.agentIdentity.avatar.kind, "default");
+  }
+  host.files.set(path, JSON.stringify(state({ kind: "preset", presetId: "missing" }))); await services.refreshAgentIdentity(); assert.equal(resolveAgentAvatarUrl(services.agentIdentity.avatar), null);
+  assert.ok(!host.writes.includes(path), "identity must remain read-only"); await services.dispose();
+});
+
 await test("concurrent context preparation issues one provider request", async () => {
   const state = await setup("openai-completions", async () => { requests++; return answer("openai-completions", "ok"); }); let requests = 0;
   const runtime = new MobileRuntime(state.app, state.store, () => state.config, async () => { requests++; return answer("openai-completions", "ok"); }, async () => { await new Promise(resolve => setTimeout(resolve, 5)); return "real context"; });
@@ -210,7 +232,12 @@ await test("formal DOM: sheet preserves draft node and focus, eight settings and
   const settle = () => new Promise(resolve => setTimeout(resolve, 10));
   await services.openEchoInkGeneralSettings(); assert.equal(root.dataset.page, "settings"); button("基础设置").click(); assert.equal(root.dataset.page, "basic"); button("返回").click(); assert.equal(root.dataset.page, "settings"); button("返回").click(); assert.equal(root.dataset.page, "chat");
   ui.showPage("layout"); await services.openEchoInkGeneralSettings(); button("基础设置").click(); button("返回").click(); assert.equal(root.dataset.page, "settings"); button("返回").click(); assert.equal(root.dataset.page, "chat", "Home settings entry returns to chat even when another detail was open");
-  const input = root.querySelector(".em-input"); input.value = "保留中文草稿"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true })); input.focus();
+  const input = root.querySelector(".em-input");
+  assert.equal(root.querySelector(".em-header .em-title").textContent, "EchoInk"); assert.ok(root.querySelector('.em-agent-avatar [data-icon="bot"]')); assert.ok(!root.querySelector(".em-identity")); assert.ok(root.querySelector(".codex-settings-gear-svg"));
+  host.files.set(".echoink/agents/echoink/agent-identity.json", JSON.stringify({ schema: "echoink.agent-identity.v1", revision: 1, displayName: "墨墨", avatar: { kind: "preset", presetId: "sol" }, updatedAt: 42 })); await services.refreshAgentIdentity();
+  assert.equal(root.querySelector(".em-header .em-title").textContent, "墨墨"); assert.equal(root.querySelector(".em-input"), input); assert.ok(input.placeholder.includes("墨墨")); assert.equal(root.querySelector(".em-agent-avatar img").src, resolveAgentAvatarUrl(services.agentIdentity.avatar));
+  runtime.busy = true; runtime.onChange(); assert.ok(root.querySelector(".em-status").textContent); runtime.busy = false; runtime.onChange(); assert.equal(root.querySelector(".em-status").textContent, "");
+  input.value = "保留中文草稿"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true })); input.focus();
   button("引用笔记").click(); const dialog = root.querySelector('[role="dialog"]'); assert.ok(dialog); assert.ok(root.querySelector(".em-header").inert); dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true })); assert.equal(dom.window.document.activeElement, dialog.querySelector("button"));
   button("当前笔记笔记/来源.md").click(); await settle(); assert.equal(root.querySelector(".em-input"), input); assert.equal(input.value, "保留中文草稿"); assert.equal(dom.window.document.activeElement, input); assert.equal(store.session.notePath, "笔记/来源.md");
   const viewport = new dom.window.EventTarget(); viewport.scale = 1; viewport.height = 552; viewport.offsetTop = 0; Object.defineProperty(dom.window, "visualViewport", { value: viewport, configurable: true }); root.getBoundingClientRect = () => ({ bottom: 852 });
@@ -220,6 +247,22 @@ await test("formal DOM: sheet preserves draft node and focus, eight settings and
   ui.showPage("memories"); [...root.querySelectorAll(".em-row")].find(row => row.textContent.includes("待修正记忆")).click(); button("编辑").click(); const editor = root.querySelector('[aria-label="记忆内容"]'); editor.value = "修正后正文"; editor.dispatchEvent(new dom.window.Event("input")); button("预览修改").click(); assert.equal(store.state.memories.at(-1).content, "原文"); assert.ok(root.querySelector('[role="dialog"]').textContent.includes("修改前")); button("应用修改").click(); await settle(); assert.equal(store.state.memories.at(-1).content, "修正后正文"); assert.equal(store.state.memories.at(-1).revision, 2);
   const oldId = store.session.id; ui.showPage("review"); button("归档当前会话").click(); await settle(); assert.ok(store.state.sessions.find(session => session.id === oldId).archivedAt); root.querySelector(".em-archive summary").click(); await settle(); button("恢复会话").click(); await settle(); assert.equal(store.session.id, oldId); assert.equal(store.session.archivedAt, undefined);
   ui.destroy(); await services.dispose();
+});
+
+await test("knowledge freshness uses latest successful at and latest maintenance at, without fabricated score", async () => {
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+  const services = new MobileServices({ app: state.app, settings: state.config, store: state.store, runtime: state.runtime, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile"); await services.initialize();
+  const root = dom.window.document.querySelector("#app");
+  const ui = new MobileUI(root, { app: state.app, store: state.store, runtime: state.runtime, services, settings: () => state.config, async saveSettings() {}, async openNote() {}, beginRender() {}, renderMarkdown(text, element) { element.textContent = text; } }); ui.mount(); ui.showPage("knowledge");
+  assert.equal(root.querySelector(".kb-health-score strong").textContent, "—"); assert.equal(root.querySelector(".kb-freshness-title strong").textContent, "暂无成功体检记录"); assert.ok(!root.querySelector('[role="meter"]'));
+  const check = (at, date, status) => ({ id: String(at), at, date, status });
+  state.config.knowledgeBase.healthHistory = [check(40, "2026-10-11", "failed")]; ui.showPage("knowledge"); assert.equal(root.querySelector(".kb-freshness-title strong").textContent, "暂无成功体检记录");
+  state.config.knowledgeBase.healthHistory = [check(10, "2026-10-05", "success"), check(30, "2026-10-09", "success"), check(20, "2026-10-07", "success"), check(40, "2026-10-11", "failed")];
+  state.config.knowledgeBase.maintenanceHistory = [check(10, "2026-10-05", "success"), check(30, "2026-10-10", "failed"), check(20, "2026-10-08", "success")]; ui.showPage("knowledge");
+  assert.equal(root.querySelector(".kb-freshness-title strong").textContent, "2026-10-09");
+  assert.deepEqual([...root.querySelectorAll(".kb-health-facts dd")].map(e => e.textContent), ["2026-10-09", "—", "2026-10-10", "尚未检查"]);
+  assert.deepEqual(state.config.knowledgeBase.healthHistory.map(c => c.at), [10,30,20,40], "reading must not reorder stored history");
+  const button = [...root.querySelectorAll("button")].find(b => b.textContent === "评分说明"); button.click(); assert.ok(root.querySelector('[role="dialog"]').textContent.includes("尚未接通结构健康扫描")); ui.destroy(); await services.dispose();
 });
 
 await test("journal entries wait for input and retain old, quick and plus-menu drafts", async () => {

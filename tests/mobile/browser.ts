@@ -15,8 +15,15 @@ import { createHost, answer } from "./host.mjs";
 const host = createHost({ "笔记/来源.md": "项目决定：先完成手机本地问答。", "Wiki/项目/产品草稿.md": "# 产品草稿\n\n本周聚焦真实场景。", "Wiki/项目/工作复盘.md": "# 工作复盘\n\n记录决定、证据与行动。", "Wiki/项目/手机验收.md": "# 知识", "Raw/资料.md": "# 原始资料", "Inbox/记录.md": "# Inbox" });
 host.app.workspace.containerEl = document.body;
 const params = new URLSearchParams(location.search);
+const keyboard = Number(params.get("keyboard") ?? 0);
+if (keyboard > 0) {
+  const viewport = Object.assign(new EventTarget(), { scale: 1, height: innerHeight - keyboard, offsetTop: 0 });
+  Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true });
+  if (params.has("shrink")) document.querySelector<HTMLElement>("#fixture-workspace")!.style.height = `calc(100dvh - 48px - ${keyboard}px - var(--fixture-safe,0px))`;
+  document.querySelector<HTMLElement>(".fixture-navbar")!.style.bottom = `${keyboard}px`;
+}
 Platform.isMobileApp = Platform.isMobile = !params.has("desktop"); Platform.isTablet = params.has("tablet") && Platform.isMobile;
-const fixturePrefix = params.has("host") ? "echoink-ipad-beta6-host-fixture" : params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
+const fixturePrefix = params.has("host") ? "echoink-ipad-beta7-host-fixture" : params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
 const persisted = localStorage.getItem(`${fixturePrefix}-files`);
 if (persisted) { host.files.clear(); for (const [key, value] of JSON.parse(persisted)) host.files.set(key, value); }
 const persist = () => localStorage.setItem(`${fixturePrefix}-files`, JSON.stringify([...host.files]));
@@ -28,8 +35,23 @@ let slowRead = false;
 const read = host.app.vault.read.bind(host.app.vault);
 host.app.vault.read = async file => { if (slowRead) await new Promise(resolve => setTimeout(resolve, 1600)); return read(file); };
 const store = new MobileStore(host.adapter, "plugin/mobile"); await store.load();
+if (params.has("identity")) {
+  let avatar: Record<string, unknown> = { kind: "preset", presetId: params.get("identity") };
+  if (params.get("identity") === "custom") {
+    const canvas = document.createElement("canvas"); canvas.width = canvas.height = 256;
+    const context = canvas.getContext("2d")!; context.fillStyle = "#2e7569"; context.fillRect(0,0,256,256); context.fillStyle = "#fff"; context.font = "100px sans-serif"; context.textAlign = "center"; context.fillText("FI",128,164);
+    avatar = { kind: "custom", mimeType: "image/png", dataUrl: canvas.toDataURL("image/png"), width:256, height:256 };
+  }
+  host.files.set(".echoink/agents/echoink/agent-identity.json", JSON.stringify({ schema:"echoink.agent-identity.v1",revision:1,displayName:"墨墨",avatar,updatedAt:42 }));
+}
 const settings = loadMobileSettings(params.has("offline") ? null : JSON.parse(localStorage.getItem(`${fixturePrefix}-settings`) ?? "null"));
 settings.mobileUi.knowledgePaths = { wiki: "Wiki", raw: "Raw", inbox: "Inbox" };
+if (params.has("history")) {
+  settings.knowledgeBase.healthHistory = [
+    { date: "2026-10-05", at: Date.parse("2026-10-05T10:00:00+08:00"), status: "success" }, { date: "2026-10-09", at: Date.parse("2026-10-09T10:00:00+08:00"), status: "success" }, { date: "2026-10-11", at: Date.parse("2026-10-11T10:00:00+08:00"), status: "failed" }
+  ] as typeof settings.knowledgeBase.healthHistory;
+  settings.knowledgeBase.maintenanceHistory = [{ date: "2026-10-05", at: Date.parse("2026-10-05T10:00:00+08:00"), status: "success", summary: "旧维护" }, { date: "2026-10-10", at: Date.parse("2026-10-10T10:00:00+08:00"), status: "failed", summary: "最近维护" }] as typeof settings.knowledgeBase.maintenanceHistory;
+}
 if (params.has("seed") && !persisted) {
   const first = store.session; first.title = "iPad 上的工作记录"; first.notePath = "笔记/来源.md";
   first.messages = [{ role: "user", content: "把今天的记录整理成可读的笔记。", timestamp: Date.now() }, {
@@ -40,6 +62,7 @@ if (params.has("seed") && !persisted) {
   for (let index = 0; index < 25; index++) store.state.memories.push({ id: `fixture-memory-${index}`, kind: "view", title: ["解释与沟通偏好", "每周复盘", "工作中的决定", "值得继续探索的问题"][index] ?? `记忆 ${index + 1}`, content: ("先给结论，再给证据。每次记录只保留真正影响下一步的决定。\n\n").repeat(index === 0 ? 25 : 2), recallWhen: "解释问题", basis: "explicit", date: new Date().toISOString(), revision: 1, contentOrigin: "user_edit" });
   await store.save();
 }
+if (params.has("large")) settings.mobileUi.largeText = true;
 const requests: unknown[] = [];
 let renders = 0;
 const runtime = new MobileRuntime(host.app as any, store, () => settings, async request => {
@@ -61,7 +84,7 @@ const runtime = new MobileRuntime(host.app as any, store, () => settings, async 
 }, () => services.context());
 const accountService = await createMobileAccountService(host.app as any, () => settings);
 const financeAccess = { checkCapability: () => !params.has("expired"), requireCapability: () => { if (params.has("expired")) throw new Error("替身：授权已失效"); }, subscribe: () => () => {} };
-const plugin = new EchoInkMobilePlugin(host.app as any, { id: "codex-echoink", version: "2.6.3-beta.6 fixture" } as any);
+const plugin = new EchoInkMobilePlugin(host.app as any, { id: "codex-echoink", version: "2.6.3-beta.7 fixture" } as any);
 const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) } as any, registerEvent() {}, showPage: page => plugin.showPage(page), saveSettings: () => plugin.saveSettings() }, "plugin/mobile");
 await services.initialize();
 await services.initializeFinance();
@@ -92,6 +115,11 @@ if (params.has("desktop") && params.has("account")) {
   await plugin.navigation.open();
   if (params.has("home")) await plugin.navigation.openHome();
 }
+if (params.get("page") === "account") await plugin.showPage("account");
+if (params.has("long")) {
+  const action = document.querySelector<HTMLElement>(".start-actions button.quiet");
+  if (action) action.append("：记录今天的重要决定与下一步行动");
+}
 document.querySelector("#fixture-home-tab")!.addEventListener("click", () => { void plugin.navigation.openHome(); });
 document.querySelector("#fixture-close-settings")!.addEventListener("click", () => { void workspaceFixture.closeSettings(); });
 window.addEventListener("pagehide", () => { void desktopDispose?.(); void workspaceFixture.dispose(); }, { once: true });
@@ -110,7 +138,7 @@ if (params.has("finance")) {
   const element = params.has("tablet") ? document.querySelector<HTMLElement>("#home")! : root;
   if (!params.has("tablet")) { await workspaceFixture.dispose(); root.classList.remove("echoink-mobile", "em-tablet"); }
   element.hidden = false; element.classList.add("echoink-mobile-finance");
-  element.style.setProperty("--view-bottom-spacing", params.has("tablet") ? "0px" : "68px");
+  element.style.setProperty("--view-bottom-spacing", params.has("host") ? "var(--fixture-required)" : params.has("tablet") ? "0px" : "68px");
   const viewport = new MobileViewport(element);
   const view = new LifestyleView({ app: host.app, containerEl: element, contentEl: element } as any, services.lifestyle, "finance");
   await view.onOpen(); Object.assign(window, { financeView: view, financeViewport: viewport });

@@ -1,4 +1,7 @@
 const paths: Record<string, string> = {
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+  "circle-help": '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>',
+  "calendar-days": '<path d="M8 2v4M16 2v4M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/>',
   "arrow-up": '<path d="m5 12 7-7 7 7M12 5v14"/>',
   "chevron-left": '<path d="m15 18-6-6 6-6"/>', "chevron-right": '<path d="m9 18 6-6-6-6"/>', "chevron-down": '<path d="m6 9 6 6 6-6"/>',
   check: '<path d="m4 12 5 5L20 6"/>', square: '<rect x="6" y="6" width="12" height="12" rx="1"/>',
@@ -53,6 +56,7 @@ export async function requestUrl() { throw new Error("Browser fixture cannot cal
 export class Notice { constructor(text: string) { console.info("Fixture notice", text); } }
 export function sanitizeHTMLToDom(html: string) { const template = document.createElement("template"); template.innerHTML = html; return template.content; }
 const prototype = HTMLElement.prototype as any;
+(SVGElement.prototype as any).addClass = function(...names: string[]) { this.classList.add(...names); };
 prototype.empty = function() { this.replaceChildren(); };
 prototype.addClass = function(...names: string[]) { this.classList.add(...names); };
 prototype.removeClass = function(...names: string[]) { this.classList.remove(...names); };

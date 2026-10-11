@@ -8,6 +8,8 @@ export { default as EchoInkMobilePlugin, EchoInkMobileView } from "../../src/mob
 export { mobileWorkspaceFixture } from "./workspace-fixture";
 
 export { MobileServices } from "../../src/mobile/services";
+export { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../../src/ui/agent-avatar-presets";
+export { MobileViewport } from "../../src/ui/mobile/viewport";
 export { HomeActivityCore } from "../../src/home/home-activity-core";
 export { mobilePluginDataRoot } from "../../src/mobile/data-root";
 export { SETTINGS_TAB_ICONS } from "../../src/settings/settings-tab-icons";
