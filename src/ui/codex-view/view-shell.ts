@@ -53,6 +53,7 @@ export interface CodexViewShellHost extends Component {
 
 export function renderViewShell(host: CodexViewShellHost): void {
   host.contentEl.empty();
+  host.contentEl.addClass("echoink-chat-surface");
   host.rootEl = host.contentEl.createDiv({ cls: "codex-container" });
 
   renderCodexHeader(host.rootEl, {

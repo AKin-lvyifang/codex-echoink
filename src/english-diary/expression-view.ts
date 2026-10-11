@@ -1,3 +1,4 @@
+import {showEchoInkMenu} from "../ui/theme-boundary";
 import { capabilityMessage, unavailableCapabilityAccess } from "../membership/access";
 import { ItemView, Menu, Notice, setIcon, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { createOriginInput, disposeOriginControls } from "../settings/origin-controls";
@@ -340,7 +341,8 @@ export class EnglishExpressionView extends ItemView {
     if (occurrence.status === "needs-review") header.createSpan({ cls: "echoink-diary-badge is-review", text: "待确认" });
     const menuButton = diaryButton(header, "", () => {
       const rect = menuButton.getBoundingClientRect();
-      this.occurrenceMenu(entry, occurrence).showAtPosition({ x: rect.right, y: rect.bottom }, menuButton.ownerDocument);
+      const menu=this.occurrenceMenu(entry,occurrence);
+      showEchoInkMenu(menuButton.ownerDocument,()=>menu.showAtPosition({ x: rect.right, y: rect.bottom }, menuButton.ownerDocument));
     }, { tertiary: true, label: `${occurrence.date} 收录操作` });
     menuButton.addClass("echoink-expression-occurrence-menu");
     menuButton.setAttribute("aria-haspopup", "menu");

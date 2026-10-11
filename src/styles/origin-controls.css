@@ -103,6 +103,15 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
 :is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item],[data-slot=select-trigger]):disabled {opacity:.45;cursor:default}
 .echoink-settings-demo .codex-provider-custom-toggle>[data-slot=switch] {order:2;margin-left:auto}
 .echoink-settings-demo .codex-provider-custom-toggle-copy {min-width:0}
+/* The host's button/input focus selectors can be more specific than the
+   primitive base. Keep the existing field background and border, without
+   reintroducing a ring or painting its containing label/description. */
+:is(.echoink-settings-demo,.codex-provider-model-modal,.codex-mcp-server-modal) .echoink-origin-control[data-slot=input]:is(:focus,:focus-visible) {
+  outline:none;box-shadow:none;border-color:var(--origin-line);
+}
+:is(.echoink-settings-demo,.codex-provider-model-modal,.codex-mcp-server-modal) .echoink-origin-control[data-slot=input][aria-invalid=true] {
+  border-color:var(--text-error,#b44f4f);
+}
 @container settings (max-width:760px) {
   .echoink-settings-demo .setting-item-control>.echoink-origin-control[data-slot=input] {width:200px}
 }

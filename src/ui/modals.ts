@@ -129,6 +129,7 @@ class ConfirmModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl.addClass("echoink-theme-boundary");
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: this.titleText });
@@ -188,6 +189,7 @@ class TextInputModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl.addClass("echoink-theme-boundary");
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: this.titleText });
@@ -257,6 +259,7 @@ export class MemoryCorrectionModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl.addClass("echoink-theme-boundary");
     const zh = this.language !== "en";
     const { contentEl } = this;
     this.modalEl.addClass("echoink-memory-correction-modal");
@@ -564,6 +567,7 @@ class SelectInputModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl.addClass("echoink-theme-boundary");
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: this.titleText });
@@ -613,6 +617,7 @@ class RequestInputModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl.addClass("echoink-theme-boundary");
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: "Codex 需要你的选择" });
