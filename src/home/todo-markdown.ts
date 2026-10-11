@@ -9,6 +9,7 @@
  *   - [ ] 提交季度报告 <!-- echoink-todo-id: todo-1 -->
  *     - 相关人员：张三、李四
  *     - 截止日期：2026-09-18
+ *     - 截止时间：14:30
  *     - 分类：工作
  */
 export interface ParsedTodoRecord {
@@ -17,6 +18,8 @@ export interface ParsedTodoRecord {
   title: string;
   people: string;
   dueDate: string;
+  /** Local HH:mm; absent/empty uses 09:00. Invalid handwritten values are preserved. */
+  dueTime?: string;
   /** Category associated by display name; "" means uncategorized. */
   categoryName: string;
   done: boolean;
@@ -36,7 +39,7 @@ export interface ParsedTodoMarkdown {
 export const TODO_ID_COMMENT = "echoink-todo-id";
 
 const TASK_LINE = /^[-*]\s+\[([ xX])\]\s*(.*)$/;
-const META_LINE = /^\s+[-*]\s+(相关人员|截止日期|分类)[：:]\s*(.*)$/;
+const META_LINE = /^\s+[-*]\s+(相关人员|截止日期|截止时间|分类)[：:]\s*(.*)$/;
 const INDENTED_LINE = /^\s+\S/;
 const ID_COMMENT = new RegExp(`<!--\\s*${TODO_ID_COMMENT}:\\s*([^>]+?)\\s*-->`, "u");
 const DATE_VALUE = /^\d{4}-\d{2}-\d{2}$/;
@@ -84,6 +87,7 @@ export function parseTodoMarkdown(content: string): ParsedTodoMarkdown {
         const value = meta[2].trim();
         if (meta[1] === "相关人员") record.people = value;
         else if (meta[1] === "截止日期") record.dueDate = DATE_VALUE.test(value) ? value : "";
+        else if (meta[1] === "截止时间") record.dueTime = value;
         else record.categoryName = value;
       } else {
         record.extraMetaLines.push(sub);
@@ -106,6 +110,7 @@ export function serializeTodoRecord(record: ParsedTodoRecord): string {
   const lines = [`- [${record.done ? "x" : " "}] ${record.title}${idComment}`];
   if (record.people) lines.push(`  - 相关人员：${record.people}`);
   if (record.dueDate) lines.push(`  - 截止日期：${record.dueDate}`);
+  if (record.dueTime) lines.push(`  - 截止时间：${record.dueTime}`);
   if (record.categoryName) lines.push(`  - 分类：${record.categoryName}`);
   lines.push(...record.extraMetaLines);
   return lines.join("\n");

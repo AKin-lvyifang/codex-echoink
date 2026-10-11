@@ -1,4 +1,4 @@
-import type { FinanceBudget, FinanceEntry } from "./store";
+import type { FinanceBudget, FinanceEntry } from "./store-core";
 import { money } from "./finance-domain";
 import { financeAnalysisLabel, nextFinanceAnalysisMonth, type FinanceAnalysisHistoryOptions } from "./finance-analysis-history";
 

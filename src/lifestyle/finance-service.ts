@@ -4,13 +4,13 @@ import { financeEntryCsv } from "./finance-domain";
 import { Notice } from "obsidian";
 import { lifestyleProviderModel } from "./provider-info";
 import type { FinanceSettings } from "./settings";
-import type { LifestyleService } from "./service";
+import type { LifestyleHost } from "./host";
 import type { FinanceImportRow } from "./finance-domain";
 import { applyFinanceImportSettings, organizeFinanceRows, type FinanceOrganizationResult } from "./finance-import";
 import { buildFinanceAnalysisInput, parseFinanceAnalysisResponse,
   FinanceAnalysisValidationError, type FinanceAnalysisInput, type FinanceReportSnapshot } from "./finance-analysis";
 import { FINANCE_ANALYSIS_OUTPUT_PROTOCOL } from "../harness/resources/finance-analysis-skill";
-import { lifeId, type FinanceBillPlan, type FinanceContinuousGoal, type FinanceEntry, type FinanceGoal, type FinanceMonthlyPlan, type LifeReport } from "./store";
+import { lifeId, type FinanceBillPlan, type FinanceContinuousGoal, type FinanceEntry, type FinanceGoal, type FinanceMonthlyPlan, type LifeReport } from "./store-core";
 import { validateFinanceBillPlan, financeBillPlanStats } from "./finance-bill-plan";
 import { effectiveFinanceBudget, applyFinanceBudgetChanges, type FinanceBudgetChanges } from "./finance-budget";
 import { validateFinanceGoal } from "./finance-goals";
@@ -31,7 +31,7 @@ export class LifestyleFinanceService {
   private settingsQueue: Promise<void> = Promise.resolve();
   private importedIds = new Set<string>();
   private listeners = new Set<() => void>();
-  constructor(private readonly service: LifestyleService, readonly access: CapabilityAccess = service.plugin.accountService ?? unavailableCapabilityAccess) {
+  constructor(private readonly service: LifestyleHost, readonly access: CapabilityAccess = service.plugin.accountService ?? unavailableCapabilityAccess) {
     this.ledger = new FinanceLedger(service.plugin.app, service.store);
     this.analysisArchive = new FinanceAnalysisArchive(service.plugin.app, service.store, () => ({ ...this.ledger.paths(), configured:service.plugin.settings.lifestyle.finance.analysisDirectory??"" }));
   }

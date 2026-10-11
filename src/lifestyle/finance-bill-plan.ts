@@ -1,4 +1,4 @@
-import type { FinanceBillPlan, FinanceEntry } from "./store";
+import type { FinanceBillPlan, FinanceEntry } from "./store-core";
 import { effectiveFinanceEntries, financeSpendingFacts, filterFinanceEntries, localDate, type FinanceFilters } from "./finance-domain";
 
 export function validateFinanceBillPlan(plan: FinanceBillPlan): void {

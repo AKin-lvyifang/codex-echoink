@@ -3,8 +3,10 @@ import { mountAccountMembership } from "./account-membership";
 import { createUnavailableAccountAdapter } from "./account-membership-model";
 import { renderTavilySettings, renderProviderTabs } from "./tavily-settings";
 import { renderTodoStatistics } from "./todo-statistics";
+import { renderTodoReminderSettings } from "./todo-reminder-settings";
 import { renderEnglishDiaryActivity } from "./english-diary-activity";
 import { renderAppearancePicker } from "./appearance-picker";
+import { SETTINGS_TAB_ICONS } from "./settings-tab-icons";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { renderManualDreamAction } from "./manual-dream-action";
 import { OriginSetting } from "./origin-setting";
@@ -279,6 +281,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private developerPanel: DeveloperModePanel | null = null;
   private accountPage: { dispose: () => void } | null = null;
   private disposeTodoStatistics: (() => void) | null = null;
+  private disposeTodoReminders: (() => void) | null = null;
   private disposeDiaryActivity: (() => void) | null = null;
   private inlineEditor: { tab: VisibleSettingsTab; host: HTMLElement; dispose: () => void } | null = null;
   private nativeSettingsNavigation: NativeSettingsNavigation | null = null;
@@ -408,6 +411,8 @@ export class CodexSettingTab extends PluginSettingTab {
     this.accountPage = null;
     this.disposeTodoStatistics?.();
     this.disposeTodoStatistics = null;
+    this.disposeTodoReminders?.();
+    this.disposeTodoReminders = null;
     const navigation = this.nativeSettingsNavigation;
     for (const { setting, button } of navigation?.rows.values() ?? []) {
       if (setting.nameEl.parentElement === button) setting.infoEl.appendChild(setting.nameEl);
@@ -484,6 +489,8 @@ export class CodexSettingTab extends PluginSettingTab {
     this.accountPage = null;
     this.disposeTodoStatistics?.();
     this.disposeTodoStatistics = null;
+    this.disposeTodoReminders?.();
+    this.disposeTodoReminders = null;
     this.developerPanel?.dispose();
     this.developerPanel = null;
     this.ensureSettingsShell();
@@ -1184,6 +1191,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const store = this.plugin.getTodoStore();
     this.disposeTodoStatistics?.();
+    this.disposeTodoReminders?.();
     const statistics = page.createDiv();
     const renderStats = () => renderTodoStatistics(statistics, store, this.plugin.settings.settingsLanguage, this.app);
     renderStats();
@@ -1207,6 +1215,7 @@ export class CodexSettingTab extends PluginSettingTab {
     setIcon(openButton.createSpan({ attr: { "aria-hidden": "true" } }), "file-text");
     openButton.createSpan({ text: zh ? "打开源文件" : "Open source file" });
     openButton.onclick = () => void store.openSourceFile();
+    this.disposeTodoReminders = renderTodoReminderSettings(page, this.plugin);
 
     const section = createSettingsSection(page, {
       title: zh ? "待办分类" : "To-do categories",
@@ -5789,14 +5798,14 @@ const SETTINGS_TABS: Array<{
   id: VisibleSettingsTab;
   icon: AnimatedSettingsTabIconName;
 }> = [
-  { id: "general", icon: "settings" },
-  { id: "layout", icon: "blocks" },
-  { id: "providers", icon: "key-round" },
-  { id: "resources", icon: "layout-list" },
-  { id: "knowledgeBase", icon: "book-open-check" },
-  { id: "review", icon: "clipboard-check" },
-  { id: "todos", icon: "list-todo" },
-  { id: "account", icon: "feather" }
+  { id: "general", icon: SETTINGS_TAB_ICONS.general },
+  { id: "layout", icon: SETTINGS_TAB_ICONS.layout },
+  { id: "providers", icon: SETTINGS_TAB_ICONS.providers },
+  { id: "resources", icon: SETTINGS_TAB_ICONS.resources },
+  { id: "knowledgeBase", icon: SETTINGS_TAB_ICONS.knowledgeBase },
+  { id: "review", icon: SETTINGS_TAB_ICONS.review },
+  { id: "todos", icon: SETTINGS_TAB_ICONS.todos },
+  { id: "account", icon: SETTINGS_TAB_ICONS.account }
 ];
 
 function visibleSettingsTab(tab: SettingsTab): VisibleSettingsTab {

@@ -1,7 +1,7 @@
 import { capabilityMessage } from "../membership/access";
 import { setIcon } from "obsidian";
-import type { LifestyleService } from "./service";
-import type { FinanceBillPlan, FinanceEntry } from "./store";
+import type { LifestyleHost } from "./host";
+import type { FinanceBillPlan, FinanceEntry } from "./store-core";
 import { financePage, financePagination, fitFinanceList } from "./finance-pagination";
 import { FinanceNumbers } from "./finance-number";
 import { financeCategoryDonut } from "./finance-category-donut";
@@ -48,7 +48,7 @@ export class FinanceBillPlanView {
   private sizeObserver: ResizeObserver | null = null;
   private sizeFrame = 0;
   private stopResize: (() => void) | null = null;
-  constructor(private readonly service: LifestyleService, readonly state: FinanceBillPlanViewState, private readonly actions: BillPlanActions) {}
+  constructor(private readonly service: LifestyleHost, readonly state: FinanceBillPlanViewState, private readonly actions: BillPlanActions) {}
   get busy(): boolean { return this.saving; }
   dispose(clearHistory = false): void {
     if (clearHistory) this.numbers.release(); else this.numbers.begin(); this.stopDetailSize?.(); this.stopDetailSize = null; this.categoryDonut = null;
@@ -161,7 +161,7 @@ export class FinanceBillPlanView {
     this.updateDashboardRows(parent, stats.entries);
     this.categoryBudgets(parent,plan,stats.categoryBudgets,stats.unallocatedCents);
   }
-  private categoryBudgets(parent:HTMLElement,plan:FinanceBillPlan,rows:ReturnType<LifestyleService["finance"]["billPlanStats"]>["categoryBudgets"],unallocated:number):void {
+  private categoryBudgets(parent:HTMLElement,plan:FinanceBillPlan,rows:ReturnType<LifestyleHost["finance"]["billPlanStats"]>["categoryBudgets"],unallocated:number):void {
     const card=parent.createDiv({cls:"echoink-finance-card echoink-finance-bill-budget"});
     const header=card.createDiv({cls:"echoink-finance-section-head"});header.createEl("h3",{text:"分类预算"});
     const modes=header.createDiv({cls:"echoink-finance-segment",attr:{role:"group","aria-label":"分类预算读数"}});

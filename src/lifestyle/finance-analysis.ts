@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import type { FinanceBudget, FinanceEntry } from "./store";
+import { sha256Hex } from "../utils/sha256";
+import type { FinanceBudget, FinanceEntry } from "./store-core";
 import { financeAnalysisPurposeGroups, financeAnalysisAdjustmentScenarios } from "./finance-analysis-scenarios";
 import { buildFinanceAnalysisHistory, financeAnalysisLabel, financeAnalysisRows, financeCategoryBudgetFacts, type FinanceAnalysisHistoryOptions } from "./finance-analysis-history";
 import { effectiveFinanceEntries, financeSpendingFacts, localDate, money } from "./finance-domain";
@@ -224,7 +224,7 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
     可选核对表: tables.map((table) => ({ id: table.id, title: table.title, headers: table.headers, rows: table.rows }))
   };
   const text = JSON.stringify(input);
-  return { text, fingerprint: createHash("sha256").update(JSON.stringify({ ...input, 前次成功报告: [] })).digest("hex"), entryCount: valid.filter((row) => row.kind !== "transfer").length,
+  return { text, fingerprint: sha256Hex(JSON.stringify({ ...input, 前次成功报告: [] })), entryCount: valid.filter((row) => row.kind !== "transfer").length,
     facts: refs, candidates, tables };
 }
 

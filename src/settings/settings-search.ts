@@ -21,7 +21,7 @@ const CATEGORY_ALIASES: Record<SettingsTab, readonly string[]> = {
   resources: ["Skills & MCP", "资源", "resources", "技能", "skill", "skills", "MCP", "插件", "plugins", "工具", "tools", "服务", "server"],
   knowledgeBase: ["知识库管理", "知识库", "Knowledge", "knowledge base", "初始化", "initialization", "提炼", "refinement", "维护", "maintenance", "wiki", "索引", "index"],
   review: ["复盘", "Review", "周报", "weekly", "月报", "monthly", "报告", "report", "输出", "output", "归档", "archive", "记忆管理", "memory management"],
-  todos: ["待办", "todo", "todos", "任务", "task", "分类", "category", "截止日期", "due", "ddl"],
+  todos: ["待办", "todo", "todos", "任务", "task", "分类", "category", "截止日期", "due", "ddl", "提醒", "通知", "权限", "reminder", "notification", "permission", "截止时间"],
   account: ["账号", "会员", "订阅", "PRO", "激活", "兑换码", "设备", "头像", "密码", "account", "membership", "subscription", "redeem", "license", "devices", "password", "avatar"]
 };
 

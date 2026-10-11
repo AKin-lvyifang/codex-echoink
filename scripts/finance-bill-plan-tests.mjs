@@ -11,7 +11,7 @@ try {
   await esbuild.build({
     stdin: { contents: 'export { runFinanceBillPlanTests, runFinanceBillPlanDomTests } from "./src/tests/finance-bill-plan";', resolveDir: root, loader: "ts" },
     bundle: true, platform: "node", target: "node22", format: "esm", outfile: target,
-    external: ["read-excel-file/node", "yaml", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"],
+    external: ["read-excel-file/universal", "yaml", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"],
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
     banner: { js: 'import {createRequire} from "node:module"; const require = createRequire(import.meta.url);' },
     alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") },

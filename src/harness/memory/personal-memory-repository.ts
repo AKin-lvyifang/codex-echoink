@@ -1,3 +1,4 @@
+import { renderPersonalMemoryOverview as renderOverview } from "./mobile-profile-protocol";
 import { createHash, randomUUID } from "node:crypto";
 import { watch, type FSWatcher, type Stats } from "node:fs";
 import {
@@ -3905,41 +3906,6 @@ function defaultMemoryOverview(): string {
   ].join("\n");
 }
 
-function renderOverview(
-  manifest: PersonalMemoryManifest,
-  records: readonly Readonly<Pick<
-    PersonalMemoryRecord,
-    "id" | "kind" | "status" | "title" | "date" | "basis"
-  >>[]
-): string {
-  const current = records.filter((record) => record.status === "current");
-  const groups: Array<readonly [string, readonly PersonalMemoryKind[]]> = [
-    ["Facts", ["fact"]],
-    ["Views", ["view"]],
-    ["Decisions", ["decision"]],
-    ["Active", ["goal", "task", "open_loop"]],
-    ["Episodes", ["episode"]]
-  ];
-  const lines = [
-    "# Memory",
-    "",
-    `Revision: ${manifest.revision}`,
-    "",
-    GENERATED_OVERVIEW_SENTINEL,
-    ""
-  ];
-  for (const [heading, kinds] of groups) {
-    lines.push(`## ${heading}`, "");
-    const matches = current
-      .filter((record) => kinds.includes(record.kind))
-      .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id))
-      .slice(0, 8);
-    if (!matches.length) lines.push("- 暂无");
-    else for (const record of matches) lines.push(`- ${record.title}（${record.date}，${record.basis}，${record.id}）`);
-    lines.push("");
-  }
-  return `${lines.join("\n").slice(0, MAX_OVERVIEW_CHARS - 1)}\n`;
-}
 
 function parseGeneratedOverviewRevision(
   value: string

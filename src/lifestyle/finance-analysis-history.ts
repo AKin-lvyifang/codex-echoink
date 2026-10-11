@@ -1,4 +1,4 @@
-import type { FinanceBudget, FinanceContinuousGoal, FinanceEntry, LifeReport } from "./store";
+import type { FinanceBudget, FinanceContinuousGoal, FinanceEntry, LifeReport } from "./store-core";
 import { effectiveFinanceEntries, localDate, money } from "./finance-domain";
 import { financeGoalProgress } from "./finance-goals";
 

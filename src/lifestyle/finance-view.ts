@@ -1,9 +1,10 @@
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import type { Capability } from "../membership/types";
 import { capabilityMessage } from "../membership/access";
-import { Component, MarkdownRenderer, Modal, Notice, setIcon } from "obsidian";
-import type { LifestyleService } from "./service";
-import { lifeId, type FinanceBillPlan, type FinanceBudget, type FinanceContinuousGoal, type FinanceEntry, type FinanceGoal, type FinanceKind } from "./store";
+import { Component, MarkdownRenderer, Modal, Notice, Platform, setIcon } from "obsidian";
+import { MobileViewport } from "../ui/mobile/viewport";
+import type { LifestyleHost } from "./host";
+import { lifeId, type FinanceBillPlan, type FinanceBudget, type FinanceContinuousGoal, type FinanceEntry, type FinanceGoal, type FinanceKind } from "./store-core";
 import { effectiveFinanceBudget, FinanceBudgetEditor, parseFinanceBudgetDraft, type FinanceBudgetChanges, type FinanceBudgetDraft } from "./finance-budget";
 import { financeGoalProgress } from "./finance-goals";
 import {
@@ -83,20 +84,22 @@ function select(parent: HTMLElement, label: string, choices: readonly [string, s
 }
 
 class FinanceDialog extends Modal {
+  private mobileViewport?: MobileViewport;
   whenClosed?: () => void;
   private controls?: ProPluginControls;
   bindWrite(control: HTMLButtonElement, businessDisabled: () => boolean = () => false, needsWrite?: () => boolean, capability?: Capability): void { this.controls?.bind(control, { businessDisabled, needsWrite, capability }); }
   refreshAccess(): void { this.controls?.refresh(); }
-  constructor(private readonly service: LifestyleService, private readonly title: string, private readonly draw: (content: HTMLElement, dialog: FinanceDialog) => void) {
+  constructor(private readonly service: LifestyleHost, private readonly title: string, private readonly draw: (content: HTMLElement, dialog: FinanceDialog) => void) {
     super(service.plugin.app);
   }
   onOpen(): void {
     this.modalEl.addClass("echoink-finance-dialog");
+    if (Platform.isMobileApp || Platform.isTablet) { this.modalEl.addClass("echoink-mobile-finance-dialog"); this.mobileViewport = new MobileViewport(this.containerEl, this.service.viewportRoot?.()); }
     this.titleEl.setText(this.title);
     this.controls = new ProPluginControls(this.service.finance.access, () => this.service.finance.accessState());
     this.draw(this.contentEl, this);
   }
-  onClose(): void { this.controls?.dispose(); this.whenClosed?.(); this.contentEl.empty(); }
+  onClose(): void { this.mobileViewport?.dispose(); this.controls?.dispose(); this.whenClosed?.(); this.contentEl.empty(); }
 }
 
 export class FinanceWorkspace {
@@ -118,7 +121,7 @@ export class FinanceWorkspace {
   private renderedPage: FinancePage | null = null;
   private readonly numbers = new FinanceNumbers();
   private readonly billPlanView: FinanceBillPlanView;
-  constructor(private readonly service: LifestyleService) {
+  constructor(private readonly service: LifestyleHost) {
     this.state.billPlans ??= initialFinanceBillPlanViewState();
     this.billPlanView = new FinanceBillPlanView(service, this.state.billPlans, {
       redraw: () => this.redraw(), edit: (plan) => this.billPlanDialog(plan), add: (id) => this.addDialog(id),
@@ -1431,6 +1434,11 @@ export class FinanceWorkspace {
     const entries = filterFinanceEntries(this.entries(), this.state.month, this.state.filters);
     let csv: string;
     try { csv = this.service.finance.exportCsv(entries); } catch (error) { new Notice(errorText(error)); return; }
+    if (this.service.plugin.saveFinanceCsv) {
+      void this.service.plugin.saveFinanceCsv(`EchoInk-财务-${this.state.month}.csv`, csv)
+        .then(path => new Notice(`已导出到笔记库：${path}`, 10000)).catch(error => new Notice(errorText(error)));
+      return;
+    }
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a"); anchor.href = url; anchor.download = `EchoInk-财务-${this.state.month}.csv`; anchor.click();

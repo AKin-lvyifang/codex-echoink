@@ -169,6 +169,39 @@ export async function runHomeTodoTests(): Promise<void> {
     assert.deepEqual(cleared.todoCategories, []);
     assert.deepEqual(normalizeSettingsData(JSON.parse(JSON.stringify(cleared))).settings.todoCategories, []);
     assert.deepEqual(normalizeSettingsData({}).settings.todoCategories, DEFAULT_SETTINGS.todoCategories);
+
+    const times = createTodoFixture("说明原文\n- [ ] 手写任务 <!-- echoink-todo-id: manual -->\n  - 截止日期：2026-10-12\n  - 截止时间：15:45\n  - 自定义：保持原文\n");
+    await times.store.reload();
+    assert.equal(times.store.snapshot()[0].dueTime, "15:45");
+    await times.store.toggleDone(times.store.snapshot()[0], true);
+    assert.match(times.content(), /说明原文/);
+    assert.match(times.content(), /自定义：保持原文/);
+    assert.equal(times.store.snapshot()[0].dueTime, "15:45");
+    times.externalEdit(times.content().replace("15:45", "16:20"));
+    await times.store.updateTodo(times.store.snapshot()[0], { title: "编辑标题" });
+    assert.equal(times.store.snapshot()[0].dueTime, "16:20", "latest handwritten time survives unrelated UI writes");
+    await times.store.updateTodo(times.store.snapshot()[0], { dueTime: "" });
+    assert.equal(times.store.snapshot()[0].dueTime, undefined);
+    await times.store.updateTodo(times.store.snapshot()[0], { dueTime: "10:00" });
+    await times.store.updateTodo(times.store.snapshot()[0], { dueDate: "" });
+    assert.equal(times.store.snapshot()[0].dueTime, undefined);
+    assert.doesNotMatch(times.content(), /截止时间/);
+    await assert.rejects(times.store.addTodo({ title: "Invalid", dueDate: "2026-10-12", dueTime: "25:30" }), /HH:mm/);
+    await times.store.addTodo({ title: "Date only", dueDate: "2026-10-12" });
+    assert.equal(times.store.snapshot().at(-1)?.dueTime, undefined);
+    await times.store.addTodo({ title: "With time", dueDate: "2026-10-12", dueTime: " 00:00 " });
+    assert.equal(times.store.snapshot().at(-1)?.dueTime, "00:00");
+
+    const handwrittenTime = createTodoFixture("- [ ] 稍后补日期 <!-- echoink-todo-id: time-only -->\n  - 截止时间：15:45\n  - 自定义：保留\n");
+    await handwrittenTime.store.reload();
+    await handwrittenTime.store.toggleDone(handwrittenTime.store.snapshot()[0], true);
+    await handwrittenTime.store.updateTodo(handwrittenTime.store.snapshot()[0], { title: "改个标题", people: "张三" });
+    await handwrittenTime.store.toggleDone(handwrittenTime.store.snapshot()[0], false);
+    assert.equal(handwrittenTime.store.snapshot()[0].dueDate, "");
+    assert.equal(handwrittenTime.store.snapshot()[0].dueTime, "15:45", "unrelated edits and completion preserve time-only handwritten metadata");
+    assert.match(handwrittenTime.content(), /自定义：保留/u);
+    await handwrittenTime.store.updateTodo(handwrittenTime.store.snapshot()[0], { dueDate: "" });
+    assert.equal(handwrittenTime.store.snapshot()[0].dueTime, undefined, "an explicit date-clear also clears the time");
   } finally {
     console.error = previousError;
   }

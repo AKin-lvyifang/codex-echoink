@@ -1,7 +1,7 @@
 import { TFile, type App } from "obsidian";
 import { stringify } from "yaml";
 import type { FinanceAnalysisInput, FinanceReportSnapshot, FinanceTableSnapshot } from "./finance-analysis";
-import type { LifeReport, LifestyleStore } from "./store";
+import type { LifeReport, LifestyleStoreCore } from "./store-core";
 
 export interface FinanceAnalysisArchiveRecord {
   id: string; period: string; version: number; createdAt: number;
@@ -59,7 +59,7 @@ export function financeReportMarkdown(report: LifeReport): string {
 export class FinanceAnalysisArchive {
   private queue: Promise<unknown> = Promise.resolve();
   private history = new Map<string, { report: LifeReport; input?: string }>();
-  constructor(private readonly app: App, private readonly store: LifestyleStore,
+  constructor(private readonly app: App, private readonly store: LifestyleStoreCore,
     private readonly location: () => { root: string; directory: string; configured: string }) {}
   directory(value = this.location().configured): string {
     const { root, directory } = this.location();

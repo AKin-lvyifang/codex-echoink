@@ -1,7 +1,8 @@
 import { localTodoDate, reconcileTodoCompletions, todoCompletionStatistics } from "./todo-completions";
 import { Notice, TFile } from "obsidian";
-import type CodexForObsidianPlugin from "../main";
-import { newId } from "../settings/settings";
+import type { TodoHost } from "./home-host";
+import { newId } from "../core/new-id";
+import { isTodoDueTime, normalizeTodoDueTime } from "./todo-due";
 import {
   appendRecordBlock,
   locateRecord,
@@ -19,6 +20,7 @@ export interface TodoInput {
   title: string;
   people?: string;
   dueDate?: string;
+  dueTime?: string;
   categoryName?: string;
   done?: boolean;
   id?: string;
@@ -35,9 +37,12 @@ export class EchoInkTodoStore {
   private writeQueue: Promise<void> = Promise.resolve();
   private reloadTimer: number | null = null;
   private initialized = false;
+  private initialization: Promise<void> | null = null;
+  private observing = false;
+  private disposed = false;
   private hasObserved = false;
 
-  constructor(private readonly plugin: CodexForObsidianPlugin) {}
+  constructor(private readonly plugin: TodoHost) {}
 
   get sourcePath(): string {
     return TODO_SOURCE_PATH;
@@ -55,34 +60,47 @@ export class EchoInkTodoStore {
   }
 
   private notify(): void {
+    if (this.disposed) return;
     for (const listener of [...this.listeners]) listener();
   }
 
   async initialize(): Promise<void> {
+    if (this.disposed) return;
     if (this.initialized) return;
-    this.initialized = true;
-    try {
-      await this.initializeInner();
-    } catch (error) {
-      this.initialized = false;
-      throw error;
-    }
+    if (!this.initialization) this.initialization = this.initializeInner()
+      .then(() => { this.initialized = true; })
+      .finally(() => { this.initialization = null; });
+    await this.initialization;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    const win = this.plugin.app.workspace.containerEl.ownerDocument.defaultView;
+    if (this.reloadTimer !== null) win?.clearTimeout(this.reloadTimer);
+    this.reloadTimer = null;
+    this.listeners.clear();
   }
 
   private async initializeInner(): Promise<void> {
     const vault = this.plugin.app.vault;
-    this.plugin.registerEvent(vault.on("modify", (file) => {
-      if (file.path === TODO_SOURCE_PATH) this.scheduleReload();
-    }));
-    this.plugin.registerEvent(vault.on("create", (file) => {
-      if (file.path === TODO_SOURCE_PATH) this.scheduleReload();
-    }));
-    this.plugin.registerEvent(vault.on("delete", (file) => {
-      if (file.path !== TODO_SOURCE_PATH) return;
-      // Never resurrect from cache: a deleted source means an empty list.
-      this.records = [];
-      this.notify();
-    }));
+    if (!this.observing) {
+      this.observing = true;
+      this.plugin.registerEvent(vault.on("modify", (file) => {
+        if (file.path === TODO_SOURCE_PATH) this.scheduleReload();
+      }));
+      this.plugin.registerEvent(vault.on("create", (file) => {
+        if (file.path === TODO_SOURCE_PATH) this.scheduleReload();
+      }));
+      this.plugin.registerEvent(vault.on("delete", (file) => {
+        if (file.path !== TODO_SOURCE_PATH) return;
+        // Never resurrect from cache: a deleted source means an empty list.
+        this.records = [];
+        this.notify();
+      }));
+      this.plugin.registerEvent(vault.on("rename", (file, oldPath) => {
+        if (oldPath === TODO_SOURCE_PATH || file.path === TODO_SOURCE_PATH) this.scheduleReload();
+      }));
+    }
     await this.migrateLegacySettings();
     await this.reload();
   }
@@ -95,6 +113,7 @@ export class EchoInkTodoStore {
   }
 
   async reload(): Promise<void> {
+    if (this.disposed) return;
     const run = this.writeQueue.then(() => this.reloadInner());
     this.writeQueue = run.catch(() => undefined);
     return run;
@@ -124,6 +143,7 @@ export class EchoInkTodoStore {
   }
 
   private async reloadInner(): Promise<void> {
+    if (this.disposed) return;
     const file = this.plugin.app.vault.getAbstractFileByPath(TODO_SOURCE_PATH);
     if (!(file instanceof TFile)) {
       this.records = [];
@@ -131,6 +151,7 @@ export class EchoInkTodoStore {
       return;
     }
     let content = await this.plugin.app.vault.cachedRead(file);
+    if (this.disposed) return;
     if (this.assignStableIds(content) !== content) {
       content = await this.plugin.app.vault.process(file, (latest) => this.assignStableIds(latest));
     }
@@ -153,11 +174,12 @@ export class EchoInkTodoStore {
   }
 
   private scheduleReload(): void {
+    if (this.disposed) return;
     const win = this.plugin.app.workspace.containerEl.ownerDocument.defaultView;
     if (this.reloadTimer !== null) win?.clearTimeout(this.reloadTimer);
     this.reloadTimer = win?.setTimeout(() => {
       this.reloadTimer = null;
-      void this.reload();
+      void this.reload().catch((error) => console.error("[EchoInk] To-do source refresh failed:", error));
     }, 250) ?? null;
   }
 
@@ -263,11 +285,13 @@ export class EchoInkTodoStore {
   }
 
   async addTodo(input: TodoInput): Promise<void> {
+    this.validateDueTime(input.dueTime);
     const record: ParsedTodoRecord = {
       id: input.id ?? newId("todo"),
       title: input.title.trim(),
       people: (input.people ?? "").trim(),
       dueDate: input.dueDate ?? "",
+      dueTime: normalizeTodoDueTime(input.dueTime) || undefined,
       categoryName: (input.categoryName ?? "").trim(),
       done: input.done === true,
       lineStart: 0,
@@ -280,6 +304,7 @@ export class EchoInkTodoStore {
   }
 
   async updateTodo(target: ParsedTodoRecord, patch: Partial<TodoInput>): Promise<void> {
+    this.validateDueTime(patch.dueTime);
     await this.enqueueWrite((content) => {
       const parsed = parseTodoMarkdown(content);
       const current = locateRecord(parsed.records, target);
@@ -292,8 +317,17 @@ export class EchoInkTodoStore {
         categoryName: patch.categoryName !== undefined ? patch.categoryName.trim() : current.categoryName,
         done: patch.done !== undefined ? patch.done === true : current.done
       };
+      next.dueTime = patch.dueDate === "" ? undefined
+        : patch.dueTime !== undefined ? normalizeTodoDueTime(patch.dueTime) || undefined : current.dueTime;
       return { content: replaceRecordLines(content, current, serializeTodoRecord(next)) };
     });
+  }
+
+  private validateDueTime(value: string | undefined): void {
+    if (value?.trim() && !isTodoDueTime(value.trim())) {
+      throw new Error(this.plugin.settings.settingsLanguage === "en"
+        ? "Use a valid deadline time (HH:mm)." : "截止时间请使用有效的 HH:mm 格式。");
+    }
   }
 
   async toggleDone(target: ParsedTodoRecord, done: boolean): Promise<void> {
