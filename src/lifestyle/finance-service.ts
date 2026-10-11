@@ -18,7 +18,7 @@ import { nextFinanceAnalysisMonth } from "./finance-analysis-history";
 import { FinanceAnalysisArchive, type FinanceAnalysisArchiveDraft } from "./finance-analysis-archive";
 import { FinanceLedger, type CreatedFinanceRow, type FinanceImportResult, type FinanceImportWriteOptions } from "./finance-ledger";
 
-export const FINANCE_ANALYSIS_PROMPT_VERSION = "finance-analysis-v20";
+export const FINANCE_ANALYSIS_PROMPT_VERSION = "finance-analysis-v21";
 
 export class LifestyleFinanceService {
   readonly ledger: FinanceLedger;

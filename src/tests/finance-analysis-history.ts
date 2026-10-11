@@ -58,34 +58,55 @@ export async function runFinanceAnalysisHistoryTests(){
 }
 
 function assertAdjustmentScenarios() {
-  const rows=[...Array.from({length:28},(_,i)=>row(`ordinary-${i}`,5500,"expense","餐饮",{description:"日常三餐"})),
-    ...Array.from({length:2},(_,i)=>row(`party-${i}`,39000,"expense","餐饮",{description:"朋友聚餐"})),
-    ...Array.from({length:18},(_,i)=>row(`tea-${i}`,2400,"expense","饮品",{description:"奶茶",merchant:`茶店${i%6}`})),
+  const rows=[...Array.from({length:28},(_,i)=>row(`ordinary-${i}`,5500,"expense","餐饮",{date:`2026-09-${String(i+1).padStart(2,"0")}`,description:"普通一日三餐"})),
+    row("party-friend",39000,"expense","餐饮",{date:"2026-09-15",description:"朋友聚餐"}),
+    row("party-birthday",39000,"expense","餐饮",{date:"2026-09-25",description:"生日聚餐"}),
+    ...Array.from({length:18},(_,i)=>row(`tea-${i}`,2400,"expense","饮品",{description:"奶茶",merchant:`茶店${i%9}`})),
     row("ordinary-budget",8000,"expense","交通"),row("unallocated",10000,"expense","未设额度")];
   const budget={month:"2026-09",totalCents:400000,allocations:{餐饮:180000,饮品:24000,交通:8000}};
   const prepared=buildFinanceAnalysisInput("2026-09",rows,budget,"2026-10-12",{});
   const input=JSON.parse(prepared.text),scenarios=input.可核对调整情景.分类;
   assert.deepEqual(scenarios.map((item:any)=>item.分类),["餐饮","饮品"],"normal use and missing allocation do not produce adjustment scenarios");
-  const dining=scenarios[0],party=dining.用途取舍.find((item:any)=>item.消费说明==="朋友聚餐");
+  const dining=scenarios[0],ordinary=dining.用途取舍.find((item:any)=>item.消费说明==="普通一日三餐");
   assert.equal(dining.本期净支出元,2320);assert.equal(dining.需减少或增加额度元,520);
-  assert.deepEqual([party.本期用途金额元,party.本期其余金额元,party.保留用途后其余上限元,party.保留其余后用途上限元],[780,1540,1020,260]);
-  assert.equal(party.本期用途金额元+party.保留用途后其余上限元,1800);
-  assert.equal(party.本期其余金额元+party.保留其余后用途上限元,1800);
+  assert.equal(dining.用途取舍.length,3,"three distinct recorded purposes remain distinct");
+  assert.deepEqual([ordinary.本期用途金额元,ordinary.本期其余金额元,ordinary.保留用途后其余上限元,ordinary.保留其余后用途上限元],[1540,780,260,1020]);
+  assert.equal(ordinary.本期用途金额元+ordinary.保留用途后其余上限元,1800);
+  assert.equal(ordinary.本期其余金额元+ordinary.保留其余后用途上限元,1800);
+  const combined=rows.map(item=>item.id.startsWith("party-")?{...item,description:"聚餐"}:item);
+  const complementary=JSON.parse(buildFinanceAnalysisInput("2026-09",combined,budget,"2026-10-12",{}).text).可核对调整情景.分类[0].用途取舍;
+  assert.equal(complementary.length,1,"two complementary purpose groups share one pair of amount choices");
+  assert.deepEqual([complementary[0].本期用途金额元,complementary[0].本期其余金额元,complementary[0].保留用途后其余上限元,complementary[0].保留其余后用途上限元],[780,1540,1020,260]);
   assert.match(dining.条件,/若2026-10沿用本月/);assert.match(dining.条件,/以本期.*作对照/);
   assert.equal(dining.单独调拨后余量元,1360);
   assert.match(prepared.facts[dining.引用.单独调拨],/本月总预算与全部分类额度/);
   const tea=scenarios[1].用途取舍[0];
-  assert.deepEqual([tea.用途单价元,tea.同价次数上限,tea.需减少同价次数,tea.减少同价金额元],[24,10,8,192]);
+  assert.deepEqual([scenarios[1].本期净支出元,scenarios[1].情景分类额度元,scenarios[1].需减少或增加额度元],[432,240,192]);
+  assert.deepEqual([tea.本期用途金额元,tea.本期其余金额元,tea.保留其余后用途上限元],[432,0,240]);
+  for(const scenario of scenarios) for(const choice of scenario.用途取舍) {
+    assert.equal(Object.hasOwn(choice,"同价次数上限"),false);
+    assert.equal(Object.hasOwn(choice,"需减少同价次数"),false);
+    assert.equal(Object.hasOwn(choice,"减少同价金额元"),false);
+    assert.equal(choice.引用.同价次数,undefined,"same-price records do not supply activity-count advice");
+  }
+  assert.equal(Object.keys(prepared.facts).some(key=>/^adjustment_.*_count$/u.test(key)),false);
+  assert.doesNotMatch(Object.entries(prepared.facts).filter(([key])=>key.startsWith("adjustment_")).map(([,value])=>value).join(""),/最多 \d+ 笔|需减少 \d+ 笔/u);
+  const diningHistory=input.用途累计候选.find((item:any)=>item.相同消费说明==="普通一日三餐");
+  const teaHistory=input.用途累计候选.find((item:any)=>item.相同消费说明==="奶茶");
+  assert.deepEqual([diningHistory.笔数,diningHistory.累计支出原额元,diningHistory.相同单笔金额元],[28,1540,55]);
+  assert.deepEqual([teaHistory.笔数,teaHistory.不同商户数,teaHistory.累计支出原额元,teaHistory.相同单笔金额元],[18,9,432,24]);
   const parsed=parseFinanceAnalysisResponse(JSON.stringify({version:8,sections:[{title:"取舍",blocks:[
     {type:"highlight",tone:"fact",markdown:"{{record_coverage}}"},
-    {type:"actions",items:[`{{${party.引用.保留其余}}}`,`{{${tea.引用.同价次数}}} 每月预算最多10次，是条件选择。`]}]}]}),prepared);
+    {type:"actions",items:[`{{${ordinary.引用.保留用途}}}`,`{{${tea.引用.保留其余}}}`]},
+    {type:"text",markdown:"餐饮净支出2320元，超额520元；饮品432元，按240元额度需减少192元。"}]}]}),prepared);
   const action=parsed.sections![0].blocks.find(block=>block.type==="actions")!;
   assert.equal(action.type,"actions");if(action.type!=="actions")throw new Error("actions required");
   assert.doesNotMatch(action.items.join(""),/\{\{/);assert.match(action.items[0],/260/);assert.match(action.items[1],/192/);
   assert.match(parsed.conclusion,/记录完整性未知/);assert.equal(parsed.omittedSuggestionCount,0);
   const differentPrice=rows.map(item=>item.id==="tea-0"?{...item,amountCents:2500}:item);
-  const varied=JSON.parse(buildFinanceAnalysisInput("2026-09",differentPrice,budget,"2026-10-12",{}).text).可核对调整情景.分类[1].用途取舍[0];
-  assert.equal(varied.同价次数上限,null);assert.equal(varied.引用.同价次数,undefined,"varying prices cannot imply a fixed count limit");
+  const varied=JSON.parse(buildFinanceAnalysisInput("2026-09",differentPrice,budget,"2026-10-12",{}).text);
+  assert.equal(varied.可核对调整情景.分类[1].需减少或增加额度元,193);
+  assert.equal(varied.用途累计候选.find((item:any)=>item.相同消费说明==="奶茶").相同单笔金额元,null);
   const refunded=JSON.parse(buildFinanceAnalysisInput("2026-09",[...rows,row("refund",10000,"refund","餐饮")],budget,"2026-10-12",{}).text).可核对调整情景.分类[0];
   assert.equal(refunded.本期净支出元,2220);assert.equal(refunded.需减少或增加额度元,420);
   assert.deepEqual(refunded.用途取舍,[],"category refunds cannot be attributed to an individual purpose");
@@ -95,11 +116,12 @@ function assertAdjustmentScenarios() {
   assert.equal(higher.情景分类额度元,3000);assert.equal(higher.需减少或增加额度元,0);assert.deepEqual(higher.用途取舍,[]);
   assert.match(high.facts[higher.引用.总额],/不需增额或减支/);
   const low=buildFinanceAnalysisInput("2026-09",rows,budget,"2026-10-12",{nextBudget:{month:"2026-10",totalCents:105000,allocations:{餐饮:100000}}});
-  const lower=JSON.parse(low.text).可核对调整情景.分类[0],lowerParty=lower.用途取舍[0];
+  const lower=JSON.parse(low.text).可核对调整情景.分类[0],lowerOrdinary=lower.用途取舍[0],lowerParty=lower.用途取舍[1];
   assert.equal(lower.情景分类额度元,1000);assert.equal(lower.需减少或增加额度元,1320);
   assert.equal(lower.引用.单独调拨,undefined,"insufficient public allocation must not produce a reallocation option");
-  assert.equal(lowerParty.保留用途后其余上限元,220);assert.equal(lowerParty.保留其余后用途上限元,null);
-  assert.equal(lowerParty.同价次数上限,null);assert.match(low.facts[lowerParty.引用.保留其余],/不能.*可花金额/);
+  assert.equal(lowerOrdinary.保留用途后其余上限元,null);assert.equal(lowerOrdinary.保留其余后用途上限元,220);
+  assert.equal(lowerParty.保留用途后其余上限元,610);assert.equal(lowerParty.保留其余后用途上限元,null);
+  assert.match(low.facts[lowerParty.引用.保留其余],/不能.*可花金额/);
   const missingCategory=JSON.parse(buildFinanceAnalysisInput("2026-09",rows,budget,"2026-10-12",{nextBudget:{month:"2026-10",totalCents:500000,allocations:{交通:20000}}}).text).可核对调整情景.分类[0];
   assert.match(missingCategory.条件,/若2026-10沿用本月/);assert.equal(missingCategory.未分配余量元,null);
   assert.equal(missingCategory.引用.单独调拨,undefined,"unknown next-category baseline cannot use the next plan's entire public pool");
@@ -108,5 +130,5 @@ function assertAdjustmentScenarios() {
   assert.equal(Object.hasOwn(noAdjustment.facts,"adjustment_0_total"),false);
   const noActions=parseFinanceAnalysisResponse(JSON.stringify({version:8,sections:[{title:"记录回看",blocks:[{type:"text",markdown:"已记录支出80元，交通在额度内。"}]}]}),noAdjustment);
   assert.equal(noActions.sections![0].blocks.length,1,"empty adjustment context still supports a report without actions");
-  console.log("PASS adjustment scenarios: exact sum/tradeoff, 18x24 within240, differing prices/refunds, next higher/lower/unknown budget, public pool feasibility and unchanged fact-reference/natural-number parser");
+  console.log("PASS adjustment scenarios: three real purpose groups, exact amount tradeoffs without activity-count advice, recorded price/frequency retained, refunds and next budgets, public pool feasibility and unchanged fact-reference/natural-number parser");
 }
