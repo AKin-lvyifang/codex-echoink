@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { FinanceBudget, FinanceEntry } from "./store";
+import { buildFinanceAnalysisHistory, financeAnalysisLabel, financeAnalysisRows, financeCategoryBudgetFacts, type FinanceAnalysisHistoryOptions } from "./finance-analysis-history";
 import { effectiveFinanceEntries, financeSpendingFacts, localDate, money } from "./finance-domain";
 
 export type FinanceChartId = "daily" | "large" | "budget" | "category" | "merchant" | "flow";
@@ -16,7 +17,7 @@ export function financeDailyWeeks(points: readonly FinanceChartPoint[]): Finance
   return weeks;
 }
 export interface FinanceChartSnapshot { id: FinanceChartId; title: string; points: FinanceChartPoint[]; explanation: string }
-export interface FinanceTableSnapshot { id: "category" | "merchant" | "budget"; title: string; headers: string[]; rows: string[][] }
+export interface FinanceTableSnapshot { id: "category" | "merchant" | "budget"; title: string; headers: string[]; rows: string[][]; columns?: ("text" | "number" | "status")[]; statuses?: ("fact" | "notice" | "positive")[] }
 export type FinanceReportBlock =
   | { type: "text"; markdown: string }
   | { type: "highlight"; tone: "fact" | "notice" | "positive"; markdown: string }
@@ -43,13 +44,12 @@ export class FinanceAnalysisValidationError extends Error {
 }
 function invalid(code: FinanceAnalysisErrorCode): never { throw new FinanceAnalysisValidationError(code); }
 
-const safeLabel = (value: string): string => value.replace(/\p{Cc}/gu, " ")
-  .replace(/(?:\d[ -]?){12,}/gu, "[编号]").replace(/\s+/gu, " ").trim().slice(0, 60);
+const safeLabel = financeAnalysisLabel;
 const sum = (rows: readonly FinanceEntry[]): number => rows.reduce((total, row) => total + row.amountCents, 0);
 
 /** Prepare recorded transactions, deterministic statistics and display candidates for the model. */
 export function buildFinanceAnalysisInput(month: string, ledger: readonly FinanceEntry[], budget: FinanceBudget | null,
-  asOfDate = localDate()): FinanceAnalysisInput {
+  asOfDate = localDate(), historyOptions?: FinanceAnalysisHistoryOptions): FinanceAnalysisInput {
   const valid = effectiveFinanceEntries(ledger, month, asOfDate);
   const facts = financeSpendingFacts(ledger, month, asOfDate);
   const incomeCents = sum(valid.filter((row) => row.kind === "income"));
@@ -116,7 +116,7 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
       if (row.kind !== "expense" && row.kind !== "refund") continue;
       categoryNet.set(row.category, (categoryNet.get(row.category) ?? 0) + (row.kind === "expense" ? row.amountCents : -row.amountCents));
     }
-    const names = [...new Set([...Object.keys(budget.allocations), ...categoryNet.keys()])];
+    const names = Object.keys(budget.allocations);
     const ranked = names.map((name) => ({ label: safeLabel(name), valueCents: categoryNet.get(name) ?? 0,
       comparisonCents: budget.allocations[name] ?? 0 }))
       .sort((a, b) => Math.max(Math.abs(b.valueCents), b.comparisonCents) - Math.max(Math.abs(a.valueCents), a.comparisonCents));
@@ -182,13 +182,16 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
     { label: "退款", valueCents: refundCents }, { label: "收支差额", valueCents: incomeCents - netCents }
   ] });
   const tables: FinanceTableSnapshot[] = [];
+  const categoryBudgets = financeCategoryBudgetFacts(valid, budget);
   if (category.length) tables.push({ id: "category", title: "分类支出核对", headers: ["分类", "支出原额", "占比", "笔数"],
     rows: category.map((item) => [item.分类, item.金额, item.占支出原额, `${item.笔数}`]) });
   if (merchants.length) tables.push({ id: "merchant", title: "商户支出核对", headers: ["商户", "支出原额", "占比", "笔数"],
     rows: merchants.map((item) => [item.商户, item.金额, item.占支出原额, `${item.笔数}`]) });
-  const budgetChart = candidates.find((item) => item.id === "budget");
-  if (budgetChart) tables.push({ id: "budget", title: "分类预算核对", headers: ["分类", "净支出", "预算"], rows: budgetChart.points.map((point) =>
-    [point.label, `¥ ${money(point.valueCents)}`, `¥ ${money(point.comparisonCents ?? 0)}`]) });
+  if (categoryBudgets.length) tables.push({ id: "budget", title: "完整分类预算核对", headers: ["分类", "净支出", "预算", "超出", "状态"],
+    columns: ["text", "number", "number", "number", "status"],
+    statuses: categoryBudgets.map(item => item.状态 === "超支" || item.状态 === "接近额度" ? "notice" : "fact"),
+    rows: categoryBudgets.map(item => [item.分类, `¥ ${money(item.净支出分)}`, item.额度分 === null ? "未设额度" : `¥ ${money(item.额度分)}`,
+      item.超额分 === null ? "—" : `¥ ${money(item.超额分)}`, item.状态]) });
   const highest = facts.expenses.slice().sort((a, b) => b.amountCents - a.amountCents || a.date.localeCompare(b.date)).slice(0, 8)
     .map((row, index) => {
       const item = { 日期: row.date.slice(0, 10), 商户: safeLabel(row.merchant), 分类: safeLabel(row.category),
@@ -196,6 +199,16 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
       refs[`expense_${index + 1}`] = `${item.日期} ${item.商户} ${item.金额}`;
       return item;
     });
+  const purposeGroups=new Map<string,{category:string;description:string;amountCents:number;count:number;merchants:Set<string>;dates:Set<string>}>();
+  for(const row of facts.expenses) {
+    if(!row.description.trim()) continue;
+    const key=JSON.stringify([row.category,row.description.trim()]);
+    const group=purposeGroups.get(key)??{category:row.category,description:row.description.trim(),amountCents:0,count:0,merchants:new Set<string>(),dates:new Set<string>()};
+    group.amountCents+=row.amountCents;group.count++;group.merchants.add(row.merchant.trim());group.dates.add(row.date.slice(0,10));purposeGroups.set(key,group);
+  }
+  const purposes=[...purposeGroups.values()].filter(group=>group.count>1).sort((a,b)=>b.amountCents-a.amountCents).map(group=>({
+    分类:safeLabel(group.category),相同消费说明:safeLabel(group.description),笔数:group.count,不同商户数:group.merchants.size,
+    累计支出原额元:group.amountCents/100,交易日期:[...group.dates].sort(),归组口径:"相同非空消费说明和已有分类，未进行模型用途分类"}));
   const input = {
     月份: refs.month, 已记录日期: refs.range, 资料边界: "只代表此账本已记录的已完成人民币交易；不能判断全部账户或完整月份。",
     排除记录: {
@@ -204,9 +217,14 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
       未来: ledger.filter((row) => row.date.startsWith(month) && row.date.slice(0, 10) > asOfDate).length
     },
     基础统计: refs,
-    有效交易明细: valid.map((row) => ({ 日期: row.date, 交易方向: { income: "收入", expense: "支出", refund: "退款", transfer: "转账（不计收支）" }[row.kind],
-      商户: safeLabel(row.merchant), 分类: safeLabel(row.category), 账户: safeLabel(row.account),
-      人民币金额: money(row.amountCents), 消费说明: safeLabel(row.description) })),
+    有效交易明细: financeAnalysisRows(valid),
+    完整分类预算: categoryBudgets.map(item=>({分类:item.分类,净支出元:item.净支出分/100,额度元:item.额度分===null?null:item.额度分/100,
+      超额元:item.超额分===null?null:item.超额分/100,状态:item.状态})),
+    用途累计候选:purposes,
+    金额口径:"所有面向模型的金额为人民币元，比例目标为%；交易日期是账目交易日期，不是录入时间；覆盖unknown表示记录完整性未知。",
+    月预算事实: budget ? { 额度元: budget.totalCents/100, 净支出元: netCents/100, 超额元: Math.max(0, netCents - budget.totalCents)/100,
+      规则来源: historyOptions?.budgetSource==="current-default" ? "当前默认预算回算所选月份，不能证明当时已设置此预算" : "所选月份独立预算；变更预算不等于行为改善" } : null,
+    ...(historyOptions ? buildFinanceAnalysisHistory(month, ledger, asOfDate, historyOptions) : {}),
     分类支出原额: category, 其余分类数: Math.max(0, facts.categories.length - 12),
     商户支出: merchants, 其余商户数: Math.max(0, merchantMap.size - 8),
     重复消费候选: frequentMerchants,
@@ -219,7 +237,7 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
     可选核对表: tables.map((table) => ({ id: table.id, title: table.title, headers: table.headers, rows: table.rows }))
   };
   const text = JSON.stringify(input);
-  return { text, fingerprint: createHash("sha256").update(text).digest("hex"), entryCount: valid.filter((row) => row.kind !== "transfer").length,
+  return { text, fingerprint: createHash("sha256").update(JSON.stringify({ ...input, 前次成功报告: [] })).digest("hex"), entryCount: valid.filter((row) => row.kind !== "transfer").length,
     facts: refs, candidates, tables };
 }
 

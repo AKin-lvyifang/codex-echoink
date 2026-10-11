@@ -34,6 +34,7 @@ function choice(parent: HTMLElement, label: string, values: [string, string][], 
 /** The plan pages share the financial workspace; associations stay local until confirmed. */
 export class FinanceBillPlanView {
   private detailPage = 1;
+  private budgetDisplay: "percent" | "amount" = "percent";
   private stopDetailSize: (() => void) | null = null;
   private categoryDonut: ReturnType<typeof financeCategoryDonut> | null = null;
   private readonly numbers = new FinanceNumbers();
@@ -158,6 +159,38 @@ export class FinanceBillPlanView {
     const detailHead = details.createDiv({ cls: "echoink-finance-section-head" }); detailHead.createEl("h3", { text: "关联明细" });
     choice(detailHead, "排序", [["date-desc", "时间从新到旧"], ["amount-desc", "金额从大到小"], ["amount-asc", "金额从小到大"]], this.state.sort, value => { this.detailPage = 1; this.state.sort = value as FinanceBillPlanSort; this.updateDashboardRows(parent, stats.entries); });
     this.updateDashboardRows(parent, stats.entries);
+    this.categoryBudgets(parent,plan,stats.categoryBudgets,stats.unallocatedCents);
+  }
+  private categoryBudgets(parent:HTMLElement,plan:FinanceBillPlan,rows:ReturnType<LifestyleService["finance"]["billPlanStats"]>["categoryBudgets"],unallocated:number):void {
+    const card=parent.createDiv({cls:"echoink-finance-card echoink-finance-bill-budget"});
+    const header=card.createDiv({cls:"echoink-finance-section-head"});header.createEl("h3",{text:"分类预算"});
+    const modes=header.createDiv({cls:"echoink-finance-segment",attr:{role:"group","aria-label":"分类预算读数"}});
+    const list=card.createDiv({cls:"echoink-finance-bill-budget-rows"});
+    const draw=()=>{
+      list.empty();
+      for(const control of Array.from(modes.querySelectorAll<HTMLButtonElement>("button"))) { control.setAttribute("aria-pressed",String(control.dataset.mode===this.budgetDisplay));control.toggleClass("is-active",control.dataset.mode===this.budgetDisplay); }
+      for(const row of rows) {
+        const item=list.createDiv({cls:"echoink-finance-bill-budget-row",attr:{"data-category":row.category}});
+        const label=item.createDiv({cls:"echoink-finance-bill-budget-label"});label.createSpan({text:row.category||"未分类"});
+        if(row.allocationCents!==null && !this.service.plugin.settings.lifestyle.finance.categories.some(c=>c.active&&c.name===row.category))
+          label.createEl("small",{text:"原分类已停用或更名"});
+        const track=item.createDiv({cls:"echoink-finance-progress",attr:{role:"progressbar","aria-label":`${row.category}预算使用`,"aria-valuemin":"0","aria-valuemax":"100",
+          "aria-valuenow":String(Math.round(row.progress*100)),"aria-valuetext":row.allocationCents===null?`净支出${money(row.netCents)}元，未设额度`:`净支出${money(row.netCents)}元，额度${money(row.allocationCents)}元`}});
+        track.createDiv({attr:{style:`width:${row.progress*100}%`}});
+        const value=item.createDiv({cls:"echoink-finance-bill-budget-value"});
+        value.createSpan({text:row.allocationCents===null?`¥ ${money(row.netCents)} · 未设额度`:this.budgetDisplay==="amount"?`¥ ${money(row.netCents)} / ¥ ${money(row.allocationCents)}`:
+          row.percentage===null?"零预算":`${Number(row.percentage.toFixed(1))}%`});
+        if(row.overCents) {item.addClass("is-over");value.createEl("small",{text:`超出 ¥ ${money(row.overCents)}`});}
+      }
+    };
+    for(const [mode,label] of [["percent","百分比"],["amount","金额"]] as const) {
+      const control=button(modes,label,()=>{this.budgetDisplay=mode;draw();});control.dataset.mode=mode;
+    }
+    if(!Object.keys(plan.allocations??{}).length) {
+      card.createEl("p",{text:"尚未设置分类额度。",cls:"echoink-finance-empty"});
+      button(card,"设置分类额度",()=>this.actions.edit(plan)).disabled=!this.service.finance.access.checkCapability("finance.bill_plan.write");
+    } else card.createEl("small",{text:`未分配 ¥ ${money(unallocated)} · 全周期净支出按支出减退款计算`});
+    draw();
   }
   private updateDashboardRows(parent: HTMLElement, entries: readonly FinanceEntry[]): void {
     this.categoryDonut?.sync(); this.stopDetailSize?.(); this.stopDetailSize = null;

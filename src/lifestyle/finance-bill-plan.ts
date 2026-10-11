@@ -1,9 +1,15 @@
 import type { FinanceBillPlan, FinanceEntry } from "./store";
-import { financeSpendingFacts, filterFinanceEntries, localDate, type FinanceFilters } from "./finance-domain";
+import { effectiveFinanceEntries, financeSpendingFacts, filterFinanceEntries, localDate, type FinanceFilters } from "./finance-domain";
 
 export function validateFinanceBillPlan(plan: FinanceBillPlan): void {
   if (!plan.id || !plan.name.trim()) throw new Error("请填写账单名称");
   if (!Number.isSafeInteger(plan.budgetCents) || plan.budgetCents <= 0) throw new Error("总预算须为正金额，最多两位小数");
+  let allocated=0;
+  for(const [name,amount] of Object.entries(plan.allocations??{})) {
+    if(!name.trim() || !Number.isSafeInteger(amount) || amount<0) throw new Error("分类额度须为非负金额，最多两位小数");
+    allocated+=amount;
+  }
+  if(allocated>plan.budgetCents) throw new Error("分类额度合计不能超过总预算，请修正后保存");
 }
 
 export function financeBillPlanStats(plan: FinanceBillPlan, ledger: readonly FinanceEntry[], today = localDate()) {
@@ -12,7 +18,17 @@ export function financeBillPlanStats(plan: FinanceBillPlan, ledger: readonly Fin
   const facts = financeSpendingFacts(entries, "", today);
   const ranked = [...facts.expenses].sort((a, b) => b.amountCents - a.amountCents || b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
   const netCents = facts.grossCents - facts.refundsCents;
-  return { entries, ...facts, netCents, remainingCents: plan.budgetCents - netCents,
+  const categoryNet=new Map<string,number>();
+  for(const row of effectiveFinanceEntries(entries,"",today)) if(row.kind==="expense" || row.kind==="refund")
+    categoryNet.set(row.category,(categoryNet.get(row.category)??0)+(row.kind==="expense"?row.amountCents:-row.amountCents));
+  const categoryBudgets=[...new Set([...Object.keys(plan.allocations??{}),...categoryNet.keys()])].map(category=>{
+    const allocation=Object.hasOwn(plan.allocations??{},category)?plan.allocations![category]:null,spent=categoryNet.get(category)??0;
+    return {category,allocationCents:allocation,netCents:spent,percentage:allocation!==null && allocation>0?spent/allocation*100:null,
+      progress:allocation===null?0:allocation>0?Math.max(0,Math.min(1,spent/allocation)):spent>0?1:0,
+      overCents:allocation===null?null:Math.max(0,spent-allocation)};
+  });
+  return { entries, ...facts, netCents, categoryBudgets,
+    unallocatedCents:plan.budgetCents-Object.values(plan.allocations??{}).reduce((total,value)=>total+value,0), remainingCents: plan.budgetCents - netCents,
     progress: Math.max(0, Math.min(1, netCents / plan.budgetCents)),
     largest: ranked[0] ?? null, smallest: ranked.at(-1) ?? null,
     averageCents: ranked.length ? facts.grossCents / ranked.length : null };

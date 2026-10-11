@@ -129,8 +129,8 @@ export class FinanceLedger {
   entries(): readonly FinanceEntry[] { return structuredClone(this.records); }
   issues(): readonly { path: string; reason: string }[] { return this.problems.slice(); }
   fileFor(id: string): TFile | null { return this.files.get(id) ?? null; }
-  paths(): { directory: string; base: string; embed: string } {
-    return { directory: this.directory, base: this.basePath, embed: `![[${this.basePath}#本笔账目]]` };
+  paths(): { root: string; directory: string; base: string; embed: string } {
+    return { root: this.root, directory: this.directory, base: this.basePath, embed: `![[${this.basePath}#本笔账目]]` };
   }
   pathForNewEntry(id: string): string { return `${this.directory}/${fileName(id)}`; }
   watches(path: string): boolean { return path.startsWith(`${this.directory}/`) && path.endsWith(".md"); }

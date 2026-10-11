@@ -1,3 +1,4 @@
+import type { FinanceAnalysisArchiveDraft, FinanceAnalysisArchiveRecord } from "./finance-analysis-archive";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 
@@ -10,7 +11,7 @@ export interface FinanceEntry {
   icon?: string;
   billPlanId?: string;
 }
-export interface FinanceBillPlan { id: string; name: string; budgetCents: number }
+export interface FinanceBillPlan { id: string; name: string; budgetCents: number; allocations?: Record<string, number> }
 
 export interface FinanceBudget {
   month: string; totalCents: number; allocations: Record<string, number>;
@@ -46,6 +47,8 @@ export interface LifestyleData {
   financeBillPlans: FinanceBillPlan[];
   financeGoals: FinanceContinuousGoal[];
   reports: LifeReport[];
+  financeAnalysisArchives?: FinanceAnalysisArchiveRecord[];
+  financeAnalysisPending?: FinanceAnalysisArchiveDraft[];
   /** Unowned fields survive finance writes without loading another plugin. */
   [key: string]: unknown;
 }
@@ -65,7 +68,9 @@ function normalizeData(raw: unknown): LifestyleData {
   for (const raw of list<FinanceBillPlan>("financeBillPlans")) {
     if (!raw || typeof raw.id !== "string" || !raw.id.trim() || typeof raw.name !== "string" || !raw.name.trim()
       || !Number.isSafeInteger(raw.budgetCents) || raw.budgetCents <= 0 || plans.has(raw.id)) continue;
-    plans.set(raw.id, { id: raw.id, name: raw.name.trim(), budgetCents: raw.budgetCents });
+    const allocations = raw.allocations && typeof raw.allocations==="object" && !Array.isArray(raw.allocations)
+      ? Object.fromEntries(Object.entries(raw.allocations).filter(([name,amount])=>name.trim() && Number.isSafeInteger(amount) && amount>=0)) : undefined;
+    plans.set(raw.id, { id: raw.id, name: raw.name.trim(), budgetCents: raw.budgetCents, ...(allocations?{allocations}:{}) });
   }
   return {
     ...value,

@@ -26,7 +26,7 @@ export async function runFinanceBillPlanTests(): Promise<void> {
     const app = { vault, fileManager: { processFrontMatter: vault.processFrontMatter.bind(vault), renameFile: vault.rename.bind(vault) } } as unknown as App;
     const service = new LifestyleFinanceService({ store, plugin: { app, settings: { lifestyle: structuredClone(DEFAULT_LIFESTYLE_SETTINGS) }, registerEvent() {} } } as unknown as LifestyleService);
     await service.initialize();
-    await Promise.all([service.saveBillPlan({ id: "trip", name: "旅行", budgetCents: 10000 }), service.saveBillPlan({ id: "party", name: "聚会", budgetCents: 20000 })]);
+    await Promise.all([service.saveBillPlan({ id: "trip", name: "旅行", budgetCents: 10000, allocations:{交通:4000,餐饮:4000} }), service.saveBillPlan({ id: "party", name: "聚会", budgetCents: 20000,allocations:{交通:1000} })]);
     await assert.rejects(service.saveBillPlan({ id: "bad", name: "", budgetCents: 0 }));
     const rows = [entry("a", 8000, { billPlanId: "trip" }), entry("b", 4000, { date: "2026-10-01", billPlanId: "trip", category: "餐饮" }),
       entry("refund", 3000, { kind: "refund", date: "2026-10-02", billPlanId: "trip" }), entry("income", 99999, { kind: "income", billPlanId: "trip" }),
@@ -35,6 +35,20 @@ export async function runFinanceBillPlanTests(): Promise<void> {
     for (const row of rows) await service.ledger.add(row);
     const plan = service.billPlans()[0];
     const stats = financeBillPlanStats(plan, service.entries(), "2026-10-06");
+    const transit=stats.categoryBudgets.find(r=>r.category==="交通")!;
+    assert.equal(transit.netCents,5000);assert.equal(transit.percentage,125);assert.equal(transit.progress,1);assert.equal(transit.overCents,1000);
+    assert.equal(stats.unallocatedCents,2000);
+    assert.equal(financeBillPlanStats(plan,[rows[2]],"2026-10-06").categoryBudgets.find(r=>r.category==="交通")!.netCents,-3000);
+    assert.equal(financeBillPlanStats(plan,[rows[2]],"2026-10-06").categoryBudgets.find(r=>r.category==="交通")!.progress,0);
+    const unset=financeBillPlanStats({...plan,allocations:{交通:0}},rows,"2026-10-06").categoryBudgets.find(r=>r.category==="餐饮")!;
+    assert.equal(unset.allocationCents,null);assert.equal(unset.overCents,null);
+    await assert.rejects(service.saveBillPlan({...plan,budgetCents:7000}),/合计/);
+    await assert.rejects(service.saveBillPlan({...plan,allocations:{交通:4000,假分类:1000}}),/已有启用目录/);
+    const catalog=service["service"].plugin.settings.lifestyle.finance.categories;
+    service["service"].plugin.settings.lifestyle.finance.categories=[];
+    await assert.rejects(service.saveBillPlan({id:"empty",name:"空目录",budgetCents:10000,allocations:{其他:100}}),/已有启用目录/);
+    await service.saveBillPlan({...plan,name:"保留旧分类"});
+    service["service"].plugin.settings.lifestyle.finance.categories=catalog;
     assert.equal(stats.entries.length, 8); assert.equal(stats.grossCents, 12000); assert.equal(stats.refundsCents, 3000);
     assert.equal(stats.netCents, 9000); assert.equal(stats.remainingCents, 1000); assert.equal(stats.progress, .9);
     assert.equal(stats.largest?.id, "a"); assert.equal(stats.smallest?.id, "b"); assert.equal(stats.averageCents, 6000);
@@ -46,6 +60,8 @@ export async function runFinanceBillPlanTests(): Promise<void> {
     await service.saveBillPlan({ ...plan, name: "跨月旅行" });
     const reloaded = new LifestyleStore(json); await reloaded.initialize();
     assert.equal(reloaded.snapshot().financeBillPlans.find(p => p.id === "trip")!.name, "跨月旅行");
+    assert.deepEqual(reloaded.snapshot().financeBillPlans.find(p=>p.id==="trip")!.allocations,{交通:4000,餐饮:4000});
+    assert.deepEqual(reloaded.snapshot().financeBillPlans.find(p=>p.id==="party")!.allocations,{交通:1000});
     assert.equal(reloaded.snapshot().financePlans.length, 0);
     const a = service.ledger.fileFor("a")!;
     const raw = vault.files.get(a.path)!;
@@ -207,6 +223,25 @@ export async function runFinanceBillPlanDomTests(win: Window & typeof globalThis
     editing.contentEl.querySelector<HTMLFormElement>("form")!.dispatchEvent(new win.Event("submit", { bubbles: true, cancelable: true }));
     assert.ok(savedBudget); await savedBudget; await flush();
     finance.saveBillPlan = savePlan; assert.equal(finance.billPlans().find(p => p.id === "trip")!.budgetCents, 25000);
+    click("修改预算");const allocationModal=openTestModals.at(-1)!;
+    const selector=allocationModal.contentEl.querySelector<HTMLSelectElement>(".echoink-finance-bill-allocations select")!;
+    selector.value="交通";selector.dispatchEvent(new win.Event("change"));
+    const categoryAmount=allocationModal.contentEl.querySelector<HTMLInputElement>(".echoink-finance-bill-allocation-row input")!;
+    categoryAmount.value="20";
+    allocationModal.contentEl.querySelector<HTMLFormElement>("form")!.dispatchEvent(new win.Event("submit",{bubbles:true,cancelable:true}));await flush();
+    assert.deepEqual(finance.billPlans().find(p=>p.id==="trip")!.allocations,{交通:2000});
+    const card=host.querySelector<HTMLElement>(".echoink-finance-bill-budget")!;assert.ok(card);
+    const beforeAllocation=JSON.stringify(finance.billPlans());
+    click("金额",card);assert.ok(card.textContent?.includes("/ ¥ 20.00"));click("百分比",card);
+    assert.equal(JSON.stringify(finance.billPlans()),beforeAllocation,"display switch changes no stored budget");
+    click("修改预算");const canceled=openTestModals.at(-1)!;
+    canceled.contentEl.querySelector<HTMLInputElement>(".echoink-finance-bill-allocation-row input")!.value="999";click("取消",canceled.contentEl);
+    assert.equal(JSON.stringify(finance.billPlans()),beforeAllocation);
+    click("修改预算");const failed=openTestModals.at(-1)!;const failedInput=failed.contentEl.querySelector<HTMLInputElement>(".echoink-finance-bill-allocation-row input")!;
+    failedInput.value="19";const saving=finance.saveBillPlan;finance.saveBillPlan=async()=>{throw new Error("合成保存失败");};
+    failed.contentEl.querySelector<HTMLFormElement>("form")!.dispatchEvent(new win.Event("submit",{bubbles:true,cancelable:true}));await flush();
+    assert.equal(failedInput.value,"19");assert.equal(failedInput.disabled,false);assert.ok(failed.contentEl.textContent?.includes("合成保存失败"));
+    assert.equal(JSON.stringify(finance.billPlans()),beforeAllocation);finance.saveBillPlan=saving;click("取消",failed.contentEl);
     const originalEntries = finance.entries.bind(finance);
     const many = Array.from({ length: 120 }, (_, index) => entry(`long-${index}`, 100 + index));
     finance.entries = () => [...originalEntries(), ...many];

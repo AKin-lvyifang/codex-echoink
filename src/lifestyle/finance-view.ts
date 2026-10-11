@@ -149,6 +149,18 @@ export class FinanceWorkspace {
     void MarkdownRenderer.render(this.service.plugin.app, markdown, container, "", component).catch((error) => {
       if (ticket === this.reportRenderTicket && container.isConnected) container.setText(`报告显示失败：${errorText(error)}`);
     }).finally(() => {
+      if (ticket === this.reportRenderTicket && container.isConnected) {
+        for(const table of Array.from(container.querySelectorAll<HTMLTableElement>("table"))) {
+          if(!table.parentElement?.classList.contains("echoink-finance-ai-table-scroll")) {
+            const scroll=container.ownerDocument.createElement("div");scroll.className="echoink-finance-ai-table-scroll";
+            table.parentElement?.insertBefore(scroll,table);scroll.appendChild(table);
+          }
+          for(const row of Array.from(table.rows)) for(const [index,cell] of Array.from(row.cells).entries()) {
+            const header=table.rows[0]?.cells[index]?.textContent??"";
+            cell.classList.toggle("is-number",index>0 && /金额|预算|额度|支出|占比|比例|笔数|收入|差额|超出/u.test(header));
+          }
+        }
+      }
       if (ticket === this.reportRenderTicket && !container.isConnected) this.releaseMarkdown();
     });
   }
@@ -672,18 +684,23 @@ export class FinanceWorkspace {
     const busy = busyMonth === this.state.month;
     const failed = !busy && this.analysisError?.month === this.state.month && this.analysisError.reportId === (savedReport?.id ?? null);
     const report = busy || failed ? null : savedReport;
-    const action = button(header, busy ? "生成中…" : failed ? "重试分析" : report ? "刷新分析" : "生成分析", () => {
+    const pendingSave = this.service.finance.pendingAnalysisSave?.(this.state.month) ?? false;
+    const action = button(header, pendingSave && !busy ? "重试保存" : busy ? "生成中…" : failed ? "重试分析" : report ? "刷新分析" : "生成分析", () => {
       if (this.service.finance.busyMonth()) return;
       const month = this.state.month;
       this.analysisError = null;
-      void this.service.finance.analyze(month, true).then(() => { if (this.state.month === month) { this.analysisError = null; this.redraw(); } })
+      const operation = pendingSave ? this.service.finance.retryAnalysisSave(month) : this.service.finance.analyze(month, true);
+      void operation.then((result) => { if (this.state.month === month) {
+        this.analysisError = pendingSave && !result ? { month, message:"解析失败记录已保存，请重新生成分析",reportId:this.service.finance.latestReport(month)?.id??null } : null;
+        this.redraw();
+      } })
         .catch((error) => {
           this.analysisError = { month, message: errorText(error), reportId: this.service.finance.latestReport(month)?.id ?? null };
           if (this.state.month === month) this.redraw();
         });
       this.redraw();
     }, "echoink-finance-ai-action");
-    action.disabled = Boolean(busyMonth) || !input.entryCount || !this.service.finance.access.checkCapability("finance.analysis.generate");
+    action.disabled = Boolean(busyMonth) || (!pendingSave && (!input.entryCount || !this.service.finance.access.checkCapability("finance.analysis.generate")));
     if (notice) action.title = notice;
     if (busy) action.setAttribute("aria-busy", "true");
     if (busyMonth && !busy) action.title = `${busyMonth} 的分析正在生成`;
@@ -735,6 +752,7 @@ export class FinanceWorkspace {
       if (report.inputFingerprint !== input.fingerprint || report.promptVersion !== FINANCE_ANALYSIS_PROMPT_VERSION)
         card.createEl("small", { text: "可刷新查看当前账目与分析方法下的最新结果。" });
     } else if (!busy && !failed) card.createEl("p", { text: input.entryCount ? "点击生成分析，回看本月已记录的收支。" : "暂无可分析的收支记录。" });
+    if (pendingSave && !busy) card.createEl("p", { text:"本次分析尚未完成保存，内容已保留。重试保存不会再次请求模型。",cls:"echoink-life-error",attr:{role:"alert"} });
     if (failed) card.createEl("p", { text: this.analysisError!.message, cls: "echoink-life-error", attr: { role: "alert" } });
     card.createEl("small", { text: `${this.state.month} · ${input.entryCount} 笔有效收支 · 记录范围可能不完整` });
     if (busy) card.createEl("p", { text: "正在根据最新账目生成本次报告。", attr: { role: "status" } });
@@ -782,12 +800,19 @@ export class FinanceWorkspace {
     const scroll = panel.createDiv({ cls: "echoink-finance-ai-table-scroll" });
     const element = scroll.createEl("table");
     const head = element.createEl("thead").createEl("tr");
-    for (const label of table.headers) head.createEl("th", { text: label });
+    const kind=(index:number)=>table.columns?.[index]??(index>0 && /金额|预算|额度|支出|占比|比例|笔数|收入|差额|超出/u.test(table.headers[index])?"number":"text");
+    table.headers.forEach((label,index)=>head.createEl("th", { text: label,cls:kind(index)==="number"?"is-number":"" }));
     const body = element.createEl("tbody");
-    for (const values of table.rows) {
+    table.rows.forEach((values,rowIndex)=>{
       const row = body.createEl("tr");
-      for (const value of values) row.createEl("td", { text: value });
-    }
+      values.forEach((value,index)=>{
+        const cell=row.createEl("td",{cls:kind(index)==="number"?"is-number":""});
+        if(kind(index)==="status") {
+          const tone=table.statuses?.[rowIndex];
+          cell.createSpan({text:value,cls:`echoink-finance-status-tag is-${tone==="notice"||tone==="positive"?tone:"fact"}`});
+        } else cell.setText(value);
+      });
+    });
     this.renderAnalysisMarkdown(panel.createDiv({ cls: "echoink-finance-report markdown-rendered" }), explanation);
   }
   private renderAnalysisChart(parent: HTMLElement, chart: FinanceChartSnapshot, markdown = false): void {
@@ -1057,6 +1082,34 @@ export class FinanceWorkspace {
       const form = content.createEl("form", { cls: "echoink-finance-form" });
       const name = field(form, "账单名称", "text", plan?.name || ""); name.required = true;
       const budget = field(form, "总预算 · 元", "number", plan ? yuanInput(plan.budgetCents) : ""); budget.min = "0.01"; budget.step = "0.01"; budget.required = true;
+      const allocations = form.createDiv({cls:"echoink-finance-bill-allocations"});
+      allocations.createEl("h4",{text:"分类额度 · 可选"});
+      allocations.createEl("small",{text:"只选择财务设置已有的启用分类；留空表示未设额度，0 元表示零预算。分类额度合计不能超过总预算。"});
+      const active = this.catalog().categories.filter(c=>c.active).map(c=>c.name);
+      const fields = new Map<string,HTMLInputElement>();
+      const selector = select(allocations,"添加已有分类",[["","选择分类"],...active.map(name=>[name,name] as [string,string])],"",name=>{
+        if(name && !fields.has(name)) addAllocation(name,"");selector.value="";refreshChoices();
+      });
+      const rows=allocations.createDiv({cls:"echoink-finance-bill-allocation-rows"});
+      const total=allocations.createEl("small",{attr:{role:"status"}});
+      if(!active.length) allocations.createEl("small",{text:"暂无启用分类，请先到财务设置管理分类。"});
+      const refreshChoices=()=>{for(const option of Array.from(selector.options))option.disabled=!!option.value&&fields.has(option.value);};
+      const refreshTotal=()=>{
+        try { const sum=[...fields.values()].reduce((n,input)=>n+(input.value.trim()?parseYuan(input.value,true):0),0);
+          const full=budget.value.trim()?parseYuan(budget.value):0;
+          total.setText(`已分配 ¥ ${money(sum)} · ${sum<=full?"未分配":"超出总预算"} ¥ ${money(Math.abs(full-sum))}`);
+        } catch {total.setText("请输入有效的两位小数金额");}
+      };
+      const addAllocation=(category:string,value:string)=>{
+        const row=rows.createDiv({cls:"echoink-finance-bill-allocation-row"});row.createSpan({text:category});
+        if(!active.includes(category))row.createEl("small",{text:"原分类已停用或更名，额度保留"});
+        const amount=field(row,`${category}额度 · 元`,"number",value);amount.min="0";amount.step="0.01";
+        amount.oninput=refreshTotal;fields.set(category,amount);
+        button(row,"移除",()=>{fields.delete(category);row.remove();refreshChoices();refreshTotal();});
+        refreshTotal();
+      };
+      for(const [category,amount] of Object.entries(plan?.allocations??{}))addAllocation(category,yuanInput(amount));
+      budget.oninput=refreshTotal;refreshTotal();refreshChoices();
       const error = form.createEl("p", { cls: "echoink-life-error", attr: { role: "alert" } });
       const actions = form.createDiv({ cls: "echoink-finance-dialog-actions" });
       const cancel = button(actions, "取消", () => dialog.close());
@@ -1066,12 +1119,15 @@ export class FinanceWorkspace {
       form.onsubmit = (event) => {
         event.preventDefault(); if (saving) return;
         try {
-          const next = { id, name: name.value.trim(), budgetCents: parseYuan(budget.value) };
+          const selected=Object.fromEntries([...fields].filter(([,input])=>input.value.trim()).map(([category,input])=>[category,parseYuan(input.value,true)]));
+          const next = { id, name: name.value.trim(), budgetCents: parseYuan(budget.value),allocations:selected };
           if (!next.name) throw new Error("请填写账单名称");
           saving = true; dialog.refreshAccess(); cancel.disabled = name.disabled = budget.disabled = true;
+          for(const control of Array.from(allocations.querySelectorAll<HTMLInputElement|HTMLButtonElement|HTMLSelectElement>("input,button,select")))control.disabled=true;
           void this.service.finance.saveBillPlan(next).then(() => {
             dialog.close(); if (plan) this.redraw(); else this.billPlanView.showPlan(id);
-          }).catch((cause) => { error.setText(errorText(cause)); saving = false; dialog.refreshAccess(); cancel.disabled = name.disabled = budget.disabled = false; });
+          }).catch((cause) => { error.setText(errorText(cause)); saving = false; dialog.refreshAccess(); cancel.disabled = name.disabled = budget.disabled = false;
+            for(const control of Array.from(allocations.querySelectorAll<HTMLInputElement|HTMLButtonElement|HTMLSelectElement>("input,button,select")))control.disabled=false;refreshChoices(); });
         } catch (cause) { error.setText(errorText(cause)); }
       };
     }).open();

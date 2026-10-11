@@ -33,6 +33,21 @@ export class LifestyleSettingsPanel {
     this.toggle(page, "AI 分析", "默认关闭；仅在开启后显示分析模块，关闭模型不影响记账和预算。", settings.aiEnabled, async (value) => {
       await this.plugin.lifestyle.finance.saveOption("aiEnabled", value);
     });
+    const location = page.createDiv({ cls:"echoink-life-setting-row echoink-finance-analysis-location" });
+    const copy=location.createDiv();copy.createEl("strong",{text:"分析保存位置"});
+    copy.createEl("small",{text:"留空使用当前财务目录下的分析记录；改位置仅影响后续生成，旧报告保留。填写当前 Vault 内的相对目录。"});
+    const form=location.createEl("form",{cls:"echoink-finance-form"});
+    const input=form.createEl("input",{attr:{type:"text","aria-label":"分析保存位置",placeholder:`${this.plugin.lifestyle.finance.ledger.paths().root}/分析记录`}});
+    input.value=settings.analysisDirectory??"";
+    const message=form.createEl("small",{attr:{role:"status"}});
+    const save=form.createEl("button",{text:"保存位置",attr:{type:"submit"}});let saving=false;
+    this.controls?.bind(save,{businessDisabled:()=>saving});
+    form.onsubmit=event=>{
+      event.preventDefault();if(saving)return;saving=true;input.disabled=true;this.controls?.refresh();
+      void this.plugin.lifestyle.finance.saveAnalysisDirectory(input.value).then(()=>{message.setText("保存位置已更新");})
+        .catch(error=>{message.setText(error instanceof Error?error.message:String(error));})
+        .finally(()=>{saving=false;input.disabled=false;this.controls?.refresh();});
+    };
     this.toggle(page, "导入时智能整理", "使用当前模型提出商户、账户、分类与图标建议；失败时仍可基础导入。", settings.importAiEnabled, async (value) => {
       await this.plugin.lifestyle.finance.saveOption("importAiEnabled", value);
     });

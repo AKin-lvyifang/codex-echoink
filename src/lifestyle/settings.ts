@@ -6,6 +6,7 @@ export interface FinanceMerchantSetting {
 export interface FinanceAccountSetting { name: string; aliases: string[]; active: boolean }
 export interface FinanceCategorySetting { name: string; icon: string; color: string; active: boolean }
 export interface FinanceSettings {
+  analysisDirectory?: string;
   enabled: boolean; aiEnabled: boolean; importAiEnabled: boolean;
   merchants: FinanceMerchantSetting[]; accounts: FinanceAccountSetting[]; categories: FinanceCategorySetting[];
 }
@@ -43,6 +44,7 @@ export function normalizeLifestyleSettings(input: unknown): LifestyleSettings {
     ...root,
     finance: {
       ...finance,
+      analysisDirectory: string(finance.analysisDirectory, ""),
       enabled: finance.enabled === true,
       aiEnabled: finance.aiEnabled === true,
       importAiEnabled: finance.importAiEnabled !== false,
