@@ -17,7 +17,7 @@ export class DesktopNotifications implements DesktopNotificationPort {
   private disposed = false;
   private pending = new Map<Notification, () => void>();
 
-  constructor(private readonly win: Window | null, private readonly desktop = Platform.isDesktopApp) {}
+  constructor(private readonly win: NotificationWindow | null, private readonly desktop = Platform.isDesktopApp) {}
 
   permission(): DesktopNotificationPermission {
     if (this.disposed || !this.desktop || !this.api()) return "unavailable";
@@ -25,7 +25,7 @@ export class DesktopNotifications implements DesktopNotificationPort {
   }
 
   private api(): typeof Notification | undefined {
-    return (this.win as NotificationWindow | null)?.Notification;
+    return this.win?.Notification;
   }
 
   /** Call directly from an enable/test interaction, before any other await. */
