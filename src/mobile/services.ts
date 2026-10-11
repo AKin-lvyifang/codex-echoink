@@ -26,7 +26,7 @@ export interface MobileServicesHost {
   accountService?: CapabilityAccess;
   saveSettings(): Promise<void>;
   registerEvent(event: EventRef): void;
-  showPage(page: "basic" | "knowledge" | "resources" | "finance-settings"): Promise<void>;
+  showPage(page: "settings" | "basic" | "knowledge" | "resources" | "finance-settings"): Promise<void>;
 }
 export class MobileServices implements HomeHost {
   readonly app: App;
@@ -98,7 +98,7 @@ export class MobileServices implements HomeHost {
     openDiary: async (path: string) => { const file = this.app.vault.getAbstractFileByPath(path); if (file instanceof TFile) await this.host.navigation.openNote(file); else throw new Error("日记原稿不存在。"); }
   };
   openEchoInkKnowledgeSettings() { return this.host.showPage("knowledge"); }
-  openEchoInkGeneralSettings() { return this.host.showPage("basic"); }
+  openEchoInkGeneralSettings() { return this.host.showPage("settings"); }
   openEchoInkSkillSettings(_id: string) { return this.host.showPage("resources"); }
   activateView() { return this.host.navigation.open(); }
   getCodexView() { return {

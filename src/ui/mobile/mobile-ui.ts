@@ -76,7 +76,7 @@ export class MobileUI {
   private timer?: number;
   private onRuntimeChange = () => { if (this.page === "chat" || (this.host.isTablet && this.page === "history")) this.refreshChat(); };
   constructor(private root: HTMLElement, private host: MobileUIHost) { this.host.applyAppearance = () => this.applyAppearance(); this.settingPages = new MobileSettingsPages(host, { go: page => this.go(page), sheet: (title, render) => this.openSheet(title, render), row: (parent, title, desc, name, action) => this.row(parent, title, desc, name, action), button: (parent, title, action, name, cls) => this.button(parent, title, action, name, cls), field: (parent, title, value, update, type) => this.field(parent, title, value, update, type), act: action => this.act(action) }); }
-  showPage(page: MobileSettingsPage) { this.go(page); }
+  showPage(page: MobileSettingsPage | "settings") { this.go(page, page === "settings"); }
   mount() { this.mounted = true; this.root.classList.add("echoink-mobile"); this.root.classList.toggle("em-tablet", !!this.host.isTablet); this.host.runtime.onChange = this.onRuntimeChange; this.render(); this.viewport = new MobileViewport(this.root); this.applyAppearance(); this.timer = window.setInterval(() => this.updateTimers(), 250); }
   destroy() { this.viewport?.dispose(); this.settingPages.dispose(); this.closeSheet(false); this.mounted = false; window.clearInterval(this.timer); if (this.host.runtime.onChange === this.onRuntimeChange) this.host.runtime.onChange = () => {}; this.root.replaceChildren(); }
   private async act(action: () => void | Promise<void>) {
@@ -95,8 +95,10 @@ export class MobileUI {
   }
   private scrollKey() { return this.page === "memory" ? `memory:${this.memoryId}` : this.page; }
   private captureScroll() { const body = this.root.querySelector<HTMLElement>(".em-body"); if (body) this.scroll.set(this.scrollKey(), body.scrollTop); }
-  private go(page: Page) {
-    this.captureScroll(); if (page !== this.page) this.stack.push(this.page); this.page = page; this.error = "";
+  private go(page: Page, fromHome = false) {
+    this.captureScroll();
+    if (fromHome) this.stack = ["chat"]; else if (page !== this.page) this.stack.push(this.page);
+    this.page = page; this.error = "";
     if (this.host.isTablet && this.root.clientWidth >= 760) {
       if (page === "settings") { this.stack.push("settings"); this.page = "basic"; }
       if (page === "memories" && this.host.store.state.memories.length) {

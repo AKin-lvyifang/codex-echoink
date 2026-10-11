@@ -29,7 +29,14 @@ export class ItemView {
 export class Modal {
   contentEl: HTMLElement; modalEl: HTMLElement; titleEl: HTMLElement; containerEl: HTMLElement;
   constructor(public app: unknown) { this.containerEl = document.createElement("div"); this.containerEl.className = "modal-container"; this.modalEl = this.containerEl.appendChild(document.createElement("div")); this.modalEl.className = "modal"; this.titleEl = document.createElement("h2"); this.contentEl = document.createElement("div"); this.contentEl.className = "modal-content"; this.modalEl.append(this.titleEl, this.contentEl); }
-  open() { document.body.append(this.containerEl); (this as any).onOpen?.(); }
+  open() {
+    if (document.body.classList.contains("fixture-host")) {
+      const close = this.modalEl.appendChild(document.createElement("div"));
+      close.className = "modal-close-button"; close.textContent = "×"; close.setAttribute("role", "button"); close.setAttribute("aria-label", "关闭宿主弹窗"); close.tabIndex = 0;
+      close.onclick = () => this.close(); close.onkeydown = event => { if (event.key === "Enter" || event.key === "Escape") this.close(); };
+    }
+    document.body.append(this.containerEl); (this as any).onOpen?.();
+  }
   close() { (this as any).onClose?.(); this.containerEl.remove(); }
   setTitle(text: string) { this.titleEl.textContent = text; }
   register() {} registerDomEvent(element: HTMLElement, name: string, cb: EventListener) { element.addEventListener(name, cb); }

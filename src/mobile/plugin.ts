@@ -65,7 +65,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     if (Platform.isTablet) await this.navigation.openHome();
     await this.navigation.open();
   }
-  async showPage(page: "basic" | "knowledge" | "resources" | "finance-settings"): Promise<void> {
+  async showPage(page: "settings" | "basic" | "knowledge" | "resources" | "finance-settings"): Promise<void> {
     await this.navigation.open();
     const view = this.app.workspace.getLeavesOfType(MOBILE_VIEW)[0]?.view;
     if (view instanceof EchoInkMobileView) view.showPage(page);
@@ -86,7 +86,7 @@ class EchoInkMobileView extends ItemView {
   getViewType() { return MOBILE_VIEW; }
   getDisplayText() { return "EchoInk"; }
   getIcon() { return "bot"; }
-  showPage(page: "basic" | "knowledge" | "resources" | "finance-settings") { this.ui?.showPage(page); }
+  showPage(page: "settings" | "basic" | "knowledge" | "resources" | "finance-settings") { this.ui?.showPage(page); }
   async onOpen(): Promise<void> {
     this.addChild(this.markdown);
     this.ui = new MobileUI(this.contentEl, {

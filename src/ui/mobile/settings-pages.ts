@@ -73,7 +73,7 @@ export class MobileSettingsPages {
     const accountRow = this.ui.row(body, "账号与会员", "登录、授权与设备管理", "feather", () => this.ui.go("account"));
     const accountIcon = accountRow.querySelector<HTMLElement>(".em-icon")!;
     accountIcon.classList.add("codex-settings-tab-icon"); renderAnimatedSettingsTabIcon(accountIcon, SETTINGS_TAB_ICONS.account, null);
-    const language = node(body, "div", "em-row"); node(language, "strong", "em-row-label", "设置语言"); node(language, "span", "em-help", "简体中文");
+    const language = node(body, "div", "em-row"); node(language, "strong", "em-row-label", "设置语言"); node(language, "span", "em-row-value", "简体中文");
     this.ui.row(body, "关于 EchoInk", "", "circle-help", () => this.ui.sheet("关于 EchoInk", part => {
       node(part, "h2", "em-about-title", "EchoInk"); this.help(part, `版本 ${this.host.version ?? "本地测试包"}`);
       this.help(part, "你的思考，在这里积累。");

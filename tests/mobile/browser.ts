@@ -1,3 +1,4 @@
+import { Platform } from "./browser-obsidian";
 import { LifestyleView } from "../../src/lifestyle/view";
 import { MobileViewport } from "../../src/ui/mobile/viewport";
 import { createMobileAccountService } from "../../src/mobile/account";
@@ -9,10 +10,11 @@ import { MobileRuntime } from "../../src/mobile/runtime";
 import { loadMobileSettings } from "../../src/mobile/settings";
 import { createHost, answer } from "./host.mjs";
 
-const host = createHost({ "笔记/来源.md": "项目决定：先完成手机本地问答。", "Wiki/项目/手机验收.md": "# 知识", "Raw/资料.md": "# 原始资料", "Inbox/记录.md": "# Inbox" });
+const host = createHost({ "笔记/来源.md": "项目决定：先完成手机本地问答。", "Wiki/项目/产品草稿.md": "# 产品草稿\n\n本周聚焦真实场景。", "Wiki/项目/工作复盘.md": "# 工作复盘\n\n记录决定、证据与行动。", "Wiki/项目/手机验收.md": "# 知识", "Raw/资料.md": "# 原始资料", "Inbox/记录.md": "# Inbox" });
 host.app.workspace.containerEl = document.body;
 const params = new URLSearchParams(location.search);
-const fixturePrefix = params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
+Platform.isMobileApp = Platform.isMobile = !params.has("desktop"); Platform.isTablet = params.has("tablet") && Platform.isMobile;
+const fixturePrefix = params.has("host") ? "echoink-ipad-beta5-host-v2-fixture" : params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
 const persisted = localStorage.getItem(`${fixturePrefix}-files`);
 if (persisted) { host.files.clear(); for (const [key, value] of JSON.parse(persisted)) host.files.set(key, value); }
 const persist = () => localStorage.setItem(`${fixturePrefix}-files`, JSON.stringify([...host.files]));
@@ -57,16 +59,23 @@ const runtime = new MobileRuntime(host.app as any, store, () => settings, async 
 }, () => services.context());
 const accountService = await createMobileAccountService(host.app as any, () => settings);
 const financeAccess = { checkCapability: () => !params.has("expired"), requireCapability: () => { if (params.has("expired")) throw new Error("替身：授权已失效"); }, subscribe: () => () => {} };
-const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: {} as any, registerEvent() {}, showPage: async () => {}, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); } }, "plugin/mobile");
+let ui: MobileUI;
+const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: {} as any, registerEvent() {}, showPage: async page => {
+  if (params.has("home") && !params.has("tablet") && Platform.isMobile) { document.querySelector<HTMLElement>("#home")!.hidden = true; root.hidden = false; }
+  ui.showPage(page);
+}, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); } }, "plugin/mobile");
 await services.initialize();
 await services.initializeFinance();
 const root = document.querySelector<HTMLElement>("#app")!;
 if (params.has("home")) {
   const element = document.querySelector<HTMLElement>("#home")!; element.hidden = false;
+  if (!params.has("tablet") && Platform.isMobile) root.hidden = true;
   const homeView = new EchoInkHomeView({ app: host.app, containerEl: element, contentEl: element } as any, services);
-  await homeView.onOpen(); Object.assign(window, { homeView });
+  await homeView.onOpen();
+  if (Platform.isMobile) { element.classList.add("echoink-mobile-home"); const homeViewport = new MobileViewport(element); window.addEventListener("pagehide", () => homeViewport.dispose(), { once: true }); }
+  Object.assign(window, { homeView });
 }
-const ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tablet"), services, accountService, version: "2.6.2 fixture", store, runtime, settings: () => settings, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); }, openNote: async path => { await host.app.workspace.getLeaf().openFile({ path }); document.querySelector("#opened")!.textContent = `已通过打开接口进入：${path}\n${host.files.get(path)}`; }, beginRender() { root.dataset.renders = String(++renders); }, renderMarkdown(text, element) {
+ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tablet"), services, accountService, version: "2.6.2 fixture", store, runtime, settings: () => settings, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); }, openNote: async path => { await host.app.workspace.getLeaf().openFile({ path }); document.querySelector("#opened")!.textContent = `已通过打开接口进入：${path}\n${host.files.get(path)}`; }, beginRender() { root.dataset.renders = String(++renders); }, renderMarkdown(text, element) {
   // A synthetic renderer for layout only; real MarkdownRenderer is host-owned.
   for (const part of text.split(/(```[\s\S]*?```)/u)) {
     if (part.startsWith("```")) { const pre = document.createElement("pre"); const code = document.createElement("code"); code.textContent = part.replace(/^```[^\n]*\n|```$/gu, ""); pre.append(code); element.append(pre); }

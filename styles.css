@@ -21969,11 +21969,13 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .echoink-mobile .em-tool-content { border: 1px solid var(--em-line); border-radius: 8px; padding: 8px 10px; max-height: 320px; overflow: auto; }
 .echoink-mobile .em-tool-content pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .9em/1.7 var(--font-monospace); margin: 8px 0; }
 .echoink-mobile .em-note-link { color: var(--em-green); font-size: .8em; text-align: left; padding-left: 0; }
-.echoink-mobile .em-row { display: flex; text-align: left; width: 100%; padding: 14px 4px; gap: 12px; border-bottom: 1px solid var(--em-line); border-radius: 0; }
+.echoink-mobile .em-row, .echoink-mobile button.em-row { display: flex; align-items: center; justify-content: flex-start; text-align: left; width: 100%; padding: 14px 4px; gap: 12px; border-bottom: 1px solid var(--em-line); border-radius: 0; height: auto; }
 .echoink-mobile .em-row > .em-icon { color: var(--em-muted); }
 .echoink-mobile .em-row > .em-icon:last-child { width: 16px; }
 .echoink-mobile .em-row-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .echoink-mobile .em-row-label strong { font-size: .92em; font-weight: 500; }
+.echoink-mobile strong.em-row-label { font-size: .92em; font-weight: 500; }
+.echoink-mobile .em-row-value { color: var(--em-muted); font-size: .76em; line-height: 1.5; margin: 0; }
 .echoink-mobile .em-row-label small { color: var(--em-muted); font-size: .76em; line-height: 1.5; }
 .echoink-mobile .em-row input[type=checkbox] { width: 40px; height: 24px; flex: none; accent-color: var(--em-green); }
 .echoink-mobile .em-help { color: var(--em-muted); font-size: .76em; line-height: 1.8; margin: 16px 0; }
@@ -23304,6 +23306,7 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-mobile input[type=checkbox][role=switch]::before { content:""; display:block; width:21px; height:21px; border-radius:50%; background:#fff; box-shadow:0 1px 3px #0002; transition:transform .17s; }
 .echoink-mobile input[type=checkbox][role=switch]:checked { background:var(--em-green); }
 .echoink-mobile input[type=checkbox][role=switch]:checked::before { transform:translateX(18px); }
+.echoink-mobile input[type=checkbox][role=switch]::after { content:none; display:none; }
 .echoink-mobile .em-sheet-overlay { position:absolute; inset:0 0 max(var(--view-bottom-spacing, env(safe-area-inset-bottom,0px)),var(--em-viewport-occlusion,0px)); z-index:20; display:flex; align-items:flex-end; }
 .echoink-mobile .em-sheet-scrim { position:absolute; inset:0; width:100%; height:100%; background:#0005; border-radius:0; }
 .echoink-mobile .em-sheet { position:relative; background:var(--background-primary); color:var(--text-normal); width:100%; max-height:90%; border-radius:23px 23px 0 0; display:flex; flex-direction:column; padding:8px 18px 18px; box-shadow:0 -8px 30px #0001; overflow:hidden; }
@@ -23330,7 +23333,14 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-mobile .em-todo-row>.em-help { flex-basis:100%; margin:0 0 12px 52px; }
 .echoink-mobile .em-todo-row input[type=checkbox] { width:24px; height:24px; min-width:24px; accent-color:var(--em-green); }
 .echoink-home-workspace.echoink-mobile-home { padding-bottom:max(var(--view-bottom-spacing, env(safe-area-inset-bottom,0px)),var(--em-viewport-occlusion,0px)) !important; }
-.echoink-home-workspace.echoink-mobile-home :is(button,input,select) { min-height:44px; }
+.echoink-home-workspace.echoink-mobile-home :is(button,input,select):not(.calendar-days>button) { min-height:44px; }
+.echoink-home-workspace.echoink-mobile-home .calendar-days>button { min-height:0; height:auto; padding:0; }
+.echoink-home-workspace.echoink-mobile-home :is(.echoink-home-shortnav button,.todo-filter) { height:auto; padding:6px 12px; border-radius:6px; }
+.echoink-home-workspace.echoink-mobile-home .small-note { border-radius:0; height:auto; padding:11px; }
+.echoink-home-workspace.echoink-mobile-home .return-grid { align-items:start; }
+.is-mobile .echoink-journal-template-modal .modal-content { overflow:auto; min-height:0; }
+.is-mobile .echoink-journal-template-modal :is(.echoink-journal-template-card,.echoink-journal-custom-template) { height:auto; min-height:44px; padding:11px; border-radius:8px; }
+.is-mobile .echoink-journal-template-modal :is(.echoink-journal-template-card,.echoink-journal-custom-template) :is(strong,span,small) { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
 
 /* Knowledge settings: approved mobile prototype structure. */
 .echoink-mobile .setting-view.kb-mobile {

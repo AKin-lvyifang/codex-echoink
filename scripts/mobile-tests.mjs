@@ -202,11 +202,14 @@ await test("formal DOM: sheet preserves draft node and focus, seven settings and
   const host = createHost(); host.app.workspace.containerEl = dom.window.document.body;
   const store = new MobileStore(host.adapter, "plugin/mobile"); await store.load(); const config = settings(); let saved = "";
   const runtime = new MobileRuntime(host.app, store, () => config, async () => answer("openai-completions", "ok"));
-  const services = new MobileServices({ app: host.app, settings: config, store, runtime, navigation: {}, registerEvent() {}, showPage: async () => {}, saveSettings: async () => {} }, "plugin/mobile"); await services.initialize();
+  let ui;
+  const services = new MobileServices({ app: host.app, settings: config, store, runtime, navigation: {}, registerEvent() {}, showPage: async page => ui.showPage(page), saveSettings: async () => {} }, "plugin/mobile"); await services.initialize();
   const root = dom.window.document.querySelector("#app"); root.style.setProperty("--view-bottom-spacing", "68px");
-  const ui = new MobileUI(root, { app: host.app, store, runtime, services, settings: () => config, saveSettings: async () => { saved = JSON.stringify(config); }, openNote: async () => {}, beginRender() {}, renderMarkdown(text, element) { element.textContent = text; } }); ui.mount();
+  ui = new MobileUI(root, { app: host.app, store, runtime, services, settings: () => config, saveSettings: async () => { saved = JSON.stringify(config); }, openNote: async () => {}, beginRender() {}, renderMarkdown(text, element) { element.textContent = text; } }); ui.mount();
   const button = text => [...root.querySelectorAll("button")].find(element => element.textContent.trim() === text || element.getAttribute("aria-label") === text);
   const settle = () => new Promise(resolve => setTimeout(resolve, 10));
+  await services.openEchoInkGeneralSettings(); assert.equal(root.dataset.page, "settings"); button("基础设置").click(); assert.equal(root.dataset.page, "basic"); button("返回").click(); assert.equal(root.dataset.page, "settings"); button("返回").click(); assert.equal(root.dataset.page, "chat");
+  ui.showPage("layout"); await services.openEchoInkGeneralSettings(); button("基础设置").click(); button("返回").click(); assert.equal(root.dataset.page, "settings"); button("返回").click(); assert.equal(root.dataset.page, "chat", "Home settings entry returns to chat even when another detail was open");
   const input = root.querySelector(".em-input"); input.value = "保留中文草稿"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true })); input.focus();
   button("引用笔记").click(); const dialog = root.querySelector('[role="dialog"]'); assert.ok(dialog); assert.ok(root.querySelector(".em-header").inert); dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true })); assert.equal(dom.window.document.activeElement, dialog.querySelector("button"));
   button("当前笔记笔记/来源.md").click(); await settle(); assert.equal(root.querySelector(".em-input"), input); assert.equal(input.value, "保留中文草稿"); assert.equal(dom.window.document.activeElement, input); assert.equal(store.session.notePath, "笔记/来源.md");
