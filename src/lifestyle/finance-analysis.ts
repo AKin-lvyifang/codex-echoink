@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { FinanceBudget, FinanceEntry } from "./store";
+import { financeAnalysisPurposeGroups, financeAnalysisAdjustmentScenarios } from "./finance-analysis-scenarios";
 import { buildFinanceAnalysisHistory, financeAnalysisLabel, financeAnalysisRows, financeCategoryBudgetFacts, type FinanceAnalysisHistoryOptions } from "./finance-analysis-history";
 import { effectiveFinanceEntries, financeSpendingFacts, localDate, money } from "./finance-domain";
 
@@ -199,16 +200,13 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
       refs[`expense_${index + 1}`] = `${item.日期} ${item.商户} ${item.金额}`;
       return item;
     });
-  const purposeGroups=new Map<string,{category:string;description:string;amountCents:number;count:number;merchants:Set<string>;dates:Set<string>}>();
-  for(const row of facts.expenses) {
-    if(!row.description.trim()) continue;
-    const key=JSON.stringify([row.category,row.description.trim()]);
-    const group=purposeGroups.get(key)??{category:row.category,description:row.description.trim(),amountCents:0,count:0,merchants:new Set<string>(),dates:new Set<string>()};
-    group.amountCents+=row.amountCents;group.count++;group.merchants.add(row.merchant.trim());group.dates.add(row.date.slice(0,10));purposeGroups.set(key,group);
-  }
-  const purposes=[...purposeGroups.values()].filter(group=>group.count>1).sort((a,b)=>b.amountCents-a.amountCents).map(group=>({
+  const purposeGroups=financeAnalysisPurposeGroups(valid);
+  const purposes=purposeGroups.filter(group=>group.count>1).sort((a,b)=>b.amountCents-a.amountCents).map(group=>({
     分类:safeLabel(group.category),相同消费说明:safeLabel(group.description),笔数:group.count,不同商户数:group.merchants.size,
     累计支出原额元:group.amountCents/100,交易日期:[...group.dates].sort(),归组口径:"相同非空消费说明和已有分类，未进行模型用途分类"}));
+  const adjustments=financeAnalysisAdjustmentScenarios(month,valid,budget,purposeGroups,historyOptions);
+  Object.assign(refs,adjustments.facts);
+  refs.record_coverage="记录完整性未知；收入记录只能支持已记录收入金额，不能证明全部收入、支出或完整财务状况。";
   const input = {
     月份: refs.month, 已记录日期: refs.range, 资料边界: "只代表此账本已记录的已完成人民币交易；不能判断全部账户或完整月份。",
     排除记录: {
@@ -221,6 +219,7 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
     完整分类预算: categoryBudgets.map(item=>({分类:item.分类,净支出元:item.净支出分/100,额度元:item.额度分===null?null:item.额度分/100,
       超额元:item.超额分===null?null:item.超额分/100,状态:item.状态})),
     用途累计候选:purposes,
+    可核对调整情景:{说明:"每项均有明确条件；同分类的保留用途、保留其余、增额或次数是替代选择，不能同时保留全部原消费。多个分类若同时调拨，须合并核对同一期公共余量。引用key对应基础统计中的完整计算句子，可用{{key}}原样引用后补生活取舍。",分类:adjustments.scenarios},
     金额口径:"所有面向模型的金额为人民币元，比例目标为%；交易日期是账目交易日期，不是录入时间；覆盖unknown表示记录完整性未知。",
     月预算事实: budget ? { 额度元: budget.totalCents/100, 净支出元: netCents/100, 超额元: Math.max(0, netCents - budget.totalCents)/100,
       规则来源: historyOptions?.budgetSource==="current-default" ? "当前默认预算回算所选月份，不能证明当时已设置此预算" : "所选月份独立预算；变更预算不等于行为改善" } : null,
