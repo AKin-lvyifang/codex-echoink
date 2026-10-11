@@ -55,8 +55,12 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
   assert.deepEqual(facts.排除记录, { 失败: 1, 外币: 1, 未来: 0 });
   assert.equal(input.entryCount, 3);
   assert.equal(facts.分类支出原额.length, 2);
-  assert.equal(facts.商户支出.length, 2);
-  assert.equal(facts.较高单笔样本.length, 3);
+  for (const key of ["商户支出", "其余商户数", "重复消费候选", "较高单笔样本", "其余单笔数"])
+    assert.equal(Object.hasOwn(facts, key), false, "ranked transaction/merchant materials are not default model input");
+  assert.deepEqual(input.candidates.map(chart => chart.id), ["daily", "budget", "category", "flow"]);
+  assert.deepEqual(facts.可选解释图.map((chart: { id: string }) => chart.id), input.candidates.map(chart => chart.id));
+  assert.deepEqual(facts.可选核对表.map((table: { id: string }) => table.id), ["category", "budget"]);
+  assert.equal(Object.keys(facts.基础统计).some(key => /^(?:large_|merchant_\d|frequent_\d|expense_\d)/u.test(key)), false);
   assert.match(input.facts.category_1, /¥ 120.00/u);
   assert.match(input.facts.merchant_1, /¥ 120.00/u);
   assert.equal(input.facts.merchant_1_count, "1 笔");
@@ -79,7 +83,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     ["¥ 650.01", "¥ 630.01", "¥ 1,369.99"]);
   assert.deepEqual(completeFacts.有效交易明细[65], { 日期: "2026-09-20 10:00:00", 交易方向: "支出", 商户: "合成商户65",
     分类: "餐饮", 账户: "合成账户 [编号]", 人民币金额: "0.01", 消费说明: "工作餐65" });
-  assert.ok(!completeFacts.商户支出.some((item: { 商户: string }) => item.商户 === "合成商户65"), "full details include rows omitted by ranked summaries");
+  assert.equal(Object.hasOwn(completeFacts, "商户支出"), false, "full details remain available without a ranked merchant summary");
   assert.equal(completeFacts.有效交易明细[68].交易方向, "转账（不计收支）");
   assert.doesNotMatch(completeInput.text, /private-id|sourceId|不发送的私人备注|1234567890123456|未来样本|上月样本|失败样本|外币样本/u);
   const refund = [row("expense", 10_000, "expense"), row("refund-a", 15_000, "refund"),
@@ -116,19 +120,21 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
   assert.match(parsed.conclusion, /¥ 200.00/u);
   assert.match(parseFinanceAnalysisResponse(JSON.stringify({ conclusion: "主要分类 {{category_1}}。", charts: [{ id: "daily", explanation: "支出有起伏。" }], suggestions: [] }), input).conclusion, /¥ 120.00/u);
   assert.equal(parsed.charts[0].points.length, 21, "daily snapshot includes zero-spend days without rendering a long list");
-  assert.deepEqual(input.tables.map((table) => table.id), ["category", "merchant", "budget"]);
+  assert.deepEqual(input.tables.map((table) => table.id), ["category", "budget"]);
   assert.ok(input.candidates.some((item) => item.id === "flow" && item.points.some((point) => point.valueCents < 0)));
   const frequencyRows = Array.from({ length: 9 }, (_, index) => row(`once-${index}`, 30_000, "expense", "购物", { merchant: `单次商户${index}` }))
     .concat(Array.from({ length: 3 }, (_, index) => row(`repeat-${index}`, 100, "expense", index === 2 ? "购物" : "餐饮",
       { merchant: "小额重复商户", description: index === 2 ? "零食" : "工作餐" })));
   const frequencyInput = buildFinanceAnalysisInput("2026-09", frequencyRows, null, "2026-09-21");
   const frequencyFacts = JSON.parse(frequencyInput.text) as any;
-  assert.ok(!frequencyFacts.商户支出.some((item: { 商户: string }) => item.商户 === "小额重复商户"));
-  assert.equal(frequencyFacts.重复消费候选[0].商户, "小额重复商户");
+  assert.equal(Object.hasOwn(frequencyFacts, "商户支出"), false);
+  assert.equal(Object.hasOwn(frequencyFacts, "重复消费候选"), false);
+  assert.equal(frequencyFacts.有效交易明细.filter((item: { 商户: string }) => item.商户 === "小额重复商户").length, 3);
   assert.equal(frequencyInput.facts.frequent_1_count, "3 笔");
   assert.equal(frequencyInput.facts.frequent_1_amount, "¥ 3.00");
   assert.equal(frequencyInput.facts.frequent_1_categories, "餐饮 2 笔；购物 1 笔");
-  assert.equal(frequencyFacts.重复消费候选[0].已有分类与笔数, frequencyInput.facts.frequent_1_categories);
+  assert.equal(Object.hasOwn(frequencyFacts.基础统计, "frequent_1_categories"), false, "legacy references remain program-side only");
+  assert.deepEqual(frequencyFacts.用途累计候选.find((item: { 相同消费说明: string }) => item.相同消费说明 === "工作餐").笔数, 2);
   const zeroAllocationInput = buildFinanceAnalysisInput("2026-09", sample,
     { month: "2026-09", totalCents: 100_000, allocations: { 餐饮: 0, 购物: 0 } }, "2026-09-21");
   assert.deepEqual([zeroAllocationInput.facts.budget_total, zeroAllocationInput.facts.budget_allocated,
@@ -139,7 +145,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     { title: "记录中最显著的支出是什么", blocks: [
       { type: "highlight", tone: "fact", markdown: "**{{category_1_name}}**为 {{category_1_amount}}。" },
       { type: "chart", id: "category", explanation: "这张排名图用于找出重点分类。" },
-      { type: "table", id: "merchant", explanation: "表格核对商户聚合，不能当作单笔。" },
+      { type: "table", id: "category", explanation: "表格核对分类聚合，不能当作单笔。" },
       { type: "actions", items: ["先核对用途。", "{{unverified_key}} 应省略。"] }
     ] },
     { title: "收支差额如何理解", blocks: [
@@ -164,8 +170,24 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     suggestions: ["确认是否属于一次性消费，逐项核对每一笔，并换一个更合适的方案。"] }), input).suggestions.length, 1);
   assert.match(parseFinanceAnalysisResponse(`\u0060\u0060\u0060json\n${validResponse}\n\u0060\u0060\u0060`, input).conclusion, /¥ 200.00/u);
   const largeInput = buildFinanceAnalysisInput("2026-09", [row("large", 30_000, "expense")], null, "2026-09-21");
+  assert.deepEqual(largeInput.candidates.map(chart => chart.id), ["daily", "category", "flow"]);
+  assert.equal(Object.keys(JSON.parse(largeInput.text).基础统计).some(key => key.startsWith("large_")), false);
   assert.match(parseFinanceAnalysisResponse(JSON.stringify({ conclusion: "大额门槛为 {{large_threshold}}，涉及 {{large_count}}。",
-    charts: [{ id: "large", explanation: "这部分占比 {{large_share}}。" }], suggestions: [] }), largeInput).conclusion, /¥ 200.00.*1 笔/u);
+    charts: [], suggestions: [] }), largeInput).conclusion, /¥ 200.00.*1 笔/u, "old fact references still parse");
+  // An archived prepared input/snapshot keeps its original candidates independently of new defaults.
+  const savedInput = { ...largeInput, candidates: [
+    { id: "large" as const, title: "已保存的大额贡献", points: [{ label: "单笔 ≥200.00 元", valueCents: 30_000 }, { label: "其余消费", valueCents: 0 }] },
+    { id: "merchant" as const, title: "已保存的商户支出", points: [{ label: "合成商户", valueCents: 30_000 }] }
+  ], tables: [{ id: "merchant" as const, title: "已保存的商户核对", headers: ["商户", "支出原额", "占比", "笔数"],
+    rows: [["合成商户", "¥ 300.00", "100.0%", "1"]] }] };
+  assert.match(parseFinanceAnalysisResponse(JSON.stringify({ conclusion: "大额门槛为 {{large_threshold}}，涉及 {{large_count}}。",
+    charts: [{ id: "large", explanation: "这部分占比 {{large_share}}。" }], suggestions: [] }), savedInput).conclusion, /¥ 200.00.*1 笔/u);
+  const savedReport = parseFinanceAnalysisResponse(JSON.stringify({ version: 8, sections: [{ title: "旧报告图表", blocks: [
+    { type: "text", markdown: "已保存报告保留原图和原表。" },
+    { type: "chart", id: "large", explanation: "旧大额快照，保留原图。" },
+    { type: "chart", id: "merchant", explanation: "旧商户快照，保留原图。" },
+    { type: "table", id: "merchant", explanation: "旧商户表，保留原表。" }
+  ] }] }), savedInput);
   const assertCode = (body: string, code: FinanceAnalysisErrorCode): void => {
     assert.throws(() => parseFinanceAnalysisResponse(body, input), (error: unknown) => error instanceof FinanceAnalysisValidationError && error.code === code);
   };
@@ -178,7 +200,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     { type: "highlight", tone: "fact", markdown: "本月已记录两笔消费，共2400元；扣除100元退款后净支出为2300元。" },
     { type: "text", markdown: "2026-09-07与9月20日各支出1200元。第1周占支出原额50%，约五成；分类额度为0元不代表没有总预算。" },
     { type: "chart", id: "daily", explanation: "09-01至09-07合计1200元，第1周的集中支付可用于安排后续开支。" },
-    { type: "table", id: "merchant", explanation: "合成商户两笔累计2400元，聚合金额与逐笔明细可以对照阅读。" },
+    { type: "table", id: "category", explanation: "餐饮两笔累计2400元，分类聚合与逐笔明细可以对照阅读。" },
     { type: "actions", items: ["1. 每周少1次临时下单，先试7天；若每次30元，按每周30元估算调整效果，这不是已发生的节省金额。"] }
   ];
   const naturalResponse = JSON.stringify({ version: 8, sections: [{ title: "第1周与后续安排", blocks: naturalBlocks }] });
@@ -188,7 +210,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
   assert.deepEqual(naturalSection.blocks.slice(0, 2), naturalBlocks.slice(0, 2).map((block) => ({ ...block, markdown: block.markdown!.normalize("NFKC") })), "natural amounts, dates, ratios and counts survive unchanged");
   assert.deepEqual(naturalSection.blocks[2], { type: "chart", chart: { ...naturalInput.candidates.find((chart) => chart.id === "daily"),
     explanation: naturalBlocks[2].explanation!.normalize("NFKC") } }, "chart data still comes from the local snapshot");
-  assert.deepEqual(naturalSection.blocks[3], { type: "table", table: naturalInput.tables.find((table) => table.id === "merchant"),
+  assert.deepEqual(naturalSection.blocks[3], { type: "table", table: naturalInput.tables.find((table) => table.id === "category"),
     explanation: naturalBlocks[3].explanation!.normalize("NFKC") });
   assert.deepEqual(naturalSection.blocks[4], { type: "actions", items: naturalBlocks[4].items!.map((item) => item.normalize("NFKC")) });
   assert.equal(naturalParsed.omittedSuggestionCount, 0, "numeric action targets are not discarded");
@@ -399,6 +421,17 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     assert.equal(versionedParent.querySelector(".echoink-finance-section-head")?.querySelector("button")?.textContent, "刷新分析");
     assert.equal(versionedParent.children.filter((node) => node.tagName === "button").length, 0);
     assert.doesNotMatch(versionedParent.textContent, /支出原额.*退款超过消费/u);
+    await store.update((draft) => { draft.reports.find((item) => item.id === displayReport.id)!.financeSnapshot = savedReport; });
+    const reopenedStore = new LifestyleStore(path.join(directory, "lifestyle.json"));
+    await reopenedStore.initialize();
+    assert.deepEqual(reopenedStore.snapshot().reports.find(item => item.id === displayReport.id)!.financeSnapshot, savedReport,
+      "saved large/merchant chart and merchant table snapshots survive storage reload");
+    const savedParent = document.body.createDiv();
+    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(savedParent as unknown as HTMLElement);
+    assert.equal(savedParent.querySelectorAll(".echoink-finance-ai-chart").length, 2);
+    assert.ok(savedParent.querySelector(".echoink-finance-ai-stack"), "saved large chart still renders");
+    assert.equal(savedParent.querySelector(".echoink-finance-ai-table-panel")?.querySelectorAll("table").length, 1);
+    assert.match(savedParent.textContent, /已保存的商户支出.*已保存的商户核对/u);
     await store.update((draft) => { draft.reports.find((item) => item.id === displayReport.id)!.financeSnapshot = naturalParsed; });
     const naturalParent = document.body.createDiv();
     const naturalRenderStart = openTestMarkdownRenders.length;

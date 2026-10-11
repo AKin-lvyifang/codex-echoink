@@ -106,10 +106,6 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
     refs.large_count = `${large.length} 笔`;
     refs.large_total = `¥ ${money(sum(large))}`;
     refs.large_share = `${(sum(large) / facts.grossCents * 100).toFixed(1)}%`;
-    candidates.push({ id: "large", title: "大额消费贡献", points: [
-      { label: `单笔 ≥${money(largeThresholdCents)} 元`, valueCents: sum(large) },
-      { label: "其余消费", valueCents: facts.grossCents - sum(large) }
-    ] });
   }
   if (budget && Object.keys(budget.allocations).length && facts.expenses.length) {
     const categoryNet = new Map<string, number>();
@@ -148,8 +144,8 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
     if (description && !item.descriptions.includes(description) && item.descriptions.length < 2) item.descriptions.push(description);
     merchantMap.set(name, item);
   }
-  const merchants = [...merchantMap].sort((a, b) => b[1].amountCents - a[1].amountCents).slice(0, 8)
-    .map(([name, value], index) => {
+  [...merchantMap].sort((a, b) => b[1].amountCents - a[1].amountCents).slice(0, 8)
+    .forEach(([name, value], index) => {
       const item = { 商户: name, 金额: `¥ ${money(value.amountCents)}`,
         占支出原额: `${(value.amountCents / facts.grossCents * 100).toFixed(1)}%`, 笔数: value.count, 用途样本: value.descriptions };
       refs[`merchant_${index + 1}`] = `${item.商户} ${item.金额}、${item.占支出原额}、${item.笔数} 笔`;
@@ -157,11 +153,10 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
       refs[`merchant_${index + 1}_amount`] = item.金额;
       refs[`merchant_${index + 1}_share`] = item.占支出原额;
       refs[`merchant_${index + 1}_count`] = `${item.笔数} 笔`;
-      return item;
     });
-  const frequentMerchants = [...merchantMap].filter(([, value]) => value.count > 1)
+  [...merchantMap].filter(([, value]) => value.count > 1)
     .sort((a, b) => b[1].count - a[1].count || b[1].amountCents - a[1].amountCents).slice(0, 5)
-    .map(([name, value], index) => {
+    .forEach(([name, value], index) => {
       const key = `frequent_${index + 1}`;
       refs[`${key}_name`] = name;
       refs[`${key}_count`] = `${value.count} 笔`;
@@ -171,13 +166,9 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
       const remainingCount = rankedCategories.slice(3).reduce((total, [, count]) => total + count, 0);
       if (remainingCount) shownCategories.push(`其余分类合计 ${remainingCount} 笔`);
       refs[`${key}_categories`] = shownCategories.join("；");
-      return { 商户: name, 笔数: value.count, 金额: `¥ ${money(value.amountCents)}`, 用途样本: value.descriptions,
-        已有分类与笔数: refs[`${key}_categories`] };
     });
   if (category.length) candidates.push({ id: "category", title: "主要分类支出排名（已列样本）", points: category.slice(0, 6).map((item) =>
     ({ label: item.分类, valueCents: Math.round(Number(item.金额.replace(/[^\d.]/gu, "")) * 100) })) });
-  if (merchants.length) candidates.push({ id: "merchant", title: "主要商户支出排名（已列样本）", points: merchants.slice(0, 6).map((item) =>
-    ({ label: item.商户, valueCents: Math.round(Number(item.金额.replace(/[^\d.]/gu, "")) * 100) })) });
   if (incomeCents || facts.grossCents || refundCents) candidates.push({ id: "flow", title: "收入、支出和退款如何影响差额", points: [
     { label: "收入", valueCents: incomeCents }, { label: "支出原额", valueCents: -facts.grossCents },
     { label: "退款", valueCents: refundCents }, { label: "收支差额", valueCents: incomeCents - netCents }
@@ -186,19 +177,16 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
   const categoryBudgets = financeCategoryBudgetFacts(valid, budget);
   if (category.length) tables.push({ id: "category", title: "分类支出核对", headers: ["分类", "支出原额", "占比", "笔数"],
     rows: category.map((item) => [item.分类, item.金额, item.占支出原额, `${item.笔数}`]) });
-  if (merchants.length) tables.push({ id: "merchant", title: "商户支出核对", headers: ["商户", "支出原额", "占比", "笔数"],
-    rows: merchants.map((item) => [item.商户, item.金额, item.占支出原额, `${item.笔数}`]) });
   if (categoryBudgets.length) tables.push({ id: "budget", title: "完整分类预算核对", headers: ["分类", "净支出", "预算", "超出", "状态"],
     columns: ["text", "number", "number", "number", "status"],
     statuses: categoryBudgets.map(item => item.状态 === "超支" || item.状态 === "接近额度" ? "notice" : "fact"),
     rows: categoryBudgets.map(item => [item.分类, `¥ ${money(item.净支出分)}`, item.额度分 === null ? "未设额度" : `¥ ${money(item.额度分)}`,
       item.超额分 === null ? "—" : `¥ ${money(item.超额分)}`, item.状态]) });
-  const highest = facts.expenses.slice().sort((a, b) => b.amountCents - a.amountCents || a.date.localeCompare(b.date)).slice(0, 8)
-    .map((row, index) => {
+  facts.expenses.slice().sort((a, b) => b.amountCents - a.amountCents || a.date.localeCompare(b.date)).slice(0, 8)
+    .forEach((row, index) => {
       const item = { 日期: row.date.slice(0, 10), 商户: safeLabel(row.merchant), 分类: safeLabel(row.category),
         金额: `¥ ${money(row.amountCents)}`, 用途: safeLabel(row.description) };
       refs[`expense_${index + 1}`] = `${item.日期} ${item.商户} ${item.金额}`;
-      return item;
     });
   const purposeGroups=financeAnalysisPurposeGroups(valid);
   const purposes=purposeGroups.filter(group=>group.count>1).sort((a,b)=>b.amountCents-a.amountCents).map(group=>({
@@ -208,6 +196,8 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
   const adjustments=financeAnalysisAdjustmentScenarios(month,valid,budget,purposeGroups,historyOptions);
   Object.assign(refs,adjustments.facts);
   refs.record_coverage="记录完整性未知；收入记录只能支持已记录收入金额，不能证明全部收入、支出或完整财务状况。";
+  // Retain old references for compatible parsing, without repeating ranked statistics in new model inputs.
+  const modelFacts = Object.fromEntries(Object.entries(refs).filter(([key]) => !/^(?:large_|merchant_\d|frequent_\d|expense_\d)/u.test(key)));
   const input = {
     月份: refs.month, 已记录日期: refs.range, 资料边界: "只代表此账本已记录的已完成人民币交易；不能判断全部账户或完整月份。",
     排除记录: {
@@ -215,7 +205,7 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
       外币: ledger.filter((row) => row.date.startsWith(month) && row.status === "completed" && row.currency !== "CNY").length,
       未来: ledger.filter((row) => row.date.startsWith(month) && row.date.slice(0, 10) > asOfDate).length
     },
-    基础统计: refs,
+    基础统计: modelFacts,
     有效交易明细: financeAnalysisRows(valid),
     完整分类预算: categoryBudgets.map(item=>({分类:item.分类,净支出元:item.净支出分/100,额度元:item.额度分===null?null:item.额度分/100,
       超额元:item.超额分===null?null:item.超额分/100,状态:item.状态})),
@@ -226,9 +216,6 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
       规则来源: historyOptions?.budgetSource==="current-default" ? "当前默认预算回算所选月份，不能证明当时已设置此预算" : "所选月份独立预算；变更预算不等于行为改善" } : null,
     ...(historyOptions ? buildFinanceAnalysisHistory(month, ledger, asOfDate, historyOptions) : {}),
     分类支出原额: category, 其余分类数: Math.max(0, facts.categories.length - 12),
-    商户支出: merchants, 其余商户数: Math.max(0, merchantMap.size - 8),
-    重复消费候选: frequentMerchants,
-    较高单笔样本: highest, 其余单笔数: Math.max(0, facts.expenses.length - 8),
     可选解释图: candidates.map((chart) => ({ id: chart.id, title: chart.title,
       周段: chart.id === "daily" ? financeDailyWeeks(chart.points).map((week) =>
         `第 ${week.number} 周 · ${month.slice(0, 4)}-${week.start} 至 ${month.slice(0, 4)}-${week.end} · 合计 ¥ ${money(week.totalCents)}`) : undefined,
