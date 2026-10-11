@@ -1,5 +1,7 @@
+import type { DataAdapter } from "obsidian";
+import { MobileProfileProtocol } from "../harness/memory/mobile-profile-protocol";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile, rename, readdir, access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -1157,6 +1159,35 @@ export async function runAgentSelfMigrationScenarios(): Promise<void> {
 
   await assertTemplateReselectionContract();
   await assertTemplateSelectionRejectsStaleAgentSnapshot();
+
+  await withVault(null, async ({ vaultPath, repository }) => {
+    const system = await createLocalCognitiveSystem(repository);
+    await system.selectPersonalityTemplate("advisor", { initialIdentity: { displayName: "移动互通", avatar: { kind: "default" } } });
+    const resolve = (file: string) => path.join(vaultPath, file);
+    const adapter = {
+      exists: async (file: string) => { try { await access(resolve(file)); return true; } catch { return false; } },
+      read: (file: string) => readFile(resolve(file), "utf8"),
+      write: async (file: string, text: string) => { await writeFile(resolve(file), text); },
+      rename: (from: string, to: string) => rename(resolve(from), resolve(to)),
+      remove: (file: string) => rm(resolve(file)), rmdir: (file: string) => rm(resolve(file), { recursive: true }),
+      mkdir: async (file: string) => { await mkdir(resolve(file), { recursive: true }); },
+      list: async (file: string) => { const entries = await readdir(resolve(file), { withFileTypes: true }); return { files: entries.filter(e => e.isFile()).map(e => `${file}/${e.name}`), folders: entries.filter(e => e.isDirectory()).map(e => `${file}/${e.name}`) }; }
+    } as DataAdapter;
+    const mobile = new MobileProfileProtocol(adapter, () => 1_800_000_000_000, { read: () => "fixture-device", create: () => "fixture-device" });
+    let profile = await mobile.profile();
+    profile = await mobile.save({ identity: { displayName: "同源墨墨", avatar: { kind: "preset", presetId: "sol" } } }, profile.version);
+    await mobile.save({ templateId: "executor" }, profile.version);
+    const savedManifest = JSON.parse(await readFile(repository.layout.manifest, "utf8"));
+    const reopened = new PersonalMemoryRepository({ vaultPath, vaultId: "vault-agent-self-test", watchExternalChanges: false });
+    try {
+      await reopened.initialize(); const fixed = await reopened.loadFixedContext({ memoryMode: "normal" });
+      assert.equal(fixed.revision, savedManifest.revision); assert.ok(fixed.agent.includes("同源墨墨"));
+      assert.ok(fixed.memory?.includes(`Revision: ${savedManifest.revision}`));
+      const desktop = await createLocalCognitiveSystem(reopened);
+      await desktop.updateAgentIdentity({ displayName: "桌面继续", avatar: { kind: "preset", presetId: "lin" } });
+      assert.equal((await mobile.profile()).identity.displayName, "桌面继续");
+    } finally { await reopened.dispose(); }
+  });
 
   console.log("PASS agent-self: templates, reselection, strict round-trip and recoverable migration");
 }

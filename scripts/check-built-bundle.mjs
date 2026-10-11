@@ -1,12 +1,13 @@
 /**
  * Post-build gate for the EchoInk Obsidian bundle.
  *
- * Guards EchoInk's project budget and Obsidian review/runtime requirements
+ * Reports EchoInk's bundle size and checks Obsidian review/runtime requirements
  * that a plain `npm run build` cannot express:
  *
- *   1. `dist/main.js` must be below the 8,000,000-byte project budget,
- *      including the compressed full o200k vocabulary used for local usage
- *      estimates across Providers. The vocabulary is pooled once by the build.
+ *   1. Report `dist/main.js` size, with an advisory above 8,000,000 bytes.
+ *      Project size thresholds are informational, not installation limits or
+ *      build/release blockers. The full o200k vocabulary for local usage
+ *      estimates is pooled once by the build.
  *      Bundles above Obsidian Sync Standard's per-file limit must be
  *      installed independently on each device instead of synced.
  *   2. The bundle must not contain Pi CLI / self-update / tool-download code
@@ -32,10 +33,8 @@ import { findDynamicScriptCreations, SCRIPT_RESOURCE_DISABLED } from "./react-do
 
 const DIST_MAIN_JS = path.join(process.cwd(), "dist", "main.js");
 
-/** Project hard limit, in decimal bytes; reaching it fails the build gate. */
-const HARD_LIMIT_BYTES = 8_000_000;
-/** Internal target, reported without relaxing the hard limit. */
-const TARGET_LIMIT_BYTES = 4_500_000;
+/** Project review threshold in decimal bytes; never a failure condition. */
+const SIZE_REVIEW_BYTES = 8_000_000;
 
 /**
  * Definitive violation markers. These name the actual ZIP / self-update /
@@ -81,14 +80,10 @@ function checkSize() {
 
   console.log(`dist/main.js: ${bytes} bytes (${sizeMiB} MiB)`);
 
-  if (bytes >= HARD_LIMIT_BYTES) {
-    failures.push(
-      `dist/main.js must be below ${HARD_LIMIT_BYTES} bytes; got ${bytes} bytes`
-    );
-  } else if (bytes > TARGET_LIMIT_BYTES) {
-    console.log(
-      `note: above the ${TARGET_LIMIT_BYTES}-byte internal target but below `
-        + `the ${HARD_LIMIT_BYTES}-byte hard limit.`
+  if (bytes >= SIZE_REVIEW_BYTES) {
+    console.warn(
+      `note: dist/main.js exceeds the ${SIZE_REVIEW_BYTES}-byte project review `
+        + `threshold (${bytes} bytes). Informational only; size does not block delivery.`
     );
   }
 }

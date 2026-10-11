@@ -1,4 +1,4 @@
-import type { FinanceBudget, FinanceDefaultBudget, LifestyleData } from "./store";
+import type { FinanceBudget, FinanceDefaultBudget, LifestyleData } from "./store-core";
 import { allocateBudgetByPercent, parsePercent, parseYuan, validateBudget } from "./finance-domain";
 
 type BudgetData = Pick<LifestyleData, "budgets" | "financeDefaultBudget">;

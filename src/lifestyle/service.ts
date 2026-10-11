@@ -4,6 +4,7 @@ import { Notice, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { pluginDataDir } from "../plugin/plugin-data-paths";
 import { LifestyleStore } from "./store";
+import type { LifestyleViewPort } from "./host";
 import type { LifestyleKind } from "./settings";
 import { LifestyleView, LIFE_VIEW_TYPES } from "./view";
 import { LifestyleFinanceService } from "./finance-service";
@@ -11,7 +12,7 @@ import { LifestyleFinanceService } from "./finance-service";
 export class LifestyleService {
   readonly store: LifestyleStore;
   readonly finance: LifestyleFinanceService;
-  private views = new Set<LifestyleView>();
+  private views = new Set<LifestyleViewPort>();
   private disposed = false;
 
   constructor(readonly plugin: CodexForObsidianPlugin) {
@@ -35,8 +36,8 @@ export class LifestyleService {
     });
   }
 
-  registerView(view: LifestyleView): void { this.views.add(view); }
-  unregisterView(view: LifestyleView): void { this.views.delete(view); }
+  registerView(view: LifestyleViewPort): void { this.views.add(view); }
+  unregisterView(view: LifestyleViewPort): void { this.views.delete(view); }
 
   async open(kind: LifestyleKind, mode: "main" | "settings" = "main"): Promise<void> {
     if (this.disposed) return;

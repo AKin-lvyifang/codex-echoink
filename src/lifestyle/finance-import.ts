@@ -1,4 +1,4 @@
-import type { FinanceEntry } from "./store";
+import type { FinanceEntry } from "./store-core";
 import type { FinanceImportRow } from "./finance-domain";
 import { FINANCE_BRAND_CHOICES, financeSelectableCategoryNames, matchConfigured, resolveFinanceMerchant } from "./finance-catalog";
 import type { FinanceSettings } from "./settings";

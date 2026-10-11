@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
-import type { LifestyleService } from "./service";
+import type { LifestyleHost } from "./host";
 import type { LifestyleKind } from "./settings";
 import { FinanceWorkspace } from "./finance-view";
 
@@ -9,7 +9,7 @@ export class LifestyleView extends ItemView {
   private unsubscribe: (() => void) | null = null;
   private financeUnsubscribe: (() => void) | null = null;
   private readonly financeWorkspace: FinanceWorkspace;
-  constructor(leaf: WorkspaceLeaf, private readonly service: LifestyleService, readonly kind: LifestyleKind) {
+  constructor(leaf: WorkspaceLeaf, private readonly service: LifestyleHost, readonly kind: LifestyleKind) {
     super(leaf);
     this.financeWorkspace = new FinanceWorkspace(service);
   }

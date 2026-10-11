@@ -29,7 +29,8 @@ const dateKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, 
 const { EchoInkHomeView } = await production('src/home/home-view.ts', {
   './home-workbench-model': { dateKey }, './home-i18n': i18n, './home-note-visibility': visibility
 });
-const { HomeActivityService } = await production('src/home/home-activity-service.ts');
+const activityCore = await production('src/home/home-activity-core.ts');
+const { HomeActivityService } = await production('src/home/home-activity-service.ts', { './home-activity-core': activityCore });
 const { ForegroundView } = await production('src/ui/foreground-view.ts');
 const filters = await production('src/english-diary/expression-search.ts');
 const { EnglishExpressionView } = await production('src/english-diary/expression-view.ts', { './expression-search': filters });

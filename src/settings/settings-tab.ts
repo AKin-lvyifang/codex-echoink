@@ -6,6 +6,7 @@ import { renderTodoStatistics } from "./todo-statistics";
 import { renderTodoReminderSettings } from "./todo-reminder-settings";
 import { renderEnglishDiaryActivity } from "./english-diary-activity";
 import { renderAppearancePicker } from "./appearance-picker";
+import { SETTINGS_TAB_ICONS } from "./settings-tab-icons";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { renderManualDreamAction } from "./manual-dream-action";
 import { OriginSetting } from "./origin-setting";
@@ -5797,14 +5798,14 @@ const SETTINGS_TABS: Array<{
   id: VisibleSettingsTab;
   icon: AnimatedSettingsTabIconName;
 }> = [
-  { id: "general", icon: "settings" },
-  { id: "layout", icon: "blocks" },
-  { id: "providers", icon: "key-round" },
-  { id: "resources", icon: "layout-list" },
-  { id: "knowledgeBase", icon: "book-open-check" },
-  { id: "review", icon: "clipboard-check" },
-  { id: "todos", icon: "list-todo" },
-  { id: "account", icon: "feather" }
+  { id: "general", icon: SETTINGS_TAB_ICONS.general },
+  { id: "layout", icon: SETTINGS_TAB_ICONS.layout },
+  { id: "providers", icon: SETTINGS_TAB_ICONS.providers },
+  { id: "resources", icon: SETTINGS_TAB_ICONS.resources },
+  { id: "knowledgeBase", icon: SETTINGS_TAB_ICONS.knowledgeBase },
+  { id: "review", icon: SETTINGS_TAB_ICONS.review },
+  { id: "todos", icon: SETTINGS_TAB_ICONS.todos },
+  { id: "account", icon: SETTINGS_TAB_ICONS.account }
 ];
 
 function visibleSettingsTab(tab: SettingsTab): VisibleSettingsTab {

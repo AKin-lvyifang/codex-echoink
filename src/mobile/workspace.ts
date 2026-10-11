@@ -1,71 +1,63 @@
 import type { TFile, Workspace, WorkspaceLeaf } from "obsidian";
+import { VIEW_TYPE_ECHOINK_HOME } from "../home/view-type";
 
 export const MOBILE_VIEW = "echoink-mobile";
-const SPLIT_MIN_WIDTH = 820;
+export const MOBILE_SETTINGS_VIEW = "echoink-mobile-settings";
 
-/** Only explicit navigation creates panes; resizing never changes host layout. */
+/** Explicit navigation only: the host owns sidebar pinning, drawers and splits. */
 export class MobileWorkspace {
-  private paired?: { leaf: WorkspaceLeaf; path: string };
+  private reader?: { leaf: WorkspaceLeaf; path: string };
   private pending: Promise<void> = Promise.resolve();
   constructor(private workspace: Workspace, private isTablet: boolean) {}
-
   private serial(action: () => Promise<void>): Promise<void> {
-    const next = this.pending.catch(() => {}).then(action);
-    this.pending = next;
-    return next;
+    const next = this.pending.catch(() => {}).then(action); this.pending = next; return next;
   }
-  private leaves(): WorkspaceLeaf[] {
+  private center(): WorkspaceLeaf[] {
     const leaves: WorkspaceLeaf[] = [];
     this.workspace.iterateAllLeaves(leaf => { if (leaf.getRoot() === this.workspace.rootSplit) leaves.push(leaf); });
     return leaves;
-  }
-  private wide(leaf: WorkspaceLeaf): boolean {
-    // A wide window may already contain narrow panes. Only split the actual view.
-    return this.isTablet && leaf.view.containerEl.clientWidth >= SPLIT_MIN_WIDTH;
   }
   private path(leaf: WorkspaceLeaf): string | undefined {
     return leaf.view.getViewType() === "markdown" ? leaf.getViewState().state?.file as string | undefined : undefined;
   }
   open(): Promise<void> {
     return this.serial(async () => {
-      // Do not reset an existing ItemView: it owns the draft, focus and request.
-      let leaf = this.workspace.getLeavesOfType(MOBILE_VIEW)[0];
-      const current = this.workspace.getMostRecentLeaf(this.workspace.rootSplit);
-      const path = current && this.path(current);
+      const existing = this.workspace.getLeavesOfType(MOBILE_VIEW);
+      let leaf = existing.find(item => !this.isTablet || item.getRoot() === this.workspace.rightSplit);
       if (!leaf) {
-        if (current && path && this.wide(current)) {
-          leaf = this.workspace.createLeafBySplit(current, "vertical");
-          this.paired = { leaf: current, path };
-        } else leaf = this.workspace.getLeaf("tab");
+        leaf = this.isTablet ? this.workspace.getRightLeaf(false) ?? undefined : this.workspace.getLeaf("tab");
+        if (!leaf) throw new Error("无法创建 EchoInk 原生右侧栏。");
         await leaf.setViewState({ type: MOBILE_VIEW, active: true });
-      } else if (current && path && current.parent === leaf.parent && this.wide(current)) {
-        // A conversation opened in a narrow tab can later become a wide pair.
-        const leaves = this.leaves();
-        let reader = leaves.find(item => item.parent !== leaf.parent && this.path(item) === path);
-        if (!reader && this.paired && leaves.includes(this.paired.leaf) && this.paired.leaf.parent !== leaf.parent
-          && !this.paired.leaf.getViewState().pinned && this.path(this.paired.leaf) === this.paired.path) reader = this.paired.leaf;
-        if (!reader) reader = this.workspace.createLeafBySplit(leaf, "vertical", true);
-        if (this.path(reader) !== path) await reader.setViewState({ ...current.getViewState(), pinned: false, active: true });
-        this.paired = { leaf: reader, path };
+        // Migrate only legacy EchoInk chat tabs, after the new view is ready.
+        for (const old of existing) if (this.isTablet && old !== leaf && old.getRoot() === this.workspace.rootSplit) old.detach();
       }
       await this.workspace.revealLeaf(leaf);
     });
   }
-  openNote(file: TFile, conversation: WorkspaceLeaf): Promise<void> {
+  openHome(): Promise<void> {
     return this.serial(async () => {
-      const leaves = this.leaves();
-      const wide = this.wide(conversation);
-      const beside = (leaf: WorkspaceLeaf) => leaf !== conversation && leaf.parent !== conversation.parent;
-      let reader = leaves.find(leaf => this.path(leaf) === file.path && beside(leaf));
-      if (!reader && !wide) reader = leaves.find(leaf => this.path(leaf) === file.path);
-      if (!reader && this.paired && leaves.includes(this.paired.leaf)
-        && (!wide || beside(this.paired.leaf)) && !this.paired.leaf.getViewState().pinned && this.path(this.paired.leaf) === this.paired.path) reader = this.paired.leaf;
-      if (!reader) reader = wide && leaves.includes(conversation)
-        ? this.workspace.createLeafBySplit(conversation, "vertical", true)
-        : this.workspace.getLeaf("tab");
-      if (this.path(reader) !== file.path) await reader.openFile(file, { active: true });
-      this.paired = { leaf: reader, path: file.path };
-      await this.workspace.revealLeaf(reader);
+      let leaf = this.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME).find(item => item.getRoot() === this.workspace.rootSplit);
+      if (!leaf) { leaf = this.workspace.getLeaf("tab"); await leaf.setViewState({ type: VIEW_TYPE_ECHOINK_HOME, active: true }); }
+      await this.workspace.revealLeaf(leaf);
+    });
+  }
+  openSettings(): Promise<WorkspaceLeaf> {
+    let leaf: WorkspaceLeaf;
+    return this.serial(async () => {
+      leaf = this.workspace.getLeavesOfType(MOBILE_SETTINGS_VIEW).find(item => item.getRoot() === this.workspace.rootSplit)!;
+      if (!leaf) { leaf = this.workspace.getLeaf("tab"); await leaf.setViewState({ type: MOBILE_SETTINGS_VIEW, active: true }); }
+      await this.workspace.revealLeaf(leaf);
+    }).then(() => leaf);
+  }
+  openNote(file: TFile, _conversation?: WorkspaceLeaf): Promise<void> {
+    return this.serial(async () => {
+      const center = this.center();
+      let leaf = center.find(item => this.path(item) === file.path);
+      if (!leaf && this.reader && center.includes(this.reader.leaf) && !this.reader.leaf.getViewState().pinned && this.path(this.reader.leaf) === this.reader.path) leaf = this.reader.leaf;
+      if (!leaf) leaf = this.workspace.getLeaf("tab");
+      if (this.path(leaf) !== file.path) await leaf.openFile(file, { active: true });
+      this.reader = { leaf, path: file.path };
+      await this.workspace.revealLeaf(leaf);
     });
   }
 }

@@ -1,5 +1,5 @@
 import { ItemView, Modal, Notice, TFile, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from "obsidian";
-import type CodexForObsidianPlugin from "../main";
+import type { HomeHost } from "./home-host";
 import type { SettingsLanguage } from "../settings/settings";
 import type { KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { homeEntryIndexPath, HomeWorkbenchDataService, type HomeEntrySummary, type HomeWorkbenchData } from "./home-workbench-data";
@@ -14,7 +14,7 @@ import { homeWorkspaceMarkup } from "./home-workspace-template";
 import { bindHomeBentoMagnet } from "./home-bento-magnet";
 import { HomeSearchService, type HomeSearchMatch } from "./home-search";
 import { isHomeNotePath } from "./home-note-visibility";
-import { type HomeActivityEvent, type HomeActivityKind } from "./home-activity-service";
+import { type HomeActivityEvent, type HomeActivityKind } from "./home-activity-core";
 import { ECHOINK_HOME_MODULES } from "./home-modules";
 import { sortOpenTodos } from "./home-todos";
 import { EchoInkTodoFormModal } from "./todo-edit-modal";
@@ -23,7 +23,8 @@ import type { ParsedTodoRecord } from "./todo-markdown";
 import { confirmModal } from "../ui/modals";
 import { ForegroundView } from "../ui/foreground-view";
 
-export const VIEW_TYPE_ECHOINK_HOME = "codex-echoink-home";
+import { VIEW_TYPE_ECHOINK_HOME } from "./view-type";
+export { VIEW_TYPE_ECHOINK_HOME } from "./view-type";
 let nextHomeId = 0;
 const esc = (value: string | number | null | undefined): string => String(value ?? "").replace(/[&<>"']/gu, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const icon = (name: string) => `<i data-icon="${name}" aria-hidden="true"></i>`;
@@ -75,7 +76,7 @@ export class EchoInkHomeView extends ItemView {
   private shortNavigationFrame: number | null = null;
   private shortNavigationObserver: ResizeObserver | null = null;
 
-  constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
+  constructor(leaf: WorkspaceLeaf, private readonly plugin: HomeHost) {
     super(leaf);
     const includeNotePath = (path: string) => isHomeNotePath(path, plugin.settings.englishDiary);
     this.dataService = new HomeWorkbenchDataService(plugin.app, () => plugin.settings.journalDirectory, plugin.homeActivity, includeNotePath);
@@ -499,7 +500,7 @@ export class EchoInkHomeView extends ItemView {
     const health = this.snapshot?.health;
     const score = health && health.status !== "unknown" ? String(health.score) : "—";
     this.el(".review-score strong").setText(score);
-    const status = this.healthLoading ? this.t("正在检查知识库…", "Checking knowledge…") : !health ? this.t("健康状态暂不可用", "Health is unavailable") : health.assessment === "uninitialized" ? this.t("初始化知识库", "Initialize knowledge") : health.assessment === "unavailable" ? this.t("健康状态无法评估", "Health cannot be assessed") : this.t(`本地结构 ${score} 分${health.assessment === "limited" ? " · 检查受限" : ""}`, `Local structure ${score}${health.assessment === "limited" ? " · Limited" : ""}`);
+    const status = this.healthLoading ? this.t("正在检查知识库…", "Checking knowledge…") : !health ? this.plugin.homeUnavailableReason ?? this.t("健康状态暂不可用", "Health is unavailable") : health.assessment === "uninitialized" ? this.t("初始化知识库", "Initialize knowledge") : health.assessment === "unavailable" ? this.t("健康状态无法评估", "Health cannot be assessed") : this.t(`本地结构 ${score} 分${health.assessment === "limited" ? " · 检查受限" : ""}`, `Local structure ${score}${health.assessment === "limited" ? " · Limited" : ""}`);
     markup(this.el(".health"), `<b></b>${esc(status)}${icon("chevron-right")}`);
   }
   private renderTodos(): void {

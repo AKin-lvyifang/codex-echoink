@@ -143,3 +143,15 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
     return stream;
   };
 }
+
+/** Independent one-shot inference: no conversation state or tools are involved. */
+export async function mobileGenerateText(provider: ApiProviderConfig, model: ApiProviderModelConfig, request: MobileRequest,
+  systemPrompt: string, user: string, maxTokens: number, signal: AbortSignal): Promise<string> {
+  const selected = { ...piModel(provider, model), maxTokens: Math.min(model.maxOutputTokens, maxTokens) };
+  const stream = await mobileStream(provider, request)(selected, { systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal });
+  const result = await stream.result();
+  if (signal.aborted || result.stopReason === "aborted") throw new Error("已停止");
+  if (result.stopReason === "error") throw new Error(result.errorMessage || "模型请求失败");
+  if (result.stopReason === "length") throw new Error("模型输出未完整返回，请调整模型输出上限后重试。");
+  return textContent(result);
+}

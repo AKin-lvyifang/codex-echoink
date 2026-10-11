@@ -72,7 +72,7 @@ export async function preparePluginDataRoot(
 
 async function hasCurrentPluginData(rootPath: string): Promise<boolean> {
   // Only current durable stores count, not an empty directory or plugin files.
-  for (const name of ["pi-agent-product-v1", "home-activity.json", "raw", "clipboard"]) {
+  for (const name of ["pi-agent-product-v1", "home-activity.json", "lifestyle.json", "raw", "clipboard"]) {
     if (await containsDataFile(path.join(rootPath, name))) return true;
   }
   return false;

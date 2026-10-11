@@ -1,4 +1,7 @@
 const paths: Record<string, string> = {
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+  "circle-help": '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>',
+  "calendar-days": '<path d="M8 2v4M16 2v4M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/>',
   "arrow-up": '<path d="m5 12 7-7 7 7M12 5v14"/>',
   "chevron-left": '<path d="m15 18-6-6 6-6"/>', "chevron-right": '<path d="m9 18 6-6-6-6"/>', "chevron-down": '<path d="m6 9 6 6 6-6"/>',
   check: '<path d="m4 12 5 5L20 6"/>', square: '<rect x="6" y="6" width="12" height="12" rx="1"/>',
@@ -16,4 +19,61 @@ const paths: Record<string, string> = {
 export function setIcon(element: HTMLElement, name: string) {
   const parsed = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? '<circle cx="12" cy="12" r="8"/>'}</svg>`, "image/svg+xml");
   const svg = document.importNode(parsed.documentElement, true); svg.setAttribute("data-icon", name); element.replaceChildren(svg);
+}
+
+export { FixtureTFile as TFile } from "./host.mjs";
+export class Component { addChild() {} removeChild() {} register() {} load() {} unload() {} }
+export class Plugin extends Component {
+  constructor(public app: any, public manifest: any) { super(); }
+  registerView(type: string, factory: unknown) { this.app.workspace.registerView(type, factory); }
+  async saveData(_data: unknown) {}
+}
+export class ItemView {
+  app: any; containerEl: HTMLElement; contentEl: HTMLElement;
+  constructor(public leaf: any) { this.app = leaf.app; this.containerEl = leaf.containerEl; this.contentEl = leaf.contentEl; }
+  registerEvent() {} register() {} addChild() {} removeChild() {}
+  registerDomEvent(element: any, name: string, cb: any, options?: any) { element.addEventListener(name, cb, options); }
+}
+export class Modal {
+  contentEl: HTMLElement; modalEl: HTMLElement; titleEl: HTMLElement; containerEl: HTMLElement;
+  constructor(public app: unknown) { this.containerEl = document.createElement("div"); this.containerEl.className = "modal-container"; this.modalEl = this.containerEl.appendChild(document.createElement("div")); this.modalEl.className = "modal"; this.titleEl = document.createElement("h2"); this.contentEl = document.createElement("div"); this.contentEl.className = "modal-content"; this.modalEl.append(this.titleEl, this.contentEl); }
+  open() {
+    if (document.body.classList.contains("fixture-host")) {
+      const close = this.modalEl.appendChild(document.createElement("div"));
+      close.className = "modal-close-button"; close.textContent = "×"; close.setAttribute("role", "button"); close.setAttribute("aria-label", "关闭宿主弹窗"); close.tabIndex = 0;
+      close.onclick = () => this.close(); close.onkeydown = event => { if (event.key === "Enter" || event.key === "Escape") this.close(); };
+    }
+    document.body.append(this.containerEl); (this as any).onOpen?.();
+  }
+  close() { (this as any).onClose?.(); this.containerEl.remove(); }
+  setTitle(text: string) { this.titleEl.textContent = text; }
+  register() {} registerDomEvent(element: HTMLElement, name: string, cb: EventListener) { element.addEventListener(name, cb); }
+}
+export const Platform = { isMobileApp: true, isMobile: true, isTablet: false };
+export class Scope { constructor(_parent?: unknown) {} register() {} }
+export const MarkdownRenderer = { async render(_app: unknown, text: string, element: HTMLElement) { element.textContent = text; } };
+export async function requestUrl() { throw new Error("Browser fixture cannot call a real Provider"); }
+export class Notice { constructor(text: string) { console.info("Fixture notice", text); } }
+export function sanitizeHTMLToDom(html: string) { const template = document.createElement("template"); template.innerHTML = html; return template.content; }
+const prototype = HTMLElement.prototype as any;
+(SVGElement.prototype as any).addClass = function(...names: string[]) { this.classList.add(...names); };
+prototype.empty = function() { this.replaceChildren(); };
+prototype.addClass = function(...names: string[]) { this.classList.add(...names); };
+prototype.removeClass = function(...names: string[]) { this.classList.remove(...names); };
+prototype.setText = function(text: string) { this.textContent = text; };
+prototype.createEl = function(tag: string, opts: any = {}) { const element = document.createElement(tag); element.className = opts.cls ?? ""; element.textContent = opts.text ?? ""; if (opts.value !== undefined) (element as HTMLInputElement).value = opts.value; for (const [key, value] of Object.entries(opts.attr ?? {})) element.setAttribute(key, String(value)); this.append(element); return element; };
+prototype.createDiv = function(opts: any = {}) { return this.createEl("div", typeof opts === "string" ? { cls: opts } : opts); };
+prototype.createSpan = function(opts: any = {}) { return this.createEl("span", opts); };
+export { default as moment } from "moment";
+
+prototype.toggleClass = function(name: string, force: boolean) { this.classList.toggle(name, force); };
+prototype.setAttr = function(name: string, value: string) { this.setAttribute(name, value); };
+export function normalizePath(path: string) { return path.replace(/\\/g, "/").replace(/\/+/g, "/"); }
+export class WorkspaceLeaf {}
+export class Setting {
+  settingEl: HTMLElement;
+  constructor(parent: HTMLElement) { this.settingEl = parent.createDiv({cls:"setting-item"}); }
+  setName(text: string) { this.settingEl.createSpan({text}); return this; }
+  setDesc(text: string) { this.settingEl.createSpan({text}); return this; }
+  addButton(callback: (button: any) => void) { const element = this.settingEl.createEl("button"); const button = { buttonEl: element, setButtonText(text: string) { element.textContent = text; return this; }, setCta() { element.classList.add("mod-cta"); return this; }, onClick(fn: () => void) { element.onclick = fn; return this; } }; callback(button); return this; }
 }

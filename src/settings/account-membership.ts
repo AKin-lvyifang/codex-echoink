@@ -4,8 +4,9 @@ import { Modal, Notice, setIcon, type App } from "obsidian";
 import { createOriginButton, createOriginInput, disposeOriginControls } from "./origin-controls";
 import type { AccountActions, AccountAvatar, AccountMembershipViewModel, AccountRank, MembershipState } from "./account-membership-model";
 import { getMembershipPlanPricing, resolveMembershipCurrency } from "./account-membership-pricing";
+import { MobileViewport } from "../ui/mobile/viewport";
 
-type PageOptions = { app: App; viewModel: AccountMembershipViewModel; actions?: AccountActions; language: string; openProviders: () => void; subscribe?: (listener:()=>void)=>()=>void; read?:()=>AccountMembershipViewModel; beginAction?:()=>()=>void; };
+type PageOptions = { app: App; viewModel: AccountMembershipViewModel; actions?: AccountActions; language: string; openProviders: () => void; subscribe?: (listener:()=>void)=>()=>void; read?:()=>AccountMembershipViewModel; beginAction?:()=>()=>void; activationNotice?: string; };
 type Tag = keyof HTMLElementTagNameMap;
 function el<K extends Tag>(parent: HTMLElement, tag: K, cls = "", text = ""): HTMLElementTagNameMap[K] {
   const node = parent.ownerDocument.createElement(tag);
@@ -275,13 +276,14 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     button(profileActions, t("退出登录", "Sign out"), "quiet", () => show(t("退出登录", "Sign out"), (body, modal) => { const form = el(body, "form"); submit(form, t("退出登录", "Sign out"), actions.signOut, modal); }));
   } else {
     const identity = el(profileCopy, "div"); el(identity, "h2", "", t("未登录", "Signed out"));
-    button(profileActions, t("登录 / 注册", "Sign in / register"), "primary", () => login());
+    button(profileActions, t("登录 / 注册", "Sign in / register"), "primary account-login-action", () => login());
     el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
   }
   const heading = (parent: HTMLElement, title: string, caption?: string) => {
     const row = el(parent, "div", "section-heading"); el(row, "h2", "", title); if (caption) el(row, "span", "muted", caption); return row;
   };
   const overview = heading(page, t("我的使用概览", "My usage"));
+  overview.classList.add("account-overview-heading");
   const scope = el(overview, "div", "scope", t("当前 Vault · 本地", "This vault · local"));
   const statsInfo = button(scope, "", "icon-button", () => show(t("统计口径", "About statistics"), body => {
     copy(body, t("统计保存在当前知识库，不依赖登录或会员。从启用统计之日起记录，此前历史不补算。", "Statistics stay in this vault and work without an account or membership. Recording starts when statistics are enabled; earlier activity is not reconstructed."));
@@ -306,7 +308,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   }
 
   const activity = el(page, "section", "panel activity-panel");
-  const activityHead = el(activity, "div", "section-heading compact"); const activityTitle = el(activityHead, "div", "heading-inline"); el(activityTitle, "h3", "", t("使用足迹", "Activity")); el(activityTitle, "span", "muted", stats.coverage ?? missing);
+  const activityHead = el(activity, "div", "section-heading compact account-activity-heading"); const activityTitle = el(activityHead, "div", "heading-inline"); el(activityTitle, "h3", "", t("使用足迹", "Activity")); el(activityTitle, "span", "muted", stats.coverage ?? missing);
   const segments = el(activityHead, "div", "segments"); let heatMode: "tokens" | "turns" = "tokens";
   const heatButtons = [button(segments, "Token", "quiet", () => changeHeat("tokens")), button(segments, t("对话轮次", "Turns"), "quiet", () => changeHeat("turns"))];
   const layout = el(activity, "div", "heatmap-layout"); const weekdays = el(layout, "div", "week-labels"); weekdays.setAttribute("aria-hidden", "true");
@@ -381,7 +383,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const verificationNote = [vm.membership.verifiedAt && `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}`, vm.membership.offlineUntil && `${t("凭证有效至", "Offline until")} ${vm.membership.offlineUntil}`].filter(Boolean).join(" · ");
   if (verificationNote) el(memberCopy, "div", "verification-note", verificationNote);
   const memberActions = el(summary, "div", "membership-actions");
-  if(vm.identity&&["device-required","device-limit"].includes(vm.membership.state)&&actions.activateDevice) button(memberActions,t("在此设备启用","Activate this device"),"primary",()=>show(t("启用本机","Activate device"),(body,modal)=>{const form=el(body,"form");const name=field(form,t("设备名称","Device name"),"text",t("我的 Obsidian","My Obsidian"));name.maxLength=80;submit(form,t("启用","Activate"),()=>actions.activateDevice!(name.value),modal);}));
+  if(vm.identity&&["device-required","device-limit"].includes(vm.membership.state)&&actions.activateDevice) button(memberActions,t("在此设备启用","Activate this device"),"primary",()=>show(t("启用本机","Activate device"),(body,modal)=>{const form=el(body,"form");if(options.activationNotice)copy(form,options.activationNotice);const name=field(form,t("设备名称","Device name"),"text",t("我的 Obsidian","My Obsidian"));name.maxLength=80;submit(form,t("启用","Activate"),()=>actions.activateDevice!(name.value),modal);}));
   const details = el(membership, "details", "plans-details"); const planSummary = el(details, "summary", "", t("查看订阅计划", "View subscription plans")); icon(planSummary, "chevron-right");
   details.open = valid;
   const openPlans = () => { details.open = true; details.scrollIntoView?.({ block: "nearest" }); };
@@ -425,6 +427,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       const releaseModal = beginAction();
       modal.afterClose = releaseModal;
       const form = el(body, "form", "activation-form");
+      if (options.activationNotice) copy(form, options.activationNotice);
       const code = field(form, t("兑换码", "Redemption code"));
       code.placeholder = t("输入兑换码", "Enter a redemption code"); code.required = true; code.spellcheck = false;
       const feedback = el(form, "p", "activation-feedback"); feedbackState(feedback, "status", "");
@@ -572,6 +575,7 @@ function recentDates(end: string) {
   return Array.from({ length: 365 }, (_, index) => { const day = new Date(date); day.setDate(day.getDate() - 364 + index); return localDate(day); });
 }
 class AccountModal extends Modal {
+  private mobileViewport?: MobileViewport;
   afterClose?: () => void;
   private readonly opener: HTMLElement | null;
   private escapeDocument: Document | null = null;
@@ -583,6 +587,11 @@ class AccountModal extends Modal {
     const doc = this.source.ownerDocument;
     if (this.modalEl.ownerDocument !== doc) doc.body.appendChild(doc.adoptNode(this.containerEl));
     this.modalEl.classList.add("echoink-account-modal", "echoink-account");
+    const mobile = this.source.closest<HTMLElement>(".echoink-mobile");
+    if (mobile) {
+      this.modalEl.classList.add("echoink-mobile-modal");
+      this.mobileViewport = new MobileViewport(this.containerEl, mobile);
+    }
     this.titleEl.textContent = this.title;
     copyAccountTheme(this.source, this.modalEl);
     this.escapeDocument = doc; doc.addEventListener("keydown", this.escape, true);
@@ -590,6 +599,7 @@ class AccountModal extends Modal {
     this.contentEl.querySelector<HTMLElement>("input:not([disabled]), button:not([disabled])")?.focus();
   }
   onClose() {
+    this.mobileViewport?.dispose();
     this.escapeDocument?.removeEventListener("keydown", this.escape, true); this.escapeDocument = null;
     this.contentEl.querySelectorAll<HTMLInputElement>("input").forEach(input => input.value = "");
     this.contentEl.querySelectorAll<HTMLElement>("*").forEach(node => { node.onclick = node.oninput = node.onchange = node.onerror = null; if (node.tagName === "FORM") (node as HTMLFormElement).onsubmit = null; });

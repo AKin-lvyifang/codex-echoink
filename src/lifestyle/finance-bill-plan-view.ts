@@ -1,7 +1,7 @@
 import { capabilityMessage } from "../membership/access";
 import { setIcon } from "obsidian";
-import type { LifestyleService } from "./service";
-import type { FinanceBillPlan, FinanceEntry } from "./store";
+import type { LifestyleHost } from "./host";
+import type { FinanceBillPlan, FinanceEntry } from "./store-core";
 import { financePage, financePagination, fitFinanceList } from "./finance-pagination";
 import { FinanceNumbers } from "./finance-number";
 import { financeCategoryDonut } from "./finance-category-donut";
@@ -47,7 +47,7 @@ export class FinanceBillPlanView {
   private sizeObserver: ResizeObserver | null = null;
   private sizeFrame = 0;
   private stopResize: (() => void) | null = null;
-  constructor(private readonly service: LifestyleService, readonly state: FinanceBillPlanViewState, private readonly actions: BillPlanActions) {}
+  constructor(private readonly service: LifestyleHost, readonly state: FinanceBillPlanViewState, private readonly actions: BillPlanActions) {}
   get busy(): boolean { return this.saving; }
   dispose(clearHistory = false): void {
     if (clearHistory) this.numbers.release(); else this.numbers.begin(); this.stopDetailSize?.(); this.stopDetailSize = null; this.categoryDonut = null;

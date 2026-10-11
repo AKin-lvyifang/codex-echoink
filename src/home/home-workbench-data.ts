@@ -1,6 +1,6 @@
 import { App, TFile, normalizePath } from "obsidian";
 import type { SettingsLanguage } from "../settings/settings";
-import type { HomeActivityService } from "./home-activity-service";
+import type { HomeActivityCore } from "./home-activity-core";
 import { homeCopy } from "./home-i18n";
 import { isHomeNotePath, type HomeNoteVisibility } from "./home-note-visibility";
 import { nativeJournalPathForDate, readNativeJournalContext, readNativeJournalSettings } from "./native-journal";
@@ -85,7 +85,7 @@ export class HomeWorkbenchDataService {
   constructor(
     private readonly app: App,
     private readonly journalDirectoryProvider: () => string = () => DEFAULT_JOURNAL_DIRECTORY,
-    private readonly activityService?: HomeActivityService | null,
+    private readonly activityService?: HomeActivityCore | null,
     private readonly includeNotePath: HomeNoteVisibility = isHomeNotePath
   ) {}
 

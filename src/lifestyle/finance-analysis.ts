@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import type { FinanceBudget, FinanceEntry } from "./store";
+import { sha256Hex } from "../utils/sha256";
+import type { FinanceBudget, FinanceEntry } from "./store-core";
 import { effectiveFinanceEntries, financeSpendingFacts, localDate, money } from "./finance-domain";
 
 export type FinanceChartId = "daily" | "large" | "budget" | "category" | "merchant" | "flow";
@@ -219,7 +219,7 @@ export function buildFinanceAnalysisInput(month: string, ledger: readonly Financ
     可选核对表: tables.map((table) => ({ id: table.id, title: table.title, headers: table.headers, rows: table.rows }))
   };
   const text = JSON.stringify(input);
-  return { text, fingerprint: createHash("sha256").update(text).digest("hex"), entryCount: valid.filter((row) => row.kind !== "transfer").length,
+  return { text, fingerprint: sha256Hex(text), entryCount: valid.filter((row) => row.kind !== "transfer").length,
     facts: refs, candidates, tables };
 }
 

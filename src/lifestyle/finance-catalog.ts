@@ -1,5 +1,5 @@
 import { FINANCE_BRAND_ASSETS, FINANCE_BRAND_ASSETS_BY_ID } from "./finance-brand-assets";
-import type { FinanceBudget, FinanceEntry } from "./store";
+import type { FinanceBudget, FinanceEntry } from "./store-core";
 import { DEFAULT_FINANCE_CATEGORIES, type FinanceSettings } from "./settings";
 
 /** Built-in Lucide ids accepted by Obsidian setIcon; the original twelve remain stable. */

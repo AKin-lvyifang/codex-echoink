@@ -1,4 +1,4 @@
-import { Modal, Notice, TFile, type App } from "obsidian";
+import { Modal, Notice, Platform, TFile, type App } from "obsidian";
 import {
   BUILT_IN_JOURNAL_TEMPLATES,
   DEFAULT_JOURNAL_TEMPLATE_ID,
@@ -67,12 +67,14 @@ export class JournalTemplateModal extends Modal {
     const headCopy = head.createDiv();
     headCopy.createEl("h2", { text: copy.modal.title });
     headCopy.createEl("p", { text: copy.modal.introduction });
-    const close = head.createEl("button", {
-      cls: "echoink-journal-modal-close",
-      text: copy.modal.close,
-      attr: { type: "button", "aria-label": copy.modal.closeTemplatePicker }
-    });
-    close.onclick = () => this.close();
+    if (!Platform.isMobile) {
+      const close = head.createEl("button", {
+        cls: "echoink-journal-modal-close",
+        text: copy.modal.close,
+        attr: { type: "button", "aria-label": copy.modal.closeTemplatePicker }
+      });
+      close.onclick = () => this.close();
+    }
 
     contentEl.createEl("h3", { text: copy.modal.builtInTemplates });
     const builtIns = contentEl.createDiv({ cls: "echoink-journal-template-grid" });

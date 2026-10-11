@@ -176,11 +176,26 @@ export async function processAgentAvatar(
 export function createBrowserAvatarRenderer(): AvatarRenderer {
   return async (file, canvas): Promise<AvatarRenderResult> => {
     let bitmap: ImageBitmap | null = null;
+    let imageUrl: string | null = null;
     try {
       const safeBlob = await normalizeSvgForRasterization(file, canvas);
-      bitmap = await createImageBitmap(safeBlob);
-      const sourceWidth = bitmap.width;
-      const sourceHeight = bitmap.height;
+      let source: ImageBitmap | HTMLImageElement;
+      try {
+        bitmap = await createImageBitmap(safeBlob);
+        source = bitmap;
+      } catch {
+        // Some browser engines decode SVG through <img> but reject SVG blobs
+        // in createImageBitmap. The same validated, normalized SVG stays local.
+        imageUrl = URL.createObjectURL(safeBlob);
+        const image = document.createElement("img");
+        source = await new Promise<HTMLImageElement>((resolve, reject) => {
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error("avatar_decode_failed"));
+          image.src = imageUrl!;
+        });
+      }
+      const sourceWidth = bitmap ? bitmap.width : (source as HTMLImageElement).naturalWidth;
+      const sourceHeight = bitmap ? bitmap.height : (source as HTMLImageElement).naturalHeight;
       validateCanvas({ width: sourceWidth, height: sourceHeight });
 
       const output = document.createElement("canvas");
@@ -189,7 +204,7 @@ export function createBrowserAvatarRenderer(): AvatarRenderer {
       const context = output.getContext("2d");
       if (!context) throw new Error("avatar_canvas_unavailable");
       context.drawImage(
-        bitmap,
+        source,
         0,
         0,
         sourceWidth,
@@ -206,6 +221,7 @@ export function createBrowserAvatarRenderer(): AvatarRenderer {
       return { sourceWidth, sourceHeight, dataUrl: await blobToDataUrl(blob) };
     } finally {
       bitmap?.close();
+      if (imageUrl) URL.revokeObjectURL(imageUrl);
     }
   };
 }

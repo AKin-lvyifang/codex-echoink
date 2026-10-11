@@ -1,11 +1,25 @@
 import type { ApiProviderConfig, ApiProviderModelConfig, CodexForObsidianSettings } from "../settings/settings";
 import { API_PROVIDER_PRESETS, getApiProviderPreset, normalizeApiProviderBaseUrl, type ApiProviderId } from "../settings/provider-presets";
 import { newId } from "./store";
+import { DEFAULT_ENGLISH_DIARY_SETTINGS } from "../english-diary/types";
+import { normalizeLifestyleSettings } from "../lifestyle/settings";
+import { defaultHomeModuleVisibility } from "../home/home-modules";
+import { normalizeTodoCompletions } from "../home/todo-completions";
+import type { TodoHost, HomeHost } from "../home/home-host";
 
-export interface MobileSettings extends Record<string, unknown>, Pick<CodexForObsidianSettings, "customWelcomeEnabled" | "customWelcomeTitle" | "customWelcomeSubtitle"> {
+export interface MobileAppearance {
+  appearance: "system" | "light" | "dark";
+  largeText: boolean;
+  knowledgePaths: Record<"wiki" | "raw" | "inbox", string>;
+  reports: Record<"agent" | "knowledge", { period: "7d" | "last-week" | "30d"; schedule: "manual" | "weekly" | "monthly" }>;
+}
+
+type MobileHomeSettings = HomeHost["settings"];
+export interface MobileSettings extends Record<string, unknown>, MobileHomeSettings, Pick<CodexForObsidianSettings, "customWelcomeEnabled" | "customWelcomeTitle" | "customWelcomeSubtitle" | "resources" | "knowledgeBase" | "review"> {
   apiProviders: ApiProviderConfig[];
   activeApiProviderId: string;
   defaultModel: string;
+  mobileUi: MobileAppearance;
 }
 export const MOBILE_DEFAULT_WELCOME = {
   title: "让想法，慢慢清晰。",
@@ -17,6 +31,7 @@ export function supportedProvider(p: ApiProviderConfig): boolean {
 }
 export function loadMobileSettings(value: unknown): MobileSettings {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  const saved = (raw?.mobileUi ?? {}) as Partial<MobileAppearance>;
   return {
     ...raw,
     // Both desktop and mobile persist the same provider configuration schema.
@@ -25,7 +40,21 @@ export function loadMobileSettings(value: unknown): MobileSettings {
     defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "",
     customWelcomeEnabled: raw?.customWelcomeEnabled === true,
     customWelcomeTitle: typeof raw?.customWelcomeTitle === "string" ? raw.customWelcomeTitle : "",
-    customWelcomeSubtitle: typeof raw?.customWelcomeSubtitle === "string" ? raw.customWelcomeSubtitle : ""
+    customWelcomeSubtitle: typeof raw?.customWelcomeSubtitle === "string" ? raw.customWelcomeSubtitle : "",
+    settingsLanguage: raw?.settingsLanguage === "en" ? "en" : "zh-CN",
+    journalDirectory: typeof raw?.journalDirectory === "string" ? raw.journalDirectory : "journal",
+    englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, ...(raw?.englishDiary as object) },
+    lifestyle: normalizeLifestyleSettings(raw?.lifestyle),
+    homeModules: { ...defaultHomeModuleVisibility(), ...(raw?.homeModules as object) },
+    todos: Array.isArray(raw?.todos) ? raw.todos as TodoHost["settings"]["todos"] : [],
+    todoCategories: Array.isArray(raw?.todoCategories) ? raw.todoCategories as TodoHost["settings"]["todoCategories"] : [],
+    todoCompletions: normalizeTodoCompletions(raw?.todoCompletions),
+    resources: { catalog: [], importedFrom: {}, mcpConnections: {}, lastScannedAt: 0, lastError: "", ...(raw?.resources as object) },
+    knowledgeBase: { lastRunAt: 0, lastRunStatus: "idle", lastReportPath: "", lastError: "", lastSummary: "", lastCompletion: "", lastPendingSources: [], lastWarnings: [], initialization: { status: "not-started", initializedAt: 0, templateVersion: "", lastPreviewSummary: "" }, processedSources: {}, healthHistory: [], maintenanceHistory: [], ...(raw?.knowledgeBase as object) },
+    review: { enabled: false, knowledgeBaseEnabled: true, agentChatEnabled: true, scheduleTime: "21:00", catchUpOnStartup: true, outputDir: "outputs/reviews", rangeMode: "previous-week", openHtmlAfterRun: false, reports: { knowledgeBase: { lastRangeKey: "" }, agentChat: { lastRangeKey: "" } }, ...(raw?.review as object) },
+    mobileUi: { appearance: saved.appearance === "light" || saved.appearance === "dark" ? saved.appearance : "system", largeText: saved.largeText === true,
+      knowledgePaths: { wiki: "wiki", raw: "raw", inbox: "inbox", ...saved.knowledgePaths },
+      reports: { agent: { period: "7d", schedule: "manual", ...saved.reports?.agent }, knowledge: { period: "7d", schedule: "manual", ...saved.reports?.knowledge } } }
   };
 }
 export function mobileModel(id: string, existing?: ApiProviderModelConfig): ApiProviderModelConfig {

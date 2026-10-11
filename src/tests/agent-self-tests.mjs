@@ -24,6 +24,7 @@ await esbuild.build({
   target: "node22",
   format: "esm",
   outfile: outputFile,
+  loader: { ".md": "text" },
   logLevel: "silent"
 });
 

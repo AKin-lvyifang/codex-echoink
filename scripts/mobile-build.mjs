@@ -2,12 +2,17 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import esbuild from "esbuild";
 import { poolDesktopStrings, assertDesktopMarkersPreserved } from "./desktop-string-pool.mjs";
+import { financeBrandsPlugin, agentAvatarAssetsPlugin, profileStringsPlugin, profileModulesPlugin, sharedAssetsBundle } from "./bundle-shared-assets.mjs";
 
 // Keep Pi's real Agent, event stream and tool validation. Exclude the Node
 // provider/auth catalog: mobile always injects its own requestUrl streamFn.
 export const mobilePiPlugin = {
   name: "mobile-pi-browser-surface",
   setup(build) {
+    build.onLoad({ filter: /\/LICENSE$/ }, async args => ({ contents: await fs.readFile(args.path, "utf8"), loader: "text" }));
+    build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, args => {
+      if (args.importer.includes("/src/home/") || args.importer.includes("/src/lifestyle/") || args.importer.endsWith("/src/ui/modals.ts") || args.importer.endsWith("/src/settings/account-membership.ts")) return { path: path.resolve("src/ui/mobile/origin-controls.ts") };
+    });
     const root = path.resolve("node_modules/@earendil-works");
     build.onResolve({ filter: /^@earendil-works\/pi-agent-core$/ }, () => ({ path: path.join(root, "pi-agent-core/dist/agent.js") }));
     build.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: "pi-mobile", namespace: "pi-mobile" }));
@@ -18,14 +23,14 @@ export const mobilePiPlugin = {
   }
 };
 export function mobileBuildOptions(entry = "src/mobile/plugin.ts") {
-  return { entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian"], plugins: [mobilePiPlugin], logLevel: "silent" };
+  return { entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian"], loader: { ".md": "text", ".svg": "dataurl" }, plugins: [mobilePiPlugin, financeBrandsPlugin(), agentAvatarAssetsPlugin(), profileStringsPlugin()], logLevel: "silent" };
 }
 export async function assemblePlatformBundle(desktopCode, minify) {
-  const mobile = await esbuild.build({ ...mobileBuildOptions(), minify });
+  const mobile = await esbuild.build({ ...mobileBuildOptions(), plugins: [profileModulesPlugin(), mobilePiPlugin, financeBrandsPlugin(true), agentAvatarAssetsPlugin(true), profileStringsPlugin(true)], metafile: true, minify });
   const selector = await esbuild.build({ ...mobileBuildOptions("src/platform-entry.ts"), minify });
   const wrap = (name, code) => `function ${name}(){var module={exports:{}};var exports=module.exports;\n${code}\nreturn module.exports;}\n`;
   const desktop = minify ? poolDesktopStrings(desktopCode).code : desktopCode;
-  let code = selector.outputFiles[0].text + "\n" + wrap("loadMobile", mobile.outputFiles[0].text) + wrap("loadDesktop", desktop);
+  let code = await sharedAssetsBundle(minify) + selector.outputFiles[0].text + "\n" + wrap("loadMobile", mobile.outputFiles[0].text) + wrap("loadDesktop", desktop);
   if (minify) {
     code = (await esbuild.transform(code, { minify: true, charset: "utf8", target: "es2022", format: "cjs", legalComments: "inline" })).code;
     assertDesktopMarkersPreserved(desktopCode, code);
@@ -39,5 +44,7 @@ export async function assemblePlatformBundle(desktopCode, minify) {
   if (notice.includes("*/")) throw new Error("License notice contains a JavaScript comment terminator.");
   code = `/*! EchoInk component licenses and third-party notices\n${notice}\n*/\n${code}`;
   await fs.writeFile("dist/main.js", code);
+  await fs.mkdir(".tmp", { recursive: true });
+  await fs.writeFile(".tmp/mobile-production-metafile.json", JSON.stringify(mobile.metafile));
   console.log(`Mobile browser bundle: ${mobile.outputFiles[0].contents.length} bytes; combined main.js: ${Buffer.byteLength(code)} bytes`);
 }
