@@ -74,26 +74,28 @@ export class MobileSettingsPages {
   private get services(): MobileServices { if (!this.host.services) throw new Error("当前预览尚未提供 Vault 服务。"); return this.host.services; }
   private help(parent: HTMLElement, text: string) { return node(parent, "p", "em-help", text); }
   private heading(parent: HTMLElement, title: string) { return node(parent, "h3", "em-section-title", title); }
-  private group(parent: HTMLElement) { return node(parent, "section", "em-setting-group"); }
+  group(parent: HTMLElement) { return node(parent, "section", "em-setting-group"); }
   private toggle(parent: HTMLElement, title: string, checked: boolean, update: (checked: boolean) => Promise<void>) {
     const label = node(parent, "label", "em-row"); const text = node(label, "span", "em-row-label"); node(text, "strong", "", title);
     const input = node(label, "input", "em-switch"); input.type = "checkbox"; input.checked = checked; input.setAttribute("role", "switch"); input.setAttribute("aria-label", title);
     input.addEventListener("change", () => { void this.ui.act(() => update(input.checked)); }); return input;
   }
-  basicEntries(body: HTMLElement) {
-    this.ui.row(body, "离线记忆整理（做梦）", "", "moon", () => this.ui.sheet("做梦与成长", part => {
+  basicEntries(body: HTMLElement, memory: HTMLElement) {
+    this.ui.row(memory, "离线记忆整理（做梦）", "", "moon", () => this.ui.sheet("做梦与成长", part => {
       this.help(part, "移动端尚未接通记忆整理引擎。已有记忆可查看、修正与忘记；配置与资料已保留。");
       this.ui.button(part, "查看记忆", () => this.ui.go("memories"), "brain", "em-wide-action");
     }));
     this.heading(body, "身份与用户画像");
-    const profile = this.ui.row(body, (this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName, "EchoInk Agent", "user", () => this.ui.go("profile-agent")); profile.classList.add("em-profile-link");
+    const identity = this.group(body);
+    const profile = this.ui.row(identity, (this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName, "EchoInk Agent", "user", () => this.ui.go("profile-agent")); profile.classList.add("em-profile-link");
     this.identityLink = profile; profile.querySelector(".em-icon")?.remove(); this.fillIdentityLink(profile);
-    this.ui.row(body, "用户画像", "", "file-text", () => this.ui.go("profile-user"));
+    this.ui.row(identity, "用户画像", "", "file-text", () => this.ui.go("profile-user"));
   }
   basicGeneral(body: HTMLElement) {
     this.heading(body, "通用");
-    const language = node(body, "div", "em-row"); node(language, "strong", "em-row-label", "设置语言"); node(language, "span", "em-row-value", "简体中文");
-    this.ui.row(body, "关于 EchoInk", "", "circle-help", () => this.ui.sheet("关于 EchoInk", part => {
+    const general = this.group(body);
+    const language = node(general, "div", "em-row"); node(language, "strong", "em-row-label", "设置语言"); node(language, "span", "em-row-value", "简体中文");
+    this.ui.row(general, "关于 EchoInk", "", "circle-help", () => this.ui.sheet("关于 EchoInk", part => {
       node(part, "h2", "em-about-title", "EchoInk"); this.help(part, `版本 ${this.host.version ?? "本地测试包"}`);
       this.help(part, "你的思考，在这里积累。");
       this.help(part, "作者：AKin-lvyifang · Copyright © 2026 EchoInk Agent contributors");
@@ -128,8 +130,9 @@ export class MobileSettingsPages {
     this.heading(body, "显示"); const group = this.group(body); const settings = this.host.settings();
     const names = { system: "跟随 Obsidian", light: "浅色", dark: "深色" };
     this.ui.row(group, "外观", names[settings.mobileUi.appearance], "sun", () => this.ui.sheet("外观", part => {
+      const choices = this.group(part);
       for (const id of ["system", "light", "dark"] as const) {
-        const row = this.ui.row(part, names[id], "", settings.mobileUi.appearance === id ? "check" : "sun", async () => { settings.mobileUi.appearance = id; await this.host.saveSettings(); this.ui.go("layout"); });
+        const row = this.ui.row(choices, names[id], "", settings.mobileUi.appearance === id ? "check" : "sun", async () => { settings.mobileUi.appearance = id; await this.host.saveSettings(); this.ui.go("layout"); });
         row.setAttribute("aria-pressed", String(settings.mobileUi.appearance === id));
       }
     }));
@@ -144,22 +147,25 @@ export class MobileSettingsPages {
       if (this.resourceTab === "plugins") {
         const plugins = this.services.plugins();
         if (!plugins.length) node(panel, "p", "em-empty", "暂无插件");
-        for (const plugin of plugins) this.ui.row(panel, plugin.name, `${plugin.enabled ? "已启用" : "未启用"} · ${plugin.description}`, "puzzle", () => plugin.id === "echoink:finance" ? this.ui.go("finance-settings") : this.ui.sheet(plugin.name, part => {
+        const group = plugins.length ? this.group(panel) : panel;
+        for (const plugin of plugins) this.ui.row(group, plugin.name, `${plugin.enabled ? "已启用" : "未启用"} · ${plugin.description}`, "puzzle", () => plugin.id === "echoink:finance" ? this.ui.go("finance-settings") : this.ui.sheet(plugin.name, part => {
           this.help(part, plugin.description); this.help(part, plugin.mobileStatus);
           this.help(part, plugin.enabled ? "已保留启用状态与配置。" : "当前未启用；启用与授权由桌面已有设置管理。");
         }));
       } else if (this.resourceTab === "mcp") {
         this.ui.button(panel, "添加 MCP 服务", () => this.mcpEditor(), "plus", "em-wide-action");
         const records = this.host.settings().resources.mcpConnections;
-        if (!Object.keys(records).length) node(panel, "p", "em-empty", "暂无 MCP 服务");
+        const group = this.group(panel);
+        if (!Object.keys(records).length) node(group, "p", "em-empty", "暂无 MCP 服务");
         for (const [id, record] of Object.entries(records)) {
           const resource = this.host.settings().resources.catalog.find(item => item.id === id);
-          this.ui.row(panel, resource?.name ?? id, record.transport === "stdio" ? "移动端无法启动本地进程" : "未连接 · 移动远程调用尚未接通", "server", () => this.mcpEditor(id));
+          this.ui.row(group, resource?.name ?? id, record.transport === "stdio" ? "移动端无法启动本地进程" : "未连接 · 移动远程调用尚未接通", "server", () => this.mcpEditor(id));
         }
       } else {
-        for (const skill of this.services.skills()) this.ui.row(panel, skill.name, skill.enabled ? skill.description : "已停用", "sparkles", () => this.ui.sheet(skill.name, part => {
+        const skills = this.services.skills(); const group = skills.length ? this.group(panel) : panel;
+        for (const skill of skills) this.ui.row(group, skill.name, skill.enabled ? skill.description : "已停用", "sparkles", () => this.ui.sheet(skill.name, part => {
           this.help(part, skill.description);
-          this.toggle(part, "启用 Skill", skill.enabled, async enabled => {
+          this.toggle(this.group(part), "启用 Skill", skill.enabled, async enabled => {
             const settings = this.host.settings(); const saved = settings.resources.catalog.find(item => item.id === skill.id);
             if (saved) saved.enabled = enabled; else { settings.resources.legacyEnabledOverrides ??= {}; settings.resources.legacyEnabledOverrides[skill.id] = enabled; }
             await this.host.saveSettings(); skill.enabled = enabled;
@@ -182,18 +188,19 @@ export class MobileSettingsPages {
     if (!lifestyle) { this.help(body, "财务服务尚未初始化，请稍后重试。"); return; }
     const settings = this.host.settings();
     const page = node(body, "div", "echoink-settings-demo echoink-lifestyle-view echoink-life-finance echoink-mobile-finance-settings");
+    const group = this.group(page);
     const toggle = (title: string, value: () => boolean, save: (enabled: boolean) => Promise<void>) => {
-      const input = this.toggle(page, title, value(), async enabled => { try { await save(enabled); } catch (error) { input.checked = value(); throw error; } });
+      const input = this.toggle(group, title, value(), async enabled => { try { await save(enabled); } catch (error) { input.checked = value(); throw error; } });
       return input;
     };
     toggle("启用财务", () => settings.lifestyle.finance.enabled, enabled => lifestyle.setEnabled("finance", enabled));
-    this.ui.button(page, "打开财务工作区", () => lifestyle.open("finance"), "wallet", "em-wide-action");
+    this.ui.button(group, "打开财务工作区", () => lifestyle.open("finance"), "wallet", "em-wide-action");
     toggle("AI 分析", () => settings.lifestyle.finance.aiEnabled, enabled => lifestyle.finance.saveOption("aiEnabled", enabled));
     toggle("导入时智能整理", () => settings.lifestyle.finance.importAiEnabled, enabled => lifestyle.finance.saveOption("importAiEnabled", enabled));
     toggle("在首页显示", () => settings.homeModules.finance !== false, enabled => lifestyle.finance.saveOption("showOnHome", enabled));
-    this.help(page, "未配置模型时仍可记账、预算和导入。AI 分析与智能整理使用当前 EchoInk 模型。");
+    this.help(group, "未配置模型时仍可记账、预算和导入。AI 分析与智能整理使用当前 EchoInk 模型。");
     const catalog = node(page, "div", "echoink-life-settings-page");
-    const menu = node(catalog, "div"), panel = node(catalog, "div"); panel.hidden = true;
+    const menu = this.group(catalog), panel = node(catalog, "div"); panel.hidden = true;
     for (const [kind, title] of [["merchants", "管理商户"], ["accounts", "管理账户"], ["categories", "管理分类"]] as [CatalogKind, string][]) this.ui.row(menu, title, "", "list", () => {
       const draw = () => {
         panel.replaceChildren();
@@ -277,10 +284,10 @@ export class MobileSettingsPages {
       for (let day = 1; day <= new Date(year, month + 1, 0).getDate(); day++) { const key = dayKey(new Date(year, month, day)); const record = records.find(check => check.date === key); const cell = record ? this.ui.button(grid, "", () => this.ui.sheet("体检记录", part => { this.help(part, `${record.date} · ${record.status}`); this.help(part, new Date(record.at).toLocaleString()); }), undefined, `kb-day kb-day-${record.status === "success" ? "success" : "failed"}`) : node(grid, "span", `kb-day ${key === dayKey(today) ? "kb-day-today" : ""}`); node(cell, "span", "", String(day)); cell.setAttribute("aria-label", `${month + 1} 月 ${day} 日，${record ? record.status : "无体检记录"}`); if (record) node(cell, "b"); if (key === dayKey(today)) cell.setAttribute("aria-current", "date"); }
       const legend = node(calendar, "div", "kb-calendar-legend"); node(legend, "span", "", `成功 ${records.filter(record => record.status === "success").length}`); node(legend, "span", "", `失败 ${records.filter(record => record.status !== "success").length}`); this.ui.button(legend, "本月", () => { this.knowledgeMonth = new Date(today.getFullYear(), today.getMonth(), 1); drawCalendar(); });
     }; drawCalendar();
-    const model = section("模型"); this.ui.row(model, "EchoInk 当前模型", "选择模型", "server", () => this.ui.go("providers"));
-    const history = section("维护日志"); if (!logs.length) node(history, "p", "em-empty", "还没有维护记录");
+    const model = this.group(section("模型")); this.ui.row(model, "EchoInk 当前模型", "选择模型", "server", () => this.ui.go("providers"));
+    const history = this.group(section("维护日志")); if (!logs.length) node(history, "p", "em-empty", "还没有维护记录");
     for (const log of logs) this.ui.row(history, log.date, log.resultStatus ?? log.status, "history", () => this.ui.sheet("维护记录", part => { this.help(part, `${log.date} · ${log.resultStatus ?? log.status}`); if (log.reportPath) this.ui.button(part, "打开报告", () => this.host.openNote(log.reportPath), "file-text"); if (log.errorCode) this.help(part, log.errorCode); }));
-    const manage = section("管理"); this.ui.row(manage, "知识提炼偏好", "", "sliders-horizontal", () => this.preferences());
+    const manage = this.group(section("管理")); this.ui.row(manage, "知识提炼偏好", "", "sliders-horizontal", () => this.preferences());
     for (const [kind, label] of [["wiki", "Wiki 目录"], ["raw", "Raw 目录"], ["inbox", "Inbox 目录"]] as const) this.ui.row(manage, label, this.services.knowledgePath(kind), "folder", () => this.ui.sheet(label, part => { let value = this.host.settings().mobileUi.knowledgePaths[kind]; this.ui.field(part, "目录路径", value, text => { value = text; }); this.ui.button(part, "保存", async () => { this.host.settings().mobileUi.knowledgePaths[kind] = this.services.safePath(value); await this.host.saveSettings(); this.ui.go("knowledge"); }, "check", "em-primary em-wide-action"); }));
   }
   private preferences() {
@@ -411,11 +418,12 @@ export class MobileSettingsPages {
     }
   }
   private todoSettings(body: HTMLElement) {
-    this.heading(body, "数据文件"); this.ui.row(body, "待办源文件", TODO_SOURCE_PATH, "file-text", () => this.services.getTodoStore().openSourceFile());
-    this.ui.row(body, "待办清单", "", "check-check", () => this.ui.go("todos"));
+    this.heading(body, "数据文件"); const data = this.group(body); this.ui.row(data, "待办源文件", TODO_SOURCE_PATH, "file-text", () => this.services.getTodoStore().openSourceFile());
+    this.ui.row(data, "待办清单", "", "check-check", () => this.ui.go("todos"));
     this.heading(body, "待办分类");
     const settings = this.host.settings();
-    for (const category of settings.todoCategories) this.ui.row(body, category.name, "", "bookmark", () => this.ui.sheet("编辑分类", part => {
+    const categories = settings.todoCategories.length ? this.group(body) : body;
+    for (const category of settings.todoCategories) this.ui.row(categories, category.name, "", "bookmark", () => this.ui.sheet("编辑分类", part => {
       let name = category.name; this.ui.field(part, "分类名称", name, value => { name = value; });
       this.ui.button(part, "保存", async () => {
         name = name.trim(); if (!name) throw new Error("分类名称不能为空。"); if (settings.todoCategories.some(other => other.id !== category.id && other.name === name)) throw new Error("已有同名分类。");

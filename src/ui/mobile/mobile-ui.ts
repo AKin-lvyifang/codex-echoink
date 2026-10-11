@@ -394,22 +394,25 @@ export class MobileUI {
   }
   private basic(body: HTMLElement) {
     el(body, "h3", "em-section-title", "长期记忆");
-    const label = el(body, "label", "em-row"); const text = el(label, "span", "em-row-label"); el(text, "strong", "", "使用长期记忆"); el(text, "small", "", "保存值得保留的信息，在后续对话中召回");
+    const memory = this.settingPages.group(body);
+    const label = el(memory, "label", "em-row"); const text = el(label, "span", "em-row-label"); el(text, "strong", "", "使用长期记忆"); el(text, "small", "", "保存值得保留的信息，在后续对话中召回");
     const toggle = el(label, "input"); toggle.type = "checkbox"; toggle.checked = this.host.store.state.memoryEnabled; toggle.setAttribute("role", "switch"); toggle.setAttribute("aria-label", "长期记忆");
     toggle.addEventListener("change", () => { void this.act(async () => { this.host.runtime.stop(); this.host.store.state.memoryEnabled = toggle.checked; await this.host.store.save(); }); });
-    el(body, "p", "em-help", "关闭后保留已有记忆，停止自动召回和写入。记忆查看与忘记仍可使用。");
+    el(memory, "p", "em-help", "关闭后保留已有记忆，停止自动召回和写入。记忆查看与忘记仍可使用。");
 
-    this.settingPages.basicEntries(body);
+    this.settingPages.basicEntries(body, memory);
     const settings = this.host.settings();
     el(body, "h3", "em-section-title", "欢迎语");
-    const welcomeLabel = el(body, "label", "em-row");
+    const welcome = this.settingPages.group(body);
+    const welcomeLabel = el(welcome, "label", "em-row");
     const welcomeText = el(welcomeLabel, "span", "em-row-label");
     el(welcomeText, "strong", "", "自定义欢迎语");
     el(welcomeText, "small", "", "自定义空对话的标题和问候语");
     const welcomeToggle = el(welcomeLabel, "input"); welcomeToggle.type = "checkbox";
     welcomeToggle.checked = settings.customWelcomeEnabled;
     welcomeToggle.setAttribute("role", "switch"); welcomeToggle.setAttribute("aria-label", "自定义欢迎语");
-    const fields = el(body, "div"); fields.hidden = !settings.customWelcomeEnabled;
+    const fields = el(welcome, "div", "em-setting-content"); fields.hidden = !settings.customWelcomeEnabled;
+    welcomeLabel.classList.toggle("em-row-terminal", fields.hidden);
     el(fields, "p", "em-help", "输入后自动保存。留空时使用默认文案；关闭后保留自定义内容。");
     const title = this.field(fields, "欢迎标题", settings.customWelcomeTitle, value => {
       settings.customWelcomeTitle = value;
@@ -424,6 +427,7 @@ export class MobileUI {
     welcomeToggle.addEventListener("change", () => {
       settings.customWelcomeEnabled = welcomeToggle.checked;
       fields.hidden = !welcomeToggle.checked;
+      welcomeLabel.classList.toggle("em-row-terminal", fields.hidden);
       void this.act(() => this.host.saveSettings());
     });
     this.settingPages.basicGeneral(body);
@@ -435,8 +439,10 @@ export class MobileUI {
     el(body, "p", "em-help", "三种权限均限定于当前笔记库。长期记忆由基础设置中的开关独立控制。");
   }
   private providers(body: HTMLElement) {
-    for (const provider of this.host.settings().apiProviders.filter(supportedProvider)) {
-      const row = this.row(body, provider.name, `${provider.models.map(m => m.displayName || m.id).join("、")}${provider.id === this.host.settings().activeApiProviderId ? " · 当前" : ""}`, "cpu", () => { this.providerDraft = structuredClone(provider); this.openSheet("编辑模型", body => this.provider(body)); });
+    const providers = this.host.settings().apiProviders.filter(supportedProvider);
+    const group = providers.length ? this.settingPages.group(body) : body;
+    for (const provider of providers) {
+      const row = this.row(group, provider.name, `${provider.models.map(m => m.displayName || m.id).join("、")}${provider.id === this.host.settings().activeApiProviderId ? " · 当前" : ""}`, "cpu", () => { this.providerDraft = structuredClone(provider); this.openSheet("编辑模型", body => this.provider(body)); });
       const mark = row.querySelector<HTMLElement>(".em-icon")!; mark.replaceChildren(); renderProviderBrandIcon(mark, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom");
     }
     this.button(body, "添加提供商", () => { this.providerDraft = mobileProvider("deepseek"); this.openSheet("添加模型", body => this.provider(body)); }, "plus", "em-wide-action");

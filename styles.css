@@ -23335,7 +23335,10 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-mobile .em-model-label { min-width:0; }
 .echoink-mobile .em-section-title { color:var(--em-muted); font-size:.72em; font-weight:500; margin:24px 12px 9px; }
 .echoink-mobile .em-setting-group { border:1px solid var(--em-line); border-radius:12px; overflow:hidden; padding:0 12px; margin-bottom:18px; }
-.echoink-mobile .em-setting-group>.em-row:last-child { border-bottom:0; }
+.echoink-mobile .em-setting-group>.em-row:is(:last-child,.em-row-terminal) { border-bottom:0; }
+.echoink-mobile .em-setting-group>.em-help { margin:12px 4px; }
+.echoink-mobile .em-setting-group>.em-empty { margin:0; padding:18px 0; }
+.echoink-mobile .em-setting-content { padding:0 4px; }
 .echoink-mobile .em-settings-page { width:100%; max-width:720px; margin-inline:auto; }
 .echoink-mobile .em-body:not(.em-messages) { padding-bottom:24px; }
 .echoink-mobile .em-field>textarea { border:1px solid var(--em-line); background:var(--background-primary); color:inherit; border-radius:9px; padding:10px; font:inherit; font-size:max(16px,1em); min-height:74px; }
@@ -23592,6 +23595,8 @@ body.is-mobile .modal.echoink-todo-form-modal .echoink-todo-form-field :is(input
 /* Native switches use their full label as the touch target. */
 .echoink-mobile .echoink-mobile-finance-settings label.em-row { min-height:44px; }
 .echoink-mobile .echoink-mobile-finance-settings input[role=switch] { min-height:27px!important;height:27px; }
+.echoink-mobile .echoink-mobile-finance-settings .em-setting-group>button.em-row { padding:14px 4px; border:0; border-bottom:1px solid var(--em-line); border-radius:0; background:transparent; }
+.echoink-mobile .echoink-mobile-finance-settings .em-setting-group>button.em-row:last-child { border-bottom:0; }
 .echoink-mobile-finance-dialog { width:min(680px,calc(100vw - 24px)); max-height:calc(100dvh - var(--em-bottom-compensation,max(var(--view-bottom-spacing,env(safe-area-inset-bottom,0px)),var(--em-viewport-occlusion,0px))) - 24px); margin-bottom:var(--em-bottom-compensation,max(var(--view-bottom-spacing,env(safe-area-inset-bottom,0px)),var(--em-viewport-occlusion,0px))); }
 .echoink-mobile-finance-dialog .modal-content { min-height:0; overflow:auto; overscroll-behavior:contain; }
 .echoink-mobile-finance-dialog .echoink-finance-dialog-actions { position:sticky;bottom:0;background:var(--background-primary);padding-block:10px;z-index:1;flex-wrap:wrap; }
