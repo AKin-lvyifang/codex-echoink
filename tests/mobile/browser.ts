@@ -1,12 +1,15 @@
+import { EchoInkHomeView } from "../../src/home/home-view";
+import { MobileServices } from "../../src/mobile/services";
 import { MobileUI } from "../../src/ui/mobile/mobile-ui";
 import { MobileStore } from "../../src/mobile/store";
 import { MobileRuntime } from "../../src/mobile/runtime";
 import { loadMobileSettings } from "../../src/mobile/settings";
 import { createHost, answer } from "./host.mjs";
 
-const host = createHost();
+const host = createHost({ "笔记/来源.md": "项目决定：先完成手机本地问答。", "Wiki/项目/手机验收.md": "# 知识", "Raw/资料.md": "# 原始资料", "Inbox/记录.md": "# Inbox" });
+host.app.workspace.containerEl = document.body;
 const params = new URLSearchParams(location.search);
-const fixturePrefix = params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-fixture";
+const fixturePrefix = params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
 const persisted = localStorage.getItem(`${fixturePrefix}-files`);
 if (persisted) { host.files.clear(); for (const [key, value] of JSON.parse(persisted)) host.files.set(key, value); }
 const persist = () => localStorage.setItem(`${fixturePrefix}-files`, JSON.stringify([...host.files]));
@@ -19,6 +22,7 @@ const read = host.app.vault.read.bind(host.app.vault);
 host.app.vault.read = async file => { if (slowRead) await new Promise(resolve => setTimeout(resolve, 1600)); return read(file); };
 const store = new MobileStore(host.adapter, "plugin/mobile"); await store.load();
 const settings = loadMobileSettings(params.has("offline") ? null : JSON.parse(localStorage.getItem(`${fixturePrefix}-settings`) ?? "null"));
+settings.mobileUi.knowledgePaths = { wiki: "Wiki", raw: "Raw", inbox: "Inbox" };
 if (params.has("seed") && !persisted) {
   const first = store.session; first.title = "iPad 上的工作记录"; first.notePath = "笔记/来源.md";
   first.messages = [{ role: "user", content: "把今天的记录整理成可读的笔记。", timestamp: Date.now() }, {
@@ -47,9 +51,16 @@ const runtime = new MobileRuntime(host.app as any, store, () => settings, async 
   ]);
   if (!after.length && prompt.includes("读取")) { slowRead = true; return answer(protocol, "", [["read-" + requests.length, "note_read", { path: "笔记/来源.md" }]]); }
   return answer(protocol, "已完成。这是测试提供商返回的完整回答，正式组件使用真实 Agent 和工具回执。");
-});
+}, () => services.context());
+const services = new MobileServices({ app: host.app as any, settings, store, runtime, navigation: {} as any, registerEvent() {}, showPage: async () => {}, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); } }, "plugin/mobile");
+await services.initialize();
 const root = document.querySelector<HTMLElement>("#app")!;
-const ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tablet"), store, runtime, settings: () => settings, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); }, openNote: async path => { await host.app.workspace.getLeaf().openFile({ path }); document.querySelector("#opened")!.textContent = `已通过打开接口进入：${path}\n${host.files.get(path)}`; }, beginRender() { root.dataset.renders = String(++renders); }, renderMarkdown(text, element) {
+if (params.has("home")) {
+  const element = document.querySelector<HTMLElement>("#home")!; element.hidden = false;
+  const homeView = new EchoInkHomeView({ app: host.app, containerEl: element, contentEl: element } as any, services);
+  await homeView.onOpen(); Object.assign(window, { homeView });
+}
+const ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tablet"), services, version: "2.6.2 fixture", store, runtime, settings: () => settings, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); }, openNote: async path => { await host.app.workspace.getLeaf().openFile({ path }); document.querySelector("#opened")!.textContent = `已通过打开接口进入：${path}\n${host.files.get(path)}`; }, beginRender() { root.dataset.renders = String(++renders); }, renderMarkdown(text, element) {
   // A synthetic renderer for layout only; real MarkdownRenderer is host-owned.
   for (const part of text.split(/(```[\s\S]*?```)/u)) {
     if (part.startsWith("```")) { const pre = document.createElement("pre"); const code = document.createElement("code"); code.textContent = part.replace(/^```[^\n]*\n|```$/gu, ""); pre.append(code); element.append(pre); }
@@ -62,4 +73,4 @@ const ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tabl
   }
 } });
 ui.mount();
-Object.assign(window, { mobileFixture: { store, settings, runtime, host, requests, ui } });
+Object.assign(window, { mobileFixture: { store, settings, runtime, host, requests, ui, services } });

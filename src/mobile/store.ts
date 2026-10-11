@@ -10,6 +10,8 @@ export interface MobileSession {
   messages: AgentMessage[];
   draft: string;
   notePath: string;
+  skillId?: string;
+  archivedAt?: number;
   tools: Record<string, { startedAt: number; elapsedMs?: number }>;
 }
 export interface MobileState {

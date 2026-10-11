@@ -17,3 +17,43 @@ export function setIcon(element: HTMLElement, name: string) {
   const parsed = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? '<circle cx="12" cy="12" r="8"/>'}</svg>`, "image/svg+xml");
   const svg = document.importNode(parsed.documentElement, true); svg.setAttribute("data-icon", name); element.replaceChildren(svg);
 }
+
+export { FixtureTFile as TFile } from "./host.mjs";
+export class Component { addChild() {} removeChild() {} register() {} }
+export class ItemView {
+  app: any; containerEl: HTMLElement; contentEl: HTMLElement;
+  constructor(public leaf: any) { this.app = leaf.app; this.containerEl = leaf.containerEl; this.contentEl = leaf.contentEl; }
+  registerEvent() {} register() {} addChild() {} removeChild() {}
+  registerDomEvent(element: any, name: string, cb: any, options?: any) { element.addEventListener(name, cb, options); }
+}
+export class Modal {
+  contentEl: HTMLElement; modalEl: HTMLElement; titleEl: HTMLElement;
+  constructor(public app: unknown) { this.modalEl = document.createElement("div"); this.modalEl.className = "modal"; this.titleEl = document.createElement("h2"); this.contentEl = document.createElement("div"); this.modalEl.append(this.titleEl, this.contentEl); }
+  open() { document.body.append(this.modalEl); (this as any).onOpen?.(); }
+  close() { (this as any).onClose?.(); this.modalEl.remove(); }
+  setTitle(text: string) { this.titleEl.textContent = text; }
+  register() {} registerDomEvent(element: HTMLElement, name: string, cb: EventListener) { element.addEventListener(name, cb); }
+}
+export class Notice { constructor(text: string) { console.info("Fixture notice", text); } }
+export function sanitizeHTMLToDom(html: string) { const template = document.createElement("template"); template.innerHTML = html; return template.content; }
+const prototype = HTMLElement.prototype as any;
+prototype.empty = function() { this.replaceChildren(); };
+prototype.addClass = function(...names: string[]) { this.classList.add(...names); };
+prototype.removeClass = function(...names: string[]) { this.classList.remove(...names); };
+prototype.setText = function(text: string) { this.textContent = text; };
+prototype.createEl = function(tag: string, opts: any = {}) { const element = document.createElement(tag); element.className = opts.cls ?? ""; element.textContent = opts.text ?? ""; for (const [key, value] of Object.entries(opts.attr ?? {})) element.setAttribute(key, String(value)); this.append(element); return element; };
+prototype.createDiv = function(opts: any = {}) { return this.createEl("div", typeof opts === "string" ? { cls: opts } : opts); };
+prototype.createSpan = function(opts: any = {}) { return this.createEl("span", opts); };
+export { default as moment } from "moment";
+
+prototype.toggleClass = function(name: string, force: boolean) { this.classList.toggle(name, force); };
+prototype.setAttr = function(name: string, value: string) { this.setAttribute(name, value); };
+export function normalizePath(path: string) { return path.replace(/\\/g, "/").replace(/\/+/g, "/"); }
+export class WorkspaceLeaf {}
+export class Setting {
+  settingEl: HTMLElement;
+  constructor(parent: HTMLElement) { this.settingEl = parent.createDiv({cls:"setting-item"}); }
+  setName(text: string) { this.settingEl.createSpan({text}); return this; }
+  setDesc(text: string) { this.settingEl.createSpan({text}); return this; }
+  addButton(callback: (button: any) => void) { const element = this.settingEl.createEl("button"); const button = { buttonEl: element, setButtonText(text: string) { element.textContent = text; return this; }, setCta() { element.classList.add("mod-cta"); return this; }, onClick(fn: () => void) { element.onclick = fn; return this; } }; callback(button); return this; }
+}

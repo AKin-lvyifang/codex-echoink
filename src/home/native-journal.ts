@@ -1,4 +1,4 @@
-import { resolveKnowledgePathFromRoots, rebaseKnowledgePath } from "../knowledge-base/root-paths";
+import { resolveKnowledgePathFromRoots, rebaseKnowledgePath } from "../knowledge-base/root-paths-core";
 import { moment, TFile, type App } from "obsidian";
 import { normalizeJournalDirectory, normalizedJournalDirectoryOrNull } from "./journal-directory";
 

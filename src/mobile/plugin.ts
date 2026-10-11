@@ -4,6 +4,10 @@ import { loadMobileSettings, type MobileSettings } from "./settings";
 import { MobileRuntime } from "./runtime";
 import { MobileUI } from "../ui/mobile/mobile-ui";
 import { MobileWorkspace, MOBILE_VIEW } from "./workspace";
+import { mobilePluginDataRoot } from "./data-root";
+import { MobileServices } from "./services";
+import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { MobileViewport } from "../ui/mobile/viewport";
 
 export { MOBILE_VIEW } from "./workspace";
 export default class EchoInkMobilePlugin extends Plugin {
@@ -11,21 +15,27 @@ export default class EchoInkMobilePlugin extends Plugin {
   settings!: MobileSettings;
   runtime!: MobileRuntime;
   navigation!: MobileWorkspace;
+  services!: MobileServices;
   private settingsWrites: Promise<void> = Promise.resolve();
   async onload(): Promise<void> {
     try {
       this.settings = loadMobileSettings(await this.loadData());
       this.store = new MobileStore(this.app.vault.adapter, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       await this.store.load();
-      this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl);
+      this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl, () => this.services.context());
       this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
+      this.services = new MobileServices(this, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
+      this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.manifest.dir));
+      await this.services.initialize();
       this.registerView(MOBILE_VIEW, leaf => new EchoInkMobileView(leaf, this));
+      this.registerView(VIEW_TYPE_ECHOINK_HOME, leaf => new EchoInkMobileHomeView(leaf, this.services));
       this.addRibbonIcon("bot", "打开 EchoInk", () => { void this.open().catch(error => new Notice(String(error))); });
       this.addCommand({ id: "open-echoink-mobile", name: "打开移动对话", callback: () => { void this.open().catch(error => new Notice(String(error))); } });
+      this.addCommand({ id: "open-echoink-mobile-home", name: "打开首页", callback: () => { void this.navigation.openHome().catch(error => new Notice(String(error))); } });
       this.addCommand({ id: "echoink-mobile-current-note", name: "在 EchoInk 中引用当前笔记", callback: () => {
         const file = this.app.workspace.getActiveFile();
         if (file?.extension === "md") this.store.session.notePath = file.path;
-        void this.store.save().then(() => this.open()).catch(error => new Notice(String(error)));
+        void this.store.save().then(() => this.navigation.open()).catch(error => new Notice(String(error)));
       } });
     } catch (error) { new Notice(`EchoInk 无法加载：${error instanceof Error ? error.message : String(error)}`, 10000); throw error; }
   }
@@ -36,9 +46,15 @@ export default class EchoInkMobilePlugin extends Plugin {
     return write;
   }
   async open(): Promise<void> {
+    if (Platform.isTablet) await this.navigation.openHome();
     await this.navigation.open();
   }
-  onunload(): void { this.runtime?.stop(); }
+  async showPage(page: "basic" | "knowledge" | "resources"): Promise<void> {
+    await this.navigation.open();
+    const view = this.app.workspace.getLeavesOfType(MOBILE_VIEW)[0]?.view;
+    if (view instanceof EchoInkMobileView) view.showPage(page);
+  }
+  onunload(): void { this.runtime?.stop(); void this.services?.dispose(); }
 }
 
 class EchoInkMobileView extends ItemView {
@@ -48,11 +64,13 @@ class EchoInkMobileView extends ItemView {
   getViewType() { return MOBILE_VIEW; }
   getDisplayText() { return "EchoInk"; }
   getIcon() { return "bot"; }
+  showPage(page: "basic" | "knowledge" | "resources") { this.ui?.showPage(page); }
   async onOpen(): Promise<void> {
     this.addChild(this.markdown);
     this.ui = new MobileUI(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime,
       isTablet: Platform.isTablet,
+      services: this.plugin.services, version: this.plugin.manifest.version,
       settings: () => this.plugin.settings,
       saveSettings: () => this.plugin.saveSettings(),
       openNote: async path => {
@@ -69,4 +87,10 @@ class EchoInkMobileView extends ItemView {
     this.ui?.destroy();
     await this.plugin.store.save();
   }
+}
+
+class EchoInkMobileHomeView extends EchoInkHomeView {
+  private mobileViewport?: MobileViewport;
+  async onOpen(): Promise<void> { await super.onOpen(); this.contentEl.addClass("echoink-mobile-home"); this.mobileViewport = new MobileViewport(this.contentEl); }
+  async onClose(): Promise<void> { this.mobileViewport?.dispose(); this.contentEl.removeClass("echoink-mobile-home"); await super.onClose(); }
 }

@@ -1,5 +1,5 @@
 import { DEFAULT_ENGLISH_DIARY_SETTINGS, LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY, type EnglishDiarySettings } from "../english-diary/types";
-import { knowledgeRootRole } from "../knowledge-base/root-paths";
+import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
 
 export type HomeNoteVisibility = (path: string) => boolean;
 type DiaryDirectories = Pick<EnglishDiarySettings, "englishDirectory" | "expressionDirectory" | "legacyEnglishDirectories" | "legacyExpressionDirectories">;

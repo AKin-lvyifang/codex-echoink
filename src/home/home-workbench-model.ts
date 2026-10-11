@@ -2,7 +2,7 @@ import type { SettingsLanguage } from "../settings/settings";
 import { moment } from "obsidian";
 import { DEFAULT_JOURNAL_DATE_FORMAT, QUICK_JOURNAL_TEMPLATE, renderNativeJournalTemplate } from "./native-journal";
 import { homeContributionMonthLabel, homeCopy } from "./home-i18n";
-import { knowledgeRootRole } from "../knowledge-base/root-paths";
+import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
 import {
   DEFAULT_JOURNAL_DIRECTORY,
   normalizeJournalDirectory

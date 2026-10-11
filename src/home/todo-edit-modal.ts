@@ -1,6 +1,6 @@
 import { App, Modal, Notice, setIcon } from "obsidian";
-import type CodexForObsidianPlugin from "../main";
-import { newId } from "../settings/settings";
+import type { TodoHost } from "./home-host";
+import { newId } from "../core/new-id";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { joinPeopleNames, parsePeopleNames, personColorIndex, personInitial, TODO_AVATAR_PALETTE_SIZE } from "./todo-people";
 import { dateKey } from "./home-workbench-model";
@@ -32,7 +32,7 @@ export class EchoInkTodoFormModal extends Modal {
 
   constructor(
     app: App,
-    private readonly plugin: CodexForObsidianPlugin,
+    private readonly plugin: TodoHost,
     private readonly record: ParsedTodoRecord | null
   ) {
     super(app);

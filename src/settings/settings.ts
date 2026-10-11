@@ -1,3 +1,5 @@
+import { newId } from "../core/new-id";
+export { newId } from "../core/new-id";
 import { normalizeDiscoveredProviderModel, type DiscoveredProviderModel } from "./provider-model-discovery";
 import { DEFAULT_ENGLISH_DIARY_SETTINGS, LEGACY_HIDDEN_EXPRESSION_DIRECTORY } from "../english-diary/types";
 import { knowledgeRootRole } from "../knowledge-base/root-paths";
@@ -1575,9 +1577,6 @@ export function filterEnabledSkills(skills: CodexSkill[], overrides: Record<stri
   return skills.filter((skill) => resourceEnabled(overrides, skill.path || skill.name, skill.enabled !== false));
 }
 
-export function newId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function normalizeResourceManagementTab(value: unknown): ResourceManagementTab {
   return value === "mcp" || value === "skills" || value === "plugins" ? value : DEFAULT_SETTINGS.resourceManagementTab;

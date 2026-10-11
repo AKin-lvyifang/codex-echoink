@@ -1,7 +1,7 @@
 import { localTodoDate, reconcileTodoCompletions, todoCompletionStatistics } from "./todo-completions";
 import { Notice, TFile } from "obsidian";
-import type CodexForObsidianPlugin from "../main";
-import { newId } from "../settings/settings";
+import type { TodoHost } from "./home-host";
+import { newId } from "../core/new-id";
 import {
   appendRecordBlock,
   locateRecord,
@@ -37,7 +37,7 @@ export class EchoInkTodoStore {
   private initialized = false;
   private hasObserved = false;
 
-  constructor(private readonly plugin: CodexForObsidianPlugin) {}
+  constructor(private readonly plugin: TodoHost) {}
 
   get sourcePath(): string {
     return TODO_SOURCE_PATH;

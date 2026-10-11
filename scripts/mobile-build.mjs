@@ -8,6 +8,9 @@ import { poolDesktopStrings, assertDesktopMarkersPreserved } from "./desktop-str
 export const mobilePiPlugin = {
   name: "mobile-pi-browser-surface",
   setup(build) {
+    build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, args => {
+      if (args.importer.includes("/src/home/") || args.importer.endsWith("/src/ui/modals.ts")) return { path: path.resolve("src/ui/mobile/origin-controls.ts") };
+    });
     const root = path.resolve("node_modules/@earendil-works");
     build.onResolve({ filter: /^@earendil-works\/pi-agent-core$/ }, () => ({ path: path.join(root, "pi-agent-core/dist/agent.js") }));
     build.onResolve({ filter: /^@earendil-works\/pi-ai$/ }, () => ({ path: "pi-mobile", namespace: "pi-mobile" }));
@@ -18,7 +21,7 @@ export const mobilePiPlugin = {
   }
 };
 export function mobileBuildOptions(entry = "src/mobile/plugin.ts") {
-  return { entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian"], plugins: [mobilePiPlugin], logLevel: "silent" };
+  return { entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian"], loader: { ".md": "text", ".svg": "dataurl" }, plugins: [mobilePiPlugin], logLevel: "silent" };
 }
 export async function assemblePlatformBundle(desktopCode, minify) {
   const mobile = await esbuild.build({ ...mobileBuildOptions(), minify });
