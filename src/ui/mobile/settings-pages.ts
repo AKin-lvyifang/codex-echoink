@@ -6,6 +6,8 @@ import { EchoInkTodoFormModal } from "../../home/todo-edit-modal";
 import { TODO_SOURCE_PATH } from "../../home/todo-store";
 import type { ParsedTodoRecord } from "../../home/todo-markdown";
 import type { MobileServices } from "../../mobile/services";
+import { SETTINGS_TAB_ICONS } from "../../settings/settings-tab-icons";
+import type { AnimatedSettingsTabIconName } from "../../settings/animated-settings-tab-icon";
 
 export type MobileSettingsPage = "basic" | "layout" | "resources" | "knowledge" | "review" | "todos-settings" | "todos" | "profile-agent" | "profile-user" | "archives";
 interface Controls {
@@ -20,10 +22,14 @@ function node<K extends keyof HTMLElementTagNameMap>(parent: HTMLElement, tag: K
   const element = parent.ownerDocument.createElement(tag); element.className = cls; if (text !== undefined) element.textContent = text; parent.append(element); return element;
 }
 export class MobileSettingsPages {
-  readonly categories: { page: MobileSettingsPage | "providers"; title: string; icon: string }[] = [
-    { page: "basic", title: "基础设置", icon: "settings" }, { page: "layout", title: "布局与外观", icon: "layers" },
-    { page: "providers", title: "API Provider", icon: "server" }, { page: "resources", title: "Skills & MCP", icon: "sparkles" },
-    { page: "knowledge", title: "知识库管理", icon: "book-text" }, { page: "review", title: "复盘", icon: "history" }, { page: "todos-settings", title: "待办", icon: "check-check" }
+  readonly categories: { page: MobileSettingsPage | "providers"; title: string; icon: AnimatedSettingsTabIconName }[] = [
+    { page: "basic", title: "基础设置", icon: SETTINGS_TAB_ICONS.general },
+    { page: "layout", title: "布局与外观", icon: SETTINGS_TAB_ICONS.layout },
+    { page: "providers", title: "API Provider", icon: SETTINGS_TAB_ICONS.providers },
+    { page: "resources", title: "Skills & MCP", icon: SETTINGS_TAB_ICONS.resources },
+    { page: "knowledge", title: "知识库管理", icon: SETTINGS_TAB_ICONS.knowledgeBase },
+    { page: "review", title: "复盘", icon: SETTINGS_TAB_ICONS.review },
+    { page: "todos-settings", title: "待办", icon: SETTINGS_TAB_ICONS.todos }
   ];
   readonly titles: Record<MobileSettingsPage, string> = { basic: "基础设置", layout: "布局与外观", resources: "Skills & MCP", knowledge: "知识库管理", review: "复盘", "todos-settings": "待办设置", todos: "待办", "profile-agent": "Nova 档案", "profile-user": "用户画像", archives: "已归档会话" };
   private knowledgeMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);

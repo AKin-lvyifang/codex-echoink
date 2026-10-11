@@ -3,6 +3,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ApiProviderConfig } from "../../settings/settings";
 import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
+import { renderAnimatedSettingsTabIcon } from "../../settings/animated-settings-tab-icon";
 import { MOBILE_DEFAULT_WELCOME, mobileModel, mobilePresets, mobileProvider, selectedModel, supportedProvider, validateMobileProvider, type MobileSettings } from "../../mobile/settings";
 import { memoryCategories } from "../../mobile/tools";
 import { type MobilePermission, MobileStore } from "../../mobile/store";
@@ -336,7 +337,13 @@ export class MobileUI {
     }
   }
   private settings(body: HTMLElement) {
-    for (const category of this.settingPages.categories) this.row(body, category.title, "", category.icon, () => this.go(category.page));
+    for (const category of this.settingPages.categories) {
+      const row = this.row(body, category.title, "", category.icon, () => this.go(category.page));
+      const leadingIcon = row.querySelector<HTMLElement>(".em-icon")!;
+      // Reuse the desktop static layers and their CSS, without animation listeners.
+      leadingIcon.classList.add("codex-settings-tab-icon");
+      renderAnimatedSettingsTabIcon(leadingIcon, category.icon, null);
+    }
   }
   private basic(body: HTMLElement) {
     el(body, "h3", "em-section-title", "长期记忆");

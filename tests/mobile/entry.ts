@@ -8,3 +8,5 @@ export { MobileWorkspace } from "../../src/mobile/workspace";
 export { MobileServices } from "../../src/mobile/services";
 export { HomeActivityCore } from "../../src/home/home-activity-core";
 export { mobilePluginDataRoot } from "../../src/mobile/data-root";
+export { SETTINGS_TAB_ICONS } from "../../src/settings/settings-tab-icons";
+export { renderAnimatedSettingsTabIcon } from "../../src/settings/animated-settings-tab-icon";

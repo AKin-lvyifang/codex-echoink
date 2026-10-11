@@ -9,10 +9,12 @@ import { createHost, answer, FixtureTFile } from "../tests/mobile/host.mjs";
 
 const build = await esbuild.build(mobileBuildOptions("tests/mobile/entry.ts"));
 const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVisual: true });
+dom.window.HTMLElement.prototype.setAttr = function (name, value) { this.setAttribute(name, String(value)); };
+dom.window.HTMLElement.prototype.toggleClass = function (name, enabled) { this.classList.toggle(name, enabled); };
 const module = { exports: {} };
 const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, setTimeout, clearTimeout, structuredClone, crypto: webcrypto, console, require: id => { if (id !== "obsidian") throw new Error(`Node import on mobile: ${id}`); return { setIcon() {}, Modal: class {}, ItemView: class {}, TFile: FixtureTFile, Notice: class {} }; } };
 vm.runInNewContext(build.outputFiles[0].text, globals);
-const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, MobileUI, MobileWorkspace, MobileServices, HomeActivityCore, mobilePluginDataRoot } = module.exports;
+const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, MobileUI, MobileWorkspace, MobileServices, HomeActivityCore, mobilePluginDataRoot, SETTINGS_TAB_ICONS, renderAnimatedSettingsTabIcon } = module.exports;
 const memoryArgs = { kind: "view", title: "解释偏好", content: "解释技术问题时先说结论。", recallWhen: "解释技术问题", basis: "explicit" };
 let passed = 0;
 async function test(name, run) { await run(); passed++; console.log(`OK ${name}`); }
@@ -199,6 +201,33 @@ await test("formal DOM: sheet preserves draft node and focus, seven settings and
   ui.showPage("memories"); [...root.querySelectorAll(".em-row")].find(row => row.textContent.includes("待修正记忆")).click(); button("编辑").click(); const editor = root.querySelector('[aria-label="记忆内容"]'); editor.value = "修正后正文"; editor.dispatchEvent(new dom.window.Event("input")); button("预览修改").click(); assert.equal(store.state.memories.at(-1).content, "原文"); assert.ok(root.querySelector('[role="dialog"]').textContent.includes("修改前")); button("应用修改").click(); await settle(); assert.equal(store.state.memories.at(-1).content, "修正后正文"); assert.equal(store.state.memories.at(-1).revision, 2);
   const oldId = store.session.id; ui.showPage("review"); button("归档当前会话").click(); await settle(); assert.ok(store.state.sessions.find(session => session.id === oldId).archivedAt); root.querySelector(".em-archive summary").click(); await settle(); button("恢复会话").click(); await settle(); assert.equal(store.session.id, oldId); assert.equal(store.session.archivedAt, undefined);
   ui.destroy(); await services.dispose();
+});
+
+await test("phone/tablet settings reuse all seven desktop SVGs in static mode", async () => {
+  const expected = ["settings", "blocks", "key-round", "layout-list", "book-open-check", "clipboard-check", "list-todo"];
+  assert.deepEqual(Object.values(SETTINGS_TAB_ICONS).slice(0, 7), expected);
+  for (const isTablet of [false, true]) {
+    const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+    const root = dom.window.document.querySelector("#app");
+    const ui = new MobileUI(root, { app: state.app, isTablet, store: state.store, runtime: state.runtime, settings: () => state.config, saveSettings: async () => {}, openNote: async () => {}, beginRender() {}, renderMarkdown() {} });
+    ui.mount(); ui.showPage("settings");
+    const selector = `${isTablet ? ".em-sidebar" : ".em-body"} .em-row>.codex-settings-tab-icon`;
+    assert.equal(root.querySelectorAll(selector).length, 7);
+    for (const [index, iconName] of expected.entries()) {
+      const icon = root.querySelectorAll(selector)[index];
+      const desktop = dom.window.document.createElement("span");
+      renderAnimatedSettingsTabIcon(desktop, iconName, null);
+      assert.equal(icon.innerHTML, desktop.innerHTML, iconName);
+      assert.ok(icon.querySelector("path"), "no circle-only fixture fallback");
+      icon.parentElement.dispatchEvent(new dom.window.MouseEvent("mouseenter")); icon.parentElement.focus(); icon.parentElement.click();
+      assert.equal(icon.classList.contains("is-animating"), false);
+      assert.equal(icon.style.getPropertyValue("--echoink-tab-icon-delay"), "");
+      ui.showPage("settings");
+    }
+    ui.showPage("settings");
+    assert.equal(root.querySelector(".codex-settings-tab-icon.is-animating"), null);
+    ui.destroy();
+  }
 });
 
 for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, { isMobileApp: true, isMobile: false, isTablet: true }]) await test(`production mobile bundle initializes without Node: ${platform.isTablet ? "tablet desktop UI" : "phone"}`, async () => {
