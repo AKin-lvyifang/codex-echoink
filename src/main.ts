@@ -43,6 +43,7 @@ import { confirmModal } from "./ui/modals";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
 import { PaperGuideController } from "./plugin/paper-guide-controller";
 import { EchoInkTodoStore } from "./home/todo-store";
+import { TodoReminderService } from "./home/todo-reminder-service";
 import {
   EchoInkSettingsStore,
   SettingsPersistenceError,
@@ -188,6 +189,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private viewService: EchoInkViewService | null = null;
   private quickChatWindow: QuickChatWindowController | null = null;
   private todoStore: EchoInkTodoStore | null = null;
+  private todoReminderService: TodoReminderService | null = null;
   private resourceCatalogService: EchoInkResourceCatalogService | null = null;
   private skillRuntimeCoordinator: SkillRuntimeCoordinator | null = null;
   private autoArchive: ConversationAutoArchive | null = null;
@@ -301,9 +303,15 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (this.settings.quickChat.enabled && !quickChatRegistration.ok) {
       console.warn("EchoInk quick chat hotkey not registered", quickChatRegistration.reason);
     }
+    this.getTodoReminderService().start();
   }
 
   onunload(): void {
+    // Stop notifications synchronously, before the async service shutdown.
+    this.todoReminderService?.dispose();
+    this.todoReminderService = null;
+    this.todoStore?.dispose();
+    this.todoStore = null;
     void this.performUnload();
   }
 
@@ -385,6 +393,10 @@ export default class CodexForObsidianPlugin extends Plugin {
       });
     }
     return this.todoStore;
+  }
+  getTodoReminderService(): TodoReminderService {
+    if (!this.todoReminderService) this.todoReminderService = new TodoReminderService(this);
+    return this.todoReminderService;
   }
   async activateView(): Promise<void> { return this.getViewService().activateView(); }
   getQuickChatWindowController(): QuickChatWindowController | null { return this.quickChatWindow; }

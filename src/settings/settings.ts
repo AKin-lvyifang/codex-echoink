@@ -5,6 +5,7 @@ import { DEFAULT_LIFESTYLE_SETTINGS, normalizeLifestyleSettings, type LifestyleS
 import { normalizeTavilySettings, type TavilySettings } from "../tools/tavily-search";
 import { normalizeEchoInkColorTheme, type EchoInkColorTheme } from "../ui/appearance-theme";
 import { normalizeTodoCompletions, type TodoCompletionHistory } from "../home/todo-completions";
+import { normalizeTodoReminders } from "../home/todo-reminders";
 import type { CodexModel, CodexPluginInfo, CodexSkill, McpServerStatus, PermissionMode, ProcessEventKind, ProcessFileRef, ReasoningEffort, TokenUsage, UiMode } from "../types/app-server";
 import { DEFAULT_QUICK_CHAT_HOTKEY, normalizeAccelerator } from "../core/quick-hotkey";
 import { defaultHomeModuleVisibility } from "../home/home-modules";
@@ -517,6 +518,7 @@ export interface CodexForObsidianSettings {
   lifestyle: LifestyleSettings;
   todos: EchoInkTodoItem[];
   todoCompletions: TodoCompletionHistory;
+  todoReminders: import("../home/todo-reminders").TodoReminderSettings;
   todoCategories: EchoInkTodoCategory[];
   journalDirectory: string;
   customWelcomeEnabled: boolean;
@@ -566,6 +568,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   lifestyle: DEFAULT_LIFESTYLE_SETTINGS,
   todos: [],
   todoCompletions: {},
+  todoReminders: { enabled: false, sent: {} },
   todoCategories: [
     { id: "life", name: "生活" },
     { id: "work", name: "工作" }
@@ -726,6 +729,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     lifestyle: normalizeLifestyleSettings(data?.lifestyle),
     todos: normalizeTodos(data?.todos),
     todoCompletions: normalizeTodoCompletions(data?.todoCompletions),
+    todoReminders: normalizeTodoReminders(data?.todoReminders),
     todoCategories: normalizeTodoCategories(data?.todoCategories),
     resourceManagementTab: normalizeResourceManagementTab(data?.resourceManagementTab),
     knowledgeBase: normalizeKnowledgeBaseSettings(data?.knowledgeBase),
