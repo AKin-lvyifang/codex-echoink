@@ -23339,6 +23339,8 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-home-workspace.echoink-mobile-home :is(.echoink-home-shortnav button,.todo-filter) { height:auto; padding:6px 12px; border-radius:6px; }
 .echoink-home-workspace.echoink-mobile-home .small-note { border-radius:0; height:auto; padding:11px; }
 .echoink-home-workspace.echoink-mobile-home .return-grid { align-items:start; }
+/* Shared to-do Modal fields retain their mobile touch height after Origin styling. */
+body.is-mobile .modal.echoink-todo-form-modal .echoink-todo-form-field :is(input:not([type=checkbox]):not([type=radio]),select) { min-height:44px; }
 .is-mobile .echoink-journal-template-modal .modal-content { overflow:auto; min-height:0; }
 .is-mobile .echoink-journal-template-modal :is(.echoink-journal-template-card,.echoink-journal-custom-template) { height:auto; min-height:44px; padding:11px; border-radius:8px; }
 .is-mobile .echoink-journal-template-modal :is(.echoink-journal-template-card,.echoink-journal-custom-template) :is(strong,span,small) { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
