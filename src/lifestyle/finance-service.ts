@@ -14,10 +14,11 @@ import { lifeId, type FinanceBillPlan, type FinanceContinuousGoal, type FinanceE
 import { validateFinanceBillPlan, financeBillPlanStats } from "./finance-bill-plan";
 import { effectiveFinanceBudget, applyFinanceBudgetChanges, type FinanceBudgetChanges } from "./finance-budget";
 import { validateFinanceGoal } from "./finance-goals";
+import { nextFinanceAnalysisMonth } from "./finance-analysis-history";
 import { FinanceAnalysisArchive, type FinanceAnalysisArchiveDraft } from "./finance-analysis-archive";
 import { FinanceLedger, type CreatedFinanceRow, type FinanceImportResult, type FinanceImportWriteOptions } from "./finance-ledger";
 
-export const FINANCE_ANALYSIS_PROMPT_VERSION = "finance-analysis-v18";
+export const FINANCE_ANALYSIS_PROMPT_VERSION = "finance-analysis-v19";
 
 export class LifestyleFinanceService {
   readonly ledger: FinanceLedger;
@@ -338,7 +339,8 @@ export class LifestyleFinanceService {
   analysisInput(month: string): FinanceAnalysisInput {
     const data = this.service.store.snapshot();
     const budget = effectiveFinanceBudget(data, month);
-    return buildFinanceAnalysisInput(month, this.entries(), budget ?? null, undefined, { goals: data.financeGoals, budgetSource:data.budgets.some(b=>b.month===month)?"month-override":"current-default", previousReports:this.analysisArchive.previous(month) });
+    const nextMonth=nextFinanceAnalysisMonth(month);
+    return buildFinanceAnalysisInput(month, this.entries(), budget ?? null, undefined, { nextBudget:effectiveFinanceBudget(data,nextMonth),nextBudgetSource:data.budgets.some(b=>b.month===nextMonth)?"month-override":"current-default",goals: data.financeGoals, budgetSource:data.budgets.some(b=>b.month===month)?"month-override":"current-default", previousReports:this.analysisArchive.previous(month) });
   }
 
   latestReport(month: string): LifeReport | null {

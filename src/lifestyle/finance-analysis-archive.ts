@@ -74,7 +74,7 @@ export class FinanceAnalysisArchive {
   async validateDirectory(value = this.location().configured): Promise<string> {
     const directory=this.directory(value);
     let parent="";
-    for(const part of [...directory.split("/"),".data"]) {
+    for(const part of [...directory.split("/"),"数据快照"]) {
       parent=parent?`${parent}/${part}`:part;
       if (await this.app.vault.adapter.exists(parent) && (await this.app.vault.adapter.stat(parent))?.type!=="folder")
         throw new Error(`分析保存位置与文件冲突：${parent}`);
@@ -126,11 +126,12 @@ export class FinanceAnalysisArchive {
     const directory = await this.validateDirectory(), stamp = archiveTime(draft.createdAt).stamp;
     let version = Math.max(0,...(this.store.snapshot().financeAnalysisArchives ?? []).filter(r=>r.period===draft.period).map(r=>r.version))+1;
     const paths = () => { const name = `${draft.period}__财务分析__${stamp}__v${pad(version,3)}`;
-      return { path:`${directory}/${name}.md`,snapshotPath:`${directory}/.data/${name}.json` }; };
+      return { path:`${directory}/${name}.md`,snapshotPath:`${directory}/数据快照/${name}.json` }; };
     while (await this.app.vault.adapter.exists(paths().path) || await this.app.vault.adapter.exists(paths().snapshotPath)) version++;
     draft.record={ id:draft.id,period:draft.period,createdAt:draft.createdAt,version,status:"raw",...paths() };
   }
   async capture(draft: FinanceAnalysisArchiveDraft): Promise<void> { await this.enqueue(async()=> {
+    await this.persistPending(draft);
     await this.reserve(draft);
     await this.persistPending(draft);
     await this.folders(draft.record!.snapshotPath.slice(0,draft.record!.snapshotPath.lastIndexOf("/")));
@@ -140,11 +141,11 @@ export class FinanceAnalysisArchive {
   private async persistPending(draft: FinanceAnalysisArchiveDraft) {
     await this.store.update(data=> {
       data.financeAnalysisPending = [...(data.financeAnalysisPending??[]).filter(p=>p.id!==draft.id),structuredClone(draft)];
-      data.financeAnalysisArchives = [...(data.financeAnalysisArchives??[]).filter(r=>r.id!==draft.id),{ ...draft.record!,status:"raw" }];
+      if (draft.record) data.financeAnalysisArchives = [...(data.financeAnalysisArchives??[]).filter(r=>r.id!==draft.id),{ ...draft.record,status:"raw" }];
     });
   }
   async finish(draft: FinanceAnalysisArchiveDraft): Promise<void> { await this.enqueue(async()=> {
-    await this.reserve(draft); await this.persistPending(draft);
+    await this.persistPending(draft); await this.reserve(draft); await this.persistPending(draft);
     const record = draft.record!;
     await this.folders(record.snapshotPath.slice(0,record.snapshotPath.lastIndexOf("/")));
     const snapshotExists = await this.app.vault.adapter.exists(record.snapshotPath);

@@ -7,7 +7,7 @@ import { LifestyleStore, type LifeReport, type FinanceEntry } from "../lifestyle
 import { LifestyleFinanceService } from "../lifestyle/finance-service";
 import type { LifestyleService } from "../lifestyle/service";
 import { DEFAULT_LIFESTYLE_SETTINGS } from "../lifestyle/settings";
-import { validateFinanceAnalysisDirectory } from "../lifestyle/finance-analysis-archive";
+import { FinanceAnalysisArchive, validateFinanceAnalysisDirectory } from "../lifestyle/finance-analysis-archive";
 import { FINANCE_ANALYSIS_SKILL } from "../harness/resources/finance-analysis-skill";
 import { FakeVault } from "./lifestyle-finance-ledger";
 import { paidTestAccess } from "./membership-access";
@@ -41,6 +41,7 @@ export async function runFinanceAnalysisArchiveTests() {
     let records=store.snapshot().financeAnalysisArchives!;
     assert.deepEqual(records.map(r=>r.version),[1,2]);assert.equal(records[0].status,"success");
     const saved=JSON.parse(vault.files.get(records[0].snapshotPath)!.text);
+    assert.match(records[0].snapshotPath,/\/数据快照\/[^/]+\.json$/);
     assert.equal(saved.raw,response);assert.deepEqual(saved.report.financeSnapshot,first.financeSnapshot);
     assert.ok(saved.input.includes("普通吃饭"));assert.doesNotMatch(saved.input,/private-source|private-note/);
     assert.match(saved.generatedAt,/T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
@@ -70,11 +71,35 @@ export async function runFinanceAnalysisArchiveTests() {
     assert.equal(calls,before+1,"restart and save retry must not call model again");assert.equal(retried!.text,"保留的完整内容");
     assert.equal(again.pendingAnalysisSave("2026-09"),false);
     await again.retryAnalysisSave("2026-09").then(()=>assert.fail("retry without pending"),()=>{});
+    // A directory collision happens before a path can be reserved, after the model has returned.
+    await vault.create("early-conflict", "ordinary file");
+    settings.lifestyle.finance.analysisDirectory="early-conflict/reports";
+    const beforeEarly=calls;
+    await assert.rejects(again.analyze("2026-09",true),/保存失败/);
+    const early=againStore.snapshot().financeAnalysisPending!.at(-1)!;
+    assert.equal(early.raw,response);assert.equal(early.record,undefined);
+    assert.ok(!againStore.snapshot().financeAnalysisArchives!.some(r=>r.id===early.id),"unreserved draft is not an invalid archive index");
+    const earlyStore=new LifestyleStore(file);await earlyStore.initialize();const earlyRestart=make(earlyStore);await earlyRestart.initialize();
+    assert.equal(earlyRestart.pendingAnalysisSave("2026-09"),true);
+    await earlyRestart.saveAnalysisDirectory("新的保存位置");
+    const earlyReport=await earlyRestart.retryAnalysisSave("2026-09");
+    assert.equal(calls,beforeEarly+1,"early directory failure survives restart and retries without model");
+    assert.equal(earlyReport!.text,"保留的完整内容");
+    // Old hidden snapshots stay readable through their indexed adapter path.
+    const oldHidden=earlyStore.snapshot().financeAnalysisArchives!.find(r=>r.id===first.id)!;
+    const hiddenPath=oldHidden.snapshotPath.replace("/数据快照/","/.data/");
+    vault.files.set(hiddenPath,vault.files.get(oldHidden.snapshotPath)!);vault.files.delete(oldHidden.snapshotPath);
+    await earlyStore.update(d=>{d.financeAnalysisArchives!.find(r=>r.id===first.id)!.snapshotPath=hiddenPath;});
+    const hiddenArchive=new FinanceAnalysisArchive(app,earlyStore,()=>({root:"finance",directory:"finance/transactions",configured:""}));
+    // Make this successful version the latest for its month to exercise initialize's history read.
+    await earlyStore.update(d=>{d.financeAnalysisArchives!.find(r=>r.id===first.id)!.version=99;});
+    await hiddenArchive.initialize();assert.equal(hiddenArchive.previous("2026-09")[0].report.id,first.id);
+    // Use the latest durable store for the subsequent legacy upgrade checks.
     const legacy:LifeReport={id:"legacy-existing",kind:"finance",period:"2026-08",createdAt:new Date(2026,8,1,12).getTime(),provider:"旧模型",promptVersion:"old",inputFingerprint:"old",inputSummary:"旧账目",text:"实际存在的旧正文"};
-    await againStore.update(data=>data.reports.push(legacy));const migrate=make(againStore);await migrate.initialize();
-    const legacyRecord=againStore.snapshot().financeAnalysisArchives!.find(r=>r.id===legacy.id)!;
+    await earlyStore.update(data=>data.reports.push(legacy));const migrate=make(earlyStore);await migrate.initialize();
+    const legacyRecord=earlyStore.snapshot().financeAnalysisArchives!.find(r=>r.id===legacy.id)!;
     assert.equal(legacyRecord.createdAt,legacy.createdAt);assert.equal(JSON.parse(vault.files.get(legacyRecord.snapshotPath)!.text).source,"legacy-report");
-    assert.equal(againStore.snapshot().financeAnalysisArchives!.filter(r=>r.period==="2026-08").length,1,"only existing old report is migrated");
+    assert.equal(earlyStore.snapshot().financeAnalysisArchives!.filter(r=>r.period==="2026-08").length,1,"only existing old report is migrated");
     for(const location of ["../escape","/tmp","C:/temp","finance/transactions","finance/transactions/sub",".obsidian/reports","custom-config/reports"])
       assert.throws(()=>validateFinanceAnalysisDirectory(location,"finance","finance/transactions","custom-config"));
     await vault.create("blocked","file");await assert.rejects(migrate.saveAnalysisDirectory("blocked/sub"),/文件冲突/);

@@ -395,25 +395,27 @@ async function assertDerivedDiaryNotesStayOutOfHome(): Promise<void> {
 
 async function assertHomeRecentNotesPreserveFullData(): Promise<void> {
   const files = [
-    ["finance/latest.md", 100, 100], ["health/latest.md", 99, 99], ["wiki-backup/latest.md", 98, 98],
+    ["finance/latest.md", 100, 100], ["templates/latest.md", 99, 99], ["outputs/分析记录/latest.md", 98, 98],
     ["wiki/knowledge.md", 10, 1], ["raw/material.md", 7, 25], ["outputs/result.md", 9, 1],
-    ["Notes/Daily/archive/journal.md", 8, 1], ["legacy-journal/old.md", 97, 97]
+    ["Notes/Daily/archive/journal.md", 8, 1], ["旧分析/旧报告.md", 97, 97], ["index/普通索引.md", 2, 2], ["随手写.md", 1, 1]
   ].map(([path, mtime, ctime]) => {
     const file = new TFile(String(path));
     Object.assign(file, { basename: String(path).split("/").at(-1)!.replace(/\.md$/, ""), stat: { mtime, ctime, size: 50 } });
     return file;
   });
   const selectedDate = "2026-09-06";
-  const events = ["finance/latest.md", "raw/material.md", "wiki/knowledge.md", "raw/material.md", "health/latest.md"]
+  const events = ["finance/latest.md", "raw/material.md", "wiki/knowledge.md", "raw/material.md", "templates/latest.md"]
     .map((path, index) => ({ path, date: selectedDate, kind: "modified" as const, at: index }));
   events.push({ path: "finance/latest.md", date: "2026-09-07", kind: "modified", at: 6 });
   const app = {
     internalPlugins: { plugins: { "daily-notes": { instance: { options: { folder: "Notes/Daily" } } } } },
     vault: { getAllLoadedFiles: () => files, getMarkdownFiles: () => files,
+      getAbstractFileByPath:(path:string)=>files.find(file=>file.path===path) ?? null,
       cachedRead: async (file: TFile) => file.path === "finance/latest.md" ? "searchable finance marker" : "ordinary note" },
-    metadataCache: { getFileCache: () => null }
+    metadataCache: { getFileCache: (file:TFile) => file.path === "outputs/分析记录/latest.md" ? {frontmatter:{type:"finance-analysis"}} : null }
   };
-  const plugin = { app, settings: { settingsLanguage: "zh-CN", journalDirectory: "legacy-journal" },
+  const plugin = { app, settings: { settingsLanguage: "zh-CN", journalDirectory: "legacy-journal",lifestyle:{finance:{analysisDirectory:"outputs/分析记录"}} },
+    lifestyle:{store:{snapshot:()=>({financeAnalysisArchives:[{path:"旧分析/旧报告.md"}]})}},
     homeActivity: { snapshot: () => ({ events }) } };
   const service = new HomeWorkbenchDataService(app as never, () => plugin.settings.journalDirectory, plugin.homeActivity as never);
   assert.equal(service.getJournalDirectory(), "Notes/Daily", "native journal configuration wins over the old EchoInk folder");
@@ -424,9 +426,11 @@ async function assertHomeRecentNotesPreserveFullData(): Promise<void> {
   const originalPaths = data.records.map((record) => record.path);
   const activityBefore = JSON.stringify(data.activity);
   const recent = mutable.records();
-  assert.deepEqual(recent.map((record) => record.path), ["raw/material.md", "wiki/knowledge.md", "outputs/result.md", "Notes/Daily/archive/journal.md"]);
+  assert.deepEqual(recent.map((record) => record.path), ["raw/material.md", "wiki/knowledge.md", "outputs/result.md", "Notes/Daily/archive/journal.md", "index/普通索引.md", "随手写.md"]);
   assert.deepEqual(recent.slice(0, 3).map((record) => record.path), ["raw/material.md", "wiki/knowledge.md", "outputs/result.md"],
-    "new finance/health notes cannot displace eligible notes; creation/modification ordering stays intact");
+    "system finance/template/report notes cannot displace eligible notes; creation/modification ordering stays intact");
+  plugin.settings.lifestyle.finance.analysisDirectory="outputs";
+  assert.deepEqual(mutable.records().map(record=>record.path),recent.map(record=>record.path),"report type excludes reports in a content root without hiding ordinary results");
   mutable.selectedDate = selectedDate;
   assert.deepEqual(mutable.records().map((record) => record.path), ["raw/material.md", "wiki/knowledge.md"],
     "date mode applies the same scope while preserving activity order and path deduplication");

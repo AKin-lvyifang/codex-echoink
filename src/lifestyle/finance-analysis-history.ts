@@ -25,9 +25,12 @@ export function financeCategoryBudgetFacts(rows: readonly FinanceEntry[], budget
 export interface FinanceAnalysisHistoryOptions {
   goals?: readonly FinanceContinuousGoal[];
   budgetSource?: "month-override" | "current-default";
+  nextBudget?: FinanceBudget | null;
+  nextBudgetSource?: "month-override" | "current-default";
   previousReports?: readonly { report: LifeReport; input?: string }[];
 }
 const lastDay = (month: string) => { const [y, m] = month.split("-").map(Number); return new Date(y, m, 0).getDate(); };
+export const nextFinanceAnalysisMonth = (month: string) => { const [y,m]=month.split("-").map(Number); return localDate(new Date(y,m,1)).slice(0,7); };
 const previousMonth = (month: string) => { const [y, m] = month.split("-").map(Number); return localDate(new Date(y, m - 2, 1)).slice(0, 7); };
 const monthIndex = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7));
 export function financeAnalysisPeriod(month: string, asOf: string) {
@@ -45,6 +48,13 @@ const summary = (rows: readonly FinanceEntry[]) => {
 export function buildFinanceAnalysisHistory(month: string, ledger: readonly FinanceEntry[], asOf: string,
   options: FinanceAnalysisHistoryOptions) {
   const current = financeAnalysisPeriod(month, asOf), previous = previousMonth(month);
+  const nextMonth=nextFinanceAnalysisMonth(month),nextDays=lastDay(nextMonth),nextBudget=options.nextBudget;
+  const nextPlanning={月份:nextMonth,月天数:nextDays,预算已配置:!!nextBudget,
+    预算:nextBudget ? {额度元:nextBudget.totalCents/100,
+      分类额度元:Object.fromEntries(Object.entries(nextBudget.allocations).map(([name,value])=>[financeAnalysisLabel(name),value/100])),
+      日均预算参考元:nextBudget.totalCents/100/nextDays,
+      规则来源:options.nextBudgetSource==="month-override" ? "下月独立预算" : "当前每月默认预算适用于下月"} : null,
+    说明:nextBudget ? "下月从该月新额度开始，本月已用金额不结转。" : "下月预算未知；若沿用本月额度，仅作为条件情景，不代表实际已设置。"};
   const previousDays = month === asOf.slice(0, 7) && current.天数 < current.月天数
     ? Math.min(current.天数, lastDay(previous)) : lastDay(previous);
   const comparable = { ...financeAnalysisPeriod(previous, asOf), 天数: previousDays,
@@ -95,7 +105,7 @@ export function buildFinanceAnalysisHistory(month: string, ledger: readonly Fina
       变化元:((nowCategories.get(name)??0)-(beforeCategories.get(name)??0))/100,
       当前该类有记录:nowCategories.has(name),前月该类有记录:beforeCategories.has(name)})),
     说明:"仅为两边范围内已记录金额的变化，完整性未知；天数不同须看日均。不能单凭金额差异断言消费习惯改善。" } : null;
-  return { 确定计算的前后变化:changes, 统计范围: current, 上个自然月可比: { 当前范围: current, 历史范围: comparable, 缺少记录: !previousRows.length,
+  return { 下一统计月份:nextPlanning, 确定计算的前后变化:changes, 统计范围: current, 上个自然月可比: { 当前范围: current, 历史范围: comparable, 缺少记录: !previousRows.length,
     汇总: previousRows.length ? summary(previousRows) : null, 相关账目引用:previousRows.length?{历史月份:previous,字段:"最近三个已有历史月.原始相关账目",筛选起日:comparable.起日,筛选止日:comparable.止日}:null },
     最近三个已有历史月: months, 历史月份连续:recordedMonths.length>=2?recordedMonths.every((m,i)=>!i||monthIndex(m)-monthIndex(recordedMonths[i-1])===1):null, 缺月: missing, 持续目标: goals, 前次成功报告: reports,
     比较边界: "记录完整性均未知；缺记录不等于零消费，非相邻月份不称连续。日数不同应按日均等可比口径。补账、修正分类用途、收入变化及预算/目标调整不证明消费习惯改善。" };

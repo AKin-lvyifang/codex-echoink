@@ -86,13 +86,26 @@ function assertRecentNoteDirectoryScope(): void {
     "Notes/Daily/today.md", "Notes/Daily/archive/older.md", "Notes\\Daily\\nested\\note.md"]) {
     assert.equal(isHomeRecentNotePath(path, journalDirectory), true, path);
   }
-  for (const path of ["finance/a.md", "财务/账目.md", "health/a.md", "projects/a.md", "inbox/a.md", "other/a.md",
-    "wiki-backup/a.md", "raw-materials/a.md", "outputs-old/a.md", "知识库（wiki）备份/a.md",
-    "Notes/Daily-old/a.md", "Notes/Daily.md", "journal/a.md", "日记（journal）/a.md"]) {
+  for (const path of ["finance/a.md", "财务（finance）/账目（transactions）/a.md", "EchoInk/财务/分析记录/a.md",
+    ".obsidian/plugins/data.md", ".echoink/resources/skills/a.md", "templates/journal/a.md", "模板（templates）/a.md"]) {
     assert.equal(isHomeRecentNotePath(path, journalDirectory), false, path);
   }
-  assert.equal(isHomeRecentNotePath("日记（journal）/2026-09/note.md", "日记（journal）"), true);
-  assert.equal(isHomeRecentNotePath("journal/note.md", "日记（journal）"), false, "journal follows the actual selected directory");
+  for (const path of ["财务/手写.md","finance-backup/a.md","EchoInk/财务备份/a.md","health/a.md","map/a.md",
+    "projects/a.md","inbox/a.md","other/a.md","wiki-backup/a.md","index.md","index/a.md","日记（journal）/a.md"]) {
+    assert.equal(isHomeRecentNotePath(path,journalDirectory),true,path);
+  }
+  const context={analysisDirectory:"outputs/财务报告",reportPaths:new Set(["旧目录/报告.md"])};
+  assert.equal(isHomeRecentNotePath("outputs/财务报告/a.md",journalDirectory,context),false);
+  assert.equal(isHomeRecentNotePath("outputs/财务报告备份/a.md",journalDirectory,context),true);
+  assert.equal(isHomeRecentNotePath("旧目录/报告.md",journalDirectory,context),false);
+  assert.equal(isHomeRecentNotePath("旧目录/普通.md",journalDirectory,context),true);
+  for(const root of ["outputs","wiki","index","输出（outputs）","知识库（wiki）"]) {
+    assert.equal(isHomeRecentNotePath(`${root}/普通.md`,journalDirectory,{analysisDirectory:root}),true);
+    assert.equal(isHomeRecentNotePath(`${root}/报告.md`,journalDirectory,{analysisDirectory:root,reportType:"finance-analysis"}),false);
+  }
+  assert.equal(isHomeRecentNotePath("Notes/Daily/a.md",journalDirectory,{analysisDirectory:journalDirectory}),true);
+  assert.equal(isHomeRecentNotePath("custom-config/a.md",journalDirectory,{configDirectory:"custom-config"}),false);
+
 }
 
 async function assertHomeConversationLaunchFlow(): Promise<void> {

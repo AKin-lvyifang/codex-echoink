@@ -416,7 +416,20 @@ export class EchoInkHomeView extends ItemView {
   }
   private records(): HomeVaultFileRecord[] {
     const journalDirectory = this.dataService.getJournalDirectory();
-    const records = (this.data?.records ?? []).filter((record) => isHomeRecentNotePath(record.path, journalDirectory));
+    const archives=this.plugin.lifestyle?.store.snapshot();
+    const reportPaths=new Set([
+      ...(archives?.financeAnalysisArchives ?? []).map(record=>record.path),
+      ...(archives?.financeAnalysisPending ?? []).flatMap(draft=>[
+        ...(draft.record?[draft.record.path]:[]),...(draft.previousAttemptPaths ?? []).map(attempt=>attempt.path)])
+    ]);
+    const native=readNativeJournalSettings(this.app,this.plugin.settings.journalDirectory);
+    const context={analysisDirectory:this.plugin.settings.lifestyle?.finance.analysisDirectory,
+      reportPaths,configDirectory:this.app.vault.configDir,templatesDirectory:native.templatesFolder};
+    const records = (this.data?.records ?? []).filter((record) => {
+      const file=this.app.vault.getAbstractFileByPath?.(record.path);
+      const reportType=file instanceof TFile ? this.app.metadataCache.getFileCache(file)?.frontmatter?.type : undefined;
+      return isHomeRecentNotePath(record.path,journalDirectory,{...context,reportType});
+    });
     if (!this.selectedDate) return [...records].sort((a, b) => Math.max(b.ctime ?? 0, b.mtime) - Math.max(a.ctime ?? 0, a.mtime));
     const events = this.events.filter((e) => e.date === this.selectedDate);
     const paths = [...new Set(events.map((e) => e.path))];

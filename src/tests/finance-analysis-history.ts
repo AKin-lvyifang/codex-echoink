@@ -41,5 +41,17 @@ export async function runFinanceAnalysisHistoryTests(){
   assert.equal(changed.月预算事实.额度元,2000);
   assert.equal(changed.前次成功报告[0].当时资料.统计范围.止日,"2026-10-12");
   assert.equal(before.fingerprint,buildFinanceAnalysisInput("2026-10",[row("old",10000,"expense","餐饮",{date:"2026-10-01"})],{month:"2026-10",totalCents:100000,allocations:{}},"2026-10-12",{previousReports:[{report:oldReport,input:before.text}]}).fingerprint);
-  console.log("PASS analysis inputs: whole-month/month-to-date comparison, missing history/income, sixth budget, same-purpose accumulation, equal daily spending, stored prior input and stable data fingerprint");
+  for(const [month,next,days] of [["2026-09","2026-10",31],["2026-01","2026-02",28],["2028-01","2028-02",29],["2026-12","2027-01",31]] as const) {
+    const input=JSON.parse(buildFinanceAnalysisInput(month,[],null,"2028-03-01",{}).text);
+    assert.deepEqual([input.下一统计月份.月份,input.下一统计月份.月天数,input.下一统计月份.预算已配置],[next,days,false]);
+    assert.equal(input.下一统计月份.预算,null);assert.match(input.下一统计月份.说明,/条件情景/);
+    const configured=JSON.parse(buildFinanceAnalysisInput(month,[],{month,totalCents:99900,allocations:{}},"2028-03-01",{
+      nextBudget:{month:next,totalCents:days*10000,allocations:{餐饮:150000}},nextBudgetSource:"month-override"}).text);
+    assert.equal(configured.月预算事实.额度元,999);
+    assert.equal(configured.下一统计月份.预算.额度元,days*100);
+    assert.equal(configured.下一统计月份.预算.日均预算参考元,100);
+    assert.equal(configured.下一统计月份.预算.分类额度元.餐饮,1500);
+    assert.equal(configured.下一统计月份.预算.规则来源,"下月独立预算");
+  }
+  console.log("PASS analysis inputs: next-month actual calendar and configured/unknown budget, whole-month/month-to-date comparison, missing history/income, sixth budget, same-purpose accumulation, equal daily spending, stored prior input and stable data fingerprint");
 }
