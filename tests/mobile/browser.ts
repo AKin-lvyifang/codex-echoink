@@ -1,3 +1,6 @@
+import { LifestyleView } from "../../src/lifestyle/view";
+import { MobileViewport } from "../../src/ui/mobile/viewport";
+import { createMobileAccountService } from "../../src/mobile/account";
 import { EchoInkHomeView } from "../../src/home/home-view";
 import { MobileServices } from "../../src/mobile/services";
 import { MobileUI } from "../../src/ui/mobile/mobile-ui";
@@ -9,7 +12,7 @@ import { createHost, answer } from "./host.mjs";
 const host = createHost({ "笔记/来源.md": "项目决定：先完成手机本地问答。", "Wiki/项目/手机验收.md": "# 知识", "Raw/资料.md": "# 原始资料", "Inbox/记录.md": "# Inbox" });
 host.app.workspace.containerEl = document.body;
 const params = new URLSearchParams(location.search);
-const fixturePrefix = params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
+const fixturePrefix = params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
 const persisted = localStorage.getItem(`${fixturePrefix}-files`);
 if (persisted) { host.files.clear(); for (const [key, value] of JSON.parse(persisted)) host.files.set(key, value); }
 const persist = () => localStorage.setItem(`${fixturePrefix}-files`, JSON.stringify([...host.files]));
@@ -52,15 +55,18 @@ const runtime = new MobileRuntime(host.app as any, store, () => settings, async 
   if (!after.length && prompt.includes("读取")) { slowRead = true; return answer(protocol, "", [["read-" + requests.length, "note_read", { path: "笔记/来源.md" }]]); }
   return answer(protocol, "已完成。这是测试提供商返回的完整回答，正式组件使用真实 Agent 和工具回执。");
 }, () => services.context());
-const services = new MobileServices({ app: host.app as any, settings, store, runtime, navigation: {} as any, registerEvent() {}, showPage: async () => {}, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); } }, "plugin/mobile");
+const accountService = await createMobileAccountService(host.app as any, () => settings);
+const financeAccess = { checkCapability: () => !params.has("expired"), requireCapability: () => { if (params.has("expired")) throw new Error("替身：授权已失效"); }, subscribe: () => () => {} };
+const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: {} as any, registerEvent() {}, showPage: async () => {}, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); } }, "plugin/mobile");
 await services.initialize();
+await services.initializeFinance();
 const root = document.querySelector<HTMLElement>("#app")!;
 if (params.has("home")) {
   const element = document.querySelector<HTMLElement>("#home")!; element.hidden = false;
   const homeView = new EchoInkHomeView({ app: host.app, containerEl: element, contentEl: element } as any, services);
   await homeView.onOpen(); Object.assign(window, { homeView });
 }
-const ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tablet"), services, version: "2.6.2 fixture", store, runtime, settings: () => settings, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); }, openNote: async path => { await host.app.workspace.getLeaf().openFile({ path }); document.querySelector("#opened")!.textContent = `已通过打开接口进入：${path}\n${host.files.get(path)}`; }, beginRender() { root.dataset.renders = String(++renders); }, renderMarkdown(text, element) {
+const ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tablet"), services, accountService, version: "2.6.2 fixture", store, runtime, settings: () => settings, saveSettings: async () => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(settings)); }, openNote: async path => { await host.app.workspace.getLeaf().openFile({ path }); document.querySelector("#opened")!.textContent = `已通过打开接口进入：${path}\n${host.files.get(path)}`; }, beginRender() { root.dataset.renders = String(++renders); }, renderMarkdown(text, element) {
   // A synthetic renderer for layout only; real MarkdownRenderer is host-owned.
   for (const part of text.split(/(```[\s\S]*?```)/u)) {
     if (part.startsWith("```")) { const pre = document.createElement("pre"); const code = document.createElement("code"); code.textContent = part.replace(/^```[^\n]*\n|```$/gu, ""); pre.append(code); element.append(pre); }
@@ -74,3 +80,22 @@ const ui = new MobileUI(root, { app: host.app as any, isTablet: params.has("tabl
 } });
 ui.mount();
 Object.assign(window, { mobileFixture: { store, settings, runtime, host, requests, ui, services } });
+
+if (params.has("finance")) {
+  settings.lifestyle.finance.enabled = true;
+  const finance = services.lifestyle.finance;
+  await finance.initialize();
+  if (!finance.entries().length && !params.has("expired")) {
+    const month = new Date().toISOString().slice(0, 7);
+    await finance.saveBudgetChanges({ defaultBudget: { totalCents: 500000, allocations: { "餐饮": 80000, "购物": 100000 } }, overrides: [], removedMonths: [] });
+    await finance.saveBillPlan({ id: "fixture-plan", name: "设备添置", budgetCents: 800000 });
+    for (let i = 0; i < 25; i++) await finance.addManual({ date: `${month}-${String(i % 10 + 1).padStart(2,"0")} 10:00:00`, merchant: i % 2 ? "合成餐饮" : "合成购物", category: i % 2 ? "餐饮" : "购物", kind: "expense", amountCents: 1000 + i * 123, status: "completed", account: "替身账户", description: "内部验收合成记录", currency: "CNY", note: "", ...(i < 3 ? { billPlanId: "fixture-plan" } : {}) });
+  }
+  const element = params.has("tablet") ? document.querySelector<HTMLElement>("#home")! : root;
+  if (!params.has("tablet")) { ui.destroy(); root.classList.remove("echoink-mobile", "em-tablet"); }
+  element.hidden = false; element.classList.add("echoink-mobile-finance");
+  element.style.setProperty("--view-bottom-spacing", params.has("tablet") ? "0px" : "68px");
+  const viewport = new MobileViewport(element);
+  const view = new LifestyleView({ app: host.app, containerEl: element, contentEl: element } as any, services.lifestyle, "finance");
+  await view.onOpen(); Object.assign(window, { financeView: view, financeViewport: viewport });
+}

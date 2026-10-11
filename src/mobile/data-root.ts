@@ -13,6 +13,6 @@ export async function mobilePluginDataRoot(adapter: DataAdapter, install: string
     for (const child of [...children.files, ...children.folders]) if (await containsData(child)) return true;
     return false;
   };
-  for (const name of ["pi-agent-product-v1", "home-activity.json", "raw", "clipboard"]) if (await containsData(`${previous}/${name}`)) return previous;
+  for (const name of ["pi-agent-product-v1", "home-activity.json", "lifestyle.json", "raw", "clipboard"]) if (await containsData(`${previous}/${name}`)) return previous;
   return install;
 }

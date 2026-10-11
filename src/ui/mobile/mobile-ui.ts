@@ -12,12 +12,14 @@ import type { MobileServices } from "../../mobile/services";
 import { MobileViewport } from "./viewport";
 import { MobileSettingsPages, type MobileSettingsPage } from "./settings-pages";
 import novaAvatar from "../../../assets/nova.svg";
+import type { AccountService } from "../../membership/account-service";
 
 export interface MobileUIHost {
   app: App;
   isTablet?: boolean;
   services?: MobileServices;
   version?: string;
+  accountService?: AccountService;
   applyAppearance?(): void;
   store: MobileStore;
   runtime: MobileRuntime;
@@ -50,6 +52,7 @@ function detailRecord(value: unknown): Record<string, unknown> | undefined {
 
 /** The same DOM controller is used by the ItemView and browser host fixture. */
 export class MobileUI {
+  private providerPickerBack?: () => void;
   private viewport?: MobileViewport;
   private overlay?: HTMLElement;
   private sheetRestore?: HTMLElement;
@@ -401,10 +404,42 @@ export class MobileUI {
   private provider(body: HTMLElement) {
     const draft = this.providerDraft!;
     const form = el(body, "div", "em-form");
-    const presetLabel = el(form, "label", "em-field"); el(presetLabel, "span", "", "供应商"); const presets = el(presetLabel, "select"); presets.setAttribute("aria-label", "供应商");
-    for (const preset of mobilePresets) { const option = el(presets, "option", "", preset.name.split(" / ")[0]); option.value = preset.id; }
-    presets.value = draft.providerId ?? "custom";
-    presets.addEventListener("change", () => { const selected = mobilePresets.find(preset => preset.id === presets.value); if (!selected) return; const preset = mobileProvider(selected.id); this.providerDraft = { ...draft, ...preset, id: draft.id, apiKey: draft.providerId === preset.providerId ? draft.apiKey : "" }; this.openSheet("配置提供商", body => this.provider(body)); });
+    const presetLabel = el(form, "div", "em-field"); el(presetLabel, "span", "", "供应商");
+    const presets = this.button(presetLabel, "", () => {
+      const scroll = body.scrollTop;
+      form.hidden = true; presets.setAttribute("aria-expanded", "true");
+      const picker = el(body, "section", "em-provider-picker");
+      const close = () => { this.providerPickerBack = undefined; picker.remove(); form.hidden = false; presets.setAttribute("aria-expanded", "false"); body.scrollTop = scroll; presets.focus({ preventScroll: true }); };
+      this.providerPickerBack = close;
+      this.button(picker, "返回配置", close, "chevron-left", "em-wide-action");
+      el(picker, "h3", "em-section-title", "选择供应商");
+      const list = el(picker, "div"); list.setAttribute("role", "listbox"); list.setAttribute("aria-label", "供应商");
+      for (const preset of mobilePresets) {
+        const row = this.row(list, preset.name.split(" / ")[0], "", "cpu", () => {
+          close();
+          if (draft.providerId === preset.id) return;
+          const replacement = mobileProvider(preset.id);
+          this.providerDraft = { ...draft, ...replacement, id: draft.id, apiKey: draft.providerId === replacement.providerId ? draft.apiKey : "" };
+          body.replaceChildren(); this.provider(body); body.scrollTop = scroll;
+          body.querySelector<HTMLElement>(".em-provider-trigger")?.focus({ preventScroll: true });
+        });
+        const art = row.querySelector<HTMLElement>(".em-icon")!; renderProviderBrandIcon(art, preset.id); art.classList.add("em-provider-brand");
+        row.setAttribute("role", "option"); row.setAttribute("aria-selected", String(draft.providerId === preset.id)); row.dataset.provider = preset.id;
+        row.lastElementChild?.remove();
+        if (draft.providerId === preset.id) icon(row, "check");
+      }
+      picker.addEventListener("keydown", event => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        event.preventDefault(); const options = Array.from(list.querySelectorAll<HTMLButtonElement>("button")), index = options.indexOf(picker.ownerDocument.activeElement as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + options.length) % options.length;
+        options[next]?.focus();
+      });
+      list.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true });
+    }, undefined, "em-provider-trigger");
+    presets.setAttribute("aria-label", `供应商：${mobilePresets.find(item => item.id === draft.providerId)?.name.split(" / ")[0] ?? draft.name}`); presets.setAttribute("aria-haspopup", "listbox"); presets.setAttribute("aria-expanded", "false");
+    const brand = el(presets, "span", "em-provider-brand"); brand.setAttribute("aria-hidden", "true"); renderProviderBrandIcon(brand, draft.providerId === "openai" ? "openai-codex" : draft.providerId ?? "custom");
+    el(presets, "span", "", mobilePresets.find(item => item.id === draft.providerId)?.name.split(" / ")[0] ?? draft.name); icon(presets, "chevron-down");
     this.field(form, "显示名称", draft.name, value => { draft.name = value; });
     const key = this.field(form, "API Key", draft.apiKey, value => { draft.apiKey = value; }, "password");
     const reveal = this.button(form, "显示 API Key", () => { const visible = key.type === "password"; key.type = visible ? "text" : "password"; reveal.setAttribute("aria-pressed", String(visible)); }, "eye"); reveal.setAttribute("aria-pressed", "false");
@@ -559,6 +594,8 @@ export class MobileUI {
     sheet.focus({ preventScroll: true });
   }
   private closeSheet(restore = true) {
+    if (restore && this.providerPickerBack) { this.providerPickerBack(); return; }
+    this.providerPickerBack = undefined;
     this.overlay?.remove(); this.overlay = undefined;
     for (const child of Array.from(this.root.children)) (child as HTMLElement).inert = false;
     if (restore && this.sheetRestore?.isConnected) this.sheetRestore.focus({ preventScroll: true });

@@ -38,6 +38,7 @@ async function dataRoots() {
       const expected = path.join(vault, pluginInstallDir(manifest, configDir));
       // An empty previous location must not force fallback.
       await mkdir(path.join(vault, ".obsidian/plugins", dir ?? id), { recursive: true });
+      await writeFile(path.join(vault, ".obsidian/plugins", dir ?? id, "lifestyle.json"), "");
       const binding = await preparePluginDataRoot(vault, manifest, configDir!);
       bindings.push(binding);
       assert.equal(binding.rootPath, expected);
@@ -53,6 +54,31 @@ async function dataRoots() {
       const reloaded = await refreshKnowledgeBaseIndex(vault, { roots: ["wiki"] });
       assert.ok(reloaded.index.checkpoints.lint?.["wiki/note.md"]);
       assert.equal(reloaded.reusedCount, 1);
+    }
+    // Finance JSON alone is durable state, with or without manifest.dir.
+    for (const manifestDir of [undefined, ".obsidian-work/plugins/codex-echoink"]) {
+      for (const both of [false, true]) {
+        const financeVault = path.join(temp, `finance-${manifestDir ? "manifest" : "fallback"}-${both}`);
+        await mkdir(financeVault);
+        const manifest = { id, dir: manifestDir };
+        const oldFinanceRoot = path.join(financeVault, ".obsidian/plugins", manifestDir ?? id);
+        const newFinanceRoot = path.join(financeVault, pluginInstallDir(manifest, ".obsidian-work"));
+        const oldFinance = JSON.stringify({ budgets: [{ month: "2026-10", totalCents: 12345 }], goals: [{ id: "old-goal" }], reports: [{ id: "old-report" }], unowned: { keep: true } });
+        await mkdir(oldFinanceRoot, { recursive: true });
+        await writeFile(path.join(oldFinanceRoot, "lifestyle.json"), oldFinance);
+        if (both) {
+          await mkdir(newFinanceRoot, { recursive: true });
+          await writeFile(path.join(newFinanceRoot, "lifestyle.json"), "new-finance-preserved");
+        }
+        const financeBinding = await preparePluginDataRoot(financeVault, manifest, ".obsidian-work");
+        bindings.push(financeBinding);
+        assert.equal(financeBinding.rootPath, oldFinanceRoot, "finance-only previous root must remain selected");
+        assert.equal(financeBinding.usingPreviousRoot, true);
+        assert.equal(financeBinding.installRootHasData, both);
+        assert.equal(pluginDataDir(financeVault), oldFinanceRoot);
+        assert.equal(await readFile(path.join(oldFinanceRoot, "lifestyle.json"), "utf8"), oldFinance);
+        if (both) assert.equal(await readFile(path.join(newFinanceRoot, "lifestyle.json"), "utf8"), "new-finance-preserved");
+      }
     }
     // Two live Vaults retain independent choices, including symlink aliases.
     const vault = path.join(temp, "legacy");
@@ -114,7 +140,7 @@ async function dataRoots() {
       binding.dispose();
       assert.equal(pluginDataDir(alias, dir), path.join(alias, dir));
     }
-    console.log("Default/custom roots, empty/legacy/dual stores, Vault isolation, native Pi session reopen, memory/activity/index: PASS");
+    console.log("Default/custom roots, empty/finance-only/legacy/dual stores, Vault isolation, native Pi session reopen, memory/activity/index: PASS");
   } finally {
     for (const binding of bindings) binding.dispose();
     await rm(temp, { recursive: true, force: true });

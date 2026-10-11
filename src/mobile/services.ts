@@ -1,5 +1,5 @@
 import { ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES } from "../core/knowledge-preferences-default";
-import { Notice, TFile, type App, type EventRef } from "obsidian";
+import { TFile, type App, type EventRef } from "obsidian";
 import type { HomeHost } from "../home/home-host";
 import { EchoInkTodoStore } from "../home/todo-store";
 import { HomeActivityCore } from "../home/home-activity-core";
@@ -9,6 +9,13 @@ import type { MobileSettings } from "./settings";
 import type { MobileStore } from "./store";
 import type { MobileRuntime } from "./runtime";
 import type { MobileWorkspace } from "./workspace";
+import type { CapabilityAccess } from "../membership/types";
+import { mobileGenerateText } from "./transport";
+import { selectedModel } from "./settings";
+import { requestUrl } from "obsidian";
+import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { mobileAtomicFilePort } from "./finance-store";
+import { MobileLifestyleService } from "./finance";
 
 export interface MobileServicesHost {
   app: App;
@@ -16,15 +23,17 @@ export interface MobileServicesHost {
   store: MobileStore;
   runtime: MobileRuntime;
   navigation: MobileWorkspace;
+  accountService?: CapabilityAccess;
   saveSettings(): Promise<void>;
   registerEvent(event: EventRef): void;
-  showPage(page: "basic" | "knowledge" | "resources"): Promise<void>;
+  showPage(page: "basic" | "knowledge" | "resources" | "finance-settings"): Promise<void>;
 }
 export class MobileServices implements HomeHost {
   readonly app: App;
   readonly homeActivity: HomeActivityCore;
   private preferenceRoot: string;
   private readonly todos: EchoInkTodoStore;
+  private skillStateWrites: Promise<void> = Promise.resolve();
   readonly homeUnavailableReason = "移动端尚未接通知识健康扫描；笔记数量来自当前笔记库";
   constructor(private host: MobileServicesHost, readonly directory: string) {
     this.app = host.app; this.preferenceRoot = directory.replace(/\/mobile$/u, "");
@@ -47,8 +56,41 @@ export class MobileServices implements HomeHost {
     this.registerEvent(this.app.vault.on("rename", (file, old) => this.homeActivity.rename(old, file.path)));
     this.registerEvent(this.app.vault.on("delete", file => this.homeActivity.delete(file.path)));
   }
-  async dispose() { await this.homeActivity.dispose(); }
-  readonly lifestyle = { open: async (_kind: "finance") => { new Notice("移动端尚未支持财务工作区；财务数据与配置已保留，请在桌面端打开。"); } };
+  async dispose() { this.lifestyle?.dispose(); await this.homeActivity.dispose(); }
+  lifestyle!: MobileLifestyleService;
+  get accountService() { return this.host.accountService; }
+  async initializeFinance() { this.lifestyle = new MobileLifestyleService(this, this.preferenceRoot); await this.lifestyle.initialize(); }
+  notifyHomeSurfacesChanged() { for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) if (leaf.view instanceof EchoInkHomeView) leaf.view.refreshHomeSurfaces(); }
+  openLifestyleSettings(_kind: "finance") { return this.host.showPage("finance-settings"); }
+  getSkillRuntimeCoordinator() {
+    return { resolveById: (id: string) => this.requireAvailableEchoInkSkill(id), recordUse: (id: string) => {
+      const run = async () => {
+      const path = ".echoink/resources/skill-state.json", adapter = this.app.vault.adapter;
+      if (!await adapter.exists(path)) return;
+      const state = JSON.parse(await adapter.read(path)) as { schema: string; records?: Record<string, { status: string; lastUsedAt: number | null; usageCount: number }> };
+      if (state.schema !== "echoink.skill-runtime.v1" || !state.records) throw new Error("Skill 使用状态不可读取，原文件已保留。");
+      const item = state.records?.[id];
+      if (item && item.status === "active") {
+        if (!Number.isSafeInteger(item.usageCount) || item.usageCount < 0) throw new Error("Skill 使用状态不可读取，原文件已保留。");
+        item.lastUsedAt = Date.now(); item.usageCount += 1; await mobileAtomicFilePort(adapter, path).write(`${JSON.stringify(state, null, 2)}\n`);
+      }
+      };
+      const pending = this.skillStateWrites.then(run, run); this.skillStateWrites = pending.catch(() => {}); return pending;
+    } };
+  }
+  async readEchoInkBuiltinSkill(id: string) { return { fileStatus: "ready", content: await this.requireAvailableEchoInkSkill(id) }; }
+  async generateLifestyleText(system: string, user: string, maxTokens: number, signal: AbortSignal) {
+    const selected = selectedModel(this.settings);
+    if (!selected) throw new Error("尚未配置当前 EchoInk Provider");
+    return mobileGenerateText(selected.provider, selected.model, requestUrl, system, user, maxTokens, signal);
+  }
+  async saveFinanceCsv(name: string, content: string) {
+    const directory = "EchoInk/财务导出";
+    for (const path of ["EchoInk", directory]) if (!await this.app.vault.adapter.exists(path)) await this.app.vault.createFolder(path);
+    const stem = name.replace(/\.csv$/u, ""); let path = `${directory}/${name}`, index = 1;
+    while (await this.app.vault.adapter.exists(path)) path = `${directory}/${stem}-${index++}.csv`;
+    await this.app.vault.create(path, content); return path;
+  }
   readonly englishDiary = {
     enabled: () => this.settings.englishDiary.enabled,
     setHomeShortcut: async (choice: "english-diary" | "quick-record") => { this.settings.englishDiary.homeShortcut = choice; await this.saveSettings(); },
@@ -71,14 +113,17 @@ export class MobileServices implements HomeHost {
   }
   skills() {
     const saved = this.settings.resources.catalog.filter(item => item.kind === "skill");
-    return [...BUILTIN_SKILLS.map(skill => ({ id: skill.id, name: skill.title, description: skill.description, enabled: saved.find(item => item.id === skill.id)?.enabled ?? this.settings.resources.legacyEnabledOverrides?.[skill.id] ?? true,
-      content: renderBuiltinSkill(skill), contentPath: saved.find(item => item.id === skill.id)?.contentPath })),
-      ...saved.filter(item => !BUILTIN_SKILLS.some(skill => skill.id === item.id)).map(item => ({ ...item, content: "" }))];
+    const record = (id: string) => saved.find(item => item.id === id || item.metadata?.resourceId === id);
+    return [...BUILTIN_SKILLS.map(skill => ({ id: skill.id, name: skill.title, description: skill.description, enabled: record(skill.id)?.enabled ?? this.settings.resources.legacyEnabledOverrides?.[skill.id] ?? true,
+      content: renderBuiltinSkill(skill), contentPath: record(skill.id)?.contentPath })),
+      ...saved.filter(item => !BUILTIN_SKILLS.some(skill => skill.id === item.id || skill.id === item.metadata?.resourceId)).map(item => ({ ...item, content: "" }))];
   }
   async requireAvailableEchoInkSkill(id: string): Promise<string> {
     const skill = this.skills().find(item => item.id === id);
     if (!skill?.enabled) throw new Error(`Skill ${id} 已停用或不存在。`);
     if (skill.contentPath) return this.app.vault.adapter.read(this.safePath(skill.contentPath));
+    const runtimePath = this.safePath(`.echoink/resources/skills/${id}/SKILL.md`);
+    if (await this.app.vault.adapter.exists(runtimePath)) return this.app.vault.adapter.read(runtimePath);
     if (!skill.content) throw new Error("Skill 正文尚未导入当前笔记库。");
     return skill.content;
   }
@@ -123,7 +168,8 @@ export class MobileServices implements HomeHost {
     return `${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify({ wiki: this.knowledgePath("wiki"), raw: this.knowledgePath("raw"), inbox: this.knowledgePath("inbox") })}`;
   }
   plugins() {
-    return [{ id: "echoink:english-diary", name: "English Diary", description: "英文日记与表达积累", enabled: this.settings.englishDiary.enabled, mobileStatus: "移动端尚未接通英文日记工作区与纠错服务" },
-      ...this.settings.resources.catalog.filter(item => item.kind === "tool-bundle" && item.id !== "echoink:english-diary").map(item => ({ ...item, mobileStatus: "移动工具桥接尚未接通，资源配置已保留" }))];
+    return [{ id: "echoink:finance", name: "财务", description: "账目、预算、账单计划与分析", enabled: this.settings.lifestyle.finance.enabled, mobileStatus: "复用当前笔记库的财务账本" },
+      { id: "echoink:english-diary", name: "English Diary", description: "英文日记与表达积累", enabled: this.settings.englishDiary.enabled, mobileStatus: "移动端尚未接通英文日记工作区与纠错服务" },
+      ...this.settings.resources.catalog.filter(item => item.kind === "tool-bundle" && !["echoink:english-diary", "echoink:finance"].includes(item.id)).map(item => ({ ...item, mobileStatus: "移动工具桥接尚未接通，资源配置已保留" }))];
   }
 }

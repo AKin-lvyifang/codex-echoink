@@ -1,6 +1,6 @@
-import { readSheet } from "read-excel-file/node";
-import type { FinanceBudget, FinanceEntry, FinanceKind } from "./store";
-import { lifeId } from "./store";
+import { readSheet } from "read-excel-file/universal";
+import type { FinanceBudget, FinanceEntry, FinanceKind } from "./store-core";
+import { lifeId } from "./store-core";
 
 export const FINANCE_CATEGORIES = ["居住", "餐饮", "购物", "交通", "订阅", "其他"] as const;
 export type FinanceCategory = string;
@@ -253,7 +253,7 @@ function parseImportedDate(value: string): string {
 export async function readFinanceBill(bytes: Uint8Array, fileName: string, source: FinanceImportSource): Promise<FinanceImportRow[]> {
   let rows: string[][];
   if (/\.xlsx$/iu.test(fileName)) {
-    const sheet = await readSheet(Buffer.from(bytes));
+    const sheet = await readSheet(new Uint8Array(bytes).buffer);
     rows = sheet.map((row) => row.map((value) => value instanceof Date
       ? formatExcelWallTime(value)
       : String(value ?? "")));

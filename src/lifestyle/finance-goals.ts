@@ -1,4 +1,4 @@
-import type { FinanceContinuousGoal, FinanceEntry } from "./store";
+import type { FinanceContinuousGoal, FinanceEntry } from "./store-core";
 import { localDate } from "./finance-domain";
 
 export interface FinanceGoalProgress {

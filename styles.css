@@ -23341,7 +23341,7 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
   font-size: 14px;
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
-.echoink-mobile }
+}
 .kb-mobile *, .echoink-mobile .kb-sheet * { box-sizing: border-box; }
 .echoink-mobile .kb-mobile button, .echoink-mobile .kb-sheet button { font: inherit; }
 .echoink-mobile .kb-mobile i, .echoink-mobile .kb-sheet i { display: inline-flex; align-items: center; justify-content: center; flex: none; }
@@ -23490,3 +23490,59 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-mobile .kb-title-row { display:flex; justify-content:space-between; align-items:center; }
 .echoink-mobile .kb-icon-button { min-height:44px; min-width:44px; display:flex; align-items:center; justify-content:center; }
 .echoink-mobile .kb-day { min-width:0; }
+
+/* Mobile account uses the existing account component and semantic tokens. */
+.echoink-mobile .echoink-account,
+.echoink-mobile-modal.echoink-account {
+  --bg:var(--background-primary);--text:var(--text-normal);--secondary:var(--text-muted);
+  --muted:var(--text-muted);--line:var(--background-modifier-border);--soft:var(--background-secondary);
+  --accent:var(--em-green,#3d685b);--accent-bg:var(--background-secondary);
+}
+.echoink-mobile .echoink-account:not(.echoink-account-modal) { padding-top:0; }
+.echoink-mobile .echoink-account.echoink-account button:not(.heat-cell),
+.echoink-mobile-modal.echoink-account.echoink-account button:not(.heat-cell) { min-height:44px;min-width:44px; }
+.echoink-mobile .echoink-account.echoink-account button.icon-button,
+.echoink-mobile-modal.echoink-account.echoink-account button.icon-button { min-width:44px; }
+.echoink-mobile .echoink-account.echoink-account input.form-input,
+.echoink-mobile-modal.echoink-account.echoink-account input.form-input { min-height:44px;font-size:max(16px,1em); }
+.echoink-mobile-modal.echoink-account {
+  max-height:calc(100dvh - max(var(--view-bottom-spacing,0px),var(--em-viewport-occlusion,0px)) - env(safe-area-inset-bottom,0px) - 24px);
+  margin-bottom:max(var(--view-bottom-spacing,0px),var(--em-viewport-occlusion,0px));
+}
+.echoink-mobile-modal.echoink-account .dialog-actions { position:sticky;bottom:0;background:var(--card);padding-block:10px; }
+.echoink-mobile .em-license { white-space:pre-wrap;overflow-wrap:anywhere;font-size:.78em;line-height:1.7; }
+@container account (max-width:430px) {
+  .echoink-mobile .echoink-account .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .echoink-mobile .echoink-account .profile-section { flex-wrap:wrap;gap:16px; }
+}
+
+/* The shared finance layout keeps its own container breakpoints on iOS. */
+.echoink-mobile-finance { padding-bottom:max(var(--view-bottom-spacing,env(safe-area-inset-bottom,0px)),var(--em-viewport-occlusion,0px)); }
+.echoink-mobile-finance.echoink-lifestyle-view :is(button,input,select),
+.echoink-mobile-finance-dialog :is(button,input,select),
+.echoink-mobile .echoink-mobile-finance-settings :is(button,input,select) { min-height:44px; }
+.echoink-mobile-finance :is(input,select,textarea),
+.echoink-mobile-finance-dialog :is(input,select,textarea),
+.echoink-mobile .echoink-mobile-finance-settings :is(input,select,textarea) { font-size:max(16px,1em); }
+/* Desktop settings resets contain many :not() classes; keep the mobile targets explicit. */
+.echoink-mobile .echoink-mobile-finance-settings :is(button,input,select) { min-height:44px!important;min-width:44px; }
+.echoink-mobile .echoink-mobile-finance-settings :is(input,select,textarea) { font-size:max(16px,1em)!important; }
+/* Native switches use their full label as the touch target. */
+.echoink-mobile .echoink-mobile-finance-settings label.em-row { min-height:44px; }
+.echoink-mobile .echoink-mobile-finance-settings input[role=switch] { min-height:27px!important;height:27px; }
+.echoink-mobile-finance-dialog { width:min(680px,calc(100vw - 24px)); max-height:calc(100dvh - max(var(--view-bottom-spacing,env(safe-area-inset-bottom,0px)),var(--em-viewport-occlusion,0px)) - 24px); margin-bottom:max(var(--view-bottom-spacing,env(safe-area-inset-bottom,0px)),var(--em-viewport-occlusion,0px)); }
+.echoink-mobile-finance-dialog .modal-content { min-height:0; overflow:auto; overscroll-behavior:contain; }
+.echoink-mobile-finance-dialog .echoink-finance-dialog-actions { position:sticky;bottom:0;background:var(--background-primary);padding-block:10px;z-index:1;flex-wrap:wrap; }
+.echoink-mobile-finance-dialog .echoink-finance-field input { min-width:0;width:100%; }
+.echoink-mobile .echoink-mobile-finance-settings { height:auto;overflow:visible;--bg:var(--background-primary);--text:var(--text-normal);--secondary:var(--text-muted);--muted:var(--text-muted);--line:var(--background-modifier-border);--soft:var(--background-secondary);--accent:var(--text-accent);font:inherit; }
+.echoink-mobile .echoink-mobile-finance-settings [data-slot=switch] { width:45px;min-width:45px;max-width:45px;height:44px;max-height:44px;flex:none;border:0;background:transparent!important;position:relative; }
+.echoink-mobile .echoink-mobile-finance-settings [data-slot=switch]::before { content:"";position:absolute;width:45px;height:27px;border-radius:16px;background:var(--em-muted);left:0;top:calc(50% - 13.5px); }
+.echoink-mobile .echoink-mobile-finance-settings [data-slot=switch][aria-checked=true]::before { background:var(--em-green); }
+.echoink-mobile .echoink-mobile-finance-settings [data-slot=switch-thumb] { width:21px;height:21px;left:3px;top:calc(50% - 10.5px);background:#fff; }
+.echoink-mobile .echoink-mobile-finance-settings [data-slot=switch-thumb][data-state=checked] { transform:translateX(18px); }
+.echoink-mobile-finance [data-slot=checkbox] { width:44px;min-width:44px;border:1px solid var(--background-modifier-border);border-radius:8px; }
+.echoink-mobile .em-provider-trigger { display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:10px;border:1px solid var(--em-line);border-radius:9px;text-align:left; }
+.echoink-mobile .em-provider-trigger>.em-icon { margin-left:auto; }
+.echoink-mobile .em-provider-brand { width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;flex:none; }
+.echoink-mobile .em-provider-brand :is(svg,img) { width:24px;height:24px; }
+.echoink-mobile .em-provider-picker [aria-selected=true] { color:var(--em-green); }

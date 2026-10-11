@@ -215,8 +215,15 @@ export class AccountService implements CapabilityAccess {
     ++this.generation;
     this.claims = null;
     this.state = {};
-    await this.persist();
-    await this.discardSession(token);
+    try {
+      await this.persist();
+    } finally {
+      // A secure-store failure must not leave the server session untouched.
+      // Preserve the persistence error so the UI cannot report successful clearing.
+      await this.discardSession(token);
+      this.emit();
+      this.scheduleExpiry();
+    }
   }
   private async password(
     input: { email: string; code: string; next: string },

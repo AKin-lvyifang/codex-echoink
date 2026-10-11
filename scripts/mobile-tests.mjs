@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import vm from "node:vm";
-import { webcrypto } from "node:crypto";
+import { zipSync, strToU8 } from "fflate";
+import { createHash, webcrypto } from "node:crypto";
 import { JSDOM } from "jsdom";
 import esbuild from "esbuild";
 import { mobileBuildOptions } from "./mobile-build.mjs";
@@ -12,10 +13,14 @@ const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVi
 dom.window.HTMLElement.prototype.setAttr = function (name, value) { this.setAttribute(name, String(value)); };
 dom.window.HTMLElement.prototype.toggleClass = function (name, enabled) { this.classList.toggle(name, enabled); };
 const module = { exports: {} };
-const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, setTimeout, clearTimeout, structuredClone, crypto: webcrypto, console, require: id => { if (id !== "obsidian") throw new Error(`Node import on mobile: ${id}`); return { setIcon() {}, Modal: class {}, ItemView: class {}, TFile: FixtureTFile, Notice: class {} }; } };
+const obsidian = { exports: {} };
+const hostBuild = await esbuild.build({ entryPoints: ["tests/mobile/browser-obsidian.ts"], bundle: true, write: false, platform: "browser", format: "cjs", logLevel: "silent" });
+vm.runInNewContext(hostBuild.outputFiles[0].text, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, DOMParser: dom.window.DOMParser, module: obsidian, exports: obsidian.exports, console });
+const globals = { window: dom.window, document: dom.window.document, DOMParser: dom.window.DOMParser, MutationObserver: dom.window.MutationObserver, HTMLElement: dom.window.HTMLElement, module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, setTimeout, clearTimeout, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, require: id => { if (id !== "obsidian") throw new Error(`Node import on mobile: ${id}`); return { ...obsidian.exports, TFile: FixtureTFile }; } };
 vm.runInNewContext(build.outputFiles[0].text, globals);
-const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, MobileUI, MobileWorkspace, MobileServices, HomeActivityCore, mobilePluginDataRoot, SETTINGS_TAB_ICONS, renderAnimatedSettingsTabIcon } = module.exports;
+const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, mobilePresets, MobileUI, MobileWorkspace, MobileServices, HomeActivityCore, mobilePluginDataRoot, SETTINGS_TAB_ICONS, renderAnimatedSettingsTabIcon, createMobileMembershipStorage, AccountService, MembershipApiError, keyHash, mobileLifestyleStore, mobileGenerateText, readFinanceBill, sha256Hex, FinanceWorkspace } = module.exports;
 const memoryArgs = { kind: "view", title: "解释偏好", content: "解释技术问题时先说结论。", recallWhen: "解释技术问题", basis: "explicit" };
+const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 let passed = 0;
 async function test(name, run) { await run(); passed++; console.log(`OK ${name}`); }
 function settings(protocol = "openai-completions") {
@@ -167,6 +172,17 @@ await test("desktop legacy data root is selected without merging stores", async 
   assert.equal(await mobilePluginDataRoot(host.adapter, ".obsidian/plugins/codex-echoink", "codex-echoink"), ".obsidian/plugins/codex-echoink");
   host.files.set(".obsidian/plugins/codex-echoink/pi-agent-product-v1/knowledge/preferences.md", "legacy without manifest.dir");
   assert.equal(await mobilePluginDataRoot(host.adapter, "custom/plugins/codex-echoink", "codex-echoink"), ".obsidian/plugins/codex-echoink");
+  for (const manifestDir of [undefined, "custom/plugins/codex-echoink"]) {
+    const oldRoot = `.obsidian/plugins/${manifestDir ?? "codex-echoink"}`;
+    const currentRoot = "custom/plugins/codex-echoink";
+    const financeOnly = createHost({ [`${oldRoot}/lifestyle.json`]: JSON.stringify({ budgets: [{ totalCents: 12345 }], goals: [{ id: "old-goal" }], reports: [{ id: "old-report" }] }) });
+    assert.equal(await mobilePluginDataRoot(financeOnly.adapter, currentRoot, "codex-echoink", manifestDir), oldRoot);
+    financeOnly.files.set(`${currentRoot}/lifestyle.json`, "new-finance-preserved");
+    assert.equal(await mobilePluginDataRoot(financeOnly.adapter, currentRoot, "codex-echoink", manifestDir), oldRoot, "do not merge two finance roots");
+    financeOnly.files.set(`${oldRoot}/lifestyle.json`, "");
+    assert.equal(await mobilePluginDataRoot(financeOnly.adapter, currentRoot, "codex-echoink", manifestDir), currentRoot, "empty finance file is not durable state");
+    assert.equal(financeOnly.files.get(`${currentRoot}/lifestyle.json`), "new-finance-preserved");
+  }
 });
 await test("mobile default preferences match desktop literal", async () => {
   const desktop = await fs.readFile("src/knowledge-base/knowledge-maintenance-preferences.ts", "utf8"); const mobile = await fs.readFile("src/core/knowledge-preferences-default.ts", "utf8"); const literal = text => text.slice(text.indexOf("export const ECHOINK_DEFAULT_"), text.indexOf('].join("\\n");') + 13).trim(); assert.ok(literal(desktop).length > 100); assert.equal(literal(desktop), literal(mobile));
@@ -203,6 +219,44 @@ await test("formal DOM: sheet preserves draft node and focus, seven settings and
   ui.destroy(); await services.dispose();
 });
 
+await test("provider branded picker: every brand, nested cancel, keyboard, same-key retention and saved selection", async () => {
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+  state.config.apiProviders[0].providerId = "deepseek";
+  const root = dom.window.document.querySelector("#app"); let saved = 0;
+  const ui = new MobileUI(root, { app: state.app, store: state.store, runtime: state.runtime, settings: () => state.config, saveSettings: async () => { saved++; }, openNote: async () => {}, beginRender() {}, renderMarkdown() {} }); ui.mount(); ui.showPage("providers");
+  root.querySelector(".em-row").click(); const original = root.querySelector('[aria-label="API Key"]'); original.value = "synthetic-edited-key"; original.dispatchEvent(new dom.window.Event("input"));
+  const trigger = root.querySelector(".em-provider-trigger"); assert.ok(trigger.querySelector("svg,img")); trigger.click();
+  const options = [...root.querySelectorAll('[role="option"]')]; assert.equal(JSON.stringify(options.map(item => item.dataset.provider)), JSON.stringify(mobilePresets.map(item => item.id))); assert.ok(options.every(option => option.querySelector("svg,img"))); assert.equal(root.querySelector('[role="option"][aria-selected=true]').dataset.provider, "deepseek");
+  root.querySelector(".em-provider-picker").dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); assert.equal(dom.window.document.activeElement.getAttribute("role"), "option");
+  root.querySelector(".em-provider-picker").dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); assert.ok(root.querySelector('[role="dialog"]')); assert.equal(root.querySelector('[aria-label="API Key"]'), original); assert.equal(original.value, "synthetic-edited-key"); assert.equal(dom.window.document.activeElement, trigger);
+  trigger.click(); root.querySelector('[role="option"][data-provider="deepseek"]').click(); assert.equal(root.querySelector('[aria-label="API Key"]'), original); assert.equal(original.value, "synthetic-edited-key");
+  trigger.click(); root.querySelector('[role="option"][data-provider="kimi"]').click(); assert.equal(root.querySelector('[aria-label="API Key"]').value, "");
+  const key = root.querySelector('[aria-label="API Key"]'); key.value = "synthetic-kimi-key"; key.dispatchEvent(new dom.window.Event("input"));
+  [...root.querySelectorAll("button")].find(b => b.textContent.trim() === "保存").click(); await settle();
+  assert.equal(saved, 1); assert.equal(state.config.apiProviders[0].providerId, "kimi"); assert.equal(state.config.apiProviders[0].apiKey, "synthetic-kimi-key"); ui.destroy();
+});
+
+await test("mobile full finance: same ledger, budget, plans, real workspace, CSV export and revoked write gate", async () => {
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok")); let qualified = true;
+  const access = { checkCapability: () => qualified, requireCapability: () => { if (!qualified) throw new Error("PRO_REQUIRED"); }, subscribe: () => () => {} };
+  state.config.lifestyle.finance.enabled = true;
+  const services = new MobileServices({ app: state.app, settings: state.config, store: state.store, runtime: state.runtime, accountService: access, navigation: {}, registerEvent() {}, showPage: async () => {}, saveSettings: async () => {} }, "plugin/mobile"); await services.initialize(); await services.initializeFinance();
+  const service = services.lifestyle, finance = service.finance; await finance.initialize();
+  const date = new Date(), month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2,"0")}`;
+  await finance.saveBudgetChanges({ defaultBudget: { totalCents: 100000, allocations: {} }, overrides: [], removedMonths: [] });
+  await finance.saveBillPlan({ id: "fixture-plan", name: "测试计划", budgetCents: 50000 });
+  await finance.addManual({ date: `${month}-10 10:00:00`, merchant: "合成商户", category: "餐饮", kind: "expense", amountCents: 1234, status: "completed", account: "合成账户", description: "说明", currency: "CNY", note: "", billPlanId: "fixture-plan" });
+  assert.equal(finance.entries().length, 1); assert.ok([...state.files.keys()].some(path => path.endsWith(".md") && path.includes("transactions"))); assert.ok(state.files.has("plugin/lifestyle.json"));
+  const root = dom.window.document.querySelector("#app"); root.replaceChildren(); root.className = "echoink-lifestyle-view echoink-mobile-finance";
+  const body = root.createDiv(); const workspace = new FinanceWorkspace(service); workspace.render(body);
+  const click = label => [...root.querySelectorAll("button")].find(b => b.textContent.trim().startsWith(label)).click();
+  click("收支明细"); assert.ok(root.textContent.includes("合成商户")); root.querySelector(".echoink-finance-export").click(); await settle();
+  const exported = [...state.files.entries()].find(([path]) => path.endsWith(".csv")); assert.ok(exported); assert.ok(exported[1].includes("合成商户"));
+  click("月度预算"); assert.ok(root.textContent.includes("预算")); click("账单计划"); assert.ok(root.textContent.includes("测试计划"));
+  qualified = false; assert.equal(finance.accessState().canEnter, true); await assert.rejects(finance.saveBillPlan({ id: "other", name: "禁止", budgetCents: 5000 }), /PRO_REQUIRED/);
+  workspace.detach(); root.replaceChildren(); await services.dispose();
+});
+
 await test("phone/tablet settings reuse all seven desktop SVGs in static mode", async () => {
   const expected = ["settings", "blocks", "key-round", "layout-list", "book-open-check", "clipboard-check", "list-todo"];
   assert.deepEqual(Object.values(SETTINGS_TAB_ICONS).slice(0, 7), expected);
@@ -230,6 +284,124 @@ await test("phone/tablet settings reuse all seven desktop SVGs in static mode", 
   }
 });
 
+await test("mobile account: SecretStorage identity concurrency, real signed lease, restart and failed logout clearing", async () => {
+  const values = new Map(); let failWrites = false;
+  const secret = { getSecret: id => values.get(id) ?? null, setSecret(id, value) { if (failWrites) throw new Error("fixture storage failure"); values.set(id, value); } };
+  const [storage, concurrent] = await Promise.all([createMobileMembershipStorage(secret, "https://fixture.test"), createMobileMembershipStorage(secret, "https://fixture.test")]);
+  const [identity, otherIdentity, sameIdentity] = await Promise.all([storage.identity(), concurrent.identity(), storage.identity()]);
+  assert.deepEqual(identity, otherIdentity); assert.deepEqual(identity, sameIdentity);
+  const storedIdentity = [...values.entries()].find(([key]) => key.endsWith("-identity"))[1];
+  assert.deepEqual(JSON.parse(storedIdentity), JSON.parse(JSON.stringify(identity)));
+  const signer = await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const publicKey = await webcrypto.subtle.exportKey("jwk", signer.publicKey);
+  const now = Date.now(); const calls = []; let activated = false, offline = false;
+  const transport = async (path, method, body, token) => {
+    calls.push({ path, method, body });
+    if (offline) throw new Error("fixture offline");
+    if (path === "/api/products") return { products: [] };
+    if (path === "/api/auth/code") return {};
+    if (path === "/api/auth/login") { assert.equal(body.method, "code"); return { token: "fixture-secret-token" }; }
+    if (path === "/api/auth/logout") { assert.equal(token, "fixture-secret-token"); return {}; }
+    if (path === "/api/account") return { id: "fixture", email: "fixture@example.test", name: "Fixture", joinedAt: "2026-10-11", avatar: null, passwordSet: false };
+    if (path === "/api/membership") return { state: "active", planId: "year", deviceLimit: 3, devices: activated ? [{ id: "device-fixture", name: "手机实例", platform: "Obsidian", verified: now }] : [], capabilities: ["finance.export"], serverTime: now };
+    if (path === "/api/devices/challenge") return { challengeId: "challenge", nonce: "fixture-nonce" };
+    if (path === "/api/devices/lease" && !activated) throw new MembershipApiError("DEVICE_REVOKED");
+    if (path === "/api/devices/activate" || path === "/api/devices/lease") {
+      const verifyKey = await webcrypto.subtle.importKey("jwk", body.publicKey, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+      assert.ok(await webcrypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, verifyKey, Buffer.from(body.signature, "base64url"), new TextEncoder().encode("echoink-device-v1\nchallenge\nfixture-nonce")));
+      activated = true;
+      const claims = { schema: 1, iss: "echoink", sub: "fixture", deviceId: "device-fixture", keyHash: await keyHash(body.publicKey), capabilities: ["finance.export"], major: 2, iat: now, exp: now + 3600000 };
+      const parts = [Buffer.from(JSON.stringify({ alg: "ES256", typ: "JWT", kid: "fixture" })).toString("base64url"), Buffer.from(JSON.stringify(claims)).toString("base64url")];
+      const payload = parts.join(".");
+      const signature = Buffer.from(await webcrypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, signer.privateKey, new TextEncoder().encode(payload))).toString("base64url");
+      return { lease: payload + "." + signature, deviceId: "device-fixture", serverTime: now };
+    }
+    if (path === "/api/keys") return { keys: [{ kid: "fixture", alg: "ES256", publicKey }] };
+    throw new Error("unexpected fixture path " + path);
+  };
+  const makeService = adapter => new AccountService(adapter, transport, "https://fixture.test", () => {}, "https://fixture.test", () => "missing");
+  const account = makeService(storage); await account.initialize();
+  await account.actions.requestCode({ email: "fixture@example.test", purpose: "login" });
+  await account.actions.signIn({ email: "fixture@example.test", method: "code", credential: "123456" });
+  assert.equal(account.read().membership.state, "device-required"); assert.equal(account.checkCapability("finance.export"), false);
+  await account.actions.activateDevice("手机实例"); assert.equal(account.checkCapability("finance.export"), true);
+  assert.equal(account.checkCapability("finance.analysis.generate"), false);
+  account.dispose(); offline = true;
+  const restoredStorage = await createMobileMembershipStorage(secret, "https://fixture.test");
+  const restored = makeService(restoredStorage); await restored.initialize();
+  assert.equal(restored.checkCapability("finance.export"), true); assert.equal(restored.read().membership.state, "offline-valid");
+  offline = false; failWrites = true;
+  const before = calls.filter(call => call.path === "/api/auth/logout").length;
+  await assert.rejects(restored.actions.signOut(), /安全存储未保存成功/);
+  assert.equal(calls.filter(call => call.path === "/api/auth/logout").length, before + 1);
+  assert.equal(restored.checkCapability("finance.export"), false); assert.equal(restored.read().identity, null); assert.equal(restoredStorage.persistent, false);
+  assert.match(restored.read().storageNotice, /本次运行/);
+  failWrites = false; await restored.actions.signOut();
+  assert.deepEqual(JSON.parse([...values.entries()].find(([key]) => key.endsWith("-state"))[1]), {});
+  assert.equal([...values.entries()].find(([key]) => key.endsWith("-identity"))[1], storedIdentity);
+  restored.dispose();
+  const transient = await createMobileMembershipStorage(undefined, "fixture"); assert.equal(transient.persistent, false);
+  const [temporaryA, temporaryB] = await Promise.all([transient.identity(), transient.identity()]); assert.deepEqual(temporaryA, temporaryB);
+});
+
+await test("mobile finance Skill files: desktop customization, disabled metadata, queued atomic usage and failure", async () => {
+  const host = createHost({ ".echoink/resources/skills/finance-analysis/SKILL.md": "用户已有财务 Skill", ".echoink/resources/skill-state.json": JSON.stringify({ schema: "echoink.skill-runtime.v1", unowned: true, records: { "finance-analysis": { status: "active", lastUsedAt: null, usageCount: 2, contentHash: "preserved" } } }) });
+  const store = new MobileStore(host.adapter, "plugin/mobile"); await store.load(); const config = settings();
+  const services = new MobileServices({ app: host.app, settings: config, store, runtime: {}, navigation: {}, registerEvent() {}, showPage: async () => {}, saveSettings: async () => {} }, "plugin/mobile");
+  assert.equal((await services.readEchoInkBuiltinSkill("finance-analysis")).content, "用户已有财务 Skill");
+  const coordinator = services.getSkillRuntimeCoordinator(); await Promise.all([coordinator.recordUse("finance-analysis"), coordinator.recordUse("finance-analysis")]);
+  const saved = host.files.get(".echoink/resources/skill-state.json"), state = JSON.parse(saved); assert.equal(state.records["finance-analysis"].usageCount, 4); assert.equal(state.unowned, true); assert.equal(state.records["finance-analysis"].contentHash, "preserved");
+  host.adapter.rename = async () => { throw new Error("WRITE_FAILED"); }; await assert.rejects(coordinator.recordUse("finance-analysis"), /WRITE_FAILED/); assert.equal(host.files.get(".echoink/resources/skill-state.json"), saved);
+  config.resources.catalog.push({ id: "echoink-local:skill:finance-analysis", kind: "skill", enabled: false, metadata: { resourceId: "finance-analysis" } });
+  await assert.rejects(services.requireAvailableEchoInkSkill("finance-analysis"), /停用/);
+});
+
+await test("finance DataAdapter: same root, queued writes, failure rollback, unknown fields, legacy backup and restart", async () => {
+  const host = createHost({ "custom/lifestyle.json": JSON.stringify({ version: 1, unowned: { keep: true }, financeEntries: [{ id: "legacy" }] }) });
+  const store = mobileLifestyleStore(host.adapter, "custom/lifestyle.json"); await store.initialize();
+  await store.retainLegacyFinanceBackup(); const backup = host.files.get("custom/lifestyle.json.finance-legacy-backup.json");
+  await Promise.all([store.update(d => { d.budgets.push({ month: "2026-10", totalCents: 5000, allocations: {} }); }), store.update(d => { d.financeBillPlans.push({ id: "plan", name: "计划", budgetCents: 6000 }); })]);
+  const before = JSON.stringify(store.snapshot()), bytes = host.files.get("custom/lifestyle.json"), rename = host.adapter.rename;
+  host.adapter.rename = async () => { throw new Error("WRITE_FAILED"); };
+  await assert.rejects(store.update(d => { d.budgets = []; }), /WRITE_FAILED/);
+  assert.equal(JSON.stringify(store.snapshot()), before); assert.equal(host.files.get("custom/lifestyle.json"), bytes); assert.ok(![...host.files.keys()].some(p => p.endsWith(".tmp")));
+  host.adapter.rename = rename; await store.update(d => { d.reports = []; }); await store.retainLegacyFinanceBackup(); assert.equal(host.files.get("custom/lifestyle.json.finance-legacy-backup.json"), backup);
+  const reopened = mobileLifestyleStore(host.adapter, "custom/lifestyle.json"); await reopened.initialize(); assert.equal(reopened.snapshot().unowned.keep, true); assert.equal(reopened.snapshot().budgets.length, 1); assert.equal(reopened.snapshot().financeBillPlans[0].id, "plan");
+  for (const text of ["", "abc", "中文😀", "a".repeat(1000000)]) assert.equal(sha256Hex(text), createHash("sha256").update(text).digest("hex"));
+});
+
+await test("finance XLSX universal parser matches CSV in browser without Buffer or process", async () => {
+  const rows = [["交易时间", "交易类型", "交易对方", "商品", "收/支", "金额(元)", "支付方式", "当前状态", "交易单号"], ["2026-10-10 10:00:00", "商户消费", "合成商户", "合成商品", "支出", "12.34", "零钱", "支付成功", "synthetic-1"]];
+  const cell = (value, column, row) => `<c r="${String.fromCharCode(65 + column)}${row + 1}" t="inlineStr"><is><t>${value}</t></is></c>`;
+  const sheet = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((values, row) => `<row r="${row + 1}">${values.map((v, c) => cell(v, c, row)).join("")}</row>`).join("")}</sheetData></worksheet>`;
+  const zip = zipSync({ "xl/workbook.xml": strToU8('<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="账单" sheetId="1" r:id="rId1"/></sheets></workbook>'), "xl/_rels/workbook.xml.rels": strToU8('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'), "xl/worksheets/sheet1.xml": strToU8(sheet) });
+  const xlsx = await readFinanceBill(zip, "bill.xlsx", "wechat"), csv = await readFinanceBill(new TextEncoder().encode(rows.map(row => row.join(",")).join("\n")), "bill.csv", "wechat");
+  assert.equal(xlsx[0].entry.amountCents, 1234); const normalize = rows => JSON.parse(JSON.stringify(rows)).map(row => { delete row.entry.id; return row; }); assert.deepEqual(normalize(xlsx), normalize(csv));
+});
+
+await test("finance independent inference: both protocols, secret redaction, cancellation and late response", async () => {
+  for (const protocol of ["openai-completions", "openai-responses"]) {
+    const config = settings(protocol), provider = config.apiProviders[0]; let sent;
+    const value = await mobileGenerateText(provider, provider.models[0], async request => { sent = JSON.parse(request.body); return answer(protocol, "独立财务分析"); }, "财务系统", "本月资料", 1800, new AbortController().signal);
+    assert.equal(value, "独立财务分析"); assert.ok(!sent.tools); assert.equal((sent.messages ?? sent.input).filter(m => m.role === "user").length, 1);
+    const controller = new AbortController(); let finish;
+    const pending = mobileGenerateText(provider, provider.models[0], () => new Promise(resolve => { finish = resolve; }), "sys", "data", 1800, controller.signal);
+    await settle(); controller.abort(); await assert.rejects(pending, /已停止/); finish(answer(protocol, "迟到")); await settle();
+    await assert.rejects(mobileGenerateText(provider, provider.models[0], async () => ({ status: 401, json: { error: { message: provider.apiKey } } }), "sys", "data", 1800, new AbortController().signal), error => !error.message.includes(provider.apiKey));
+  }
+});
+
+await test("mobile identity persists the same temporary key when SecretStorage recovers", async () => {
+  const values = new Map(); let failed = true;
+  const port = { getSecret: id => values.get(id) ?? null, setSecret: (id, value) => { if (failed) throw new Error("WRITE_FAILED"); values.set(id,value); } };
+  const temporary = await createMobileMembershipStorage(port, "recovering-port"); assert.equal(temporary.persistent, false);
+  const first = await temporary.identity(); failed = false;
+  const recovered = await createMobileMembershipStorage(port, "recovering-port"); assert.equal(recovered.persistent, true); assert.deepEqual(await recovered.identity(), first);
+  assert.deepEqual(JSON.parse([...values.entries()].find(([id]) => id.endsWith("-identity"))[1]), JSON.parse(JSON.stringify(first)));
+  const restartedPort = { getSecret: id => values.get(id) ?? null, setSecret: (id,value) => values.set(id,value) };
+  const restarted = await createMobileMembershipStorage(restartedPort, "recovering-port"); assert.equal(JSON.stringify(await restarted.identity()), JSON.stringify(first));
+});
+
 for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, { isMobileApp: true, isMobile: false, isTablet: true }]) await test(`production mobile bundle initializes without Node: ${platform.isTablet ? "tablet desktop UI" : "phone"}`, async () => {
   const code = await fs.readFile("dist/main.js", "utf8"); const host = createHost(); const imported = []; const commands = [];
   class Plugin {
@@ -237,17 +409,21 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
     async loadData() { return { desktopUnknown: { keep: true } }; }
     async saveData() {}
     registerEvent() {}
+    register() {}
+    registerDomEvent() {}
+    registerInterval(id) { this.interval = id; }
     registerView(type, factory) { this.factory = factory; }
     addRibbonIcon() {}
     addCommand(command) { commands.push(command.id); }
   }
   class Component {}
   const exports = { exports: {} };
-  const context = vm.createContext({ module: exports, exports: exports.exports, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, console, setTimeout, clearTimeout,
+  const context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
     require(id) { imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, Component, Modal: class {}, TFile: FixtureTFile, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
   });
   vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports; const plugin = new MobilePlugin(); await plugin.onload();
   assert.ok(commands.includes("open-echoink-mobile")); assert.ok(plugin.store); assert.equal(plugin.settings.apiProviders.length, 0);
   assert.ok(imported.every(id => id === "obsidian")); assert.equal(vm.runInContext("typeof process + ':' + typeof Buffer", context), "undefined:undefined");
+  plugin.onunload(); dom.window.clearInterval(plugin.interval);
 });
 console.log(`${passed} mobile integration checks passed (real Pi Agent; Provider and Obsidian API fixtures).`);

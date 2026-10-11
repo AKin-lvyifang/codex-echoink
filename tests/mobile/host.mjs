@@ -11,18 +11,21 @@ export function createHost(seed = { "笔记/来源.md": "项目决定：先完�
     async exists(path) { return files.has(path) || folders.has(path) || [...files.keys()].some(key => key.startsWith(path + "/")); },
     async read(path) { if (!files.has(path)) throw new Error(`Missing ${path}`); return files.get(path); },
     async write(path, content) { writes.push(path); files.set(path, content); },
+    async rename(from, to) { if (!files.has(from)) throw new Error("Missing temporary file"); files.set(to, files.get(from)); files.delete(from); },
     async mkdir(path) { folders.add(path); }, async remove(path) { files.delete(path); },
     async stat(path) { return files.has(path) ? { type: "file", size: files.get(path).length } : await this.exists(path) ? { type: "folder", size: 0 } : null; },
     async list(path) { const prefix = path + "/"; const childFolders = new Set(); const childFiles = []; for (const key of files.keys()) { if (!key.startsWith(prefix)) continue; const rest = key.slice(prefix.length); if (rest.includes("/")) childFolders.add(prefix + rest.split("/")[0]); else childFiles.push(key); } return { files: childFiles, folders: [...childFolders] }; }
   };
   const app = {
+    scope: {}, keymap: { pushScope() {}, popScope() {} },
     metadataCache: { ...events(), getFileCache() { return {}; }, resolvedLinks: {} },
     vault: {
       ...vaultEvents, configDir: ".obsidian", adapter,
       getName() { return "Disposable mobile fixture"; },
       getRoot() { return { path: "", name: "", children: [...new Set([...files.keys()].map(path => path.split("/")[0]))].map(name => ({ name, path: name })) }; },
       getMarkdownFiles() { return [...files.keys()].filter(p => p.endsWith(".md") && !p.startsWith("plugin/") && !p.startsWith(".obsidian/")).map(file); },
-      getAllLoadedFiles() { return this.getMarkdownFiles(); },
+      getFiles() { return [...files.keys()].map(file); },
+      getAllLoadedFiles() { return this.getFiles(); },
       getAbstractFileByPath(path) { return files.has(path) ? file(path) : folders.has(path) ? { path, name: path.split("/").pop(), children: [] } : null; },
       async read(f) { return adapter.read(f.path); }, async cachedRead(f) { return adapter.read(f.path); },
       async modify(f, text) { await adapter.write(f.path, text); f.stat.mtime = Date.now(); vaultEvents.trigger("modify", f); },
@@ -32,6 +35,7 @@ export function createHost(seed = { "笔记/来源.md": "项目决定：先完�
     },
     workspace: {
       ...workspaceEvents, containerEl: { ownerDocument: { defaultView: globalThis } },
+      layoutReady: true, getLeavesOfType() { return []; }, onLayoutReady(callback) { callback(); },
       getActiveFile() { return file("笔记/来源.md"); },
       getLeaf() { return { async openFile(f) { opened.push(f.path); workspaceEvents.trigger("file-open", f); } }; }, setActiveLeaf() {}
     }

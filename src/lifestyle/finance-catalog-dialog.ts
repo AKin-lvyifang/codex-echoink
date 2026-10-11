@@ -1,6 +1,6 @@
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import { Notice } from "obsidian";
-import type CodexForObsidianPlugin from "../main";
+import type { LifestylePluginHost, LifestyleHost } from "./host";
 import { openFinanceIconPicker, financeIconOptions, renderFinanceIcon, type FinanceIconScope } from "./finance-icon-picker";
 import type { FinanceSettings, FinanceAccountSetting, FinanceCategorySetting, FinanceMerchantSetting } from "./settings";
 import { createOriginSwitch } from "../settings/origin-controls";
@@ -41,7 +41,7 @@ export class FinanceCatalogPanel {
   private pending = false;
   private focusName = false;
   private focusRow: number | null = null;
-  constructor(private readonly plugin: CodexForObsidianPlugin, readonly kind: CatalogKind,
+  constructor(private readonly plugin: LifestylePluginHost & { lifestyle: LifestyleHost }, readonly kind: CatalogKind,
     private readonly exit: () => void, private readonly redraw: () => void) {}
 
   title(): string { return this.editing === null ? `管理${labels[this.kind]}` : `${this.editing < 0 ? "新增" : "编辑"}${labels[this.kind]}`; }

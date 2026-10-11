@@ -7,9 +7,15 @@ import { TODO_SOURCE_PATH } from "../../home/todo-store";
 import type { ParsedTodoRecord } from "../../home/todo-markdown";
 import type { MobileServices } from "../../mobile/services";
 import { SETTINGS_TAB_ICONS } from "../../settings/settings-tab-icons";
-import type { AnimatedSettingsTabIconName } from "../../settings/animated-settings-tab-icon";
+import { renderAnimatedSettingsTabIcon, type AnimatedSettingsTabIconName } from "../../settings/animated-settings-tab-icon";
+import { mountAccountMembership } from "../../settings/account-membership";
+import { MOBILE_ACTIVATION_NOTICE } from "../../membership/mobile-storage";
+import { membershipWebsiteLink } from "../../membership/website-links";
+import license from "../../../LICENSE";
+import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
+import { FinanceCatalogPanel, type CatalogKind } from "../../lifestyle/finance-catalog-dialog";
 
-export type MobileSettingsPage = "basic" | "layout" | "resources" | "knowledge" | "review" | "todos-settings" | "todos" | "profile-agent" | "profile-user" | "archives";
+export type MobileSettingsPage = "basic" | "layout" | "resources" | "knowledge" | "review" | "todos-settings" | "todos" | "profile-agent" | "profile-user" | "archives" | "account" | "finance-settings";
 interface Controls {
   go(page: MobileSettingsPage | "memories" | "providers" | "chat"): void;
   sheet(title: string, render: (body: HTMLElement) => void): void;
@@ -31,7 +37,7 @@ export class MobileSettingsPages {
     { page: "review", title: "复盘", icon: SETTINGS_TAB_ICONS.review },
     { page: "todos-settings", title: "待办", icon: SETTINGS_TAB_ICONS.todos }
   ];
-  readonly titles: Record<MobileSettingsPage, string> = { basic: "基础设置", layout: "布局与外观", resources: "Skills & MCP", knowledge: "知识库管理", review: "复盘", "todos-settings": "待办设置", todos: "待办", "profile-agent": "Nova 档案", "profile-user": "用户画像", archives: "已归档会话" };
+  readonly titles: Record<MobileSettingsPage, string> = { basic: "基础设置", layout: "布局与外观", resources: "Skills & MCP", knowledge: "知识库管理", review: "复盘", "todos-settings": "待办设置", todos: "待办", "profile-agent": "Nova 档案", "profile-user": "用户画像", archives: "已归档会话", account: "账号与会员", "finance-settings": "财务设置" };
   private knowledgeMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   private resourceTab = "plugins";
   private todoStatus = "open";
@@ -40,7 +46,9 @@ export class MobileSettingsPages {
   private profileScroll = new Map<string, number>();
   private unsubscribe?: () => void;
   constructor(private host: MobileUIHost, private ui: Controls) {}
-  dispose() { this.unsubscribe?.(); this.unsubscribe = undefined; }
+  private accountPage?: { dispose(): void };
+  private financeCatalog?: FinanceCatalogPanel;
+  dispose() { this.unsubscribe?.(); this.unsubscribe = undefined; this.accountPage?.dispose(); this.accountPage = undefined; this.financeCatalog?.dispose(); this.financeCatalog = undefined; }
   private get services(): MobileServices { if (!this.host.services) throw new Error("当前预览尚未提供 Vault 服务。"); return this.host.services; }
   private help(parent: HTMLElement, text: string) { return node(parent, "p", "em-help", text); }
   private heading(parent: HTMLElement, title: string) { return node(parent, "h3", "em-section-title", title); }
@@ -62,15 +70,32 @@ export class MobileSettingsPages {
   }
   basicGeneral(body: HTMLElement) {
     this.heading(body, "通用");
+    const accountRow = this.ui.row(body, "账号与会员", "登录、授权与设备管理", "feather", () => this.ui.go("account"));
+    const accountIcon = accountRow.querySelector<HTMLElement>(".em-icon")!;
+    accountIcon.classList.add("codex-settings-tab-icon"); renderAnimatedSettingsTabIcon(accountIcon, SETTINGS_TAB_ICONS.account, null);
     const language = node(body, "div", "em-row"); node(language, "strong", "em-row-label", "设置语言"); node(language, "span", "em-help", "简体中文");
     this.ui.row(body, "关于 EchoInk", "", "circle-help", () => this.ui.sheet("关于 EchoInk", part => {
       node(part, "h2", "em-about-title", "EchoInk"); this.help(part, `版本 ${this.host.version ?? "本地测试包"}`);
       this.help(part, "你的思考，在这里积累。");
+      if (this.host.version?.includes("beta")) this.help(part, "测试版本，设备效果仍在验证。");
+      this.help(part, "作者：AKin-lvyifang · Copyright © 2026 EchoInk Agent contributors");
+      const website = node(part, "a", "em-wide-action", "官网 echoink.cn"); website.href = membershipWebsiteLink("plugin.about"); website.target = "_blank"; website.rel = "noopener noreferrer";
+      this.help(part, "基础部分采用 MIT 许可；PRO 功能遵循单独许可，需有效授权。模型与账号操作会按所选服务发送请求。");
+      for (const [title, content] of [["组件许可", license], ["第三方许可", thirdPartyNotices]]) {
+        const details = node(part, "details"); node(details, "summary", "", title); node(details, "pre", "em-license", content);
+      }
     }));
   }
   render(page: MobileSettingsPage, body: HTMLElement) {
     body.classList.add("em-settings-page");
     switch (page) {
+      case "finance-settings": this.financeSettings(body); break;
+      case "account": {
+        const account = this.host.accountService;
+        if (!account) { this.help(body, "账号服务尚未初始化，请稍后重试。"); break; }
+        this.accountPage = mountAccountMembership(body, { app: this.host.app, viewModel: account.read(), actions: account.actions, read: () => account.read(), subscribe: listener => account.subscribe(listener), language: "zh-CN", openProviders: () => this.ui.go("providers"), activationNotice: MOBILE_ACTIVATION_NOTICE });
+        break;
+      }
       case "layout": this.layout(body); break;
       case "resources": this.resources(body); break;
       case "knowledge": this.knowledge(body); break;
@@ -101,7 +126,7 @@ export class MobileSettingsPages {
       if (this.resourceTab === "plugins") {
         const plugins = this.services.plugins();
         if (!plugins.length) node(panel, "p", "em-empty", "暂无插件");
-        for (const plugin of plugins) this.ui.row(panel, plugin.name, `${plugin.enabled ? "已启用" : "未启用"} · ${plugin.description}`, "puzzle", () => this.ui.sheet(plugin.name, part => {
+        for (const plugin of plugins) this.ui.row(panel, plugin.name, `${plugin.enabled ? "已启用" : "未启用"} · ${plugin.description}`, "puzzle", () => plugin.id === "echoink:finance" ? this.ui.go("finance-settings") : this.ui.sheet(plugin.name, part => {
           this.help(part, plugin.description); this.help(part, plugin.mobileStatus);
           this.help(part, plugin.enabled ? "已保留启用状态与配置。" : "当前未启用；启用与授权由桌面已有设置管理。");
         }));
@@ -133,6 +158,35 @@ export class MobileSettingsPages {
       const button = this.ui.button(tabs, title, () => { this.resourceTab = id; render(); }); button.dataset.tab = id; button.setAttribute("role", "tab");
     }
     render();
+  }
+  private financeSettings(body: HTMLElement) {
+    const lifestyle = this.services.lifestyle;
+    if (!lifestyle) { this.help(body, "财务服务尚未初始化，请稍后重试。"); return; }
+    const settings = this.host.settings();
+    const page = node(body, "div", "echoink-settings-demo echoink-lifestyle-view echoink-life-finance echoink-mobile-finance-settings");
+    const toggle = (title: string, value: () => boolean, save: (enabled: boolean) => Promise<void>) => {
+      const input = this.toggle(page, title, value(), async enabled => { try { await save(enabled); } catch (error) { input.checked = value(); throw error; } });
+      return input;
+    };
+    toggle("启用财务", () => settings.lifestyle.finance.enabled, enabled => lifestyle.setEnabled("finance", enabled));
+    this.ui.button(page, "打开财务工作区", () => lifestyle.open("finance"), "wallet", "em-wide-action");
+    toggle("AI 分析", () => settings.lifestyle.finance.aiEnabled, enabled => lifestyle.finance.saveOption("aiEnabled", enabled));
+    toggle("导入时智能整理", () => settings.lifestyle.finance.importAiEnabled, enabled => lifestyle.finance.saveOption("importAiEnabled", enabled));
+    toggle("在首页显示", () => settings.homeModules.finance !== false, enabled => lifestyle.finance.saveOption("showOnHome", enabled));
+    this.help(page, "未配置模型时仍可记账、预算和导入。AI 分析与智能整理使用当前 EchoInk 模型。");
+    const catalog = node(page, "div", "echoink-life-settings-page");
+    const menu = node(catalog, "div"), panel = node(catalog, "div"); panel.hidden = true;
+    for (const [kind, title] of [["merchants", "管理商户"], ["accounts", "管理账户"], ["categories", "管理分类"]] as [CatalogKind, string][]) this.ui.row(menu, title, "", "list", () => {
+      const draw = () => {
+        panel.replaceChildren();
+        const back = node(panel, "button", "echoink-life-settings-back", `‹ ${this.financeCatalog?.backLabel() ?? "返回财务设置"}`);
+        back.onclick = () => this.financeCatalog?.back();
+        node(panel, "h2", "", this.financeCatalog?.title());
+        this.financeCatalog?.render(panel);
+      };
+      this.financeCatalog = new FinanceCatalogPanel(this.services, kind, () => { this.financeCatalog?.dispose(); this.financeCatalog = undefined; panel.replaceChildren(); panel.hidden = true; menu.hidden = false; }, draw);
+      menu.hidden = true; panel.hidden = false; draw();
+    });
   }
   private mcpEditor(id?: string) {
     const settings = this.host.settings(); const record = id ? settings.resources.mcpConnections[id] : undefined;

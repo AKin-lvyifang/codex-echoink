@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../utils/sha256";
 import { type App, TFile } from "obsidian";
 import { parse, stringify } from "yaml";
 import { classifyImport, parseYuan, type FinanceImportRow } from "./finance-domain";
 import { FINANCE_BILINGUAL_ROOT, FINANCE_BILINGUAL_TRANSACTIONS, FINANCE_DEFAULT_ROOT, FINANCE_DEFAULT_TRANSACTIONS, FINANCE_LEGACY_ROOT, isEchoInkFinanceBase, isFinanceRootName } from "./finance-paths";
-import type { FinanceEntry, LifestyleStore } from "./store";
+import type { FinanceEntry, LifestyleStoreCore } from "./store-core";
 
 export const FINANCE_DIRECTORY = `${FINANCE_DEFAULT_ROOT}/${FINANCE_DEFAULT_TRANSACTIONS}`;
 export const FINANCE_BASE_PATH = `${FINANCE_DEFAULT_ROOT}/ledger.base`;
@@ -99,7 +99,7 @@ function financeFields(entry: FinanceEntry, sourceFields?: FinanceImportRow["sou
 }
 
 function fileName(id: string): string {
-  return createHash("sha256").update(id).digest("hex").slice(0, 24) + ".md";
+  return sha256Hex(id).slice(0, 24) + ".md";
 }
 
 function folderFilterPaths(value: unknown): string[] {
@@ -123,7 +123,7 @@ export class FinanceLedger {
   private queue: Promise<unknown> = Promise.resolve();
   private reloadScheduled = false;
 
-  constructor(private readonly app: App, private readonly store: LifestyleStore) {}
+  constructor(private readonly app: App, private readonly store: LifestyleStoreCore) {}
 
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   entries(): readonly FinanceEntry[] { return structuredClone(this.records); }
