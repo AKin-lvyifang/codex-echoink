@@ -1,6 +1,29 @@
-/** Native buttons for the mobile build of Home dialogs. Desktop keeps React. */
+import type { App } from "obsidian";
+
+/** Native controls for the mobile build of Home dialogs. Desktop keeps React. */
 const cleanups = new Map<HTMLElement, () => void>();
 type ElementOptions = { cls?: string; text?: string; attr?: Record<string, string | number | boolean> };
+type OriginSelectOption = { value: string; label: string; disabled?: boolean };
+export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
+  choices: readonly OriginSelectOption[], initialValue = "", _app?: Pick<App, "keymap" | "scope">) {
+  const element = parent.ownerDocument.createElement("select");
+  element.className = `echoink-origin-control ${options.cls ?? ""}`;
+  element.dataset.slot = "select-trigger";
+  for (const [key, value] of Object.entries(options.attr ?? {})) element.setAttribute(key, String(value));
+  const appendOption = (value: string, label: string, disabled = false) => {
+    const option = parent.ownerDocument.createElement("option");
+    option.value = value; option.textContent = label; option.disabled = disabled;
+    element.append(option);
+  };
+  for (const choice of choices) appendOption(choice.value, choice.label, choice.disabled);
+  element.value = initialValue || choices[0]?.value || "";
+  parent.append(element);
+  return { element, addOption(value: string, label: string) {
+    const selectNew = !element.value;
+    appendOption(value, label);
+    if (selectNew) element.value = value;
+  } };
+}
 export type OriginCheckElement = HTMLButtonElement & { checked: boolean; indeterminate: boolean };
 export function createOriginCheck(parent: HTMLElement, options: ElementOptions = {}, kind: "switch" | "checkbox" = "checkbox"): OriginCheckElement {
   const button = createOriginButton(parent, options) as OriginCheckElement;

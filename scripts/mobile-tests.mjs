@@ -7,6 +7,7 @@ import { JSDOM } from "jsdom";
 import esbuild from "esbuild";
 import { mobileBuildOptions } from "./mobile-build.mjs";
 import { profileScenarios } from "../tests/mobile/profile-scenarios.mjs";
+import { originControlScenarios } from "../tests/mobile/origin-controls-scenarios.mjs";
 import { createHost, answer, FixtureTFile } from "../tests/mobile/host.mjs";
 
 const build = await esbuild.build(mobileBuildOptions("tests/mobile/entry.ts"));
@@ -35,6 +36,7 @@ async function setup(protocol, request) {
   return { ...host, store, config, runtime };
 }
 
+await originControlScenarios(test);
 await profileScenarios(module.exports, test, settings);
 
 for (const protocol of ["openai-completions", "openai-responses"]) await test(`${protocol}: real Agent read → memory + Markdown tools → answer; reopen and recall`, async () => {
