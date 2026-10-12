@@ -4,6 +4,7 @@ import { parse, stringify } from "yaml";
 import { classifyImport, parseYuan, type FinanceImportRow } from "./finance-domain";
 import { FINANCE_BILINGUAL_ROOT, FINANCE_BILINGUAL_TRANSACTIONS, FINANCE_DEFAULT_ROOT, FINANCE_DEFAULT_TRANSACTIONS, FINANCE_LEGACY_ROOT, isEchoInkFinanceBase, isFinanceRootName } from "./finance-paths";
 import type { FinanceEntry, LifestyleStoreCore } from "./store-core";
+import type { FinanceRecordPatch, FinanceRecordSnapshot } from "./finance-operation-types";
 
 export const FINANCE_DIRECTORY = `${FINANCE_DEFAULT_ROOT}/${FINANCE_DEFAULT_TRANSACTIONS}`;
 export const FINANCE_BASE_PATH = `${FINANCE_DEFAULT_ROOT}/ledger.base`;
@@ -61,7 +62,7 @@ function parseFinanceDocument(markdown: string): ParsedNote {
   let amountCents: number;
   try { amountCents = parseYuan(typeof rawAmount === "number" || typeof rawAmount === "string" ? String(rawAmount) : ""); }
   catch { return { entry: null, identity, issue: "金额属性无效" }; }
-  if (!knownKinds.has(kind) || !knownStatuses.has(status) || !merchant
+  if (!knownKinds.has(kind) || !knownStatuses.has(status)
     || !/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(date)) return { entry: null, identity, issue: "日期、类型、状态或商户属性无效" };
   const entry: FinanceEntry = {
     id, source: source as FinanceEntry["source"], sourceId, date, merchant,
@@ -170,7 +171,7 @@ export class FinanceLedger {
     });
   }
 
-  private async resolveLocation(): Promise<void> {
+  private async resolveLocation(readOnly = false): Promise<void> {
     const vault = this.app.vault;
     const bases: TFile[] = [];
     for (const file of vault.getFiles().filter((item) => item.path.endsWith("/ledger.base") || item.path.endsWith("/账本.base"))) {
@@ -188,6 +189,7 @@ export class FinanceLedger {
     this.basePath = bases[0]?.path ?? `${this.root}/ledger.base`;
     const baseFilterPath = bases[0] ? await this.baseFilterDirectory(bases[0]) : null;
     this.directory = await this.resolveDirectory(baseFilterPath);
+    if (readOnly) return;
     const before = this.paths();
     await this.migrateOldLayout();
     await this.rewriteManagedReferences([before,
@@ -332,6 +334,64 @@ export class FinanceLedger {
 
   reload(): Promise<void> { return this.enqueue(() => this.readDirect()); }
 
+  /** Location discovery and Markdown reads only: no Base creation or migrations. */
+  readSnapshots(): Promise<FinanceRecordSnapshot[]> {
+    return this.enqueue(async () => {
+      await this.resolveLocation(true);
+      await this.readDirect();
+      return Promise.all(this.records.map(async entry => {
+        const file = this.files.get(entry.id)!;
+        const markdown = await this.app.vault.read(file);
+        const observed = parseFinanceNote(markdown);
+        if (!observed || observed.id !== entry.id) throw new Error("finance_version_conflict");
+        return { entry: observed, path: file.path, version: sha256Hex(markdown) };
+      }));
+    });
+  }
+
+  patchRecord(id: string, expectedVersion: string, changes: FinanceRecordPatch): Promise<FinanceRecordSnapshot> {
+    return this.enqueue(async () => {
+      await this.resolveLocation(true); await this.readDirect();
+      const file = this.files.get(id);
+      if (!file) throw new Error("finance_record_not_found");
+      await this.app.vault.process(file, markdown => {
+        if (sha256Hex(markdown) !== expectedVersion) throw new Error("finance_version_conflict");
+        const current = parseFinanceNote(markdown);
+        if (!current || current.id !== id) throw new Error("finance_record_not_found");
+        const next = { ...current, ...changes };
+        if (!Number.isSafeInteger(next.amountCents) || next.amountCents <= 0 || !/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(next.date)
+          || !knownKinds.has(next.kind) || next.merchant.length > 60 || next.description.length > 200 || !next.category) throw new Error("finance_invalid_record");
+        const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u)!;
+        const fields = parse(match[1]) as Record<string, unknown>;
+        const keys: Record<string, string> = { amountCents: "amount", billPlanId: "bill_plan_id", kind: "type" };
+        for (const [key, value] of Object.entries(changes)) {
+          const field = keys[key] ?? key;
+          if (value === null) delete fields[field];
+          else fields[field] = key === "amountCents" ? (Number(value) / 100).toFixed(2) : value;
+        }
+        return `---\n${stringify(fields)}---\n${markdown.slice(match[0].length)}`;
+      });
+      const markdown = await this.app.vault.read(file);
+      const entry = parseFinanceNote(markdown);
+      if (!entry || entry.id !== id) throw new Error("finance_readback_failed");
+      for (const [key, value] of Object.entries(changes)) if ((entry as unknown as Record<string, unknown>)[key] !== (value === null ? undefined : value)) throw new Error("finance_readback_failed");
+      await this.readDirect();
+      return { entry, path: file.path, version: sha256Hex(markdown) };
+    });
+  }
+
+  deleteRecord(id: string, expectedVersion: string): Promise<{ id: string; path: string; recoverable: true }> {
+    return this.enqueue(async () => {
+      await this.resolveLocation(true); await this.readDirect();
+      const file = this.files.get(id);
+      if (!file) throw new Error("finance_record_not_found");
+      if (sha256Hex(await this.app.vault.read(file)) !== expectedVersion) throw new Error("finance_version_conflict");
+      await this.app.fileManager.trashFile(file);
+      if (this.app.vault.getAbstractFileByPath(file.path)) throw new Error("finance_readback_failed");
+      await this.readDirect(); return { id, path: file.path, recoverable: true };
+    });
+  }
+
   scheduleReload(): void {
     if (this.reloadScheduled) return;
     this.reloadScheduled = true;
@@ -424,8 +484,8 @@ export class FinanceLedger {
       await this.readDirect();
       const previous = this.records.find((entry) => entry.id === id);
       if (!previous) throw new Error("这笔账目已被删除或移出账目目录");
-      const next = { ...previous, merchant: merchant.trim(), description: description.trim(), icon, category: category?.trim() || previous.category, account: account?.trim() || previous.account };
-      if (!next.merchant || next.merchant.length > 60 || next.description.length > 200 || !next.category || !next.account) throw new Error("请检查商户、分类、账户和消费说明");
+      const next = { ...previous, merchant: merchant.trim(), description: description.trim(), icon, category: category?.trim() || previous.category, account: account === undefined ? previous.account : account.trim() };
+      if (next.merchant.length > 60 || next.description.length > 200 || !next.category) throw new Error("请检查商户、分类、账户和消费说明");
       await this.patchDirect(id, { merchant: next.merchant, description: next.description, icon: next.icon || "auto", category: next.category, account: next.account, ...(billPlanId === undefined ? {} : { bill_plan_id: billPlanId }) });
       await this.readDirect();
       return this.records.find((entry) => entry.id === id)!;

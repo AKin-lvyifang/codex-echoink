@@ -77,6 +77,17 @@ export async function runSkillRuntimeScenarios(): Promise<void> {
     assert.equal(Object.values(initial.records).every((record) =>
       record.origin === "builtin" && record.status === "active"
     ), true);
+    for (const text of ["记一下，我今天早餐吃了12块钱", "把这个月餐饮预算调整到2000元", "建一个杭州旅行账单，总预算3000元", "刚才那笔高铁票记到杭州旅行里", "查询本月支出多少"]) {
+      const chosen = await coordinator.selectForTask({ text });
+      assert.equal(chosen?.id, "finance-operations", text);
+      assert.deepEqual(chosen.skills.map(s => s.id), ["finance-operations"], "ordinary finance does not select analysis/import/freshness methods");
+    }
+    assert.equal(await coordinator.selectForTask({ text: "记一下早餐12块", excludedSkillIds: ["finance-operations"] }), null);
+    for (const text of ["生成财务分析报告", "导入微信CSV账单"]) assert.ok(!(await coordinator.selectForTask({ text }))?.skills.some(s => s.id === "finance-operations"));
+    const financeContent = (await coordinator.inspectBuiltinSkill("finance-operations")).content;
+    const edited = `${financeContent}\n\n## 我的偏好\n回复保持简短。\n`;
+    assert.equal((await coordinator.saveBuiltinSkillContent("finance-operations", edited)).userModified, true);
+    assert.equal((await coordinator.inspectBuiltinSkill("finance-operations")).content, edited);
 
     assert.equal(await coordinator.selectForTask({
       text: "把 hello 翻译成中文",

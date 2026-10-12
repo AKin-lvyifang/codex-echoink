@@ -31,7 +31,8 @@ export const KNOWLEDGE_MAINTENANCE_APPROVAL_TOOL_ID =
 export const APPROVAL_TOOL_IDS = [
   ...APPROVAL_WRITE_TOOL_IDS,
   KNOWLEDGE_MAINTENANCE_APPROVAL_TOOL_ID,
-  "obsidian_cli"
+  "obsidian_cli",
+  "finance_record", "finance_budget", "finance_bill"
 ] as const;
 
 export type McpApprovalToolId = `echoink_mcp_${string}`;
@@ -42,7 +43,7 @@ export const AUTO_ALLOWED_READ_TOOL_IDS = [
 ] as const;
 
 export type ApprovalWriteToolId = typeof APPROVAL_WRITE_TOOL_IDS[number];
-export type SideEffectApprovalToolId = ApprovalWriteToolId | McpApprovalToolId | "obsidian_cli";
+export type SideEffectApprovalToolId = ApprovalWriteToolId | McpApprovalToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill";
 export type ApprovalToolId = typeof APPROVAL_TOOL_IDS[number] | McpApprovalToolId;
 export type AutoAllowedReadToolId = typeof AUTO_ALLOWED_READ_TOOL_IDS[number];
 export type AuthorizedVaultToolId =
@@ -658,6 +659,7 @@ export function isMcpApprovalToolId(value: unknown): value is McpApprovalToolId 
 export function isSideEffectApprovalToolId(value: unknown): value is SideEffectApprovalToolId {
   return (typeof value === "string" && APPROVAL_WRITE_TOOL_IDS.includes(value as ApprovalWriteToolId))
     || value === "obsidian_cli"
+    || value === "finance_record" || value === "finance_budget" || value === "finance_bill"
     || isMcpApprovalToolId(value);
 }
 

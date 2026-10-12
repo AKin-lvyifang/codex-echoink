@@ -143,6 +143,7 @@ type SkillResponsibility =
   | "freshness"
   | "experiment"
   | "self-exploration"
+  | "finance-operations"
   | "generated-method";
 
 const MAX_SKILL_BYTES = 200_000;
@@ -560,6 +561,7 @@ export class SkillRuntimeCoordinator {
   async selectForTask(input: Readonly<{
     text: string;
     preferredSkillIds?: readonly string[];
+    excludedSkillIds?: readonly string[];
   }>): Promise<SelectedRuntimeSkill | null> {
     return await this.withStateMutation(async (state) => {
       const text = normalizeTaskText(input.text);
@@ -576,6 +578,7 @@ export class SkillRuntimeCoordinator {
       requiresFreshnessVerification: boolean;
     }> = [];
     for (const record of Object.values(state.records)) {
+      if (input.excludedSkillIds?.includes(record.id)) continue;
       if (record.status !== "active" && record.status !== "downranked") continue;
       const trigger = record.origin === "builtin"
         ? builtinTrigger(record.id as BuiltinSkillId, text)
@@ -1371,6 +1374,7 @@ function skillResponsibility(
   if (record.id === "evidence-freshness-audit") return "freshness";
   if (record.id === "minimum-real-world-experiment") return "experiment";
   if (record.id === "self-discovery-life-design") return "self-exploration";
+  if (record.id === "finance-operations") return "finance-operations";
   return "analysis";
 }
 
@@ -1391,6 +1395,11 @@ function builtinTrigger(
   requiresFreshnessVerification: boolean;
 }> {
   const hit = (pattern: RegExp) => pattern.test(text);
+  const financeOperation = !hit(/导入|csv|xlsx|生成.{0,8}报告|财务分析|分析报告|月度报告/iu)
+    && hit(/记账|记(?:一下|一笔|下来).{0,60}(?:钱|元|块|早餐|午餐|晚餐|高铁)|(?:预算|账单).{0,30}(?:调整|修改|改|设|查询|多少)|(?:改|调整|建|创建|查).{0,30}(?:预算|账单)|(?:刚才|这|那).{0,8}笔|(?:支出|消费|花了).{0,15}(?:多少|查询)|(?:finance|budget|bill).{0,30}(?:record|query|update|create|change)|(?:record|log).{0,30}(?:expense|breakfast|lunch|dinner)/iu);
+  if (id === "finance-operations") return trigger(financeOperation, 96);
+  if (id === "finance-analysis" || id === "finance-bill-import") return trigger(false, 0);
+  if (financeOperation && id === "evidence-freshness-audit") return trigger(false, 0);
   if (id === "daily-journal" || id === "english-diary") {
     return trigger(false, 0);
   }

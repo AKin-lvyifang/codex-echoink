@@ -15,7 +15,8 @@ export function financeAnalysisPurposeGroups(rows: readonly FinanceEntry[]): Fin
     const group = groups.get(key) ?? { category: row.category, description, amountCents: 0, count: 0,
       merchants: new Set<string>(), dates: new Set<string>(), prices: new Set<number>() };
     group.amountCents += row.amountCents; group.count++; group.prices.add(row.amountCents);
-    group.merchants.add(row.merchant.trim()); group.dates.add(row.date.slice(0, 10)); groups.set(key, group);
+    if (row.merchant.trim()) group.merchants.add(row.merchant.trim());
+    group.dates.add(row.date.slice(0, 10)); groups.set(key, group);
   }
   return [...groups.values()];
 }

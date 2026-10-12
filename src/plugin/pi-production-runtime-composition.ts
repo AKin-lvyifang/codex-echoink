@@ -464,7 +464,8 @@ export async function createPiProductionRuntimeBundle(
   await knowledgeMaintenance.initialize();
   await recoverPiVaultDomainReceipts({
     receipts,
-    domainService: vaultDomainService
+    domainService: vaultDomainService,
+    finance: plugin.lifestyle?.finance
   });
   await recoverProductionPiMcpDomainReceipts(plugin, receipts);
   const writeExecution: PiVaultToolWriteExecutionPort =
@@ -499,8 +500,11 @@ export async function createPiProductionRuntimeBundle(
       skills: {
         selectForTask: async ({ text }) => {
           const metadata = await agentSelfMetadata.read();
+          const resources = await plugin.buildRuntimeEchoInkResourceCatalog();
+          const financeSkill = resources.find(r => r.kind === "skill" && r.metadata?.resourceId === "finance-operations");
           return await skillRuntime.selectForTask({
             text,
+            excludedSkillIds: financeSkill?.enabled === true ? [] : ["finance-operations"],
             preferredSkillIds: getAgentTemplate(metadata?.templateId)
               ?.preferredSkillIds ?? []
           });
@@ -1843,6 +1847,7 @@ async function createProductionAgentSession(input: {
   });
   const userQuestionSecurity = new PiUserQuestionToolSecurity();
   const obsidianSecurity = new PiObsidianToolSecurity({
+    currentUserEntry: () => { const context = input.input.currentToolExecutionContext(); return { entryId: context.userEntryId, text: context.userEntryText }; },
     currentAccess: () => input.input.currentWorkspaceAccess?.(),
     currentRunIdentity: () => {
       const context = input.input.currentToolExecutionContext();

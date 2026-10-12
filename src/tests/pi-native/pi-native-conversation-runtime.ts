@@ -298,6 +298,50 @@ async function assertNaturalMaintenanceAndCorrection(): Promise<void> {
   }, { knowledge: maintenanceKnowledgeFixture() });
 }
 
+export async function runPiNativePromptEntryStartupTests(): Promise<void> {
+  await withFixture(["slow-preflight"], async fixture => {
+    await fixture.runtime.createConversation({ conversationId: "slow-preflight", title: "Slow preflight", cwd: fixture.root });
+    await fixture.runtime.activateConversation("slow-preflight");
+    const session = fixture.latestSession(), prompt = session.prompt.bind(session);
+    session.prompt = async (text, options) => {
+      await new Promise(resolve => setTimeout(resolve, 5100));
+      const pending = prompt(text, options);
+      session.finishSuccessful("Preflight completed, one user Entry accepted.");
+      await pending;
+    };
+    const run = await fixture.submit({ conversationId: "slow-preflight", text: "记一下早餐12元", submittedAt: 1 });
+    assert.equal((await run.result).terminalState, "completed");
+    assert.equal(session.sessionManager.getEntries().filter(e => e.type === "message" && e.message.role === "user").length, 1);
+  });
+  await withFixture(["late-timer"], async fixture => {
+    await fixture.runtime.createConversation({ conversationId: "late-timer", title: "Delayed timer", cwd: fixture.root });
+    await fixture.runtime.activateConversation("late-timer");
+    const session = fixture.latestSession(), prompt = session.prompt.bind(session), realNow = Date.now;
+    session.prompt = (text, options) => {
+      const pending = prompt(text, options);
+      Date.now = () => realNow() + 6000;
+      return pending;
+    };
+    try {
+      const run = await fixture.submit({ conversationId: "late-timer", text: "Already appended", submittedAt: 1 });
+      session.finishSuccessful("Read the Entry before checking timeout.");
+      assert.equal((await run.result).terminalState, "completed");
+    } finally { Date.now = realNow; }
+  });
+  for (const reject of [false, true]) await withFixture([], async fixture => {
+    const conversationId = reject ? "rejected-preflight" : "handled-without-entry";
+    await fixture.runtime.createConversation({ conversationId, title: conversationId, cwd: fixture.root });
+    await fixture.runtime.activateConversation(conversationId);
+    fixture.latestSession().prompt = async (_text, options) => {
+      options.preflightResult?.(!reject);
+      if (reject) throw new Error("fixture_preflight_rejected");
+    };
+    await assert.rejects(fixture.submit({ conversationId, text: "Must not invent a user Entry", submittedAt: 1 }), reject ? /fixture_preflight_rejected/ : /first user Entry/);
+    assert.equal((await fixture.runtime.readProjection(conversationId)).messages.some(m => m.role === "user"), false);
+  });
+  console.log("PASS prompt startup: >5s native preflight, late timer final read, rejected/finished-without-Entry fail promptly, one accepted user Entry");
+}
+
 export async function runPiNativeConversationRuntimeTests(): Promise<void> {
   await assertWorkspacePermissionsAndLateSources();
   await assertConversationDefaultSkillPriorityAndTurnContext();
@@ -5609,7 +5653,7 @@ class ControlledAgentSession {
 
   prompt(
     text: string,
-    options: { source?: string; images?: ImageContent[] }
+    options: { source?: string; images?: ImageContent[]; preflightResult?: (accepted: boolean) => void }
   ): Promise<void> {
     assert.equal(options.source, "interactive");
     assert.equal(this.isStreaming, false);
@@ -5627,6 +5671,7 @@ class ControlledAgentSession {
       this.nextPromptError = null;
       throw error;
     }
+    options.preflightResult?.(true);
     this.promptSequence += 1;
     const userMessage: UserMessage = {
       role: "user",

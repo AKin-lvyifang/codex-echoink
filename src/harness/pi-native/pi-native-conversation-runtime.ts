@@ -1694,10 +1694,14 @@ export class PiNativeConversationRuntime {
         "Reasoning start snapshot durability failed"
       );
     }
+    const promptStart = { readyAt: undefined as number | undefined, settled: false, error: undefined as unknown };
     let promptPromise: Promise<void>;
     try {
       promptPromise = active.session.prompt(promptText, {
         source: "interactive",
+        // Pi appends the user Entry only after auth, compaction and
+        // before_agent_start. Their duration is not an Entry-write timeout.
+        preflightResult: (accepted) => { if (accepted) promptStart.readyAt = Date.now(); },
         ...(promptImages.length ? { images: promptImages } : {})
       });
     } catch (promptStartError) {
@@ -1712,12 +1716,17 @@ export class PiNativeConversationRuntime {
         "Pi prompt start failed and runtime cleanup was incomplete"
       );
     }
+    void promptPromise.then(
+      () => { promptStart.settled = true; },
+      (error) => { promptStart.error = error; promptStart.settled = true; }
+    );
     let userEntry: SessionEntry;
     try {
       userEntry = await waitForNewUserEntry(
         active.sessionManager,
         execution.baselineEntryIds,
-        USER_ENTRY_WAIT_TIMEOUT_MS
+        USER_ENTRY_WAIT_TIMEOUT_MS,
+        promptStart
       );
       assertPiSessionAppendsDurable({
         sessionRoot: this.catalog.sessionRootPath,
@@ -4893,16 +4902,20 @@ function validatePlanToolNames(
 async function waitForNewUserEntry(
   sessionManager: SessionManager,
   baselineEntryIds: ReadonlySet<string>,
-  timeoutMs: number
+  timeoutMs: number,
+  promptStart: { readyAt: number | undefined; settled: boolean; error: unknown }
 ): Promise<SessionEntry> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
+  while (true) {
     const candidate = sessionManager.getEntries().find((entry) =>
       !baselineEntryIds.has(entry.id)
       && entry.type === "message"
       && entry.message.role === "user"
     );
     if (candidate) return candidate;
+    if (promptStart.settled && promptStart.error) throw promptStart.error;
+    // Always read first: a background timer can resume after the deadline
+    // even though Pi has already appended the Entry.
+    if (promptStart.settled || (promptStart.readyAt !== undefined && Date.now() - promptStart.readyAt >= timeoutMs)) break;
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
   }
   throw new PiNativeConversationRuntimeError(

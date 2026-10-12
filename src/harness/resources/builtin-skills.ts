@@ -1,6 +1,7 @@
 import { OBSIDIAN_BUILTIN_SKILLS } from "./obsidian-skills";
 import { FINANCE_IMPORT_SKILL } from "./finance-import-skill";
 import { FINANCE_ANALYSIS_SKILL } from "./finance-analysis-skill";
+import { FINANCE_OPERATIONS_SKILL } from "./finance-operations-skill";
 
 export const BUILTIN_SKILL_IDS = Object.freeze([
   "clarify-real-question",
@@ -18,7 +19,8 @@ export const BUILTIN_SKILL_IDS = Object.freeze([
   "obsidian-bases",
   "json-canvas",
   "finance-bill-import",
-  "finance-analysis"
+  "finance-analysis",
+  "finance-operations"
 ] as const);
 
 export type BuiltinSkillId = (typeof BUILTIN_SKILL_IDS)[number];
@@ -321,7 +323,8 @@ export const BUILTIN_SKILLS: readonly BuiltinSkillDefinition[] = Object.freeze([
   ),
   ...OBSIDIAN_BUILTIN_SKILLS,
   skill("finance-bill-import", "微信与支付宝账单整理", "基础入库后，整理微信或支付宝新账目的商户、账户、分类、消费说明与品牌图标。", FINANCE_IMPORT_SKILL),
-  skill("finance-analysis", "财务回看分析", "用户主动生成或刷新时，结合当月已记录账目与统计，分析消费影响并给出有依据的安排建议。", FINANCE_ANALYSIS_SKILL)
+  skill("finance-analysis", "财务回看分析", "用户主动生成或刷新时，结合当月已记录账目与统计，分析消费影响并给出有依据的安排建议。", FINANCE_ANALYSIS_SKILL),
+  skill("finance-operations", "财务对话操作", "用自然话查询、记账、修改、删除，调整月度或默认预算，创建账单与关联明确账目。", FINANCE_OPERATIONS_SKILL)
 ]);
 
 export function renderBuiltinSkill(definition: BuiltinSkillDefinition): string {

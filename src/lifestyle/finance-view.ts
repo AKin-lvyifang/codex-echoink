@@ -958,7 +958,7 @@ export class FinanceWorkspace {
     search.value = this.state.filters.search;
     search.oninput = () => { this.state.filters.search = search.value; this.updateLedgerRows(panel); };
     const allEntries = this.entries().filter((entry) => entry.date.startsWith(this.state.month));
-    const merchants = [...new Set(allEntries.map((entry) => entry.merchant))].sort((a, b) => a.localeCompare(b, "zh-CN"));
+    const merchants = [...new Set(allEntries.map((entry) => entry.merchant).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN"));
     if (this.state.filters.merchant && !merchants.includes(this.state.filters.merchant)) merchants.push(this.state.filters.merchant);
     const filters = toolbar.createDiv({ cls: "echoink-finance-ledger-filters", attr: { role: "group", "aria-label": "账目筛选" } });
     select(filters, "类型", [["all", "全部类型"], ["spending", "消费与退款"], ...Object.entries(labels)], this.state.filters.kind, (value) => {
@@ -976,7 +976,10 @@ export class FinanceWorkspace {
       this.state.filters.exactAccount === "" ? noAccount : this.state.filters.exactAccount ?? this.state.filters.account,
       (value) => { this.state.filters.exactAccount = value === noAccount ? "" : undefined;
         this.state.filters.account = value === noAccount ? "" : value; this.state.filterLabel = undefined; this.redraw(); });
-    select(filters, "商户", [["", "全部商户"], ...merchants.map((name): [string, string] => [name, name === this.state.filters.merchant && !allEntries.some((entry) => entry.merchant === name) ? `${name}（本月无记录）` : name])], this.state.filters.merchant, (value) => { this.state.filters.merchant = value; this.updateLedgerRows(panel); });
+    const noMerchant = "__echoink_unassigned_merchant__";
+    select(filters, "商户", [["", "全部商户"], [noMerchant, "未指定商户"], ...merchants.map((name): [string, string] => [name, name === this.state.filters.merchant && !allEntries.some((entry) => entry.merchant === name) ? `${name}（本月无记录）` : name])],
+      this.state.filters.exactMerchant === "" ? noMerchant : this.state.filters.merchant,
+      value => { this.state.filters.exactMerchant = value === noMerchant ? "" : undefined; this.state.filters.merchant = value === noMerchant ? "" : value; this.updateLedgerRows(panel); });
     const noCategory = "__echoink_uncategorized__";
     select(filters, "分类", [["", "全部分类"], [noCategory, "未分类"], ...this.categories().filter(Boolean).map((category): [string, string] => [category, category])],
       this.state.filters.exactCategory === "" ? noCategory : this.state.filters.exactCategory ?? this.state.filters.category,
@@ -1027,13 +1030,13 @@ export class FinanceWorkspace {
   }
   private transactionRow(parent: HTMLElement, entry: FinanceEntry, compact = false): void {
     const row = parent.createDiv({ cls: `echoink-finance-transaction${compact ? " is-compact" : ""}`, attr: { role: "button", tabindex: "0" } });
-    row.setAttribute("aria-label", `${entry.merchant}，${labels[entry.kind]} ${money(entry.amountCents)} 元，查看详情`);
+    row.setAttribute("aria-label", `${entry.merchant || "未指定"}，${labels[entry.kind]} ${money(entry.amountCents)} 元，查看详情`);
     row.onclick = () => this.detailDialog(entry);
     row.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); row.click(); } };
     const merchant = row.createDiv({ cls: "echoink-finance-transaction-merchant" });
     merchantIcon(merchant, entry, this.catalog());
     const copy = merchant.createDiv({ cls: "echoink-finance-transaction-copy" });
-    copy.createEl("strong", { text: entry.merchant }); copy.createEl("small", { text: entry.description || entry.category });
+    copy.createEl("strong", { text: entry.merchant || "未指定" }); copy.createEl("small", { text: entry.description || entry.category });
     const category = row.createDiv({ cls: "echoink-finance-transaction-category" });
     const categoryLine = category.createSpan({ cls: "echoink-finance-transaction-category-line" });
     const dot = categoryLine.createSpan({ cls: "echoink-finance-category-dot", attr: { "aria-hidden": "true" } });
@@ -1043,7 +1046,7 @@ export class FinanceWorkspace {
     row.createEl("time", { text: this.state.page === "billPlans" ? entry.date.slice(0, 10) : entry.date.slice(5, 10).replace("-", " / "), attr: { datetime: entry.date.slice(0, 10) } });
     const amount = entry.kind === "expense" ? "−" : entry.kind === "transfer" ? "" : "+";
     row.createEl("strong", { text: `${amount}¥ ${money(entry.amountCents)}`, cls: `echoink-finance-transaction-amount${entry.kind === "expense" ? "" : " is-positive"}` });
-    row.createEl("small", { text: entry.account, cls: "echoink-finance-transaction-account" });
+    row.createEl("small", { text: entry.account || "未指定", cls: "echoink-finance-transaction-account" });
   }
   private writeButton(parent: HTMLElement, label: string, run: () => void, cls = ""): HTMLButtonElement {
     const control = button(parent, label, run, cls);
@@ -1177,7 +1180,7 @@ export class FinanceWorkspace {
       amount.setAttribute("aria-label", `${labels[entry.kind]} ${money(entry.amountCents)} 元`);
       const form = detail.createEl("form", { cls: "echoink-finance-detail-form" });
       const merchant = field(form, "商户 / 对方", "text", entry.merchant);
-      merchant.maxLength = 60; merchant.required = true;
+      merchant.maxLength = 60; merchant.placeholder = "未指定";
       const candidates = form.createEl("datalist", { attr: { id: "echoink-finance-merchants" } });
       for (const name of [...new Set(this.entries().map((item) => item.merchant))]) candidates.createEl("option", { value: name });
       merchant.setAttribute("list", "echoink-finance-merchants");
@@ -1190,7 +1193,7 @@ export class FinanceWorkspace {
         ...this.catalog().accounts.filter((item) => item.active).map((item) => item.name),
         ...this.entries().map((item) => item.account), entry.account
       ].filter(Boolean))];
-      const account = select(form, "账户", accountNames.map((name): [string, string] => [name, name]), entry.account, () => undefined);
+      const account = select(form, "账户", [["", "未指定"], ...accountNames.map((name): [string, string] => [name, name])], entry.account, () => undefined);
       const plans = this.service.finance.billPlans();
       const planChoices: [string, string][] = [["", "不关联账单"], ...plans.map((plan): [string, string] => [plan.id, plan.name])];
       if (entry.billPlanId && !plans.some(plan => plan.id === entry.billPlanId)) planChoices.push([entry.billPlanId, "原账单未找到（保留关联）"]);

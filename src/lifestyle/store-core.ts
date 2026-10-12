@@ -1,8 +1,8 @@
 import type { FinanceAnalysisArchiveRecord, FinanceAnalysisArchiveDraft } from "./finance-analysis-archive";
 
 export interface LifestyleFilePort {
-  read(): Promise<string | null>;
-  write(content: string): Promise<void>;
+  read(readOnly?: boolean): Promise<string | null>;
+  write(content: string, expected?: string | null): Promise<void>;
   backup(content: string): Promise<void>;
 }
 
@@ -74,7 +74,7 @@ function normalizeData(raw: unknown): LifestyleData {
       || !Number.isSafeInteger(raw.budgetCents) || raw.budgetCents <= 0 || plans.has(raw.id)) continue;
     const allocations = raw.allocations && typeof raw.allocations==="object" && !Array.isArray(raw.allocations)
       ? Object.fromEntries(Object.entries(raw.allocations).filter(([name,amount])=>name.trim() && Number.isSafeInteger(amount) && amount>=0)) : undefined;
-    plans.set(raw.id, { id: raw.id, name: raw.name.trim(), budgetCents: raw.budgetCents, ...(allocations?{allocations}:{}) });
+    plans.set(raw.id, { ...raw, id: raw.id, name: raw.name.trim(), budgetCents: raw.budgetCents, ...(allocations?{allocations}:{}) });
   }
   return {
     ...value,
@@ -102,6 +102,12 @@ export class LifestyleStoreCore {
   }
 
   snapshot(): Readonly<LifestyleData> { return structuredClone(this.data); }
+  /** Read the file without migration/recovery writes or changing the UI cache. */
+  async readFresh(): Promise<Readonly<LifestyleData>> {
+    await this.queue;
+    const content = await this.file.read(true);
+    return normalizeData(content === null ? null : JSON.parse(content));
+  }
   hasLegacyFinanceField(): boolean { return this.legacyFinanceFieldPresent; }
   async retainLegacyFinanceBackup(): Promise<void> {
     if (!this.data.financeEntries.length) return;
@@ -113,13 +119,14 @@ export class LifestyleStoreCore {
     return () => this.listeners.delete(listener);
   }
 
-  async update<T>(mutate: (draft: LifestyleData) => T): Promise<T> {
+  async update<T>(mutate: (draft: LifestyleData) => T, fresh = false): Promise<T> {
     const run = async (): Promise<T> => {
-      const draft = structuredClone(this.data);
+      const content = fresh ? await this.file.read(true) : undefined;
+      const draft = fresh ? normalizeData(content == null ? null : JSON.parse(content)) : structuredClone(this.data);
       const result = mutate(draft);
       const persisted: Record<string, unknown> = { ...draft };
       if (!draft.financeEntries.length) delete persisted.financeEntries;
-      await this.file.write(JSON.stringify(persisted, null, 2));
+      await this.file.write(JSON.stringify(persisted, null, 2), content);
       this.data = draft;
       this.legacyFinanceFieldPresent = draft.financeEntries.length > 0;
       for (const listener of this.listeners) listener();
@@ -129,4 +136,5 @@ export class LifestyleStoreCore {
     this.queue = pending.catch(() => undefined);
     return await pending;
   }
+  updateFresh<T>(mutate: (draft: LifestyleData) => T): Promise<T> { return this.update(mutate, true); }
 }

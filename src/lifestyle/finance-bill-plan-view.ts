@@ -143,7 +143,7 @@ export class FinanceBillPlanView {
     const extremes = parent.createDiv({ cls: "echoink-finance-bill-extremes" });
     for (const [label, record] of [["最大一笔", stats.largest], ["最小一笔", stats.smallest]] as const) {
       const item = extremes.createDiv(); item.createSpan({ text: label }); item.createEl("strong", { text: record ? `¥ ${money(record.amountCents)}` : "—" });
-      item.createEl("small", { text: record ? `${record.merchant} · ${record.date.slice(0, 10)}` : "暂无有效支出" });
+      item.createEl("small", { text: record ? `${record.merchant || "未指定"} · ${record.date.slice(0, 10)}` : "暂无有效支出" });
     }
     const average = extremes.createDiv(); average.createSpan({ text: "平均每笔支出" }); average.createEl("strong", { text: stats.averageCents === null ? "—" : `¥ ${money(stats.averageCents)}` }); average.createEl("small", { text: `${stats.expenses.length} 笔有效支出` });
     const chart = parent.createDiv({ cls: "echoink-finance-card echoink-finance-bill-category" }); chart.createEl("h3", { text: "消费分类" });
@@ -258,10 +258,10 @@ export class FinanceBillPlanView {
     const plans = new Map(this.service.finance.billPlans().map(item => [item.id, item.name]));
     for (const entry of visible) {
       const row = rows.createEl("label", { cls: "echoink-finance-bill-select-row" });
-      const check = createOriginCheck(row, { attr: { "aria-label": `选择${entry.merchant}，${entry.date}，${money(entry.amountCents)}元`, "data-plan-entry-id": entry.id } });
+      const check = createOriginCheck(row, { attr: { "aria-label": `选择${entry.merchant || "未指定"}，${entry.date}，${money(entry.amountCents)}元`, "data-plan-entry-id": entry.id } });
       check.checked = this.selected.has(entry.id); check.disabled = this.saving || entry.billPlanId === plan.id;
       check.onchange = () => { if (check.checked) this.selected.add(entry.id); else this.selected.delete(entry.id); this.updateAssociationRows(parent, plan); };
-      const copy = row.createDiv(); copy.createEl("strong", { text: entry.merchant }); copy.createEl("small", { text: `${entry.description || entry.category} · ${entry.date.slice(0, 10)} · ${entry.account}` });
+      const copy = row.createDiv(); copy.createEl("strong", { text: entry.merchant || "未指定" }); copy.createEl("small", { text: `${entry.description || entry.category} · ${entry.date.slice(0, 10)} · ${entry.account || "未指定"}` });
       copy.createEl("small", { text: entry.billPlanId === plan.id ? "已关联当前账单" : entry.billPlanId ? `来自：${plans.get(entry.billPlanId) || "未找到原账单"}` : "未关联" });
       row.createSpan({ text: `${labels[entry.kind]} ¥ ${money(entry.amountCents)}` });
     }

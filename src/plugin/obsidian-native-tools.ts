@@ -13,6 +13,7 @@ import { ObsidianPluginDirectory } from "./obsidian-plugin-directory";
 import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { isEchoInkFinanceBase } from "../lifestyle/finance-paths";
 import { parseFinanceNote } from "../lifestyle/finance-ledger";
+import { financeConversationPort } from "../lifestyle/finance-conversation-port";
 
 export interface ObsidianNativeOptions {
   transport?: ObsidianCliTransport;
@@ -79,6 +80,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
   };
   const pluginInstance = (id: string) => (app as unknown as { plugins?: { plugins?: Record<string, unknown> } }).plugins?.plugins?.[id];
   const port: ObsidianNativePort = {
+    prepareFinance: async (tool, args, seed, signal) => { checkVault(); return financeConversationPort(options.finance)(tool, args, seed, signal); },
     async context() {
       checkVault();
       await targetFor(nativeJournalPathForDate(app, new Date(), legacyDirectory()), false);
