@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import vm from "node:vm";
 import { zipSync, strToU8 } from "fflate";
 import { createHash, webcrypto } from "node:crypto";
 import { JSDOM } from "jsdom";
 import esbuild from "esbuild";
-import { mobileBuildOptions } from "./mobile-build.mjs";
+import { mobileBuildOptions, mobilePiPlugin } from "./mobile-build.mjs";
 import { profileScenarios } from "../tests/mobile/profile-scenarios.mjs";
 import { financeSettingsNavigationScenarios } from "../tests/mobile/finance-settings-navigation-scenarios.mjs";
 import { originControlScenarios } from "../tests/mobile/origin-controls-scenarios.mjs";
@@ -36,6 +37,30 @@ async function setup(protocol, request) {
   const config = settings(protocol); const runtime = new MobileRuntime(host.app, store, () => config, request);
   return { ...host, store, config, runtime };
 }
+
+await test("mobile build hooks recognize Windows and POSIX license/control paths", async () => {
+  const loaders = [], resolvers = [];
+  mobilePiPlugin.setup({
+    onLoad(options, run) { loaders.push({ ...options, run }); },
+    onResolve(options, run) { resolvers.push({ ...options, run }); }
+  });
+  for (const file of ["/repo/LICENSE", "C:\\repo\\LICENSE"]) {
+    const handler = loaders.find(item => !item.namespace && item.filter.test(file));
+    assert.ok(handler, `LICENSE text loader must match ${file}`);
+    const loaded = await handler.run({ path: path.resolve("LICENSE") });
+    assert.equal(loaded.loader, "text");
+    assert.equal(loaded.contents, await fs.readFile("LICENSE", "utf8"));
+  }
+  assert.ok(!loaders.some(item => !item.namespace && item.filter.test("/repo/LICENSE.ts")));
+  for (const importer of ["src/home/todo-edit-modal.ts", "src/lifestyle/finance-view.ts", "src/ui/modals.ts", "src/settings/account-membership.ts"]) {
+    for (const source of [`/repo/${importer}`, `C:\\repo\\${importer.replaceAll("/", "\\")}`]) {
+      const handler = resolvers.find(item => item.filter.test("../settings/origin-controls"));
+      assert.deepEqual(await handler.run({ path: "../settings/origin-controls", importer: source }), { path: path.resolve("src/ui/mobile/origin-controls.ts") });
+    }
+  }
+  const controls = resolvers.find(item => item.filter.test("../settings/origin-controls"));
+  assert.equal(await controls.run({ path: "../settings/origin-controls", importer: "C:\\repo\\src\\settings\\settings-tab.ts" }), undefined);
+});
 
 await originControlScenarios(test);
 await profileScenarios(module.exports, test, settings);

@@ -9,9 +9,10 @@ import { financeBrandsPlugin, agentAvatarAssetsPlugin, profileStringsPlugin, pro
 export const mobilePiPlugin = {
   name: "mobile-pi-browser-surface",
   setup(build) {
-    build.onLoad({ filter: /\/LICENSE$/ }, async args => ({ contents: await fs.readFile(args.path, "utf8"), loader: "text" }));
+    build.onLoad({ filter: /[\\/]LICENSE$/ }, async args => ({ contents: await fs.readFile(args.path, "utf8"), loader: "text" }));
     build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, args => {
-      if (args.importer.includes("/src/home/") || args.importer.includes("/src/lifestyle/") || args.importer.endsWith("/src/ui/modals.ts") || args.importer.endsWith("/src/settings/account-membership.ts")) return { path: path.resolve("src/ui/mobile/origin-controls.ts") };
+      const importer = args.importer.replaceAll("\\", "/");
+      if (importer.includes("/src/home/") || importer.includes("/src/lifestyle/") || importer.endsWith("/src/ui/modals.ts") || importer.endsWith("/src/settings/account-membership.ts")) return { path: path.resolve("src/ui/mobile/origin-controls.ts") };
     });
     const root = path.resolve("node_modules/@earendil-works");
     build.onResolve({ filter: /^@earendil-works\/pi-agent-core$/ }, () => ({ path: path.join(root, "pi-agent-core/dist/agent.js") }));
