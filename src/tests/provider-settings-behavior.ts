@@ -5452,6 +5452,7 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
 async function assertOnboardingNavigationPersistence(): Promise<void> {
   installProviderModalDomFixture();
   const plugin: any = Object.create(CodexForObsidianPlugin.prototype);
+  plugin.conversationCatalogListeners = new Set<() => void>();
   plugin.settings = structuredClone(DEFAULT_SETTINGS);
   plugin.onboardingRequested = true;
   let failSave = false;
