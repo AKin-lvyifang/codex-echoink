@@ -9,11 +9,28 @@ export async function originControlScenarios(test) {
   const options = mobileBuildOptions();
   const probe = { name: "home-origin-select-probe", setup(build) {
     build.onResolve({ filter: /^origin-select-probe$/ }, () => ({ path: path.resolve("src/home/origin-select-probe.ts") }));
-    build.onLoad({ filter: /\/origin-select-probe\.ts$/ }, () => ({
+    build.onLoad({ filter: /[\\/]origin-select-probe\.ts$/ }, () => ({
       // Keep a value reference: a TS-only re-export can hide a missing export.
       contents: 'import { createOriginSelect } from "../settings/origin-controls"; export const categorySelect = createOriginSelect;', loader: "ts"
     }));
   } };
+  await test("Home Select virtual probe loads on Windows and POSIX paths", async () => {
+    const loaders = [], resolvers = [];
+    probe.setup({
+      onLoad(options, run) { loaders.push({ ...options, run }); },
+      onResolve(options, run) { resolvers.push({ ...options, run }); }
+    });
+    const resolver = resolvers.find(item => item.filter.test("origin-select-probe"));
+    assert.deepEqual(await resolver.run({ path: "origin-select-probe" }), { path: path.resolve("src/home/origin-select-probe.ts") });
+    for (const file of ["/repo/src/home/origin-select-probe.ts", "C:\\repo\\src\\home\\origin-select-probe.ts"]) {
+      const loader = loaders.find(item => item.filter.test(file));
+      assert.ok(loader, `virtual probe loader must match ${file}`);
+      const loaded = await loader.run({ path: file });
+      assert.equal(loaded.loader, "ts");
+      assert.match(loaded.contents, /export const categorySelect = createOriginSelect;/u);
+      assert.ok(!loaders.some(item => item.filter.test(`${file}.map`)));
+    }
+  });
   const built = await esbuild.build({ ...options, entryPoints: ["origin-select-probe"], plugins: [probe, ...options.plugins], metafile: true });
   const main = new JSDOM("<!doctype html><body></body>");
   const owner = new JSDOM("<!doctype html><body><div id=category></div><button>Next</button></body>", { pretendToBeVisual: true });
