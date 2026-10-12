@@ -23863,6 +23863,9 @@ body.is-tablet :is(.echoink-mobile-finance.echoink-lifestyle-view,.echoink-mobil
   .echoink-mobile-finance.echoink-lifestyle-view .echoink-finance-composition .echoink-finance-segment::after { transition:none; }
 }
 .echoink-mobile-finance.echoink-lifestyle-view .echoink-finance-budget-month-tabs button.is-active { background:transparent;--em-finance-fill:var(--background-modifier-hover); }
+/* Month fields include a label above the input; align actions to the input and constrain native month sizing. */
+.echoink-mobile-finance-dialog.echoink-finance-budget-dialog .echoink-finance-budget-month-controls .echoink-finance-field { min-width:0;max-width:100%;grid-template-columns:minmax(0,1fr); }
+.echoink-mobile-finance-dialog.echoink-finance-budget-dialog .echoink-finance-budget-month-controls>button { align-self:flex-end!important; }
 /* Search and native select retain a 44px input target, with a compact visible frame. */
 .echoink-mobile-finance.echoink-lifestyle-view .echoink-finance-toolbar :is(.echoink-finance-ledger-search,.echoink-finance-select) { position:relative;isolation:isolate;align-self:center; }
 .echoink-mobile-finance.echoink-lifestyle-view .echoink-finance-toolbar :is(.echoink-finance-ledger-search,.echoink-finance-select)::before { content:"";position:absolute;inset:6px 0;border:1px solid var(--background-modifier-border);border-radius:6px;background:var(--background-primary);z-index:-1;pointer-events:none; }
