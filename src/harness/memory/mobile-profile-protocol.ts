@@ -1,4 +1,5 @@
 import type { DataAdapter } from "obsidian";
+import { replaceMobileFile } from "../../mobile/replace-file";
 import { sha256Hex } from "../../utils/sha256";
 import { AGENT_IDENTITY_RELATIVE_PATH, defaultAgentIdentityState, normalizeAgentAvatar, normalizeAgentDisplayName, parseAgentIdentityState, type AgentAvatarState, type AgentIdentityState } from "./agent-identity-model";
 import { agentSelfFromTemplate, parseAgentCurrentSelf, publicAgentSelfProfile, renderAgentMarkdown, renderBaseAgentMarkdown, replaceAgentCurrentSelf, type AgentSelfState, type PublicAgentSelfProfile } from "./agent-self-model";
@@ -163,11 +164,9 @@ export class MobileProfileProtocol {
     let parent = "";
     for (const part of path.split("/")) { parent = parent ? `${parent}/${part}` : part; if (!await this.adapter.exists(parent)) await this.adapter.mkdir(parent); }
   }
-  private async atomic(path: string, content: string) {
+  private async atomic(path: string, content: string, replacementPath?: string, expected: string | null = null) {
     await this.mkdir(path.slice(0, path.lastIndexOf("/")));
-    const temp = `${path}.${Math.random().toString(36).slice(2)}.tmp`;
-    try { await this.adapter.write(temp, content); await this.adapter.rename(temp, path); }
-    finally { if (await this.adapter.exists(temp)) await this.adapter.remove(temp); }
+    await replaceMobileFile(this.adapter, path, content, expected, replacementPath, conflict);
   }
   private async commit(changes: Map<string, string>, expected: Map<string, string | null>, baseRevision: number) {
     const assertCurrent = async () => { for (const [path, value] of expected) if (await this.read(ROOT + path) !== value) throw conflict(); };
@@ -175,9 +174,9 @@ export class MobileProfileProtocol {
     const ownerId = this.owner.read() ?? this.owner.create();
     if (!/^[a-zA-Z0-9_-]{1,96}$/u.test(ownerId)) throw invalid();
     const transactionId = `txn_mobile_${ownerId}_${Math.random().toString(36).slice(2)}`, directory = `${transactions}/${transactionId}`;
-    const applied: string[] = [];
     try {
     await this.mkdir(`${directory}/backup`);
+    await this.mkdir(`${directory}/replace`);
     const entries: { relativePath: string; existed: boolean; backupFile?: string; contentHash: string }[] = [];
     for (const [index, [path]] of [...changes].entries()) {
       const old = expected.get(path) ?? null, backupFile = `backup/${index}.bak`;
@@ -188,18 +187,14 @@ export class MobileProfileProtocol {
     await this.atomic(`${directory}/plan.json`, json({ schemaVersion: 1, transactionId, ownerId, operation: "cognitive-update", baseRevision, targetRevision: baseRevision + 1, entries }));
     await this.adapter.write(`${directory}/state`, "applying\n");
       await assertCurrent();
-      for (const [path, content] of changes) {
+      for (const [index, [path, content]] of [...changes].entries()) {
         if (await this.read(ROOT + path) !== expected.get(path)) throw conflict();
-        await this.atomic(ROOT + path, content); applied.push(path);
+        await this.atomic(ROOT + path, content, `${directory}/replace/${index}.bak`, expected.get(path) ?? null);
       }
       await this.adapter.write(`${directory}/state`, "committed\n");
     } catch (error) {
-      for (const path of applied.reverse()) {
-        if (await this.read(ROOT + path) !== changes.get(path)) throw conflict();
-        const old = expected.get(path);
-        if (old === null) await this.adapter.remove(ROOT + path); else await this.atomic(ROOT + path, old!);
-      }
-      await this.adapter.rmdir(directory, true);
+      try { await this.recover(directory); }
+      catch (restoreError) { throw new AggregateError([error, restoreError], "保存失败，原资料与事务备份已保留，恢复尚未完成。"); }
       throw error;
     }
     await this.adapter.rmdir(directory, true);
@@ -214,8 +209,8 @@ export class MobileProfileProtocol {
     }
     const plan = object(planText);
     if (plan.schemaVersion !== 1 || !plan.ownerId || plan.ownerId !== this.owner.read() || !Array.isArray(plan.entries)) throw invalid();
-    const entries: { path: string; old: string | null; current: string | null }[] = [];
-    for (const value of plan.entries) {
+    const entries: { path: string; old: string | null; current: string | null; replacementPath: string }[] = [];
+    for (const [index, value] of plan.entries.entries()) {
       const entry = value as { relativePath: string; existed: boolean; backupFile?: string; contentHash: string };
       // Only this adapter's known control files can be restored. Validate ALL
       // targets first; an external write prevents the whole recovery.
@@ -223,13 +218,24 @@ export class MobileProfileProtocol {
         || typeof entry.existed !== "boolean" || !/^[a-f0-9]{64}$/u.test(entry.contentHash)
         || (entry.existed && !/^backup\/\d+\.bak$/u.test(entry.backupFile ?? ""))) throw invalid();
       const old = entry.existed ? await this.read(`${directory}/${entry.backupFile}`) : null, current = await this.read(ROOT + entry.relativePath);
-      if ((entry.existed && old === null) || (current !== old && (current === null || sha256Hex(current) !== entry.contentHash))) throw conflict();
-      entries.push({ path: ROOT + entry.relativePath, old, current });
+      // Derive slots by index, including for existing v1 journals. Recovery
+      // remains restartable without introducing another journal format.
+      const replacementPath = `${directory}/replace/${index}.bak`;
+      const parked = await this.read(replacementPath);
+      const parkedIsKnown = parked !== null && (parked === old || sha256Hex(parked) === entry.contentHash);
+      if ((entry.existed && old === null) || (parked !== null && !parkedIsKnown)
+        || (current !== old && (current === null ? !parkedIsKnown : sha256Hex(current) !== entry.contentHash))) throw conflict();
+      entries.push({ path: ROOT + entry.relativePath, old, current, replacementPath });
     }
     for (const entry of entries.reverse()) {
       if (await this.read(entry.path) !== entry.current) throw conflict();
       if (entry.current === entry.old) continue;
-      if (entry.old === null) await this.adapter.remove(entry.path); else await this.atomic(entry.path, entry.old);
+      if (entry.old === null) await this.adapter.remove(entry.path);
+      else {
+        await this.mkdir(`${directory}/replace`);
+        if (entry.current !== null && await this.adapter.exists(entry.replacementPath)) await this.adapter.remove(entry.replacementPath);
+        await this.atomic(entry.path, entry.old, entry.replacementPath, entry.current);
+      }
     }
     await this.adapter.rmdir(directory, true);
   }

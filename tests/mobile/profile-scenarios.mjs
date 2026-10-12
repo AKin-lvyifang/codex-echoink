@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createHost, answer } from "./host.mjs";
+import { answer } from "./host.mjs";
+import { createProfileHost as createHost } from "./profile-host.mjs";
 
 export async function profileScenarios(api, test, settings) {
   const { renderPersonalMemoryOverview, MobileProfileProtocol, renderAgentMarkdown, agentSelfFromTemplate, parseAgentCurrentSelf, emptyAgentSelfMetadata, getAgentTemplate, stableSelfKey, MobileStore, MobileRuntime, MobileServices } = api;
@@ -8,6 +9,65 @@ export async function profileScenarios(api, test, settings) {
   const hash = text => createHash("sha256").update(text).digest("hex");
   const identity = { schema: "echoink.agent-identity.v1", revision: 2, displayName: "墨墨", avatar: { kind: "preset", presetId: "sol" }, updatedAt: 42 };
   const habits = [{ key: "short-first", text: "长期习惯独有证据" }];
+  await test("finance replacement supports non-overwriting adapters and restores failed saves", async () => {
+    const path = "custom/lifestyle.json", initial = JSON.stringify({ version: 1, unowned: { keep: true }, budgets: [] });
+    const host = createHost({ [path]: initial }), store = api.mobileLifestyleStore(host.adapter, path);
+    await store.initialize();
+    await store.update(data => { data.budgets.push({ month: "2026-10", totalCents: 5000, allocations: {} }); });
+    const before = host.files.get(path), snapshot = JSON.stringify(store.snapshot());
+    const rename = host.adapter.rename.bind(host.adapter); let failed = false;
+    host.adapter.rename = async (from, to) => { if (to === path && !failed) { failed = true; throw new Error("finance-install-failure"); } await rename(from, to); };
+    await assert.rejects(store.update(data => { data.budgets = []; }), /finance-install/u);
+    assert.equal(host.files.get(path), before); assert.equal(JSON.stringify(store.snapshot()), snapshot);
+    assert.ok(![...host.files.keys()].some(file => file.endsWith(".tmp")));
+    host.adapter.rename = rename;
+    const reopened = api.mobileLifestyleStore(host.adapter, path); await reopened.initialize();
+    assert.equal(reopened.snapshot().budgets[0].totalCents, 5000); assert.equal(reopened.snapshot().unowned.keep, true);
+    const remove = host.adapter.remove.bind(host.adapter), replacement = `${path}.finance-replace-backup.json`;
+    host.adapter.remove = async file => { if (file === replacement) throw new Error("completed-save-cleanup-failure"); await remove(file); };
+    await reopened.update(data => { data.budgets[0].totalCents = 7000; });
+    assert.equal(reopened.snapshot().budgets[0].totalCents, 7000); assert.equal(JSON.parse(host.files.get(path)).budgets[0].totalCents, 7000);
+    assert.equal(host.files.get(replacement), before);
+  });
+  await test("finance failed restoration keeps its backup and reopening recovers without overwriting a current ledger", async () => {
+    const path = "custom/lifestyle.json", replacement = `${path}.finance-replace-backup.json`;
+    const initial = JSON.stringify({ version: 1, unowned: { keep: true }, budgets: [] });
+    const host = createHost({ [path]: initial }), store = api.mobileLifestyleStore(host.adapter, path);
+    await store.initialize(); const before = JSON.stringify(store.snapshot());
+    const rename = host.adapter.rename.bind(host.adapter);
+    host.adapter.rename = async (from, to) => { if (to === path) throw new Error(from === replacement ? "finance-restore-failure" : "finance-install-failure"); await rename(from, to); };
+    await assert.rejects(store.update(data => { data.budgets.push({ month: "2026-10", totalCents: 5000, allocations: {} }); }), error => {
+      assert.match(error.message, /恢复/u); assert.ok(error.errors.some(cause => /finance-install/u.test(cause.message))); assert.ok(error.errors.some(cause => /finance-restore/u.test(cause.message))); return true;
+    });
+    assert.equal(host.files.has(path), false); assert.equal(host.files.get(replacement), initial);
+    assert.equal(JSON.stringify(store.snapshot()), before); assert.ok(![...host.files.keys()].some(file => file.endsWith(".tmp")));
+    host.adapter.rename = rename;
+    const reopened = api.mobileLifestyleStore(host.adapter, path); await reopened.initialize();
+    assert.equal(host.files.get(path), initial); assert.equal(host.files.has(replacement), false); assert.equal(reopened.snapshot().unowned.keep, true);
+    const external = JSON.stringify({ version: 1, unowned: { external: true }, budgets: [] });
+    host.files.set(path, external); host.files.set(replacement, initial);
+    const current = api.mobileLifestyleStore(host.adapter, path); await current.initialize();
+    assert.equal(host.files.get(path), external); assert.equal(host.files.get(replacement), initial); assert.equal(current.snapshot().unowned.external, true);
+    await assert.rejects(reopened.update(data => { data.budgets = []; }), /资料已变化/u);
+    assert.equal(host.files.get(path), external); assert.equal(host.files.get(replacement), initial);
+  });
+  await test("finance detects changes during preparation and preserves original errors when temporary cleanup fails", async () => {
+    const path = "custom/lifestyle.json", initial = JSON.stringify({ version: 1, budgets: [] });
+    const host = createHost({ [path]: initial }), store = api.mobileLifestyleStore(host.adapter, path); await store.initialize();
+    const write = host.adapter.write.bind(host.adapter), external = '{"version":1,"external":true}';
+    host.adapter.write = async (file, content) => { await write(file, content); if (file.endsWith(".tmp")) host.files.set(path, external); };
+    await assert.rejects(store.update(data => { data.budgets = []; }), /资料已变化/u);
+    assert.equal(host.files.get(path), external); assert.ok(![...host.files.keys()].some(file => file.endsWith(".tmp")));
+    host.adapter.write = write;
+    const current = api.mobileLifestyleStore(host.adapter, path); await current.initialize();
+    const rename = host.adapter.rename.bind(host.adapter), remove = host.adapter.remove.bind(host.adapter);
+    host.adapter.rename = async (from, to) => { if (to === path && from.endsWith(".tmp")) throw new Error("original-install-failure"); await rename(from, to); };
+    host.adapter.remove = async file => { if (file.endsWith(".tmp")) throw new Error("temporary-cleanup-failure"); await remove(file); };
+    await assert.rejects(current.update(data => { data.budgets = []; }), error => {
+      assert.ok(error.errors.some(cause => /original-install/u.test(cause.message))); assert.ok(error.errors.some(cause => /temporary-cleanup/u.test(cause.message))); return true;
+    });
+    assert.equal(host.files.get(path), external);
+  });
   function seed() {
     const agent = renderAgentMarkdown({ identity, styleName: getAgentTemplate("advisor").labelZh, self: agentSelfFromTemplate(getAgentTemplate("advisor"), habits) }) + "\n额外既有正文必须保留。\n";
     const records = [{ id:"existing-memory",kind:"fact",status:"current",title:"旧记忆独有证据",date:"2026-10-11",basis:"explicit" }];
@@ -93,6 +153,27 @@ export async function profileScenarios(api, test, settings) {
       const protocol = new MobileProfileProtocol(host.adapter, () => 99, { read: () => "this-device", create: () => "this-device" });
       if (scenario === "own") { assert.equal((await protocol.profile()).identity.displayName, "墨墨"); assert.deepEqual([...host.files].sort(), Object.entries(initial).sort()); }
       else { const before = [...host.files]; await assert.rejects(protocol.profile()); assert.deepEqual([...host.files], before); assert.equal(host.writes.length, 0); }
+    }
+  });
+  await test("profile recovery can restart from a missing target and from a second interrupted legacy recovery", async () => {
+    for (const scenario of ["parked-original", "interrupted-recovery"]) {
+      const initial = seed(), next = JSON.stringify({ ...identity, revision: 3, displayName: "中断修改" });
+      const directory = root + "shared-user/.runtime/transactions/txn_mobile_this-device_interrupted";
+      const files = { ...initial, [`${directory}/backup/0.bak`]: initial[identityPath], [`${directory}/state`]: "applying\n",
+        [`${directory}/plan.json`]: JSON.stringify({ schemaVersion: 1, ownerId: "this-device", entries: [{ relativePath: identityPath.slice(root.length), existed: true, backupFile: "backup/0.bak", contentHash: hash(next) }] }) };
+      if (scenario === "parked-original") { delete files[identityPath]; files[`${directory}/replace/0.bak`] = initial[identityPath]; }
+      else files[identityPath] = next;
+      const host = createHost(files), owner = { read: () => "this-device", create: () => "this-device" };
+      if (scenario === "interrupted-recovery") {
+        const rename = host.adapter.rename.bind(host.adapter);
+        host.adapter.rename = async (from, to) => { if (to === identityPath) throw new Error("second-recovery-interruption"); await rename(from, to); };
+        await assert.rejects(new MobileProfileProtocol(host.adapter, () => 99, owner).profile());
+        assert.equal(host.files.has(identityPath), false); assert.equal(host.files.get(`${directory}/replace/0.bak`), next);
+        assert.equal(host.files.get(`${directory}/backup/0.bak`), initial[identityPath]);
+        host.adapter.rename = rename;
+      }
+      const recovered = await new MobileProfileProtocol(host.adapter, () => 99, owner).profile();
+      assert.equal(recovered.identity.displayName, "墨墨"); assert.deepEqual([...host.files].sort(), Object.entries(initial).sort());
     }
   });
   await test("preparation failure and own plan-less restart leave business files unchanged", async () => {

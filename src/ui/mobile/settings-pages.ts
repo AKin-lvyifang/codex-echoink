@@ -19,10 +19,16 @@ import license from "../../../LICENSE";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
 import { FinanceCatalogPanel, type CatalogKind } from "../../lifestyle/finance-catalog-dialog";
 
-export type MobileSettingsPage = "basic" | "layout" | "resources" | "knowledge" | "review" | "todos-settings" | "todos" | "profile-agent" | "profile-user" | "archives" | "account" | "finance-settings";
+type MobileFinanceCatalogPage = "finance-merchants" | "finance-accounts" | "finance-categories";
+const financeCatalogKinds: Record<MobileFinanceCatalogPage, CatalogKind> = { "finance-merchants": "merchants", "finance-accounts": "accounts", "finance-categories": "categories" };
+export type MobileSettingsPage = "basic" | "layout" | "resources" | "knowledge" | "review" | "todos-settings" | "todos" | "profile-agent" | "profile-user" | "archives" | "account" | "finance-settings" | MobileFinanceCatalogPage;
 export type MobileSettingsRoute = MobileSettingsPage | "settings" | "providers";
 interface Controls {
   go(page: MobileSettingsPage | "memories" | "providers" | "chat"): void;
+  back(): void;
+  captureScroll(key?: string): void;
+  restoreScroll(key?: string): void;
+  updateHeader(): void;
   sheet(title: string, render: (body: HTMLElement) => void): void;
   closeSheet(): void;
   row(parent: HTMLElement, title: string, description: string, icon: string, action: () => void | Promise<void>): HTMLButtonElement;
@@ -44,7 +50,7 @@ export class MobileSettingsPages {
     { page: "todos-settings", title: "待办", icon: SETTINGS_TAB_ICONS.todos },
     { page: "account", title: "账号与会员", icon: SETTINGS_TAB_ICONS.account }
   ];
-  readonly titles: Record<MobileSettingsPage, string> = { basic: "基础设置", layout: "布局与外观", resources: "Skills & MCP", knowledge: "知识库管理", review: "复盘", "todos-settings": "待办设置", todos: "待办", "profile-agent": "Agent 档案", "profile-user": "用户画像", archives: "已归档会话", account: "账号与会员", "finance-settings": "财务设置" };
+  readonly titles: Record<MobileSettingsPage, string> = { basic: "基础设置", layout: "布局与外观", resources: "Skills & MCP", knowledge: "知识库管理", review: "复盘", "todos-settings": "待办设置", todos: "待办", "profile-agent": "Agent 档案", "profile-user": "用户画像", archives: "已归档会话", account: "账号与会员", "finance-settings": "财务设置", "finance-merchants": "管理商户", "finance-accounts": "管理账户", "finance-categories": "管理分类" };
   private knowledgeMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   private resourceTab = "plugins";
   private todoStatus = "open";
@@ -58,6 +64,11 @@ export class MobileSettingsPages {
   private accountPage?: { dispose(): void };
   private financeCatalog?: FinanceCatalogPanel;
   dispose() { this.identityLink = undefined; this.agentArticle = undefined; this.unsubscribe?.(); this.unsubscribe = undefined; this.accountPage?.dispose(); this.accountPage = undefined; this.financeCatalog?.dispose(); this.financeCatalog = undefined; }
+  categoryPage(page: string) { return page === "finance-settings" || Object.hasOwn(financeCatalogKinds, page) ? "resources" : page; }
+  navigationKey() { return this.financeCatalog?.navigationKey(); }
+  navigationTitle() { return this.financeCatalog?.title(); }
+  backLabel() { return this.financeCatalog?.backLabel(); }
+  back(): boolean { if (!this.financeCatalog) return false; this.financeCatalog.back(); return true; }
   refreshIdentity() { if (this.identityLink?.isConnected) this.fillIdentityLink(this.identityLink); if (this.agentArticle?.isConnected) void this.loadAgentProfile(this.agentArticle); }
   private avatar(parent: HTMLElement, profile: MobileAgentProfile["identity"], cls: string) {
     const box = node(parent, "span", cls); box.setAttribute("aria-hidden", "true");
@@ -110,6 +121,7 @@ export class MobileSettingsPages {
     body.classList.add("em-settings-page");
     switch (page) {
       case "finance-settings": this.financeSettings(body); break;
+      case "finance-merchants": case "finance-accounts": case "finance-categories": this.financeCatalogPage(body, financeCatalogKinds[page]); break;
       case "account": {
         const account = this.host.accountService;
         if (!account) { this.help(body, "账号服务尚未初始化，请稍后重试。"); break; }
@@ -200,18 +212,28 @@ export class MobileSettingsPages {
     toggle("在首页显示", () => settings.homeModules.finance !== false, enabled => lifestyle.finance.saveOption("showOnHome", enabled));
     this.help(group, "未配置模型时仍可记账、预算和导入。AI 分析与智能整理使用当前 EchoInk 模型。");
     const catalog = node(page, "div", "echoink-life-settings-page");
-    const menu = this.group(catalog), panel = node(catalog, "div"); panel.hidden = true;
-    for (const [kind, title] of [["merchants", "管理商户"], ["accounts", "管理账户"], ["categories", "管理分类"]] as [CatalogKind, string][]) this.ui.row(menu, title, "", "list", () => {
-      const draw = () => {
-        panel.replaceChildren();
-        const back = node(panel, "button", "echoink-life-settings-back", `‹ ${this.financeCatalog?.backLabel() ?? "返回财务设置"}`);
-        back.onclick = () => this.financeCatalog?.back();
-        node(panel, "h2", "", this.financeCatalog?.title());
-        this.financeCatalog?.render(panel);
-      };
-      this.financeCatalog = new FinanceCatalogPanel(this.services, kind, () => { this.financeCatalog?.dispose(); this.financeCatalog = undefined; panel.replaceChildren(); panel.hidden = true; menu.hidden = false; }, draw);
-      menu.hidden = true; panel.hidden = false; draw();
-    });
+    const menu = this.group(catalog);
+    for (const page of Object.keys(financeCatalogKinds) as MobileFinanceCatalogPage[]) this.ui.row(menu, this.titles[page], "", "list", () => this.ui.go(page));
+  }
+  private financeCatalogPage(body: HTMLElement, kind: CatalogKind) {
+    if (!this.services.lifestyle) { this.help(body, "财务服务尚未初始化，请稍后重试。"); return; }
+    const page = node(body, "div", "echoink-settings-demo echoink-lifestyle-view echoink-life-finance echoink-mobile-finance-settings");
+    const content = node(page, "div", "echoink-life-settings-page");
+    let renderedKey: string | undefined;
+    const draw = () => {
+      if (this.financeCatalog !== catalog || !body.isConnected) return;
+      if (renderedKey) this.ui.captureScroll(renderedKey);
+      content.replaceChildren();
+      catalog.render(content);
+      renderedKey = catalog.navigationKey();
+      this.ui.updateHeader();
+      this.ui.restoreScroll(renderedKey);
+    };
+    const catalog = new FinanceCatalogPanel(this.services, kind, () => {
+      catalog.dispose(); this.financeCatalog = undefined; this.ui.back();
+    }, draw);
+    this.financeCatalog = catalog;
+    draw();
   }
   private mcpEditor(id?: string) {
     const settings = this.host.settings(); const record = id ? settings.resources.mcpConnections[id] : undefined;
