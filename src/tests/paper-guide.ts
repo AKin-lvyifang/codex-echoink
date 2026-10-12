@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import type CodexForObsidianPlugin from "../main";
 import type { CapabilityAccess } from "../membership/types";
 import { PaperGuideController } from "../plugin/paper-guide-controller";
+import {
+  advanceEchoInkOnboardingTutorial,
+  ECHOINK_ONBOARDING_STEPS,
+  prepareEchoInkOnboardingTutorial
+} from "../settings/onboarding";
 import { normalizeSettingsData } from "../settings/settings";
 import { PaperGuideModal } from "./paper-guide-modal-shim";
 
@@ -218,6 +223,40 @@ async function persistenceAndNavigation(): Promise<void> {
   }
 }
 
+async function repeatedOnboardingCompletion(): Promise<void> {
+  for (const action of ["dismiss", "choose"] as const) {
+    const f = fixture();
+    assert.equal(f.instances().length, 0, "visiting Home does not automatically open the guide");
+    for (let round = 1; round <= 3; round++) {
+      if (round > 1) {
+        const setup = f.plugin.settings.setup;
+        assert.ok(prepareEchoInkOnboardingTutorial(setup, { forceRestart: true }));
+        for (const step of ECHOINK_ONBOARDING_STEPS) {
+          await f.controller.showAfterOnboarding();
+          assert.equal(f.instances().length, round - 1, "an unfinished tutorial cannot reopen the guide");
+          const result = advanceEchoInkOnboardingTutorial(setup, step, Date.now() + round);
+          assert.equal(result.completed, step === "personality");
+        }
+      }
+      const modal = await f.open();
+      assert.equal(f.instances().length, round, `${action}: completing tutorial ${round} opens a fresh guide`);
+      await f.controller.showAfterOnboarding();
+      assert.equal(f.instances().length, round, "repeated completion calls do not stack dialogs");
+      const next = action === "dismiss" ? await modal.options.onDismiss() : await modal.options.onChoose("knowledge");
+      modal.close();
+      if (typeof next === "function") await next();
+      assert.ok(f.plugin.settings.setup.paperGuideDismissedAt > 0);
+      assert.equal(f.state.saves, round, "each tutorial's guide choice or dismissal is saved");
+      await f.controller.showAfterOnboarding();
+      assert.equal(f.instances().length, round, "a closed guide stays closed for the same tutorial completion");
+      assert.equal(f.frames.pending, 0);
+      assert.equal(f.listeners.size, 0);
+    }
+    assert.equal(f.events.filter(event => event === "knowledge:open").length, action === "choose" ? 3 : 0);
+    f.dispose();
+  }
+}
+
 async function scenarioRouting(): Promise<void> {
   for (const scene of ["english", "finance"] as const) for (const paid of [false, true]) for (const enabled of [false, true]) {
     const f = fixture({ paid, enabled }); const modal = await f.open();
@@ -315,6 +354,7 @@ export async function runPaperGuideCompletionTests(Constructor: new () => Comple
 export async function runPaperGuideTests(): Promise<void> {
   await timingAndCancellation();
   await persistenceAndNavigation();
+  await repeatedOnboardingCompletion();
   await scenarioRouting();
-  console.log("PASS paper guide controller: paint timing, single instance, cancellation, persisted dismissal, rollback, 8 access routes and live authorization");
+  console.log("PASS paper guide controller: paint timing, single instance, cancellation, persisted dismissal, repeated tutorial completion, rollback, 8 access routes and live authorization");
 }

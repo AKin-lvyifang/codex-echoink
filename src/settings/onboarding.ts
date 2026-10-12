@@ -119,6 +119,8 @@ export function advanceEchoInkOnboardingTutorial(
     return Object.freeze({ changed: true, completed: false, nextStep });
   }
   setup.completedAt = now;
+  // Each completed tutorial gets its own follow-up choice on the workbench.
+  setup.paperGuideDismissedAt = 0;
   setup.lastCheckedAt = now;
   setup.tutorialVersion = ECHOINK_ONBOARDING_VERSION;
   setup.dismissedVersion = ECHOINK_ONBOARDING_VERSION;
