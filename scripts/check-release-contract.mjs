@@ -5,13 +5,14 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { transformSync } from "esbuild";
 import { parseDocument } from "yaml";
+import { validateManifestSource } from "./manifest-contract.mjs";
+import { runManifestContractTests } from "./manifest-contract-tests.mjs";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const args = parseArgs(process.argv.slice(2));
 const failures = [];
 const expectedAssets = ["main.js", "manifest.json", "styles.css"];
-const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-const manifest = readJson("manifest.json");
+const manifest = readManifest();
 const packageJson = readJson("package.json");
 const packageLock = readJson("package-lock.json");
 const versions = readJson("versions.json");
@@ -19,7 +20,8 @@ const workflowPath = path.join(rootDir, ".github", "workflows", "release.yml");
 const workflowDocument = parseWorkflow(workflowPath);
 const workflow = workflowDocument?.toJS() ?? {};
 
-validateManifest(manifest);
+try { runManifestContractTests(); }
+catch (error) { failures.push(`Manifest contract probes failed: ${error.message}`); }
 check(packageJson.version === manifest.version, "package.json version must match manifest.json.");
 check(packageLock.version === manifest.version, "package-lock.json version must match manifest.json.");
 check(packageLock.packages?.[""]?.version === manifest.version, "package-lock.json root package version must match manifest.json.");
@@ -47,16 +49,11 @@ console.log(
   + `${args.artifacts ? ` with assets from ${args.artifacts}` : ""}.`
 );
 
-function validateManifest(value) {
-  check(isRecord(value), "manifest.json must be an object.");
-  if (!isRecord(value)) return;
-  for (const key of ["id", "name", "version", "minAppVersion", "description", "author", "isDesktopOnly"]) {
-    check(key in value, `manifest.json is missing ${key}.`);
-  }
-  check(typeof value.id === "string" && /^[a-z]+(?:-[a-z]+)*$/.test(value.id), "manifest id must use lowercase hyphenated words.");
-  check(typeof value.version === "string" && semver.test(value.version), "manifest version must use x.y.z SemVer.");
-  check(typeof value.minAppVersion === "string" && semver.test(value.minAppVersion), "manifest minAppVersion must use x.y.z SemVer.");
-  check(value.isDesktopOnly === false, "manifest must allow mobile with EchoInk's isolated platform entries.");
+function readManifest() {
+  const source = fs.readFileSync(path.join(rootDir, "manifest.json"), "utf8");
+  const errors = validateManifestSource(source);
+  failures.push(...errors);
+  return errors.length ? {} : JSON.parse(source);
 }
 
 function validatePlatformBoundary() {
@@ -230,10 +227,6 @@ function blockValues(value) {
 
 function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.join(rootDir, relativePath), "utf8"));
-}
-
-function isRecord(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function check(condition, message) {

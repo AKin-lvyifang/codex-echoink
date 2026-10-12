@@ -37,12 +37,13 @@ function recordPatch(value: unknown): FinanceRecordPatch {
     if (key === "amountCents") { if (!Number.isSafeInteger(val) || Number(val) <= 0) throw new Error("finance_invalid_amount"); }
     else if (typeof val !== "string" || val.length > (key === "merchant" ? 60 : 1000) || /\0/u.test(val)) throw new Error("finance_invalid_record");
   }
-  if (v.kind !== undefined && !["expense", "income", "refund", "transfer"].includes(String(v.kind))) throw new Error("finance_invalid_record");
+  if (v.kind !== undefined && (typeof v.kind !== "string" || !["expense", "income", "refund", "transfer"].includes(v.kind))) throw new Error("finance_invalid_record");
   if (v.date !== undefined) {
-    const text = String(v.date); const date = new Date(text.slice(0, 10) + "T12:00:00Z");
+    if (typeof v.date !== "string") throw new Error("finance_invalid_record");
+    const text = v.date; const date = new Date(text.slice(0, 10) + "T12:00:00Z");
     if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(text) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== text.slice(0, 10)) throw new Error("finance_invalid_date");
   }
-  return { ...v } as FinanceRecordPatch;
+  return { ...v };
 }
 export function normalizeFinanceToolRequest(tool: PiFinanceToolId, value: unknown): FinanceToolRequest {
   const v = object(value); const action = String(v.action);

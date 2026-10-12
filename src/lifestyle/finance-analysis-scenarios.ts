@@ -60,7 +60,7 @@ export function financeAnalysisAdjustmentScenarios(month: string, rows: readonly
     if (canReallocate) {
       reference.单独调拨 = `${key}_reallocation`;
       const poolSource = configured ? `${nextMonth}已配置预算` : `若${nextMonth}沿用本月总预算与全部分类额度`;
-      facts[reference.单独调拨] = `${poolSource}的未分配余量为 ${yuan(available!)}；单独给${label}增加 ${yuan(difference)} 后，额度为 ${yuan(net)}，余量为 ${yuan(available! - difference)}。`;
+      facts[reference.单独调拨] = `${poolSource}的未分配余量为 ${yuan(available)}；单独给${label}增加 ${yuan(difference)} 后，额度为 ${yuan(net)}，余量为 ${yuan(available - difference)}。`;
     }
     const choices: PurposeChoice[] = [];
     if (difference > 0 && !categoryRows.some(row => row.kind === "refund")) {
@@ -87,7 +87,7 @@ export function financeAnalysisAdjustmentScenarios(month: string, rows: readonly
     }
     scenarios.push({ 分类: label, 目标月份: nextMonth, 条件: condition, 本期净支出元: net / 100,
       本期分类额度元: allocation / 100, 情景分类额度元: limit / 100, 需减少或增加额度元: difference / 100,
-      未分配余量元: available === null ? null : available / 100, 单独调拨后余量元: canReallocate ? (available! - difference) / 100 : null,
+      未分配余量元: available === null ? null : available / 100, 单独调拨后余量元: canReallocate ? (available - difference) / 100 : null,
       引用: reference, 用途取舍: choices });
   }
   return { scenarios, facts };

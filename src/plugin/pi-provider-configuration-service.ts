@@ -181,6 +181,8 @@ export class PiProviderConfigurationService {
         : createConfiguredPiProviderProtocolDispatcher(normalized),
       timeoutMs: this.options.timeoutMs,
       recordUsage: this.options.recordUsage
+        ? (event) => this.options.recordUsage?.(event)
+        : undefined
     });
   }
 
@@ -239,7 +241,7 @@ export class PiProviderConfigurationService {
       });
       const stream = this.options.recordUsage ? observeUsageStream(upstream, {
         context, provider: model.provider, model: model.id, source: "background",
-        recordUsage: this.options.recordUsage,
+        recordUsage: (event) => this.options.recordUsage?.(event),
         onRecordError: () => console.error("EchoInk background usage could not be recorded")
       }) : upstream;
       const message = await stream.result();
@@ -457,7 +459,7 @@ export async function testProviderConnection(input: {
     });
     const stream = input.recordUsage ? observeUsageStream(upstream, {
       context, provider: model.provider, model: model.id, source: "connection-test",
-      recordUsage: input.recordUsage,
+      recordUsage: (event) => input.recordUsage?.(event),
       onRecordError: () => console.error("EchoInk connection check usage could not be recorded")
     }) : upstream;
     const message = await stream.result();

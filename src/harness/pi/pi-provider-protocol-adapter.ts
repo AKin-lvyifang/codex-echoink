@@ -261,7 +261,7 @@ implements ControlledPiStreamPort {
           provider: input.model.provider,
           model: input.model.id,
           source: "conversation",
-          recordUsage: this.options.recordUsage,
+          recordUsage: (event) => this.options.recordUsage?.(event),
           additionalInputTokens,
           onRecordError: () => console.error("EchoInk request usage could not be recorded")
         }) : upstream;

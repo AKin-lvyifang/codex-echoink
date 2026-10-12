@@ -339,7 +339,7 @@ export async function recoverPiVaultDomainReceipts(input: {
                 const record = state.records.find(r => r.entry.id === target.id);
                 return !!record && financeValueVersion(record.entry) === financeValueVersion(target.expectedEntry);
               });
-            } else if (state && expected?.kind === "budget") verified = financeValueVersion(financeBudgetSnapshot(state.data, String(expected.scope)).budget) === financeValueVersion(expected.expectedBudget);
+            } else if (state && expected?.kind === "budget" && typeof expected.scope === "string") verified = financeValueVersion(financeBudgetSnapshot(state.data, expected.scope).budget) === financeValueVersion(expected.expectedBudget);
             else if (state && expected?.kind === "bill") verified = financeValueVersion(state.data.financeBillPlans.find(b => b.id === expected.billId) ?? null) === financeValueVersion(expected.expectedBill);
           } catch { /* Read-only recovery cannot invent success or replay writes. */ }
           return { status: verified ? "completed" : "uncertain", safeSummary: verified ? "finance_original_operation_verified" : "finance_result_uncertain_query_original_operation",

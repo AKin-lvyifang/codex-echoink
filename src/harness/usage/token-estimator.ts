@@ -26,9 +26,10 @@ export function countTextTokens(text: string): number {
     recentCounts.set(text, count);
     cachedCharacters += text.length;
     while (recentCounts.size > 64 || cachedCharacters > 200_000) {
-      const oldest = recentCounts.keys().next().value!;
-      recentCounts.delete(oldest);
-      cachedCharacters -= oldest.length;
+      const oldest = recentCounts.keys().next();
+      if (oldest.done) break;
+      recentCounts.delete(oldest.value);
+      cachedCharacters -= oldest.value.length;
     }
   }
   return count;
@@ -109,7 +110,9 @@ function normalizeValue(value: unknown): { value: unknown; images: number } {
       normalized = { name: value.name, description: value.description, parameters: value.parameters };
     } else if (Array.isArray(value.messages)) {
       // This entry point is also used by context-budget admission checks.
-      const pieces = [value.systemPrompt ?? "", ...(Array.isArray(value.tools) ? value.tools : []), ...value.messages];
+      const tools: readonly unknown[] = Array.isArray(value.tools) ? value.tools : [];
+      const messages: readonly unknown[] = value.messages;
+      const pieces = [value.systemPrompt ?? "", ...tools, ...messages];
       return { value: pieces.map(piece => {
         const item = normalizeValue(piece);
         images += item.images;

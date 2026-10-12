@@ -4,7 +4,8 @@ import { effectiveFinanceBudget } from "./finance-budget";
 
 export type FinanceRecordPatch = Partial<Pick<FinanceEntry, "date" | "merchant" | "amountCents" | "kind" | "category" | "account" | "description" | "note" | "icon">> & { billPlanId?: string | null };
 export interface FinanceRecordSnapshot { entry: FinanceEntry; path: string; version: string }
-export type FinanceBudgetScope = "default" | string;
+/** "default" or a validated YYYY-MM month. */
+export type FinanceBudgetScope = string;
 export interface FinanceBudgetPatch { totalCents?: number; allocations?: Record<string, number>; deltas?: Record<string, number> }
 export function financeValueVersion(value: unknown): string {
   const ordered = (v: unknown): unknown => Array.isArray(v) ? v.map(ordered) : v && typeof v === "object"

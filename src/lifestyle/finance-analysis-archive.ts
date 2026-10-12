@@ -17,6 +17,9 @@ export interface FinanceAnalysisArchiveDraft {
 }
 
 const inside = (value: string, root: string) => value === root || value.startsWith(`${root}/`);
+function recordField(value: unknown, key: string): unknown {
+  return value !== null && typeof value === "object" && key in value ? (value as Record<string, unknown>)[key] : undefined;
+}
 export function validateFinanceAnalysisDirectory(value: string, root: string, transactions: string, config = ".obsidian"): string {
   const result = value.trim() || `${root}/分析记录`;
   if (result.startsWith("/") || result.includes("\\") || /[:\p{Cc}]/u.test(result)
@@ -151,18 +154,20 @@ export class FinanceAnalysisArchive {
     const snapshotExists = await this.app.vault.adapter.exists(record.snapshotPath);
     const snapshotText=JSON.stringify({ ...draft, dataVersion:1, generatedAt:archiveTime(draft.createdAt).precise },null,2);
     if (snapshotExists) {
-      let old: {id?:string}|undefined;
+      let old: unknown;
       try { old=JSON.parse(await this.app.vault.adapter.read(record.snapshotPath)); }
       catch { if (!this.store.snapshot().financeAnalysisArchives?.some(r=>r.id===draft.id&&r.status==="raw"&&r.snapshotPath===record.snapshotPath))
         throw new Error("存档文件无法核对，原记录已保留"); }
-      if (old && old.id!==draft.id) throw new Error("存档文件冲突，原记录已保留");
+      if (old && recordField(old, "id")!==draft.id) throw new Error("存档文件冲突，原记录已保留");
     }
     await this.app.vault.adapter.write(record.snapshotPath,snapshotText);
-    const input = draft.input ? JSON.parse(draft.input) : {};
+    const input: unknown = draft.input ? JSON.parse(draft.input) : {};
+    if (input === null) throw new Error("分析资料无法读取，原记录已保留");
+    const period = recordField(input, "统计范围"), comparison = recordField(input, "上个自然月可比");
     const metadata=stringify({ type:"finance-analysis", analysis_id:draft.id, month:draft.period,
       generated_at:archiveTime(draft.createdAt).precise, month_version:record.version, model:draft.provider,
       skill_version:draft.promptVersion, data_version:1, status:draft.status, source:draft.source,
-      as_of:input.统计范围?.止日??null, comparison_range:input.上个自然月可比 ? { current:input.上个自然月可比.当前范围, previous:input.上个自然月可比.历史范围 } : null, previous_report_ids:draft.previousReportIds,
+      as_of:recordField(period, "止日")??null, comparison_range:comparison ? { current:recordField(comparison, "当前范围"), previous:recordField(comparison, "历史范围") } : null, previous_report_ids:draft.previousReportIds,
       tags:["echoink/finance-analysis","finance/monthly-review"] });
     const body=draft.report?financeReportMarkdown(draft.report):`## 解析失败\n\n${draft.error??"内容无法展示"}\n\n原始最终响应保留在同名机器快照中。`;
     const markdown=`---\n${metadata}---\n\n${body}\n`;

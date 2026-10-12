@@ -1707,7 +1707,9 @@ async function createProductionAgentSession(input: {
   const controlledStream = new PiProviderProtocolTransport({
     authorityId: binding.authorityId,
     storeSetId: binding.pluginData.rootBindingDigest,
-    recordUsage: input.plugin.recordModelUsage?.bind(input.plugin),
+    recordUsage: input.plugin.recordModelUsage
+      ? (event) => input.plugin.recordModelUsage?.(event)
+      : undefined,
     observeRequest: (context, execution, additionalInputTokens) => {
       contextLedger.recordProviderRequest(context, execution, additionalInputTokens);
     },

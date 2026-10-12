@@ -430,8 +430,8 @@ export class EchoInkHomeView extends ItemView {
       reportPaths,configDirectory:this.app.vault.configDir,templatesDirectory:native.templatesFolder};
     const records = (this.data?.records ?? []).filter((record) => {
       const file=this.app.vault.getAbstractFileByPath?.(record.path);
-      const reportType=file instanceof TFile ? this.app.metadataCache.getFileCache(file)?.frontmatter?.type : undefined;
-      return isHomeRecentNotePath(record.path,journalDirectory,{...context,reportType});
+      const reportType: unknown=file instanceof TFile ? this.app.metadataCache.getFileCache(file)?.frontmatter?.type : undefined;
+      return isHomeRecentNotePath(record.path,journalDirectory,{...context,reportType:typeof reportType === "string" ? reportType : undefined});
     });
     if (!this.selectedDate) return [...records].sort((a, b) => Math.max(b.ctime ?? 0, b.mtime) - Math.max(a.ctime ?? 0, a.mtime));
     const events = this.events.filter((e) => e.date === this.selectedDate);

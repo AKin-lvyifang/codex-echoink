@@ -320,7 +320,10 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
           throw brokerError("schema_invalid", "MCP Server 返回了非法 Session ID。");
         }
       }
-      const data = parseMcpHttpResponse(response);
+      const parsed: unknown = parseMcpHttpResponse(response);
+      const data = parsed !== null && typeof parsed === "object"
+        ? parsed as Record<string, unknown>
+        : undefined;
       if (data?.error) {
         throw brokerError("call_failed", safeJsonRpcError(data.error));
       }

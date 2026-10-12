@@ -4912,7 +4912,11 @@ async function waitForNewUserEntry(
       && entry.message.role === "user"
     );
     if (candidate) return candidate;
-    if (promptStart.settled && promptStart.error) throw promptStart.error;
+    if (promptStart.settled && promptStart.error) {
+      throw promptStart.error instanceof Error
+        ? promptStart.error
+        : new Error(safeRuntimeErrorText(promptStart.error), { cause: promptStart.error });
+    }
     // Always read first: a background timer can resume after the deadline
     // even though Pi has already appended the Entry.
     if (promptStart.settled || (promptStart.readyAt !== undefined && Date.now() - promptStart.readyAt >= timeoutMs)) break;

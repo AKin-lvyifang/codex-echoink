@@ -15,7 +15,7 @@ export function financeCategoryBudgetFacts(rows: readonly FinanceEntry[], budget
     amounts.set(row.category, (amounts.get(row.category) ?? 0) + (row.kind === "expense" ? row.amountCents : -row.amountCents));
   return [...new Set([...Object.keys(budget?.allocations ?? {}), ...amounts.keys()])].map(name => {
     const configured = !!budget && Object.hasOwn(budget.allocations, name);
-    const allocation = configured ? budget!.allocations[name] : null, net = amounts.get(name) ?? 0;
+    const allocation = configured ? budget.allocations[name] : null, net = amounts.get(name) ?? 0;
     return { 分类: financeAnalysisLabel(name || "未分类"), 净支出分: net, 额度分: allocation,
       超额分: allocation === null ? null : Math.max(0, net - allocation),
       状态: allocation === null ? "未设额度" : net > allocation ? "超支" : allocation > 0 && net >= allocation * .9 ? "接近额度" : "额度内" };
@@ -80,7 +80,10 @@ export function buildFinanceAnalysisHistory(month: string, ledger: readonly Fina
   });
   const reports = (options.previousReports ?? []).map(({ report, input }) => {
     let saved: Record<string, unknown> = {};
-    try { const value = JSON.parse(input ?? "{}"); if (value && typeof value === "object") saved = value; } catch { /* Legacy reports lack inputs. */ }
+    try {
+      const value: unknown = JSON.parse(input ?? "{}");
+      if (value && typeof value === "object" && !Array.isArray(value)) saved = value as Record<string, unknown>;
+    } catch { /* Legacy reports lack inputs. */ }
     return { 分析ID: report.id, 月份: report.period, 生成时间: report.createdAt, Skill版本: report.promptVersion,
       旧模型解释非原始事实: true, 完整报告: report.financeSnapshot ?? report.text,
       当时资料: { 统计范围: saved.统计范围 ?? null, 基础统计: saved.基础统计 ?? null,

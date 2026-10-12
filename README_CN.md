@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.6.0：官网正式上线，注册送激活码" src="assets/releases/echoink-agent-2.6.0-release.png">
+    <img width="1024" alt="EchoInk 2.7.0：平板与手机，随时可用" src="assets/releases/echoink-agent-2.7.0-release.png">
   </a>
 </p>
 
@@ -11,14 +11,14 @@
 <p align="center">
   <a href="https://echoink.cn">官方网站</a> ·
   <a href="https://echoink.cn/install">下载与安装</a> ·
-  <a href="#260-更新">2.6.0 更新</a> ·
+  <a href="#270-更新">2.7.0 更新</a> ·
   <a href="#隐私与数据">隐私与数据</a> ·
   <a href="README.md">English</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="桌面端与移动端 Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.6.0"><img src="https://img.shields.io/badge/version-2.6.0-0EA5E9?style=flat-square" alt="版本 2.6.0"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.7.0"><img src="https://img.shields.io/badge/version-2.7.0-0EA5E9?style=flat-square" alt="版本 2.7.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
 
@@ -26,24 +26,26 @@
 
 EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理知识、保留可查看和修正的长期记忆，也记录自己的日常。笔记留在你的 Vault，AI 功能连接你自己的模型服务；正常安装无需 Codex CLI。
 
-## 2.6.0 更新
+## 2.7.0 更新
 
-**EchoInk 有官网了：[echoink.cn](https://echoink.cn)。** 产品介绍、下载、使用说明和账号管理，都可以从这里找到。
+**平板与手机，随时可用。** 在手机上对话、查看笔记和管理财务，在 iPad 宽屏上同时使用工作台与对话。移动端继续以 Beta 提供。
 
-- **支持注册、登录和 PRO 激活。** 使用邮箱验证码或已有密码登录。目前内测活动为“注册送激活码”：注册并验证邮箱后领取，数量与有效期以活动页面为准。在桌面插件登录后，点击“使用兑换码”即可激活。
-- **财务，从记账到安排计划。** 支持微信、支付宝账单导入，商户、账户与分类管理，月度预算、持续目标，以及账单计划和记录关联。连接自己的模型后，可辅助整理账单、生成财务分析。
-- **英文日记，写生活，也积累表达。** 直接编辑 Markdown 原稿，生成自然英文，在表达库中搜索和回顾本篇收获；可以选择原文中允许发给模型的部分。
-- **更顺手的工作区。** 新增主题颜色、首页分区导航、英文日记快捷入口，以及按年、月筛选的活动热力图。
-- **会员状态更清楚。** 兑换时显示联网进度，授权成功后显示 PRO。订阅到期后，已启用的 PRO 插件保留已有资料阅读，开关与新增、导入、修改、生成操作禁用；普通对话、知识库和原始 Markdown 仍可使用。
-- **模型与平板适配。** 更新模型发现与 DeepSeek 请求兼容，增加 iPad 宽屏布局和分栏。移动端仍处于 Beta。
+- **手机和平板接入账号与财务。** 可登录账号、激活 PRO，使用账目、预算、账单计划和财务分析。首页、设置、人格编辑与财务控件按手机单列、平板宽屏分别调整。
+- **在桌面对话里处理财务。** 直接说“记一下，我今天早餐吃了 12 块钱”，也可以查询或修改账目、调整预算、创建账单并关联记录。
+- **财务分析可以回看。** 报告按月份和版本保存为 Markdown，保留当时的数据；账单计划支持分配分类额度，查看各类进度与尚未分配的金额。
+- **桌面待办到期提醒。** 开启提醒后，Obsidian 运行期间会通知到期事项；只填日期时默认按本地 09:00 提醒，退出应用后不提醒。
+- **知识整理和上手引导更顺畅。** 修复知识库初始化批次冲突与目录调整后的链接同步，新增纸页式功能引导，回答后可继续选择下一项功能。
+- **改善日常阅读与切换。** 减少首页和表达库的重复刷新，回答完成后收起工作记录并保留阅读位置，改善不同 Obsidian 主题下的字体、图片和控件显示。
 
-财务和英文日记属于 PRO 插件，**PRO 不包含模型调用额度**。目前内测尚未开放付费购买，活动与订阅说明以[官网](https://echoink.cn/plans)为准。
+财务和桌面端英文日记属于 PRO 插件，**PRO 不包含模型调用额度**。活动与订阅说明以[官网](https://echoink.cn/plans)为准。完整更新见 [CHANGELOG](CHANGELOG.md)。
 
 ## 下载与说明
 
 前往 [echoink.cn](https://echoink.cn) 查看[安装方法](https://echoink.cn/install)、[功能介绍](https://echoink.cn/features)和[帮助与支持](https://echoink.cn/support)。仓库的 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases) 继续提供官方插件文件。
 
-需要 **Obsidian 1.11.4 及以上**。上述账号、财务与英文日记功能用于桌面端。移动 Beta 支持对话、Markdown 笔记读取与新建、本地记忆及平板布局；暂不包含桌面会员、财务、英文日记、附件、CLI 和完整 Skills/MCP 能力。iOS 与 Android 真机验证仍未完成。
+需要 **Obsidian 1.11.4 及以上**。手动升级时，只替换官方 `main.js`、`manifest.json` 和 `styles.css`，保留原有设置和数据文件，再重新启用插件。
+
+移动 Beta 支持文字对话、Markdown 笔记读取与新建、本地记忆、账号与财务，以及手机和平板布局。英文日记生成、附件、CLI、对话内财务操作和桌面后台知识／记忆任务尚未接通；Skills 可查看、开关和选择，但只使用移动端已有工具，MCP 暂只保存配置。iOS、iPadOS 与 Android 的完整实机验收尚未完成。
 
 插件文件超过 Obsidian Sync Standard 的单文件 5 MB 限制。请在各设备上通过官方下载或社区插件分别安装、更新，不要依赖 Sync Standard 传输该文件。
 
@@ -51,7 +53,8 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 
 - 对话、笔记、知识、记忆、日记和财务记录保存在本地；插件不会默认上传整个 Vault。
 - **https://echoink.cn** 提供注册、登录、邮箱验证、兑换、订阅与设备授权服务，接收完成这些请求所需的账号资料和授权数据，包括生成的设备标识。PRO 插件需要 EchoInk 账号与有效权益；普通对话和知识库无需 EchoInk 账号。
-- 桌面端的账号会话和设备授权加密保存在 Vault 外的 **`~/.echoink/membership/`**，避免随笔记同步设备凭据；加密密钥使用 Obsidian 的安全存储。持久安全存储不可用时，仅在当前会话内存中保存授权。
+- 桌面端的账号会话和设备授权加密保存在 Vault 外的 **`~/.echoink/membership/`**。同一设备的授权由系统安全存储保护，各 Vault 的账号会话分别由 Obsidian 安全存储保护；安全存储不可用时无法完成持久设备授权，已有凭据会保留。
+- 移动端的账号会话和授权使用当前 Vault 的 Obsidian 安全存储，不写入普通插件设置。移动端按笔记库的客户端实例激活，同一设备上的不同库可能占用不同名额，可在设备管理中解绑不再使用的实例。安全存储不可用时仅保留本次会话状态。
 - Provider API Key 与 OpenAI Codex Beta 登录凭据保存在当前 Vault 的插件设置中，请在可信设备和 Vault 中配置。
 - 你选择的模型服务会接收当前 AI 请求所需的提示词、笔记、附件、记忆和工具结果。模型服务可能要求独立账号并另行收费；图片输入需要支持视觉的模型。
 - 桌面对话可以选择 Vault 外的本地工作区。文件访问遵循所选权限；“完全访问”会解除工作区边界。Vault 外附件仅在你明确选择、拖入或粘贴时读取。

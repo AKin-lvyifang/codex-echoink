@@ -516,7 +516,7 @@ export class LifestyleFinanceService {
         catch(error) { saveError=error; }
       }
       await runtime.recordUse("finance-analysis").catch(()=>undefined);
-      if (saveError) throw new Error(`分析保存失败，本次内容已保留，可重试保存：${saveError instanceof Error?saveError.message:String(saveError)}`);
+      if (saveError) throw new Error(`分析保存失败，本次内容已保留，可重试保存：${saveError instanceof Error ? saveError.message : typeof saveError === "string" ? saveError : "无法写入分析存档"}`);
       if (draft.status==="parse-failed") throw new Error(draft.error);
       return draft.report!;
     })();

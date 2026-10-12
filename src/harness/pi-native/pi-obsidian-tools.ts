@@ -201,7 +201,7 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
         if (started) await this.options.receipts!.markEffectCompleted(call.authorization.operationIdentity);
         await this.options.receipts!.persistReceipt({
           operationIdentity: call.authorization.operationIdentity, status,
-          safeSummary: normalizeJsonValue({ source: "echoink-obsidian", command: value.command ?? String(call.input.command ?? call.toolName), status, readbackVerified: verified }),
+          safeSummary: normalizeJsonValue({ source: "echoink-obsidian", command: value.command ?? (typeof call.input.command === "string" ? call.input.command : call.toolName), status, readbackVerified: verified }),
           readback: { checkedAt: Date.now(), readbackVerified: verified, observedTargetVersion: value.observedTargetVersion ?? null, safeSummary: verified ? "Target readback verified" : "Result not verified; do not retry automatically" }
         });
         result = { ...value, status, ...(status === "uncertain" ? { reason: isFinanceTool(tool) ? "finance_result_uncertain_query_original_operation" : "obsidian_cli_result_uncertain_do_not_retry" } : {}) };

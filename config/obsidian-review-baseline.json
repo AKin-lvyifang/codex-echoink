@@ -1,42 +1,898 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "source": "eslint-plugin-obsidianmd production errors",
-  "errors": {
-    "src/core/diff-summary.ts::@typescript-eslint/no-base-to-string": 1,
-    "src/core/electron.ts::@typescript-eslint/no-unnecessary-type-assertion": 1,
-    "src/core/mapping.ts::@typescript-eslint/no-unsafe-argument": 4,
-    "src/core/mapping.ts::@typescript-eslint/no-unsafe-member-access": 19,
-    "src/core/workspace-resources.ts::@typescript-eslint/no-unnecessary-type-assertion": 2,
-    "src/harness/pi-native/domain-receipt-store.ts::@typescript-eslint/no-base-to-string": 1,
-    "src/harness/pi-native/pi-native-controlled-provider.ts::@typescript-eslint/no-unsafe-assignment": 1,
-    "src/harness/pi-native/tool-authorization.ts::@typescript-eslint/no-unsafe-argument": 1,
-    "src/harness/pi-native/tool-authorization.ts::@typescript-eslint/no-unsafe-assignment": 1,
-    "src/harness/resources/skill-loader.ts::@typescript-eslint/no-unnecessary-type-assertion": 1,
-    "src/harness/resources/vault-store.ts::@typescript-eslint/no-base-to-string": 1,
-    "src/knowledge-base/digest-evidence.ts::no-useless-escape": 2,
-    "src/knowledge-base/raw-digest.ts::@typescript-eslint/no-unnecessary-type-assertion": 1,
-    "src/knowledge-base/raw-digest.ts::@typescript-eslint/no-unsafe-argument": 1,
-    "src/knowledge-base/raw-digest.ts::@typescript-eslint/no-unsafe-assignment": 6,
-    "src/knowledge-base/raw-digest.ts::@typescript-eslint/no-unsafe-call": 3,
-    "src/knowledge-base/raw-digest.ts::@typescript-eslint/no-unsafe-member-access": 19,
-    "src/knowledge-base/web-capture.ts::no-useless-escape": 1,
-    "src/resources/mcp-broker.ts::@typescript-eslint/no-misused-promises": 1,
-    "src/resources/mcp-broker.ts::@typescript-eslint/no-unnecessary-type-assertion": 3,
-    "src/resources/mcp-broker.ts::@typescript-eslint/no-unsafe-argument": 4,
-    "src/resources/mcp-broker.ts::@typescript-eslint/no-unsafe-assignment": 3,
-    "src/resources/mcp-broker.ts::@typescript-eslint/no-unsafe-member-access": 5,
-    "src/review/preview-view.ts::@typescript-eslint/no-unnecessary-type-assertion": 1,
-    "src/types/app-server.ts::@typescript-eslint/no-redundant-type-constituents": 1,
-    "src/ui/codex-view.ts::@typescript-eslint/no-this-alias": 3,
-    "src/ui/codex-view/message-list.ts::@typescript-eslint/no-unsafe-argument": 1,
-    "src/ui/codex-view/message-list.ts::@typescript-eslint/no-unsafe-assignment": 1,
-    "src/ui/codex-view/session-message-store.ts::@typescript-eslint/no-unsafe-argument": 2,
-    "src/ui/codex-view/view-shell.ts::@typescript-eslint/no-unnecessary-type-assertion": 3,
-    "src/ui/modals.ts::@typescript-eslint/no-unsafe-argument": 4,
-    "src/ui/modals.ts::@typescript-eslint/no-unsafe-assignment": 2,
-    "src/ui/modals.ts::@typescript-eslint/no-unsafe-member-access": 18,
-    "src/ui/render-message.ts::@typescript-eslint/no-unsafe-assignment": 2,
-    "src/ui/render-message.ts::@typescript-eslint/no-unsafe-call": 1,
-    "src/ui/render-message.ts::@typescript-eslint/no-unsafe-member-access": 2
-  }
+  "total": 119,
+  "findings": [
+    {
+      "fingerprint": "49628d8f6b19808170eb33b4a9a7cc96df337aa64d89105450653bfaa3e10b9a",
+      "path": "src/core/diff-summary.ts",
+      "rule": "@typescript-eslint/no-base-to-string",
+      "severity": 2,
+      "message": "'(kind as { type?: unknown }).type ?? \"\"' will use Object's default stringification format ('[object Object]') when stringified.",
+      "context": "const type = String((kind as { type?: unknown }).type ?? \"\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "2914c26c6e16297a7d50d0daf59b70b10fc787f2693fe5f4e79a8d438f31cd25",
+      "path": "src/core/electron.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since it does not change the type of the expression.",
+      "context": "const electronRequire = (window as typeof window & { require?: ElectronRequire }).require",
+      "count": 1
+    },
+    {
+      "fingerprint": "022ef756c57a929be96b9b98e1d773a4e724343dd2452fdc8ddba21b57da0e26",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `string`.",
+      "context": "detail: compactText(payload?.message ?? payload?.status ?? \"记录执行过程\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "0b8108e8a82aa37de80313786dfb0f15c56368772feb0bb28bd7d44156e12ba2",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `string`.",
+      "context": "detail: compactText(payload?.message ?? payload?.status ?? \"调用工具\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "384fd4934de9cd1e51c0a318dd1788ce73c01a5e276d905d3d3db4800d3d88d1",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `string`.",
+      "context": "detail: compactText(payload?.message ?? payload?.status ?? \"调用外部工具\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "f62dee87f02472b5833abda16a22d09911c003db6e24f6701e2901d4b7db7b60",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `string`.",
+      "context": "detail: command.detail || compactText(commandText || payload?.status || \"执行命令\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "0d9e24b02b3e54d1dbf932f9ad98dd9bc8db4854140e54e944b656ea7a1ae142",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .status on an `any` value.",
+      "context": "detail: compactText(payload?.message ?? payload?.status ?? \"记录执行过程\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "20331bd81d94d28c3ae27405bbeac94876df2aa7e8314b3f4f98c0d5bbe5a56e",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .summary on an `any` value.",
+      "context": "return joinTextFragments([payload?.text, payload?.summary, payload?.content]);",
+      "count": 1
+    },
+    {
+      "fingerprint": "25de64fc874c5d6e8dc2e31b116e3dd3f7fce89fe294b6d4810d0a7d6b4b97fb",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .command on an `any` value.",
+      "context": "const commandText = String(payload?.command ?? payload?.text ?? payload ?? \"\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "461044f219664def768fcd424ba69237391a1c9e17ae037d62bca916ff34c7cf",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .text on an `any` value.",
+      "context": "const commandText = String(payload?.command ?? payload?.text ?? payload ?? \"\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "5e4a1bb6099fbaa8b5e9245cc4338363ef94efe584f452acbf47e1426642ab28",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .text on an `any` value.",
+      "context": "return joinTextFragments([payload?.text, payload?.summary, payload?.content]);",
+      "count": 1
+    },
+    {
+      "fingerprint": "78c2060e5ff61290fd7cbedd4aa18343d6e1f1d3fafacc67fb0a109431372308",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .status on an `any` value.",
+      "context": "detail: compactText(payload?.message ?? payload?.status ?? \"调用外部工具\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "94645a36e9b93ca5f7089eca851174f69d5a3d829517f71e805c6d72f11f25f3",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .namespace on an `any` value.",
+      "context": "const toolName = [payload?.namespace, payload?.tool].filter(Boolean).join(\".\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "a9b2c5a94323a598de9aae99620315d0189e8421980b1916676e2164c789b175",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .message on an `any` value.",
+      "context": "detail: compactText(payload?.message ?? payload?.status ?? \"调用工具\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "ac76db61e34c44897a14fd986803085e41bf550ccaea3887827560185668c660",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .tool on an `any` value.",
+      "context": "const toolName = [payload?.namespace, payload?.tool].filter(Boolean).join(\".\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "aeaa50e9021f0deacc86faed1b3551b53d5de07e2c10b6dfc6e66827be41a793",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .content on an `any` value.",
+      "context": "return joinTextFragments([payload?.text, payload?.summary, payload?.content]);",
+      "count": 1
+    },
+    {
+      "fingerprint": "b4d31c36946e8957f71a450fa682ba680937193a5c9db41d69e8b6aa6519cfc7",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .message on an `any` value.",
+      "context": "detail: compactText(payload?.message ?? payload?.status ?? \"调用外部工具\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "d0ec6d08a8c5a657cc2514733f792d812be979f6092c8825ec3bbd2faf29ee0f",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .status on an `any` value.",
+      "context": "const running = payload?.status === \"running\" || payload?.status === \"in_progress\" || payload?.status === \"inProgress\";",
+      "count": 3
+    },
+    {
+      "fingerprint": "dc389604c00a7a68f62f6a24c95a7f7af76ae7b8e3cdf0d6cc5279bef4165990",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .server on an `any` value.",
+      "context": "const toolName = [payload?.server, payload?.tool].filter(Boolean).join(\".\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "e501f8681de26df2449144d7dc353cdc0d33f60cf2d6818193e2e1e99b7897f9",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .status on an `any` value.",
+      "context": "detail: compactText(payload?.message ?? payload?.status ?? \"调用工具\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "eae5b048b9cac481dda83a6e90ea40df06d857b17d600954ce87851978e155b7",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .message on an `any` value.",
+      "context": "detail: compactText(payload?.message ?? payload?.status ?? \"记录执行过程\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "ee5b34ecab71c579ca7ae19b2663ab18540563b7f36a88a3d858c718ba5534bf",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .status on an `any` value.",
+      "context": "detail: command.detail || compactText(commandText || payload?.status || \"执行命令\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "fe5771e0e083d601fb785068e4bc0dea2aa5acd25c2ceb067a52628766558d5f",
+      "path": "src/core/mapping.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .tool on an `any` value.",
+      "context": "const toolName = [payload?.server, payload?.tool].filter(Boolean).join(\".\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "6fb4895a724101756bfd68c09ece520424ca13e0c459737d53a222e5df69fa2c",
+      "path": "src/core/workspace-resources.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
+      "context": "next.mcpServers = data as McpServerStatus[];",
+      "count": 1
+    },
+    {
+      "fingerprint": "fc2cbb0a9d69c346cc69abe292eeefab7a2d908b69a3d6ab37b3738631812108",
+      "path": "src/core/workspace-resources.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
+      "context": "else if (kind === \"mcp\") next.mcp = entry as WorkspaceResourceCache[\"mcp\"];",
+      "count": 1
+    },
+    {
+      "fingerprint": "f7db608586849d23283bbd943ebd8d071aacf59f33876eea9a95c5b32741fd10",
+      "path": "src/harness/pi-native/domain-receipt-store.ts",
+      "rule": "@typescript-eslint/no-base-to-string",
+      "severity": 2,
+      "message": "'failureInjection' may use Object's default stringification format ('[object Object]') when stringified.",
+      "context": "`不支持的 Receipt failureInjection ${String(failureInjection)}`",
+      "count": 1
+    },
+    {
+      "fingerprint": "a5024f7ab6ba9c6d5291a847a3d7e1b75454fd3f1b6327ac3437fc5c06e65df8",
+      "path": "src/harness/pi-native/pi-native-controlled-provider.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe object destructuring of a property with an `any` value.",
+      "context": "const { details: _runtimeDetails, ...providerMessage } = message;",
+      "count": 1
+    },
+    {
+      "fingerprint": "0beb6591e8e8c0945415eaf1aa9fe867cc7b9b9f20186a7b60896f46ce1c58f6",
+      "path": "src/harness/pi-native/tool-authorization.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `JsonValue`.",
+      "context": "deepFreezeJson(child);",
+      "count": 1
+    },
+    {
+      "fingerprint": "d4381287fe5f70df8e9a398f70394839f7bc49ede115ce60dda869548a772bc1",
+      "path": "src/harness/pi-native/tool-authorization.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "const prototype = Object.getPrototypeOf(value);",
+      "count": 1
+    },
+    {
+      "fingerprint": "e72aade7a7e737c7a15e368b7c5de39017e695203d324db543d513b4fcd08fb3",
+      "path": "src/harness/resources/skill-loader.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since it does not change the type of the expression.",
+      "context": "(data[key] as string) = value;",
+      "count": 1
+    },
+    {
+      "fingerprint": "ba35adf8d72858112f5a5be10e683573e64ebb8b3cba4d2a4459dbe17d6e5354",
+      "path": "src/harness/resources/vault-store.ts",
+      "rule": "@typescript-eslint/no-base-to-string",
+      "severity": 2,
+      "message": "'binding.ref ?? \"\"' will use Object's default stringification format ('[object Object]') when stringified.",
+      "context": "const ref = parseResourceUri(String(binding.ref ?? \"\"));",
+      "count": 1
+    },
+    {
+      "fingerprint": "6c622ac3a8b421c75b010d8e45b348f8f98b44f8a0173bc07ba8e74cefb1b3ef",
+      "path": "src/knowledge-base/digest-evidence.ts",
+      "rule": "no-useless-escape",
+      "severity": 2,
+      "message": "Unnecessary escape character: \\[.",
+      "context": ".replace(/[*_`>#\\[\\]()（）:：，。,.!！?？\\s|\\-]/g, \"\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "fad688221dfbf7162a60dea9f695a8a5a0deeb0a146670449cad65c89a3898f4",
+      "path": "src/knowledge-base/digest-evidence.ts",
+      "rule": "no-useless-escape",
+      "severity": 2,
+      "message": "Unnecessary escape character: \\-.",
+      "context": ".replace(/[*_`>#\\[\\]()（）:：，。,.!！?？\\s|\\-]/g, \"\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "d4cbf9ad86053e3512355ffbbc06d6d1bf10018d01a439e52be38b8ed68c2a90",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since it does not change the type of the expression.",
+      "context": "for (const [key, item] of Object.entries(rawEntries) as Array<[string, any]>) {",
+      "count": 1
+    },
+    {
+      "fingerprint": "7e868b3bec918cde302ebabde56725115ed7f3107c8af8dd591b6542d2ac2ac8",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `{ [s: string]: any; } | ArrayLike<any>`.",
+      "context": "for (const [key, item] of Object.entries(rawEntries) as Array<[string, any]>) {",
+      "count": 1
+    },
+    {
+      "fingerprint": "23c280d2b2bc0fd24a2e3a5127023d895fe64f6f5ed7cdee083b0e1fd2fd04e7",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "runId: typeof item?.runId === \"string\" ? item.runId : \"\",",
+      "count": 1
+    },
+    {
+      "fingerprint": "3a1afc904ecd0a91fcb33016a2364b108f1122620c23909afe5b9e08f3fe2dee",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "updatedAt: typeof value.updatedAt === \"string\" ? value.updatedAt : \"\",",
+      "count": 1
+    },
+    {
+      "fingerprint": "4c80fb5441f149fb0cb4a504581d4ccfb3280e43395bb55bad5a811e8c7ce05f",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "evidencePaths: Array.isArray(item?.evidencePaths) ? item.evidencePaths.map(normalizeRelativePath).filter(Boolean) : [],",
+      "count": 1
+    },
+    {
+      "fingerprint": "72a11dda7842e7b825ff5f9feb63199ffce261d02f7ce65664e0aa18c22f3403",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "const fingerprint = typeof item?.fingerprint === \"string\" ? item.fingerprint.trim() : \"\";",
+      "count": 1
+    },
+    {
+      "fingerprint": "744be0e1545f394cd985c5e56196407372e7046854163c6645edffc5569e8df6",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "fingerprint,",
+      "count": 1
+    },
+    {
+      "fingerprint": "a27494e741bac6f4d6c7308680b92a96faa63de984f8381a0c29f628f671b7c5",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "const rawEntries = value.entries && typeof value.entries === \"object\" && !Array.isArray(value.entries) ? value.entries : {};",
+      "count": 1
+    },
+    {
+      "fingerprint": "6d7dc143870ca56bda6ef54f7e7e4302ba3c73f39735ad43f0ca0c17994a9909",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-call",
+      "severity": 2,
+      "message": "Unsafe call of an `any` typed value.",
+      "context": "evidencePaths: Array.isArray(item?.evidencePaths) ? item.evidencePaths.map(normalizeRelativePath).filter(Boolean) : [],",
+      "count": 2
+    },
+    {
+      "fingerprint": "c967be5f1eea6ece9d4458d44214c1b8d3ec351475cff654d186112c087eb408",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-call",
+      "severity": 2,
+      "message": "Unsafe call of an `any` typed value.",
+      "context": "const fingerprint = typeof item?.fingerprint === \"string\" ? item.fingerprint.trim() : \"\";",
+      "count": 1
+    },
+    {
+      "fingerprint": "19d6c9a6f7f4d96d7526f92fbe997202da405975a6fb7de320cf17dd6d9d814f",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .digestedAt on an `any` value.",
+      "context": "digestedAt: nonNegativeNumber(item?.digestedAt),",
+      "count": 1
+    },
+    {
+      "fingerprint": "30f0471a6b9b45105defe221965d2cb86aac617159a9826657e2c04800eb4406",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .runId on an `any` value.",
+      "context": "runId: typeof item?.runId === \"string\" ? item.runId : \"\",",
+      "count": 2
+    },
+    {
+      "fingerprint": "590da7c7b09d8816c32937fcd3929cc8883baddf1fb907e7ed1b4880970b0137",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .filter on an `any` value.",
+      "context": "evidencePaths: Array.isArray(item?.evidencePaths) ? item.evidencePaths.map(normalizeRelativePath).filter(Boolean) : [],",
+      "count": 1
+    },
+    {
+      "fingerprint": "8ac1490d03c6c8a6afb6e3b934e8bda7f736e4d93916c0152cd209eeb9f92858",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .updatedAt on an `any` value.",
+      "context": "updatedAt: typeof value.updatedAt === \"string\" ? value.updatedAt : \"\",",
+      "count": 2
+    },
+    {
+      "fingerprint": "8d572b01be6ead35fda77050fcdbffad96427ad2f83bc1eb4b3d845b438848c5",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .rawPath on an `any` value.",
+      "context": "const rawPath = normalizeRelativePath(item?.rawPath || key);",
+      "count": 1
+    },
+    {
+      "fingerprint": "95626294424a776f7c87ca5287549f0c64a2601e2cb363bd9e970adc85ec49bb",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .entries on an `any` value.",
+      "context": "const rawEntries = value.entries && typeof value.entries === \"object\" && !Array.isArray(value.entries) ? value.entries : {};",
+      "count": 4
+    },
+    {
+      "fingerprint": "ba19b81a32a10c67b8b367ee392f0906f15edb74e75c5e85354e42b5c6c275ec",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .size on an `any` value.",
+      "context": "size: nonNegativeNumber(item?.size),",
+      "count": 1
+    },
+    {
+      "fingerprint": "d11f5ef4ce577071b87e7232e5aeba66bc4eaf97797fd1c996cf5c0950123712",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .mtime on an `any` value.",
+      "context": "mtime: nonNegativeNumber(item?.mtime),",
+      "count": 1
+    },
+    {
+      "fingerprint": "d342b8885672c925acf45bec606b12ac221b504da0402329b7fd624c0797407c",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .evidencePaths on an `any` value.",
+      "context": "evidencePaths: Array.isArray(item?.evidencePaths) ? item.evidencePaths.map(normalizeRelativePath).filter(Boolean) : [],",
+      "count": 2
+    },
+    {
+      "fingerprint": "d963b0b0c440f0d14a2b6a1cfcd7bbf48dbe3e1ff81e54c1c17cc4d46ee8c8c0",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .fingerprint on an `any` value.",
+      "context": "const fingerprint = typeof item?.fingerprint === \"string\" ? item.fingerprint.trim() : \"\";",
+      "count": 2
+    },
+    {
+      "fingerprint": "e7176fc1c6681c614c3794a13ade3d2d6b3bc9851e3cb63e9647ab5200cbe981",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .reportPath on an `any` value.",
+      "context": "reportPath: normalizeRelativePath(item?.reportPath ?? \"\"),",
+      "count": 1
+    },
+    {
+      "fingerprint": "f130f1be2b60ea243a1b4525d254928a673e83d8ff52f2bac86b0b2c7961d55e",
+      "path": "src/knowledge-base/raw-digest.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .confidence on an `any` value.",
+      "context": "confidence: item?.confidence === \"repaired\" ? \"repaired\" : \"verified\"",
+      "count": 1
+    },
+    {
+      "fingerprint": "81b50866e6f4722ba7d923d17148e284f04eae00f347583ffc84bf37879adab5",
+      "path": "src/knowledge-base/web-capture.ts",
+      "rule": "no-useless-escape",
+      "severity": 2,
+      "message": "Unnecessary escape character: \\[.",
+      "context": "return cleanInlineText(value).replace(/[\\\\/:*?\"<>|#\\[\\]]/g, \" \").replace(/\\s+/g, \" \").trim().slice(0, 80) || \"未命名资料\";",
+      "count": 1
+    },
+    {
+      "fingerprint": "67c40cc643b66da9a3c34118feb9cc897b331c36d701b392ec80a72c36b789e0",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-misused-promises",
+      "severity": 2,
+      "message": "Promise-returning method provided where a void return was expected by extended/implemented type 'JsonRpcStdioTransport'.",
+      "context": "async notify(\nmethod: string,\nparams?: Record<string, unknown>,\nsignal?: AbortSignal\n): Promise<void> {\nthrowIfMcpAborted(signal);\nsuper.notify(method, params ?? {});\n}",
+      "count": 1
+    },
+    {
+      "fingerprint": "237c6fe7ec5ad56b3f42dae0024fcca1177c166067e8a7a6818a2fd058ed7602",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
+      "context": "const publicConfig = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} } as any);",
+      "count": 1
+    },
+    {
+      "fingerprint": "8866761b804eaa14959c8203798201664605bb9c23df4001d8687058e424fee4",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
+      "context": "return resolveMcpConnectionConfig(resource, { mcpConnections: {} } as any);",
+      "count": 1
+    },
+    {
+      "fingerprint": "8908a5f8a8e9fa7ee2510ea6a6ace7305cb4dd4b420b6817a64ead0fbc31427d",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
+      "context": "const publicConfig = resolveMcpConnectionConfig(invocation.resource, { mcpConnections: this.options.connections ?? {} } as any);",
+      "count": 1
+    },
+    {
+      "fingerprint": "158dae0f7dd31b96c8e12eb2d43113c99d9276a3da7c9a9f62b945099f88b8b1",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `Pick<EchoInkResourceSettings, \"mcpConnections\"> | null | undefined`.",
+      "context": "return Boolean(resolveMcpConnectionConfig(resource, { mcpConnections: connections ?? {} } as any));",
+      "count": 1
+    },
+    {
+      "fingerprint": "9c663f814a9b72fc240029034728a7a5036f029ff9afc56b7d54e1cd14eb5085",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `Pick<EchoInkResourceSettings, \"mcpConnections\"> | null | undefined`.",
+      "context": "const publicConfig = resolveMcpConnectionConfig(invocation.resource, { mcpConnections: this.options.connections ?? {} } as any);",
+      "count": 1
+    },
+    {
+      "fingerprint": "9d81ddce8e02aa1428efe15194511a38a3ae6fecc4d6acc650efecec1156f082",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `Pick<EchoInkResourceSettings, \"mcpConnections\"> | null | undefined`.",
+      "context": "const publicConfig = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} } as any);",
+      "count": 1
+    },
+    {
+      "fingerprint": "e7b83c7d4eb76a171d273f4cb942cf53f5429a3c35ffff93860a97f8653a101f",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `Pick<EchoInkResourceSettings, \"mcpConnections\"> | null | undefined`.",
+      "context": "return resolveMcpConnectionConfig(resource, { mcpConnections: {} } as any);",
+      "count": 1
+    },
+    {
+      "fingerprint": "33f061f64292f7d21f2aad1580941edda43803af828b673e47edbc1761cde84f",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "const tools = (result as any).tools;",
+      "count": 1
+    },
+    {
+      "fingerprint": "cd6a0b451ddc3ba209028cd38f2f3b27b77b6d503452ce5bd7fb4de4257673bc",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "return { tools };",
+      "count": 1
+    },
+    {
+      "fingerprint": "99300d7f54972375b384b650e366144113bee467426f6340bdc4dc350406b0ed",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .tools on an `any` value.",
+      "context": "if (!result || typeof result !== \"object\" || !Array.isArray((result as any).tools)) {",
+      "count": 1
+    },
+    {
+      "fingerprint": "bf7eaa879a08e334b8d8fb30e93bcbc0bbd133f095e715653edf60f74408a132",
+      "path": "src/resources/mcp-broker.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .tools on an `any` value.",
+      "context": "const tools = (result as any).tools;",
+      "count": 1
+    },
+    {
+      "fingerprint": "e8abd01b98f934433c3ea3b81d8dada06dd50a3eae892588d7a36ccdf32526ff",
+      "path": "src/review/preview-view.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since it does not change the type of the expression.",
+      "context": "const frame = contentEl.createEl(\"iframe\", {\ncls: \"codex-review-preview-frame\",\nattr: {\ntitle: this.htmlPath,\nsandbox: \"allow-same-origin\"\n}\n}) as HTMLIFrameElement;",
+      "count": 1
+    },
+    {
+      "fingerprint": "a3c7858e71d8224cd26ab526932b4121a275425d18196b619c203fea28bf67b8",
+      "path": "src/types/app-server.ts",
+      "rule": "@typescript-eslint/no-redundant-type-constituents",
+      "severity": 2,
+      "message": "\"none\" | \"minimal\" | \"low\" | \"medium\" | \"high\" | \"xhigh\" | \"max\" is overridden by string in this union type.",
+      "context": "supportedReasoningEfforts?: Array<{ effort: ReasoningEffort } | ReasoningEffort | string>;",
+      "count": 1
+    },
+    {
+      "fingerprint": "0b7413c6d33883aec290ae80082a671e577cb2fd9cf8dbc715d5b56efb18a3df",
+      "path": "src/ui/codex-view.ts",
+      "rule": "@typescript-eslint/no-this-alias",
+      "severity": 2,
+      "message": "Unexpected aliasing of 'this' to local variable.",
+      "context": "const view = this;",
+      "count": 3
+    },
+    {
+      "fingerprint": "de882c917721729c367e65b5c38b295b7deeeebc42502d8e3caa8f62b0b886fc",
+      "path": "src/ui/codex-view/message-list.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `string`.",
+      "context": "this.rawTextCache.delete(oldest);",
+      "count": 1
+    },
+    {
+      "fingerprint": "444adf931f6fd66d6793f51c4ff617009b842eed9594fddc313d4ebe3ea3be08",
+      "path": "src/ui/codex-view/message-list.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "const oldest = this.rawTextCache.keys().next().value;",
+      "count": 1
+    },
+    {
+      "fingerprint": "9adc89ba7553270cf7a8cd1943fbb092fa2fb70f43436bd6b4959f5521a9aa7c",
+      "path": "src/ui/codex-view/session-message-store.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any[]` assigned to a parameter of type `RawFileChange[]`.",
+      "context": "const text = serializeFileChanges(changes);",
+      "count": 1
+    },
+    {
+      "fingerprint": "e39b251ab870148771bd46b765ff567d4ca94e1c472752a6a769de61ea96fff9",
+      "path": "src/ui/codex-view/session-message-store.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any[]` assigned to a parameter of type `RawFileChange[]`.",
+      "context": "const diffSummary = buildDiffSummary(changes);",
+      "count": 1
+    },
+    {
+      "fingerprint": "1aa8d47c387f54da6538f68ffa0217892c7cc1774757771217d48bcce4db641d",
+      "path": "src/ui/codex-view/view-shell.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since it does not change the type of the expression.",
+      "context": "host.registerDomEvent(host.messagesEl, \"wheel\", (event) => host.messageScrollFollow.handleWheel(event as WheelEvent));",
+      "count": 1
+    },
+    {
+      "fingerprint": "48eb3c38dc063c4ffeef29ba9d88895b6a28a25fe30f82bed83cddf246678c28",
+      "path": "src/ui/codex-view/view-shell.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since it does not change the type of the expression.",
+      "context": "host.registerDomEvent(host.messagesEl, \"touchstart\", (event) => host.messageScrollFollow.handleTouchStart(event as TouchEvent));",
+      "count": 1
+    },
+    {
+      "fingerprint": "506c5fa2dcd1830fd40f29cadae5437adf9ddfbb515f54a2b68cd59ef86ed4f8",
+      "path": "src/ui/codex-view/view-shell.ts",
+      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
+      "severity": 2,
+      "message": "This assertion is unnecessary since it does not change the type of the expression.",
+      "context": "host.registerDomEvent(host.messagesEl, \"touchmove\", (event) => host.messageScrollFollow.handleTouchMove(event as TouchEvent));",
+      "count": 1
+    },
+    {
+      "fingerprint": "3265697ead09ce674f9d3cb553211becb0400253a50913de0b38d3b562acad75",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `string | DocumentFragment`.",
+      "context": "const setting = new Setting(contentEl).setName(question.header || question.question).setDesc(question.question || \"\");",
+      "count": 2
+    },
+    {
+      "fingerprint": "f335827dcb25fcc8844b46046aed7e5aacd9c8b0e8bac6a02ebfc4891709166d",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-argument",
+      "severity": 2,
+      "message": "Unsafe argument of type `any` assigned to a parameter of type `string`.",
+      "context": "for (const option of options) dropdown.addOption(option.label, option.label);",
+      "count": 2
+    },
+    {
+      "fingerprint": "667e6ebbf3769784727dbc45b41f6fac695d63632b8657a704744da66bc50870",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "const options = Array.isArray(question.options) ? question.options : [];",
+      "count": 1
+    },
+    {
+      "fingerprint": "f093b204d56aa05dd8bf7ccf49cba9854c84d594a2e3ddf18e9dd5059ec6d7c8",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of type `any[]` to a variable of type `string[]`.",
+      "context": "this.answers[question.id] = [options[0].label];",
+      "count": 1
+    },
+    {
+      "fingerprint": "2784082311fb8b7244ea3ce728c71f7734092d4bb7b787762da236d94a4f55b4",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .label on an `any` value.",
+      "context": "for (const option of options) dropdown.addOption(option.label, option.label);",
+      "count": 2
+    },
+    {
+      "fingerprint": "2e2c39fec92e4ca45ad678ed7639fc6cf62eef484354703d6e8304df4d74e82c",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Computed name [question.id] resolves to an `any` value.",
+      "context": "this.answers[question.id] = [value];",
+      "count": 2
+    },
+    {
+      "fingerprint": "30ce922c8b279ea286c3b1de921c5d1827d2b58fe49a4ebf4181d8871b4c1096",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .length on an `any` value.",
+      "context": "if (options.length > 0) {",
+      "count": 1
+    },
+    {
+      "fingerprint": "481797f7b20d060aa691f023ae5659f2f9a8133393a69691f1c5baf20e3416cd",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .id on an `any` value.",
+      "context": "this.answers[question.id] = [value];",
+      "count": 2
+    },
+    {
+      "fingerprint": "5b8a79144e22bdec1814125d425be8c93ed2c4381a3d560b56256db70ef120bd",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Computed name [question.id] resolves to an `any` value.",
+      "context": "this.answers[question.id] = [options[0].label];",
+      "count": 1
+    },
+    {
+      "fingerprint": "5d793a9200295d580b6a313e3fe62e20dbc9a90bb9401fd1ae69ca383a366576",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .id on an `any` value.",
+      "context": "this.answers[question.id] = [\"\"];",
+      "count": 1
+    },
+    {
+      "fingerprint": "66d90e711f170b3daac84b862b94832bb3abffb89731c9dce2efa2d04ae4a6a1",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access [0] on an `any` value.",
+      "context": "this.answers[question.id] = [options[0].label];",
+      "count": 1
+    },
+    {
+      "fingerprint": "7683c0d3708885db1720493f342cded940088a41ec5d4948567e77b99c2887c9",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .isSecret on an `any` value.",
+      "context": "if (question.isSecret) text.inputEl.type = \"password\";",
+      "count": 1
+    },
+    {
+      "fingerprint": "76d5ac65f5a5b68e1b10643340066d89353fa962ad7afeb5e8ae2e4d25061950",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .id on an `any` value.",
+      "context": "this.answers[question.id] = [options[0].label];",
+      "count": 1
+    },
+    {
+      "fingerprint": "8b35134b401f0e41568a7fc06702da7c7cbd61517be9e6332574f644c2da7ac3",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .header on an `any` value.",
+      "context": "const setting = new Setting(contentEl).setName(question.header || question.question).setDesc(question.question || \"\");",
+      "count": 1
+    },
+    {
+      "fingerprint": "96fc0925c3fa72daf8a65277bf63755fbfd59249f5a9ab47507eeb9977eb6bb9",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .question on an `any` value.",
+      "context": "const setting = new Setting(contentEl).setName(question.header || question.question).setDesc(question.question || \"\");",
+      "count": 2
+    },
+    {
+      "fingerprint": "c29de84ee797edf1d9d4c9bbcb8242a6d684cb654bdc0a13b5fce6aa28e65f5a",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Computed name [question.id] resolves to an `any` value.",
+      "context": "this.answers[question.id] = [\"\"];",
+      "count": 1
+    },
+    {
+      "fingerprint": "ed4f33325918479092197fa694b47783f8f2a4cfa06c0fc8d8c89eb201ec6cce",
+      "path": "src/ui/modals.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .options on an `any` value.",
+      "context": "const options = Array.isArray(question.options) ? question.options : [];",
+      "count": 2
+    },
+    {
+      "fingerprint": "72d9205ff9f2f7fe5640356d26eb233627f70fa733d1bb1fda1a03c00103faaf",
+      "path": "src/ui/render-message.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "const adapter = app.vault.adapter as any;",
+      "count": 1
+    },
+    {
+      "fingerprint": "7bb6555cc40089ff8cf1e207b79d9fd82511337cbc53bf9fa88a71ac14acec32",
+      "path": "src/ui/render-message.ts",
+      "rule": "@typescript-eslint/no-unsafe-assignment",
+      "severity": 2,
+      "message": "Unsafe assignment of an `any` value.",
+      "context": "const basePath = typeof adapter.getBasePath === \"function\" ? adapter.getBasePath() : \"\";",
+      "count": 1
+    },
+    {
+      "fingerprint": "25a9007b86c9f2213313f3685cc9b575fe4d85319918a91315cb71d395caa43d",
+      "path": "src/ui/render-message.ts",
+      "rule": "@typescript-eslint/no-unsafe-call",
+      "severity": 2,
+      "message": "Unsafe call of an `any` typed value.",
+      "context": "const basePath = typeof adapter.getBasePath === \"function\" ? adapter.getBasePath() : \"\";",
+      "count": 1
+    },
+    {
+      "fingerprint": "42d7d57c02cff05551bde4ad45aa4bfdb0e8081ab9fb30e236fdddfe521b4d23",
+      "path": "src/ui/render-message.ts",
+      "rule": "@typescript-eslint/no-unsafe-member-access",
+      "severity": 2,
+      "message": "Unsafe member access .getBasePath on an `any` value.",
+      "context": "const basePath = typeof adapter.getBasePath === \"function\" ? adapter.getBasePath() : \"\";",
+      "count": 2
+    }
+  ]
 }
