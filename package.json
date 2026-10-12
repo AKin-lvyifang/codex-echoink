@@ -39,6 +39,7 @@
     "package": "npm run build && node scripts/package.mjs",
     "deploy": "npm run build && node scripts/deploy.mjs",
     "test:finance": "node scripts/finance-tests.mjs",
+    "test:finance-operations": "node scripts/finance-operations-tests.mjs",
     "test:finance-bill-plans": "node scripts/finance-bill-plan-tests.mjs",
     "test:finance-ui": "node scripts/finance-ui-tests.mjs",
     "test:finance-budget": "node scripts/finance-budget-tests.mjs",

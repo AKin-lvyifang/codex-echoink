@@ -90,7 +90,7 @@ export function financeSummary(entries: readonly FinanceEntry[], month: string, 
 export interface FinanceFilters {
   search: string; merchant: string; category: string; kind: "all" | "spending" | FinanceKind;
   account: string; excludedCategories: string[]; excludedIds: string[];
-  date?: string; minCents?: number; maxCents?: number | null; validExpenseOnly?: boolean; exactAccount?: string; exactCategory?: string;
+  date?: string; minCents?: number; maxCents?: number | null; validExpenseOnly?: boolean; exactAccount?: string; exactCategory?: string; exactMerchant?: string;
 }
 
 export function filterFinanceEntries(entries: readonly FinanceEntry[], month: string, filters: FinanceFilters): FinanceEntry[] {
@@ -102,6 +102,7 @@ export function filterFinanceEntries(entries: readonly FinanceEntry[], month: st
     if (filters.minCents !== undefined && entry.amountCents < filters.minCents) return false;
     if (filters.maxCents != null && entry.amountCents >= filters.maxCents) return false;
     if (filters.exactAccount !== undefined && entry.account !== filters.exactAccount) return false;
+    if (filters.exactMerchant !== undefined && entry.merchant !== filters.exactMerchant) return false;
     if (filters.exactCategory !== undefined && entry.category !== filters.exactCategory) return false;
     if (query && !`${entry.merchant} ${entry.description} ${entry.note}`.toLocaleLowerCase().includes(query)) return false;
     if (filters.merchant && entry.merchant !== filters.merchant) return false;

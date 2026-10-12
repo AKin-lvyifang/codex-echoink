@@ -51,6 +51,9 @@ import {
   type ResolvedVaultTarget
 } from "../harness/pi-native/vault-target-resolver";
 import { confirmModal } from "../ui/modals";
+import type { LifestyleFinanceService } from "../lifestyle/finance-service";
+import { financeBudgetSnapshot, financeValueVersion } from "../lifestyle/finance-operation-types";
+import { isFinanceTool } from "../harness/pi-native/finance-tool-policy";
 
 const APPROVAL_TTL_MS = 5 * 60 * 1000;
 const APPROVAL_DIFF_LIMIT_BYTES = 12_000;
@@ -69,7 +72,7 @@ export interface PiVaultApprovalConfirmationInput {
   readonly piSessionId: string;
   readonly productRunId: string;
   readonly toolCallId: string;
-  readonly toolId: PiVaultToolId | "obsidian_cli";
+  readonly toolId: PiVaultToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill";
   readonly target: JsonValue;
   readonly preview: JsonValue;
   readonly signal: AbortSignal | undefined;
@@ -93,6 +96,7 @@ export interface CreatePiVaultProductionAuthorizationOptions {
 export interface CreatePiVaultProductionWriteExecutionOptions {
   readonly receipts: FileDomainReceiptStore;
   readonly domainService: VaultDomainService;
+  readonly finance?: LifestyleFinanceService;
   readonly now?: () => number;
   readonly failureInjection?: (
     input: Readonly<ExecutePiVaultWriteInput>
@@ -308,11 +312,43 @@ export function createPiVaultProductionWriteExecutionPort(
 export async function recoverPiVaultDomainReceipts(input: {
   readonly receipts: FileDomainReceiptStore;
   readonly domainService: VaultDomainService;
+  readonly finance?: LifestyleFinanceService;
   readonly now?: () => number;
 }): Promise<void> {
   const now = input.now ?? Date.now;
   const pending = await input.receipts.listPendingRecovery();
   for (const view of pending) {
+    if (isFinanceTool(view.toolId)) {
+      const inspection = await input.receipts.inspectRecovery(view.operationIdentity);
+      if (inspection.state === "not_started") {
+        await input.receipts.persistReceipt({ operationIdentity: view.operationIdentity, status: "cancelled", safeSummary: "recovered_before_side_effect",
+          readback: { checkedAt: now(), readbackVerified: false, observedTargetVersion: null, safeSummary: "Financial operation was never started; no replay" } });
+      } else if (inspection.state === "readback_required") {
+        await input.receipts.recoverMissingReceipt(view.operationIdentity, async context => {
+          let verified = false;
+          const version = context.targetVersion as Record<string, JsonValue>;
+          const expected = version.domainVersion as Record<string, JsonValue>;
+          try {
+            const state = await input.finance?.readForConversation();
+            if (state && expected?.kind === "record-create") {
+              const record = state.records.find(r => r.entry.id === expected.recordId);
+              verified = !!record && financeValueVersion(record.entry) === financeValueVersion(expected.expectedEntry);
+            } else if (state && expected?.kind === "record-update" && Array.isArray(expected.records)) {
+              verified = expected.records.every(raw => {
+                const target = raw as Record<string, JsonValue>;
+                const record = state.records.find(r => r.entry.id === target.id);
+                return !!record && financeValueVersion(record.entry) === financeValueVersion(target.expectedEntry);
+              });
+            } else if (state && expected?.kind === "budget") verified = financeValueVersion(financeBudgetSnapshot(state.data, String(expected.scope)).budget) === financeValueVersion(expected.expectedBudget);
+            else if (state && expected?.kind === "bill") verified = financeValueVersion(state.data.financeBillPlans.find(b => b.id === expected.billId) ?? null) === financeValueVersion(expected.expectedBill);
+          } catch { /* Read-only recovery cannot invent success or replay writes. */ }
+          return { status: verified ? "completed" : "uncertain", safeSummary: verified ? "finance_original_operation_verified" : "finance_result_uncertain_query_original_operation",
+            readback: { checkedAt: now(), readbackVerified: verified, observedTargetVersion: verified ? context.targetVersion : null,
+              safeSummary: verified ? "Original financial target identity and expected fields verified; no replay" : "Original target not verified; no replay" } };
+        });
+      }
+      continue;
+    }
     if (view.toolId === "obsidian_cli") {
       // Public CLI has no atomic operation ID/readback protocol. Never replay an interrupted action.
       const inspection = await input.receipts.inspectRecovery(view.operationIdentity);

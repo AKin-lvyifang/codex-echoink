@@ -1,6 +1,6 @@
 import { getProPluginAccess, requireProPlugin, unavailableCapabilityAccess } from "../membership/access";
 import type { CapabilityAccess } from "../membership/types";
-import { financeEntryCsv } from "./finance-domain";
+import { financeEntryCsv, validateBudget } from "./finance-domain";
 import { Notice } from "obsidian";
 import { lifestyleProviderModel } from "./provider-info";
 import type { FinanceSettings } from "./settings";
@@ -17,6 +17,7 @@ import { validateFinanceGoal } from "./finance-goals";
 import { nextFinanceAnalysisMonth } from "./finance-analysis-history";
 import { FinanceAnalysisArchive, type FinanceAnalysisArchiveDraft } from "./finance-analysis-archive";
 import { FinanceLedger, type CreatedFinanceRow, type FinanceImportResult, type FinanceImportWriteOptions } from "./finance-ledger";
+import { financeBudgetSnapshot, financeValueVersion, type FinanceBudgetPatch, type FinanceRecordPatch } from "./finance-operation-types";
 
 export const FINANCE_ANALYSIS_PROMPT_VERSION = "finance-analysis-v23";
 
@@ -98,6 +99,86 @@ export class LifestyleFinanceService {
     }
   }
   entries(): readonly FinanceEntry[] { return this.ledger.entries(); }
+  private requireEnabled(): void {
+    if (!this.service.plugin.settings.lifestyle.finance.enabled) throw new Error("finance_plugin_disabled");
+  }
+  async readForConversation() {
+    this.requireEnabled();
+    const records = await this.ledger.readSnapshots();
+    const data = await this.service.store.readFresh();
+    const settings = this.service.plugin.settings.lifestyle.finance;
+    return { records, data, categories: structuredClone(settings.categories), accounts: structuredClone(settings.accounts), issues: this.ledger.issues() };
+  }
+  private requireExistingCategories(names: readonly string[]): void {
+    const active = new Set(this.service.plugin.settings.lifestyle.finance.categories.filter(c => c.active).map(c => c.name));
+    for (const name of names) if (!active.has(name)) throw new Error(`finance_unknown_category:${name}`);
+  }
+  async patchConversationRecord(id: string, version: string, patch: FinanceRecordPatch) {
+    this.requireEnabled(); requireProPlugin(this.access);
+    if (patch.category !== undefined) this.requireExistingCategories([patch.category]);
+    if (patch.billPlanId !== undefined) {
+      this.access.requireCapability("finance.bill_plan.write");
+      const data = await this.service.store.readFresh();
+      if (patch.billPlanId !== null && !data.financeBillPlans.some(b => b.id === patch.billPlanId)) throw new Error("finance_bill_not_found");
+    }
+    return this.ledger.patchRecord(id, version, structuredClone(patch));
+  }
+  async deleteConversationRecord(id: string, version: string) {
+    this.requireEnabled(); requireProPlugin(this.access);
+    return this.ledger.deleteRecord(id, version);
+  }
+  async patchConversationBudget(scope: string, version: string, patch: FinanceBudgetPatch) {
+    this.requireEnabled(); requireProPlugin(this.access);
+    const frozen = structuredClone(patch);
+    const result = await this.service.store.updateFresh(draft => {
+      const before = financeBudgetSnapshot(draft, scope);
+      if (before.version !== version) throw new Error("finance_version_conflict");
+      if (!before.budget && frozen.totalCents === undefined) throw new Error("finance_budget_total_unset");
+      const allocations = { ...before.budget?.allocations, ...frozen.allocations };
+      if (Object.keys(frozen.allocations ?? {}).length || Object.keys(frozen.deltas ?? {}).length) {
+        this.access.requireCapability("finance.category_budget.write");
+        this.requireExistingCategories([...Object.keys(frozen.allocations ?? {}), ...Object.keys(frozen.deltas ?? {})]);
+      }
+      for (const [name, delta] of Object.entries(frozen.deltas ?? {})) {
+        if (Object.hasOwn(frozen.allocations ?? {}, name)) throw new Error("finance_duplicate_allocation_change");
+        if (!Object.hasOwn(allocations, name)) throw new Error("finance_category_budget_unset");
+        if (!Number.isSafeInteger(delta)) throw new Error("finance_invalid_amount");
+        allocations[name] += delta;
+      }
+      const next = { ...before.budget, totalCents: frozen.totalCents ?? before.budget!.totalCents, allocations };
+      validateBudget({ ...next, month: scope === "default" ? "2000-01" : scope });
+      if (scope === "default") draft.financeDefaultBudget = next;
+      else {
+        const index = draft.budgets.findIndex(b => b.month === scope);
+        const saved = { ...next, month: scope };
+        if (index < 0) draft.budgets.push(saved); else draft.budgets[index] = saved;
+      }
+      return { before, after: financeBudgetSnapshot(draft, scope) };
+    });
+    const observed = financeBudgetSnapshot(await this.service.store.readFresh(), scope);
+    if (observed.version !== result.after.version) throw new Error("finance_readback_failed");
+    return { ...result, after: observed };
+  }
+  async writeConversationBill(action: "create" | "update", id: string, version: string, patch: { name?: string; budgetCents?: number; allocations?: Record<string, number> }) {
+    this.requireEnabled(); this.access.requireCapability("finance.bill_plan.write");
+    const frozen = structuredClone(patch);
+    const result = await this.service.store.updateFresh(draft => {
+      const index = draft.financeBillPlans.findIndex(b => b.id === id);
+      const before = index < 0 ? null : draft.financeBillPlans[index];
+      if (action === "create" && before) throw new Error("finance_bill_already_exists");
+      if (action === "update" && !before) throw new Error("finance_bill_not_found");
+      if (financeValueVersion(before) !== version) throw new Error("finance_version_conflict");
+      this.requireExistingCategories(Object.keys(frozen.allocations ?? {}));
+      const after = { ...before, ...frozen, id, allocations: { ...before?.allocations, ...frozen.allocations } } as FinanceBillPlan;
+      if (typeof after.name !== "string") throw new Error("finance_bill_name_required");
+      after.name = after.name.trim(); validateFinanceBillPlan(after);
+      if (index < 0) draft.financeBillPlans.push(after); else draft.financeBillPlans[index] = after;
+      return { before, after, version: financeValueVersion(after) };
+    });
+    const observed = (await this.service.store.readFresh()).financeBillPlans.find(b => b.id === id);
+    if (financeValueVersion(observed ?? null) !== result.version) throw new Error("finance_readback_failed");
+    return result;
+  }
   monthlyPlan(month: string): FinanceMonthlyPlan {
     return this.service.store.snapshot().financePlans.find((item) => item.month === month)
       ?? { month, dailyLimitCents: null, goals: [] };
@@ -240,14 +321,14 @@ export class LifestyleFinanceService {
   }
 
   /** Prepare the real service-generated identity before conversation approval. No write here. */
-  prepareManual(entry: Omit<FinanceEntry, "id" | "source" | "sourceId">) {
+  prepareManual(entry: Omit<FinanceEntry, "id" | "source" | "sourceId">, identity?: Pick<FinanceEntry, "id" | "sourceId">) {
     requireProPlugin(this.access);
     if (entry.billPlanId != null) this.access.requireCapability("finance.bill_plan.write");
     if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(entry.date)) throw new Error("交易日期无效");
-    if (!entry.merchant.trim()) throw new Error("请填写商户或对方名称");
+    if (entry.merchant.trim().length > 60) throw new Error("商户名称过长");
     if (!Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) throw new Error("金额无效");
     this.validateBillPlanId(entry.billPlanId);
-    const created: FinanceEntry = { ...entry, id: lifeId("entry"), source: "manual", sourceId: lifeId("manual") };
+    const created: FinanceEntry = { ...entry, merchant: entry.merchant.trim(), account: entry.account.trim(), id: identity?.id ?? lifeId("entry"), source: "manual", sourceId: identity?.sourceId ?? lifeId("manual") };
     let consumed = false;
     return { entry: Object.freeze(created), relativePath: this.ledger.pathForNewEntry(created.id), create: async () => {
       if (consumed) throw new Error("finance_manual_operation_already_consumed");

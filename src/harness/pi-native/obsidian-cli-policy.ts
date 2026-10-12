@@ -112,9 +112,9 @@ export function normalizeFinanceInput(value: unknown): ObsidianFinanceInput {
   const fields = ["date", "merchant", "amountCents", "kind", "category", "account", "description", "currency", "note", "billPlanId"];
   if (Object.keys(input).some(key => !fields.includes(key)) || !Number.isSafeInteger(input.amountCents) || Number(input.amountCents) <= 0
     || !["expense", "income", "refund", "transfer"].includes(String(input.kind)) || typeof input.date !== "string"
-    || !/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(input.date) || typeof input.merchant !== "string" || !input.merchant.trim()) throw new Error("obsidian_invalid_finance_entry");
+    || !/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(input.date) || input.merchant !== undefined && typeof input.merchant !== "string") throw new Error("obsidian_invalid_finance_entry");
   for (const key of fields.filter(key => !["amountCents", "kind"].includes(key))) if (input[key] !== undefined && (typeof input[key] !== "string" || String(input[key]).length > 1_000 || /\0/u.test(String(input[key])))) throw new Error("obsidian_invalid_finance_entry");
-  const normalized: Record<string, unknown> = { ...input, merchant: input.merchant.trim() };
+  const normalized: Record<string, unknown> = { ...input, merchant: typeof input.merchant === "string" ? input.merchant.trim() : "" };
   if (typeof input.billPlanId === "string") {
     if (input.billPlanId.trim()) normalized.billPlanId = input.billPlanId.trim();
     else delete normalized.billPlanId;
