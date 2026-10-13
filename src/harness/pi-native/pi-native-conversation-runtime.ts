@@ -215,6 +215,8 @@ export interface PiNativeAgentSessionFactoryInput {
   currentMemoryTurnContext?(): Readonly<PiNativeMemoryTurnContext> | null;
   currentNoteMentionTurnContext?(): Readonly<PiNativeNoteMentionTurnContext> | null;
   currentDocumentTurnContext?(): Readonly<PiNativeDocumentTurnContext> | null;
+  bindPdfMaintenanceSources?(paths: readonly string[]): void;
+  consumePdfDocument?(attachmentId: string, sha256: string): Readonly<{ conversationId: string; userEntryId: string }> | null;
   currentTaskPlanTurnContext(): Readonly<PiNativeTaskPlanTurnContext> | null;
   /** Successful read-only external Tools from the currently bound ProductRun. */
   currentSuccessfulExternalReadToolNames(): readonly string[];
@@ -2589,6 +2591,20 @@ export class PiNativeConversationRuntime {
         return noteMentions.length
           ? Object.freeze({ noteMentions })
           : null;
+      },
+      bindPdfMaintenanceSources: (paths) => {
+        const run = holder.active?.currentRun;
+        if (!run || !paths.length || paths.length > 20) throw new Error("PDF maintenance scope unavailable");
+        run.maintenanceScope = { mode: "batch", sourcePaths: [...new Set(paths)] };
+      },
+      consumePdfDocument: (attachmentId, sha256) => {
+        const active = holder.active, run = active?.currentRun;
+        if (!active || !run) return null;
+        const document = run.documents.find(d => d.transport === "tool_reference" && d.attachmentId === attachmentId && d.sha256 === sha256);
+        if (!document) return null;
+        run.documents = run.documents.filter(d => d !== document);
+        (document.bytes as Uint8Array).fill(0);
+        return { conversationId: catalog.conversationId, userEntryId: currentRunUserEntry(active.sessionManager, run.baselineEntryIds).id };
       },
       currentDocumentTurnContext: () => {
         const documents = holder.active?.currentRun?.documents ?? [];

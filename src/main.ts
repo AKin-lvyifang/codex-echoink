@@ -1,3 +1,4 @@
+import { PdfReadingController } from "./pdf-reading/controller";
 import { createPluginAccountService } from "./membership/plugin-service";
 import type { AccountService } from "./membership/account-service";
 import { UsageStore, type UsageRequestEvent } from "./harness/usage/usage-store";
@@ -219,6 +220,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private readonly piSubmittingConversations = new Set<string>();
   private readonly apiProviderActivation = new ApiProviderActivationService();
   private editorTranslation: EditorTranslationService | null = null;
+  pdfReading: PdfReadingController | null = null;
   englishDiary: EnglishDiaryController | null = null;
   accountService: AccountService | null = null;
   usageStore: UsageStore | null = null;
@@ -289,6 +291,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     void this.getCognitiveSystem().catch((error) => {
       console.error("EchoInk cognitive system init failed", error);
     });
+    this.pdfReading = new PdfReadingController(this);
     this.englishDiary = new EnglishDiaryController(this);
     this.englishDiary.register();
     this.register(this.accountService.subscribe(() => this.notifyHomeSurfacesChanged()));
@@ -317,6 +320,8 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   private async performUnload(): Promise<void> {
     this.accountService?.dispose();this.accountService=null;
+    this.pdfReading?.api.cancel();
+    this.pdfReading = null;
     this.englishDiary?.dispose();
     this.englishDiary = null;
     this.lifestyle?.dispose();
@@ -1599,6 +1604,16 @@ export default class CodexForObsidianPlugin extends Plugin {
       draft: this.activePiProviderConfigurationDraft(), systemPrompt, userPrompt,
       timeoutMs: 60_000, maxTokens: 4_096
     });
+  }
+  createPdfReadingGenerator(draft: PiProviderConfigurationDraft = this.activePiProviderConfigurationDraft()) {
+    const budget = Math.min(7000, Math.floor(Math.min(draft.contextWindow - draft.maxOutputTokens - 2000, draft.maxOutputTokens / 3)));
+    if (budget < 500) throw new Error("当前模型输出或上下文预算过小，请在 Provider 设置中调整。");
+    return { maxSourceCharacters: budget, generate: async (systemPrompt: string, userPrompt: string, signal: AbortSignal) => {
+      requireProPlugin(this.accountService ?? unavailableCapabilityAccess);
+      // The current chat owns the activity; PdfReadingService serializes jobs.
+      // Entering a second top-level activity here would reject our own Tool call.
+      return this.getPiProviderConfigurationService().generateText({ draft, systemPrompt, userPrompt, signal, timeoutMs: 120_000, maxTokens: draft.maxOutputTokens });
+    } };
   }
   englishDiaryProviderLabel(): string {
     try {

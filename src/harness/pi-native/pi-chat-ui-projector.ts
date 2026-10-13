@@ -1,3 +1,4 @@
+import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { assistantProviderFailureText } from "../pi/provider-failure";
 import {
   extractProcessFileRefs,
@@ -897,6 +898,7 @@ export class PiChatUiProjector {
         toolName === PI_TASK_UPDATE_TOOL_ID
         || toolName === PI_USER_QUESTION_TOOL_ID
       ) return;
+      if (toolName === "pdf_reading_process" && !message.isError) consumePdfAttachmentCard(messages, message.details);
       const resultText = textFromContent(message.content);
       const cancelled = isCancelledResult(message.details);
       const status = cancelled ? "interrupted" : message.isError ? "failed" : "completed";
@@ -1387,6 +1389,7 @@ export class PiChatUiProjector {
       }
       return;
     }
+    if (event.toolName === "pdf_reading_process" && !event.isError) consumePdfAttachmentCard(view.messages, event.result, event.conversationId);
     const timing = this.toolExecutionTimes.get(this.toolTimeKey(view.piSessionId, event.toolCallId));
     if (timing) timing.completedAt = event.occurredAt;
     const existing = findByIdentity(view.messages, "tool", event.toolCallId);
@@ -3448,4 +3451,11 @@ function decodeIdentity(value: string): string {
   } catch {
     return value;
   }
+}
+
+function consumePdfAttachmentCard(messages: ChatMessage[], result: unknown, conversationId?: string): void {
+  const receipt = pdfAttachmentReceipt(result);
+  if (!receipt || conversationId && receipt.conversationId !== conversationId) return;
+  const message = messages.find(m => m.role === "user" && piEntryIdFromProjectedMessageId(m.id) === receipt.userEntryId);
+  if (message?.attachments) message.attachments = message.attachments.filter(a => a.path !== `pdf-attachment:${receipt.attachmentId}`);
 }

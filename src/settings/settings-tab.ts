@@ -1,3 +1,4 @@
+import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { mountAccountMembership } from "./account-membership";
 import { createUnavailableAccountAdapter } from "./account-membership-model";
@@ -250,6 +251,12 @@ export class CodexSettingTab extends PluginSettingTab {
   private membershipRowsDisposers: (() => void)[] = [];
   private lifestyleSettingsPanel: LifestyleSettingsPanel | null = null;
 
+  openPdfReadingDetail(): void {
+    if (!this.plugin.pdfReading?.policy().canEnter) return;
+    this.openSettingsDetail("pdf-reading");
+  }
+  private pdfSettingsPanel: PdfReadingSettingsPanel | null = null;
+
   openLifestyleDetail(kind: LifestyleKind): void {
     const enabled = this.plugin.settings.lifestyle[kind].enabled;
     if (!getProPluginAccess(this.plugin.accountService ?? unavailableCapabilityAccess, enabled).canEnter) return;
@@ -402,6 +409,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private disposeSettingsView(): void {
     this.membershipRowsDisposers.splice(0).forEach(dispose => dispose());
+    this.pdfSettingsPanel?.dispose();
     this.lifestyleSettingsPanel?.dispose();
     this.disposeDiaryActivity?.();
     this.disposeDiaryActivity = null;
@@ -4211,6 +4219,11 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private renderWorkspaceResourceManager(container: HTMLElement): void {
     const copy = this.copy;
+    if (this.settingsDetail === "pdf-reading") {
+      this.pdfSettingsPanel ??= new PdfReadingSettingsPanel(this.plugin, () => void this.closeSettingsDetail());
+      this.pdfSettingsPanel.render(container);
+      return;
+    }
     if (this.settingsDetail === "english-diary") {
       this.renderEnglishDiarySettings(container);
       return;
@@ -5081,7 +5094,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private renderBuiltinPluginRow(
     container: HTMLElement,
-    kind: LifestyleKind,
+    kind: LifestyleKind | "pdf",
     visible: boolean,
     searchRow: { key: string; name: string; meta: string; desc: string; aliases?: readonly string[] }
   ): void {
@@ -5096,14 +5109,14 @@ export class CodexSettingTab extends PluginSettingTab {
         "data-resource-aliases": searchRow.aliases?.join("\n") ?? ""
       }
     });
-    setIcon(row.createSpan({ cls: "codex-resource-row-icon" }), "wallet");
+    setIcon(row.createSpan({ cls: "codex-resource-row-icon" }), kind === "pdf" ? "file-text" : "wallet");
     const content = row.createDiv({ cls: "codex-resource-row-content" });
     const title = content.createDiv({ cls: "codex-resource-row-title" });
     const name = createOriginButton(title, {
       cls: "codex-resource-row-name", text: searchRow.name,
       attr: { type: "button", "data-echoink-focus-key": `${searchRow.key}:detail` }
     });
-    name.onclick = () => this.openLifestyleDetail(kind);
+    name.onclick = () => { if (kind === "pdf") this.openPdfReadingDetail(); else this.openLifestyleDetail(kind); };
     createPluginEditionBadge(title, "pro", this.plugin.settings.settingsLanguage);
     content.createDiv({ cls: "codex-resource-row-desc", text: searchRow.desc });
     const actions = row.createDiv({ cls: "codex-resource-row-actions" });
@@ -5112,7 +5125,7 @@ export class CodexSettingTab extends PluginSettingTab {
       text: english ? "Settings" : "设置",
       attr: { type: "button", "data-echoink-focus-key": `${searchRow.key}:settings` }
     });
-    settings.onclick = () => this.openLifestyleDetail(kind);
+    settings.onclick = () => { if (kind === "pdf") this.openPdfReadingDetail(); else this.openLifestyleDetail(kind); };
     const toggle = createOriginSwitch(row, {
       cls: "codex-resource-toggle",
       attr: { "aria-label": this.copy.resources.toggleAria(searchRow.name), "data-echoink-focus-key": `${searchRow.key}:enabled` }
@@ -5120,7 +5133,7 @@ export class CodexSettingTab extends PluginSettingTab {
     let pending = false;
     const access = this.plugin.accountService ?? unavailableCapabilityAccess;
     const updateState = () => {
-      const enabled = this.plugin.settings.lifestyle[kind].enabled;
+      const enabled = kind === "pdf" ? this.plugin.settings.pdfReading.enabled : this.plugin.settings.lifestyle[kind].enabled;
       const policy = getProPluginAccess(access, enabled);
       toggle.disabled = pending || !policy.canToggle;
       toggle.checked = enabled;
@@ -5136,7 +5149,8 @@ export class CodexSettingTab extends PluginSettingTab {
       toggle.disabled = true;
       name.disabled = settings.disabled = true;
       try {
-        await this.plugin.lifestyle.setEnabled(kind, enabled);
+        if (kind === "pdf") await this.plugin.pdfReading?.setEnabled(enabled);
+        else await this.plugin.lifestyle.setEnabled(kind, enabled);
       } catch (error) {
         const message = error instanceof Error ? error.message : (english ? "The plugin setting was not saved." : "插件状态保存失败");
         new Notice(message);
@@ -5152,7 +5166,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderEchoInkResources(container: HTMLElement, resources: EchoInkResource[], error?: string): void {
     const copy = this.copy;
     const activeTab = this.plugin.settings.resourceManagementTab;
-    const rows: Array<{ key: string; name: string; meta: string; desc: string; aliases: readonly string[]; enabled: boolean; resource?: EchoInkResource; lifeKind?: LifestyleKind }> = resources.map((resource) => {
+    const rows: Array<{ key: string; name: string; meta: string; desc: string; aliases: readonly string[]; enabled: boolean; resource?: EchoInkResource; lifeKind?: LifestyleKind | "pdf" }> = resources.map((resource) => {
       const presentation = resourcePresentation(resource, this.plugin.settings.settingsLanguage);
       return {
         key: resource.id,
@@ -5166,6 +5180,7 @@ export class CodexSettingTab extends PluginSettingTab {
     });
     if (activeTab === "plugins") {
       const english = this.plugin.settings.settingsLanguage === "en";
+      rows.unshift({ key: "builtin-plugin:pdf", name: "PDF 精读 · 提取", aliases: ["PDF reading", "提取", "翻译"], meta: "PRO", desc: english ? "Extract, read and translate a PDF into linked notes" : "提取单篇 PDF，生成精读笔记与按需译文", enabled: this.plugin.settings.pdfReading.enabled, lifeKind: "pdf" });
       const finance = builtinPluginPresentation("finance", this.plugin.settings.settingsLanguage);
       rows.unshift({
         key: "builtin-plugin:finance",
@@ -5657,6 +5672,7 @@ type VisibleSettingsTab = SettingsTab;
 type SettingsActionContext = "knowledge" | "review" | "resources" | "providers";
 
 type SettingsDetail =
+  | "pdf-reading"
   | "english-diary"
   | "knowledge-preferences"
   | "knowledge-maintenance-history"

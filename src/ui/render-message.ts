@@ -161,7 +161,10 @@ function renderVaultNoteLink(app: App, component: Component, container: HTMLElem
     event.preventDefault();
     event.stopPropagation();
     const current = app.vault.getAbstractFileByPath(targetPath);
-    if (current instanceof TFile) await app.workspace.getLeaf("tab").openFile(current, { active: true });
+    if (current instanceof TFile) {
+      if (segment.heading) await app.workspace.openLinkText(`${targetPath}#${segment.heading}`, "", true);
+      else await app.workspace.getLeaf("tab").openFile(current, { active: true });
+    }
   });
   return true;
 }
@@ -230,7 +233,11 @@ function renderTable(app: App, component: Component, container: HTMLElement, lin
   const tbody = table.createEl("tbody");
   for (const line of lines.slice(2)) {
     const tr = tbody.createEl("tr");
-    for (const cell of splitMessageTableRow(line)) renderInline(app, component, tr.createEl("td"), cell);
+    for (const [index, cell] of splitMessageTableRow(line).entries()) {
+      const td = tr.createEl("td");
+      if (/^(保存路径|完整路径|Save path|Path)$/iu.test(headerCells[index]?.trim() ?? "")) td.createEl("code", { text: cell.replace(/^`|`$/gu, "").replace(/&#96;/gu, "`") });
+      else renderInline(app, component, td, cell);
+    }
   }
 }
 

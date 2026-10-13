@@ -21805,6 +21805,12 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
     transition: none;
   }
 }
+.echoink-pdf-settings-heading { display:flex; align-items:center; gap:12px; }
+.echoink-pdf-settings-form { display:flex; flex-direction:column; gap:18px; margin-top:24px; max-width:600px; }
+.echoink-pdf-settings-form label { display:flex; flex-direction:column; align-items:flex-start; gap:8px; font-size:calc(var(--font-text-size,16px)*.75); }
+.echoink-pdf-settings-form p { color:var(--text-muted); font-size:calc(var(--font-text-size,16px)*.6875); line-height:1.85; }
+.echoink-pdf-settings-actions { display:flex; justify-content:flex-end; }
+.codex-composer-resource-row.is-pdf-plugin .codex-composer-resource-name { display:flex; align-items:center; gap:8px; }
 /* ECHOINK_WORKSPACE_SETTINGS_END */
 
 /* ===== EchoInk 快捷 AI 小窗（quick chat popout）===== */

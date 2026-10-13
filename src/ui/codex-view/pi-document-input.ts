@@ -1,5 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { extractPdfText } from "./pdf-text-extractor";
@@ -86,6 +86,7 @@ export async function preparePiChatDocuments(
   options: Readonly<{
     /** Current model input capacity remaining before adding these documents. */
     availableInputTokens: number;
+    pdfToolReference?: boolean;
     /** Exact Provider/API/base URL/model/adapter identity frozen for this turn. */
     capabilityTarget: Readonly<PiDocumentCapabilityTarget>;
   }>
@@ -128,7 +129,7 @@ export async function preparePiChatDocuments(
   for (const attachment of fileAttachments) {
     const prepared = await prepareOneDocument(
       attachment,
-      options.capabilityTarget
+      options.capabilityTarget, options.pdfToolReference === true
     );
     totalBytes += prepared.attachment.sizeBytes;
     if (totalBytes > PI_DOCUMENT_MAX_TOTAL_BYTES) {
@@ -174,7 +175,7 @@ export function reconcilePiDocumentTransports(
 ): readonly Readonly<PiChatPreparedDocument>[] {
   return Object.freeze(documents.map((document) => {
     if (
-      document.transport === "extracted_text"
+      document.transport === "tool_reference" || document.transport === "extracted_text"
       || resolvePiDocumentTransport(
         capabilityTarget,
         document.attachment.mimeType
@@ -206,7 +207,8 @@ export function reconcilePiDocumentTransports(
 
 async function prepareOneDocument(
   attachment: Readonly<StoredAttachment>,
-  capabilityTarget: Readonly<PiDocumentCapabilityTarget>
+  capabilityTarget: Readonly<PiDocumentCapabilityTarget>,
+  pdfToolReference = false
 ): Promise<PiChatPreparedDocument> {
   const name = displayName(attachment);
   const kind = piDocumentKindForAttachment(attachment);
@@ -303,6 +305,10 @@ async function prepareOneDocument(
   }
 
   const mimeType = canonicalDocumentMimeType(kind, attachment);
+  if (pdfToolReference && kind === "pdf") {
+    if (bytes.subarray(0, 5).toString() !== "%PDF-") throw new PiDocumentInputError("damaged", name, "请选择有效 PDF。");
+    return { kind, bytes: new Uint8Array(bytes), sha256: createHash("sha256").update(bytes).digest("hex"), transport: "tool_reference", attachmentId: `pdf-${randomUUID()}`, attachment: { type: "file", name, path: attachment.path, mimeType, sizeBytes, availability: "available" } };
+  }
   const transport = resolvePiDocumentTransport(capabilityTarget, mimeType);
   let extracted: string;
   try {

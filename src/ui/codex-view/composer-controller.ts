@@ -255,7 +255,8 @@ export function renderToolbar(host: CodexComposerHost): void {
         : host.currentEchoInkResourceCatalog(),
       resourceSettings: host.plugin.settings.resources,
       language: host.plugin.settings.settingsLanguage,
-      canAttachActiveFile: currentDisplayedMarkdownFile(host.app) !== null
+      canAttachActiveFile: currentDisplayedMarkdownFile(host.app) !== null,
+      pdfPlugin: { enabled: host.plugin.settings.pdfReading?.enabled === true, canWrite: host.plugin.pdfReading?.policy().canWrite === true }
     },
     {
       onDismiss: (restoreFocus) => closeResourcePanel(host, restoreFocus),
@@ -276,6 +277,15 @@ export function renderToolbar(host: CodexComposerHost): void {
         closeResourcePanel(host, false);
         host.renderAttachments();
         host.renderToolbar();
+        host.inputEl.focus();
+      },
+      onSelectPdfPlugin: () => {
+        closeResourcePanel(host, false);
+        if (!host.plugin.settings.pdfReading.enabled || !host.plugin.pdfReading?.policy().canWrite) return;
+        const draft = host.inputEl.value.trim();
+        if (!draft.startsWith("PDF 精读：")) host.inputEl.value = `PDF 精读：${draft || "提取并精读附加的 PDF，沉淀到 Wiki。"}`;
+        host.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+        if (!host.attachments.some(a => /\.pdf$/iu.test(a.name))) host.pickFiles(false);
         host.inputEl.focus();
       },
       onOpenMcpSettings: () => {

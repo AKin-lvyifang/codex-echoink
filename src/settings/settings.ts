@@ -494,6 +494,7 @@ export interface EchoInkTodoItem {
 }
 
 export interface CodexForObsidianSettings {
+  pdfReading: import("../pdf-reading/types").PdfReadingSettings;
   englishDiary: import("../english-diary/types").EnglishDiarySettings;
   productGeneration: "pi-agent-product-v1";
   settingsVersion: number;
@@ -541,6 +542,7 @@ export interface CodexForObsidianSettings {
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
+  pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
   englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS },
   productGeneration: "pi-agent-product-v1",
   settingsVersion: 54,
@@ -706,6 +708,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,
     journalDirectory: normalizeJournalDirectory(data?.journalDirectory),
+    pdfReading: normalizePdfReading(data.pdfReading),
     englishDiary: normalizeEnglishDiarySettings(data.englishDiary),
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
     apiProviders: normalizeApiProviders(
@@ -3161,4 +3164,9 @@ function settingsRecord(value: unknown): Record<string, unknown> | null {
 
 export function normalizeAutoArchiveDays(value: unknown): 0 | 7 | 14 | 30 | 90 {
   return value === 7 || value === 14 || value === 30 || value === 90 ? value : 0;
+}
+
+function normalizePdfReading(value: unknown): CodexForObsidianSettings["pdfReading"] {
+  const data = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return { enabled: data.enabled === true, mineruToken: typeof data.mineruToken === "string" ? data.mineruToken : "", engine: data.engine === "mineru" ? "mineru" : "local", translationLanguage: typeof data.translationLanguage === "string" && data.translationLanguage.trim() ? data.translationLanguage.trim().slice(0, 40) : "中文" };
 }

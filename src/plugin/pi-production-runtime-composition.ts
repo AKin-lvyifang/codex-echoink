@@ -1,3 +1,5 @@
+import { PiPdfReadingSecurity, createPdfReadingTools, PDF_TOOL_NAMES } from "../harness/pi-native/pi-pdf-reading-tools";
+import type { PdfReadingController } from "../pdf-reading/controller";
 import type { DiscoveredProviderModel } from "../settings/provider-model-discovery";
 import { PiWebSearchSecurity, createWebSearchTool, WEB_SEARCH_TOOL_NAME, WEB_SEARCH_INSTRUCTIONS } from "../harness/pi-native/pi-web-search";
 import { KNOWLEDGE_ASK_PROTOCOL, knowledgeReadingState } from "../harness/pi-native/knowledge-ask-protocol";
@@ -248,6 +250,7 @@ import {
 export interface PiProductionPluginHost {
   readonly app: App;
   readonly lifestyle?: { readonly finance: LifestyleFinanceService };
+  readonly pdfReading?: PdfReadingController | null;
   prepareWikiFolderNamesForMaintenance?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   readonly settings: CodexForObsidianSettings;
   recordModelUsage?(event: UsageRequestEvent): Promise<void>;
@@ -1897,6 +1900,25 @@ async function createProductionAgentSession(input: {
     egress: new EchoInkVaultToolEgressPolicy()
   });
   const mcpSnapshot = await discoverPiMcpTools(input, mcpSecurity);
+  const pdfGenerationDraft = Object.freeze({
+    providerSettingsId: configured.provider.id, providerId: productProviderId,
+    runtimeProviderId: configured.providerId, apiProtocol: configured.apiProtocol,
+    authMode: configured.authMode, baseUrl: configured.baseUrl, modelId: configured.modelRef,
+    apiKey: configured.apiKey, toolCalling: configured.toolCalling, imageInput: configured.imageInput,
+    reasoning: configured.reasoning, discovery: configured.discovery, contextWindow: configured.contextWindow,
+    modelMaxTokens: configured.modelMaxTokens, maxOutputTokens: configured.maxOutputTokens
+  });
+  const pdfSecurity = new PiPdfReadingSecurity({ generator: () => {
+    const host = input.plugin.pdfReading;
+    if (!host) throw new Error("PDF 插件不可用。");
+    return host.plugin.createPdfReadingGenerator(pdfGenerationDraft);
+  }, bindSources: paths => input.input.bindPdfMaintenanceSources?.(paths), wikiPaths: async rawPath => {
+    input.knowledgeAgentIndex.invalidate();
+    const result = await input.knowledgeAgentIndex.readReliableKnowledgeForRaw(rawPath);
+    return result?.entries.map(entry => entry.vaultRelativePath) ?? [];
+  }, documents: () => input.input.currentDocumentTurnContext?.()?.documents ?? [], consume: (id, hash) => input.input.consumePdfDocument?.(id, hash) ?? null, host: () => input.plugin.pdfReading, access: () => input.input.currentWorkspaceAccess?.(),
+    identity: () => JSON.stringify(input.input.currentToolExecutionContext()), intentId: () => { const c = input.input.currentToolExecutionContext(); return `${c.conversationId}:${c.userEntryId}`; } });
+  const pdfTools = createPdfReadingTools(pdfSecurity);
   const webSearchSecurity = new PiWebSearchSecurity(() => input.plugin.settings.tavily);
   const security = createPiVaultToolSecurityAdapter({
     isToolAllowed: (toolName) => {
@@ -1928,7 +1950,8 @@ async function createProductionAgentSession(input: {
       userQuestionSecurity,
       personalMemorySecurity,
       knowledgeReadSecurity,
-      obsidianSecurity
+      obsidianSecurity,
+      pdfSecurity
     ],
     resultCorrection: createSecurePiVaultToolResultCorrectionPort(
       new EchoInkVaultToolEgressPolicy()
@@ -2077,6 +2100,7 @@ async function createProductionAgentSession(input: {
     createWebSearchTool(webSearchSecurity),
     ...vaultTools,
     ...obsidianTools,
+    ...pdfTools,
     maintenanceTool,
     taskPlanTool,
     userQuestionTool,
@@ -2137,6 +2161,7 @@ async function createProductionAgentSession(input: {
     WEB_SEARCH_TOOL_NAME,
     ...PI_VAULT_TOOL_IDS,
     ...PI_OBSIDIAN_TOOL_IDS,
+    ...PDF_TOOL_NAMES,
     maintenanceTool.name,
     taskPlanTool.name,
     userQuestionTool.name,
@@ -2145,6 +2170,7 @@ async function createProductionAgentSession(input: {
     ...mcpSnapshot.toolNames
   ]);
   const planToolNames = [
+    "pdf_reading_query",
     WEB_SEARCH_TOOL_NAME,
     "vault_search",
     "note_read",

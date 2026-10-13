@@ -427,7 +427,9 @@ export interface PiChatPreparedDocument {
   /** Lowercase SHA-256 of bytes, used to prove queue and replay identity. */
   readonly sha256: string;
   /** Frozen transport selected from the exact product capability matrix. */
-  readonly transport: "native" | "extracted_text";
+  readonly transport: "native" | "extracted_text" | "tool_reference";
+  /** Local-only identity for this submitted plugin attachment. */
+  readonly attachmentId?: string;
   /** Local fallback text. Required for extracted_text; optional for native PDF. */
   readonly text?: string;
 }

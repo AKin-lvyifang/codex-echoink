@@ -29,7 +29,7 @@ try {
     ],
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
     banner: {
-      js: 'import {createRequire} from "node:module"; const require = createRequire(import.meta.url);',
+      js: 'import {createRequire as __membershipCreateRequire} from "node:module"; const require = __membershipCreateRequire(import.meta.url);',
     },
     alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") },
   });

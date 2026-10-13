@@ -1,6 +1,7 @@
+import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
 export type VaultNoteLinkSegment =
   | { kind: "text"; text: string }
-  | { kind: "noteLink"; text: string; original: string; targetPath: string; title: string };
+  | { kind: "noteLink"; text: string; original: string; targetPath: string; title: string; heading?: string };
 
 const VAULT_NOTE_ROOTS = new Set(["wiki", "journal", "outputs", "raw", "inbox", "projects", "work", "templates", "archive", "testing", "assets"]);
 const COMPACT_PARENT_LABEL_NAMES = new Set(["index", "00-索引", ".ingest-tracker"]);
@@ -18,7 +19,7 @@ export function splitVaultNoteLinkSegments(text: string, vaultBasePathValue = ""
       text: candidate.label,
       original: text.slice(candidate.start, candidate.end),
       targetPath: candidate.targetPath,
-      title: candidate.title
+      title: candidate.title, heading: candidate.heading
     });
     cursor = candidate.end;
   }
@@ -26,11 +27,11 @@ export function splitVaultNoteLinkSegments(text: string, vaultBasePathValue = ""
   return segments;
 }
 
-function collectVaultNoteLinkCandidates(text: string, vaultBasePathValue: string): Array<{ start: number; end: number; label: string; targetPath: string; title: string }> {
-  const candidates: Array<{ start: number; end: number; label: string; targetPath: string; title: string }> = [];
+function collectVaultNoteLinkCandidates(text: string, vaultBasePathValue: string): Array<{ start: number; end: number; label: string; targetPath: string; title: string; heading?: string }> {
+  const candidates: Array<{ start: number; end: number; label: string; targetPath: string; title: string; heading?: string }> = [];
   const basePath = normalizeFsPath(vaultBasePathValue).replace(/\/$/, "");
 
-  const markdownLinkPattern = /\[([^\]\n\r]+)]\(([^)\n\r]+?\.md(?:#[^)]+)?)\)/gi;
+  const markdownLinkPattern = /\[([^\]\n\r]+)]\(<?([^)<>\n\r]+?\.md(?:#[^)<>]+)?)>?\)/gi;
   for (const match of text.matchAll(markdownLinkPattern)) {
     const start = match.index ?? 0;
     if (start > 0 && text[start - 1] === "!") continue;
@@ -41,6 +42,7 @@ function collectVaultNoteLinkCandidates(text: string, vaultBasePathValue: string
       end: start + match[0].length,
       label: cleanLinkLabel(match[1]) || displayNameForVaultNote(targetPath),
       targetPath,
+      heading: match[2]?.includes("#") ? decodeUriPath(match[2].slice(match[2].indexOf("#") + 1)) : undefined,
       title: titleForVaultNote(targetPath, basePath)
     });
   }
@@ -130,7 +132,7 @@ function normalizeVaultNoteCandidate(value: string): string {
   const normalized = normalizeVaultPath(withoutAlias);
   if (normalized.split("/").some((part) => part === "." || part === "..")) return "";
   const root = normalized.split("/")[0] || "";
-  if (!normalized.includes("/") || VAULT_NOTE_ROOTS.has(root)) return normalized;
+  if (!normalized.includes("/") || (VAULT_NOTE_ROOTS.has(root) || knowledgeRootRole(root) !== null)) return normalized;
   return "";
 }
 
@@ -168,7 +170,7 @@ function normalizeFsPath(value: string): string {
 
 function decodeUriPath(value: string): string {
   try {
-    return decodeURI(value);
+    return decodeURIComponent(value);
   } catch {
     return value;
   }

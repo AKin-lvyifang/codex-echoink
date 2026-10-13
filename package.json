@@ -84,6 +84,7 @@
     "brace-expansion": "5.0.12",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "fflate": "^0.8.2",
     "framer-motion": "12.23.24",
     "js-tiktoken": "1.0.21",
     "number-flow": "0.2.3",

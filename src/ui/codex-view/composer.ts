@@ -1,4 +1,5 @@
 import { setIcon } from "obsidian";
+import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import {
   renderProviderBrandIcon,
   type ProviderBrandId
@@ -98,6 +99,7 @@ export interface ComposerResourcePanelState {
   resourceSettings: Pick<EchoInkResourceSettings, "mcpConnections">;
   language: "zh-CN" | "en";
   canAttachActiveFile: boolean;
+  pdfPlugin?: { enabled: boolean; canWrite: boolean };
 }
 
 export interface ComposerResourcePanelCallbacks {
@@ -107,6 +109,7 @@ export interface ComposerResourcePanelCallbacks {
   onSelectPlanMode: () => void;
   onSelectSkill: (skill: EchoInkResource) => void;
   onOpenMcpSettings: () => void;
+  onSelectPdfPlugin?: () => void;
 }
 
 export interface ComposerToolbarCallbacks {
@@ -554,6 +557,9 @@ export function renderComposerResourcePanel(
   );
   createResourcePanelRow(addGroup, "image", copy("添加图片", "Add image"), "", () => callbacks.onPickFiles(true));
 
+  const pluginGroup = createResourcePanelGroup(container, copy("插件", "Plugins"));
+  const pdf = createResourcePanelRow(pluginGroup, "file-text", "PDF 精读", !state.pdfPlugin?.enabled ? copy("请先在插件设置中启用", "Enable in plugin settings") : "", () => callbacks.onSelectPdfPlugin?.(), false, "is-pdf-plugin", !state.pdfPlugin?.enabled || !state.pdfPlugin.canWrite);
+  createPluginEditionBadge(pdf.querySelector<HTMLElement>(".codex-composer-resource-name")!, "pro", state.language);
   const skillGroup = createResourcePanelGroup(container, copy("技能", "Skills"));
   const skills = enabledSkillResources(state.resources);
   if (skills.length) {

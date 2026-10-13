@@ -1,3 +1,5 @@
+import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
+import { isPdfReadingIntent } from "../../pdf-reading/intent";
 import { Notice } from "obsidian";
 import type {
   PiChatPreparedImage,
@@ -568,6 +570,7 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
     }
     try {
       const prepared = await preparePiChatDocuments(documentAttachments, {
+        pdfToolReference: isPdfReadingIntent(submittedText, documentAttachments.some(a => /\.pdf$/iu.test(a.name) || a.mimeType === "application/pdf")) && view.plugin.settings.pdfReading?.enabled === true && view.plugin.pdfReading?.policy().canWrite === true,
         availableInputTokens: availableDocumentInputTokens(
           view,
           session,
@@ -1039,6 +1042,18 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       (event) => {
         try {
           assertPiChatRuntimeEventIdentity(event, handle!);
+          if (event.type === "tool_execution_end" && event.toolName === "pdf_reading_process" && !event.isError) {
+            const receipt = pdfAttachmentReceipt(event.result);
+            if (receipt?.conversationId === handle!.conversationId && receipt.userEntryId === handle!.userEntryId) {
+              const keep = (document: Readonly<PiChatPreparedDocument>) => {
+                if (document.transport !== "tool_reference" || document.attachmentId !== receipt.attachmentId || document.sha256 !== receipt.sha256) return true;
+                (document.bytes as Uint8Array).fill(0);
+                return false;
+              };
+              item.preparedDocuments = item.preparedDocuments?.filter(keep);
+              preparedDocumentSet = { ...preparedDocumentSet, documents: preparedDocumentSet.documents.filter(keep) };
+            }
+          }
           liveProjection = projector.projectRuntimeEvent({
             current: liveProjection!,
             event,
@@ -1488,8 +1503,9 @@ function piChatLiveProjectionFromSession(
         : {}),
       ...(preparedDocuments.length
         ? {
-            attachments: preparedDocuments.map(({ attachment }) => ({
-              ...attachment
+            attachments: preparedDocuments.map((document) => ({
+              ...document.attachment,
+              ...(document.transport === "tool_reference" ? { path: `pdf-attachment:${document.attachmentId}`, availability: "unavailable" as const } : {})
             }))
           }
         : {}),

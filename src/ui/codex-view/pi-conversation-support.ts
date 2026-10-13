@@ -161,7 +161,7 @@ export function recordPiDocumentReplayForEntry(
 ): void {
   const entryId = entryIdValue.trim();
   if (!entryId || !documents.length) return;
-  const replay = documents.map((document) => {
+  const replay = documents.filter(document => document.transport !== "tool_reference").map((document) => {
     const text = document.text?.trim() || null;
     return Object.freeze({
       name: document.attachment.name,
@@ -273,7 +273,7 @@ export function piComposerDocumentAttachmentsForEntry(
   );
   const replay = session.piDocumentReplay?.[entryId] ?? [];
   return (message?.attachments ?? [])
-    .filter((attachment) => attachment.type === "file")
+    .filter((attachment) => attachment.type === "file" && !attachment.path.startsWith("pdf-attachment:"))
     .map((attachment, index) => ({
       ...attachment,
       availability: localAttachmentAvailability(attachment.path),

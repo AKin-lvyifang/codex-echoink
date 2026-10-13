@@ -173,7 +173,13 @@ export function handleDroppedFiles(host: CodexAttachmentHost, event: DragEvent):
 }
 
 function appendPiChatFile(host: CodexAttachmentHost, file: File): void {
-  const filePath = (file as File & { path?: string }).path;
+  let filePath = (file as File & { path?: string }).path;
+  // New Electron versions removed File.path; the host-owned picker still
+  // supplies a local path through its public webUtils API.
+  if (!filePath) {
+    try { filePath = (require("electron") as { webUtils?: { getPathForFile(file: File): string } }).webUtils?.getPathForFile(file); }
+    catch { /* The ordinary unavailable-attachment notice below remains authoritative. */ }
+  }
   if (!filePath) {
     const name = file.name || conversationUiText(host.plugin.settings.settingsLanguage, "未命名文件", "Unnamed file");
     new Notice(conversationUiText(

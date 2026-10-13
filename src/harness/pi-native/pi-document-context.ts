@@ -156,7 +156,7 @@ export function normalizePiChatPreparedDocuments(
       || (hasFrozenBytes && bytes.byteLength !== sizeBytes)
       || !/^[a-f0-9]{64}$/u.test(sha256)
       || (hasFrozenBytes && sha256 !== documentBytesSha256(bytes))
-      || (value.transport !== "native" && value.transport !== "extracted_text")
+      || (value.transport !== "native" && value.transport !== "extracted_text" && value.transport !== "tool_reference")
       || (value.transport === "native"
         && (
           !hasFrozenBytes
@@ -164,6 +164,7 @@ export function normalizePiChatPreparedDocuments(
           || value.kind !== "pdf"
           || mimeType !== "application/pdf"
         ))
+      || (value.transport === "tool_reference" && (value.kind !== "pdf" || !hasFrozenBytes || !/^pdf-[a-f0-9-]{36}$/u.test(value.attachmentId ?? "")))
       || (value.transport === "extracted_text" && !text)
     ) {
       throw new Error("Pi document snapshot is invalid");
@@ -177,6 +178,7 @@ export function normalizePiChatPreparedDocuments(
       bytes,
       sha256,
       transport: value.transport,
+      ...(value.attachmentId ? { attachmentId: value.attachmentId } : {}),
       ...(text ? { text } : {}),
       attachment: Object.freeze({
         type: "file" as const,
@@ -201,7 +203,9 @@ export function buildPiDocumentProviderContext(
   if (!documents.length) return "";
   const sections = documents.map((document, index) => [
     `--- 文档 ${index + 1}：${safeContextFileName(document.attachment.name)}（${document.kind}，${document.attachment.sizeBytes} bytes）---`,
-    document.transport === "native"
+    document.transport === "tool_reference"
+      ? `PDF插件临时附件 ID：${document.attachmentId}。本轮使用 pdf_reading_query / pdf_reading_process 按 ID 提取；不使用文件路径、不将原 PDF 发送模型。默认精读后用 knowledge_maintain 在当前聊天沉淀 Wiki；用户只要原文时仅保存 Raw。`
+      : document.transport === "native"
       ? "该 PDF 的冻结字节将通过已批准的 Provider 原生文档输入发送；这里只保留不可信边界说明，不重复注入提取全文。"
       : document.text ?? ""
   ].join("\n"));
@@ -229,10 +233,10 @@ export function buildPiDocumentContextMessage(
       documents: Object.freeze(documents.map((document) => Object.freeze({
         kind: document.kind,
         name: document.attachment.name,
-        path: document.attachment.path,
+        path: document.transport === "tool_reference" ? `pdf-attachment:${document.attachmentId}` : document.attachment.path,
         mimeType: document.attachment.mimeType,
         sizeBytes: document.attachment.sizeBytes,
-        availability: document.attachment.availability
+        availability: document.transport === "tool_reference" ? "unavailable" : document.attachment.availability
       })))
     }),
     timestamp: Date.now()
@@ -294,6 +298,7 @@ export function buildPiDocumentFallbackProviderContext(
   values: readonly Readonly<PiChatPreparedDocument>[]
 ): string {
   const documents = normalizePiChatPreparedDocuments(values).map((document) => {
+    if (document.transport === "tool_reference") return document;
     const text = document.text?.trim() ?? "";
     if (!text) {
       throw new Error("Pi native document has no frozen extracted-text fallback");
