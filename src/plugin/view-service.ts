@@ -31,7 +31,7 @@ export class EchoInkViewService {
     if (leaf.view instanceof EchoInkHomeView) leaf.view.refreshIfSettingsChanged();
   }
 
-  async activateView(): Promise<void> {
+  async activateView(options: { focusInput?: boolean } = {}): Promise<void> {
     // When the shared conversation view is parked in the quick-chat popout,
     // bring it back to the sidebar first so the sidebar stays the single
     // visible conversation surface.
@@ -52,7 +52,7 @@ export class EchoInkViewService {
     }
     if (this.plugin.app.workspace.rightSplit.collapsed) this.plugin.app.workspace.rightSplit.expand();
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
-    this.getCodexView()?.focusInput();
+    if (options.focusInput !== false) this.getCodexView()?.focusInput();
   }
 
   async openObsidianGraph(): Promise<boolean> {

@@ -1,3 +1,5 @@
+import { openSelectionAnnotationSource } from "../../selection-ask/navigation";
+import { renderSelectionAnnotationSummary } from "./selection-annotations";
 import { Notice, normalizePath, setIcon, TFile, type App, type Component, type Editor } from "obsidian";
 import type {
   ChatMessage,
@@ -1277,6 +1279,9 @@ export class CodexMessageListRenderer {
           attr: { title: formatAbsoluteTime(message.createdAt, env.settingsLanguage) }
         });
       }
+    }
+    if (message.selectionAnnotations?.length) {
+      renderSelectionAnnotationSummary(bodyHost.createDiv({ cls: "codex-message-selection-annotations" }), message.selectionAnnotations, env.settingsLanguage, { onSource: (annotation) => { void openSelectionAnnotationSource(env.app, annotation, env.settingsLanguage); } }, env.app);
     }
     if (message.noteMentions?.length) {
       this.renderUserNoteMentionChips(

@@ -1,3 +1,6 @@
+import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
+import { composerSelectionAnnotations } from "../../selection-ask/draft";
+import { cloneSelectionAnnotations, selectionAnnotationsMatch, type SelectionAnnotation } from "../../types/selection-annotations";
 import { Notice } from "obsidian";
 import type {
   PiChatPreparedImage,
@@ -200,7 +203,7 @@ export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<
       );
       return;
     }
-    if (item.noteMentions?.length) {
+    if (item.noteMentions?.length || item.selectionAnnotations?.length) {
       if (hasMatchingQueuedComposerTransfer(view, item)) {
         showNotice(
           view,
@@ -295,6 +298,7 @@ export async function steerPiChatFromComposer(
   if (!text) return;
   if (
     view.attachments.length
+    || composerSelectionAnnotations(view.inputEl).length
     || composerNoteMentionSelections(view.inputEl).length
     || view.selectedSkill
   ) {
@@ -513,9 +517,14 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
   const session = view.ensureSession();
   const turnOptions = view.currentTurnOptions(session);
   const text = view.inputEl.value.trim();
+  const composerTextSnapshot = view.inputEl.value;
   const attachments = view.attachments.map((attachment) => ({ ...attachment }));
   const skill = view.selectedSkill ? { ...view.selectedSkill } : null;
   const selectedNoteMentions = composerNoteMentionSelections(view.inputEl);
+  const selectionAnnotations = composerSelectionAnnotations(view.inputEl);
+  if (selectionAnnotations.length && !text) {
+    showNotice(view, "请先输入问题，再发送注释。", "Enter a question before sending annotations."); return null;
+  }
   if (!text && !attachments.length && !selectedNoteMentions.length && !skill) return null;
   const workspaceReady = await view.ensureChatWorkspaceSelected(session);
   if (!workspaceReady || view.lifecycleSignal?.aborted) return null;
@@ -571,7 +580,7 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
         availableInputTokens: availableDocumentInputTokens(
           view,
           session,
-          { turnOptions, noteMentions },
+          { turnOptions, noteMentions, selectionAnnotations },
           submittedText
         ),
         capabilityTarget: piDocumentCapabilityTarget(provider, turnOptions.model)
@@ -586,9 +595,11 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
     id: newId("queued-turn"),
     sessionId: session.id,
     text,
+    composerTextSnapshot,
     attachments,
     ...(preparedDocuments.length ? { preparedDocuments } : {}),
     noteMentions,
+    selectionAnnotations,
     skill,
     turnOptions,
     kind: "chat",
@@ -928,6 +939,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       ...(preparedDocumentSet.documents.length
         ? { documents: preparedDocumentSet.documents }
         : {}),
+      ...(item.selectionAnnotations?.length ? { selectionAnnotations: cloneSelectionAnnotations(item.selectionAnnotations) } : {}),
       ...(item.noteMentions?.length ? { noteMentions: item.noteMentions } : {})
     });
     item.piUserEntryAccepted = true;
@@ -975,6 +987,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       preparedImages,
       preparedDocumentSet.documents,
       item.noteMentions ?? [],
+      item.selectionAnnotations ?? [],
       submittedAt
     );
     applyPiChatLiveProjection(view, session, liveProjection);
@@ -1470,10 +1483,11 @@ function piChatLiveProjectionFromSession(
   preparedImages: readonly Readonly<PiChatPreparedImage>[],
   preparedDocuments: readonly Readonly<PiChatPreparedDocument>[],
   noteMentions: readonly Readonly<NonNullable<QueuedTurnItem["noteMentions"]>[number]>[],
+  selectionAnnotations: readonly SelectionAnnotation[],
   submittedAt: number
 ): PiChatUiViewModel {
   const messages = clonePiChatMessages(session.messages);
-  if (preparedImages.length || preparedDocuments.length || noteMentions.length) {
+  if (preparedImages.length || preparedDocuments.length || noteMentions.length || selectionAnnotations.length) {
     const acceptedUserMessage: ChatMessage = {
       id: piProjectedEntryMessageId(
         handle.piSessionId,
@@ -1483,6 +1497,7 @@ function piChatLiveProjectionFromSession(
       role: "user",
       itemType: "user",
       text: submittedText,
+      ...(selectionAnnotations.length ? { selectionAnnotations: cloneSelectionAnnotations(selectionAnnotations) } : {}),
       ...(preparedImages.length
         ? { images: preparedImages.map(({ attachment }) => ({ ...attachment })) }
         : {}),
@@ -1560,6 +1575,7 @@ function clonePiChatMessages(messages: readonly ChatMessage[]): ChatMessage[] {
     ...(message.images
       ? { images: message.images.map((attachment) => ({ ...attachment })) }
       : {}),
+    ...(message.selectionAnnotations ? { selectionAnnotations: cloneSelectionAnnotations(message.selectionAnnotations) } : {}),
     ...(message.noteMentions
       ? { noteMentions: message.noteMentions.map((mention) => ({ ...mention })) }
       : {}),
@@ -1800,12 +1816,9 @@ function clearComposerAfterPiAcceptance(
   item: Readonly<QueuedTurnItem>,
   source: QueuedTurnSource
 ): void {
-  if (
-    (source === "composer" || item.clearComposerAfterPiAcceptance === true)
-    && composerStillMatchesQueuedTurn(view, item)
-  ) {
-    view.clearComposerDraft();
-  }
+  if (source !== "composer" && item.clearComposerAfterPiAcceptance !== true) return;
+  if (view.clearAcceptedComposerDraft) view.clearAcceptedComposerDraft(item);
+  else if (composerStillMatchesQueuedTurn(view, item)) view.clearComposerDraft();
 }
 
 function hasMatchingQueuedComposerTransfer(
@@ -1828,7 +1841,8 @@ function composerStillMatchesQueuedTurn(
   item: Readonly<QueuedTurnItem>
 ): boolean {
   return view.plugin.settings.activeSessionId === item.sessionId
-    && view.inputEl.value.trim() === item.text
+    && (item.composerTextSnapshot === undefined ? view.inputEl.value.trim() === item.text : view.inputEl.value === item.composerTextSnapshot)
+    && selectionAnnotationsMatch(composerSelectionAnnotations(view.inputEl), item.selectionAnnotations ?? [])
     && attachmentListsMatch(view.attachments, item.attachments)
     && noteMentionPathsMatch(
       composerNoteMentionSelections(view.inputEl),
@@ -1842,6 +1856,8 @@ function queuedTurnDraftsMatch(
   right: Readonly<QueuedTurnItem>
 ): boolean {
   return left.text === right.text
+    && left.composerTextSnapshot === right.composerTextSnapshot
+    && selectionAnnotationsMatch(left.selectionAnnotations ?? [], right.selectionAnnotations ?? [])
     && attachmentListsMatch(left.attachments, right.attachments)
     && noteMentionPathsMatch(left.noteMentions ?? [], right.noteMentions ?? [])
     && (left.skill?.id ?? null) === (right.skill?.id ?? null);
@@ -1876,7 +1892,7 @@ function attachmentListsMatch(
 function availableDocumentInputTokens(
   view: CodexViewTurnContext,
   session: Readonly<StoredSession>,
-  item: Pick<QueuedTurnItem, "turnOptions" | "noteMentions">,
+  item: Pick<QueuedTurnItem, "turnOptions" | "noteMentions" | "selectionAnnotations">,
   submittedText: string
 ): number {
   const provider = view.plugin.settings.apiProviders.find(
@@ -1900,9 +1916,10 @@ function availableDocumentInputTokens(
       4_096,
       Math.floor(effective.effectiveInputBudget * 0.15)
     );
+  const selectionContext = buildPiSelectionAnnotationContextMessage(item.selectionAnnotations ?? []);
   const currentTurnTokens = estimatePiContextTokens({
     text: submittedText,
-    noteMentions: item.noteMentions?.map((mention) => mention.content) ?? []
+    noteMentions: [...(item.noteMentions?.map((mention) => mention.content) ?? []), ...(selectionContext ? [JSON.stringify({ type: "echoink.turn-material.v1", contextType: selectionContext.customType, content: selectionContext.content })] : [])]
   }).tokens;
   return Math.max(0, baseline - currentTurnTokens);
 }

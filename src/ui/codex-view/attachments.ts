@@ -1,3 +1,5 @@
+import { composerSelectionAnnotations, removeSelectionAnnotation, editAnnotationQuestion } from "../../selection-ask/draft";
+import { renderSelectionAnnotationSummary } from "./selection-annotations";
 import { Notice, TFile, type App } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import { extractClipboardImageFiles, saveClipboardImageAttachments } from "../../core/clipboard-images";
@@ -62,6 +64,22 @@ export function renderAttachmentsView(host: CodexAttachmentHost): void {
       void openComposerAttachment(host, attachment);
     }
   });
+  const annotations = composerSelectionAnnotations(host.inputEl);
+  if (annotations.length) {
+    host.attachmentsEl.removeClass("is-empty");
+    const summary = host.attachmentsEl.createDiv();
+    const changed = () => { host.renderAttachments(); host.renderToolbar(); host.plugin.selectionAskController?.refresh(); };
+    const remove = (id: string) => {
+      if (removeSelectionAnnotation(host.inputEl, id)) new Notice(conversationUiText(host.plugin.settings.settingsLanguage, "已保留你修改的问题", "Your edited question was kept"));
+    };
+    renderSelectionAnnotationSummary(summary, annotations, host.plugin.settings.settingsLanguage, {
+      onSource: (annotation) => { void host.plugin.selectionAskController?.openSource(annotation); },
+      onEdit: (id) => { editAnnotationQuestion(host.inputEl, id, host.plugin.settings.settingsLanguage === "en"); host.renderToolbar(); },
+      onRemove: (id) => { remove(id); changed(); },
+      onRemoveAll: () => { annotations.forEach((annotation) => remove(annotation.id)); changed(); }
+    }, host.app);
+  }
+  host.plugin.selectionAskController?.refresh();
 }
 
 export async function openComposerAttachment(

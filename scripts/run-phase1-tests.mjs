@@ -27,10 +27,12 @@ await esbuild.build({
       'import { runMessageListIdentityTests } from "./src/tests/message-list-identity";',
       'import { runSmoothConversationUiTests } from "./src/tests/smooth-conversation-ui";',
       'import { runComposerActionTests } from "./src/tests/composer-actions";',
+      'import { runSelectionAnnotationTests } from "./src/tests/selection-annotations";',
       'import { runNoteMentionTests } from "./src/tests/note-mentions";',
       'import { runTurnNavigatorTests } from "./src/tests/turn-navigator";',
       'import { runQuickChatWindowTests } from "./src/tests/quick-chat-window";',
       'import { runHomeTodoTests } from "./src/tests/home-todos";',
+      "await runSelectionAnnotationTests();",
       "await runPiNativeFileStoreTests();",
       "await runPiSessionDurabilityTests();",
       "await runPiNativeConversationRuntimeTests();",
@@ -46,6 +48,7 @@ await esbuild.build({
       "await runSmoothConversationUiTests();",
       "await runComposerActionTests();",
       "await runNoteMentionTests();",
+
       "await runTurnNavigatorTests();",
       "await runQuickChatWindowTests();",
       "await runHomeTodoTests();",
@@ -73,7 +76,8 @@ await esbuild.build({
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",
     "@earendil-works/pi-coding-agent",
-    "yaml"
+    "yaml",
+    "jsdom"
   ],
   plugins: [{
     name: "pi-conversation-test-shims",

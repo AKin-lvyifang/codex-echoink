@@ -81,6 +81,7 @@ const ENGLISH_SKILLS: Record<BuiltinSkillId, { name: string; description: string
 
 /** UI copy is separate from the name that Pi validates against SKILL.md. */
 export function resourcePresentation(resource: EchoInkResource, language: SettingsLanguage): ResourcePresentation {
+  if (resource.id === "echoink:selection-ask") return builtinPluginPresentation("selection-ask", language);
   if (resource.kind === "tool-bundle" && resource.source === "echoink-local" && resource.id === "echoink:english-diary") {
     return builtinPluginPresentation("english-diary", language);
   }
@@ -107,8 +108,10 @@ export function resourcePresentation(resource: EchoInkResource, language: Settin
   };
 }
 
-export function builtinPluginPresentation(id: "finance" | "english-diary", language: SettingsLanguage): ResourcePresentation {
-  const copy = id === "finance"
+export function builtinPluginPresentation(id: "finance" | "english-diary" | "selection-ask", language: SettingsLanguage): ResourcePresentation {
+  const copy = id === "selection-ask"
+    ? { zhName: "选文提问", enName: "Selection Ask", zhDescription: "将笔记选段加入聊天，按模板准备问题。", enDescription: "Add selected passages to a conversation and prepare questions." }
+    : id === "finance"
     ? {
         zhName: "财务", enName: "Finance",
         zhDescription: "导入微信、支付宝账单，查看收支、预算和财务分析。",

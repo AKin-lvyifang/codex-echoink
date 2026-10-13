@@ -1,3 +1,4 @@
+import { buildPiSelectionAnnotationContextMessage, PI_SELECTION_CONTEXT_KEY } from "../harness/pi-native/pi-selection-annotations";
 import type { DiscoveredProviderModel } from "../settings/provider-model-discovery";
 import { PiWebSearchSecurity, createWebSearchTool, WEB_SEARCH_TOOL_NAME, WEB_SEARCH_INSTRUCTIONS } from "../harness/pi-native/pi-web-search";
 import { KNOWLEDGE_ASK_PROTOCOL, knowledgeReadingState } from "../harness/pi-native/knowledge-ask-protocol";
@@ -957,6 +958,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   currentTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
   currentSkillTurn?(): Readonly<PiNativeSkillTurnContext> | null;
   currentMemoryTurn?(): Readonly<PiNativeMemoryTurnContext> | null;
+  currentSelectionAnnotations?(): readonly import("../types/selection-annotations").SelectionAnnotation[];
   currentNoteMentionTurn?(): Readonly<PiNativeNoteMentionTurnContext> | null;
   currentDocumentTurn?(): Readonly<PiNativeDocumentTurnContext> | null;
   currentTaskPlanTurn?(): Readonly<PiNativeTaskPlanTurnContext> | null;
@@ -1043,6 +1045,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         let systemPrompt = access
           ? `${event.systemPrompt}\n\n${piWorkspaceAccessPrompt(access)}`
           : event.systemPrompt;
+        const selectionMessage = buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
         const noteMentionTurn = input.currentNoteMentionTurn?.() ?? null;
         const noteMentionMessage = noteMentionTurn
           ? buildPiNoteMentionContextMessage(noteMentionTurn.noteMentions)
@@ -1226,7 +1229,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             details: knowledgeReferenceEntryDetails(
               turn.references.map((reference) => ({ ...reference }))
             )
-          }, skillMessage, noteMentionMessage, documentMessage);
+          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage);
           transientResourceContextSignature = piResourceContextSignature(message);
           return {
             ...systemPromptResult,
@@ -1261,7 +1264,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
               preferenceState: command.preference.state,
               preferenceRevision: command.preference.revision
             })
-          }, skillMessage, noteMentionMessage, documentMessage);
+          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage);
           transientResourceContextSignature = piResourceContextSignature(message);
           return {
             ...systemPromptResult,
@@ -1272,7 +1275,8 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           null,
           skillMessage,
           noteMentionMessage,
-          documentMessage
+          documentMessage,
+          selectionMessage
         );
         if (attachmentContextMessage) {
           transientResourceContextSignature = piResourceContextSignature(
@@ -1334,12 +1338,14 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           input.contextLedger?.captureTransientContextMessages([]);
         }
         if (currentResourceContext) {
-          backgroundMessages.push(currentResourceContext);
+          backgroundMessages.push(...piProviderMaterialPartitions(currentResourceContext));
         }
         if (backgroundMessages.length > 0) {
           messages.splice(insertionIndex, 0, ...backgroundMessages);
         }
-        if (readingState) messages.push({ role: "custom", customType: "echoink-knowledge-reading-state-v1", content: readingState, display: false, timestamp: Date.now() });
+        if (readingState) messages.push({ role: "custom", customType: "echoink-knowledge-reading-state-v1", content: input.currentSelectionAnnotations?.().length
+          ? JSON.stringify({ type: "echoink.turn-material.v1", contextType: "echoink-knowledge-reading-state-v1", content: readingState })
+          : readingState, display: false, timestamp: Date.now() });
         return { messages };
       });
     }
@@ -1355,24 +1361,31 @@ function mergePiBeforeAgentStartContextMessages(
   }> | null,
   skillMessage: Extract<AgentMessage, { role: "custom" }> | null,
   noteMentionMessage: Extract<AgentMessage, { role: "custom" }> | null,
-  documentMessage: Extract<AgentMessage, { role: "custom" }> | null
+  documentMessage: Extract<AgentMessage, { role: "custom" }> | null,
+  selectionMessage: Extract<AgentMessage, { role: "custom" }> | null
 ): Readonly<{
   customType: string;
   content: string;
   display: false;
   details: unknown;
 }> | null {
-  const primary = message ?? skillMessage ?? noteMentionMessage ?? documentMessage;
+  const primary = message ?? skillMessage ?? noteMentionMessage ?? documentMessage ?? selectionMessage;
   if (!primary) return null;
   const details = primary.details
     && typeof primary.details === "object"
     && !Array.isArray(primary.details)
     ? primary.details as Readonly<Record<string, unknown>>
     : Object.freeze({});
-  const content = [message, skillMessage, noteMentionMessage, documentMessage]
-    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
-    .map((candidate) => candidate.content as string)
-    .join("\n\n");
+  const materials = [message, skillMessage, noteMentionMessage, documentMessage, selectionMessage]
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+  // Pi persists one before_agent_start message. With selected passages, keep
+  // distinct typed sections in that entry, then deliver distinct bounded
+  // background messages to the Provider. A trailing Knowledge "原文:" cannot
+  // consume a selected passage or the actual user question.
+  const content = selectionMessage ? JSON.stringify({
+    type: "echoink.turn-material-partitions.v1",
+    sections: materials.map((candidate) => ({ customType: candidate.customType, content: candidate.content }))
+  }) : materials.map((candidate) => candidate.content as string).join("\n\n");
   return Object.freeze({
     customType: primary.customType,
     content,
@@ -1385,11 +1398,39 @@ function mergePiBeforeAgentStartContextMessages(
       ...(noteMentionMessage && noteMentionMessage !== primary
         ? { [PI_NOTE_MENTIONS_CONTEXT_DETAILS_KEY]: noteMentionMessage.details }
         : {}),
+      ...(selectionMessage && selectionMessage !== primary
+        ? { [PI_SELECTION_CONTEXT_KEY]: selectionMessage.details }
+        : {}),
       ...(documentMessage && documentMessage !== primary
         ? { [PI_DOCUMENT_CONTEXT_DETAILS_KEY]: documentMessage.details }
         : {})
     })
   });
+}
+
+function piProviderMaterialPartitions(message: AgentMessage): AgentMessage[] {
+  if (message.role !== "custom" || typeof message.content !== "string") return [message];
+  let envelope: { type?: string; sections?: Array<{ customType: string; content: string }> };
+  try { envelope = JSON.parse(message.content); } catch { return [message]; }
+  if (envelope.type !== "echoink.turn-material-partitions.v1" || !Array.isArray(envelope.sections)
+    || envelope.sections.some((section) => typeof section.customType !== "string" || typeof section.content !== "string")) return [message];
+  const root = message.details && typeof message.details === "object" ? message.details as Record<string, unknown> : {};
+  const detailsKeys: Record<string, string> = {
+    "echoink-selection-annotations-v1": PI_SELECTION_CONTEXT_KEY,
+    "echoink-note-mentions-context-v1": PI_NOTE_MENTIONS_CONTEXT_DETAILS_KEY,
+    "echoink-document-context-v1": PI_DOCUMENT_CONTEXT_DETAILS_KEY,
+    "echoink-skill-turn-context-v1": "echoinkSkillTurnContext"
+  };
+  return envelope.sections.map((section) => ({
+    role: "custom" as const,
+    customType: section.customType,
+    // Serialize each body as a string value: raw Markdown and arbitrary user
+    // quotations cannot end this section or impersonate the next message.
+    content: JSON.stringify({ type: "echoink.turn-material.v1", contextType: section.customType, content: section.content }),
+    display: false,
+    timestamp: message.timestamp,
+    details: root[detailsKeys[section.customType]] ?? message.details
+  }));
 }
 
 function buildPiSkillTurnContextMessage(
@@ -2020,6 +2061,7 @@ async function createProductionAgentSession(input: {
     currentTurn: () => input.input.currentKnowledgeTurnContext(),
     currentSkillTurn: () => input.input.currentSkillTurnContext?.() ?? null,
     currentMemoryTurn: () => input.input.currentMemoryTurnContext?.() ?? null,
+    currentSelectionAnnotations: () => input.input.currentSelectionAnnotationTurnContext?.() ?? [],
     currentNoteMentionTurn: () =>
       input.input.currentNoteMentionTurnContext?.() ?? null,
     currentDocumentTurn: () =>

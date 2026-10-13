@@ -1,3 +1,5 @@
+import { addSelectionAnnotation as appendSelectionAnnotation, composerSelectionAnnotations, selectionDraft, snapshotSelectionDraft, restoreSelectionDraft, emptySelectionDraft, type SelectionDraft } from "../selection-ask/draft";
+import { selectionAnnotationsMatch, type SelectionAnnotation, type SelectionCapture } from "../types/selection-annotations";
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ChatMessage, StoredAttachment, StoredSession } from "../settings/settings";
@@ -184,6 +186,9 @@ export interface CodexViewMigrationState {
   readonly turnQueue: RuntimeTurnQueue;
   readonly pendingInteractions: Array<[string, Readonly<EchoInkTurnInteraction>]>;
   readonly draftText: string;
+  readonly annotationDraft?: SelectionDraft;
+  readonly sessionDrafts?: Array<[string, ComposerSessionDraft]>;
+  readonly draftOwner?: string;
   readonly composer: {
     selectedSkill: EchoInkResource | null;
     attachments: StoredAttachment[];
@@ -200,7 +205,58 @@ export interface CodexViewMigrationState {
   };
 }
 
+interface ComposerSessionDraft { text: string; annotations: SelectionDraft; attachments: StoredAttachment[]; noteMentions: readonly NoteMentionSelection[]; selectedSkill: EchoInkResource | null }
+
 export class CodexView extends ItemView {
+  private composerDraftOwner = "";
+  private readonly composerSessionDrafts = new Map<string, ComposerSessionDraft>();
+  switchComposerDraft(sessionId: string): void {
+    if (!this.inputEl || this.composerDraftOwner === sessionId) return;
+    const previous = this.composerDraftOwner || this.plugin.settings.activeSessionId;
+    if (previous && previous !== sessionId) this.composerSessionDrafts.set(previous, { text: this.inputEl.value, annotations: snapshotSelectionDraft(this.inputEl), attachments: this.attachments.map((item) => ({ ...item })), noteMentions: composerNoteMentionSelections(this.inputEl), selectedSkill: this.selectedSkill });
+    this.composerDraftOwner = sessionId;
+    const draft = this.composerSessionDrafts.get(sessionId);
+    this.inputEl.value = draft?.text ?? "";
+    restoreSelectionDraft(this.inputEl, draft?.annotations ?? emptySelectionDraft());
+    this.attachments = draft?.attachments.map((item) => ({ ...item })) ?? [];
+    this.selectedSkill = draft?.selectedSkill ?? null;
+    clearComposerNoteMentions(this.inputEl);
+    for (const mention of draft?.noteMentions ?? []) addComposerNoteMentionSelection(this.inputEl, mention);
+    this.renderAttachments();
+  }
+  clearAcceptedComposerDraft(item: Readonly<QueuedTurnItem>): void {
+    const owner = this.composerDraftOwner || this.plugin.settings.activeSessionId;
+    const active = owner === item.sessionId;
+    const stored = active ? null : this.composerSessionDrafts.get(item.sessionId);
+    if (!active && !stored) return;
+    const text = active ? this.inputEl.value : stored!.text;
+    const annotations = active ? composerSelectionAnnotations(this.inputEl) : stored!.annotations.annotations;
+    const attachments = active ? this.attachments : stored!.attachments;
+    const mentions = active ? composerNoteMentionSelections(this.inputEl) : stored!.noteMentions;
+    const skill = active ? this.selectedSkill : stored!.selectedSkill;
+    if ((item.composerTextSnapshot === undefined ? text.trim() !== item.text : text !== item.composerTextSnapshot) || !selectionAnnotationsMatch(annotations, item.selectionAnnotations ?? [])
+      || (skill?.id ?? null) !== (item.skill?.id ?? null)
+      || mentions.length !== (item.noteMentions?.length ?? 0) || mentions.some((mention, index) => mention.vaultRelativePath !== item.noteMentions?.[index].vaultRelativePath)
+      || attachments.length !== item.attachments.length || attachments.some((attachment, index) => {
+        const other = item.attachments[index];
+        return attachment.type !== other.type || attachment.name !== other.name || attachment.path !== other.path || attachment.mimeType !== other.mimeType || attachment.sizeBytes !== other.sizeBytes;
+      })) return;
+    if (active) this.clearComposerDraft();
+    else this.composerSessionDrafts.set(item.sessionId, { text: "", annotations: emptySelectionDraft(), attachments: [], noteMentions: [], selectedSkill: null });
+  }
+  selectionAnnotationRecords(includeHidden = false): SelectionAnnotation[] {
+    const active = this.inputEl ? selectionDraft(this.inputEl).annotations : [];
+    if (!includeHidden) return active;
+    return [...active, ...[...this.composerSessionDrafts].filter(([id]) => id !== this.composerDraftOwner).flatMap(([, draft]) => draft.annotations.annotations)];
+  }
+  addSelectionAnnotation(capture: SelectionCapture, action: { id: string; template: string }): SelectionAnnotation {
+    this.ensureSession();
+    if (!this.composerDraftOwner) this.composerDraftOwner = this.plugin.settings.activeSessionId;
+    const annotation = appendSelectionAnnotation(this.inputEl, capture, action, this.plugin.settings.settingsLanguage === "en");
+    this.onInputChanged(); this.renderAttachments(); this.focusInput(); return annotation;
+  }
+  focusSelectionAnnotations(): void { this.attachmentsEl?.querySelector<HTMLButtonElement>(".echoink-annotation-trigger")?.focus(); }
+  refreshSelectionAnnotationSummary(): void { this.renderAttachments(); }
   private rootEl!: HTMLElement;
   private tabBarEl!: HTMLElement;
   private messagesEl!: HTMLElement;
@@ -357,6 +413,7 @@ export class CodexView extends ItemView {
       get lifecycleSignal() { return state.controller.signal; }, get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return state.running; }, set running(value) { state.running = value; }, get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; }, get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; }, get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; }, get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
       get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return state.queueStartInProgress; }, set queueStartInProgress(value) { state.queueStartInProgress = value; if (!value && !state.running) view.clearConversationRun(sessionId, state); }, get turnStartedAt() { return state.turnStartedAt; }, set turnStartedAt(value) { state.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get selectedProviderSettingsId() { return view.selectedProviderSettingsId; }, set selectedProviderSettingsId(value) { view.selectedProviderSettingsId = value; }, get selectedModel() { return view.selectedModel; }, set selectedModel(value) { view.selectedModel = value; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
       applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => armTurnWatchdogAction(lifecycle, timeoutMs, timeoutText), clearTurnWatchdog: () => clearTurnWatchdogAction(lifecycle), clearActiveRun: () => view.clearConversationRun(sessionId, state), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.sessionById(sessionId) ?? view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => enqueueComposerDraftRunner(context), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => stopTurnAction(lifecycle), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
+      clearAcceptedComposerDraft: (item) => view.clearAcceptedComposerDraft(item),
       createQueuedTurnFromComposer: (options) => createQueuedTurnFromComposerRunner(context, options), startQueuedTurnItem: (item, source) => view.startQueuedTurnItem(item, source), startQueuedTurnItemSafely: (item, source) => view.startQueuedTurnItemSafely(item, source), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), startNextQueuedTurn: (sessionId) => view.startNextQueuedTurn(sessionId), startChatTurn: (session, item, source) => view.startChatTurn(session, item, source), clearComposerDraft: () => { if (view.plugin.settings.activeSessionId === sessionId) view.clearComposerDraft(); },
       ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session, updatedMessage) => view.renderMessagesIfActive(session, updatedMessage), setPendingInteraction: (sessionId, interaction, expectedTurnId) => view.setPendingInteraction(sessionId, interaction, expectedTurnId), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), dismissThinkingMessage: (session) => view.dismissThinkingMessage(session), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command)
     } satisfies CodexViewTurnContext;
@@ -558,6 +615,8 @@ export class CodexView extends ItemView {
       turnQueue: this.turnQueue,
       pendingInteractions: [...this.pendingInteractionsBySession],
       draftText: this.inputEl?.value ?? "",
+      annotationDraft: this.inputEl ? snapshotSelectionDraft(this.inputEl) : emptySelectionDraft(),
+      sessionDrafts: [...this.composerSessionDrafts], draftOwner: this.composerDraftOwner,
       composer: {
         selectedSkill: this.selectedSkill,
         attachments: this.attachments,
@@ -584,6 +643,9 @@ export class CodexView extends ItemView {
       this.conversationRuns.set(sessionId, runState);
     }
     this.turnQueue = state.turnQueue;
+    this.composerDraftOwner = state.draftOwner ?? this.plugin.settings.activeSessionId;
+    this.composerSessionDrafts.clear();
+    for (const [id, draft] of state.sessionDrafts ?? []) this.composerSessionDrafts.set(id, draft);
     for (const [sessionId, interaction] of state.pendingInteractions) {
       this.pendingInteractionsBySession.set(sessionId, interaction);
     }
@@ -598,6 +660,7 @@ export class CodexView extends ItemView {
     this.promptEnhancerTurnId = state.promptEnhancer.turnId;
     if (this.inputEl) {
       this.inputEl.value = state.draftText;
+      restoreSelectionDraft(this.inputEl, state.annotationDraft ?? emptySelectionDraft(state.draftText));
       this.inputEl.setSelectionRange(state.draftText.length, state.draftText.length);
       clearComposerNoteMentions(this.inputEl);
       for (const mention of state.composer.noteMentions) {
@@ -660,6 +723,9 @@ export class CodexView extends ItemView {
     "renderQueue",
     "renderTabs",
     "renderAttachments",
+    "selectionAnnotationRecords",
+    "focusSelectionAnnotations",
+    "clearAcceptedComposerDraft",
     "applyStatus",
     "updateInputPlaceholder",
     "ensureThinkingMessage",
@@ -1050,6 +1116,7 @@ export class CodexView extends ItemView {
   }
 
   private onInputChanged(): void {
+    selectionDraft(this.inputEl);
     onInputChangedAction(this.composerHost());
   }
   private renderKnowledgeCommandMatches(query: string): void { renderKnowledgeCommandMatchesAction(this.composerHost(), query); }

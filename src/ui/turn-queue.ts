@@ -7,15 +7,19 @@ import type { PiChatPreparedDocument } from "../harness/pi-native/contracts";
 export type QueuedTurnKind = "chat";
 export type QueueSettlement = "continue" | "paused" | "idle";
 
+import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
+
 export interface QueuedTurnItem {
   id: string;
   sessionId: string;
   text: string;
+  composerTextSnapshot?: string;
   attachments: StoredAttachment[];
   /** Document bytes/text/transport frozen before this turn enters the queue. */
   preparedDocuments?: readonly Readonly<PiChatPreparedDocument>[];
   /** Whole-note bodies frozen when the Composer draft is sent or queued. */
   noteMentions?: readonly Readonly<NoteMentionSnapshot>[];
+  selectionAnnotations?: readonly SelectionAnnotation[];
   skill: EchoInkResource | null;
   turnOptions: TurnOptions;
   kind: QueuedTurnKind;
@@ -202,6 +206,7 @@ function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
           }))
         }
       : {}),
+    ...(item.selectionAnnotations ? { selectionAnnotations: cloneSelectionAnnotations(item.selectionAnnotations) } : {}),
     ...(item.noteMentions
       ? { noteMentions: item.noteMentions.map((mention) => ({ ...mention })) }
       : {}),

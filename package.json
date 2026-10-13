@@ -25,6 +25,7 @@
     "test:account-membership": "node --enable-source-maps scripts/account-membership-tests.mjs",
     "test:usage": "node scripts/usage-tests.mjs",
     "test:settings-search": "node --enable-source-maps scripts/native-settings-search-tests.mjs",
+    "test:selection-annotations": "node scripts/selection-annotations-tests.mjs",
     "test:conversation-ui": "node scripts/conversation-ui-tests.mjs",
     "test:personal-memory": "node src/tests/personal-memory-tests.mjs",
     "test:system-prompt": "node src/tests/system-prompt-tests.mjs",

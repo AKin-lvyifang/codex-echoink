@@ -1,3 +1,5 @@
+import { selectionAnnotationsFromPiContext } from "./pi-selection-annotations";
+import { cloneSelectionAnnotations } from "../../types/selection-annotations";
 import { assistantProviderFailureText } from "../pi/provider-failure";
 import {
   extractProcessFileRefs,
@@ -734,7 +736,15 @@ export class PiChatUiProjector {
         entry.customType,
         entry.details
       );
-      if (noteMentions.length || documentAttachments.length) {
+      const selectionAnnotations = selectionAnnotationsFromPiContext(
+        entry.customType, entry.details
+      );
+      if (noteMentions.length || documentAttachments.length || selectionAnnotations.length) {
+        if (selectionAnnotations.length) {
+          for (let index = messages.length - 1; index >= 0; index--) {
+            if (messages[index].role === "user") { messages[index].selectionAnnotations = selectionAnnotations; break; }
+          }
+        }
         if (noteMentions.length) {
           attachNoteMentionsToLatestUserMessage(messages, noteMentions);
         }
@@ -958,7 +968,15 @@ export class PiChatUiProjector {
         message.customType,
         message.details
       );
-      if (noteMentions.length || documentAttachments.length) {
+      const selectionAnnotations = selectionAnnotationsFromPiContext(
+        message.customType, message.details
+      );
+      if (noteMentions.length || documentAttachments.length || selectionAnnotations.length) {
+        if (selectionAnnotations.length) {
+          for (let index = messages.length - 1; index >= 0; index--) {
+            if (messages[index].role === "user") { messages[index].selectionAnnotations = selectionAnnotations; break; }
+          }
+        }
         if (noteMentions.length) {
           attachNoteMentionsToLatestUserMessage(messages, noteMentions);
         }
@@ -3089,6 +3107,7 @@ function cloneProjectedMessage(message: Readonly<ChatMessage>): ChatMessage {
     ...(message.images
       ? { images: message.images.map((image) => ({ ...image })) }
       : {}),
+    ...(message.selectionAnnotations ? { selectionAnnotations: cloneSelectionAnnotations(message.selectionAnnotations) } : {}),
     ...(message.noteMentions
       ? { noteMentions: message.noteMentions.map((mention) => ({ ...mention })) }
       : {}),

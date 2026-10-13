@@ -1,3 +1,6 @@
+import { annotationFixture } from "../selection-annotations";
+import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
+import type { SelectionAnnotation } from "../../types/selection-annotations";
 import { resolvePiTurnToolNames as resolveWorkspaceTools } from "../../harness/pi-native/pi-native-conversation-runtime";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -374,6 +377,7 @@ export async function runPiNativeConversationRuntimeTests(): Promise<void> {
   await assertDurableDraftRequiresExplicitSuccessfulResubmission();
   await assertImagePromptsRequireCapabilityAndPreserveOrder();
   await assertDocumentSnapshotsAreTurnBoundAndValidatedBeforePrompt();
+  await assertSelectionSnapshotsAreTurnBound();
   await assertVerifiedPrefixRecoveryIsExplicitAndFailClosed();
   await assertExperienceSourceRefsArePointerOnlyAndDeleteAware();
   await assertMemoryTurnIsAvailableBeforeUserEntryPersistence();
@@ -1165,6 +1169,35 @@ async function assertRuntimeAutoSkillSelectionAndReviewLifecycle(): Promise<void
         }));
       }
     }
+  });
+}
+
+async function assertSelectionSnapshotsAreTurnBound(): Promise<void> {
+  await withFixture(["selection-turn", "selection-retry", "selection-next"], async (fixture) => {
+    const conversationId = "selection-snapshot-turn";
+    await fixture.runtime.createConversation({ conversationId, title: "Selection", cwd: fixture.root });
+    await fixture.runtime.activateConversation(conversationId);
+    const annotations = [annotationFixture()];
+    const first = await fixture.submit({ conversationId, text: "question", selectionAnnotations: annotations, submittedAt: 1 });
+    annotations[0].selectedText = "later source change";
+    assert.equal(fixture.currentSelectionAnnotations()[0].selectedText, "SELECTED_SNAPSHOT");
+    const context = buildPiSelectionAnnotationContextMessage(fixture.currentSelectionAnnotations())!;
+    fixture.latestSession().sessionManager.appendCustomMessageEntry(context.customType, context.content, false, context.details);
+    fixture.latestSession().finishSuccessful("answer");
+    const settled = await first.result;
+    assert.deepEqual(fixture.currentSelectionAnnotations(), []);
+    await fixture.runtime.releaseConversation(conversationId);
+    const projection = await fixture.runtime.readProjection(conversationId);
+    const snapshot = projection.messages.find((message) => message.role === "user")!.selectionAnnotations!;
+    assert.equal(snapshot[0].selectedText, "SELECTED_SNAPSHOT");
+    const derived = await fixture.runtime.deriveConversation({ sourceConversationId: conversationId, targetConversationId: "selection-derived", anchorEntryId: settled.assistantEntryId!, title: "Derived" });
+    assert.deepEqual(derived.projection.messages.find((message) => message.role === "user")!.selectionAnnotations, snapshot);
+    const retry = await fixture.submit({ conversationId, text: "retry question", selectionAnnotations: snapshot, submittedAt: 2 });
+    assert.deepEqual(fixture.currentSelectionAnnotations(), snapshot);
+    fixture.latestSession().finishSuccessful("retry answer"); await retry.result;
+    const next = await fixture.submit({ conversationId, text: "next question", submittedAt: 3 });
+    assert.deepEqual(fixture.currentSelectionAnnotations(), [], "only this turn's snapshot is exposed to the production merge");
+    fixture.latestSession().finishSuccessful("next answer"); await next.result;
   });
 }
 
@@ -5351,6 +5384,7 @@ interface RuntimeFixture {
   currentMaintenanceCommand: NonNullable<PiNativeAgentSessionFactoryInput["currentMaintenanceCommand"]>;
   currentSkillTurn(): Readonly<PiNativeSkillTurnContext> | null;
   currentDocumentTurn(): Readonly<PiNativeDocumentTurnContext> | null;
+  currentSelectionAnnotations(): readonly SelectionAnnotation[];
   currentToolExecution(): ReturnType<
     PiNativeAgentSessionFactoryInput["currentToolExecutionContext"]
   >;
@@ -5391,6 +5425,7 @@ async function withFixture(
   let currentMaintenanceCommandReader: PiNativeAgentSessionFactoryInput["currentMaintenanceCommand"];
   let currentSkillTurnReader:
     (() => Readonly<PiNativeSkillTurnContext> | null) | null = null;
+  let currentSelectionAnnotationsReader: PiNativeAgentSessionFactoryInput["currentSelectionAnnotationTurnContext"];
   let currentDocumentTurnReader:
     (() => Readonly<PiNativeDocumentTurnContext> | null) | null = null;
   let currentToolExecutionReader:
@@ -5433,6 +5468,7 @@ async function withFixture(
       currentMaintenanceCommandReader = input.currentMaintenanceCommand;
       currentSkillTurnReader = input.currentSkillTurnContext ?? null;
       currentDocumentTurnReader = input.currentDocumentTurnContext ?? null;
+      currentSelectionAnnotationsReader = input.currentSelectionAnnotationTurnContext;
       currentToolExecutionReader = input.currentToolExecutionContext;
       currentSuccessfulExternalReadToolsReader =
         input.currentSuccessfulExternalReadToolNames;
@@ -5519,6 +5555,7 @@ async function withFixture(
       },
       currentSkillTurn: () => currentSkillTurnReader?.() ?? null,
       currentDocumentTurn: () => currentDocumentTurnReader?.() ?? null,
+      currentSelectionAnnotations: () => currentSelectionAnnotationsReader?.() ?? [],
       currentToolExecution: () => {
         assert.ok(currentToolExecutionReader);
         return currentToolExecutionReader();
