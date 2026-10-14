@@ -13,14 +13,12 @@
 .echoink-annotation-actions svg { width: 14px; height: 14px; }
 .echoink-annotation-text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; min-height: 0; overflow-y: auto; overscroll-behavior: contain; font-size: var(--font-ui-smaller, 12px); line-height: 1.55; }
 .echoink-annotation-invalid { color: var(--text-muted); font-size: var(--font-ui-smaller, 12px); flex: 0 0 auto; }
-.echoink-selection-menu { position: fixed; z-index: 1000; display: flex; padding: 4px; border: 1px solid var(--background-modifier-border); border-radius: 8px; background: #fff; color: #171717; box-shadow: 0 4px 18px rgb(0 0 0 / .14); max-width: calc(100vw - 16px); }
+.echoink-selection-menu { position: fixed; z-index: 1000; display: flex; align-items: center; gap: 0; padding: 2px; border: 1px solid color-mix(in srgb, currentColor 12%, transparent); border-radius: 8px; background: #fff; color: #171717; box-shadow: 0 2px 8px rgb(0 0 0 / .10); max-width: calc(100vw - 16px); box-sizing: border-box; }
 .theme-dark .echoink-selection-menu, .echoink-selection-menu.is-dark { background: #181818; color: #fff; }
-.echoink-selection-menu button[type="button"] { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; box-shadow: none; font-size: 12.5px; }
+.echoink-selection-menu button[type="button"] { position: relative; display: flex; align-items: center; flex: 0 0 auto; gap: 5px; min-height: 26px; height: auto; padding: 3px 8px; box-sizing: border-box; border: 0; border-radius: 6px; background: transparent; color: inherit; box-shadow: none; font-family: inherit; font-size: 12.5px; font-weight: 400; line-height: 1.4; white-space: nowrap; }
+.echoink-selection-menu button + button::before { content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 1px; background: currentColor; opacity: .12; pointer-events: none; }
 .echoink-selection-menu button[type="button"]:is(:hover, :focus-visible) { background: var(--background-modifier-hover, rgb(128 128 128 / .15)); outline: none; box-shadow: none; }
-.echoink-selection-menu svg { width: 16px; height: 16px; }
-.echoink-selection-options { position: absolute; top: calc(100% + 4px); right: 0; padding: 4px; border: 1px solid var(--background-modifier-border); border-radius: 8px; background: inherit; max-height: min(240px, calc(100vh - 16px)); overflow-y: auto; min-width: 120px; }
-.echoink-selection-options[hidden] { display: none; }
-.echoink-selection-options button { width: 100%; text-align: left; }
+.echoink-selection-menu svg { display: block; width: 14px; height: 14px; }
 .echoink-selection-mark { background: rgb(70 130 210 / .12); }
 .markdown-source-view.mod-cm6 button.echoink-selection-tag, .echoink-selection-overlay button.echoink-selection-tag { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 5px; background: #3478d4; color: #fff; font-size: 11px; cursor: pointer; box-shadow: none; }
 .echoink-selection-overlay { position: fixed; z-index: 20; pointer-events: none; }

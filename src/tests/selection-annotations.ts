@@ -16,6 +16,7 @@ import { createPiKnowledgeInlineExtension } from "../plugin/pi-production-runtim
 import { PiChatUiProjector } from "../harness/pi-native/pi-chat-ui-projector";
 import { RuntimeTurnQueue } from "../ui/turn-queue";
 import { renderSelectionAnnotationSummary } from "../ui/codex-view/selection-annotations";
+import { createSelectionAskPopover } from "../ui/selection-ask-popover";
 import { CodexView } from "../ui/codex-view";
 import { DEFAULT_SETTINGS, normalizeSettingsData } from "../settings/settings";
 import { addComposerNoteMentionSelection, composerNoteMentionSelections } from "../ui/codex-view/note-mentions";
@@ -44,6 +45,7 @@ export async function runSelectionAnnotationTests(): Promise<void> {
     queueAndProjection();
     await queueOnlyAnnotations(win.document);
     await mergedContext();
+    selectionMenuActions(win);
     await summaryBehavior(win);
     await adoptedSummaryUsesItsCurrentWindow(win);
     await hoverEscapeDoesNotDismissQuickWindow(win);
@@ -51,7 +53,7 @@ export async function runSelectionAnnotationTests(): Promise<void> {
     await conversationDrafts(win.document);
     await summaryFocusIsNotStolenByViewActivation();
     await settingsBehavior(win);
-    console.log("PASS selection-annotations: draft ownership, safe deletion, cross-mode anchors, queue snapshots, Pi context/history, hover and free settings");
+    console.log("PASS selection-annotations: draft ownership, safe deletion, cross-mode anchors, queue snapshots, Pi context/history, segmented actions, hover and free settings");
   } finally {
     disposeOriginControls(win.document.body);
     dom.window.close();
@@ -202,6 +204,34 @@ async function mergedContext(): Promise<void> {
     annotations = []; const next = await handlers.get("before_agent_start")!({ systemPrompt: "system", prompt: "next" });
     assert.equal(next.message.content.includes("SELECTED_SNAPSHOT"), false, "new turns do not reinject old annotations");
   }
+}
+function selectionMenuActions(win: Window & typeof globalThis): void {
+  const actions = [{ id: "default", name: "提问", template: "" }, { id: "explain", name: "解释", template: "解释这一段" }, { id: "example", name: "举例", template: "给出例子" }];
+  const selected: typeof actions = [], rect = new win.DOMRect(20, 60, 30, 18);
+  let closed = 0;
+  const open = (count: number) => {
+    createSelectionAskPopover(win.document, rect, actions.slice(0, count), (action) => selected.push(action), () => closed++);
+    return win.document.querySelector<HTMLElement>(".echoink-selection-menu")!;
+  };
+  for (const count of [1, 2, 3]) {
+    const menu = open(count), buttons = Array.from(menu.querySelectorAll<HTMLButtonElement>("button"));
+    assert.deepEqual(buttons.map(button => button.textContent), actions.slice(0, count).map(action => action.name));
+    assert.equal(menu.querySelector('[hidden], [role="menu"], [aria-haspopup]'), null, "all actions are direct toolbar buttons without a hidden submenu");
+    buttons[count - 1].click();
+    assert.deepEqual(selected.at(-1), actions[count - 1], "direct second and third actions apply their own templates");
+    assert.equal(menu.isConnected, false); assert.equal(closed, 0, "choosing an action does not also invoke dismissal");
+  }
+  let menu = open(3), buttons = Array.from(menu.querySelectorAll<HTMLButtonElement>("button"));
+  buttons[0].focus(); buttons[0].dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  assert.equal(win.document.activeElement, buttons[1]);
+  buttons[1].dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); assert.equal(win.document.activeElement, buttons[2]);
+  buttons[2].dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); assert.equal(win.document.activeElement, buttons[0]);
+  buttons[0].dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })); assert.equal(win.document.activeElement, buttons[2]);
+  buttons[2].dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  assert.deepEqual(selected.at(-1), actions[2]); assert.equal(selected.length, 4); assert.equal(menu.isConnected, false);
+  menu = open(2); buttons = Array.from(menu.querySelectorAll<HTMLButtonElement>("button")); buttons[1].focus();
+  buttons[1].dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  assert.equal(menu.isConnected, false); assert.equal(closed, 1); assert.equal(selected.length, 4, "Escape dismisses without applying a template");
 }
 async function summaryBehavior(win: Window & typeof globalThis): Promise<void> {
   const host = win.document.createElement("div"); win.document.body.append(host);

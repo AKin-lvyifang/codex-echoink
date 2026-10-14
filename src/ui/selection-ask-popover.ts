@@ -8,33 +8,20 @@ export function createSelectionAskPopover(doc: Document, rect: DOMRect, actions:
   menu.setAttribute("aria-label", english ? "Selection Ask" : "选文提问");
   const makeButton = (action: SelectionAskMenuAction) => {
     const button = doc.createElement("button"); button.type = "button";
-    const icon = doc.createElement("span"); setIcon(icon, "pencil"); button.append(icon, doc.createTextNode(action.name));
+    const icon = doc.createElement("span"); icon.setAttribute("aria-hidden", "true"); setIcon(icon, "pencil"); button.append(icon, doc.createTextNode(action.name));
     button.onclick = () => { const frozen = { ...action }; close(); onChoose(frozen); }; return button;
   };
   menu.addEventListener("mousedown", (event) => event.preventDefault());
-  menu.append(makeButton(actions[0]));
-  let list: HTMLElement | undefined;
-  if (actions.length > 1) {
-    const arrow = doc.createElement("button"); arrow.type = "button"; arrow.setAttribute("aria-label", english ? "Ask options" : "提问选项"); arrow.setAttribute("aria-haspopup", "menu"); arrow.setAttribute("aria-expanded", "false"); setIcon(arrow, "chevron-down"); menu.append(arrow);
-    list = doc.createElement("div"); list.className = "echoink-selection-options"; list.hidden = true; list.setAttribute("role", "menu"); menu.append(list);
-    actions.forEach((action) => { const button = makeButton(action); button.setAttribute("role", "menuitem"); list!.append(button); });
-    arrow.onclick = () => {
-      list!.hidden = !list!.hidden; arrow.setAttribute("aria-expanded", String(!list!.hidden));
-      if (!list!.hidden) {
-        const box = menu.getBoundingClientRect(), below = win.innerHeight - box.bottom - 12, above = box.top - 12;
-        const downward = below >= Math.min(list!.scrollHeight || 120, above);
-        list!.style.top = downward ? "calc(100% + 4px)" : "auto"; list!.style.bottom = downward ? "auto" : "calc(100% + 4px)";
-        list!.style.maxHeight = `${Math.max(0, downward ? below : above)}px`;
-        list!.querySelector<HTMLButtonElement>("button")?.focus();
-      }
-    };
-  }
+  actions.forEach((action) => menu.append(makeButton(action)));
   menu.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { event.preventDefault(); close(); onClose(); }
+    const buttons = Array.from(menu.querySelectorAll<HTMLButtonElement>("button"));
+    if (event.key === "Enter" && buttons.includes(doc.activeElement as HTMLButtonElement)) { event.preventDefault(); (doc.activeElement as HTMLButtonElement).click(); }
     if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(event.key)) {
       event.preventDefault();
-      const buttons = Array.from((list && !list.hidden ? list : menu).querySelectorAll<HTMLButtonElement>("button")).filter((button) => !button.closest("[hidden]"));
-      const index = buttons.indexOf(doc.activeElement as HTMLButtonElement); buttons[(index + (event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 1) + buttons.length) % buttons.length]?.focus();
+      const index = buttons.indexOf(doc.activeElement as HTMLButtonElement), backward = event.key === "ArrowUp" || event.key === "ArrowLeft";
+      const next = index < 0 ? (backward ? buttons.length - 1 : 0) : (index + (backward ? -1 : 1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
     }
   });
   doc.body.append(menu);
