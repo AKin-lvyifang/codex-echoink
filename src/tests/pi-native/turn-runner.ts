@@ -1,3 +1,5 @@
+import { annotationFixture } from "../selection-annotations";
+import { restoreSelectionDraft, emptySelectionDraft } from "../../selection-ask/draft";
 import * as assert from "node:assert/strict";
 import { CodexView } from "../../ui/codex-view";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -1716,6 +1718,7 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
       ),
       mimeType: "text/markdown"
     }],
+    selectionAnnotations: [annotationFixture()],
     noteMentions: [{
       vaultRelativePath: "projects/项目复盘.md",
       fileName: "项目复盘.md",
@@ -1918,13 +1921,15 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
   };
   try {
   addComposerNoteMentionSelection(view.inputEl, item.noteMentions![0]!);
+  restoreSelectionDraft(view.inputEl, { ...emptySelectionDraft(view.inputEl.value), annotations: item.selectionAnnotations!, nextNumber: 2 });
 
   let turnResolved = false;
   const turn = startChatTurn(view, session, item, "composer").then((outcome) => {
     turnResolved = true;
     return outcome;
   });
-  await waitFor(() => listener !== null);
+  await waitFor(() => listener !== null || turnResolved);
+  assert.ok(listener, JSON.stringify(openTestNoticeMessages.slice(-4)));
   assert.deepEqual(approvalSubscriptionIdentity, {
     conversationId: session.id,
     piSessionId: session.piSessionId,
@@ -1947,11 +1952,13 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
     "private replay metadata must persist neither paths nor bytes"
   );
   assert.deepEqual(submittedRequest?.noteMentions, item.noteMentions);
+  assert.deepEqual(submittedRequest?.selectionAnnotations, item.selectionAnnotations);
   assert.equal(projectionReads, 0);
   const liveUserMessage = session.messages.find((message) =>
     message.role === "user"
   );
   assert.equal(liveUserMessage?.text, item.text);
+  assert.deepEqual(liveUserMessage?.selectionAnnotations, item.selectionAnnotations);
   assert.deepEqual(liveUserMessage?.images, [{
     type: "image",
     name: "memory-personality-v1.webp",
@@ -2920,6 +2927,7 @@ function installTurnRunnerMessageDom(): Readonly<{
     body: new FakeElement("body"),
     activeElement: null,
     defaultView: fakeWindow,
+    createElement: (tag: string) => Object.assign(new FakeElement(tag), { addEventListener() {}, removeEventListener() {} }),
     createElementNS: (_namespace: string, tag: string) => new FakeElement(tag),
     getSelection: () => selection,
     createRange: () => {

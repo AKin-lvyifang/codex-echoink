@@ -1,3 +1,5 @@
+import { cloneSelectionAnnotations } from "../../types/selection-annotations";
+import { emptySelectionDraft, restoreSelectionDraft } from "../../selection-ask/draft";
 import { Notice, type App } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import type {
@@ -31,6 +33,7 @@ export interface CodexSessionHost {
   inputEl: HTMLTextAreaElement;
   attachments: StoredAttachment[];
   selectedSkill: EchoInkResource | null;
+  switchComposerDraft?(sessionId: string): void;
   resetVirtualWindow(): void;
   renderTabs(): void;
   renderMessages(options?: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean }): void;
@@ -253,6 +256,7 @@ async function activateSessionInTransitionLane(
       return { status: "stale" };
     }
     applyPiConversationProjectionToShell(host, session, projection);
+    host.switchComposerDraft?.(session.id);
     host.plugin.settings.activeSessionId = session.id;
     const unreadAnswerAt = session.unreadAnswerAt;
     if (unreadAnswerAt !== undefined) delete session.unreadAnswerAt;
@@ -274,6 +278,7 @@ async function activateSessionInTransitionLane(
     if (!isCurrentConversationSelection(host, generation)) {
       return { status: "stale" };
     }
+    host.switchComposerDraft?.(session.id);
     host.plugin.settings.activeSessionId = session.id;
     releaseInactiveConversationBodies(host);
     host.updateInputPlaceholder();
@@ -350,6 +355,7 @@ async function derivePiConversationInTransitionLane(
     return;
   }
   const entryId = targetEntryId.trim();
+  const resendAnnotations = cloneSelectionAnnotations(session.messages.find((message) => piEntryIdFromProjectedMessageId(message.id) === entryId)?.selectionAnnotations ?? []);
   if (!entryId) return;
 
   let derivation: Awaited<
@@ -403,8 +409,10 @@ async function derivePiConversationInTransitionLane(
     derivation.projection.messages
   );
   applyPiConversationProjectionToShell(host, derived, derivation.projection);
+  host.switchComposerDraft?.(derived.id);
   host.plugin.settings.activeSessionId = derived.id;
   host.inputEl.value = derivation.editorText;
+  restoreSelectionDraft(host.inputEl, { ...emptySelectionDraft(derivation.editorText), annotations: derivation.anchorRole === "user" ? resendAnnotations : [], nextNumber: Math.max(0, ...resendAnnotations.map((annotation) => annotation.number)) + 1 });
   host.closeComposerMenus();
   host.attachments = resendImages;
   host.selectedSkill = null;
@@ -848,11 +856,13 @@ async function rollbackFailedSessionCreation(
   host.turnQueue.clearSessionQueue(conversationId);
   removeConversationShell(host, conversationId);
   if (host.plugin.settings.activeSessionId === conversationId) {
-    host.plugin.settings.activeSessionId = host.plugin.settings.sessions.some(
+    const restoredSessionId = host.plugin.settings.sessions.some(
       (candidate) => candidate.id === previousActiveSessionId
     )
       ? previousActiveSessionId
       : "";
+    host.switchComposerDraft?.(restoredSessionId);
+    host.plugin.settings.activeSessionId = restoredSessionId;
   }
   if (isCurrentConversationSelection(host, generation)) {
     beginConversationSelection(

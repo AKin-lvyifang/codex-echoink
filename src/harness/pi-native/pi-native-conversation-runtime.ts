@@ -84,6 +84,8 @@ import type {
 } from "./contracts";
 import { PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE } from "./contracts";
 import { normalizePiChatNoteMentions } from "./pi-note-mentions";
+import { normalizeSelectionAnnotations } from "./pi-selection-annotations";
+import type { SelectionAnnotation } from "../../types/selection-annotations";
 import {
   normalizePiChatPreparedDocuments,
   preflightPiAnthropicDocumentRequest
@@ -213,6 +215,7 @@ export interface PiNativeAgentSessionFactoryInput {
   currentMaintenanceCommand?(): Promise<Readonly<PiKnowledgeMaintenanceCommandContext>>;
   currentSkillTurnContext?(): Readonly<PiNativeSkillTurnContext> | null;
   currentMemoryTurnContext?(): Readonly<PiNativeMemoryTurnContext> | null;
+  currentSelectionAnnotationTurnContext?(): readonly SelectionAnnotation[];
   currentNoteMentionTurnContext?(): Readonly<PiNativeNoteMentionTurnContext> | null;
   currentDocumentTurnContext?(): Readonly<PiNativeDocumentTurnContext> | null;
   bindPdfMaintenanceSources?(paths: readonly string[]): void;
@@ -690,6 +693,7 @@ interface ActiveProductRun {
   permission: PiWorkspaceAccess["permission"];
   maintenanceScope?: PiChatSubmitRequest["maintenanceScope"];
   noteMentions: readonly Readonly<PiChatNoteMention>[];
+  selectionAnnotations: readonly SelectionAnnotation[];
   documents: readonly Readonly<PiChatPreparedDocument>[];
   skillTurnContext: Readonly<PiNativeSkillTurnContext> | null;
   memoryRecall?: PiMemoryRecallObservation;
@@ -1335,6 +1339,7 @@ export class PiNativeConversationRuntime {
     assertValidSkillBinding(request);
     const promptImages = normalizePiChatPreparedImages(request.images);
     const noteMentions = normalizePiChatNoteMentions(request.noteMentions);
+    const selectionAnnotations = normalizeSelectionAnnotations(request.selectionAnnotations);
     const documents = normalizePiChatPreparedDocuments(request.documents);
     const mode = normalizePiChatMode(request.mode);
     const permission = normalizePiWorkspacePermission(request.permission);
@@ -1488,6 +1493,7 @@ export class PiNativeConversationRuntime {
       permission,
       maintenanceScope: request.maintenanceScope,
       noteMentions,
+      selectionAnnotations,
       documents,
       skillTurnContext: dailyJournalSkillTurnContext({
         selectedSkillIds
@@ -2586,6 +2592,7 @@ export class PiNativeConversationRuntime {
             .slice(-6))
         });
       },
+      currentSelectionAnnotationTurnContext: () => holder.active?.currentRun?.selectionAnnotations ?? [],
       currentNoteMentionTurnContext: () => {
         const noteMentions = holder.active?.currentRun?.noteMentions ?? [];
         return noteMentions.length

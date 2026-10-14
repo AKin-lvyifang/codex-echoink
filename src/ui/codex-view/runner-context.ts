@@ -70,6 +70,7 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
   startNextQueuedTurn(sessionId: string): Promise<void>;
   startChatTurn(session: StoredSession, item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome>;
   clearComposerDraft(): void;
+  clearAcceptedComposerDraft?(item: Readonly<QueuedTurnItem>): void;
   ensureChatWorkspaceSelected(session: StoredSession): Promise<boolean>;
   currentTurnOptions(session?: StoredSession): TurnOptions;
   sessionById(sessionId: string): StoredSession | null;

@@ -1,3 +1,4 @@
+import { normalizeSelectionAskSettings } from "../selection-ask/settings";
 import { newId } from "../core/new-id";
 export { newId } from "../core/new-id";
 import { normalizeDiscoveredProviderModel, type DiscoveredProviderModel } from "./provider-model-discovery";
@@ -178,6 +179,8 @@ export interface ChatMessageApprovalSnapshot {
   readonly updatedAt?: number;
 }
 
+import type { SelectionAnnotation } from "../types/selection-annotations";
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
@@ -217,6 +220,7 @@ export interface ChatMessage {
   personalMemorySources?: readonly PersonalMemorySourceReference[];
   /** Display-only note mention metadata; note bodies remain in Pi Session. */
   noteMentions?: readonly NoteMentionReference[];
+  selectionAnnotations?: readonly SelectionAnnotation[];
   knowledgeBaseUi?: KnowledgeBaseMessageUiPayload;
   attachments?: StoredAttachment[];
   files?: ProcessFileRef[];
@@ -495,6 +499,7 @@ export interface EchoInkTodoItem {
 
 export interface CodexForObsidianSettings {
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
+  selectionAsk: import("../selection-ask/settings").SelectionAskSettings;
   englishDiary: import("../english-diary/types").EnglishDiarySettings;
   productGeneration: "pi-agent-product-v1";
   settingsVersion: number;
@@ -543,6 +548,7 @@ export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
+  selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }] },
   englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS },
   productGeneration: "pi-agent-product-v1",
   settingsVersion: 54,
@@ -704,6 +710,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     colorTheme: normalizeEchoInkColorTheme(data.colorTheme),
     settingsTab: normalizeSettingsTab(data?.settingsTab),
     tavily: normalizeTavilySettings(data.tavily),
+    selectionAsk: normalizeSelectionAskSettings(data.selectionAsk),
     autoArchiveDays: normalizeAutoArchiveDays(data.autoArchiveDays),
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,

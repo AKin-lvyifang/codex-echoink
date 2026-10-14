@@ -1481,6 +1481,7 @@ function queuedTurnMeta(item: QueuedTurnItem, language: SettingsLanguage): strin
   ];
   if (item.skill) parts.push(`Skill ${resourcePresentation(item.skill, language).name}`);
   if (item.attachments.length) parts.push(conversationUiText(language, `${item.attachments.length} 个附件`, `${item.attachments.length} attachment${item.attachments.length === 1 ? "" : "s"}`));
+  if (item.selectionAnnotations?.length) parts.push(conversationUiText(language, `${item.selectionAnnotations.length}条注释`, `${item.selectionAnnotations.length} annotations`));
   if (item.noteMentions?.length) parts.push(conversationUiText(language, `${item.noteMentions.length} 篇笔记`, `${item.noteMentions.length} note${item.noteMentions.length === 1 ? "" : "s"}`));
   return parts.join(" · ");
 }

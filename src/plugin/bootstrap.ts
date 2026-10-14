@@ -11,7 +11,10 @@ import {
   replaceTranslationSelectionIfUnchanged
 } from "../editor-actions/translation-selection";
 
+import { SelectionAskController } from "../selection-ask/controller";
+
 export interface EchoInkPluginControllers {
+  selectionAsk: SelectionAskController;
   knowledgeBase: EchoInkKnowledgeSurfaceService;
   review: ReviewManager;
 }
@@ -90,7 +93,9 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
   const review = new ReviewManager(plugin);
   review.register();
 
-  return { knowledgeBase, review };
+  const selectionAsk = new SelectionAskController(plugin);
+  selectionAsk.register();
+  return { knowledgeBase, review, selectionAsk };
 }
 
 export function registerEchoInkStartupTasks(plugin: CodexForObsidianPlugin): void {

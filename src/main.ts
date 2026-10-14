@@ -188,6 +188,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private review: ReviewManager | null = null;
   private settingsStore: EchoInkSettingsStore | null = null;
   private viewService: EchoInkViewService | null = null;
+  selectionAskController: import("./selection-ask/controller").SelectionAskController | null = null;
   private quickChatWindow: QuickChatWindowController | null = null;
   private todoStore: EchoInkTodoStore | null = null;
   private todoReminderService: TodoReminderService | null = null;
@@ -298,6 +299,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const controllers = registerEchoInkPluginFeatures(this);
     this.knowledgeBase = controllers.knowledgeBase;
     this.review = controllers.review;
+    this.selectionAskController = controllers.selectionAsk;
     registerEchoInkStartupTasks(this);
     // Global quick-chat window: registration is fail-safe by design; when the
     // desktop bridge is missing the sidebar experience stays untouched.
@@ -403,7 +405,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (!this.todoReminderService) this.todoReminderService = new TodoReminderService(this);
     return this.todoReminderService;
   }
-  async activateView(): Promise<void> { return this.getViewService().activateView(); }
+  async activateView(options: { focusInput?: boolean } = {}): Promise<void> { return this.getViewService().activateView(options); }
   getQuickChatWindowController(): QuickChatWindowController | null { return this.quickChatWindow; }
   async toggleQuickChatWindow(): Promise<void> {
     const controller = this.quickChatWindow;
@@ -1502,6 +1504,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async loadSettings(): Promise<Readonly<SettingsLoadResult>> { return this.getSettingsStore().loadSettings(); }
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> {
     await this.getSettingsStore().saveSettings(force, options);
+    this.selectionAskController?.refresh();
     this.autoArchive?.configure();
   }
   async persistPiNativeSettings(): Promise<void> {

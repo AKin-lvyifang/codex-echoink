@@ -363,6 +363,8 @@ export interface PiKnowledgeMaintenanceToolPort {
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>>;
 }
 
+import type { SelectionAnnotation } from "../../types/selection-annotations";
+
 export interface PiChatSubmitRequest {
   conversationId: string;
   text: string;
@@ -373,6 +375,7 @@ export interface PiChatSubmitRequest {
   documents?: readonly Readonly<PiChatPreparedDocument>[];
   /** Ordered whole-note snapshots frozen for this exact submitted turn. */
   noteMentions?: readonly Readonly<PiChatNoteMention>[];
+  selectionAnnotations?: readonly SelectionAnnotation[];
   /** The composer mode captured for this exact queued turn. */
   mode?: PiChatMode;
   /** Workspace permission frozen when this message was sent, including queued turns. */

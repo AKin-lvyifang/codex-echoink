@@ -1,3 +1,4 @@
+import { composerSelectionAnnotations, clearSelectionDraft } from "../../selection-ask/draft";
 import { Notice, type App } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import { enabledSkillResources } from "../../resources/registry";
@@ -1065,6 +1066,7 @@ export function hasComposerDraft(host: CodexComposerHost): boolean {
   return Boolean(
     host.inputEl?.value.trim()
     || host.attachments.length
+    || composerSelectionAnnotations(host.inputEl).length
     || composerNoteMentionSelections(host.inputEl).length
     || host.selectedSkill
   );
@@ -1078,6 +1080,8 @@ export function clearComposerDraft(host: CodexComposerHost): void {
   closeComposerMenus(host);
   host.attachments = [];
   clearComposerNoteMentions(host.inputEl);
+  clearSelectionDraft(host.inputEl);
+  host.plugin.selectionAskController?.refresh();
   host.selectedSkill = null;
 }
 

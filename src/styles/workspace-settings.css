@@ -1595,3 +1595,14 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 @keyframes echoink-registration-breathe{0%,100%{opacity:1}50%{opacity:.72}}
 @keyframes echoink-account-action-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.echoink-account .registration-gift-tag,.echoink-account .account-action-spinner svg{animation:none}}
+.echoink-selection-settings-actions { display: flex; flex-direction: column; gap: 18px; }
+.echoink-selection-settings-action { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.echoink-selection-settings-name { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.echoink-selection-settings-name label { font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-selection-settings-action > label { font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-selection-settings-template { box-sizing: border-box; width: 100%; min-height: 82px; padding: 7px 10px; border: 1px solid var(--background-modifier-border); border-radius: 6px; font-size: calc(var(--font-text-size, 16px) * .6875); line-height: 1.55; resize: vertical; }
+.echoink-selection-settings-template:focus, .echoink-selection-settings-template:focus-visible { outline: none; box-shadow: none; border-color: var(--background-modifier-border); background: var(--background-modifier-hover); }
+.echoink-selection-settings-preview, .echoink-selection-settings-status { font-size: calc(var(--font-text-size, 16px) * .6875); color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-selection-settings-error { color: var(--text-error); font-size: calc(var(--font-text-size, 16px) * .6875); }
+.echoink-selection-settings-error:empty { display: none; }
+.echoink-selection-settings-footer { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 18px; }

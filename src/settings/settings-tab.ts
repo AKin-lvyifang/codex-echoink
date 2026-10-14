@@ -1,4 +1,5 @@
 import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
+import { renderSelectionAskPluginRow, renderSelectionAnnotationSettings } from "./selection-annotation-settings";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { mountAccountMembership } from "./account-membership";
 import { createUnavailableAccountAdapter } from "./account-membership-model";
@@ -3575,6 +3576,8 @@ export class CodexSettingTab extends PluginSettingTab {
       && detail?.kind === "review-memory-category"
     ) {
       this.settingsFocusIntent = `explicit:review:memory:${detail.category}`;
+    } else if (detail === "selection-ask") {
+      this.settingsFocusIntent = "explicit:selection-ask:settings";
     } else if (detail === "english-diary") {
       this.settingsFocusIntent = "explicit:english-diary:settings";
     } else if (detail === "knowledge-preferences") {
@@ -4223,6 +4226,9 @@ export class CodexSettingTab extends PluginSettingTab {
       this.pdfSettingsPanel ??= new PdfReadingSettingsPanel(this.plugin, () => void this.closeSettingsDetail());
       this.pdfSettingsPanel.render(container);
       return;
+    }
+    if (this.settingsDetail === "selection-ask") {
+      renderSelectionAnnotationSettings(container, this.plugin, () => { void this.closeSettingsDetail(); }); return;
     }
     if (this.settingsDetail === "english-diary") {
       this.renderEnglishDiarySettings(container);
@@ -4995,7 +5001,7 @@ export class CodexSettingTab extends PluginSettingTab {
         name: "English Diary",
         description: diary.description,
         enabled: this.plugin.settings.englishDiary.enabled
-      }, ...bundles], snapshot.errors.plugins);
+      }, { id: "echoink:selection-ask", kind: "tool-bundle", source: "echoink-local", bridgeMode: "plugin-tool", name: "Selection Ask", description: builtinPluginPresentation("selection-ask", this.plugin.settings.settingsLanguage).description, enabled: this.plugin.settings.selectionAsk.enabled }, ...bundles], snapshot.errors.plugins);
       return;
     }
     if (this.plugin.settings.resourceManagementTab === "mcp") {
@@ -5172,7 +5178,7 @@ export class CodexSettingTab extends PluginSettingTab {
         key: resource.id,
         name: presentation.name,
         aliases: presentation.aliases,
-        meta: [resourceDisplayMeta(resource, this.plugin.settings.resources, this.plugin.settings.settingsLanguage), resource.kind === "tool-bundle" ? "PRO" : ""].filter(Boolean).join(" "),
+        meta: [resourceDisplayMeta(resource, this.plugin.settings.resources, this.plugin.settings.settingsLanguage), resource.id === "echoink:selection-ask" ? (this.plugin.settings.settingsLanguage === "en" ? "Basic" : "基础") : resource.kind === "tool-bundle" ? "PRO" : ""].filter(Boolean).join(" "),
         desc: presentation.description || resource.contentPath || resource.configPath || copy.resources.noDesc,
         enabled: resource.enabled,
         resource
@@ -5267,6 +5273,9 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderResourceRow(container: HTMLElement, resource: EchoInkResource, visible = true, searchRow?: { key: string; name: string; meta?: string; desc?: string; aliases?: readonly string[] }): void {
     const copy = this.copy;
     const presentation = resourcePresentation(resource, this.plugin.settings.settingsLanguage);
+    if (resource.id === "echoink:selection-ask") {
+      renderSelectionAskPluginRow(container, this.plugin, visible, () => this.openSettingsDetail("selection-ask")); return;
+    }
     const isEnglishDiary = resource.id === "echoink:english-diary";
     const resourceEnabled = resource.enabled;
     const row = container.createDiv({
@@ -5674,6 +5683,7 @@ type SettingsActionContext = "knowledge" | "review" | "resources" | "providers";
 type SettingsDetail =
   | "pdf-reading"
   | "english-diary"
+  | "selection-ask"
   | "knowledge-preferences"
   | "knowledge-maintenance-history"
   | "review-archives"
