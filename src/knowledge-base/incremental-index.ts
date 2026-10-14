@@ -1,3 +1,4 @@
+import { knowledgePathRole, knowledgePrivateRoot, getKnowledgeFolderBindings } from "./root-paths";
 import { knowledgeRolePath, knowledgeRoleRoots } from "./root-paths";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
@@ -34,6 +35,7 @@ export interface KnowledgeBaseIndexEntry {
 
 export interface KnowledgeBaseIncrementalIndex {
   schemaVersion: number;
+  bindingRevision?: number;
   updatedAt: number;
   entries: Record<string, KnowledgeBaseIndexEntry>;
   checkpoints: Partial<Record<KnowledgeBaseIndexCheckpoint, Record<string, string>>>;
@@ -77,7 +79,7 @@ export async function refreshKnowledgeBaseIndex(
   options: RefreshKnowledgeBaseIndexOptions
 ): Promise<KnowledgeBaseIndexRefreshResult> {
   const roots = uniqueRoots(options.roots);
-  const indexPath = path.join(pluginDataDir(vaultPath), "knowledge-index-v1.json");
+  const indexPath = path.join(knowledgePrivateRoot(vaultPath) ?? pluginDataDir(vaultPath), "knowledge-index-v1.json");
   const index = await readKnowledgeBaseIndex(indexPath);
   const previousEntries = index.entries;
   const currentPaths = new Set<string>();
@@ -95,7 +97,7 @@ export async function refreshKnowledgeBaseIndex(
     for (const file of files) {
       currentPaths.add(file.relativePath);
       const previous = previousEntries[file.relativePath];
-      if (previous && indexMetadataMatches(previous, file.stat)) {
+      if (previous && previous.root === root && (index.bindingRevision ?? 0) === (getKnowledgeFolderBindings(vaultPath)?.revision ?? 0) && indexMetadataMatches(previous, file.stat)) {
         reusedCount += 1;
         continue;
       }
@@ -119,7 +121,8 @@ export async function refreshKnowledgeBaseIndex(
   const changed = indexedCount > 0 || deletedPaths.length > 0 || index.schemaVersion !== KNOWLEDGE_BASE_INDEX_SCHEMA_VERSION;
   index.schemaVersion = KNOWLEDGE_BASE_INDEX_SCHEMA_VERSION;
   if (changed) {
-    index.updatedAt = indexedAt;
+    index.bindingRevision = getKnowledgeFolderBindings(vaultPath)?.revision ?? 0;
+  index.updatedAt = indexedAt;
     await persistKnowledgeBaseIndex(indexPath, index);
   }
 
@@ -211,7 +214,7 @@ export function clearKnowledgeBaseIndexMemoryCache(vaultPath?: string): void {
     indexCache.clear();
     return;
   }
-  indexCache.delete(path.join(pluginDataDir(vaultPath), "knowledge-index-v1.json"));
+  indexCache.delete(path.join(knowledgePrivateRoot(vaultPath) ?? pluginDataDir(vaultPath), "knowledge-index-v1.json"));
 }
 
 async function readKnowledgeBaseIndex(indexPath: string): Promise<KnowledgeBaseIncrementalIndex> {
@@ -252,6 +255,7 @@ function normalizeIndex(value: unknown): KnowledgeBaseIncrementalIndex {
   const checkpoints = record.checkpoints && typeof record.checkpoints === "object" ? record.checkpoints : {};
   return {
     schemaVersion: KNOWLEDGE_BASE_INDEX_SCHEMA_VERSION,
+    bindingRevision: record.bindingRevision ?? 0,
     updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : 0,
     entries,
     checkpoints
@@ -291,7 +295,7 @@ async function walkIndexRoot(
           await walk(absolutePath);
           continue;
         }
-        if (!stat.isFile() || !shouldIndexFile(root, relativePath)) continue;
+        if (!stat.isFile() || !shouldIndexFile(root, relativePath) || knowledgePathRole(vaultPath, relativePath) !== root) continue;
         files.push({ absolutePath, relativePath, stat });
       }
     };

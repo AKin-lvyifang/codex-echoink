@@ -1,3 +1,4 @@
+import { knowledgeRoleStatus, knowledgeRolePath } from "../knowledge-base/root-paths";
 import { getProPluginAccess, requireProPluginAction, requireProPlugin, unavailableCapabilityAccess } from "../membership/access";
 import { Notice, TFile, TFolder } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -19,13 +20,22 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
   readonly api: EnglishDiaryService;
   private readonly activePaths = new Set<string>();
   private readonly storageSettingsChanged: boolean;
+  private mappedEnglish: string | null = null;
+  private mappedExpressions: string | null = null;
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     const settings = plugin.settings.englishDiary;
     const previous = JSON.stringify(settings);
     const rootNames = (plugin.app.vault.getRoot?.().children ?? [])
       .filter((file) => file instanceof TFolder).map((folder) => folder.path);
-    const englishDirectory = resolveKnowledgePathFromRoots(DEFAULT_ENGLISH_DIRECTORY, rootNames);
-    const expressionDirectory = resolveKnowledgePathFromRoots(DEFAULT_EXPRESSION_DIRECTORY, rootNames);
+    const output = plugin.settings.knowledgeBase.folderBindings?.roles.outputs;
+    const useEnglishDefault = settings.englishDirectoryMode === "role" || (!settings.englishDirectoryMode && knowledgeRolePath(settings.englishDirectory) === DEFAULT_ENGLISH_DIRECTORY);
+    settings.englishDirectoryMode = useEnglishDefault ? "role" : "custom";
+    const useExpressionDefault = settings.expressionDirectoryMode === "role" || (!settings.expressionDirectoryMode && knowledgeRolePath(settings.expressionDirectory) === DEFAULT_EXPRESSION_DIRECTORY);
+    settings.expressionDirectoryMode = useExpressionDefault ? "role" : "custom";
+    const englishDirectory = useEnglishDefault ? (output?.enabled && output.writePath ? `${output.writePath}/英文日记` : plugin.settings.knowledgeBase.folderBindings ? settings.englishDirectory : resolveKnowledgePathFromRoots(DEFAULT_ENGLISH_DIRECTORY, rootNames)) : settings.englishDirectory;
+    const expressionDirectory = useExpressionDefault ? (output?.enabled && output.writePath ? `${output.writePath}/表达库` : plugin.settings.knowledgeBase.folderBindings ? settings.expressionDirectory : resolveKnowledgePathFromRoots(DEFAULT_EXPRESSION_DIRECTORY, rootNames)) : settings.expressionDirectory;
+    this.mappedEnglish = useEnglishDefault ? englishDirectory : null;
+    this.mappedExpressions = useExpressionDefault ? expressionDirectory : null;
     settings.legacyEnglishDirectories = [...new Set([...(settings.legacyEnglishDirectories ?? []), settings.englishDirectory, LEGACY_ENGLISH_DIRECTORY, DEFAULT_ENGLISH_DIRECTORY])]
       .filter((directory) => directory && directory !== englishDirectory);
     settings.legacyExpressionDirectories = [...new Set([...(settings.legacyExpressionDirectories ?? []), settings.expressionDirectory, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY, DEFAULT_EXPRESSION_DIRECTORY])]
@@ -37,7 +47,19 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
     const roots = [...new Set([englishDirectory, expressionDirectory, DEFAULT_ENGLISH_DIRECTORY, DEFAULT_EXPRESSION_DIRECTORY,
       LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY,
       ...settings.legacyEnglishDirectories, ...settings.legacyExpressionDirectories, stateDirectory])];
-    const repository = new EnglishDiaryRepository(new EnglishDiaryVaultPort(plugin.app, roots), { ...settings, stateDirectory }, plugin.accountService ?? unavailableCapabilityAccess);
+    const repository = new EnglishDiaryRepository(new EnglishDiaryVaultPort(plugin.app, () => [...new Set([...roots, plugin.settings.englishDiary.englishDirectory, plugin.settings.englishDiary.expressionDirectory, ...(plugin.settings.englishDiary.legacyEnglishDirectories ?? []), ...(plugin.settings.englishDiary.legacyExpressionDirectories ?? [])])], (target, exists) => {
+      if (target.startsWith(`${stateDirectory}/`) || exists) return;
+      const bindings = plugin.settings.knowledgeBase.folderBindings;
+      if (!bindings) return;
+      const mapped = [this.mappedEnglish, this.mappedExpressions].filter((value): value is string => !!value);
+      if (mapped.some((directory) => target.startsWith(`${directory}/`))) {
+        if (knowledgeRoleStatus(plugin.getVaultPath(), "outputs") !== "ready") throw new Error("请先选择可用的输出位置；已有英文日记仍可查看。");
+        const output = bindings.roles.outputs;
+        const directory = mapped.find((directory) => target.startsWith(`${directory}/`))!;
+        const child = directory.slice((output.writePath?.length ?? 0) + 1);
+        if (!plugin.app.vault.getAbstractFileByPath(directory) && !output.allowedSubdirectories.includes(child)) throw new Error(`请在目录方案中确认子目录：${child}`);
+      }
+    }), { ...settings, stateDirectory, migrateLegacy: !plugin.settings.knowledgeBase.folderBindings, flatExpressions: Boolean(plugin.settings.knowledgeBase.folderBindings) }, plugin.accountService ?? unavailableCapabilityAccess);
     this.api = new EnglishDiaryService(repository, {
       generate: (input) => plugin.generateEnglishDiaryText(input),
       providerLabel: () => plugin.englishDiaryProviderLabel(),
@@ -54,6 +76,16 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
       return { ...source, date: journalDateFromPath(path, native.folder, native.format) ?? propertyDate ?? source.title };
     }, plugin.accountService ?? unavailableCapabilityAccess);
   }
+  refreshStoragePaths(): void {
+    const settings = this.plugin.settings.englishDiary;
+    const output = this.plugin.settings.knowledgeBase.folderBindings?.roles.outputs;
+    if (output?.enabled && output.writePath) {
+      if (settings.englishDirectoryMode === "role") { settings.legacyEnglishDirectories = [...new Set([...(settings.legacyEnglishDirectories ?? []), settings.englishDirectory])]; this.mappedEnglish = settings.englishDirectory = `${output.writePath}/英文日记`; }
+      if (settings.expressionDirectoryMode === "role") { settings.legacyExpressionDirectories = [...new Set([...(settings.legacyExpressionDirectories ?? []), settings.expressionDirectory])]; this.mappedExpressions = settings.expressionDirectory = `${output.writePath}/表达库`; }
+    }
+    (this.api.repository as EnglishDiaryRepository).setStorageDirectories(settings.englishDirectory, settings.expressionDirectory);
+  }
+
   register(): void {
     const { plugin } = this;
     if (this.storageSettingsChanged) void plugin.saveSettings(true, { flushConversationStore: false }).catch(showError);
@@ -97,7 +129,7 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
   }
   async openToday(): Promise<void> {
     this.requireEnabled();
-    const data = new HomeWorkbenchDataService(this.plugin.app, () => this.plugin.settings.journalDirectory, this.plugin.homeActivity);
+    const data = new HomeWorkbenchDataService(this.plugin.app, () => this.plugin.settings.journalDirectory, this.plugin.homeActivity, undefined, () => this.plugin.settings.knowledgeBase.folderBindings);
     if (!getProPluginAccess(this.api.access, this.enabled()).canWrite) {
       const existing = data.existingJournalForDate(new Date());
       if (existing) await this.openDiary(existing.path);

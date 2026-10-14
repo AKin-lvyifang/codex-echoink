@@ -14,6 +14,8 @@ export interface EnglishDiarySettings {
   enabled: boolean;
   /** Ask once before changing the existing Home quick-record entry. */
   homeShortcut: "ask" | "quick-record" | "english-diary";
+  englishDirectoryMode?: "role" | "custom";
+  expressionDirectoryMode?: "role" | "custom";
   englishDirectory: string;
   expressionDirectory: string;
   legacyEnglishDirectories?: string[];

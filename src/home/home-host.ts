@@ -13,8 +13,9 @@ export interface TodoHost {
   getTodoStore(): EchoInkTodoStore;
 }
 export interface HomeHost extends TodoHost {
-  settings: TodoHost["settings"] & Pick<CodexForObsidianSettings, "journalDirectory" | "englishDiary" | "homeModules" | "lifestyle">;
+  settings: TodoHost["settings"] & { knowledgeBase?: CodexForObsidianSettings["knowledgeBase"] } & Pick<CodexForObsidianSettings, "journalDirectory" | "englishDiary" | "homeModules" | "lifestyle">;
   homeActivity: HomeActivityCore | null;
+  settingsKnowledgeBindings?(): import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;
   accountService?: CapabilityAccess | null;
   homeUnavailableReason?: string;
   englishDiary: {

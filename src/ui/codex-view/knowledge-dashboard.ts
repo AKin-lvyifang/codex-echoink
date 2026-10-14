@@ -261,7 +261,7 @@ function renderKnowledgeDashboardHealth(
       language
     )
   );
-  addKnowledgeDashboardFact(facts, "Tracker", snapshot.tracker.exists
+  addKnowledgeDashboardFact(facts, snapshot.tracker.path ? "Tracker" : conversationUiText(language, "来源处理记录", "Source records"), snapshot.tracker.exists
     ? conversationUiText(language, `${snapshot.tracker.trackedCount} 条`, `${snapshot.tracker.trackedCount} entries`)
     : conversationUiText(language, "缺失", "Missing"));
 

@@ -3,7 +3,8 @@ import { AgentIdentityModal } from "../agent-identity-modal";
 import { resolveAgentAvatarUrl } from "../agent-avatar-presets";
 import { AGENT_TEMPLATES, getAgentTemplate, type AgentTemplateId } from "../../harness/memory/agent-templates";
 import type { MobileAgentProfile } from "../../harness/memory/mobile-profile-protocol";
-import { TFile, setIcon } from "obsidian";
+import { TFile, TFolder, setIcon } from "obsidian";
+import { emptyKnowledgeFolderBindings, normalizeKnowledgeDirectory } from "../../knowledge-base/folder-bindings";
 import type { MobileUIHost } from "./mobile-ui";
 import { newId } from "../../core/new-id";
 import { EchoInkTodoFormModal } from "../../home/todo-edit-modal";
@@ -308,9 +309,76 @@ export class MobileSettingsPages {
     }; drawCalendar();
     const model = this.group(section("模型")); this.ui.row(model, "EchoInk 当前模型", "选择模型", "server", () => this.ui.go("providers"));
     const history = this.group(section("维护日志")); if (!logs.length) node(history, "p", "em-empty", "还没有维护记录");
-    for (const log of logs) this.ui.row(history, log.date, log.resultStatus ?? log.status, "history", () => this.ui.sheet("维护记录", part => { this.help(part, `${log.date} · ${log.resultStatus ?? log.status}`); if (log.reportPath) this.ui.button(part, "打开报告", () => this.host.openNote(log.reportPath), "file-text"); if (log.errorCode) this.help(part, log.errorCode); }));
+    for (const log of logs) this.ui.row(history, log.date, log.resultStatus ?? log.status, "history", () => this.ui.sheet("维护记录", part => {
+      this.help(part, `${log.date} · ${log.resultStatus ?? log.status}`);
+      if (log.recordId) {
+        const loading = this.help(part, "读取中…");
+        void this.services.readMaintenanceRecord(log.recordId).then(record => {
+          if (!part.isConnected) return;
+          loading.remove(); this.help(part, record.summary);
+          this.heading(part, "来源");
+          for (const source of record.sources) this.help(part, `${source.path} · ${source.status === "processed" ? "已处理" : source.status === "unread" ? "未读取" : "待处理"}`);
+          this.heading(part, "成果");
+          if (!record.result.notes.length) this.help(part, "本轮没有新增知识笔记");
+          for (const note of record.result.notes) this.ui.row(part, note.title, note.path, "file-text", () => this.host.openNote(note.path));
+          for (const assessment of record.result.assessments) this.help(part, `${assessment.claim} · ${assessment.status} · ${assessment.verification}`);
+          if (record.result.issues.length) { this.heading(part, "问题"); for (const issue of record.result.issues) this.help(part, `${issue.path ? `${issue.path}：` : ""}${issue.message}`); }
+        }).catch(error => { if (part.isConnected) { loading.className = "em-error"; loading.textContent = error instanceof Error ? error.message : String(error); } });
+      } else if (log.reportPath) this.ui.button(part, "打开历史报告", () => this.host.openNote(log.reportPath), "file-text");
+      if (log.errorCode) this.help(part, log.errorCode);
+    }));
     const manage = this.group(section("管理")); this.ui.row(manage, "知识提炼偏好", "", "sliders-horizontal", () => this.preferences());
-    for (const [kind, label] of [["wiki", "Wiki 目录"], ["raw", "Raw 目录"], ["inbox", "Inbox 目录"]] as const) this.ui.row(manage, label, this.services.knowledgePath(kind), "folder", () => this.ui.sheet(label, part => { let value = this.host.settings().mobileUi.knowledgePaths[kind]; this.ui.field(part, "目录路径", value, text => { value = text; }); this.ui.button(part, "保存", async () => { this.host.settings().mobileUi.knowledgePaths[kind] = this.services.safePath(value); await this.host.saveSettings(); this.ui.go("knowledge"); }, "check", "em-primary em-wide-action"); }));
+    for (const [kind, label] of [["raw", "资料来源"], ["wiki", "知识成果"], ["inbox", "收件箱"]] as const) this.ui.row(manage, label, this.services.knowledgeBindingDescription(kind), "folder", () => this.editKnowledgeBinding(kind, label));
+  }
+  private editKnowledgeBinding(kind: "raw" | "wiki" | "inbox", title: string) {
+    const saved = this.host.settings().knowledgeBase.folderBindings;
+    const draft = structuredClone(saved ?? emptyKnowledgeFolderBindings());
+    const binding = draft.roles[kind];
+    const revision = saved?.revision ?? 0;
+    this.ui.sheet(title, part => {
+      let busy = false;
+      const error = node(part, "p", "em-error"); error.hidden = true;
+      const toggle = this.toggle(part, "启用", binding.enabled, async checked => { binding.enabled = checked; sync(); });
+      const paths = node(part, "div");
+      const choose = node(part, "label", "em-field"); node(choose, "span", "", "选择已有目录");
+      const select = node(choose, "select"); select.setAttribute("aria-label", "选择已有目录");
+      node(select, "option", "", "请选择目录").value = "";
+      for (const folder of this.host.app.vault.getAllLoadedFiles().filter((file): file is TFolder => file instanceof TFolder && !!file.path).sort((a, b) => a.path.localeCompare(b.path))) node(select, "option", "", folder.path).value = folder.path;
+      const add = this.ui.button(part, kind === "raw" ? "添加来源" : "使用所选目录", () => {
+        if (busy || !select.value) return;
+        const directory = normalizeKnowledgeDirectory(select.value);
+        binding.readPaths = kind === "raw" ? [...new Set([...binding.readPaths, directory])] : [directory];
+        binding.compatibilityReadScopes = false;
+        if (binding.readPaths.length === 1) binding.writePath = directory;
+        binding.enabled = true; toggle.checked = true; drawPaths(); sync();
+      }, "plus", "em-wide-action");
+      const defaults = node(part, "label", "em-field"); node(defaults, "span", "", "新资料默认保存位置");
+      const defaultSelect = node(defaults, "select"); defaultSelect.setAttribute("aria-label", "新资料默认保存位置");
+      defaultSelect.addEventListener("change", () => { binding.writePath = defaultSelect.value || null; });
+      const unbind = this.ui.button(part, "解绑位置", () => { if (busy) return; binding.readPaths = []; binding.writePath = null; binding.enabled = false; toggle.checked = false; drawPaths(); sync(); }, "unlink", "em-wide-action");
+      const save = this.ui.button(part, "保存", async () => {
+        if (busy) return;
+        busy = true; sync(); error.hidden = true; part.setAttribute("aria-busy", "true");
+        try {
+          draft.migrationIssues = draft.migrationIssues.filter(issue => !issue.startsWith(`${kind}：`));
+          await this.services.saveKnowledgeBindings(draft, revision);
+          this.ui.go("knowledge");
+        } catch (failure) { error.hidden = false; error.textContent = failure instanceof Error ? failure.message : String(failure); }
+        finally { busy = false; part.removeAttribute("aria-busy"); sync(); }
+      }, "check", "em-primary em-wide-action");
+      const sync = () => { toggle.disabled = busy; select.disabled = busy || !binding.enabled; add.disabled = busy || !binding.enabled; defaultSelect.disabled = busy || !binding.enabled; unbind.disabled = busy; save.disabled = busy; save.querySelector("span:last-child")!.textContent = busy ? "保存中…" : "保存"; paths.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = busy || !binding.enabled; }); };
+      const drawPaths = () => {
+        paths.replaceChildren();
+        for (const directory of binding.readPaths) {
+          const row = node(paths, "div", "em-row"); node(row, "span", "em-row-label", directory);
+          this.ui.button(row, "移除", () => { if (busy) return; binding.readPaths = binding.readPaths.filter(value => value !== directory); if (binding.writePath === directory) binding.writePath = binding.readPaths.length === 1 ? binding.readPaths[0] : null; drawPaths(); sync(); });
+        }
+        defaultSelect.replaceChildren(); node(defaultSelect, "option", "", "请选择默认位置").value = "";
+        for (const directory of binding.readPaths) node(defaultSelect, "option", "", directory).value = directory;
+        defaultSelect.value = binding.writePath ?? ""; defaults.hidden = kind !== "raw";
+      };
+      drawPaths(); sync();
+    });
   }
   private preferences() {
     void this.ui.act(async () => {

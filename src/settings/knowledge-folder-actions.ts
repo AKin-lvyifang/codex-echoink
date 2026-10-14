@@ -1,6 +1,6 @@
-import { Notice } from "obsidian";
+import { Modal, Notice } from "obsidian";
 import type { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
-import { createOriginButton } from "./origin-controls";
+import { createOriginButton, createOriginCheck, disposeOriginControls } from "./origin-controls";
 import { OriginSetting } from "./origin-setting";
 import { applySettingsRow, createSettingsGroup, createSettingsSection } from "./settings-v2";
 
@@ -24,7 +24,7 @@ export function renderKnowledgeFolderActions(
   optimizeCard.addClass("settings-card");
   const optimizeRow = applySettingsRow(new OriginSetting(optimizeCard)
     .setName(zh ? "文件夹名称优化" : "Folder names")
-    .setDesc(zh ? "将知识库英文文件夹改为中英文名称。" : "Rename English knowledge folders with Chinese and English names."));
+    .setDesc(zh ? "选择用途目录，预览实际名称变化后应用。" : "Choose bound folders and preview their exact name changes."));
   const button = createOriginButton(optimizeRow.controlEl, { text: zh ? "优化名称" : "Optimize names" });
   const restoreCard = createSettingsGroup(section);
   restoreCard.addClass("settings-card");
@@ -70,15 +70,44 @@ export function renderKnowledgeFolderActions(
     }
   };
   button.onclick = () => {
-    void run("optimize", async () => {
-      const result = await service.optimizeFolderNames();
-      if (!result.renamed.length && !result.skipped.length) return zh
-        ? "目录已采用可读名称，无需优化。"
-        : "Folder names are already readable; no optimization needed.";
-      return zh
-        ? `已改名 ${result.renamed.length} 个目录${result.skipped.length ? `，${result.skipped.length} 项需处理` : ""}。`
-        : `Renamed ${result.renamed.length} folder${result.renamed.length === 1 ? "" : "s"}${result.skipped.length ? `; ${result.skipped.length} item${result.skipped.length === 1 ? " needs" : "s need"} attention` : ""}.`;
+    const modal = new Modal(service.app);
+    modal.setTitle(zh ? "文件夹名称优化" : "Folder names");
+    const selected = new Set<string>();
+    const body = modal.contentEl;
+    const scopes = service.folderNameScopes();
+    const fields = body.createDiv();
+    if (!scopes.length) fields.createDiv({ cls: "setting-item-description", text: zh ? "尚未绑定可优化的目录。" : "No bound folders are available." });
+    const checks = scopes.map(scope => {
+      const row = new OriginSetting(fields).setName(scope);
+      const check = createOriginCheck(row.controlEl, { attr: { "aria-label": scope } });
+      check.onchange = () => { check.checked ? selected.add(scope) : selected.delete(scope); preview.disabled = !selected.size; };
+      return check;
     });
+    const error = body.createDiv({ cls: "settings-error", attr: { role: "alert" } });
+    const resultEl = body.createDiv();
+    const actions = body.createDiv({ cls: "echoink-knowledge-init-actions" });
+    const cancel = createOriginButton(actions, { text: zh ? "取消" : "Cancel" }); cancel.onclick = () => modal.close();
+    const preview = createOriginButton(actions, { cls: "mod-cta", text: zh ? "预览改名" : "Preview names" }); preview.disabled = true;
+    let pending = false;
+    preview.onclick = async () => {
+      if (pending) return;
+      pending = true; error.empty(); preview.disabled = true; preview.setText(zh ? "生成中…" : "Generating…"); body.setAttr("aria-busy", "true"); checks.forEach(check => { check.disabled = true; });
+      try {
+        const plan = await service.previewFolderNames([...selected]);
+        if (!body.isConnected) return;
+        resultEl.empty();
+        for (const change of plan.result.renamed) resultEl.createDiv({ cls: "setting-item-description", text: `${change.from} → ${change.to}` });
+        for (const skipped of plan.result.skipped) resultEl.createDiv({ cls: "settings-error", text: `${skipped.path}：${skipped.reason}` });
+        if (!plan.result.renamed.length) resultEl.createDiv({ cls: "setting-item-description", text: zh ? "没有可应用的名称变化。" : "No name changes to apply." });
+        const apply = createOriginButton(actions, { cls: "mod-cta", text: zh ? "应用改名" : "Apply names" });
+        apply.disabled = !plan.result.renamed.length || !service.directoryWritable;
+        apply.onclick = () => { if (pending || state.running) return; apply.disabled = true; void run("optimize", async () => { const result = await service.applyFolderNamePreview(plan); modal.close(); return zh ? `已改名 ${result.renamed.length} 个目录，${result.skipped.length} 项未改动。` : `Renamed ${result.renamed.length} folders; ${result.skipped.length} unchanged.`; }).finally(() => { apply.disabled = !service.directoryWritable; }); };
+        preview.hidden = true;
+      } catch (failure) { error.setText(failure instanceof Error ? failure.message : String(failure)); preview.disabled = !selected.size; }
+      finally { pending = false; body.removeAttribute("aria-busy"); preview.setText(zh ? "预览改名" : "Preview names"); checks.forEach(check => { check.disabled = preview.hidden; }); }
+    };
+    modal.onClose = () => disposeOriginControls(body);
+    modal.open();
   };
   restore.onclick = () => {
     if (!hasRecord) return;

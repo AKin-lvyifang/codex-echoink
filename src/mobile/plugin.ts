@@ -1,3 +1,4 @@
+import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, type TFile, type WorkspaceLeaf } from "obsidian";
 import { MobileStore } from "./store";
 import { loadMobileSettings, type MobileSettings } from "./settings";
@@ -25,6 +26,10 @@ export default class EchoInkMobilePlugin extends Plugin {
   async onload(): Promise<void> {
     try {
       this.settings = loadMobileSettings(await this.loadData());
+      if (!this.settings.knowledgeBase.folderBindings) {
+        this.settings.knowledgeBase.folderBindings = migrateKnowledgeFolderBindings(this.app.vault.getRoot().children.filter((file) => "children" in file).map((file) => file.path), this.settings.mobileUi.knowledgePaths);
+        await this.saveData(this.settings);
+      }
       this.store = new MobileStore(this.app.vault.adapter, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       await this.store.load();
       this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl, () => this.services.context());

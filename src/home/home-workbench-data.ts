@@ -1,4 +1,5 @@
-import { App, TFile, normalizePath } from "obsidian";
+import { classifyKnowledgePath, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { App, TFolder, TFile, normalizePath } from "obsidian";
 import type { SettingsLanguage } from "../settings/settings";
 import type { HomeActivityCore } from "./home-activity-core";
 import { homeCopy } from "./home-i18n";
@@ -86,33 +87,36 @@ export class HomeWorkbenchDataService {
     private readonly app: App,
     private readonly journalDirectoryProvider: () => string = () => DEFAULT_JOURNAL_DIRECTORY,
     private readonly activityService?: HomeActivityCore | null,
-    private readonly includeNotePath: HomeNoteVisibility = isHomeNotePath
+    private readonly includeNotePath: HomeNoteVisibility = isHomeNotePath,
+    private readonly bindings: () => KnowledgeFolderBindings | null | undefined = () => undefined
   ) {}
 
   getJournalDirectory(): string {
-    return readNativeJournalSettings(this.app, this.journalDirectoryProvider()).folder;
+    return readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings()).folder;
   }
 
   journalPathForDate(date: Date): string {
-    return nativeJournalPathForDate(this.app, date, this.journalDirectoryProvider());
+    return nativeJournalPathForDate(this.app, date, this.journalDirectoryProvider(), this.bindings());
   }
 
   existingJournalForDate(date: Date): TFile | null {
+    if (!readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings()).available) return null;
     const preferred = this.app.vault.getAbstractFileByPath(this.journalPathForDate(date));
     if (preferred instanceof TFile) return preferred;
-    const settings = readNativeJournalSettings(this.app, this.journalDirectoryProvider());
+    const settings = readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings());
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     return this.app.vault.getMarkdownFiles().find((file) => journalDateFromPath(file.path, settings.folder, settings.format) === key) ?? null;
   }
 
   async ensureJournalDirectory(language: SettingsLanguage = "zh-CN"): Promise<string> {
+    if (!readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings()).available) throw new Error("请先选择日记位置。");
     const directory = this.getJournalDirectory();
     await this.ensureFolder(directory, language);
     return directory;
   }
 
   async build(visibleMonth = new Date()): Promise<HomeWorkbenchData> {
-    const journalSettings = readNativeJournalSettings(this.app, this.journalDirectoryProvider());
+    const journalSettings = readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings());
     const journalDirectory = journalSettings.folder;
     const files = this.app.vault.getMarkdownFiles();
     const records = files.filter((file) => this.includeNotePath(file.path)).map((file) =>
@@ -128,20 +132,23 @@ export class HomeWorkbenchDataService {
     const activity = [...byDate.values()];
     const journalDays = buildHomeJournalDays(records, activity, visibleMonth, journalDirectory,
       journalSettings.format);
-    const customTemplates = this.listCustomTemplates(files);
+    const customTemplates = this.listCustomTemplates(files, journalSettings);
     return {
       records,
       activity,
       journalDays,
-      entries: buildEntrySummaries(records, journalDirectory),
+      entries: buildEntrySummaries(records, journalDirectory, this.bindings()),
       customTemplates
     };
   }
 
   async createBlankInboxNote(language: SettingsLanguage = "zh-CN"): Promise<TFile> {
-    await this.ensureFolder("inbox", language);
+    const binding = this.bindings()?.roles.inbox;
+    if (binding && (!binding.enabled || !binding.writePath || !(this.app.vault.getAbstractFileByPath(binding.writePath) instanceof TFolder))) throw new Error("请先选择有效的收件箱位置。");
+    const directory = binding?.writePath ?? "inbox";
+    await this.ensureFolder(directory, language);
     for (let suffix = 0; ; suffix++) {
-      const path = `inbox/未命名${suffix ? ` ${suffix}` : ""}.md`;
+      const path = `${directory}/未命名${suffix ? ` ${suffix}` : ""}.md`;
       if (this.app.vault.getAbstractFileByPath(path)) continue;
       try { return await this.app.vault.create(path, ""); }
       catch (error) { if (!this.app.vault.getAbstractFileByPath(path)) throw error; }
@@ -165,9 +172,10 @@ export class HomeWorkbenchDataService {
     if (existing instanceof TFile) return { file: existing, created: false };
     if (existing) throw new Error(homeCopy(language).template.pathOccupiedByFolder(path));
     const content = choice.kind === "built-in" && choice.template.id === "quick"
-      ? (await readNativeJournalContext(this.app, { now: date, legacyDirectory: this.journalDirectoryProvider() })).templateContent
+      ? (await readNativeJournalContext(this.app, { now: date, legacyDirectory: this.journalDirectoryProvider(), bindings: this.bindings() })).templateContent
       : applyJournalTemplate(await this.readTemplate(choice, language), date);
-    await this.ensureFolder(path.slice(0, path.lastIndexOf("/")), language);
+    const slash = path.lastIndexOf("/");
+    if (slash > 0) await this.ensureFolder(path.slice(0, slash), language);
     try {
       const file = await this.app.vault.create(path, content);
       return { file, created: true };
@@ -186,10 +194,11 @@ export class HomeWorkbenchDataService {
     return parseImportedJournalTemplate(fileName, content, language);
   }
 
-  listCustomTemplates(files: readonly TFile[] = this.app.vault.getMarkdownFiles()): HomeCustomTemplateSummary[] {
-    const prefix = `${JOURNAL_TEMPLATE_DIRECTORY}/`;
+  listCustomTemplates(files: readonly TFile[] = this.app.vault.getMarkdownFiles(), native = readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings())): HomeCustomTemplateSummary[] {
+    if (!native.templatesAvailable) return [];
+    const prefix = this.bindings() ? `${native.templatesFolder}${native.templatesFolder ? "/" : ""}` : `${JOURNAL_TEMPLATE_DIRECTORY}/`;
     return files
-      .filter((file) => file.path.toLocaleLowerCase().startsWith(prefix))
+      .filter((file) => file.path.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase()))
       .sort((left, right) => left.basename.localeCompare(right.basename, "zh-Hans"))
       .map((file) => ({ id: `custom:${file.path}`, name: file.basename, path: file.path }));
   }
@@ -199,24 +208,29 @@ export class HomeWorkbenchDataService {
     conflictResolution: "cancel" | "safe-copy" = "cancel",
     language: SettingsLanguage = "zh-CN"
   ): Promise<HomeTemplateSaveResult> {
-    const path = normalizePath(importedTemplatePath(template.name));
+    const native = readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings());
+    if (!native.templatesAvailable) throw new Error("请先选择模板位置。");
+    const directory = this.bindings() ? native.templatesFolder : JOURNAL_TEMPLATE_DIRECTORY;
+    const templatePath = (value: string) => this.bindings() ? value.replace(`${JOURNAL_TEMPLATE_DIRECTORY}/`, directory ? `${directory}/` : "") : value;
+    const knownTemplatePaths = new Set(this.app.vault.getMarkdownFiles().map((file) => this.bindings() && file.path.startsWith(directory ? `${directory}/` : "") ? `${JOURNAL_TEMPLATE_DIRECTORY}/${file.path.slice(directory ? directory.length + 1 : 0)}` : file.path));
+    const path = normalizePath(templatePath(importedTemplatePath(template.name)));
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing && conflictResolution === "cancel") {
       const paths = new Set(this.app.vault.getMarkdownFiles().map((file) => file.path));
       return {
         status: "conflict",
         path,
-        safeCopyPath: nextAvailableImportedTemplatePath(template.name, paths, language)
+        safeCopyPath: templatePath(nextAvailableImportedTemplatePath(template.name, knownTemplatePaths, language))
       };
     }
     const targetPath = existing
-      ? normalizePath(nextAvailableImportedTemplatePath(
+      ? normalizePath(templatePath(nextAvailableImportedTemplatePath(
           template.name,
-        new Set(this.app.vault.getMarkdownFiles().map((file) => file.path)),
+        knownTemplatePaths,
         language
-      ))
+      )))
       : path;
-    await this.ensureFolder(JOURNAL_TEMPLATE_DIRECTORY, language);
+    if (directory) await this.ensureFolder(directory, language);
     const file = await this.app.vault.create(targetPath, template.content);
     return { status: "saved", path: targetPath, file };
   }
@@ -267,7 +281,8 @@ export function defaultJournalTemplateChoice(): HomeJournalTemplateChoice {
 
 function buildEntrySummaries(
   records: readonly HomeVaultFileRecord[],
-  journalDirectory = DEFAULT_JOURNAL_DIRECTORY
+  journalDirectory = DEFAULT_JOURNAL_DIRECTORY,
+  bindings?: KnowledgeFolderBindings | null
 ): HomeEntrySummary[] {
   const definitions: Record<HomeEntryId, Pick<HomeEntrySummary, "label" | "description"> & { folder?: string }> = {
     wiki: { label: "Wiki", description: "结构化长期知识", folder: "wiki" },
@@ -279,9 +294,11 @@ function buildEntrySummaries(
   };
   return HOME_ENTRY_IDS.map((id) => {
     const definition = definitions[id];
-    const folder = definition.folder;
-    const recent = folder ? mostRecentRecordInFolder(records, folder) : null;
-    const wikiIndex = id === "wiki" ? records.find((record) => record.path.toLocaleLowerCase() === "wiki/index.md") : null;
+    const role = id === "wiki" || id === "outputs" || id === "projects" || id === "inbox" ? id : null;
+    const matching = bindings && role ? records.filter((record) => classifyKnowledgePath(bindings, record.path) === role) : records;
+    const folder = bindings && role ? bindings.roles[role].enabled ? bindings.roles[role].writePath ?? undefined : undefined : definition.folder;
+    const recent = bindings && role ? [...matching].sort((a, b) => b.mtime - a.mtime)[0] ?? null : folder ? mostRecentRecordInFolder(records, folder) : null;
+    const wikiIndex = id === "wiki" ? matching.find((record) => record.path === `${folder}/index.md`) : null;
     const reviews = id === "review"
       ? records.filter((record) => isKnowledgeBaseReviewPath(record.path)).sort((left, right) => right.mtime - left.mtime)
       : [];
@@ -290,7 +307,7 @@ function buildEntrySummaries(
       id,
       label: definition.label,
       description: definition.description,
-      count: folder ? countRecordsInFolder(records, folder) : reviews.length,
+      count: bindings && role ? matching.length : folder ? countRecordsInFolder(records, folder) : reviews.length,
       targetPath: wikiIndex?.path ?? recent?.path ?? review?.path
     };
   });

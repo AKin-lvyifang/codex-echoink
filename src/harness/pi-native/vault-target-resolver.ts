@@ -112,7 +112,7 @@ export class VaultTargetResolver {
       });
     }
 
-    const segments = resolveKnowledgePath(root.canonicalPath, requestedRelativePath, false).split("/");
+    const segments = requestedRelativePath.split("/");
     let requestedCursor = root.requestedPath;
     let canonicalCursor = root.canonicalPath;
     let encounteredSymbolicLink = root.requestedPath !== root.canonicalPath;

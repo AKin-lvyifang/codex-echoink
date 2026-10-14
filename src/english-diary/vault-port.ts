@@ -101,10 +101,8 @@ const hiddenPath = (path: string): boolean => path.split("/").some((part) => par
 
 /** Hidden product files use the adapter; ordinary Markdown uses the native Vault API. */
 export class EnglishDiaryVaultPort implements DiaryFilePort {
-  private readonly roots: readonly string[];
-  constructor(private readonly app: App, roots: readonly string[]) {
-    this.roots = roots.map(normalizeDiaryPath);
-  }
+  constructor(private readonly app: App, private readonly rootSource: readonly string[] | (() => readonly string[]), private readonly beforeWrite?: (path: string, exists: boolean) => void) {}
+  private get roots(): readonly string[] { return (typeof this.rootSource === "function" ? this.rootSource() : this.rootSource).map(normalizeDiaryPath); }
 
   private path(value: string): string {
     const path = normalizeDiaryPath(value);
@@ -145,6 +143,7 @@ export class EnglishDiaryVaultPort implements DiaryFilePort {
 
   async write(value: string, content: string, expected: string | null): Promise<void> {
     const path = this.path(value);
+    this.beforeWrite?.(path, expected !== null);
     await withPathLock(this.app, path, async () => {
       if (await this.read(path) !== expected) conflict();
       await this.ensureParent(path);
@@ -182,6 +181,7 @@ export class EnglishDiaryVaultPort implements DiaryFilePort {
   async move(from: string, to: string, expected?: string): Promise<void> {
     from = this.path(from);
     to = this.path(to);
+    this.beforeWrite?.(to, false);
     await withPathLock(this.app, from, async () => {
       if (expected !== undefined && await this.read(from) !== expected) conflict();
       if (await this.read(to) !== null) conflict();

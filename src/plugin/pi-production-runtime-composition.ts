@@ -1,3 +1,8 @@
+import { privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
+import { readPrivateMaintenanceRecords, FilePhase3MaintenanceStateStore } from "./pi-knowledge-maintenance-production";
+import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
+import { createKnowledgeMaintenanceResultEnvelope } from "../knowledge-base/knowledge-maintenance-result";
+import { knowledgePathRole, getKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { PiPdfReadingSecurity, createPdfReadingTools, PDF_TOOL_NAMES } from "../harness/pi-native/pi-pdf-reading-tools";
 import type { PdfReadingController } from "../pdf-reading/controller";
 import { buildPiSelectionAnnotationContextMessage, PI_SELECTION_CONTEXT_KEY } from "../harness/pi-native/pi-selection-annotations";
@@ -288,6 +293,7 @@ export interface PiProductionRuntimeBundle {
   readonly knowledgeAgentIndex: KnowledgeAgentIndex;
   readonly knowledgePreferences: KnowledgeMaintenancePreferenceRepository;
   readonly knowledgeMaintenance: ProductionPiKnowledgeMaintenanceToolPort;
+  readonly resolveMaintenanceScope: NonNullable<PiKnowledgeRuntimePort["resolveMaintenanceScope"]>;
 }
 
 export type PiProductionConfigurationErrorCode =
@@ -435,7 +441,8 @@ export async function createPiProductionRuntimeBundle(
     knowledgeAgentIndex,
     knowledgePreferences,
     prepareStructure: (initialization) => plugin.prepareWikiFolderNamesForMaintenance?.(initialization) ?? Promise.resolve(""),
-    usage: new KnowledgeUsageBridge(knowledgeUsageStore)
+    usage: new KnowledgeUsageBridge(knowledgeUsageStore),
+    onNaturalMaintenance: (request) => knowledgeMaintenance.finalizeNatural(request)
   });
   const vaultAdapter = new ObsidianVaultDomainAdapter(
     plugin.app,
@@ -462,10 +469,11 @@ export async function createPiProductionRuntimeBundle(
       await knowledgeAgentIndex.refresh();
     },
     onTerminal: async (event) => {
-      if (recordProductionMaintenanceTerminal(plugin.settings.knowledgeBase, event)) await plugin.persistPiNativeSettings();
+      await syncPrivateMaintenanceOverview(plugin, privateKnowledgeRootPath);
     }
   });
   await knowledgeMaintenance.initialize();
+  await syncPrivateMaintenanceOverview(plugin, privateKnowledgeRootPath);
   await recoverPiVaultDomainReceipts({
     receipts,
     domainService: vaultDomainService,
@@ -612,7 +620,8 @@ export async function createPiProductionRuntimeBundle(
       personalMemory,
       knowledgeAgentIndex,
       knowledgePreferences,
-      knowledgeMaintenance
+      knowledgeMaintenance,
+      resolveMaintenanceScope: knowledgeRuntime.resolveMaintenanceScope!
     });
   } catch (error) {
     restorePiConversationShellSettings(
@@ -629,10 +638,24 @@ export async function createPiProductionRuntimeBundle(
   }
 }
 
+async function syncPrivateMaintenanceOverview(plugin: PiProductionPluginHost, root: string): Promise<void> {
+  const records = await readPrivateMaintenanceRecords(root);
+  const legacy = plugin.settings.knowledgeBase.maintenanceHistory.filter((entry) => !entry.recordId && !records.some((record) => record.runId === entry.runId));
+  plugin.settings.knowledgeBase.maintenanceHistory = [...legacy, ...records.map((record) => ({ recordId: record.recordId, runId: record.runId, at: record.at, date: record.date, mode: "maintain" as const, reportPath: "", status: record.result.status === "completed" || record.result.status === "noop" ? "success" as const : "failed" as const, resultStatus: record.cancelled ? "cancelled" as const : record.result.status, completion: record.result.status === "partial" ? "partial" as const : record.result.status === "noop" ? "noop" as const : record.result.status === "completed" ? "full" as const : undefined, pendingSources: record.sources.filter((source) => source.status !== "processed").map((source) => source.path) }))];
+  const latest = records[0];
+  if (latest) {
+    plugin.settings.knowledgeBase.lastRunAt = latest.at;
+    plugin.settings.knowledgeBase.lastSummary = latest.summary;
+    plugin.settings.knowledgeBase.lastPendingSources = latest.sources.filter((source) => source.status !== "processed").map((source) => source.path);
+  }
+  await plugin.persistPiNativeSettings();
+}
+
 export function createProductionPiKnowledgeRuntime(input: Readonly<{
   vaultRootPath: string;
   knowledgeAgentIndex: KnowledgeAgentIndex;
   knowledgePreferences: KnowledgeMaintenancePreferenceRepository;
+  onNaturalMaintenance?: (request: Parameters<NonNullable<PiKnowledgeRuntimePort["finalizeMaintenance"]>>[0]) => Promise<void | Readonly<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceSettlement>>;
   prepareStructure?: (input: { initialization: boolean; assertActive(): void }) => Promise<string>;
   usage: KnowledgeUsageBridge;
 }>): PiKnowledgeRuntimePort {
@@ -648,7 +671,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       return result;
     },
     async resolveMaintenanceScope(request) {
-      if (!request.trim()) return Object.freeze({ mode: "global" as const });
+      if (!request.trim()) return Object.freeze({ mode: "global" as const, ...await privateMaintenanceSourceScope(input.vaultRootPath) });
       const result = await input.knowledgeAgentIndex.search({ query: request, kinds: ["raw"], limit: 50 });
       const candidatePaths = result.hits.map((hit) => hit.vaultRelativePath).filter(isRawMarkdownPath).slice(0, 12);
       if (!candidatePaths.length) throw new Error("没有找到可可靠匹配的 Raw 笔记；本轮不会回退到全局维护。");
@@ -731,7 +754,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       const result = await retriever.retrieve({
         question: request.question,
         explicitPaths: request.explicitPaths,
-        includeUnrefined: request.includeUnrefined,
+        includeUnrefined: request.includeUnrefined || request.explicitPaths.some((relative) => knowledgePathRole(input.vaultRootPath, relative) === "raw" || knowledgePathRole(input.vaultRootPath, relative) === "inbox") || (input.knowledgeAgentIndex && getKnowledgeFolderBindings(input.vaultRootPath) && !getKnowledgeFolderBindings(input.vaultRootPath)!.roles.wiki.enabled && !getKnowledgeFolderBindings(input.vaultRootPath)!.roles.projects.enabled ? true : false),
         limit: 6
       });
       const providerResource = result.status === "no_evidence"
@@ -831,11 +854,15 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       });
     },
     async finalizeMaintenance(request) {
+      const root = knowledgePrivateRoot(input.vaultRootPath);
+      const turnEntries = request.turnEntries ?? request.entries;
+      const toolReceipts = turnEntries.filter((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "knowledge_maintain");
+      const settlement = root && toolReceipts.length === 0 ? await input.onNaturalMaintenance?.(request) : undefined;
       const references = normalReadKnowledgeReferences(
         request.entries,
         request.noteReadPaths
       );
-      if (references.length === 0 && request.producedPaths.length === 0) return;
+      if (references.length === 0 && request.producedPaths.length === 0) return settlement;
       await input.usage.record({
         event: {
           sourceEventId: stableProductId(
@@ -857,6 +884,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
         },
         entries: request.entries
       });
+      return settlement;
     }
   };
   return Object.freeze(runtime);
@@ -956,6 +984,7 @@ function parsePiKnowledgeReference(value: unknown): PiKnowledgeReference | null 
 }
 
 export function createPiKnowledgeInlineExtension(input: Readonly<{
+  knowledgeBindings?: () => import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;
   vaultSecurity: InlineExtension;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
@@ -1246,13 +1275,13 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             content: [
                 "当前轮是一次性 Knowledge Maintenance。",
                 "按需读取本地知识与已准入的只读外部资料；维护写入仍取决于本条消息的工作区权限。",
-                echoInkKnowledgeMaintenanceProtocolPrompt(),
+                echoInkKnowledgeMaintenanceProtocolPrompt(input.knowledgeBindings?.()),
                 command.preference.providerResourceText,
                 maintenanceScopeProviderPrompt(command.scope),
                 "由当前同一个 AgentSession 生成 candidateActions；无需新增可自然结束，有失败候选可修正后再提交；",
-                "candidateActions 只包含 wiki/** 或 projects/** 的 Markdown 候选。",
+                "candidateActions 只包含当前真实知识成果或项目位置的 Markdown 候选。",
                 "每个候选必须携带 expectedTarget：更新已有目标前先 note_read，并原样使用其 contentRevision；确认不存在时使用 kind=missing。",
-                "raw/index.md、Tracker 和维护报告由 EchoInk 自动生成，不要作为候选动作传入。",
+                "维护详情和处理记录由 EchoInk 私有保存，不生成普通目录运行文件。",
                 "权限可写且用户要求执行维护时，自检后按需分次调用 knowledge_maintain，工具会写入并回读；只读或用户要求先不写入时，只分析并给出建议。",
                 "对重要知识主张同时给出仍有效、需补充、已过时或存在冲突的结构化判断；记录来源与日期，无法联网核验时明确标为 unverified。",
                 `用户维护请求：${command.request}`
@@ -1457,7 +1486,8 @@ function maintenanceScopeProviderPrompt(
 ): string {
   if (scope.mode === "global") {
     return [
-      "本轮范围是 global：先读取 outputs/.ingest-tracker.md，再读取 Tracker 标记 changed 的 Raw（升序、去重，最多 20 个）。",
+      "本轮范围是 global：从当前已绑定来源中检索并阅读待提炼资料，升序、去重，最多 20 个；处理状态由私有记录判断。无需读取 Tracker 文件。",
+      `本轮待处理真实来源（最多20篇）：${JSON.stringify(scope.sourcePaths ?? [])}；配置版本：${scope.folderBindingsRevision ?? "沿用当前"}。先读取这些来源，不能扩展为全库。`,
       "调用 knowledge_maintain 时不要提供 sourcePaths。"
     ].join("\n");
   }
@@ -1930,10 +1960,10 @@ async function createProductionAgentSession(input: {
       }
     }
   });
-  const sourceBodyFingerprints = maintenanceSourceFingerprintsFromEntries(input.input.sessionManager.getBranch());
+  const sourceBodyFingerprints = maintenanceSourceFingerprintsFromEntries(input.input.sessionManager.getBranch(), input.plugin.getVaultPath());
   const knowledgeReadSecurity = new PiKnowledgeReadToolSecurity({
     currentRunIdentity: () => input.input.currentToolExecutionContext(),
-    onSourceRead: (reference) => { if (knowledgeRolePath(reference.vaultRelativePath).startsWith("raw/")) sourceBodyFingerprints[reference.vaultRelativePath] = reference.contentRevision; },
+    onSourceRead: (reference) => { if (knowledgePathRole(input.plugin.getVaultPath(), reference.vaultRelativePath) === "raw") sourceBodyFingerprints[reference.vaultRelativePath] = reference.contentRevision; },
     currentWorkflow: () => {
       const turn = input.input.currentKnowledgeTurnContext();
       return turn?.kind ?? "none";
@@ -1981,7 +2011,7 @@ async function createProductionAgentSession(input: {
     includeNoteReadKnowledgeReferences: true,
     onSuccessfulNoteRead: (value) => {
       const snapshot = (value as { snapshot?: { relativePath?: string; bodyFingerprint?: string } })?.snapshot;
-      if (snapshot?.relativePath?.startsWith("raw/") && typeof snapshot.bodyFingerprint === "string") sourceBodyFingerprints[snapshot.relativePath] = snapshot.bodyFingerprint;
+      if (snapshot?.relativePath && knowledgePathRole(input.plugin.getVaultPath(), snapshot.relativePath) === "raw" && typeof snapshot.bodyFingerprint === "string") sourceBodyFingerprints[snapshot.relativePath] = snapshot.bodyFingerprint;
     },
     additionalToolSecurity: maintenanceSecurity,
     additionalToolSecurities: [
@@ -2004,12 +2034,13 @@ async function createProductionAgentSession(input: {
     writeExecution: input.writeExecution
   });
   const obsidianTools = createPiObsidianToolDefinitions(
-    createObsidianNativePort(input.plugin.app, input.vaultAdapter, () => input.plugin.settings.journalDirectory, { finance: input.plugin.lifestyle?.finance }),
+    createObsidianNativePort(input.plugin.app, input.vaultAdapter, () => input.plugin.settings.journalDirectory, { finance: input.plugin.lifestyle?.finance, knowledgeBindings: () => input.plugin.settings.knowledgeBase.folderBindings }),
     obsidianSecurity
   );
   const maintenanceTool = createPiKnowledgeMaintenanceToolDefinition({
     port: { execute: async (request) => {
-      const result = await input.knowledgeMaintenance.execute({ ...request, sourceBodyFingerprints: { ...sourceBodyFingerprints } });
+      const turn = input.input.currentKnowledgeTurnContext();
+      const result = await input.knowledgeMaintenance.execute({ ...request, folderBindingsRevision: turn?.kind === "maintain" ? turn.command.folderBindingsRevision : undefined, globalSourcePaths: turn?.kind === "maintain" && turn.command.scope.mode === "global" ? turn.command.scope.sourcePaths : undefined, sourceBodyFingerprints: { ...sourceBodyFingerprints } });
       Object.assign(sourceBodyFingerprints, result.refreshedSources ?? {});
       return result;
     } },
@@ -2079,6 +2110,7 @@ async function createProductionAgentSession(input: {
     currentExecutionContext: () => input.input.currentExecutionContext()
   }));
   const inlineExtension = createPiKnowledgeInlineExtension({
+    knowledgeBindings: () => input.plugin.settings.knowledgeBase.folderBindings,
     vaultSecurity: security.inlineExtension,
     currentWorkspaceAccess: () => input.input.currentWorkspaceAccess?.() ?? null,
     currentTurn: () => input.input.currentKnowledgeTurnContext(),

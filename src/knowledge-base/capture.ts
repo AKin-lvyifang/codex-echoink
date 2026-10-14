@@ -1,3 +1,5 @@
+import { constants as fsConstants } from "node:fs";
+import { resolveKnowledgeRoleTarget, getKnowledgeFolderBindings } from "./root-paths";
 import { resolveKnowledgePath } from "./root-paths";
 import * as fsp from "fs/promises";
 import * as path from "path";
@@ -86,6 +88,24 @@ export class KnowledgeBaseCaptureService {
     return paths;
   }
 
+  private async copyCapturedFile(source: string, directory: string, fileName: string): Promise<string> {
+    const extension = path.extname(fileName);
+    const stem = path.basename(fileName, extension);
+    for (let index = 1; ; index++) {
+      const target = path.join(directory, `${stem}${index === 1 ? "" : `-${index}`}${extension}`);
+      try { await fsp.copyFile(source, target, fsConstants.COPYFILE_EXCL); return target; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    }
+  }
+
+  private captureDirectory(vaultPath: string, child: string): string {
+    const config = getKnowledgeFolderBindings(vaultPath);
+    if (!config) return path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), child);
+    if (child === "attachments" && config.roles.assets.enabled) return path.join(vaultPath, resolveKnowledgeRoleTarget(vaultPath, "assets"));
+    const approved = config.roles.raw.allowedSubdirectories.includes(child) ? child : "";
+    return path.join(vaultPath, resolveKnowledgeRoleTarget(vaultPath, "raw", approved));
+  }
+
   async captureActiveAttachment(): Promise<void> {
     const file = this.plugin.app.workspace.getActiveFile();
     if (!(file instanceof TFile)) {
@@ -99,10 +119,9 @@ export class KnowledgeBaseCaptureService {
     }
     const vaultPath = this.plugin.getVaultPath();
     const source = path.join(vaultPath, file.path);
-    const targetDir = path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "attachments");
+    const targetDir = this.captureDirectory(vaultPath, "attachments");
     await fsp.mkdir(targetDir, { recursive: true });
-    const target = path.join(targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
-    await fsp.copyFile(source, target);
+    const target = await this.copyCapturedFile(source, targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
     new Notice(`已收集到 ${normalizePath(path.relative(vaultPath, target))}`);
   }
 
@@ -117,7 +136,7 @@ export class KnowledgeBaseCaptureService {
     const vaultPath = this.plugin.getVaultPath();
     const now = new Date();
     const stamp = formatDateTimeForFile(now);
-    const dir = target === "inbox" ? path.join(vaultPath, resolveKnowledgePath(vaultPath, "inbox")) : path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "articles", "手动收集");
+    const dir = target === "inbox" ? path.join(vaultPath, getKnowledgeFolderBindings(vaultPath) ? resolveKnowledgeRoleTarget(vaultPath, "inbox") : resolveKnowledgePath(vaultPath, "inbox")) : this.captureDirectory(vaultPath, "articles/手动收集");
     await fsp.mkdir(dir, { recursive: true });
     const fileName = target === "inbox" ? `${stamp} 知识库想法.md` : `${stamp} 手动收集.md`;
     const body = [
@@ -136,14 +155,14 @@ export class KnowledgeBaseCaptureService {
 
   private async captureWeChatUrl(url: string): Promise<string[]> {
     const vaultPath = this.plugin.getVaultPath();
-    const dest = path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "articles", "微信公众号");
+    const dest = this.captureDirectory(vaultPath, "articles/微信公众号");
     await fsp.mkdir(dest, { recursive: true });
     return [await this.captureHtmlLikePage(url, dest, "微信公众号")];
   }
 
   private async captureWebUrl(url: string, originalInput = ""): Promise<string[]> {
     const vaultPath = this.plugin.getVaultPath();
-    const dest = path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "articles", "网页收藏");
+    const dest = this.captureDirectory(vaultPath, "articles/网页收藏");
     await fsp.mkdir(dest, { recursive: true });
     return [await this.captureHtmlLikePage(url, dest, "web", originalInput)];
   }
@@ -196,11 +215,10 @@ export class KnowledgeBaseCaptureService {
       if (!KNOWLEDGE_FILE_CAPTURE_EXTENSIONS.has(ext)) continue;
       const textLike = [".md", ".markdown", ".txt"].includes(ext);
       const targetDir = textLike
-        ? path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "articles", "文件收藏")
-        : path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "attachments");
+        ? this.captureDirectory(vaultPath, "articles/文件收藏")
+        : this.captureDirectory(vaultPath, "attachments");
       await fsp.mkdir(targetDir, { recursive: true });
-      const target = path.join(targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
-      await fsp.copyFile(file.path, target);
+      const target = await this.copyCapturedFile(file.path, targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
       copied.push(normalizePath(path.relative(vaultPath, target)));
     }
     if (!copied.length) throw new Error("请选择 PDF、DOCX、Markdown 或 TXT 文件。");
@@ -210,14 +228,13 @@ export class KnowledgeBaseCaptureService {
   async copyAttachmentsToRaw(attachments: StoredAttachment[]): Promise<string[]> {
     if (!attachments.length) return [];
     const vaultPath = this.plugin.getVaultPath();
-    const targetDir = path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), "attachments");
+    const targetDir = this.captureDirectory(vaultPath, "attachments");
     await fsp.mkdir(targetDir, { recursive: true });
     const copied: string[] = [];
     for (const attachment of attachments) {
       const ext = path.extname(attachment.path).toLowerCase();
       if (!SUPPORTED_RAW_EXTENSIONS.has(ext) || [".md", ".markdown", ".txt"].includes(ext)) continue;
-      const target = path.join(targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(attachment.path)}`);
-      await fsp.copyFile(attachment.path, target);
+      const target = await this.copyCapturedFile(attachment.path, targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(attachment.path)}`);
       copied.push(normalizePath(path.relative(vaultPath, target)));
     }
     return copied;

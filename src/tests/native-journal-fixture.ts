@@ -78,6 +78,7 @@ export async function nativeJournalFixture(root: string) {
     },
     cli: { handlers },
     vault: {
+      on: () => ({}),
       adapter: { getBasePath: () => root },
       getName: () => "offline-journal-fixture",
       getFiles: () => list(),
@@ -104,6 +105,7 @@ export async function nativeJournalFixture(root: string) {
     metadataCache: { resolvedLinks: {}, unresolvedLinks: {}, getFileCache: () => null, getFirstLinkpathDest: () => null }
   };
   const plugin: any = {
+    registerEvent() {},
     app: app as App,
     settings: structuredClone(DEFAULT_SETTINGS),
     getVaultPath: () => root,

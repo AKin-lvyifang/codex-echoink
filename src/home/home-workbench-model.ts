@@ -326,8 +326,8 @@ export function journalDateFromPath(
   journalFormat = DEFAULT_JOURNAL_DATE_FORMAT
 ): string | null {
   const normalizedPath = path.replace(/\\/gu, "/").replace(/^\/+|\/+$/gu, "");
-  const directory = normalizeJournalDirectory(journalDirectory);
-  const prefix = `${directory}/`;
+  const directory = journalDirectory === "" ? "" : normalizeJournalDirectory(journalDirectory);
+  const prefix = directory ? `${directory}/` : "";
   if (!normalizedPath.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())) return null;
   if (!normalizedPath.endsWith(".md")) return null;
   const name = normalizedPath.slice(prefix.length, -3);

@@ -174,27 +174,16 @@ function vaultNoteName(targetPath: string): string {
 }
 
 function resolveVaultNoteFile(app: App, targetPath: string): { file: TFile; targetPath: string } | null {
-  for (const candidate of knowledgeBaseLinkTargetCandidates(targetPath)) {
+  for (const candidate of [targetPath]) {
     const normalized = normalizePath(candidate);
     const file = app.vault.getAbstractFileByPath(normalized);
     if (file instanceof TFile) return { file, targetPath: normalized };
   }
+  if (targetPath.includes("/")) return null;
   const linkpath = normalizePath(targetPath).replace(/\.md$/i, "");
   const linkedFile = app.metadataCache.getFirstLinkpathDest(linkpath, "");
   if (linkedFile instanceof TFile) return { file: linkedFile, targetPath: linkedFile.path };
   return null;
-}
-
-function knowledgeBaseLinkTargetCandidates(targetPath: string): string[] {
-  const normalized = normalizePath(targetPath);
-  const candidates = [normalized];
-  const basename = normalized.split("/").pop() ?? "";
-  if (/^outputs\/kb-maintenance-.+\.md$/i.test(normalized)) candidates.push(`outputs/maintenance/${basename}`);
-  if (/^outputs\/knowledge-base-review-.+\.md$/i.test(normalized)) candidates.push(`outputs/reviews/${basename}`);
-  if (/^outputs\/old-wiki-merge-.+\.md$/i.test(normalized)) candidates.push(`outputs/migrations/${basename}`);
-  if (/^outputs\/[^/]+instructions[^/]*\.md$/i.test(normalized)) candidates.push(`outputs/instructions/${basename}`);
-  if (/^outputs\/[^/]*xhs[^/]*\.md$/i.test(normalized)) candidates.push(`outputs/publishing/xiaohongshu/${basename}`);
-  return candidates;
 }
 
 function vaultBasePath(app: App): string {

@@ -41,6 +41,12 @@ export interface KnowledgeBaseDashboardEvidence {
 }
 
 export interface KnowledgeBaseMaintenanceReportEvidence {
+  recordId?: string;
+  summary?: string;
+  resultStatus?: string;
+  producedPaths?: string[];
+  issues?: string[];
+  assessments?: string[];
   path: string;
   excerpt: string;
 }
@@ -207,7 +213,7 @@ function buildAgentChatHtmlData(range: ReviewRange, evidence: AgentChatReviewEvi
 function buildKnowledgeBaseHtmlData(range: ReviewRange, evidence: KnowledgeBaseReviewEvidence): ReviewHtmlData {
   const commandTotal = Object.values(evidence.commandCounts).reduce((sum, value) => sum + value, 0);
   const reportPaths = uniqueCompact([
-    ...evidence.maintenanceReports.map((report) => report.path),
+    ...evidence.maintenanceReports.filter((report) => !report.recordId).map((report) => report.path),
     evidence.lastReportPath,
     evidence.dashboard.latestReportPath
   ]);
@@ -268,7 +274,8 @@ function buildKnowledgeBaseHtmlData(range: ReviewRange, evidence: KnowledgeBaseR
     checklist: [
       { item: "raw/wiki/outputs/inbox 健康信号", judgement: formatKnowledgeBaseDirectorySignal(evidence.dashboard) },
       { item: "wiki 是否健康", judgement: evidence.dashboard.healthScore === undefined ? "健康分未知。" : `健康分：${evidence.dashboard.healthScore}。` },
-      { item: "近期维护报告", judgement: reportPaths.length ? reportPaths.join("；") : "未记录最近报告。" },
+      { item: "近期维护记录", judgement: evidence.maintenanceReports.filter((record) => record.recordId).map((record) => [record.resultStatus, record.summary, ...(record.assessments ?? []), ...(record.issues ?? []), ...(record.producedPaths ?? []).map((path) => `成果：${path}`)].filter(Boolean).join("；")).join("\n") || "本周暂无维护记录。" },
+      ...(reportPaths.length ? [{ item: "旧维护报告", judgement: reportPaths.join("；") }] : []),
       { item: "是否混入普通对话", judgement: "否，本报告只统计知识库频道。" }
     ],
     finalJudgement: commandTotal

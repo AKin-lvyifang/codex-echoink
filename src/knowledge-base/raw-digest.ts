@@ -1,4 +1,4 @@
-import { resolveKnowledgePath } from "./root-paths";
+import { resolveKnowledgePath, resolveKnowledgePathFromRoots, knowledgeRootEntries, knowledgePrivateRoot, getKnowledgeFolderBindings } from "./root-paths";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { contentFingerprint } from "./raw-integrity";
@@ -158,14 +158,19 @@ export function rawDigestUserFrontmatterProjectionBytes(
 }
 
 export async function readRawDigestRegistry(vaultPath: string, strict = false): Promise<RawDigestRegistry> {
-  const absolute = path.join(vaultPath, resolveKnowledgePath(vaultPath, RAW_DIGEST_REGISTRY_PATH));
+  const privateRoot = knowledgePrivateRoot(vaultPath);
+  const privatePath = privateRoot ? path.join(privateRoot, "processed-sources.json") : null;
+  const absolute = privatePath && await fsp.lstat(privatePath).then(() => true, (error) => { if (!isMissingPathError(error)) throw error; return false; })
+    ? privatePath : path.join(vaultPath, resolveKnowledgePathFromRoots(RAW_DIGEST_REGISTRY_PATH, knowledgeRootEntries(vaultPath)));
   const stat = await fsp.lstat(absolute).catch((error) => { if (strict && !isMissingPathError(error)) throw error; return null; });
   if (strict && stat && (!stat.isFile() || stat.nlink > 1)) throw new Error("Raw registry is not a readable regular file");
   if (!stat?.isFile() || stat.nlink > 1) return emptyRawDigestRegistry();
   const text = await fsp.readFile(absolute, "utf8").catch((error) => { if (strict) throw error; return ""; });
   if (!text.trim()) return emptyRawDigestRegistry();
   try {
-    return normalizeRawDigestRegistry(JSON.parse(text));
+    const parsed = JSON.parse(text) as RawDigestRegistry;
+    if (parsed.schemaVersion !== RAW_DIGEST_SCHEMA_VERSION) throw new Error("Unsupported Raw registry schema");
+    return normalizeRawDigestRegistry(parsed);
   } catch (error) {
     if (strict) throw error;
     return emptyRawDigestRegistry();
@@ -173,7 +178,9 @@ export async function readRawDigestRegistry(vaultPath: string, strict = false): 
 }
 
 export async function writeRawDigestRegistry(vaultPath: string, registry: RawDigestRegistry): Promise<void> {
-  const absolute = path.join(vaultPath, resolveKnowledgePath(vaultPath, RAW_DIGEST_REGISTRY_PATH));
+  const privateRoot = knowledgePrivateRoot(vaultPath);
+  if (!privateRoot && getKnowledgeFolderBindings(vaultPath)) throw new Error("知识库私有存储尚未就绪，已停止写入处理记录。");
+  const absolute = privateRoot ? path.join(privateRoot, "processed-sources.json") : path.join(vaultPath, resolveKnowledgePath(vaultPath, RAW_DIGEST_REGISTRY_PATH));
   await writeFileAtomic(absolute, buildRawDigestRegistryContent(registry));
 }
 

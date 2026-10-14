@@ -1,5 +1,6 @@
+import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { resolveKnowledgePathFromRoots, rebaseKnowledgePath } from "../knowledge-base/root-paths-core";
-import { moment, TFile, type App } from "obsidian";
+import { moment, TFolder, TFile, type App } from "obsidian";
 import { normalizeJournalDirectory, normalizedJournalDirectoryOrNull } from "./journal-directory";
 
 export const DEFAULT_JOURNAL_DATE_FORMAT = "YYYY-MM/YYYY-MM-DD";
@@ -82,27 +83,36 @@ export async function rebaseNativeJournalPaths(app: App, from: string, to: strin
   }
 }
 
-export function readNativeJournalSettings(app: App, legacyDirectory?: string) {
+export function readNativeJournalSettings(app: App, legacyDirectory?: string, bindings?: KnowledgeFolderBindings | null) {
   const daily = optionsOf(app, "daily-notes");
   const templates = optionsOf(app, "templates");
   // Resolve against one current root snapshot, without walking every descendant.
   const entries = app.vault.getRoot?.()?.children ?? app.vault.getAllLoadedFiles?.() ?? [];
   const roots = [...new Set(entries.map((file) => file.path.split("/")[0]).filter(Boolean))];
-  const templatesFolder = actualJournalPath(nonempty(templates.folder) ?? DEFAULT_TEMPLATES_DIRECTORY, roots);
-  const template = actualJournalPath(nonempty(daily.template) ?? `${templatesFolder}/此刻速记.md`, roots);
+  const nativeFolder = typeof daily.folder === "string" ? daily.folder : undefined;
+  const nativeTemplates = typeof templates.folder === "string" ? templates.folder : undefined;
+  const mapped = (role: "journal" | "templates") => bindings?.roles[role].enabled ? bindings.roles[role].writePath : null;
+  const folder = nativeFolder ?? (bindings ? mapped("journal") ?? "" : normalizeJournalDirectory(legacyDirectory));
+  const mappedFolder = mapped("journal");
+  const mappedTemplates = mapped("templates");
+  const available = nativeFolder !== undefined || !bindings || Boolean(mappedFolder && app.vault.getAbstractFileByPath(mappedFolder) instanceof TFolder);
+  const templatesFolder = nativeTemplates ?? (bindings ? mapped("templates") ?? "" : actualJournalPath(DEFAULT_TEMPLATES_DIRECTORY, roots));
+  const template = bindings ? nonempty(daily.template) ?? "" : actualJournalPath(nonempty(daily.template) ?? `${templatesFolder}/此刻速记.md`, roots);
   return Object.freeze({
-    folder: actualJournalPath(nonempty(daily.folder) ?? normalizeJournalDirectory(legacyDirectory), roots),
+    available, templatesAvailable: nativeTemplates !== undefined || !bindings || Boolean(mappedTemplates && app.vault.getAbstractFileByPath(mappedTemplates) instanceof TFolder),
+    folder: bindings ? folder : actualJournalPath(nonempty(daily.folder) ?? normalizeJournalDirectory(legacyDirectory), roots),
     format: nonempty(daily.format) ?? DEFAULT_JOURNAL_DATE_FORMAT,
-    template: /\.md$/iu.test(template) ? template : `${template}.md`,
+    template: !template ? "" : /\.md$/iu.test(template) ? template : `${template}.md`,
     templatesFolder,
     templateDateFormat: nonempty(templates.dateFormat) ?? "YYYY-MM-DD",
     templateTimeFormat: nonempty(templates.timeFormat) ?? "HH:mm"
   });
 }
 
-export function nativeJournalPathForDate(app: App, date: Date, legacyDirectory?: string): string {
-  const settings = readNativeJournalSettings(app, legacyDirectory);
-  return relativePath(`${settings.folder}/${moment(date).format(settings.format)}.md`);
+export function nativeJournalPathForDate(app: App, date: Date, legacyDirectory?: string, bindings?: KnowledgeFolderBindings | null): string {
+  const settings = readNativeJournalSettings(app, legacyDirectory, bindings);
+  if (!settings.available) throw new Error("请在知识库目录或 Obsidian 日记设置中选择日记位置。");
+  return relativePath(`${settings.folder ? `${settings.folder}/` : ""}${moment(date).format(settings.format)}.md`);
 }
 
 /** Native template tokens also serve direct creation and Agent saves. */
@@ -121,18 +131,18 @@ export function renderNativeJournalTemplate(
 
 export async function readNativeJournalContext(
   app: App,
-  options: { now?: Date; legacyDirectory?: string; readTemplate?: (path: string) => Promise<string | null> } = {}
+  options: { now?: Date; legacyDirectory?: string; bindings?: KnowledgeFolderBindings | null; readTemplate?: (path: string) => Promise<string | null> } = {}
 ) {
   const now = options.now ?? new Date();
-  const settings = readNativeJournalSettings(app, options.legacyDirectory);
-  const targetPath = nativeJournalPathForDate(app, now, options.legacyDirectory);
+  const settings = readNativeJournalSettings(app, options.legacyDirectory, options.bindings);
+  const targetPath = nativeJournalPathForDate(app, now, options.legacyDirectory, options.bindings);
   const target = app.vault.getAbstractFileByPath(targetPath);
   if (target && !(target instanceof TFile)) throw new Error("当天日记路径已被文件夹占用。");
   const templateFile = app.vault.getAbstractFileByPath(settings.template);
   const source = options.readTemplate
     ? await options.readTemplate(settings.template)
     : templateFile instanceof TFile ? await app.vault.read(templateFile) : null;
-  if (source === null && settings.template !== `${settings.templatesFolder}/此刻速记.md`) {
+  if (source === null && settings.template && settings.template !== `${settings.templatesFolder}/此刻速记.md`) {
     throw new Error("Obsidian 配置的日记模板不存在，请在原生日记设置中修正模板。");
   }
   const templateSource = source ?? QUICK_JOURNAL_TEMPLATE;

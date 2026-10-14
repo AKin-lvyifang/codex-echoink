@@ -16,6 +16,7 @@ import { parseFinanceNote } from "../lifestyle/finance-ledger";
 import { financeConversationPort } from "../lifestyle/finance-conversation-port";
 
 export interface ObsidianNativeOptions {
+  knowledgeBindings?: () => import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;
   transport?: ObsidianCliTransport;
   directory?: ObsidianPluginDirectory;
   finance?: LifestyleFinanceService;
@@ -83,8 +84,8 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
     prepareFinance: async (tool, args, seed, signal) => { checkVault(); return financeConversationPort(options.finance)(tool, args, seed, signal); },
     async context() {
       checkVault();
-      await targetFor(nativeJournalPathForDate(app, new Date(), legacyDirectory()), false);
-      return await readNativeJournalContext(app, { now: new Date(), legacyDirectory: legacyDirectory(), readTemplate: async relativePath => (await snapshot(relativePath, 24_000))?.content ?? null });
+      await targetFor(nativeJournalPathForDate(app, new Date(), legacyDirectory(), options.knowledgeBindings?.()), false);
+      return await readNativeJournalContext(app, { now: new Date(), legacyDirectory: legacyDirectory(), bindings: options.knowledgeBindings?.(), readTemplate: async relativePath => (await snapshot(relativePath, 24_000))?.content ?? null });
     },
     async pluginSearch(query, limit, signal) { return await directory.search(query, limit, signal); },
     async cli(request, signal) {
@@ -133,7 +134,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
       }
       if (request.daily && ["tasks", "task"].includes(request.command)) { request.path = dailyPath; delete request.daily; await targetFor(request.path!); }
       if (request.command === "template:read") {
-        const settings = readNativeJournalSettings(app, legacyDirectory());
+        const settings = readNativeJournalSettings(app, legacyDirectory(), options.knowledgeBindings?.());
         const template = request.name!.endsWith(".md") ? request.name! : `${request.name}.md`;
         const scoped = (await targetFor(`${settings.templatesFolder}/${template}`)).relativePath;
         if (!scoped.startsWith(`${settings.templatesFolder}/`)) throw new Error("obsidian_cli_template_outside_folder");

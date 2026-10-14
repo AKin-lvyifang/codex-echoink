@@ -120,10 +120,11 @@ export function parseKnowledgeMaintenanceResultEnvelope(
   }
   const systemPaths: string[] = [];
   for (const raw of value.systemPaths) {
-    if (typeof raw !== "string" || !safePath(raw) || isKnowledgePath(raw)) return null;
+    if (typeof raw !== "string" || !safePath(raw) || /^(wiki|projects)\//u.test(knowledgeRolePath(raw)) || notes.some((note) => note.path === raw)) return null;
     systemPaths.push(raw);
   }
-  if ((value.status === "completed" || value.status === "partial") && notes.length === 0) return null;
+  if (value.status === "completed" && notes.length === 0) return null;
+  if (value.status === "partial" && notes.length === 0 && issues.length === 0) return null;
   if (value.status === "noop" && notes.length !== 0) return null;
   const assessments: KnowledgeMaintenanceAssessment[] = [];
   for (const raw of value.assessments ?? []) {
@@ -280,7 +281,8 @@ function requireKnowledgePath(value: string): string {
 }
 
 function isKnowledgePath(value: string): boolean {
-  return /^(?:wiki|projects)\/(?!.*(?:^|\/)\.)[^\\]+\.md$/u.test(knowledgeRolePath(value))
+  return /^(?!\/)(?!.*(?:^|\/)\.)[^\\]+\.md$/u.test(value)
+    && !["raw/index.md"].includes(knowledgeRolePath(value)) && !/^outputs\/(?:maintenance\/)?kb-.*\.md$/u.test(knowledgeRolePath(value))
     && safePath(value);
 }
 

@@ -21245,6 +21245,13 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-selection-settings-error { color: var(--text-error); font-size: calc(var(--font-text-size, 16px) * .6875); }
 .echoink-selection-settings-error:empty { display: none; }
 .echoink-selection-settings-footer { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 18px; }
+
+/* The bound-folder editor keeps the existing tab rail with neutral states. */
+.echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-tabs [aria-selected=true],
+.echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-tabs button:hover,
+.echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-tabs button:focus-visible {
+  color:var(--text-normal);background:var(--background-modifier-hover);border-color:transparent;box-shadow:none;outline:none;
+}
 /* MIT Origin UI primitive styling, scoped to the actual library controls.
    EchoInk maps Origin's utility styles to the approved Demo tokens. No preflight. */
 .echoink-origin-control {

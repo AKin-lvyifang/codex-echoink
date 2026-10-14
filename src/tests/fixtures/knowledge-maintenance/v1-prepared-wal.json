@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "preview": {
+    "protocolVersion": "echoink-knowledge-maintenance-protocol-v1",
+    "preferenceProfileVersion": "echoink-knowledge-preference-profile-v1",
+    "preferenceState": "default",
+    "preferenceRevision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "previewId": "preview-1",
+    "previewDigest": "sha256:84528ad2b8bb458357e5a20a237c1aeef4734d5a2059435dc422647cd77bc5ec",
+    "vaultId": "phase3-fixture-vault",
+    "dateKey": "2026-08-03",
+    "sourceMode": "tracker",
+    "selectedSources": [
+      {
+        "raw": {
+          "kind": "file",
+          "relativePath": "raw/a.md",
+          "revision": "23a17b581379e1a95386e9305aaeb3d05ae5697e7487475d54fd26ca130240c6",
+          "contentSha256": "23a17b581379e1a95386e9305aaeb3d05ae5697e7487475d54fd26ca130240c6",
+          "byteLength": 5
+        },
+        "attachments": []
+      }
+    ],
+    "remainingRawPaths": [],
+    "tracker": {
+      "binding": {
+        "kind": "file",
+        "version": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+        "contentSha256": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+        "byteLength": 7
+      },
+      "changedRawPaths": [
+        "raw/a.md"
+      ]
+    },
+    "shadowId": "shadow-preview-1",
+    "shadowRevision": "sealed-preview-1",
+    "reportPath": "outputs/maintenance/kb-maintenance-2026-08-03.md",
+    "actions": [
+      {
+        "actionId": "preview-1:001",
+        "operation": "create",
+        "targetPath": "wiki/phase3-summary.md",
+        "content": "knowledge from raw/a.md\n来源：[[raw/a.md|原始材料]]\n<!-- echoink-source: {\"path\":\"raw/a.md\",\"revision\":\"sha256:23a17b581379e1a95386e9305aaeb3d05ae5697e7487475d54fd26ca130240c6\"} -->",
+        "contentSha256": "04da032d452b4c01f189509dda7d0ad2d9251bb9c9307657080b59da09d301be",
+        "expected": {
+          "kind": "missing"
+        }
+      },
+      {
+        "actionId": "preview-1:002",
+        "operation": "create",
+        "targetPath": "raw/index.md",
+        "content": "index: raw/a.md",
+        "contentSha256": "056e62b2cc04b0efcd0cc8370c9632f86e55b8c929308044abe7be1f669ff047",
+        "expected": {
+          "kind": "missing"
+        }
+      },
+      {
+        "actionId": "preview-1:003",
+        "operation": "update",
+        "targetPath": "outputs/.ingest-tracker.md",
+        "content": "processed: raw/a.md",
+        "contentSha256": "6fc919091faf39c3f2361055f83a681dad9e4c2a6fc64a917427d298695b2830",
+        "expected": {
+          "kind": "file",
+          "version": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+          "contentSha256": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+          "byteLength": 7
+        }
+      },
+      {
+        "actionId": "preview-1:004",
+        "operation": "create",
+        "targetPath": "outputs/maintenance/kb-maintenance-2026-08-03.md",
+        "content": "report for raw/a.md",
+        "contentSha256": "21eece547022e21219e7826c5f44d3f53631816f90a0c30a0191924f210e3427",
+        "expected": {
+          "kind": "missing"
+        }
+      }
+    ],
+    "createdAt": 1785715200001
+  },
+  "authorization": {
+    "approvalId": "direct:call-wal-reload",
+    "operationIdentity": "knowledge-maintain:run-wal-reload:call-wal-reload",
+    "consumedAt": 1785715200001,
+    "contract": {
+      "productRunId": "run-wal-reload",
+      "toolCallId": "call-wal-reload",
+      "conversationId": "conversation-phase3",
+      "piSessionId": "pi-session-phase3",
+      "vaultId": "phase3-fixture-vault",
+      "userId": "user-phase3",
+      "deviceId": "device-phase3",
+      "previewId": "preview-1",
+      "previewDigest": "sha256:84528ad2b8bb458357e5a20a237c1aeef4734d5a2059435dc422647cd77bc5ec",
+      "preferenceProfileVersion": "echoink-knowledge-preference-profile-v1",
+      "preferenceState": "default",
+      "preferenceRevision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "orderedActions": [
+        {
+          "actionId": "preview-1:001",
+          "operation": "create",
+          "targetPath": "wiki/phase3-summary.md",
+          "content": "knowledge from raw/a.md\n来源：[[raw/a.md|原始材料]]\n<!-- echoink-source: {\"path\":\"raw/a.md\",\"revision\":\"sha256:23a17b581379e1a95386e9305aaeb3d05ae5697e7487475d54fd26ca130240c6\"} -->",
+          "contentSha256": "04da032d452b4c01f189509dda7d0ad2d9251bb9c9307657080b59da09d301be",
+          "expected": {
+            "kind": "missing"
+          }
+        },
+        {
+          "actionId": "preview-1:002",
+          "operation": "create",
+          "targetPath": "raw/index.md",
+          "content": "index: raw/a.md",
+          "contentSha256": "056e62b2cc04b0efcd0cc8370c9632f86e55b8c929308044abe7be1f669ff047",
+          "expected": {
+            "kind": "missing"
+          }
+        },
+        {
+          "actionId": "preview-1:003",
+          "operation": "update",
+          "targetPath": "outputs/.ingest-tracker.md",
+          "content": "processed: raw/a.md",
+          "contentSha256": "6fc919091faf39c3f2361055f83a681dad9e4c2a6fc64a917427d298695b2830",
+          "expected": {
+            "kind": "file",
+            "version": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+            "contentSha256": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+            "byteLength": 7
+          }
+        },
+        {
+          "actionId": "preview-1:004",
+          "operation": "create",
+          "targetPath": "outputs/maintenance/kb-maintenance-2026-08-03.md",
+          "content": "report for raw/a.md",
+          "contentSha256": "21eece547022e21219e7826c5f44d3f53631816f90a0c30a0191924f210e3427",
+          "expected": {
+            "kind": "missing"
+          }
+        }
+      ]
+    }
+  },
+  "status": "prepared",
+  "sequence": 0,
+  "actions": [
+    {
+      "action": {
+        "actionId": "preview-1:001",
+        "operation": "create",
+        "targetPath": "wiki/phase3-summary.md",
+        "content": "knowledge from raw/a.md\n来源：[[raw/a.md|原始材料]]\n<!-- echoink-source: {\"path\":\"raw/a.md\",\"revision\":\"sha256:23a17b581379e1a95386e9305aaeb3d05ae5697e7487475d54fd26ca130240c6\"} -->",
+        "contentSha256": "04da032d452b4c01f189509dda7d0ad2d9251bb9c9307657080b59da09d301be",
+        "expected": {
+          "kind": "missing"
+        }
+      },
+      "status": "pending"
+    },
+    {
+      "action": {
+        "actionId": "preview-1:002",
+        "operation": "create",
+        "targetPath": "raw/index.md",
+        "content": "index: raw/a.md",
+        "contentSha256": "056e62b2cc04b0efcd0cc8370c9632f86e55b8c929308044abe7be1f669ff047",
+        "expected": {
+          "kind": "missing"
+        }
+      },
+      "status": "pending"
+    },
+    {
+      "action": {
+        "actionId": "preview-1:003",
+        "operation": "update",
+        "targetPath": "outputs/.ingest-tracker.md",
+        "content": "processed: raw/a.md",
+        "contentSha256": "6fc919091faf39c3f2361055f83a681dad9e4c2a6fc64a917427d298695b2830",
+        "expected": {
+          "kind": "file",
+          "version": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+          "contentSha256": "7ae4495c83dd7323b71c94739ddc7a45dfe3cb6a851c31fc1d040cdd47ced985",
+          "byteLength": 7
+        }
+      },
+      "status": "pending"
+    },
+    {
+      "action": {
+        "actionId": "preview-1:004",
+        "operation": "create",
+        "targetPath": "outputs/maintenance/kb-maintenance-2026-08-03.md",
+        "content": "report for raw/a.md",
+        "contentSha256": "21eece547022e21219e7826c5f44d3f53631816f90a0c30a0191924f210e3427",
+        "expected": {
+          "kind": "missing"
+        }
+      },
+      "status": "pending"
+    }
+  ],
+  "createdAt": 1785715200001,
+  "updatedAt": 1785715200001
+}

@@ -252,6 +252,12 @@ export interface PiKnowledgeUsageEvent {
 }
 
 /** Phase 3 domain seam; structural preparation is explicit and write-authorized. */
+export interface PiKnowledgeMaintenanceSettlement {
+  processedSourcePaths: readonly string[];
+  pendingSourcePaths: readonly string[];
+  warnings: readonly string[];
+}
+
 export interface PiKnowledgeRuntimePort {
   prepareMaintenanceStructure?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   resolveMaintenanceScope?(request: string): Promise<PiKnowledgeMaintenanceScope>;
@@ -296,15 +302,21 @@ export interface PiKnowledgeRuntimePort {
   >): Promise<void>;
   finalizeMaintenance?(input: Readonly<
     PiKnowledgeRunIdentity & {
+      turnEntries?: readonly SessionEntry[];
+      folderBindingsRevision?: number;
+      scope?: PiKnowledgeMaintenanceScope;
+      terminalState?: string;
       noteReadPaths: readonly string[];
       producedPaths: readonly string[];
       assistantEntryId: string;
       entries: readonly SessionEntry[];
     }
-  >): Promise<void>;
+  >): Promise<void | Readonly<PiKnowledgeMaintenanceSettlement>>;
 }
 
 export interface PiKnowledgeMaintenanceToolInput extends PiKnowledgeRunIdentity {
+  readonly folderBindingsRevision?: number;
+  readonly globalSourcePaths?: readonly string[];
   readonly toolCallId: string;
   readonly mode: "maintain";
   readonly request: string;
@@ -331,6 +343,8 @@ export interface PiKnowledgeMaintenanceToolInput extends PiKnowledgeRunIdentity 
 }
 
 export interface PiKnowledgeMaintenanceToolResult {
+  readonly recordId?: string;
+  readonly verifiedSourceFingerprints?: Readonly<Record<string, string>>;
   readonly status: "completed" | "failed" | "cancelled";
   readonly message: string;
   readonly producedPaths?: readonly string[];
@@ -353,6 +367,7 @@ export interface PiKnowledgeMaintenanceToolResult {
     | "write_failed"
     | "write_uncertain"
     | "recovery_blocked"
+    | "record_pending"
     | "knowledge_maintenance_failed";
 }
 
@@ -438,7 +453,7 @@ export interface PiChatPreparedDocument {
 }
 
 export type PiKnowledgeMaintenanceScope = Readonly<
-  | { mode: "global" }
+  | { mode: "global"; sourcePaths?: readonly string[]; folderBindingsRevision?: number }
   | { mode: "exact"; sourcePaths: readonly [string] }
   /** Explicit source list is authoritative; /maintain may also carry batch instructions. */
   | { mode: "batch"; sourcePaths: readonly string[] }

@@ -1,3 +1,4 @@
+import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { normalizeSelectionAskSettings } from "../selection-ask/settings";
 import { newId } from "../core/new-id";
 export { newId } from "../core/new-id";
@@ -309,6 +310,7 @@ export interface KnowledgeBaseHealthHistoryEntry {
 }
 
 export interface KnowledgeBaseMaintenanceHistoryEntry {
+  recordId?: string;
   resultStatus?: "completed" | "partial" | "noop" | "failed" | "write_uncertain" | "cancelled";
   date: string;
   status: KnowledgeBaseMaintenanceTerminalStatus;
@@ -325,6 +327,7 @@ export interface KnowledgeBaseMaintenanceHistoryEntry {
 }
 
 export interface KnowledgeBaseSettings {
+  folderBindings?: import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null;
   lastRunAt: number;
   lastRunStatus: KnowledgeBaseRunStatus;
   lastReportPath: string;
@@ -678,6 +681,8 @@ function normalizeEnglishDiarySettings(input: unknown): CodexForObsidianSettings
   return {
     enabled: data.enabled === true,
     homeShortcut: data.homeShortcut === "quick-record" || data.homeShortcut === "english-diary" ? data.homeShortcut : "ask",
+    englishDirectoryMode: data.englishDirectoryMode === "role" || data.englishDirectoryMode === "custom" ? data.englishDirectoryMode : !data.englishDirectory || typeof data.englishDirectory === "string" && knowledgeRootRole(data.englishDirectory) === "outputs" && data.englishDirectory.endsWith("/.english-diary/diaries") ? "role" : "custom",
+    expressionDirectoryMode: data.expressionDirectoryMode === "role" || data.expressionDirectoryMode === "custom" ? data.expressionDirectoryMode : !data.expressionDirectory || typeof data.expressionDirectory === "string" && knowledgeRootRole(data.expressionDirectory) === "outputs" && data.expressionDirectory.endsWith("/.english-diary/expressions") ? "role" : "custom",
     englishDirectory: directory(data.englishDirectory, DEFAULT_SETTINGS.englishDiary.englishDirectory),
     expressionDirectory: directory(data.expressionDirectory, DEFAULT_SETTINGS.englishDiary.expressionDirectory),
     legacyEnglishDirectories: legacyDirectories(data.legacyEnglishDirectories),
@@ -869,6 +874,7 @@ function hasLegacyTokenPlanCustomProvider(value: unknown): boolean {
 }
 
 const KNOWLEDGE_BASE_SETTINGS_KEYS = new Set<string>([
+  "folderBindings",
   "lastRunAt",
   "lastRunStatus",
   "lastReportPath",
@@ -1787,6 +1793,7 @@ function normalizeMemorySettings(input: unknown): EchoInkMemorySettings {
 function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
   const value = settingsRecord(input) ?? {};
   const normalized: KnowledgeBaseSettings = {
+    folderBindings: normalizeKnowledgeFolderBindings(value.folderBindings),
     lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),
     lastRunStatus: normalizeKnowledgeBaseRunStatus(value?.lastRunStatus),
     lastReportPath: normalizeOptionalText(value?.lastReportPath),
@@ -2336,6 +2343,7 @@ export function canonicalizeKnowledgeBaseMaintenanceHistoryEntry(
     status,
     at,
     ...(runId ? { runId } : {}),
+    ...(typeof record.recordId === "string" && /^maintenance-[a-f0-9]{32}$/u.test(record.recordId) ? { recordId: record.recordId } : {}),
     mode,
     reportPath,
     ...(["completed", "partial", "noop", "failed", "write_uncertain", "cancelled"].includes(String(record.resultStatus))
@@ -2446,6 +2454,7 @@ export function recordKnowledgeBaseMaintenanceRun(
     mode: KnowledgeBaseMaintenanceMode;
     at?: number;
     runId?: string;
+    recordId?: string;
     reportPath?: string;
     completion?: KnowledgeBaseRunCompletion;
     pendingSources?: string[];

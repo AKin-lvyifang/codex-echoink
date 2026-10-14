@@ -1,4 +1,4 @@
-import { knowledgeRolePath } from "../../knowledge-base/root-paths";
+import { knowledgeRolePath, knowledgePathRole } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -31,7 +31,7 @@ const MAINTENANCE_RESULT_LIMIT_BYTES = 8_000;
 const RESULT_PENDING_SAFETY = "knowledge_maintain_result_pending_safety";
 
 /** Reuse source versions already delivered in this conversation after reopening. */
-export function maintenanceSourceFingerprintsFromEntries(entries: readonly SessionEntry[]): Record<string, string> {
+export function maintenanceSourceFingerprintsFromEntries(entries: readonly SessionEntry[], vaultRoot = ""): Record<string, string> {
   const fingerprints: Record<string, string> = {};
   const reads = new Map<string, string>();
   for (const entry of entries) {
@@ -48,7 +48,7 @@ export function maintenanceSourceFingerprintsFromEntries(entries: readonly Sessi
     if (message.role !== "toolResult") continue;
     const details = message.details && typeof message.details === "object" ? message.details as Record<string, unknown> : {};
     const adopt = (relative: unknown, revision: unknown) => {
-      if (typeof relative === "string" && knowledgeRolePath(relative).startsWith("raw/") && typeof revision === "string" && /^sha256:(?:\d+:)?[a-f0-9]{64}$/u.test(revision)) fingerprints[relative] = revision;
+      if (typeof relative === "string" && knowledgePathRole(vaultRoot, relative) === "raw" && typeof revision === "string" && /^sha256:(?:\d+:)?[a-f0-9]{64}$/u.test(revision)) fingerprints[relative] = revision;
     };
     if (message.toolName === PI_KNOWLEDGE_MAINTAIN_TOOL_ID) {
       if (details.sourceBodyFingerprints && typeof details.sourceBodyFingerprints === "object") {
@@ -67,6 +67,7 @@ export function maintenanceSourceFingerprintsFromEntries(entries: readonly Sessi
 }
 
 export type PiKnowledgeMaintenanceCommandContext = Readonly<{
+  folderBindingsRevision?: number;
   mode: "maintain";
   request: string;
   scope: PiKnowledgeMaintenanceScope;
@@ -265,6 +266,7 @@ implements PiVaultAdditionalToolSecurityPort {
             ? { errorCode: execution.result.errorCode }
             : {}),
           ...(execution.result.refreshedSources ? { readSourcePaths: Object.keys(execution.result.refreshedSources), sourceBodyFingerprints: execution.result.refreshedSources } : {}),
+          ...(execution.result.recordId ? { recordId: execution.result.recordId } : {}),
           ...(execution.result.processedSourcePaths ? { processedSourcePaths: [...execution.result.processedSourcePaths] } : {}),
           ...(execution.result.producedPaths
             ? { producedPaths: [...execution.result.producedPaths] }
@@ -308,12 +310,11 @@ export function createPiKnowledgeMaintenanceToolDefinition(
     label: "维护知识库",
     description: [
       "用户要求维护知识库时，提交当前已确认范围内的知识维护动作。",
-      echoInkKnowledgeMaintenanceProtocolPrompt(),
+      "资料与目标均使用本轮上下文中提供的真实绑定路径；未启用用途不写入。",
       "exact 范围只可使用已绑定单篇 Raw；batch 范围只可使用已绑定的 1-20 篇 Raw；query 范围必须从候选中选择唯一 sourcePaths；global 范围不得提供 sourcePaths。",
-      "有明确 Raw 时只读取这些 Raw；只有 global 范围才读取 outputs/.ingest-tracker.md，",
-      "再读取 Tracker 标记 changed 的 Raw。candidateActions 只可包含 wiki/** 或 projects/** 的 Markdown 候选；",
+      "只读取本轮已选真实来源；global 待处理范围由程序私有状态提供，不读取 Tracker 文件。candidateActions 只写当前绑定的知识成果或项目位置。",
       "每个候选必须携带 expectedTarget。更新已有目标前先 note_read，并原样使用其 contentRevision；确认目标不存在时使用 kind=missing。",
-      "raw/index.md、Tracker 和维护报告由 EchoInk 确定性生成，不要放进 candidateActions。",
+      "维护记录由 EchoInk 私有保存，不要把索引、Tracker 或报告放进 candidateActions。",
       "候选完成自检后可分次提交或修正后重试；工具会安全写入并回读。Raw 属性和 Tag 使用 metadata_update，保持正文不变。",
       "同时对重要知识主张给出 assessments：仍有效(valid)、需补充(needs_supplement)、已过时(outdated)或冲突(conflict)，并记录证据、日期和是否完成外部核验；assessments 可选；无法核验时使用 unverified。"
     ].join(""),
@@ -555,8 +556,7 @@ function normalizeMaintenanceRawPath(value: unknown): string {
   }
   const normalized = value.trim().replaceAll("\\", "/").replace(/^\/+/, "");
   if (
-    !knowledgeRolePath(normalized).toLocaleLowerCase().startsWith("raw/")
-    || !isRawMarkdownPath(normalized)
+    !isRawMarkdownPath(normalized)
     || normalized.split("/").some((part) => !part || part === "." || part === "..")
   ) {
     throw new TypeError("knowledge_maintenance_source_scope_invalid");
@@ -642,7 +642,7 @@ function freezeCommand(
   return Object.freeze({
     ...value,
     scope: scope.mode === "global"
-      ? Object.freeze({ mode: "global" as const })
+      ? Object.freeze({ ...scope, mode: "global" as const, ...(scope.sourcePaths ? { sourcePaths: Object.freeze(scope.sourcePaths.map(normalizeMaintenanceRawPath)) } : {}) })
       : scope.mode === "exact"
         ? Object.freeze({
             mode: "exact" as const,

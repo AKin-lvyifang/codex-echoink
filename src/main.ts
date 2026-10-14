@@ -1,3 +1,4 @@
+import { registerKnowledgePrivateRoot } from "./knowledge-base/root-paths";
 import { PdfReadingController } from "./pdf-reading/controller";
 import { createPluginAccountService } from "./membership/plugin-service";
 import type { AccountService } from "./membership/account-service";
@@ -5,7 +6,7 @@ import { UsageStore, type UsageRequestEvent } from "./harness/usage/usage-store"
 import { requireProPlugin, unavailableCapabilityAccess } from "./membership/access";
 import { ConversationAutoArchive } from "./plugin/conversation-auto-archive";
 import { EchoInkAppearance } from "./ui/appearance-theme";
-import { knowledgeRolePath } from "./knowledge-base/root-paths";
+import { knowledgePathRole } from "./knowledge-base/root-paths";
 import { HomeActivityService } from "./home/home-activity-service";
 import { LifestyleService } from "./lifestyle/service";
 import type { LifestyleKind } from "./lifestyle/settings";
@@ -241,6 +242,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const dataRoot = await preparePluginDataRoot(this.getVaultPath(), this.manifest, this.app.vault.configDir);
     this.register(() => dataRoot.dispose());
     const settingsLoad = await this.loadSettings();
+    registerKnowledgePrivateRoot(this.getVaultPath(), path.join(pluginDataDir(this.getVaultPath(), this.getPluginDataDirName()), "pi-agent-product-v1", "knowledge"));
     this.appearance = new EchoInkAppearance(this.app, () => this.settings.colorTheme);
     this.appearance.refresh();
     this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, win) => {
@@ -770,10 +772,10 @@ export default class CodexForObsidianPlugin extends Plugin {
         || !relative
         || relative.startsWith("../")
         || path.isAbsolute(relative)
-        || !knowledgeRolePath(relative).toLocaleLowerCase().startsWith("raw/")
+        || knowledgePathRole(vaultRoot, relative) !== "raw"
         || !isRawMarkdownPath(relative)
       ) {
-        throw new Error("/maintain 附件必须是当前 Vault 的 raw/** Markdown 笔记。");
+        throw new Error("/maintain 附件必须是当前 Vault 已绑定资料来源中的 Markdown 笔记。");
       }
       await bundle.knowledgeAgentIndex.read({ vaultRelativePath: relative });
       return Object.freeze({
@@ -781,23 +783,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         sourcePaths: Object.freeze<[string]>([relative])
       });
     }
-    if (!request) return Object.freeze({ mode: "global" as const });
-    const result = await bundle.knowledgeAgentIndex.search({
-      query: request,
-      kinds: ["raw"],
-      limit: 50
-    });
-    const candidatePaths = result.hits
-      .map((hit) => hit.vaultRelativePath)
-      .filter(isRawMarkdownPath)
-      .slice(0, 12);
-    if (!candidatePaths.length) {
-      throw new Error("没有找到可可靠匹配的 Raw 笔记；本轮不会回退到全局维护。");
-    }
-    return Object.freeze({
-      mode: "query" as const,
-      candidatePaths: Object.freeze(candidatePaths)
-    });
+    return await bundle.resolveMaintenanceScope(request);
   }
   async submitPiChat(
     request: PiChatSubmitRequest
@@ -1702,6 +1688,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     });
   }
   async prepareWikiFolderNamesForMaintenance(input: { initialization: boolean; assertActive(): void }): Promise<string> {
+    if (this.settings.knowledgeBase.folderBindings) { input.assertActive(); return `当前目录用途：${JSON.stringify(this.settings.knowledgeBase.folderBindings.roles)}；维护只提炼已选资料，不改名、不创建分类树。`; }
     const result = await this.requireKnowledgeSurfaceService().optimizeFolderNames(undefined, input.initialization, { ...input, authorized: true });
     return `${result.message ?? `目录优化：改名 ${result.renamed.length}，跳过 ${result.skipped.length}。`}${JSON.stringify(result.skipped)}`;
   }

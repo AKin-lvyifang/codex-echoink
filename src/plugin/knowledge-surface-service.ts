@@ -1,3 +1,9 @@
+import { rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
+import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
+import { previewKnowledgeDirectoryPlan, type KnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
+import { classifyKnowledgePath, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
+import { readPrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import type { PiTurnInteractionIdentity } from "./pi-turn-interaction-broker";
 import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { resolveKnowledgePath, knowledgeRootRole, rebaseKnowledgePath, rebaseKnowledgePathRecords } from "../knowledge-base/root-paths";
@@ -43,6 +49,12 @@ import {
 import { optimizeWikiFolderNames, type WikiFolderNameResult } from "../knowledge-base/wiki-folder-names";
 import { pluginDataDir } from "./plugin-data-paths";
 import { initializeNativeJournal, rebaseNativeJournalPaths } from "../home/native-journal";
+
+export interface KnowledgeFolderNamePreview {
+  revision: number;
+  scopes: string[];
+  result: WikiFolderNameResult;
+}
 import { captureFolderLinkRenames, applyFolderLinkRenames } from "../knowledge-base/folder-link-renames";
 
 export type KnowledgeMaintenanceSurfaceStatus = Readonly<{
@@ -50,57 +62,16 @@ export type KnowledgeMaintenanceSurfaceStatus = Readonly<{
   message: "";
 }>;
 
-export function resolveKnowledgeMaintenanceSubmitSnapshot(
-  settings: Pick<
-    CodexForObsidianSettings,
-    | "activeApiProviderId"
-    | "apiProviders"
-    | "defaultModel"
-    | "openAICodexCredential"
-  >
-): Readonly<{
-  runtimeProviderId: string;
-  modelId: string;
-  reasoning: ReasoningEffort;
-}> {
-  const active = getActiveApiProviderModel(settings);
-  if (!active) throw new Error("准备知识分析：缺少已选择的模型；本地整理保留，选择模型后继续。");
-  if (!active.model.id.trim()) throw new Error("准备知识分析：缺少模型 ID。");
-  if (!active.provider.runtimeProviderId.trim()) throw new Error("准备知识分析：缺少 Provider 连接类型。");
-  if (!active.provider.baseUrl.trim()) throw new Error("准备知识分析：缺少 API 地址。");
-  try { const url = new URL(active.provider.baseUrl); if (!["https:", "http:"].includes(url.protocol)) throw new Error(); }
-  catch { throw new Error("准备知识分析：API 地址无效，请检查连接设置。"); }
-  if (!apiProviderHasUsableCredential(active.provider, settings.openAICodexCredential)) throw new Error("准备知识分析：缺少此 Provider 所需的登录或 API Key。");
-  const capabilities = resolveEchoInkPiReasoningCapabilities(
-    active.provider.runtimeProviderId,
-    active.model.id,
-    active.model
-  );
-  if (
-    !capabilities.supported
-    || (capabilities.supportsOff && !active.model.reasoningEnabled)
-  ) {
-    return Object.freeze({
-      runtimeProviderId: active.provider.runtimeProviderId,
-      modelId: active.model.id,
-      reasoning: "none"
-    });
-  }
-  const stored = normalizeEchoInkReasoningEffort(active.model.reasoningEffort);
-  const reasoning = stored && isEchoInkPiReasoningEffortSupported(capabilities, stored)
-    ? stored : capabilities.defaultEffort ?? "none";
-  return Object.freeze({
-    runtimeProviderId: active.provider.runtimeProviderId,
-    modelId: active.model.id,
-    reasoning
-  });
-}
+export { resolveKnowledgeMaintenanceSubmitSnapshot } from "../settings/knowledge-maintenance-submit";
+import { resolveKnowledgeMaintenanceSubmitSnapshot } from "../settings/knowledge-maintenance-submit";
 
 /** Current Knowledge dashboard and capture surfaces. Pi owns agent execution. */
 export class EchoInkKnowledgeSurfaceService {
   private readonly captureService: KnowledgeBaseCaptureService;
   private readonly directoryHistory: InitializationDirectoryHistory;
   private restoring = false;
+  private readonly ownedRenames = new Set<string>();
+  private renameSyncQueue: Promise<void> = Promise.resolve();
   private readonly initializer: KnowledgeBaseInitializer;
   private readonly initializerReady: Promise<void>;
   private dashboardSnapshot:
@@ -116,7 +87,9 @@ export class EchoInkKnowledgeSurfaceService {
     return this.initializationInteraction ? this.plugin.piTurnInteractionBinding(this.initializationInteraction) : null;
   }
   get directoryWritable(): boolean { return this.plugin.settings.defaultPermission !== "read-only"; }
-  get folderOperationBusy(): boolean { return this.namingFlight !== null || this.restoring || this.initializer.isRunning; }
+  get app() { return this.plugin.app; }
+  get folderOperationBusy(): boolean { return this.namingFlight !== null || this.folderNamingBusy || this.restoring || this.initializer.isRunning; }
+  private folderNamingBusy = false;
   private namingFlight: Promise<WikiFolderNameResult> | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
@@ -126,6 +99,22 @@ export class EchoInkKnowledgeSurfaceService {
       vaultRoot: plugin.getVaultPath(), privateRoot: host.privateRootPath,
       mkdir: (folder) => host.createFolder(folder),
       rename: (from, to, restoring) => this.renameWithLinks(from, to, restoring),
+      currentBindings: () => this.plugin.settings.knowledgeBase.folderBindings,
+      restoreBindings: async (from, to, keepCurrent, originalBindings) => {
+        const bindings = this.plugin.settings.knowledgeBase.folderBindings;
+        if (!bindings) return;
+        const restored = structuredClone(bindings);
+        for (const role of Object.keys(bindings.roles) as (keyof typeof bindings.roles)[]) {
+          const originalPaths = originalBindings?.roles[role].readPaths ?? (knowledgeRootRole(to) === role ? [to] : []);
+          const eligible = (directory: string) => (directory === from || directory.startsWith(`${from}/`)) && originalPaths.includes(rebaseKnowledgePath(directory, from, to));
+          restored.roles[role].readPaths = [...new Set(bindings.roles[role].readPaths.flatMap((directory) => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
+          if (bindings.roles[role].writePath && eligible(bindings.roles[role].writePath!)) restored.roles[role].writePath = rebaseKnowledgePath(bindings.roles[role].writePath!, from, to);
+          if (keepCurrent && restored.roles[role].readPaths.length > 1) restored.roles[role].compatibilityReadScopes = true;
+        }
+        if (JSON.stringify(restored.roles) !== JSON.stringify(bindings.roles)) restored.revision += 1;
+        this.plugin.settings.knowledgeBase.folderBindings = restored;
+        await this.plugin.saveSettings(true);
+      },
       restoreFolderLinks: async (from, to) => {
         const links = await captureFolderLinkRenames(plugin.app, from, to);
         await applyFolderLinkRenames(plugin.app, links);
@@ -144,6 +133,7 @@ export class EchoInkKnowledgeSurfaceService {
       }
       await createFolder(relative);
     };
+    host.folderBindingsRevision = () => plugin.settings.knowledgeBase.folderBindings?.revision;
     host.beforeStructureChange = (jobId) => this.directoryHistory.capture(jobId);
     host.withStructureMutation = (action) => this.withStructureMutation(action);
     host.optimizeWikiFolders = async (assertActive) => { await this.optimizeFolderNames(undefined, true, { assertActive }); };
@@ -155,12 +145,17 @@ export class EchoInkKnowledgeSurfaceService {
     };
     this.initializer = new KnowledgeBaseInitializer(host);
     this.initializerReady = this.initializer.initialize();
+    plugin.registerEvent(plugin.app.vault.on("rename", (file, oldPath) => {
+      const target = file.path;
+      if (this.ownedRenames.has(`${oldPath}→${target}`)) return;
+      this.renameSyncQueue = this.renameSyncQueue.then(() => this.syncRenamedPaths(oldPath, target)).catch((error) => { this.folderOperationMessage = `目录或历史路径同步未完成：${knowledgeErrorDetail(error)}`; });
+    }));
     // 插件 onload 早于 Vault 文件索引完全就绪；等 Obsidian layoutReady 后
     // 再读取并升级旧指南，否则 getFileByPath 可能暂时返回 null 而被跳过。
     plugin.app.workspace.onLayoutReady(() => {
       void this.initializerReady.then(async () => {
         try {
-          await this.initializer.refreshManagedGuide();
+          if (!plugin.settings.knowledgeBase.folderBindings) await this.initializer.refreshManagedGuide();
         } catch (error) {
           // 指南升级是可选维护，不得阻断知识库设置与既有初始化恢复链。
           console.error("EchoInk managed knowledge guide refresh failed", knowledgeErrorDetail(error));
@@ -189,6 +184,7 @@ export class EchoInkKnowledgeSurfaceService {
   }
 
   optimizeFolderNames(onProgress?: (message: string) => void, initialization = false, maintenance?: { assertActive(): void; authorized?: boolean }): Promise<WikiFolderNameResult> {
+    if (this.plugin.settings.knowledgeBase.folderBindings) return Promise.reject(new Error("请先选择目录范围并预览实际改名方案。"));
     if (this.namingFlight) return this.namingFlight;
     if (this.initializer.isRunning && !initialization) return Promise.reject(new Error("初始化进行中，请稍后再优化目录。"));
     const assertActive = maintenance ? () => maintenance.assertActive() : undefined;
@@ -217,6 +213,59 @@ export class EchoInkKnowledgeSurfaceService {
       }
     }, maintenance?.authorized === true).finally(() => { this.namingFlight = null; });
     return this.namingFlight;
+  }
+
+  folderNameScopes(): string[] {
+    return [...new Set(Object.values(this.plugin.settings.knowledgeBase.folderBindings?.roles ?? {}).flatMap(binding => binding.enabled ? binding.readPaths : []))].filter(directory => this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder);
+  }
+
+  async previewFolderNames(scopes: readonly string[]): Promise<KnowledgeFolderNamePreview> {
+    if (this.folderOperationBusy) throw new Error("目录操作进行中，请稍后重试。");
+    this.folderNamingBusy = true;
+    try {
+    const allowed = this.folderNameScopes();
+    if (!scopes.length || scopes.some(scope => !allowed.includes(scope))) throw new Error("请选择已绑定的目录范围。");
+    const revision = this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0;
+    const vault = this.plugin.app.vault;
+    const folders = vault.getAllLoadedFiles().filter((file): file is TFolder => file instanceof TFolder).map(folder => ({ path: folder.path, titles: folder.children.filter(file => !(file instanceof TFolder)).map(file => file.name) }));
+    const allPaths = new Set(folders.map(folder => folder.path));
+    const result = await optimizeWikiFolderNames({
+      folders: () => folders.filter(folder => scopes.some(scope => folder.path === scope || folder.path.startsWith(`${scope}/`))),
+      generate: (system, prompt) => this.plugin.generateWikiFolderNames(system, prompt),
+      exists: target => allPaths.has(target) || vault.getAbstractFileByPath(target) !== null,
+      unsafeReason: source => this.renameUnsafeReason(source),
+      rename: async (from, to) => { allPaths.delete(from); allPaths.add(to); }
+    });
+    if (revision !== (this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0)) throw new Error("目录配置已变化，请重新预览。");
+    return { revision, scopes: [...scopes], result };
+    } finally { this.folderNamingBusy = false; }
+  }
+
+  applyFolderNamePreview(preview: KnowledgeFolderNamePreview): Promise<WikiFolderNameResult> {
+    if (this.folderOperationBusy) return Promise.reject(new Error("目录操作进行中，请稍后重试。"));
+    this.folderNamingBusy = true;
+    return this.withStructureMutation(async () => {
+      if (this.initializer.isRunning) throw new Error("知识优化进行中，请稍后重试。");
+      if (preview.revision !== (this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0)) throw new Error("目录配置已变化，请重新预览。");
+      const allowed = this.folderNameScopes();
+      if (!preview.scopes.length || preview.scopes.some(scope => !allowed.includes(scope))) throw new Error("目录范围已变化，请重新预览。");
+      const result: WikiFolderNameResult = { renamed: [], skipped: [...preview.result.skipped] };
+      await this.directoryHistory.capture(`folder-names-${Date.now()}`);
+      for (const change of preview.result.renamed) {
+        try {
+          if (!preview.scopes.some(scope => change.from === scope || change.from.startsWith(`${scope}/`))) throw new Error("改名超出选定范围");
+          const folder = this.plugin.app.vault.getAbstractFileByPath(change.from);
+          if (!(folder instanceof TFolder) || this.plugin.app.vault.getAbstractFileByPath(change.to)) throw new Error("目录或目标已变化，请重新预览");
+          const reason = this.renameUnsafeReason(change.from);
+          if (reason) throw new Error(reason);
+          if (await knowledgeInitializationPathHasSymbolicLink(this.plugin.getVaultPath(), change.from)) throw new Error("符号链接目录保持原位");
+          await this.renameTracked(change.from, change.to);
+          result.renamed.push(change);
+        } catch (error) { result.skipped.push({ path: change.from, reason: knowledgeErrorDetail(error) }); }
+      }
+      this.plugin.refreshKnowledgeBaseSurfaces();
+      return result;
+    }).finally(() => { this.folderNamingBusy = false; });
   }
 
   private renameUnsafeReason(source: string): string | null {
@@ -249,20 +298,30 @@ export class EchoInkKnowledgeSurfaceService {
     if (this.plugin.app.vault.getAbstractFileByPath(target)) throw new Error(`目标已存在：${target}`);
     const isFolder = file instanceof TFolder;
     const folderLinks = await captureFolderLinkRenames(this.plugin.app, source, target);
-    await this.plugin.app.fileManager.renameFile(file, target);
-    if (isFolder || restoring) await this.syncRenamedPaths(source, target);
+    const key = `${source}→${target}`;
+    this.ownedRenames.add(key);
+    try { await this.plugin.app.fileManager.renameFile(file, target); await this.syncRenamedPaths(source, target); }
+    finally { this.ownedRenames.delete(key); }
     await applyFolderLinkRenames(this.plugin.app, folderLinks);
   }
 
   private async syncRenamedPaths(from: string, to: string): Promise<void> {
+    const bindings = this.plugin.settings.knowledgeBase.folderBindings;
+    const wasSource = knowledgePathRole(this.plugin.getVaultPath(), from) === "raw" || bindings?.roles.raw.readPaths.some((directory) => directory.startsWith(`${from}/`));
     this.plugin.settings.knowledgeBase = rebaseKnowledgePathRecords(this.plugin.settings.knowledgeBase, from, to);
+    if (bindings) this.plugin.settings.knowledgeBase.folderBindings = rebaseKnowledgeFolderBindings(bindings, from, to);
+    this.plugin.settings.englishDiary = rebaseKnowledgePathRecords(this.plugin.settings.englishDiary, from, to);
+    const privateRoot = knowledgePrivateRoot(this.plugin.getVaultPath());
+    if (privateRoot) await rebasePrivateMaintenanceRecords(privateRoot, from, to);
+    await this.plugin.pdfReading?.api.rebasePaths(from, to);
+    this.plugin.englishDiary?.refreshStoragePaths();
     this.plugin.settings.journalDirectory = rebaseKnowledgePath(this.plugin.settings.journalDirectory, from, to);
     for (const session of this.plugin.settings.sessions) if (session.journalDirectory) session.journalDirectory = rebaseKnowledgePath(session.journalDirectory, from, to);
     const registry = await readRawDigestRegistry(this.plugin.getVaultPath(), true);
     if (Object.keys(registry.entries).length) await writeRawDigestRegistry(this.plugin.getVaultPath(), rebaseKnowledgePathRecords(registry, from, to));
-    if (knowledgeRootRole(from) === "raw") {
+    if (wasSource) {
       for (const file of this.plugin.app.vault.getMarkdownFiles()) {
-        if (!["wiki", "projects"].includes(knowledgeRootRole(file.path) ?? "")) continue;
+        if (!["wiki", "projects"].includes(knowledgePathRole(this.plugin.getVaultPath(), file.path) ?? "")) continue;
         const rebaseMarkers = (content: string) => content.replace(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu, (marker, json: string) => {
           try {
             const record = JSON.parse(json) as Record<string, unknown>;
@@ -293,6 +352,11 @@ export class EchoInkKnowledgeSurfaceService {
     await this.plugin.saveSettings(true);
     this.dashboardSnapshot = null;
     this.plugin.refreshKnowledgeBaseSurfaces();
+  }
+
+  async getMaintenanceRecords() {
+    const root = knowledgePrivateRoot(this.plugin.getVaultPath());
+    return root ? readPrivateMaintenanceRecords(root) : [];
   }
 
   async getOriginalDirectoryStatus() { return this.directoryHistory.status(); }
@@ -365,6 +429,39 @@ export class EchoInkKnowledgeSurfaceService {
   ) {
     await this.initializerReady;
     return await this.withStructureMutation(() => this.initializer.restoreStructure(onProgress));
+  }
+
+  async previewDirectoryPlan(bindings: KnowledgeFolderBindings, createPaths: readonly string[]): Promise<KnowledgeDirectoryPlan> {
+    const files = this.plugin.app.vault.getMarkdownFiles();
+    return previewKnowledgeDirectoryPlan({ baseRevision: this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0, bindings, createPaths,
+      kind: async (relative) => {
+        if (await knowledgeInitializationPathHasSymbolicLink(this.plugin.getVaultPath(), relative)) return "other";
+        const file = this.plugin.app.vault.getAbstractFileByPath(relative);
+        return file instanceof TFolder ? "folder" : file ? "other" : "missing";
+      }, sourcePaths: files.map((file) => file.path) });
+  }
+
+  async applyDirectoryPlan(plan: KnowledgeDirectoryPlan, optimize = false): Promise<void> {
+    if (this.folderOperationBusy || ((plan.create.length > 0 || optimize) && !this.directoryWritable)) throw new Error("当前只读或已有目录操作，请稍后重试。");
+    if (plan.issues.length) throw new Error(plan.issues.join("；"));
+    if (optimize) resolveKnowledgeMaintenanceSubmitSnapshot(this.plugin.settings);
+    await this.withStructureMutation(async () => {
+      if ((this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0) !== plan.baseRevision) throw new Error("目录配置已改变，请重新预览。");
+      const checked = await this.previewDirectoryPlan(plan.bindings, plan.create);
+      if (checked.issues.length || JSON.stringify(checked.create) !== JSON.stringify(plan.create)) throw new Error("目录结构已改变，请重新预览。");
+      for (const directory of plan.create) {
+        if (this.plugin.app.vault.getAbstractFileByPath(directory)) throw new Error(`路径已存在：${directory}`);
+        await this.plugin.app.vault.createFolder(directory);
+      }
+      const previous = this.plugin.settings.knowledgeBase.folderBindings;
+      const previousDiary = structuredClone(this.plugin.settings.englishDiary);
+      this.plugin.settings.knowledgeBase.folderBindings = { ...structuredClone(plan.bindings), revision: plan.baseRevision + 1 };
+      this.plugin.englishDiary?.refreshStoragePaths();
+      try { await this.plugin.saveSettings(true); } catch (error) { this.plugin.settings.knowledgeBase.folderBindings = previous; this.plugin.settings.englishDiary = previousDiary; this.plugin.englishDiary?.refreshStoragePaths(); throw error; }
+      if (optimize) await this.initializer.startBoundOptimization(plan.sources, plan.baseRevision + 1);
+      this.dashboardSnapshot = null;
+      this.plugin.refreshKnowledgeBaseSurfaces();
+    }, plan.create.length === 0 && !optimize);
   }
 
   async startInitialization(

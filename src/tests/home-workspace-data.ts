@@ -421,6 +421,7 @@ async function assertHomeRecentNotesPreserveFullData(): Promise<void> {
   assert.equal(service.getJournalDirectory(), "Notes/Daily", "native journal configuration wins over the old EchoInk folder");
   const data = await service.build(new Date(2026, 8, 6));
   const view = new EchoInkHomeView(new WorkspaceLeaf(), plugin as never);
+  view.app = app as never;
   const mutable = view as unknown as { data: typeof data; selectedDate: string | null; records(): HomeVaultFileRecord[] };
   mutable.data = data;
   const originalPaths = data.records.map((record) => record.path);

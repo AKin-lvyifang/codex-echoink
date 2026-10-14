@@ -1,6 +1,7 @@
 import { DEFAULT_ENGLISH_DIARY_SETTINGS, LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY, type EnglishDiarySettings } from "../english-diary/types";
 import { FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT } from "../lifestyle/finance-paths";
 import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
+import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 
 export type HomeNoteVisibility = (path: string) => boolean;
 type DiaryDirectories = Pick<EnglishDiarySettings, "englishDirectory" | "expressionDirectory" | "legacyEnglishDirectories" | "legacyExpressionDirectories">;
@@ -19,6 +20,7 @@ export function isHomeNotePath(path: string, directories: DiaryDirectories = DEF
 }
 
 export interface HomeRecentNoteContext {
+  folderBindings?: KnowledgeFolderBindings | null;
   analysisDirectory?: string;
   reportPaths?: ReadonlySet<string>;
   reportType?: string;
@@ -36,7 +38,7 @@ export function isHomeRecentSystemPath(path: string, journalDirectory: string, c
     context.configDirectory ?? ".obsidian", ".echoink"].some(root=>inDirectory(path,relative(root)))) return true;
   // The configured native diary remains content even when it overlaps a template root.
   if (inDirectory(path,relative(journalDirectory))) return false;
-  if (knowledgeRootRole(path) === "templates" || inDirectory(path,relative(context.templatesDirectory ?? "templates"))) return true;
+  if (knowledgeRootRole(path, context.folderBindings) === "templates" || inDirectory(path,relative(context.templatesDirectory ?? (context.folderBindings ? "" : "templates")))) return true;
   const directory=relative(context.analysisDirectory ?? "");
   // A content root can hold ordinary results alongside reports. Identify reports there by index/type.
   const contentRoot=directory && !directory.includes("/") && ["raw","wiki","outputs","projects","inbox","journal","index"].includes(knowledgeRootRole(directory) ?? directory);

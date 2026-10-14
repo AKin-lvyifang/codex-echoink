@@ -1,4 +1,4 @@
-import { knowledgeRootRole, knowledgeRolePath, resolveKnowledgePath, knowledgeRoleRoots, type KnowledgeRootRole } from "./root-paths";
+import { getKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleStatus, knowledgeRootRole, knowledgeRolePath, resolveKnowledgePath, knowledgeRoleRoots, type KnowledgeRootRole } from "./root-paths";
 import { wikiCategoryLabel } from "./wiki-folder-names";
 import * as fs from "fs";
 import * as fsp from "fs/promises";
@@ -197,18 +197,20 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     }
   };
   const processedSources = settings.processedSources ?? {};
+  const bindings = getKnowledgeFolderBindings(vaultPath);
   const raw = await scanDashboardRole(vaultPath, "raw", { skipHidden: true });
   const wiki = await scanDashboardRole(vaultPath, "wiki", { skipHidden: true });
   const outputs = await scanDashboardRole(vaultPath, "outputs", { skipHidden: false, ignoreNames: new Set([".DS_Store"]) });
   const inbox = await scanDashboardRole(vaultPath, "inbox", { skipHidden: true });
   const reportPath = await resolveLatestReportPath(vaultPath, settings.lastReportPath, outputs.files);
-  const trackerPath = resolveKnowledgePath(vaultPath, "outputs/.ingest-tracker.md");
-  const trackerExists = await structureExists(trackerPath);
+  const trackerPath = bindings ? "" : resolveKnowledgePath(vaultPath, "outputs/.ingest-tracker.md");
+  const trackerExists = bindings ? true : await structureExists(trackerPath);
   const reportExists = reportPath ? await exists(path.join(vaultPath, reportPath)) : false;
-  const wikiIndexExists = await structureExists(resolveKnowledgePath(vaultPath, "wiki/index.md"));
+  const wikiIndexPath = bindings?.roles.wiki.writePath ? `${bindings.roles.wiki.writePath}/index.md` : resolveKnowledgePath(vaultPath, "wiki/index.md");
+  const wikiIndexExists = await structureExists(wikiIndexPath);
   const rawSourceFiles = raw.files.filter(isRawProcessingSource);
   const registry = await readRawDigestRegistry(vaultPath, true).catch(() => {
-    readErrors.push("outputs/.raw-digest-registry.json");
+    readErrors.push("来源处理记录");
     return { schemaVersion: 1, updatedAt: "", entries: {} };
   });
   const fingerprintCoverage = { limited: 0, failed: 0 };
@@ -222,7 +224,7 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
       maxTotalBytes: options.maxTotalRawFingerprintBytes
     }), fingerprintCoverage
   );
-  const trackerHints = await readKnowledgeBaseTrackerHints(vaultPath, trackerPath, rawContentFiles, true).catch(() => {
+  const trackerHints = bindings ? { paths: new Set<string>(), updatedAt: 0 } : await readKnowledgeBaseTrackerHints(vaultPath, trackerPath, rawContentFiles, true).catch(() => {
     readErrors.push(trackerPath);
     return { paths: new Set<string>(), updatedAt: 0 };
   });
@@ -231,13 +233,13 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const reportFindings = await readReportFindings(vaultPath, reportPath);
   const maintenanceHistory = normalizeMaintenanceHistory(settings.maintenanceHistory ?? [], settings.healthHistory ?? []);
   const rawChangedCount = rawDigestStatus.pending + rawDigestStatus.changed;
-  const wikiGroups = buildWikiGroups(wiki.files, generatedAt);
+  const wikiGroups = buildWikiGroups(wiki.files, generatedAt, vaultPath);
   const rawTodayCount = countFilesChangedToday(rawContentFiles, generatedAt);
   const inboxTodayCount = countFilesChangedToday(inbox.files, generatedAt);
   const wikiTodayCount = wiki.files.filter((file) => knowledgeRolePath(file.path) !== "wiki/index.md" && isSameLocalDay(file.createdAt ?? file.mtime, generatedAt)).length;
   const warnings = buildWarnings({
-    rawExists: raw.exists,
-    wikiExists: wiki.exists,
+    rawExists: bindings && !bindings.roles.raw.enabled ? true : raw.exists,
+    wikiExists: bindings && !bindings.roles.wiki.enabled ? true : wiki.exists,
     trackerExists,
     lastError: settings.lastError,
     scanLimited: raw.limited || wiki.limited || outputs.limited || inbox.limited
@@ -274,6 +276,8 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     rawExists: raw.exists,
     wikiExists: wiki.exists,
     wikiIndexExists,
+    mappedFolders: !!bindings,
+    bindingIssues: bindings ? Object.entries(bindings.roles).filter(([role, binding]) => binding.enabled && !["ready", "disabled"].includes(knowledgeRoleStatus(vaultPath, role as KnowledgeRootRole))).map(([role]) => `${role} 位置尚未绑定或已失效`) : [],
     trackerExists,
     rawChangedCount,
     rawDigestStatus,
@@ -366,12 +370,14 @@ interface DashboardScanResult extends KnowledgeBaseDashboardDirectory {
 }
 
 async function scanDashboardRole(vaultPath: string, role: KnowledgeRootRole, options: DashboardScanOptions): Promise<DashboardScanResult> {
-  const scans = await Promise.all(knowledgeRoleRoots(vaultPath, role).map((root) => scanDashboardDirectory(vaultPath, root, options)));
-  const files = scans.flatMap((scan) => scan.files);
+  const roots = knowledgeRoleRoots(vaultPath, role);
+  const scans = await Promise.all(roots.map((root) => scanDashboardDirectory(vaultPath, root, options)));
+  const bindings = getKnowledgeFolderBindings(vaultPath);
+  const files = [...new Map(scans.flatMap(scan => scan.files).filter(file => knowledgePathRole(vaultPath, file.path) === role).map(file => [file.path, file])).values()];
   return {
-    path: resolveKnowledgePath(vaultPath, role), exists: scans.some((scan) => scan.exists),
+    path: bindings ? bindings.roles[role].writePath ?? roots.join("、") : resolveKnowledgePath(vaultPath, role), exists: scans.some((scan) => scan.exists),
     fileCount: files.length, folderCount: scans.reduce((sum, scan) => sum + scan.folderCount, 0),
-    totalSize: scans.reduce((sum, scan) => sum + scan.totalSize, 0), files,
+    totalSize: files.reduce((sum, file) => sum + file.size, 0), files,
     recentFiles: [...files].sort((a, b) => b.mtime - a.mtime).slice(0, RECENT_FILE_LIMIT),
     limited: scans.some((scan) => scan.limited), failed: scans.some((scan) => scan.failed)
   };
@@ -909,6 +915,8 @@ async function countImmediateDirectories(root: string): Promise<number> {
 }
 
 interface HealthInput {
+  mappedFolders?: boolean;
+  bindingIssues?: string[];
   readFailed: boolean;
   limited: boolean;
   settings: KnowledgeBaseSettings;
@@ -948,10 +956,11 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
     });
   };
 
-  if (!input.rawExists) addReason("critical", "raw 目录缺失", "raw 目录缺失", 1, "说明原始来源区不可用。");
-  if (!input.wikiExists) addReason("critical", "wiki 目录缺失", "wiki 目录缺失", 1, "说明沉淀后的知识区不可用。");
-  if (!input.wikiIndexExists) addReason("critical", "wiki/index.md 缺失", "wiki/index.md 缺失", 1, "说明知识库入口页不存在。");
-  if (!input.trackerExists) addReason("critical", "tracker 缺失", "tracker 缺失", 1, "说明来源消化登记无法确认。");
+  if (!input.rawExists && (!input.mappedFolders || input.settings.folderBindings?.roles.raw.enabled)) addReason("critical", "资料来源位置失效", "资料来源位置失效", 1, "已绑定的原始来源区不可用。");
+  if (!input.wikiExists && (!input.mappedFolders || input.settings.folderBindings?.roles.wiki.enabled)) addReason("critical", "知识成果位置失效", "知识成果位置失效", 1, "已绑定的知识区不可用。");
+  if (!input.mappedFolders && !input.wikiIndexExists) addReason("critical", "wiki/index.md 缺失", "wiki/index.md 缺失", 1, "说明知识库入口页不存在。");
+  if (!input.mappedFolders && !input.trackerExists) addReason("critical", "tracker 缺失", "tracker 缺失", 1, "说明来源消化登记无法确认。");
+  for (const issue of input.bindingIssues ?? []) addReason("critical", issue, issue, 1, "已启用的用途位置不可用，请重新选择。");
 
   const history = normalizeHealthHistory(input.settings.healthHistory ?? []);
   const latestCheckAt = latestHealthEntry(history.filter((entry) => entry.status === "success"))?.at ?? 0;
@@ -961,7 +970,7 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   }
   // Existing knowledge structures remain assessable even when legacy settings
   // have no initialization receipt. Missing core pieces still deduct points.
-  const initialized = input.rawExists || input.wikiExists || input.wikiIndexExists || input.trackerExists
+  const initialized = input.mappedFolders ? Object.values(input.settings.folderBindings?.roles ?? {}).some(binding => binding.enabled) : input.rawExists || input.wikiExists || input.wikiIndexExists || input.trackerExists
     || input.settings.initialization.status === "initialized" || input.settings.initialization.initializedAt > 0;
   const assessment = !initialized ? "uninitialized" : input.readFailed ? "unavailable" : input.limited ? "limited" : "local-structure";
   const available = assessment === "local-structure" || assessment === "limited";
@@ -974,7 +983,7 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   const reasons = reasonTexts.length ? reasonTexts : ["已检查的本地结构未发现扣分项"];
   return {
     assessment,
-    coverage: assessment === "limited" ? `本地结构与已读取的来源状态；每个目录最多扫描 ${MAX_DASHBOARD_FILES} 个文件，部分来源因读取预算尚未检查。` : "仅检查 raw、wiki、wiki/index.md、Tracker 及 Raw 来源状态；不是全库体检。",
+    coverage: assessment === "limited" ? `本地结构与已读取的来源状态；每个目录最多扫描 ${MAX_DASHBOARD_FILES} 个文件，部分来源因读取预算尚未检查。` : input.mappedFolders ? "检查已启用的资料、知识位置与私有来源处理记录；不是全库体检。" : "仅检查 raw、wiki、wiki/index.md、Tracker 及 Raw 来源状态；不是全库体检。",
     unchecked: ["断链", "孤儿页面", "过时内容", "索引链接有效性"],
     status,
     label,
@@ -983,7 +992,7 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
     scoreSummary: available ? healthScoreSummary(score, status, critical.length > 0) : label,
     scoreReasons,
     scoreCheckNote: HEALTH_SCORE_CHECK_NOTE,
-    scoreThresholdText: HEALTH_SCORE_THRESHOLD_TEXT,
+    scoreThresholdText: input.mappedFolders ? "85+ 健康，60–84 风险，低于 60 异常；已启用位置失效各扣 24 分。" : HEALTH_SCORE_THRESHOLD_TEXT,
     lastCheckAt: latestCheckAt,
     streakDays: countHealthStreakDays(history, input.maintenanceHistory),
   };
@@ -1035,14 +1044,16 @@ function healthScoreSummary(score: number, status: KnowledgeBaseDashboardHealthS
   return `当前 ${score} 分，达到 85+，显示健康。`;
 }
 
-function buildWikiGroups(files: KnowledgeBaseDashboardFile[], generatedAt: number): KnowledgeBaseDashboardWikiGroup[] {
+function buildWikiGroups(files: KnowledgeBaseDashboardFile[], generatedAt: number, vaultPath: string): KnowledgeBaseDashboardWikiGroup[] {
   const groups = new Map<string, KnowledgeBaseDashboardWikiGroup>();
   for (const file of files) {
-    const parts = file.path.split("/");
-    if (parts.length < 3 || knowledgeRootRole(file.path) !== "wiki") continue;
-    const folder = parts[1];
+    if (knowledgePathRole(vaultPath, file.path) !== "wiki") continue;
+    const root = knowledgeRoleRoots(vaultPath, "wiki").filter(directory => file.path.startsWith(`${directory}/`)).sort((a, b) => b.length - a.length)[0];
+    if (!root) continue;
+    const parts = file.path.slice(root.length + 1).split("/");
+    const folder = parts.length > 1 ? parts[0] : root.split("/").at(-1)!;
     if (!folder || folder.startsWith(".")) continue;
-    const groupPath = `${parts[0]}/${folder}`;
+    const groupPath = parts.length > 1 ? `${root}/${folder}` : root;
     const group = groups.get(groupPath) ?? { path: groupPath, label: wikiCategoryLabel(folder), totalCount: 0, sharePercent: 0, todayCount: 0 };
     group.totalCount += 1;
     if (isSameLocalDay(file.createdAt ?? file.mtime, generatedAt)) group.todayCount += 1;

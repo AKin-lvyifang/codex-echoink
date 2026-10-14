@@ -1,5 +1,5 @@
 import { extractKnowledgeLinks, extractKnowledgeApplicability, resolveKnowledgeLink, type KnowledgeLink, type KnowledgeApplicability, type KnowledgeLinkResolver, type KnowledgeRelation, type KnowledgeRelationPage } from "./knowledge-relations";
-import { knowledgeRootRole, knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath } from "./root-paths";
+import { knowledgeRootRole, knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath, knowledgePathRole, knowledgePathPolicy, getKnowledgeFolderBindings } from "./root-paths";
 import { isRawMarkdownPath, rawDigestFingerprint } from "./raw-digest";
 import { createHash } from "node:crypto";
 import { createReadStream, type Stats } from "node:fs";
@@ -135,6 +135,7 @@ interface StoredKnowledgeEntry {
 
 interface StoredKnowledgeAgentIndex {
   schemaVersion: typeof KNOWLEDGE_AGENT_INDEX_SCHEMA_VERSION;
+  bindingRevision?: number;
   generation: number;
   /** Cursor generation for result sets ordered by recordedAt metadata. */
   recentGeneration: number;
@@ -188,7 +189,7 @@ export class KnowledgeAgentIndex {
   /** Hosts call this for create/modify/rename/delete and committed local writes. */
   invalidate(relativePath?: string): void {
     if (relativePath !== undefined) {
-      const root = knowledgeRootRole(relativePath);
+      const root = knowledgePathRole(this.vaultPath, relativePath);
       if (!KNOWLEDGE_ROOTS.includes(root as KnowledgeAgentKind)) return;
     }
     this.invalidationVersion += 1;
@@ -200,6 +201,7 @@ export class KnowledgeAgentIndex {
   }
 
   private async ensureFresh(): Promise<void> {
+    if ((this.current?.bindingRevision ?? 0) !== (getKnowledgeFolderBindings(this.vaultPath)?.revision ?? 0)) this.invalidate();
     while (!this.current || this.refreshedVersion !== this.invalidationVersion) {
       await this.refreshInvalidated();
     }
@@ -245,7 +247,7 @@ export class KnowledgeAgentIndex {
       ? ""
       : normalizeQuery(request.query ?? "");
     const kinds = normalizeKinds(request.kinds);
-    const excludedPaths = normalizeExcludedPaths(request.excludePaths);
+    const excludedPaths = normalizeExcludedPaths(request.excludePaths, this.vaultPath);
     const limit = normalizePageSize(request.limit);
     const queryTokens = tokenCounts(query);
     const queryHash = knowledgeQueryHash(
@@ -321,7 +323,7 @@ export class KnowledgeAgentIndex {
   }>): Promise<KnowledgeAgentReadResult> {
     await this.ensureFresh();
     const index = this.requireCurrent();
-    const relativePath = normalizeKnowledgePath(resolveKnowledgePath(this.vaultPath, input.vaultRelativePath));
+    const relativePath = normalizeKnowledgePath(resolveKnowledgePath(this.vaultPath, input.vaultRelativePath), this.vaultPath);
     const entry = index.entries[relativePath];
     if (!entry) {
       throw new KnowledgeAgentIndexError(
@@ -349,7 +351,7 @@ export class KnowledgeAgentIndex {
       relativePath
     );
     const bytes = await fsp.readFile(absolutePath);
-    const currentRevision = contentRevision(bytes, relativePath);
+    const currentRevision = contentRevision(bytes, relativePath, this.vaultPath);
     if (currentRevision !== entry.contentRevision) {
       this.invalidate(relativePath);
       throw new KnowledgeAgentIndexError(
@@ -367,7 +369,7 @@ export class KnowledgeAgentIndex {
 
   async related(input: Readonly<{ vaultRelativePath: string; limit?: number; cursor?: string }>): Promise<KnowledgeRelationPage> {
     await this.ensureFresh();
-    const relativePath = normalizeKnowledgePath(resolveKnowledgePath(this.vaultPath, input.vaultRelativePath));
+    const relativePath = normalizeKnowledgePath(resolveKnowledgePath(this.vaultPath, input.vaultRelativePath), this.vaultPath);
     return this.relationPage(relativePath, input.limit ?? 8, input.cursor);
   }
 
@@ -410,7 +412,7 @@ export class KnowledgeAgentIndex {
   ): Promise<Readonly<KnowledgeAgentReliableRawKnowledge> | null> {
     await this.ensureFresh();
     const index = this.requireCurrent();
-    const rawPath = normalizeRawSourcePath(resolveKnowledgePath(this.vaultPath, vaultRelativePath));
+    const rawPath = normalizeRawSourcePath(resolveKnowledgePath(this.vaultPath, vaultRelativePath), this.vaultPath);
     const raw = index.entries[rawPath];
     if (!raw || raw.kind !== "raw") return null;
     const linked = Object.values(index.entries)
@@ -440,7 +442,7 @@ export class KnowledgeAgentIndex {
       return null;
     }
     const rawFile = await resolveIndexedFile(this.vaultPath, rawPath);
-    if (await streamedContentRevision(rawFile, rawPath) !== raw.contentRevision) {
+    if (await streamedContentRevision(rawFile, rawPath, this.vaultPath) !== raw.contentRevision) {
       this.invalidate(rawPath);
       return null;
     }
@@ -454,7 +456,7 @@ export class KnowledgeAgentIndex {
   private async performRefresh(): Promise<KnowledgeAgentIndexRefreshResult> {
     const vaultRoot = await resolveDirectory(this.vaultPath, "Vault");
     await ensurePrivateStorageRoot(this.storageRootPath);
-    const previous = this.current ?? await readStoredIndex(this.indexPath);
+    const previous = this.current ?? await readStoredIndex(this.indexPath, this.vaultPath);
     const candidates = new Map<string, CandidateEntry>();
     const reused = new Map<string, StoredKnowledgeEntry>();
     let indexedCount = 0;
@@ -463,15 +465,17 @@ export class KnowledgeAgentIndex {
     for (const kind of KNOWLEDGE_ROOTS) {
       const files = (await Promise.all(knowledgeRoleRoots(vaultRoot, kind).map((root) => walkKnowledgeRoot(vaultRoot, kind, root)))).flat();
       for (const file of files) {
+        if (knowledgePathRole(vaultRoot, file.vaultRelativePath) !== kind) continue;
         const oldEntry = previous.entries[file.vaultRelativePath];
-        if (oldEntry?.relationSchema === 1 && metadataMatches(oldEntry, file.stat)) {
+        if (oldEntry?.relationSchema === 1 && oldEntry.kind === kind && (previous.bindingRevision ?? 0) === (getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0) && metadataMatches(oldEntry, file.stat)) {
           reused.set(file.vaultRelativePath, oldEntry);
           reusedCount += 1;
           continue;
         }
-        const candidate = await buildCandidateEntry(file, kind);
+        const candidate = await buildCandidateEntry(file, kind, vaultRoot);
         if (
           oldEntry
+          && (previous.bindingRevision ?? 0) === (getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0)
           && oldEntry.contentRevision === candidate.contentRevision
         ) {
           candidate.rawLinks = oldEntry.rawSources.map((source) => ({
@@ -528,7 +532,7 @@ export class KnowledgeAgentIndex {
         combined[relativePath]
       ))
       .sort((left, right) => left.localeCompare(right));
-    const semanticChanged = changedPaths.length > 0 || deletedPaths.length > 0;
+    const semanticChanged = changedPaths.length > 0 || deletedPaths.length > 0 || (previous.bindingRevision ?? 0) !== (getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0);
     const recentMetadataChanged = nextPaths.some((relativePath) => {
       const oldEntry = previous.entries[relativePath];
       return oldEntry !== undefined
@@ -538,6 +542,7 @@ export class KnowledgeAgentIndex {
     const metadataChanged = indexedCount > 0;
     const next: StoredKnowledgeAgentIndex = {
       schemaVersion: KNOWLEDGE_AGENT_INDEX_SCHEMA_VERSION,
+      bindingRevision: getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0,
       generation: semanticChanged
         ? Math.max(0, previous.generation) + 1
         : previous.generation,
@@ -600,7 +605,8 @@ async function buildCandidateEntry(
     vaultRelativePath: string;
     stat: Stats;
   }>,
-  kind: KnowledgeAgentKind
+  kind: KnowledgeAgentKind,
+  vaultRoot = ""
 ): Promise<CandidateEntry> {
   const isText = kind !== "raw"
     || RAW_TEXT_EXTENSIONS.has(path.extname(file.vaultRelativePath).toLowerCase());
@@ -613,7 +619,7 @@ async function buildCandidateEntry(
     kind,
     title,
     contentRevision: bytes
-      ? contentRevision(bytes, file.vaultRelativePath)
+      ? contentRevision(bytes, file.vaultRelativePath, vaultRoot)
       : await streamedContentRevision(file.absolutePath),
     size: file.stat.size,
     mtimeMs: file.stat.mtimeMs,
@@ -626,7 +632,7 @@ async function buildCandidateEntry(
     applicability: extractKnowledgeApplicability(text),
     rawLinks: kind === "raw"
       ? []
-      : extractRawSourceLinks(text, file.vaultRelativePath)
+      : extractRawSourceLinks(text, file.vaultRelativePath, vaultRoot)
   };
 }
 
@@ -707,7 +713,8 @@ function shouldIndexPath(
 
 function extractRawSourceLinks(
   text: string,
-  knowledgePath: string
+  knowledgePath: string,
+  vaultRoot = ""
 ): CandidateEntry["rawLinks"] {
   const markerRevisions = new Map<string, string>();
   for (const match of text.matchAll(
@@ -722,7 +729,7 @@ function extractRawSourceLinks(
         continue;
       }
       markerRevisions.set(
-        normalizeRawSourcePath(parsed.path),
+        normalizeRawSourcePath(parsed.path, vaultRoot),
         normalizeRevision(parsed.revision)
       );
     } catch {
@@ -733,13 +740,13 @@ function extractRawSourceLinks(
   for (const match of text.matchAll(
     /\[\[([^\]|#\r\n]+)(?:#[^\]|\r\n]+)?(?:\|[^\]\r\n]+)?\]\]/gu
   )) {
-    const source = resolveRawLink(match[1] ?? "", knowledgePath);
+    const source = resolveRawLink(match[1] ?? "", knowledgePath, vaultRoot);
     if (source) links.add(source);
   }
   for (const match of text.matchAll(/\[[^\]\r\n]*\]\(([^)\r\n]+)\)/gu)) {
     const rawTarget = (match[1] ?? "").trim().replace(/^<|>$/gu, "")
       .split(/\s+["']/u, 1)[0] ?? "";
-    const source = resolveRawLink(rawTarget, knowledgePath);
+    const source = resolveRawLink(rawTarget, knowledgePath, vaultRoot);
     if (source) links.add(source);
   }
   for (const markerPath of markerRevisions.keys()) links.add(markerPath);
@@ -751,7 +758,7 @@ function extractRawSourceLinks(
     }));
 }
 
-function resolveRawLink(value: string, knowledgePath: string): string | null {
+function resolveRawLink(value: string, knowledgePath: string, vaultRoot = ""): string | null {
   let decoded: string;
   try {
     decoded = decodeURIComponent(value.trim());
@@ -760,14 +767,14 @@ function resolveRawLink(value: string, knowledgePath: string): string | null {
   }
   if (!decoded || /^[a-z]+:\/\//iu.test(decoded)) return null;
   const withoutAnchor = decoded.split(/[?#]/u, 1)[0]?.replace(/^\/+/, "") ?? "";
-  const candidate = knowledgeRolePath(withoutAnchor).toLowerCase().startsWith("raw/")
+  const candidate = knowledgePathRole(vaultRoot, withoutAnchor) === "raw"
     ? path.posix.normalize(withoutAnchor)
     : path.posix.normalize(path.posix.join(
         path.posix.dirname(knowledgePath),
         withoutAnchor
       ));
   try {
-    return normalizeRawSourcePath(candidate);
+    return normalizeRawSourcePath(candidate, vaultRoot);
   } catch {
     return null;
   }
@@ -970,7 +977,7 @@ function decodeCursor(
   }
 }
 
-async function readStoredIndex(indexPath: string): Promise<StoredKnowledgeAgentIndex> {
+async function readStoredIndex(indexPath: string, vaultRoot = ""): Promise<StoredKnowledgeAgentIndex> {
   const stat = await fsp.lstat(indexPath).catch((error) => {
     if (isMissingPathError(error)) return null;
     throw error;
@@ -983,7 +990,7 @@ async function readStoredIndex(indexPath: string): Promise<StoredKnowledgeAgentI
     );
   }
   try {
-    return normalizeStoredIndex(JSON.parse(await fsp.readFile(indexPath, "utf8")));
+    return normalizeStoredIndex(JSON.parse(await fsp.readFile(indexPath, "utf8")), vaultRoot);
   } catch {
     return emptyIndex();
   }
@@ -996,7 +1003,7 @@ async function persistIndex(
   await writeFileAtomic(indexPath, `${JSON.stringify(index)}\n`);
 }
 
-function normalizeStoredIndex(value: unknown): StoredKnowledgeAgentIndex {
+function normalizeStoredIndex(value: unknown, vaultRoot = ""): StoredKnowledgeAgentIndex {
   if (!value || typeof value !== "object") return emptyIndex();
   const record = value as Partial<StoredKnowledgeAgentIndex>;
   if (record.schemaVersion !== KNOWLEDGE_AGENT_INDEX_SCHEMA_VERSION) {
@@ -1007,11 +1014,12 @@ function normalizeStoredIndex(value: unknown): StoredKnowledgeAgentIndex {
     ? record.entries
     : {};
   for (const candidate of Object.values(rawEntries)) {
-    const entry = normalizeStoredEntry(candidate);
+    const entry = normalizeStoredEntry(candidate, vaultRoot);
     if (entry) entries[entry.vaultRelativePath] = entry;
   }
   return {
     schemaVersion: KNOWLEDGE_AGENT_INDEX_SCHEMA_VERSION,
+    bindingRevision: record.bindingRevision ?? 0,
     generation: Number.isInteger(record.generation) && (record.generation ?? -1) >= 0
       ? record.generation as number
       : 0,
@@ -1026,12 +1034,12 @@ function normalizeStoredIndex(value: unknown): StoredKnowledgeAgentIndex {
   };
 }
 
-function normalizeStoredEntry(value: unknown): StoredKnowledgeEntry | null {
+function normalizeStoredEntry(value: unknown, vaultRoot = ""): StoredKnowledgeEntry | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Partial<StoredKnowledgeEntry>;
   try {
-    const relativePath = normalizeKnowledgePath(record.vaultRelativePath ?? "");
-    const kind = knowledgeKindForPath(relativePath);
+    const relativePath = normalizeKnowledgePath(record.vaultRelativePath ?? "", vaultRoot);
+    const kind = knowledgeKindForPath(relativePath, vaultRoot);
     if (!kind || record.kind !== kind) return null;
     const revision = normalizeRevision(record.contentRevision ?? "");
     const rawSources = Array.isArray(record.rawSources)
@@ -1040,7 +1048,7 @@ function normalizeStoredEntry(value: unknown): StoredKnowledgeEntry | null {
           const raw = source as Partial<StoredRawSource>;
           try {
             return [{
-              vaultRelativePath: normalizeRawSourcePath(raw.vaultRelativePath ?? ""),
+              vaultRelativePath: normalizeRawSourcePath(raw.vaultRelativePath ?? "", vaultRoot),
               contentRevision: raw.contentRevision === null
                 ? null
                 : normalizeRevision(raw.contentRevision ?? "")
@@ -1188,7 +1196,7 @@ async function resolveIndexedFile(
   return real;
 }
 
-function normalizeKnowledgePath(value: string): string {
+function normalizeKnowledgePath(value: string, vaultRoot = ""): string {
   if (typeof value !== "string" || !value.trim() || value.includes("\0")) {
     throw new KnowledgeAgentIndexError("invalid_path", "Knowledge path is invalid.");
   }
@@ -1202,16 +1210,16 @@ function normalizeKnowledgePath(value: string): string {
     normalized === "."
     || normalized.startsWith("../")
     || segments.some((segment) => !segment || segment === ".." || isHiddenName(segment))
-    || !knowledgeKindForPath(normalized)
+    || !knowledgeKindForPath(normalized, vaultRoot)
   ) {
     throw new KnowledgeAgentIndexError("invalid_path", "Knowledge path is outside the indexed roots.");
   }
   return normalized;
 }
 
-function normalizeRawSourcePath(value: string): string {
-  const normalized = normalizeKnowledgePath(value);
-  if (!knowledgeRolePath(normalized).toLowerCase().startsWith("raw/")) {
+function normalizeRawSourcePath(value: string, vaultRoot = ""): string {
+  const normalized = normalizeKnowledgePath(value, vaultRoot);
+  if (knowledgePathRole(vaultRoot, normalized) !== "raw") {
     throw new KnowledgeAgentIndexError("invalid_path", "Knowledge source must be under raw/.");
   }
   return normalized;
@@ -1241,10 +1249,10 @@ function normalizeKinds(
 }
 
 function normalizeExcludedPaths(
-  values: readonly string[] | undefined
+  values: readonly string[] | undefined, vaultRoot = ""
 ): string[] {
   if (!values?.length) return [];
-  return Array.from(new Set(values.map(normalizeKnowledgePath)))
+  return Array.from(new Set(values.map((value) => normalizeKnowledgePath(value, vaultRoot))))
     .sort((left, right) => left.localeCompare(right));
 }
 
@@ -1259,8 +1267,8 @@ function normalizeNonNegativeNumber(value: unknown): number {
     : 0;
 }
 
-function knowledgeKindForPath(value: string): KnowledgeAgentKind | null {
-  const root = knowledgeRootRole(value);
+function knowledgeKindForPath(value: string, vaultRoot = ""): KnowledgeAgentKind | null {
+  const root = knowledgePathRole(vaultRoot, value);
   return KNOWLEDGE_ROOTS.includes(root as KnowledgeAgentKind)
     ? root as KnowledgeAgentKind
     : null;
@@ -1282,13 +1290,13 @@ function knowledgeTitle(relativePath: string, text: string): string {
     || path.posix.basename(relativePath, path.posix.extname(relativePath));
 }
 
-function contentRevision(bytes: Uint8Array, relativePath = ""): string {
-  if (knowledgeRolePath(relativePath).startsWith("raw/") && isRawMarkdownPath(relativePath)) return `sha256:${rawDigestFingerprint(relativePath, Buffer.from(bytes)).split(":").at(-1)}`;
+function contentRevision(bytes: Uint8Array, relativePath = "", vaultRoot = ""): string {
+  if (knowledgePathRole(vaultRoot, relativePath) === "raw" && isRawMarkdownPath(relativePath)) return `sha256:${rawDigestFingerprint(relativePath, Buffer.from(bytes)).split(":").at(-1)}`;
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-async function streamedContentRevision(absolutePath: string, relativePath = ""): Promise<string> {
-  if (knowledgeRolePath(relativePath).startsWith("raw/") && isRawMarkdownPath(relativePath)) return contentRevision(await fsp.readFile(absolutePath), relativePath);
+async function streamedContentRevision(absolutePath: string, relativePath = "", vaultRoot = ""): Promise<string> {
+  if (knowledgePathRole(vaultRoot, relativePath) === "raw" && isRawMarkdownPath(relativePath)) return contentRevision(await fsp.readFile(absolutePath), relativePath, vaultRoot);
   const hash = createHash("sha256");
   await new Promise<void>((resolve, reject) => {
     const stream = createReadStream(absolutePath);

@@ -10,12 +10,16 @@ export interface PdfJob {
   version: 1; id: string; name: string; createdAt: number; options: PdfOptions;
   state: "running" | "completed" | "partial" | "cancelled" | "failed";
   stage: string; error?: string; batchId?: string; uploadUrl?: string; sourceFingerprint?: string; wikiState?: "running" | "completed" | "failed"; uploadState?: "prepared" | "uploaded" | "uncertain";
+  artifactPrefix?: string;
+  imageDirectory?: string;
+  imagePaths?: string[];
   rawDirectory: string; sourceLanguage?: string; artifacts: PdfArtifact[]; pages: PdfPage[];
   chunks: PdfChunk[]; warnings: string[]; published: Partial<Record<"reading" | "translation", string>>;
 }
 export interface PdfFiles {
   exists(path: string): Promise<boolean>;
   read(path: string): Promise<string>;
+  readBinary?(path: string): Promise<Uint8Array>;
   create(path: string, value: string | Uint8Array): Promise<void>;
   replace(path: string, value: string, expected?: string): Promise<void>;
   listJobs(): Promise<string[]>;

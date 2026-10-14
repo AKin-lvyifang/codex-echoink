@@ -92,12 +92,16 @@ function collectVaultNoteLinkCandidates(text: string, vaultBasePathValue: string
     }
   }
 
-  const barePattern = /(^|[\s"'“‘(（:：，,;；、])((?:(?:wiki|journal|outputs|raw|inbox|projects|work|templates|archive|testing|assets)\/[^\n\r\t()[\]<>]+?\.md)|(?:[A-Za-z0-9_.\-\u3400-\u9fff]+\.md))/giu;
+  const barePattern = /(^|[\s"'“‘(（:：，,;；、])((?:[^\s/\n\r\t()[\]<>]+\/[^\n\r\t()[\]<>]+?\.md)|(?:[A-Za-z0-9_.\-\u3400-\u9fff]+\.md))/giu;
   for (const match of text.matchAll(barePattern)) {
     const targetPath = normalizeVaultNoteCandidate(match[2]);
     if (!targetPath) continue;
     const prefixLength = match[1].length;
     const start = (match.index ?? 0) + prefixLength;
+    // A bare tail after a word may belong to a longer folder name containing spaces.
+    // Explicit links and code spans already preserve those full paths.
+    const preceding = text.slice(0, start).match(/([^\s\r\n]+)\s+$/u)?.[1];
+    if (preceding && /[\p{L}\p{N}]$/u.test(preceding)) continue;
     candidates.push({
       start,
       end: start + match[2].length,
@@ -131,9 +135,8 @@ function normalizeVaultNoteCandidate(value: string): string {
   if (!/\.md$/i.test(withoutAlias) || /^https?:\/\//i.test(withoutAlias) || withoutAlias.startsWith("/")) return "";
   const normalized = normalizeVaultPath(withoutAlias);
   if (normalized.split("/").some((part) => part === "." || part === "..")) return "";
-  const root = normalized.split("/")[0] || "";
-  if (!normalized.includes("/") || (VAULT_NOTE_ROOTS.has(root) || knowledgeRootRole(root) !== null)) return normalized;
-  return "";
+  if (normalized.split("/").some((part) => !part || part.startsWith(".")) || /^[a-z]:/iu.test(normalized)) return "";
+  return normalized;
 }
 
 function relativePathForAbsoluteVaultNote(absolutePath: string, basePath: string): string {

@@ -1,3 +1,4 @@
+import { knowledgeRootEntries, knowledgeRootRole } from "../knowledge-base/root-paths";
 import * as fsp from "fs/promises";
 import type { Dirent } from "fs";
 import * as path from "path";
@@ -152,11 +153,7 @@ export class ReviewManager {
   }
 
   private async readMaintenanceReports(range: ReviewRange): Promise<KnowledgeBaseMaintenanceReportEvidence[]> {
-    const outputsDir = path.join(this.plugin.getVaultPath(), "outputs");
-    const entries = [
-      ...await readMaintenanceReportEntries(outputsDir, "outputs"),
-      ...await readMaintenanceReportEntries(path.join(outputsDir, "maintenance"), "outputs/maintenance")
-    ];
+    const entries = (await Promise.all(knowledgeRootEntries(this.plugin.getVaultPath()).filter((root) => knowledgeRootRole(root) === "outputs").map(async (root) => [...await readMaintenanceReportEntries(path.join(this.plugin.getVaultPath(), root), root), ...await readMaintenanceReportEntries(path.join(this.plugin.getVaultPath(), root, "maintenance"), `${root}/maintenance`)]))).flat();
     const reports: Array<KnowledgeBaseMaintenanceReportEvidence & { mtime: number }> = [];
     for (const entry of entries) {
       const absolute = path.join(this.plugin.getVaultPath(), entry.path);
@@ -169,10 +166,14 @@ export class ReviewManager {
         mtime: stat.mtimeMs
       });
     }
+    for (const record of await this.plugin.getKnowledgeSurfaceService()?.getMaintenanceRecords() ?? []) {
+      if (record.at < range.startAt || record.at > range.endAt + 24 * 60 * 60 * 1000) continue;
+      reports.push({ path: record.result.notes[0]?.path ?? record.sources[0]?.path ?? "", recordId: record.recordId, summary: record.summary, resultStatus: record.result.status, producedPaths: record.result.notes.map((note) => note.path), issues: record.result.issues.map((issue) => issue.message), assessments: record.result.assessments.map((item) => `${item.claim}：${item.status}；${item.asOf}；${item.verification}`), excerpt: `${record.date} · ${record.result.status}\n${record.summary}\n${record.result.assessments.map((item) => `${item.claim}：${item.status}；${item.verification}；${item.evidence.join("、")}`).join("\n")}`, mtime: record.at });
+    }
     return reports
       .sort((left, right) => right.mtime - left.mtime)
       .slice(0, 5)
-      .map(({ path, excerpt }) => ({ path, excerpt }));
+      .map(({ mtime: _mtime, ...report }) => report);
   }
 }
 

@@ -1,3 +1,4 @@
+import { KnowledgeFolderSection } from "./knowledge-folder-section";
 import { resolveKnowledgePath } from "../knowledge-base/root-paths";
 import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -87,6 +88,7 @@ interface KnowledgeInitProgressRefs {
  * 为准。settings 里的 initialized 只保留历史，不再决定当前状态。
  */
 export class KnowledgeInitializationSection {
+  private folderSection: KnowledgeFolderSection | null = null;
   private readonly interactionDock = new InteractionDockController();
   private interactionEl: HTMLElement | null = null;
   private interactionKey = "";
@@ -123,6 +125,7 @@ export class KnowledgeInitializationSection {
   ) {}
 
   get showDashboard(): boolean {
+    if (this.plugin.settings.knowledgeBase.folderBindings) return true;
     return this.loaded && this.structure !== null
       && this.structure.state !== "uninitialized"
       && !this.reselecting
@@ -130,6 +133,7 @@ export class KnowledgeInitializationSection {
   }
 
   dispose(): void {
+    this.folderSection?.dispose();
     this.interactionDock.dispose();
     this.interactionEl = null;
     this.interactionKey = "";
@@ -153,6 +157,11 @@ export class KnowledgeInitializationSection {
   }
 
   render(page: HTMLElement, zh: boolean): void {
+    if (this.plugin.settings.knowledgeBase.folderBindings) {
+      this.folderSection ??= new KnowledgeFolderSection(this.plugin, this.scheduleRender);
+      this.folderSection.render(page, zh);
+      return;
+    }
     this.pageEl = page;
     this.zh = zh;
     this.progressRefs = null;

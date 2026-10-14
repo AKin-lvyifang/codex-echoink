@@ -2,7 +2,7 @@ import { TFile, TFolder, type App } from "obsidian";
 import type { PdfFiles } from "./types";
 
 export class PdfVaultFiles implements PdfFiles {
-  constructor(private readonly app: App, private readonly stateDirectory: string) {}
+  constructor(private readonly app: App, private readonly stateDirectory: string, private readonly mapped = false) {}
   roots(): string[] { return this.app.vault.getRoot().children.filter(item => item instanceof TFolder).map(item => item.path); }
   private safe(path: string): string {
     if (!path || path.startsWith("/") || path.includes("\\") || path.split("/").some(part => !part || part === "." || part === "..")) throw new Error("PDF 成果路径无效。");
@@ -10,11 +10,13 @@ export class PdfVaultFiles implements PdfFiles {
   }
   private state(path: string): boolean { return path.startsWith(this.stateDirectory + "/"); }
   async exists(path: string): Promise<boolean> { return this.app.vault.adapter.exists(this.safe(path)); }
+  async readBinary(path: string): Promise<Uint8Array> { return new Uint8Array(await this.app.vault.adapter.readBinary(this.safe(path))); }
   async read(path: string): Promise<string> { return this.app.vault.adapter.read(this.safe(path)); }
   private async parents(path: string): Promise<void> {
     const parts = path.split("/"); parts.pop(); let parent = "";
     for (const part of parts) { parent = parent ? `${parent}/${part}` : part;
       if (!await this.exists(parent)) {
+        if (this.mapped && !this.state(path)) throw new Error(`PDF 保存位置已失效：${parent}，请重新选择，未补建旧目录。`);
         if (parent.startsWith(this.app.vault.configDir)) await this.app.vault.adapter.mkdir(parent);
         else await this.app.vault.createFolder(parent);
       }

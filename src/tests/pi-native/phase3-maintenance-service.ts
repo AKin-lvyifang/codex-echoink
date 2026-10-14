@@ -1,4 +1,8 @@
-import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
+import { emptyKnowledgeFolderBindings, registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "../../knowledge-base/root-paths";
+import { readPrivateMaintenanceRecords } from "../../plugin/pi-knowledge-maintenance-production";
+import { rawDigestFingerprint, readRawDigestRegistry, writeRawDigestRegistry } from "../../knowledge-base/raw-digest";
+import { KnowledgeAgentIndex } from "../../knowledge-base/knowledge-agent-index";
+import { discoverKnowledgeBaseSources } from "../../knowledge-base/discovery";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
@@ -65,6 +69,9 @@ export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void>
   await assertMaintenanceScopeSecurityIsFailClosed();
   await assertReliableExistingKnowledgeReturnsNoopBeforeWrites();
   await assertProductionStructuredNoopCompletesChangedRaw();
+  await assertPrivateRecordsRecoverWithoutRewriting();
+  await assertPrivateSettlementBoundaries();
+  await assertOriginalV1WalNeverRevivesRetiredFiles();
   await assertStructuredNoopProcessesExplicitRaw();
   await assertExplicitRawPriorityAndDirectSequentialWrite();
   await assertDirectRunCreatesNoActivePreviewOrApproval();
@@ -396,6 +403,9 @@ async function assertMaintenanceScopeSecurityIsFailClosed(): Promise<void> {
 }
 
 async function assertReliableExistingKnowledgeReturnsNoopBeforeWrites(): Promise<void> {
+  const fixtureRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "echoink-reliable-noop-"));
+  await fsp.mkdir(path.join(fixtureRoot, "vault/raw"), { recursive: true });
+  await fsp.writeFile(path.join(fixtureRoot, "vault/raw/a.md"), "reliable raw");
   let indexCalls = 0;
   const domain = new Proxy({}, {
     get() {
@@ -403,9 +413,8 @@ async function assertReliableExistingKnowledgeReturnsNoopBeforeWrites(): Promise
     }
   });
   const port = new ProductionPiKnowledgeMaintenanceToolPort({
-    vaultRootPath: ".tmp/echoink-reliable-noop-vault-not-used",
-    privateKnowledgeRootPath:
-      ".tmp/echoink-reliable-noop-state-not-used",
+    vaultRootPath: path.join(fixtureRoot, "vault"),
+    privateKnowledgeRootPath: path.join(fixtureRoot, "private"),
     vaultId: VAULT_ID,
     userId: "user-phase3",
     deviceId: "device-phase3",
@@ -416,7 +425,7 @@ async function assertReliableExistingKnowledgeReturnsNoopBeforeWrites(): Promise
         assert.equal(rawPath, "raw/a.md");
         return Object.freeze({
           rawPath,
-          rawContentRevision: `sha256:${"a".repeat(64)}`,
+          rawContentRevision: `sha256:${sha256("reliable raw")}`,
           entries: Object.freeze([Object.freeze({
             vaultRelativePath: "wiki/existing.md",
             title: "现有知识",
@@ -452,6 +461,7 @@ async function assertReliableExistingKnowledgeReturnsNoopBeforeWrites(): Promise
   assert.deepEqual(result.producedPaths, []);
   assert.match(result.message, /现有知识/u);
   assert.match(result.message, /wiki\/existing\.md/u);
+  await fsp.rm(fixtureRoot, { recursive: true, force: true });
 }
 
 async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void> {
@@ -532,7 +542,7 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
       });
       assert.equal(invalidFolder.status, "failed");
       assert.ok(invalidFolder.message.includes(reason), invalidFolder.message);
-      assert.equal(domain.formalWrites.length, writesBeforeRejectedCandidate + 4);
+      assert.equal(domain.formalWrites.length, writesBeforeRejectedCandidate + 1);
     }
     const result = await port.execute({
       vaultId: VAULT_ID,
@@ -556,9 +566,9 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
       result.maintenanceResult?.systemPaths.includes(
         PHASE3_MAINTENANCE_TRACKER_PATH
       ),
-      true
+      false
     );
-    assert.equal(domain.formalWrites.length, 7);
+    assert.equal(domain.formalWrites.length, 1);
     const setRaw = async (value: string) => { await fsp.writeFile(path.join(vaultRootPath, rawPath), value); domain.seed(rawPath, value); };
     const executeCandidate = (id: string, content: string, fingerprints?: Readonly<Record<string, string>>) => port.execute({
       vaultId: VAULT_ID, conversationId: "tolerant-production", piSessionId: "pi-tolerant", productRunId: "same-run-corrections", toolCallId: id,
@@ -595,17 +605,14 @@ async function assertProductionStructuredNoopCompletesChangedRaw(): Promise<void
     });
     assert.equal(subset.status, "completed", subset.message);
     assert.deepEqual(subset.processedSourcePaths, [rawPath]);
-    const tracker = domain.content(PHASE3_MAINTENANCE_TRACKER_PATH)!;
-    assert.doesNotMatch(tracker.split("## Processed").at(-1)!.split("## Changed Raw")[0], /raw\/b.md/u);
-    assert.match(tracker.split("## Changed Raw").at(-1)!, /raw\/b.md/u);
-    const { readKnowledgeBaseTrackerHints } = await import("../../knowledge-base/tracker");
-    const hints = await readKnowledgeBaseTrackerHints(vaultRootPath, PHASE3_MAINTENANCE_TRACKER_PATH,
-      [{ path: rawPath, size: 1, mtime: 1 }, { path: "raw/b.md", size: 1, mtime: 1 }], true);
-    assert.equal(hints.paths.has(rawPath), true);
-    assert.equal(hints.paths.has("raw/b.md"), false, "downstream digest hints must not promote an unread source");
-    const report = domain.content(phase3MaintenanceReportPath(DATE_KEY))!;
-    assert.doesNotMatch(report.split("## Processed Raw")[1].split("## Knowledge targets")[0], /raw\/b.md/u);
-    assert.match(report.split("## Remaining Raw")[1], /raw\/b.md/u);
+    assert.equal(domain.content(PHASE3_MAINTENANCE_TRACKER_PATH), trackerContent, "legacy tracker is retained without new writes");
+    assert.equal(domain.content(phase3MaintenanceReportPath(DATE_KEY)), undefined);
+    const { readPrivateMaintenanceRecords } = await import("../../plugin/pi-knowledge-maintenance-production");
+    const records = await readPrivateMaintenanceRecords(privateKnowledgeRootPath);
+    const detail = records.find((record) => record.recordId === subset.recordId)!;
+    assert.equal(detail.sources.find((source) => source.path === "raw/b.md")?.status, "unread");
+    assert.equal(detail.sources.find((source) => source.path === rawPath)?.status, "processed");
+    assert.equal(detail.result.notes[0]?.path, "wiki/subset.md");
   } finally {
     await fsp.rm(fixtureRoot, { recursive: true, force: true });
   }
@@ -1812,4 +1819,152 @@ function phase3Error(code: Phase3MaintenanceError["code"]): (error: unknown) => 
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+async function assertPrivateRecordsRecoverWithoutRewriting(): Promise<void> {
+  for (const failurePoint of ["before-private-record", "after-private-record"] as const) {
+    const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "echoink-private-record-")));
+    const vault = path.join(root, "vault");
+    const privateRoot = path.join(root, "private");
+    await fsp.mkdir(path.join(vault, "阅读/来源"), { recursive: true });
+    await fsp.mkdir(path.join(vault, "知识/卡片"), { recursive: true });
+    const config = emptyKnowledgeFolderBindings();
+    Object.assign(config.roles.raw, { enabled: true, readPaths: ["阅读/来源"], writePath: "阅读/来源" });
+    Object.assign(config.roles.wiki, { enabled: true, readPaths: ["知识/卡片"], writePath: "知识/卡片" });
+    const release = registerKnowledgeFolderBindings(vault, () => config);
+    registerKnowledgePrivateRoot(vault, privateRoot);
+    const domain = new FakeVaultDomain(vault);
+    const source = "阅读/来源/a.md";
+    await fsp.writeFile(path.join(vault, source), "原始版本");
+    domain.seed(source, "原始版本");
+    let fail = true;
+    const options = { vaultRootPath: vault, privateKnowledgeRootPath: privateRoot, vaultId: VAULT_ID, userId: "user", deviceId: "device", domainService: domain as never, dateKey: () => DATE_KEY };
+    const input = { vaultId: VAULT_ID, conversationId: "private-record", piSessionId: "private-record", productRunId: "private-record", toolCallId: "save", mode: "maintain" as const, request: "", sourcePaths: [source], sourceBodyFingerprints: { [source]: rawDigestFingerprint(source, Buffer.from("原始版本")) }, preferenceSnapshot: PREFERENCE,
+      candidateActions: [{ targetPath: "知识/卡片/a.md", content: "# 知识\n已理解的事实", expectedTarget: { kind: "missing" as const } }], assessments: [{ claim: "事实", status: "valid" as const, evidence: [source], asOf: DATE_KEY, verification: "unverified" as const }] };
+    try {
+      const port = new ProductionPiKnowledgeMaintenanceToolPort({ ...options, faultInjector: (point) => { if (point === failurePoint && fail) { fail = false; throw new Error("record save failure"); } } });
+      await port.initialize();
+      const first = await port.execute(input);
+      assert.equal(first.errorCode, "record_pending", first.message);
+      assert.equal(first.maintenanceResult?.notes.length, 1);
+      assert.equal(domain.formalWrites.length, 1);
+      const restarted = new ProductionPiKnowledgeMaintenanceToolPort(options);
+      await restarted.state.recoverPrivateFinalization();
+      await restarted.initialize();
+      const records = await readPrivateMaintenanceRecords(privateRoot);
+      assert.equal(records.length, 1);
+      assert.equal(records[0].result.assessments.length, 1);
+      assert.equal(records[0].sources[0].status, "processed");
+      const retry = await restarted.execute(input);
+      assert.equal(retry.recordId, records[0].recordId);
+      assert.equal(domain.formalWrites.length, 1, "recovery/repeated call never writes notes again");
+      assert.deepEqual(await fsp.readdir(vault), ["知识", "阅读"], "only bound source and knowledge directories exist");
+      // Global natural noop cannot process the current body from an older delivered fingerprint.
+      await fsp.writeFile(path.join(vault, source), "新正文未被读取");
+      domain.seed(source, "新正文未被读取");
+      const stale = await restarted.execute({ ...input, productRunId: "global", toolCallId: "global", sourcePaths: [], candidateActions: [] });
+      assert.equal(stale.errorCode, "preview_stale");
+      const { readRawDigestRegistry } = await import("../../knowledge-base/raw-digest");
+      const registry = await readRawDigestRegistry(vault, true);
+      assert.notEqual(registry.entries[source].fingerprint, rawDigestFingerprint(source, Buffer.from("新正文未被读取")));
+      // Read-only/no-candidate terminal bookkeeping still has a durable WAL.
+      let terminalFail = true;
+      const noop = new ProductionPiKnowledgeMaintenanceToolPort({ ...options, faultInjector: (point) => { if (point === "before-private-record" && terminalFail) { terminalFail = false; throw new Error("terminal record failure"); } }, knowledgeAgentIndex: { async readReliableKnowledgeForRaw() { return { rawPath: source, rawContentRevision: `sha256:${sha256("新正文未被读取")}`, entries: [{ vaultRelativePath: "知识/卡片/a.md", title: "知识", content: "现有知识", contentRevision: `sha256:${sha256("existing")}` }] }; } } as never });
+      const terminal = await noop.execute({ ...input, productRunId: "reliable", toolCallId: "reliable", candidateActions: [], sourceBodyFingerprints: { [source]: rawDigestFingerprint(source, Buffer.from("新正文未被读取")) } });
+      assert.equal(terminal.errorCode, "record_pending");
+      await new ProductionPiKnowledgeMaintenanceToolPort(options).initialize();
+      const afterTerminal = await readPrivateMaintenanceRecords(privateRoot);
+      assert.equal(afterTerminal.filter((record) => record.runId === "reliable:reliable").length, 1);
+      assert.equal(domain.formalWrites.length, 1);
+    } finally { release(); await fsp.rm(root, { recursive: true, force: true }); }
+  }
+}
+
+async function assertPrivateSettlementBoundaries(): Promise<void> {
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "echoink-private-boundaries-")));
+  const vault = path.join(root, "vault"), privateRoot = path.join(root, "private");
+  await fsp.mkdir(path.join(vault, "阅读/来源"), { recursive: true });
+  await fsp.mkdir(path.join(vault, "知识/卡片"), { recursive: true });
+  const config = emptyKnowledgeFolderBindings();
+  Object.assign(config.roles.raw, { enabled: true, readPaths: ["阅读/来源"], writePath: "阅读/来源" });
+  Object.assign(config.roles.wiki, { enabled: true, readPaths: ["知识/卡片"], writePath: "知识/卡片" });
+  const release = registerKnowledgeFolderBindings(vault, () => config); registerKnowledgePrivateRoot(vault, privateRoot);
+  const domain = new FakeVaultDomain(vault);
+  const a = "阅读/来源/a.md", b = "阅读/来源/b.md";
+  const bodyA = "---\ntitle: Frontmatter source\n---\n\n规范正文 A\n", bodyB = "规范正文 B\n";
+  const revisionA = rawDigestFingerprint(a, Buffer.from(bodyA)), revisionB = rawDigestFingerprint(b, Buffer.from(bodyB));
+  await fsp.writeFile(path.join(vault, a), bodyA); await fsp.writeFile(path.join(vault, b), bodyB); domain.seed(a, bodyA); domain.seed(b, bodyB);
+  const index = new KnowledgeAgentIndex({ vaultPath: vault, storageRootPath: privateRoot });
+  const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: privateRoot, vaultId: VAULT_ID, userId: "user", deviceId: "device", domainService: domain as never, knowledgeAgentIndex: index, dateKey: () => DATE_KEY });
+  const base = { vaultId: VAULT_ID, conversationId: "boundaries", piSessionId: "boundaries", mode: "maintain" as const, request: "", preferenceSnapshot: PREFERENCE };
+  const call = (id: string) => ({ ...base, productRunId: id, toolCallId: id });
+  try {
+    await port.initialize();
+    const seed = await port.execute({ ...call("seed"), sourcePaths: [a], sourceBodyFingerprints: { [a]: revisionA }, candidateActions: [{ targetPath: "知识/卡片/a.md", content: `# Knowledge A\n来源：[[${a}]]`, expectedTarget: { kind: "missing" } }] });
+    assert.equal(seed.maintenanceResult?.status, "completed", seed.message); index.invalidate();
+    const writes = domain.formalWrites.length;
+    for (const global of [false, true]) for (const outdated of [false, true]) {
+      const registry = await readRawDigestRegistry(vault, true); delete registry.entries[a]; await writeRawDigestRegistry(vault, registry);
+      const id = `reliable-${global}-${outdated}`;
+      const result = await port.execute({ ...call(id), ...(global ? { sourcePaths: [], globalSourcePaths: [a] } : { sourcePaths: [a] }), candidateActions: [], ...(outdated ? { sourceBodyFingerprints: { [a]: `sha256:1:${"f".repeat(64)}` } } : {}) });
+      assert.equal(result.maintenanceResult?.status, "noop", result.message);
+      assert.equal((await readRawDigestRegistry(vault, true)).entries[a].fingerprint, revisionA, "reliable knowledge establishes the normalized current body fingerprint");
+      assert.equal((await discoverKnowledgeBaseSources(vault, {})).changedSources.some(source => source.relativePath === a), false);
+      const record = (await readPrivateMaintenanceRecords(privateRoot)).find(record => record.runId === `${id}:${id}`)!;
+      assert.equal(record.sources[0].status, "processed"); assert.equal(record.sources[0].fingerprint, revisionA);
+    }
+    assert.equal(domain.formalWrites.length, writes, "reliable noop does not write notes in any scope/fingerprint combination");
+    const racedPort = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: privateRoot, vaultId: VAULT_ID, userId: "user", deviceId: "device", domainService: domain as never, knowledgeAgentIndex: { async readReliableKnowledgeForRaw(relative) { const proof = await index.readReliableKnowledgeForRaw(relative); await fsp.writeFile(path.join(vault, a), bodyA + "Changed after proof\n"); return proof; } }, dateKey: () => DATE_KEY });
+    const raced = await racedPort.execute({ ...call("proof-race"), sourcePaths: [], globalSourcePaths: [a], candidateActions: [] });
+    assert.equal(raced.errorCode, "preview_stale");
+    assert.equal((await readRawDigestRegistry(vault, true)).entries[a].fingerprint, revisionA, "a concurrent body change cannot advance the processed version");
+    await fsp.writeFile(path.join(vault, a), bodyA); index.invalidate(a);
+    await fsp.writeFile(path.join(vault, "知识/卡片/conflict.md"), "keep existing"); domain.seed("知识/卡片/conflict.md", "keep existing");
+    const independent = await port.execute({ ...call("independent"), sourcePaths: [a, b], sourceBodyFingerprints: { [a]: revisionA, [b]: revisionB }, candidateActions: [
+      { targetPath: "知识/卡片/independent.md", content: `# A result\n[[${a}]]`, expectedTarget: { kind: "missing" } },
+      { targetPath: "知识/卡片/conflict.md", content: `# B result\n[[${b}]]`, expectedTarget: { kind: "missing" } }
+    ] });
+    assert.equal(independent.maintenanceResult?.status, "partial", independent.message);
+    const independentRecord = (await readPrivateMaintenanceRecords(privateRoot)).find(record => record.runId === "independent:independent")!;
+    assert.equal(independentRecord.sources.find(source => source.path === a)?.status, "processed");
+    assert.notEqual(independentRecord.sources.find(source => source.path === b)?.status, "processed");
+    const same = await port.execute({ ...call("same-source"), sourcePaths: [a], sourceBodyFingerprints: { [a]: revisionA }, candidateActions: [
+      { targetPath: "知识/卡片/same.md", content: `# A result\n[[${a}]]`, expectedTarget: { kind: "missing" } },
+      { targetPath: "知识/卡片/conflict.md", content: `# A failed\n[[${a}]]`, expectedTarget: { kind: "missing" } }
+    ] });
+    assert.equal(same.maintenanceResult?.status, "partial");
+    assert.notEqual((await readPrivateMaintenanceRecords(privateRoot)).find(record => record.runId === "same-source:same-source")!.sources[0].status, "processed", "one failed candidate keeps its entire source pending");
+    const disallowed = await port.execute({ ...call("unapproved-child"), sourcePaths: [a], sourceBodyFingerprints: { [a]: revisionA }, candidateActions: [{ targetPath: "知识/卡片/unapproved/note.md", content: `# A\n[[${a}]]`, expectedTarget: { kind: "missing" } }] });
+    assert.equal(disallowed.status, "failed"); assert.equal(await fsp.stat(path.join(vault, "知识/卡片/unapproved")).catch(() => null), null);
+    index.invalidate();
+    const references = await Promise.all([a, b].map(async vaultRelativePath => ({ vaultRelativePath, contentRevision: (await index.read({ vaultRelativePath })).contentRevision })));
+    const entries = [{ type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references } } }] as never;
+    await port.finalizeNatural({ ...base, productRunId: "natural-query", scope: { mode: "query", candidatePaths: [a] }, terminalState: "completed", noteReadPaths: [a, b], producedPaths: [], assistantEntryId: "assistant", entries, turnEntries: entries });
+    const natural = (await readPrivateMaintenanceRecords(privateRoot)).find(record => record.runId === "natural-query:natural")!;
+    assert.deepEqual(natural.sources.map(source => source.path), [a]); assert.equal(natural.sources[0].status, "processed");
+    await port.finalizeNatural({ ...base, productRunId: "empty-global", scope: { mode: "global", sourcePaths: [] }, terminalState: "completed", noteReadPaths: [b], producedPaths: [], assistantEntryId: "assistant", entries, turnEntries: entries });
+    assert.deepEqual((await readPrivateMaintenanceRecords(privateRoot)).find(record => record.runId === "empty-global:natural")!.sources, []);
+    const externalEntries = [{ type: "message", message: { role: "toolResult", toolName: "external_read", isError: false, details: { references } } }] as never;
+    await port.finalizeNatural({ ...base, productRunId: "external-empty", scope: { mode: "global", sourcePaths: [] }, terminalState: "completed", noteReadPaths: [], producedPaths: [], assistantEntryId: "assistant", entries: externalEntries, turnEntries: externalEntries });
+    assert.deepEqual((await readPrivateMaintenanceRecords(privateRoot)).find(record => record.runId === "external-empty:natural")!.sources, []);
+    assert.equal(await fsp.readFile(path.join(vault, a), "utf8"), bodyA, "all bookkeeping leaves the original Raw bytes unchanged");
+  } finally { release(); await fsp.rm(root, { recursive: true, force: true }); }
+}
+
+async function assertOriginalV1WalNeverRevivesRetiredFiles(): Promise<void> {
+  // Fixed JSON was emitted by the e0d1829 original service and its original fixture.
+  const original = JSON.parse(await fsp.readFile("src/tests/fixtures/knowledge-maintenance/v1-prepared-wal.json", "utf8")) as Phase3MaintenanceWalRecord;
+  assert.equal(original.version, 1);
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "echoink-v1-wal-")));
+  const vault = path.join(root, "vault"), privateRoot = path.join(root, "private");
+  await fsp.mkdir(vault); const domain = new FakeVaultDomain(vault);
+  const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: privateRoot, vaultId: VAULT_ID, userId: "user", deviceId: "device", domainService: domain as never });
+  try {
+    await port.state.createWal(original); await port.initialize();
+    assert.equal(domain.formalWrites.length, 0);
+    assert.deepEqual(await fsp.readdir(vault), [], "old candidates and retired runtime files are never recreated");
+    const record = (await readPrivateMaintenanceRecords(privateRoot))[0];
+    assert(record.sources.every(source => source.status !== "processed"));
+    assert.equal((await port.state.loadWal(original.preview.previewId))?.status, "completed");
+  } finally { await fsp.rm(root, { recursive: true, force: true }); }
 }

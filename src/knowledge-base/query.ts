@@ -1,4 +1,4 @@
-import { knowledgeRootRole, resolveKnowledgePath } from "./root-paths";
+import { knowledgeRootRole, resolveKnowledgePath, knowledgePathRole } from "./root-paths";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import { TextDecoder } from "node:util";
@@ -407,7 +407,7 @@ export class KnowledgeRetriever {
       }
     }
     const indexedExplicitPaths = Array.from(explicitSet)
-      .filter(isKnowledgeAgentIndexedPath);
+      .filter((value) => isKnowledgeAgentIndexedPath(value, this.vaultPath));
     const searchQuestion = explicitPaths.reduce(
       (value, explicitPath) => value.replaceAll(explicitPath, " "),
       question
@@ -909,7 +909,7 @@ async function readKnowledgeSourceSnapshot(
     lines,
     text,
     contentRevision: knowledgeContentRevision(bytes),
-    sourceType: knowledgeSourceType(canonicalRelativePath),
+    sourceType: knowledgeSourceType(canonicalRelativePath, vaultPath),
     recordedAt: stat.mtimeMs,
     ...(frontmatterPublishedAt(lines)
       ? { publishedAt: frontmatterPublishedAt(lines)! }
@@ -918,9 +918,9 @@ async function readKnowledgeSourceSnapshot(
 }
 
 function knowledgeSourceType(
-  relativePath: string
+  relativePath: string, vaultPath = ""
 ): "wiki" | "projects" | "raw" {
-  const root = knowledgeRootRole(relativePath);
+  const root = knowledgePathRole(vaultPath, relativePath);
   if (root === "wiki" || root === "projects" || root === "raw") return root;
   return "raw";
 }
@@ -1228,8 +1228,8 @@ function uniqueExplicitKnowledgePaths(paths: readonly string[]): string[] {
   return Array.from(result);
 }
 
-function isKnowledgeAgentIndexedPath(relativePath: string): boolean {
-  const root = knowledgeRootRole(relativePath);
+function isKnowledgeAgentIndexedPath(relativePath: string, vaultPath = ""): boolean {
+  const root = knowledgePathRole(vaultPath, relativePath);
   return root === "wiki" || root === "projects" || root === "raw";
 }
 

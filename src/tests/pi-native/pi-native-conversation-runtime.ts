@@ -133,11 +133,27 @@ export async function runKnowledgeMaintenanceRuntimeTests(): Promise<void> {
   assertPersistedMaintenanceSourceVersions();
   await assertInitializationHostUsesRealMaintenanceRuntime();
   await assertMaintenanceScopeEntryContracts();
+  await assertUiGlobalScopeGetsFrozenBeforeProvider();
   await assertOnlyUnresolvedMaintenanceWarningsSurvive();
   await assertNaturalMaintenanceAndCorrection();
   await assertKnowledgeMaintenanceSettlementRequiresUniqueDurableResult();
   await assertTrustedKnowledgeMaintenanceResultsSurviveSettlementAndReopen();
   console.log("Production initialization requests, maintenance scope boundaries, resolved warnings, corrections and durable reopen: PASS");
+}
+
+async function assertUiGlobalScopeGetsFrozenBeforeProvider(): Promise<void> {
+  let resolutions = 0;
+  const knowledge = maintenanceKnowledgeFixture();
+  knowledge.resolveMaintenanceScope = async request => { assert.equal(request, ""); resolutions++; return { mode: "global", sourcePaths: ["raw/a.md"], folderBindingsRevision: 29 }; };
+  await withFixture(["ui-global-freeze"], async fixture => {
+    await createAndActivateMaintenanceConversation(fixture, "ui-global-freeze");
+    const handle = await fixture.submit({ conversationId: "ui-global-freeze", text: "/maintain", maintenanceScope: { mode: "global" }, submittedAt: 3 });
+    const command = await fixture.currentMaintenanceCommand();
+    assert.equal(resolutions, 1, "an existing maintain workflow must resolve the old UI global shape before the Provider starts");
+    assert.deepEqual(command.scope, { mode: "global", sourcePaths: ["raw/a.md"], folderBindingsRevision: 29 });
+    assert.equal(command.folderBindingsRevision, 29, "the frozen source revision is authoritative");
+    fixture.latestSession().finishSuccessful("无需新增。"); await handle.result;
+  }, { knowledge });
 }
 
 async function assertOnlyUnresolvedMaintenanceWarningsSurvive(): Promise<void> {
@@ -2436,6 +2452,7 @@ Promise<void> {
 async function assertKnowledgeMaintenanceSettlementRequiresUniqueDurableResult():
 Promise<void> {
   const finalizedProductRunIds: string[] = [];
+  const finalizedFailedProductRunIds: string[] = [];
   const knowledge: PiKnowledgeRuntimePort = {
     async prepareMaintenancePreferences() {
       return Object.freeze({
@@ -2455,7 +2472,7 @@ Promise<void> {
       });
     },
     async finalizeMaintenance(input) {
-      finalizedProductRunIds.push(input.productRunId);
+      (input.terminalState === "completed" ? finalizedProductRunIds : finalizedFailedProductRunIds).push(input.productRunId);
     }
   };
   const validEnvelope = createKnowledgeMaintenanceResultEnvelope({
@@ -2572,6 +2589,7 @@ Promise<void> {
       );
       session.finishSuccessful("知识维护已完成。");
       assert.equal((await missingTerminal.result).terminalState, "failed");
+      assert(finalizedFailedProductRunIds.includes(missingTerminal.productRunId), "an incomplete tool attempt retains a failed private maintenance record");
       assert.deepEqual(finalizedProductRunIds, [valid.productRunId, duplicate.productRunId]);
       session = await assertInvalidMaintenanceResultSurvivesReopen(
         fixture,

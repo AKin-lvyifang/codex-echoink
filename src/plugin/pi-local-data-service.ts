@@ -1,3 +1,5 @@
+import { registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
+import { FilePhase3MaintenanceStateStore } from "./pi-knowledge-maintenance-production";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import {
@@ -106,6 +108,7 @@ export class PiLocalDataService {
       pluginDataRootPath,
       "pi-agent-product-v1"
     );
+    registerKnowledgePrivateRoot(vaultRootPath, path.join(piNativeStorageRootPath, "knowledge"));
     const catalog = new FileConversationCatalog({
       storageRootPath: piNativeStorageRootPath,
       vaultId: deviceScope.vaultIdDigest
@@ -142,6 +145,9 @@ export class PiLocalDataService {
     await receipts.initialize();
     await knowledgeUsageStore.initialize();
     await personalMemory.initialize();
+    const maintenanceState = new FilePhase3MaintenanceStateStore({ vaultRootPath, storageRootPath: path.join(piNativeStorageRootPath, "knowledge"), vaultId: deviceScope.vaultIdDigest });
+    await maintenanceState.initialize();
+    await maintenanceState.recoverPrivateFinalization();
 
     return new PiLocalDataService(
       vaultRootPath,

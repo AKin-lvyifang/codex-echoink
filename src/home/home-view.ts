@@ -1,3 +1,4 @@
+import { classifyKnowledgePath } from "../knowledge-base/folder-bindings";
 import { ItemView, Modal, Notice, TFile, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from "obsidian";
 import type { HomeHost } from "./home-host";
 import type { LifestyleStoreCore } from "../lifestyle/store-core";
@@ -81,7 +82,7 @@ export class EchoInkHomeView extends ItemView {
   constructor(leaf: WorkspaceLeaf, private readonly plugin: FinanceHomeHost) {
     super(leaf);
     const includeNotePath = (path: string) => isHomeNotePath(path, plugin.settings.englishDiary);
-    this.dataService = new HomeWorkbenchDataService(plugin.app, () => plugin.settings.journalDirectory, plugin.homeActivity, includeNotePath);
+    this.dataService = new HomeWorkbenchDataService(plugin.app, () => plugin.settings.journalDirectory, plugin.homeActivity, includeNotePath, () => plugin.settings.knowledgeBase?.folderBindings);
     this.searchService = new HomeSearchService(plugin.app, includeNotePath);
   }
   getViewType(): string { return VIEW_TYPE_ECHOINK_HOME; }
@@ -189,7 +190,7 @@ export class EchoInkHomeView extends ItemView {
   }
   private currentDataSettingsSignature(): string {
     return JSON.stringify({
-      journal: readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory),
+      journal: readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings),
       diary: this.plugin.settings.englishDiary
     });
   }
@@ -425,9 +426,9 @@ export class EchoInkHomeView extends ItemView {
       ...(archives?.financeAnalysisPending ?? []).flatMap(draft=>[
         ...(draft.record?[draft.record.path]:[]),...(draft.previousAttemptPaths ?? []).map(attempt=>attempt.path)])
     ]);
-    const native=readNativeJournalSettings(this.app,this.plugin.settings.journalDirectory);
+    const native=readNativeJournalSettings(this.app,this.plugin.settings.journalDirectory,this.plugin.settings.knowledgeBase?.folderBindings);
     const context={analysisDirectory:this.plugin.settings.lifestyle?.finance.analysisDirectory,
-      reportPaths,configDirectory:this.app.vault.configDir,templatesDirectory:native.templatesFolder};
+      reportPaths,configDirectory:this.app.vault.configDir,templatesDirectory:native.templatesAvailable ? native.templatesFolder : "",folderBindings:this.plugin.settings.knowledgeBase?.folderBindings};
     const records = (this.data?.records ?? []).filter((record) => {
       const file=this.app.vault.getAbstractFileByPath?.(record.path);
       const reportType: unknown=file instanceof TFile ? this.app.metadataCache.getFileCache(file)?.frontmatter?.type : undefined;
@@ -491,10 +492,10 @@ export class EchoInkHomeView extends ItemView {
   private renderEntries(): void {
     const records = this.data?.records ?? [];
     const entry = (id: string) => this.data?.entries.find((e) => e.id === id);
-    const latest = (id: string) => records.filter((r) => r.path.startsWith(`${id}/`)).sort((a, b) => b.mtime - a.mtime)[0];
+    const latest = (id: string) => records.filter((r) => this.plugin.settings.knowledgeBase?.folderBindings ? classifyKnowledgePath(this.plugin.settings.knowledgeBase.folderBindings, r.path) === id : r.path.startsWith(`${id}/`)).sort((a, b) => b.mtime - a.mtime)[0];
     const count = (id: string) => entry(id)?.count ?? 0;
     markup(this.el(".wiki-count"), `${count("wiki")}<span>${this.t("篇笔记", "notes")}</span>`);
-    const changed = new Set(this.events.filter((e) => e.path.startsWith("wiki/") && this.weekDates().includes(e.date) && e.kind !== "reopened").map((e) => e.path)).size;
+    const changed = new Set(this.events.filter((e) => (this.plugin.settings.knowledgeBase?.folderBindings ? classifyKnowledgePath(this.plugin.settings.knowledgeBase.folderBindings, e.path) === "wiki" : e.path.startsWith("wiki/")) && this.weekDates().includes(e.date) && e.kind !== "reopened").map((e) => e.path)).size;
     this.el(".wiki .bento-meta").setText(this.t(`本周留下 ${changed} 篇笔记的足迹`, `${changed} notes touched this week`));
     this.el(".outputs .bento-line").setText(latest("outputs")?.title ?? this.t("思考的成果，从这里开始", "A place for your work"));
     this.el(".outputs .bento-meta").setText(this.t(`${count("outputs")} 份成果`, `${count("outputs")} outputs`));
@@ -503,7 +504,7 @@ export class EchoInkHomeView extends ItemView {
     this.field("inbox-count").setText(String(count("inbox")));
     this.el(".journal-date").setText(new Intl.DateTimeFormat(this.language, { month: "long", day: "numeric" }).format(new Date()));
     const prefix = dateKey(new Date()).slice(0, 7);
-    const journalSettings = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory);
+    const journalSettings = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings);
     const journals = records.filter((r) => {
       const parsed = journalDateFromPath(r.path, journalSettings.folder, journalSettings.format);
       return parsed?.startsWith(prefix);
@@ -896,6 +897,14 @@ export class EchoInkHomeView extends ItemView {
   }
 
   private async openEntry(entry: HomeEntrySummary): Promise<void> {
+    const config = this.plugin.settings.knowledgeBase?.folderBindings;
+    const mappedRole = entry.id === "wiki" || entry.id === "outputs" || entry.id === "projects" || entry.id === "inbox" ? entry.id : null;
+    if (config && mappedRole) {
+      const target = entry.targetPath && this.app.vault.getFileByPath(entry.targetPath);
+      if (target) await openObsidianLocalGraphLeaf(this.app, target.path, this.language);
+      else { new Notice(config.roles[mappedRole].enabled ? this.t("这个位置暂无笔记", "This folder has no notes") : this.t("请先启用并选择目录", "Choose a folder first")); await this.plugin.openEchoInkKnowledgeSettings(); }
+      return;
+    }
     const indexPath = homeEntryIndexPath(entry.id);
     if (indexPath) {
       await openObsidianLocalGraphLeaf(this.app, indexPath, this.language);

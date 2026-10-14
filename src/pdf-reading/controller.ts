@@ -1,3 +1,4 @@
+import { resolveKnowledgeRoleTarget, knowledgeRoleStatus, getKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { getProPluginAccess, requireProPluginAction, unavailableCapabilityAccess } from "../membership/access";
@@ -11,8 +12,11 @@ export class PdfReadingController {
   readonly api: PdfReadingService;
   constructor(readonly plugin: CodexForObsidianPlugin) {
     const stateDirectory = `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}/pdf-reading`;
-    this.api = new PdfReadingService(new PdfVaultFiles(plugin.app, stateDirectory), stateDirectory, {
+    this.api = new PdfReadingService(new PdfVaultFiles(plugin.app, stateDirectory, Boolean(plugin.settings.knowledgeBase.folderBindings)), stateDirectory, {
       access: plugin.accountService ?? unavailableCapabilityAccess, enabled: () => plugin.settings.pdfReading.enabled,
+      sourceDirectory: () => getKnowledgeFolderBindings(plugin.getVaultPath()) ? resolveKnowledgeRoleTarget(plugin.getVaultPath(), "raw") : undefined as never,
+      imageDirectory: () => getKnowledgeFolderBindings(plugin.getVaultPath())?.roles.assets.enabled ? resolveKnowledgeRoleTarget(plugin.getVaultPath(), "assets") : undefined,
+      canWriteKnowledge: () => knowledgeRoleStatus(plugin.getVaultPath(), "wiki") === "ready",
       local: extractLocalPdf,
       enhanced: (job, bytes, signal, persist, progress) => extractMinerPdf(job, bytes, plugin.settings.pdfReading.mineruToken, signal, persist, progress),
       generator: () => plugin.createPdfReadingGenerator()

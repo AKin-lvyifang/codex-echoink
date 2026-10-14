@@ -17,6 +17,7 @@ import {
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { ResourceMutationError } from "./resource-mutation-authority";
 import { isEmptyEchoInkPluginData } from "../settings/onboarding";
+import { knowledgeRootEntries, migrateKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 export { ResourceMutationError, resourceMutationRollbackIsSafe } from "./resource-mutation-authority";
 
 export interface SettingsSaveOptions {
@@ -92,10 +93,18 @@ export class EchoInkSettingsStore {
     const emptyData = isEmptyEchoInkPluginData(data);
     const normalized = normalizeSettingsData(data);
     this.plugin.settings = normalized.settings;
+    let bindingsMigrated = false;
+    if (!this.plugin.settings.knowledgeBase.folderBindings) {
+      const mobilePaths = (data as { mobileUi?: { knowledgePaths?: Partial<Record<"raw" | "wiki" | "inbox", string>> } } | null)?.mobileUi?.knowledgePaths;
+      this.plugin.settings.knowledgeBase.folderBindings = migrateKnowledgeFolderBindings(knowledgeRootEntries(this.plugin.getVaultPath()), mobilePaths);
+      bindingsMigrated = true;
+    }
+    // Registered before local runtimes and feature controllers are constructed; reloads read live settings.
+    registerKnowledgeFolderBindings(this.plugin.getVaultPath(), () => this.plugin.settings.knowledgeBase.folderBindings);
     this.settingsPersistenceRecoveryError = null;
     this.resourceMutationRecoveryError = null;
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
-    if (normalized.changed || knowledgeStatusRecovered) {
+    if (normalized.changed || knowledgeStatusRecovered || bindingsMigrated) {
       await this.saveSettings(true, {
         flushConversationStore: false
       });

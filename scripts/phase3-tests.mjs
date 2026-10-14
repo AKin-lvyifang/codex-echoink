@@ -16,6 +16,7 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
+  'import { runKnowledgeFolderBindingsTests } from "./src/tests/knowledge-folder-bindings";',
   'import { runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
   'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
   'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
@@ -26,6 +27,7 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeFolderBindingsTests();",
   "await runKnowledgeAssociativeReadingTests();",
   "await runKnowledgeAgentIndexTests();",
   "await runKnowledgeMaintenancePreferenceTests();",
@@ -39,7 +41,10 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--bilingual-lifecycle") ? [
+    contents: (process.argv.includes("--folder-bindings") ? [
+      'import { runKnowledgeFolderBindingsTests } from "./src/tests/knowledge-folder-bindings";',
+      'await runKnowledgeFolderBindingsTests();'
+    ] : process.argv.includes("--bilingual-lifecycle") ? [
       'import { runKnowledgeBilingualLifecycleTests } from "./src/tests/knowledge-bilingual-lifecycle";',
       'await runKnowledgeBilingualLifecycleTests();'
     ] : maintenanceRuntimeOnly ? [
@@ -83,6 +88,7 @@ await esbuild.build({
   bundle: true,
   loader: {
     ".md": "text",
+    ".svg": "text",
     ".webp": "dataurl"
   },
   platform: "node",
@@ -92,7 +98,8 @@ await esbuild.build({
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",
     "@earendil-works/pi-coding-agent",
-    "yaml"
+    "yaml",
+    "jsdom"
   ],
   plugins: [{
     name: "knowledge-test-shims",

@@ -1,5 +1,8 @@
+import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderIssues, normalizeKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import { sha256Hex } from "../utils/sha256";
 import { ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES } from "../core/knowledge-preferences-default";
-import { TFile, type App, type EventRef } from "obsidian";
+import { TFolder, TFile, type App, type EventRef } from "obsidian";
 import type { HomeHost } from "../home/home-host";
 import { EchoInkTodoStore } from "../home/todo-store";
 import { HomeActivityCore } from "../home/home-activity-core";
@@ -161,10 +164,54 @@ export class MobileServices implements HomeHost {
   roots() {
     return this.app.vault.getRoot().children.map(file => file.name);
   }
-  knowledgePath(kind: "wiki" | "raw" | "inbox") { return resolveKnowledgePathFromRoots(this.settings.mobileUi.knowledgePaths[kind], this.roots()); }
+  knowledgePath(kind: "wiki" | "raw" | "inbox") {
+    const config = this.settings.knowledgeBase.folderBindings;
+    if (!config) return resolveKnowledgePathFromRoots(this.settings.mobileUi.knowledgePaths[kind], this.roots());
+    const binding = config.roles[kind];
+    if (config.migrationIssues.some((issue) => issue.startsWith(`${kind}：`)) || !binding.enabled || !binding.writePath || !(this.app.vault.getAbstractFileByPath(binding.writePath) instanceof TFolder)) throw new Error(`${kind} 位置未启用、尚未绑定或已失效，请在知识库目录中选择。`);
+    return binding.writePath;
+  }
+  knowledgeBindingDescription(kind: "wiki" | "raw" | "inbox"): string {
+    const binding = this.settings.knowledgeBase.folderBindings?.roles[kind];
+    if (!binding) return this.knowledgePath(kind);
+    if (!binding.enabled) return "未启用";
+    if (!binding.readPaths.length) return "尚未绑定";
+    const invalid = binding.readPaths.filter(directory => !(this.app.vault.getAbstractFileByPath(directory) instanceof TFolder));
+    return invalid.length ? `位置失效：${invalid.join("、")}` : binding.readPaths.join("、");
+  }
+  async saveKnowledgeBindings(next: KnowledgeFolderBindings, expectedRevision: number): Promise<void> {
+    const previous = this.settings.knowledgeBase.folderBindings;
+    if ((previous?.revision ?? 0) !== expectedRevision) throw new Error("目录配置已更新，请重新打开后编辑。");
+    const normalized = normalizeKnowledgeFolderBindings(next) ?? emptyKnowledgeFolderBindings();
+    const existingIssues = previous ? knowledgeFolderIssues(previous) : [];
+    const issues = knowledgeFolderIssues(normalized).filter(issue => !existingIssues.includes(issue));
+    if (issues.length) throw new Error(issues.join("；"));
+    for (const [role, binding] of Object.entries(normalized.roles)) {
+      if (JSON.stringify(binding) === JSON.stringify(previous?.roles[role as keyof typeof previous.roles])) continue;
+      if (!binding.enabled || binding.native) continue;
+      for (const directory of binding.readPaths) if (!(this.app.vault.getAbstractFileByPath(directory) instanceof TFolder)) throw new Error(`目录不存在：${directory}；请选择已有目录。`);
+    }
+    normalized.revision = expectedRevision + 1;
+    this.settings.knowledgeBase.folderBindings = normalized;
+    try { await this.host.saveSettings(); }
+    catch (error) { this.settings.knowledgeBase.folderBindings = previous; throw error; }
+    this.notifyHomeSurfacesChanged();
+  }
+  async readMaintenanceRecord(recordId: string): Promise<KnowledgeMaintenanceRecord> {
+    if (!/^maintenance-[a-f0-9]{32}$/u.test(recordId)) throw new Error("维护记录身份无效。");
+    const adapter = this.app.vault.adapter;
+    const target = `${this.preferenceRoot}/pi-agent-product-v1/knowledge/records/${recordId}.json`;
+    if (!await adapter.exists(target)) throw new Error("维护记录不存在或尚未同步。");
+    const envelope = JSON.parse(await adapter.read(target));
+    const stable = (value: unknown): string => value === null || typeof value !== "object" ? JSON.stringify(value) : Array.isArray(value) ? `[${value.map(stable).join(",")}]` : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable((value as Record<string, unknown>)[key])}`).join(",")}}`;
+    const record = envelope?.payload as KnowledgeMaintenanceRecord;
+    if (envelope?.schemaVersion !== 1 || envelope.kind !== "record" || typeof envelope.vaultId !== "string" || envelope.payloadDigest !== sha256Hex(stable(record)) || record?.schemaVersion !== 1 || record.recordId !== recordId || !Array.isArray(record.sources) || !Array.isArray(record.result?.notes)) throw new Error("维护记录损坏，请重新同步。");
+    return record;
+  }
   knowledgeFiles(kind: "wiki" | "raw" | "inbox") {
-    const prefix = `${this.knowledgePath(kind)}/`;
-    return this.app.vault.getMarkdownFiles().filter(file => file.path.startsWith(prefix)).sort((a, b) => b.stat.mtime - a.stat.mtime);
+    const config = this.settings.knowledgeBase.folderBindings;
+    const prefixes = config ? config.roles[kind].enabled ? config.roles[kind].readPaths.map((directory) => `${directory}/`) : [] : [`${this.knowledgePath(kind)}/`];
+    return this.app.vault.getMarkdownFiles().filter(file => prefixes.some((prefix) => file.path.startsWith(prefix)) && (!config || classifyKnowledgePath(config, file.path) === kind)).sort((a, b) => b.stat.mtime - a.stat.mtime);
   }
   safePath(path: string): string {
     const normalized = path.trim().replace(/\\/gu, "/");
@@ -197,7 +244,7 @@ export class MobileServices implements HomeHost {
     const skillId = this.host.store.session.skillId;
     const skill = skillId ? await this.requireAvailableEchoInkSkill(skillId) : "";
     const preference = await this.readPreferences() ?? this.defaultPreferences;
-    return `${profile}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify({ wiki: this.knowledgePath("wiki"), raw: this.knowledgePath("raw"), inbox: this.knowledgePath("inbox") })}`;
+    return `${profile}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify(this.settings.knowledgeBase.folderBindings?.roles ?? this.settings.mobileUi.knowledgePaths)}`;
   }
   plugins() {
     return [{ id: "echoink:finance", name: "财务", description: "账目、预算、账单计划与分析", enabled: this.settings.lifestyle.finance.enabled, mobileStatus: "复用当前笔记库的财务账本" },

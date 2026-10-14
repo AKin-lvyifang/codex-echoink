@@ -21,6 +21,8 @@ export class EnglishDiaryRepositoryError extends Error {
 }
 
 interface RepositoryOptions {
+  migrateLegacy?: boolean;
+  flatExpressions?: boolean;
   stateDirectory: string; englishDirectory: string; expressionDirectory: string;
   legacyEnglishDirectories?: string[]; legacyExpressionDirectories?: string[];
 }
@@ -152,6 +154,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
 
   constructor(private readonly files: DiaryFilePort, options: RepositoryOptions, private readonly access: CapabilityAccess = unavailableCapabilityAccess) {
     this.options = {
+      migrateLegacy: options.migrateLegacy, flatExpressions: options.flatExpressions,
       stateDirectory: normalizeDiaryPath(options.stateDirectory),
       englishDirectory: normalizeDiaryPath(options.englishDirectory),
       expressionDirectory: normalizeDiaryPath(options.expressionDirectory),
@@ -164,6 +167,13 @@ export class EnglishDiaryRepository implements DiaryRepository {
         ...(options.expressionDirectory === HIDDEN_EXPRESSION_DIRECTORY ? [LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY] : [])
       ].map(normalizeDiaryPath))].filter((path) => path !== normalizeDiaryPath(options.expressionDirectory))
     };
+  }
+
+  setStorageDirectories(englishDirectory: string, expressionDirectory: string): void {
+    if (this.options.englishDirectory !== englishDirectory) this.options.legacyEnglishDirectories = [...new Set([...(this.options.legacyEnglishDirectories ?? []), this.options.englishDirectory])];
+    if (this.options.expressionDirectory !== expressionDirectory) this.options.legacyExpressionDirectories = [...new Set([...(this.options.legacyExpressionDirectories ?? []), this.options.expressionDirectory])];
+    this.options.englishDirectory = normalizeDiaryPath(englishDirectory);
+    this.options.expressionDirectory = normalizeDiaryPath(expressionDirectory);
   }
 
   subscribe(listener: () => void): () => void {
@@ -343,6 +353,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   private async migrateEnglish(): Promise<void> {
+    if (this.options.migrateLegacy === false) return;
     const roots = this.options.legacyEnglishDirectories ?? [];
     if (!roots.length) return;
     for (const loaded of await this.states()) {
@@ -384,6 +395,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
 
   /** Move only recognized old product files; keep their exact bytes as a hidden backup. */
   private async migrateEntries(): Promise<void> {
+    if (this.options.migrateLegacy === false) return;
     if (!this.options.legacyExpressionDirectories?.length) return;
     const hiddenIds = new Set<string>();
     for await (const { path, content } of this.markdownFiles(this.options.expressionDirectory)) {
@@ -445,13 +457,20 @@ export class EnglishDiaryRepository implements DiaryRepository {
     return { raw, state };
   }
 
+  private async *expressionMarkdownFiles() {
+    const seen = new Set<string>();
+    for (const directory of [this.options.expressionDirectory, ...(this.options.migrateLegacy === false ? this.options.legacyExpressionDirectories ?? [] : [])]) {
+      for await (const file of this.markdownFiles(directory)) { if (!seen.has(file.path)) { seen.add(file.path); yield file; } }
+    }
+  }
+
   private async entryFiles(): Promise<EntryFile[]> {
     // A library-first reopen must recover the same journal as reopening its diary.
     for (const state of await this.states()) if (state.value.transaction) await this.recover(state);
     await this.migrateEntries();
     const entries: EntryFile[] = [];
     const seen = new Set<string>();
-    for await (const file of this.markdownFiles(this.options.expressionDirectory)) {
+    for await (const file of this.expressionMarkdownFiles()) {
       const normalized = file.path;
       let content = file.content;
       const { legacy, id } = expressionMetadata(content, normalized);
@@ -473,13 +492,12 @@ export class EnglishDiaryRepository implements DiaryRepository {
         let migrated: string;
         try { migrated = migrateExpressionMarkdown(content, id); }
         catch { return inconsistentExpression(normalized); }
-        await this.writeChecked(normalized, migrated, content);
-        content = migrated;
+        if (this.options.migrateLegacy !== false) { await this.writeChecked(normalized, migrated, content); content = migrated; }
       }
       if (stateRaw === null) return invalidExpression(normalized);
       const state = data.state, entry = state.entry;
       const previous = clone(entry);
-      const relativeDirectory = normalized.slice(this.options.expressionDirectory.length + 1).split("/").slice(0, -1).join("/");
+      const relativeDirectory = normalized.slice(([this.options.expressionDirectory, ...(this.options.legacyExpressionDirectories ?? [])].filter((directory) => normalized.startsWith(`${directory}/`)).sort((a, b) => b.length - a.length)[0] ?? this.options.expressionDirectory).length + 1).split("/").slice(0, -1).join("/");
       if (relativeDirectory && relativeDirectory !== filePart(entry.category)) {
         entry.category = relativeDirectory;
         entry.userCategory = true;
@@ -602,7 +620,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   private entryPath(term: string, category: string, id: string): string {
-    return `${this.options.expressionDirectory}/${filePart(category)}/${filePart(term)}-${id.slice(0, 8)}.md`;
+    return `${this.options.expressionDirectory}/${this.options.flatExpressions ? "" : `${filePart(category)}/`}${filePart(term)}-${id.slice(0, 8)}.md`;
   }
 
   private occurrenceId(result: DiaryResult, expressionId: string, entryId: string): string {

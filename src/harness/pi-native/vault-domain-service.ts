@@ -1,4 +1,4 @@
-import { knowledgeRolePath } from "../../knowledge-base/root-paths";
+import { knowledgePathRole } from "../../knowledge-base/root-paths";
 import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
@@ -348,7 +348,7 @@ export class VaultDomainService {
     });
     throwIfAborted(input.signal);
     const snapshot = await this.adapter.readFile(target, {
-      maxBytes: knowledgeRolePath(target.relativePath).startsWith("raw/") ? Number.MAX_SAFE_INTEGER : VAULT_READ_RESULT_LIMIT_BYTES
+      maxBytes: knowledgePathRole(target.vaultRootPath, target.relativePath) === "raw" ? Number.MAX_SAFE_INTEGER : VAULT_READ_RESULT_LIMIT_BYTES
     });
     if (!snapshot) {
       throw domainError(
@@ -358,7 +358,7 @@ export class VaultDomainService {
     }
     return Object.freeze({
       snapshot: Object.freeze({ ...normalizeSnapshot(snapshot, target, VAULT_READ_RESULT_LIMIT_BYTES),
-        ...(!snapshot.truncated && knowledgeRolePath(target.relativePath).startsWith("raw/") ? { bodyFingerprint: rawDigestFingerprint(target.relativePath, Buffer.from(snapshot.content, "utf8")) } : {})
+        ...(!snapshot.truncated && knowledgePathRole(target.vaultRootPath, target.relativePath) === "raw" ? { bodyFingerprint: rawDigestFingerprint(target.relativePath, Buffer.from(snapshot.content, "utf8")) } : {})
       })
     });
   }

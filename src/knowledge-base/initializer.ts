@@ -134,6 +134,7 @@ export interface KnowledgeInitializationCounts {
 }
 
 export interface KnowledgeInitializationJob {
+  folderBindingsRevision?: number;
   readonly schemaVersion: 1;
   readonly jobId: string;
   readonly templateVersion: typeof KNOWLEDGE_BASE_TEMPLATE_VERSION;
@@ -180,6 +181,7 @@ export interface KnowledgeInitializationHost {
   readonly vaultRootPath: string;
   readonly privateRootPath: string;
   now(): number;
+  folderBindingsRevision?(): number | undefined;
   resolvePath?(relativePath: string): string;
   beforeStructureChange?(jobId: string): Promise<void | readonly string[]>;
   withStructureMutation?<T>(action: () => Promise<T>): Promise<T>;
@@ -531,6 +533,24 @@ export class KnowledgeBaseInitializer {
     return cloneJob(job);
   }
 
+  async startBoundOptimization(sourcePaths: readonly string[], revision: number): Promise<Readonly<KnowledgeInitializationJob>> {
+    if (this.runFlight) throw new Error("已有知识分析进行中。");
+    const now = this.host.now();
+    const sources: KnowledgeInitializationSourceSnapshot[] = [];
+    for (const relative of [...new Set(sourcePaths)]) {
+      const contentHash = await this.host.readFileHash(relative);
+      if (contentHash === null) throw new Error(`资料已失效：${relative}`);
+      sources.push({ path: relative, sourceRevision: contentHash, contentHash });
+    }
+    const job: KnowledgeInitializationJob = { schemaVersion: 1, folderBindingsRevision: revision, jobId: randomUUID(), templateVersion: KNOWLEDGE_BASE_TEMPLATE_VERSION, mode: "custom", phase: "confirmed", status: "active", createdAt: now, updatedAt: now, provider: this.host.currentProvider(), planDigest: "", confirmedDigest: null, items: [], extractionSources: sources, extractionQueue: sources.map((source) => source.path), extractionCursor: 0, expectedBatches: Math.ceil(sources.length / EXTRACTION_BATCH_SIZE), moveCursor: 0, createdDirectories: [], conversationId: null, productRunIds: [], counts: { ...emptyCounts(), extraction: sources.length }, guidePath: "", lastError: "", recoveryAction: "" };
+    job.planDigest = sha256(stableJson(frozenPlanDocument(job)));
+    job.confirmedDigest = job.planDigest;
+    await this.persistJob(job, true);
+    this.job = job;
+    this.startRun(job);
+    return cloneJob(job);
+  }
+
   async assign(sourcePath: string, role: KnowledgeInitializationRole):
   Promise<Readonly<KnowledgeInitializationJob>> {
     return await this.assignMany([{ sourcePath, role }]);
@@ -625,6 +645,7 @@ export class KnowledgeBaseInitializer {
 
   async continueJob(): Promise<Readonly<KnowledgeInitializationJob>> {
     const job = this.requireJob();
+    if (this.host.folderBindingsRevision?.() !== undefined && job.folderBindingsRevision === undefined) throw new Error("旧初始化方案已停用，请按当前目录重新预览；原文件保留。");
     if (job.status === "initialized" && job.savePending) {
       await this.finishInitialization(job);
       return cloneJob(job);
@@ -697,6 +718,12 @@ export class KnowledgeBaseInitializer {
   }
 
   private async run(job: KnowledgeInitializationJob, signal: AbortSignal): Promise<void> {
+    if (job.folderBindingsRevision !== undefined) {
+      if (job.folderBindingsRevision !== this.host.folderBindingsRevision?.()) throw new Error("目录方案已变化，请重新预览；已完成结果保留。");
+      await this.runExtractionBatches(job, signal);
+      if (job.status === "active") { job.phase = "complete"; await this.finishInitialization(job); }
+      return;
+    }
     if (job.phase === "complete") { await this.finishInitialization(job); return; }
     if (!["batch_extraction", "generate_guide"].includes(job.phase)) {
       const prepare = async () => {
@@ -788,6 +815,7 @@ export class KnowledgeBaseInitializer {
       await this.persistJob(job);
     }
     while (job.extractionCursor < job.extractionQueue.length) {
+      if (job.folderBindingsRevision !== undefined && job.folderBindingsRevision !== this.host.folderBindingsRevision?.()) throw new Error("目录配置已变化，停止剩余批次。");
       assertNotCancelled(signal);
       job.provider = this.host.currentProvider();
       const queued = job.extractionQueue.slice(job.extractionCursor, job.extractionCursor + EXTRACTION_BATCH_SIZE);
@@ -1123,6 +1151,7 @@ function frozenPlanDocument(job: Readonly<KnowledgeInitializationJob>): object {
     jobId: job.jobId,
     templateVersion: job.templateVersion,
     mode: job.mode,
+    folderBindingsRevision: job.folderBindingsRevision,
     items: job.items.map((item) => ({
       sourcePath: item.sourcePath,
       targetPath: item.targetPath,

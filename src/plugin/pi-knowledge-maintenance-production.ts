@@ -1,6 +1,11 @@
-import { knowledgeRolePath, resolveKnowledgePath } from "../knowledge-base/root-paths";
+import { rebaseKnowledgePathRecords } from "../knowledge-base/root-paths-core";
+import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import { knowledgeMaintenanceNoteFromReadback } from "../knowledge-base/knowledge-maintenance-result";
+import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base/raw-digest";
+import { registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
+import { knowledgePathPolicy, knowledgePathRole, getKnowledgeFolderBindings, knowledgeRolePath, resolveKnowledgePath } from "../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
-import { canonicalRawMarkdownForDigest, rawDigestFingerprint } from "../knowledge-base/raw-digest";
+import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isRawMarkdownPath } from "../knowledge-base/raw-digest";
 import { isBilingualWikiFolder, wikiFolderEnglishId } from "../knowledge-base/wiki-folder-names";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -118,7 +123,7 @@ implements PiKnowledgeMaintenanceToolPort {
     "readReliableKnowledgeForRaw"
   >;
   private readonly sources: FilePhase3MaintenanceSourceSnapshotPort;
-  private readonly tracker: FilePhase3MaintenanceTrackerPort;
+  private readonly tracker: Phase3MaintenanceTrackerPort;
   private readonly now: () => number;
   private readonly createPreviewId: () => string;
   private readonly dateKey: () => string;
@@ -136,6 +141,7 @@ implements PiKnowledgeMaintenanceToolPort {
     this.privateKnowledgeRootPath = path.resolve(
       options.privateKnowledgeRootPath
     );
+    registerKnowledgePrivateRoot(this.vaultRootPath, this.privateKnowledgeRootPath);
     this.vaultId = requireNonEmpty(options.vaultId, "vaultId");
     this.userId = requireNonEmpty(options.userId, "userId");
     this.deviceId = requireNonEmpty(options.deviceId, "deviceId");
@@ -150,17 +156,20 @@ implements PiKnowledgeMaintenanceToolPort {
     this.state = new FilePhase3MaintenanceStateStore({
       storageRootPath: this.privateKnowledgeRootPath,
       vaultId: this.vaultId,
+      vaultRootPath: this.vaultRootPath,
       walFileId: options.walFileId
     });
     this.sources = new FilePhase3MaintenanceSourceSnapshotPort({
       vaultRootPath: this.vaultRootPath,
       vaultId: this.vaultId
     });
-    this.tracker = new FilePhase3MaintenanceTrackerPort({
+    this.tracker = new PrivateMaintenanceTrackerPort(this.vaultRootPath);
+    /* legacy tracker adapter retained for explicit old-version reads */
+    /* this.tracker = new FilePhase3MaintenanceTrackerPort({
       vaultRootPath: this.vaultRootPath,
       vaultId: this.vaultId,
       domainService: this.domainService
-    });
+    }); */
   }
 
   async initialize(): Promise<void> {
@@ -173,7 +182,14 @@ implements PiKnowledgeMaintenanceToolPort {
   async execute(
     input: Readonly<PiKnowledgeMaintenanceToolInput>
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
-    const result = await this.executeMaintenance(input);
+    const saved = (await readPrivateMaintenanceRecords(this.privateKnowledgeRootPath)).find((record) => record.runId === `${input.productRunId}:${input.toolCallId}`);
+    if (saved) return { status: saved.result.status === "failed" || saved.result.status === "write_uncertain" ? "failed" : "completed", message: saved.summary, maintenanceResult: saved.result, recordId: saved.recordId, producedPaths: saved.result.notes.map((note) => note.path) };
+    let result = await this.executeMaintenance(input);
+    const recordId = `maintenance-${sha256(`${input.productRunId}:${input.toolCallId}`).slice(0, 32)}`;
+    if (result.errorCode !== "record_pending") {
+      try { await this.saveTerminalRecord(input, result, recordId); result = { ...result, recordId }; }
+      catch { result = { ...result, errorCode: "record_pending", message: `${result.message}\n维护记录待恢复，已保存的知识笔记保留。` }; }
+    }
     try {
       await this.onTerminal?.({ input, result, at: this.now() });
     } catch (error) {
@@ -182,25 +198,79 @@ implements PiKnowledgeMaintenanceToolPort {
     return result;
   }
 
+  async finalizeNatural(request: Parameters<NonNullable<import("../harness/pi-native/contracts").PiKnowledgeRuntimePort["finalizeMaintenance"]>>[0]): Promise<Readonly<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceSettlement>> {
+    const scope = request.scope;
+    const paths = scope?.mode === "global" ? scope.sourcePaths ?? request.noteReadPaths : scope?.mode === "exact" || scope?.mode === "batch" ? scope.sourcePaths : scope?.mode === "query" ? scope.candidatePaths : request.noteReadPaths;
+    const entries = request.turnEntries ?? request.entries;
+    const { maintenanceSourceFingerprintsFromEntries } = await import("../harness/pi-native/pi-knowledge-maintenance-tool");
+    const delivered = maintenanceSourceFingerprintsFromEntries(entries, this.vaultRootPath);
+    const sources: KnowledgeMaintenanceRecord["sources"] = [];
+    const issues: { code: string; message: string; path?: string }[] = [];
+    const revision = request.folderBindingsRevision ?? (scope?.mode === "global" ? scope.folderBindingsRevision : undefined);
+    const scopeChanged = revision !== undefined && revision !== (getKnowledgeFolderBindings(this.vaultRootPath)?.revision ?? 0);
+    for (const relative of [...new Set(paths)].filter((relative) => scopeChanged || knowledgePathRole(this.vaultRootPath, relative) === "raw")) {
+      if (scopeChanged) { sources.push({ path: relative, fingerprint: delivered[relative] ?? "", status: "failed", evidencePaths: [] }); issues.push({ code: "folder_bindings_changed", path: relative, message: "本轮目录配置改变，保留待处理" }); continue; }
+      if (!delivered[relative]) { sources.push({ path: relative, fingerprint: "", status: "unread", evidencePaths: [] }); issues.push({ code: "source_unread", path: relative, message: "本轮未读取，保留待处理" }); continue; }
+      try {
+        const current = await readImmutableFile(this.vaultRootPath, relative);
+        const fingerprint = rawDigestFingerprint(relative, current.bytes);
+        const verified = fingerprint.split(":").at(-1) === delivered[relative].split(":").at(-1);
+        sources.push({ path: relative, fingerprint, status: verified && request.terminalState === "completed" ? "processed" : "failed", evidencePaths: [] });
+        if (!verified) issues.push({ code: "source_changed", path: relative, message: "来源正文改变，保留待处理" });
+      } catch { sources.push({ path: relative, fingerprint: delivered[relative], status: "failed", evidencePaths: [] }); issues.push({ code: "source_unavailable", path: relative, message: "读取失败，保留待处理" }); }
+    }
+    const runId = `${request.productRunId}:natural`;
+    const at = this.now();
+    const result = createKnowledgeMaintenanceResultEnvelope({ status: request.terminalState !== "completed" ? "failed" : issues.length ? "partial" : "noop", issues });
+    const record: KnowledgeMaintenanceRecord = { schemaVersion: 1, recordId: `maintenance-${sha256(runId).slice(0, 32)}`, runId, at, date: this.dateKey(), result, cancelled: request.terminalState === "cancelled", sources, summary: request.terminalState === "completed" ? issues.length ? "已读资料无需新增；另有来源待处理" : "本轮无需新增知识笔记" : "本轮未完成，来源保留待处理" };
+    const input = { vaultId: request.vaultId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: "natural", mode: "maintain" as const, request: "" };
+    await this.state.queueTerminalRecord(input, record);
+    await this.createService(new UnavailableMaintenanceProposalPort()).recoverPendingOrThrow(this.vaultId);
+    await this.onTerminal?.({ input, result: { status: request.terminalState === "completed" ? "completed" : "failed", message: record.summary, maintenanceResult: result, recordId: record.recordId }, at });
+    return { processedSourcePaths: sources.filter((source) => source.status === "processed").map((source) => source.path), pendingSourcePaths: sources.filter((source) => source.status !== "processed").map((source) => source.path), warnings: issues.map((issue) => issue.message) };
+  }
+
+  private async saveTerminalRecord(input: Readonly<PiKnowledgeMaintenanceToolInput>, result: Readonly<PiKnowledgeMaintenanceToolResult>, recordId: string): Promise<void> {
+    const at = this.now();
+    const verified = result.verifiedSourceFingerprints ?? {};
+    const paths = [...new Set([...Object.keys(verified), ...(input.sourcePaths?.length ? input.sourcePaths : Object.keys(input.sourceBodyFingerprints ?? {}))])];
+    const sources: KnowledgeMaintenanceRecord["sources"] = [];
+    for (const relative of paths) {
+      if (knowledgePathRole(this.vaultRootPath, relative) !== "raw") continue;
+      const fingerprint = verified[relative] ?? input.sourceBodyFingerprints?.[relative];
+      const processed = Boolean(fingerprint && result.maintenanceResult?.status === "noop");
+      sources.push({ path: relative, fingerprint: fingerprint ?? "", status: processed ? "processed" : fingerprint ? "failed" : "unread", evidencePaths: [] });
+    }
+    await this.state.queueTerminalRecord(input, { schemaVersion: 1, recordId, runId: `${input.productRunId}:${input.toolCallId}`, at, date: this.dateKey(), cancelled: result.status === "cancelled", result: result.maintenanceResult ?? createKnowledgeMaintenanceResultEnvelope({ status: "failed", issues: [{ code: result.errorCode ?? "cancelled", message: result.message }] }), sources, summary: result.message });
+    await this.createService(new UnavailableMaintenanceProposalPort()).recoverPendingOrThrow(this.vaultId);
+  }
+
   private async executeMaintenance(
     input: Readonly<PiKnowledgeMaintenanceToolInput>
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     const issues: { code: string; message: string; path?: string }[] = [];
+    const failedSourcePaths = new Set<string>();
     try {
       this.assertIdentity(input);
+      if (input.folderBindingsRevision !== undefined && input.folderBindingsRevision !== getKnowledgeFolderBindings(this.vaultRootPath)?.revision) throw new Phase3MaintenanceError("preview_stale", "知识库目录已变化，请重新读取并生成候选。");
       if (input.sourceBodyFingerprints) input = { ...input, sourceBodyFingerprints: Object.fromEntries(Object.entries(input.sourceBodyFingerprints).map(([relative, revision]) => [resolveKnowledgePath(this.vaultRootPath, relative, false), revision])) };
       if (input.signal?.aborted) return cancelledResult();
       const requestedActions = input.candidateActions ?? [];
-      const requestedSources = (input.sourcePaths?.length ? [...input.sourcePaths] : extractExplicitRawPaths(input.request)).map((value) => resolveKnowledgePath(this.vaultRootPath, value, false));
+      const requestedSources = (input.sourcePaths?.length ? [...input.sourcePaths] : extractExplicitRawPaths(input.request, this.vaultRootPath)).map((value) => resolveKnowledgePath(this.vaultRootPath, value, false));
+      if (!requestedSources.length) requestedSources.push(...(input.globalSourcePaths ?? (await this.tracker.snapshot({ vaultId: this.vaultId })).changedRawPaths.filter(isRawMarkdownPath).slice(0, 20)));
       if (requestedActions.length === 0 && requestedSources.length === 1 && this.knowledgeAgentIndex) {
         const reliable = await this.knowledgeAgentIndex
           .readReliableKnowledgeForRaw(requestedSources[0])
           .catch(() => null);
         if (reliable?.entries.length) {
+          const verifiedFile = await readImmutableFile(this.vaultRootPath, reliable.rawPath);
+          const verifiedFingerprint = rawDigestFingerprint(reliable.rawPath, verifiedFile.bytes);
+          if (verifiedFingerprint.split(":").at(-1) !== reliable.rawContentRevision.split(":").at(-1)) throw new Phase3MaintenanceError("preview_stale", "可靠知识对应的来源正文已变化，请重新阅读。", reliable.rawPath);
           return Object.freeze({
             status: "completed" as const,
             producedPaths: Object.freeze([]),
-            processedSourcePaths: Object.freeze(requestedSources),
+            processedSourcePaths: Object.freeze([reliable.rawPath]),
+            verifiedSourceFingerprints: { [reliable.rawPath]: verifiedFingerprint },
             maintenanceResult: createKnowledgeMaintenanceResultEnvelope({
               status: "noop",
               assessments: input.assessments
@@ -212,11 +282,13 @@ implements PiKnowledgeMaintenanceToolPort {
           });
         }
       }
+      if (!requestedSources.length) return { status: "completed", message: "没有待处理资料，本轮无需新增。", maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "noop" }) };
       const sourcePaths: string[] = [];
       const refreshedSources: Record<string, string> = {};
       const changed: string[] = [];
       for (const relativePath of requestedSources) {
         try {
+          if (knowledgePathRole(this.vaultRootPath, relativePath) !== "raw") throw new Error("指定资料不在来源范围。");
           const file = await readImmutableFile(this.vaultRootPath, normalizeVaultRelativePath(relativePath));
           const fingerprint = rawDigestFingerprint(relativePath, file.bytes);
           const expected = input.sourceBodyFingerprints?.[relativePath];
@@ -248,7 +320,7 @@ implements PiKnowledgeMaintenanceToolPort {
             throw new Error("目标已变化，已重读并保留最新内容；请重新读取此目标后调整候选。");
           }
           actions.push({ ...action, targetPath });
-        } catch (error) { issues.push({ code: "candidate_skipped", path: action.targetPath, message: `处理候选 ${action.targetPath}：${knowledgeErrorDetail(error)}` }); }
+        } catch (error) { for (const source of candidateSourcePaths(action.content, requestedSources)) failedSourcePaths.add(source); issues.push({ code: "candidate_skipped", path: action.targetPath, message: `处理候选 ${action.targetPath}：${knowledgeErrorDetail(error)}` }); }
       }
       if (requestedActions.length && !actions.length) return Object.freeze({ status: "failed", errorCode: "proposal_invalid", message: issues.map((issue) => issue.message).join("\n"), maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "failed", issues }) });
       const preference = requirePreferenceSnapshot(input.preferenceSnapshot);
@@ -257,6 +329,8 @@ implements PiKnowledgeMaintenanceToolPort {
           privateKnowledgeRootPath: this.privateKnowledgeRootPath,
           vaultId: this.vaultId,
           candidateActions: actions,
+          failedSourcePaths,
+          assessments: input.assessments,
           readSourcePaths: Object.keys(input.sourceBodyFingerprints ?? {}),
           issues
       });
@@ -276,7 +350,7 @@ implements PiKnowledgeMaintenanceToolPort {
         },
         ...(input.signal ? { signal: input.signal } : {})
       });
-      const stale = committed.notes.length === 0 ? committed.issues.find((issue) => issue.code === "preview_stale" && (issue.path && knowledgeRolePath(issue.path).startsWith("raw/"))) : undefined;
+      const stale = committed.notes.length === 0 ? committed.issues.find((issue) => issue.code === "preview_stale" && (issue.path && knowledgePathPolicy(this.vaultRootPath, issue.path).startsWith("raw/"))) : undefined;
       if (stale?.path) throw new Phase3MaintenanceError("preview_stale", stale.message, stale.path);
       if (committed.appliedPaths.length && this.onCommitted) {
         await Promise.resolve(this.onCommitted(committed.appliedPaths))
@@ -284,7 +358,7 @@ implements PiKnowledgeMaintenanceToolPort {
       }
       return Object.freeze({
         status: committed.status === "completed" || committed.status === "partial" ? "completed" as const : "failed" as const,
-        processedSourcePaths: Object.freeze([...proposal.usedSourcePaths]),
+        processedSourcePaths: Object.freeze((await readPrivateMaintenanceRecords(this.privateKnowledgeRootPath)).find((record) => record.runId === `${input.productRunId}:${input.toolCallId}`)?.sources.filter((source) => source.status === "processed").map((source) => source.path) ?? []),
         producedPaths: committed.appliedPaths,
         maintenanceResult: createKnowledgeMaintenanceResultEnvelope({
           status: committed.status === "completed" && committed.notes.length === 0
@@ -301,7 +375,7 @@ implements PiKnowledgeMaintenanceToolPort {
         preferenceState: preference.state,
         ...(committed.status === "completed"
           ? {}
-          : { errorCode: committed.status === "write_uncertain"
+          : { errorCode: committed.issues.some((issue) => issue.code === "record_pending") ? "record_pending" as const : committed.status === "write_uncertain"
               ? "write_uncertain" as const
               : "write_failed" as const }),
         message: [
@@ -321,7 +395,7 @@ implements PiKnowledgeMaintenanceToolPort {
       });
     } catch (error) {
       if (input.signal?.aborted) return cancelledResult();
-      if (error instanceof Phase3MaintenanceError && error.code === "preview_stale" && (error.relativePath && knowledgeRolePath(error.relativePath).startsWith("raw/"))) {
+      if (error instanceof Phase3MaintenanceError && error.code === "preview_stale" && (error.relativePath && knowledgePathPolicy(this.vaultRootPath, error.relativePath).startsWith("raw/"))) {
         try {
           const file = await readImmutableFile(this.vaultRootPath, error.relativePath);
           const fingerprint = rawDigestFingerprint(error.relativePath, file.bytes);
@@ -363,8 +437,25 @@ implements PiKnowledgeMaintenanceToolPort {
 
   private async normalizeCandidateTarget(value: string): Promise<string> {
     const target = resolveKnowledgePath(this.vaultRootPath, normalizeVaultRelativePath(value));
-    if (!/^(wiki|projects)\//u.test(knowledgeRolePath(target)) || !target.endsWith(".md") || target.split("/").some((part) => part.startsWith("."))) throw new Error("候选只可写入 wiki 或 projects 的 Markdown。");
-    if (!knowledgeRolePath(target).startsWith("wiki/")) return target;
+    if (!/^(wiki|projects)\//u.test(knowledgePathPolicy(this.vaultRootPath, target)) || !target.endsWith(".md") || target.split("/").some((part) => part.startsWith("."))) throw new Error("候选只可写入 wiki 或 projects 的 Markdown。");
+    const config = getKnowledgeFolderBindings(this.vaultRootPath);
+    if (config) {
+      const role = knowledgePathRole(this.vaultRootPath, target);
+      if (role !== "wiki" && role !== "projects") throw new Error("知识成果位置未启用或不在绑定范围中。");
+      const binding = config.roles[role];
+      const root = binding.writePath;
+      if (!root || !target.startsWith(`${root}/`)) throw new Error("候选不在当前默认知识成果保存位置中。");
+      const segments = target.slice(root.length + 1).split("/");
+      for (let depth = 1; depth < segments.length; depth++) {
+        const child = segments.slice(0, depth).join("/");
+        const parent = path.join(this.vaultRootPath, root, child);
+        const stat = await lstat(parent).catch(error => { if (isNodeErrorWithCode(error, "ENOENT")) return null; throw error; });
+        if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) throw new Error(`目标父目录不可用：${root}/${child}`);
+        if (!stat && !binding.allowedSubdirectories.some(allowed => allowed === child || allowed.startsWith(`${child}/`))) throw new Error(`尚未允许创建子目录：${root}/${child}；本候选保留待处理。`);
+      }
+      return target;
+    }
+    if (!knowledgePathPolicy(this.vaultRootPath, target).startsWith("wiki/")) return target;
     const parts = target.split("/");
     for (let depth = 1; depth < parts.length - 1; depth++) {
       const parent = parts.slice(0, depth).join("/");
@@ -384,6 +475,10 @@ implements PiKnowledgeMaintenanceToolPort {
   ): Phase3KnowledgeMaintenanceService {
     return new Phase3KnowledgeMaintenanceService({
       resolvePath: (relative) => resolveKnowledgePath(this.vaultRootPath, relative),
+      pathPolicy: (relative) => knowledgePathPolicy(this.vaultRootPath, relative),
+      bindingRevision: () => getKnowledgeFolderBindings(this.vaultRootPath)?.revision ?? 0,
+      privateRecords: true,
+      finalizeRecord: async (wal) => { await this.faultInjector?.("before-private-record"); await this.state.finalizeRecord(wal); await this.faultInjector?.("after-private-record"); },
       domain: this.domainService,
       sources: this.sources,
       tracker: this.tracker,
@@ -420,6 +515,7 @@ export function createProductionPiKnowledgeMaintenanceToolPort(
 }
 
 interface FilePhase3MaintenanceStateStoreOptions {
+  vaultRootPath?: string;
   storageRootPath: string;
   vaultId: string;
   walFileId?: (previewId: string) => string;
@@ -431,15 +527,29 @@ implements Phase3MaintenanceStateStore {
 
   private readonly vaultId: string;
   private readonly walFileId: (previewId: string) => string;
+  private readonly vaultRootPath?: string;
 
   constructor(options: Readonly<FilePhase3MaintenanceStateStoreOptions>) {
     this.vaultId = requireNonEmpty(options.vaultId, "vaultId");
     this.rootPath = path.resolve(options.storageRootPath);
+    this.vaultRootPath = options.vaultRootPath;
     this.walFileId = options.walFileId ?? ((previewId) => previewId);
   }
 
   async initialize(): Promise<void> {
     await assertExistingPrivateStateDirectoriesSafe(this.rootPath);
+  }
+
+  /** Provider-independent startup only finishes records whose note actions already settled. */
+  async recoverPrivateFinalization(): Promise<number> {
+    let recovered = 0;
+    for (const wal of await this.listRecoverableWals(this.vaultId)) {
+      if (wal.version !== 2 || wal.status === "completed" || wal.status === "blocked" || wal.actions.some(entry => entry.status === "pending" || entry.status === "uncertain")) continue;
+      await this.finalizeRecord(wal);
+      await this.saveWal({ ...wal, status: "completed", sequence: wal.sequence + 1, updatedAt: Date.now(), error: undefined }, wal.sequence);
+      recovered++;
+    }
+    return recovered;
   }
 
   async createPreview(
@@ -612,6 +722,50 @@ implements Phase3MaintenanceStateStore {
     });
   }
 
+  async queueTerminalRecord(input: Readonly<PiKnowledgeMaintenanceToolInput>, record: KnowledgeMaintenanceRecord): Promise<void> {
+    if (await this.loadWal(record.recordId)) return;
+    const preference = input.preferenceSnapshot ?? { profileVersion: "terminal-v1", state: "default" as const, revision: `sha256:${sha256("terminal")}` };
+    const preview = { protocolVersion: ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION, preferenceProfileVersion: preference.profileVersion, preferenceState: preference.state, preferenceRevision: preference.revision,
+      previewId: record.recordId, previewDigest: `sha256:${sha256(stableJson(record))}`, vaultId: this.vaultId, dateKey: record.date, sourceMode: "explicit" as const, selectedSources: [], remainingRawPaths: [], tracker: { binding: { kind: "missing" as const }, changedRawPaths: [] }, shadowId: record.recordId, shadowRevision: `sha256:${sha256(stableJson(record))}`, reportPath: "", actions: [], createdAt: record.at };
+    await this.createWal({ version: 2, terminalRecord: record, preview, authorization: { approvalId: `terminal:${input.toolCallId}`, operationIdentity: record.runId, consumedAt: record.at, contract: { ...input, userId: "private-bookkeeping", deviceId: "private-bookkeeping", previewId: preview.previewId, previewDigest: preview.previewDigest, preferenceProfileVersion: preference.profileVersion, preferenceState: preference.state, preferenceRevision: preference.revision, orderedActions: [] } }, status: "prepared", sequence: 0, actions: [], createdAt: record.at, updatedAt: record.at });
+  }
+
+  async finalizeRecord(wal: Readonly<Phase3MaintenanceWalRecord>): Promise<void> {
+    if (wal.terminalRecord) { await this.saveRecord(wal.terminalRecord); return; }
+    const runId = `${wal.authorization.contract.productRunId}:${wal.authorization.contract.toolCallId}`;
+    const recordId = `maintenance-${sha256(runId).slice(0, 32)}`;
+    const notes = wal.actions.filter((entry) => entry.status === "completed" && (entry.action.purpose === "knowledge" || (this.vaultRootPath ? ["wiki", "projects"].includes(knowledgePathRole(this.vaultRootPath, entry.action.targetPath) ?? "") : /^(wiki|projects)\//u.test(knowledgeRolePath(entry.action.targetPath)))))
+      .map((entry) => knowledgeMaintenanceNoteFromReadback({ operation: entry.action.operation === "create" ? "created" : "updated", path: entry.action.targetPath, content: entry.action.content }));
+    const issues = [...(wal.preview.bookkeeping?.issues ?? []), ...wal.actions.filter((entry) => entry.status !== "completed").map((entry) => ({ code: "write_failed", path: entry.action.targetPath, message: entry.error ?? "未完成写入" }))];
+    const sources = wal.preview.selectedSources.map((source) => {
+      const referencing = wal.actions.filter((entry) => entry.action.content.includes(`"path":"${source.raw.relativePath}"`) || entry.action.content.includes(`"path": "${source.raw.relativePath}"`));
+      const evidencePaths = referencing.filter((entry) => entry.status === "completed").map((entry) => entry.action.targetPath);
+      const read = referencing.length > 0 || wal.preview.bookkeeping?.readSourcePaths.includes(source.raw.relativePath);
+      const failed = wal.preview.bookkeeping?.failedSourcePaths?.includes(source.raw.relativePath) || referencing.some((entry) => entry.status !== "completed");
+      const processed = read && !failed && referencing.every((entry) => entry.status === "completed");
+      return { path: source.raw.relativePath, fingerprint: source.raw.revision, status: processed ? "processed" as const : read || failed ? "failed" as const : "unread" as const, evidencePaths };
+    });
+    const at = wal.updatedAt;
+    const result = createKnowledgeMaintenanceResultEnvelope({ status: issues.length ? notes.length ? "partial" : "failed" : notes.length ? "completed" : "noop", notes, issues, assessments: wal.preview.bookkeeping?.assessments });
+    await this.saveRecord({ schemaVersion: 1, recordId, runId, at, date: wal.preview.dateKey, result, sources, summary: issues.length ? "本轮有未完成项" : notes.length ? `已保存 ${notes.length} 篇知识笔记` : "本轮无需新增知识笔记" });
+  }
+
+  async saveRecord(record: KnowledgeMaintenanceRecord): Promise<void> {
+    await serializePiNativeFileWrite(this.rootPath, async () => {
+      const directory = await ensurePrivateStateDirectory(this.rootPath, ["records"]);
+      const recordPath = path.join(directory, `${requireControlId(record.recordId)}.json`);
+      const previous = await readControlEnvelope(recordPath, this.vaultId, "record") as KnowledgeMaintenanceRecord | null;
+      const persisted = previous ?? await writeControlEnvelope(recordPath, this.vaultId, "record", record);
+      if (this.vaultRootPath) {
+        const registry = await readRawDigestRegistry(this.vaultRootPath, true);
+        for (const source of persisted.sources) if (source.status === "processed") registry.entries[source.path] = {
+          rawPath: source.path, fingerprint: source.fingerprint, size: 0, mtime: 0, digestedAt: persisted.at, runId: persisted.runId, reportPath: "", evidencePaths: source.evidencePaths, confidence: "verified"
+        };
+        await writeRawDigestRegistry(this.vaultRootPath, registry);
+      }
+    });
+  }
+
   private async initializeUnlocked(): Promise<void> {
     await ensurePrivateStateDirectories(this.rootPath);
   }
@@ -649,6 +803,7 @@ implements Phase3MaintenanceSourceSnapshotPort {
     relativePath: string;
   }>): Promise<Readonly<Phase3MaintenanceSourceBinding>> {
     this.assertVault(input.vaultId);
+    if (knowledgePathRole(this.vaultRootPath, input.relativePath) !== "raw") throw new Error("资料不在已绑定的来源范围内。");
     const raw = await readImmutableFile(
       this.vaultRootPath,
       normalizeVaultRelativePath(input.relativePath)
@@ -676,6 +831,50 @@ implements Phase3MaintenanceSourceSnapshotPort {
     if (vaultId !== this.options.vaultId) {
       throw new Error("phase3_source_vault_mismatch");
     }
+  }
+}
+
+export async function rebasePrivateMaintenanceRecords(rootPath: string, from: string, to: string): Promise<void> {
+  await serializePiNativeFileWrite(rootPath, async () => {
+    for (const record of await readPrivateMaintenanceRecords(rootPath)) {
+      const next = rebaseKnowledgePathRecords(record, from, to);
+      if (JSON.stringify(next) === JSON.stringify(record)) continue;
+      const target = path.join(rootPath, "records", `${record.recordId}.json`);
+      const envelope = await readJsonFileIfPresent(target, "维护记录") as ControlEnvelope;
+      await writeControlEnvelope(target, envelope.vaultId, "record", next);
+    }
+  });
+}
+
+export async function readPrivateMaintenanceRecords(rootPath: string): Promise<KnowledgeMaintenanceRecord[]> {
+  const directory = path.join(rootPath, "records");
+  const names = await readdir(directory).catch((error: unknown) => { if (isNodeErrorWithCode(error, "ENOENT")) return []; throw error; });
+  const records: KnowledgeMaintenanceRecord[] = [];
+  for (const name of names) {
+    if (!/^maintenance-[a-f0-9]{32}\.json$/u.test(name)) continue;
+    const raw = await readJsonFileIfPresent(path.join(directory, name), "维护记录");
+    if (!isRecord(raw) || typeof raw.vaultId !== "string") throw new Error("维护记录无效");
+    const payload = parseControlEnvelope(raw, raw.vaultId, "record").payload as KnowledgeMaintenanceRecord;
+    if (payload.schemaVersion !== 1 || payload.recordId + ".json" !== name || !Array.isArray(payload.sources)) throw new Error("维护记录版本或身份无效");
+    records.push(payload);
+  }
+  return records.sort((a, b) => b.at - a.at);
+}
+
+export async function privateMaintenanceSourceScope(vaultRoot: string) {
+  const index = await import("../knowledge-base/incremental-index");
+  const registry = await readRawDigestRegistry(vaultRoot, true);
+  const refreshed = await index.refreshKnowledgeBaseIndex(vaultRoot, { roots: ["raw"], validateRawSafety: true });
+  return { folderBindingsRevision: getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0, sourcePaths: Object.values(refreshed.index.entries).filter((entry) => entry.root === "raw" && isRawMarkdownPath(entry.path) && (!registry.entries[entry.path] || registry.entries[entry.path].fingerprint !== entry.fingerprint)).map((entry) => entry.path).sort().slice(0, 20) };
+}
+
+class PrivateMaintenanceTrackerPort implements Phase3MaintenanceTrackerPort {
+  constructor(private readonly vaultRoot: string) {}
+  async snapshot(): Promise<Readonly<Phase3MaintenanceTrackerSnapshot>> {
+    const index = await import("../knowledge-base/incremental-index");
+    const registry = await readRawDigestRegistry(this.vaultRoot, true);
+    const sources = (await index.refreshKnowledgeBaseIndex(this.vaultRoot, { roots: ["raw"], validateRawSafety: true })).index;
+    return { binding: { kind: "missing" }, changedRawPaths: Object.values(sources.entries).filter((entry) => entry.root === "raw" && (!registry.entries[entry.path] || registry.entries[entry.path].fingerprint !== entry.fingerprint)).map((entry) => entry.path) };
   }
 }
 
@@ -748,6 +947,8 @@ implements Phase3MaintenanceProposalPort {
     privateKnowledgeRootPath: string;
     vaultId: string;
     issues: { code: string; message: string; path?: string }[];
+    failedSourcePaths: Set<string>;
+    assessments?: readonly import("../knowledge-base/knowledge-maintenance-result").KnowledgeMaintenanceAssessment[];
     readSourcePaths: readonly string[];
     candidateActions: readonly Readonly<{
       targetPath: string;
@@ -787,7 +988,7 @@ implements Phase3MaintenanceProposalPort {
           selectedSources: input.selectedSources.map((source) => ({ relativePath: source.raw.relativePath, contentSha256: source.raw.contentSha256 })) });
         for (const source of adopted) this.usedSourcePaths.add(source.relativePath);
         knowledgeActions.push({ ...action, content });
-      } catch (error) { this.options.issues.push({ code: "candidate_skipped", path: action.targetPath, message: `处理候选 ${action.targetPath}：${knowledgeErrorDetail(error)}` }); }
+      } catch (error) { for (const source of candidateSourcePaths(action.content, input.selectedSources.map((source) => source.raw.relativePath))) this.options.failedSourcePaths.add(source); this.options.issues.push({ code: "candidate_skipped", path: action.targetPath, message: `处理候选 ${action.targetPath}：${knowledgeErrorDetail(error)}` }); }
     }
     if (this.options.candidateActions.length && !knowledgeActions.length) throw new Phase3MaintenanceError("proposal_invalid", this.options.issues.map((issue) => issue.message).join("\n"));
     const usedNames = new Set<string>();
@@ -801,19 +1002,10 @@ implements Phase3MaintenanceProposalPort {
     for (const source of input.selectedSources) {
       if (this.options.readSourcePaths.includes(source.raw.relativePath)) this.usedSourcePaths.add(source.raw.relativePath);
     }
-    const managedActions = await deterministicManagedActions(
-      this.vaultRootPath,
-      {
-        ...input,
-        selectedSources: input.selectedSources.filter((source) => this.usedSourcePaths.has(source.raw.relativePath)),
-        remainingRawPaths: [...new Set([...input.remainingRawPaths, ...input.selectedSources.filter((source) => !this.usedSourcePaths.has(source.raw.relativePath)).map((source) => source.raw.relativePath)])]
-      },
-      knowledgeActions
-    );
-    const actions: readonly Readonly<Phase3MaintenanceProposalAction>[] =
-      Object.freeze([...knowledgeActions, ...managedActions]);
+    const actions = Object.freeze(knowledgeActions);
     return Object.freeze({
       shadowId: previewId,
+      bookkeeping: { readSourcePaths: this.options.readSourcePaths, failedSourcePaths: [...this.options.failedSourcePaths], assessments: this.options.assessments, issues: [...this.options.issues] },
       shadowRevision: sha256(stableJson(actions)),
       actions: Object.freeze(actions.map((action) =>
         Object.freeze({
@@ -826,85 +1018,6 @@ implements Phase3MaintenanceProposalPort {
       ))
     });
   }
-}
-
-async function deterministicManagedActions(
-  vaultRootPath: string,
-  input: Readonly<Phase3MaintenanceProposalInput>,
-  knowledgeActions: readonly Readonly<{
-    targetPath: string;
-    content: string;
-  }>[]
-): Promise<readonly Readonly<{ targetPath: string; content: string }>[]> {
-  const [rawIndexFile, trackerFile] = await Promise.all([
-    readImmutableFileIfPresent(vaultRootPath, PHASE3_MAINTENANCE_RAW_INDEX_PATH),
-    readImmutableFileIfPresent(vaultRootPath, PHASE3_MAINTENANCE_TRACKER_PATH)
-  ]);
-  const selectedPaths = input.selectedSources.map((source) =>
-    source.raw.relativePath
-  );
-  const rawIndexBefore = rawIndexFile
-    ? UTF8_DECODER.decode(rawIndexFile.bytes).trimEnd()
-    : "# Raw Index";
-  const trackerBefore = trackerFile
-    ? UTF8_DECODER.decode(trackerFile.bytes).trimEnd()
-    : "# Knowledge Maintenance Tracker";
-  const rawIndexContent = [
-    rawIndexBefore,
-    "",
-    `## Phase 3 ${input.dateKey}`,
-    ...selectedPaths.map((relativePath) => `- \`${relativePath}\``),
-    ""
-  ].join("\n");
-  const trackerContent = [
-    trackerBefore,
-    "",
-    `## Processed ${input.dateKey} (${input.previewId})`,
-    ...selectedPaths.map((relativePath) => `- \`${relativePath}\``),
-    ...(input.remainingRawPaths.length
-      ? [
-          "",
-          "## Changed Raw（待处理）",
-          ...input.remainingRawPaths.map((relativePath) =>
-            `- \`${relativePath}\``
-          )
-        ]
-      : []),
-    ""
-  ].join("\n");
-  const reportContent = [
-    `# Knowledge Maintenance ${input.dateKey}`,
-    "",
-    `- previewId: \`${input.previewId}\``,
-    `- protocolVersion: \`${input.protocolVersion}\``,
-    `- sourceMode: \`${input.sourceMode}\``,
-    "",
-    "## Processed Raw",
-    ...selectedPaths.map((relativePath) => `- \`${relativePath}\``),
-    "",
-    "## Knowledge targets",
-    ...knowledgeActions.map((action) => `- \`${action.targetPath}\``),
-    "",
-    "## Remaining Raw",
-    ...(input.remainingRawPaths.length
-      ? input.remainingRawPaths.map((relativePath) => `- \`${relativePath}\``)
-      : ["- none"]),
-    ""
-  ].join("\n");
-  return Object.freeze([
-    Object.freeze({
-      targetPath: resolveKnowledgePath(vaultRootPath, PHASE3_MAINTENANCE_RAW_INDEX_PATH),
-      content: rawIndexContent
-    }),
-    Object.freeze({
-      targetPath: resolveKnowledgePath(vaultRootPath, PHASE3_MAINTENANCE_TRACKER_PATH),
-      content: trackerContent
-    }),
-    Object.freeze({
-      targetPath: input.reportPath,
-      content: reportContent
-    })
-  ]);
 }
 
 class UnavailableMaintenanceProposalPort
@@ -1177,7 +1290,7 @@ async function writeNewFileWithReadback(
 interface ControlEnvelope {
   schemaVersion: 1;
   vaultId: string;
-  kind: "preview" | "wal";
+  kind: "preview" | "wal" | "record";
   payloadDigest: string;
   payload: unknown;
 }
@@ -1267,7 +1380,7 @@ function requireStoredPreview(
 function requireWal(value: unknown): Readonly<Phase3MaintenanceWalRecord> {
   if (
     !isRecord(value)
-    || value.version !== 1
+    || (value.version !== 1 && value.version !== 2)
     || !isRecord(value.preview)
     || value.preview.protocolVersion
       !== ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION
@@ -1313,14 +1426,19 @@ function safeMaintenanceError(error: unknown): string {
   return `知识维护 ${code}${file}：${knowledgeErrorDetail(error)}；已完成内容保留，请只处理受影响项。`;
 }
 
-function extractExplicitRawPaths(value: string): string[] {
+function candidateSourcePaths(content: string, selected: readonly string[]): string[] {
+  const matches = selected.filter((relative) => content.includes(relative));
+  return matches.length ? matches : [...selected];
+}
+
+function extractExplicitRawPaths(value: string, vaultRoot = ""): string[] {
   const paths = new Set<string>();
-  for (const match of value.matchAll(/(?:raw|[^\s/`[\]（）]+（raw）)\/[^`[\]\r\n]+?\.md\b/giu)) {
+  for (const match of value.matchAll(/[^\s`[\]\r\n]+\/[^`[\]\r\n]+?\.md\b/giu)) {
     try {
-      paths.add(normalizeVaultRelativePath(match[0].trim()));
-    } catch {
-      // The service will use Tracker sources if no valid explicit path exists.
-    }
+      const candidate = normalizeVaultRelativePath(match[0].trim());
+      if (knowledgePathRole(vaultRoot, candidate) !== "raw") throw new Error("指定资料不在来源范围，不能回退全局维护。");
+      paths.add(candidate);
+    } catch (error) { throw error; }
   }
   return [...paths].sort((left, right) => left.localeCompare(right, "en"));
 }

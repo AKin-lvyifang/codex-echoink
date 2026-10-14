@@ -40,7 +40,8 @@ export type Phase3MaintenanceErrorCode =
   | "wal_conflict"
   | "write_failed"
   | "write_uncertain"
-  | "recovery_blocked";
+  | "recovery_blocked"
+  | "record_pending";
 
 export class Phase3MaintenanceError extends Error {
   constructor(
@@ -99,6 +100,7 @@ export interface Phase3MaintenanceProposalAction {
 }
 
 export interface Phase3MaintenanceProposal {
+  bookkeeping?: { readSourcePaths: readonly string[]; failedSourcePaths?: readonly string[]; assessments?: readonly import("./knowledge-maintenance-result").KnowledgeMaintenanceAssessment[]; issues: readonly { code: string; message: string; path?: string }[] };
   /** Existing Shadow attempt/control identity. */
   shadowId: string;
   /** Sealed Shadow/change-set digest. */
@@ -200,6 +202,7 @@ export type Phase3MaintenanceVaultDomain = Pick<
 >;
 
 export interface Phase3MaintenanceAction {
+  purpose?: "knowledge";
   actionId: string;
   operation: "create" | "update";
   targetPath: string;
@@ -209,6 +212,8 @@ export interface Phase3MaintenanceAction {
 }
 
 export interface Phase3MaintenancePreview {
+  bookkeeping?: Phase3MaintenanceProposal["bookkeeping"];
+  bindingRevision?: number;
   protocolVersion: typeof ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION;
   preferenceProfileVersion: string;
   preferenceState: "default" | "custom";
@@ -259,7 +264,8 @@ export type Phase3MaintenanceWalStatus =
   | "blocked";
 
 export interface Phase3MaintenanceWalRecord {
-  version: 1;
+  terminalRecord?: import("./maintenance-record").KnowledgeMaintenanceRecord;
+  version: 1 | 2;
   preview: Readonly<Phase3MaintenancePreview>;
   authorization: Readonly<Phase3MaintenanceBatchAuthorization>;
   status: Phase3MaintenanceWalStatus;
@@ -355,7 +361,7 @@ export interface Phase3MaintenanceRecoveryResult {
 }
 
 export type Phase3MaintenanceFaultPoint =
-  "after-wal-before-first-write";
+  "after-wal-before-first-write" | "before-private-record" | "after-private-record";
 
 export interface Phase3KnowledgeMaintenanceServiceOptions {
   domain: Phase3MaintenanceVaultDomain;
@@ -366,6 +372,10 @@ export interface Phase3KnowledgeMaintenanceServiceOptions {
   approvals?: Phase3MaintenanceBatchApprovalPort;
   state: Phase3MaintenanceStateStore;
   resolvePath?: (relativePath: string) => string;
+  pathPolicy?: (relativePath: string) => string;
+  bindingRevision?: () => number;
+  privateRecords?: boolean;
+  finalizeRecord?: (wal: Readonly<Phase3MaintenanceWalRecord>) => Promise<void>;
   createPreviewId?: () => string;
   now?: () => number;
   faultInjector?: (
@@ -380,6 +390,10 @@ export interface Phase3KnowledgeMaintenanceServiceOptions {
  * exactly once and in preview order.
  */
 export class Phase3KnowledgeMaintenanceService {
+  private readonly privateRecords: boolean;
+  private readonly finalizeRecord?: (wal: Readonly<Phase3MaintenanceWalRecord>) => Promise<void>;
+  private readonly pathPolicy: (relativePath: string) => string;
+  private readonly bindingRevision: () => number;
   private readonly resolvePath: (relativePath: string) => string;
   private readonly domain: Phase3MaintenanceVaultDomain;
   private readonly sources: Phase3MaintenanceSourceSnapshotPort;
@@ -394,6 +408,10 @@ export class Phase3KnowledgeMaintenanceService {
   ) => void | Promise<void>;
 
   constructor(options: Readonly<Phase3KnowledgeMaintenanceServiceOptions>) {
+    this.privateRecords = options.privateRecords === true;
+    this.finalizeRecord = options.finalizeRecord;
+    this.pathPolicy = options.pathPolicy ?? knowledgeRolePath;
+    this.bindingRevision = options.bindingRevision ?? (() => 0);
     this.resolvePath = options.resolvePath ?? ((value) => value);
     this.domain = options.domain;
     this.sources = options.sources;
@@ -452,7 +470,7 @@ export class Phase3KnowledgeMaintenanceService {
     });
     await this.assertPreviewUnchanged(preview);
     let wal = await this.state.createWal(freezeWal({
-      version: 1,
+      version: this.privateRecords ? 2 : 1,
       preview,
       authorization,
       status: "prepared",
@@ -499,8 +517,8 @@ export class Phase3KnowledgeMaintenanceService {
     const committed = commitResult(wal, false);
     const evidence = await this.collectExecutionEvidence(wal);
     const expectedKnowledgeNotes = preview.actions.some((action) =>
-      knowledgeRolePath(action.targetPath).startsWith("wiki/")
-      || knowledgeRolePath(action.targetPath).startsWith("projects/")
+      this.pathPolicy(action.targetPath).startsWith("wiki/")
+      || this.pathPolicy(action.targetPath).startsWith("projects/")
     );
     if (expectedKnowledgeNotes && evidence.notes.length === 0) {
       return Object.freeze({
@@ -531,12 +549,12 @@ export class Phase3KnowledgeMaintenanceService {
     input: Readonly<Phase3MaintenancePreparePreviewInput>
   ): Promise<boolean> {
     const vaultId = requireNonEmpty(input.vaultId, "vaultId");
-    if (normalizeRawPaths(input.explicitRawPaths ?? []).length > 0) return false;
+    if (normalizeRawPaths(input.explicitRawPaths ?? [], this.pathPolicy).length > 0) return false;
     const tracker = normalizeTrackerSnapshot(
       await this.tracker.snapshot({ vaultId })
     );
-    await this.assertTrackerMatchesDomain(vaultId, tracker.binding);
-    return normalizeRawPaths(tracker.changedRawPaths).length === 0;
+    if (!this.privateRecords) await this.assertTrackerMatchesDomain(vaultId, tracker.binding);
+    return normalizeRawPaths(tracker.changedRawPaths, this.pathPolicy).length === 0;
   }
 
   private async collectExecutionEvidence(
@@ -553,8 +571,8 @@ export class Phase3KnowledgeMaintenanceService {
       if (entry.status !== "completed") continue;
       appliedPaths.push(entry.action.targetPath);
       if (
-        knowledgeRolePath(entry.action.targetPath).startsWith("wiki/")
-        || knowledgeRolePath(entry.action.targetPath).startsWith("projects/")
+        entry.action.purpose === "knowledge" || this.pathPolicy(entry.action.targetPath).startsWith("wiki/")
+        || this.pathPolicy(entry.action.targetPath).startsWith("projects/")
       ) {
         const readback = await this.domain.readback({
           vaultId: wal.preview.vaultId,
@@ -595,13 +613,14 @@ export class Phase3KnowledgeMaintenanceService {
     const vaultId = requireNonEmpty(input.vaultId, "vaultId");
     const dateKey = requireDateKey(input.dateKey);
     const preference = normalizePreferenceSnapshot(input.preference);
+    const bindingRevision = this.bindingRevision();
     const tracker = normalizeTrackerSnapshot(
       await this.tracker.snapshot({ vaultId })
     );
-    await this.assertTrackerMatchesDomain(vaultId, tracker.binding);
+    if (!this.privateRecords) await this.assertTrackerMatchesDomain(vaultId, tracker.binding);
 
-    const explicit = normalizeRawPaths(input.explicitRawPaths ?? []);
-    const trackerPaths = normalizeRawPaths(tracker.changedRawPaths);
+    const explicit = normalizeRawPaths(input.explicitRawPaths ?? [], this.pathPolicy);
+    const trackerPaths = normalizeRawPaths(tracker.changedRawPaths, this.pathPolicy);
     const sourceMode: Phase3MaintenanceSourceMode = explicit.length
       ? "explicit"
       : "tracker";
@@ -622,7 +641,7 @@ export class Phase3KnowledgeMaintenanceService {
       candidateSources.slice(0, selectedPaths.length)
     );
     const previewId = requireNonEmpty(this.createPreviewId(), "previewId");
-    const reportPath = this.resolvePath(phase3MaintenanceReportPath(dateKey));
+    const reportPath = this.privateRecords ? "" : this.resolvePath(phase3MaintenanceReportPath(dateKey));
     const proposal = normalizeProposal(await this.proposal.generate({
       protocolVersion: ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION,
       preferenceProfileVersion: preference.profileVersion,
@@ -638,7 +657,7 @@ export class Phase3KnowledgeMaintenanceService {
       reportPath
     }));
 
-    await this.assertTrackerMatchesDomain(vaultId, tracker.binding);
+    if (!this.privateRecords) await this.assertTrackerMatchesDomain(vaultId, tracker.binding);
     await this.assertSourceBindingsUnchanged(vaultId, selectedSources);
     const actions = await this.materializeActions({
       vaultId,
@@ -650,7 +669,10 @@ export class Phase3KnowledgeMaintenanceService {
       proposal
     });
     const createdAt = this.now();
+    if (bindingRevision !== this.bindingRevision()) throw phase3Error("preview_stale", "知识库目录已改变，请重新生成候选。");
     const previewDigest = digestJson({
+      bindingRevision,
+      bookkeeping: proposal.bookkeeping,
       protocolVersion: ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION,
       preferenceProfileVersion: preference.profileVersion,
       preferenceState: preference.state,
@@ -669,6 +691,8 @@ export class Phase3KnowledgeMaintenanceService {
       createdAt
     });
     const preview = freezePreview({
+      bindingRevision,
+      bookkeeping: proposal.bookkeeping,
       protocolVersion: ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION,
       preferenceProfileVersion: preference.profileVersion,
       preferenceState: preference.state,
@@ -758,7 +782,7 @@ export class Phase3KnowledgeMaintenanceService {
       throw error;
     }
     let wal = await this.state.createWal(freezeWal({
-      version: 1,
+      version: this.privateRecords ? 2 : 1,
       preview,
       authorization,
       status: "prepared",
@@ -843,8 +867,16 @@ export class Phase3KnowledgeMaintenanceService {
         wal.error ?? "Maintenance WAL is blocked"
       );
     }
+    if (this.privateRecords && wal.version === 1) {
+      wal = await this.saveWal(wal, { version: 2, actions: wal.actions.map((entry) => entry.status === "completed" && /^(wiki|projects)\//u.test(knowledgeRolePath(entry.action.targetPath)) ? { ...entry, action: { ...entry.action, purpose: "knowledge" as const } } : { ...entry, status: "failed" as const, error: "旧运行文件已停用；旧候选需按当前配置重新生成" }) });
+    }
+    if (this.privateRecords && (wal.preview.bindingRevision ?? 0) !== this.bindingRevision()) wal = await this.saveWal(wal, { actions: wal.actions.map((entry) => entry.status === "pending" ? { ...entry, status: "failed" as const, error: "知识库配置改变，停止剩余候选" } : entry) });
+    if (this.privateRecords) for (let index = 0; index < wal.actions.length; index++) {
+      const entry = wal.actions[index];
+      if ((entry.status === "pending" || entry.status === "uncertain") && targetHasDesiredContent(await this.readTargetBinding(wal.preview.vaultId, entry.action.targetPath), entry.action)) wal = await this.checkpointCompletedAction(wal, index);
+    }
     try {
-      await this.assertWalCanResume(wal);
+      if (!this.privateRecords || wal.actions.some((entry) => entry.status === "pending" || entry.status === "uncertain")) await this.assertWalCanResume(wal);
     } catch (error) {
       if (error instanceof Phase3MaintenanceError && error.code === "preview_stale" && wal.actions.every((entry) => entry.status === "pending")) {
         await this.saveWal(wal, { status: "completed", actions: wal.actions.map((entry) => ({ ...entry, status: "failed" as const, error: errorMessage(error) })), error: errorMessage(error), updatedAt: this.now() });
@@ -861,6 +893,10 @@ export class Phase3KnowledgeMaintenanceService {
     for (let index = 0; index < wal.actions.length; index += 1) {
       const entry = wal.actions[index];
       if (entry.status === "completed" || entry.status === "failed") continue;
+      if ((wal.preview.bindingRevision ?? 0) !== this.bindingRevision()) {
+        wal = await this.saveWalAction(wal, index, { status: "failed", error: "知识库配置改变，停止该候选写入" });
+        continue;
+      }
       const current = await this.readTargetBinding(
         wal.preview.vaultId,
         entry.action.targetPath
@@ -926,10 +962,14 @@ export class Phase3KnowledgeMaintenanceService {
       wal = await this.checkpointCompletedAction(wal, index);
     }
 
-    await this.assertSourceBindingsUnchanged(
+    if (!this.privateRecords) await this.assertSourceBindingsUnchanged(
       wal.preview.vaultId,
       wal.preview.selectedSources
     );
+    if (this.finalizeRecord) {
+      try { await this.finalizeRecord(wal); }
+      catch (error) { throw phase3Error("record_pending", "笔记已核对，维护记录待恢复；恢复只补内部记录。", undefined, error); }
+    }
     wal = await this.saveWal(wal, {
       status: "completed",
       updatedAt: this.now(),
@@ -941,7 +981,8 @@ export class Phase3KnowledgeMaintenanceService {
   private async assertPreviewUnchanged(
     preview: Readonly<Phase3MaintenancePreview>
   ): Promise<void> {
-    await this.assertTrackerMatchesDomain(
+    if ((preview.bindingRevision ?? 0) !== this.bindingRevision()) throw phase3Error("preview_stale", "知识库目录已改变，请重新生成候选。");
+    if (!this.privateRecords) await this.assertTrackerMatchesDomain(
       preview.vaultId,
       preview.tracker.binding
     );
@@ -954,6 +995,7 @@ export class Phase3KnowledgeMaintenanceService {
   private async assertWalCanResume(
     wal: Readonly<Phase3MaintenanceWalRecord>
   ): Promise<void> {
+    if ((wal.preview.bindingRevision ?? 0) !== this.bindingRevision()) throw phase3Error("preview_stale", "知识库目录已改变，停止恢复笔记写入。");
     assertAuthorizationMatchesPreview(wal.authorization, wal.preview);
     await this.assertSourceBindingsUnchanged(
       wal.preview.vaultId,
@@ -1037,8 +1079,9 @@ export class Phase3KnowledgeMaintenanceService {
     const drafts = input.proposal.actions.map((draft) => {
       const targetPath = normalizeFormalTargetPath(
         draft.targetPath,
-        input.dateKey
+        input.dateKey, this.pathPolicy
       );
+      if (this.privateRecords && !/^(wiki|projects)\//u.test(this.pathPolicy(targetPath))) throw phase3Error("proposal_invalid", "仅允许写入已绑定的知识成果位置", targetPath);
       if (protectedPaths.has(targetPath)) {
         throw phase3Error(
           "proposal_invalid",
@@ -1056,8 +1099,8 @@ export class Phase3KnowledgeMaintenanceService {
     });
     for (const draft of drafts) {
       if (
-        knowledgeRolePath(draft.targetPath).startsWith("wiki/")
-        || knowledgeRolePath(draft.targetPath).startsWith("projects/")
+        this.pathPolicy(draft.targetPath).startsWith("wiki/")
+        || this.pathPolicy(draft.targetPath).startsWith("projects/")
       ) {
         if (!draft.expectedTarget) {
           throw phase3Error(
@@ -1092,21 +1135,21 @@ export class Phase3KnowledgeMaintenanceService {
         "Maintenance proposal contains duplicate target paths"
       );
     }
-    if (!drafts.some((draft) =>
-      knowledgeRolePath(draft.targetPath) === PHASE3_MAINTENANCE_TRACKER_PATH)) {
+    if (!this.privateRecords && !drafts.some((draft) =>
+      this.pathPolicy(draft.targetPath) === PHASE3_MAINTENANCE_TRACKER_PATH)) {
       throw phase3Error(
         "proposal_invalid",
         "Maintenance proposal must update the ingest tracker"
       );
     }
-    if (drafts.filter((draft) => draft.targetPath === input.reportPath).length !== 1) {
+    if (!this.privateRecords && drafts.filter((draft) => draft.targetPath === input.reportPath).length !== 1) {
       throw phase3Error(
         "proposal_invalid",
         "Maintenance proposal must contain exactly one dated report"
       );
     }
     const report = drafts.find((draft) => draft.targetPath === input.reportPath)!;
-    for (const remainingPath of input.remainingRawPaths) {
+    for (const remainingPath of this.privateRecords ? [] : input.remainingRawPaths) {
       if (!report.content.includes(remainingPath)) {
         throw phase3Error(
           "proposal_invalid",
@@ -1136,6 +1179,7 @@ export class Phase3KnowledgeMaintenanceService {
         );
       }
       actions.push(Object.freeze({
+        purpose: /^(wiki|projects)\//u.test(this.pathPolicy(draft.targetPath)) ? "knowledge" : undefined,
         actionId: `${input.previewId}:${String(index + 1).padStart(3, "0")}`,
         operation: expected.kind === "missing" ? "create" : "update",
         targetPath: draft.targetPath,
@@ -1249,6 +1293,7 @@ export class Phase3KnowledgeMaintenanceService {
     } catch (error) {
       const action = wal.actions[index]?.action;
       if (!action) throw error;
+      if (this.privateRecords) throw phase3Error("record_pending", "笔记已核对，内部完成状态待恢复；不会重复写入笔记。", action.targetPath, error);
       await this.saveWalAction(wal, index, {
         status: "uncertain",
         domainStatus: "completed",
@@ -1306,12 +1351,12 @@ export function isPhase3MaintenanceWorkflowStatePath(
   }
 }
 
-function normalizeRawPaths(paths: readonly string[]): string[] {
-  const normalized = paths.map(normalizeRawPath);
+function normalizeRawPaths(paths: readonly string[], policy: (value: string) => string = knowledgeRolePath): string[] {
+  const normalized = paths.map((value) => normalizeRawPath(value, policy));
   return Array.from(new Set(normalized)).sort(compareText);
 }
 
-function normalizeRawPath(value: string): string {
+function normalizeRawPath(value: string, policy: (value: string) => string = knowledgeRolePath): string {
   let relativePath: string;
   try {
     relativePath = normalizeVaultRelativePath(value);
@@ -1324,8 +1369,8 @@ function normalizeRawPath(value: string): string {
     );
   }
   if (
-    !knowledgeRolePath(relativePath).startsWith("raw/")
-    || knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH
+    !policy(relativePath).startsWith("raw/")
+    || policy(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH
     || hasHiddenSegment(relativePath)
   ) {
     throw phase3Error(
@@ -1339,7 +1384,8 @@ function normalizeRawPath(value: string): string {
 
 function normalizeFormalTargetPath(
   value: string,
-  dateKeyInput: string
+  dateKeyInput: string,
+  policy: (value: string) => string = knowledgeRolePath
 ): string {
   const dateKey = requireDateKey(dateKeyInput);
   let relativePath: string;
@@ -1355,15 +1401,15 @@ function normalizeFormalTargetPath(
   }
   const reportPath = phase3MaintenanceReportPath(dateKey);
   const ordinaryKnowledgePage = (
-    knowledgeRolePath(relativePath).startsWith("wiki/")
-    || knowledgeRolePath(relativePath).startsWith("projects/")
+    policy(relativePath).startsWith("wiki/")
+    || policy(relativePath).startsWith("projects/")
   ) && relativePath.toLowerCase().endsWith(".md")
     && !hasHiddenSegment(relativePath);
   if (
     ordinaryKnowledgePage
-    || knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH
-    || knowledgeRolePath(relativePath) === PHASE3_MAINTENANCE_TRACKER_PATH
-    || knowledgeRolePath(relativePath) === reportPath
+    || policy(relativePath) === PHASE3_MAINTENANCE_RAW_INDEX_PATH
+    || policy(relativePath) === PHASE3_MAINTENANCE_TRACKER_PATH
+    || policy(relativePath) === reportPath
   ) {
     return relativePath;
   }
@@ -1381,6 +1427,7 @@ function normalizeProposal(
     throw phase3Error("proposal_invalid", "Maintenance proposal is invalid");
   }
   return Object.freeze({
+    bookkeeping: proposal.bookkeeping,
     shadowId: requireNonEmpty(proposal.shadowId, "shadowId"),
     shadowRevision: requireNonEmpty(
       proposal.shadowRevision,
@@ -1455,7 +1502,7 @@ function normalizeTrackerSnapshot(
   }
   return Object.freeze({
     binding: normalizeTargetBinding(snapshot.binding),
-    changedRawPaths: Object.freeze(normalizeRawPaths(snapshot.changedRawPaths))
+    changedRawPaths: Object.freeze([...new Set(snapshot.changedRawPaths.map((value) => normalizeVaultRelativePath(value)))])
   });
 }
 

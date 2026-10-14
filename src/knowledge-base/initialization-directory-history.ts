@@ -1,3 +1,4 @@
+import type { KnowledgeFolderBindings } from "./folder-bindings";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -6,6 +7,7 @@ import { knowledgeErrorDetail } from "./initialization-error";
 interface Position { original: string; current: string; identity: string }
 interface FolderPosition { original: string; current: string }
 interface DirectoryHistory {
+  bindings?: KnowledgeFolderBindings;
   version: 1;
   createdAt: number;
   jobId: string;
@@ -26,6 +28,8 @@ export interface DirectoryHistoryHost {
   rename(from: string, to: string, restoring?: boolean): Promise<void>;
   removeEmptyFolder(relativePath: string): Promise<void>;
   restoreFolderLinks?(from: string, to: string): Promise<void>;
+  restoreBindings?(from: string, to: string, keepCurrent: boolean, originalBindings?: KnowledgeFolderBindings): Promise<void>;
+  currentBindings?(): KnowledgeFolderBindings | null | undefined;
 }
 
 /** Position journal, never a content backup. Callers serialize all mutations. */
@@ -85,7 +89,7 @@ export class InitializationDirectoryHistory {
   async capture(jobId: string): Promise<readonly string[]> {
     if (await this.read()) return []; // Never replace the original with a later layout.
     const warnings: string[] = [];
-    const record: DirectoryHistory = { version: 1, createdAt: Date.now(), jobId, folders: [], files: [], createdFolders: [], pending: null };
+    const record: DirectoryHistory = { bindings: this.host.currentBindings?.() ? structuredClone(this.host.currentBindings!()!) : undefined, version: 1, createdAt: Date.now(), jobId, folders: [], files: [], createdFolders: [], pending: null };
     const walk = async (parent: string): Promise<void> => {
       for (const entry of await fs.readdir(path.join(this.host.vaultRoot, parent), { withFileTypes: true })) {
         if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.isSymbolicLink()) continue;
@@ -196,7 +200,8 @@ export class InitializationDirectoryHistory {
     if (!record) throw new Error("暂无初始化前目录记录");
     await this.recoverPending(record);
     const result: DirectoryRestoreResult = { restored: 0, skipped: [] };
-    for (const folder of record.folders.sort((a, b) => a.split("/").length - b.split("/").length)) {
+    const affectedOriginalFolders = [...new Set((record.folderRenames ?? []).filter(position => position.current !== position.original).map(position => position.original))];
+    for (const folder of affectedOriginalFolders.sort((a, b) => a.split("/").length - b.split("/").length)) {
       try { await this.host.mkdir(folder); }
       catch (error) { result.skipped.push({ path: folder, reason: String(error) }); }
     }
@@ -221,6 +226,13 @@ export class InitializationDirectoryHistory {
         if (record.pending) await this.recoverPending(record);
       }
       onProgress(`已恢复 ${result.restored}，未恢复 ${result.skipped.length} / ${record.files.length}`);
+    }
+    for (const position of record.folderRenames ?? []) {
+      if (position.current === position.original) continue;
+      const members = record.files.filter((item) => item.original.startsWith(`${position.original}/`));
+      if (!members.every((item) => item.current === item.original)) continue;
+      const children = await fs.readdir(this.absolute(position.current)).catch(() => []);
+      await this.host.restoreBindings?.(position.current, position.original, children.length > 0, record.bindings);
     }
     for (const folder of [...record.createdFolders].sort((a, b) => b.split("/").length - a.split("/").length)) {
       if (record.folders.includes(folder)) continue;

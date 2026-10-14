@@ -25,6 +25,7 @@ class MemoryFiles implements PdfFiles {
   data = new Map<string, string | Uint8Array>();
   async exists(path: string) { return this.data.has(path); }
   async read(path: string) { const value = this.data.get(path); if (typeof value !== "string") throw new Error("missing"); return value; }
+  async readBinary(path: string) { const value = this.data.get(path); if (!(value instanceof Uint8Array)) throw new Error("missing binary"); return value; }
   async create(path: string, value: string | Uint8Array) { assert(!this.data.has(path)); this.data.set(path, value); }
   async replace(path: string, value: string, expected?: string) { if (expected !== undefined) assert.equal(this.data.get(path), expected); this.data.set(path, value); }
   async listJobs() { return [...this.data.keys()].filter(path => path.startsWith("state/")).map(path => path.slice(6, -5)); }
@@ -33,6 +34,8 @@ class MemoryFiles implements PdfFiles {
 const pdf = new TextEncoder().encode("%PDF- fixture");
 const options: PdfOptions = { engine: "local", reading: false, translation: true, translationLanguage: "英文", wiki: false };
 export async function runPdfReadingTests(): Promise<void> {
+  await assertActivePdfRenameKeepsGeneratedChunks();
+  await assertPdfAttachmentRenameRebasesKnownCaches();
   const bytes = new Uint8Array(await readFile("src/tests/fixtures/pdf/bilingual-multipage.pdf"));
   const local = await extractLocalPdf(bytes, new AbortController().signal, () => {}, undefined, async () => new Uint8Array([1, 2]));
   assert.deepEqual(local.pages.map(page => page.number), [1, 2]);
@@ -167,6 +170,41 @@ export async function runPdfReadingTests(): Promise<void> {
   assert(![...files.data.keys()].some(path => path.startsWith("输出")), "no Outputs reading or translation");
   await runPdfAttachmentTests();
   console.log("PASS actual bilingual links, headings, pipe table cells, Raw translation index/source nature, read-only tool guard");
+}
+
+async function assertActivePdfRenameKeepsGeneratedChunks(): Promise<void> {
+  const files = new MemoryFiles();
+  let started!: () => void, finish!: () => void;
+  const waiting = new Promise<void>(resolve => { started = resolve; });
+  const continueGeneration = new Promise<void>(resolve => { finish = resolve; });
+  const prompts: string[] = [];
+  let moved = false;
+  const create = files.create.bind(files);
+  files.create = async (target, value) => { assert(!moved || !target.startsWith("Old/"), "a renamed PDF source directory must never be recreated"); await create(target, value); };
+  const service = new PdfReadingService(files, "state", {
+    enabled: () => true, sourceDirectory: () => "Old",
+    access: { checkCapability: () => true, requireCapability() {}, subscribe: () => () => {} },
+    local: async () => ({ pages: [{ number: 1, markdown: "第一段原文" }, { number: 2, markdown: "第二段原文" }], images: [], warnings: [], engine: "local" }),
+    enhanced: async () => { throw new Error("not used"); },
+    generator: () => ({ maxSourceCharacters: 1000, generate: async (_system, prompt) => { prompts.push(prompt); if (prompts.length === 1) { started(); await continueGeneration; } return `Translated section ${prompts.length}`; } })
+  });
+  const run = service.start("Active.pdf", pdf, options, undefined, "bbbb2222-active");
+  await waiting;
+  for (const [target, content] of [...files.data]) if (target.startsWith("Old/")) { files.data.delete(target); files.data.set(`New/${target.slice(4)}`, content); }
+  moved = true;
+  await service.rebasePaths("Old", "New");
+  finish();
+  const result = await run;
+  assert.equal(result.state, "completed", result.error);
+  assert.equal(result.rawDirectory, "New");
+  assert.equal(result.chunks[0].translation, "Translated section 1");
+  assert.equal(result.chunks[1].translation, "Translated section 2");
+  assert(prompts[1].includes("New/"));
+  assert(result.artifacts.every(artifact => artifact.path.startsWith("New/")));
+  assert.equal((await service.actualArtifacts(result)).length, 2);
+  assert((await files.read(result.artifacts.find(artifact => artifact.kind === "translation")!.path)).includes("New/"));
+  assert.equal((await service.load(result.id)).rawDirectory, "New");
+  console.log("PASS active PDF directory rename preserves chunks and current source/output paths");
 }
 
 async function runPdfSecurityTests(base: PdfJob): Promise<void> {
@@ -315,4 +353,41 @@ function minimalBlankPdf(): Buffer {
   source += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n`;
   source += `startxref\n${xrefOffset}\n%%EOF\n`;
   return Buffer.from(source, "ascii");
+}
+
+async function assertPdfAttachmentRenameRebasesKnownCaches(): Promise<void> {
+  const files = new MemoryFiles(); let calls = 0;
+  const service = new PdfReadingService(files, "state", {
+    enabled: () => true, sourceDirectory: () => "Documents", imageDirectory: () => "PDF Images",
+    access: { checkCapability: () => true, requireCapability() {}, subscribe: () => () => {} },
+    local: async () => ({ pages: [{ number: 1, markdown: "Original prose mentions PDF Images.\n\n![Figure](images/figure.png)" }], images: [{ path: "images/figure.png", bytes: new Uint8Array([1, 2, 3]) }], warnings: [], engine: "local" }),
+    enhanced: async () => { throw new Error("not used"); },
+    generator: () => ({ maxSourceCharacters: 1000, generate: async (_system, prompt) => { calls++; return prompt.split("<document>\n")[1].split("\n</document>")[0]; } })
+  });
+  const original = await service.start("Illustrated.pdf", pdf, { ...options, translationLanguage: "中文" }, undefined, "image-rename");
+  assert.equal(original.state, "completed", original.error);
+  const image = original.imagePaths![0];
+  assert(image.startsWith("PDF Images/"));
+  assert(original.pages[0].markdown.includes("PDF%20Images/"));
+  for (const [target, value] of [...files.data]) {
+    if (target.startsWith("PDF Images/")) { files.data.delete(target); files.data.set(`Renamed Images/${target.slice(11)}`, value); }
+    else if (target.endsWith(".md") && typeof value === "string") files.data.set(target, value.replaceAll("PDF%20Images/", "Renamed%20Images/"));
+  }
+  await service.rebasePaths("PDF Images", "Renamed Images");
+  const saved = await service.load(original.id);
+  assert.equal(saved.imageDirectory, "Renamed Images");
+  assert(saved.pages[0].markdown.includes("Renamed%20Images/"));
+  assert(saved.chunks[0].source.includes("Renamed%20Images/"));
+  assert(saved.chunks[0].translation!.includes("Renamed%20Images/"));
+  assert(saved.published.translation!.includes("Renamed%20Images/"));
+  assert(saved.pages[0].markdown.includes("prose mentions PDF Images."), "a path-shaped phrase in the original prose is not rewritten");
+  const resumed = await service.resume(original.id);
+  assert.equal(resumed.state, "completed", resumed.error); assert.equal(calls, 1);
+  assert.equal((await service.actualArtifacts(resumed)).length, 2);
+  assert.equal([...files.data.keys()].some(target => target.startsWith("PDF Images/")), false);
+  const raw = resumed.artifacts.find(artifact => artifact.kind === "raw")!.path;
+  files.data.set(raw, (await files.read(raw)).replace("Original prose", "User edited prose"));
+  const edited = await service.resume(original.id);
+  assert.equal(edited.state, "partial"); assert.match(edited.error!, /正文已编辑/u); assert.equal(calls, 1);
+  console.log("PASS PDF known image-link caches follow encoded attachment renames while real body edits remain protected");
 }
