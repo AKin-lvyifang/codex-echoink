@@ -163,6 +163,12 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert(!host.textContent?.includes("预览方案"));
     const help = raw.querySelector<HTMLButtonElement>(".echoink-folder-help")!;
     const tooltipId = help.getAttribute("aria-describedby")!;
+    const helpLabelId = help.getAttribute("aria-labelledby")!;
+    assert(helpLabelId, "permission help has a stable accessible name reference");
+    assert.equal(help.getAttribute("aria-label"), null, "permission help avoids the native title tooltip trigger");
+    assert.equal(help.getAttribute("title"), null, "permission help relies on the attached settings tooltip");
+    assert.equal(raw.querySelector(`#${helpLabelId}`)?.textContent, "自动整理权限说明");
+    assert.equal(help.querySelector(`#${helpLabelId}`)?.classList.contains("echoink-folder-help-label"), true);
     assert.equal(raw.querySelector('[role="checkbox"]')?.getAttribute("aria-label"), "允许 Agent 自动整理 · 阅读/资料");
     assert.equal(raw.querySelector(".echoink-folder-organize .setting-item-description"), null, "organization explanations do not occupy permanent rows");
     help.click();
@@ -191,6 +197,10 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert.equal(rawContent().hidden, false, "folder selection preserves the expanded drawer");
     assert.equal(host.querySelector<HTMLElement>('[data-folder-role="wiki"] .echoink-folder-bindings')!.hidden, true, "folder selection preserves other collapsed drawers");
     assert(host.textContent?.includes("新资料保存到"), "multiple sources reveal the default destination selector");
+    const rawHelpIds = [...host.querySelectorAll<HTMLElement>('[data-folder-role="raw"] .echoink-folder-help')]
+      .map(trigger => trigger.getAttribute("aria-labelledby"));
+    assert.equal(rawHelpIds.length, 2, "each raw source has its own permission help name");
+    assert.equal(new Set(rawHelpIds).size, rawHelpIds.length, "permission help labels remain unique across sources");
     const extraSource = host.querySelector('[data-folder-path="工作/调研"]')!;
     extraSource.querySelector<HTMLButtonElement>('[aria-label="解除绑定"]')!.click();
     assert(!host.textContent?.includes("新资料保存到"));
@@ -259,6 +269,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     section = new KnowledgeFolderSection(plugin, draw, { open() { detail = true; draw(); }, close() { detail = false; draw(); } });
     draw(); button("初始化").click();
     assert.equal(host.querySelectorAll(".echoink-folder-routes button").length, 2);
+    assert.equal(host.querySelectorAll(".echoink-folder-routes > .echoink-settings-navigation-row").length, 2, "first-time choices use the existing navigation rows");
     button("使用现有").click();
     assert(host.textContent?.includes("资料来源")); assert(!host.textContent?.includes("帮我搭建"));
     section.dispose(); detail = false;

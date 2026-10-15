@@ -357,8 +357,14 @@ export class KnowledgeFolderSection {
     check.onchange = () => { this.draft.organize(role, path, check.checked); this.updateFooter(zh, locked); };
     option.createEl("label", { text: zh ? "允许 Agent 自动整理" : "Allow Agent organization", attr: { for: checkId } });
     const help = option.createSpan({ cls: "echoink-settings-help" });
-    const trigger = createOriginButton(help, { cls: "echoink-folder-help is-icon", attr: { "aria-label": zh ? "自动整理权限说明" : "Agent organization permission details" } });
+    const helpLabelId = `${checkId}-help-label`;
+    const trigger = createOriginButton(help, { cls: "echoink-folder-help is-icon", attr: { "aria-labelledby": helpLabelId } });
     setIcon(trigger, "circle-alert");
+    trigger.createSpan({
+      cls: "echoink-folder-help-label",
+      text: zh ? "自动整理权限说明" : "Agent organization permission details",
+      attr: { id: helpLabelId }
+    });
     attachSettingsTooltip(trigger, zh ? "允许 Agent 在这个文件夹内创建分类文件夹，并移动文件进行归类。" : "Allow Agent to create category folders and move files within this folder.", help);
   }
 

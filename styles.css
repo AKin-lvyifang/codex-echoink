@@ -21305,6 +21305,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-folder-bindings { display: grid; gap: 12px; margin-top: 17px; min-width: 0; }
 .echoink-settings-demo .echoink-folder-bindings[hidden] { display: none; }
 .echoink-settings-demo .echoink-folder-bindings .setting-item { padding-block: 0; border: 0; }
+.echoink-settings-demo .echoink-folder-bindings .setting-item::before { display: none; }
 .echoink-settings-demo .echoink-folder-binding { display: grid; gap: 7px; }
 .echoink-settings-demo .echoink-folder-path-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .echoink-settings-demo button.echoink-folder-path { flex: 1; min-width: 0; justify-content: flex-start; text-align: left; white-space: normal; overflow-wrap: anywhere; }
@@ -21316,6 +21317,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-folder-new-organize { display: grid; gap: 7px; }
 .echoink-settings-demo button.echoink-folder-help { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; min-height: 20px; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--secondary); }
 .echoink-settings-demo .echoink-folder-help svg { width: 14px; height: 14px; }
+.echoink-settings-demo .echoink-folder-help .echoink-folder-help-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .echoink-settings-demo .echoink-folder-disclosure:not(:disabled):is(:hover,:focus-visible),
 .echoink-settings-demo .echoink-folder-help:is(:hover,:focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
 .echoink-settings-demo .echoink-folder-plan-path { padding-block: 6px; font-size: calc(var(--font-text-size, 16px) * .6875); line-height: 1.85; overflow-wrap: anywhere; }
@@ -21326,7 +21328,16 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-actions { margin-top: 17px; }
 .echoink-settings-demo .echoink-folder-path:is(:hover,:focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; border-color: transparent; }
 .echoink-settings-demo .echoink-folder-routes { display: grid; gap: 12px; }
-.echoink-settings-demo .echoink-folder-routes > .echoink-settings-navigation-row { border: 1px solid var(--line); border-radius: 8px; padding: 17px 18px; }
+.echoink-settings-demo .echoink-folder-routes > .echoink-settings-navigation-row.echoink-origin-control[data-slot=button] {
+  display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center;
+  border: 1px solid var(--line); border-radius: 8px; padding: 17px 18px;
+}
+.echoink-settings-demo .echoink-folder-routes > .echoink-settings-navigation-row.echoink-origin-control[data-slot=button] > .echoink-settings-navigation-copy {
+  flex: 1 1 auto; min-width: 0; width: auto; align-self: stretch; text-align: left;
+}
+.echoink-settings-demo .echoink-folder-routes > .echoink-settings-navigation-row.echoink-origin-control[data-slot=button] > .echoink-settings-navigation-trailing {
+  flex: none; width: auto; max-width: none; align-self: center; justify-content: flex-end;
+}
 .echoink-settings-demo .echoink-knowledge-folder-panel.is-detail.is-entering { animation: echoink-folder-enter .16s ease-out; }
 @keyframes echoink-folder-enter { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
 @media (prefers-reduced-motion: reduce) { .echoink-settings-demo .echoink-knowledge-folder-panel.is-detail.is-entering { animation: none; } }
