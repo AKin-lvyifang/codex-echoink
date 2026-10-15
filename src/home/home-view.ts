@@ -1,5 +1,5 @@
 import { classifyKnowledgePath } from "../knowledge-base/folder-bindings";
-import { ItemView, Modal, Notice, TFile, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from "obsidian";
+import { ItemView, Modal, Notice, TFile, TFolder, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from "obsidian";
 import type { HomeHost } from "./home-host";
 import type { LifestyleStoreCore } from "../lifestyle/store-core";
 import type { SettingsLanguage } from "../settings/settings";
@@ -10,6 +10,7 @@ import { dateKey, isHomeRecentNotePath, journalDateFromPath, type HomeVaultFileR
 import { homeConversationMessage, homeReviewPrompt, type HomeConversationAction } from "./home-conversation-actions";
 import { JournalTemplateModal } from "./journal-template-modal";
 import { chooseEnglishDiaryHomeShortcut } from "./english-diary-shortcut-modal";
+import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { formatHomeFullDate, formatHomeRelativeTime, homeCopy, type HomeCopy } from "./home-i18n";
 import { openObsidianLocalGraphLeaf } from "./open-native-graph";
 import { homeWorkspaceMarkup } from "./home-workspace-template";
@@ -687,7 +688,7 @@ export class EchoInkHomeView extends ItemView {
       case "capture": await this.capture(); break;
       case "journal-chat": await this.openConversationAction("daily"); break;
       case "review": await this.openReviewConversation(); break;
-      case "journal-template": this.openJournalTemplate(new Date()); break;
+      case "journal-template": await this.openJournalTemplate(new Date()); break;
       case "selected-journal": await this.openJournal(parseDate(this.selectedDate ?? dateKey(new Date()))); break;
       case "today": this.selectDate(dateKey(new Date())); break;
       case "reset-date": this.selectDate(null); break;
@@ -720,16 +721,39 @@ export class EchoInkHomeView extends ItemView {
           if (this.closed || !diary.enabled()) return;
         }
         if (this.plugin.settings.englishDiary.homeShortcut === "english-diary") {
+          if (getProPluginAccess(this.plugin.accountService ?? unavailableCapabilityAccess, true).canWrite
+            && !await this.ensureHomeFolder("journal")) return;
           await diary.openToday();
           return;
         }
       }
+      if (!await this.ensureHomeFolder("inbox")) return;
       const file = await this.dataService.createBlankInboxNote(this.language);
       const leaf = this.app.workspace.getLeaf("tab");
       await leaf.openFile(file, { active: true });
       this.app.workspace.setActiveLeaf(leaf, { focus: true });
       await this.refresh();
     } finally { this.captureBusy = false; }
+  }
+  private async ensureHomeFolder(role: "inbox" | "journal"): Promise<boolean> {
+    const bindings = this.plugin.settings.knowledgeBase?.folderBindings;
+    if (!bindings) return true;
+    const binding = bindings.roles[role];
+    const available = role === "journal"
+      ? readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, bindings).available
+      : binding.enabled && binding.writePath && this.app.vault.getAbstractFileByPath(binding.writePath) instanceof TFolder;
+    if (available) return true;
+    const accepted = await confirmModal(
+      this.app,
+      role === "inbox" ? this.t("选择收件箱位置", "Choose an inbox folder") : this.t("选择日记位置", "Choose a journal folder"),
+      role === "inbox"
+        ? this.t("收件箱尚未启用或保存位置不可用，暂时无法新建笔记。请在知识库目录设置中选择位置。", "The inbox is disabled or its save location is unavailable. Choose a folder in Knowledge settings before creating a note.")
+        : this.t("尚未配置可用的日记位置，暂时无法写日记。请在知识库目录设置中选择位置，也可以在 Obsidian 日记设置中配置。", "No journal location is available. Choose a folder in Knowledge settings or configure Obsidian Daily notes before writing a journal."),
+      this.t("去选择位置", "Choose location"),
+      this.t("稍后", "Later")
+    );
+    if (accepted) await this.plugin.openEchoInkKnowledgeSettings();
+    return false;
   }
   private async openNote(path: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -858,6 +882,7 @@ export class EchoInkHomeView extends ItemView {
   private async openConversationAction(action: HomeConversationAction): Promise<void> {
     const now = new Date();
     if (action === "daily") {
+      if (!await this.ensureHomeFolder("journal")) return;
       try {
         await this.plugin.requireAvailableEchoInkSkill("daily-journal");
       } catch (error) {
@@ -911,7 +936,7 @@ export class EchoInkHomeView extends ItemView {
       return;
     }
     if (entry.id === "journal") {
-      this.openJournalTemplate(new Date());
+      await this.openJournalTemplate(new Date());
       return;
     }
     if (entry.id === "review") {
@@ -938,16 +963,17 @@ export class EchoInkHomeView extends ItemView {
   }
 
   private async openJournal(date: Date): Promise<void> {
-    if (this.plugin.settings.englishDiary.enabled) { this.openJournalTemplate(date); return; }
+    if (this.plugin.settings.englishDiary.enabled) { await this.openJournalTemplate(date); return; }
     const existing = this.dataService.existingJournalForDate(date);
     if (existing instanceof TFile) {
       await this.app.workspace.getLeaf("tab").openFile(existing, { active: true });
       return;
     }
-    this.openJournalTemplate(date);
+    await this.openJournalTemplate(date);
   }
 
-  private openJournalTemplate(date: Date): void {
+  private async openJournalTemplate(date: Date): Promise<void> {
+    if (!await this.ensureHomeFolder("journal")) return;
     const customTemplates = this.dataService.listCustomTemplates();
     if (this.data) this.data.customTemplates = customTemplates;
     new JournalTemplateModal(this.app, {

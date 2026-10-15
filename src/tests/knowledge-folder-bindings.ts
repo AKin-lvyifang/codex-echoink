@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm, symlink, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { emptyKnowledgeFolderBindings, migrateKnowledgeFolderBindings, classifyKnowledgePath, knowledgeFolderIssues } from "../knowledge-base/folder-bindings";
@@ -14,9 +14,61 @@ import { privateMaintenanceSourceScope, FilePhase3MaintenanceStateStore, rebaseP
 import { readRawDigestRegistry, writeRawDigestRegistry, rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { KnowledgeRetriever } from "../knowledge-base/query";
+import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
 import { TFolder, TFile } from "obsidian";
 
+async function runCaptureSourceBindingTests(): Promise<void> {
+  for (const allowAttachments of [false, true]) {
+    const temporaryRoot = await mkdtemp(path.join(tmpdir(), "echoink-capture-bindings-"));
+    const vault = path.join(temporaryRoot, "vault");
+    const rawDirectory = "资料/来源";
+    const assetsDirectory = "资源/附件";
+    const config = emptyKnowledgeFolderBindings();
+    Object.assign(config.roles.raw, { enabled: true, readPaths: [rawDirectory], writePath: rawDirectory, allowedSubdirectories: allowAttachments ? ["attachments"] : [] });
+    Object.assign(config.roles.assets, { enabled: true, readPaths: [assetsDirectory], writePath: assetsDirectory });
+    await mkdir(vault);
+    const release = registerKnowledgeFolderBindings(vault, () => config);
+    try {
+      for (const directory of [rawDirectory, assetsDirectory, "工作"]) await mkdir(path.join(vault, directory), { recursive: true });
+      const fixtures = [
+        { name: "external.pdf", source: path.join(temporaryRoot, "external.pdf"), body: "external PDF source" },
+        { name: "external.docx", source: path.join(temporaryRoot, "external.docx"), body: "external DOCX source" },
+        { name: "chat.pdf", source: path.join(temporaryRoot, "chat.pdf"), body: "chat attachment source" },
+        { name: "active.pdf", source: path.join(vault, "工作/active.pdf"), body: "active attachment source" }
+      ];
+      for (const fixture of fixtures) await writeFile(fixture.source, fixture.body);
+      const plugin = {
+        getVaultPath: () => vault,
+        app: { workspace: { getActiveFile: () => Object.assign(new TFile(), { path: "工作/active.pdf" }) } }
+      } as unknown as CodexForObsidianPlugin;
+      const capture = new KnowledgeBaseCaptureService(plugin);
+      const attachment = (fixture: typeof fixtures[number]) => ({ type: "file" as const, name: fixture.name, path: fixture.source });
+      const externalPaths = await capture.captureExternalFiles(fixtures.slice(0, 2).map(attachment));
+      assert.equal(externalPaths.length, 2, "external PDF and DOCX are both collected");
+      const chatPaths = await capture.copyAttachmentsToRaw([attachment(fixtures[2])]);
+      assert.equal(chatPaths.length, 1, "chat attachments are collected");
+      await capture.captureActiveAttachment();
+      const targetDirectory = path.posix.join(rawDirectory, allowAttachments ? "attachments" : "");
+      const collectedNames = await readdir(path.join(vault, targetDirectory));
+      assert.equal(collectedNames.length, 4, "all collection entry points write to the source default or its approved attachments child");
+      const collectedPaths = collectedNames.map(name => path.posix.join(targetDirectory, name));
+      for (const relative of [...externalPaths, ...chatPaths, ...collectedPaths]) {
+        assert.equal(path.posix.dirname(relative), targetDirectory);
+        assert.equal(knowledgePathRole(vault, relative), "raw", "collected documents remain Raw sources while Assets is enabled");
+      }
+      for (const fixture of fixtures) {
+        const relative = collectedPaths.find(item => item.endsWith(`-${fixture.name}`));
+        assert(relative, `${fixture.name} was copied`);
+        assert.equal(await readFile(path.join(vault, relative), "utf8"), fixture.body);
+      }
+      assert.deepEqual(await readdir(path.join(vault, assetsDirectory)), [], "source capture does not write to the Assets destination");
+    } finally { release(); await rm(temporaryRoot, { recursive: true, force: true }); }
+  }
+  console.log("Knowledge capture source bindings: PASS");
+}
+
 export async function runKnowledgeFolderBindingsTests(): Promise<void> {
+  await runCaptureSourceBindingTests();
   const vault = await mkdtemp(path.join(tmpdir(), "echoink-bindings-"));
   const config = emptyKnowledgeFolderBindings();
   registerKnowledgePrivateRoot(vault, path.join(vault, "private"));

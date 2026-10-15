@@ -70,6 +70,8 @@ export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void>
   await assertReliableExistingKnowledgeReturnsNoopBeforeWrites();
   await assertProductionStructuredNoopCompletesChangedRaw();
   await assertPrivateRecordsRecoverWithoutRewriting();
+  await assertCorruptPrivateHistoryDoesNotBlockMaintenanceOrRetry();
+  await assertFailedNaturalSettlementKeepsEverySourcePending();
   await assertPrivateSettlementBoundaries();
   await assertOriginalV1WalNeverRevivesRetiredFiles();
   await assertStructuredNoopProcessesExplicitRaw();
@@ -1857,6 +1859,7 @@ async function assertPrivateRecordsRecoverWithoutRewriting(): Promise<void> {
       assert.equal(records[0].sources[0].status, "processed");
       const retry = await restarted.execute(input);
       assert.equal(retry.recordId, records[0].recordId);
+      assert.deepEqual(retry.processedSourcePaths, [source], "recovered repeated calls retain processed sources");
       assert.equal(domain.formalWrites.length, 1, "recovery/repeated call never writes notes again");
       assert.deepEqual(await fsp.readdir(vault), ["知识", "阅读"], "only bound source and knowledge directories exist");
       // Global natural noop cannot process the current body from an older delivered fingerprint.
@@ -1878,6 +1881,78 @@ async function assertPrivateRecordsRecoverWithoutRewriting(): Promise<void> {
       assert.equal(domain.formalWrites.length, 1);
     } finally { release(); await fsp.rm(root, { recursive: true, force: true }); }
   }
+}
+
+async function assertCorruptPrivateHistoryDoesNotBlockMaintenanceOrRetry(): Promise<void> {
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "echoink-corrupt-private-record-")));
+  const vault = path.join(root, "vault"), privateRoot = path.join(root, "private");
+  const source = "阅读/来源/a.md", body = "本轮实际读取的来源正文\n";
+  await fsp.mkdir(path.join(vault, "阅读/来源"), { recursive: true });
+  await fsp.mkdir(path.join(vault, "知识/卡片"), { recursive: true });
+  await fsp.writeFile(path.join(vault, source), body);
+  const config = emptyKnowledgeFolderBindings();
+  Object.assign(config.roles.raw, { enabled: true, readPaths: ["阅读/来源"], writePath: "阅读/来源" });
+  Object.assign(config.roles.wiki, { enabled: true, readPaths: ["知识/卡片"], writePath: "知识/卡片" });
+  const release = registerKnowledgeFolderBindings(vault, () => config);
+  const domain = new FakeVaultDomain(vault); domain.seed(source, body);
+  const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: privateRoot, vaultId: VAULT_ID, userId: "user", deviceId: "device", domainService: domain as never, dateKey: () => DATE_KEY });
+  const input = { vaultId: VAULT_ID, conversationId: "corrupt-history", piSessionId: "corrupt-history", productRunId: "corrupt-history", toolCallId: "save", mode: "maintain" as const, request: "", sourcePaths: [source], sourceBodyFingerprints: { [source]: rawDigestFingerprint(source, Buffer.from(body)) }, preferenceSnapshot: PREFERENCE,
+    candidateActions: [{ targetPath: "知识/卡片/a.md", content: `# Knowledge A\n来源：[[${source}]]`, expectedTarget: { kind: "missing" as const } }] };
+  const warnings: unknown[][] = [], warn = console.warn;
+  try {
+    await port.initialize();
+    const damagedNames = [`maintenance-${"f".repeat(32)}.json`, `maintenance-${"e".repeat(32)}.json`];
+    await fsp.mkdir(path.join(privateRoot, "records"), { recursive: true });
+    await fsp.writeFile(path.join(privateRoot, "records", damagedNames[0]), "{ broken JSON");
+    await fsp.writeFile(path.join(privateRoot, "records", damagedNames[1]), JSON.stringify({ schemaVersion: 1, vaultId: VAULT_ID, kind: "record", payloadDigest: sha256("null"), payload: null }));
+    console.warn = (...args) => { warnings.push(args); };
+    const result = await port.execute(input);
+    assert.equal(result.maintenanceResult?.status, "completed", result.message);
+    assert.deepEqual(result.processedSourcePaths, [source], "unrelated corrupt records cannot block the post-write source read");
+    const retry = await port.execute(input);
+    assert.equal(retry.recordId, `maintenance-${sha256("corrupt-history:save").slice(0, 32)}`);
+    assert.deepEqual(retry.processedSourcePaths, [source]);
+    assert.equal(domain.formalWrites.length, 1, "a repeated call restores its own record without writing the note again");
+    assert.equal(warnings.length, 0, "execution reads only its own stable record ID");
+    const records = await readPrivateMaintenanceRecords(privateRoot, { vaultId: VAULT_ID });
+    assert.deepEqual(records.map((record) => record.recordId), [retry.recordId]);
+    assert.equal(warnings.length, 2, "history warns once per skipped corrupt JSON or payload");
+    for (const name of damagedNames) assert(warnings.some((warning) => warning.includes(path.join(privateRoot, "records", name))));
+    const invalidPaths: string[] = [];
+    assert.equal((await readPrivateMaintenanceRecords(privateRoot, { vaultId: VAULT_ID, onInvalidRecord: (recordPath) => { invalidPaths.push(recordPath); } })).length, 1);
+    assert.equal(invalidPaths.length, 2, "the history surface can combine invalid-record warnings into one notice");
+  } finally { console.warn = warn; release(); await fsp.rm(root, { recursive: true, force: true }); }
+}
+
+async function assertFailedNaturalSettlementKeepsEverySourcePending(): Promise<void> {
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "echoink-failed-natural-settlement-")));
+  const vault = path.join(root, "vault"), privateRoot = path.join(root, "private");
+  await fsp.mkdir(path.join(vault, "阅读/来源"), { recursive: true });
+  const config = emptyKnowledgeFolderBindings();
+  Object.assign(config.roles.raw, { enabled: true, readPaths: ["阅读/来源"], writePath: "阅读/来源" });
+  const release = registerKnowledgeFolderBindings(vault, () => config);
+  const a = "阅读/来源/read.md", b = "阅读/来源/unread.md", bodyA = "已读取且版本匹配\n", bodyB = "本轮未读取\n";
+  await fsp.writeFile(path.join(vault, a), bodyA); await fsp.writeFile(path.join(vault, b), bodyB);
+  const domain = new FakeVaultDomain(vault); domain.seed(a, bodyA); domain.seed(b, bodyB);
+  const index = new KnowledgeAgentIndex({ vaultPath: vault, storageRootPath: privateRoot });
+  const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: privateRoot, vaultId: VAULT_ID, userId: "user", deviceId: "device", domainService: domain as never, dateKey: () => DATE_KEY });
+  try {
+    await port.initialize();
+    const read = await index.read({ vaultRelativePath: a });
+    const entries = [{ type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references: [{ vaultRelativePath: a, contentRevision: read.contentRevision }] } } }] as never;
+    assert.equal((await readRawDigestRegistry(vault, true)).entries[a], undefined);
+    const settlement = await port.finalizeNatural({ vaultId: VAULT_ID, conversationId: "failed-natural", piSessionId: "failed-natural", productRunId: "failed-natural", scope: { mode: "batch", sourcePaths: [a, b] }, terminalState: "failed", noteReadPaths: [a], producedPaths: [], assistantEntryId: "assistant", entries, turnEntries: entries });
+    assert.deepEqual(settlement.processedSourcePaths, []);
+    assert.deepEqual(settlement.pendingSourcePaths, [a, b]);
+    const record = (await readPrivateMaintenanceRecords(privateRoot)).find((record) => record.runId === "failed-natural:natural")!;
+    assert.equal(record.result.status, "failed", "failed turns still finalize a private record");
+    assert.deepEqual(record.sources.map((source) => ({ path: source.path, status: source.status })), [{ path: a, status: "failed" }, { path: b, status: "unread" }]);
+    assert.equal(record.sources[0].fingerprint, rawDigestFingerprint(a, Buffer.from(bodyA)), "a matching read fingerprint does not mark a failed turn processed");
+    const registry = await readRawDigestRegistry(vault, true);
+    assert.equal(registry.entries[a], undefined);
+    assert.equal(registry.entries[b], undefined, "failed finalization never advances either source's processed registry entry");
+    assert.equal(domain.formalWrites.length, 0);
+  } finally { release(); await fsp.rm(root, { recursive: true, force: true }); }
 }
 
 async function assertPrivateSettlementBoundaries(): Promise<void> {

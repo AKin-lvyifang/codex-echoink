@@ -60,7 +60,8 @@ import {
   validateKnowledgeMaintenanceCandidateSources
 } from "../knowledge-base/knowledge-maintenance-protocol";
 import {
-  createKnowledgeMaintenanceResultEnvelope
+  createKnowledgeMaintenanceResultEnvelope,
+  parseKnowledgeMaintenanceResultEnvelope
 } from "../knowledge-base/knowledge-maintenance-result";
 import type {
   KnowledgeAgentIndex,
@@ -182,10 +183,13 @@ implements PiKnowledgeMaintenanceToolPort {
   async execute(
     input: Readonly<PiKnowledgeMaintenanceToolInput>
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
-    const saved = (await readPrivateMaintenanceRecords(this.privateKnowledgeRootPath)).find((record) => record.runId === `${input.productRunId}:${input.toolCallId}`);
-    if (saved) return { status: saved.result.status === "failed" || saved.result.status === "write_uncertain" ? "failed" : "completed", message: saved.summary, maintenanceResult: saved.result, recordId: saved.recordId, producedPaths: saved.result.notes.map((note) => note.path) };
-    let result = await this.executeMaintenance(input);
     const recordId = `maintenance-${sha256(`${input.productRunId}:${input.toolCallId}`).slice(0, 32)}`;
+    const saved = await readPrivateMaintenanceRecord(this.privateKnowledgeRootPath, recordId, this.vaultId);
+    if (saved) {
+      this.assertIdentity(input);
+      return { status: saved.result.status === "failed" || saved.result.status === "write_uncertain" ? "failed" : "completed", message: saved.summary, maintenanceResult: saved.result, recordId: saved.recordId, producedPaths: saved.result.notes.map((note) => note.path), processedSourcePaths: saved.sources.filter((source) => source.status === "processed").map((source) => source.path) };
+    }
+    let result = await this.executeMaintenance(input);
     if (result.errorCode !== "record_pending") {
       try { await this.saveTerminalRecord(input, result, recordId); result = { ...result, recordId }; }
       catch { result = { ...result, errorCode: "record_pending", message: `${result.message}\n维护记录待恢复，已保存的知识笔记保留。` }; }
@@ -358,7 +362,7 @@ implements PiKnowledgeMaintenanceToolPort {
       }
       return Object.freeze({
         status: committed.status === "completed" || committed.status === "partial" ? "completed" as const : "failed" as const,
-        processedSourcePaths: Object.freeze((await readPrivateMaintenanceRecords(this.privateKnowledgeRootPath)).find((record) => record.runId === `${input.productRunId}:${input.toolCallId}`)?.sources.filter((source) => source.status === "processed").map((source) => source.path) ?? []),
+        processedSourcePaths: Object.freeze((await readPrivateMaintenanceRecord(this.privateKnowledgeRootPath, `maintenance-${sha256(`${input.productRunId}:${input.toolCallId}`).slice(0, 32)}`, this.vaultId))?.sources.filter((source) => source.status === "processed").map((source) => source.path) ?? []),
         producedPaths: committed.appliedPaths,
         maintenanceResult: createKnowledgeMaintenanceResultEnvelope({
           status: committed.status === "completed" && committed.notes.length === 0
@@ -846,17 +850,46 @@ export async function rebasePrivateMaintenanceRecords(rootPath: string, from: st
   });
 }
 
-export async function readPrivateMaintenanceRecords(rootPath: string): Promise<KnowledgeMaintenanceRecord[]> {
+async function readPrivateMaintenanceRecord(rootPath: string, recordId: string, vaultId?: string): Promise<KnowledgeMaintenanceRecord | null> {
+  if (!/^maintenance-[a-f0-9]{32}$/u.test(recordId)) throw new Error("维护记录身份无效");
+  const raw = await readJsonFileIfPresent(path.join(rootPath, "records", `${recordId}.json`), "维护记录");
+  if (raw === null) return null;
+  if (!isRecord(raw) || typeof raw.vaultId !== "string") throw new Error("维护记录无效");
+  const payload = parseControlEnvelope(raw, vaultId ?? raw.vaultId, "record").payload;
+  if (!isRecord(payload)
+    || payload.schemaVersion !== 1
+    || payload.recordId !== recordId
+    || typeof payload.runId !== "string"
+    || typeof payload.at !== "number" || !Number.isFinite(payload.at)
+    || typeof payload.date !== "string"
+    || typeof payload.summary !== "string"
+    || (payload.cancelled !== undefined && typeof payload.cancelled !== "boolean")
+    || !Array.isArray(payload.sources)
+    || payload.sources.some((source) => !isRecord(source)
+      || typeof source.path !== "string" || typeof source.fingerprint !== "string"
+      || !["processed", "unread", "failed"].includes(String(source.status))
+      || !Array.isArray(source.evidencePaths) || source.evidencePaths.some((value) => typeof value !== "string"))) throw new Error("维护记录版本或身份无效");
+  const result = parseKnowledgeMaintenanceResultEnvelope(payload.result);
+  if (!result) throw new Error("维护记录结果无效");
+  return { ...payload, result } as unknown as KnowledgeMaintenanceRecord;
+}
+
+export async function readPrivateMaintenanceRecords(rootPath: string, options: Readonly<{
+  vaultId?: string;
+  onInvalidRecord?: (recordPath: string, error: unknown) => void;
+}> = {}): Promise<KnowledgeMaintenanceRecord[]> {
   const directory = path.join(rootPath, "records");
   const names = await readdir(directory).catch((error: unknown) => { if (isNodeErrorWithCode(error, "ENOENT")) return []; throw error; });
   const records: KnowledgeMaintenanceRecord[] = [];
   for (const name of names) {
     if (!/^maintenance-[a-f0-9]{32}\.json$/u.test(name)) continue;
-    const raw = await readJsonFileIfPresent(path.join(directory, name), "维护记录");
-    if (!isRecord(raw) || typeof raw.vaultId !== "string") throw new Error("维护记录无效");
-    const payload = parseControlEnvelope(raw, raw.vaultId, "record").payload as KnowledgeMaintenanceRecord;
-    if (payload.schemaVersion !== 1 || payload.recordId + ".json" !== name || !Array.isArray(payload.sources)) throw new Error("维护记录版本或身份无效");
-    records.push(payload);
+    try {
+      const record = await readPrivateMaintenanceRecord(rootPath, name.slice(0, -5), options.vaultId);
+      if (record) records.push(record);
+    } catch (error) {
+      if (options.onInvalidRecord) options.onInvalidRecord(path.join(directory, name), error);
+      else console.warn("EchoInk skipped invalid maintenance record", path.join(directory, name), knowledgeErrorDetail(error));
+    }
   }
   return records.sort((a, b) => b.at - a.at);
 }

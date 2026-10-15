@@ -3,6 +3,7 @@ import { App, TFolder, openTestModals } from "obsidian";
 import CodexForObsidianPlugin from "../main";
 import { EnglishDiaryController } from "../english-diary/controller";
 import { EchoInkHomeView } from "../home/home-view";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { DEFAULT_ENGLISH_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY, LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY } from "../english-diary/types";
 import { ProductActivityGate } from "../plugin/api-provider-activation-service";
 import { PiProviderConfigurationService } from "../plugin/pi-provider-configuration-service";
@@ -14,6 +15,7 @@ import {
 export async function runEnglishDiaryProviderTests(installDom: () => void): Promise<void> {
   installDom();
   await assertEnglishDiaryHomeShortcut();
+  await assertHomeMissingFolderGuidance();
   const normalized = normalizeSettingsData({ englishDiary: { enabled: true } }).settings.englishDiary;
   assert.equal(normalized.providerSettingsId, "");
   assert.equal(normalized.modelId, "");
@@ -51,24 +53,30 @@ export async function runEnglishDiaryProviderTests(installDom: () => void): Prom
       app: { vault: { configDir: ".test-config", getRoot: () => ({ children: roots.map((name) => Object.assign(new TFolder(), { name, path: name })) }) } }
     };
     new EnglishDiaryController(plugin as never);
-    const root = roots.includes("outputs") ? "outputs" : "输出（outputs）";
-    assert.equal(storage.englishDiary.englishDirectory, `${root}/.english-diary/diaries`);
-    assert.equal(storage.englishDiary.expressionDirectory, `${root}/.english-diary/expressions`);
-    for (const directory of ["Old English", LEGACY_ENGLISH_DIRECTORY])
+    assert.equal(storage.englishDiary.englishDirectory, "Old English", "custom English directories are preserved");
+    assert.equal(storage.englishDiary.expressionDirectory, "Old Expressions", "custom expression directories are preserved");
+    assert.equal(storage.englishDiary.englishDirectoryMode, "custom");
+    assert.equal(storage.englishDiary.expressionDirectoryMode, "custom");
+    for (const directory of [DEFAULT_ENGLISH_DIRECTORY, LEGACY_ENGLISH_DIRECTORY])
       assert.ok(storage.englishDiary.legacyEnglishDirectories?.includes(directory), `migration retains English source ${directory}`);
-    for (const directory of ["Old Expressions", LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY])
+    for (const directory of [HIDDEN_EXPRESSION_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY])
       assert.ok(storage.englishDiary.legacyExpressionDirectories?.includes(directory), `migration retains expression source ${directory}`);
     assert.ok(!storage.englishDiary.legacyEnglishDirectories?.includes(storage.englishDiary.englishDirectory), "the current English target is not a legacy source");
     assert.ok(!storage.englishDiary.legacyExpressionDirectories?.includes(storage.englishDiary.expressionDirectory), "the current expression target is not a legacy source");
-    if (root !== "outputs") {
-      assert.ok(storage.englishDiary.legacyEnglishDirectories?.includes(DEFAULT_ENGLISH_DIRECTORY), "bilingual destinations retain the old English outputs root");
-      assert.ok(storage.englishDiary.legacyExpressionDirectories?.includes(HIDDEN_EXPRESSION_DIRECTORY), "bilingual destinations retain the old expression outputs root");
-    }
     const restored = normalizeSettingsData(JSON.parse(JSON.stringify(storage))).settings;
     assert.deepEqual(restored.englishDiary, storage.englishDiary, "resolved hidden paths and migration roots survive saving and reopening");
     new EnglishDiaryController({ ...plugin, settings: restored } as never);
     assert.deepEqual(restored.englishDiary, storage.englishDiary, "reopening does not duplicate old roots");
+
+    const defaults = normalizeSettingsData({}).settings;
+    new EnglishDiaryController({ ...plugin, settings: defaults } as never);
+    const root = roots.includes("outputs") ? "outputs" : "输出（outputs）";
+    assert.equal(defaults.englishDiary.englishDirectory, `${root}/.english-diary/diaries`, "default English directories still follow the output root");
+    assert.equal(defaults.englishDiary.expressionDirectory, `${root}/.english-diary/expressions`);
+    assert.equal(defaults.englishDiary.englishDirectoryMode, "role");
+    assert.equal(defaults.englishDiary.expressionDirectoryMode, "role");
   }
+  console.log("PASS English Diary storage: custom directories preserved, default directories migrated, reopen idempotent");
   const rebuiltSettings = normalizeSettingsData({}).settings;
   new EnglishDiaryController({
     settings: rebuiltSettings, manifest: { id: "echoink-test" },
@@ -204,6 +212,112 @@ export async function runEnglishDiaryProviderTests(installDom: () => void): Prom
   assert.equal(getEnglishDiaryApiProviderModel(settings).provider, global);
   settings.activeApiProviderId = "";
   assert.match(plugin.englishDiaryProviderLabel(), /尚未设置默认模型/u);
+}
+
+async function assertHomeMissingFolderGuidance(): Promise<void> {
+  const makeFixture = () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+    const events: string[] = [];
+    const folders = new Map<string, TFolder>();
+    const dailyOptions: Record<string, unknown> = {};
+    const app = Object.assign(new App(), {
+      vault: {
+        getRoot: () => ({ children: [...folders.values()] }),
+        getAbstractFileByPath: (path: string) => folders.get(path) ?? null
+      },
+      internalPlugins: { plugins: { "daily-notes": { instance: { options: dailyOptions } } } },
+      workspace: {
+        getLeaf: () => ({ openFile: async () => { events.push("open-note"); } }),
+        setActiveLeaf: () => {}
+      }
+    });
+    const plugin = {
+      settings, app,
+      openEchoInkKnowledgeSettings: async () => { events.push("choose-location"); },
+      requireAvailableEchoInkSkill: async () => { events.push("require-skill"); },
+      activateView: async () => { events.push("open-chat"); },
+      getCodexView: () => ({ startHomeConversation: async () => { events.push("start-journal"); } })
+    };
+    const home = Object.assign(Object.create(EchoInkHomeView.prototype), {
+      plugin, app, closed: false, captureBusy: false,
+      dataService: {
+        createBlankInboxNote: async () => { events.push("create-note"); return { path: "随手记/未命名.md" }; },
+        listCustomTemplates: () => { events.push("list-templates"); return []; }
+      },
+      refresh: async () => {}
+    }) as {
+      capture(): Promise<void>;
+      openConversationAction(action: "daily"): Promise<void>;
+      openJournalTemplate(date: Date): Promise<void>;
+    };
+    return { settings, events, folders, dailyOptions, plugin, home };
+  };
+  const chooseLocation = (title: string) => {
+    const modal = openTestModals.at(-1);
+    assert.ok(modal, "missing locations show actionable guidance");
+    assert.equal(modal.contentEl.querySelector("h2")?.textContent, title);
+    assert.match(modal.contentEl.querySelector("p")?.textContent ?? "", /位置/u);
+    const buttons = [...modal.contentEl.querySelectorAll<HTMLButtonElement>("button")];
+    assert.deepEqual(buttons.map((button) => button.textContent), ["稍后", "去选择位置"]);
+    buttons.at(-1)!.click();
+  };
+  assert.equal(openTestModals.length, 0);
+  for (const state of ["disabled", "unbound", "missing"] as const) {
+    const fixture = makeFixture();
+    const binding = fixture.settings.knowledgeBase.folderBindings!.roles.inbox;
+    binding.enabled = state !== "disabled";
+    binding.writePath = state === "missing" ? "已删除的收件箱" : null;
+    const capture = fixture.home.capture();
+    assert.deepEqual(fixture.events, [], "guidance does not create a note or a directory");
+    await fixture.home.capture();
+    assert.equal(openTestModals.length, 1, "repeated capture does not stack dialogs");
+    chooseLocation("选择收件箱位置");
+    await capture;
+    assert.deepEqual(fixture.events, ["choose-location"]);
+    assert.equal(binding.enabled, state !== "disabled", "guidance leaves migration settings unchanged");
+  }
+  const cancelled = makeFixture();
+  const pending = cancelled.home.capture();
+  openTestModals.at(-1)!.close();
+  await pending;
+  assert.deepEqual(cancelled.events, [], "closing guidance leaves settings and notes unchanged");
+  const binding = cancelled.settings.knowledgeBase.folderBindings!.roles.inbox;
+  Object.assign(binding, { enabled: true, writePath: "随手记", readPaths: ["随手记"] });
+  cancelled.folders.set("随手记", Object.assign(new TFolder(), { path: "随手记" }));
+  await cancelled.home.capture();
+  assert.deepEqual(cancelled.events, ["create-note", "open-note"], "retry works after a folder is chosen");
+
+  for (const action of ["chat", "template", "english-shortcut"] as const) {
+    const fixture = makeFixture();
+    if (action === "english-shortcut") {
+      fixture.settings.englishDiary.homeShortcut = "english-diary";
+      Object.assign(fixture.plugin, {
+        accountService: { checkCapability: () => true },
+        englishDiary: { enabled: () => true, openToday: async () => { fixture.events.push("open-english"); } }
+      });
+    }
+    const pending = action === "chat" ? fixture.home.openConversationAction("daily")
+      : action === "template" ? fixture.home.openJournalTemplate(new Date()) : fixture.home.capture();
+    assert.deepEqual(fixture.events, [], "missing journal location is handled before opening chat or creating content");
+    chooseLocation("选择日记位置");
+    await pending;
+    assert.deepEqual(fixture.events, ["choose-location"]);
+  }
+  for (const folder of ["", "我的原生日记"]) {
+    const fixture = makeFixture();
+    fixture.dailyOptions.folder = folder;
+    await fixture.home.openConversationAction("daily");
+    assert.equal(openTestModals.length, 0, "native Daily notes configuration remains authoritative, including the vault root");
+    assert.deepEqual(fixture.events, ["require-skill", "open-chat", "start-journal"]);
+  }
+  const readonlyDiary = makeFixture();
+  readonlyDiary.settings.englishDiary.homeShortcut = "english-diary";
+  Object.assign(readonlyDiary.plugin, { englishDiary: { enabled: () => true, openToday: async () => { readonlyDiary.events.push("open-library"); } } });
+  await readonlyDiary.home.capture();
+  assert.equal(openTestModals.length, 0);
+  assert.deepEqual(readonlyDiary.events, ["open-library"], "read-only English diary access does not require a creation location");
+  console.log("PASS Home missing folder guidance: inbox and journal choices, cancellation, retry and native Daily notes precedence");
 }
 
 async function assertEnglishDiaryHomeShortcut(): Promise<void> {

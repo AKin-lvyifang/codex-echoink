@@ -2359,6 +2359,7 @@ function assertKnowledgeMaintenanceRequiresExplicitCommand(): void {
 async function assertKnowledgeMaintenancePreferenceSnapshotIsTurnBound():
 Promise<void> {
   let finalizeCalls = 0;
+  let finalizedState: string | undefined;
   let currentPreference: Readonly<{
     profileVersion: string;
     state: "default" | "custom";
@@ -2383,8 +2384,9 @@ Promise<void> {
         references: Object.freeze([])
       });
     },
-    async finalizeMaintenance() {
+    async finalizeMaintenance(input) {
       finalizeCalls += 1;
+      finalizedState = input.terminalState;
     }
   };
   await withFixture(["run-knowledge-maintain-snapshot"], async (fixture) => {
@@ -2444,8 +2446,12 @@ Promise<void> {
       new Set(["vault_search", "note_read", "knowledge_maintain"])
     );
     session.finishSuccessful("知识维护已完成。");
-    assert.equal((await handle.result).terminalState, "failed");
-    assert.equal(finalizeCalls, 0);
+    const result = await handle.result;
+    assert.equal(result.terminalState, "failed");
+    assert.equal(finalizeCalls, 1, "failed maintenance still writes a settlement record");
+    assert.equal(finalizedState, "failed");
+    assert.deepEqual(result.maintenance?.processedSourcePaths, [], "a failed turn cannot mark any source processed");
+    assert.deepEqual(result.maintenance?.pendingSourcePaths, QUERY_MAINTENANCE_SCOPE.candidatePaths, "failed sources remain pending");
   }, { knowledge });
 }
 

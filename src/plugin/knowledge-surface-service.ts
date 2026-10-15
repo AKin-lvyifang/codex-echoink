@@ -12,7 +12,7 @@ import { InitializationDirectoryHistory } from "../knowledge-base/initialization
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { normalizePath, TFolder, type TFile } from "obsidian";
+import { normalizePath, Notice, TFolder, type TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
 import {
@@ -356,7 +356,13 @@ export class EchoInkKnowledgeSurfaceService {
 
   async getMaintenanceRecords() {
     const root = knowledgePrivateRoot(this.plugin.getVaultPath());
-    return root ? readPrivateMaintenanceRecords(root) : [];
+    if (!root) return [];
+    let invalidCount = 0;
+    const records = await readPrivateMaintenanceRecords(root, { onInvalidRecord: () => { invalidCount++; } });
+    if (invalidCount) new Notice(this.plugin.settings.settingsLanguage === "en"
+      ? `Skipped ${invalidCount} damaged maintenance record${invalidCount === 1 ? "" : "s"}.`
+      : `已跳过 ${invalidCount} 条损坏的维护记录。`);
+    return records;
   }
 
   async getOriginalDirectoryStatus() { return this.directoryHistory.status(); }
