@@ -91,6 +91,9 @@
 :is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=button]:is(.is-tertiary,.is-icon) {background:transparent;border-color:transparent}
 :is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=button]:is(.settings-danger,.is-danger,.mod-warning) {color:var(--text-error,#b44f4f)}
 :is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=button]:disabled {opacity:.45;cursor:default}
+.modal.echoink-confirm-origin .echoink-origin-control[data-slot=button]:is(:hover,:focus-visible) {
+  background:var(--background-modifier-hover);color:var(--text-normal);border-color:var(--origin-line);outline:none;box-shadow:none;
+}
 :is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item],[data-slot=select-trigger]):focus-visible,
 .echoink-origin-control [data-slot=slider-thumb]:focus-visible {outline:2px solid var(--origin-accent);outline-offset:3px}
 /* Desktop focus stays inside the control. Preserve mobile controls and previews. */

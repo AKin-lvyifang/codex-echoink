@@ -1903,6 +1903,7 @@ async function assertProviderApiKeyPersistenceLifecycle(): Promise<void> {
 
   const reloadedPlugin = {
     settings: structuredClone(DEFAULT_SETTINGS),
+    getVaultPath: () => path.join(tmpdir(), "echoink-provider-key-persistence-fixture"),
     loadData: async () => structuredClone(persisted),
     saveData: async (value: unknown) => {
       persisted = structuredClone(value);
@@ -2612,6 +2613,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
       forgetCalls.push([id, reason, revision]);
     },
     getKnowledgeSurfaceService: () => ({
+      getMaintenanceRecords: async () => [],
       folderOperationBusy: false,
       directoryWritable: true,
       folderOperationMessage: "",
@@ -3076,7 +3078,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
     '[data-echoink-focus-key="knowledge:maintenance-history"]'
   );
   assert.ok(maintenanceNavigation);
-  assert.equal(maintenanceNavigation.getAttribute("aria-label"), "维护日志，查看");
+  assert.equal(maintenanceNavigation.getAttribute("aria-label"), "维护记录，查看");
   assert.match(maintenanceNavigation.textContent, /2 条记录/u);
   assert.equal(
     tab.containerEl.querySelectorAll<ProviderModalTestElement>("button")
@@ -3087,9 +3089,17 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   assert.match(tab.containerEl.textContent, /部分完成/u);
   assert.match(tab.containerEl.textContent, /1 项待处理/u);
   Object.assign(tab.containerEl, { scrollTop: 900, scrollHeight: 2400, clientHeight: 500 });
+  resetSynchronousSettingsDisplayFrame(tab);
   maintenanceNavigation.focus();
   maintenanceNavigation.click();
   await settleMicrotasks();
+  // Simulate a content frame after the private history load. display() instead
+  // reopens the host shell and invalidates the freshly loaded records and focus.
+  const renderMaintenanceFrame = () => {
+    resetSynchronousSettingsDisplayFrame(tab);
+    (tab as unknown as { renderSettingsContent(): void }).renderSettingsContent();
+  };
+  renderMaintenanceFrame();
   assert.equal(tab.containerEl.scrollTop, 0, "opening a detail starts at the native scroll root's top");
   const backToKnowledge = tab.containerEl.querySelector<ProviderModalTestElement>(
     '[data-echoink-focus-key="settings-detail:back"]'
@@ -3129,7 +3139,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   maintenanceDate.onchange?.();
   // The fixture runs requestAnimationFrame synchronously, so clear its
   // scheduled-frame sentinel before observing the rerendered filter state.
-  tab.display();
+  renderMaintenanceFrame();
   await settleMicrotasks();
   assert.equal(tab.containerEl.scrollTop, 320, "same-page filtering preserves the native scroll position");
   assert.match(tab.containerEl.textContent, new RegExp(previousMaintenanceReportPath, "u"));
@@ -3141,7 +3151,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   assert.ok(filteredDate);
   filteredDate.value = "2026-08-23";
   filteredDate.onchange?.();
-  tab.display();
+  renderMaintenanceFrame();
   await settleMicrotasks();
   assert.match(tab.containerEl.textContent, /所选日期没有维护记录/u);
   const clearNoMatch = tab.containerEl.querySelector<ProviderModalTestElement>(
@@ -3149,6 +3159,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   );
   assert.ok(clearNoMatch);
   assert.equal(clearNoMatch.disabled, false);
+  resetSynchronousSettingsDisplayFrame(tab);
   clearNoMatch.click();
   resetSynchronousSettingsDisplayFrame(tab);
   await settleMicrotasks();
@@ -3175,6 +3186,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   );
   assert.ok(currentBackToKnowledge);
   tab.containerEl.scrollTop = 620;
+  resetSynchronousSettingsDisplayFrame(tab);
   currentBackToKnowledge.click();
   await settleMicrotasks();
   assert.equal(tab.containerEl.scrollTop, 0, "back navigation does not inherit the detail's scroll position");
@@ -3188,18 +3200,20 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
     "returning from the maintenance log restores focus to its main-page entry"
   );
   settings.knowledgeBase.maintenanceHistory = [];
-  tab.display();
+  renderMaintenanceFrame();
   const emptyMaintenanceNavigation = tab.containerEl.querySelector<ProviderModalTestElement>(
     '[data-echoink-focus-key="knowledge:maintenance-history"]'
   );
   assert.ok(emptyMaintenanceNavigation);
   assert.match(emptyMaintenanceNavigation.textContent, /0 条记录/u);
+  resetSynchronousSettingsDisplayFrame(tab);
   emptyMaintenanceNavigation.click();
   await settleMicrotasks();
+  renderMaintenanceFrame();
   assert.match(tab.containerEl.textContent, /还没有知识库维护记录/u);
   assert.doesNotMatch(tab.containerEl.textContent, /所选日期没有维护记录/u);
   settings.settingsLanguage = "en";
-  tab.display();
+  renderMaintenanceFrame();
   assert.match(tab.containerEl.textContent, /No Knowledge maintenance runs yet/u);
   assert.ok(tab.containerEl.querySelector('input[aria-label="Maintenance log date filter"]'));
   assert.ok(tab.containerEl.querySelector('button[aria-label="Clear date filter"]'));
@@ -5665,6 +5679,7 @@ async function assertRetiredSettingsRewritePersistence(): Promise<void> {
   let saveCount = 0;
   const plugin = {
     settings: structuredClone(DEFAULT_SETTINGS),
+    getVaultPath: () => path.join(tmpdir(), "echoink-retired-settings-rewrite-fixture"),
     loadData: async () => structuredClone(persisted),
     saveData: async (value: unknown) => {
       saveCount += 1;

@@ -640,6 +640,13 @@ export async function createPiProductionRuntimeBundle(
 
 async function syncPrivateMaintenanceOverview(plugin: PiProductionPluginHost, root: string): Promise<void> {
   const records = await readPrivateMaintenanceRecords(root);
+  const overview = () => canonicalJsonStringify(JSON.parse(JSON.stringify({
+    maintenanceHistory: plugin.settings.knowledgeBase.maintenanceHistory,
+    lastRunAt: plugin.settings.knowledgeBase.lastRunAt,
+    lastSummary: plugin.settings.knowledgeBase.lastSummary,
+    lastPendingSources: plugin.settings.knowledgeBase.lastPendingSources
+  })));
+  const previous = overview();
   const legacy = plugin.settings.knowledgeBase.maintenanceHistory.filter((entry) => !entry.recordId && !records.some((record) => record.runId === entry.runId));
   plugin.settings.knowledgeBase.maintenanceHistory = [...legacy, ...records.map((record) => ({ recordId: record.recordId, runId: record.runId, at: record.at, date: record.date, mode: "maintain" as const, reportPath: "", status: record.result.status === "completed" || record.result.status === "noop" ? "success" as const : "failed" as const, resultStatus: record.cancelled ? "cancelled" as const : record.result.status, completion: record.result.status === "partial" ? "partial" as const : record.result.status === "noop" ? "noop" as const : record.result.status === "completed" ? "full" as const : undefined, pendingSources: record.sources.filter((source) => source.status !== "processed").map((source) => source.path) }))];
   const latest = records[0];
@@ -648,7 +655,7 @@ async function syncPrivateMaintenanceOverview(plugin: PiProductionPluginHost, ro
     plugin.settings.knowledgeBase.lastSummary = latest.summary;
     plugin.settings.knowledgeBase.lastPendingSources = latest.sources.filter((source) => source.status !== "processed").map((source) => source.path);
   }
-  await plugin.persistPiNativeSettings();
+  if (overview() !== previous) await plugin.persistPiNativeSettings();
 }
 
 export function createProductionPiKnowledgeRuntime(input: Readonly<{

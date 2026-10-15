@@ -1367,13 +1367,26 @@ function assertKnowledgeMaintenanceResultCardIsLiveDurableAndStrict(): void {
     assert.equal(card?.status, cardStatus);
   }
 
+  const customPath = "个人知识/卡片/Readback.md";
+  const customView = projector.projectSessionBranch({
+    ...durableInput,
+    entries: [durableInput.entries[0], messageEntry("tool-maintain-durable", "assistant-maintain-durable", 2, {
+      role: "toolResult", toolCallId: "maintain-durable", toolName: "knowledge_maintain",
+      content: [{ type: "text", text: "custom folder result" }],
+      details: { status: "completed", maintenanceResult: { ...completed, notes: completed.notes.map((note) => ({ ...note, path: customPath })) } },
+      isError: false
+    })]
+  });
+  assert.equal(onlyTool(customView).knowledgeBaseUi?.sections[0]?.items[0]?.path, customPath,
+    "result cards accept user-chosen directories without requiring a fixed wiki prefix");
+
   for (const forged of [
     { ...completed, schema: "forged.v1" },
     {
       ...completed,
       notes: [{
         operation: "created",
-        path: "raw/NotKnowledge.md",
+        path: "../raw/NotKnowledge.md",
         title: "伪造",
         summary: "不能成为成功卡"
       }]

@@ -750,7 +750,8 @@ export class EchoInkHomeView extends ItemView {
         ? this.t("收件箱尚未启用或保存位置不可用，暂时无法新建笔记。请在知识库目录设置中选择位置。", "The inbox is disabled or its save location is unavailable. Choose a folder in Knowledge settings before creating a note.")
         : this.t("尚未配置可用的日记位置，暂时无法写日记。请在知识库目录设置中选择位置，也可以在 Obsidian 日记设置中配置。", "No journal location is available. Choose a folder in Knowledge settings or configure Obsidian Daily notes before writing a journal."),
       this.t("去选择位置", "Choose location"),
-      this.t("稍后", "Later")
+      this.t("稍后", "Later"),
+      { originControls: true }
     );
     if (accepted) await this.plugin.openEchoInkKnowledgeSettings();
     return false;

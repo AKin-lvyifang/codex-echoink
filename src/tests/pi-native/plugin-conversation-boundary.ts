@@ -26,6 +26,8 @@ import {
 import { FileApprovalTicketStore } from "../../harness/pi-native/tool-authorization";
 import { devicePiCanonicalStoreRoots } from "../../harness/pi/pi-store-layout";
 import { FileKnowledgeUsageStore } from "../../knowledge-base/usage";
+import { FilePhase3MaintenanceStateStore } from "../../plugin/pi-knowledge-maintenance-production";
+import { createKnowledgeMaintenanceResultEnvelope } from "../../knowledge-base/knowledge-maintenance-result";
 import {
   createPiProductionRuntimeBundle,
   createPiProductionModelDefinition,
@@ -228,7 +230,7 @@ Promise<void> {
       sessionApi
     } as never;
 
-    const bundle = await createPiProductionRuntimeBundle(plugin, localData);
+    let bundle = await createPiProductionRuntimeBundle(plugin, localData);
     try {
       assert.equal(vaultEvents.size, 4);
       assert.equal(
@@ -254,6 +256,41 @@ Promise<void> {
         "metadata synchronization must not overwrite an already resident active body"
       );
       assert.equal(persisted, 1);
+      await bundle.runtime.shutdown();
+      const records = new FilePhase3MaintenanceStateStore({
+        storageRootPath: path.join(piNativeStorageRootPath, "knowledge"), vaultId
+      });
+      await records.saveRecord({
+        schemaVersion: 1, recordId: `maintenance-${"a".repeat(32)}`, runId: "overview-sync",
+        at: 100, date: "2026-10-15", summary: "A source remains pending",
+        sources: [{ path: "raw/a.md", fingerprint: "", status: "unread", evidencePaths: [] }],
+        result: createKnowledgeMaintenanceResultEnvelope({ status: "failed" })
+      });
+      bundle = await createPiProductionRuntimeBundle(plugin, localData);
+      assert.equal(persisted, 2, "a changed private overview is persisted once");
+      assert.equal(settings.knowledgeBase.lastRunAt, 100);
+      assert.equal(settings.knowledgeBase.lastSummary, "A source remains pending");
+      assert.deepEqual(settings.knowledgeBase.lastPendingSources, ["raw/a.md"]);
+      assert.equal(settings.knowledgeBase.maintenanceHistory[0]?.runId, "overview-sync");
+      const restart = async () => {
+        await bundle.runtime.shutdown();
+        bundle = await createPiProductionRuntimeBundle(plugin, localData);
+      };
+      await restart();
+      assert.equal(persisted, 2, "unchanged overview does not save again on restart");
+      for (const change of [
+        () => { settings.knowledgeBase.maintenanceHistory = []; },
+        () => { settings.knowledgeBase.lastRunAt = 0; },
+        () => { settings.knowledgeBase.lastSummary = "stale summary"; },
+        () => { settings.knowledgeBase.lastPendingSources = []; }
+      ]) {
+        const before = persisted;
+        change();
+        await restart();
+        assert.equal(persisted, before + 1, "each changed overview field is persisted");
+        await restart();
+        assert.equal(persisted, before + 1, "unchanged fields do not cause another save");
+      }
     } finally {
       await bundle.runtime.shutdown();
       assert.equal(vaultEvents.size, 0, "runtime shutdown releases Knowledge file event listeners");

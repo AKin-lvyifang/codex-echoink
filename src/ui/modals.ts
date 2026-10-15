@@ -7,7 +7,7 @@ export function confirmModal(
   body: string,
   acceptText = "允许",
   declineText = "拒绝",
-  options: { signal?: AbortSignal; preformatted?: boolean } = {}
+  options: { signal?: AbortSignal; preformatted?: boolean; originControls?: boolean } = {}
 ): Promise<boolean> {
   if (options.signal?.aborted) return Promise.resolve(false);
   return new Promise((resolve) => {
@@ -30,7 +30,8 @@ export function confirmModal(
       acceptText,
       declineText,
       options.preformatted === true,
-      finish
+      finish,
+      options.originControls === true
     );
     options.signal?.addEventListener("abort", abort, { once: true });
     if (options.signal?.aborted) {
@@ -123,7 +124,8 @@ class ConfirmModal extends Modal {
     private readonly acceptText: string,
     private readonly declineText: string,
     private readonly preformatted: boolean,
-    private readonly done: (accepted: boolean) => void
+    private readonly done: (accepted: boolean) => void,
+    private readonly originControls = false
   ) {
     super(app);
   }
@@ -140,6 +142,15 @@ class ConfirmModal extends Modal {
       });
     } else {
       contentEl.createEl("p", { text: this.bodyText });
+    }
+    if (this.originControls) {
+      this.modalEl.addClass("echoink-confirm-origin");
+      const actions = new Setting(contentEl).controlEl;
+      const decline = createOriginButton(actions, { text: this.declineText });
+      const accept = createOriginButton(actions, { text: this.acceptText, cls: "mod-cta" });
+      decline.onclick = () => { this.finish(false); this.close(); };
+      accept.onclick = () => { this.finish(true); this.close(); };
+      return;
     }
     new Setting(contentEl)
       .addButton((button) =>
