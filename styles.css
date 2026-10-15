@@ -21266,6 +21266,15 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-actions {
   justify-content: flex-end;
 }
+.echoink-settings-demo .echoink-knowledge-folder-panel .settings-back.echoink-origin-control[data-slot=button] {
+  width: auto; max-width: 100%; height: auto; min-height: 30px; flex: 0 0 auto;
+  justify-content: flex-start; gap: 6px; padding: 6px 0; text-align: left; white-space: normal;
+  border: 0; background: transparent; box-shadow: none;
+}
+.echoink-settings-demo .echoink-knowledge-folder-panel .settings-back.echoink-origin-control[data-slot=button]:is(:hover, :focus, :focus-visible) {
+  background: var(--background-modifier-hover); outline: none; box-shadow: none; border: 0;
+}
+.echoink-settings-demo .echoink-knowledge-folder-panel .settings-back.echoink-origin-control[data-slot=button] > span { min-width: 0; overflow-wrap: anywhere; }
 .echoink-settings-demo .echoink-knowledge-folder-panel .settings-error {
   color: var(--text-error);
 }
@@ -21281,7 +21290,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-folder-purpose-header { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .echoink-settings-demo button.echoink-folder-disclosure {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 1; min-width: 0;
-  padding: 0; border: 0; background: transparent; box-shadow: none; text-align: left; white-space: normal;
+  height: auto; min-height: 30px; padding: 0; border: 0; background: transparent; box-shadow: none; text-align: left; white-space: normal;
 }
 .echoink-settings-demo .echoink-folder-purpose-copy { display: grid; gap: 5px; min-width: 0; }
 .echoink-settings-demo .echoink-folder-purpose-title { justify-content: flex-start; }
