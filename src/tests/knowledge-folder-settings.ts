@@ -97,11 +97,12 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
 
   const dom = prepareDOM();
   const host = dom.win.document.body.createDiv({ cls: "echoink-settings-demo" });
-  const folders = ["阅读/资料", "知识/卡片", "工作/调研", "读书/2026"].map(path => Object.assign(new TFolder(), { path }));
+  const folders = ["/", "", "阅读/资料", "知识/卡片", "工作/调研", "读书/2026"].map(path => Object.assign(new TFolder(), { path }));
   let saved = bound();
   let detail = false;
   let failed = false;
   let applyCalls = 0;
+  const optimizeCalls: boolean[] = [];
   let previewCalls = 0;
   let settleApply: (() => void) | undefined;
   const manager = {
@@ -111,8 +112,8 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
       return previewKnowledgeDirectoryPlan({ baseRevision: saved.revision, baseline: saved, bindings, createPaths, mode: options.mode,
         kind: async path => folders.some(folder => folder.path === path) ? "folder" : "missing", sourcePaths: [], files: [] });
     },
-    async applyDirectoryPlan(plan: KnowledgeDirectoryPlan) {
-      applyCalls++;
+    async applyDirectoryPlan(plan: KnowledgeDirectoryPlan, optimize = false) {
+      applyCalls++; optimizeCalls.push(optimize);
       await new Promise<void>(resolve => { settleApply = resolve; });
       if (failed) throw new Error("预览后的资料已变化，请重新预览；目录尚未应用。");
       saved = structuredClone(plan.bindings); (saved as any).configured = true;
@@ -134,7 +135,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert(found, `Expected button: ${text}`); return found;
   };
   const change = (control: HTMLInputElement) => control.dispatchEvent(new dom.win.Event("change", { bubbles: true }));
-  const flush = async () => { for (let index = 0; index < 8; index++) await Promise.resolve(); };
+  const flush = async () => { for (let index = 0; index < 8; index++) await Promise.resolve(); await new Promise(resolve => setTimeout(resolve, 0)); };
   try {
     draw();
     assert.equal(host.querySelectorAll("button").length, 1, "home has one folder entry");
@@ -150,6 +151,8 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert(!host.textContent?.includes("新资料保存到"), "single source is automatic");
     button("添加来源目录", raw).click();
     let picker = dom.win.document.body.querySelector(".echoink-folder-picker")!;
+    const existingChoices = [...picker.querySelectorAll(".echoink-settings-navigation-title")].map(item => item.textContent);
+    assert.deepEqual(existingChoices.slice().sort(), ["阅读/资料", "知识/卡片", "工作/调研", "读书/2026"].sort(), "existing-folder picker excludes both Obsidian root path forms");
     button("工作/调研", picker).click(); await flush();
     assert(host.textContent?.includes("新资料保存到"), "multiple sources reveal the default destination selector");
     const extraSource = host.querySelector('[data-folder-path="工作/调研"]')!;
@@ -176,6 +179,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert.equal(host.querySelector<HTMLInputElement>('input[aria-label^="允许 Agent 自动整理"]')!.checked, true, "return and reopen retains the draft");
     button("预览方案").click(); await flush();
     assert.equal(previewCalls, 1);
+    assert(!host.textContent?.includes("提炼"), "ordinary binding and consent previews do not promise refinement");
     assert(host.textContent?.includes("关闭 → 允许"));
     assert(!host.textContent?.includes("移动 0"), "preview never invents move counts");
     button("返回修改").click();
@@ -195,7 +199,10 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     button("预览方案").click(); await flush();
     button("应用修改").click(); await flush(); settleApply!(); await flush();
     assert.equal(detail, false, "successful save returns to parent");
-    assert(openTestNoticeMessages.at(-1)?.includes("未配置模型"), "folder completion reports why refinement did not start");
+    assert(openTestNoticeMessages.at(-1)?.includes("目录设置已应用"));
+    assert(!openTestNoticeMessages.at(-1)?.includes("提炼"), "ordinary saves report only the actual folder settings result");
+    assert(!openTestNoticeMessages.at(-1)?.includes("未配置模型"));
+    assert(optimizeCalls.every(value => value === false), "ordinary saves never request refinement");
     button("修改目录方案").click();
     assert.equal(host.querySelector<HTMLInputElement>('input[aria-label^="允许 Agent 自动整理"]')!.checked, true, "reopening reads persisted consent");
     assert(!host.textContent?.includes("预览方案"));
@@ -213,6 +220,10 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert(!host.textContent?.includes("新建位置")); assert(!host.textContent?.includes("选择父目录"));
     button("Vault 根目录").click();
     const modal = [...dom.win.document.body.querySelectorAll(".echoink-folder-picker")].at(-1)!;
+    const parentChoices = [...modal.querySelectorAll(".echoink-settings-navigation-title")].map(item => item.textContent);
+    assert.equal(parentChoices.filter(title => title === "Vault 根目录").length, 1, "parent picker has one explicit Vault-root choice");
+    assert(!parentChoices.includes("/") && !parentChoices.includes(""), "native root objects are excluded from parent rows");
+    assert.equal(parentChoices.length, 5);
     button("读书/2026", modal).click(); await flush();
     assert(button("读书/2026"));
     assert.equal(host.querySelector<HTMLInputElement>('input[aria-label^="允许 Agent 自动整理 · 读书/2026/"]')?.checked, false);
@@ -249,6 +260,12 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert(host.querySelector('[data-folder-role="templates"]')?.textContent?.includes("读书/2026"));
     button("预览方案").click(); await flush();
     assert(!host.textContent?.includes("创建目录 · 4"));
+    assert(host.textContent?.includes("待提炼"), "build previews retain real refinement information");
+    button("确认初始化").click(); await flush(); settleApply!(); await flush();
+    assert.equal(detail, false);
+    assert.equal(optimizeCalls.at(-1), true, "build confirmation requests refinement after configuration");
+    assert(openTestNoticeMessages.at(-1)?.includes("目录配置完成"));
+    assert(openTestNoticeMessages.at(-1)?.includes("知识提炼未开始：未配置模型"), "build completion reports its actual no-Provider state");
     assert.equal(typeof Modal, "function");
   } finally { section.dispose(); disposeOriginControls(host); host.remove(); dom.close(); }
   console.log("Knowledge folder settings: PASS (draft and host DOM; native visual acceptance is separate)");

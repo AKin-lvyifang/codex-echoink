@@ -115,6 +115,20 @@ export function nativeJournalPathForDate(app: App, date: Date, legacyDirectory?:
   return relativePath(`${settings.folder ? `${settings.folder}/` : ""}${moment(date).format(settings.format)}.md`);
 }
 
+/** An empty native folder is the Vault root; protect matching notes, not the whole Vault. */
+export function nativeRootJournalPaths(app: App, paths: readonly string[]): string[] {
+  const daily = optionsOf(app, "daily-notes");
+  if (typeof daily.folder !== "string" || daily.folder.trim() !== "") return [];
+  // Obsidian's own fallback differs from EchoInk's recommended month layout.
+  const format = nonempty(daily.format) ?? "YYYY-MM-DD";
+  return paths.filter(relative => {
+    if (!relative.endsWith(".md")) return false;
+    const title = relative.slice(0, -3);
+    const date = moment(title, format, true);
+    return date.isValid() && date.format(format) === title;
+  });
+}
+
 /** Native template tokens also serve direct creation and Agent saves. */
 export function renderNativeJournalTemplate(
   source: string,

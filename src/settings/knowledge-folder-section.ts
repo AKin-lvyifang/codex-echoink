@@ -348,8 +348,13 @@ export class KnowledgeFolderSection {
       const list = moves.createDiv({ cls: "echoink-folder-moves" });
       for (const move of plan.moves) list.createDiv({ cls: "echoink-folder-plan-path", text: `${move.from} → ${move.to}` });
     }
-    new OriginSetting(page).setName(zh ? `待提炼 · ${plan.sources.length} 篇` : `Sources to refine · ${plan.sources.length}`)
-      .setDesc(zh ? (plan.mode === "build" ? "确认后先完成目录配置与搬迁，再尝试启动知识提炼。未配置模型不影响目录配置。" : "本次只应用绑定和权限修改，不搬迁既有文件。") : (plan.mode === "build" ? "Confirmation configures folders and moves material, then attempts refinement. A model is not required for folder setup." : "Apply bindings and permissions without moving existing files."));
+    if (plan.mode === "build") {
+      new OriginSetting(page).setName(zh ? `待提炼 · ${plan.sources.length} 篇` : `Sources to refine · ${plan.sources.length}`)
+        .setDesc(zh ? "确认后先完成目录配置与搬迁，再尝试启动知识提炼。未配置模型不影响目录配置。" : "Confirmation configures folders and moves material, then attempts refinement. A model is not required for folder setup.");
+    } else {
+      new OriginSetting(page).setName(zh ? "应用范围" : "Changes to apply")
+        .setDesc(zh ? "本次只应用绑定和权限修改，不搬迁既有文件。" : "Apply bindings and permissions without moving existing files.");
+    }
     if (plan.excluded.length) {
       const details = page.createEl("details");
       details.createEl("summary", { text: zh ? `保持原位 · ${plan.excluded.length}` : `Keep in place · ${plan.excluded.length}` });
@@ -368,10 +373,15 @@ export class KnowledgeFolderSection {
   private async apply(zh: boolean): Promise<void> {
     if (!this.preview) return;
     await this.run(async () => {
-      const result = await this.plugin.getKnowledgeSurfaceService()!.applyDirectoryPlan(this.preview!, this.preview!.mode === "build");
+      const plan = this.preview!;
+      const result = await this.plugin.getKnowledgeSurfaceService()!.applyDirectoryPlan(plan, plan.mode === "build");
       this.draft = this.readDraft(); this.preview = null; this.jobLoaded = false;
-      const refinement = result.refinement === "started" ? (zh ? "知识提炼已开始。" : "Knowledge refinement started.") : result.refinement === "failed" ? (zh ? `知识提炼未成功：${result.refinementError ?? "请在知识库中重试"}` : `Refinement failed: ${result.refinementError ?? "Retry from Knowledge"}`) : (zh ? `知识提炼未开始${result.refinementError ? `：${result.refinementError}` : "。"}` : `Refinement has not started${result.refinementError ? `: ${result.refinementError}` : "."}`);
-      new Notice(zh ? `目录配置完成：创建 ${result.created.length} 个目录，搬迁 ${result.moved.length} 个文件。${refinement}` : `Folders configured: ${result.created.length} created, ${result.moved.length} files moved. ${refinement}`);
+      if (plan.mode === "build") {
+        const refinement = result.refinement === "started" ? (zh ? "知识提炼已开始。" : "Knowledge refinement started.") : result.refinement === "failed" ? (zh ? `知识提炼未成功：${result.refinementError ?? "请在知识库中重试"}` : `Refinement failed: ${result.refinementError ?? "Retry from Knowledge"}`) : (zh ? `知识提炼未开始${result.refinementError ? `：${result.refinementError}` : "。"}` : `Refinement has not started${result.refinementError ? `: ${result.refinementError}` : "."}`);
+        new Notice(zh ? `目录配置完成：创建 ${result.created.length} 个目录，搬迁 ${result.moved.length} 个文件。${refinement}` : `Folders configured: ${result.created.length} created, ${result.moved.length} files moved. ${refinement}`);
+      } else {
+        new Notice(zh ? `目录设置已应用：更新 ${plan.changes.length} 个用途。` : `Folder settings applied for ${plan.changes.length} purposes.`);
+      }
       this.close();
     });
   }
@@ -413,7 +423,7 @@ export class KnowledgeFolderSection {
         modal.titleEl.setText(zh ? (parent ? "创建于" : "选择已有目录") : (parent ? "Create in" : "Choose existing folder"));
         const list = modal.contentEl.createDiv({ cls: "settings-stack echoink-folder-picker" });
         if (parent) createSettingsNavigationRow(list, { title: zh ? "Vault 根目录" : "Vault root", onActivate: () => { resolve(""); modal.close(); } });
-        for (const folder of this.plugin.app.vault.getAllLoadedFiles().filter((file): file is TFolder => file instanceof TFolder && !!file.path).sort((a, b) => a.path.localeCompare(b.path))) createSettingsNavigationRow(list, { title: folder.path, onActivate: () => { resolve(folder.path); modal.close(); } });
+        for (const folder of this.plugin.app.vault.getAllLoadedFiles().filter((file): file is TFolder => file instanceof TFolder && !!file.path && file.path !== "/").sort((a, b) => a.path.localeCompare(b.path))) createSettingsNavigationRow(list, { title: folder.path, onActivate: () => { resolve(folder.path); modal.close(); } });
       };
       modal.onClose = () => { disposeOriginControls(modal.contentEl); resolve(null); if (trigger?.isConnected) trigger.focus({ preventScroll: true }); };
       modal.open();

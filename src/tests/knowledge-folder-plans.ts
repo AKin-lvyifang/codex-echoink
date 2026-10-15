@@ -63,6 +63,7 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
     await assertFailedSaveRecovery(path.join(root, "save-failure"));
     await assertRestoreKeepsNewContent(path.join(root, "restore-retained"));
     await assertRenamedLegacyConsentRestores(path.join(root, "restore-legacy"));
+    await assertRootNativeJournalProtection(path.join(root, "native-root"));
   } finally { await fs.rm(root, { recursive: true, force: true }); }
   console.log("Knowledge directory plans, relocation and recovery: PASS");
 }
@@ -227,6 +228,37 @@ async function assertRenamedLegacyConsentRestores(root: string) {
     assert.equal(await fs.readFile(path.join(root, "知识/original.md"), "utf8"), "ORIGINAL");
     assert.equal(await fs.readFile(path.join(root, "知识（knowledge）/new.md"), "utf8"), "NEW");
   } finally { fixture.release(); }
+}
+
+async function assertRootNativeJournalProtection(root: string) {
+  const cases = [
+    { format: "YYYY-MM-DD", journal: "2026-10-15.md", ordinary: "2026-02-30.md" },
+    { format: "[工作日记]-YYYY年MM月DD日", journal: "工作日记-2026年10月15日.md", ordinary: "工作日记-使用说明.md" },
+    { format: "YYYY/[月]MM/DD", journal: "2026/月10/15.md", ordinary: "2026/月10/课程.md" },
+    { format: "", journal: "2026-10-15.md", ordinary: "课程.md" }
+  ];
+  for (const [index, entry] of cases.entries()) {
+    const fixture = await fixtureAt(path.join(root, String(index)));
+    try {
+      fixture.records["daily-notes"].instance.options = { folder: "", format: entry.format };
+      await fixture.write(entry.journal, "NATIVE JOURNAL");
+      await fixture.write(entry.ordinary, "ORDINARY MATERIAL");
+      await fixture.write("普通资料/笔记.md", "MATERIAL");
+      const plan = await fixture.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
+      assert.deepEqual(plan.issues, []);
+      assert(!plan.moves.some(move => move.from === entry.journal), `root native daily note stays in place for ${entry.format || "the native default"}`);
+      assert(plan.excluded.some(item => item.path === entry.journal));
+      assert(plan.moves.some(move => move.from === entry.ordinary), "only a valid date matching the configured native format is protected");
+      assert(plan.moves.some(move => move.from === "普通资料/笔记.md"), "root journal configuration never excludes the whole Vault");
+      assert(!plan.sources.includes(entry.journal), "the preserved native daily note does not enter the new Raw extraction queue");
+    } finally { fixture.release(); }
+  }
+  const unconfigured = await fixtureAt(path.join(root, "unconfigured"));
+  try {
+    await unconfigured.write("2026-10-15.md", "ORDINARY DATE NOTE");
+    const plan = await unconfigured.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
+    assert(plan.moves.some(move => move.from === "2026-10-15.md"), "a date-like name alone does not imply a configured native diary");
+  } finally { unconfigured.release(); }
 }
 
 async function assertFailedSaveRecovery(root: string) {

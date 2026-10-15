@@ -49,7 +49,7 @@ import {
 } from "../knowledge-base/initializer";
 import { optimizeWikiFolderNames, type WikiFolderNameResult } from "../knowledge-base/wiki-folder-names";
 import { pluginDataDir } from "./plugin-data-paths";
-import { initializeNativeJournal, rebaseNativeJournalPaths } from "../home/native-journal";
+import { initializeNativeJournal, nativeRootJournalPaths, rebaseNativeJournalPaths } from "../home/native-journal";
 
 export interface KnowledgeFolderNamePreview {
   revision: number;
@@ -496,6 +496,7 @@ export class EchoInkKnowledgeSurfaceService {
     }
     const native = (this.plugin.app as unknown as { internalPlugins?: { plugins?: Record<string, { instance?: { options?: { folder?: string } } }> } }).internalPlugins?.plugins;
     protect(native?.["daily-notes"]?.instance?.options?.folder); protect(native?.templates?.instance?.options?.folder);
+    nativeRootJournalPaths(this.plugin.app, files.map(file => file.path)).forEach(protect);
     for (const file of files) {
       const root = file.path.split("/")[0];
       if (isFinanceRootName(root) || isLegacyFinancePath(file.path)) protect(isLegacyFinancePath(file.path) ? "EchoInk/财务" : root);
