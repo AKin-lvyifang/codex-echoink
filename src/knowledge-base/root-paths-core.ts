@@ -46,7 +46,7 @@ export function rebaseKnowledgePath(value: string, from: string, to: string): st
 
 /** Existing path fields and map keys only; does not edit note bodies or free text. */
 export function rebaseKnowledgePathRecords<T>(value: T, from: string, to: string): T {
-  const pathFields = new Set(["path", "rawPath", "sourcePath", "targetPath", "relativePath", "vaultRelativePath", "guidePath", "reportPath", "lastReportPath", "trackerPath", "journalDirectory", "evidencePaths", "sourcePaths", "pendingSourcePaths", "analyzedSourcePaths", "extractionQueue", "rawDirectory", "imageDirectory", "imagePaths", "englishDirectory", "expressionDirectory", "legacyEnglishDirectories", "legacyExpressionDirectories", "readPaths", "writePath"]);
+  const pathFields = new Set(["path", "rawPath", "sourcePath", "targetPath", "relativePath", "vaultRelativePath", "guidePath", "reportPath", "lastReportPath", "trackerPath", "journalDirectory", "evidencePaths", "evidence", "sourcePaths", "pendingSourcePaths", "analyzedSourcePaths", "extractionQueue", "rawDirectory", "imageDirectory", "imagePaths", "englishDirectory", "expressionDirectory", "legacyEnglishDirectories", "legacyExpressionDirectories", "readPaths", "writePath"]);
   const walk = (item: unknown, field: string): unknown => {
     if (typeof item === "string") return pathFields.has(field) ? rebaseKnowledgePath(item, from, to) : item;
     if (Array.isArray(item)) return item.map((child) => walk(child, field));

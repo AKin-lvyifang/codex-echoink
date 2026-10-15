@@ -58,17 +58,18 @@ export function classifyKnowledgePath(config: KnowledgeFolderBindings, value: st
 }
 export function knowledgeFolderIssues(config: KnowledgeFolderBindings): string[] {
   const issues: string[] = [];
+  const labels: Record<KnowledgeRootRole, string> = { raw: "资料来源", wiki: "知识成果", projects: "项目", outputs: "输出", inbox: "收件箱", journal: "日记", work: "工作", archive: "归档", templates: "模板", assets: "附件" };
   for (const role of KNOWLEDGE_ROOT_ROLES) {
     const binding = config.roles[role];
     if (!binding.enabled) continue;
     if (binding.native && (role === "journal" || role === "templates")) continue;
-    if (!binding.readPaths.length) issues.push(`${role}：尚未选择位置`);
-    if (role !== "raw" && binding.readPaths.length > 1 && !binding.compatibilityReadScopes) issues.push(`${role}：只能选择一个位置`);
-    if (binding.writePath && !binding.readPaths.includes(binding.writePath)) issues.push(`${role}：默认保存位置不在读取范围中`);
+    if (!binding.readPaths.length) issues.push(`${labels[role]}：尚未选择位置`);
+    if (role !== "raw" && binding.readPaths.length > 1 && !binding.compatibilityReadScopes) issues.push(`${labels[role]}：只能选择一个位置`);
+    if (binding.writePath && !binding.readPaths.includes(binding.writePath)) issues.push(`${labels[role]}：默认保存位置不在读取范围中`);
     if (role === "raw" && binding.readPaths.length > 1 && !binding.writePath) issues.push("资料来源：请选择默认保存位置");
   }
   for (const role of ["wiki", "projects"] as const) if (config.roles[role].enabled && config.roles.raw.enabled) {
-    for (const directory of config.roles[role].readPaths) if (config.roles.raw.readPaths.includes(directory)) issues.push(`资料来源与${role}不能使用同一路径：${directory}`);
+    for (const directory of config.roles[role].readPaths) if (config.roles.raw.readPaths.includes(directory)) issues.push(`资料来源与${labels[role]}不能使用同一路径：${directory}`);
   }
   return issues;
 }

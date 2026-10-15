@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, symlink, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { emptyKnowledgeFolderBindings, migrateKnowledgeFolderBindings, classifyKnowledgePath, knowledgeFolderIssues } from "../knowledge-base/folder-bindings";
@@ -9,7 +9,8 @@ import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard
 import { DEFAULT_SETTINGS, normalizeSettingsData } from "../settings/settings";
 import { isHomeRecentNotePath } from "../home/home-workbench-model";
 import CodexForObsidianPlugin from "../main";
-import { privateMaintenanceSourceScope } from "../plugin/pi-knowledge-maintenance-production";
+import { CodexSettingTab } from "../settings/settings-tab";
+import { privateMaintenanceSourceScope, FilePhase3MaintenanceStateStore, rebasePrivateMaintenanceRecords, readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
 import { readRawDigestRegistry, writeRawDigestRegistry, rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { KnowledgeRetriever } from "../knowledge-base/query";
@@ -94,9 +95,69 @@ export async function runKnowledgeFolderBindingsTests(): Promise<void> {
     assert.equal(saves, 1); assert.equal(creates, 0); assert.equal(optimizations, 0);
     await assert.rejects(surface.applyDirectoryPlan({ ...readOnlyPlan, create: ["Not selected"] }), /只读/u);
     await assert.rejects(surface.applyDirectoryPlan(readOnlyPlan, true), /只读/u);
+    const buildConfig = structuredClone(config);
+    Object.assign(buildConfig.roles.inbox, { enabled: true, readPaths: ["资料备选/验收收件箱"], writePath: "资料备选/验收收件箱", allowedSubdirectories: ["附件"] });
+    const unapprovedPlan = await surface.previewDirectoryPlan(buildConfig, []);
+    assert(unapprovedPlan.issues.some((issue: string) => issue.includes("原位置已失效")), "missing existing bindings remain invalid");
+    const buildPlan = await surface.previewDirectoryPlan(buildConfig, ["资料备选/验收收件箱"]);
+    assert.deepEqual(buildPlan.issues, [], "a confirmed new directory is not mistaken for an unsafe existing path");
+    assert.deepEqual(new Set(buildPlan.create), new Set(["资料备选/验收收件箱", "资料备选/验收收件箱/附件"]));
+    const linkedConfig = structuredClone(buildConfig);
+    linkedConfig.roles.inbox.readPaths = ["链接父目录/收件箱"]; linkedConfig.roles.inbox.writePath = "链接父目录/收件箱";
+    await symlink(path.join(vault, "资料备选"), path.join(vault, "链接父目录"));
+    try {
+      const linkedPlan = await surface.previewDirectoryPlan(linkedConfig, ["链接父目录/收件箱"]);
+      assert(linkedPlan.issues.length > 0, "a symlink ancestor still blocks confirmed creation");
+    } finally { await rm(path.join(vault, "链接父目录")); }
+    await writeFile(path.join(vault, "文件父路径"), "This is a file, not a folder.");
+    const blockedConfig = structuredClone(buildConfig);
+    blockedConfig.roles.inbox.readPaths = ["文件父路径/收件箱"]; blockedConfig.roles.inbox.writePath = "文件父路径/收件箱";
+    const blockedPlan = await surface.previewDirectoryPlan(blockedConfig, ["文件父路径/收件箱"]);
+    assert(blockedPlan.issues.length > 0, "a file occupying the parent path still blocks confirmed creation");
+    plugin.settings.defaultPermission = "workspace-write";
+    const createdDirectories: string[] = [];
+    plugin.app.vault.createFolder = async (relative: string) => {
+      await mkdir(path.join(vault, relative));
+      folderObjects.set(relative, Object.assign(new TFolder(), { path: relative }));
+      createdDirectories.push(relative);
+    };
+    await surface.applyDirectoryPlan(buildPlan);
+    assert.deepEqual(createdDirectories, buildPlan.create, "application creates exactly the reviewed directories");
+    assert.equal(config.roles.inbox.writePath, "资料备选/验收收件箱");
+    assert.equal(optimizations, 0, "directory creation does not call the model");
     const ask = await new KnowledgeRetriever(vault, { agentIndex: index }).retrieve({ question: "BINDING_TOKEN", explicitPaths: ["阅读/文献/a.md"], includeUnrefined: true });
     assert.equal(ask.status, "ready", "read-only binding of existing sources permits local Ask retrieval");
     assert.equal(await import("node:fs/promises").then(fs => fs.readFile(path.join(vault, "阅读/文献/a.md"), "utf8")), "# A\nBINDING_TOKEN\n", "source text remains unchanged");
+    const settingsTab = Object.create(CodexSettingTab.prototype) as any;
+    const revealedSources: string[] = [];
+    const explorer = { view: { revealInFolder: async (folder: TFolder) => { revealedSources.push(folder.path); } } };
+    plugin.app.workspace = { getLeavesOfType: () => [explorer], revealLeaf: async () => {} };
+    plugin.app.setting = { close: () => {} };
+    Object.assign(settingsTab, { plugin, app: plugin.app });
+    const originalSourceBinding = structuredClone(config.roles.raw);
+    config.roles.raw.writePath = "工作/调研";
+    await settingsTab.openKnowledgeRawFolder();
+    assert.deepEqual(revealedSources, ["工作/调研"], "the settings dashboard opens the selected source default, not a literal raw folder");
+    folderObjects.set("raw", Object.assign(new TFolder(), { path: "raw" }));
+    config.roles.raw.enabled = false;
+    await settingsTab.openKnowledgeRawFolder();
+    Object.assign(config.roles.raw, { enabled: true, readPaths: ["失效来源"], writePath: "失效来源" });
+    await settingsTab.openKnowledgeRawFolder();
+    assert.deepEqual(revealedSources, ["工作/调研"], "disabled or missing source bindings never fall back to an unbound raw folder");
+    config.roles.raw = originalSourceBinding;
+    const privateRoot = await realpath(path.join(vault, "private"));
+    const recordStore = new FilePhase3MaintenanceStateStore({ storageRootPath: privateRoot, vaultId: "folder-binding-tests" });
+    const recordId = `maintenance-${"e".repeat(32)}`;
+    await recordStore.saveRecord({ schemaVersion: 1, recordId, runId: "rename-assessment", date: "2026-10-14", at: 1,
+      summary: "阅读/文献/a.md is unchanged free text", sources: [{ path: "阅读/文献/a.md", fingerprint: "fixture", status: "processed", evidencePaths: ["阅读/文献/卡片/card.md"] }],
+      result: { schema: "echoink.knowledge-maintenance-result.v1", status: "noop", notes: [], issues: [], systemPaths: [], assessments: [{ claim: "阅读/文献/a.md is unchanged free text", status: "valid", asOf: "2026-10-14", verification: "local_verified", evidence: ["阅读/文献/a.md", "https://example.com/阅读/文献/a.md"] }] } });
+    await rebasePrivateMaintenanceRecords(privateRoot, "阅读/文献", "深读 材料");
+    const renamedRecord = (await readPrivateMaintenanceRecords(privateRoot)).find(item => item.recordId === recordId)!;
+    assert.equal(renamedRecord.sources[0].path, "深读 材料/a.md");
+    assert.deepEqual(renamedRecord.sources[0].evidencePaths, ["深读 材料/卡片/card.md"]);
+    assert.deepEqual(renamedRecord.result.assessments[0].evidence, ["深读 材料/a.md", "https://example.com/阅读/文献/a.md"]);
+    assert.equal(renamedRecord.summary, "阅读/文献/a.md is unchanged free text");
+    assert.equal(renamedRecord.result.assessments[0].claim, "阅读/文献/a.md is unchanged free text");
     config.roles.wiki.enabled = false; config.revision++;
     dashboard = await buildKnowledgeBaseDashboardSnapshot(vault, settings);
     assert.equal(dashboard.health.score, 100, "a disabled knowledge destination requires no index page or legacy tracker");

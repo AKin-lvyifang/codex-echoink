@@ -1,4 +1,5 @@
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import { knowledgeRoleStatus, resolveKnowledgeRoleTarget } from "../knowledge-base/root-paths";
 import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
 import { renderSelectionAskPluginRow, renderSelectionAnnotationSettings } from "./selection-annotation-settings";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
@@ -13,7 +14,7 @@ import { SETTINGS_TAB_ICONS } from "./settings-tab-icons";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { renderManualDreamAction } from "./manual-dream-action";
 import { OriginSetting } from "./origin-setting";
-import { createOriginInput, createOriginButton, createOriginSwitch, createOriginSlider, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
+import { createOriginInput, createOriginButton, createOriginSwitch, createOriginSlider, createOriginPagination, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
 import { renderSettingsKnowledgeDashboard } from "./knowledge-dashboard";
 import { BUILTIN_SKILLS } from "../harness/resources/builtin-skills";
 import { mountSettingsEditor } from "./inline-editor";
@@ -268,8 +269,13 @@ export class CodexSettingTab extends PluginSettingTab {
     this.scheduleDisplay();
   }
   private knowledgeMaintenanceHistoryDate = "";
+  private knowledgeMaintenanceHistoryPage = 1;
+  private knowledgeMaintenanceListScroll = 0;
+  private knowledgeMaintenanceListCleanup: (() => void) | null = null;
   private knowledgeMaintenanceSelectedRecord: KnowledgeMaintenanceRecord | null = null;
   private knowledgeMaintenanceRecords: KnowledgeMaintenanceRecord[] = [];
+  private knowledgeMaintenanceRecordsLoaded = false;
+  private knowledgeMaintenanceRecordsLoading = false;
   private knowledgeMaintenanceHistoryScroll: ReturnType<typeof captureSettingsScrollSnapshot> = [];
   private pendingKnowledgeHistoryScroll: ReturnType<typeof captureSettingsScrollSnapshot> | null = null;
   private knowledgeMaintenanceRecordsError = "";
@@ -374,6 +380,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private beginSettingsDisplay(): void {
     this.settingsVisible = true;
+    this.knowledgeMaintenanceRecordsLoaded = false;
     this.lastRenderedSettingsTab = null;
     this.settingsTabIconAnimation = null;
     this.cancelScheduledDisplay();
@@ -415,6 +422,8 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private disposeSettingsView(): void {
+    this.knowledgeMaintenanceListCleanup?.();
+    this.knowledgeMaintenanceListCleanup = null;
     this.membershipRowsDisposers.splice(0).forEach(dispose => dispose());
     this.pdfSettingsPanel?.dispose();
     this.lifestyleSettingsPanel?.dispose();
@@ -2172,11 +2181,21 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private async openKnowledgeRawFolder(): Promise<void> {
     const zh = this.plugin.settings.settingsLanguage !== "en";
-    const folder = this.app.vault.getAbstractFileByPath("raw");
+    const vaultRoot = this.plugin.getVaultPath();
+    const status = this.plugin.settings.knowledgeBase.folderBindings ? knowledgeRoleStatus(vaultRoot, "raw") : "unbound";
+    if (status !== "ready") {
+      const labels = { disabled: "未启用", unbound: "尚未选择默认位置", invalid: "默认位置已失效" };
+      new Notice(zh ? `资料来源${labels[status]}，请在知识库目录中选择有效位置。` : "Enable sources and choose a valid default folder in Knowledge folders.");
+      return;
+    }
+    let directory: string;
+    try { directory = resolveKnowledgeRoleTarget(vaultRoot, "raw"); }
+    catch { new Notice(zh ? "资料来源位置已改变，请在知识库目录中重新选择。" : "The source folder changed. Select it again in Knowledge folders."); return; }
+    const folder = this.app.vault.getAbstractFileByPath(directory);
     const leaf = this.app.workspace.getLeavesOfType("file-explorer")[0];
     const view = leaf?.view as (typeof leaf.view & { revealInFolder?: (folder: TFolder) => void | Promise<void> }) | undefined;
     if (!folder || folder instanceof TFile || !leaf || !view?.revealInFolder) {
-      new Notice(zh ? "请在文件列表中打开 Raw 目录。" : "Open the Raw folder in the file explorer.");
+      new Notice(zh ? `请在文件列表中打开资料来源：${directory}。` : `Open the source folder in the file explorer: ${directory}.`);
       return;
     }
     try {
@@ -2184,7 +2203,7 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.app.workspace.revealLeaf(leaf);
       (this.app as unknown as { setting?: { close: () => void } }).setting?.close();
     } catch {
-      new Notice(zh ? "Raw 目录未能打开，请从文件列表重试。" : "The Raw folder could not open. Retry from the file explorer.");
+      new Notice(zh ? "资料来源目录未能打开，请从文件列表重试。" : "The source folder could not open. Retry from the file explorer.");
     }
   }
 
@@ -2218,6 +2237,7 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderKnowledgeMaintenanceHistory(page: HTMLElement, zh: boolean): void {
+    if (!this.knowledgeMaintenanceRecordsLoaded && !this.knowledgeMaintenanceRecordsLoading && !this.knowledgeMaintenanceRecordsError) void this.loadKnowledgeMaintenanceRecords();
     const section = createSettingsSection(page, {
       title: zh ? "维护记录" : "Maintenance records",
       surface: "flat"
@@ -2225,13 +2245,13 @@ export class CodexSettingTab extends PluginSettingTab {
     section.addClass("standard-section");
     const group = createSettingsGroup(section);
     group.addClass("settings-card");
-    const count = this.plugin.settings.knowledgeBase.maintenanceHistory.length;
+    const count = this.mergedKnowledgeMaintenanceHistory().length;
     createSettingsNavigationRow(group, {
       title: zh ? "维护记录" : "Maintenance records",
       description: zh
         ? "打开完整记录，按日期查看每次知识维护。"
         : "Open the complete history and view Knowledge maintenance by date.",
-      value: zh
+      value: this.knowledgeMaintenanceRecordsError ? (zh ? "读取失败" : "Read failed") : this.knowledgeMaintenanceRecordsLoading || !this.knowledgeMaintenanceRecordsLoaded ? (zh ? "正在读取" : "Loading") : zh
         ? `${count} 条记录`
         : `${count} ${count === 1 ? "record" : "records"}`,
       actionLabel: zh ? "查看" : "View",
@@ -2241,6 +2261,8 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderKnowledgeMaintenanceHistoryDetail(container: HTMLElement, zh: boolean): void {
+    this.knowledgeMaintenanceListCleanup?.();
+    this.knowledgeMaintenanceListCleanup = null;
     if (this.knowledgeMaintenanceSelectedRecord) { this.renderKnowledgeMaintenanceRecordDetail(container, zh, this.knowledgeMaintenanceSelectedRecord); return; }
     const page = createSettingsPage(container, {
       title: zh ? "维护记录" : "Maintenance records",
@@ -2263,6 +2285,8 @@ export class CodexSettingTab extends PluginSettingTab {
     date.value = selectedDate;
     date.onchange = () => {
       this.knowledgeMaintenanceHistoryDate = date.value;
+      this.knowledgeMaintenanceHistoryPage = 1;
+      this.knowledgeMaintenanceListScroll = 0;
       this.scheduleDisplay();
     };
     const clear = createOriginButton(filter, { cls: "text-button", text: zh ? "清除" : "Clear", attr: {
@@ -2272,14 +2296,18 @@ export class CodexSettingTab extends PluginSettingTab {
     clear.disabled = !selectedDate;
     clear.onclick = () => {
       this.knowledgeMaintenanceHistoryDate = "";
+      this.knowledgeMaintenanceHistoryPage = 1;
+      this.knowledgeMaintenanceListScroll = 0;
       this.settingsFocusIntent = "explicit:knowledge:maintenance-history:date";
       this.scheduleDisplay();
     };
     const group = createSettingsGroup(page);
+    if (this.knowledgeMaintenanceRecordsLoading || (!this.knowledgeMaintenanceRecordsLoaded && !this.knowledgeMaintenanceRecordsError)) {
+      group.createDiv({ text: zh ? "正在读取维护记录" : "Loading maintenance records", attr: { role: "status" } });
+      return;
+    }
     if (this.knowledgeMaintenanceRecordsError) group.createDiv({ text: this.knowledgeMaintenanceRecordsError, cls: "settings-error" });
-    const privateEntries: KnowledgeBaseMaintenanceHistoryEntry[] = this.knowledgeMaintenanceRecords.map((record) => ({ recordId: record.recordId, runId: record.runId, date: record.date, at: record.at, status: record.cancelled ? "canceled" : record.result.status === "completed" || record.result.status === "noop" ? "success" as const : "failed" as const, mode: "maintain" as const, reportPath: "", resultStatus: record.cancelled ? "cancelled" : record.result.status, completion: record.result.status === "partial" ? "partial" : record.result.status === "noop" ? "noop" : record.result.status === "completed" ? "full" : undefined, pendingSources: record.sources.filter((source) => source.status !== "processed").map((source) => source.path), warnings: record.result.issues.map((issue) => ({ id: issue.code, message: issue.message })) }));
-    const allEntries = [...this.plugin.settings.knowledgeBase.maintenanceHistory.filter((entry) => !privateEntries.some((item) => item.recordId === entry.recordId || Boolean(item.runId && item.runId === entry.runId))), ...privateEntries]
-      .sort((left, right) => right.at - left.at || right.date.localeCompare(left.date));
+    const allEntries = this.mergedKnowledgeMaintenanceHistory();
     if (!allEntries.length && this.knowledgeMaintenanceRecordsError) return;
     if (!allEntries.length) {
       filter.createSpan({ cls: "history-count", text: zh ? "0 条记录" : "0 records" });
@@ -2294,7 +2322,14 @@ export class CodexSettingTab extends PluginSettingTab {
       this.renderHistoryEmpty(group, zh ? "所选日期没有维护记录" : "No maintenance runs on this date", zh ? "选择另一个日期，或清除筛选查看全部记录。" : "Choose another date or clear the filter to see all records.");
       return;
     }
-    for (const entry of entries) {
+    const pageSize = 20;
+    const pages = Math.ceil(entries.length / pageSize);
+    const currentPage = Math.max(1, Math.min(pages, this.knowledgeMaintenanceHistoryPage));
+    this.knowledgeMaintenanceHistoryPage = currentPage;
+    group.addClass("echoink-maintenance-record-list");
+    group.setAttr("aria-label", zh ? "维护记录列表" : "Maintenance record list");
+    group.onscroll = () => { this.knowledgeMaintenanceListScroll = group.scrollTop; };
+    for (const entry of entries.slice((currentPage - 1) * pageSize, currentPage * pageSize)) {
       const row = new OriginSetting(group)
         .setName(knowledgeMaintenanceHistoryTitle(entry, zh))
         .setDesc(knowledgeMaintenanceHistoryDescription(entry, zh));
@@ -2318,6 +2353,47 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }
       applySettingsRow(row);
+    }
+    const footer = page.createDiv({ cls: "echoink-maintenance-pagination" });
+    footer.createSpan({ text: zh ? `${currentPage} / ${pages} 页 · 每页 ${pageSize} 条` : `${currentPage} / ${pages} pages · ${pageSize} per page`, attr: { role: "status" } });
+    createOriginPagination(footer, currentPage, pages, (nextPage) => {
+      this.knowledgeMaintenanceHistoryPage = nextPage;
+      this.knowledgeMaintenanceListScroll = 0;
+      this.scheduleDisplay();
+    });
+    const win = page.ownerDocument.defaultView;
+    if (win) {
+      const scrollTop = this.knowledgeMaintenanceListScroll;
+      const fit = () => {
+        if (!group.isConnected) return;
+        const available = win.innerHeight - group.getBoundingClientRect().top - footer.getBoundingClientRect().height - 18;
+        group.style.maxHeight = `${Math.floor(Math.max(144, Math.min(560, win.innerHeight * .65, available)))}px`;
+      };
+      const frame = win.requestAnimationFrame(() => { fit(); group.scrollTop = scrollTop; });
+      win.addEventListener("resize", fit);
+      this.knowledgeMaintenanceListCleanup = () => { win.cancelAnimationFrame(frame); win.removeEventListener("resize", fit); };
+    }
+  }
+
+  private mergedKnowledgeMaintenanceHistory(): KnowledgeBaseMaintenanceHistoryEntry[] {
+    const privateEntries: KnowledgeBaseMaintenanceHistoryEntry[] = this.knowledgeMaintenanceRecords.map((record) => ({ recordId: record.recordId, runId: record.runId, date: record.date, at: record.at, status: record.cancelled ? "canceled" : record.result.status === "completed" || record.result.status === "noop" ? "success" : "failed", mode: "maintain", reportPath: "", resultStatus: record.cancelled ? "cancelled" : record.result.status, completion: record.result.status === "partial" ? "partial" : record.result.status === "noop" ? "noop" : record.result.status === "completed" ? "full" : undefined, pendingSources: record.sources.filter((source) => source.status !== "processed").map((source) => source.path), warnings: record.result.issues.map((issue) => ({ id: issue.code, message: issue.message })) }));
+    return [...this.plugin.settings.knowledgeBase.maintenanceHistory.filter((entry) => !privateEntries.some((item) => item.recordId === entry.recordId || Boolean(item.runId && item.runId === entry.runId))), ...privateEntries]
+      .sort((left, right) => right.at - left.at || right.date.localeCompare(left.date));
+  }
+
+  private async loadKnowledgeMaintenanceRecords(): Promise<void> {
+    if (this.knowledgeMaintenanceRecordsLoading) return;
+    this.knowledgeMaintenanceRecordsLoading = true;
+    this.knowledgeMaintenanceRecordsError = "";
+    try {
+      this.knowledgeMaintenanceRecords = await this.plugin.getKnowledgeSurfaceService()?.getMaintenanceRecords() ?? [];
+      this.knowledgeMaintenanceRecordsLoaded = true;
+    } catch (error) {
+      this.knowledgeMaintenanceRecords = [];
+      this.knowledgeMaintenanceRecordsError = String(error);
+    } finally {
+      this.knowledgeMaintenanceRecordsLoading = false;
+      this.scheduleDisplay();
     }
   }
 
@@ -3582,9 +3658,10 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     if (detail === "knowledge-maintenance-history") {
       this.knowledgeMaintenanceHistoryDate = "";
+      this.knowledgeMaintenanceHistoryPage = 1;
+      this.knowledgeMaintenanceListScroll = 0;
       this.knowledgeMaintenanceSelectedRecord = null;
-      this.knowledgeMaintenanceRecordsError = "";
-      void this.plugin.getKnowledgeSurfaceService()?.getMaintenanceRecords().then((records) => { this.knowledgeMaintenanceRecords = records; if (this.settingsDetail === "knowledge-maintenance-history") this.scheduleDisplay(); }).catch((error) => { this.knowledgeMaintenanceRecordsError = String(error); this.scheduleDisplay(); });
+      void this.loadKnowledgeMaintenanceRecords();
     }
     if (detail === "knowledge-preferences") {
       void this.loadKnowledgePreferenceState();

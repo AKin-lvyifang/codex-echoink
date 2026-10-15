@@ -435,7 +435,7 @@ export class EchoInkKnowledgeSurfaceService {
     const files = this.plugin.app.vault.getMarkdownFiles();
     return previewKnowledgeDirectoryPlan({ baseRevision: this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0, bindings, createPaths,
       kind: async (relative) => {
-        if (await knowledgeInitializationPathHasSymbolicLink(this.plugin.getVaultPath(), relative)) return "other";
+        if (await knowledgeInitializationPathHasSymbolicLink(this.plugin.getVaultPath(), relative, true)) return "other";
         const file = this.plugin.app.vault.getAbstractFileByPath(relative);
         return file instanceof TFolder ? "folder" : file ? "other" : "missing";
       }, sourcePaths: files.map((file) => file.path) });
@@ -753,13 +753,17 @@ function binaryContentHash(content: ArrayBuffer): string {
 
 async function knowledgeInitializationPathHasSymbolicLink(
   vaultRootPath: string,
-  relativePath: string
+  relativePath: string,
+  allowMissingPath = false
 ): Promise<boolean> {
   let cursor = vaultRootPath;
   for (const segment of normalizePath(relativePath).split("/").filter(Boolean)) {
     cursor = path.join(cursor, segment);
-    const stats = await fsp.lstat(cursor).catch(() => null);
-    if (!stats || stats.isSymbolicLink()) return true;
+    try {
+      if ((await fsp.lstat(cursor)).isSymbolicLink()) return true;
+    } catch (error) {
+      return !(allowMissingPath && (error as NodeJS.ErrnoException).code === "ENOENT");
+    }
   }
   return false;
 }

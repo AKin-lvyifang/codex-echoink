@@ -1608,6 +1608,28 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-selection-settings-footer { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 18px; }
 
 /* The bound-folder editor keeps the existing tab rail with neutral states. */
+.echoink-settings-demo .echoink-maintenance-record-list {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.echoink-settings-demo .echoink-maintenance-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: calc(var(--font-text-size, 16px) * .75);
+  color: var(--secondary);
+}
+.echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-actions {
+  justify-content: flex-end;
+}
+.echoink-settings-demo .echoink-knowledge-folder-panel .settings-error {
+  color: var(--text-error);
+}
 .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-tabs [aria-selected=true],
 .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-tabs button:hover,
 .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-tabs button:focus-visible {
