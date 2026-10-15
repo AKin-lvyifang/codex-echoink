@@ -129,10 +129,17 @@ export class EchoInkKnowledgeSurfaceService {
           const appliedOnly = emptyKnowledgeFolderBindings(); appliedOnly.roles[role] = { ...applied.roles[role], autoOrganizePaths: [] };
           if (knowledgeFolderBindingsSignature(currentOnly) !== knowledgeFolderBindingsSignature(appliedOnly)) continue; // A later user edit wins.
           const binding = structuredClone(originalConfig.roles[role]);
-          const retained = applied.roles[role].readPaths.filter(directory => {
-            const folder = plugin.app.vault.getAbstractFileByPath(directory);
-            return !binding.readPaths.includes(directory) && folder instanceof TFolder && folder.children.length > 0;
-          });
+          const retained: string[] = [];
+          for (const directory of applied.roles[role].readPaths) {
+            if (binding.readPaths.includes(directory)) continue;
+            // Adapter deletion can resolve before the Vault cache receives its
+            // event. Only content still on disk keeps a newly created binding.
+            const children = await fsp.readdir(path.join(plugin.getVaultPath(), directory)).catch((error: NodeJS.ErrnoException) => {
+              if (error.code === "ENOENT") return [];
+              throw error;
+            });
+            if (children.length > 0) retained.push(directory);
+          }
           binding.readPaths = [...new Set([...binding.readPaths, ...retained])];
           binding.autoOrganizePaths = [...new Set([...(binding.autoOrganizePaths ?? []), ...(current.roles[role].autoOrganizePaths ?? []).filter(directory => binding.readPaths.includes(directory))])];
           if (retained.length) {
@@ -154,10 +161,7 @@ export class EchoInkKnowledgeSurfaceService {
         const links = await captureFolderLinkRenames(plugin.app, from, to);
         await applyFolderLinkRenames(plugin.app, links);
       },
-      removeEmptyFolder: async (relative) => {
-        const folder = plugin.app.vault.getAbstractFileByPath(relative);
-        if (folder instanceof TFolder && folder.children.length === 0) await plugin.app.vault.delete(folder);
-      }
+      removeEmptyFolder: (relative) => this.removeEmptyCreatedFolder(relative)
     });
     const createFolder = host.createFolder.bind(host) as typeof host.createFolder;
     host.createFolder = async (relative) => {
@@ -321,6 +325,22 @@ export class EchoInkKnowledgeSurfaceService {
 
   private async renameTracked(source: string, target: string, assertActive?: () => void): Promise<void> {
     await this.directoryHistory.rename(source, target, assertActive);
+  }
+
+  /** Callers pass only folders recorded as created by this operation. */
+  private async removeEmptyCreatedFolder(relative: string): Promise<void> {
+    const absolute = path.join(this.plugin.getVaultPath(), relative);
+    const stat = await fsp.lstat(absolute).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!stat?.isDirectory() || stat.isSymbolicLink() || (await fsp.readdir(absolute)).length > 0) return;
+    // Obsidian 1.14.4 routes both Vault.delete and adapter.rmdir(false) to
+    // fs.rm({ recursive: false }), which rejects directories with EISDIR.
+    // rmdir is atomic and cannot delete hidden or concurrently added content.
+    // The host filesystem watcher reconciles the removal; binding restoration
+    // above reads disk rather than waiting for that cache event.
+    await fsp.rmdir(absolute);
   }
 
   private async renameWithLinks(source: string, target: string, restoring = false): Promise<void> {
@@ -559,10 +579,8 @@ export class EchoInkKnowledgeSurfaceService {
           catch (error) { recovery.push(`${move.to} → ${move.from}：${knowledgeErrorDetail(error)}`); }
         }
         for (const directory of [...result.created].reverse()) {
-          const folder = this.plugin.app.vault.getAbstractFileByPath(directory);
-          if (folder instanceof TFolder && folder.children.length === 0) {
-            try { await this.plugin.app.vault.delete(folder); } catch (error) { recovery.push(`${directory}：${knowledgeErrorDetail(error)}`); }
-          }
+          try { await this.removeEmptyCreatedFolder(directory); }
+          catch (error) { recovery.push(`${directory}：${knowledgeErrorDetail(error)}`); }
         }
         try { await this.plugin.saveSettings(true); } catch (error) { recovery.push(`配置恢复：${knowledgeErrorDetail(error)}`); }
         throw new Error(`目录方案未应用：${knowledgeErrorDetail(failure)}。${recovery.length ? `仍需恢复 ${recovery.length} 项：${recovery.join("；")}。可在目录管理复原仓库。` : `已恢复本次搬迁的 ${moved.length} 个文件，原配置保留；请重新预览。`}`);

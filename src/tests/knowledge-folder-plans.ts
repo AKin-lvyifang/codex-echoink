@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import { TFolder } from "obsidian";
 import { emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeMaintenanceFolderIssues, normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { previewKnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
 import { registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
@@ -58,6 +59,7 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "echoink-folder-plan-v2-")));
   try {
     await assertPlanApplication(path.join(root, "success"));
+    await assertRestoreNativeEmptyDirectoryCleanup(path.join(root, "restore-native-api"));
     await assertStaleAndConflicts(path.join(root, "stale"));
     await assertFailedMoveRecovery(path.join(root, "rollback"));
     await assertFailedSaveRecovery(path.join(root, "save-failure"));
@@ -133,6 +135,40 @@ async function assertPlanApplication(root: string) {
     assert.equal(plugin.settings.knowledgeBase.folderBindings.roles.raw.enabled, false, "restoration also restores setup bindings, even when only organization consent changed later");
     assert.equal(plugin.settings.knowledgeBase.folderBindings.roles.projects.writePath, "既有项目");
     assert.equal(await fs.stat(path.join(root, "资料/原文")).catch(() => null), null);
+  } finally { fixture.release(); }
+}
+
+async function assertRestoreNativeEmptyDirectoryCleanup(root: string) {
+  const fixture = await fixtureAt(root);
+  try {
+    await fixture.write("原有资料/课程/source.md", "ORIGINAL");
+    await fs.mkdir(path.join(root, "原有空目录"));
+    const plan = await fixture.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
+    await fixture.service.applyDirectoryPlan(plan);
+    await fixture.write("资料/知识/.keep", "KEEP HIDDEN CONTENT");
+    const cachedFolders = new Map(fixture.app.vault.getAllLoadedFiles().filter(item => item instanceof TFolder).map(item => [item.path, item]));
+    const find = fixture.app.vault.getAbstractFileByPath.bind(fixture.app.vault);
+    // Native adapter events can arrive after rmdir resolves. Keep removed folder
+    // objects cached until this restore finishes, including stale child entries.
+    fixture.app.vault.getAbstractFileByPath = relative => find(relative) ?? cachedFolders.get(relative) ?? null;
+    let deleteCalls = 0;
+    fixture.app.vault.delete = async () => { deleteCalls++; throw Object.assign(new Error("Path is a directory: rm returned EISDIR"), { code: "ERR_FS_EISDIR" }); };
+    let adapterDeleteCalls = 0;
+    fixture.app.vault.adapter.rmdir = async (relative, recursive) => {
+      adapterDeleteCalls++;
+      assert.equal(recursive, false, "cleanup must never request recursive deletion");
+      // Actual Obsidian 1.14.4 implementation also throws EISDIR for folders.
+      await fs.rm(path.join(root, relative), { maxRetries: 5, recursive });
+    };
+    const result = await fixture.service.restoreOriginalDirectories();
+    assert.equal(result.restored, 1);
+    assert.equal(deleteCalls, 0, "avoid the host file-delete implementation for folders");
+    assert.equal(adapterDeleteCalls, 0, "avoid adapter.rmdir(false) routing to fs.rm");
+    assert.equal(await fs.stat(path.join(root, "资料/原文")).catch(() => null), null);
+    assert.equal(await fs.readFile(path.join(root, "原有资料/课程/source.md"), "utf8"), "ORIGINAL");
+    assert.equal(await fs.readFile(path.join(root, "资料/知识/.keep"), "utf8"), "KEEP HIDDEN CONTENT");
+    assert((await fs.stat(path.join(root, "原有空目录"))).isDirectory(), "pre-existing empty folders remain");
+    assert.equal(fixture.plugin.settings.knowledgeBase.folderBindings.roles.raw.enabled, false, "removed setup folders cannot retain bindings through stale host cache");
   } finally { fixture.release(); }
 }
 
