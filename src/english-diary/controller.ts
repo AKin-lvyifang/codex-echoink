@@ -57,7 +57,7 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
         const output = bindings.roles.outputs;
         const directory = mapped.find((directory) => target.startsWith(`${directory}/`))!;
         const child = directory.slice((output.writePath?.length ?? 0) + 1);
-        if (!plugin.app.vault.getAbstractFileByPath(directory) && !output.allowedSubdirectories.includes(child)) throw new Error(`请在目录方案中确认子目录：${child}`);
+        if (!plugin.app.vault.getAbstractFileByPath(directory) && !(output.allowedSubdirectories.includes(child) && (output.allowedSubdirectoryRoots ?? output.readPaths).includes(output.writePath ?? ""))) throw new Error(`请在目录方案中确认子目录：${child}`);
       }
     }), { ...settings, stateDirectory, migrateLegacy: !plugin.settings.knowledgeBase.folderBindings, flatExpressions: Boolean(plugin.settings.knowledgeBase.folderBindings) }, plugin.accountService ?? unavailableCapabilityAccess);
     this.api = new EnglishDiaryService(repository, {

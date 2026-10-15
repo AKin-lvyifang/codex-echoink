@@ -8,6 +8,7 @@ interface Position { original: string; current: string; identity: string }
 interface FolderPosition { original: string; current: string }
 interface DirectoryHistory {
   bindings?: KnowledgeFolderBindings;
+  appliedBindings?: KnowledgeFolderBindings;
   version: 1;
   createdAt: number;
   jobId: string;
@@ -30,6 +31,7 @@ export interface DirectoryHistoryHost {
   restoreFolderLinks?(from: string, to: string): Promise<void>;
   restoreBindings?(from: string, to: string, keepCurrent: boolean, originalBindings?: KnowledgeFolderBindings): Promise<void>;
   currentBindings?(): KnowledgeFolderBindings | null | undefined;
+  restorePlanBindings?(original: KnowledgeFolderBindings | undefined, applied: KnowledgeFolderBindings): Promise<void>;
 }
 
 /** Position journal, never a content backup. Callers serialize all mutations. */
@@ -114,6 +116,13 @@ export class InitializationDirectoryHistory {
     if (!record || record.folders.includes(relative) || record.createdFolders.includes(relative)) return;
     this.absolute(relative);
     record.createdFolders.push(relative);
+    await this.save(record);
+  }
+
+  async appliedBindings(bindings: KnowledgeFolderBindings): Promise<void> {
+    const record = await this.read();
+    if (!record) return;
+    record.appliedBindings = structuredClone(bindings);
     await this.save(record);
   }
 
@@ -255,6 +264,7 @@ export class InitializationDirectoryHistory {
         await this.host.removeEmptyFolder(folder);
       }
     }
+    if (record.appliedBindings) await this.host.restorePlanBindings?.(record.bindings, record.appliedBindings);
     return result;
   }
 }

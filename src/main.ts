@@ -1,4 +1,5 @@
 import { registerKnowledgePrivateRoot } from "./knowledge-base/root-paths";
+import { knowledgeFolderOrganizationPrompt } from "./knowledge-base/folder-bindings";
 import { PdfReadingController } from "./pdf-reading/controller";
 import { createPluginAccountService } from "./membership/plugin-service";
 import type { AccountService } from "./membership/account-service";
@@ -1688,7 +1689,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     });
   }
   async prepareWikiFolderNamesForMaintenance(input: { initialization: boolean; assertActive(): void }): Promise<string> {
-    if (this.settings.knowledgeBase.folderBindings) { input.assertActive(); return `当前目录用途：${JSON.stringify(this.settings.knowledgeBase.folderBindings.roles)}；维护只提炼已选资料，不改名、不创建分类树。`; }
+    if (this.settings.knowledgeBase.folderBindings) { input.assertActive(); return `当前目录用途：${JSON.stringify(this.settings.knowledgeBase.folderBindings.roles)}；维护只提炼本轮已选资料，不改名目录。${knowledgeFolderOrganizationPrompt(this.settings.knowledgeBase.folderBindings)}`; }
     const result = await this.requireKnowledgeSurfaceService().optimizeFolderNames(undefined, input.initialization, { ...input, authorized: true });
     return `${result.message ?? `目录优化：改名 ${result.renamed.length}，跳过 ${result.skipped.length}。`}${JSON.stringify(result.skipped)}`;
   }

@@ -261,6 +261,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
       );
     }
     try {
+      await this.createMissingParentDirectories(target);
       await this.app.fileManager.renameFile(file, target.relativePath);
     } catch (error) {
       throw mapMutationError(error, "io_error", "Vault move failed");

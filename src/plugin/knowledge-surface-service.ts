@@ -1,7 +1,8 @@
 import { rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
-import { previewKnowledgeDirectoryPlan, type KnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
-import { classifyKnowledgePath, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult } from "../knowledge-base/folder-plan";
+import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { readPrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import type { PiTurnInteractionIdentity } from "./pi-turn-interaction-broker";
@@ -88,8 +89,9 @@ export class EchoInkKnowledgeSurfaceService {
   }
   get directoryWritable(): boolean { return this.plugin.settings.defaultPermission !== "read-only"; }
   get app() { return this.plugin.app; }
-  get folderOperationBusy(): boolean { return this.namingFlight !== null || this.folderNamingBusy || this.restoring || this.initializer.isRunning; }
+  get folderOperationBusy(): boolean { return this.namingFlight !== null || this.folderNamingBusy || this.restoring || this.directoryPlanBusy === true || this.initializer.isRunning; }
   private folderNamingBusy = false;
+  private directoryPlanBusy = false;
   private namingFlight: Promise<WikiFolderNameResult> | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
@@ -109,10 +111,43 @@ export class EchoInkKnowledgeSurfaceService {
           const eligible = (directory: string) => (directory === from || directory.startsWith(`${from}/`)) && originalPaths.includes(rebaseKnowledgePath(directory, from, to));
           restored.roles[role].readPaths = [...new Set(bindings.roles[role].readPaths.flatMap((directory) => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
           if (bindings.roles[role].writePath && eligible(bindings.roles[role].writePath!)) restored.roles[role].writePath = rebaseKnowledgePath(bindings.roles[role].writePath!, from, to);
+          if (bindings.roles[role].autoOrganizePaths) restored.roles[role].autoOrganizePaths = [...new Set(bindings.roles[role].autoOrganizePaths!.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
+          if (bindings.roles[role].allowedSubdirectoryRoots) restored.roles[role].allowedSubdirectoryRoots = [...new Set(bindings.roles[role].allowedSubdirectoryRoots!.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
           if (keepCurrent && restored.roles[role].readPaths.length > 1) restored.roles[role].compatibilityReadScopes = true;
         }
         if (JSON.stringify(restored.roles) !== JSON.stringify(bindings.roles)) restored.revision += 1;
         this.plugin.settings.knowledgeBase.folderBindings = restored;
+        await this.plugin.saveSettings(true);
+      },
+      restorePlanBindings: async (original, applied) => {
+        const current = this.plugin.settings.knowledgeBase.folderBindings;
+        if (!current) return;
+        const restored = structuredClone(current);
+        const originalConfig = original ?? emptyKnowledgeFolderBindings();
+        for (const role of Object.keys(current.roles) as (keyof typeof current.roles)[]) {
+          const currentOnly = emptyKnowledgeFolderBindings(); currentOnly.roles[role] = { ...current.roles[role], autoOrganizePaths: [] };
+          const appliedOnly = emptyKnowledgeFolderBindings(); appliedOnly.roles[role] = { ...applied.roles[role], autoOrganizePaths: [] };
+          if (knowledgeFolderBindingsSignature(currentOnly) !== knowledgeFolderBindingsSignature(appliedOnly)) continue; // A later user edit wins.
+          const binding = structuredClone(originalConfig.roles[role]);
+          const retained = applied.roles[role].readPaths.filter(directory => {
+            const folder = plugin.app.vault.getAbstractFileByPath(directory);
+            return !binding.readPaths.includes(directory) && folder instanceof TFolder && folder.children.length > 0;
+          });
+          binding.readPaths = [...new Set([...binding.readPaths, ...retained])];
+          binding.autoOrganizePaths = [...new Set([...(binding.autoOrganizePaths ?? []), ...(current.roles[role].autoOrganizePaths ?? []).filter(directory => binding.readPaths.includes(directory))])];
+          if (retained.length) {
+            binding.enabled = true;
+            binding.writePath ??= retained.includes(applied.roles[role].writePath ?? "") ? applied.roles[role].writePath : retained[0];
+            if (binding.readPaths.length > 1) binding.compatibilityReadScopes = true;
+          }
+          restored.roles[role] = binding;
+        }
+        if (knowledgeFolderBindingsSignature(restored) === knowledgeFolderBindingsSignature(current)) return;
+        restored.revision = current.revision + 1;
+        const rolesOnly = (value: KnowledgeFolderBindings) => knowledgeFolderBindingsSignature(value);
+        restored.configured = originalConfig.configured === true || rolesOnly(restored) !== rolesOnly(originalConfig);
+        this.plugin.settings.knowledgeBase.folderBindings = restored;
+        this.plugin.englishDiary?.refreshStoragePaths();
         await this.plugin.saveSettings(true);
       },
       restoreFolderLinks: async (from, to) => {
@@ -307,7 +342,7 @@ export class EchoInkKnowledgeSurfaceService {
 
   private async syncRenamedPaths(from: string, to: string): Promise<void> {
     const bindings = this.plugin.settings.knowledgeBase.folderBindings;
-    const wasSource = knowledgePathRole(this.plugin.getVaultPath(), from) === "raw" || bindings?.roles.raw.readPaths.some((directory) => directory.startsWith(`${from}/`));
+    const wasSource = knowledgePathRole(this.plugin.getVaultPath(), from) === "raw" || knowledgePathRole(this.plugin.getVaultPath(), to) === "raw" || bindings?.roles.raw.readPaths.some((directory) => directory.startsWith(`${from}/`) || directory.startsWith(`${to}/`));
     this.plugin.settings.knowledgeBase = rebaseKnowledgePathRecords(this.plugin.settings.knowledgeBase, from, to);
     if (bindings) this.plugin.settings.knowledgeBase.folderBindings = rebaseKnowledgeFolderBindings(bindings, from, to);
     this.plugin.settings.englishDiary = rebaseKnowledgePathRecords(this.plugin.settings.englishDiary, from, to);
@@ -437,37 +472,113 @@ export class EchoInkKnowledgeSurfaceService {
     return await this.withStructureMutation(() => this.initializer.restoreStructure(onProgress));
   }
 
-  async previewDirectoryPlan(bindings: KnowledgeFolderBindings, createPaths: readonly string[]): Promise<KnowledgeDirectoryPlan> {
-    const files = this.plugin.app.vault.getMarkdownFiles();
-    return previewKnowledgeDirectoryPlan({ baseRevision: this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0, bindings, createPaths,
+  async previewDirectoryPlan(bindings: KnowledgeFolderBindings, createPaths: readonly string[], options: KnowledgeDirectoryPlanOptions = {}): Promise<KnowledgeDirectoryPlan> {
+    const vault = this.plugin.app.vault;
+    const vaultRoot = this.plugin.getVaultPath();
+    const files = await Promise.all((vault.getFiles?.() ?? vault.getMarkdownFiles()).map(async file => {
+      const stat = await fsp.lstat(path.join(vaultRoot, file.path)).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+      return { path: file.path, size: stat?.size ?? file.stat?.size ?? 0, mtime: stat?.mtimeMs ?? file.stat?.mtime ?? 0,
+        symbolicLink: await knowledgeInitializationPathHasSymbolicLink(vaultRoot, file.path) };
+    }));
+    const protectedPaths = new Set<string>();
+    const protect = (directory: string | null | undefined) => { if (directory) protectedPaths.add(directory.replace(/\\/gu, "/").replace(/\/$/u, "")); };
+    const privateRoot = knowledgePrivateRoot(vaultRoot);
+    if (privateRoot) { const relative = path.relative(vaultRoot, privateRoot).replace(/\\/gu, "/"); if (relative && !relative.startsWith("../") && !path.isAbsolute(relative)) protect(relative); }
+    protect(vault.configDir);
+    protect("EchoInk/待办.md"); protect("EchoInk/待办-settings-backup.json");
+    protect(this.plugin.settings.review?.outputDir);
+    protect(this.plugin.settings.lifestyle?.finance.analysisDirectory);
+    protect(this.plugin.lifestyle?.finance.ledger.paths().root);
+    protect(this.plugin.settings.englishDiary?.englishDirectory); protect(this.plugin.settings.englishDiary?.expressionDirectory);
+    protect(this.plugin.settings.journalDirectory);
+    for (const [role, binding] of Object.entries(this.plugin.settings.knowledgeBase.folderBindings?.roles ?? {})) {
+      if (role !== "raw") binding.readPaths.forEach(protect);
+    }
+    const native = (this.plugin.app as unknown as { internalPlugins?: { plugins?: Record<string, { instance?: { options?: { folder?: string } } }> } }).internalPlugins?.plugins;
+    protect(native?.["daily-notes"]?.instance?.options?.folder); protect(native?.templates?.instance?.options?.folder);
+    for (const file of files) {
+      const root = file.path.split("/")[0];
+      if (isFinanceRootName(root) || isLegacyFinancePath(file.path)) protect(isLegacyFinancePath(file.path) ? "EchoInk/财务" : root);
+      if (file.path.endsWith("/ledger.base") && vault.getFileByPath && vault.cachedRead) {
+        const base = vault.getFileByPath(file.path);
+        if (base && isEchoInkFinanceBase(await vault.cachedRead(base))) protect(file.path.slice(0, -"/ledger.base".length));
+      }
+    }
+    return previewKnowledgeDirectoryPlan({ baseRevision: this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0, baseline: this.plugin.settings.knowledgeBase.folderBindings, mode: options.mode, bindings, createPaths, files, protectedPaths: [...protectedPaths],
       kind: async (relative) => {
-        if (await knowledgeInitializationPathHasSymbolicLink(this.plugin.getVaultPath(), relative, true)) return "other";
-        const file = this.plugin.app.vault.getAbstractFileByPath(relative);
-        return file instanceof TFolder ? "folder" : file ? "other" : "missing";
-      }, sourcePaths: files.map((file) => file.path) });
+        if (await knowledgeInitializationPathHasSymbolicLink(vaultRoot, relative, true)) return "other";
+        const file = vault.getAbstractFileByPath(relative);
+        const stat = await fsp.lstat(path.join(vaultRoot, relative)).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+        return stat ? stat.isDirectory() ? "folder" : "other" : file instanceof TFolder ? "folder" : file ? "other" : "missing";
+      }, sourcePaths: files.filter(file => /\.(?:md|markdown)$/iu.test(file.path) && !file.symbolicLink).map(file => file.path) });
   }
 
-  async applyDirectoryPlan(plan: KnowledgeDirectoryPlan, optimize = false): Promise<void> {
-    if (this.folderOperationBusy || ((plan.create.length > 0 || optimize) && !this.directoryWritable)) throw new Error("当前只读或已有目录操作，请稍后重试。");
+  async applyDirectoryPlan(plan: KnowledgeDirectoryPlan, optimize = false): Promise<KnowledgeDirectoryApplyResult> {
+    if (this.folderOperationBusy || ((plan.create.length > 0 || plan.moves.length > 0 || optimize) && !this.directoryWritable)) throw new Error("当前只读或已有目录操作，请稍后重试。");
     if (plan.issues.length) throw new Error(plan.issues.join("；"));
-    if (optimize) resolveKnowledgeMaintenanceSubmitSnapshot(this.plugin.settings);
-    await this.withStructureMutation(async () => {
+    this.directoryPlanBusy = true;
+    const result: KnowledgeDirectoryApplyResult = { configured: true, created: [], moved: [], refinement: "not-started" };
+    try { return await this.withStructureMutation(async () => {
       if ((this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0) !== plan.baseRevision) throw new Error("目录配置已改变，请重新预览。");
-      const checked = await this.previewDirectoryPlan(plan.bindings, plan.create);
-      if (checked.issues.length || JSON.stringify(checked.create) !== JSON.stringify(plan.create)) throw new Error("目录结构已改变，请重新预览。");
-      for (const directory of plan.create) {
-        if (this.plugin.app.vault.getAbstractFileByPath(directory)) throw new Error(`路径已存在：${directory}`);
-        await this.plugin.app.vault.createFolder(directory);
-      }
+      if (knowledgeFolderBindingsSignature(this.plugin.settings.knowledgeBase.folderBindings) !== plan.baseSignature) throw new Error("目录配置已改变，请重新预览。");
+      const checked = await this.previewDirectoryPlan(plan.bindings, plan.create, { mode: plan.mode });
+      if (checked.issues.length || knowledgeDirectoryPlanSignature(checked) !== knowledgeDirectoryPlanSignature(plan)) throw new Error("目录或文件已改变，请重新预览。");
+      if (plan.moves.length && (this.plugin.app.vault as unknown as { getConfig(key: string): unknown }).getConfig?.("alwaysUpdateLinks") !== true) throw new Error("请在 Obsidian 开启自动更新内部链接，再重新预览搬迁。");
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
       const previousDiary = structuredClone(this.plugin.settings.englishDiary);
-      this.plugin.settings.knowledgeBase.folderBindings = { ...structuredClone(plan.bindings), revision: plan.baseRevision + 1 };
-      this.plugin.englishDiary?.refreshStoragePaths();
-      try { await this.plugin.saveSettings(true); } catch (error) { this.plugin.settings.knowledgeBase.folderBindings = previous; this.plugin.settings.englishDiary = previousDiary; this.plugin.englishDiary?.refreshStoragePaths(); throw error; }
-      if (optimize) await this.initializer.startBoundOptimization(plan.sources, plan.baseRevision + 1);
+      try {
+        if (plan.create.length || plan.moves.length) await this.directoryHistory.capture(`folder-plan-${Date.now()}`);
+        for (const directory of plan.create) {
+          if (this.plugin.app.vault.getAbstractFileByPath(directory) || await knowledgeInitializationPathExists(this.plugin.getVaultPath(), directory, false)) throw new Error(`路径已存在：${directory}`);
+          await this.directoryHistory.createdFolder(directory);
+          await this.plugin.app.vault.createFolder(directory);
+          result.created.push(directory);
+        }
+        // Validate the entire inventory once, before renameFile updates links (and
+        // mtimes) in other pending files. Each move still verifies the actual path
+        // and file identity through the existing durable directory journal.
+        for (const move of plan.moves) {
+          this.folderOperationMessage = `正在搬迁 ${result.moved.length + 1} / ${plan.moves.length}：${move.from}`;
+          await this.renameTracked(move.from, move.to);
+          result.moved.push(move);
+        }
+        this.plugin.settings.knowledgeBase.folderBindings = { ...structuredClone(plan.bindings), configured: true, revision: plan.baseRevision + 1 };
+        this.plugin.englishDiary?.refreshStoragePaths();
+        if (plan.create.length || plan.moves.length) await this.directoryHistory.appliedBindings(this.plugin.settings.knowledgeBase.folderBindings);
+        await this.plugin.saveSettings(true);
+      } catch (failure) {
+        this.plugin.settings.knowledgeBase.folderBindings = previous;
+        this.plugin.settings.englishDiary = previousDiary;
+        this.plugin.englishDiary?.refreshStoragePaths();
+        const recovery: string[] = [];
+        // renameFile may have completed before an integration sync failed.
+        const moved = plan.moves.filter(move => !this.plugin.app.vault.getAbstractFileByPath(move.from) && this.plugin.app.vault.getAbstractFileByPath(move.to));
+        for (const move of [...moved].reverse()) {
+          try { await this.renameTracked(move.to, move.from); }
+          catch (error) { recovery.push(`${move.to} → ${move.from}：${knowledgeErrorDetail(error)}`); }
+        }
+        for (const directory of [...result.created].reverse()) {
+          const folder = this.plugin.app.vault.getAbstractFileByPath(directory);
+          if (folder instanceof TFolder && folder.children.length === 0) {
+            try { await this.plugin.app.vault.delete(folder); } catch (error) { recovery.push(`${directory}：${knowledgeErrorDetail(error)}`); }
+          }
+        }
+        try { await this.plugin.saveSettings(true); } catch (error) { recovery.push(`配置恢复：${knowledgeErrorDetail(error)}`); }
+        throw new Error(`目录方案未应用：${knowledgeErrorDetail(failure)}。${recovery.length ? `仍需恢复 ${recovery.length} 项：${recovery.join("；")}。可在目录管理复原仓库。` : `已恢复本次搬迁的 ${moved.length} 个文件，原配置保留；请重新预览。`}`);
+      }
+      if (optimize && plan.sources.length) {
+        try { resolveKnowledgeMaintenanceSubmitSnapshot(this.plugin.settings); }
+        catch (error) { result.refinementError = `目录配置已完成，提炼尚未开始：${knowledgeErrorDetail(error)}`; }
+        if (!result.refinementError) {
+          try { await this.initializer.startBoundOptimization(plan.sources, plan.baseRevision + 1); result.refinement = "started"; }
+          catch (error) { result.refinement = "failed"; result.refinementError = `目录配置已完成，提炼启动失败：${knowledgeErrorDetail(error)}`; }
+        }
+      }
       this.dashboardSnapshot = null;
       this.plugin.refreshKnowledgeBaseSurfaces();
-    }, plan.create.length === 0 && !optimize);
+      return result;
+    }, plan.create.length === 0 && plan.moves.length === 0 && !optimize); }
+    finally { this.directoryPlanBusy = false; this.folderOperationMessage = ""; }
   }
 
   async startInitialization(

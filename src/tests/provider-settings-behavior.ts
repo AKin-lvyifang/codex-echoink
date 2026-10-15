@@ -1,4 +1,6 @@
 import { runProviderModelDiscoveryRegression } from "./provider-model-discovery-behavior";
+import { KnowledgeInitializationSection } from "../settings/knowledge-initialization-section";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
 import { todoCompletionStatistics } from "../home/todo-completions";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
@@ -2435,6 +2437,9 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   settings.settingsTab = "providers";
   settings.settingsLanguage = "zh-CN";
   const maintenanceReportPath = "outputs/maintenance-2026-08-25.md";
+  settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+  for (const role of ["raw", "wiki"] as const) Object.assign(settings.knowledgeBase.folderBindings.roles[role], { enabled: true, readPaths: [role], writePath: role });
+  const boundFolders = new Map(["raw", "wiki"].map(relative => [relative, Object.assign(new TFolder(), { path: relative })]));
   const previousMaintenanceReportPath = "outputs/maintenance-2026-08-24.md";
   const maintenanceAt = Date.UTC(2026, 7, 25, 6, 30);
   const previousMaintenanceAt = Date.UTC(2026, 7, 24, 6, 30);
@@ -2470,7 +2475,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   ]);
   const app = Object.assign(new App(), {
     vault: {
-      getAbstractFileByPath: (value: string) => reportFiles.get(value) ?? null
+      getAbstractFileByPath: (value: string) => reportFiles.get(value) ?? boundFolders.get(value) ?? null
     },
     workspace: {
       getLeaf: () => ({
@@ -5857,7 +5862,17 @@ async function assertKnowledgeSettingsDetailRetiresLegacyControls(): Promise<voi
   // 文案，也让后续点击能正常触发 scheduleDisplay。
   tab.display();
   assert.match(tab.containerEl.textContent, /知识库管理/u);
-  assert.match(tab.containerEl.textContent, /让现有笔记成为知识库/u);
+  const folderEntry = tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:onboarding"]');
+  assert.equal(folderEntry?.textContent, "初始化");
+  assert.equal(tab.containerEl.querySelectorAll(".echoink-folder-purpose").length, 0, "the Knowledge home only exposes the folder entry");
+  folderEntry!.click();
+  tab.display();
+  assert.match(tab.containerEl.textContent, /使用现有/u);
+  assert.match(tab.containerEl.textContent, /帮我搭建/u);
+  assert.equal(tab.containerEl.querySelectorAll('.echoink-knowledge-folder-panel [role="tab"]').length, 0, "initial routes are navigation, not permanent tabs");
+  tab.containerEl.querySelector<HTMLButtonElement>(".settings-back")!.click();
+  await flushProviderModalTasks();
+  tab.display();
   assert.match(tab.containerEl.textContent, /\/ask 先查知识库/u);
   assert.match(tab.containerEl.textContent, /是否写入由会话底部的工作区选项和你的要求决定/u);
   assert.match(tab.containerEl.textContent, /知识提炼偏好/u);
@@ -6098,7 +6113,12 @@ function createKnowledgeInitPluginFixture(state: {
 }
 
 async function renderKnowledgeInitTab(plugin: Record<string, any>) {
-  const tab = new CodexSettingTab(withSettingsTabDefaults(plugin) as never);
+  const host = withSettingsTabDefaults(plugin);
+  const tab = new CodexSettingTab(host as never);
+  // Retain the legacy initializer's recovery/progress regressions in an isolated
+  // component host. Production navigation is covered by the v2 tests above.
+  (tab as unknown as { knowledgeInitSection: KnowledgeInitializationSection }).knowledgeInitSection =
+    new KnowledgeInitializationSection(host as never, () => tab.display(), () => undefined);
   const preference = Object.freeze({
     profileVersion: ECHOINK_KNOWLEDGE_PREFERENCE_PROFILE_VERSION,
     state: "default" as const,
@@ -13280,6 +13300,7 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
   };
   return {
     register: () => undefined,
+    getKnowledgeSurfaceService: () => null,
     applyAppearanceTheme: () => undefined,
     onConversationCatalogChanged: () => () => undefined,
     getEchoInkKnowledgeInitializationState: async () => null,

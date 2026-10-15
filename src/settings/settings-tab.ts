@@ -107,7 +107,7 @@ import type { WorkspaceResourceSnapshot } from "../types/app-server";
 import {
   ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_STEPS
 } from "../knowledge-base/knowledge-maintenance-protocol";
-import { KnowledgeInitializationSection } from "./knowledge-initialization-section";
+import { KnowledgeFolderSection } from "./knowledge-folder-section";
 import {
   applyAmicroButton,
   confirmAmicroButton,
@@ -226,7 +226,7 @@ export class CodexSettingTab extends PluginSettingTab {
     Readonly<KnowledgeMaintenancePreferenceEditorState> | null = null;
   private knowledgePreferenceLoading = false;
   private knowledgePreferenceLoadError: string | null = null;
-  private knowledgeInitSection: KnowledgeInitializationSection | null = null;
+  private knowledgeInitSection: KnowledgeFolderSection | null = null;
   private knowledgePreferenceClosePromptRunning = false;
   private knowledgeDashboardEl: HTMLElement | null = null;
   private knowledgeDashboardSnapshot: KnowledgeBaseDashboardSnapshot | null = null;
@@ -2112,16 +2112,20 @@ export class CodexSettingTab extends PluginSettingTab {
     pre.setAttr("tabindex", "0");
   }
 
-  /** 知识库初始化体验的唯一挂载点；渲染与状态都在 KnowledgeInitializationSection 内。 */
+  private ensureKnowledgeFolderSection(): KnowledgeFolderSection {
+    this.knowledgeInitSection ??= new KnowledgeFolderSection(
+      this.plugin,
+      () => this.scheduleDisplay(),
+      {
+        open: () => this.openSettingsDetail("knowledge-folders"),
+        close: () => { void this.closeSettingsDetail(); }
+      }
+    );
+    return this.knowledgeInitSection;
+  }
+
   private mountKnowledgeInitializationSection(page: HTMLElement, zh: boolean): void {
-    if (!this.knowledgeInitSection) {
-      this.knowledgeInitSection = new KnowledgeInitializationSection(
-        this.plugin,
-        () => this.scheduleDisplay(),
-        () => this.activateSettingsTab("providers", true)
-      );
-    }
-    this.knowledgeInitSection.render(page, zh);
+    this.ensureKnowledgeFolderSection().render(page, zh);
   }
 
   private mountKnowledgeDashboard(page: HTMLElement, zh: boolean): void {
@@ -2444,6 +2448,10 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderKnowledgeBaseSettings(container: HTMLElement): void {
     const copy = this.copy;
     const zh = this.plugin.settings.settingsLanguage !== "en";
+    if (this.settingsDetail === "knowledge-folders") {
+      this.ensureKnowledgeFolderSection().renderDetail(container, zh);
+      return;
+    }
     if (this.settingsDetail === "knowledge-maintenance-history") {
       this.renderKnowledgeMaintenanceHistoryDetail(container, zh);
       return;
@@ -3613,6 +3621,16 @@ export class CodexSettingTab extends PluginSettingTab {
     focus: boolean
   ): Promise<void> {
     if (this.plugin.settings.settingsTab === tabId) return;
+    if (this.settingsDetail === "knowledge-folders") {
+      if (this.knowledgeInitSection?.submitting) return;
+      if (this.knowledgeInitSection?.hasDraft) {
+        this.knowledgeInitSection.requestLeave(() => {
+          this.settingsDetail = null;
+          void this.activateSettingsTab(tabId, focus);
+        });
+        return;
+      }
+    }
     if (
       this.plugin.settings.settingsTab === "knowledgeBase"
       && tabId !== "knowledgeBase"
@@ -3707,6 +3725,8 @@ export class CodexSettingTab extends PluginSettingTab {
       this.settingsFocusIntent = "explicit:selection-ask:settings";
     } else if (detail === "english-diary") {
       this.settingsFocusIntent = "explicit:english-diary:settings";
+    } else if (detail === "knowledge-folders") {
+      this.settingsFocusIntent = "explicit:knowledge:onboarding";
     } else if (detail === "knowledge-preferences") {
       this.settingsFocusIntent = "explicit:knowledge:preferences";
     } else if (detail === "knowledge-maintenance-history") {
@@ -5811,6 +5831,7 @@ type SettingsDetail =
   | "pdf-reading"
   | "english-diary"
   | "selection-ask"
+  | "knowledge-folders"
   | "knowledge-preferences"
   | "knowledge-maintenance-history"
   | "review-archives"

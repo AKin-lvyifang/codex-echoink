@@ -449,7 +449,7 @@ export async function createPiProductionRuntimeBundle(
     deviceScope.vaultIdDigest,
     vaultRootPath
   );
-  const vaultDomainService = new VaultDomainService(vaultAdapter);
+  const vaultDomainService = new VaultDomainService(vaultAdapter, { allowMissingParentDirectories: true });
   const maintenanceVaultDomainService = new VaultDomainService(
     createPhase3MaintenanceVaultDomainAdapter({
       base: vaultAdapter,
@@ -483,7 +483,8 @@ export async function createPiProductionRuntimeBundle(
   const writeExecution: PiVaultToolWriteExecutionPort =
     createPiVaultProductionWriteExecutionPort({
       receipts,
-      domainService: vaultDomainService
+      domainService: vaultDomainService,
+      adapter: vaultAdapter
     });
   const settingsBeforeCutover = snapshotPiConversationShellSettings(
     plugin.settings
@@ -1853,6 +1854,7 @@ async function createProductionAgentSession(input: {
     currentRunIdentity: () => input.input.currentToolExecutionContext(),
     userId: localPiVaultUserId(input.deviceScope.deviceIdDigest),
     deviceId: input.deviceScope.deviceIdDigest,
+    currentWorkspaceAccess: () => input.input.currentWorkspaceAccess?.(),
     confirmation: {
       async confirm(request) {
         if (input.input.currentTaskPlanTurnContext()?.mode !== "agent") {

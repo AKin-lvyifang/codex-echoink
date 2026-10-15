@@ -7,6 +7,7 @@ import { knowledgePathPolicy, knowledgePathRole, getKnowledgeFolderBindings, kno
 import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
 import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isRawMarkdownPath } from "../knowledge-base/raw-digest";
 import { isBilingualWikiFolder, wikiFolderEnglishId } from "../knowledge-base/wiki-folder-names";
+import { knowledgeMayCreateCategoryDirectory } from "../knowledge-base/folder-organization";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -455,7 +456,7 @@ implements PiKnowledgeMaintenanceToolPort {
         const parent = path.join(this.vaultRootPath, root, child);
         const stat = await lstat(parent).catch(error => { if (isNodeErrorWithCode(error, "ENOENT")) return null; throw error; });
         if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) throw new Error(`目标父目录不可用：${root}/${child}`);
-        if (!stat && !binding.allowedSubdirectories.some(allowed => allowed === child || allowed.startsWith(`${child}/`))) throw new Error(`尚未允许创建子目录：${root}/${child}；本候选保留待处理。`);
+        if (!stat && !knowledgeMayCreateCategoryDirectory(config, `${root}/${child}`)) throw new Error(`尚未允许创建子目录：${root}/${child}；本候选保留待处理。`);
       }
       return target;
     }

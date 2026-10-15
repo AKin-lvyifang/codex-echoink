@@ -54,6 +54,11 @@ import { confirmModal } from "../ui/modals";
 import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { financeBudgetSnapshot, financeValueVersion } from "../lifestyle/finance-operation-types";
 import { isFinanceTool } from "../harness/pi-native/finance-tool-policy";
+import { getKnowledgeFolderBindings, knowledgePathRole } from "../knowledge-base/root-paths";
+import { knowledgeMayCreateCategoryDirectory, knowledgeMayOrganizeMove } from "../knowledge-base/folder-organization";
+import { canonicalRawMarkdownForDigest } from "../knowledge-base/raw-digest";
+import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
+import type { PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
 
 const APPROVAL_TTL_MS = 5 * 60 * 1000;
 const APPROVAL_DIFF_LIMIT_BYTES = 12_000;
@@ -89,6 +94,7 @@ export interface CreatePiVaultProductionAuthorizationOptions {
   readonly userId: string;
   readonly deviceId: string;
   readonly confirmation: PiVaultApprovalConfirmationPort;
+  readonly currentWorkspaceAccess?: () => Readonly<PiWorkspaceAccess> | null | undefined;
   readonly now?: () => number;
   readonly approvalTtlMs?: number;
 }
@@ -96,6 +102,8 @@ export interface CreatePiVaultProductionAuthorizationOptions {
 export interface CreatePiVaultProductionWriteExecutionOptions {
   readonly receipts: FileDomainReceiptStore;
   readonly domainService: VaultDomainService;
+  /** Production rechecks folder consent immediately before invoking the domain. */
+  readonly adapter?: VaultDomainAdapter;
   readonly finance?: LifestyleFinanceService;
   readonly now?: () => number;
   readonly failureInjection?: (
@@ -138,8 +146,13 @@ export function createPiVaultProductionAuthorizationPort(
       if (identity.vaultId !== options.approvals.vaultId) {
         throw new PiVaultToolAuthorizationError("authorization_failed");
       }
+      if (input.policy.effectType !== "read" && options.currentWorkspaceAccess) {
+        const access = options.currentWorkspaceAccess();
+        if (!access || access.permission === "read-only" || access.mode === "plan") throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+      }
       let target: ResolvedAuthorizationTarget;
       try {
+        await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments);
         target = await resolveAuthorizationTarget(
           resolver,
           options.adapter,
@@ -246,7 +259,9 @@ export function createPiVaultProductionWriteExecutionPort(
       await options.receipts.beginAuthorizedOperation(input.authorization);
       let result: Readonly<VaultOperationResult>;
       try {
+        if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>);
         result = await invokeDomainOnce(async () => {
+          if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>);
           await options.receipts.markEffectStarted(
             input.authorization.operationIdentity
           );
@@ -467,6 +482,38 @@ interface ResolvedAuthorizationTarget {
   readonly preview: JsonValue;
 }
 
+async function assertProductionFolderPolicy(
+  adapter: VaultDomainAdapter,
+  toolId: PiVaultToolId,
+  args: Readonly<Record<string, unknown>>
+): Promise<void> {
+  const config = getKnowledgeFolderBindings(adapter.vaultRootPath);
+  if (toolId === "note_move" && config && !knowledgeMayOrganizeMove(config, requireString(args.sourcePath), requireString(args.targetPath))) {
+    throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+  }
+  if ((toolId === "note_create" || toolId === "note_move") && config) {
+    const target = normalizeVaultRelativePath(requireString(toolId === "note_move" ? args.targetPath : args.relativePath));
+    const segments = target.split("/").slice(0, -1);
+    const resolver = new VaultTargetResolver(adapter);
+    for (let depth = 1; depth <= segments.length; depth++) {
+      const directory = segments.slice(0, depth).join("/");
+      const parent = await resolver.resolve({ vaultId: adapter.vaultId, relativePath: directory, mustExist: false, allowMissingParentDirectories: true, expectedKind: "directory" });
+      if (!parent.exists && !knowledgeMayCreateCategoryDirectory(config, directory)) throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+    }
+  }
+  if (toolId === "note_update") {
+    const relativePath = normalizeVaultRelativePath(requireString(args.relativePath));
+    if (knowledgePathRole(adapter.vaultRootPath, relativePath) === "raw") {
+      const resolver = new VaultTargetResolver(adapter);
+      const target = await resolver.resolve({ vaultId: adapter.vaultId, relativePath, mustExist: true, expectedKind: "file" });
+      const before = await requireSnapshot(adapter, target);
+      if (canonicalRawMarkdownForDigest(before.content) !== canonicalRawMarkdownForDigest(requireString(args.content))) {
+        throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+      }
+    }
+  }
+}
+
 async function resolveAuthorizationTarget(
   resolver: VaultTargetResolver,
   adapter: VaultDomainAdapter,
@@ -498,6 +545,7 @@ async function resolveAuthorizationTarget(
     const target = await resolver.resolve({
       vaultId,
       relativePath: requireString(args.targetPath),
+      allowMissingParentDirectories: true,
       mustExist: false,
       expectedKind: "file"
     });

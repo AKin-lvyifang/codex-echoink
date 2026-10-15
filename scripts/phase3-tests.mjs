@@ -16,6 +16,9 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
+  'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
+  'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
+  'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
   'import { runKnowledgeFolderBindingsTests } from "./src/tests/knowledge-folder-bindings";',
   'import { runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
   'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
@@ -27,6 +30,9 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeFolderPlanTests();",
+  "await runKnowledgeFolderSettingsTests();",
+  "await runKnowledgeFolderOrganizationTests();",
   "await runKnowledgeFolderBindingsTests();",
   "await runKnowledgeAssociativeReadingTests();",
   "await runKnowledgeAgentIndexTests();",
@@ -41,7 +47,16 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--folder-bindings") ? [
+    contents: (process.argv.includes("--folder-settings") ? [
+      'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
+      'await runKnowledgeFolderSettingsTests();'
+    ] : process.argv.includes("--folder-organization") ? [
+      'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
+      'await runKnowledgeFolderOrganizationTests();'
+    ] : process.argv.includes("--folder-plans") ? [
+      'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
+      'await runKnowledgeFolderPlanTests();'
+    ] : process.argv.includes("--folder-bindings") ? [
       'import { runKnowledgeFolderBindingsTests } from "./src/tests/knowledge-folder-bindings";',
       'await runKnowledgeFolderBindingsTests();'
     ] : process.argv.includes("--bilingual-lifecycle") ? [

@@ -21274,6 +21274,39 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-tabs button:focus-visible {
   color:var(--text-normal);background:var(--background-modifier-hover);border-color:transparent;box-shadow:none;outline:none;
 }
+
+/* Folder plans use the existing settings page and nested purpose hierarchy. */
+.echoink-settings-demo .echoink-knowledge-folder-panel .echoink-folder-purpose {
+  padding: 0 0 17px;
+  border-bottom: 1px solid var(--line);
+}
+.echoink-settings-demo .echoink-knowledge-folder-panel .echoink-folder-purpose:last-child { border-bottom: 0; }
+.echoink-settings-demo .echoink-folder-tags { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-inline-start: 8px; }
+.echoink-settings-demo .echoink-folder-tag { color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .625); font-weight: 400; }
+.echoink-settings-demo .echoink-folder-bindings { margin-inline-start: 18px; min-width: 0; }
+.echoink-settings-demo .echoink-folder-binding + .echoink-folder-binding { margin-top: 12px; }
+.echoink-settings-demo .echoink-folder-path-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.echoink-settings-demo button.echoink-folder-path { flex: 1; min-width: 0; justify-content: flex-start; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.echoink-settings-demo .echoink-folder-icon { display: flex; flex: none; }
+.echoink-settings-demo .echoink-folder-icon svg { width: 14px; height: 14px; }
+.echoink-settings-demo .echoink-folder-path-row > .icon-button { flex: none; }
+.echoink-settings-demo .echoink-folder-organize.setting-item { border: 0; padding-block: 7px 12px; }
+.echoink-settings-demo .echoink-folder-plan-path { padding-block: 6px; font-size: calc(var(--font-text-size, 16px) * .6875); line-height: 1.85; overflow-wrap: anywhere; }
+.echoink-settings-demo .echoink-folder-moves { max-height: min(360px, 45vh); overflow-y: auto; }
+.echoink-settings-demo .echoink-folder-picker { max-height: 60vh; overflow-y: auto; }
+.echoink-settings-demo .echoink-folder-status { color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .6875); line-height: 1.85; }
+.echoink-settings-demo .echoink-folder-issues { display: grid; gap: 7px; }
+.echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-actions { margin-top: 17px; }
+.echoink-settings-demo .echoink-folder-path:is(:hover,:focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; border-color: transparent; }
+@container settings (max-width: 600px) {
+  .echoink-settings-demo .echoink-folder-bindings { margin-inline-start: 12px; }
+  .echoink-settings-demo .echoink-folder-tags { display: flex; margin-inline-start: 0; margin-top: 5px; }
+}
+.echoink-settings-demo .echoink-folder-routes { display: grid; gap: 12px; }
+.echoink-settings-demo .echoink-folder-routes > .echoink-settings-navigation-row { border: 1px solid var(--line); border-radius: 8px; padding: 17px 18px; }
+.echoink-settings-demo .echoink-knowledge-folder-panel.is-detail.is-entering { animation: echoink-folder-enter .16s ease-out; }
+@keyframes echoink-folder-enter { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .echoink-settings-demo .echoink-knowledge-folder-panel.is-detail.is-entering { animation: none; } }
 /* MIT Origin UI primitive styling, scoped to the actual library controls.
    EchoInk maps Origin's utility styles to the approved Demo tokens. No preflight. */
 .echoink-origin-control {

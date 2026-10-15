@@ -140,7 +140,7 @@ export async function runKnowledgeFolderBindingsTests(): Promise<void> {
     plugin.saveSettings = async () => { saves++; Object.assign(config, plugin.settings.knowledgeBase.folderBindings); };
     plugin.refreshKnowledgeBaseSurfaces = () => {};
     const surface = Object.create(EchoInkKnowledgeSurfaceService.prototype) as any;
-    Object.assign(surface, { plugin, initializer: { isRunning: false, startBoundOptimization: async () => { optimizations++; } }, restoring: false, namingFlight: null, folderNamingBusy: false, structureQueue: Promise.resolve(), structureRevision: 0 });
+    Object.assign(surface, { plugin, directoryHistory: { capture: async () => [], createdFolder: async () => {}, appliedBindings: async () => {} }, initializer: { isRunning: false, startBoundOptimization: async () => { optimizations++; } }, restoring: false, namingFlight: null, folderNamingBusy: false, structureQueue: Promise.resolve(), structureRevision: 0 });
     const readOnlyPlan = await surface.previewDirectoryPlan(config, []);
     assert.equal(readOnlyPlan.create.length, 0);
     await surface.applyDirectoryPlan(readOnlyPlan);

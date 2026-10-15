@@ -101,7 +101,8 @@ export class KnowledgeBaseCaptureService {
   private captureDirectory(vaultPath: string, child: string): string {
     const config = getKnowledgeFolderBindings(vaultPath);
     if (!config) return path.join(vaultPath, resolveKnowledgePath(vaultPath, "raw"), child);
-    const approved = config.roles.raw.allowedSubdirectories.includes(child) ? child : "";
+    const binding = config.roles.raw;
+    const approved = binding.allowedSubdirectories.includes(child) && (binding.allowedSubdirectoryRoots ?? binding.readPaths).includes(binding.writePath ?? "") ? child : "";
     return path.join(vaultPath, resolveKnowledgeRoleTarget(vaultPath, "raw", approved));
   }
 
