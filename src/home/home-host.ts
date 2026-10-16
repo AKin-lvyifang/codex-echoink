@@ -19,10 +19,12 @@ export interface HomeHost extends TodoHost {
   accountService?: CapabilityAccess | null;
   homeUnavailableReason?: string;
   englishDiary: {
+    readonly api?: Pick<import("../english-diary/types").EnglishDiaryApi, "repository">;
     enabled(): boolean;
     setHomeShortcut(choice: "english-diary" | "quick-record"): Promise<void>;
     openToday(): Promise<unknown>;
     openDiary(path: string): Promise<unknown>;
+    openLibrary?(expressionId?: string): Promise<unknown>;
   } | null;
   lifestyle: { open(kind: "finance"): Promise<unknown> };
   getKnowledgeSurfaceService(): { getDashboardSnapshot(): Promise<KnowledgeBaseDashboardSnapshot> } | null;

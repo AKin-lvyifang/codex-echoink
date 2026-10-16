@@ -16,3 +16,6 @@
 .echoink-diary-modal.echoink-diary-shortcut-modal { width: min(480px,calc(100vw - 32px)); }
 .echoink-diary-shortcut-modal .modal-title { font-size: calc(var(--font-text-size,16px)*1.3125); font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
 .echoink-diary-shortcut-modal .echoink-diary-actions > button { min-width: 0; overflow-wrap: anywhere; }
+.echoink-home-workspace .echoink-life-card-english { min-width: 0; }
+.echoink-home-workspace .echoink-life-card-english :is(h2,p) { max-width: 100%; overflow-wrap: anywhere; }
+.echoink-home-workspace .echoink-life-card-english button { padding: 8px 14px; border-radius: 8px; background: var(--accent); color: var(--echoink-theme-on-accent,var(--text-on-accent)); }
