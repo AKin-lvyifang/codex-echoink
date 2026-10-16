@@ -2315,7 +2315,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 }
 :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-organize-option {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 20px;
+  grid-template-columns: 16px minmax(0, max-content) 20px;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -2424,7 +2424,8 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page-title-row .setting-item-name {
   font-size: calc(var(--font-text-size, 16px) * 1.375);
 }
-:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-binding-row > button.icon-button.echoink-origin-control[data-slot=button] {
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose .echoink-folder-list-header > button.icon-button.echoink-origin-control[data-slot=button],
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose .echoink-folder-binding-row > button.icon-button.echoink-origin-control[data-slot=button] {
   width: 30px;
   height: 30px;
   min-height: 30px;
