@@ -8,6 +8,7 @@ import { registerKnowledgeFolderBindings, normalizeKnowledgeFolderBindings } fro
 import { createProductionPiKnowledgeRuntime, createPiKnowledgeInlineExtension } from '@production/plugin/pi-production-runtime-composition';
 import { PersonalMemoryRepository } from '@production/harness/memory/personal-memory-repository';
 import { PersonalMemoryRecallHarness } from '@production/harness/memory/personal-memory-recall-harness';
+import { serializeSecondaryRecord } from '@production/harness/memory/secondary-memory-store';
 
 const inside = (root, relative) => {
   if (typeof relative !== 'string' || !relative || relative.includes('\\') || relative.startsWith('/') || relative.split('/').some(part => !part || part === '.' || part === '..')) throw new Error(`Unsafe setup path: ${relative}`);
@@ -65,6 +66,23 @@ export async function evaluateProduction(input) {
       const seedPaths = setup.memory_seed ? (Array.isArray(setup.memory_seed) ? setup.memory_seed : [setup.memory_seed]) : [];
       const seeds = await Promise.all(seedPaths.map(async seedPath => JSON.parse(await fs.readFile(inside(datasetPath, seedPath), 'utf8'))));
       const secondaryRecords = seeds.flatMap(seed => seed.secondary_records ?? []);
+      const validatedSecondaryIds = [];
+      for (const record of secondaryRecords) {
+        try {
+          // Use the exact production serializer/normalizer before the provider
+          // seam. Validation must not silently repair or replace frozen fields.
+          await observe('serializeSecondaryRecord.fixtureValidation', { id: record.id }, () => serializeSecondaryRecord(record));
+          validatedSecondaryIds.push(record.id);
+        } catch (error) {
+          const invalidFixture = { key: 'memory_seed.secondary_records', classification: 'invalid_fixture', blocks_standard_setup: true, record_id: record.id, reason: String(error) };
+          return {
+            candidate_items: [], delivery_items: [], provider_text: '', calls,
+            raw: { fixture_validation: { status: 'invalid_fixture', ...invalidFixture } },
+            host_adapters: ['Frozen synthetic secondary records were rejected by the production serializer before Repository/Recall execution.'],
+            unsupported_setup: [...unsupportedSetup(setup), invalidFixture]
+          };
+        }
+      }
       let timestamp = Date.parse(setup.fixed_now ?? seeds[0]?.clock ?? manifest.fixed_date ?? manifest.fixed_today ?? '2026-10-16T12:00:00+08:00');
       if (!Number.isFinite(timestamp)) throw new Error('Invalid fixed_date');
       repository = new PersonalMemoryRepository({
@@ -112,7 +130,7 @@ export async function evaluateProduction(input) {
       const delivered = [...(block ? JSON.parse(block[1]).candidates : []), ...(secondaryBlock ? JSON.parse(secondaryBlock[1]).secondaryFacts.map(entry => entry.fact) : [])];
       return {
         candidate_items: pages.flatMap(value => value.items), delivery_items: delivered,
-        provider_text: text, calls, raw: { seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context },
+        provider_text: text, calls, raw: { fixture_validation: { status: 'valid', secondary_ids: validatedSecondaryIds, method: 'serializeSecondaryRecord (calls normalizeAssociationClueFields); provider fields unchanged' }, seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context },
         host_adapters: ['synthetic Vault and runtime IDs', 'deterministic Repository idFactory/now', 'Repository secondaryRecordsProvider from frozen synthetic SecondaryMemoryRecord records', 'Pi event registration host only; production handler and serialization unchanged'],
         unsupported_setup: unsupportedSetup(setup)
       };

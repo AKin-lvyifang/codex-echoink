@@ -27,11 +27,15 @@ try {
       { id: 'mem_eval_new', request: { operation: 'supersede', targetId: 'mem_eval_old', title: 'CURRENT_MEMORY_TOKEN', recallWhen: 'CURRENT_MEMORY_TOKEN', content: 'CURRENT_MEMORY_TOKEN now Obsidian.', basis: 'explicit', reason: 'Changed tool.' } }
     ], secondary_records: [{ schema: 'echoink.memory-secondary.v1', id: 'secondary_eval_tea', parentId: 'mem_eval_coffee', status: 'current', disabledReason: null, title: 'Possible tea preference', content: 'Maybe tea.', recallWhen: 'COFFEE_MEMORY_TOKEN', matchTerms: ['COFFEE_MEMORY_TOKEN'], relation: 'associated', reason: 'Synthetic inference.', supportLevel: 'weak_inference', evidence: 'Synthetic explicit statement only.', basis: 'llm_inferred', sourceMemoryRevision: 1, confidence: 0.70, hitCount: 0, lastHitAt: null, lastDecayAt: null, createdAt: 1792108800000, updatedAt: 1792108800000, revision: 1, file: 'secondary/secondary_eval_tea.md' }]
   }));
+  const invalidSeed = JSON.parse(await readFile(path.join(dataset, '记忆/seed.json'), 'utf8'));
+  invalidSeed.secondary_records[0].matchTerms = ['茶'];
+  await writeFile(path.join(dataset, '记忆/invalid-seed.json'), JSON.stringify(invalidSeed));
   const cases = [
     { case_id: 'A1', starter: true, query: 'GOLD_TOKEN', setup: { opened_paths: ['wiki/gold.md'], history: [{ role: 'user', content: 'Prior host hint' }], model_must_derive_date_range: true }, expected: { candidate: { required_paths: ['wiki/gold.md'], max_rank: 1 }, delivery: { required_paths: ['wiki/gold.md'], required_excerpts: ['preserve this exact sentence.'], required_fields: ['contentRevision', 'lineStart', 'lineEnd'] } } },
     { case_id: 'A3', starter: true, query: 'GOLD_TOKEN', expected: { candidate: { required_paths: ['missing.md'] }, delivery: { required_excerpts: ['THIS_IS_NOT_IN_THE_VAULT'] } } },
     { case_id: 'A4', starter: true, query: 'GOLD_TOKEN', setup: { settings_override: { search_journal: false } }, expected: { candidate: { required_paths: ['wiki/gold.md'] }, delivery: { required_paths: ['wiki/gold.md'] } } },
     { case_id: 'H1', starter: true, domain: 'memory', query: 'COFFEE_MEMORY_TOKEN', setup: { memory_seed: '记忆/seed.json' }, expected: { candidate: { required_ids: ['mem_eval_coffee'], required_secondary_ids: ['secondary_eval_tea'] }, delivery: { required_ids: ['mem_eval_coffee', 'secondary_eval_tea'], required_excerpts: ['I do not drink coffee.', 'Maybe tea.'], required_fields: ['basis'] } } },
+    { case_id: 'H_INVALID', starter: true, domain: 'memory', query: 'COFFEE_MEMORY_TOKEN', setup: { memory_seed: '记忆/invalid-seed.json' }, expected: { candidate: { required_ids: ['mem_eval_coffee'] }, delivery: { required_ids: ['mem_eval_coffee'] } } },
     { case_id: 'H2', starter: true, domain: 'memory', query: 'split', setup: { memory_seed: '记忆/seed.json' }, subcases: [
       { subcase_id: 'current', query: 'CURRENT_MEMORY_TOKEN', expected: { candidate: { required_ids: ['mem_eval_new'], forbidden_ids: ['mem_eval_old'] }, delivery: { required_ids: ['mem_eval_new'], required_excerpts: ['now Obsidian.'] } } },
       { subcase_id: 'history', query: 'HISTORY_MEMORY_TOKEN', setup: { memory_search: { statuses: ['current', 'superseded'] } }, expected: { candidate: { required_ids: ['mem_eval_old'] }, delivery: { required_ids: ['mem_eval_old'], required_excerpts: ['old Notion reason.'] } } }
@@ -91,6 +95,11 @@ try {
   assert.equal(byId.A1.actual.effective_configuration.retrieval_request.includeUnrefined, false);
   assert.equal(byId.H1.candidate.status, 'pass', JSON.stringify({ verdict: byId.H1.candidate, raw: byId.H1.actual.raw.repository_search, delivered: byId.H1.actual.delivery_items }));
   assert.equal(byId.H1.delivery.status, 'fail', 'Real recall currently drops basis; evaluator must expose this');
+  assert.equal(byId.H_INVALID.candidate.status, 'blocked');
+  assert.equal(byId.H_INVALID.delivery.status, 'blocked');
+  assert.equal(byId.H_INVALID.actual.raw.fixture_validation.status, 'invalid_fixture');
+  assert.match(byId.H_INVALID.actual.raw.fixture_validation.reason, /association_clue_invalid:matchTerms/u);
+  assert.ok(!byId.H_INVALID.actual.calls.some(item => item.function === 'PersonalMemoryRepository.initialize'), 'Invalid fixture must be rejected before Repository execution');
   assert.ok(byId.H1.actual.delivery_items.length > 0, 'Memory delivery must come from production serialization');
   assert.ok(byId.H1.actual.delivery_items.some(item => item.id === 'secondary_eval_tea'), 'Dream must be delivered by real matching and production secondary serialization');
   assert.equal(results.find(item => item.case_id === 'H2' && item.subcase_id === 'current').delivery.status, 'pass');
