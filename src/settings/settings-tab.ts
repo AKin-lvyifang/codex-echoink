@@ -5219,9 +5219,9 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
     this.decorateSetting(modelSetting, "brain-circuit");
-    const files = createSettingsGroup(createSettingsSection(page, { title: "文件与内容", description: "原稿可正常编辑；英文稿与词条由插件维护并隐藏保存，请勿直接修改，以免影响关联。分类与备注请在表达库内修改。", surface: "flat" }));
+    const files = createSettingsGroup(createSettingsSection(page, { title: "文件与内容", description: "原稿、英文稿和词条都是可从文件夹查看的 Markdown 笔记。分类与备注可在表达库内修改。", surface: "flat" }));
     const native = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory);
-    applySettingsRow(new OriginSetting(files).setName("日记原稿").setDesc(`沿用 Obsidian 日记：${native.folder || "Vault 根目录"}，可正常编辑。在日记原稿页的“发送范围”中选择允许生成的段落。`));
+    applySettingsRow(new OriginSetting(files).setName("日记原稿").setDesc(`沿用 Obsidian 日记：${native.folder || "Vault 根目录"}，可正常编辑。在英文面板更多菜单的“发送范围”中选择允许生成的段落。`));
     applySettingsRow(new OriginSetting(files).setName("英文稿位置").setDesc(current.englishDirectory));
     applySettingsRow(new OriginSetting(files).setName("表达库位置").setDesc(current.expressionDirectory));
     const openLibrary = async () => {

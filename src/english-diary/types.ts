@@ -3,9 +3,10 @@ import type { CapabilityAccess } from "../membership/types";
 export const ENGLISH_DIARY_VIEW = "echoink-english-diary";
 export const ENGLISH_EXPRESSION_VIEW = "echoink-english-expressions";
 export const ENGLISH_DIARY_SKILL = "english-diary" as const;
-export const DEFAULT_ENGLISH_DIRECTORY = "outputs/.english-diary/diaries";
-export const DEFAULT_EXPRESSION_DIRECTORY = "outputs/.english-diary/expressions";
-export const HIDDEN_EXPRESSION_DIRECTORY = DEFAULT_EXPRESSION_DIRECTORY;
+export const DEFAULT_ENGLISH_DIRECTORY = "outputs/英文日记";
+export const DEFAULT_EXPRESSION_DIRECTORY = "outputs/英文日记/表达库";
+export const LEGACY_HIDDEN_ENGLISH_DIRECTORY = "outputs/.english-diary/diaries";
+export const HIDDEN_EXPRESSION_DIRECTORY = "outputs/.english-diary/expressions";
 export const LEGACY_ENGLISH_DIRECTORY = "EchoInk/英文日记";
 export const LEGACY_HIDDEN_EXPRESSION_DIRECTORY = ".echoink/english-diary/expressions";
 export const LEGACY_EXPRESSION_DIRECTORY = "EchoInk/表达库";
@@ -167,6 +168,8 @@ export interface DiaryGenerator {
   providerLabel(): string;
 }
 export interface GenerateDiaryOptions {
+  /** Generate a fresh result even when the original or a pending result matches. */
+  force?: boolean;
   privacy?: DiaryPrivacy;
   overwriteModified?: boolean;
   expectedEnglishFingerprint?: string | null;

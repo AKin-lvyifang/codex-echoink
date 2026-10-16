@@ -2,8 +2,8 @@ import { Notice } from "obsidian";
 import { createOriginButton } from "../settings/origin-controls";
 import type { DiaryAlignment, DiaryRange } from "./types";
 
-export function diaryButton(parent: HTMLElement, text: string, action: () => void | Promise<void>, options: { primary?: boolean; disabled?: boolean; label?: string; tertiary?: boolean } = {}): HTMLButtonElement {
-  const button = createOriginButton(parent, { text, cls: `echoink-origin-button${options.primary ? " mod-cta" : ""}${options.tertiary ? " is-tertiary" : ""}` });
+export function diaryButton(parent: HTMLElement, text: string, action: () => void | Promise<void>, options: { primary?: boolean; disabled?: boolean; label?: string; tertiary?: boolean; icon?: boolean } = {}): HTMLButtonElement {
+  const button = createOriginButton(parent, { text, cls: `echoink-origin-button${options.primary ? " mod-cta" : ""}${options.tertiary ? " is-tertiary" : ""}${options.icon ? " is-icon is-tertiary" : ""}` });
   button.disabled = options.disabled === true;
   if (options.label) button.setAttribute("aria-label", options.label);
   button.addEventListener("click", (event) => {

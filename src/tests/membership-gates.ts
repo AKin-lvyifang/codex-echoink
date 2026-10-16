@@ -5,7 +5,6 @@ import path from "node:path";
 import { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { LifestyleService } from "../lifestyle/service";
 import { EnglishDiaryController } from "../english-diary/controller";
-import { TFile } from "obsidian";
 import { LifestyleStore } from "../lifestyle/store";
 import { DEFAULT_LIFESTYLE_SETTINGS } from "../lifestyle/settings";
 import { FakeVault } from "./lifestyle-finance-ledger";
@@ -64,19 +63,20 @@ export async function runMembershipGateTests() {
     await assert.rejects(lifestyle.setEnabled("finance", false), /PRO_REQUIRED/);
     assert.equal(plugin.settings.lifestyle.finance.enabled, true, "no PRO cannot switch an enabled plugin off");
     const diarySettings = { enabled: true };
-    let sourceWrites = 0, libraryOpens = 0, diaryOpens = 0;
-    let existingDiary: TFile | null = null;
+    let libraryOpens = 0, diaryOpens = 0;
+    const diaryVault = new FakeVault();
     const controller = Object.assign(Object.create(EnglishDiaryController.prototype), {
-      api: { access }, plugin: { settings: { englishDiary: diarySettings }, app: { vault: {
-        getAllLoadedFiles: () => [], getAbstractFileByPath: () => existingDiary, getMarkdownFiles: () => [],
-        create: () => { sourceWrites++; }
-      } } }, openLibrary: async () => { libraryOpens++; }, openDiary: async () => { diaryOpens++; }
+      api: { access }, plugin: { settings: { englishDiary: diarySettings, journalDirectory: "journal", knowledgeBase: { folderBindings: null } }, app: { vault: diaryVault } },
+      openLibrary: async () => { libraryOpens++; }, openDiary: async () => { diaryOpens++; }
     });
     await assert.rejects(controller.setEnabled(false), /PRO_REQUIRED/);
     assert.equal(diarySettings.enabled, true);
-    await controller.openToday(); assert.equal(libraryOpens, 1); assert.equal(sourceWrites, 0);
-    existingDiary = new TFile("Daily/existing.md");
-    await controller.openToday(); assert.equal(diaryOpens, 1); assert.equal(sourceWrites, 0);
+    await controller.openToday();
+    assert.equal(libraryOpens, 0); assert.equal(diaryOpens, 1); assert.equal(diaryVault.createCount, 1, "ordinary diary writing remains available without PRO");
+    const sourceBefore = [...diaryVault.files.values()][0].text;
+    await controller.openToday();
+    assert.equal(diaryOpens, 2); assert.equal(diaryVault.createCount, 1, "reopening reuses the native diary without PRO");
+    assert.equal([...diaryVault.files.values()][0].text, sourceBefore);
     assert.equal(getProPluginAccess(access, false).canEnter, false);
     assert.equal(getProPluginAccess(access, true).canEnter, true);
     const catalogBefore = structuredClone(plugin.settings.lifestyle.finance.accounts);
