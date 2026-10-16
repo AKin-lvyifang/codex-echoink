@@ -1,3 +1,4 @@
+import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../../knowledge-base/search/contracts";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../../knowledge-base/root-paths";
 import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
@@ -680,6 +681,7 @@ interface ActiveProductRun {
   toolCallIds: Set<string>;
   agentSettledSeen: boolean;
   abortRequested: boolean;
+  knowledgeAbort: AbortController;
   eventError: unknown;
   channel: PiRuntimeEventChannel;
   settlementBarrier: PiProductRunSettlementBarrier;
@@ -1479,6 +1481,7 @@ export class PiNativeConversationRuntime {
       toolCallIds: new Set(),
       agentSettledSeen: false,
       abortRequested: false,
+      knowledgeAbort: new AbortController(),
       eventError: null,
       channel,
       settlementBarrier: createSettlementBarrier(),
@@ -1536,6 +1539,7 @@ export class PiNativeConversationRuntime {
           stage: "searching"
         });
         const preflight = await this.options.knowledge!.retrieveAsk({
+          signal: execution.knowledgeAbort.signal,
           vaultId: catalog.vaultId,
           conversationId: catalog.conversationId,
           piSessionId: catalog.piSessionId,
@@ -1574,6 +1578,7 @@ export class PiNativeConversationRuntime {
           stage: "searching"
         });
         const preflight = await this.options.knowledge.retrieveChat({
+          signal: execution.knowledgeAbort.signal,
           vaultId: catalog.vaultId,
           conversationId: catalog.conversationId,
           piSessionId: catalog.piSessionId,
@@ -2139,6 +2144,7 @@ export class PiNativeConversationRuntime {
     if (!active?.currentRun) return;
     const execution = active.currentRun;
     execution.abortRequested = true;
+    execution.knowledgeAbort.abort();
     const abortErrors: unknown[] = [];
     try {
       await this.pauseTaskPlanForAbort(active, execution);
@@ -5475,13 +5481,21 @@ function parseKnowledgeReference(value: unknown): PiKnowledgeReference | null {
     || (reference.lineEnd as number) < (reference.lineStart as number)
   ) return null;
   return Object.freeze({
+    ...(Number.isSafeInteger(reference.columnStart) && Number.isSafeInteger(reference.columnEnd) ? { columnStart: reference.columnStart as number, columnEnd: reference.columnEnd as number } : {}),
     referenceId: reference.referenceId,
     vaultRelativePath: reference.vaultRelativePath,
     title: reference.title,
     excerpt: reference.excerpt,
     contentRevision: reference.contentRevision,
     lineStart: reference.lineStart as number,
-    lineEnd: reference.lineEnd as number
+    lineEnd: reference.lineEnd as number,
+    ...(typeof reference.sectionTitle === "string" ? { sectionTitle: reference.sectionTitle } : {}),
+    ...(KNOWLEDGE_SEARCH_KINDS.includes(reference.sourceType as KnowledgeSearchKind) ? { sourceType: reference.sourceType as KnowledgeSearchKind } : {}),
+    ...(typeof reference.recordedAt === "number" && Number.isFinite(reference.recordedAt) ? { recordedAt: reference.recordedAt } : {}),
+    ...(typeof reference.publishedAt === "string" ? { publishedAt: reference.publishedAt } : {}),
+    ...(typeof reference.totalLines === "number" ? { totalLines: reference.totalLines } : {}),
+    ...(typeof reference.hasMore === "boolean" ? { hasMore: reference.hasMore } : {}),
+    ...(reference.verificationStatus === "local_revision_verified" || reference.verificationStatus === "source_link_changed" ? { verificationStatus: reference.verificationStatus } : {})
   });
 }
 

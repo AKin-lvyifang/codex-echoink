@@ -2,6 +2,8 @@ import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole, rebaseKnowledgePath, type Know
 
 export interface KnowledgeFolderBinding {
   enabled: boolean;
+  /** Read-only retrieval consent, independent from organization/write consent. */
+  searchEnabled?: boolean;
   readPaths: string[];
   writePath: string | null;
   /** Only these relative child directories were explicitly approved for creation. */
@@ -49,7 +51,7 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
       try { return normalizeKnowledgeDirectory(item); } catch { return ""; }
     }).filter(Boolean))] : [];
     const readPaths = paths(saved.readPaths);
-    result.roles[role] = { enabled: saved.enabled === true, readPaths,
+    result.roles[role] = { enabled: saved.enabled === true, searchEnabled: saved.searchEnabled !== false, readPaths,
       writePath: paths([saved.writePath])[0] ?? null,
       allowedSubdirectories: paths(saved.allowedSubdirectories), allowedSubdirectoryRoots: paths(Array.isArray(saved.allowedSubdirectoryRoots) ? saved.allowedSubdirectoryRoots : saved.readPaths).filter(directory => readPaths.includes(directory)),
       autoOrganizePaths: paths(saved.autoOrganizePaths).filter(directory => readPaths.includes(directory)),
@@ -123,7 +125,7 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
 export function knowledgeFolderBindingsSignature(config: KnowledgeFolderBindings | null | undefined): string {
   return JSON.stringify(KNOWLEDGE_ROOT_ROLES.map(role => {
     const binding = config?.roles[role];
-    return { role, enabled: binding?.enabled === true, readPaths: [...(binding?.readPaths ?? [])].sort(),
+    return { role, enabled: binding?.enabled === true, searchEnabled: binding?.searchEnabled !== false, readPaths: [...(binding?.readPaths ?? [])].sort(),
       writePath: binding?.readPaths.length === 1 ? binding.readPaths[0] : binding?.writePath ?? null,
       allowedSubdirectories: [...(binding?.allowedSubdirectories ?? [])].sort(),
       allowedSubdirectoryRoots: binding?.allowedSubdirectories.length ? [...(binding.allowedSubdirectoryRoots ?? binding.readPaths)].filter(directory => binding.readPaths.includes(directory)).sort() : [],

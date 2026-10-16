@@ -178,6 +178,8 @@ export interface ExperienceSourceRef {
 
 /** Structural Phase 3 pointer; the Vault file remains the only content source. */
 export interface PiKnowledgeReference {
+  readonly columnStart?: number;
+  readonly columnEnd?: number;
   totalLines?: number;
   hasMore?: boolean;
   related?: import("../../knowledge-base/knowledge-relations").KnowledgeRelationPage;
@@ -189,7 +191,8 @@ export interface PiKnowledgeReference {
   readonly contentRevision: string;
   readonly lineStart: number;
   readonly lineEnd: number;
-  readonly sourceType?: "wiki" | "projects" | "raw";
+  readonly sourceType?: import("../../knowledge-base/search/contracts").KnowledgeSearchKind;
+  readonly sectionTitle?: string;
   readonly recordedAt?: number;
   readonly publishedAt?: string;
   readonly verificationStatus?: "local_revision_verified" | "source_link_changed";
@@ -203,6 +206,7 @@ export interface PiKnowledgeRunIdentity {
 }
 
 export interface PiKnowledgeRetrievalObservation {
+  readonly coverage?: import("../../knowledge-base/search/contracts").BodySearchResult["coverage"];
   readonly elapsedMs: number;
   readonly total: number;
   readonly returned: number;
@@ -271,6 +275,7 @@ export interface PiKnowledgeRuntimePort {
   }>>;
   retrieveAsk(input: Readonly<
     PiKnowledgeRunIdentity & {
+      signal?: AbortSignal;
       question: string;
       explicitPaths: readonly string[];
       includeUnrefined: boolean;
@@ -278,6 +283,7 @@ export interface PiKnowledgeRuntimePort {
   >): Promise<PiKnowledgeAskPreflightResult>;
   retrieveChat?(input: Readonly<
     PiKnowledgeRunIdentity & {
+      signal?: AbortSignal;
       question: string;
       explicitPaths: readonly string[];
       includeUnrefined: boolean;

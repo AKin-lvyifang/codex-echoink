@@ -32,7 +32,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       }
       this.store = new MobileStore(this.app.vault.adapter, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       await this.store.load();
-      this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl, () => this.services.context());
+      this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl, () => this.services.context(), () => this.saveData(this.settings));
       this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
       this.services = new MobileServices(this, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.manifest.dir));

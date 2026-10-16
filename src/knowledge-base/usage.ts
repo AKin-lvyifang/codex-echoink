@@ -1,3 +1,4 @@
+import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "./search/contracts";
 import { isDeepStrictEqual } from "node:util";
 import { mkdir, readdir } from "node:fs/promises";
 import * as path from "node:path";
@@ -117,6 +118,9 @@ const REFERENCE_KEYS = [
 ] as const;
 
 const OPTIONAL_REFERENCE_KEYS = [
+  "columnStart",
+  "columnEnd",
+  "sectionTitle",
   "sourceType",
   "recordedAt",
   "publishedAt",
@@ -611,11 +615,12 @@ function normalizeKnowledgeReference(
     throw new PiNativeFileStoreError(errorCode, "KnowledgeReference contentRevision 无效");
   }
   const hasSourceType = Object.hasOwn(object, "sourceType");
+  if ((Object.hasOwn(object, "columnStart") || Object.hasOwn(object, "columnEnd"))
+    && (!Number.isSafeInteger(object.columnStart) || !Number.isSafeInteger(object.columnEnd) || (object.columnStart as number) < 0 || (object.columnEnd as number) < 0
+      || (lineStart === lineEnd && (object.columnEnd as number) < (object.columnStart as number)))) throw new PiNativeFileStoreError(errorCode, "KnowledgeReference columns are invalid");
   if (
     hasSourceType
-    && object.sourceType !== "wiki"
-    && object.sourceType !== "projects"
-    && object.sourceType !== "raw"
+    && !KNOWLEDGE_SEARCH_KINDS.includes(object.sourceType as KnowledgeSearchKind)
   ) {
     throw new PiNativeFileStoreError(errorCode, "KnowledgeReference sourceType 无效");
   }
@@ -653,6 +658,8 @@ function normalizeKnowledgeReference(
     );
   }
   return {
+    ...(Number.isSafeInteger(object.columnStart) && Number.isSafeInteger(object.columnEnd) && (object.columnStart as number) >= 0 && (object.columnEnd as number) >= 0 ? { columnStart: object.columnStart as number, columnEnd: object.columnEnd as number } : {}),
+    ...(typeof object.sectionTitle === "string" ? { sectionTitle: object.sectionTitle } : {}),
     referenceId: requireUsageString(object.referenceId, "referenceId", errorCode),
     vaultRelativePath: normalizeVaultRelativePath(object.vaultRelativePath, "vaultRelativePath"),
     title: requireUsageString(object.title, "title", errorCode),

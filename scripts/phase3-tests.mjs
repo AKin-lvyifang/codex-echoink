@@ -16,6 +16,8 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
+  'import { runKnowledgeBodySearchTests } from "./src/tests/knowledge-body-search";',
+  'import { runVaultBodySearchTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
   'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
@@ -30,6 +32,7 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runVaultBodySearchTests();",
   "await runKnowledgeFolderPlanTests();",
   "await runKnowledgeFolderSettingsTests();",
   "await runKnowledgeFolderOrganizationTests();",
@@ -41,7 +44,8 @@ const fullSuiteRuns = [
   "await runPhase3KnowledgeRetrieverTests();",
   "await runPhase3KnowledgeMaintenanceServiceTests();",
   "await runKnowledgeInitializationTests();",
-  "await runNativeJournalTests();"
+  "await runNativeJournalTests();",
+  "await runKnowledgeBodySearchTests();"
 ];
 
 await mkdir(outputDir, { recursive: true });

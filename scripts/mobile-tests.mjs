@@ -125,6 +125,35 @@ await test("stop settles immediately; late response cannot write or request agai
   assert.equal(state.runtime.error, "");
 });
 
+await test("shared mobile body search delivers chapters, revisions, journal dates and cancellation", async () => {
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+  state.files.set("随手记/长文.md", "# 背景\n" + "无关背景\n".repeat(120) + "## 发布\nMOBILE_BODY_ONLY 2.6.2答案。\n");
+  state.files.set("日记/2026-09-20.md", "# 日记\nJOURNAL_DATE_TOKEN九月跑步。\n");
+  state.files.set("日记/2026-08-20.md", "# 日记\nJOURNAL_DATE_TOKEN八月跑步。\n");
+  state.files.set("模板/私有模板.md", "MOBILE_BODY_ONLY");
+  const bindings = loadMobileSettings({ knowledgeBase: { folderBindings: { schemaVersion: 1, revision: 1, roles: {
+    journal: { enabled: true, readPaths: ["日记"], writePath: "日记", allowedSubdirectories: [] },
+    templates: { enabled: true, readPaths: ["模板"], writePath: "模板", allowedSubdirectories: [] }
+  } } } }).knowledgeBase.folderBindings;
+  const tools = mobileTools(state.app, state.store, () => "", () => bindings);
+  const search = tools.find(tool => tool.name === "vault_search");
+  const read = tools.find(tool => tool.name === "note_read");
+  const page = (await search.execute("body", { queries: ["MOBILE_BODY_ONLY", "2.6.2"] })).details;
+  assert.equal(page.hits[0].kind, "notes"); assert.ok(page.hits[0].lineStart > 100);
+  assert.ok(!page.hits.some(hit => hit.vaultRelativePath.startsWith("模板/")));
+  const source = page.hits[0];
+  const span = (await read.execute("read", { path: source.vaultRelativePath, expectedContentRevision: source.contentRevision, lineStart: source.lineStart })).details;
+  assert.match(span.content, /MOBILE_BODY_ONLY/u); assert.equal(span.lineStart, source.lineStart);
+  state.files.set(source.vaultRelativePath, "已修改");
+  await assert.rejects(read.execute("changed", { path: source.vaultRelativePath, expectedContentRevision: source.contentRevision }), /changed/u);
+  const dated = (await search.execute("date", { query: "JOURNAL_DATE_TOKEN", dateFrom: "2026-09-01", dateTo: "2026-09-30" })).details;
+  assert.equal(dated.hits.length, 1); assert.equal(dated.hits[0].vaultRelativePath, "日记/2026-09-20.md");
+  bindings.roles.journal.searchEnabled = false;
+  assert.equal((await search.execute("off", { query: "JOURNAL_DATE_TOKEN" })).details.hits.length, 0);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(search.execute("stopped", { query: "token" }, controller.signal));
+});
+
 await test("read-only, duplicate paths and Vault boundary retain original notes", async () => {
   let calls = 0;
   const state = await setup("openai-completions", async request => {

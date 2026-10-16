@@ -48,7 +48,7 @@ export async function runKnowledgeAssociativeReadingTests(): Promise<void> {
     assert.ok(first.references[0].lineEnd < 90);
     assert.equal(first.references[0].hasMore, true);
     assert.ok(first.references[0].related?.items.some((item) => item.target?.vaultRelativePath === "wiki/B.md"));
-    assert.match(formatKnowledgeReferencesForPrompt(first.references), /仅交付片段/u);
+    assert.equal(JSON.parse(formatKnowledgeReferencesForPrompt(first.references)).sources[0].hasMore, true);
     const page = await index.related({ vaultRelativePath: "wiki/A.md", limit: 50 });
     assert.ok(page.items.some((item) => item.direction === "incoming" && item.source.vaultRelativePath === "wiki/back.md"));
     const ambiguous = page.items.find((item) => item.original === "[[duplicate]]")!;
@@ -95,9 +95,12 @@ export async function runKnowledgeAssociativeReadingTests(): Promise<void> {
     index.invalidate("wiki/long.md");
     const long = (await index.search({ query: "long" })).hits[0];
     const truncated = await call("knowledge_read", { vaultRelativePath: long.vaultRelativePath, expectedContentRevision: long.contentRevision });
-    assert.equal(truncated.details.truncated, true);
-    assert.equal(truncated.details.references, undefined);
-    assert.equal(observed.length, 1);
+    assert.equal(truncated.details.truncated, false);
+    const longReference = (truncated.details.references as import("../knowledge-base/types").KnowledgeReference[])[0];
+    assert(longReference.excerpt.length <= 6000 && longReference.columnEnd! <= 6000);
+    assert.equal(longReference.hasMore, true);
+    assert.equal((await retriever.verifyReferences([longReference])).status, "valid");
+    assert.equal(observed.length, 2);
 
     await write("wiki/B.md", "# B\n已变更为14:40\n");
     index.invalidate("wiki/B.md");
