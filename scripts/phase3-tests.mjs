@@ -16,7 +16,7 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
-  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests } from "./src/tests/knowledge-body-search";',
+  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests } from "./src/tests/knowledge-body-search";',
   'import { runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
@@ -32,6 +32,7 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeBodySearchSchedulingTests();",
   "await runKnowledgeBodySearchCacheTests();",
   "await runVaultBodySearchCacheTests();",
   "await runVaultBodySearchTests();",
@@ -53,7 +54,14 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--body-search-cache") ? [
+    contents: (process.argv.includes("--body-search-scheduling") ? [
+      'import { runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchCacheTests } from "./src/tests/knowledge-body-search";',
+      'import { runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
+      'await runKnowledgeBodySearchSchedulingTests();',
+      'await runKnowledgeBodySearchCacheTests();',
+      'await runVaultBodySearchCacheTests();',
+      'await runVaultBodySearchTests();'
+    ] : process.argv.includes("--body-search-cache") ? [
       'import { runKnowledgeBodySearchCacheTests } from "./src/tests/knowledge-body-search";',
       'import { runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
       'await runKnowledgeBodySearchCacheTests();',

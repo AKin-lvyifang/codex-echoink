@@ -1,5 +1,6 @@
 import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult } from "./contracts";
 import { buildSearchDictionary, iterateSearchTokens, tokenizeSearchText } from "./tokenize";
+import { yieldSearchTask as yieldToUi } from "./scheduling";
 
 interface Heading { heading: string; line: number; level: number }
 interface Fragment {
@@ -68,12 +69,6 @@ function checkAbort(signal?: AbortSignal): void {
     error.name = "AbortError";
     throw error;
   }
-}
-
-async function yieldToUi(signal?: AbortSignal): Promise<void> {
-  checkAbort(signal);
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  checkAbort(signal);
 }
 
 function isAbort(error: unknown): boolean {

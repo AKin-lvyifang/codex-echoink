@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { BodySearchMemoryIndex, searchBodyDocuments } from "../knowledge-base/search/body-search";
 import { buildSearchDictionary, tokenizeSearchText } from "../knowledge-base/search/tokenize";
+import { yieldSearchTask } from "../knowledge-base/search/scheduling";
 import type { BodySearchDocument, BodySearchRequest } from "../knowledge-base/search/contracts";
 
 function note(path: string, body: string, metadata: Partial<BodySearchDocument> = {}): BodySearchDocument {
@@ -446,4 +447,219 @@ export async function runKnowledgeBodySearchCacheTests(): Promise<void> {
   await assert.rejects(disposed.search({ documents, request: { query: "alpha" } }), { code: "search_index_disposed" });
   for (const item of [index, noVersion, longIndex, retryIndex, abortIndex, invalidationIndex, concurrent, oneDocument]) item.dispose();
   console.log("Knowledge body search cache: cold/warm equivalence, complete reuse, revisions, events, cancellation, limits and disposal PASS");
+}
+
+export async function runKnowledgeBodySearchSchedulingTests(): Promise<void> {
+  const schedulerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "scheduler");
+  const channelDescriptor = Object.getOwnPropertyDescriptor(globalThis, "MessageChannel");
+  const timerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "setTimeout");
+  const nativeTimer = globalThis.setTimeout;
+  const NativeChannel = globalThis.MessageChannel;
+  assert.equal(typeof NativeChannel, "function", "the Node test host supplies real MessageChannel tasks");
+  const activeHandles = () => (process as unknown as { _getActiveHandles(): object[] })._getActiveHandles();
+  const previousHandles = new Set(activeHandles());
+  const channels: { ports: MessagePort[]; closeCalls: number }[] = [];
+  let timerCalls = 0;
+  let afterMessage: (() => void) | undefined;
+  let postFailure = false;
+  const setGlobal = (name: string, value: unknown) => Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+  const trackedTimer = (callback: (...args: any[]) => void, delay?: number, ...args: any[]) => {
+    timerCalls++;
+    return nativeTimer(callback, delay, ...args);
+  };
+  class TrackedChannel {
+    readonly port1;
+    readonly port2;
+    constructor() {
+      const channel = new NativeChannel();
+      const record = { ports: [channel.port1, channel.port2], closeCalls: 0 };
+      channels.push(record);
+      const wrap = (port: MessagePort, receiving: boolean) => ({
+        get onmessage() { return port.onmessage; },
+        set onmessage(handler) {
+          port.onmessage = handler && ((event) => {
+            handler.call(port, event);
+            if (receiving) afterMessage?.();
+          });
+        },
+        get onmessageerror() { return port.onmessageerror; },
+        set onmessageerror(handler) { port.onmessageerror = handler; },
+        postMessage(value: unknown) {
+          if (postFailure) throw new Error("post failed");
+          port.postMessage(value);
+        },
+        close() { record.closeCalls++; port.close(); },
+      });
+      this.port1 = wrap(channel.port1, true);
+      this.port2 = wrap(channel.port2, false);
+    }
+  }
+  const assertReleased = () => {
+    for (const channel of channels) {
+      assert.equal(channel.closeCalls, 2, "every channel closes both ports exactly once");
+      for (const port of channel.ports) {
+        assert.equal(port.onmessage, null);
+        assert.equal(port.onmessageerror, null);
+      }
+    }
+  };
+  const trackAbortListeners = (signal: AbortSignal) => {
+    const listeners = new Set<EventListenerOrEventListenerObject>();
+    const add = signal.addEventListener.bind(signal);
+    const remove = signal.removeEventListener.bind(signal);
+    Object.defineProperty(signal, "addEventListener", { value: (type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions) => {
+      if (type === "abort") listeners.add(listener);
+      add(type, listener, options);
+    } });
+    Object.defineProperty(signal, "removeEventListener", { value: (type: string, listener: EventListenerOrEventListenerObject, options?: EventListenerOptions) => {
+      if (type === "abort") listeners.delete(listener);
+      remove(type, listener, options);
+    } });
+    return listeners;
+  };
+  try {
+    setGlobal("setTimeout", trackedTimer);
+    setGlobal("MessageChannel", TrackedChannel);
+    let schedulerCalls = 0;
+    let realTaskRan = false;
+    const scheduler = { yield() {
+      assert.equal(this, scheduler, "scheduler.yield retains its host receiver");
+      schedulerCalls++;
+      return new Promise<void>((resolve) => nativeTimer(() => { realTaskRan = true; resolve(); }, 0));
+    } };
+    setGlobal("scheduler", scheduler);
+    const completedSignal = new AbortController();
+    const completedListeners = trackAbortListeners(completedSignal.signal);
+    let finished = false;
+    const preferred = yieldSearchTask(completedSignal.signal).then(() => { finished = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(finished, false, "microtasks alone cannot complete the preferred task wait");
+    assert.equal(realTaskRan, false);
+    await preferred;
+    assert.equal(realTaskRan, true);
+    assert.equal(schedulerCalls, 1);
+    assert.equal(channels.length, 0);
+    assert.equal(timerCalls, 0, "a successful scheduler does not start a fallback timer");
+    assert.equal(completedListeners.size, 0);
+
+    const before = new AbortController(); before.abort();
+    await assert.rejects(yieldSearchTask(before.signal), { name: "AbortError" });
+    assert.equal(schedulerCalls, 1, "already cancelled work starts no task");
+
+    for (const failure of ["throw", "reject"] as const) {
+      setGlobal("scheduler", { yield() {
+        if (failure === "throw") throw new Error("scheduler unavailable");
+        return new Promise<void>((_resolve, reject) => nativeTimer(() => reject(new Error("scheduler rejected")), 0));
+      } });
+      const previousChannels = channels.length;
+      await yieldSearchTask();
+      assert.equal(channels.length, previousChannels + 1, "scheduler exceptions and rejections fall back to a real message task");
+      assert.equal(timerCalls, 0);
+      assertReleased();
+    }
+
+    setGlobal("scheduler", undefined);
+    finished = false;
+    const messageTask = yieldSearchTask().then(() => { finished = true; });
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(finished, false, "MessageChannel completion requires its real posted task");
+    await messageTask;
+    assertReleased();
+
+    const duringMessage = new AbortController();
+    const messageListeners = trackAbortListeners(duringMessage.signal);
+    const cancelledMessage = yieldSearchTask(duringMessage.signal);
+    duringMessage.abort();
+    await assert.rejects(cancelledMessage, { name: "AbortError" });
+    assert.equal(messageListeners.size, 0);
+    assertReleased();
+
+    const afterMessageController = new AbortController();
+    afterMessage = () => afterMessageController.abort();
+    await assert.rejects(yieldSearchTask(afterMessageController.signal), { name: "AbortError" });
+    afterMessage = undefined;
+    assertReleased();
+
+    const independentAbort = new AbortController();
+    const independentSuccess = new AbortController();
+    const first = yieldSearchTask(independentAbort.signal);
+    const second = yieldSearchTask(independentSuccess.signal);
+    independentAbort.abort();
+    await assert.rejects(first, { name: "AbortError" });
+    await second;
+    assert.equal(independentSuccess.signal.aborted, false);
+    assertReleased();
+
+    let lateReject!: (error: Error) => void;
+    setGlobal("scheduler", { yield() { return new Promise<void>((_resolve, reject) => { lateReject = reject; }); } });
+    const duringScheduler = new AbortController();
+    const schedulerListeners = trackAbortListeners(duringScheduler.signal);
+    const cancelledScheduler = yieldSearchTask(duringScheduler.signal);
+    duringScheduler.abort();
+    await assert.rejects(cancelledScheduler, { name: "AbortError" });
+    lateReject(new Error("late rejection is consumed after cancellation"));
+    await new Promise<void>((resolve) => nativeTimer(resolve, 0));
+    assert.equal(schedulerListeners.size, 0);
+    const afterScheduler = new AbortController();
+    setGlobal("scheduler", { yield() { return new Promise<void>((resolve) => nativeTimer(() => { resolve(); afterScheduler.abort(); }, 0)); } });
+    await assert.rejects(yieldSearchTask(afterScheduler.signal), { name: "AbortError" });
+
+    setGlobal("scheduler", undefined);
+    postFailure = true;
+    const timersBeforePostFailure = timerCalls;
+    await yieldSearchTask();
+    postFailure = false;
+    assert.equal(timerCalls, timersBeforePostFailure + 1, "posting failures release both ports before timer fallback");
+    assertReleased();
+    for (const Constructor of [undefined, class { constructor() { throw new Error("channel construction failed"); } }]) {
+      setGlobal("MessageChannel", Constructor);
+      const timersBefore = timerCalls;
+      finished = false;
+      const timerTask = yieldSearchTask().then(() => { finished = true; });
+      await Promise.resolve(); await Promise.resolve();
+      assert.equal(finished, false, "old WebViews still yield to a real timer task");
+      await timerTask;
+      assert.equal(timerCalls, timersBefore + 1);
+    }
+    setGlobal("MessageChannel", undefined);
+    const duringTimer = new AbortController();
+    const timerListeners = trackAbortListeners(duringTimer.signal);
+    const cancelledTimer = yieldSearchTask(duringTimer.signal);
+    await Promise.resolve();
+    duringTimer.abort();
+    await assert.rejects(cancelledTimer, { name: "AbortError" });
+    assert.equal(timerListeners.size, 0);
+    const afterTimer = new AbortController();
+    setGlobal("setTimeout", (callback: () => void, delay?: number) => nativeTimer(() => { callback(); afterTimer.abort(); }, delay));
+    await assert.rejects(yieldSearchTask(afterTimer.signal), { name: "AbortError" });
+    setGlobal("setTimeout", trackedTimer);
+
+    let readFiles = 0;
+    const oldWebViewDocuments = Array.from({ length: 32 }, (_, index) => note(`old-webview-${index}.md`, "", { read: async () => {
+      readFiles++;
+      return { content: "needle", contentRevision: String(index) };
+    } }));
+    const oldWebView = await search(oldWebViewDocuments, { query: "needle", limit: 50 });
+    assert.equal(oldWebView.coverage.indexedFiles, 32);
+    assert.equal(oldWebView.coverage.complete, true);
+    assert.equal(readFiles, 32);
+    const oldWebViewAbort = new AbortController();
+    const abortTimer = nativeTimer(() => oldWebViewAbort.abort(), 0);
+    readFiles = 0;
+    await assert.rejects(search(oldWebViewDocuments, { query: "needle", signal: oldWebViewAbort.signal }), { name: "AbortError" });
+    clearTimeout(abortTimer);
+    assert.ok(readFiles > 0 && readFiles < 32, "legacy timer fallback keeps scan checkpoints cancellable");
+    assertReleased();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(activeHandles().filter(handle => !previousHandles.has(handle) && handle.constructor.name === "MessagePort"), [], "no new active MessagePort handles remain");
+  } finally {
+    afterMessage = undefined;
+    for (const channel of channels) for (const port of channel.ports) port.close();
+    for (const [name, descriptor] of [["scheduler", schedulerDescriptor], ["MessageChannel", channelDescriptor], ["setTimeout", timerDescriptor]] as const) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  }
+  console.log("Knowledge body search scheduling: real tasks, fallback priority, independent cancellation and released ports PASS");
 }
