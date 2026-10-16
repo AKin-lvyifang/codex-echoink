@@ -194,7 +194,7 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
     element.dispatchEvent(new (element.ownerDocument.defaultView!.Event)("change", { bubbles: true }));
   }}>
     <SelectTrigger ref={island.ref} className="echoink-origin-control"><SelectValue /></SelectTrigger>
-    <SelectContent ref={setPopupElement} container={portalHost} className="echoink-origin-control echoink-theme-overlay" position="popper" style={popupTheme}
+    <SelectContent ref={setPopupElement} container={portalHost} className={`echoink-origin-control echoink-theme-overlay${parent.closest(".echoink-settings-demo,.echoink-settings-modal") && !parent.closest(".echoink-mobile,.echoink-mobile-modal") && !ownerDocument.body.classList.contains("is-mobile") ? " echoink-settings-overlay" : ""}`} position="popper" style={popupTheme}
       onFocusCapture={(event) => {
         const content = event.currentTarget;
         // Radix's fallback focus loop reads the main document. In a detached

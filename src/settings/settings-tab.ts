@@ -2137,7 +2137,9 @@ export class CodexSettingTab extends PluginSettingTab {
         : "Knowledge status and statistics will appear here after initialization." });
     }
     if (manager) renderKnowledgeFolderActions(page, manager, this.plugin.settings.settingsLanguage,
-      async () => { this.knowledgeDashboardSnapshot = null; this.scheduleDisplay(); });
+      async () => { this.knowledgeDashboardSnapshot = null; this.scheduleDisplay(); },
+      group => this.mountKnowledgeInitializationSection(group, zh));
+    else this.mountKnowledgeInitializationSection(page, zh);
     if (!this.knowledgeInitSection?.showDashboard) return;
     const section = createSettingsSection(page, {
       surface: "flat"
@@ -2468,15 +2470,12 @@ export class CodexSettingTab extends PluginSettingTab {
     ) void this.loadKnowledgePreferenceState();
 
     const page = createSettingsPage(container, {
-      title: copy.knowledge.title,
-      description: zh
-        ? "/ask 先查知识库，有依据时展示 Sources；最终没有找到时会说明，并按需使用已有外部资料或模型知识补答。/maintain 用于整理资料。是否写入由会话底部的工作区选项和你的要求决定：只读可分析，可写时按现有流程执行并核对结果。"
-        : "Use /ask to search your knowledge base first and show Sources when evidence is found. If none is found, EchoInk says so and may use available external sources or model knowledge. Use /maintain to organize material. Writing follows the workspace option below the conversation and your request: read-only allows analysis; writable modes use the existing workflow and verify results."
+      title: copy.knowledge.title
     });
     page.addClass("codex-knowledge-settings");
     this.renderSettingsActionError(page, "knowledge");
 
-    this.mountKnowledgeInitializationSection(page, zh);
+    this.ensureKnowledgeFolderSection();
     this.mountKnowledgeDashboard(page, zh);
 
     const runSection = createSettingsSection(page, {

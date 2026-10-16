@@ -2622,6 +2622,7 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
       folderOperationBusy: false,
       directoryWritable: true,
       folderOperationMessage: "",
+      folderNameScopes: () => [],
       getOriginalDirectoryStatus: async () => null,
       maintenanceRecoveryStatus: { state: "ready" as const, message: "" },
       getDashboardSnapshot: async () => dashboardSnapshot
@@ -3065,11 +3066,11 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   );
   assert.ok(dashboard, "Knowledge settings mounts the shared Dashboard renderer");
   for (const label of [
-    "知识库 Dashboard",
+    "知识库看板",
     "结构健康度",
     "体检新鲜度",
-    "Wiki 结构",
-    "Raw / Inbox 状态",
+    "知识成果结构",
+    "资料来源 / 收件箱状态",
     "体检记录"
   ]) {
     assert.match(dashboard!.textContent, new RegExp(label, "u"));
@@ -5863,7 +5864,8 @@ async function assertKnowledgeSettingsDetailRetiresLegacyControls(): Promise<voi
   tab.display();
   assert.match(tab.containerEl.textContent, /知识库管理/u);
   const folderEntry = tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:onboarding"]');
-  assert.equal(folderEntry?.textContent, "初始化");
+  assert.equal(folderEntry?.querySelector(".echoink-settings-navigation-title")?.textContent, "目录方案");
+  assert.equal(folderEntry?.querySelector(".echoink-settings-navigation-description")?.textContent, "尚未初始化");
   assert.equal(tab.containerEl.querySelectorAll(".echoink-folder-purpose").length, 0, "the Knowledge home only exposes the folder entry");
   folderEntry!.click();
   tab.display();
@@ -5873,8 +5875,8 @@ async function assertKnowledgeSettingsDetailRetiresLegacyControls(): Promise<voi
   tab.containerEl.querySelector<HTMLButtonElement>(".settings-back")!.click();
   await flushProviderModalTasks();
   tab.display();
-  assert.match(tab.containerEl.textContent, /\/ask 先查知识库/u);
-  assert.match(tab.containerEl.textContent, /是否写入由会话底部的工作区选项和你的要求决定/u);
+  assert.doesNotMatch(tab.containerEl.textContent, /\/ask 先查知识库/u);
+  assert.doesNotMatch(tab.containerEl.textContent, /是否写入由会话底部的工作区选项和你的要求决定/u);
   assert.match(tab.containerEl.textContent, /知识提炼偏好/u);
   assert.doesNotMatch(tab.containerEl.textContent, /等待确认|维护预览/u);
   assertLegacyKnowledgeControlsAbsent(tab.containerEl.textContent);
@@ -6455,7 +6457,7 @@ async function assertKnowledgeInitQuestionSurface(): Promise<void> {
   };
   const identity = { conversationId: interaction.conversationId, piSessionId: interaction.piSessionId, productRunId: interaction.turnId, interactionId: interaction.interactionId };
   const answer = broker.waitForAnswers({ ...identity, interaction });
-  plugin.getKnowledgeSurfaceService = () => ({ getInitializationQuestion: () => broker.bindingFor(identity), folderOperationBusy: true, directoryWritable: true, getOriginalDirectoryStatus: async () => null });
+  plugin.getKnowledgeSurfaceService = () => ({ getInitializationQuestion: () => broker.bindingFor(identity), folderOperationBusy: true, directoryWritable: true, folderNameScopes: () => [], getOriginalDirectoryStatus: async () => null });
   const first = await renderKnowledgeInitTab(plugin);
   assert.match(knowledgeInitPanel(first).textContent, /等待你的回答/u);
   assert.ok(broker.bindingFor(identity), "rendering must never answer for the user");
@@ -13348,7 +13350,7 @@ async function writeSettingsVisualFixtures(): Promise<void> {
     plugin.saveSettings = async () => undefined;
     plugin.buildRuntimeEchoInkResourceCatalog = async () => [];
     const snapshot = await buildKnowledgeBaseDashboardSnapshot(root, plugin.settings.knowledgeBase);
-    plugin.getKnowledgeSurfaceService = () => ({ maintenanceRecoveryStatus: { state: "ready", message: "" }, getDashboardSnapshot: async () => snapshot });
+    plugin.getKnowledgeSurfaceService = () => ({ maintenanceRecoveryStatus: { state: "ready", message: "" }, folderNameScopes: () => [], getOriginalDirectoryStatus: async () => null, getDashboardSnapshot: async () => snapshot });
     const tab = new CodexSettingTab(withSettingsTabDefaults(plugin) as never);
     const mutable = tab as any; mutable.personalMemoryState = state; mutable.knowledgeDashboardSnapshot = snapshot;
     const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

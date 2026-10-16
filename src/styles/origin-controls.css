@@ -134,3 +134,12 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
 :is(.echoink-finance-workspace,.echoink-maintenance-history-page) .echoink-origin-pagination button:is(:hover,:focus-visible){background:var(--background-modifier-hover);outline:none;box-shadow:none}
 :is(.echoink-finance-workspace,.echoink-maintenance-history-page) .echoink-origin-pagination button:disabled{opacity:.45;cursor:default}
 :is(.echoink-finance-workspace,.echoink-maintenance-history-page) .echoink-origin-pagination svg{width:16px;height:16px}
+
+/* Settings-only desktop type scale. Shared .modal and Origin defaults above stay intact. */
+:where(body:not(.is-mobile)) :is(.echoink-settings-demo, .echoink-settings-modal) .echoink-origin-control:is([data-slot=input], [data-slot=select-trigger]),
+:where(body:not(.is-mobile)) :is(.echoink-settings-demo, .echoink-settings-modal) .echoink-origin-control[data-slot=button]:is(.echoink-origin-button, .echoink-amicro-button, .mod-cta, .button) {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}
+:where(body:not(.is-mobile)) .echoink-origin-control.echoink-settings-overlay[data-slot=select-content] {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}

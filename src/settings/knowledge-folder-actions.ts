@@ -2,7 +2,7 @@ import { Modal, Notice } from "obsidian";
 import type { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { createOriginButton, createOriginCheck, disposeOriginControls } from "./origin-controls";
 import { OriginSetting } from "./origin-setting";
-import { applySettingsRow, createSettingsGroup, createSettingsSection } from "./settings-v2";
+import { createSettingsGroup, createSettingsNavigationRow, createSettingsSection, showSettingsInlineConfirmation } from "./settings-v2";
 
 type Operation = "optimize" | "restore";
 type OperationState = { running: Operation | null };
@@ -13,43 +13,46 @@ export function renderKnowledgeFolderActions(
   container: HTMLElement,
   service: EchoInkKnowledgeSurfaceService,
   language: string,
-  refresh: () => Promise<void>
+  refresh: () => Promise<void>,
+  renderPlan?: (group: HTMLElement) => void
 ): void {
   const zh = language !== "en";
   const state = operationStates.get(service) ?? { running: null };
   operationStates.set(service, state);
   const section = createSettingsSection(container, { title: zh ? "目录管理" : "Folder management", surface: "flat" });
   section.addClass("standard-section", "echoink-knowledge-folder-actions");
-  const optimizeCard = createSettingsGroup(section);
-  optimizeCard.addClass("settings-card");
-  const optimizeRow = applySettingsRow(new OriginSetting(optimizeCard)
-    .setName(zh ? "文件夹名称优化" : "Folder names")
-    .setDesc(zh ? "选择用途目录，预览实际名称变化后应用。" : "Choose bound folders and preview their exact name changes."));
-  const button = createOriginButton(optimizeRow.controlEl, { text: zh ? "优化名称" : "Optimize names" });
-  const restoreCard = createSettingsGroup(section);
-  restoreCard.addClass("settings-card");
-  const restoreRow = applySettingsRow(new OriginSetting(restoreCard)
-    .setName(zh ? "复原仓库" : "Restore vault")
-    .setDesc(zh ? "恢复初始化前的目录结构，保留最新内容和新增文件。" : "Restore the original folder structure, keeping current content and new files."));
-  const restore = createOriginButton(restoreRow.controlEl, { text: zh ? "复原" : "Restore" });
-  const original = restoreRow.infoEl.createDiv({ cls: "setting-item-description" });
-  let hasRecord = false;
+  const group = createSettingsGroup(section);
+  renderPlan?.(group);
+  const scopes = service.folderNameScopes();
+  const optimizeSummary = scopes.length ? (zh ? `${scopes.length} 个可选目录` : `${scopes.length} available folders`) : (zh ? "尚未绑定可优化的目录" : "No bound folders are available");
+  const button = createSettingsNavigationRow(group, {
+    title: zh ? "文件夹名称优化" : "Folder names",
+    description: optimizeSummary,
+    onActivate: () => openOptimize()
+  });
+  let record: Awaited<ReturnType<EchoInkKnowledgeSurfaceService["getOriginalDirectoryStatus"]>> = null;
+  let recordError = "";
+  let recordLoading = true;
+  const restoreSummary = () => recordLoading ? (zh ? "正在读取复原记录…" : "Reading restore record…") : recordError || (record
+    ? (zh ? `${new Date(record.createdAt).toLocaleString()} · ${record.files} 个文件` : `${new Date(record.createdAt).toLocaleString()} · ${record.files} files`)
+    : (zh ? "暂无可复原记录" : "No restore record available"));
+  const restore = createSettingsNavigationRow(group, {
+    title: zh ? "复原仓库" : "Restore vault", description: restoreSummary(), onActivate: () => openRestore()
+  });
+  const original = restore.querySelector<HTMLElement>(".echoink-settings-navigation-description")!;
   const syncControls = () => {
     const busy = state.running !== null || service.folderOperationBusy;
-    button.disabled = busy || !service.directoryWritable;
-    restore.disabled = busy || !hasRecord || !service.directoryWritable;
-    button.setText(state.running === "optimize" ? (zh ? "优化中…" : "Optimizing…") : (zh ? "优化名称" : "Optimize names"));
-    restore.setText(state.running === "restore" ? (zh ? "复原中…" : "Restoring…") : (zh ? "复原" : "Restore"));
+    button.disabled = busy;
+    restore.disabled = busy || recordLoading;
+    button.setAttr("aria-busy", String(state.running === "optimize"));
+    restore.setAttr("aria-busy", String(state.running === "restore"));
+    button.querySelector<HTMLElement>(".echoink-settings-navigation-description")!.setText(state.running === "optimize" ? (zh ? "正在优化名称…" : "Optimizing folder names…") : optimizeSummary);
+    original.setText(state.running === "restore" ? (zh ? "正在复原目录…" : "Restoring folders…") : restoreSummary());
   };
   syncControls();
-  void service.getOriginalDirectoryStatus().then((record) => {
-    hasRecord = !!record;
-    original.setText(record
-      ? (zh ? `原始目录记录：${new Date(record.createdAt).toLocaleString()}，${record.files} 个文件。`
-        : `Original layout: ${new Date(record.createdAt).toLocaleString()}, ${record.files} files.`)
-      : (zh ? "暂无初始化前目录记录" : "No pre-initialization directory record"));
-    syncControls();
-  }).catch((error: unknown) => { original.setText(String(error)); });
+  void service.getOriginalDirectoryStatus().then(result => { record = result; })
+    .catch(() => { recordError = zh ? "复原记录读取失败，请重新打开设置重试" : "Could not read the restore record. Reopen settings to retry."; })
+    .finally(() => { recordLoading = false; original.setText(restoreSummary()); syncControls(); });
 
   const run = async (operation: Operation, action: () => Promise<string>) => {
     if (state.running || service.folderOperationBusy || !service.directoryWritable) return;
@@ -58,7 +61,7 @@ export function renderKnowledgeFolderActions(
     try {
       new Notice(await action());
     } catch (error: unknown) {
-      const detail = (error instanceof Error ? error.message : String(error)).replace(/\s+/gu, " ").trim();
+      const detail = (error instanceof Error ? error.message : typeof error === "string" ? error : "").replace(/\s+/gu, " ").trim();
       const summary = operation === "optimize"
         ? (zh ? "名称优化未完成" : "Folder name optimization did not complete")
         : (zh ? "仓库复原未完成" : "Vault restoration did not complete");
@@ -69,8 +72,10 @@ export function renderKnowledgeFolderActions(
       void refresh();
     }
   };
-  button.onclick = () => {
+  const openOptimize = () => {
+    if (state.running || service.folderOperationBusy) return;
     const modal = new Modal(service.app);
+    modal.modalEl.addClass("echoink-settings-modal", "echoink-theme-boundary");
     modal.setTitle(zh ? "文件夹名称优化" : "Folder names");
     const selected = new Set<string>();
     const body = modal.contentEl;
@@ -80,7 +85,7 @@ export function renderKnowledgeFolderActions(
     const checks = scopes.map(scope => {
       const row = new OriginSetting(fields).setName(scope);
       const check = createOriginCheck(row.controlEl, { attr: { "aria-label": scope } });
-      check.onchange = () => { check.checked ? selected.add(scope) : selected.delete(scope); preview.disabled = !selected.size; };
+      check.onchange = () => { check.checked ? selected.add(scope) : selected.delete(scope); preview.disabled = !selected.size || !service.directoryWritable; };
       return check;
     });
     const error = body.createDiv({ cls: "settings-error", attr: { role: "alert" } });
@@ -103,19 +108,39 @@ export function renderKnowledgeFolderActions(
         apply.disabled = !plan.result.renamed.length || !service.directoryWritable;
         apply.onclick = () => { if (pending || state.running) return; apply.disabled = true; void run("optimize", async () => { const result = await service.applyFolderNamePreview(plan); modal.close(); return zh ? `已改名 ${result.renamed.length} 个目录，${result.skipped.length} 项未改动。` : `Renamed ${result.renamed.length} folders; ${result.skipped.length} unchanged.`; }).finally(() => { apply.disabled = !service.directoryWritable; }); };
         preview.hidden = true;
-      } catch (failure) { error.setText(failure instanceof Error ? failure.message : String(failure)); preview.disabled = !selected.size; }
+      } catch (failure) { error.setText(failure instanceof Error ? failure.message : String(failure)); preview.disabled = !selected.size || !service.directoryWritable; }
       finally { pending = false; body.removeAttribute("aria-busy"); preview.setText(zh ? "预览改名" : "Preview names"); checks.forEach(check => { check.disabled = preview.hidden; }); }
     };
     modal.onClose = () => disposeOriginControls(body);
     modal.open();
   };
-  restore.onclick = () => {
-    if (!hasRecord) return;
-    void run("restore", async () => {
-      const result = await service.restoreOriginalDirectories();
-      return zh
-        ? `已恢复 ${result.restored} 个文件${result.skipped.length ? `，${result.skipped.length} 项需处理` : ""}。`
-        : `Restored ${result.restored} file${result.restored === 1 ? "" : "s"}${result.skipped.length ? `; ${result.skipped.length} item${result.skipped.length === 1 ? " needs" : "s need"} attention` : ""}.`;
-    });
+  const openRestore = () => {
+    if (state.running || service.folderOperationBusy || recordLoading) return;
+    const modal = new Modal(service.app);
+    modal.modalEl.addClass("echoink-settings-modal", "echoink-theme-boundary");
+    modal.setTitle(zh ? "复原仓库" : "Restore vault");
+    const body = modal.contentEl;
+    body.createDiv({ cls: "setting-item-description", text: restoreSummary() });
+    const actions = body.createDiv({ cls: "echoink-knowledge-init-actions" });
+    createOriginButton(actions, { cls: "text-button", text: zh ? "返回" : "Back" }).onclick = () => modal.close();
+    if (record) {
+      const confirm = createOriginButton(actions, { text: zh ? "复原目录" : "Restore folders" });
+      confirm.disabled = !service.directoryWritable;
+      confirm.onclick = () => showSettingsInlineConfirmation(body, confirm, {
+        message: zh ? "恢复初始化前的目录结构，保留最新内容和新增文件。确认后开始移动文件。" : "Restore the pre-initialization folder structure, keeping current content and new files. Confirmation starts moving files.",
+        confirmLabel: zh ? "确认复原" : "Confirm restore", cancelLabel: zh ? "取消" : "Cancel",
+        onConfirm: async () => {
+          await run("restore", async () => {
+            const result = await service.restoreOriginalDirectories();
+            modal.close();
+            return zh
+              ? `已恢复 ${result.restored} 个文件${result.skipped.length ? `，${result.skipped.length} 项需处理` : ""}。`
+              : `Restored ${result.restored} file${result.restored === 1 ? "" : "s"}${result.skipped.length ? `; ${result.skipped.length} item${result.skipped.length === 1 ? " needs" : "s need"} attention` : ""}.`;
+          });
+        }
+      });
+    }
+    modal.onClose = () => disposeOriginControls(body);
+    modal.open();
   };
 }

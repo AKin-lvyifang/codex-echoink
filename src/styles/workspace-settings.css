@@ -1702,3 +1702,767 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-knowledge-folder-panel.is-detail.is-entering { animation: echoink-folder-enter .16s ease-out; }
 @keyframes echoink-folder-enter { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
 @media (prefers-reduced-motion: reduce) { .echoink-settings-demo .echoink-knowledge-folder-panel.is-detail.is-entering { animation: none; } }
+
+
+/* Desktop settings type roles: final H=16 values; mobile and dedicated content retain their styles.
+   Group by role without raising selector specificity. Dedicated components keep their cascade. */
+:where(body:not(.is-mobile)) .echoink-settings-demo h1,
+:where(body:not(.is-mobile)) .echoink-settings-demo h2,
+:where(body:not(.is-mobile)) .echoink-settings-demo .page-intro h2,
+:where(body:not(.is-mobile)) .echoink-settings-demo .detail-intro h2,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-settings-page-title,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page-heading h2,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-inline-title,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-inline-content>h2 {
+  font-size: calc(var(--font-text-size, 16px) * 1.375);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo h4,
+:where(body:not(.is-mobile)) .echoink-settings-demo .initialization h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .card-label h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .health-explanation h4,
+:where(body:not(.is-mobile)) .echoink-settings-demo .panel-heading h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .detail-card h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .empty-history h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-card-header h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-section-title h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-template-picker>h4,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-oauth-card h4,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-empty :is(h3,.settings-empty-title),
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-model-choice-actions,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-init-ready-copy h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .history-empty :is(h3,.settings-empty-title),
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-memory-correction-modal .echoink-memory-correction-card-title,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-picker-intro-title {
+  font-size: calc(var(--font-text-size, 16px) * 0.875);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .preview-tools>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .snapshot-time,
+:where(body:not(.is-mobile)) .echoink-settings-demo .status,
+:where(body:not(.is-mobile)) .echoink-settings-demo .check-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .status-facts dt,
+:where(body:not(.is-mobile)) .echoink-settings-demo .status-facts dd>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .score-reason span b,
+:where(body:not(.is-mobile)) .echoink-settings-demo .score-thresholds,
+:where(body:not(.is-mobile)) .echoink-settings-demo .health-explanation small,
+:where(body:not(.is-mobile)) .echoink-settings-demo .panel-total,
+:where(body:not(.is-mobile)) .echoink-settings-demo thead th,
+:where(body:not(.is-mobile)) .echoink-settings-demo .share-cell,
+:where(body:not(.is-mobile)) .echoink-settings-demo .number-badge,
+:where(body:not(.is-mobile)) .echoink-settings-demo .history-period,
+:where(body:not(.is-mobile)) .echoink-settings-demo .history-panel .text-button,
+:where(body:not(.is-mobile)) .echoink-settings-demo .setting-value,
+:where(body:not(.is-mobile)) .echoink-settings-demo #info-content .demo-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .protocol-list b,
+:where(body:not(.is-mobile)) .echoink-settings-demo .editor-status,
+:where(body:not(.is-mobile)) .echoink-settings-demo .preference-demo-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-badge,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-section-title p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-section-title>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-identity .settings-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-content .settings-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-template p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-avatar,
+:where(body:not(.is-mobile)) .echoink-settings-demo .review-generate-card span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-method-tags>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-default,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-list-heading,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-connection-state,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-demo-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-help,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-preview-bar,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-folders,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-folders>div>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-bottom>span>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-attachment>span:last-child,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-steps b,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-navigation-value,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-model-count,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-active-badge,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-protocol-pill,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-manager .codex-resource-summary,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-resource-detail .resources-editor-footer>*,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-field-label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-maintenance-history-page .history-count,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-memory-card-field>.echoink-memory-card-label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-memory-correction-modal .echoink-memory-correction-field-label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-skill-character-count,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-plan-heading,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-name small,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-count,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-purpose,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-none,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-summary,
+:where(body:not(.is-mobile)) .echoink-settings-demo .history-period.activity-heatmap-period,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-activity-heatmap :is(.todo-heatmap-month,.todo-heatmap-weekday,.todo-heatmap-legend),
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-tag {
+  font-size: calc(var(--font-text-size, 16px) * 0.6875);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .back-home,
+:where(body:not(.is-mobile)) .echoink-settings-demo .initialization p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .button,
+:where(body:not(.is-mobile)) .echoink-settings-demo .text-button,
+:where(body:not(.is-mobile)) .echoink-settings-demo .section-heading p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .health-card>p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .check-card>p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .health-explanation>p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .setting-copy>p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .setting-controls select,
+:where(body:not(.is-mobile)) .echoink-settings-demo .collapsed-summary,
+:where(body:not(.is-mobile)) .echoink-settings-demo .back-link,
+:where(body:not(.is-mobile)) .echoink-settings-demo .detail-card .detail-hint,
+:where(body:not(.is-mobile)) .echoink-settings-demo .history-filter,
+:where(body:not(.is-mobile)) .echoink-settings-demo .empty-history p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .protocol-list li,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-card-header p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-search,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-input,
+:where(body:not(.is-mobile)) .echoink-settings-demo .setting-controls>.settings-input,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-empty p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-back,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-range output,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-content h5,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-content dl,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-user-preview,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-field,
+:where(body:not(.is-mobile)) .echoink-settings-demo .review-field,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-archive-row .settings-danger,
+:where(body:not(.is-mobile)) .echoink-settings-demo .review-confirm,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-growth-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-about-section .echoink-about-version,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-saved-copy>p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-delete-confirm,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-field>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-field-label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-field>small,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-combobox-trigger,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-combobox-option,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-endpoint,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-endpoint code,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-oauth-card p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-oauth-card small,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-key-field>label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-custom-toggles>div,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-model-advanced h4,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-context-grid .provider-field>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-context-grid input,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-manual>label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-discovery-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-feedback,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-group-button,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-picker-empty,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-empty p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-location,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-editor-label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-feedback,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-confirm,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-tool-controls>label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-form-field>label>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-checkbox,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-tooltip,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-preview-bar select,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-tabs button,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-plan-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo [aria-labelledby=echoink-knowledge-init-tab-custom]>.echoink-knowledge-init-copy,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-route>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-bottom>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-awaiting,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-dirs label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-attachment,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-dirs select,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-meta,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-steps li,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-complete p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-section-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .setting-item-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo input:not([type=checkbox]):not([type=range]):not([type=radio]),
+:where(body:not(.is-mobile)) .echoink-settings-demo select,
+:where(body:not(.is-mobile)) .echoink-settings-demo:not(.echoink-mobile-finance-settings) button:not(:where(.echoink-account .heat-cell)):not(.codex-settings-tab):not(.codex-resource-tab):not(.text-button):not(.todo-heatmap-cell):not(.provider-group-button):not(.codex-provider-combobox-option):not(.echoink-about-logo):not(.echoink-settings-navigation-row):not(.echoink-origin-control):not(.codex-resource-row-name):not(:where(.directory-planner button)),
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-navigation-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-navigation-action,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-picker button.codex-provider-combobox-option,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-add-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-connection-header p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-model-header p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-endpoint-summary,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-manager .codex-resource-row-desc,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-resource-detail .resource-status-path-label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-resource-detail .resources-connection-summary code,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-resource-detail .codex-mcp-tool-policy-toggle,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-compact-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-personality,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-field-value,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-growth-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-growth-empty,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-card-desc,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-protocol-item,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-feature-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-tab,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-text,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-init-ready-copy p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-panel.initialization>.init-actions>button,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-panel .settings-card-header p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-panel .init-route>span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-progress>.echoink-knowledge-init-count,
+:where(body:not(.is-mobile)) .echoink-settings-demo .history-empty p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-step,
+:where(body:not(.is-mobile)) .echoink-settings-demo .health-explanation,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-help-panel,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-picker-intro-copy,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-mcp-server-field-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-saved-details,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resource-status-path-label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-add,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-notes>div,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-attachments,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-attachments strong,
+:where(body:not(.is-mobile)) .echoink-settings-demo .activity-range-trigger.echoink-origin-control,
+:where(body:not(.is-mobile)) .echoink-settings-demo .activity-range-field,
+:where(body:not(.is-mobile)) .echoink-settings-demo .activity-range-editor :is(.activity-range-mode,.activity-range-start,.activity-range-end),
+:where(body:not(.is-mobile)) .echoink-settings-demo .activity-range-actions button,
+:where(body:not(.is-mobile)) .echoink-settings-demo .activity-range-error,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-activity-heatmap .todo-history-day-detail,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-summary,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-organize-option,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-plan-path,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-status {
+  font-size: calc(var(--font-text-size, 16px) * 0.75);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-settings-tabs .codex-settings-tab,
+:where(body:not(.is-mobile)) .echoink-settings-demo .page-intro p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .status-facts dd,
+:where(body:not(.is-mobile)) .echoink-settings-demo .score-reason,
+:where(body:not(.is-mobile)) .echoink-settings-demo tbody th,
+:where(body:not(.is-mobile)) .echoink-settings-demo .setting-copy h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .setting-copy>label,
+:where(body:not(.is-mobile)) .echoink-settings-demo #info-content,
+:where(body:not(.is-mobile)) .echoink-settings-demo .detail-intro p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .toast,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-settings-body details>summary,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-agent-profile-card h4,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-user h4,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-template strong,
+:where(body:not(.is-mobile)) .echoink-settings-demo .review-generate-card strong,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-archive-row h4,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-about-section .echoink-about-desc,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-about-section .echoink-about-philosophy-title,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-about-section .echoink-about-principle,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-about-section .echoink-about-btn,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-saved-model strong,
+:where(body:not(.is-mobile)) .echoink-settings-demo .provider-enabled strong,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-tabs>button,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-title>strong,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-form-field>label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .resources-form-error,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .setting-item-name,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-navigation-title,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-saved-model,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-editor-description,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-manager .codex-resource-tabs>button.codex-resource-tab,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-manager button.codex-resource-row-name,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-resource-detail textarea.echoink-builtin-skill-textarea,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-compact-title,
+:where(body:not(.is-mobile)) .echoink-settings-demo textarea,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-heading,
+:where(body:not(.is-mobile)) .echoink-settings-demo .history-panel summary,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page-title-row .setting-item-name,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-memory-correction-intro,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-name,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-maintenance-pagination {
+  font-size: calc(var(--font-text-size, 16px) * 0.8125);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .standard-section>h2,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-empty :is(h3,.settings-empty-title),
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-section-title h2,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-page .settings-card-header>h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-page .settings-card-header h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .review-page .settings-card-header h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-about-section-title,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-section-header h3,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-add-title,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-feature-title,
+:where(body:not(.is-mobile)) .echoink-settings-demo .codex-knowledge-settings>.standard-section>.settings-card-header h3 {
+  font-size: calc(var(--font-text-size, 16px) * 0.9375);
+}
+@container settings (max-width:1000px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .setting-copy>p {
+    font-size: calc(var(--font-text-size, 16px) * 0.6875);
+  }
+}
+@container settings (max-width:760px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo h1 {
+    font-size: calc(var(--font-text-size, 16px) * 1.375);
+  }
+}
+@container settings (max-width:760px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-settings-tabs .codex-settings-tab {
+    font-size: calc(var(--font-text-size, 16px) * 0.8125);
+  }
+}
+@container settings (max-width:760px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .initialization p,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .table-note,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .health-card>p,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .check-card>p,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .settings-card-header p,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-description,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-manager .codex-resource-row-desc {
+    font-size: calc(var(--font-text-size, 16px) * 0.6875);
+  }
+}
+@container settings (max-width:760px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .init-actions .button,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .init-actions .text-button,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .page-intro p,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .status-facts dd,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .review-generate-card strong,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-title>strong,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-manager button.codex-resource-row-name {
+    font-size: calc(var(--font-text-size, 16px) * 0.75);
+  }
+}
+@container settings (max-width:760px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .card-label h3 {
+    font-size: calc(var(--font-text-size, 16px) * 0.875);
+  }
+}
+@container settings (max-width:520px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-settings-title h1,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .page-intro h2 {
+    font-size: calc(var(--font-text-size, 16px) * 1.25);
+  }
+}
+@container settings (max-width:520px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .back-home,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .status-facts dt,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .section-heading p,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .review-generate-card span,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-description,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .directory-add {
+    font-size: calc(var(--font-text-size, 16px) * 0.6875);
+  }
+}
+@container settings (max-width:520px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-settings-tabs .codex-settings-tab,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .review-generate-card strong,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-resource-tabs>button,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-resource-preferences-editor,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-resource-detail textarea.echoink-builtin-skill-textarea {
+    font-size: calc(var(--font-text-size, 16px) * 0.8125);
+  }
+}
+@container settings (max-width:520px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .health-card>p,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .check-card>p,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .setting-copy>p,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .setting-controls select,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-custom-toggles>div {
+    font-size: calc(var(--font-text-size, 16px) * 0.75);
+  }
+}
+@container settings (max-width:520px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .card-label h3 {
+    font-size: calc(var(--font-text-size, 16px) * 0.875);
+  }
+}
+@container settings (max-width:600px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .settings-note,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .init-route>span,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .init-bottom>span,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-meta {
+    font-size: calc(var(--font-text-size, 16px) * 0.6875);
+  }
+}
+@container settings (max-width:600px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .init-bottom .button {
+    font-size: calc(var(--font-text-size, 16px) * 0.75);
+  }
+}
+@container settings (max-width:380px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .codex-settings-tabs .codex-settings-tab {
+    font-size: calc(var(--font-text-size, 16px) * 0.8125);
+  }
+}
+
+/* Page geometry uses the available settings pane, including native settings tabs. */
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page {
+  --settings-page-title-size: calc(var(--font-text-size, 16px) * 1.375);
+  --settings-page-description-size: calc(var(--font-text-size, 16px) * .8125);
+  --settings-resource-row-padding: 13px 19px;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page-heading h2 {
+  font-size: var(--settings-page-title-size);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page-description {
+  font-size: var(--settings-page-description-size);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-card {
+  padding: 16px 18px;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-card-header,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-section-header {
+  margin-bottom: 12px;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-section.settings-card {
+  padding: 16px 18px;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-navigation-row {
+  padding-block: 13px;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-maintenance-pagination {
+  font-size: 12px;
+}
+/* Long-form settings editors retain their own readable text role. */
+:where(body:not(.is-mobile)) .echoink-settings-demo :is(.settings-editor, .preference-textarea, .echoink-resource-preferences-editor),
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-resource-detail textarea.echoink-builtin-skill-textarea {
+  font-size: calc(var(--font-text-size, 16px) * .8125);
+}
+/* Account tokens belong only to desktop settings and their explicitly marked dialogs.
+   The existing 19px name/dialog and all chart/price numbers remain dedicated roles. */
+:where(body:not(.is-mobile)) :is(.echoink-settings-demo .echoink-account, .echoink-settings-modal.echoink-account) {
+  --f10: calc(var(--font-text-size, 16px) * .6875);
+  --f11: calc(var(--font-text-size, 16px) * .75);
+  --f12: calc(var(--font-text-size, 16px) * .8125);
+  --f13: calc(var(--font-text-size, 16px) * .875);
+  --f14: calc(var(--font-text-size, 16px) * .9375);
+  --f21: calc(var(--font-text-size, 16px) * 1.375);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-account .metrics strong .unit {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-account .profile-actions button {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}
+:where(body:not(.is-mobile)) .echoink-settings-modal:not(.echoink-account-modal) .modal-title {
+  font-size: calc(var(--font-text-size, 16px) * 1.375);
+  line-height: 1.55;
+}
+:where(body:not(.is-mobile)) .echoink-settings-modal .setting-item-name {
+  font-size: calc(var(--font-text-size, 16px) * .8125);
+  line-height: 1.6;
+}
+:where(body:not(.is-mobile)) .echoink-settings-modal :is(.setting-item-description, .settings-note, .echoink-folder-status) {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+  line-height: 1.85;
+}
+:where(body:not(.is-mobile)) .echoink-settings-modal :is(input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea) {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}
+
+/* Folder drawers: the card owns the border; header and rows own full-width states. */
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-folder-purpose.echoink-settings-section.settings-card {
+  --folder-card-inset: 18px;
+  --folder-card-block: 16px;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  opacity: 1;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose-header {
+  display: grid;
+  gap: 7px;
+  padding: var(--folder-card-block) var(--folder-card-inset);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+  box-shadow: none;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose.is-expanded > .echoink-folder-purpose-header {
+  border-radius: 10px 10px 0 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose-header:is(:hover, :focus-within) {
+  background: var(--background-modifier-hover);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-header-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose-copy {
+  flex: 1;
+  min-width: 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose-title {
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose-header button.echoink-folder-disclosure.echoink-origin-control[data-slot=button] {
+  flex: 0 1 auto;
+  gap: 6px;
+  min-width: 0;
+  min-height: 21px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: calc(var(--font-text-size, 16px) * .8125);
+  font-weight: 500;
+  line-height: 1.6;
+  opacity: 1;
+  outline: none;
+  box-shadow: none;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-disclosure[aria-disabled=true] {
+  cursor: default;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-enable {
+  flex: none;
+  margin-left: auto;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-command-badges {
+  min-width: 0;
+  max-width: 100%;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-command-badge {
+  font-size: calc(var(--font-text-size, 16px) * .6875);
+  line-height: 1.4;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-header-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-header-summary > .echoink-folder-summary {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-header-summary > button {
+  flex: none;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-bindings {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px var(--folder-card-inset) var(--folder-card-block);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: calc(var(--font-text-size, 16px) * .75);
+  font-weight: 500;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-list-header > button {
+  flex: none;
+  margin-left: auto;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-binding-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-binding-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-inline: calc(-1 * var(--folder-card-inset));
+  padding: 7px var(--folder-card-inset);
+  border-radius: 0;
+  background: transparent;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-binding-row:is(:hover, :focus-within) {
+  background: var(--background-modifier-hover);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-binding-row button.echoink-folder-path.echoink-origin-control[data-slot=button] {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  outline: none;
+  box-shadow: none;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-path > span:not(.echoink-folder-icon) {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-binding-row > .icon-button {
+  flex: none;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-path-state {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 30%;
+  color: var(--text-error);
+  font-size: calc(var(--font-text-size, 16px) * .6875);
+  overflow-wrap: anywhere;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-binding-item .echoink-folder-organize.setting-item {
+  margin: 0;
+  padding: 0 0 0 22px;
+  border: 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-organize-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-organize-option > label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-write-location.setting-item {
+  margin: 0;
+  padding: 0;
+  gap: 12px;
+  border: 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-write-location .setting-item-control {
+  flex: 1 1 50%;
+  max-width: 60%;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-write-location .echoink-origin-control[data-slot=select-trigger] {
+  width: 100%;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo button.echoink-folder-purpose-help.echoink-origin-control[data-slot=button] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--secondary);
+  outline: none;
+  box-shadow: none;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose-help svg {
+  width: 14px;
+  height: 14px;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose-help .echoink-folder-help-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@container settings (max-width: 760px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page {
+    --settings-page-description-size: calc(var(--font-text-size, 16px) * .75);
+    --settings-resource-row-padding: 12px 15px;
+  }
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-section.settings-card {
+    padding: 14px;
+  }
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-folder-purpose.echoink-settings-section.settings-card {
+    --folder-card-inset: 14px;
+    --folder-card-block: 14px;
+    padding: 0;
+  }
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-write-location.setting-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+  }
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-write-location :is(.setting-item-info, .setting-item-control) {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: 100%;
+    align-self: stretch;
+  }
+}
+@container settings (max-width: 520px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page {
+    --settings-page-title-size: calc(var(--font-text-size, 16px) * 1.25);
+    --settings-resource-row-padding: 11px 12px;
+  }
+  :where(body:not(.is-mobile)) .echoink-settings-demo :is(.codex-settings-page-title, .echoink-settings-inline-title),
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page-title-row .setting-item-name,
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-inline-content > h2 {
+    font-size: calc(var(--font-text-size, 16px) * 1.25);
+  }
+}
+
+/* Descriptions keep their role in compact panes; legacy label-size rules do not shrink them. */
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-note,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-card-header p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .setting-copy > p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .initialization p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .section-heading p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .health-card > p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .check-card > p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .general-template p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .review-generate-card span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .settings-section-title p,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-route > span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .init-bottom > span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-meta,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-add,
+:where(body:not(.is-mobile)) .echoink-settings-demo .directory-name small {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page-title-row .setting-item-name {
+  font-size: calc(var(--font-text-size, 16px) * 1.375);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-binding-row > button.icon-button.echoink-origin-control[data-slot=button] {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo button.echoink-folder-help.echoink-origin-control[data-slot=button] {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+}
+@container settings (max-width: 520px) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-page-title-row .setting-item-name {
+    font-size: calc(var(--font-text-size, 16px) * 1.25);
+  }
+}
+
+/* Settings cumulative metrics use their dedicated final sizes. */
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-diary-progress dt {
+  font-size: calc(var(--font-text-size, 16px) * .8125);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-diary-progress dd strong {
+  font-size: calc(var(--font-text-size, 16px) * 1.375);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-diary-progress dd span,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-diary-activity-summary,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-selection-settings-template,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-selection-settings-preview,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-selection-settings-status,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-selection-settings-error {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-selection-settings-name label,
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-selection-settings-action > label {
+  font-size: calc(var(--font-text-size, 16px) * .8125);
+}
+
+/* The score explanation is a control; the score itself retains its numeric role. */
+:where(body:not(.is-mobile)) .echoink-settings-demo .health-score > .text-button {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}

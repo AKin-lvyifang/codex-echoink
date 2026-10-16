@@ -17,6 +17,10 @@ export function renderSettingsKnowledgeDashboard(
 ): void {
   const zh = state.language !== "en";
   const t = (cn: string, en: string) => zh ? cn : en;
+  const terms = (text: string) => text.replace(/wiki\/index\.md/giu, t("知识入口页", "Knowledge index"))
+    .replace(/\bTracker\b/giu, t("来源处理记录", "Source processing records"))
+    .replace(/\bRaw\b/giu, t("资料来源", "Sources")).replace(/\bWiki\b/giu, t("知识成果", "Knowledge"))
+    .replace(/\bInbox\b/giu, t("收件箱", "Inbox"));
   const time = (at: number) => at ? new Date(at).toLocaleString(zh ? "zh-CN" : "en-US", {
     month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
   }) : t("暂无记录", "No record");
@@ -26,7 +30,7 @@ export function renderSettingsKnowledgeDashboard(
   container.setAttr("aria-busy", String(state.loading));
   const heading = container.createDiv({ cls: "section-heading" });
   const headingCopy = heading.createDiv();
-  headingCopy.createEl("h3", { text: t("知识库 Dashboard", "Knowledge Dashboard") });
+  headingCopy.createEl("h3", { text: t("知识库看板", "Knowledge dashboard") });
   headingCopy.createEl("p", { cls: "settings-note", text: t("查看结构、资料状态与已确认的体检记录。", "Review structure, source status, and verified check history.") });
   const controls = heading.createDiv({ cls: "dashboard-actions" });
   if (state.snapshot) controls.createSpan({ cls: "snapshot-time", text: time(state.snapshot.generatedAt) });
@@ -48,7 +52,7 @@ export function renderSettingsKnowledgeDashboard(
   if (!state.expanded) {
     const summary = container.createDiv({ cls: "collapsed-summary" });
     summary.createSpan({ text: `${healthLabel} · ${available ? health.score : "—"}` });
-    summary.createSpan({ text: `Wiki ${snapshot.wiki.fileCount} · Raw ${snapshot.raw.fileCount} · Inbox ${snapshot.inbox.fileCount}` });
+    summary.createSpan({ text: `${t("知识成果", "Knowledge")} ${snapshot.wiki.fileCount} · ${t("资料来源", "Sources")} ${snapshot.raw.fileCount} · ${t("收件箱", "Inbox")} ${snapshot.inbox.fileCount}` });
     return;
   }
   const overview = container.createDiv({ cls: "health-overview" });
@@ -90,32 +94,27 @@ export function renderSettingsKnowledgeDashboard(
   checkTitle.createEl("strong", { text: freshness.lastCheckAt
     ? t(`${freshness.daysSinceCheck} 天前确认`, `Confirmed ${freshness.daysSinceCheck} days ago`)
     : t("暂无体检记录", "No verified check yet") });
-  check.createEl("p", { text: freshness.lastCheckAt
-    ? t("仅以成功的体检记录计算，失败和普通维护不会刷新确认时间。", "Only successful checks refresh this time. Failed checks and ordinary maintenance do not.")
-    : t("这代表缺少确认，不代表知识库已经损坏。", "This means confirmation is missing, not that the knowledge base is damaged.") });
-  const checkNote = check.createDiv({ cls: "check-note" });
-  setIcon(checkNote.createSpan(), "circle-help");
-  checkNote.createSpan({ text: t("维护成功不等于完成全库体检。", "Successful maintenance is not a full knowledge-base check.") });
+  if (freshness.lastCheckAt) check.createEl("p", { text: t("仅以成功的体检记录计算，失败和普通维护不会刷新确认时间。", "Only successful checks refresh this time. Failed checks and ordinary maintenance do not.") });
   for (const reason of health.scoreReasons) {
     const row = explanation.createDiv({ cls: "score-reason" });
-    row.createSpan({ text: knowledgeDashboardHealthReasonText(reason, state.language) });
+    const text = knowledgeDashboardHealthReasonText(reason, state.language);
+    row.createSpan({ text: reason.explanation === "已启用的用途位置不可用，请重新选择。" ? text : terms(text) });
     row.createEl("strong", { text: `−${reason.penalty}` });
   }
   if (available && !health.scoreReasons.length) explanation.createEl("p", { text: t("已检查的范围内没有扣分项。", "No deductions in the inspected scope.") });
-  explanation.createEl("p", { text: t(health.coverage, health.assessment === "limited" ? "Coverage is limited: each folder is capped at 3,000 files; some source content remains unread within the reading budget." : "Checks cover raw, wiki, wiki/index.md, Tracker, and Raw source status only.") });
+  explanation.createEl("p", { text: terms(t(health.coverage, health.assessment === "limited" ? "Coverage is limited: each folder is capped at 3,000 files; some source content remains unread within the reading budget." : "Checks cover sources, knowledge, the knowledge index, and source processing records only.")) });
   explanation.createEl("p", { text: t("尚未检查：断链、孤儿页面、过时内容和索引链接有效性。", "Not checked: broken links, orphan pages, stale content, and index-link validity.") });
-  explanation.createDiv({ cls: "score-thresholds", text: t(health.scoreThresholdText, "85+ healthy; 60–84 at risk; below 60 unhealthy. Missing raw, wiki, wiki/index.md, or Tracker deducts 24 points each and overrides the score to unhealthy.") });
+  explanation.createDiv({ cls: "score-thresholds", text: terms(t(health.scoreThresholdText, "85+ healthy; 60–84 at risk; below 60 unhealthy. Missing sources, knowledge, the knowledge index, or source processing records deducts 24 points each and overrides the score to unhealthy.")) });
   explanation.createEl("small", { text: t(health.scoreCheckNote, "Score = max(0, min(100, 100 − deductions)). Queues and failed maintenance do not deduct structural points.") });
   const facts = container.createEl("dl", { cls: "status-facts" });
   const runStatus = knowledgeRunStatusLabel(snapshot.lastRun.status, snapshot.lastRun.at, snapshot.lastRun.completion, snapshot.lastRun.pendingSourceCount, state.language);
   for (const [name, value] of [
     [t("最近成功体检", "Last successful check"), time(freshness.lastCheckAt)],
     [t("连续体检", "Check streak"), t(`${health.streakDays} 天`, `${health.streakDays} days`)],
-    [t("最近维护", "Latest maintenance"), snapshot.lastRun.at ? runStatus : t("暂无记录", "No record")],
-    ["Tracker", snapshot.tracker.exists ? t(`已追踪 ${snapshot.tracker.trackedCount} 项`, `${snapshot.tracker.trackedCount} tracked`) : t("缺失", "Missing")]
+    [t("最近维护", "Latest maintenance"), snapshot.lastRun.at ? runStatus : t("暂无记录", "No record")]
   ]) { const fact = facts.createDiv(); fact.createEl("dt", { text: name }); fact.createEl("dd", { text: value }); }
   const panels = container.createDiv({ cls: "content-status" });
-  const wiki = table(panels, t("Wiki 结构", "Wiki structure"), snapshot.wiki.fileCount, [t("分类", "Category"), t("数量", "Count"), t("占比", "Share"), t("今日新增", "Added today")]);
+  const wiki = table(panels, t("知识成果结构", "Knowledge structure"), snapshot.wiki.fileCount, [t("分类", "Category"), t("数量", "Count"), t("占比", "Share"), t("今日新增", "Added today")]);
   for (const group of snapshot.wiki.groups) {
     const names: Record<string, string> = { 概念: "Concepts", 实体: "Entities", 主题: "Topics", 来源: "Sources", 其他: "Other" };
     const row = cells(wiki, [zh ? group.label : names[group.label] ?? group.label, String(group.totalCount), "", group.todayCount ? `+${group.todayCount}` : "—"]);
@@ -124,17 +123,17 @@ export function renderSettingsKnowledgeDashboard(
     share.createDiv({ cls: "wiki-share-track", attr: { "aria-hidden": "true" } })
       .createSpan().style.width = `${Math.max(0, Math.min(100, group.sharePercent))}%`;
   }
-  wiki.closest(".data-panel")?.createEl("p", { cls: "table-note", text: t("占比以 Wiki 一级分类目录内的文件为分母；入口页等根目录文件只计入总数。", "Shares use files inside first-level Wiki category folders. Root-level files such as index.md count toward the total only.") });
-  const queues = table(panels, t("Raw / Inbox 状态", "Raw / Inbox status"), snapshot.raw.fileCount + snapshot.inbox.fileCount, [t("区域", "Area"), t("总数", "Total"), t("今日新增", "Added today"), t("待处理", "Pending"), t("待校准", "Calibration")]);
-  const raw = cells(queues, ["Raw", String(snapshot.raw.fileCount), String(snapshot.raw.todayCount), "", ""]);
+  wiki.closest(".data-panel")?.createEl("p", { cls: "table-note", text: t("占比以知识成果一级分类目录内的文件为分母；入口页等根目录文件只计入总数。", "Shares use files inside first-level knowledge category folders. Root-level files such as index.md count toward the total only.") });
+  const queues = table(panels, t("资料来源 / 收件箱状态", "Sources / Inbox status"), snapshot.raw.fileCount + snapshot.inbox.fileCount, [t("区域", "Area"), t("总数", "Total"), t("今日新增", "Added today"), t("待处理", "Pending"), t("待校准", "Calibration")]);
+  const raw = cells(queues, [t("资料来源", "Sources"), String(snapshot.raw.fileCount), String(snapshot.raw.todayCount), "", ""]);
   for (const [index, count] of [[3, snapshot.raw.digestStatus.pending + snapshot.raw.digestStatus.changed], [4, snapshot.raw.digestStatus.calibration]]) {
     const open = (raw.children[index] as HTMLElement).createEl("button", { cls: "queue-count", text: String(count), attr: {
-      type: "button", title: t("在文件列表中打开 Raw 目录", "Open the Raw folder in the file explorer"),
-      "aria-label": t(`${index === 3 ? "待处理" : "待校准"} ${count} 项，打开 Raw 目录`, `${count} ${index === 3 ? "pending" : "needing calibration"}; open the Raw folder`)
+      type: "button", title: t("在文件列表中打开资料来源目录", "Open source folders in the file explorer"),
+      "aria-label": t(`${index === 3 ? "待处理" : "待校准"} ${count} 项，打开资料来源目录`, `${count} ${index === 3 ? "pending" : "needing calibration"}; open source folders`)
     } });
     open.onclick = actions.onOpenRaw;
   }
-  cells(queues, ["Inbox", String(snapshot.inbox.fileCount), String(snapshot.inbox.todayCount), String(snapshot.inbox.fileCount), "—"]);
+  cells(queues, [t("收件箱", "Inbox"), String(snapshot.inbox.fileCount), String(snapshot.inbox.todayCount), String(snapshot.inbox.fileCount), "—"]);
   queues.closest(".data-panel")?.createEl("p", { cls: "table-note", text: t("今日新增依据文件属性统计；待处理数量用于整理提示，不扣结构分。", "Added today uses file metadata. Pending counts are organization suggestions and do not reduce structural health.") });
   const history = container.createEl("section", { cls: "history-panel" });
   const historyHeading = history.createDiv({ cls: "panel-heading" });
@@ -163,7 +162,7 @@ function button(container: HTMLElement, label: string, icon: string, onClick: ()
 function table(container: HTMLElement, title: string, total: number, columns: string[]): HTMLTableSectionElement {
   const panel = container.createDiv({ cls: "data-panel" });
   const heading = panel.createDiv({ cls: "panel-heading" });
-  const name = heading.createEl("h3"); setIcon(name.createSpan(), title.startsWith("Wiki") ? "book-open" : "inbox"); name.createSpan({ text: title });
+  const name = heading.createEl("h3"); setIcon(name.createSpan(), (title.startsWith("知识成果") || title.startsWith("Knowledge")) ? "book-open" : "inbox"); name.createSpan({ text: title });
   heading.createSpan({ cls: "panel-total", text: String(total) });
   const table = panel.createDiv({ cls: "table-wrap" }).createEl("table");
   const head = table.createEl("thead").createEl("tr");

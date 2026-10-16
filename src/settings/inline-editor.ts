@@ -7,7 +7,7 @@ export function mountSettingsEditor(modal: Modal, host: HTMLElement, backLabel: 
   const back = host.createEl("button", { cls: "settings-back text-button", attr: { type: "button" } });
   setIcon(back.createSpan(), "chevron-left");
   back.createSpan({ text: backLabel });
-  const surface = host.createDiv({ cls: "echoink-settings-inline-surface" });
+  const surface = host.createDiv({ cls: "echoink-settings-inline-surface echoink-settings-modal" });
   modal.containerEl = surface;
   modal.modalEl = surface;
   modal.titleEl = surface.createEl("h2", { cls: "echoink-settings-inline-title" });

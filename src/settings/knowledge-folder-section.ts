@@ -13,7 +13,7 @@ const LABELS: Record<KnowledgeRootRole, [string, string]> = {
   raw: ["资料来源", "Sources"], wiki: ["知识成果", "Knowledge"], projects: ["项目", "Projects"], outputs: ["输出", "Outputs"], inbox: ["收件箱", "Inbox"], journal: ["日记", "Journal"], work: ["工作", "Work"], archive: ["归档", "Archive"], templates: ["模板", "Templates"], assets: ["附件", "Attachments"]
 };
 const DESCRIPTIONS: Record<KnowledgeRootRole, [string, string]> = {
-  raw: ["保存原始材料。", "Keep original material."], wiki: ["保存提炼后的主题知识。", "Keep distilled knowledge by topic."], projects: ["保存项目型知识。", "Keep project knowledge."], outputs: ["保存英文日记、表达库等产物。", "Keep English diary, expression library, and other outputs."], inbox: ["保存临时笔记。", "Keep temporary notes."], journal: ["保存日常记录，沿用 Obsidian 日记设置。", "Keep daily records and respect Obsidian daily-note settings."], work: ["保存正在整理的工作资料。", "Keep material used for ongoing work."], archive: ["保存已归档的内容。", "Keep archived content."], templates: ["保存笔记模板。", "Keep note templates."], assets: ["保存图片等附件；收藏的 PDF 仍属于资料来源。", "Keep images and attachments; collected PDFs stay in Sources."]
+  raw: ["保存原始收藏和材料。", "Keep original collections and source material."], wiki: ["保存提炼后的主题知识。", "Keep distilled knowledge by topic."], projects: ["保存项目型知识。", "Keep project knowledge."], outputs: ["保存英文日记、表达库等产物。", "Keep English diary, expression library, and other outputs."], inbox: ["保存临时笔记。", "Keep temporary notes."], journal: ["保存日常记录。", "Keep daily records."], work: ["保存正在整理的工作资料。", "Keep material used for ongoing work."], archive: ["保存已归档的内容。", "Keep archived content."], templates: ["保存笔记模板。", "Keep note templates."], assets: ["保存图片等引用附件；收藏的 PDF 仍属于资料来源。", "Keep images and referenced attachments; collected PDFs stay in Sources."]
 };
 const label = (role: KnowledgeRootRole, zh: boolean) => LABELS[role][zh ? 0 : 1];
 
@@ -26,6 +26,21 @@ export function knowledgeFoldersConfigured(config: KnowledgeFolderBindings | nul
   return enabled.length > 0
     && (!config.roles.raw.enabled || (["wiki", "projects"] as const).some(role => config.roles[role].enabled && !!config.roles[role].writePath))
     && enabled.every(role => config.roles[role].readPaths.every(path => !exists || exists(path)));
+}
+
+/** Summarize saved choices, never an uncommitted draft or assumed default roots. */
+export function knowledgeFolderPlanSummary(config: KnowledgeFolderBindings | null | undefined, exists: (path: string) => boolean, zh: boolean): string {
+  if (!knowledgeFoldersConfigured(config)) return zh ? "尚未初始化" : "Not initialized";
+  if (KNOWLEDGE_ROOT_ROLES.some(role => config!.roles[role].enabled && !config!.roles[role].native && config!.roles[role].readPaths.some(path => !exists(path)))) return zh ? "有目录已失效" : "Some folders are no longer available";
+  const count = (roles: KnowledgeRootRole[]) => roles.reduce((total, role) => total + (config!.roles[role].enabled ? config!.roles[role].readPaths.filter(exists).length : 0), 0);
+  const inbox = config!.roles.inbox.enabled ? (zh ? "收件箱已启用" : "Inbox enabled") : (zh ? "收件箱未启用" : "Inbox disabled");
+  return zh ? `来源 ${count(["raw"])} 个 · 成果 ${count(["wiki", "projects"])} 个 · ${inbox}` : `${count(["raw"])} source folders · ${count(["wiki", "projects"])} result folders · ${inbox}`;
+}
+
+function folderErrorText(error: unknown, zh: boolean): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (/revision|stale|预览.*(?:变化|过期)|目录.*已变化/iu.test(message)) return zh ? "目录已变化，请重新预览" : "Folders have changed. Preview the plan again.";
+  return message.replace(/默认保存位置/gu, zh ? "收藏保存位置" : "Collection destination") || (zh ? "目录操作未完成，请重试" : "Folder operation did not complete. Try again.");
 }
 
 /** Editing only changes this draft. Files and saved settings belong to the service. */
@@ -67,7 +82,7 @@ export class KnowledgeFolderDraft {
   }
   bind(role: KnowledgeRootRole, path: string, previous?: string): void {
     const binding = this.bindings.roles[role];
-    if (path === previous) return;
+    if (path === previous) { binding.enabled = true; return; }
     if (previous) binding.readPaths = binding.readPaths.map(item => item === previous ? path : item);
     else binding.readPaths = role === "raw" ? [...binding.readPaths, path] : [path];
     binding.readPaths = [...new Set(binding.readPaths)];
@@ -119,6 +134,7 @@ export class KnowledgeFolderSection {
   private opened = false;
   private animateEntry = false;
   private readonly expandedRoles = new Set<KnowledgeRootRole>();
+  private readonly selectingRoles = new Set<KnowledgeRootRole>();
   private readonly drawerId = ++folderDrawerSequence;
   private timer: number | null = null;
   private job: Readonly<KnowledgeInitializationJob> | null = null;
@@ -143,7 +159,7 @@ export class KnowledgeFolderSection {
       binding.readPaths = folder ? [folder] : []; binding.writePath = folder || null;
       binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(path => binding.readPaths.includes(path));
     }
-    return new KnowledgeFolderDraft(effective, knowledgeFoldersConfigured(saved, path => this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder));
+    return new KnowledgeFolderDraft(effective, knowledgeFoldersConfigured(saved));
   }
   get showDashboard(): boolean { return this.readDraft().initialized; }
   get hasDraft(): boolean { return this.draft.dirty; }
@@ -156,10 +172,9 @@ export class KnowledgeFolderSection {
   }
   render(page: HTMLElement, zh: boolean): void {
     if (this.localOpen) { this.renderDetail(page, zh); return; }
-    const section = createSettingsSection(page, { title: zh ? "知识库目录" : "Knowledge folders", surface: "flat" });
-    const group = createSettingsGroup(section);
-    createSettingsNavigationRow(group, {
-      title: this.showDashboard ? (zh ? "修改目录方案" : "Edit folder plan") : (zh ? "初始化" : "Initialize"),
+    createSettingsNavigationRow(page, {
+      title: zh ? "目录方案" : "Folder plan",
+      description: knowledgeFolderPlanSummary(this.plugin.settings.knowledgeBase.folderBindings, path => this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder, zh),
       focusKey: "knowledge:onboarding",
       onActivate: () => {
         if (!this.draft.dirty) { this.draft = this.readDraft(); this.preview = null; this.expandedRoles.clear(); }
@@ -171,7 +186,7 @@ export class KnowledgeFolderSection {
   renderDetail(container: HTMLElement, zh: boolean): void {
     if (!this.opened) { this.draft = this.readDraft(); this.opened = true; this.animateEntry = true; }
     const page = createSettingsPage(container, {
-      title: this.preview ? (zh ? "预览目录方案" : "Preview folder plan") : this.draft.initialized ? (zh ? "修改目录方案" : "Edit folder plan") : (zh ? "初始化知识库" : "Initialize knowledge base"),
+      title: this.preview ? (zh ? "预览目录方案" : "Preview folder plan") : this.draft.initialized ? (zh ? "目录方案" : "Folder plan") : (zh ? "初始化知识库" : "Initialize knowledge base"),
       detail: true, backLabel: zh ? (this.preview ? "返回修改" : "返回知识库") : (this.preview ? "Back to editing" : "Back to knowledge"),
       onBack: () => this.back()
     });
@@ -232,117 +247,132 @@ export class KnowledgeFolderSection {
     panel.createEl("p", { text: zh ? "目录修改尚未应用。返回时可以保留草稿，或放弃这次修改。" : "Your changes have not been applied. Keep the draft or discard it when leaving." });
     const actions = panel.createDiv({ cls: "echoink-knowledge-init-actions" });
     createOriginButton(actions, { text: zh ? "继续编辑" : "Keep editing" }).onclick = () => { this.leavePrompt = false; this.pendingLeave = null; this.redraw(); };
-    createOriginButton(actions, { text: zh ? "放弃修改" : "Discard changes" }).onclick = () => { this.draft = this.readDraft(); this.preview = null; this.expandedRoles.clear(); this.error = ""; this.close(); };
+    createOriginButton(actions, { cls: "settings-danger", text: zh ? "放弃修改" : "Discard changes" }).onclick = () => { this.draft = this.readDraft(); this.preview = null; this.expandedRoles.clear(); this.error = ""; this.close(); };
     createOriginButton(actions, { cls: "mod-cta", text: zh ? "保留草稿并返回" : "Keep draft and leave" }).onclick = () => this.close();
   }
   private renderRole(group: HTMLElement, role: KnowledgeRootRole, zh: boolean, locked: boolean): void {
     const binding = this.draft.bindings.roles[role];
+    const created = this.draft.createdRoles.has(role) && !binding.native;
+    const missing = created || binding.native ? [] : binding.readPaths.filter(path => !(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder));
     const purpose = createSettingsSection(group, { surface: "group" });
     purpose.addClass("echoink-folder-purpose"); purpose.setAttr("data-folder-role", role);
     const header = purpose.createDiv({ cls: "echoink-folder-purpose-header" });
+    const top = header.createDiv({ cls: "echoink-folder-header-top" });
     const contentId = `echoink-folder-${this.drawerId}-${role}`;
-    const disclosure = createOriginButton(header, {
-      cls: "echoink-folder-disclosure text-button",
+    const copy = top.createDiv({ cls: "echoink-folder-purpose-copy" });
+    const title = copy.createDiv({ cls: "echoink-folder-purpose-title setting-item-name" });
+    const disclosure = createOriginButton(title, {
+      cls: "echoink-folder-disclosure text-button", text: label(role, zh),
       attr: { "aria-label": label(role, zh), "aria-controls": contentId, "aria-expanded": String(binding.enabled && this.expandedRoles.has(role)) }
     });
-    disclosure.disabled = locked || !binding.enabled;
-    const copy = disclosure.createDiv({ cls: "echoink-folder-purpose-copy" });
-    const title = copy.createDiv({ cls: "echoink-folder-purpose-title setting-item-name" });
-    title.createSpan({ text: label(role, zh) });
-    const tags = title.createSpan({ cls: "echoink-folder-tags" });
-    if (["raw", "wiki", "projects"].includes(role)) tags.createSpan({ cls: "echoink-folder-tag", text: "Ask" });
-    if (role === "raw" || role === "wiki" || role === "projects") tags.createSpan({ cls: "echoink-folder-tag", text: role === "raw" ? (zh ? "维护来源" : "Maintenance source") : (zh ? "维护成果" : "Maintenance output") });
-    copy.createDiv({ cls: "echoink-folder-description", text: DESCRIPTIONS[role][zh ? 0 : 1] });
-    const summary = copy.createDiv({ cls: "echoink-folder-summary" });
-    const updateSummary = () => summary.setText(binding.readPaths.join("、") || (binding.native ? (zh ? "Vault 根目录" : "Vault root") : binding.enabled ? (zh ? "尚未选择目录" : "No folder selected") : (zh ? "未启用" : "Disabled")));
-    updateSummary();
+    // A disabled purpose stays readable; only its disclosure action is unavailable.
+    disclosure.setAttr("aria-disabled", String(locked || !binding.enabled));
+    const help = title.createSpan({ cls: "echoink-settings-help" });
+    const helpId = `echoink-folder-purpose-${this.drawerId}-${role}-help`;
+    const helpTrigger = createOriginButton(help, { cls: "echoink-folder-purpose-help is-icon", attr: { "aria-labelledby": helpId } });
+    setIcon(helpTrigger, "circle-alert");
+    helpTrigger.createSpan({ cls: "echoink-folder-help-label", text: zh ? `${label(role, zh)}用途说明` : `${label(role, zh)} purpose`, attr: { id: helpId } });
+    attachSettingsTooltip(helpTrigger, DESCRIPTIONS[role][zh ? 0 : 1], help);
+    help.addEventListener("click", event => event.stopPropagation());
+    help.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") event.stopPropagation(); });
+    const tags = title.createSpan({ cls: "echoink-folder-tags echoink-folder-command-badges" });
+    if (["raw", "wiki", "projects"].includes(role)) for (const command of ["/ask", "/maintain"]) tags.createSpan({ cls: "echoink-folder-tag echoink-folder-command-badge", text: command });
     setIcon(disclosure.createSpan({ cls: "echoink-folder-chevron", attr: { "aria-hidden": "true" } }), "chevron-right");
-    const nativeId = role === "journal" ? "daily-notes" : role === "templates" ? "templates" : null;
-    const nativeOptions = nativeId ? (this.plugin.app as unknown as { internalPlugins?: { plugins?: Record<string, { instance?: { options?: { folder?: string } } }> } }).internalPlugins?.plugins?.[nativeId]?.instance?.options : undefined;
-    const native = nativeId && (binding.native || typeof nativeOptions?.folder === "string") ? nativeId : null;
-    const enabled = createOriginSwitch(header, { cls: "echoink-folder-enable", attr: { "aria-label": label(role, zh), "data-folder-control": "enabled" } });
+    const enabled = createOriginSwitch(top, { cls: "echoink-folder-enable", attr: { "aria-label": label(role, zh), "data-folder-control": "enabled" } });
     enabled.setAttr("role", "switch");
-    enabled.checked = binding.enabled; enabled.disabled = locked || !!native;
+    enabled.checked = binding.enabled; enabled.disabled = locked || !!binding.native || this.selectingRoles.has(role);
     enabled.onchange = () => {
-      this.draft.enable(role, enabled.checked);
-      if (native && enabled.checked) {
-        binding.native = true;
-        const path = nativeOptions?.folder;
-        if (typeof path === "string") {
-          binding.readPaths = path ? [path] : []; binding.writePath = path || null;
-          binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(item => binding.readPaths.includes(item));
-        }
+      if (locked || binding.native || this.selectingRoles.has(role)) return;
+      if (enabled.checked) {
+        // Selection is provisional. Cancellation must leave both draft and switch off.
+        enabled.checked = false;
+        this.chooseFolder(role, zh, binding.readPaths[0]);
+      } else {
+        this.draft.enable(role, false); this.expandedRoles.delete(role);
+        this.error = ""; this.redraw();
       }
-      if (enabled.checked) this.expandedRoles.add(role); else this.expandedRoles.delete(role);
-      this.error = ""; this.redraw();
     };
+    const summaryLine = header.createDiv({ cls: "echoink-folder-header-summary" });
+    const path = binding.readPaths[0];
+    const summary = !binding.enabled ? (zh ? "未启用" : "Disabled")
+      : missing.length ? (zh ? "原目录已失效" : "Original folder is no longer available")
+      : created ? `${zh ? "待创建" : "To be created"} · ${path ?? ""}`
+      : path ? `${path}${binding.readPaths.length > 1 ? (zh ? ` 等 ${binding.readPaths.length} 个文件夹` : ` and ${binding.readPaths.length - 1} more folders`) : ""}`
+      : binding.native ? (zh ? "仓库根目录" : "Vault root") : (zh ? "原目录已失效" : "Original folder is no longer available");
+    summaryLine.createDiv({ cls: "echoink-folder-summary", text: summary });
+    if (binding.enabled && !binding.native && (missing.length || !binding.readPaths.length)) {
+      const reselect = createOriginButton(summaryLine, { text: zh ? "重新选择" : "Choose again" });
+      reselect.disabled = locked || this.selectingRoles.has(role);
+      reselect.onclick = event => { event.stopPropagation(); this.chooseFolder(role, zh, missing[0]); };
+    }
     const nested = purpose.createDiv({ cls: "echoink-folder-bindings", attr: { id: contentId } });
     const updateExpanded = () => {
       const expanded = binding.enabled && this.expandedRoles.has(role);
       nested.hidden = !expanded;
       disclosure.setAttr("aria-expanded", String(expanded));
       purpose.toggleClass("is-expanded", expanded);
-      if (!expanded) nested.querySelectorAll<HTMLElement>(".echoink-folder-help").forEach(trigger => trigger.dispatchEvent(new trigger.ownerDocument.defaultView!.Event("blur")));
+      if (!expanded) purpose.querySelectorAll<HTMLElement>(".echoink-folder-help, .echoink-folder-purpose-help").forEach(trigger => trigger.dispatchEvent(new trigger.ownerDocument.defaultView!.Event("blur")));
     };
     const toggleExpanded = () => {
-      if (locked || !binding.enabled) return;
+      if (locked || !binding.enabled || this.selectingRoles.has(role)) return;
       if (this.expandedRoles.has(role)) this.expandedRoles.delete(role); else this.expandedRoles.add(role);
       updateExpanded();
     };
-    disclosure.onclick = toggleExpanded;
+    disclosure.onclick = event => { event.stopPropagation(); toggleExpanded(); };
     disclosure.onkeydown = event => {
       if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault(); toggleExpanded();
+      event.preventDefault(); event.stopPropagation(); toggleExpanded();
+    };
+    header.onclick = event => {
+      // Let Origin/Radix receive the original switch event before deciding
+      // whether a click on the header's empty area should fold the drawer.
+      if ((event.target as Element).closest("button, input, select, a")) return;
+      toggleExpanded();
     };
     updateExpanded();
     if (!binding.enabled) return;
-    if (native) {
-      new OriginSetting(nested).setName(zh ? "沿用 Obsidian 设置" : "Use Obsidian settings").setDesc(binding.readPaths.join("、") || (zh ? "Vault 根目录" : "Vault root"))
-        .addOriginButton(button => button.setButtonText(zh ? "编辑原生设置" : "Native settings").setDisabled(locked).onClick(() => {
+    if (binding.native) {
+      new OriginSetting(nested).setName(zh ? "沿用 Obsidian 设置" : "Use Obsidian settings").setDesc(binding.readPaths.join("、") || (zh ? "仓库根目录" : "Vault root"))
+        .addOriginButton(button => button.setButtonText(zh ? "编辑 Obsidian 设置" : "Edit Obsidian settings").setDisabled(locked).onClick(() => {
           const settings = (this.plugin.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
-          settings?.open(); settings?.openTabById(native);
+          settings?.open(); settings?.openTabById(role === "journal" ? "daily-notes" : "templates");
         }));
-    } else if (this.draft.createdRoles.has(role)) {
-      let refreshOrganize = () => {};
-      new OriginSetting(nested).setName(zh ? "目录名称" : "Folder name").addOriginText(input => {
-        input.inputEl.setAttribute("aria-label", `${label(role, zh)} · ${zh ? "目录名称" : "Folder name"}`);
-        input.setValue(this.draft.names.get(role) ?? "").setDisabled(locked).onChange(name => { this.draft.names.set(role, name); this.draft.updateNew(role); updateSummary(); refreshOrganize(); this.updateFooter(zh, locked); });
-      });
-      new OriginSetting(nested).setName(zh ? "创建于" : "Create in").addOriginButton(button => button.setButtonText(this.draft.parents.get(role) || (zh ? "Vault 根目录" : "Vault root")).setDisabled(locked).onClick(() => void this.pickFolder(true, zh).then(parent => {
-        if (parent === null) return;
-        this.draft.parents.set(role, parent); this.draft.updateNew(role); this.redraw();
-      })));
-      const organize = nested.createDiv({ cls: "echoink-folder-new-organize" });
-      refreshOrganize = () => {
-        disposeOriginControls(organize); organize.empty();
-        for (const path of binding.readPaths) this.renderOrganize(organize, role, path, zh, locked);
-      };
-      refreshOrganize();
-    } else {
-      for (const path of binding.readPaths) {
-        const item = nested.createDiv({ cls: "echoink-folder-binding", attr: { "data-folder-path": path } });
-        const line = item.createDiv({ cls: "echoink-folder-path-row" });
-        const choose = createOriginButton(line, { cls: "echoink-folder-path text-button", attr: { "aria-label": `${zh ? "重新选择" : "Choose another folder"} · ${path}` } });
-        setIcon(choose.createSpan({ cls: "echoink-folder-icon" }), "folder"); choose.createSpan({ text: path });
-        choose.disabled = locked; choose.onclick = () => this.chooseFolder(role, zh, path);
-        const remove = createOriginButton(line, { cls: "is-icon icon-button", attr: { "aria-label": zh ? "解除绑定" : "Unbind folder", title: zh ? "解除绑定" : "Unbind folder" } });
-        setIcon(remove, "trash-2"); remove.disabled = locked;
-        remove.onclick = () => { this.draft.unbind(role, path); this.error = ""; this.redraw(); };
-        this.renderOrganize(item, role, path, zh, locked);
-      }
-      if (!binding.readPaths.length || role === "raw") {
-        const add = createOriginButton(nested, { cls: "text-button", text: binding.readPaths.length ? (zh ? "添加来源目录" : "Add source folder") : (zh ? "选择目录" : "Choose folder") });
-        add.disabled = locked; add.onclick = () => this.chooseFolder(role, zh);
-      }
+      return;
     }
-    if (role === "raw" && binding.readPaths.length > 1) new OriginSetting(nested).setName(zh ? "新资料保存到" : "Save new material to")
+    const listHeader = nested.createDiv({ cls: "echoink-folder-list-header" });
+    listHeader.createSpan({ text: zh ? "文件夹" : "Folders" });
+    if (role === "raw" && !created) {
+      const add = createOriginButton(listHeader, { cls: "is-icon icon-button", attr: { "aria-label": zh ? "添加来源目录" : "Add source folder" } });
+      setIcon(add, "plus"); add.disabled = locked || this.selectingRoles.has(role);
+      add.onclick = () => this.chooseFolder(role, zh);
+    }
+    for (const path of binding.readPaths) {
+      const item = nested.createDiv({ cls: "echoink-folder-binding echoink-folder-binding-item", attr: { "data-folder-path": path } });
+      const line = item.createDiv({ cls: "echoink-folder-path-row echoink-folder-binding-row" });
+      const choose = createOriginButton(line, { cls: "echoink-folder-path text-button", attr: { "aria-label": `${zh ? "重新选择" : "Choose another folder"} · ${path}` } });
+      setIcon(choose.createSpan({ cls: "echoink-folder-icon" }), "folder");
+      choose.createSpan({ text: created ? `${zh ? "待创建" : "To be created"} · ${path}` : path });
+      choose.disabled = locked || this.selectingRoles.has(role); choose.onclick = () => this.chooseFolder(role, zh, path);
+      if (missing.includes(path)) {
+        item.addClass("is-invalid");
+        line.createSpan({ cls: "echoink-folder-path-state", text: zh ? "原目录已失效" : "Unavailable" });
+      }
+      const remove = createOriginButton(line, { cls: "is-icon icon-button", attr: { "aria-label": `${zh ? "解绑文件夹" : "Unbind folder"} · ${path}` } });
+      setIcon(remove, "trash-2"); remove.disabled = locked;
+      remove.onclick = () => { this.draft.unbind(role, path); this.error = ""; this.redraw(); };
+      this.renderOrganize(item, role, path, zh, locked);
+    }
+    if (!binding.readPaths.length) {
+      const select = createOriginButton(nested, { text: zh ? "选择目录" : "Choose folder" });
+      select.disabled = locked || this.selectingRoles.has(role); select.onclick = () => this.chooseFolder(role, zh);
+    }
+    if (role === "raw" && binding.readPaths.length > 1) new OriginSetting(nested).setClass("echoink-folder-write-location").setName(zh ? "收藏保存位置" : "Collection destination")
       .addOriginDropdown(this.plugin.app, select => {
-        select.selectEl.setAttribute("aria-label", zh ? "新资料保存到" : "Save new material to");
-        select.addOption("unbound", zh ? "请选择" : "Choose");
+        select.selectEl.setAttribute("aria-label", zh ? "收藏保存位置" : "Collection destination");
+        select.addOption("unbound", zh ? "请选择收藏保存位置" : "Choose collection destination");
         for (const path of binding.readPaths) select.addOption(path, path);
         select.setValue(binding.writePath ?? "unbound").setDisabled(locked).onChange(path => { binding.writePath = path === "unbound" ? null : path; this.updateFooter(zh, locked); });
       });
-    if (native) for (const path of binding.readPaths) this.renderOrganize(nested, role, path, zh, locked);
   }
   private renderOrganize(parent: HTMLElement, role: KnowledgeRootRole, path: string, zh: boolean, locked: boolean): void {
     const row = new OriginSetting(parent).setClass("echoink-folder-organize");
@@ -369,12 +399,29 @@ export class KnowledgeFolderSection {
   }
 
   private chooseFolder(role: KnowledgeRootRole, zh: boolean, previous?: string): void {
-    void this.pickFolder(false, zh).then(path => { if (path === null) return; this.draft.bind(role, path, previous); this.error = ""; this.redraw(); });
+    if (this.selectingRoles.has(role) || this.busy) return;
+    this.selectingRoles.add(role);
+    const created = this.draft.createdRoles.has(role);
+    const selection = created ? this.configureNewFolder(role, zh) : this.pickFolder(false, zh, previous);
+    this.redraw();
+    void selection.then(result => {
+      if (result === null) return;
+      if (typeof result === "string") this.draft.bind(role, result, previous);
+      else {
+        this.draft.names.set(role, result.name); this.draft.parents.set(role, result.parent);
+        this.draft.enable(role, true);
+      }
+      this.expandedRoles.add(role); this.error = "";
+    }).catch(error => { this.error = folderErrorText(error, zh); })
+      .finally(() => {
+        this.selectingRoles.delete(role); this.redraw();
+        this.root?.querySelector<HTMLElement>(`[data-folder-role="${role}"] [data-folder-control="enabled"]`)?.focus({ preventScroll: true });
+      });
   }
   private updateFooter(zh: boolean, locked: boolean): void {
     if (!this.footer || !this.issueEl) return;
     disposeOriginControls(this.footer); this.footer.empty(); this.issueEl.empty();
-    for (const issue of this.draft.issues) this.issueEl.createDiv({ cls: "settings-error", text: issue });
+    for (const issue of this.draft.issues) this.issueEl.createDiv({ cls: "settings-error", text: folderErrorText(issue, zh) });
     if (!this.draft.dirty) return;
     const preview = createOriginButton(this.footer, { cls: "mod-cta", text: zh ? "预览方案" : "Preview plan" });
     applyAmicroButton(preview, { variant: "primary" });
@@ -387,10 +434,10 @@ export class KnowledgeFolderSection {
     const plan = this.preview!;
     const group = createSettingsGroup(page);
     for (const change of plan.changes) {
-      const before = change.before.enabled ? change.before.readPaths.join("、") || (change.before.native ? (zh ? "Vault 根目录" : "Vault root") : "—") : (zh ? "未启用" : "Disabled");
-      const after = change.after.enabled ? change.after.readPaths.join("、") || (change.after.native ? (zh ? "Vault 根目录" : "Vault root") : "—") : (zh ? "未启用" : "Disabled");
+      const before = change.before.enabled ? change.before.readPaths.join("、") || (change.before.native ? (zh ? "仓库根目录" : "Vault root") : "—") : (zh ? "未启用" : "Disabled");
+      const after = change.after.enabled ? change.after.readPaths.join("、") || (change.after.native ? (zh ? "仓库根目录" : "Vault root") : "—") : (zh ? "未启用" : "Disabled");
       new OriginSetting(group).setName(label(change.role, zh)).setDesc(`${before} → ${after}`);
-      if (change.before.writePath !== change.after.writePath && change.after.readPaths.length > 1) new OriginSetting(group).setName(zh ? "新资料保存到" : "Save new material to").setDesc(`${change.before.writePath ?? "—"} → ${change.after.writePath ?? "—"}`);
+      if (change.role === "raw" && change.before.writePath !== change.after.writePath && change.after.readPaths.length > 1) new OriginSetting(group).setName(zh ? "收藏保存位置" : "Collection destination").setDesc(`${change.before.writePath ?? "—"} → ${change.after.writePath ?? "—"}`);
       const paths = [...new Set([...(change.before.autoOrganizePaths ?? []), ...(change.after.autoOrganizePaths ?? [])])];
       for (const path of paths) {
         const beforeAllowed = change.before.autoOrganizePaths?.includes(path) ?? false;
@@ -420,7 +467,7 @@ export class KnowledgeFolderSection {
       const list = details.createDiv({ cls: "echoink-folder-moves" });
       for (const item of plan.excluded) list.createDiv({ cls: "echoink-folder-plan-path", text: `${item.path} · ${item.reason}` });
     }
-    for (const issue of plan.issues) page.createDiv({ cls: "settings-error", text: issue, attr: { role: "alert" } });
+    for (const issue of plan.issues) page.createDiv({ cls: "settings-error", text: folderErrorText(issue, zh), attr: { role: "alert" } });
     const actions = page.createDiv({ cls: "echoink-knowledge-init-actions" });
     const back = createOriginButton(actions, { text: zh ? "返回修改" : "Back to editing" });
     back.disabled = locked; back.onclick = () => this.back();
@@ -433,7 +480,13 @@ export class KnowledgeFolderSection {
     if (!this.preview) return;
     await this.run(async () => {
       const plan = this.preview!;
-      const result = await this.plugin.getKnowledgeSurfaceService()!.applyDirectoryPlan(plan, plan.mode === "build");
+      let result;
+      try { result = await this.plugin.getKnowledgeSurfaceService()!.applyDirectoryPlan(plan, plan.mode === "build"); }
+      catch (error) {
+        const message = folderErrorText(error, zh);
+        if (message === (zh ? "目录已变化，请重新预览" : "Folders have changed. Preview the plan again.")) this.preview = null;
+        throw new Error(message);
+      }
       this.draft = this.readDraft(); this.preview = null; this.expandedRoles.clear(); this.jobLoaded = false;
       if (plan.mode === "build") {
         const refinement = result.refinement === "started" ? (zh ? "知识提炼已开始。" : "Knowledge refinement started.") : result.refinement === "failed" ? (zh ? `知识提炼未成功：${result.refinementError ?? "请在知识库中重试"}` : `Refinement failed: ${result.refinementError ?? "Retry from Knowledge"}`) : (zh ? `知识提炼未开始${result.refinementError ? `：${result.refinementError}` : "。"}` : `Refinement has not started${result.refinementError ? `: ${result.refinementError}` : "."}`);
@@ -448,7 +501,7 @@ export class KnowledgeFolderSection {
     if (this.busy) return;
     this.busy = true; this.error = ""; this.redraw();
     try { await action(); }
-    catch (error) { this.error = error instanceof Error ? error.message : String(error); }
+    catch (error) { this.error = folderErrorText(error, this.plugin.settings.settingsLanguage !== "en"); }
     finally { this.busy = false; this.redraw(); }
   }
   private renderJob(page: HTMLElement, zh: boolean): void {
@@ -473,16 +526,70 @@ export class KnowledgeFolderSection {
       }, 1000);
     }
   }
-  private async pickFolder(parent: boolean, zh: boolean): Promise<string | null> {
+  private configureNewFolder(role: KnowledgeRootRole, zh: boolean): Promise<{ name: string; parent: string } | null> {
+    return new Promise(resolve => {
+      const modal = new Modal(this.plugin.app);
+      modal.modalEl.addClass("echoink-settings-modal", "echoink-theme-boundary");
+      modal.setTitle(zh ? `设置${label(role, zh)}目录` : `Set up ${label(role, zh)} folder`);
+      let name = this.draft.names.get(role) ?? KNOWLEDGE_ROOT_NAMES[role];
+      let parent = this.draft.parents.get(role) ?? "";
+      const body = modal.contentEl;
+      new OriginSetting(body).setName(zh ? "目录名称" : "Folder name").addOriginText(input => {
+        input.inputEl.setAttribute("aria-label", `${label(role, zh)} · ${zh ? "目录名称" : "Folder name"}`);
+        input.setValue(name).onChange(value => { name = value; validate(); });
+      });
+      let parentButton: HTMLButtonElement;
+      new OriginSetting(body).setName(zh ? "创建于" : "Create in").addOriginButton(button => {
+        parentButton = button.buttonEl;
+        button.setButtonText(parent || (zh ? "仓库根目录" : "Vault root")).onClick(() => {
+          void this.pickFolder(true, zh, parent).then(selected => {
+            if (selected === null) return;
+            parent = selected; parentButton.setText(parent || (zh ? "仓库根目录" : "Vault root")); validate();
+          });
+        });
+      });
+      const error = body.createDiv({ cls: "settings-error", attr: { role: "alert" } });
+      const actions = body.createDiv({ cls: "echoink-knowledge-init-actions" });
+      createOriginButton(actions, { text: zh ? "取消" : "Cancel" }).onclick = () => modal.close();
+      const confirm = createOriginButton(actions, { cls: "mod-cta", text: zh ? "确认目录" : "Confirm folder" });
+      const validate = () => {
+        const trimmed = name.trim();
+        const target = parent ? `${parent}/${trimmed}` : trimmed;
+        const invalid = !trimmed || /[/\\]/u.test(trimmed) || trimmed.startsWith(".") || /[\0-\x1f]/u.test(trimmed);
+        const existing = !invalid && this.plugin.app.vault.getAbstractFileByPath(target);
+        const conflict = !!existing && !(existing instanceof TFolder);
+        error.setText(invalid ? (zh ? "请填写合法的目录名称，不含路径分隔符。" : "Enter a valid folder name without path separators.") : conflict ? (zh ? "这个位置已有同名文件，请更换目录名称。" : "A file already uses this location. Choose another folder name.") : "");
+        confirm.disabled = invalid || conflict;
+      };
+      confirm.onclick = () => { validate(); if (confirm.disabled) return; resolve({ name: name.trim(), parent }); modal.close(); };
+      modal.onClose = () => { disposeOriginControls(body); resolve(null); };
+      validate(); modal.open();
+    });
+  }
+  private async pickFolder(parent: boolean, zh: boolean, current?: string): Promise<string | null> {
     return new Promise(resolve => {
       const modal = new Modal(this.plugin.app);
       const trigger = this.root?.ownerDocument.activeElement as HTMLElement | null;
-      modal.modalEl.addClass("echoink-theme-boundary");
+      modal.modalEl.addClass("echoink-settings-modal", "echoink-theme-boundary");
       modal.onOpen = () => {
         modal.titleEl.setText(zh ? (parent ? "创建于" : "选择已有目录") : (parent ? "Create in" : "Choose existing folder"));
         const list = modal.contentEl.createDiv({ cls: "settings-stack echoink-folder-picker" });
-        if (parent) createSettingsNavigationRow(list, { title: zh ? "Vault 根目录" : "Vault root", onActivate: () => { resolve(""); modal.close(); } });
-        for (const folder of this.plugin.app.vault.getAllLoadedFiles().filter((file): file is TFolder => file instanceof TFolder && !!file.path && file.path !== "/").sort((a, b) => a.path.localeCompare(b.path))) createSettingsNavigationRow(list, { title: folder.path, onActivate: () => { resolve(folder.path); modal.close(); } });
+        const render = () => {
+          disposeOriginControls(list); list.empty();
+          try {
+            const folders = this.plugin.app.vault.getAllLoadedFiles().filter((file): file is TFolder => file instanceof TFolder && !!file.path && file.path !== "/").sort((a, b) => a.path.localeCompare(b.path));
+            const add = (path: string, title: string) => createSettingsNavigationRow(list, { title, value: path === current ? (zh ? "当前选择" : "Current choice") : undefined, onActivate: () => { resolve(path); modal.close(); } });
+            if (parent) add("", zh ? "仓库根目录" : "Vault root");
+            for (const folder of folders) add(folder.path, folder.path);
+            if (!parent && !folders.length) list.createDiv({ cls: "settings-empty", text: zh ? "当前仓库还没有可选择的文件夹" : "This vault has no folders to choose from" });
+          } catch {
+            list.createDiv({ cls: "settings-error", text: zh ? "文件夹列表读取失败，请重试" : "Could not read the folder list. Try again.", attr: { role: "alert" } });
+            createOriginButton(list, { text: zh ? "重试" : "Retry" }).onclick = render;
+          }
+        };
+        render();
+        const actions = modal.contentEl.createDiv({ cls: "echoink-knowledge-init-actions" });
+        createOriginButton(actions, { text: zh ? "取消" : "Cancel" }).onclick = () => modal.close();
       };
       modal.onClose = () => { disposeOriginControls(modal.contentEl); resolve(null); if (trigger?.isConnected) trigger.focus({ preventScroll: true }); };
       modal.open();

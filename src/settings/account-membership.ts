@@ -588,6 +588,7 @@ class AccountModal extends Modal {
     if (this.modalEl.ownerDocument !== doc) doc.body.appendChild(doc.adoptNode(this.containerEl));
     this.modalEl.classList.add("echoink-account-modal", "echoink-account");
     const mobile = this.source.closest<HTMLElement>(".echoink-mobile");
+    if (!mobile) this.modalEl.classList.add("echoink-settings-modal");
     if (mobile) {
       this.modalEl.classList.add("echoink-mobile-modal");
       this.mobileViewport = new MobileViewport(this.containerEl, mobile);
