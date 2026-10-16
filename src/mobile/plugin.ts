@@ -86,7 +86,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     const view = this.app.workspace.getLeavesOfType(MOBILE_VIEW)[0]?.view;
     if (view instanceof EchoInkMobileView) view.showPage(page);
   }
-  onunload(): void { this.accountService?.dispose(); this.runtime?.stop(); void this.services?.dispose(); }
+  onunload(): void { this.accountService?.dispose(); this.runtime?.dispose(); void this.services?.dispose(); }
 }
 
 class EchoInkMobileFinanceView extends LifestyleView {

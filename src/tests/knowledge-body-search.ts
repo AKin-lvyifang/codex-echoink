@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { searchBodyDocuments } from "../knowledge-base/search/body-search";
+import { BodySearchMemoryIndex, searchBodyDocuments } from "../knowledge-base/search/body-search";
 import { buildSearchDictionary, tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import type { BodySearchDocument, BodySearchRequest } from "../knowledge-base/search/contracts";
 
@@ -201,7 +201,7 @@ export async function runKnowledgeBodySearchTests(): Promise<void> {
   assert.ok([...readCounts.values()].every((count) => count === 1));
   const failure = await search([note("good.md", "needle"), note("bad.md", "", { read: async () => { throw new Error("unreadable"); } })], { query: "needle" });
   assert.equal(failure.hits.length, 1);
-  assert.deepEqual(failure.coverage, { totalFiles: 2, scannedFiles: 1, failedFiles: 1, complete: false, unknownJournalDates: 0 });
+  assert.deepEqual(failure.coverage, { totalFiles: 2, scannedFiles: 1, readFiles: 2, cachedFiles: 0, indexedFiles: 1, failedFiles: 1, complete: false, unknownJournalDates: 0 });
   const before = new AbortController();
   before.abort();
   await assert.rejects(search(sequential, { query: "needle", signal: before.signal }), { name: "AbortError" });
@@ -237,4 +237,213 @@ export async function runKnowledgeBodySearchTests(): Promise<void> {
   assert.equal((await search([changing()], { query: "old alias" })).total, 0, "metadata and body are not cached between searches");
   console.log("Knowledge body search core: tokenization, evidence, RRF, dates, coverage and cancellation PASS; broad-query ranking check follows");
   assert.ok(partialTopicRank >= 0 && partialTopicRank < 3, "a two-character topic in a longer title remains ahead of incidental conversational words");
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+export async function runKnowledgeBodySearchCacheTests(): Promise<void> {
+  const reads = new Map<string, number>();
+  let revision = "v1";
+  let body = "# 章节\nbodymark alpha 2.6.2 莫干山知识库。\n## 后半章\nbeta 的答案在这里。";
+  const document = (path: string, content = body, extra: Partial<BodySearchDocument> = {}) => {
+    const observedRevision = revision;
+    return note(path, content, {
+    title: "共同标题", revisionKey: observedRevision,
+    read: async () => {
+      reads.set(path, (reads.get(path) ?? 0) + 1);
+      return { content, contentRevision: `${path}:${observedRevision}:${content.length}` };
+    }, ...extra,
+    });
+  };
+  const documents = [document("folder/a.md"), document("folder/b.md"), document("other/c.md")];
+  const index = new BodySearchMemoryIndex();
+  const baseline = await search(documents, { query: "alpha" });
+  const cold = await index.search({ documents, request: { query: "alpha" } });
+  assert.deepEqual(cold.hits, baseline.hits);
+  assert.equal(cold.total, baseline.total);
+  assert.deepEqual(cold.coverage, { totalFiles: 3, scannedFiles: 3, readFiles: 3, cachedFiles: 0, indexedFiles: 3,
+    failedFiles: 0, complete: true, unknownJournalDates: 0 });
+  const warm = await index.search({ documents, request: { query: "alpha" } });
+  assert.deepEqual(warm.hits, baseline.hits);
+  assert.deepEqual(warm.coverage, { ...cold.coverage, scannedFiles: 0, readFiles: 0, cachedFiles: 3 });
+  const beforeWarmReads = [...reads.values()].reduce((sum, count) => sum + count, 0);
+  for (const request of [{ query: "beta" }, { query: "莫干" }, { query: "2.6.2" }, { queries: ["alpha", "beta"] }, { query: "alpha", offset: 1, limit: 1 }]) {
+    const expected = await search(documents, request);
+    const actual = await index.search({ documents, request });
+    assert.deepEqual(actual.hits, expected.hits, "different queries reuse complete statistics without changing scores or positions");
+    assert.equal(actual.total, expected.total);
+    assert.equal(actual.coverage.readFiles, 0);
+    assert.equal(actual.coverage.cachedFiles, 3);
+  }
+  assert.equal([...reads.values()].reduce((sum, count) => sum + count, 0), beforeWarmReads + 15, "only the five one-shot comparison scans read bodies");
+
+  const segmenterDescriptor = Object.getOwnPropertyDescriptor(Intl, "Segmenter");
+  const OriginalSegmenter = (Intl as typeof Intl & { Segmenter?: new (...args: any[]) => { segment(text: string): unknown } }).Segmenter;
+  if (OriginalSegmenter) {
+    let bodyTokenizations = 0;
+    class ObservedSegmenter {
+      private readonly inner: { segment(text: string): unknown };
+      constructor(...args: any[]) { this.inner = new OriginalSegmenter!(...args); }
+      segment(text: string) {
+        if (text.includes("bodymark")) bodyTokenizations++;
+        return this.inner.segment(text);
+      }
+    }
+    try {
+      Object.defineProperty(Intl, "Segmenter", { configurable: true, value: ObservedSegmenter });
+      const tokenIndex = new BodySearchMemoryIndex();
+      await tokenIndex.search({ documents, request: { query: "alpha" } });
+      const coldTokenizations = bodyTokenizations;
+      assert.ok(coldTokenizations > 0);
+      await tokenIndex.search({ documents, request: { query: "beta" } });
+      assert.equal(bodyTokenizations, coldTokenizations, "warm changes of query do not tokenize cached body text again");
+      tokenIndex.dispose();
+    } finally {
+      if (segmenterDescriptor) Object.defineProperty(Intl, "Segmenter", segmenterDescriptor);
+    }
+  }
+
+  revision = "v2";
+  body = "# 章节\nchanged alpha 答案。";
+  const changed = [document("folder/a.md"), documents[1], documents[2]];
+  const modified = await index.search({ documents: changed, request: { query: "alpha" } });
+  assert.equal(modified.coverage.readFiles, 1);
+  assert.equal(modified.coverage.cachedFiles, 2);
+  assert.deepEqual(modified.hits, (await search(changed, { query: "alpha" })).hits);
+  index.invalidate("folder");
+  const directoryInvalidation = await index.search({ documents: changed, request: { query: "alpha" } });
+  assert.equal(directoryInvalidation.coverage.readFiles, 2);
+  assert.equal(directoryInvalidation.coverage.cachedFiles, 1);
+  const deleted = changed.slice(1);
+  assert.equal((await index.search({ documents: deleted, request: { query: "alpha" } })).coverage.readFiles, 0);
+  const renamed = [document("folder/renamed.md", body), changed[2]];
+  const afterRename = await index.search({ documents: renamed, request: { query: "alpha" } });
+  assert.equal(afterRename.coverage.readFiles, 1);
+  assert.equal(afterRename.coverage.cachedFiles, 1);
+  const added = [...renamed, document("new.md", body)];
+  assert.equal((await index.search({ documents: added, request: { query: "alpha" } })).coverage.readFiles, 1);
+  const scope = await index.search({ documents: added, request: { query: "alpha", excludePaths: ["new.md"], kinds: ["notes"] } });
+  assert.equal(scope.coverage.totalFiles, 2);
+  assert.equal(scope.coverage.cachedFiles, 2);
+  assert.deepEqual(scope.hits, (await search(added, { query: "alpha", excludePaths: ["new.md"], kinds: ["notes"] })).hits);
+  const metadata = [document("folder/renamed.md", body, { aliases: ["新专名"], tags: ["新增标签"] }), changed[2]];
+  const changedDictionary = await index.search({ documents: metadata, request: { query: "新专名" } });
+  assert.equal(changedDictionary.coverage.readFiles, 2, "new metadata words replace the single dictionary view");
+  assert.deepEqual(changedDictionary.hits, (await search(metadata, { query: "新专名" })).hits);
+  const updatedTitle = [document("folder/renamed.md", body, { title: "另一标题", aliases: ["新专名"], tags: ["新增标签"] }), changed[2]];
+  assert.equal((await index.search({ documents: updatedTitle, request: { query: "alpha" } })).coverage.readFiles, 2);
+  index.clear();
+  assert.equal((await index.search({ documents: updatedTitle, request: { query: "alpha" } })).coverage.readFiles, 2);
+  const unversioned = documents.map((entry) => ({ ...entry, revisionKey: undefined }));
+  const noVersion = new BodySearchMemoryIndex();
+  await noVersion.search({ documents: unversioned, request: { query: "alpha" } });
+  assert.equal((await noVersion.search({ documents: unversioned, request: { query: "beta" } })).coverage.cachedFiles, 0);
+
+  const longContent = `${"背景📌材料。".repeat(1500)}尾部金丝雀答案。`;
+  const longDocuments = [document("long.md", longContent)];
+  const longIndex = new BodySearchMemoryIndex();
+  const longCold = await longIndex.search({ documents: longDocuments, request: { query: "金丝雀答案" } });
+  const longWarm = await longIndex.search({ documents: longDocuments, request: { query: "金丝雀答案" } });
+  assert.deepEqual(longCold.hits, (await search(longDocuments, { query: "金丝雀答案" })).hits);
+  assert.deepEqual(longWarm.hits, longCold.hits, "warm reads retain exact UTF-16 columns and excerpts");
+
+  let failOnce = true;
+  const retryIndex = new BodySearchMemoryIndex();
+  const unreliable = [documents[0], document("failure.md", "alpha", { read: async () => {
+    if (failOnce) { failOnce = false; throw new Error("one read failed"); }
+    return { content: "alpha", contentRevision: "retry" };
+  } })];
+  const partial = await retryIndex.search({ documents: unreliable, request: { query: "alpha" } });
+  assert.equal(partial.coverage.complete, false);
+  assert.equal(partial.coverage.indexedFiles, 1);
+  assert.equal(partial.coverage.failedFiles, 1);
+  const retry = await retryIndex.search({ documents: unreliable, request: { query: "alpha" } });
+  assert.equal(retry.coverage.readFiles, 2, "a failed search did not publish its partial staged build");
+  assert.equal(retry.coverage.complete, true);
+  assert.equal((await retryIndex.search({ documents: unreliable, request: { query: "alpha" } })).coverage.cachedFiles, 2);
+
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  const abortIndex = new BodySearchMemoryIndex();
+  const abort = new AbortController();
+  let block = true;
+  const interruptible = [documents[0], document("blocked.md", "alpha", { read: async () => {
+    if (block) { entered.resolve(); await release.promise; }
+    return { content: "alpha", contentRevision: "blocked" };
+  } })];
+  const interrupted = abortIndex.search({ documents: interruptible, request: { query: "alpha", signal: abort.signal } });
+  await entered.promise;
+  abort.abort(); block = false; release.resolve();
+  await assert.rejects(interrupted, { name: "AbortError" });
+  assert.equal((await abortIndex.search({ documents: interruptible, request: { query: "alpha" } })).coverage.readFiles, 2);
+
+  const invalidationIndex = new BodySearchMemoryIndex();
+  await invalidationIndex.search({ documents, request: { query: "alpha" } });
+  invalidationIndex.invalidate("folder/a.md");
+  const invalidatedRead = deferred<void>();
+  const oldReadReleased = deferred<void>();
+  const invalidatedDocuments = [document("folder/a.md", "alpha", { read: async () => {
+    invalidatedRead.resolve(); await oldReadReleased.promise;
+    return { content: "alpha old snapshot", contentRevision: "old" };
+  } }), documents[1], documents[2]];
+  const stale = invalidationIndex.search({ documents: invalidatedDocuments, request: { query: "alpha" } });
+  await invalidatedRead.promise;
+  invalidationIndex.invalidate("folder");
+  oldReadReleased.resolve();
+  await assert.rejects(stale, { code: "search_index_stale" });
+  const freshAfterEvent = await invalidationIndex.search({ documents: changed, request: { query: "alpha" } });
+  assert.equal(freshAfterEvent.coverage.readFiles, 2, "real file/directory invalidation cannot let an old in-flight read refill the index");
+  assert.equal(freshAfterEvent.coverage.cachedFiles, 1);
+  assert.ok(freshAfterEvent.hits.every((hit) => hit.contentRevision !== "old"));
+
+  const concurrent = new BodySearchMemoryIndex();
+  const firstEntered = deferred<void>();
+  const releaseFirst = deferred<void>();
+  const firstAbort = new AbortController();
+  let firstCall = true;
+  const parallelDocuments = [document("parallel.md", "alpha beta", { read: async () => {
+    if (firstCall) { firstCall = false; firstEntered.resolve(); await releaseFirst.promise; }
+    return { content: "alpha beta", contentRevision: "parallel" };
+  } })];
+  const firstSearch = concurrent.search({ documents: parallelDocuments, request: { query: "alpha", signal: firstAbort.signal } });
+  await firstEntered.promise;
+  const secondSearch = await concurrent.search({ documents: parallelDocuments, request: { query: "beta" } });
+  assert.equal(secondSearch.coverage.complete, true);
+  firstAbort.abort(); releaseFirst.resolve();
+  await assert.rejects(firstSearch, { name: "AbortError" });
+  assert.equal((await concurrent.search({ documents: parallelDocuments, request: { query: "alpha" } })).coverage.cachedFiles, 1, "one query's cancellation does not cancel or discard another's completed build");
+
+  for (const limits of [{ maxCachedCharacters: 1 }, { maxCachedTokenEntries: 1 }, { maxCachedDocuments: 0 }]) {
+    const bounded = new BodySearchMemoryIndex(limits);
+    await bounded.search({ documents, request: { query: "alpha" } });
+    const boundedWarm = await bounded.search({ documents, request: { query: "beta" } });
+    assert.equal(boundedWarm.coverage.readFiles, 3);
+    assert.equal(boundedWarm.coverage.complete, true);
+    assert.deepEqual(boundedWarm.hits, (await search(documents, { query: "beta" })).hits, "memory limits restrict retention, never coverage or results");
+    bounded.dispose();
+  }
+  const oneDocument = new BodySearchMemoryIndex({ maxCachedDocuments: 1 });
+  await oneDocument.search({ documents, request: { query: "alpha" } });
+  const oneWarm = await oneDocument.search({ documents, request: { query: "alpha" } });
+  assert.equal(oneWarm.coverage.cachedFiles, 1);
+  assert.equal(oneWarm.coverage.readFiles, 2);
+
+  const disposed = new BodySearchMemoryIndex();
+  const disposeEntered = deferred<void>();
+  const releaseDisposed = deferred<void>();
+  const disposing = disposed.search({ documents: [document("dispose.md", "alpha", { read: async () => {
+    disposeEntered.resolve(); await releaseDisposed.promise;
+    return { content: "alpha", contentRevision: "disposed" };
+  } })], request: { query: "alpha" } });
+  await disposeEntered.promise;
+  disposed.dispose(); releaseDisposed.resolve();
+  await assert.rejects(disposing, { code: "search_index_disposed" });
+  disposed.clear(); disposed.invalidate("folder");
+  await assert.rejects(disposed.search({ documents, request: { query: "alpha" } }), { code: "search_index_disposed" });
+  for (const item of [index, noVersion, longIndex, retryIndex, abortIndex, invalidationIndex, concurrent, oneDocument]) item.dispose();
+  console.log("Knowledge body search cache: cold/warm equivalence, complete reuse, revisions, events, cancellation, limits and disposal PASS");
 }

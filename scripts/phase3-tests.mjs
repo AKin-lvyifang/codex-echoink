@@ -16,8 +16,8 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
-  'import { runKnowledgeBodySearchTests } from "./src/tests/knowledge-body-search";',
-  'import { runVaultBodySearchTests } from "./src/tests/vault-body-search";',
+  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests } from "./src/tests/knowledge-body-search";',
+  'import { runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
   'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
@@ -32,6 +32,8 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeBodySearchCacheTests();",
+  "await runVaultBodySearchCacheTests();",
   "await runVaultBodySearchTests();",
   "await runKnowledgeFolderPlanTests();",
   "await runKnowledgeFolderSettingsTests();",
@@ -51,7 +53,13 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--folder-settings") ? [
+    contents: (process.argv.includes("--body-search-cache") ? [
+      'import { runKnowledgeBodySearchCacheTests } from "./src/tests/knowledge-body-search";',
+      'import { runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
+      'await runKnowledgeBodySearchCacheTests();',
+      'await runVaultBodySearchCacheTests();',
+      'await runVaultBodySearchTests();'
+    ] : process.argv.includes("--folder-settings") ? [
       'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
       'await runKnowledgeFolderSettingsTests();'
     ] : process.argv.includes("--folder-organization") ? [

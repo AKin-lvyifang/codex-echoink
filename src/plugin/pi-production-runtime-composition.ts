@@ -1,4 +1,4 @@
-import { VaultBodySearch } from "../knowledge-base/vault-body-search";
+import { bindVaultBodySearchEvents, VaultBodySearch } from "../knowledge-base/vault-body-search";
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../knowledge-base/search/contracts";
 import { getPiKnowledgeLinkingBatch, createPiKnowledgeLinkingTool, knowledgeLinkingInlineExtension, PI_KNOWLEDGE_LINKING_TOOL } from "../harness/pi-native/pi-knowledge-linking-tool";
 import { privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
@@ -401,8 +401,16 @@ export function bindKnowledgeIndexToVault(
       index.invalidate(oldPath);
     })
   ];
+  const releaseMetadata = index.bodySearch ? bindVaultBodySearchEvents(app, index.bodySearch, { vaultEvents: false }) : () => {};
   index.invalidate();
-  return () => events.forEach((event) => app.vault.offref(event));
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    events.forEach((event) => app.vault.offref(event));
+    releaseMetadata();
+    index.bodySearch?.dispose();
+  };
 }
 
 export async function createPiProductionRuntimeBundle(

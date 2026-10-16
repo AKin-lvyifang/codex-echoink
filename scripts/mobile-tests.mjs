@@ -154,6 +154,43 @@ await test("shared mobile body search delivers chapters, revisions, journal date
   await assert.rejects(search.execute("stopped", { query: "token" }, controller.signal));
 });
 
+await test("mobile runtime shares warm statistics across preflight, tools and sends, then releases on unload", async () => {
+  let calls = 0;
+  const state = await setup("openai-completions", async () => ++calls === 1
+    ? answer("openai-completions", "", [["shared-search", "vault_search", { query: "手机" }]])
+    : answer("openai-completions", "ok"));
+  let reads = 0, vaultReleased = 0, metadataReleased = 0;
+  const read = state.app.vault.read.bind(state.app.vault);
+  state.app.vault.read = async source => { reads++; return read(source); };
+  const offVault = state.app.vault.offref.bind(state.app.vault), offMetadata = state.app.metadataCache.offref.bind(state.app.metadataCache);
+  state.app.vault.offref = ref => { vaultReleased++; offVault(ref); };
+  state.app.metadataCache.offref = ref => { metadataReleased++; offMetadata(ref); };
+  const searches = [], search = state.runtime.bodySearch.search.bind(state.runtime.bodySearch);
+  state.runtime.bodySearch.search = async request => { const found = await search(request); searches.push(found); return found; };
+  await state.runtime.send("手机");
+  assert.equal(calls, 2); assert.equal(searches.length, 2);
+  assert.equal(searches[0].coverage.readFiles, 1); assert.equal(searches[1].coverage.cachedFiles, 1); assert.equal(reads, 1);
+  await state.runtime.send("先完成");
+  state.runtime.stop(); await state.runtime.send("本地问答");
+  assert.equal(reads, 1, "stop retains valid cache for later sends");
+  const source = state.app.vault.getAbstractFileByPath("笔记/来源.md");
+  const mtime = source.stat.mtime;
+  state.files.set(source.path, "项目决定：先完成平板本地问答。");
+  state.app.vault.trigger("modify", source);
+  assert.equal(source.stat.mtime, mtime);
+  await state.runtime.send("平板");
+  assert.equal(searches.at(-1).coverage.readFiles, 1); assert.ok(searches.at(-1).hits[0].excerpt.includes("平板"));
+  state.app.metadataCache.getFileCache = () => ({ frontmatter: { aliases: ["星河计划"] } });
+  state.app.metadataCache.trigger("changed", source);
+  await state.runtime.send("星河计划");
+  assert.equal(searches.at(-1).coverage.readFiles, 1); assert.equal(searches.at(-1).hits.length, 1);
+  const beforeDispose = calls;
+  state.runtime.dispose(); state.runtime.dispose();
+  assert.equal(vaultReleased, 4); assert.equal(metadataReleased, 1);
+  await state.runtime.send("卸载后"); assert.equal(calls, beforeDispose);
+  await assert.rejects(state.runtime.bodySearch.search({ query: "平板" }), /disposed/u);
+});
+
 await test("read-only, duplicate paths and Vault boundary retain original notes", async () => {
   let calls = 0;
   const state = await setup("openai-completions", async request => {

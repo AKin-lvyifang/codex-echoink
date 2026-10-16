@@ -2,7 +2,7 @@ import type { App, TFile } from "obsidian";
 import { sha256Hex } from "../utils/sha256";
 import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole } from "./root-paths-core";
 import type { KnowledgeFolderBindings } from "./folder-bindings";
-import { searchBodyDocuments } from "./search/body-search";
+import { BodySearchMemoryIndex } from "./search/body-search";
 import type { BodySearchDocument, KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeAgentReadResult, KnowledgeAgentSearchRequest, KnowledgeAgentSearchResult } from "./knowledge-agent-index";
 
@@ -10,6 +10,7 @@ export interface KnowledgeBodySearchPort {
   allowsPath(path: string): boolean;
   scopeKey(): string;
   invalidate(path?: string): void;
+  dispose(): void;
   search(request: Readonly<KnowledgeAgentSearchRequest>): Promise<KnowledgeAgentSearchResult>;
   read(input: Readonly<{ vaultRelativePath: string; expectedContentRevision?: string }>): Promise<KnowledgeAgentReadResult>;
 }
@@ -33,15 +34,46 @@ export function knowledgeSearchPathKind(relativePath: string, bindings?: Knowled
   return role ?? "notes";
 }
 
-/** Public Vault API adapter; no filesystem, CLI, persistence or full-body cache. */
+/** Bind public host events once per owning runtime; release is idempotent. */
+export function bindVaultBodySearchEvents(app: App, target: Pick<KnowledgeBodySearchPort, "invalidate">,
+  options: Readonly<{ vaultEvents?: boolean }> = {}): () => void {
+  const releases: (() => void)[] = [];
+  const changed = (file: { path: string }) => target.invalidate(file.path);
+  if (options.vaultEvents !== false && app.vault.on) {
+    const refs = [app.vault.on("create", changed), app.vault.on("modify", changed), app.vault.on("delete", changed)];
+    refs.forEach(ref => releases.push(() => app.vault.offref(ref)));
+    const ref = app.vault.on("rename", (file, oldPath) => { changed(file); target.invalidate(oldPath); });
+    releases.push(() => app.vault.offref(ref));
+  }
+  if (app.metadataCache?.on) {
+    const ref = app.metadataCache.on("changed", changed);
+    releases.push(() => app.metadataCache.offref(ref));
+  }
+  let released = false;
+  return () => { if (released) return; released = true; releases.forEach(release => release()); };
+}
+
+/** Public Vault API adapter with a bounded, ephemeral search index. */
 export class VaultBodySearch implements KnowledgeBodySearchPort {
   private generation = 1;
+  private disposed = false;
+  private indexedScope?: string;
+  private readonly memory = new BodySearchMemoryIndex();
   constructor(private readonly app: App, private readonly bindings: () => KnowledgeFolderBindings | null | undefined,
     private readonly options: Readonly<{ excludedRoots?: () => readonly string[]; onJournalSearch?: () => void | Promise<void> }> = {}) {}
-  invalidate(): void { this.generation += 1; }
+  invalidate(path?: string): void { if (this.disposed) return; this.generation += 1; this.memory.invalidate(path); }
+  dispose(): void { if (this.disposed) return; this.disposed = true; this.generation += 1; this.memory.dispose(); }
+  private assertOpen(): void { if (this.disposed) throw Object.assign(new Error("Knowledge search disposed"), { code: "disposed" }); }
+  private ensureScope(): string {
+    this.assertOpen();
+    const signature = this.scopeKey();
+    if (signature !== this.indexedScope) { this.indexedScope = signature; this.generation += 1; this.memory.clear(); }
+    return signature;
+  }
   allowsPath(path: string): boolean { return knowledgeSearchPathKind(path, this.bindings(), this.options.excludedRoots?.()) !== null; }
   scopeKey(): string { return JSON.stringify([this.bindings(), this.options.excludedRoots?.() ?? []]); }
   private allowed(filePath: string): KnowledgeSearchKind {
+    this.assertOpen();
     const kind = knowledgeSearchPathKind(filePath, this.bindings(), this.options.excludedRoots?.());
     if (!kind) throw Object.assign(new Error("Knowledge path is outside the search scope"), { code: "invalid_path" });
     return kind;
@@ -53,8 +85,13 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     return file as TFile;
   }
   async read(input: Readonly<{ vaultRelativePath: string; expectedContentRevision?: string }>): Promise<KnowledgeAgentReadResult> {
+    const scope = this.scopeKey();
+    const generation = this.generation;
     const file = this.file(input.vaultRelativePath);
     const content = await this.app.vault.read(file);
+    this.assertOpen();
+    this.file(input.vaultRelativePath);
+    if (scope !== this.scopeKey() || generation !== this.generation || file.path !== input.vaultRelativePath) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
     const kind = this.allowed(file.path);
     const contentRevision = `sha256:${sha256Hex(content)}`;
     if (input.expectedContentRevision && input.expectedContentRevision !== contentRevision) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
@@ -62,6 +99,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       contentRevision, content, recordedAt: Math.trunc(file.stat.mtime), verificationStatus: "local_revision_verified", rawSources: [] };
   }
   async search(request: Readonly<KnowledgeAgentSearchRequest>): Promise<KnowledgeAgentSearchResult> {
+    const scope = this.ensureScope();
     if (request.signal?.aborted) throw Object.assign(new Error("Knowledge search aborted"), { name: "AbortError" });
     const generation = this.generation;
     const bindingSignature = JSON.stringify(this.bindings());
@@ -72,16 +110,18 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       let cache: ReturnType<App["metadataCache"]["getFileCache"]> = null;
       try { cache = this.app.metadataCache?.getFileCache(file) ?? null; } catch { /* Missing metadata must not hide readable Markdown. */ }
       const array = (value: unknown): string[] => typeof value === "string" ? [value] : Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+      const aliases = array(cache?.frontmatter?.aliases ?? cache?.frontmatter?.alias);
+      const tags = [...array(cache?.frontmatter?.tags), ...(cache?.tags?.map(tag => tag.tag) ?? [])];
+      const headings = cache?.headings?.map(h => ({ heading: h.heading, level: h.level, line: h.position.start.line + 1 }));
       return [{ vaultRelativePath: file.path, title: file.basename, kind, recordedAt: Math.trunc(file.stat.mtime),
-        aliases: array(cache?.frontmatter?.aliases ?? cache?.frontmatter?.alias),
-        tags: [...array(cache?.frontmatter?.tags), ...(cache?.tags?.map(tag => tag.tag) ?? [])],
-        headings: cache?.headings?.map(h => ({ heading: h.heading, level: h.level, line: h.position.start.line + 1 })),
+        revisionKey: JSON.stringify([file.stat.mtime, file.stat.size, file.basename, kind, aliases, tags, headings]),
+        aliases, tags, headings,
         read: () => this.read({ vaultRelativePath: file.path }) }];
     });
     if (documents.some(document => document.kind === "journal")) await this.options.onJournalSearch?.();
     const queryKey = sha256Hex(JSON.stringify({ mode: request.mode, query: request.query, queries: request.queries, kinds: request.kinds,
       dateFrom: request.dateFrom, dateTo: request.dateTo, excludePaths: request.excludePaths, bindingSignature,
-      excludedRoots, files: documents.map(d => [d.vaultRelativePath, d.recordedAt]) }));
+      excludedRoots, files: documents.map(d => [d.vaultRelativePath, d.revisionKey]) }));
     let offset = 0;
     if (request.cursor) {
       try {
@@ -107,17 +147,17 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
         try { hits.push(await this.read({ vaultRelativePath: document.vaultRelativePath })); } catch (error) { if (error instanceof Error && error.name === "AbortError") throw error; failedFiles++; }
       }
       if (request.signal?.aborted) throw Object.assign(new Error("Knowledge search aborted"), { name: "AbortError" });
-      if (bindingSignature !== JSON.stringify(this.bindings()) || generation !== this.generation || JSON.stringify(excludedRoots) !== JSON.stringify(this.options.excludedRoots?.() ?? [])) throw Object.assign(new Error("Search scope changed"), { code: "cursor_stale" });
+      this.assertCurrent(scope, generation);
       const remaining = Math.max(0, eligible.length - offset - page.length);
       return { generation, total: eligible.length, returned: hits.length, remaining, hasMore: remaining > 0, exhausted: remaining === 0 && failedFiles === 0,
-        coverage: { totalFiles: eligible.length, scannedFiles: page.length - failedFiles, failedFiles, complete: remaining === 0 && failedFiles === 0, unknownJournalDates: 0 },
+        coverage: { totalFiles: eligible.length, scannedFiles: hits.length, readFiles: page.length, cachedFiles: 0, indexedFiles: hits.length, failedFiles, complete: hits.length === eligible.length && failedFiles === 0, unknownJournalDates: 0 },
         hits: hits.map(({ content: _content, ...hit }) => hit),
         ...(remaining ? { continuationCursor: JSON.stringify({ key: queryKey, generation, offset: offset + page.length }) } : {}) };
     }
-    const result = await searchBodyDocuments({ documents, request: { ...request, offset, limit },
+    const result = await this.memory.search({ documents, request: { ...request, offset, limit },
       activePath: this.app.workspace?.getActiveFile()?.path, recentPaths: this.app.workspace?.getLastOpenFiles?.() ?? [] });
     // Scope changes during a scan cannot leak material from an earlier setting.
-    if (bindingSignature !== JSON.stringify(this.bindings()) || JSON.stringify(excludedRoots) !== JSON.stringify(this.options.excludedRoots?.() ?? []) || generation !== this.generation) throw Object.assign(new Error("Search scope changed"), { code: "cursor_stale" });
+    this.assertCurrent(scope, generation);
     const hits = result.hits.map(hit => ({ ...hit, entryId: `body:${hit.vaultRelativePath}:${hit.lineStart}`,
       verificationStatus: "local_revision_verified" as const, rawSources: [] }));
     while (hits.length > 1 && new TextEncoder().encode(JSON.stringify(hits)).length > 10_000) hits.pop();
@@ -125,5 +165,13 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     return { generation, total: result.total, returned: hits.length, remaining, hasMore: remaining > 0,
       exhausted: remaining === 0 && result.coverage.complete, coverage: result.coverage, hits,
       ...(remaining ? { continuationCursor: JSON.stringify({ key: queryKey, generation, offset: offset + hits.length }) } : {}) };
+  }
+  private assertCurrent(scope: string, generation: number): void {
+    this.assertOpen();
+    if (scope !== this.scopeKey() || generation !== this.generation) {
+      // A setting change can arrive without a Vault event while a scan yields.
+      if (scope !== this.scopeKey()) this.ensureScope();
+      throw Object.assign(new Error("Search scope changed"), { code: "cursor_stale" });
+    }
   }
 }

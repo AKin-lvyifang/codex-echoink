@@ -1,4 +1,4 @@
-import type { BodySearchDocument, BodySearchHit, BodySearchRequest, BodySearchResult } from "./contracts";
+import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult } from "./contracts";
 import { buildSearchDictionary, iterateSearchTokens, tokenizeSearchText } from "./tokenize";
 
 interface Heading { heading: string; line: number; level: number }
@@ -14,18 +14,48 @@ interface Evidence {
   columnEnd?: number;
   excerpt: string;
 }
-interface Section {
-  document: BodySearchDocument;
-  contentRevision: string;
+interface IndexedSection {
   sectionTitle: string;
   sectionStart: number;
+  sectionEnd: number;
   totalLines: number;
-  journalDate?: string;
+  text: string;
+  fragments: readonly Fragment[];
+  fragmentFrequency: Map<string, number>;
   length: number;
   frequencies: Map<string, number>;
+}
+interface DocumentStatistics {
+  contentRevision: string;
+  sections: readonly IndexedSection[];
   titleTerms: Set<string>;
   tagTerms: Set<string>;
-  evidence: readonly Evidence[];
+  characters: number;
+  tokenEntries: number;
+}
+interface Section extends IndexedSection {
+  document: BodySearchDocument;
+  contentRevision: string;
+  journalDate?: string;
+  titleTerms: Set<string>;
+  tagTerms: Set<string>;
+}
+interface PreparedSearch {
+  documents: readonly BodySearchDocument[];
+  dictionary: readonly string[];
+  queryWeights: readonly Map<string, number>[];
+  queries: readonly Set<string>[];
+  union: Set<string>;
+  coverage: BodySearchCoverage;
+}
+interface SearchCacheHooks {
+  get(document: BodySearchDocument): DocumentStatistics | undefined;
+  stage(document: BodySearchDocument, statistics: DocumentStatistics): void;
+  check(document?: BodySearchDocument): void;
+}
+interface CachedDocument {
+  key: string;
+  statistics: DocumentStatistics;
 }
 
 const MAX_FRAGMENT_CHARACTERS = 2400;
@@ -160,7 +190,7 @@ function evidenceFor(text: string, fragment: Fragment, sectionStart: number, sec
   return { lineStart, lineEnd, excerpt, ...(!wholeLines ? { columnStart, columnEnd } : {}) };
 }
 
-async function buildSections(document: BodySearchDocument, content: string, contentRevision: string, dictionary: readonly string[], queries: readonly Set<string>[], union: Set<string>, signal?: AbortSignal): Promise<Section[]> {
+async function buildDocumentStatistics(document: BodySearchDocument, content: string, contentRevision: string, dictionary: readonly string[], signal?: AbortSignal): Promise<DocumentStatistics> {
   const lines = content.split(/\r\n|\n|\r/u);
   const headings = currentHeadings(document, lines);
   const ranges: { title: string; start: number; end: number }[] = [];
@@ -170,10 +200,12 @@ async function buildSections(document: BodySearchDocument, content: string, cont
   }
   const titleTerms = new Set<string>();
   for (const title of [document.title, ...(document.aliases ?? [])]) {
-    for (const token of tokenizeSearchText(title, dictionary)) if (union.has(token)) titleTerms.add(token);
+    for (const token of tokenizeSearchText(title, dictionary)) titleTerms.add(token);
   }
-  const tagTerms = new Set(tokenizeSearchText((document.tags ?? []).join("\n"), dictionary).filter((token) => union.has(token)));
-  const sections: Section[] = [];
+  const tagTerms = new Set(tokenizeSearchText((document.tags ?? []).join("\n"), dictionary));
+  const sections: IndexedSection[] = [];
+  let characters = 0;
+  let tokenEntries = titleTerms.size + tagTerms.size;
   for (const range of ranges) {
     checkAbort(signal);
     const text = lines.slice(range.start - 1, range.end).join("\n");
@@ -186,7 +218,6 @@ async function buildSections(document: BodySearchDocument, content: string, cont
       if ((++length & 255) === 0) checkAbort(signal);
       if ((length & 8191) === 0) await yieldToUi(signal);
       const { token, start } = result;
-      if (!union.has(token)) continue;
       frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
       const fragment = fragments[rangeIndex(fragments, start)];
       fragment.frequencies.set(token, (fragment.frequencies.get(token) ?? 0) + 1);
@@ -195,28 +226,32 @@ async function buildSections(document: BodySearchDocument, content: string, cont
     for (const fragment of fragments) {
       for (const token of fragment.frequencies.keys()) fragmentFrequency.set(token, (fragmentFrequency.get(token) ?? 0) + 1);
     }
-    const evidence = frequencies.size || titleTerms.size ? queries.map((query) => {
-      let best = fragments[0];
-      let bestScore = -1;
-      for (const fragment of fragments) {
-        let score = 0;
-        for (const token of query) {
-          const count = fragment.frequencies.get(token) ?? 0;
-          if (count) {
-            const frequency = fragmentFrequency.get(token) ?? 0;
-            const rarity = Math.log(1 + (fragments.length - frequency + 0.5) / (frequency + 0.5));
-            score += rarity * count * 2.2 / (count + 1.2);
-          }
-        }
-        if (score > bestScore) { bestScore = score; best = fragment; }
-      }
-      return evidenceFor(text, best, range.start, range.end);
-    }) : [];
-    sections.push({ document, contentRevision, sectionTitle: range.title, sectionStart: range.start, totalLines: lines.length,
-      journalDate: journalDate(document), length: Math.max(1, length), frequencies, titleTerms, tagTerms, evidence });
+    sections.push({ sectionTitle: range.title, sectionStart: range.start, sectionEnd: range.end, totalLines: lines.length,
+      text, fragments, fragmentFrequency, length: Math.max(1, length), frequencies });
+    characters += text.length;
+    tokenEntries += frequencies.size + fragmentFrequency.size + fragments.reduce((count, fragment) => count + fragment.frequencies.size, 0);
     if (sections.length % 16 === 0 || text.length >= 32_000) await yieldToUi(signal);
   }
-  return sections;
+  return { contentRevision, sections, titleTerms, tagTerms, characters, tokenEntries };
+}
+
+function sectionEvidence(section: IndexedSection, query: ReadonlySet<string>): Evidence {
+  const { fragments, fragmentFrequency } = section;
+  let best = fragments[0];
+  let bestScore = -1;
+  for (const fragment of fragments) {
+    let score = 0;
+    for (const token of query) {
+      const count = fragment.frequencies.get(token) ?? 0;
+      if (count) {
+        const frequency = fragmentFrequency.get(token) ?? 0;
+        const rarity = Math.log(1 + (fragments.length - frequency + 0.5) / (frequency + 0.5));
+        score += rarity * count * 2.2 / (count + 1.2);
+      }
+    }
+    if (score > bestScore) { bestScore = score; best = fragment; }
+  }
+  return evidenceFor(section.text, best, section.sectionStart, section.sectionEnd);
 }
 
 function queryTexts(request: BodySearchRequest): string[] {
@@ -244,13 +279,7 @@ function queryTermWeights(text: string, dictionary: readonly string[]): Map<stri
   return weights;
 }
 
-/** A single, query-local scan. No Vault/Node dependency or persistent body index. */
-export async function searchBodyDocuments(options: {
-  documents: readonly BodySearchDocument[];
-  request: BodySearchRequest;
-  activePath?: string;
-  recentPaths?: readonly string[];
-}): Promise<BodySearchResult> {
+function prepareSearch(options: BodySearchOptions): PreparedSearch {
   const { request } = options;
   checkAbort(request.signal);
   const texts = queryTexts(request);
@@ -271,33 +300,57 @@ export async function searchBodyDocuments(options: {
     }
     return true;
   });
-  const coverage = { totalFiles: documents.length, scannedFiles: 0, failedFiles: 0, complete: !(unknownJournalDates && (dateFrom || dateTo)), unknownJournalDates };
+  const coverage: BodySearchCoverage = { totalFiles: documents.length, scannedFiles: 0, readFiles: 0, cachedFiles: 0, indexedFiles: 0,
+    failedFiles: 0, complete: !(unknownJournalDates && (dateFrom || dateTo)), unknownJournalDates };
   const dictionary = buildSearchDictionary(documents);
   const queryWeights = texts.map((query) => queryTermWeights(query, dictionary)).filter((tokens) => tokens.size);
   const queries = queryWeights.map((weights) => new Set(weights.keys()));
-  if (!queries.length) return { hits: [], total: 0, coverage: { ...coverage, complete: coverage.totalFiles === 0 && coverage.complete } };
   const union = new Set(queries.flatMap((query) => [...query]));
+  return { documents, dictionary, queryWeights, queries, union, coverage };
+}
+
+async function executeSearch(options: BodySearchOptions, prepared: PreparedSearch, cache?: SearchCacheHooks): Promise<BodySearchResult> {
+  const { request } = options;
+  const { documents, dictionary, queryWeights, queries, union } = prepared;
+  const coverage = { ...prepared.coverage };
+  if (!queries.length) return { hits: [], total: 0, coverage: { ...coverage, complete: coverage.totalFiles === 0 && coverage.complete } };
   const sections: Section[] = [];
   let scannedSections = 0;
+  let freshFilesSinceYield = 0;
+  let filesSinceYield = 0;
   for (let index = 0; index < documents.length; index++) {
     checkAbort(request.signal);
+    cache?.check();
     const document = documents[index];
     try {
-      const { content, contentRevision } = await document.read();
-      checkAbort(request.signal);
-      const current = await buildSections(document, content, contentRevision, dictionary, queries, union, request.signal);
-      sections.push(...current);
-      scannedSections += current.length;
-      coverage.scannedFiles++;
+      let statistics = cache?.get(document);
+      if (statistics) coverage.cachedFiles++;
+      else {
+        coverage.readFiles++;
+        const { content, contentRevision } = await document.read();
+        checkAbort(request.signal);
+        cache?.check(document);
+        coverage.scannedFiles++;
+        statistics = await buildDocumentStatistics(document, content, contentRevision, dictionary, request.signal);
+        cache?.check(document);
+        cache?.stage(document, statistics);
+        scannedSections += statistics.sections.length;
+        freshFilesSinceYield++;
+      }
+      for (const section of statistics.sections) sections.push({ ...section, document, contentRevision: statistics.contentRevision,
+        journalDate: journalDate(document), titleTerms: statistics.titleTerms, tagTerms: statistics.tagTerms });
+      coverage.indexedFiles++;
     } catch (error) {
       checkAbort(request.signal);
-      if (isAbort(error)) throw error;
+      if (isAbort(error) || isIndexStateError(error)) throw error;
       coverage.failedFiles++;
       coverage.complete = false;
     }
-    if ((index + 1) % 16 === 0 || scannedSections >= 64) {
+    if (++filesSinceYield >= 256 || freshFilesSinceYield >= 16 || scannedSections >= 64) {
       await yieldToUi(request.signal);
       scannedSections = 0;
+      freshFilesSinceYield = 0;
+      filesSinceYield = 0;
     }
   }
   const df = new Map<string, number>();
@@ -378,10 +431,139 @@ export async function searchBodyDocuments(options: {
     contentRevision: section.contentRevision,
     sectionTitle: section.sectionTitle,
     totalLines: section.totalLines,
-    ...section.evidence[query],
+    ...sectionEvidence(section, queries[query]),
     score,
     ...(section.journalDate ? { journalDate: section.journalDate } : {}),
   }));
   checkAbort(request.signal);
+  cache?.check();
+  coverage.complete = coverage.complete && coverage.indexedFiles === coverage.totalFiles && coverage.failedFiles === 0;
   return { hits, total: ordered.length, coverage };
+}
+
+/** A single scan with no statistics retained across calls. */
+export async function searchBodyDocuments(options: BodySearchOptions): Promise<BodySearchResult> {
+  return executeSearch(options, prepareSearch(options));
+}
+
+function indexStateError(code: "search_index_stale" | "search_index_disposed"): Error {
+  return Object.assign(new Error(code === "search_index_disposed" ? "Knowledge search index was disposed" : "Knowledge search changed while indexing"), { code });
+}
+
+function isIndexStateError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error
+    && (error.code === "search_index_stale" || error.code === "search_index_disposed");
+}
+
+function documentKey(document: BodySearchDocument): string {
+  return JSON.stringify([document.revisionKey, document.title, document.aliases ?? [], document.tags ?? [], document.headings ?? []]);
+}
+
+function memoryLimit(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : fallback;
+}
+
+/** One Vault-local dictionary view, bounded in memory and never persisted. */
+export class BodySearchMemoryIndex implements BodySearchMemoryPort {
+  private readonly records = new Map<string, CachedDocument>();
+  private readonly maxCharacters: number;
+  private readonly maxTokenEntries: number;
+  private readonly maxDocuments: number;
+  private characters = 0;
+  private tokenEntries = 0;
+  private epoch = 0;
+  private disposed = false;
+  private dictionarySignature?: string;
+  private segmenterIdentity: unknown;
+
+  constructor(options: BodySearchMemoryOptions = {}) {
+    this.maxCharacters = memoryLimit(options.maxCachedCharacters, 16_000_000);
+    this.maxTokenEntries = memoryLimit(options.maxCachedTokenEntries, 1_000_000);
+    this.maxDocuments = memoryLimit(options.maxCachedDocuments, 10_000);
+  }
+
+  async search(options: BodySearchOptions): Promise<BodySearchResult> {
+    this.assertActive();
+    const prepared = prepareSearch(options);
+    const signature = JSON.stringify([...prepared.dictionary].sort());
+    const identity = (Intl as typeof Intl & { Segmenter?: unknown }).Segmenter;
+    if (this.dictionarySignature !== signature || this.segmenterIdentity !== identity) {
+      this.clear();
+      this.dictionarySignature = signature;
+      this.segmenterIdentity = identity;
+    }
+    const keys = new Map(prepared.documents.map((document) => [document.vaultRelativePath, documentKey(document)]));
+    for (const path of this.records.keys()) if (!keys.has(path)) this.remove(path);
+    const epoch = this.epoch;
+    const staged = new Map<string, CachedDocument>();
+    const check = (document?: BodySearchDocument) => {
+      this.assertActive();
+      if (epoch !== this.epoch || (document && keys.get(document.vaultRelativePath) !== documentKey(document))) throw indexStateError("search_index_stale");
+    };
+    const result = await executeSearch(options, prepared, {
+      check,
+      get: (document) => {
+        check(document);
+        if (document.revisionKey === undefined) return undefined;
+        const record = this.records.get(document.vaultRelativePath);
+        return record && record.key === keys.get(document.vaultRelativePath) ? record.statistics : undefined;
+      },
+      stage: (document, statistics) => {
+        check(document);
+        if (document.revisionKey !== undefined) staged.set(document.vaultRelativePath, { key: keys.get(document.vaultRelativePath)!, statistics });
+      },
+    });
+    checkAbort(options.request.signal);
+    check();
+    for (const document of prepared.documents) check(document);
+    // A cancelled/failed/invalidated build never publishes partial state as complete.
+    if (result.coverage.complete) for (const [path, record] of staged) this.retain(path, record);
+    return result;
+  }
+
+  invalidate(path?: string): void {
+    if (path === undefined) { this.clear(); return; }
+    this.epoch++;
+    const prefix = path.replace(/\\/gu, "/").replace(/\/+$/u, "");
+    for (const key of this.records.keys()) if (!prefix || key === prefix || key.startsWith(`${prefix}/`)) this.remove(key);
+  }
+
+  clear(): void {
+    this.epoch++;
+    this.records.clear();
+    this.characters = 0;
+    this.tokenEntries = 0;
+    this.dictionarySignature = undefined;
+    this.segmenterIdentity = undefined;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.clear();
+  }
+
+  private assertActive(): void {
+    if (this.disposed) throw indexStateError("search_index_disposed");
+  }
+
+  private remove(path: string): void {
+    const previous = this.records.get(path);
+    if (!previous) return;
+    this.characters -= previous.statistics.characters + previous.key.length;
+    this.tokenEntries -= previous.statistics.tokenEntries;
+    this.records.delete(path);
+  }
+
+  private retain(path: string, record: CachedDocument): void {
+    const characters = record.statistics.characters + record.key.length;
+    const tokenEntries = record.statistics.tokenEntries;
+    this.remove(path);
+    if (!this.maxDocuments || characters > this.maxCharacters || tokenEntries > this.maxTokenEntries) return;
+    while (this.records.size && (this.records.size >= this.maxDocuments || this.characters + characters > this.maxCharacters || this.tokenEntries + tokenEntries > this.maxTokenEntries)) {
+      this.remove(this.records.keys().next().value!);
+    }
+    this.records.set(path, record);
+    this.characters += characters;
+    this.tokenEntries += tokenEntries;
+  }
 }

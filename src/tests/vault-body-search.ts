@@ -52,7 +52,9 @@ export async function runVaultBodySearchTests(): Promise<void> {
     const production = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
     const chat = await production.retrieveChat!({ question: "2.6.2 纸飞机方案", explicitPaths: [], includeUnrefined: false } as never);
     assert.equal(JSON.parse(chat.providerResourceText).sources[0].sourceType, "notes");
-    assert.equal(chat.retrieval.coverage?.scannedFiles, 3);
+    assert.equal(chat.retrieval.coverage?.scannedFiles, 0);
+    assert.equal(chat.retrieval.coverage?.cachedFiles, 3);
+    assert.equal(chat.retrieval.coverage?.indexedFiles, 3);
     bindings.roles.journal.searchEnabled = false;
     assert.equal((await index.search({ query: "莫干山" })).hits.length, 0);
     await assert.rejects(() => retriever.readAgentIndex({ vaultRelativePath: "日记/2026-09-20.md" }));
@@ -115,4 +117,90 @@ export async function runVaultBodySearchTests(): Promise<void> {
     assert.equal(graph.relationPage("知识/允许.md", 8).items.length, 0, "related targets obey the same disabled scope");
   } finally { unbind(); }
   console.log("Public Vault body search, scope, delivery, events and freshness: PASS");
+}
+
+export async function runVaultBodySearchCacheTests(): Promise<void> {
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.projects.enabled = true; bindings.roles.projects.readPaths = ["项目"];
+  const bodies = new Map([["普通/A.md", "# A\nCACHE_ALPHA"], ["项目/B.md", "# B\nCACHE_ALPHA"]]);
+  const metadata = new Map<string, unknown>();
+  const vaultEvents = new EventEmitter(), metadataEvents = new EventEmitter();
+  let reads = 0;
+  const failed = new Set<string>();
+  let pause: (() => Promise<void>) | undefined;
+  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
+  const hostEvents = (events: EventEmitter) => ({
+    on: (name: string, callback: (...args: unknown[]) => void) => { events.on(name, callback); return { name, callback }; },
+    offref: ({ name, callback }: { name: string; callback: (...args: unknown[]) => void }) => { events.off(name, callback); }
+  });
+  const app = { vault: { ...hostEvents(vaultEvents), getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => { reads++; await pause?.(); if (failed.has(source.path) || !bodies.has(source.path)) throw new Error("unreadable"); return bodies.get(source.path)!; }
+  }, metadataCache: { ...hostEvents(metadataEvents), getFileCache: (source: TFile) => metadata.get(source.path) ?? null },
+  workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings);
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-cache", storageRootPath: "/synthetic-cache-state", bodySearch: port });
+  const release = bindKnowledgeIndexToVault(app, index);
+  try {
+    const cold = await index.search({ query: "CACHE_ALPHA", limit: 1 });
+    assert.deepEqual(cold.coverage, { totalFiles: 2, scannedFiles: 2, readFiles: 2, cachedFiles: 0, indexedFiles: 2, failedFiles: 0, complete: true, unknownJournalDates: 0 });
+    const warm = await index.search({ query: "CACHE_ALPHA", limit: 1 });
+    assert.deepEqual(warm.hits, cold.hits);
+    assert.equal(warm.coverage?.readFiles, 0); assert.equal(warm.coverage?.cachedFiles, 2); assert.equal(reads, 2);
+    const another = await index.search({ query: "CACHE_OTHER" });
+    assert.equal(another.coverage?.cachedFiles, 2); assert.equal(reads, 2, "different query reuses full statistics");
+    // Same mtime and same length: the production modify event is the freshness authority.
+    bodies.set("普通/A.md", "# A\nCACHE_OMEGA"); vaultEvents.emit("modify", file("普通/A.md"));
+    const modified = await index.search({ query: "CACHE_OMEGA" });
+    assert.equal(modified.hits[0].vaultRelativePath, "普通/A.md"); assert.equal(modified.coverage?.readFiles, 1); assert.equal(modified.coverage?.cachedFiles, 1);
+    await assert.rejects(() => port.read({ vaultRelativePath: cold.hits[0].vaultRelativePath, expectedContentRevision: cold.hits[0].contentRevision }), /changed/u);
+    await assert.rejects(() => index.search({ query: "CACHE_ALPHA", cursor: cold.continuationCursor! }), /stale/u);
+    const metadataQuery = { queries: ["CACHE_ALPHA", "CACHE_OMEGA"], limit: 1 };
+    const beforeMetadata = await index.search(metadataQuery);
+    metadata.set("普通/A.md", { frontmatter: { aliases: ["星河计划"], tags: ["观察"] } });
+    metadataEvents.emit("changed", file("普通/A.md"));
+    const alias = await index.search({ query: "星河计划" });
+    assert.equal(alias.hits[0].vaultRelativePath, "普通/A.md"); assert.equal(alias.coverage?.readFiles, 2, "dictionary changes rebuild affected tokenization view");
+    await assert.rejects(() => index.search({ ...metadataQuery, cursor: beforeMetadata.continuationCursor! }), /stale/u);
+    // Fresh metadata enumeration also catches a missed metadata notification.
+    metadata.set("普通/A.md", { frontmatter: { aliases: ["月海计划"] } });
+    assert.equal((await index.search({ query: "月海计划" })).hits[0].vaultRelativePath, "普通/A.md");
+    bodies.set("普通/C.md", "# C\nCREATED_TOKEN"); vaultEvents.emit("create", file("普通/C.md"));
+    assert.equal((await index.search({ query: "CREATED_TOKEN" })).hits[0].vaultRelativePath, "普通/C.md");
+    bodies.set("普通/D.md", bodies.get("普通/C.md")!); bodies.delete("普通/C.md"); vaultEvents.emit("rename", file("普通/D.md"), "普通/C.md");
+    assert.equal((await index.search({ query: "CREATED_TOKEN" })).hits[0].vaultRelativePath, "普通/D.md");
+    bodies.set("新目录/D.md", bodies.get("普通/D.md")!); bodies.delete("普通/D.md"); vaultEvents.emit("rename", { path: "新目录", children: [] }, "普通");
+    assert.equal((await index.search({ query: "CREATED_TOKEN" })).hits[0].vaultRelativePath, "新目录/D.md");
+    bodies.delete("新目录/D.md"); vaultEvents.emit("delete", file("新目录/D.md"));
+    assert.equal((await index.search({ query: "CREATED_TOKEN" })).hits.length, 0);
+    bindings.roles.projects.searchEnabled = false;
+    assert.equal((await index.search({ query: "CACHE_ALPHA" })).hits.length, 0);
+    bindings.roles.projects.searchEnabled = true;
+    assert.equal((await index.search({ query: "CACHE_ALPHA" })).hits[0].vaultRelativePath, "项目/B.md");
+    failed.add("项目/B.md"); vaultEvents.emit("modify", file("项目/B.md"));
+    const partial = await index.search({ query: "CACHE_ALPHA" });
+    assert.equal(partial.coverage?.complete, false); assert.equal(partial.coverage?.failedFiles, 1); assert.equal(partial.coverage?.indexedFiles, 1);
+    failed.clear(); assert.equal((await index.search({ query: "CACHE_ALPHA" })).coverage?.readFiles, 1);
+    const recent = await index.search({ mode: "recent", limit: 1 });
+    assert.equal(recent.coverage?.readFiles, 1); assert.equal(recent.coverage?.cachedFiles, 0); assert.equal(recent.coverage?.indexedFiles, 1); assert.equal(recent.coverage?.complete, false);
+    const recentEnd = await index.search({ mode: "recent", limit: 1, cursor: recent.continuationCursor });
+    assert.equal(recentEnd.exhausted, true); assert.equal(recentEnd.coverage?.complete, false, "last page does not claim all bodies were read in this request");
+    port.invalidate();
+    let started!: () => void, resume!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const gate = new Promise<void>(resolve => { resume = resolve; });
+    pause = async () => { started(); await gate; };
+    const pending = index.search({ query: "CACHE_ALPHA" });
+    await entered; bindings.roles.projects.searchEnabled = false; resume();
+    await assert.rejects(pending, /scope changed/u);
+    pause = undefined;
+    assert.equal((await index.search({ query: "CACHE_ALPHA" })).hits.length, 0);
+    release(); release();
+    assert.equal(vaultEvents.listenerCount("modify"), 0); assert.equal(metadataEvents.listenerCount("changed"), 0);
+    const before = reads;
+    await assert.rejects(() => port.search({ query: "any" }), /disposed/u);
+    await assert.rejects(() => port.read({ vaultRelativePath: "普通/A.md" }), /disposed/u);
+    assert.equal(reads, before);
+  } finally { release(); }
+  console.log("Public Vault memory reuse, production events, scope, partial failure and disposal: PASS");
 }

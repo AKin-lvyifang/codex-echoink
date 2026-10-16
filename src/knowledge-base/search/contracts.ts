@@ -3,6 +3,8 @@ export const KNOWLEDGE_SEARCH_KINDS = ["wiki", "projects", "raw", "journal", "wo
 export type KnowledgeSearchKind = typeof KNOWLEDGE_SEARCH_KINDS[number];
 
 export interface BodySearchDocument {
+  /** Host-observed body/metadata/event version; omitted documents are never reused. */
+  readonly revisionKey?: string;
   readonly vaultRelativePath: string;
   readonly title: string;
   readonly kind: KnowledgeSearchKind;
@@ -48,5 +50,46 @@ export interface BodySearchHit {
 export interface BodySearchResult {
   readonly hits: readonly BodySearchHit[];
   readonly total: number;
-  readonly coverage: Readonly<{ totalFiles: number; scannedFiles: number; failedFiles: number; complete: boolean; unknownJournalDates: number }>;
+  readonly coverage: Readonly<BodySearchCoverage>;
+}
+
+/** Counts describe search preparation, excluding later source reads/verification.
+ * Recent browsing counts its successful page reads as indexedFiles, with no reuse.
+ */
+export interface BodySearchCoverage {
+  /** Unique eligible files after scope/kind/date filters. */
+  readonly totalFiles: number;
+  /** Successful body reads used to prepare statistics in this search (legacy field). */
+  readonly scannedFiles: number;
+  /** Attempted document.read calls in this search, including failures. */
+  readonly readFiles: number;
+  /** Eligible complete file-statistic records reused without reading/tokenizing. */
+  readonly cachedFiles: number;
+  /** Files whose complete statistics participated, fresh plus cached. */
+  readonly indexedFiles: number;
+  readonly failedFiles: number;
+  readonly complete: boolean;
+  readonly unknownJournalDates: number;
+}
+
+export interface BodySearchOptions {
+  readonly documents: readonly BodySearchDocument[];
+  readonly request: BodySearchRequest;
+  readonly activePath?: string;
+  readonly recentPaths?: readonly string[];
+}
+
+export interface BodySearchMemoryOptions {
+  /** Retained source characters and token-map entries have independent hard limits. */
+  readonly maxCachedCharacters?: number;
+  readonly maxCachedTokenEntries?: number;
+  readonly maxCachedDocuments?: number;
+}
+
+/** Implemented by BodySearchMemoryIndex; all data is ephemeral and Vault-local. */
+export interface BodySearchMemoryPort {
+  search(options: BodySearchOptions): Promise<BodySearchResult>;
+  invalidate(path?: string): void;
+  clear(): void;
+  dispose(): void;
 }

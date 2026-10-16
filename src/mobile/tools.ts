@@ -1,5 +1,5 @@
 import { boundKnowledgeSourceSpan, sliceKnowledgeSourceSpan, sourceSpanHasMore } from "../knowledge-base/source-span";
-import { VaultBodySearch } from "../knowledge-base/vault-body-search";
+import { VaultBodySearch, type KnowledgeBodySearchPort } from "../knowledge-base/vault-body-search";
 import { tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -33,14 +33,16 @@ export function searchMemories(records: readonly PersonalMemoryRecord[], query: 
 }
 function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Error("已停止，未开始此操作。"); }
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
-export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null): AgentTool[] {
-  const bodySearch = new VaultBodySearch(app, bindings);
+export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort): AgentTool[] {
+  const bodySearch = sharedBodySearch ?? new VaultBodySearch(app, bindings);
   const tools: AgentTool[] = [
     {
       name: "vault_search", label: "查找笔记", description: "搜索允许用途和普通笔记的真实正文。query或queries(1-5问法)二选一；可用dateFrom/dateTo筛选日记日期。结果含命中章节、原文片段、版本和行号；可直接使用已交付原文，需要更多时note_read续读。", parameters: Type.Object({ query: Type.Optional(Type.String()), queries: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 5 })), dateFrom: Type.Optional(Type.String()), dateTo: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), cursor: Type.Optional(Type.String()) }),
       async execute(_id, args: { query?: string; queries?: string[]; dateFrom?: string; dateTo?: string; limit?: number; cursor?: string }, signal) {
         checkStopped(signal);
         if ((args.query === undefined) === (args.queries === undefined)) throw new Error("请传入query或queries之一。");
+        // Standalone callers have no owning runtime to release host listeners.
+        if (!sharedBodySearch) bodySearch.invalidate();
         return result(await bodySearch.search({ ...args, signal }));
       }
     },
