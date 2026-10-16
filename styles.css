@@ -19594,6 +19594,13 @@ button.codex-assistant-turn-process-toggle:is(:hover, :focus-visible) {
 @container (max-width:390px) { .echoink-home-workspace .health { display:flex; } .echoink-home-workspace .knowledge-heading { flex-wrap:wrap; } }
 .echoink-home-workspace .project-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 .echoink-home-workspace .search-result>i>svg{width:100%;height:100%}
+/* Photo calendar: retain the current grid and readable dates over local images. */
+.echoink-home-workspace .calendar-days>button.has-photo{isolation:isolate;overflow:hidden}
+.echoink-home-workspace .calendar-days .echoink-calendar-photo{position:absolute;inset:0;z-index:-1;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.echoink-home-workspace .calendar-days .has-photo .calendar-day-number{display:inline-block;position:relative;padding:0 3px;border-radius:3px;background:var(--paper);color:var(--ink);line-height:1.4}
+.echoink-home-workspace .calendar-days .has-photo:is(.selected,:hover,:focus-visible) .calendar-day-number{background:var(--soft);color:var(--ink)}
+.echoink-home-workspace .calendar-days .has-photo.selected .calendar-day-number{font-weight:700;text-decoration:underline}
+body .echoink-home-workspace .calendar-days>button.has-photo:is(.today,.selected,:hover,:focus-visible){outline:none;box-shadow:none}
 /* ECHOINK_WORKSPACE_HOME_END */
 
 /* Wider central workspaces grow within a bounded reading area. */

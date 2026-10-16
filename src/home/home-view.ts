@@ -567,12 +567,37 @@ export class EchoInkHomeView extends ItemView {
     const cells = Math.ceil((new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate() + offset) / 7) * 7;
     const counts = new Map<string, number>();
     for (const event of this.events) counts.set(event.date, (counts.get(event.date) ?? 0) + 1);
+    // Reuse the current journal binding and cached image metadata. The old
+    // lifestyle branch scanned the vault using a separate map setting.
+    const journalSettings = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings);
+    const photos = new Map<string, string>();
+    const journalDates = new Set<string>();
+    for (const record of journalSettings.available ? this.data?.records ?? [] : []) {
+      const date = journalDateFromPath(record.path, journalSettings.folder, journalSettings.format);
+      if (!date) continue;
+      journalDates.add(date);
+      if (record.firstImageUrl && !photos.has(date)) photos.set(date, record.firstImageUrl);
+    }
     markup(this.field("calendar-days"), Array.from({ length: cells }, (_, i) => {
       const date = new Date(first.getFullYear(), first.getMonth(), i - offset + 1); const key = dateKey(date); const count = counts.get(key) ?? 0;
-      return `<button data-date="${key}" class="${date.getMonth() !== first.getMonth() ? "outside" : ""} ${key === dateKey(new Date()) ? "today" : ""} ${key === this.selectedDate ? "selected" : ""} ${count ? "has-record" : ""}" aria-pressed="${key === this.selectedDate}" aria-label="${esc(formatHomeFullDate(date, this.language))} · ${count}" ${key === dateKey(new Date()) ? 'aria-current="date"' : ""}>${date.getDate()}</button>`;
+      const photo = date.getMonth() === first.getMonth() && photos.has(key);
+      return `<button data-date="${key}" class="${date.getMonth() !== first.getMonth() ? "outside" : ""} ${key === dateKey(new Date()) ? "today" : ""} ${key === this.selectedDate ? "selected" : ""} ${count || journalDates.has(key) ? "has-record" : ""} ${photo ? "has-photo" : ""}" aria-pressed="${key === this.selectedDate}" aria-label="${esc(formatHomeFullDate(date, this.language))} · ${count}${photo ? this.t(" · 含照片", " · With photo") : ""}" ${key === dateKey(new Date()) ? 'aria-current="date"' : ""}><span class="calendar-day-number">${date.getDate()}</span></button>`;
     }).join(""));
-    const prefix = dateKey(first).slice(0, 7); const count = [...counts.keys()].filter((date) => date.startsWith(prefix)).length;
-    this.field("month-record-count").setText(this.t(`本月 ${count} 天`, `${count} days this month`));
+    for (const day of Array.from(this.field("calendar-days").querySelectorAll<HTMLElement>(".has-photo"))) {
+      const photo = day.ownerDocument.createElement("img");
+      photo.className = "echoink-calendar-photo";
+      photo.alt = "";
+      photo.loading = "lazy";
+      photo.addEventListener("error", () => {
+        photo.remove();
+        day.classList.remove("has-photo");
+      }, { once: true });
+      photo.src = photos.get(day.dataset.date!)!;
+      day.prepend(photo);
+    }
+    const prefix = dateKey(first).slice(0, 7); const count = [...new Set([...counts.keys(), ...journalDates])].filter((date) => date.startsWith(prefix)).length;
+    const photoDays = [...photos.keys()].filter((date) => date.startsWith(prefix)).length;
+    this.field("month-record-count").setText(this.t(`本月 ${count} 天 · ${photoDays} 天有图`, `${count} days this month · ${photoDays} with photos`));
     const key = this.selectedDate ?? dateKey(new Date());
     this.field("journal-label").setText(this.t(`${this.shortDate(key)}的日记`, `Journal · ${this.shortDate(key)}`));
     this.field("journal-hint").setText(this.dataService.existingJournalForDate(parseDate(key)) ? this.t("已经留下一页，点开看看", "A page is waiting for you") : this.t("这一天还没有日记", "No journal for this day yet"));
