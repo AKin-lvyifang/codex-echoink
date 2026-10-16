@@ -2,10 +2,11 @@
 // @ts-nocheck -- bundled against the explicitly supplied source checkout.
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { KnowledgeAgentIndex } from '@production/knowledge-base/knowledge-agent-index';
 import { KnowledgeRetriever } from '@production/knowledge-base/query';
 import { registerKnowledgeFolderBindings, normalizeKnowledgeFolderBindings } from '@production/knowledge-base/root-paths';
-import { createProductionPiKnowledgeRuntime, createPiKnowledgeInlineExtension } from '@production/plugin/pi-production-runtime-composition';
+import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime, createPiKnowledgeInlineExtension } from '@production/plugin/pi-production-runtime-composition';
 import { PersonalMemoryRepository } from '@production/harness/memory/personal-memory-repository';
 import { PersonalMemoryRecallHarness } from '@production/harness/memory/personal-memory-recall-harness';
 import { serializeSecondaryRecord } from '@production/harness/memory/secondary-memory-store';
@@ -54,6 +55,9 @@ export async function evaluateProduction(input) {
   let unregister;
   let repository;
   let candidateEvidence;
+  let unbindIndexEvents;
+  let vaultEventSource;
+  let vaultEventBinding;
   try {
     const savedBindings = setup.folder_bindings ?? manifest.settings?.folder_bindings ?? manifest.folder_bindings;
     if (savedBindings) {
@@ -137,22 +141,41 @@ export async function evaluateProduction(input) {
     }
 
     const index = new KnowledgeAgentIndex({ vaultPath, storageRootPath: statePath });
+    if (setup.mutations?.length) {
+      vaultEventSource = new EventEmitter();
+      const app = { vault: {
+        on(name, handler) { vaultEventSource.on(name, handler); return { name, handler }; },
+        offref(reference) { vaultEventSource.off(reference.name, reference.handler); }
+      } };
+      unbindIndexEvents = await observe('bindKnowledgeIndexToVault', { event_source: 'synthetic Vault EventEmitter' }, () => bindKnowledgeIndexToVault(app, index));
+      vaultEventBinding = { producer_binding: 'bindKnowledgeIndexToVault', event_source: 'synthetic Vault EventEmitter', bound: true, unbound: false };
+    }
     const initialRefresh = await observe('KnowledgeAgentIndex.refresh', {}, () => index.refresh());
     const mutationResults = [];
     if (setup.mutations?.length) {
-      // Warm the real index before mutation, then send the same invalidate event
-      // the host sends. Rebuilding a fresh index after mutation would mask I2.
+      // Warm the real index, then deliver synthetic host events through the
+      // unchanged production binding. Never call index.invalidate directly.
       const before = await observe('KnowledgeAgentIndex.search.beforeMutation', { query: item.query, limit: 50 }, () => index.search({ query: item.query, limit: 50 }));
       mutationResults.push({ before });
       for (const mutation of setup.mutations) {
         const full = inside(vaultPath, mutation.path);
-        if (mutation.action === 'write') { await fs.mkdir(path.dirname(full), { recursive: true }); await fs.writeFile(full, mutation.content, 'utf8'); }
-        else if (mutation.action === 'delete') await fs.unlink(full);
-        else if (mutation.action === 'rename') { const to = inside(vaultPath, mutation.to); await fs.mkdir(path.dirname(to), { recursive: true }); await fs.rename(full, to); }
+        let event;
+        let eventPath = mutation.path;
+        let oldPath;
+        if (mutation.action === 'write') {
+          let existed;
+          try { await fs.lstat(full); existed = true; } catch (error) { if (error.code !== 'ENOENT') throw error; existed = false; }
+          await fs.mkdir(path.dirname(full), { recursive: true }); await fs.writeFile(full, mutation.content, 'utf8');
+          event = existed ? 'modify' : 'create';
+        }
+        else if (mutation.action === 'delete') { await fs.unlink(full); event = 'delete'; }
+        else if (mutation.action === 'rename') { const to = inside(vaultPath, mutation.to); await fs.mkdir(path.dirname(to), { recursive: true }); await fs.rename(full, to); event = 'rename'; eventPath = mutation.to; oldPath = mutation.path; }
         else throw new Error(`Unsupported mutation: ${mutation.action}`);
-        index.invalidate(mutation.path);
-        if (mutation.to) index.invalidate(mutation.to);
-        mutationResults.push({ action: mutation.action, path: mutation.path, to: mutation.to });
+        const notification = await observe(`bindKnowledgeIndexToVault.handler.${event}`, { path: eventPath, old_path: oldPath ?? null }, () => {
+          if (!vaultEventSource.emit(event, { path: eventPath }, ...(oldPath === undefined ? [] : [oldPath]))) throw new Error(`No production listener registered for ${event}`);
+          return { event, path: eventPath, old_path: oldPath ?? null, producer_binding: 'bindKnowledgeIndexToVault', event_source: 'synthetic Vault EventEmitter', handler_completed: true, refresh_behavior: 'Production synchronous callback returned; lazy index refresh occurs on next search.' };
+        });
+        mutationResults.push({ action: mutation.action, path: mutation.path, to: mutation.to, notification });
       }
     }
     const pages = [];
@@ -177,7 +200,7 @@ export async function evaluateProduction(input) {
     return {
       candidate_items: pages.flatMap(value => value.hits), delivery_items: selected.references,
       provider_text: selected.providerResourceText, calls,
-      raw: { initial_refresh: initialRefresh, mutations: mutationResults, index_search: pages, retriever: retrieved, production_chat: chat, production_ask: ask, scored_delivery: selectedMode },
+      raw: { initial_refresh: initialRefresh, vault_event_binding: vaultEventBinding ?? null, mutations: mutationResults, index_search: pages, retriever: retrieved, production_chat: chat, production_ask: ask, scored_delivery: selectedMode },
       effective_configuration: {
         retrieval_request: retrievalRequest, selected_preflight: selectedMode,
         directory_bindings: savedBindings ?? null,
@@ -186,13 +209,18 @@ export async function evaluateProduction(input) {
         opened_paths_applied: false, history_applied_to_knowledge_preflight: false,
         host_hints: { opened_paths: setup.opened_paths ?? [], history: setup.history ?? [] }
       },
-      host_adapters: ['synthetic Vault', 'Knowledge directory binding registration', 'host modify/rename/delete invalidation events'],
+      host_adapters: ['synthetic Vault', 'Knowledge directory binding registration', ...(vaultEventBinding ? ['Synthetic Vault event source; unchanged production bindKnowledgeIndexToVault handlers. Native Obsidian event delivery/timeliness is not measured.'] : [])],
       unsupported_setup: unsupportedSetup(setup)
     };
   } catch (error) {
     error.evaluator_evidence = { ...candidateEvidence, calls };
     throw error;
   } finally {
+    unbindIndexEvents?.();
+    if (vaultEventBinding) {
+      vaultEventBinding.unbound = true;
+      vaultEventBinding.listeners_remaining = vaultEventSource.eventNames().reduce((count, name) => count + vaultEventSource.listenerCount(name), 0);
+    }
     unregister?.();
     await repository?.dispose();
   }

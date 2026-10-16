@@ -20,6 +20,7 @@ try {
   await mkdir(path.join(dataset, '记忆'), { recursive: true });
   await writeFile(path.join(dataset, 'manifest.json'), JSON.stringify({ dataset_version: 'selftest', fixed_date: '2026-10-16T12:00:00+08:00', settings: {} }));
   await writeFile(path.join(dataset, '笔记/wiki/gold.md'), '# Golden fixture\nGOLD_TOKEN answer: preserve this exact sentence.\n');
+  await writeFile(path.join(dataset, '笔记/wiki/change.md'), '# Change fixture\nBEFOREMUTATION original sentence.\n');
   await writeFile(path.join(dataset, '记忆/seed.json'), JSON.stringify({
     operations: [
       { id: 'mem_eval_coffee', request: { operation: 'create', kind: 'fact', title: 'COFFEE_MEMORY_TOKEN', recallWhen: 'COFFEE_MEMORY_TOKEN', content: 'COFFEE_MEMORY_TOKEN I do not drink coffee.', basis: 'explicit' } },
@@ -40,13 +41,22 @@ try {
       { subcase_id: 'current', query: 'CURRENT_MEMORY_TOKEN', expected: { candidate: { required_ids: ['mem_eval_new'], forbidden_ids: ['mem_eval_old'] }, delivery: { required_ids: ['mem_eval_new'], required_excerpts: ['now Obsidian.'] } } },
       { subcase_id: 'history', query: 'HISTORY_MEMORY_TOKEN', setup: { memory_search: { statuses: ['current', 'superseded'] } }, expected: { candidate: { required_ids: ['mem_eval_old'] }, delivery: { required_ids: ['mem_eval_old'], required_excerpts: ['old Notion reason.'] } } }
     ] },
-    { case_id: 'I2', starter: true, query: 'CHANGED_TOKEN', setup: { mutations: [{ action: 'write', path: 'wiki/gold.md', content: '# Changed\nCHANGED_TOKEN latest sentence.\n' }] }, expected: { candidate: { required_paths: ['wiki/gold.md'] }, delivery: { required_excerpts: ['latest sentence.'] } } },
+    { case_id: 'I2', starter: true, query: 'AFTERMUTATION', setup: { mutations: [{ action: 'write', path: 'wiki/change.md', content: '# Changed\nAFTERMUTATION latest sentence.\n' }] }, expected: { candidate: { required_paths: ['wiki/change.md'] }, delivery: { required_excerpts: ['latest sentence.'] } } },
+    { case_id: 'I2_OLD', starter: true, query: 'BEFOREMUTATION', setup: { mutations: [{ action: 'write', path: 'wiki/change.md', content: '# Changed\nAFTERMUTATION latest sentence.\n' }] }, expected: { candidate: { empty: true }, delivery: { empty: true } } },
     { case_id: 'J1', starter: true, query: '', execution: { script: false, reason: 'Needs native iPhone and iPad.' } },
     { case_id: 'K1', starter: true, query: '', execution: { script: false, reason: 'Separate large-vault performance run.' } }
   ];
   await writeFile(path.join(dataset, 'cases.jsonl'), `${cases.map(item => JSON.stringify(item)).join('\n')}\n`);
   const frozen = await freezeDataset(dataset);
+  assert.equal(frozen.manifest.scoring_rule_version, 'kb-recall-mechanical-v2');
   assert.equal((await verifyDataset(dataset)).digest.content_sha256, frozen.digest.content_sha256);
+  const legacyDataset = path.join(fixture, 'archived-v1');
+  await mkdir(legacyDataset);
+  await writeFile(path.join(legacyDataset, 'manifest.json'), JSON.stringify({ dataset_version: 'selftest-archived-v1', scoring_rule_version: 'kb-recall-mechanical-v1' }));
+  await writeFile(path.join(legacyDataset, 'cases.jsonl'), '');
+  const legacyFrozen = await freezeDataset(legacyDataset);
+  assert.equal((await verifyDataset(legacyDataset)).digest.content_sha256, legacyFrozen.digest.content_sha256);
+  assert.equal((await verifyDataset(legacyDataset)).manifest.scoring_rule_version, 'kb-recall-mechanical-v1');
   const original = await readFile(path.join(dataset, '笔记/wiki/gold.md'));
   await writeFile(path.join(dataset, '笔记/wiki/gold.md'), Buffer.concat([original, Buffer.from('tamper')]));
   await assert.rejects(verifyDataset(dataset), /digest mismatch/u);
@@ -72,6 +82,8 @@ try {
   await rm(outputAlias);
 
   assert.equal(judgeCandidate({ required_paths: ['a'], max_rank: 1 }, [{ vaultRelativePath: 'b' }, { vaultRelativePath: 'a' }]).status, 'fail');
+  assert.equal(judgeCandidate({ applicable: false }, []).status, 'not_applicable');
+  assert.equal(judgeCandidate({}, []).status, 'pending_review', 'An empty applicable rule must not automatically pass');
   assert.equal(judgeDelivery({ required_excerpts: ['evidence'] }, [{ excerpt: 'other' }], 'wrapper evidence').status, 'fail');
   const output = path.join(fixture, 'run');
   const run = await runEvaluation({ dataset, 'source-root': root, 'output-run': output, 'run-id': runId, phase: 'selftest' });
@@ -107,20 +119,41 @@ try {
   assert.equal(results.find(item => item.case_id === 'H2' && item.subcase_id === 'history').delivery.status, 'fail');
   assert.equal(byId.I2.candidate.status, 'pass');
   assert.equal(byId.I2.delivery.status, 'pass');
+  assert.equal(byId.I2_OLD.actual.raw.mutations[0].before.total, 1, 'Old word must exist in the warm index before modification');
+  assert.equal(byId.I2_OLD.candidate.status, 'pass', 'Old word must disappear after the real bound modify handler');
+  assert.equal(byId.I2_OLD.delivery.status, 'pass');
+  assert.equal(byId.I2.actual.raw.mutations[1].notification.event, 'modify');
+  assert.equal(byId.I2.actual.raw.mutations[1].notification.path, 'wiki/change.md');
+  assert.equal(byId.I2.actual.raw.mutations[1].notification.producer_binding, 'bindKnowledgeIndexToVault');
+  assert.equal(byId.I2.actual.raw.mutations[1].notification.handler_completed, true);
+  assert.equal(byId.I2.actual.raw.vault_event_binding.unbound, true);
+  assert.equal(byId.I2.actual.raw.vault_event_binding.listeners_remaining, 0);
+  const changedReference = byId.I2.actual.delivery_items[0];
+  assert.equal(judgeDelivery({ identity_assertions: [{ path: changedReference.vaultRelativePath, fields: { contentRevision: changedReference.contentRevision } }] }, byId.I2.actual.delivery_items, byId.I2.actual.provider_text).status, 'pass');
+  assert.equal(judgeDelivery({ identity_assertions: [{ path: changedReference.vaultRelativePath, fields: { contentRevision: `sha256:${'0'.repeat(64)}` } }] }, byId.I2.actual.delivery_items, byId.I2.actual.provider_text).status, 'fail', 'Correct excerpt with a different expected revision must fail delivery');
   assert.equal(byId.J1.candidate.status, 'not_run');
   assert.equal(byId.K1.candidate.status, 'not_run');
-  assert.equal(run.scores.candidate.score, '5/6');
-  assert.equal(run.scores.delivery.score, '3/6');
+  assert.equal(run.scores.candidate.score, '6/7');
+  assert.equal(run.scores.delivery.score, '4/7');
   assert.equal(run.scores.answer.score, '');
   assert.equal(run.device, 'desktop-script');
   assert.equal(run.model, '');
-  assert.equal(CSV_COLUMNS.join(','), 'run_id,started_at,phase,git_commit,dataset_version,device,model,candidate,delivery,answer,record_path,notes');
-  assert.equal(csvRow(run, 'run.json').match(/","/gu).length, 11);
+  assert.equal(run.dataset.scoring_rule_version, 'kb-recall-mechanical-v2');
+  assert.equal(CSV_COLUMNS.join(','), 'run_id,started_at,phase,git_commit,dataset_version,device,model,candidate,delivery,answer,tool_calls_median,elapsed_seconds_median,record_path,notes');
+  assert.equal(csvRow(run, 'run.json').match(/","/gu).length, 13);
+  assert.deepEqual(csvRow(run, 'run.json').split('","').slice(10, 12), ['', '']);
+  assert.deepEqual(csvRow({ ...run, answer_metrics: { summary: { tool_calls_median: 3, elapsed_seconds_median: 1.25 } } }, 'run.json').split('","').slice(10, 12), ['3', '1.25']);
+  assert.deepEqual(csvRow({ ...run, answer_metrics: { summary: { tool_calls_median: 0, elapsed_seconds_median: 0 } } }, 'run.json').split('","').slice(10, 12), ['0', '0']);
+  const legacyWork = `${work}-v1`;
+  try {
+    const legacyRun = await runEvaluation({ dataset: legacyDataset, 'source-root': root, 'output-run': path.join(fixture, 'legacy-run'), 'run-id': `${runId}-v1`, phase: 'selftest' });
+    assert.equal(legacyRun.dataset.scoring_rule_version, 'kb-recall-mechanical-v1', 'Archived manifest rule version must not be relabeled as the latest rule');
+  } finally { await rm(legacyWork, { recursive: true, force: true }); }
   assert.ok(byId.A1.actual.calls.some(item => item.function === 'createProductionPiKnowledgeRuntime.retrieveChat'));
   assert.ok(byId.A1.actual.calls.some(item => item.function === 'KnowledgeRetriever.retrieve'));
   assert.ok(byId.H1.actual.calls.some(item => item.function === 'PersonalMemoryRecallHarness.prepareTurnContext'));
   assert.ok(run.adapter.imported_files.some(item => item.path === 'src/plugin/pi-production-runtime-composition.ts'));
-  console.log('PASS: positive/negative freeze, extra-file and symlink rejection, no output after mismatch, actual production retrieval/Recall serialization, golden pass/fail, output/12-column format.');
+  console.log('PASS: v1/v2 freeze and run metadata, digest rejection, real production retrieval/Recall, inapplicable candidate and revision assertions, output/14-column CSV with unmeasured blanks.');
 } finally {
   await rm(fixture, { recursive: true, force: true });
   await rm(work, { recursive: true, force: true });

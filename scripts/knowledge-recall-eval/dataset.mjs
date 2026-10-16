@@ -4,7 +4,8 @@ import path from 'node:path';
 
 export const DIGEST_ALGORITHM = 'sha256-path-content-u64be-v1';
 export const DIGEST_EXCLUDED_FIELDS = ['manifest.json#/content_sha256'];
-export const RULE_VERSION = 'kb-recall-mechanical-v1';
+export const RULE_VERSION = 'kb-recall-mechanical-v2';
+const SUPPORTED_RULE_VERSIONS = ['kb-recall-mechanical-v1', RULE_VERSION];
 
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
@@ -82,7 +83,7 @@ export async function verifyDataset(root) {
   const digest = await digestDataset(root);
   const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
   if (manifest.digest_algorithm !== DIGEST_ALGORITHM || canonicalJson(manifest.digest_excluded_fields) !== canonicalJson(DIGEST_EXCLUDED_FIELDS)) throw new Error('Dataset digest algorithm/exclusion metadata does not match this evaluator');
-  if (manifest.scoring_rule_version !== RULE_VERSION) throw new Error(`Unsupported scoring rule: ${manifest.scoring_rule_version}`);
+  if (!SUPPORTED_RULE_VERSIONS.includes(manifest.scoring_rule_version)) throw new Error(`Unsupported scoring rule: ${manifest.scoring_rule_version}`);
   if (!/^[a-f0-9]{64}$/.test(manifest.content_sha256 ?? '') || manifest.content_sha256 !== digest.content_sha256) throw new Error(`Dataset digest mismatch: expected ${manifest.content_sha256 ?? '(not frozen)'}, actual ${digest.content_sha256}`);
   return { manifest, digest };
 }

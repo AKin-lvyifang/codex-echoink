@@ -5,14 +5,14 @@ import { mkdir, readFile, writeFile, lstat, copyFile, symlink, rm, readdir } fro
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { freezeDataset, verifyDataset, readCases, relativeFile, RULE_VERSION } from './dataset.mjs';
+import { freezeDataset, verifyDataset, readCases, relativeFile } from './dataset.mjs';
 import { judgeCandidate, judgeDelivery, notRun, summarize } from './judge.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const RETRIEVAL_BASELINE = 'c8fce67c91ce20ebfb0203bd7bb34f32d5b8fb23';
-export const CSV_COLUMNS = ['run_id', 'started_at', 'phase', 'git_commit', 'dataset_version', 'device', 'model', 'candidate', 'delivery', 'answer', 'record_path', 'notes'];
+export const CSV_COLUMNS = ['run_id', 'started_at', 'phase', 'git_commit', 'dataset_version', 'device', 'model', 'candidate', 'delivery', 'answer', 'tool_calls_median', 'elapsed_seconds_median', 'record_path', 'notes'];
 export function csvRow(run, recordPath, notes = '') {
-  const values = [run.run_id, run.started_at, run.phase, run.code.git_commit, run.dataset.version, run.device, '', run.scores.candidate.score, run.scores.delivery.score, '', recordPath, notes];
+  const values = [run.run_id, run.started_at, run.phase, run.code.git_commit, run.dataset.version, run.device, '', run.scores.candidate.score, run.scores.delivery.score, '', run.answer_metrics?.summary?.tool_calls_median, run.answer_metrics?.summary?.elapsed_seconds_median, recordPath, notes];
   return values.map(value => `"${String(value ?? '').replaceAll('"', '""')}"`).join(',');
 }
 
@@ -172,7 +172,7 @@ export async function runEvaluation(options) {
     run_id: runId, started_at: startedAt, ended_at: new Date().toISOString(), phase: options.phase,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, device: 'desktop-script', model: '',
     evidence_level: 'script-production-functions-with-synthetic-storage', code,
-    dataset: { path: datasetPath, version: manifest.dataset_version ?? manifest.version, scoring_rule_version: RULE_VERSION, content_sha256: digest.content_sha256, file_count: digest.file_count, fixed_date: manifest.fixed_date ?? manifest.fixed_today, timezone: manifest.timezone },
+    dataset: { path: datasetPath, version: manifest.dataset_version ?? manifest.version, scoring_rule_version: manifest.scoring_rule_version, content_sha256: digest.content_sha256, file_count: digest.file_count, fixed_date: manifest.fixed_date ?? manifest.fixed_today, timezone: manifest.timezone },
     configuration: { settings: manifest.settings ?? {}, selected_cases: selected ?? null, requested_case_ids: [...new Set(items.map(item => item.case_id))], total_dataset_case_ids: allCases.length, planned_result_rows_including_subcases: results.length, executed_content_checks: results.filter(result => result.actual || result.actual_error).length, work_root: workRoot, model_calls: 0, network_calls: 0 },
     adapter: adapter.metadata, scores, scores_by_device: Object.fromEntries([...new Set(qualityResults.map(result => result.device))].map(device => [device, scoresFor(device)])),
     not_run: results.filter(result => result.candidate.status === 'not_run' || result.delivery.status === 'not_run').map(result => ({ case_id: result.case_id, subcase_id: result.subcase_id, device: result.device, reason: result.candidate.reasons })),
