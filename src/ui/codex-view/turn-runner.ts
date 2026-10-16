@@ -885,7 +885,8 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     && !preparedImages.length
     && !preparedDocumentSet.documents.length
   ) return "failed";
-  if (view.lifecycleSignal?.aborted) return "cancelled";
+  const submissionSignal = view.lifecycleSignal;
+  if (submissionSignal?.aborted) return "cancelled";
   const projector = new PiChatUiProjector();
   let handle: Awaited<
     ReturnType<CodexViewTurnContext["plugin"]["submitPiChat"]>
@@ -923,6 +924,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   try {
     const submittedAt = Date.now();
     handle = await view.plugin.submitPiChat({
+      signal: submissionSignal,
       conversationId: session.id,
       text: submittedText,
       submittedAt,
@@ -973,7 +975,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       view.turnQueue.acceptPiUserEntry(session.id, item.id);
       view.renderQueue();
     }
-    if (view.lifecycleSignal?.aborted) {
+    if (submissionSignal?.aborted) {
       clearComposerAfterPiAcceptance(view, item, source);
       await view.plugin.abortPiConversation(session.id);
       await handle.result;
@@ -1202,6 +1204,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       applyPiConversationProjection(session, projection);
       view.renderMessagesIfActive(session);
     }
+    if (submissionSignal?.aborted) return "cancelled";
     const rawMessage = normalizePiChatError(error).message;
     const message = localizedPiChatErrorMessage(view, error);
     new Notice(

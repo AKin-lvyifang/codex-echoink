@@ -76,6 +76,7 @@ export interface CorrectPiVaultToolResultInput {
 export interface CorrectedPiVaultToolResult {
   readonly content: readonly Readonly<{ type: "text"; text: string }>[];
   readonly isError: boolean;
+  readonly truncated?: boolean;
 }
 
 export interface PiVaultToolResultCorrectionPort {
@@ -300,7 +301,7 @@ implements PiVaultToolExecutionSecurityPort {
         isError: event.isError || record.status !== "completed"
       }));
       const content = normalizeCorrectedContent(result.content);
-      if (event.toolName === "note_read" && !result.isError && record.status === "completed") this.options.onSuccessfulNoteRead?.(record.value);
+      if (event.toolName === "note_read" && !result.isError && !result.truncated && record.status === "completed") this.options.onSuccessfulNoteRead?.(record.value);
       return Object.freeze({
         content,
         details: safeDetails(
@@ -309,7 +310,8 @@ implements PiVaultToolExecutionSecurityPort {
           record.status,
           record.readbackVerified,
           this.options.includeNoteReadKnowledgeReferences === true,
-          record.value
+          record.value,
+          !result.truncated
         ),
         isError: result.isError || record.status !== "completed"
       });
@@ -354,7 +356,8 @@ export function createSecurePiVaultToolResultCorrectionPort(
           type: "text" as const,
           text: result.text
         })]),
-        isError: input.isError
+        isError: input.isError,
+        truncated: result.truncated
       });
     }
   });
@@ -391,13 +394,14 @@ function safeDetails(
   status: PiVaultToolExecutionStatus,
   readbackVerified: boolean | undefined,
   includeNoteReadKnowledgeReferences: boolean,
-  value: unknown
+  value: unknown,
+  completeResult: boolean
 ): Readonly<PiVaultToolResultDetails> {
   const write = isWriteToolAuthorizationContext(authorization);
   const referenceDetails = includeNoteReadKnowledgeReferences
     && toolId === "note_read"
     && status === "completed"
-    ? noteReadKnowledgeReferenceDetails(value)
+    ? noteReadKnowledgeReferenceDetails(value, completeResult)
     : null;
   return Object.freeze({
     source: "echoink-vault" as const,
@@ -417,11 +421,13 @@ function safeDetails(
 }
 
 function noteReadKnowledgeReferenceDetails(
-  value: unknown
+  value: unknown,
+  completeResult: boolean
 ): Readonly<{
   type: "echoink.knowledge-references.v1";
   schemaVersion: 1;
   references: readonly Readonly<PiKnowledgeReference>[];
+  sourceBodyFingerprints?: Readonly<Record<string, string>>;
 }> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const snapshotValue = (value as { snapshot?: unknown }).snapshot;
@@ -452,9 +458,7 @@ function noteReadKnowledgeReferenceDetails(
     || fileName.replace(/\.[^.]+$/u, "")
     || relativePath;
   const lineNumber = firstEvidenceIndex + 1;
-  const contentRevision = typeof snapshot.bodyFingerprint === "string"
-    ? `sha256:${snapshot.bodyFingerprint.split(":").at(-1)}`
-    : `sha256:${snapshot.contentSha256}`;
+  const contentRevision = `sha256:${snapshot.contentSha256}`;
   const reference = Object.freeze({
     referenceId: `knowledge-reference:${createHash("sha256")
       .update(relativePath, "utf8")
@@ -473,7 +477,11 @@ function noteReadKnowledgeReferenceDetails(
   return Object.freeze({
     type: "echoink.knowledge-references.v1" as const,
     schemaVersion: 1 as const,
-    references: Object.freeze([reference])
+    references: Object.freeze([reference]),
+    ...(completeResult && snapshot.truncated === false && typeof snapshot.bodyFingerprint === "string"
+      && /^sha256:\d+:[a-f0-9]{64}$/u.test(snapshot.bodyFingerprint)
+      ? { sourceBodyFingerprints: Object.freeze({ [relativePath]: snapshot.bodyFingerprint }) }
+      : {})
   });
 }
 

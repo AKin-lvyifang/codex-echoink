@@ -388,6 +388,8 @@ export interface PiKnowledgeMaintenanceToolPort {
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface PiChatSubmitRequest {
+  /** This turn's lifecycle, including initialization before a run handle exists. */
+  signal?: AbortSignal;
   conversationId: string;
   text: string;
   submittedAt: number;

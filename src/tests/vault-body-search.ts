@@ -122,7 +122,10 @@ export async function runVaultBodySearchTests(): Promise<void> {
 export async function runVaultBodySearchCacheTests(): Promise<void> {
   const bindings = emptyKnowledgeFolderBindings();
   bindings.roles.projects.enabled = true; bindings.roles.projects.readPaths = ["项目"];
-  const bodies = new Map([["普通/A.md", "# A\nCACHE_ALPHA"], ["项目/B.md", "# B\nCACHE_ALPHA"]]);
+  bindings.roles.templates.enabled = true; bindings.roles.templates.readPaths = ["模板"];
+  bindings.roles.work.enabled = false; bindings.roles.work.readPaths = ["禁用"];
+  const bodies = new Map([["普通/A.md", "# A\nCACHE_ALPHA"], ["项目/B.md", "# B\nCACHE_ALPHA"],
+    ["私有/Memory.md", "private"], ["模板/T.md", "template"], ["禁用/W.md", "disabled"]]);
   const metadata = new Map<string, unknown>();
   const vaultEvents = new EventEmitter(), metadataEvents = new EventEmitter();
   let reads = 0;
@@ -138,7 +141,7 @@ export async function runVaultBodySearchCacheTests(): Promise<void> {
     read: async (source: TFile) => { reads++; await pause?.(); if (failed.has(source.path) || !bodies.has(source.path)) throw new Error("unreadable"); return bodies.get(source.path)!; }
   }, metadataCache: { ...hostEvents(metadataEvents), getFileCache: (source: TFile) => metadata.get(source.path) ?? null },
   workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
-  const port = new VaultBodySearch(app, () => bindings);
+  const port = new VaultBodySearch(app, () => bindings, { excludedRoots: () => ["私有"] });
   const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-cache", storageRootPath: "/synthetic-cache-state", bodySearch: port });
   const release = bindKnowledgeIndexToVault(app, index);
   try {
@@ -149,6 +152,34 @@ export async function runVaultBodySearchCacheTests(): Promise<void> {
     assert.equal(warm.coverage?.readFiles, 0); assert.equal(warm.coverage?.cachedFiles, 2); assert.equal(reads, 2);
     const another = await index.search({ query: "CACHE_OTHER" });
     assert.equal(another.coverage?.cachedFiles, 2); assert.equal(reads, 2, "different query reuses full statistics");
+    // Production subscriptions must ignore paths outside this search authority.
+    port.invalidate("普通/A.md");
+    let scanEntered!: () => void, scanResume!: () => void;
+    const scanStarted = new Promise<void>(resolve => { scanEntered = resolve; });
+    const scanGate = new Promise<void>(resolve => { scanResume = resolve; });
+    pause = async () => { scanEntered(); await scanGate; };
+    const liveSearch = index.search({ query: "CACHE_ALPHA", limit: 1 });
+    await scanStarted;
+    for (const path of ["私有/Memory.md", "模板/T.md", "禁用/W.md", ".cache/hidden.md"]) {
+      vaultEvents.emit("modify", file(path)); metadataEvents.emit("changed", file(path));
+    }
+    vaultEvents.emit("rename", { path: "私有", children: [] }, ".private-old");
+    scanResume();
+    const unaffected = await liveSearch;
+    assert.equal(unaffected.coverage?.complete, true, "an unrelated event cannot fail a fresh query with no cursor");
+    pause = undefined;
+    vaultEvents.emit("create", file("模板/T.md"));
+    vaultEvents.emit("delete", file("私有/Memory.md"));
+    assert.equal((await index.search({ query: "CACHE_ALPHA", limit: 1, cursor: unaffected.continuationCursor })).returned, 1, "an old cursor remains valid across excluded events");
+    let readEntered!: () => void, readResume!: () => void;
+    const readStarted = new Promise<void>(resolve => { readEntered = resolve; });
+    const readGate = new Promise<void>(resolve => { readResume = resolve; });
+    pause = async () => { readEntered(); await readGate; };
+    const reading = port.read({ vaultRelativePath: "普通/A.md" });
+    await readStarted; vaultEvents.emit("modify", file("项目/B.md")); readResume();
+    assert.equal((await reading).content, bodies.get("普通/A.md"), "another searchable source changing does not invalidate this source read");
+    pause = undefined;
+    await index.search({ query: "CACHE_ALPHA" });
     // Same mtime and same length: the production modify event is the freshness authority.
     bodies.set("普通/A.md", "# A\nCACHE_OMEGA"); vaultEvents.emit("modify", file("普通/A.md"));
     const modified = await index.search({ query: "CACHE_OMEGA" });

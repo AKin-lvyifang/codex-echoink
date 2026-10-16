@@ -30,6 +30,11 @@ export const PI_KNOWLEDGE_MAINTAIN_TOOL_ID = "knowledge_maintain" as const;
 const MAINTENANCE_RESULT_LIMIT_BYTES = 8_000;
 const RESULT_PENDING_SAFETY = "knowledge_maintain_result_pending_safety";
 
+/** File revisions identify citations; only an explicitly observed Raw body digest authorizes maintenance. */
+export function recordMaintenanceSourceBodyFingerprint(fingerprints: Record<string, string>, relativePath: string, fingerprint: string | undefined, vaultRoot = ""): void {
+  if (knowledgePathRole(vaultRoot, relativePath) === "raw" && typeof fingerprint === "string" && /^sha256:\d+:[a-f0-9]{64}$/u.test(fingerprint)) fingerprints[relativePath] = fingerprint;
+}
+
 /** Reuse source versions already delivered in this conversation after reopening. */
 export function maintenanceSourceFingerprintsFromEntries(entries: readonly SessionEntry[], vaultRoot = ""): Record<string, string> {
   const fingerprints: Record<string, string> = {};
@@ -48,7 +53,7 @@ export function maintenanceSourceFingerprintsFromEntries(entries: readonly Sessi
     if (message.role !== "toolResult") continue;
     const details = message.details && typeof message.details === "object" ? message.details as Record<string, unknown> : {};
     const adopt = (relative: unknown, revision: unknown) => {
-      if (typeof relative === "string" && knowledgePathRole(vaultRoot, relative) === "raw" && typeof revision === "string" && /^sha256:(?:\d+:)?[a-f0-9]{64}$/u.test(revision)) fingerprints[relative] = revision;
+      if (typeof relative === "string" && typeof revision === "string") recordMaintenanceSourceBodyFingerprint(fingerprints, relative, revision, vaultRoot);
     };
     if (message.toolName === PI_KNOWLEDGE_MAINTAIN_TOOL_ID) {
       if (details.sourceBodyFingerprints && typeof details.sourceBodyFingerprints === "object") {
@@ -56,11 +61,9 @@ export function maintenanceSourceFingerprintsFromEntries(entries: readonly Sessi
       }
     } else if (["note_read", "knowledge_read"].includes(message.toolName)) {
       if (message.isError) { const relative = reads.get(message.toolCallId); if (relative) delete fingerprints[relative]; continue; }
-      for (const raw of Array.isArray(details.references) ? details.references : []) {
-        if (!raw || typeof raw !== "object") continue;
-        const reference = raw as Record<string, unknown>;
-        adopt(reference.vaultRelativePath, reference.contentRevision);
-      }
+      // Legacy citation SHA values do not identify which digest was used.
+      // A missing explicit body digest requires a new complete source read.
+      for (const [relative, fingerprint] of Object.entries((details.sourceBodyFingerprints ?? {}) as Record<string, unknown>)) adopt(relative, fingerprint);
     }
   }
   return fingerprints;

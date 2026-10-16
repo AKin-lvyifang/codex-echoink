@@ -1,3 +1,4 @@
+import { assertPiSubmissionActive } from "./pi-submission-lifecycle";
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../../knowledge-base/search/contracts";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../../knowledge-base/root-paths";
 import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/root-paths";
@@ -682,6 +683,7 @@ interface ActiveProductRun {
   agentSettledSeen: boolean;
   abortRequested: boolean;
   knowledgeAbort: AbortController;
+  releaseSubmissionAbort?: () => void;
   eventError: unknown;
   channel: PiRuntimeEventChannel;
   settlementBarrier: PiProductRunSettlementBarrier;
@@ -1321,6 +1323,7 @@ export class PiNativeConversationRuntime {
     request: Readonly<PiChatSubmitRequest>
   ): Promise<PiChatRunHandle> {
     this.assertReady();
+    assertPiSubmissionActive(request.signal);
     if (this.submitting.has(request.conversationId)) {
       throw new PiNativeConversationRuntimeError(
         "conversation_busy",
@@ -1338,6 +1341,7 @@ export class PiNativeConversationRuntime {
   private async submitPrepared(
     request: Readonly<PiChatSubmitRequest>
   ): Promise<PiChatRunHandle> {
+    assertPiSubmissionActive(request.signal);
     this.assertConversationNotRecovering(request.conversationId);
     assertValidSkillBinding(request);
     const promptImages = normalizePiChatPreparedImages(request.images);
@@ -1373,6 +1377,7 @@ export class PiNativeConversationRuntime {
       );
     }
 
+    assertPiSubmissionActive(request.signal);
     const selectedDraft = request.draftId
       ? await this.requireDraftForSubmission(catalog, request.draftId)
       : null;
@@ -1399,6 +1404,7 @@ export class PiNativeConversationRuntime {
           })])
       : Object.freeze([]);
 
+    assertPiSubmissionActive(request.signal);
     const active = await this.requireActiveConversation(
       request.conversationId,
       {
@@ -1416,6 +1422,7 @@ export class PiNativeConversationRuntime {
             : {})
       }
     );
+    assertPiSubmissionActive(request.signal);
     if (active.currentRun || active.session.isStreaming) {
       throw new PiNativeConversationRuntimeError(
         "conversation_busy",
@@ -1522,8 +1529,19 @@ export class PiNativeConversationRuntime {
       productRunId,
       request.conversationId
     );
+    if (request.signal) {
+      const onAbort = () => {
+        if (active.currentRun !== execution) return;
+        // abort() sets the bound Knowledge signal before its first await.
+        void this.abort(request.conversationId).catch(error => console.error("Pi lifecycle cancellation failed", error));
+      };
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      execution.releaseSubmissionAbort = () => request.signal!.removeEventListener("abort", onAbort);
+      if (request.signal.aborted) onAbort();
+    }
 
     try {
+      assertPiSubmissionActive(execution.knowledgeAbort.signal);
       if (requestedThinkingLevel !== undefined) {
         active.session.setThinkingLevel(requestedThinkingLevel);
       }
@@ -1670,6 +1688,7 @@ export class PiNativeConversationRuntime {
           command
         });
       }
+      assertPiSubmissionActive(execution.knowledgeAbort.signal);
     } catch (error) {
       this.abandonUnstartedProductRun(active, execution);
       throw error;
@@ -1722,7 +1741,12 @@ export class PiNativeConversationRuntime {
         source: "interactive",
         // Pi appends the user Entry only after auth, compaction and
         // before_agent_start. Their duration is not an Entry-write timeout.
-        preflightResult: (accepted) => { if (accepted) promptStart.readyAt = Date.now(); },
+        preflightResult: (accepted) => {
+          // Pi calls this after auth/compaction/before_agent_start and immediately
+          // before starting its Agent, closing the early-abort startup race.
+          assertPiSubmissionActive(execution.knowledgeAbort.signal);
+          if (accepted) promptStart.readyAt = Date.now();
+        },
         ...(promptImages.length ? { images: promptImages } : {})
       });
     } catch (promptStartError) {
@@ -1928,6 +1952,8 @@ export class PiNativeConversationRuntime {
     active: ActiveConversation,
     execution: ActiveProductRun
   ): void {
+    execution.releaseSubmissionAbort?.();
+    execution.releaseSubmissionAbort = undefined;
     if (active.currentRun === execution) active.currentRun = null;
     if (active.currentExecution?.runId === execution.productRunId) {
       active.currentExecution = null;
@@ -2151,6 +2177,7 @@ export class PiNativeConversationRuntime {
     } catch (error) {
       abortErrors.push(error);
     }
+    if (active.currentRun !== execution) return;
     let cleared: { steering: string[]; followUp: string[] } | null = null;
     try {
       cleared = active.session.clearQueue();
@@ -2162,6 +2189,7 @@ export class PiNativeConversationRuntime {
     } catch (error) {
       abortErrors.push(error);
     }
+    if (active.currentRun !== execution) return;
     if (cleared) {
       try {
         await this.persistAbortDrafts(active, execution, cleared);
@@ -2169,6 +2197,7 @@ export class PiNativeConversationRuntime {
         abortErrors.push(error);
       }
     }
+    if (active.currentRun !== execution) return;
     try {
       active.session.abortCompaction();
     } catch (error) {
@@ -2532,6 +2561,7 @@ export class PiNativeConversationRuntime {
             "Provider request has no bound Pi-native execution"
           );
         }
+        assertPiSubmissionActive(run?.knowledgeAbort.signal);
         if (run && run.providerStartedAt === undefined) {
           const providerStartedAt = this.now();
           run.providerStartedAt = providerStartedAt;
@@ -2555,6 +2585,7 @@ export class PiNativeConversationRuntime {
             "Tool execution has no bound ProductRun"
           );
         }
+        assertPiSubmissionActive(run.knowledgeAbort.signal);
         const userEntry = currentRunUserEntry(active.sessionManager, run.baselineEntryIds);
         return {
           conversationId: catalog.conversationId,

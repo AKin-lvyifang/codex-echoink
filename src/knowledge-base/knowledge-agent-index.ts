@@ -214,6 +214,11 @@ export class KnowledgeAgentIndex {
       const root = knowledgePathRole(this.vaultPath, relativePath);
       if (!(KNOWLEDGE_ROOTS as readonly string[]).includes(root as string)) return;
     }
+    this.invalidateMaintenance();
+  }
+
+  /** Mark only the maintenance index stale without invalidating body-search snapshots. */
+  invalidateMaintenance(): void {
     this.invalidationVersion += 1;
   }
 

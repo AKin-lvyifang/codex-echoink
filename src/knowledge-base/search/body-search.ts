@@ -461,6 +461,7 @@ function memoryLimit(value: number | undefined, fallback: number): number {
 /** One Vault-local dictionary view, bounded in memory and never persisted. */
 export class BodySearchMemoryIndex implements BodySearchMemoryPort {
   private readonly records = new Map<string, CachedDocument>();
+  private readonly activeSearches = new Set<{ paths: ReadonlySet<string>; invalidated: boolean }>();
   private readonly maxCharacters: number;
   private readonly maxTokenEntries: number;
   private readonly maxDocuments: number;
@@ -490,42 +491,50 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
     const keys = new Map(prepared.documents.map((document) => [document.vaultRelativePath, documentKey(document)]));
     for (const path of this.records.keys()) if (!keys.has(path)) this.remove(path);
     const epoch = this.epoch;
+    const active = { paths: new Set(keys.keys()), invalidated: false };
+    this.activeSearches.add(active);
     const staged = new Map<string, CachedDocument>();
     const check = (document?: BodySearchDocument) => {
       this.assertActive();
-      if (epoch !== this.epoch || (document && keys.get(document.vaultRelativePath) !== documentKey(document))) throw indexStateError("search_index_stale");
+      if (epoch !== this.epoch || active.invalidated || (document && keys.get(document.vaultRelativePath) !== documentKey(document))) throw indexStateError("search_index_stale");
     };
-    const result = await executeSearch(options, prepared, {
-      check,
-      get: (document) => {
-        check(document);
-        if (document.revisionKey === undefined) return undefined;
-        const record = this.records.get(document.vaultRelativePath);
-        return record && record.key === keys.get(document.vaultRelativePath) ? record.statistics : undefined;
-      },
-      stage: (document, statistics) => {
-        check(document);
-        if (document.revisionKey !== undefined) staged.set(document.vaultRelativePath, { key: keys.get(document.vaultRelativePath)!, statistics });
-      },
-    });
-    checkAbort(options.request.signal);
-    check();
-    for (const document of prepared.documents) check(document);
-    // A cancelled/failed/invalidated build never publishes partial state as complete.
-    if (result.coverage.complete) for (const [path, record] of staged) this.retain(path, record);
-    return result;
+    try {
+      const result = await executeSearch(options, prepared, {
+        check,
+        get: (document) => {
+          check(document);
+          if (document.revisionKey === undefined) return undefined;
+          const record = this.records.get(document.vaultRelativePath);
+          return record && record.key === keys.get(document.vaultRelativePath) ? record.statistics : undefined;
+        },
+        stage: (document, statistics) => {
+          check(document);
+          if (document.revisionKey !== undefined) staged.set(document.vaultRelativePath, { key: keys.get(document.vaultRelativePath)!, statistics });
+        },
+      });
+      checkAbort(options.request.signal);
+      check();
+      for (const document of prepared.documents) check(document);
+      // A cancelled/failed/invalidated build never publishes partial state as complete.
+      if (result.coverage.complete) for (const [path, record] of staged) this.retain(path, record);
+      return result;
+    } finally { this.activeSearches.delete(active); }
   }
 
   invalidate(path?: string): void {
     if (path === undefined) { this.clear(); return; }
-    this.epoch++;
     const prefix = path.replace(/\\/gu, "/").replace(/\/+$/u, "");
-    for (const key of this.records.keys()) if (!prefix || key === prefix || key.startsWith(`${prefix}/`)) this.remove(key);
+    const matches = (key: string) => !prefix || key === prefix || key.startsWith(`${prefix}/`);
+    for (const key of this.records.keys()) if (matches(key)) this.remove(key);
+    for (const active of this.activeSearches) {
+      if ([...active.paths].some(matches)) active.invalidated = true;
+    }
   }
 
   clear(): void {
     this.epoch++;
     this.records.clear();
+    this.activeSearches.clear();
     this.characters = 0;
     this.tokenEntries = 0;
     this.dictionarySignature = undefined;

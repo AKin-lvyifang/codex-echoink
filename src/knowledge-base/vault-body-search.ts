@@ -58,11 +58,24 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
   private generation = 1;
   private disposed = false;
   private indexedScope?: string;
+  private observedPaths = new Set<string>();
+  private readonly activeReads = new Set<{ path: string; invalidated: boolean }>();
   private readonly memory = new BodySearchMemoryIndex();
   constructor(private readonly app: App, private readonly bindings: () => KnowledgeFolderBindings | null | undefined,
     private readonly options: Readonly<{ excludedRoots?: () => readonly string[]; onJournalSearch?: () => void | Promise<void> }> = {}) {}
-  invalidate(path?: string): void { if (this.disposed) return; this.generation += 1; this.memory.invalidate(path); }
-  dispose(): void { if (this.disposed) return; this.disposed = true; this.generation += 1; this.memory.dispose(); }
+  invalidate(path?: string): void {
+    if (this.disposed) return;
+    const normalized = path?.replace(/\\/gu, "/").replace(/\/+$/u, "");
+    if (normalized !== undefined && !this.relevantEvent(normalized)) return;
+    this.generation += 1;
+    for (const reading of this.activeReads) if (normalized === undefined || this.containsPath(normalized, reading.path)) reading.invalidated = true;
+    this.memory.invalidate(normalized);
+  }
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true; this.generation += 1; this.memory.dispose();
+    this.observedPaths.clear(); this.activeReads.clear();
+  }
   private assertOpen(): void { if (this.disposed) throw Object.assign(new Error("Knowledge search disposed"), { code: "disposed" }); }
   private ensureScope(): string {
     this.assertOpen();
@@ -72,6 +85,16 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
   }
   allowsPath(path: string): boolean { return knowledgeSearchPathKind(path, this.bindings(), this.options.excludedRoots?.()) !== null; }
   scopeKey(): string { return JSON.stringify([this.bindings(), this.options.excludedRoots?.() ?? []]); }
+  private containsPath(directory: string, path: string): boolean { return !directory || directory === path || path.startsWith(`${directory}/`); }
+  private relevantEvent(path: string): boolean {
+    if (this.allowsPath(path)) return true;
+    // Deleted/renamed directories may no longer exist in the live Vault listing.
+    // Recheck current policy so remembered paths cannot bypass private/disabled roots.
+    const affected = (source: string) => this.containsPath(path, source) && this.allowsPath(source);
+    for (const source of this.observedPaths) if (affected(source)) return true;
+    for (const reading of this.activeReads) if (affected(reading.path)) return true;
+    return this.app.vault.getMarkdownFiles().some(file => affected(file.path));
+  }
   private allowed(filePath: string): KnowledgeSearchKind {
     this.assertOpen();
     const kind = knowledgeSearchPathKind(filePath, this.bindings(), this.options.excludedRoots?.());
@@ -86,17 +109,22 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
   }
   async read(input: Readonly<{ vaultRelativePath: string; expectedContentRevision?: string }>): Promise<KnowledgeAgentReadResult> {
     const scope = this.scopeKey();
-    const generation = this.generation;
     const file = this.file(input.vaultRelativePath);
-    const content = await this.app.vault.read(file);
-    this.assertOpen();
-    this.file(input.vaultRelativePath);
-    if (scope !== this.scopeKey() || generation !== this.generation || file.path !== input.vaultRelativePath) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
-    const kind = this.allowed(file.path);
-    const contentRevision = `sha256:${sha256Hex(content)}`;
-    if (input.expectedContentRevision && input.expectedContentRevision !== contentRevision) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
-    return { entryId: `body:${file.path}`, vaultRelativePath: file.path, kind, title: file.basename,
-      contentRevision, content, recordedAt: Math.trunc(file.stat.mtime), verificationStatus: "local_revision_verified", rawSources: [] };
+    const version = JSON.stringify([file.stat.mtime, file.stat.size, file.basename]);
+    const reading = { path: input.vaultRelativePath, invalidated: false };
+    this.activeReads.add(reading);
+    try {
+      const content = await this.app.vault.read(file);
+      this.assertOpen();
+      if (scope !== this.scopeKey() || reading.invalidated || file.path !== input.vaultRelativePath) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
+      const current = this.file(input.vaultRelativePath);
+      if (version !== JSON.stringify([current.stat.mtime, current.stat.size, current.basename])) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
+      const kind = this.allowed(file.path);
+      const contentRevision = `sha256:${sha256Hex(content)}`;
+      if (input.expectedContentRevision && input.expectedContentRevision !== contentRevision) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
+      return { entryId: `body:${file.path}`, vaultRelativePath: file.path, kind, title: file.basename,
+        contentRevision, content, recordedAt: Math.trunc(file.stat.mtime), verificationStatus: "local_revision_verified", rawSources: [] };
+    } finally { this.activeReads.delete(reading); }
   }
   async search(request: Readonly<KnowledgeAgentSearchRequest>): Promise<KnowledgeAgentSearchResult> {
     const scope = this.ensureScope();
@@ -118,6 +146,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
         aliases, tags, headings,
         read: () => this.read({ vaultRelativePath: file.path }) }];
     });
+    this.observedPaths = new Set(documents.map(document => document.vaultRelativePath));
     if (documents.some(document => document.kind === "journal")) await this.options.onJournalSearch?.();
     const queryKey = sha256Hex(JSON.stringify({ mode: request.mode, query: request.query, queries: request.queries, kinds: request.kinds,
       dateFrom: request.dateFrom, dateTo: request.dateTo, excludePaths: request.excludePaths, bindingSignature,
@@ -147,17 +176,25 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
         try { hits.push(await this.read({ vaultRelativePath: document.vaultRelativePath })); } catch (error) { if (error instanceof Error && error.name === "AbortError") throw error; failedFiles++; }
       }
       if (request.signal?.aborted) throw Object.assign(new Error("Knowledge search aborted"), { name: "AbortError" });
-      this.assertCurrent(scope, generation);
+      this.assertCurrent(scope, generation, Boolean(request.cursor));
       const remaining = Math.max(0, eligible.length - offset - page.length);
       return { generation, total: eligible.length, returned: hits.length, remaining, hasMore: remaining > 0, exhausted: remaining === 0 && failedFiles === 0,
         coverage: { totalFiles: eligible.length, scannedFiles: hits.length, readFiles: page.length, cachedFiles: 0, indexedFiles: hits.length, failedFiles, complete: hits.length === eligible.length && failedFiles === 0, unknownJournalDates: 0 },
         hits: hits.map(({ content: _content, ...hit }) => hit),
         ...(remaining ? { continuationCursor: JSON.stringify({ key: queryKey, generation, offset: offset + page.length }) } : {}) };
     }
-    const result = await this.memory.search({ documents, request: { ...request, offset, limit },
-      activePath: this.app.workspace?.getActiveFile()?.path, recentPaths: this.app.workspace?.getLastOpenFiles?.() ?? [] });
+    let result: Awaited<ReturnType<BodySearchMemoryIndex["search"]>>;
+    try {
+      result = await this.memory.search({ documents, request: { ...request, offset, limit },
+        activePath: this.app.workspace?.getActiveFile()?.path, recentPaths: this.app.workspace?.getLastOpenFiles?.() ?? [] });
+    } catch (error) {
+      if ((error as { code?: string })?.code !== "search_index_stale") throw error;
+      // A real change rejects the snapshot; it is a cursor error only for pagination.
+      this.assertCurrent(scope, generation, Boolean(request.cursor));
+      throw this.changedSearch(Boolean(request.cursor));
+    }
     // Scope changes during a scan cannot leak material from an earlier setting.
-    this.assertCurrent(scope, generation);
+    this.assertCurrent(scope, generation, Boolean(request.cursor));
     const hits = result.hits.map(hit => ({ ...hit, entryId: `body:${hit.vaultRelativePath}:${hit.lineStart}`,
       verificationStatus: "local_revision_verified" as const, rawSources: [] }));
     while (hits.length > 1 && new TextEncoder().encode(JSON.stringify(hits)).length > 10_000) hits.pop();
@@ -166,12 +203,15 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       exhausted: remaining === 0 && result.coverage.complete, coverage: result.coverage, hits,
       ...(remaining ? { continuationCursor: JSON.stringify({ key: queryKey, generation, offset: offset + hits.length }) } : {}) };
   }
-  private assertCurrent(scope: string, generation: number): void {
+  private changedSearch(cursor: boolean, scopeChanged = false): Error {
+    return Object.assign(new Error(cursor ? "Search cursor is stale" : scopeChanged ? "Search scope changed" : "Search source changed"), { code: cursor ? "cursor_stale" : "source_changed" });
+  }
+  private assertCurrent(scope: string, generation: number, cursor: boolean): void {
     this.assertOpen();
     if (scope !== this.scopeKey() || generation !== this.generation) {
       // A setting change can arrive without a Vault event while a scan yields.
       if (scope !== this.scopeKey()) this.ensureScope();
-      throw Object.assign(new Error("Search scope changed"), { code: "cursor_stale" });
+      throw this.changedSearch(cursor, scope !== this.scopeKey());
     }
   }
 }

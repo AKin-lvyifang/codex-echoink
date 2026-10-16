@@ -325,7 +325,7 @@ function assertOpenAiCompatibleMemoryToolSchemas(): void {
   assert.match(String(createProperties.recallWhen.description ?? ""), /未来.*召回/iu);
   assert.match(String(schemas.memory_write.description ?? ""), /跨轮价值.*新增或更新.*USER 画像.*忘记/iu);
   assert.doesNotMatch(String(schemas.memory_write.description ?? ""), /nextCursor|revision|outcome=/iu);
-  assert.match(String(schemas.memory_search.description ?? ""), /相关历史可能影响当前回答.*定位现有记录/iu);
+  assert.match(String(schemas.memory_search.description ?? ""), /默认只返回current.*statuses包含superseded.*scope\/from\/to.*定位现有记录/iu);
   assert.doesNotMatch(String(schemas.memory_search.description ?? ""), /nextCursor|revision|冲突/iu);
   assert.equal(profileProperties.text.maxLength, 120);
 
@@ -409,7 +409,7 @@ async function scenarioProviderVisibleDescriptionsStayAligned(): Promise<void> {
     >>;
 
     assert.equal(searchDescription, schemas.memory_search.description);
-    assert.match(searchDescription, /相关历史可能影响当前回答.*新增、更新、修正画像、忘记前定位现有记录/iu);
+    assert.match(searchDescription, /current与superseded.*supersedes.*写入、修正或忘记前按需定位现有记录/iu);
     assert.doesNotMatch(searchDescription, /exhausted|nextCursor|revision|冲突/iu);
 
     assert.equal(writeDescription, schemas.memory_write.description);

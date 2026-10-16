@@ -16,7 +16,7 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
-  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests } from "./src/tests/knowledge-body-search";',
+  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests } from "./src/tests/knowledge-body-search";',
   'import { runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
@@ -32,6 +32,7 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeBodySearchInvalidationTests();",
   "await runKnowledgeBodySearchSchedulingTests();",
   "await runKnowledgeBodySearchCacheTests();",
   "await runVaultBodySearchCacheTests();",
@@ -54,10 +55,21 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--body-search-scheduling") ? [
-      'import { runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchCacheTests } from "./src/tests/knowledge-body-search";',
+    contents: (process.argv.includes("--maintenance-fingerprints") ? [
+      'import { runMaintenanceReadFingerprintTests } from "./src/tests/pi-native/phase3-maintenance-service";',
+      'await runMaintenanceReadFingerprintTests();'
+    ] : process.argv.includes("--submission-cancellation") ? [
+      'import { runPiSubmissionCancellationTests } from "./src/tests/pi-native/pi-native-conversation-runtime";',
+      'import { runPiPluginConversationBoundaryTests } from "./src/tests/pi-native/plugin-conversation-boundary";',
+      'import { runPiNativeTurnRunnerTests } from "./src/tests/pi-native/turn-runner";',
+      'await runPiSubmissionCancellationTests();',
+      'await runPiPluginConversationBoundaryTests();',
+      'await runPiNativeTurnRunnerTests();'
+    ] : process.argv.includes("--body-search-scheduling") ? [
+      'import { runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchInvalidationTests } from "./src/tests/knowledge-body-search";',
       'import { runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
       'await runKnowledgeBodySearchSchedulingTests();',
+      'await runKnowledgeBodySearchInvalidationTests();',
       'await runKnowledgeBodySearchCacheTests();',
       'await runVaultBodySearchCacheTests();',
       'await runVaultBodySearchTests();'
@@ -139,6 +151,9 @@ await esbuild.build({
   plugins: [{
     name: "knowledge-test-shims",
     setup(build) {
+      if (process.argv.includes("--submission-cancellation")) build.onResolve({ filter: /provider-brand-icons$/ }, () => ({
+        path: path.join(rootDir, "src", "tests", "composer-provider-brand-shim.ts")
+      }));
       // Node business fixtures retain the real action handlers while using
       // the shared DOM adapter; Origin/Radix rendering has browser coverage.
       build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, () => ({

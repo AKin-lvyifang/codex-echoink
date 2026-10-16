@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import type { App, TFile } from "obsidian";
 import { BodySearchMemoryIndex, searchBodyDocuments } from "../knowledge-base/search/body-search";
+import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vault-body-search";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { buildSearchDictionary, tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import { yieldSearchTask } from "../knowledge-base/search/scheduling";
 import type { BodySearchDocument, BodySearchRequest } from "../knowledge-base/search/contracts";
@@ -11,6 +14,24 @@ function note(path: string, body: string, metadata: Partial<BodySearchDocument> 
 
 async function search(documents: readonly BodySearchDocument[], request: BodySearchRequest) {
   return searchBodyDocuments({ documents, request });
+}
+
+async function withCheckpointTask<T>(onTask: () => void, action: () => Promise<T>): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "scheduler");
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  Object.defineProperty(globalThis, "scheduler", { configurable: true, value: { yield: () => new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      try { onTask(); resolve(); } catch (error) { reject(error); }
+    }, 0);
+    timers.add(timer);
+  }) } });
+  try { return await action(); }
+  finally {
+    for (const timer of timers) clearTimeout(timer);
+    if (descriptor) Object.defineProperty(globalThis, "scheduler", descriptor);
+    else Reflect.deleteProperty(globalThis, "scheduler");
+  }
 }
 
 export async function runKnowledgeBodySearchColumnTests(): Promise<void> {
@@ -194,10 +215,8 @@ export async function runKnowledgeBodySearchTests(): Promise<void> {
     return { content: "needle", contentRevision: String(index) };
   } }));
   let uiTaskRan = false;
-  const uiTask = setTimeout(() => { uiTaskRan = true; }, 0);
-  await search(sequential, { query: "needle" });
-  clearTimeout(uiTask);
-  assert.equal(uiTaskRan, true, "scan yields to a pending UI task");
+  await withCheckpointTask(() => { uiTaskRan = true; }, () => search(sequential, { query: "needle" }));
+  assert.equal(uiTaskRan, true, "scan checkpoints execute a real task");
   assert.equal(readCounts.size, 32);
   assert.ok([...readCounts.values()].every((count) => count === 1));
   const failure = await search([note("good.md", "needle"), note("bad.md", "", { read: async () => { throw new Error("unreadable"); } })], { query: "needle" });
@@ -215,17 +234,17 @@ export async function runKnowledgeBodySearchTests(): Promise<void> {
   readAbort.name = "AbortError";
   await assert.rejects(search([note("abort-error.md", "", { read: async () => { throw readAbort; } })], { query: "needle" }), { name: "AbortError" });
   const duringScan = new AbortController();
-  const cancel = setTimeout(() => duringScan.abort(), 0);
-  await assert.rejects(search(sequential, { query: "needle", signal: duringScan.signal }), { name: "AbortError" });
-  clearTimeout(cancel);
+  await withCheckpointTask(() => duringScan.abort(), async () => {
+    await assert.rejects(search(sequential, { query: "needle", signal: duringScan.signal }), { name: "AbortError" });
+  });
   const longCancellation = new AbortController();
   let laterFileRead = false;
-  const longAbort = setTimeout(() => longCancellation.abort(), 0);
-  await assert.rejects(search([
-    note("huge-section.md", "large background ".repeat(12_000)),
-    note("later.md", "", { read: async () => { laterFileRead = true; return { content: "needle", contentRevision: "later" }; } }),
-  ], { query: "needle", signal: longCancellation.signal }), { name: "AbortError" });
-  clearTimeout(longAbort);
+  await withCheckpointTask(() => longCancellation.abort(), async () => {
+    await assert.rejects(search([
+      note("huge-section.md", "large background ".repeat(12_000)),
+      note("later.md", "", { read: async () => { laterFileRead = true; return { content: "needle", contentRevision: "later" }; } }),
+    ], { query: "needle", signal: longCancellation.signal }), { name: "AbortError" });
+  });
   assert.equal(laterFileRead, false, "a single long section yields before scanning the next file");
 
   let currentBody = "old wording";
@@ -662,4 +681,128 @@ export async function runKnowledgeBodySearchSchedulingTests(): Promise<void> {
     }
   }
   console.log("Knowledge body search scheduling: real tasks, fallback priority, independent cancellation and released ports PASS");
+}
+
+export async function runKnowledgeBodySearchInvalidationTests(): Promise<void> {
+  const memory = new BodySearchMemoryIndex();
+  const firstEntered = deferred<void>(), firstReleased = deferred<void>();
+  const unrelatedEntered = deferred<void>(), unrelatedReleased = deferred<void>();
+  const firstDocuments = [note("area/a.md", "", { title: "共同标题", revisionKey: "a1", read: async () => {
+    firstEntered.resolve(); await firstReleased.promise;
+    return { content: "alpha", contentRevision: "a1" };
+  } })];
+  const unrelatedDocuments = [note("area-other/b.md", "", { title: "共同标题", revisionKey: "b1", read: async () => {
+    unrelatedEntered.resolve(); await unrelatedReleased.promise;
+    return { content: "beta", contentRevision: "b1" };
+  } })];
+  const first = memory.search({ documents: firstDocuments, request: { query: "alpha" } });
+  await firstEntered.promise;
+  const unrelated = memory.search({ documents: unrelatedDocuments, request: { query: "beta" } });
+  await unrelatedEntered.promise;
+  memory.invalidate("private/memory.md");
+  memory.invalidate("area");
+  unrelatedReleased.resolve();
+  const unaffected = await unrelated;
+  assert.equal(unaffected.coverage.complete, true, "a directory event only invalidates requests whose eligible paths intersect it");
+  firstReleased.resolve();
+  await assert.rejects(first, { code: "search_index_stale" });
+  assert.equal((await memory.search({ documents: unrelatedDocuments, request: { query: "beta" } })).coverage.cachedFiles, 1);
+  memory.dispose();
+
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.journal.enabled = true; bindings.roles.journal.readPaths = ["日记"];
+  bindings.roles.templates.enabled = true; bindings.roles.templates.readPaths = ["模板"];
+  bindings.roles.projects.enabled = false; bindings.roles.projects.readPaths = ["项目"];
+  const excludedRoots = ["私有"];
+  const bodies = new Map([
+    ["普通/A.md", "# A\nneedle ALPHA"], ["普通/B.md", "# B\nneedle BETA"],
+    ["日记/2026-10-01.md", "# 日记\nneedle JOURNAL"],
+    ["私有/Memory.md", "needle"], ["模板/计划.md", "needle"], ["项目/关闭.md", "needle"],
+  ]);
+  let journalPause: (() => Promise<void>) | undefined;
+  let readPause: ((path: string) => Promise<void>) | undefined;
+  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.slice(0, -3), extension: "md",
+    stat: { mtime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
+  const app = { vault: {
+    getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => {
+      const content = bodies.get(source.path);
+      await readPause?.(source.path);
+      if (content === undefined) throw new Error("gone");
+      return content;
+    },
+  }, metadataCache: { getFileCache: () => null } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings, { excludedRoots: () => excludedRoots, onJournalSearch: () => journalPause?.() });
+  try {
+    for (const path of ["私有/Memory.md", "模板/计划.md", "项目/关闭.md", ".echoink/state.md"]) {
+      assert.equal(knowledgeSearchPathKind(path, bindings, excludedRoots), null);
+    }
+    const original = await port.search({ query: "needle", limit: 1 });
+    assert.ok(original.continuationCursor);
+    const noticeEntered = deferred<void>(), noticeReleased = deferred<void>();
+    journalPause = async () => { noticeEntered.resolve(); await noticeReleased.promise; };
+    const freshQuery = port.search({ query: "needle", limit: 1 });
+    await noticeEntered.promise;
+    for (const path of ["私有/Memory.md", "私有", "模板/计划.md", "模板", "项目/关闭.md", "项目", ".echoink/state.md"]) port.invalidate(path);
+    noticeReleased.resolve();
+    const freshResult = await freshQuery;
+    journalPause = undefined;
+    assert.equal(freshResult.generation, original.generation, "excluded file/folder events cannot turn a fresh query into a stale snapshot");
+    const continuation = await port.search({ query: "needle", limit: 1, cursor: original.continuationCursor });
+    assert.equal(continuation.generation, original.generation, "unrelated events also preserve valid old cursors");
+
+    const readEntered = deferred<void>(), readReleased = deferred<void>();
+    readPause = async path => { if (path === "普通/A.md") { readEntered.resolve(); await readReleased.promise; } };
+    const pendingRead = port.read({ vaultRelativePath: "普通/A.md" });
+    await readEntered.promise;
+    port.invalidate("私有/Memory.md");
+    port.invalidate("日记/2026-10-01.md");
+    readReleased.resolve();
+    assert.match((await pendingRead).content, /ALPHA/u, "reading one source is not invalidated by an event on another searchable source");
+    readPause = undefined;
+    await assert.rejects(port.search({ query: "needle", limit: 1, cursor: original.continuationCursor }), { code: "cursor_stale" });
+
+    const changedEntered = deferred<void>(), changedReleased = deferred<void>();
+    journalPause = async () => { changedEntered.resolve(); await changedReleased.promise; };
+    const changedQuery = port.search({ query: "needle" });
+    await changedEntered.promise;
+    port.invalidate("普通/A.md");
+    changedReleased.resolve();
+    await assert.rejects(changedQuery, { code: "source_changed" }, "a genuine event during a query without a cursor is a source change, never a cursor error");
+    journalPause = undefined;
+
+    for (const eventPath of ["普通/A.md", "普通", undefined]) {
+      const entered = deferred<void>(), released = deferred<void>();
+      readPause = async path => { if (path === "普通/A.md") { entered.resolve(); await released.promise; } };
+      const reading = port.read({ vaultRelativePath: "普通/A.md" });
+      await entered.promise; port.invalidate(eventPath); released.resolve();
+      await assert.rejects(reading, { code: "source_changed" });
+      readPause = undefined;
+    }
+
+    const prior = await port.read({ vaultRelativePath: "普通/A.md" });
+    port.invalidate();
+    const modifyingEntered = deferred<void>(), modifyingReleased = deferred<void>();
+    readPause = async path => { if (path === "普通/A.md") { modifyingEntered.resolve(); await modifyingReleased.promise; } };
+    const modifying = port.search({ query: "needle" });
+    await modifyingEntered.promise;
+    bodies.set("普通/A.md", "# A\nneedle OMEGA");
+    port.invalidate("普通/A.md");
+    modifyingReleased.resolve();
+    await assert.rejects(modifying, { code: "source_changed" });
+    readPause = undefined;
+    const latest = await port.search({ query: "OMEGA" });
+    assert.equal(latest.hits[0].vaultRelativePath, "普通/A.md");
+    assert.notEqual(latest.hits[0].contentRevision, prior.contentRevision, "same-mtime/same-size modify still rejects the old source revision");
+
+    const beforeDelete = await port.search({ query: "needle", limit: 1 });
+    bodies.delete("普通/A.md"); bodies.delete("普通/B.md");
+    port.invalidate("普通");
+    const afterDelete = await port.search({ query: "needle" });
+    assert.ok(afterDelete.generation > beforeDelete.generation, "a deleted directory remains relevant through its observed allowed descendants");
+    assert.ok(afterDelete.hits.every(hit => !hit.vaultRelativePath.startsWith("普通/")));
+    await assert.rejects(port.search({ query: "needle", limit: 1, cursor: beforeDelete.continuationCursor }), { code: "cursor_stale" });
+  } finally { port.dispose(); }
+  console.log("Knowledge body search invalidation: effective paths, independent reads, source-change protocol and cursor protection PASS");
 }
