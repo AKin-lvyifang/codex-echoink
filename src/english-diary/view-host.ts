@@ -1,4 +1,4 @@
-import type { DiaryRecord, EnglishDiaryApi, GenerateDiaryOptions } from "./types";
+import type { DiaryRange, DiaryRecord, EnglishDiaryApi, GenerateDiaryOptions } from "./types";
 
 /** Native view boundary: model calls and writes remain owned by the controller. */
 export interface EnglishDiaryViewHost {
@@ -6,8 +6,8 @@ export interface EnglishDiaryViewHost {
   enabled(): boolean;
   generate(path: string, options?: GenerateDiaryOptions): Promise<DiaryRecord>;
   openDiary(path: string): Promise<void>;
-  openLibrary(): Promise<void>;
+  openLibrary(expressionId?: string): Promise<void>;
   openFile(path: string): Promise<void>;
-  saveSource(path: string, content: string, expected: string): Promise<void>;
+  focusSource(path: string, ranges?: readonly DiaryRange[], options?: { expectedFingerprint: string }): Promise<void>;
   organizeThoughts(path: string): Promise<void>;
 }

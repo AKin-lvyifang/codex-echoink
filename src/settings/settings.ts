@@ -3,7 +3,7 @@ import { normalizeSelectionAskSettings } from "../selection-ask/settings";
 import { newId } from "../core/new-id";
 export { newId } from "../core/new-id";
 import { normalizeDiscoveredProviderModel, type DiscoveredProviderModel } from "./provider-model-discovery";
-import { DEFAULT_ENGLISH_DIARY_SETTINGS, LEGACY_HIDDEN_EXPRESSION_DIRECTORY } from "../english-diary/types";
+import { DEFAULT_ENGLISH_DIARY_SETTINGS, LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY } from "../english-diary/types";
 import { knowledgeRootRole } from "../knowledge-base/root-paths";
 import { DEFAULT_LIFESTYLE_SETTINGS, normalizeLifestyleSettings, type LifestyleSettings } from "../lifestyle/settings";
 import { normalizeTavilySettings, type TavilySettings } from "../tools/tavily-search";
@@ -664,25 +664,34 @@ export function normalizeQuickChatSettings(input: unknown): QuickChatSettings {
   };
 }
 
-function normalizeEnglishDiarySettings(input: unknown): CodexForObsidianSettings["englishDiary"] {
+function normalizeEnglishDiarySettings(input: unknown, bindings?: CodexForObsidianSettings["knowledgeBase"]["folderBindings"]): CodexForObsidianSettings["englishDiary"] {
   const data = settingsRecord(input) ?? {};
   const directory = (value: unknown, fallback: string) => {
     if (typeof value !== "string") return fallback;
     const normalized = value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
     const parts = normalized.split("/");
     const managed = normalized === LEGACY_HIDDEN_EXPRESSION_DIRECTORY
-      || (knowledgeRootRole(normalized) === "outputs" && parts.length === 3
-        && parts[1] === ".english-diary" && ["diaries", "expressions"].includes(parts[2]));
+      || (parts.length >= 3 && parts[parts.length - 2] === ".english-diary"
+        && ["diaries", "expressions"].includes(parts[parts.length - 1])
+        && parts.slice(0, -2).every((part) => !part.startsWith(".")));
     return normalized && !/[\p{Cc}:]/u.test(normalized)
       && parts.every((part) => part && part !== "." && part !== ".." && (managed || !part.startsWith("."))) ? normalized : fallback;
+  };
+  const followsOutput = (value: unknown, children: readonly string[], legacy: readonly string[]): boolean => {
+    if (typeof value !== "string" || !value) return true;
+    const normalized = value.trim().replace(/\\/gu, "/").replace(/\/+$/u, "");
+    if (legacy.includes(normalized)) return true;
+    const roots = bindings?.roles.outputs.readPaths ?? [];
+    return children.some((child) => roots.some((root) => normalized === `${root}/${child}`)
+      || knowledgeRootRole(normalized) === "outputs" && normalized.slice(normalized.indexOf("/") + 1) === child);
   };
   const legacyDirectories = (value: unknown) => [...new Set((Array.isArray(value) ? value : [])
     .map((item) => directory(item, "")).filter(Boolean))];
   return {
     enabled: data.enabled === true,
     homeShortcut: data.homeShortcut === "quick-record" || data.homeShortcut === "english-diary" ? data.homeShortcut : "ask",
-    englishDirectoryMode: data.englishDirectoryMode === "role" || data.englishDirectoryMode === "custom" ? data.englishDirectoryMode : !data.englishDirectory || typeof data.englishDirectory === "string" && knowledgeRootRole(data.englishDirectory) === "outputs" && data.englishDirectory.endsWith("/.english-diary/diaries") ? "role" : "custom",
-    expressionDirectoryMode: data.expressionDirectoryMode === "role" || data.expressionDirectoryMode === "custom" ? data.expressionDirectoryMode : !data.expressionDirectory || typeof data.expressionDirectory === "string" && knowledgeRootRole(data.expressionDirectory) === "outputs" && data.expressionDirectory.endsWith("/.english-diary/expressions") ? "role" : "custom",
+    englishDirectoryMode: data.englishDirectoryMode === "role" || data.englishDirectoryMode === "custom" ? data.englishDirectoryMode : followsOutput(data.englishDirectory, [".english-diary/diaries", "英文日记"], [LEGACY_ENGLISH_DIRECTORY]) ? "role" : "custom",
+    expressionDirectoryMode: data.expressionDirectoryMode === "role" || data.expressionDirectoryMode === "custom" ? data.expressionDirectoryMode : followsOutput(data.expressionDirectory, [".english-diary/expressions", "英文日记/表达库", "表达库"], [LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY]) ? "role" : "custom",
     englishDirectory: directory(data.englishDirectory, DEFAULT_SETTINGS.englishDiary.englishDirectory),
     expressionDirectory: directory(data.expressionDirectory, DEFAULT_SETTINGS.englishDiary.expressionDirectory),
     legacyEnglishDirectories: legacyDirectories(data.legacyEnglishDirectories),
@@ -721,7 +730,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     autoOpenHome: data?.autoOpenHome === true,
     journalDirectory: normalizeJournalDirectory(data?.journalDirectory),
     pdfReading: normalizePdfReading(data.pdfReading),
-    englishDiary: normalizeEnglishDiarySettings(data.englishDiary),
+    englishDiary: normalizeEnglishDiarySettings(data.englishDiary, normalizeKnowledgeFolderBindings(settingsRecord(data.knowledgeBase)?.folderBindings)),
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
     apiProviders: normalizeApiProviders(
       data?.apiProviders,

@@ -1,3 +1,4 @@
+import { unavailableCapabilityAccess } from "../membership/access";
 import { paidTestAccess } from "./membership-access";
 import * as assert from "node:assert/strict";
 import { EnglishDiaryService } from "../english-diary/service";
@@ -103,6 +104,10 @@ export async function runEnglishDiaryServiceTests(): Promise<void> {
   assert.throws(() => parseDiaryGeneration(JSON.stringify(forgedExpression), SOURCE, splitDiaryBlocks(SOURCE), privacyOf(SOURCE)),
     (error: any) => error.code === "english_diary_invalid_result", "expressions cannot claim a private block as their source");
 
+  const unknownCategory = JSON.parse(responseFor(buildDiaryPrompt(splitDiaryBlocks(SOURCE), privacyOf(SOURCE), "").userPrompt));
+  unknownCategory.expressions[0].category = "随意分类";
+  assert.equal(parseDiaryGeneration(JSON.stringify(unknownCategory), SOURCE, splitDiaryBlocks(SOURCE), privacyOf(SOURCE)).expressions[0].category, "其他");
+
   const originalPrivacy = privacyOf(SOURCE);
   const edited = SOURCE.replace("finally", "eventually");
   const migrated = normalizePrivacy(splitDiaryBlocks(edited), fingerprint(edited), originalPrivacy);
@@ -154,6 +159,24 @@ export async function runEnglishDiaryServiceTests(): Promise<void> {
   f.setSource(SOURCE);
   await f.service.generate(sourceOf(SOURCE).path);
   assert.equal(f.counts().calls, 1, "A to B to A reuses A");
+
+  const forced = fixture();
+  const firstForced = await forced.service.generate(sourceOf(SOURCE).path, { privacy: originalPrivacy });
+  const secondForced = await forced.service.generate(sourceOf(SOURCE).path, { force: true });
+  assert.equal(forced.counts().calls, 2, "force calls the model for unchanged source");
+  assert.notEqual(firstForced.result?.operationId, secondForced.result?.operationId);
+  const noPro = new EnglishDiaryService(forced.repository, { generate: async () => { throw new Error("must not call Provider"); },
+    skill: async () => "", providerLabel: () => "" }, async () => sourceOf(SOURCE), unavailableCapabilityAccess);
+  await assert.rejects(noPro.generate(sourceOf(SOURCE).path, { force: true }), /PRO/u, "force cannot bypass membership by reusing the matching result");
+  forced.setRecord({ pending: firstForced.result });
+  await forced.service.generate(sourceOf(SOURCE).path, { force: true });
+  assert.equal(forced.counts().calls, 3, "force bypasses a matching pending result");
+  forced.setGenerator(async () => "invalid json");
+  await assert.rejects(forced.service.generate(sourceOf(SOURCE).path, { force: true }), (error: any) => error.code === "english_diary_invalid_result");
+  const keptForced = forced.record().result?.operationId;
+  forced.setRecord({ englishModified: true, observedFileFingerprint: "manual-new" });
+  await assert.rejects(forced.service.generate(sourceOf(SOURCE).path, { force: true }), (error: any) => error.code === "english_diary_overwrite_required");
+  assert.equal(forced.record().result?.operationId, keptForced, "failed force retains previous publication");
 
   // Published text is retained through bad output and manually edited English
   // is never overwritten on a stale confirmation.
@@ -241,5 +264,5 @@ export async function runEnglishDiaryServiceTests(): Promise<void> {
   assert.equal(preparing.counts().calls, 0, "cancellation during repository loading must never reach the Provider");
 }
 
-const buildDiaryPrompt = (...args: Parameters<typeof productionBuildPrompt>) => productionBuildPrompt(args[0], args[1], args[2], true);
-const parseDiaryGeneration = (...args: Parameters<typeof productionParse>) => productionParse(args[0], args[1], args[2], args[3], true);
+const buildDiaryPrompt = (...args: Parameters<typeof productionBuildPrompt>) => productionBuildPrompt(args[0], args[1], args[2]);
+const parseDiaryGeneration = (...args: Parameters<typeof productionParse>) => productionParse(args[0], args[1], args[2], args[3]);

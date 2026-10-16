@@ -1,7 +1,7 @@
 import { getProPluginAccess, requireProPlugin, unavailableCapabilityAccess } from "../membership/access";
 import type { CapabilityAccess } from "../membership/types";
 import { createHash } from "node:crypto";
-import { DEFAULT_ENGLISH_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY, LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY } from "./types";
+import { DEFAULT_ENGLISH_DIRECTORY, DEFAULT_EXPRESSION_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY, LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_ENGLISH_DIRECTORY } from "./types";
 import type {
   DiaryFilePort, DiaryGenerationDay, DiaryPrivacy, DiaryRecord, DiaryRepository, DiaryResult, DiarySource,
   ExpressionEntry, ExpressionOccurrence
@@ -22,6 +22,8 @@ export class EnglishDiaryRepositoryError extends Error {
 
 interface RepositoryOptions {
   migrateLegacy?: boolean;
+  /** Defer migration and expose existing assets read-only until target folders are approved. */
+  canMigrate?: () => boolean;
   flatExpressions?: boolean;
   stateDirectory: string; englishDirectory: string; expressionDirectory: string;
   legacyEnglishDirectories?: string[]; legacyExpressionDirectories?: string[];
@@ -58,7 +60,7 @@ interface ExpressionOperation {
   diaryId?: string;
 }
 interface ExpressionState { schema: 1; entry: ExpressionEntry; managedFingerprint: string | null }
-interface EntryFile { entry: ExpressionEntry; previous: ExpressionEntry; content: string; stateRaw: string; managedFingerprint: string | null }
+interface EntryFile { entry: ExpressionEntry; previous: ExpressionEntry; content: string; stateRaw: string | null; managedFingerprint: string | null }
 interface PublishOptions {
   expressionPermit?: object;
   overwriteModified?: boolean;
@@ -146,6 +148,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   private readonly expressionPermits = new WeakMap<object, string>();
 
   acquireExpressionPermit(operationId: string): object {
+    this.requireStorageWrite();
     this.access.requireCapability("diary.expression.write");
     const permit = {};
     this.expressionPermits.set(permit, operationId);
@@ -154,17 +157,18 @@ export class EnglishDiaryRepository implements DiaryRepository {
 
   constructor(private readonly files: DiaryFilePort, options: RepositoryOptions, private readonly access: CapabilityAccess = unavailableCapabilityAccess) {
     this.options = {
-      migrateLegacy: options.migrateLegacy, flatExpressions: options.flatExpressions,
+      migrateLegacy: options.migrateLegacy, canMigrate: options.canMigrate, flatExpressions: true,
       stateDirectory: normalizeDiaryPath(options.stateDirectory),
       englishDirectory: normalizeDiaryPath(options.englishDirectory),
       expressionDirectory: normalizeDiaryPath(options.expressionDirectory),
       legacyEnglishDirectories: [...new Set([
         ...(options.legacyEnglishDirectories ?? []),
-        ...(options.englishDirectory === DEFAULT_ENGLISH_DIRECTORY ? [LEGACY_ENGLISH_DIRECTORY] : [])
+        ...(options.englishDirectory === DEFAULT_ENGLISH_DIRECTORY ? [LEGACY_ENGLISH_DIRECTORY, LEGACY_HIDDEN_ENGLISH_DIRECTORY] : [])
       ].map(normalizeDiaryPath))].filter((path) => path !== normalizeDiaryPath(options.englishDirectory)),
       legacyExpressionDirectories: [...new Set([
         ...(options.legacyExpressionDirectories ?? []),
-        ...(options.expressionDirectory === HIDDEN_EXPRESSION_DIRECTORY ? [LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY] : [])
+        ...([DEFAULT_EXPRESSION_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY].includes(options.expressionDirectory)
+          ? [LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY] : [])
       ].map(normalizeDiaryPath))].filter((path) => path !== normalizeDiaryPath(options.expressionDirectory))
     };
   }
@@ -174,6 +178,14 @@ export class EnglishDiaryRepository implements DiaryRepository {
     if (this.options.expressionDirectory !== expressionDirectory) this.options.legacyExpressionDirectories = [...new Set([...(this.options.legacyExpressionDirectories ?? []), this.options.expressionDirectory])];
     this.options.englishDirectory = normalizeDiaryPath(englishDirectory);
     this.options.expressionDirectory = normalizeDiaryPath(expressionDirectory);
+  }
+
+  private storageWritable(): boolean { return this.options.canMigrate?.() !== false; }
+
+  private migrationsEnabled(): boolean { return this.options.migrateLegacy !== false && this.storageWritable(); }
+
+  private requireStorageWrite(): void {
+    if (!this.storageWritable()) fail("INVALID_PATH", "请先在目录方案中确认英文日记和表达库的位置；已有资料仍可查看。");
   }
 
   subscribe(listener: () => void): () => void {
@@ -278,6 +290,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   private async guard(options: PublishOptions): Promise<void> {
+    this.requireStorageWrite();
     if (options.signal?.aborted) fail("ABORTED", "已取消生成，已有英文保持不变。");
     if (!await options.sourceUnchanged()) fail("SOURCE_CHANGED", "原稿已变化，本次结果未发布。");
     if (options.signal?.aborted) fail("ABORTED", "已取消生成，已有英文保持不变。");
@@ -328,7 +341,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
         schema: 1, id, sourcePath, englishPath, result: null,
         savedFileFingerprint: null, privacy: null, pending: null, transaction: null, generationActivity: []
       };
-      if (getProPluginAccess(this.access, true).canWrite) await this.writeChecked(this.statePath(id), serialize(value), null);
+      if (this.storageWritable() && getProPluginAccess(this.access, true).canWrite) await this.writeChecked(this.statePath(id), serialize(value), null);
       return this.describe(value);
     });
   }
@@ -349,11 +362,11 @@ export class EnglishDiaryRepository implements DiaryRepository {
 
   private isMigrationBackupPath(path: string): boolean {
     return path.startsWith(`${this.options.stateDirectory}/`)
-      && /^(?:expression|english)-migration-backup\/[a-f0-9]{24}(?:-[a-f0-9]{8})?\.md$/.test(path.slice(this.options.stateDirectory.length + 1));
+      && /^(?:(?:expression|english)-migration|expression-history)-backup\/[a-f0-9]{24}(?:-[a-f0-9]{8})?\.md$/.test(path.slice(this.options.stateDirectory.length + 1));
   }
 
   private async migrateEnglish(): Promise<void> {
-    if (this.options.migrateLegacy === false) return;
+    if (!this.migrationsEnabled()) return;
     const roots = this.options.legacyEnglishDirectories ?? [];
     if (!roots.length) return;
     for (const loaded of await this.states()) {
@@ -395,36 +408,45 @@ export class EnglishDiaryRepository implements DiaryRepository {
 
   /** Move only recognized old product files; keep their exact bytes as a hidden backup. */
   private async migrateEntries(): Promise<void> {
-    if (this.options.migrateLegacy === false) return;
-    if (!this.options.legacyExpressionDirectories?.length) return;
-    const hiddenIds = new Set<string>();
-    for await (const { path, content } of this.markdownFiles(this.options.expressionDirectory)) {
-      const id = expressionIdentity(content) ?? expressionMetadata(content, path).id;
-      if (id) hiddenIds.add(id);
+    if (!this.migrationsEnabled()) return;
+    const roots = [this.options.expressionDirectory, ...(this.options.legacyExpressionDirectories ?? [])];
+    const candidates = new Map<string, { path: string; content: string; directory: string }>();
+    const seen = new Set<string>();
+    for (const directory of roots) {
+      for await (const file of this.markdownFiles(directory, directory === this.options.expressionDirectory ? undefined : this.options.expressionDirectory)) {
+        if (candidates.has(file.path)) continue;
+        const { id } = expressionMetadata(file.content, file.path);
+        if (!id) continue;
+        if (seen.has(id)) return duplicateExpression(file.path);
+        seen.add(id);
+        const nearest = roots.filter((root) => file.path.startsWith(`${root}/`)).sort((a, b) => b.length - a.length)[0];
+        candidates.set(file.path, { ...file, directory: nearest });
+      }
     }
-    for (const directory of this.options.legacyExpressionDirectories) {
-    for await (const { path, content } of this.markdownFiles(directory, this.options.expressionDirectory)) {
+    for (const { path, content, directory } of candidates.values()) {
       const { legacy, id } = expressionMetadata(content, path);
       if (!id) continue; // Ordinary user files in the old folder never move.
-      if (hiddenIds.has(id)) return duplicateExpression(path);
+      const relative = path.slice(directory.length + 1);
+      const target = `${this.options.expressionDirectory}/${relative.split("/").at(-1)}`;
       const statePath = this.entryStatePath(id);
       const { raw: stateRaw, state } = await this.entryData(id, legacy, content, path);
       const entry = state.entry;
-      const relative = path.slice(directory.length + 1);
-      const target = `${this.options.expressionDirectory}/${relative}`;
-      const backup = this.migrationBackupPath("expression", id, path);
-      if (await this.files.read(target) !== null || await this.files.read(backup) !== null) return migrationConflict(path);
+      const previous = clone(entry);
       const category = relative.split("/").slice(0, -1).join("/");
       if (category && category !== filePart(entry.category)) { entry.category = category; entry.userCategory = true; }
       entry.path = target;
-      const markdown = legacy ? migrateExpressionMarkdown(content, id) : content;
+      let markdown: string;
+      try { markdown = patchExpressionMarkdown(migrateExpressionMarkdown(content, id, entry), previous, entry); }
+      catch (error) { return fail("CONFLICT", error instanceof Error ? error.message : "表达笔记无法安全迁移，已有内容已保留。"); }
+      if (target === path && markdown === content) continue;
+      const backup = this.migrationBackupPath("expression", id, path);
+      if ((target !== path && await this.files.read(target) !== null) || await this.files.read(backup) !== null) return migrationConflict(path);
       const nextState = expressionState(entry, markdown);
       await this.applyChanges([
+        ...(target === path ? [{ path: backup, before: null, after: content }] : []),
         { path: statePath, before: stateRaw, after: serialize(nextState) },
-        { path: target, before: null, after: markdown }
-      ], { from: path, to: backup, content });
-      hiddenIds.add(id);
-    }
+        { path: target, before: target === path ? content : null, after: markdown }
+      ], target === path ? undefined : { from: path, to: backup, content });
     }
   }
 
@@ -459,7 +481,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
 
   private async *expressionMarkdownFiles() {
     const seen = new Set<string>();
-    for (const directory of [this.options.expressionDirectory, ...(this.options.migrateLegacy === false ? this.options.legacyExpressionDirectories ?? [] : [])]) {
+    for (const directory of [this.options.expressionDirectory, ...(!this.migrationsEnabled() ? this.options.legacyExpressionDirectories ?? [] : [])]) {
       for await (const file of this.markdownFiles(directory)) { if (!seen.has(file.path)) { seen.add(file.path); yield file; } }
     }
   }
@@ -484,7 +506,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
       const data = await this.entryData(id, legacy, content, normalized);
       let stateRaw = data.raw;
       if (legacy) {
-        if (stateRaw === null) {
+        if (stateRaw === null && this.storageWritable()) {
           stateRaw = serialize(data.state);
           // Keep the original payload until its private copy has been durably written.
           await this.writeChecked(statePath, stateRaw, null);
@@ -492,9 +514,9 @@ export class EnglishDiaryRepository implements DiaryRepository {
         let migrated: string;
         try { migrated = migrateExpressionMarkdown(content, id); }
         catch { return inconsistentExpression(normalized); }
-        if (this.options.migrateLegacy !== false) { await this.writeChecked(normalized, migrated, content); content = migrated; }
+        if (this.migrationsEnabled()) { await this.writeChecked(normalized, migrated, content); content = migrated; }
       }
-      if (stateRaw === null) return invalidExpression(normalized);
+      if (stateRaw === null && !legacy) return invalidExpression(normalized);
       const state = data.state, entry = state.entry;
       const previous = clone(entry);
       const relativeDirectory = normalized.slice(([this.options.expressionDirectory, ...(this.options.legacyExpressionDirectories ?? [])].filter((directory) => normalized.startsWith(`${directory}/`)).sort((a, b) => b.length - a.length)[0] ?? this.options.expressionDirectory).length + 1).split("/").slice(0, -1).join("/");
@@ -504,14 +526,54 @@ export class EnglishDiaryRepository implements DiaryRepository {
       }
       entries.push({ entry, previous, content, stateRaw, managedFingerprint: state.managedFingerprint });
     }
+    await this.pruneHistoricalOccurrences(entries);
     return entries;
   }
 
-  private async entryChanges(file: EntryFile | null, next: ExpressionEntry, content?: string): Promise<FileChange[]> {
+  /** Saved successful results prove stale history; missing records never authorize deletion. */
+  private async pruneHistoricalOccurrences(files: EntryFile[]): Promise<void> {
+    if (!this.storageWritable()) return;
+    const results = new Map((await this.states()).filter(({ value }) => {
+      const result = value.result;
+      return result?.journalId === value.id && /^[a-f0-9]{64}$/.test(result.sourceFingerprint)
+        && Array.isArray(result.expressions) && result.expressions.every((item) => item
+          && [item.term, item.meaning, item.id].every((field) => typeof field === "string"));
+    }).map((state) => [state.value.id, state.value.result!]));
+    const changes: FileChange[] = [];
+    for (const file of files) {
+      const seen = new Set<string>();
+      const occurrences = file.entry.occurrences.filter((item) => {
+        const result = results.get(item.journalId);
+        if (!result || !Array.isArray(result.expressions) || typeof result.sourceFingerprint !== "string") return true;
+        const expression = result.expressions.find((value) => this.entryId(value.term, value.meaning) === file.entry.id);
+        if (!expression || item.sourceFingerprint !== result.sourceFingerprint
+          || item.id !== this.occurrenceId(result, expression.id, file.entry.id) || seen.has(item.journalId)) return false;
+        seen.add(item.journalId);
+        return true;
+      });
+      if (occurrences.length === file.entry.occurrences.length) continue;
+      const next = { ...file.entry, occurrences };
+      const backup = `${this.options.stateDirectory}/expression-history-backup/${file.entry.id}-${fingerprint(file.content).slice(0, 8)}.md`;
+      const existingBackup = await this.files.read(backup);
+      if (existingBackup !== null && existingBackup !== file.content) return migrationConflict(backup);
+      if (existingBackup === null) changes.push({ path: backup, before: null, after: file.content });
+      const updates = await this.entryChanges(file, next);
+      changes.push(...updates);
+      const markdown = updates.find((change) => change.path === next.path)?.after ?? file.content;
+      file.entry = next;
+      file.previous = clone(next);
+      file.content = markdown;
+      file.stateRaw = serialize(expressionState(next, markdown));
+      file.managedFingerprint = expressionState(next, markdown).managedFingerprint;
+    }
+    if (changes.length) await this.applyChanges(changes);
+  }
+
+  private async entryChanges(file: EntryFile | null, next: ExpressionEntry, content?: string, replaceJournalId?: string): Promise<FileChange[]> {
     let markdown: string;
     try {
       markdown = content ?? (!file || (file.managedFingerprint !== null && fingerprint(file.content) === file.managedFingerprint)
-        ? renderExpressionMarkdown(next) : patchExpressionMarkdown(file.content, file.previous, next));
+        ? renderExpressionMarkdown(next) : patchExpressionMarkdown(file.content, file.previous, next, replaceJournalId));
     } catch (error) { return fail("CONFLICT", error instanceof Error ? error.message : "表达笔记已变化，请重新打开。"); }
     const path = this.entryStatePath(next.id);
     if (!file && await this.files.read(path) !== null) return fail("CONFLICT", "表达内部数据已存在，请先恢复对应笔记。");
@@ -619,8 +681,8 @@ export class EnglishDiaryRepository implements DiaryRepository {
     return fingerprint(`${normalizedKey(term)}\u0000${normalizedKey(meaning)}`).slice(0, 24);
   }
 
-  private entryPath(term: string, category: string, id: string): string {
-    return `${this.options.expressionDirectory}/${this.options.flatExpressions ? "" : `${filePart(category)}/`}${filePart(term)}-${id.slice(0, 8)}.md`;
+  private entryPath(term: string, _category: string, id: string): string {
+    return `${this.options.expressionDirectory}/${filePart(term)}-${id.slice(0, 8)}.md`;
   }
 
   private occurrenceId(result: DiaryResult, expressionId: string, entryId: string): string {
@@ -634,11 +696,23 @@ export class EnglishDiaryRepository implements DiaryRepository {
     );
     const removed = (await this.deletedOccurrences()).ids;
     const changed = new Set<string>();
+    if (!updateExisting) {
+      for (const [id, file] of entries) {
+        const occurrences = file.entry.occurrences.filter((item) => item.journalId !== result.journalId);
+        if (occurrences.length === file.entry.occurrences.length) continue;
+        file.entry.occurrences = occurrences;
+        changed.add(id);
+      }
+    }
+    const archived = new Set<string>();
     for (const expression of result.expressions) {
       const id = this.entryId(expression.term, expression.meaning);
+      if (archived.has(id)) continue;
+      archived.add(id);
       const occurrenceId = this.occurrenceId(result, expression.id, id);
       if (removed.has(occurrenceId)) continue;
       let file = entries.get(id);
+      if (updateExisting && !file) continue;
       if (!file) {
         const category = expression.category.trim() || "未分类";
         const path = this.entryPath(expression.term, category, id);
@@ -649,7 +723,6 @@ export class EnglishDiaryRepository implements DiaryRepository {
         }, file: null };
         entries.set(id, file);
       }
-      // Existing occurrence content may contain a user's correction. Replaying never replaces it.
       const previous = file.entry.occurrences.find((item) => item.id === occurrenceId);
       if (previous) {
         if (updateExisting) {
@@ -659,6 +732,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
         }
         continue;
       }
+      if (updateExisting) continue; // A correction/retry never recreates a removed occurrence.
       const occurrence: ExpressionOccurrence = {
         id: occurrenceId, journalId: result.journalId, sourcePath: result.sourcePath,
         englishPath, sourceTitle: result.sourceTitle, date: result.date,
@@ -673,7 +747,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
     const changes: FileChange[] = [];
     for (const id of changed) {
       const item = entries.get(id)!;
-      changes.push(...await this.entryChanges(item.file, item.entry));
+      changes.push(...await this.entryChanges(item.file, item.entry, undefined, updateExisting ? undefined : result.journalId));
     }
     return changes;
   }
@@ -718,13 +792,14 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   async publish(record: DiaryRecord, result: DiaryResult, options: PublishOptions): Promise<DiaryRecord> {
+    this.requireStorageWrite();
     return this.exclusive(async () => {
       let state = await this.recover(await this.loadState(record.id));
       if (state.value.sourcePath !== normalizeDiaryPath(result.sourcePath) || result.journalId !== record.id) {
         return fail("CONFLICT", "原稿关联发生变化，请重新打开这篇日记。");
       }
       if (state.value.result?.operationId === result.operationId && !state.value.pending) return this.describe(state.value);
-      if (state.value.result?.sourceFingerprint === result.sourceFingerprint && !state.value.pending) return this.describe(state.value);
+      if (!state.value.pending && generationEvents(state.value).some((event) => event.operationId === result.operationId)) return this.describe(state.value);
       if (record.result?.operationId !== state.value.result?.operationId) fail("CONFLICT", "英文结果已变化，请重新打开后确认。");
       await this.guard(options);
       const earned = options.expressionPermit && this.expressionPermits.get(options.expressionPermit) === result.operationId;
@@ -760,6 +835,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   async savePrivacy(record: DiaryRecord, privacy: DiaryPrivacy): Promise<void> {
+    this.requireStorageWrite();
     requireProPlugin(this.access);
     return this.exclusive(async () => {
       const state = await this.loadState(record.id);
@@ -768,6 +844,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   async restore(record: DiaryRecord): Promise<DiaryRecord> {
+    this.requireStorageWrite();
     return this.exclusive(async () => {
       const state = await this.recover(await this.loadState(record.id));
       if (!state.value.result) return fail("NOT_FOUND", "还没有可恢复的英文结果。");
@@ -787,7 +864,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
         const state = await this.recover(loaded);
         const events = generationEvents(state.value);
         // Fix the local day once, including the single provable legacy event.
-        if (state.value.generationActivity === undefined) {
+        if (state.value.generationActivity === undefined && this.storageWritable()) {
           await this.writeChecked(this.statePath(state.value.id), serialize({ ...state.value, generationActivity: events }), state.raw);
         }
         for (const event of events) {
@@ -810,6 +887,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   async updateExpression(id: string, changes: { category: string; note: string }): Promise<ExpressionEntry> {
+    this.requireStorageWrite();
     return this.exclusive(async () => {
       this.access.requireCapability("diary.expression.write");
       const file = (await this.entryFiles()).find((item) => item.entry.id === id);
@@ -826,6 +904,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   async removeOccurrence(entryId: string, occurrenceId: string): Promise<void> {
+    this.requireStorageWrite();
     return this.exclusive(async () => {
       this.access.requireCapability("diary.expression.write");
       const file = (await this.entryFiles()).find((item) => item.entry.id === entryId);
@@ -841,6 +920,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
   }
 
   async markExpression(record: DiaryRecord, expressionId: string, status: "verified" | "needs-review", reason?: string): Promise<DiaryRecord> {
+    this.requireStorageWrite();
     return this.exclusive(async () => {
       this.access.requireCapability("diary.expression.write");
       const state = await this.recover(await this.loadState(record.id));
@@ -892,6 +972,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
       const all = await this.states();
       const found = all.find((state) => state.value.sourcePath === oldSource);
       if (!found) return;
+      this.requireStorageWrite();
       if (all.some((state) => state.value.sourcePath === newSource)) return fail("CONFLICT", "新路径已关联另一篇英文日记。");
       const state = await this.recover(found);
       if (newSource === state.value.englishPath) return fail("INVALID_PATH", "原稿不能重命名为它的派生英文文件。");

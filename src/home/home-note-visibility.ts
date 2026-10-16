@@ -9,7 +9,7 @@ type DiaryDirectories = Pick<EnglishDiarySettings, "englishDirectory" | "express
 /** Generated diary resources stay in their own product surfaces, even when disabled. */
 export function isHomeNotePath(path: string, directories: DiaryDirectories = DEFAULT_ENGLISH_DIARY_SETTINGS): boolean {
   const normalizedPath = path.replace(/\\/gu, "/");
-  if (knowledgeRootRole(normalizedPath) === "outputs" && normalizedPath.split("/")[1] === ".english-diary") return false;
+  if (knowledgeRootRole(normalizedPath) === "outputs" && [".english-diary", "英文日记", "表达库"].includes(normalizedPath.split("/")[1])) return false;
   return ![directories.englishDirectory, directories.expressionDirectory, LEGACY_ENGLISH_DIRECTORY,
     LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY,
     ...(directories.legacyEnglishDirectories ?? []), ...(directories.legacyExpressionDirectories ?? [])].some((directory) => {

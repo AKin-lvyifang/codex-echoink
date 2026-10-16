@@ -238,13 +238,13 @@ export class EnglishExpressionView extends ItemView {
     }
     const list = page.createDiv({ cls: "echoink-expression-list" });
     for (const entry of this.entries) {
-      const row = diaryButton(list, "", () => this.openEntry(entry.id), { label: `查看表达：${entry.term}` });
+      const row = diaryButton(list, "", () => this.openEntry(entry.id));
       row.addClass("echoink-expression-list-item");
       row.createSpan({ cls: "echoink-expression-list-title", text: entry.term, attr: { lang: "en" } });
       const metadata = row.createSpan({ cls: "echoink-diary-row" });
       metadata.createSpan({ cls: "echoink-diary-badge", text: entry.type === "phrase" ? "短语" : "短句" });
       metadata.createSpan({ cls: "echoink-diary-category", text: entry.category || "未分类" });
-      metadata.createSpan({ cls: "echoink-diary-count", text: `${entry.occurrences.length} 次收录` });
+      metadata.createSpan({ cls: "echoink-diary-count", text: `${expressionJournalCount(entry.occurrences)} 次收录` });
       row.createSpan({ cls: "echoink-diary-meaning", text: entry.meaning });
       if (entry.note) row.createSpan({ cls: "echoink-expression-note-preview", text: entry.note });
     }
@@ -295,7 +295,7 @@ export class EnglishExpressionView extends ItemView {
     const section = page.createEl("section", { cls: "echoink-expression-occurrences" });
     const occurrenceHeader = section.createDiv({ cls: "echoink-diary-section-header" });
     occurrenceHeader.createEl("h3", { text: "使用记录" });
-    occurrenceHeader.createSpan({ cls: "echoink-diary-count", text: `${entry.occurrences.length} 次收录` });
+    occurrenceHeader.createSpan({ cls: "echoink-diary-count", text: `${expressionJournalCount(entry.occurrences)} 次收录` });
     if (!entry.occurrences.length) {
       section.createDiv({ cls: "echoink-diary-empty", text: "还没有保留的使用记录，词条与备注仍在这里。" });
       return;
@@ -420,6 +420,10 @@ export function groupExpressionOccurrences(occurrences: readonly ExpressionOccur
     groups.set(occurrence.date, group);
   }
   return [...groups].map(([date, items]) => ({ date, occurrences: items }));
+}
+
+export function expressionJournalCount(occurrences: readonly ExpressionOccurrence[]): number {
+  return new Set(occurrences.map((occurrence) => occurrence.journalId)).size;
 }
 
 /** Reuse one actual saved usage paragraph; do not invent a cross-day synthesis. */

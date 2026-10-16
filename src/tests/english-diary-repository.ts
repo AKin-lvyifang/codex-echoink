@@ -3,7 +3,7 @@ import * as assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EnglishDiaryRepository as ProductionDiaryRepository, EnglishDiaryRepositoryError, normalizeDiaryPath } from "../english-diary/repository";
 import { expressionIdentityMarker, parseExpressionMarkdown, renderExpressionMarkdown } from "../english-diary/markdown";
-import { HIDDEN_EXPRESSION_DIRECTORY } from "../english-diary/types";
+import { DEFAULT_ENGLISH_DIRECTORY, DEFAULT_EXPRESSION_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_ENGLISH_DIRECTORY } from "../english-diary/types";
 import type { DiaryFilePort, DiaryRecord, DiaryResult, DiarySource } from "../english-diary/types";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -58,8 +58,8 @@ function result(record: DiaryRecord, input: DiarySource, sequence: number, meani
 const unchanged = { sourceUnchanged: async () => true };
 const entryStatePath = (id: string) => `${options.stateDirectory}/expressions/${id}.json`;
 const expressionBackup = (id: string, path: string) => `${options.stateDirectory}/expression-migration-backup/${id}-${hash(path).slice(0, 8)}.md`;
-async function rejectsCode(action: Promise<unknown>, code: string) {
-  await assert.rejects(action, (error: unknown) => error instanceof EnglishDiaryRepositoryError && error.code === code);
+async function rejectsCode(action: Promise<unknown>, code: string, context = "") {
+  await assert.rejects(action, (error: unknown) => error instanceof EnglishDiaryRepositoryError && error.code === code, `expected ${code} ${context}`);
 }
 async function seeded() {
   const files = new MemoryFiles();
@@ -86,7 +86,7 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     assert.match(files.data.get(record.englishPath)!, /## 本篇表达收获/);
     assert.equal(files.data.get(input.path), input.content);
     assert.equal([...files.data.values()].filter((content) => content.includes(input.content)).length, 1);
-    const same = await repo.publish(record, { ...output, operationId: "duplicate", english: "Must not replace" }, unchanged);
+    const same = await repo.publish(record, { ...output, english: "Must not replace" }, unchanged);
     assert.equal(same.result!.operationId, output.operationId);
     assert.equal((await repo.listExpressions()).length, 1);
     const entry = (await repo.listExpressions())[0];
@@ -101,6 +101,95 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     assert.equal(parseExpressionMarkdown(expressionMarkdown, entry.path, metadata.entry)!.id, entry.id);
     assert.equal((await files.list(options.stateDirectory)).filter((path) => /^[a-f0-9]{24}\.json$/.test(path.slice(options.stateDirectory.length + 1))).length, 1);
     assert.equal(JSON.parse(files.data.get(`${options.stateDirectory}/${record.id}.json`)!).transaction, null);
+  }
+
+  // Three versions replace by journal, including same-source regeneration and fresh explanations.
+  {
+    const { files, repo, input, record } = await seeded();
+    let entry = (await repo.listExpressions())[0];
+    await repo.updateExpression(entry.id, { category: "我的分类", note: "独立保留的笔记" });
+    const other = source("2026-10-06", "另一天使用了同一表达");
+    const otherRecord = await repo.get(other);
+    await repo.publish(otherRecord, result(otherRecord, other, 10), unchanged);
+    let saved = await repo.markExpression(record, "phrase-1", "needs-review", "上一版手改说明");
+    const changed = { ...input, content: "第二版原稿" };
+    const second = result(saved, changed, 11);
+    second.expressions[0].reason = "第二版全新说明";
+    saved = await repo.publish(saved, second, unchanged);
+    const third = result(saved, changed, 12);
+    third.expressions[0].reason = "同源重生的全新说明";
+    third.expressions.push({ ...third.expressions[0], id: "duplicate-expression" });
+    saved = await repo.publish(saved, third, unchanged);
+    entry = (await repo.listExpressions())[0];
+    assert.equal(entry.occurrences.length, 2);
+    assert.equal(entry.occurrences.filter((item) => item.journalId === record.id).length, 1);
+    assert.equal(entry.occurrences.find((item) => item.journalId === record.id)!.reason, "同源重生的全新说明");
+    assert.equal(entry.occurrences.find((item) => item.journalId === otherRecord.id)!.reason, "主动提出具体顾虑");
+    assert.equal(entry.category, "我的分类");
+    assert.equal(entry.userCategory, true);
+    assert.equal(entry.note, "独立保留的笔记");
+    assert.equal(entry.path.split("/").length, options.expressionDirectory.split("/").length + 1);
+    assert.doesNotMatch(files.data.get(entry.path)!, /以下为收录时摘录|上一版手改说明|第二版全新说明/);
+    assert.equal(saved.result!.operationId, third.operationId);
+    const before = new Map(files.data);
+    await repo.publish(saved, second, unchanged);
+    assert.deepEqual(files.data, before, "replaying an older success must not restore old explanations");
+  }
+
+  // Zero-expression publication removes this journal only and retains the portable asset.
+  {
+    const { files, repo, input, record } = await seeded();
+    const first = (await repo.listExpressions())[0];
+    await repo.updateExpression(first.id, { category: "自选分类", note: "零出处也保留" });
+    const other = source("2026-10-06", "其他日记");
+    const otherRecord = await repo.get(other);
+    await repo.publish(otherRecord, result(otherRecord, other, 20), unchanged);
+    const next = result(record, { ...input, content: "无需收录的自然英文" }, 21);
+    next.expressions = [];
+    const oldEnglish = files.data.get(record.englishPath), oldEntry = files.data.get(first.path);
+    let failed = false;
+    files.hook = (event) => {
+      if (!failed && event.kind === "write" && event.phase === "after" && event.path === first.path) {
+        failed = true;
+        throw new Error("zero-expression replacement interrupted");
+      }
+    };
+    await rejectsCode(repo.publish(record, next, unchanged), "SAVE_FAILED", "zero-expression failure");
+    files.hook = undefined;
+    assert.equal(files.data.get(record.englishPath), oldEnglish);
+    assert.equal(files.data.get(first.path), oldEntry);
+    const pending = await repo.get(input);
+    await repo.publish(pending, pending.pending!, unchanged);
+    const kept = (await repo.listExpressions())[0];
+    assert.equal(kept.occurrences.length, 1);
+    assert.equal(kept.occurrences[0].journalId, otherRecord.id);
+    assert.equal(kept.note, "零出处也保留");
+    assert.equal(kept.category, "自选分类");
+    const otherEmpty = result(await repo.get(other), other, 22);
+    otherEmpty.expressions = [];
+    await repo.publish(await repo.get(other), otherEmpty, unchanged);
+    assert.equal((await repo.listExpressions())[0].occurrences.length, 0);
+    assert.ok(files.data.has(first.path));
+  }
+
+  // Regeneration replaces recognizable edited occurrence fields while keeping surrounding prose.
+  {
+    const { files, repo, input, record } = await seeded();
+    const entry = (await repo.listExpressions())[0];
+    const original = files.data.get(entry.path)!
+      .replace("**这里为什么用** 主动提出具体顾虑", "**这里为什么用** 在笔记里手改的旧说明")
+      .replace("分类：工作沟通", "分类：用户直接改的分类");
+    const prefix = "用户额外前言\n\n", suffix = "\n\n用户额外后记\n";
+    files.data.set(entry.path, prefix + original + suffix);
+    const next = result(record, input, 30);
+    next.expressions[0].reason = "重新生成后的说明";
+    await repo.publish(record, next, unchanged);
+    const markdown = files.data.get(entry.path)!;
+    assert.ok(markdown.startsWith(prefix));
+    assert.ok(markdown.endsWith(suffix));
+    assert.match(markdown, /重新生成后的说明/);
+    assert.doesNotMatch(markdown, /在笔记里手改的旧说明/);
+    assert.equal((await repo.listExpressions())[0].category, "用户直接改的分类");
   }
 
   // Existing success + missing file is restored locally, while an existing user file is preserved.
@@ -142,6 +231,7 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     const oldEnglish = files.data.get(record.englishPath);
     const changed = { ...input, content: "第二段原稿" };
     const next = result(record, changed, 2);
+    next.expressions[0].reason = "更新原稿后的说明";
     let injected = false;
     files.hook = (event) => {
       if (!injected && event.kind === "write" && event.phase === "after" && event.path.startsWith(options.expressionDirectory)) {
@@ -149,7 +239,7 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
         throw new Error("disk failed after write");
       }
     };
-    await rejectsCode(repo.publish(record, next, unchanged), "SAVE_FAILED");
+    await rejectsCode(repo.publish(record, next, unchanged), "SAVE_FAILED", "publication failure fixture");
     files.hook = undefined;
     assert.equal(files.data.get(record.englishPath), oldEnglish);
     const pending = await repo.get(changed);
@@ -158,9 +248,9 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     assert.equal((await repo.listExpressions())[0].occurrences.length, 1);
     const saved = await repo.publish(pending, pending.pending!, unchanged);
     assert.equal(saved.pending, null);
-    assert.equal((await repo.listExpressions())[0].occurrences.length, 2);
+    assert.equal((await repo.listExpressions())[0].occurrences.length, 1);
     await repo.publish(saved, next, unchanged);
-    assert.equal((await repo.listExpressions())[0].occurrences.length, 2);
+    assert.equal((await repo.listExpressions())[0].occurrences.length, 1);
   }
 
   // Source changes and cancellation after the English write both roll back before success.
@@ -222,7 +312,72 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     assert.equal(restartedFiles.data.get(record.englishPath), oldEnglish);
     assert.equal(recoverable.pending!.operationId, "operation-2");
     await restarted.publish(recoverable, recoverable.pending!, unchanged);
-    assert.equal((await restarted.listExpressions())[0].occurrences.length, 2);
+    assert.equal((await restarted.listExpressions())[0].occurrences.length, 1);
+  }
+
+  // Historical cleanup uses the saved success, not the currently edited original or pending result.
+  for (const currentHasExpression of [true, false]) {
+    const { files, repo, input, record } = await seeded();
+    const entry = (await repo.listExpressions())[0];
+    const current = entry.occurrences[0];
+    const unknown = { ...current, id: "unknown-occurrence", journalId: "f".repeat(24), sourceFingerprint: "unknown" };
+    entry.note = "清理前的备注";
+    entry.category = "清理前的分类";
+    entry.userCategory = true;
+    entry.occurrences = [
+      { ...current, id: "obsolete-occurrence", sourceFingerprint: hash("旧原稿") },
+      current, { ...current }, unknown, { ...unknown }
+    ];
+    const oldMarkdown = `额外正文\n\n${renderExpressionMarkdown(entry)}\n用户后记\n`;
+    files.data.set(entry.path, oldMarkdown);
+    files.data.set(entryStatePath(entry.id), JSON.stringify({ schema: 1, entry, managedFingerprint: null }));
+    const statePath = `${options.stateDirectory}/${record.id}.json`;
+    const state = JSON.parse(files.data.get(statePath)!);
+    state.pending = result(record, { ...input, content: "还没有成功生成的新版" }, 40);
+    if (!currentHasExpression) state.result.expressions = [];
+    files.data.set(statePath, JSON.stringify(state));
+    files.data.set(input.path, "当前原稿还在编辑");
+    const restarted = new EnglishDiaryRepository(files, options);
+    const cleaned = (await restarted.listExpressions())[0];
+    assert.equal(cleaned.occurrences.filter((item) => item.journalId === record.id).length, currentHasExpression ? 1 : 0);
+    assert.equal(cleaned.occurrences.filter((item) => item.journalId === unknown.journalId).length, 2, "unknown records remain conservative");
+    assert.equal(cleaned.note, entry.note);
+    assert.equal(cleaned.category, entry.category);
+    assert.ok(files.data.get(entry.path)!.startsWith("额外正文\n"));
+    assert.ok(files.data.get(entry.path)!.endsWith("用户后记\n"));
+    const backups = await files.list(`${options.stateDirectory}/expression-history-backup`);
+    assert.equal(backups.length, 1);
+    assert.equal(files.data.get(backups[0]), oldMarkdown);
+    const stable = new Map(files.data), eventCount = files.events.length;
+    await restarted.listExpressions();
+    assert.deepEqual(files.data, stable);
+    assert.equal(files.events.length, eventCount, "reading an already cleaned library does not rewrite it");
+  }
+
+  // Historical cleanup recovers after process loss at backup, private state, or Markdown writes.
+  for (const point of ["backup", "private", "markdown"] as const) {
+    const { files, repo, record } = await seeded();
+    const entry = (await repo.listExpressions())[0];
+    entry.occurrences.push({ ...entry.occurrences[0], id: "old", sourceFingerprint: "old" });
+    const original = renderExpressionMarkdown(entry);
+    files.data.set(entry.path, original);
+    files.data.set(entryStatePath(entry.id), JSON.stringify({ schema: 1, entry, managedFingerprint: hash(original) }));
+    let snapshot: Map<string, string> | null = null;
+    files.hook = (event) => {
+      if (snapshot || event.phase !== "after" || event.kind !== "write") return;
+      if ((point === "backup" && event.path.includes("/expression-history-backup/"))
+        || (point === "private" && event.path === entryStatePath(entry.id))
+        || (point === "markdown" && event.path === entry.path)) snapshot = new Map(files.data);
+    };
+    await repo.listExpressions();
+    assert.ok(snapshot, `history cleanup ${point} captured a process image`);
+    const resumedFiles = new MemoryFiles();
+    resumedFiles.data = new Map(snapshot!);
+    const resumed = new EnglishDiaryRepository(resumedFiles, options);
+    assert.equal((await resumed.listExpressions())[0].occurrences.length, 1);
+    assert.equal((await resumed.get(source())).result!.operationId, record.result!.operationId);
+    assert.equal(resumedFiles.data.has(`${options.stateDirectory}/expression-operation.json`), false);
+    assert.equal((await resumedFiles.list(`${options.stateDirectory}/expression-history-backup`)).length, 1);
   }
 
   // Search is rebuilt from portable files; categories, notes, meanings and dates stay distinct.
@@ -231,9 +386,8 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     const firstEntry = (await repo.listExpressions())[0];
     const updated = await repo.updateExpression(firstEntry.id, { category: "我的分类", note: "要保留的用户备注" });
     assert.equal(updated.id, firstEntry.id);
-    assert.match(updated.path, /\/我的分类\/raise concerns-[a-f0-9]{8}\.md$/);
-    assert.equal(files.data.has(firstEntry.path), false);
-    assert.ok(files.events.some((event) => event.kind === "move"));
+    assert.equal(updated.path, firstEntry.path);
+    assert.equal(files.data.has(firstEntry.path), true);
     files.data.set(updated.path, files.data.get(updated.path)!.replace("\n要保留的用户备注\n", "\n在 Markdown 中改的备注\n"));
     const second = source("2026-10-06", "另一天");
     const secondRecord = await repo.get(second);
@@ -262,41 +416,38 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     files.data.delete(entry.path);
     files.data.delete(entryStatePath(entry.id));
     files.data.set(legacyPath, `${marker}\n\n${markdown.replace(expressionIdentityMarker(entry.id), "").trimEnd()}\n`);
-    assert.equal((await repo.listExpressions())[0].path, legacyPath);
+    const flatPath = `${options.expressionDirectory}/${entry.id}.md`;
+    assert.equal((await repo.listExpressions())[0].path, flatPath);
     const noted = await repo.updateExpression(entry.id, { category: entry.category, note: "旧路径保留备注" });
-    assert.equal(noted.path, legacyPath);
+    assert.equal(noted.path, flatPath);
     const changed = { ...input, content: "更新后的原稿" };
     await repo.publish(record, result(record, changed, 2), unchanged);
     const reloaded = (await repo.listExpressions())[0];
-    assert.equal(reloaded.path, legacyPath);
-    assert.equal(reloaded.occurrences.length, 2);
+    assert.equal(reloaded.path, flatPath);
+    assert.equal(reloaded.occurrences.length, 1);
     assert.equal(reloaded.note, "旧路径保留备注");
     assert.equal((await repo.listExpressions()).length, 1);
     const moved = await repo.updateExpression(entry.id, { category: "新的分类", note: reloaded.note });
     assert.equal(moved.id, entry.id);
-    assert.match(moved.path, /\/新的分类\/raise concerns-[a-f0-9]{8}\.md$/);
+    assert.match(moved.path, /\/raise concerns-[a-f0-9]{8}\.md$/);
     assert.equal(files.data.has(legacyPath), false);
     assert.match(files.data.get(moved.path)!, /# raise concerns\n/);
   }
 
-  // Deleting one occurrence keeps other days. A changed-back original cannot resurrect it.
+  // Removing an occurrence never reappears on a replay, restore, or correction retry.
   {
-    const { repo, input, record, output } = await seeded();
+    const { files, repo, input, record, output } = await seeded();
     let entry = (await repo.listExpressions())[0];
     const deletedId = entry.occurrences[0].id;
-    const changed = { ...input, content: "另一次日记内容" };
-    let saved = await repo.publish(record, result(record, changed, 2), unchanged);
     await repo.removeOccurrence(entry.id, deletedId);
+    await repo.publish(record, output, unchanged);
+    await repo.publish(record, { ...output, operationId: "new-same-source" }, unchanged);
+    files.data.delete(record.englishPath);
+    const restored = await repo.restore(await repo.get(input));
+    await repo.markExpression(restored, "phrase-1", "needs-review", "纠错不重建出处");
     entry = (await repo.listExpressions())[0];
-    assert.equal(entry.occurrences.length, 1);
-    saved = await repo.publish(saved, { ...output, operationId: "operation-3" }, unchanged);
-    assert.equal((await repo.listExpressions())[0].occurrences.length, 1);
-    assert.equal((await repo.listExpressions())[0].occurrences.some((item) => item.id === deletedId), false);
-    await repo.removeOccurrence(entry.id, entry.occurrences[0].id);
-    const empty = (await repo.listExpressions())[0];
-    assert.equal(empty.id, entry.id);
-    assert.equal(empty.occurrences.length, 0);
-    assert.ok(saved.result);
+    assert.equal(entry.occurrences.length, 0);
+    assert.ok(files.data.has(entry.path));
   }
 
   // Corrections update the current English and the corresponding archived occurrence together.
@@ -367,7 +518,7 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
         files.data.set(record.englishPath, "Concurrent user edit");
       }
     };
-    await rejectsCode(repo.publish(record, next, unchanged), "SAVE_FAILED");
+    await rejectsCode(repo.publish(record, next, unchanged), "SAVE_FAILED", "publication failure fixture");
     files.hook = undefined;
     assert.equal(files.data.get(record.englishPath), "Concurrent user edit");
     assert.equal((await repo.get(input)).englishModified, true);
@@ -380,6 +531,7 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     entry.note = "迁移前手写备注\n第二行也保留";
     const legacyPath = `${options.expressionDirectory}/工作沟通/${entry.id}.md`;
     const payload = `<!-- echoink-expression:v1 ${Buffer.from(JSON.stringify(entry)).toString("base64")} -->`;
+    const flatPath = `${options.expressionDirectory}/${entry.id}.md`;
     const original = `用户自写前言\n\n${payload}\n${renderExpressionMarkdown(entry).replace(expressionIdentityMarker(entry.id), "")}\n用户自写后记\n`;
     files.data.delete(entry.path);
     files.data.delete(entryStatePath(entry.id));
@@ -387,7 +539,7 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     let injected = false;
     files.hook = (event) => {
       if (!injected && event.phase === "before" && event.kind === "write"
-        && event.path === (failedPath === "private" ? entryStatePath(entry.id) : failedPath === "markdown" ? legacyPath : "never")) {
+        && event.path === (failedPath === "private" ? entryStatePath(entry.id) : failedPath === "markdown" ? flatPath : "never")) {
         injected = true;
         throw new Error("migration write failed");
       }
@@ -395,18 +547,18 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     if (failedPath !== "none") {
       await assert.rejects(repo.listExpressions());
       assert.equal(files.data.get(legacyPath), original);
-      assert.equal(files.data.has(entryStatePath(entry.id)), failedPath === "markdown");
+      assert.equal(files.data.has(entryStatePath(entry.id)), false);
     }
     files.hook = undefined;
     const migrated = (await repo.listExpressions())[0];
-    assert.equal(migrated.path, legacyPath);
+    assert.equal(migrated.path, flatPath);
     assert.equal(migrated.note, entry.note);
-    assert.equal(files.data.get(legacyPath), `${original.replace(payload, "")}\n${expressionIdentityMarker(entry.id)}\n`);
+    assert.equal(files.data.get(flatPath), `${original.replace(payload, "")}\n${expressionIdentityMarker(entry.id)}\n`);
     assert.ok(files.data.has(entryStatePath(entry.id)));
     assert.equal(files.data.has(entry.path), false);
-    const stable = files.data.get(legacyPath);
+    const stable = files.data.get(flatPath);
     await repo.listExpressions();
-    assert.equal(files.data.get(legacyPath), stable);
+    assert.equal(files.data.get(flatPath), stable);
   }
 
   // Lost/damaged private data is surfaced without recreating or overwriting the note.
@@ -432,8 +584,8 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     saved = await repo.markExpression(saved, "phrase-1", "needs-review", "这里是修正的说明");
     await repo.renameSource(input.path, "Daily/新的标题.md");
     entry = (await repo.listExpressions())[0];
-    assert.equal(entry.occurrences.length, 2);
-    assert.equal(entry.occurrences[1].reason, "这里是修正的说明");
+    assert.equal(entry.occurrences.length, 1);
+    assert.equal(entry.occurrences[0].reason, "这里是修正的说明");
     assert.ok(entry.occurrences.every((item) => item.sourcePath === "Daily/新的标题.md"));
     for (const occurrence of entry.occurrences) await repo.removeOccurrence(entry.id, occurrence.id);
     const retained = (await repo.listExpressions())[0];
@@ -524,7 +676,7 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
         assert.match(restartedFiles.data.get(restored.path)!, /中断后继续保存备注/);
         if (action === "move") {
           assert.equal(restored.category, "新分类");
-          assert.equal(restartedFiles.data.has(entry.path), false);
+          assert.equal(restartedFiles.data.has(entry.path), true);
         }
       }
       const stable = new Map(restartedFiles.data);
@@ -533,14 +685,14 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     }
   }
 
-  // A category move itself and interruption during rollback are both part of the same journal.
+  // A category edit and interruption during rollback are both part of the same journal.
   for (const point of ["move", "rollback"] as const) {
     const { files, repo } = await seeded();
     const entry = (await repo.listExpressions())[0];
     let snapshot: Map<string, string> | null = null;
     let failed = false;
     files.hook = (event) => {
-      if (point === "move" && event.kind === "move" && event.phase === "after" && !snapshot) snapshot = new Map(files.data);
+      if (point === "move" && event.kind === "write" && event.path === entryStatePath(entry.id) && event.phase === "after" && !snapshot) snapshot = new Map(files.data);
       if (point === "rollback" && event.kind === "write" && event.phase === "after" && event.path.startsWith(options.expressionDirectory) && !failed) {
         failed = true;
         throw new Error("fail after markdown write");
@@ -569,7 +721,9 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     files.hook = (event) => {
       if (event.kind === "write" && event.phase === "after" && event.path === entry.path) snapshot = new Map(files.data);
     };
-    await repo.publish(record, result(record, { ...input, content: "归档后中断" }, 2), unchanged);
+    const next = result(record, { ...input, content: "归档后中断" }, 2);
+    next.expressions[0].reason = "保证出处正文确实发生变化";
+    await repo.publish(record, next, unchanged);
     const restartedFiles = new MemoryFiles();
     restartedFiles.data = new Map(snapshot!);
     const restarted = new EnglishDiaryRepository(restartedFiles, options);
@@ -577,7 +731,7 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     assert.equal(restartedFiles.data.get(entry.path), oldMarkdown);
     const pending = await restarted.get(input);
     await restarted.publish(pending, pending.pending!, unchanged);
-    assert.equal((await restarted.listExpressions())[0].occurrences.length, 2);
+    assert.equal((await restarted.listExpressions())[0].occurrences.length, 1);
     const badSnapshot = new MemoryFiles();
     badSnapshot.data = new Map(snapshot!);
     const statePath = `${options.stateDirectory}/${record.id}.json`;
@@ -587,7 +741,173 @@ export async function runEnglishDiaryRepositoryTests(): Promise<void> {
     await assert.rejects(new EnglishDiaryRepository(badSnapshot, options).listExpressions());
   }
 
-  // New installations archive only in the hidden product folder.
+  // Hidden, bound sibling, and already nested category folders migrate to a flat visible library.
+  for (const layout of ["hidden", "bound", "nested"] as const) {
+    const files = new MemoryFiles();
+    const englishDirectory = layout === "hidden" ? LEGACY_HIDDEN_ENGLISH_DIRECTORY
+      : layout === "bound" ? "输出（outputs）/英文日记" : DEFAULT_ENGLISH_DIRECTORY;
+    const expressionDirectory = layout === "hidden" ? HIDDEN_EXPRESSION_DIRECTORY
+      : layout === "bound" ? "输出（outputs）/表达库" : DEFAULT_EXPRESSION_DIRECTORY;
+    const oldRepo = new EnglishDiaryRepository(files, { ...options, englishDirectory, expressionDirectory });
+    const input = source(), initial = await oldRepo.get(input);
+    const record = await oldRepo.publish(initial, result(initial, input, 710), unchanged);
+    let oldEntry = (await oldRepo.listExpressions())[0];
+    oldEntry = await oldRepo.updateExpression(oldEntry.id, { category: "用户分类", note: "旧分类目录里的备注" });
+    const oldPath = `${expressionDirectory}/用户分类/${oldEntry.path.split("/").at(-1)}`;
+    const oldMarkdown = `用户前言\n\n${files.data.get(oldEntry.path)}\n用户后记\n`;
+    files.data.delete(oldEntry.path);
+    files.data.set(oldPath, oldMarkdown);
+    const userFile = `${expressionDirectory}/用户分类/自己的.md`;
+    files.data.set(userFile, "普通用户文件保留在原地");
+    const targetEnglish = layout === "bound" ? englishDirectory : DEFAULT_ENGLISH_DIRECTORY;
+    const targetExpressions = `${targetEnglish}/表达库`;
+    const next = new EnglishDiaryRepository(files, {
+      ...options, englishDirectory: targetEnglish, expressionDirectory: targetExpressions,
+      legacyEnglishDirectories: [englishDirectory], legacyExpressionDirectories: [expressionDirectory],
+      flatExpressions: false // Old callers cannot re-enable category folders.
+    });
+    const migratedRecord = await next.get(input);
+    const migrated = (await next.listExpressions())[0];
+    assert.equal(migrated.path, `${targetExpressions}/${oldPath.split("/").at(-1)}`);
+    assert.equal(migrated.note, oldEntry.note);
+    assert.equal(migrated.category, oldEntry.category);
+    assert.equal(migrated.userCategory, true);
+    assert.equal(migrated.occurrences[0].englishPath, migratedRecord.englishPath);
+    assert.ok(files.data.get(migrated.path)!.startsWith("用户前言\n"));
+    assert.ok(files.data.get(migrated.path)!.endsWith("用户后记\n"));
+    assert.equal(files.data.get(expressionBackup(oldEntry.id, oldPath)), oldMarkdown);
+    assert.equal(files.data.get(userFile), "普通用户文件保留在原地");
+    assert.equal(files.data.has(oldPath), false);
+    const stable = new Map(files.data);
+    await next.get(input);
+    await next.listExpressions();
+    assert.deepEqual(files.data, stable);
+  }
+
+  // A manually renamed category directory becomes the visible category after flattening.
+  for (const extraBody of [false, true]) {
+    const { files, repo } = await seeded();
+    const entry = (await repo.listExpressions())[0];
+    assert.equal(entry.category, "工作沟通");
+    assert.equal(entry.userCategory, false);
+    const nestedPath = `${options.expressionDirectory}/自选目录/${entry.path.split("/").at(-1)}`;
+    const disclaimer = "以下为收录时摘录，不表示当前原稿仍保持原样。";
+    const prefix = extraBody ? `用户前言\n分类：这是用户正文\n${disclaimer}\n\n` : "";
+    const suffix = extraBody ? "\n用户自写后记\n" : "";
+    const owned = files.data.get(entry.path)!.replace("\n\n**原稿摘录**", `\n\n${disclaimer}\n\n**原稿摘录**`)
+      .replace("<!-- echoink:note:start -->\n\n<!-- echoink:note:end -->", "<!-- echoink:note:start -->\n手写备注保留\n<!-- echoink:note:end -->");
+    const original = prefix + owned + suffix;
+    files.data.delete(entry.path);
+    files.data.set(nestedPath, original);
+    const next = new EnglishDiaryRepository(files, options);
+    const flattened = (await next.listExpressions())[0];
+    assert.equal(flattened.category, "自选目录");
+    assert.equal(flattened.userCategory, true);
+    assert.equal(flattened.note, "手写备注保留");
+    assert.equal(JSON.parse(files.data.get(entryStatePath(entry.id))!).entry.category, "自选目录");
+    const markdown = files.data.get(flattened.path)!;
+    assert.match(markdown, /分类：自选目录/);
+    assert.ok(markdown.startsWith(prefix));
+    assert.ok(markdown.endsWith(suffix));
+    assert.equal(markdown.split(disclaimer).length - 1, extraBody ? 1 : 0, "only the owned disclaimer is removed");
+    assert.equal(files.data.get(expressionBackup(entry.id, nestedPath)), original);
+    const stable = new Map(files.data), count = files.events.length;
+    await new EnglishDiaryRepository(files, options).listExpressions();
+    assert.deepEqual(files.data, stable);
+    assert.equal(files.events.length, count);
+  }
+
+  // Already flat legacy blocks lose only their owned disclaimer and keep an exact backup.
+  {
+    const { files, repo } = await seeded();
+    const entry = (await repo.listExpressions())[0];
+    const disclaimer = "以下为收录时摘录，不表示当前原稿仍保持原样。";
+    const original = files.data.get(entry.path)!.replace("\n\n**原稿摘录**", `\n\n${disclaimer}\n\n**原稿摘录**`)
+      .replace("**这里为什么用** 主动提出具体顾虑", "**这里为什么用** 用户写过的说明");
+    files.data.set(entry.path, original);
+    await new EnglishDiaryRepository(files, options).listExpressions();
+    assert.equal(files.data.get(entry.path), original.replace(`\n\n${disclaimer}\n`, "\n"));
+    assert.equal(files.data.get(expressionBackup(entry.id, entry.path)), original);
+  }
+
+  // Unapproved new roots defer migration without blocking reads or writing legacy metadata.
+  for (const portablePayload of [false, true]) {
+    const { files, repo, input, record } = await seeded();
+    const entry = (await repo.listExpressions())[0];
+    entry.occurrences.push({ ...entry.occurrences[0], id: "past", sourceFingerprint: hash("旧版本") });
+    const oldMarkdown = renderExpressionMarkdown(entry);
+    files.data.set(entry.path, portablePayload
+      ? oldMarkdown.replace(expressionIdentityMarker(entry.id), `<!-- echoink-expression:v1 ${Buffer.from(JSON.stringify(entry)).toString("base64")} -->`)
+      : oldMarkdown);
+    if (portablePayload) files.data.delete(entryStatePath(entry.id));
+    else files.data.set(entryStatePath(entry.id), JSON.stringify({ schema: 1, entry, managedFingerprint: hash(oldMarkdown) }));
+    const statePath = `${options.stateDirectory}/${record.id}.json`;
+    const state = JSON.parse(files.data.get(statePath)!);
+    delete state.generationActivity;
+    files.data.set(statePath, JSON.stringify(state));
+    let approved = false;
+    const deferred = new EnglishDiaryRepository(files, {
+      ...options, englishDirectory: DEFAULT_ENGLISH_DIRECTORY, expressionDirectory: DEFAULT_EXPRESSION_DIRECTORY,
+      legacyEnglishDirectories: [options.englishDirectory], legacyExpressionDirectories: [options.expressionDirectory],
+      canMigrate: () => approved
+    });
+    const before = new Map(files.data), eventCount = files.events.length;
+    assert.equal((await deferred.get(input)).englishPath, record.englishPath);
+    assert.equal((await deferred.listExpressions())[0].occurrences.length, 2);
+    assert.equal((await deferred.listGenerationActivity()).length, 1);
+    await deferred.get(source("2026-10-07", "读取尚无结果的日记也不新写关联"));
+    assert.throws(() => deferred.acquireExpressionPermit("denied"), (error: unknown) => error instanceof EnglishDiaryRepositoryError && error.code === "INVALID_PATH");
+    await rejectsCode(deferred.publish(record, result(record, input, 720), unchanged), "INVALID_PATH");
+    await rejectsCode(deferred.updateExpression(entry.id, { category: "不应写入", note: "不应写入" }), "INVALID_PATH");
+    await rejectsCode(deferred.removeOccurrence(entry.id, entry.occurrences[0].id), "INVALID_PATH");
+    await rejectsCode(deferred.markExpression(record, "phrase-1", "needs-review"), "INVALID_PATH");
+    await rejectsCode(deferred.savePrivacy(record, { sourceFingerprint: hash(input.content), rules: [] }), "INVALID_PATH");
+    await rejectsCode(deferred.restore(record), "INVALID_PATH");
+    await rejectsCode(deferred.renameSource(input.path, "Daily/不得写入的新名.md"), "INVALID_PATH");
+    await deferred.renameSource("unrelated.md", "still-unrelated.md");
+    assert.deepEqual(files.data, before);
+    assert.equal(files.events.length, eventCount, "deferred reads and rejected writes perform zero file mutations");
+    approved = true;
+    const current = (await deferred.listExpressions())[0];
+    assert.equal(current.occurrences.length, 1);
+    assert.ok(current.path.startsWith(`${DEFAULT_EXPRESSION_DIRECTORY}/`));
+    assert.ok((await deferred.get(input)).englishPath.startsWith(`${DEFAULT_ENGLISH_DIRECTORY}/`));
+    assert.equal(files.data.has(entry.path), false);
+  }
+
+  // Deferral handles only unavailable destinations; approval still exposes real migration conflicts.
+  {
+    const { files, repo } = await seeded();
+    const entry = (await repo.listExpressions())[0];
+    const target = `${DEFAULT_EXPRESSION_DIRECTORY}/${entry.path.split("/").at(-1)}`;
+    files.data.set(target, "同名用户文件不得覆盖");
+    let approved = false;
+    const next = new EnglishDiaryRepository(files, {
+      ...options, expressionDirectory: DEFAULT_EXPRESSION_DIRECTORY,
+      legacyExpressionDirectories: [options.expressionDirectory], canMigrate: () => approved
+    });
+    assert.equal((await next.listExpressions())[0].path, entry.path);
+    const stable = new Map(files.data);
+    approved = true;
+    await rejectsCode(next.listExpressions(), "CONFLICT");
+    assert.deepEqual(files.data, stable);
+  }
+
+  // Flattening inside the current root never overwrites an unrelated target or backup.
+  for (const conflictAt of ["target", "backup"] as const) {
+    const { files, repo } = await seeded();
+    const entry = (await repo.listExpressions())[0];
+    const original = files.data.get(entry.path)!;
+    const nestedPath = `${options.expressionDirectory}/用户分类/${entry.path.split("/").at(-1)}`;
+    files.data.delete(entry.path);
+    files.data.set(nestedPath, original);
+    files.data.set(conflictAt === "target" ? entry.path : expressionBackup(entry.id, nestedPath), "已有资料不覆盖");
+    const before = new Map(files.data);
+    await rejectsCode(new EnglishDiaryRepository(files, options).listExpressions(), "CONFLICT");
+    assert.deepEqual(files.data, before);
+  }
+
+  // An explicitly configured hidden root remains readable, with flat expressions.
   {
     const files = new MemoryFiles();
     const repo = new EnglishDiaryRepository(files, { ...options, expressionDirectory: HIDDEN_EXPRESSION_DIRECTORY });

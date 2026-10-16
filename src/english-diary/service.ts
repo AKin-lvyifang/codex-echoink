@@ -60,7 +60,7 @@ export class EnglishDiaryService implements EnglishDiaryApi {
     assertActive(signal);
     // Reuse precedes all Provider/Skill requirements, even when the user changed
     // model preferences or manually edited the already-published English file.
-    if (record.result?.sourceFingerprint === sourceHash && record.pending?.sourceFingerprint !== sourceHash) {
+    if (!options.force && record.result?.sourceFingerprint === sourceHash && record.pending?.sourceFingerprint !== sourceHash) {
       if (!record.missingEnglish) return record;
       options.onStage?.("restoring");
       return await this.repository.restore(record);
@@ -86,7 +86,7 @@ export class EnglishDiaryService implements EnglishDiaryApi {
     }
     record = { ...record, privacy };
     await assertSource();
-    if (record.pending?.sourceFingerprint === sourceHash) {
+    if (!options.force && record.pending?.sourceFingerprint === sourceHash) {
       options.onStage?.("restoring");
       return await this.repository.publish(record, record.pending, { overwriteModified: options.overwriteModified, signal, sourceUnchanged });
     }
@@ -96,7 +96,6 @@ export class EnglishDiaryService implements EnglishDiaryApi {
     const translatable = new Set(privacy.rules.filter((rule) => rule.mode === "translate").map((rule) => rule.blockId));
     const operationId = randomUUID();
     const expressionPermit = this.repository.acquireExpressionPermit?.(operationId);
-    let pro = false;
     let parsed: ReturnType<typeof parseDiaryGeneration>;
     let provider = "";
     if (blocks.some((block) => translatable.has(block.id))) {
@@ -106,12 +105,11 @@ export class EnglishDiaryService implements EnglishDiaryApi {
       requireProPlugin(this.access);
       this.access.requireCapability("diary.explanation.generate");
       this.access.requireCapability("diary.expression.write");
-      pro = true;
-      const prompt = buildDiaryPrompt(blocks, privacy, skill, pro);
+      const prompt = buildDiaryPrompt(blocks, privacy, skill);
       provider = this.generator.providerLabel();
       const output = await this.generator.generate({ ...prompt, signal });
       await assertSource();
-      parsed = parseDiaryGeneration(output, source.content, blocks, privacy, pro);
+      parsed = parseDiaryGeneration(output, source.content, blocks, privacy);
     } else {
       parsed = { english: source.content, alignments: [], expressions: [], warnings: ["本篇没有允许改写的段落，已保留原文；未调用模型。"] };
     }

@@ -1,6 +1,8 @@
 import { classifyKnowledgePath } from "../knowledge-base/folder-bindings";
 import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
 import { ItemView, Modal, Notice, TFile, TFolder, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from "obsidian";
+import { dailyExpression, localDiaryDay } from "../english-diary/daily-expression";
+import type { DiaryRepository, ExpressionEntry } from "../english-diary/types";
 import type { HomeHost } from "./home-host";
 import type { LifestyleStoreCore } from "../lifestyle/store-core";
 import type { SettingsLanguage } from "../settings/settings";
@@ -64,6 +66,12 @@ export class EchoInkHomeView extends ItemView {
   private searchMatches: HomeSearchMatch[] = [];
   private searchIndex = -1;
   private activityUnsubscribe: (() => void) | null = null;
+  private dailyEntries: ExpressionEntry[] | null = null;
+  private dailyRepository: DiaryRepository | null = null;
+  private dailyUnsubscribe: (() => void) | null = null;
+  private dailyLoad: Promise<void> | null = null;
+  private dailyVersion = 0;
+  private dailyTimer: number | null = null;
   private todoUnsubscribe: (() => void) | null = null;
   private todoFilter: "all" | "open" | "done" = "all";
   /** null = all categories; "" = uncategorized; otherwise the category name. */
@@ -111,10 +119,14 @@ export class EchoInkHomeView extends ItemView {
       if (this.closed) return;
       if (this.isForeground()) this.renderTodos(); else this.surfacesPending = true;
     });
-    this.registerEvent(this.app.vault.on("create", () => this.scheduleRefresh()));
-    this.registerEvent(this.app.vault.on("modify", () => this.scheduleRefresh()));
-    this.registerEvent(this.app.vault.on("rename", () => this.scheduleRefresh()));
-    this.registerEvent(this.app.vault.on("delete", () => this.scheduleRefresh()));
+    const changed = (path: string, oldPath?: string) => {
+      if (this.dailyRepository?.affectsExpressions?.(path) || (oldPath && this.dailyRepository?.affectsExpressions?.(oldPath))) this.invalidateDailyExpression();
+      this.scheduleRefresh();
+    };
+    this.registerEvent(this.app.vault.on("create", (file) => changed(file.path)));
+    this.registerEvent(this.app.vault.on("modify", (file) => changed(file.path)));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => changed(file.path, oldPath)));
+    this.registerEvent(this.app.vault.on("delete", (file) => changed(file.path)));
     this.registerDomEvent(this.contentEl, "click", (e) => { void this.handleClick(e).catch((error) => new Notice(errorMessage(error))); });
     this.registerDomEvent(this.contentEl, "keydown", (e) => this.handleKeys(e));
     this.registerDomEvent(this.contentEl, "scroll", () => this.scheduleShortNavigation(), { passive: true });
@@ -137,7 +149,9 @@ export class EchoInkHomeView extends ItemView {
     this.scheduleRefresh(0);
   }
   async onClose(): Promise<void> {
-    this.closed = true; this.refreshVersion++;
+    this.closed = true; this.refreshVersion++; this.dailyVersion++;
+    this.dailyUnsubscribe?.(); this.dailyUnsubscribe = null;
+    this.clearDailyTimer();
     this.foreground?.dispose(); this.foreground = null;
     this.stopSearchWork();
     this.shortcutChoiceAbort?.abort();
@@ -171,10 +185,12 @@ export class EchoInkHomeView extends ItemView {
       this.shortNavigationFrame = null;
       if (this.refreshRunning) { this.refreshPending = true; this.refreshRunning = false; this.refreshVersion++; }
       this.stopSearchWork();
+      this.clearDailyTimer();
       return;
     }
     if (this.shellPending) { this.shellPending = false; this.renderShell(); }
     if (this.surfacesPending) this.refreshHomeSurfaces();
+    else this.renderDailyExpression();
     if (this.refreshPending) this.scheduleRefresh(0);
     if (this.searchOpen) this.scheduleSearch();
     this.scheduleShortNavigation();
@@ -205,6 +221,7 @@ export class EchoInkHomeView extends ItemView {
       this.contentEl.ownerDocument.defaultView?.clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
     }
+    this.renderDailyExpression();
     const version = ++this.refreshVersion;
     this.healthLoading = true;
     this.renderHealth();
@@ -272,6 +289,7 @@ export class EchoInkHomeView extends ItemView {
     this.surfacesPending = false;
     this.renderCaptureShortcut();
     this.renderFinanceCard();
+    this.renderDailyExpression();
     this.applyModuleVisibility();
     this.renderTodos();
   }
@@ -281,6 +299,7 @@ export class EchoInkHomeView extends ItemView {
     markup(this.contentEl, homeWorkspaceMarkup(this.language));
     this.renderCaptureShortcut();
     this.renderFinanceCard();
+    this.renderDailyExpression();
     this.disposeBentoMagnet = bindHomeBentoMagnet(this.contentEl);
     for (const node of Array.from(this.contentEl.querySelectorAll<HTMLElement>("[data-home]"))) node.id = `${this.id}-${node.dataset.home}`;
     for (const node of Array.from(this.contentEl.querySelectorAll<HTMLElement>("[aria-controls], [aria-labelledby], [for]"))) {
@@ -343,6 +362,73 @@ export class EchoInkHomeView extends ItemView {
     card.createEl("p", { text: this.t("这个月的钱，清楚地看一眼", "A clear look at your money this month") });
     const button = card.createEl("button", { text: this.t("打开财务", "Open finance") });
     button.onclick = () => void this.plugin.lifestyle.open("finance");
+    this.el(".page-footer").insertAdjacentElement("beforebegin", card);
+  }
+  private clearDailyTimer(): void {
+    if (this.dailyTimer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.dailyTimer);
+    this.dailyTimer = null;
+  }
+  private invalidateDailyExpression(): void {
+    if (this.closed) return;
+    this.dailyEntries = null;
+    this.dailyVersion++;
+    if (this.isForeground()) this.renderDailyExpression();
+    else this.surfacesPending = true;
+  }
+  private renderDailyExpression(): void {
+    if (this.closed || !this.isForeground()) { this.surfacesPending = true; return; }
+    const repository = this.plugin.englishDiary?.api?.repository ?? null;
+    if (repository !== this.dailyRepository) {
+      this.dailyUnsubscribe?.();
+      this.dailyRepository = repository;
+      this.dailyEntries = null;
+      this.dailyVersion++;
+      this.dailyUnsubscribe = repository?.subscribe?.(() => this.invalidateDailyExpression()) ?? null;
+    }
+    const existing = this.contentEl.querySelector<HTMLElement>(".echoink-life-card-english");
+    this.clearDailyTimer();
+    if (!this.plugin.settings.englishDiary.enabled || !repository) { existing?.remove(); return; }
+    const now = new Date(), midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const win = this.contentEl.ownerDocument.defaultView;
+    this.dailyTimer = win?.setTimeout(() => {
+      this.dailyTimer = null;
+      if (this.isForeground()) this.renderDailyExpression(); else this.surfacesPending = true;
+    }, Math.max(1, midnight.getTime() - now.getTime() + 25)) ?? null;
+    if (this.dailyEntries === null) {
+      existing?.remove();
+      if (this.dailyLoad) return;
+      const version = this.dailyVersion;
+      this.dailyLoad = Promise.resolve().then(() => repository.listExpressions()).then((entries) => {
+        if (this.closed || version !== this.dailyVersion || repository !== this.dailyRepository) return;
+        this.dailyEntries = entries;
+        if (this.isForeground()) this.renderDailyExpression(); else this.surfacesPending = true;
+      }, (error) => {
+        if (!this.closed && version === this.dailyVersion) console.warn("EchoInk 每日一句读取失败", error);
+      }).finally(() => {
+        this.dailyLoad = null;
+        if (!this.closed && version !== this.dailyVersion) {
+          if (this.isForeground()) this.renderDailyExpression(); else this.surfacesPending = true;
+        }
+      });
+      return;
+    }
+    const selected = dailyExpression(this.dailyEntries, now);
+    if (!selected) { existing?.remove(); return; }
+    const { entry, occurrence } = selected;
+    const signature = JSON.stringify([this.language, localDiaryDay(now), entry, occurrence]);
+    if (existing?.dataset.expressionSignature === signature) return;
+    existing?.remove();
+    const card = this.contentEl.ownerDocument.createElement("section");
+    card.className = "echoink-life-card echoink-life-card-english";
+    card.dataset.expressionSignature = signature;
+    const heading = card.createDiv({ cls: "echoink-life-card-heading" });
+    heading.createEl("small", { text: "ENGLISH / ECHOINK" });
+    heading.createEl("h2", { text: entry.term });
+    card.createEl("p", { text: entry.meaning });
+    const excerpt = card.createEl("p", { text: occurrence.targetExcerpt });
+    excerpt.createSpan({ text: ` · ${occurrence.date}` });
+    const button = card.createEl("button", { text: this.t("查看词条", "View expression"), attr: { type: "button" } });
+    button.onclick = () => void this.plugin.englishDiary?.openLibrary?.(entry.id).catch((error) => new Notice(errorMessage(error)));
     this.el(".page-footer").insertAdjacentElement("beforebegin", card);
   }
   private renderShortNavigation(): void {
