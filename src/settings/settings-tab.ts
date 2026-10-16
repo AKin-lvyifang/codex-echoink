@@ -11,6 +11,7 @@ import { renderTodoStatistics } from "./todo-statistics";
 import { renderTodoReminderSettings } from "./todo-reminder-settings";
 import { renderEnglishDiaryActivity } from "./english-diary-activity";
 import { renderAppearancePicker } from "./appearance-picker";
+import { renderObsidianCliGuide } from "./obsidian-cli-guide";
 import { SETTINGS_TAB_ICONS } from "./settings-tab-icons";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { renderManualDreamAction } from "./manual-dream-action";
@@ -1007,6 +1008,8 @@ export class CodexSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       }));
+
+    renderObsidianCliGuide(page, zh);
 
     const quickChatSection = createSettingsSection(page, {
       title: zh ? "快捷 AI 小窗" : "Quick AI window",
