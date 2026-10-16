@@ -23649,10 +23649,12 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) :is(.butt
   outline: none;
   box-shadow: none;
 }
-body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .button.primary:focus-visible {
-  border-color: var(--line);
-  background: var(--soft);
-  color: var(--ink);
+body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .button.primary:not(:disabled):is(:hover, :focus-visible, :active) {
+  border-color: color-mix(in srgb, var(--accent) 94%, black);
+  background: color-mix(in srgb, var(--accent) 94%, black);
+  color: var(--echoink-theme-on-accent, #fff);
+  outline: none;
+  box-shadow: none;
 }
 body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) :is(.icon-button, .echoink-todo-action):focus-visible {
   background: var(--soft);
