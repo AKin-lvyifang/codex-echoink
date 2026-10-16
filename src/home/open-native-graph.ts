@@ -1,4 +1,4 @@
-import { Notice, TFile, normalizePath, type App } from "obsidian";
+import { Notice, TFile, normalizePath, type App, type WorkspaceLeaf } from "obsidian";
 import type { SettingsLanguage } from "../settings/settings";
 import { homeCopy } from "./home-i18n";
 
@@ -20,6 +20,48 @@ export async function openObsidianGraphLeaf(app: App, language: SettingsLanguage
     return true;
   } catch (error) {
     console.warn("EchoInk 无法打开 Obsidian 原生图谱", error);
+    new Notice(homeCopy(language).graph.cannotOpenGraph);
+    return false;
+  }
+}
+
+/** Opens the folder's notes even when no index note exists. */
+export async function openObsidianFolderGraphLeaf(
+  app: App,
+  directories: readonly string[],
+  language: SettingsLanguage = "zh-CN"
+): Promise<boolean> {
+  const roots = [...new Set(directories.map((path) => normalizePath(path).replace(/\/$/u, "")))].filter(Boolean);
+  if (!roots.length) return false;
+  // Anchor the folder boundary: "wiki-backup" must not match "wiki".
+  const escaped = roots.map((path) => path.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&"));
+  const search = `match-case:path:/^(?:${escaped.join("|")})\\//`;
+  let leaf: WorkspaceLeaf | undefined;
+  try {
+    leaf = app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: "graph", active: true, state: {} });
+    if (leaf.getViewState().type !== "graph") throw new Error("Obsidian did not activate the Graph View");
+    // Graph View does not read filters from Workspace state. Its core engine
+    // owns the same options as the native Filters panel (verified in Obsidian).
+    const engine = (leaf.view as unknown as {
+      dataEngine?: {
+        setOptions(options: Record<string, unknown>): void;
+        getOptions(): { search?: string };
+        onOptionsChange: (() => void) & { cancel?: () => void };
+      };
+    }).dataEngine;
+    if (!engine?.setOptions || !engine.getOptions) throw new Error("Obsidian graph filters are unavailable");
+    // This new leaf is a folder view: keep its options separate from the global
+    // graph preferences, including the engine's deferred search callbacks.
+    engine.onOptionsChange.cancel?.();
+    engine.onOptionsChange = () => undefined;
+    engine.setOptions({ search, showOrphans: true, hideUnresolved: true });
+    if (engine.getOptions().search !== search) throw new Error("Obsidian did not apply the folder filter");
+    await app.workspace.revealLeaf(leaf);
+    return true;
+  } catch (error) {
+    leaf?.detach();
+    console.warn("EchoInk 无法打开 Obsidian 目录图谱", error);
     new Notice(homeCopy(language).graph.cannotOpenGraph);
     return false;
   }

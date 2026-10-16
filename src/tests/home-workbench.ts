@@ -3,6 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { TFile, TFolder, WorkspaceLeaf, type App } from "obsidian";
 import { KNOWLEDGE_ROOT_NAMES } from "../knowledge-base/root-paths";
 import {
+  emptyKnowledgeFolderBindings,
+  type KnowledgeFolderBinding
+} from "../knowledge-base/folder-bindings";
+import {
   BUILT_IN_JOURNAL_TEMPLATES,
   DEFAULT_JOURNAL_TEMPLATE_ID,
   HOME_CONTRIBUTION_DAYS,
@@ -29,13 +33,15 @@ import {
   HOME_ENTRY_INDEX_PATHS,
   HomeWorkbenchDataService,
   defaultJournalTemplateChoice,
-  homeEntryIndexPath
+  homeEntryIndexPath,
+  type HomeEntrySummary
 } from "../home/home-workbench-data";
 import {
   DEFAULT_JOURNAL_DIRECTORY,
   normalizeJournalDirectory
 } from "../home/journal-directory";
 import {
+  openObsidianFolderGraphLeaf,
   openObsidianGraphLeaf,
   openObsidianLocalGraphLeaf
 } from "../home/open-native-graph";
@@ -77,6 +83,8 @@ export async function runHomeWorkbenchTests(): Promise<void> {
   await assertHomeConversationLaunchFlow();
   await assertCustomJournalDirectoryBehavior();
   await assertNativeGraphBehavior();
+  await assertHomeEntryGraphRouting();
+  await assertNativeFolderGraphBehavior();
 }
 
 function assertRecentNoteDirectoryScope(): void {
@@ -416,7 +424,197 @@ async function assertNativeGraphBehavior(): Promise<void> {
   }
 }
 
+async function assertHomeEntryGraphRouting(): Promise<void> {
+  const bound = (readPaths: string[], enabled = true, writePath: string | null = readPaths[0] ?? null): KnowledgeFolderBinding => ({
+    enabled, readPaths, writePath, allowedSubdirectories: []
+  });
+  const cases: Array<{
+    name: string;
+    directories: string[];
+    files?: string[];
+    binding?: KnowledgeFolderBinding;
+    expectedDirectory?: string;
+    expectedIndex?: string;
+    settings?: boolean;
+  }> = [
+    { name: "legacy English Wiki without an index", directories: ["wiki", "wiki-backup"], files: ["wiki/note.md"], expectedDirectory: "wiki" },
+    { name: "legacy Chinese Wiki with an index", directories: [KNOWLEDGE_ROOT_NAMES.wiki], files: [`${KNOWLEDGE_ROOT_NAMES.wiki}/index.md`], expectedIndex: `${KNOWLEDGE_ROOT_NAMES.wiki}/index.md` },
+    { name: "empty custom Wiki without an index", directories: ["Personal/Ideas"], binding: bound(["removed", "wrong.md", "Personal/Ideas"]), files: ["wrong.md", "wiki/index.md"], expectedDirectory: "Personal/Ideas" },
+    { name: "empty legacy Vault", directories: [], expectedDirectory: "wiki" },
+    { name: "bound write directory index takes precedence", directories: ["First", "Preferred"], files: ["First/index.md", "Preferred/index.md"], binding: bound(["First", "Preferred"], true, "Preferred"), expectedIndex: "Preferred/index.md" },
+    { name: "disabled binding with a surviving directory", directories: ["wiki"], files: ["wiki/index.md"], binding: bound(["wiki"], false), settings: true },
+    { name: "binding points only to a missing directory or a file", directories: ["wiki"], files: ["wiki/index.md", "wrong.md"], binding: bound(["removed", "wrong.md"]), settings: true }
+  ];
+  try {
+    for (const test of cases) {
+      openTestNoticeMessages.length = 0;
+      const nodes = new Map<string, TFile | TFolder>();
+      for (const path of test.directories) nodes.set(path, Object.assign(new TFolder(), { path }));
+      for (const path of test.files ?? []) nodes.set(path, new TFile(path));
+      const graph = createFolderGraphLeaf();
+      const host = createGraphApp([], graph.leaf);
+      const writes = (): never => assert.fail(`${test.name}: opening a card must not write notes or directories`);
+      Object.assign(host.app, {
+        vault: {
+          getRoot: () => ({ children: [...nodes.values()].filter((file) => !file.path.includes("/")) }),
+          getAbstractFileByPath: (path: string) => nodes.get(path) ?? null,
+          create: writes,
+          createFolder: writes,
+          modify: writes
+        }
+      });
+      let settingsOpened = 0;
+      const folderBindings = test.binding ? emptyKnowledgeFolderBindings() : undefined;
+      if (folderBindings && test.binding) folderBindings.roles.wiki = test.binding;
+      const home = Object.assign(Object.create(EchoInkHomeView.prototype), {
+        app: host.app,
+        plugin: {
+          settings: { settingsLanguage: "zh-CN", knowledgeBase: { folderBindings } },
+          openEchoInkKnowledgeSettings: async () => { settingsOpened += 1; }
+        }
+      }) as { openEntry(entry: HomeEntrySummary): Promise<void> };
+      await home.openEntry({ id: "wiki", label: "Wiki", description: "", count: 0, targetPath: "stale/index.md" });
+      assert.equal(settingsOpened, test.settings ? 1 : 0, test.name);
+      if (test.settings) {
+        assert.equal(host.getLeafCalls(), 0, test.name);
+        assert.deepEqual(host.revealed, [], test.name);
+        assert.match(openTestNoticeMessages.at(-1) ?? "", /请先启用并选择目录/u, test.name);
+      } else {
+        assert.equal(host.getLeafCalls(), 1, test.name);
+        assert.deepEqual(host.revealed, [graph.leaf], test.name);
+        assert.deepEqual(openTestNoticeMessages, [], test.name);
+        if (test.expectedIndex) {
+          assert.deepEqual(graph.leaf.viewStates, [{ type: "localgraph", active: true, state: { file: test.expectedIndex } }], test.name);
+          assert.deepEqual(graph.appliedOptions, [], test.name);
+        } else {
+          assert.deepEqual(graph.leaf.setViewStates, ["graph"], test.name);
+          assert.equal(graph.appliedOptions.length, 1, test.name);
+          const filter = graphSearchPattern(graph.appliedOptions[0].search);
+          assert.equal(filter.test(`${test.expectedDirectory}/note.md`), true, test.name);
+          assert.equal(filter.test(`${test.expectedDirectory}-backup/note.md`), false, test.name);
+          assert.equal(filter.test("stale/index.md"), false, test.name);
+          if (test.binding) assert.equal(filter.test("wiki/index.md"), false, test.name);
+        }
+      }
+    }
+  } finally {
+    openTestNoticeMessages.length = 0;
+  }
+}
+
+async function assertNativeFolderGraphBehavior(): Promise<void> {
+  const originalWarn = console.warn;
+  console.warn = () => undefined;
+  try {
+    openTestNoticeMessages.length = 0;
+    const graph = createFolderGraphLeaf();
+    graph.queuePendingPreferenceSave();
+    const existing = createFolderGraphLeaf();
+    const host = createGraphApp([existing.leaf], graph.leaf);
+    const specialDirectory = "Research/Wiki [draft]+(2026).$^{}?|*";
+    assert.equal(await openObsidianFolderGraphLeaf(host.app, ["wiki/", "wiki", specialDirectory]), true);
+    assert.equal(host.getLeafCalls(), 1, "a card must not replace an existing global graph");
+    assert.deepEqual(existing.leaf.viewStates, []);
+    assert.deepEqual(host.revealed, [graph.leaf]);
+    assert.deepEqual(graph.leaf.viewStates, [{ type: "graph", active: true, state: {} }]);
+    assert.equal(graph.appliedOptions.length, 1);
+    assert.equal(graph.appliedOptions[0].showOrphans, true, "empty or unlinked notes remain visible");
+    assert.equal(graph.appliedOptions[0].hideUnresolved, true);
+    const filter = graphSearchPattern(graph.appliedOptions[0].search);
+    for (const path of ["wiki/note.md", "wiki/nested/index.md", `${specialDirectory}/note.md`]) {
+      assert.equal(filter.test(path), true, path);
+    }
+    for (const path of ["WIKI/note.md", "Wiki/note.md", "wiki-backup/note.md", "other/wiki/note.md", "wiki.md", "wikimedia/note.md", "Research/Wiki draft2026/note.md", `${specialDirectory.toLowerCase()}/note.md`, `${specialDirectory}-backup/note.md`]) {
+      assert.equal(filter.test(path), false, path);
+    }
+    assert.deepEqual(graph.savedOptions(), { search: "tag:#my-global-filter", showOrphans: false, hideUnresolved: false });
+    await graph.completePendingSearches();
+    assert.equal(graph.cancelCalls(), 1, "cancel the preference save queued while the native graph loaded");
+    assert.equal(graph.globalSaveCount(), 0, "search completion after opening must not save the directory filter globally");
+    graph.engine.setOptions({ search: "tag:#next" });
+    await graph.completePendingSearches();
+    assert.equal(graph.engine.getOptions().search, "tag:#next", "the directory graph remains interactive");
+    assert.equal(graph.globalSaveCount(), 0, "later changes in this directory graph also stay local to its leaf");
+    assert.deepEqual(graph.savedOptions(), { search: "tag:#my-global-filter", showOrphans: false, hideUnresolved: false });
+    existing.engine.setOptions({ search: "tag:#existing-global" });
+    await existing.completePendingSearches();
+    assert.equal(existing.savedOptions().search, "tag:#existing-global", "the existing global graph can still save preferences");
+    assert.ok(existing.globalSaveCount() > 0);
+    assert.deepEqual(openTestNoticeMessages, []);
+
+    for (const behavior of ["reject", "ignore", "no-engine", "no-setter", "no-getter", "ignore-options", "throw-options", "reject-reveal"] as const) {
+      openTestNoticeMessages.length = 0;
+      const failed = createFolderGraphLeaf(behavior === "reject" || behavior === "ignore" ? behavior : "accept");
+      if (behavior === "no-engine") failed.leaf.view = {};
+      if (behavior === "no-setter") failed.leaf.view = { dataEngine: { getOptions: failed.engine.getOptions } };
+      if (behavior === "no-getter") failed.leaf.view = { dataEngine: { setOptions: failed.engine.setOptions } };
+      if (behavior === "ignore-options") failed.engine.setOptions = () => undefined;
+      if (behavior === "throw-options") failed.engine.setOptions = () => { throw new Error("options rejected"); };
+      const failedHost = createGraphApp([], failed.leaf, behavior === "reject-reveal");
+      assert.equal(await openObsidianFolderGraphLeaf(failedHost.app, ["wiki"], "en"), false, behavior);
+      assert.deepEqual(failedHost.revealed, [], behavior);
+      assert.equal(failed.leaf.detached, true, `${behavior}: close the unfiltered leaf`);
+      await failed.completePendingSearches();
+      assert.equal(failed.globalSaveCount(), 0, behavior);
+      assert.equal(failed.savedOptions().search, "tag:#my-global-filter", behavior);
+      assert.equal(openTestNoticeMessages.at(-1), homeCopy("en").graph.cannotOpenGraph, behavior);
+    }
+  } finally {
+    console.warn = originalWarn;
+    openTestNoticeMessages.length = 0;
+  }
+}
+
+function graphSearchPattern(search: unknown): RegExp {
+  assert.equal(typeof search, "string");
+  const query = search as string;
+  assert.ok(query.startsWith("match-case:path:/") && query.endsWith("/"), "use Obsidian's case-sensitive native path regex filter");
+  return new RegExp(query.slice("match-case:path:/".length, -1), "u");
+}
+
+function createFolderGraphLeaf(behavior: "accept" | "reject" | "ignore" = "accept") {
+  const leaf = createGraphLeaf("empty", behavior);
+  const appliedOptions: Record<string, unknown>[] = [];
+  let currentOptions: Record<string, unknown> = { search: "tag:#my-global-filter", showOrphans: false, hideUnresolved: false };
+  let savedOptions = { ...currentOptions };
+  let globalSaveCount = 0;
+  let cancelCalls = 0;
+  const pendingSearches: Array<() => void> = [];
+  const pendingPreferenceSaves: Array<() => void> = [];
+  const onOptionsChange = Object.assign(
+    () => { globalSaveCount += 1; savedOptions = { ...currentOptions }; },
+    { cancel: () => { cancelCalls += 1; pendingPreferenceSaves.length = 0; } }
+  );
+  const engine = {
+    onOptionsChange,
+    setOptions(options: Record<string, unknown>): void {
+      appliedOptions.push(options);
+      currentOptions = { ...currentOptions, ...options };
+      engine.onOptionsChange();
+      // Native search finishes later and reads the engine's callback at completion.
+      pendingSearches.push(() => engine.onOptionsChange());
+    },
+    getOptions: () => ({ ...currentOptions })
+  };
+  leaf.view = { dataEngine: engine };
+  return {
+    leaf, engine, appliedOptions,
+    savedOptions: () => savedOptions,
+    globalSaveCount: () => globalSaveCount,
+    cancelCalls: () => cancelCalls,
+    queuePendingPreferenceSave: () => { pendingPreferenceSaves.push(onOptionsChange); },
+    completePendingSearches: async (): Promise<void> => {
+      await Promise.resolve();
+      for (const callback of pendingPreferenceSaves.splice(0)) callback();
+      for (const callback of pendingSearches.splice(0)) callback();
+    }
+  };
+}
+
 interface GraphLeafMock {
+  view?: { dataEngine?: unknown };
+  detached: boolean;
+  detach(): void;
   setViewStates: string[];
   viewStates: Array<{ type: string; active?: boolean; state?: Record<string, unknown> }>;
   setViewState(state: { type: string; active?: boolean; state?: Record<string, unknown> }): Promise<void>;
@@ -432,6 +630,8 @@ function createGraphLeaf(
   const setViewStates: string[] = [];
   const viewStates: Array<{ type: string; active?: boolean; state?: Record<string, unknown> }> = [];
   return {
+    detached: false,
+    detach(): void { this.detached = true; },
     setViewStates,
     viewStates,
     async setViewState(state): Promise<void> {

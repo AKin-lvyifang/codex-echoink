@@ -1,10 +1,11 @@
 import { classifyKnowledgePath } from "../knowledge-base/folder-bindings";
+import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
 import { ItemView, Modal, Notice, TFile, TFolder, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from "obsidian";
 import type { HomeHost } from "./home-host";
 import type { LifestyleStoreCore } from "../lifestyle/store-core";
 import type { SettingsLanguage } from "../settings/settings";
 import type { KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
-import { homeEntryIndexPath, HomeWorkbenchDataService, type HomeEntrySummary, type HomeWorkbenchData } from "./home-workbench-data";
+import { HomeWorkbenchDataService, type HomeEntrySummary, type HomeWorkbenchData } from "./home-workbench-data";
 import { readNativeJournalSettings } from "./native-journal";
 import { dateKey, isHomeRecentNotePath, journalDateFromPath, type HomeVaultFileRecord } from "./home-workbench-model";
 import { homeConversationMessage, homeReviewPrompt, type HomeConversationAction } from "./home-conversation-actions";
@@ -12,7 +13,7 @@ import { JournalTemplateModal } from "./journal-template-modal";
 import { chooseEnglishDiaryHomeShortcut } from "./english-diary-shortcut-modal";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { formatHomeFullDate, formatHomeRelativeTime, homeCopy, type HomeCopy } from "./home-i18n";
-import { openObsidianLocalGraphLeaf } from "./open-native-graph";
+import { openObsidianFolderGraphLeaf, openObsidianLocalGraphLeaf } from "./open-native-graph";
 import { homeWorkspaceMarkup } from "./home-workspace-template";
 import { bindHomeBentoMagnet } from "./home-bento-magnet";
 import { HomeSearchService, type HomeSearchMatch } from "./home-search";
@@ -925,15 +926,22 @@ export class EchoInkHomeView extends ItemView {
   private async openEntry(entry: HomeEntrySummary): Promise<void> {
     const config = this.plugin.settings.knowledgeBase?.folderBindings;
     const mappedRole = entry.id === "wiki" || entry.id === "outputs" || entry.id === "projects" || entry.id === "inbox" ? entry.id : null;
-    if (config && mappedRole) {
-      const target = entry.targetPath && this.app.vault.getFileByPath(entry.targetPath);
-      if (target) await openObsidianLocalGraphLeaf(this.app, target.path, this.language);
-      else { new Notice(config.roles[mappedRole].enabled ? this.t("这个位置暂无笔记", "This folder has no notes") : this.t("请先启用并选择目录", "Choose a folder first")); await this.plugin.openEchoInkKnowledgeSettings(); }
-      return;
-    }
-    const indexPath = homeEntryIndexPath(entry.id);
-    if (indexPath) {
-      await openObsidianLocalGraphLeaf(this.app, indexPath, this.language);
+    if (mappedRole) {
+      const binding = config?.roles[mappedRole];
+      const directories = binding
+        ? binding.enabled ? binding.readPaths.filter((path) => this.app.vault.getAbstractFileByPath(path) instanceof TFolder) : []
+        : this.app.vault.getRoot().children.filter((file) => file instanceof TFolder && knowledgeRootRole(file.path) === mappedRole).map((folder) => folder.path);
+      if (binding && !directories.length) {
+        new Notice(this.t("请先启用并选择目录", "Choose a folder first"));
+        await this.plugin.openEchoInkKnowledgeSettings();
+        return;
+      }
+      if (!directories.length) directories.push(mappedRole);
+      const preferred = binding?.writePath;
+      const ordered = preferred && directories.includes(preferred) ? [preferred, ...directories.filter((path) => path !== preferred)] : directories;
+      const index = ordered.map((path) => this.app.vault.getAbstractFileByPath(`${path}/index.md`)).find((file) => file instanceof TFile);
+      if (index instanceof TFile) await openObsidianLocalGraphLeaf(this.app, index.path, this.language);
+      else await openObsidianFolderGraphLeaf(this.app, directories, this.language);
       return;
     }
     if (entry.id === "journal") {
