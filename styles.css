@@ -21028,6 +21028,10 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 }
 @media(prefers-reduced-motion:reduce){.echoink-settings-demo :is(.directory-chevron,.directory-row){transition:none}}
 
+/* A short status stays beside its setting, including narrow desktop windows. */
+.echoink-settings-demo .echoink-obsidian-cli-status.setting-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:12px}
+.echoink-settings-demo .echoink-obsidian-cli-status>.setting-item-control{width:auto;margin-top:0;white-space:nowrap}
+
 /* The picker is an Obsidian modal in the owning window, outside settings. */
 .modal.echoink-knowledge-note-picker{display:flex;flex-direction:column;--bg:var(--background-primary);--text:var(--text-normal);--secondary:var(--text-muted);--muted:var(--text-faint);--line:var(--background-modifier-border);--soft:var(--background-secondary);--accent:var(--interactive-accent);--accent-bg:color-mix(in srgb,var(--accent) 12%,var(--bg));width:min(620px,calc(100vw - 32px));max-width:none;max-height:min(720px,calc(100dvh - 40px));padding:0;border:1px solid var(--line);border-radius:13px;color:var(--text);background:var(--bg);overflow:hidden;box-shadow:0 20px 80px #21192d30;font-family:var(--font-interface);font-size:calc(var(--font-text-size,16px)*.8125);line-height:1.55}
 .modal.echoink-knowledge-note-picker *{box-sizing:border-box}

@@ -7,7 +7,7 @@ const CATEGORY_ALIASES: Record<SettingsTab, readonly string[]> = {
   general: [
     "基础设置", "General", "语言", "language", "中文", "English", "启动", "startup",
     "日记", "journal", "daily notes", "文件夹", "folder", "长期记忆", "Memory",
-    "Obsidian 原生功能", "CLI", "命令行界面", "command line interface", "native features",
+    "Obsidian 原生 CLI", "CLI", "命令行界面", "command line interface", "native features",
     "个性化", "personalization", "人格", "personality", "头像", "avatar",
     "外观", "appearance", "主题", "theme", "颜色", "color", "暖白翠绿", "雾紫石墨", "Ivory", "Jade", "Violet", "Graphite"
   ],
