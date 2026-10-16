@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { judgePromptBoundary } from './prompt-boundary.mjs';
 
 const get = (object, key) => key.split('.').reduce((value, part) => value?.[part], object);
 const identity = item => item.vaultRelativePath ?? item.id;
@@ -82,10 +83,17 @@ export function judgeCandidate(expected, items) {
   return verdict(assertions);
 }
 
-export function judgeDelivery(expected, items, text) {
+export function judgeDelivery(expected, items, text, promptBoundary) {
   if (!expected || expected.applicable === false) return { status: 'not_applicable', assertions: [], reasons: [] };
   const assertions = [];
   const assert = (name, pass, actual) => assertions.push({ name, pass: Boolean(pass), actual });
+  if (expected.boundary_contract) {
+    const boundary = judgePromptBoundary(promptBoundary);
+    // I7 freezes only a boundary contract. Do not impose the older Markdown
+    // identity serialization on a future explicitly closed resource format.
+    if (Object.keys(expected).every(key => ['applicable', 'boundary_contract'].includes(key))) return boundary;
+    assertions.push(...boundary.assertions);
+  }
   const parsed = parseDeliveryPayload(text);
   const delivered = parsed.items;
   const paths = delivered.map(identity);

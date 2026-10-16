@@ -10,6 +10,7 @@ import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime, createPi
 import { PersonalMemoryRepository } from '@production/harness/memory/personal-memory-repository';
 import { PersonalMemoryRecallHarness } from '@production/harness/memory/personal-memory-recall-harness';
 import { serializeSecondaryRecord } from '@production/harness/memory/secondary-memory-store';
+import { capturePromptBoundary } from './prompt-boundary-adapter';
 
 const inside = (root, relative) => {
   if (typeof relative !== 'string' || !relative || relative.includes('\\') || relative.startsWith('/') || relative.split('/').some(part => !part || part === '.' || part === '..')) throw new Error(`Unsafe setup path: ${relative}`);
@@ -194,12 +195,16 @@ export async function evaluateProduction(input) {
     const request = { ...runtime, ...retrievalRequest };
     const chat = await observe('createProductionPiKnowledgeRuntime.retrieveChat', request, () => production.retrieveChat(request));
     const ask = await observe('createProductionPiKnowledgeRuntime.retrieveAsk', request, () => production.retrieveAsk(request));
+    const promptBoundary = item.expected?.delivery?.boundary_contract
+      ? await capturePromptBoundary({ chat, question: item.query, regressionFixture: item.regression_fixture, vaultPath, observe })
+      : null;
     const selectedMode = setup.preflight_mode ?? manifest.settings?.preflight_mode ?? 'chat';
     if (!['chat', 'ask'].includes(selectedMode)) throw new Error(`Unknown preflight mode: ${selectedMode}`);
     const selected = selectedMode === 'ask' ? ask : chat;
     return {
       candidate_items: pages.flatMap(value => value.hits), delivery_items: selected.references,
       provider_text: selected.providerResourceText, calls,
+      ...(promptBoundary ? { prompt_boundary: promptBoundary } : {}),
       raw: { initial_refresh: initialRefresh, vault_event_binding: vaultEventBinding ?? null, mutations: mutationResults, index_search: pages, retriever: retrieved, production_chat: chat, production_ask: ask, scored_delivery: selectedMode },
       effective_configuration: {
         retrieval_request: retrievalRequest, selected_preflight: selectedMode,
