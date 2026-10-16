@@ -107,6 +107,8 @@ export async function runEvaluation(options) {
   const selected = options.cases ? options.cases.split(',') : options['all-cases'] === 'true' ? undefined : allCases.filter(item => item.starter === true).map(item => item.case_id);
   if (selected?.some(id => !allCases.some(item => item.case_id === id))) throw new Error('Unknown selected case_id');
   const items = flattenCases(allCases, selected);
+  const promptBoundaryEnabled = options['prompt-boundary'] === 'true';
+  const boundaryOverrides = items.filter(item => item.case_id === 'I7' && promptBoundaryEnabled && item.execution?.script === false).map(item => ({ case_id: item.case_id, frozen_execution_script: false, effective_execution_script: true, reason: 'Explicit --prompt-boundary true enables the frozen I7 case through final production message conversion; dataset remains unchanged.' }));
   await mkdir(workRoot, { recursive: true });
   let adapter;
   try { adapter = await buildAdapter(sourceRoot, workRoot); }
@@ -124,7 +126,8 @@ export async function runEvaluation(options) {
       answer: notRun('No model request is made by this script; answer text and score remain empty.'), answer_text: '',
       evidence_level: 'script-production-functions-with-synthetic-storage', expected: item.expected ?? {}
     };
-    if (item.execution?.script === false || /^[JK]/u.test(item.case_id)) {
+    const boundaryOverride = boundaryOverrides.find(override => override.case_id === item.case_id);
+    if ((item.execution?.script === false && !boundaryOverride) || /^[JK]/u.test(item.case_id)) {
       const reason = item.case_id === 'J1' ? 'User deferred connecting iPhone/iPad in this round; native device checks were not run.' : item.execution?.reason ?? 'Native device/performance scenario is outside this content script.';
       result.candidate = notRun(reason); result.delivery = notRun(reason);
       results.push(result);
@@ -145,7 +148,7 @@ export async function runEvaluation(options) {
       result.actual = actual;
       result.candidate_ranking = actual.candidate_items.map((value, rank) => ({ rank: rank + 1, ...value }));
       result.candidate = applySetupLimitations(judgeCandidate(item.expected?.candidate, actual.candidate_items), actual.unsupported_setup);
-      result.delivery = applySetupLimitations(judgeDelivery(item.expected?.delivery, actual.delivery_items, actual.provider_text), actual.unsupported_setup);
+      result.delivery = applySetupLimitations(judgeDelivery(item.expected?.delivery, actual.delivery_items, actual.provider_text, actual.prompt_boundary), actual.unsupported_setup);
       if (item.engineering_assertions?.length) {
         result.engineering = { status: 'pending_review', assertions: item.engineering_assertions, reason: 'These trace assertions are preserved for review; this adapter does not claim to implement them.' };
         if (result.delivery.status === 'pass') result.delivery = { ...result.delivery, status: 'pending_review', reasons: [...result.delivery.reasons, result.engineering.reason] };
@@ -173,7 +176,7 @@ export async function runEvaluation(options) {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, device: 'desktop-script', model: '',
     evidence_level: 'script-production-functions-with-synthetic-storage', code,
     dataset: { path: datasetPath, version: manifest.dataset_version ?? manifest.version, scoring_rule_version: manifest.scoring_rule_version, content_sha256: digest.content_sha256, file_count: digest.file_count, fixed_date: manifest.fixed_date ?? manifest.fixed_today, timezone: manifest.timezone },
-    configuration: { settings: manifest.settings ?? {}, selected_cases: selected ?? null, requested_case_ids: [...new Set(items.map(item => item.case_id))], total_dataset_case_ids: allCases.length, planned_result_rows_including_subcases: results.length, executed_content_checks: results.filter(result => result.actual || result.actual_error).length, work_root: workRoot, model_calls: 0, network_calls: 0 },
+    configuration: { settings: manifest.settings ?? {}, prompt_boundary_enabled: promptBoundaryEnabled, execution_overrides: boundaryOverrides, selected_cases: selected ?? null, requested_case_ids: [...new Set(items.map(item => item.case_id))], total_dataset_case_ids: allCases.length, planned_result_rows_including_subcases: results.length, executed_content_checks: results.filter(result => result.actual || result.actual_error).length, work_root: workRoot, model_calls: 0, network_calls: 0 },
     adapter: adapter.metadata, scores, scores_by_device: Object.fromEntries([...new Set(qualityResults.map(result => result.device))].map(device => [device, scoresFor(device)])),
     not_run: results.filter(result => result.candidate.status === 'not_run' || result.delivery.status === 'not_run').map(result => ({ case_id: result.case_id, subcase_id: result.subcase_id, device: result.device, reason: result.candidate.reasons })),
     performance: { cold_p50_ms: null, cold_p95_ms: null, warm_p50_ms: null, warm_p95_ms: null, memory_peak_bytes: null, production_bundle_bytes: null, note: 'Per-case timings are diagnostic script samples, not native or large-vault performance. K cases were not run.' },
@@ -203,7 +206,7 @@ function argumentsOf(argv) {
 async function main() {
   const { command, options } = argumentsOf(process.argv.slice(2));
   if (!command || command === 'help' || command === '--help') {
-    console.log('node scripts/knowledge-recall-eval/cli.mjs freeze|verify --dataset PATH\nnode scripts/knowledge-recall-eval/cli.mjs run --dataset PATH --source-root CHECKOUT --output-run PATH --run-id ID --phase P0 [--cases A1,H2 | --all-cases true] [--expected-commit SHA] [--retrieval-baseline-commit SHA]\nrun defaults to starter=true cases. freeze is explicit and refuses to refreeze an existing digest. run verifies first; never writes to the dataset or appends CSV.');
+    console.log('node scripts/knowledge-recall-eval/cli.mjs freeze|verify --dataset PATH\nnode scripts/knowledge-recall-eval/cli.mjs run --dataset PATH --source-root CHECKOUT --output-run PATH --run-id ID --phase P0 [--cases A1,H2 | --all-cases true] [--prompt-boundary true] [--expected-commit SHA] [--retrieval-baseline-commit SHA]\nrun defaults to starter=true cases. --prompt-boundary true explicitly enables frozen I7; default execution flags remain unchanged. freeze is explicit and refuses to refreeze an existing digest. run verifies first; never writes to the dataset or appends CSV.');
     return;
   }
   if (!['freeze', 'verify', 'run'].includes(command)) throw new Error(`Unknown command: ${command}`);

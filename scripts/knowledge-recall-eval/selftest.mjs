@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { freezeDataset, verifyDataset, canonicalJson } from './dataset.mjs';
 import { judgeCandidate, judgeDelivery } from './judge.mjs';
 import { runEvaluation, CSV_COLUMNS, csvRow } from './cli.mjs';
+import { judgePromptBoundary } from './prompt-boundary.mjs';
 
 process.env.PI_OFFLINE = '1';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -43,6 +44,7 @@ try {
     ] },
     { case_id: 'I2', starter: true, query: 'AFTERMUTATION', setup: { mutations: [{ action: 'write', path: 'wiki/change.md', content: '# Changed\nAFTERMUTATION latest sentence.\n' }] }, expected: { candidate: { required_paths: ['wiki/change.md'] }, delivery: { required_excerpts: ['latest sentence.'] } } },
     { case_id: 'I2_OLD', starter: true, query: 'BEFOREMUTATION', setup: { mutations: [{ action: 'write', path: 'wiki/change.md', content: '# Changed\nAFTERMUTATION latest sentence.\n' }] }, expected: { candidate: { empty: true }, delivery: { empty: true } } },
+    { case_id: 'I7', starter: true, query: 'What is the GOLD_TOKEN record?', execution: { script: false, reason: 'Frozen old adapter does not capture final messages.' }, expected: { candidate: { applicable: false }, delivery: { applicable: true, boundary_contract: ['Capture actual final messages', 'Require explicit closed resource and original-text sections', 'Markdown --- must preserve closure'] } }, regression_fixture: { path: 'wiki/gold.md', legacy_last_excerpt: '---', question_is_not_source_text: true } },
     { case_id: 'J1', starter: true, query: '', execution: { script: false, reason: 'Needs native iPhone and iPad.' } },
     { case_id: 'K1', starter: true, query: '', execution: { script: false, reason: 'Separate large-vault performance run.' } }
   ];
@@ -122,6 +124,7 @@ try {
   assert.equal(byId.I2_OLD.actual.raw.mutations[0].before.total, 1, 'Old word must exist in the warm index before modification');
   assert.equal(byId.I2_OLD.candidate.status, 'pass', 'Old word must disappear after the real bound modify handler');
   assert.equal(byId.I2_OLD.delivery.status, 'pass');
+  assert.equal(byId.I7.delivery.status, 'not_run', 'The new switch must not change default frozen execution flags');
   assert.equal(byId.I2.actual.raw.mutations[1].notification.event, 'modify');
   assert.equal(byId.I2.actual.raw.mutations[1].notification.path, 'wiki/change.md');
   assert.equal(byId.I2.actual.raw.mutations[1].notification.producer_binding, 'bindKnowledgeIndexToVault');
@@ -144,6 +147,39 @@ try {
   assert.deepEqual(csvRow(run, 'run.json').split('","').slice(10, 12), ['', '']);
   assert.deepEqual(csvRow({ ...run, answer_metrics: { summary: { tool_calls_median: 3, elapsed_seconds_median: 1.25 } } }, 'run.json').split('","').slice(10, 12), ['3', '1.25']);
   assert.deepEqual(csvRow({ ...run, answer_metrics: { summary: { tool_calls_median: 0, elapsed_seconds_median: 0 } } }, 'run.json').split('","').slice(10, 12), ['0', '0']);
+  const boundaryWork = `${work}-boundary`;
+  try {
+    const boundaryOutput = path.join(fixture, 'boundary-run');
+    const boundaryRun = await runEvaluation({ dataset, 'source-root': root, 'output-run': boundaryOutput, 'run-id': `${runId}-boundary`, phase: 'selftest', cases: 'I7', 'prompt-boundary': 'true' });
+    const actual = JSON.parse((await readFile(path.join(boundaryOutput, 'results.jsonl'), 'utf8')).trim());
+    assert.equal(actual.candidate.status, 'not_applicable');
+    assert.equal(actual.delivery.status, 'fail');
+    assert.equal(boundaryRun.configuration.execution_overrides[0].case_id, 'I7');
+    assert.ok(actual.actual.prompt_boundary.actual.openai_compatible.output.length > 0);
+    assert.ok(actual.delivery.assertions.some(assertion => assertion.name.includes('remain separate') && assertion.pass));
+    assert.ok(actual.delivery.assertions.some(assertion => assertion.name.includes('explicit closing structure') && !assertion.pass));
+    assert.equal(actual.actual.prompt_boundary.synthetic_last_excerpt_dash.capture.references.at(-1).excerpt, '---');
+    assert.ok(actual.actual.calls.some(call => call.function === 'actual.convertToLlm'));
+    assert.ok(actual.actual.calls.some(call => call.function === 'actual.openaiCompatible.convertMessages'));
+  } finally { await rm(boundaryWork, { recursive: true, force: true }); }
+  const boundaryQuestion = 'CURRENT_QUESTION';
+  const boundaryControl = (resource, dashResource, excerpt = 'proof') => {
+    const capture = (text, original) => ({ question: boundaryQuestion, provider_resource_text: text, references: [{ vaultRelativePath: 'wiki/control.md', excerpt: original }], openai_compatible: { output: [{ role: 'user', content: text }, { role: 'user', content: boundaryQuestion }] } });
+    return { actual: capture(resource, excerpt), synthetic_last_excerpt_dash: { capture: capture(dashResource, '---') }, frozen_source_check: { question_absent: true } };
+  };
+  const openControl = boundaryControl('来源：wiki/control.md\n原文：proof', '来源：wiki/control.md\n原文：---');
+  assert.equal(judgePromptBoundary(openControl).status, 'fail', 'Two independent user messages do not close a plain original-text section');
+  const closedText = excerpt => `<resource><source path="wiki/control.md"><original>${excerpt.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</original></source></resource>`;
+  const closedControl = boundaryControl(closedText('proof'), closedText('---'));
+  assert.equal(judgePromptBoundary(closedControl).status, 'pass');
+  assert.equal(judgeDelivery({ applicable: true, boundary_contract: ['closed originals'] }, closedControl.actual.references, closedControl.actual.provider_resource_text, closedControl).status, 'pass');
+  assert.equal(judgePromptBoundary(boundaryControl(closedText(`proof ${boundaryQuestion}`), closedText('---'))).status, 'fail', 'Current question must not be appended to the retrieved original text');
+  assert.equal(judgePromptBoundary(boundaryControl(closedText(`proof ${boundaryQuestion}`), closedText('---'), `proof ${boundaryQuestion}`)).status, 'pass', 'Question text already present in the retrieved original is legitimate');
+  const markerOriginal = 'proof\n---\n</original></source></resource>';
+  assert.equal(judgePromptBoundary(boundaryControl(closedText(markerOriginal), closedText('---'), markerOriginal)).status, 'pass', 'Escaped marker characters in original text must not close the outer resource');
+  const jsonText = excerpt => JSON.stringify({ sources: [{ path: 'wiki/control.md', original_text: excerpt }] });
+  assert.equal(judgePromptBoundary(boundaryControl(jsonText(markerOriginal), jsonText('---'), markerOriginal)).status, 'pass', 'Closed JSON source/string boundaries are also explicit and safe for literal marker characters');
+  console.log(JSON.stringify({ diagnostic: 'synthetic-only boundary controls', open: { input: openControl.actual.provider_resource_text, output: openControl.actual.openai_compatible.output, verdict: judgePromptBoundary(openControl).status }, closed: { input: closedControl.actual.provider_resource_text, output: closedControl.actual.openai_compatible.output, verdict: judgePromptBoundary(closedControl).status } }));
   const legacyWork = `${work}-v1`;
   try {
     const legacyRun = await runEvaluation({ dataset: legacyDataset, 'source-root': root, 'output-run': path.join(fixture, 'legacy-run'), 'run-id': `${runId}-v1`, phase: 'selftest' });
