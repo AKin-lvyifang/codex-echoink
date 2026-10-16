@@ -1,3 +1,4 @@
+import { mountKnowledgeLinkingProgress } from "./knowledge-linking-progress";
 import { setIcon, type Component } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import type { StoredSession } from "../../settings/settings";
@@ -15,6 +16,7 @@ export interface CodexViewShellHost extends Component {
   virtualListEl: HTMLElement;
   turnNavigatorEl: HTMLElement;
   jumpToLatestEl: HTMLButtonElement;
+  knowledgeLinkingProgressDispose?: () => void;
   taskPlanDockEl: HTMLElement;
   interactionDockEl: HTMLElement;
   queueEl: HTMLElement;
@@ -52,6 +54,7 @@ export interface CodexViewShellHost extends Component {
 }
 
 export function renderViewShell(host: CodexViewShellHost): void {
+  host.knowledgeLinkingProgressDispose?.();
   host.contentEl.empty();
   host.contentEl.addClass("echoink-chat-surface");
   host.rootEl = host.contentEl.createDiv({ cls: "codex-container" });
@@ -80,6 +83,12 @@ export function renderViewShell(host: CodexViewShellHost): void {
     ])) host.closeComposerMenus();
   });
 
+  const linking = host.plugin.getKnowledgeSurfaceService()?.linking;
+  if (linking) {
+    const mount = host.rootEl.createDiv();
+    host.knowledgeLinkingProgressDispose = mountKnowledgeLinkingProgress(mount, linking, taskId => void host.plugin.openKnowledgeLinkingDetails(taskId), host.plugin.settings.settingsLanguage === "en");
+    host.register(() => host.knowledgeLinkingProgressDispose?.());
+  }
   host.tabBarEl = host.rootEl.createDiv({ cls: "codex-tabs" });
   const messagesShell = host.rootEl.createDiv({ cls: "codex-messages-shell" });
   host.messagesEl = messagesShell.createDiv({ cls: "codex-messages" });

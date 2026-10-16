@@ -894,7 +894,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async listPiConversations(
     statuses?: readonly PiConversationCatalogStatus[]
   ): Promise<Readonly<PiConversationCatalogEntry>[]> {
-    return await (await this.ensurePiLocalData()).listConversations(statuses);
+    return (await (await this.ensurePiLocalData()).listConversations(statuses)).filter(entry => !entry.conversationId.startsWith("knowledge-linking-"));
   }
   async createPiConversation(
     input: CreatePiNativeConversationInput
@@ -1506,6 +1506,13 @@ export default class CodexForObsidianPlugin extends Plugin {
   async externalizeMessageText(message: ChatMessage, fullText: string): Promise<void> { return this.getSettingsStore().externalizeMessageText(message, fullText); }
   async readRawMessageText(rawRef: string): Promise<string> { return this.getSettingsStore().readRawMessageText(rawRef); }
   getKnowledgeSurfaceService(): EchoInkKnowledgeSurfaceService | null { return this.knowledgeBase; }
+  async getKnowledgeLinkingIndex() { return (await this.ensurePiProductionRuntime()).knowledgeAgentIndex; }
+  async queueKnowledgeLinking(targetPaths: readonly string[], sourcePaths: readonly string[] = [], taskId?: string) { return await this.requireKnowledgeSurfaceService().linking.start("automatic", [...targetPaths], taskId, [...sourcePaths]); }
+  private pendingKnowledgeLinkingFocus = false;
+  private pendingKnowledgeLinkingTaskId: string | null = null;
+  async openKnowledgeLinkingDetails(taskId?: string): Promise<void> { this.pendingKnowledgeLinkingTaskId = taskId ?? null; this.pendingKnowledgeLinkingFocus = true; await this.openEchoInkKnowledgeSettings(); }
+  consumeKnowledgeLinkingTaskId(): string | null { const id = this.pendingKnowledgeLinkingTaskId; this.pendingKnowledgeLinkingTaskId = null; return id; }
+  consumeKnowledgeLinkingFocus(): boolean { const pending = this.pendingKnowledgeLinkingFocus; this.pendingKnowledgeLinkingFocus = false; return pending; }
   async getEchoInkKnowledgeInitializationState() {
     return await this.requireKnowledgeSurfaceService().getInitializationState();
   }

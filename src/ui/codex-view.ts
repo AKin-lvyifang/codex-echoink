@@ -259,6 +259,7 @@ export class CodexView extends ItemView {
   refreshSelectionAnnotationSummary(): void { this.renderAttachments(); }
   private rootEl!: HTMLElement;
   private tabBarEl!: HTMLElement;
+  private knowledgeLinkingProgressDispose?: () => void;
   private messagesEl!: HTMLElement;
   private virtualListEl!: HTMLElement;
   private jumpToLatestEl!: HTMLButtonElement;
@@ -504,6 +505,8 @@ export class CodexView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.knowledgeLinkingProgressDispose?.();
+    this.knowledgeLinkingProgressDispose = undefined;
     // Window migration (quick-chat popout <-> sidebar) must NOT cancel live
     // runs: the harness run, queue and Pi conversation stay owned by the
     // plugin layer and are handed over to the successor view instance.

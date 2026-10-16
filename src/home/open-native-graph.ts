@@ -6,9 +6,13 @@ import { homeCopy } from "./home-i18n";
  * Opens Obsidian's core Graph View through the public Workspace leaf API.
  * The graph implementation and its settings remain entirely owned by Obsidian.
  */
-export async function openObsidianGraphLeaf(app: App, language: SettingsLanguage = "zh-CN"): Promise<boolean> {
+export async function openObsidianGraphLeaf(
+  app: App,
+  language: SettingsLanguage = "zh-CN",
+  options: { reuseExisting?: boolean } = {}
+): Promise<boolean> {
   try {
-    let leaf = app.workspace.getLeavesOfType("graph")[0];
+    let leaf = options.reuseExisting === false ? undefined : app.workspace.getLeavesOfType("graph")[0];
     if (!leaf) {
       leaf = app.workspace.getLeaf("tab");
       await leaf.setViewState({ type: "graph", active: true, state: {} });
@@ -53,7 +57,7 @@ export async function openObsidianFolderGraphLeaf(
     if (!engine?.setOptions || !engine.getOptions) throw new Error("Obsidian graph filters are unavailable");
     // This new leaf is a folder view: keep its options separate from the global
     // graph preferences, including the engine's deferred search callbacks.
-    engine.onOptionsChange.cancel?.();
+    engine.onOptionsChange?.cancel?.();
     engine.onOptionsChange = () => undefined;
     engine.setOptions({ search, showOrphans: true, hideUnresolved: true });
     if (engine.getOptions().search !== search) throw new Error("Obsidian did not apply the folder filter");
@@ -62,8 +66,10 @@ export async function openObsidianFolderGraphLeaf(
   } catch (error) {
     leaf?.detach();
     console.warn("EchoInk 无法打开 Obsidian 目录图谱", error);
-    new Notice(homeCopy(language).graph.cannotOpenGraph);
-    return false;
+    new Notice(homeCopy(language).graph.folderFilterUnavailable);
+    // Existing graph leaves may themselves be directory views. A fresh leaf
+    // lets Obsidian load the user's saved global options without inheriting one.
+    return await openObsidianGraphLeaf(app, language, { reuseExisting: false });
   }
 }
 

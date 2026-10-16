@@ -40,6 +40,7 @@ export interface KnowledgeMaintenanceAssessment {
 }
 
 export interface KnowledgeMaintenanceResultEnvelope {
+  linkingTaskId?: string;
   schema: typeof KNOWLEDGE_MAINTENANCE_RESULT_SCHEMA;
   status: KnowledgeMaintenanceResultStatus;
   notes: readonly Readonly<KnowledgeMaintenanceResultNote>[];
@@ -65,6 +66,7 @@ export function knowledgeMaintenanceNoteFromReadback(input: Readonly<{
 
 export function createKnowledgeMaintenanceResultEnvelope(input: Readonly<{
   status: KnowledgeMaintenanceResultStatus;
+  linkingTaskId?: string;
   notes?: readonly Readonly<KnowledgeMaintenanceResultNote>[];
   issues?: readonly Readonly<KnowledgeMaintenanceResultIssue>[];
   systemPaths?: readonly string[];
@@ -73,6 +75,7 @@ export function createKnowledgeMaintenanceResultEnvelope(input: Readonly<{
   return parseKnowledgeMaintenanceResultEnvelope({
     schema: KNOWLEDGE_MAINTENANCE_RESULT_SCHEMA,
     status: input.status,
+    ...(input.linkingTaskId ? { linkingTaskId: input.linkingTaskId } : {}),
     notes: input.notes ?? [],
     issues: input.issues ?? [],
     systemPaths: input.systemPaths ?? [],
@@ -85,7 +88,8 @@ export function parseKnowledgeMaintenanceResultEnvelope(
 ): Readonly<KnowledgeMaintenanceResultEnvelope> | null {
   if (!isRecord(value) || !exactKeys(value, [
     "schema", "status", "notes", "issues", "systemPaths"
-  ], ["assessments"])) return null;
+  ], ["assessments", "linkingTaskId"])) return null;
+  if (value.linkingTaskId !== undefined && (typeof value.linkingTaskId !== "string" || !/^[a-zA-Z0-9-]+$/u.test(value.linkingTaskId))) return null;
   if (value.schema !== KNOWLEDGE_MAINTENANCE_RESULT_SCHEMA) return null;
   if (!isStatus(value.status)) return null;
   if (!Array.isArray(value.notes) || !Array.isArray(value.issues)
@@ -152,6 +156,7 @@ export function parseKnowledgeMaintenanceResultEnvelope(
   return Object.freeze({
     schema: KNOWLEDGE_MAINTENANCE_RESULT_SCHEMA,
     status: value.status,
+    ...(typeof value.linkingTaskId === "string" ? { linkingTaskId: value.linkingTaskId } : {}),
     notes: Object.freeze(notes),
     issues: Object.freeze(issues),
     systemPaths: Object.freeze([...new Set(systemPaths)]),
@@ -198,6 +203,7 @@ export function knowledgeMaintenanceReportPayloadFromToolResult(
             ? "知识写入状态不确定"
             : "知识维护失败",
     reportPath: "",
+    ...(envelope.linkingTaskId ? { linkingTaskId: envelope.linkingTaskId } : {}),
     careItems: [
       ...(noteItems.length ? [{ tone: "success" as const, text: `已回读验证 ${noteItems.length} 篇知识笔记。` }] : []),
       ...envelope.issues.map((issue) => ({ tone: "warning" as const, text: issue.message }))

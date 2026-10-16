@@ -2487,3 +2487,21 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 :where(body:not(.is-mobile)) .echoink-settings-demo .health-score > .text-button {
   font-size: calc(var(--font-text-size, 16px) * .75);
 }
+
+/* Vault-owned knowledge linking task and its confirmation page. */
+.echoink-knowledge-linking-progress { container-type: inline-size; container-name: echoink-linking; margin: 0 12px 8px; flex: 0 0 auto; }
+.echoink-knowledge-linking-progress[hidden] { display: none; }
+.echoink-knowledge-linking-progress-button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 10px; width: 100%; height: auto; min-height: 32px; padding: 8px 10px; border: 0; border-radius: var(--echoink-conversation-radius-sm, 6px); background: transparent; color: var(--text-normal); text-align: left; box-shadow: none; font-size: var(--echoink-conversation-font-label-primary, 13px); line-height: 1.4; cursor: pointer; }
+.echoink-knowledge-linking-progress-button:hover, .echoink-knowledge-linking-progress-button:focus-visible, .echoink-knowledge-linking-progress-button:active { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.echoink-knowledge-linking-progress-title { min-width: 0; overflow-wrap: anywhere; }
+.echoink-knowledge-linking-progress-status { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.echoink-knowledge-linking-progress-bar { grid-column: 1 / -1; width: 100%; height: 3px; accent-color: var(--interactive-accent); }
+.echoink-knowledge-linking-progress-bar[hidden] { display: none; }
+.echoink-knowledge-linking-detail-status { margin-block: 12px; font-variant-numeric: tabular-nums; }
+.echoink-knowledge-linking-detail-content { overflow-wrap: anywhere; }
+.echoink-knowledge-linking-detail > .echoink-knowledge-init-actions { justify-content: flex-end; }
+.echoink-knowledge-linking-preview-note, .echoink-knowledge-linking-result-note { padding-block: 12px; border-bottom: 1px solid var(--background-modifier-border); }
+.echoink-knowledge-linking-preview-note p { white-space: pre-wrap; }
+.echoink-knowledge-linking-error { color: var(--text-error); }
+@container echoink-linking (max-width: 760px) { .echoink-knowledge-linking-progress-status { white-space: nowrap; } }
+@container echoink-linking (max-width: 520px) { .echoink-knowledge-linking-progress-button { grid-template-columns: minmax(0, 1fr); } .echoink-knowledge-linking-progress-title, .echoink-knowledge-linking-progress-status { grid-column: 1; } }

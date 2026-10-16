@@ -816,7 +816,6 @@ function knowledgeDashboardHealthReasonLabel(value: string): string {
   return ({
     "raw 目录缺失": "Raw folder missing",
     "wiki 目录缺失": "Wiki folder missing",
-    "wiki/index.md 缺失": "wiki/index.md missing",
     "tracker 缺失": "Tracker missing",
     "最近体检失败": "Latest check failed",
     "Raw 待提炼": "Raw items need refinement",
@@ -835,7 +834,6 @@ function knowledgeDashboardHealthReasonExplanation(value: string): string {
     "1–20 项合计扣 4 分，超过 20 项合计扣 10 分；历史记录显示可能已提炼，但缺少可信机器标记。": "1–20 items deduct 4 points total; over 20 deduct 10 total. History suggests refinement, but trusted markers are missing.",
     "说明原始来源区不可用。": "The source area is unavailable.",
     "说明沉淀后的知识区不可用。": "The refined knowledge area is unavailable.",
-    "说明知识库入口页不存在。": "The knowledge base entry page is missing.",
     "说明来源消化登记无法确认。": "Source processing records cannot be confirmed.",
     "说明最近一次维护或体检没有成功完成。": "The latest maintenance run or check did not finish successfully.",
     "来源还没有进入 Wiki / Projects 的结构化知识，或缺少可信来源证据。": "Sources have not reached structured Wiki / Projects knowledge, or lack trustworthy evidence.",

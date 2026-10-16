@@ -30,10 +30,8 @@ import {
   type HomeVaultFileRecord
 } from "../home/home-workbench-model";
 import {
-  HOME_ENTRY_INDEX_PATHS,
   HomeWorkbenchDataService,
   defaultJournalTemplateChoice,
-  homeEntryIndexPath,
   type HomeEntrySummary
 } from "../home/home-workbench-data";
 import {
@@ -434,17 +432,32 @@ async function assertHomeEntryGraphRouting(): Promise<void> {
     files?: string[];
     binding?: KnowledgeFolderBinding;
     expectedDirectory?: string;
-    expectedIndex?: string;
+    expectedDirectories?: string[];
+    role?: "wiki" | "outputs" | "projects" | "inbox";
     settings?: boolean;
   }> = [
     { name: "legacy English Wiki without an index", directories: ["wiki", "wiki-backup"], files: ["wiki/note.md"], expectedDirectory: "wiki" },
-    { name: "legacy Chinese Wiki with an index", directories: [KNOWLEDGE_ROOT_NAMES.wiki], files: [`${KNOWLEDGE_ROOT_NAMES.wiki}/index.md`], expectedIndex: `${KNOWLEDGE_ROOT_NAMES.wiki}/index.md` },
+    { name: "legacy Chinese Wiki with an index", directories: [KNOWLEDGE_ROOT_NAMES.wiki], files: [`${KNOWLEDGE_ROOT_NAMES.wiki}/index.md`], expectedDirectory: KNOWLEDGE_ROOT_NAMES.wiki },
     { name: "empty custom Wiki without an index", directories: ["Personal/Ideas"], binding: bound(["removed", "wrong.md", "Personal/Ideas"]), files: ["wrong.md", "wiki/index.md"], expectedDirectory: "Personal/Ideas" },
     { name: "empty legacy Vault", directories: [], expectedDirectory: "wiki" },
-    { name: "bound write directory index takes precedence", directories: ["First", "Preferred"], files: ["First/index.md", "Preferred/index.md"], binding: bound(["First", "Preferred"], true, "Preferred"), expectedIndex: "Preferred/index.md" },
+    { name: "all bound directories remain visible despite write directory index", directories: ["First", "Preferred"], files: ["First/index.md", "Preferred/index.md"], binding: bound(["First", "Preferred"], true, "Preferred"), expectedDirectories: ["First", "Preferred"] },
     { name: "disabled binding with a surviving directory", directories: ["wiki"], files: ["wiki/index.md"], binding: bound(["wiki"], false), settings: true },
     { name: "binding points only to a missing directory or a file", directories: ["wiki"], files: ["wiki/index.md", "wrong.md"], binding: bound(["removed", "wrong.md"]), settings: true }
   ];
+  for (const role of ["wiki", "outputs", "projects", "inbox"] as const) {
+    for (const withIndex of [false, true]) {
+      cases.push({
+        name: `${role} legacy directory ${withIndex ? "with" : "without"} index`, role,
+        directories: [role], files: [`${role}/${withIndex ? "index" : "note"}.md`], expectedDirectory: role
+      }, {
+        name: `${role} custom directories ${withIndex ? "with" : "without"} index`, role,
+        directories: ["Custom/One", "Custom/Two"],
+        files: withIndex ? ["Custom/One/index.md", "Custom/Two/index.md"] : [],
+        binding: bound(["Custom/One", "Custom/Two"], true, "Custom/Two"),
+        expectedDirectories: ["Custom/One", "Custom/Two"]
+      });
+    }
+  }
   try {
     for (const test of cases) {
       openTestNoticeMessages.length = 0;
@@ -465,7 +478,7 @@ async function assertHomeEntryGraphRouting(): Promise<void> {
       });
       let settingsOpened = 0;
       const folderBindings = test.binding ? emptyKnowledgeFolderBindings() : undefined;
-      if (folderBindings && test.binding) folderBindings.roles.wiki = test.binding;
+      if (folderBindings && test.binding) folderBindings.roles[test.role ?? "wiki"] = test.binding;
       const home = Object.assign(Object.create(EchoInkHomeView.prototype), {
         app: host.app,
         plugin: {
@@ -473,7 +486,7 @@ async function assertHomeEntryGraphRouting(): Promise<void> {
           openEchoInkKnowledgeSettings: async () => { settingsOpened += 1; }
         }
       }) as { openEntry(entry: HomeEntrySummary): Promise<void> };
-      await home.openEntry({ id: "wiki", label: "Wiki", description: "", count: 0, targetPath: "stale/index.md" });
+      await home.openEntry({ id: test.role ?? "wiki", label: "Wiki", description: "", count: 0, targetPath: "stale/index.md" });
       assert.equal(settingsOpened, test.settings ? 1 : 0, test.name);
       if (test.settings) {
         assert.equal(host.getLeafCalls(), 0, test.name);
@@ -483,18 +496,16 @@ async function assertHomeEntryGraphRouting(): Promise<void> {
         assert.equal(host.getLeafCalls(), 1, test.name);
         assert.deepEqual(host.revealed, [graph.leaf], test.name);
         assert.deepEqual(openTestNoticeMessages, [], test.name);
-        if (test.expectedIndex) {
-          assert.deepEqual(graph.leaf.viewStates, [{ type: "localgraph", active: true, state: { file: test.expectedIndex } }], test.name);
-          assert.deepEqual(graph.appliedOptions, [], test.name);
-        } else {
-          assert.deepEqual(graph.leaf.setViewStates, ["graph"], test.name);
-          assert.equal(graph.appliedOptions.length, 1, test.name);
-          const filter = graphSearchPattern(graph.appliedOptions[0].search);
-          assert.equal(filter.test(`${test.expectedDirectory}/note.md`), true, test.name);
-          assert.equal(filter.test(`${test.expectedDirectory}-backup/note.md`), false, test.name);
-          assert.equal(filter.test("stale/index.md"), false, test.name);
-          if (test.binding) assert.equal(filter.test("wiki/index.md"), false, test.name);
+        assert.deepEqual(graph.leaf.setViewStates, ["graph"], test.name);
+        assert.equal(graph.appliedOptions.length, 1, test.name);
+        const filter = graphSearchPattern(graph.appliedOptions[0].search);
+        for (const directory of test.expectedDirectories ?? [test.expectedDirectory!]) {
+          assert.equal(filter.test(`${directory}/note.md`), true, test.name);
+          assert.equal(filter.test(`${directory}/index.md`), true, test.name);
+          assert.equal(filter.test(`${directory}-backup/note.md`), false, test.name);
         }
+        assert.equal(filter.test("stale/index.md"), false, test.name);
+        if (test.binding) assert.equal(filter.test("wiki/index.md"), false, test.name);
       }
     }
   } finally {
@@ -542,7 +553,10 @@ async function assertNativeFolderGraphBehavior(): Promise<void> {
     assert.ok(existing.globalSaveCount() > 0);
     assert.deepEqual(openTestNoticeMessages, []);
 
-    for (const behavior of ["reject", "ignore", "no-engine", "no-setter", "no-getter", "ignore-options", "throw-options", "reject-reveal"] as const) {
+    const previousFolder = createFolderGraphLeaf();
+    assert.equal(await openObsidianFolderGraphLeaf(createGraphApp([], previousFolder.leaf).app, ["Previous/Directory"]), true);
+    const previousFolderOptions = previousFolder.engine.getOptions();
+    for (const behavior of ["reject", "ignore", "no-engine", "no-setter", "no-getter", "ignore-options", "throw-options"] as const) {
       openTestNoticeMessages.length = 0;
       const failed = createFolderGraphLeaf(behavior === "reject" || behavior === "ignore" ? behavior : "accept");
       if (behavior === "no-engine") failed.leaf.view = {};
@@ -550,15 +564,40 @@ async function assertNativeFolderGraphBehavior(): Promise<void> {
       if (behavior === "no-getter") failed.leaf.view = { dataEngine: { setOptions: failed.engine.setOptions } };
       if (behavior === "ignore-options") failed.engine.setOptions = () => undefined;
       if (behavior === "throw-options") failed.engine.setOptions = () => { throw new Error("options rejected"); };
-      const failedHost = createGraphApp([], failed.leaf, behavior === "reject-reveal");
-      assert.equal(await openObsidianFolderGraphLeaf(failedHost.app, ["wiki"], "en"), false, behavior);
-      assert.deepEqual(failedHost.revealed, [], behavior);
+      const fallback = createFolderGraphLeaf();
+      const failedHost = createGraphApp([previousFolder.leaf], [failed.leaf, fallback.leaf]);
+      assert.equal(await openObsidianFolderGraphLeaf(failedHost.app, ["wiki"], "en"), true, behavior);
+      assert.deepEqual(failedHost.revealed, [fallback.leaf], behavior);
+      assert.equal(failedHost.getLeafCalls(), 2, "fallback must create a normal graph even when another directory graph exists");
+      assert.deepEqual(fallback.leaf.viewStates, [{ type: "graph", active: true, state: {} }], behavior);
       assert.equal(failed.leaf.detached, true, `${behavior}: close the unfiltered leaf`);
       await failed.completePendingSearches();
       assert.equal(failed.globalSaveCount(), 0, behavior);
       assert.equal(failed.savedOptions().search, "tag:#my-global-filter", behavior);
-      assert.equal(openTestNoticeMessages.at(-1), homeCopy("en").graph.cannotOpenGraph, behavior);
+      assert.equal(fallback.engine.getOptions().search, "tag:#my-global-filter", behavior);
+      assert.deepEqual(fallback.appliedOptions, [], "fallback loads the user's global graph options without overwriting them");
+      assert.deepEqual(previousFolder.engine.getOptions(), previousFolderOptions, "the previously open directory graph stays unchanged");
+      assert.equal(openTestNoticeMessages.at(-1), homeCopy("en").graph.folderFilterUnavailable, behavior);
     }
+
+    openTestNoticeMessages.length = 0;
+    const unavailable = createGraphLeaf("empty");
+    const newGlobal = createGraphLeaf("empty");
+    const freshHost = createGraphApp([], [unavailable, newGlobal]);
+    assert.equal(await openObsidianFolderGraphLeaf(freshHost.app, ["wiki"]), true);
+    assert.equal(unavailable.detached, true);
+    assert.equal(freshHost.getLeafCalls(), 2, "open a separate ordinary graph if none already exists");
+    assert.deepEqual(newGlobal.viewStates, [{ type: "graph", active: true, state: {} }]);
+    assert.deepEqual(freshHost.revealed, [newGlobal]);
+    assert.deepEqual(openTestNoticeMessages, [homeCopy("zh-CN").graph.folderFilterUnavailable]);
+
+    openTestNoticeMessages.length = 0;
+    const rejected = createFolderGraphLeaf();
+    const rejectedHost = createGraphApp([previousFolder.leaf], [rejected.leaf, createGraphLeaf("empty")], true);
+    assert.equal(await openObsidianFolderGraphLeaf(rejectedHost.app, ["wiki"], "en"), false);
+    assert.equal(rejected.leaf.detached, true);
+    assert.deepEqual(rejectedHost.revealed, []);
+    assert.deepEqual(openTestNoticeMessages, [homeCopy("en").graph.folderFilterUnavailable, homeCopy("en").graph.cannotOpenGraph]);
   } finally {
     console.warn = originalWarn;
     openTestNoticeMessages.length = 0;
@@ -647,7 +686,7 @@ function createGraphLeaf(
   };
 }
 
-function createGraphApp(existing: GraphLeafMock[], created: GraphLeafMock, rejectReveal = false): {
+function createGraphApp(existing: GraphLeafMock[], created: GraphLeafMock | GraphLeafMock[], rejectReveal = false): {
   app: App;
   revealed: GraphLeafMock[];
   getLeafCalls: () => number;
@@ -664,7 +703,9 @@ function createGraphApp(existing: GraphLeafMock[], created: GraphLeafMock, rejec
         getLeaf: (mode: string) => {
           assert.equal(mode, "tab");
           getLeafCallCount += 1;
-          return created;
+          const leaf = Array.isArray(created) ? created[getLeafCallCount - 1] : created;
+          assert(leaf, "the fallback must open a separate leaf");
+          return leaf;
         },
         revealLeaf: async (leaf: GraphLeafMock) => {
           if (rejectReveal) throw new Error("revealLeaf rejected");
@@ -712,15 +753,6 @@ function createLocalGraphApp(
 function assertFixedEntryAndTemplateContracts(): void {
   assert.deepEqual(HOME_ENTRY_IDS, ["wiki", "outputs", "projects", "inbox", "journal", "review"]);
   assert.equal(HOME_ENTRY_IDS.includes("raw" as never), false);
-  assert.deepEqual(HOME_ENTRY_INDEX_PATHS, {
-    wiki: "wiki/index.md",
-    outputs: "outputs/index.md",
-    projects: "projects/index.md",
-    inbox: "inbox/index.md"
-  });
-  assert.equal(homeEntryIndexPath("wiki"), "wiki/index.md");
-  assert.equal(homeEntryIndexPath("journal"), null);
-  assert.equal(homeEntryIndexPath("review"), null);
   assert.equal(DEFAULT_JOURNAL_TEMPLATE_ID, "quick");
   assert.deepEqual(BUILT_IN_JOURNAL_TEMPLATES.map((template) => template.id), ["quick", "morning", "evening", "blank"]);
   assert.equal(BUILT_IN_JOURNAL_TEMPLATES[0]?.name, "此刻速记");

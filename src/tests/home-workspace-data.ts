@@ -98,8 +98,12 @@ export async function runHomeWorkspaceDataTests(): Promise<void> {
     await fsp.unlink(path.join(root, "outputs/.raw-digest-registry.json"));
     await fsp.unlink(path.join(root, "wiki/index.md"));
     snapshot = await buildKnowledgeBaseDashboardSnapshot(root, settings);
-    assert.equal(snapshot.health.score, 72);
-    assert.equal(snapshot.health.status, "bad", "missing core entry overrides score threshold");
+    assert.equal(snapshot.health.score, 96, "an optional index note does not affect health");
+    assert.equal(snapshot.health.status, "healthy");
+    assert.equal(snapshot.wiki.indexExists, false, "index statistics remain available");
+    assert(snapshot.health.scoreReasons.every((reason) => !reason.label.includes("index")));
+    assert.doesNotMatch(snapshot.health.coverage, /wiki\/index\.md/u);
+    assert.doesNotMatch(snapshot.health.scoreThresholdText, /入口页/u);
 
     const terminalSettings = structuredClone(DEFAULT_SETTINGS.knowledgeBase);
     for (const terminal of ["completed", "partial", "noop", "failed", "write_uncertain", "cancelled"] as const) {

@@ -179,7 +179,7 @@ const MAX_DASHBOARD_FILES = 3000;
 const RECENT_FILE_LIMIT = 18;
 const RECOMMENDATION_PREVIEW_LIMIT = 96;
 const RAW_PROCESSING_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
-const HEALTH_SCORE_THRESHOLD_TEXT = "85+ 健康，60-84 风险，低于 60 异常；raw、wiki、入口页或 Tracker 缺失各扣 24 分且覆盖分数阈值，直接显示异常。";
+const HEALTH_SCORE_THRESHOLD_TEXT = "85+ 健康，60-84 风险，低于 60 异常；raw、wiki 或 Tracker 缺失各扣 24 分且覆盖分数阈值，直接显示异常。";
 const HEALTH_SCORE_CHECK_NOTE = "总分 = max(0, min(100, 100 − 各项扣分之和))。维护成功不代表完成全库体检，整理队列和运行失败不扣结构分。";
 const CRITICAL_HEALTH_PENALTY = 24;
 const RISK_HEALTH_PENALTY = 2;
@@ -958,7 +958,6 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
 
   if (!input.rawExists && (!input.mappedFolders || input.settings.folderBindings?.roles.raw.enabled)) addReason("critical", "资料来源位置失效", "资料来源位置失效", 1, "已绑定的原始来源区不可用。");
   if (!input.wikiExists && (!input.mappedFolders || input.settings.folderBindings?.roles.wiki.enabled)) addReason("critical", "知识成果位置失效", "知识成果位置失效", 1, "已绑定的知识区不可用。");
-  if (!input.mappedFolders && !input.wikiIndexExists) addReason("critical", "wiki/index.md 缺失", "wiki/index.md 缺失", 1, "说明知识库入口页不存在。");
   if (!input.mappedFolders && !input.trackerExists) addReason("critical", "tracker 缺失", "tracker 缺失", 1, "说明来源消化登记无法确认。");
   for (const issue of input.bindingIssues ?? []) addReason("critical", issue, issue, 1, "已启用的用途位置不可用，请重新选择。");
 
@@ -983,7 +982,7 @@ function buildHealth(input: HealthInput): KnowledgeBaseDashboardHealth {
   const reasons = reasonTexts.length ? reasonTexts : ["已检查的本地结构未发现扣分项"];
   return {
     assessment,
-    coverage: assessment === "limited" ? `本地结构与已读取的来源状态；每个目录最多扫描 ${MAX_DASHBOARD_FILES} 个文件，部分来源因读取预算尚未检查。` : input.mappedFolders ? "检查已启用的资料、知识位置与私有来源处理记录；不是全库体检。" : "仅检查 raw、wiki、wiki/index.md、Tracker 及 Raw 来源状态；不是全库体检。",
+    coverage: assessment === "limited" ? `本地结构与已读取的来源状态；每个目录最多扫描 ${MAX_DASHBOARD_FILES} 个文件，部分来源因读取预算尚未检查。` : input.mappedFolders ? "检查已启用的资料、知识位置与私有来源处理记录；不是全库体检。" : "仅检查 raw、wiki、Tracker 及 Raw 来源状态；不是全库体检。",
     unchecked: ["断链", "孤儿页面", "过时内容", "索引链接有效性"],
     status,
     label,

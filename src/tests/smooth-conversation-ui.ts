@@ -4,7 +4,10 @@ import { Platform, TFile } from "obsidian";
 import type { ChatMessage, SettingsLanguage, StoredSession } from "../settings/settings";
 import { conversationCopy, settingsCopy } from "../settings/i18n";
 import { extractProcessFileRefs, stableHashedIdentity } from "../core/mapping";
-import { PiChatUiProjector } from "../harness/pi-native/pi-chat-ui-projector";
+import { PiChatUiProjector, type PiChatUiBranchProjectionInput } from "../harness/pi-native/pi-chat-ui-projector";
+import type { PiChatRuntimeEvent } from "../harness/pi-native/contracts";
+import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
+import { KNOWLEDGE_MAINTENANCE_RESULT_SCHEMA } from "../knowledge-base/knowledge-maintenance-result";
 import { PiAgentApprovalBroker } from "../plugin/pi-agent-approval-broker";
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
 import { renderRichText } from "../ui/render-message";
@@ -17,7 +20,7 @@ import {
   REASONING_SCROLL_BOTTOM_EPSILON_PX,
   userVisibleProviderReasoningText
 } from "../ui/codex-view/message-list";
-import { buildAgentTurnProjection } from "../ui/codex-view/agent-turn-process";
+import { buildAgentTurnProjection, type AgentTurnView } from "../ui/codex-view/agent-turn-process";
 import { buildActionTimeline } from "../ui/codex-view/action-timeline";
 import {
   createAIElementsDocumentSources,
@@ -448,6 +451,133 @@ function clickElement(element: FakeElement): void {
     preventDefault: () => undefined,
     stopPropagation: () => undefined
   } as never);
+}
+
+async function assertMaintenanceLinkingResultVisibleFromPiProjection(): Promise<void> {
+  const taskId = "maintenance-linking-original";
+  const result = {
+    status: "completed",
+    maintenanceResult: {
+      schema: KNOWLEDGE_MAINTENANCE_RESULT_SCHEMA,
+      status: "completed",
+      linkingTaskId: taskId,
+      notes: [{ operation: "created", path: "outputs/Result.md", title: "新知识", summary: "实际回读摘要" }],
+      issues: [],
+      systemPaths: [],
+      assessments: []
+    }
+  };
+  const input: PiChatUiBranchProjectionInput = {
+    piSessionId: "maintenance-linking-session",
+    activeLeafId: "maintenance-final",
+    productRunId: "maintenance-linking-run",
+    runState: "completed",
+    runIdentities: [{
+      productRunId: "maintenance-linking-run", userEntryId: "maintenance-user",
+      assistantEntryId: "maintenance-final", toolCallIds: ["maintenance-call"], knowledgeWorkflow: "maintain"
+    }],
+    entries: [
+      { type: "message", id: "maintenance-user", parentId: null, timestamp: new Date(1000).toISOString(), message: { role: "user", content: "/maintain" } },
+      { type: "message", id: "maintenance-assistant", parentId: "maintenance-user", timestamp: new Date(1001).toISOString(), message: {
+        role: "assistant", content: [{ type: "toolCall", id: "maintenance-call", name: "knowledge_maintain", arguments: {} }]
+      } },
+      { type: "message", id: "maintenance-result", parentId: "maintenance-assistant", timestamp: new Date(1003).toISOString(), message: {
+        role: "toolResult", toolCallId: "maintenance-call", toolName: "knowledge_maintain", content: [{ type: "text", text: "completed" }], details: result, isError: false
+      } },
+      { type: "message", id: "maintenance-final", parentId: "maintenance-result", timestamp: new Date(1005).toISOString(), message: {
+        role: "assistant", content: [{ type: "text", text: "已生成新知识。" }], stopReason: "stop"
+      } }
+    ],
+    now: 1006
+  };
+  const projector = new PiChatUiProjector();
+  let live = projector.projectSessionBranch({ ...input, entries: input.entries.slice(0, 2), activeLeafId: "maintenance-assistant", runState: "running" });
+  const eventBase = { productRunId: "maintenance-linking-run", conversationId: "maintenance-linking-conversation", piSessionId: input.piSessionId, activeLeafId: "maintenance-assistant" };
+  const events: PiChatRuntimeEvent[] = [
+    { ...eventBase, type: "tool_execution_start", occurredAt: 1002, toolCallId: "maintenance-call", toolName: "knowledge_maintain", args: {}, privacySafe: true },
+    { ...eventBase, type: "tool_execution_end", occurredAt: 1003, toolCallId: "maintenance-call", toolName: "knowledge_maintain", result, isError: false, privacySafe: true },
+    { ...eventBase, type: "message_start", occurredAt: 1004, messageKey: "maintenance-final-live", role: "assistant" },
+    { ...eventBase, type: "message_end", occurredAt: 1005, messageKey: "maintenance-final-live", entryId: "maintenance-final", role: "assistant", text: "已生成新知识。", status: "completed" },
+    { ...eventBase, type: "product_run_settled", occurredAt: 1006, assistantEntryId: "maintenance-final", terminalState: "completed" }
+  ];
+  for (const event of events) live = projector.projectRuntimeEvent({ current: live, event });
+  const completedTask: KnowledgeLinkingTask = {
+    schemaVersion: 1, id: taskId, mode: "automatic", phase: "completed", bindingSignature: "fixture", createdAt: 1003, updatedAt: 1006,
+    processed: 2, total: 2, proposals: [], patches: [], results: [
+      { path: "projects/Alpha.md", status: "written", links: 1, aliases: 0 },
+      { path: "outputs/Result.md", status: "written", links: 1, aliases: 0 }
+    ]
+  };
+  for (const [mode, view] of [
+    ["live", live],
+    ["restored", new PiChatUiProjector().projectSessionBranch(input)],
+    ["reopened", new PiChatUiProjector().projectSessionBranch(input)]
+  ] as const) {
+    assert.equal(view.messages.find(message => message.knowledgeBaseUi?.kind === "maintain-report")?.knowledgeBaseUi?.linkingTaskId, taskId,
+      `${mode}: the actual Pi receipt keeps the original linking task identity`);
+    const row = buildAgentTurnProjection(view.messages).find(item => item.kind === "assistantTurn");
+    assert.ok(row?.kind === "assistantTurn");
+    const context = createTestContext();
+    const detailsOpened: string[] = [];
+    const readIds: string[] = [];
+    let listener: ((task: KnowledgeLinkingTask | null) => void) | undefined;
+    let unsubscribed = 0;
+    Object.assign(context.component as object, { plugin: {
+      getKnowledgeSurfaceService: () => ({ linking: {
+        subscribe(callback: (task: KnowledgeLinkingTask | null) => void) {
+          listener = callback;
+          callback(mode === "live" ? { ...completedTask, phase: "interrupted", results: [] } : { ...completedTask, id: "another-current-task" });
+          return () => { unsubscribed++; };
+        },
+        async readTask(id: string) { readIds.push(id); return mode === "live" ? null : completedTask; }
+      } }),
+      openKnowledgeLinkingDetails: (id: string) => { detailsOpened.push(id); }
+    } });
+    const renderer = new CodexMessageListRenderer();
+    bindRenderer(renderer, context);
+    const surface = new FakeElement("div");
+    (renderer as unknown as { renderAssistantTurn(container: unknown, turn: AgentTurnView, showAgentHeader: boolean): void })
+      .renderAssistantTurn(surface, row.turn, false);
+    const linking = surface.findByClass("codex-kb-maintain-linking");
+    assert.ok(linking, `${mode}: the grouped Assistant Turn displays linking results`);
+    assert.equal(linking.closest(".codex-assistant-turn-process"), null,
+      `${mode}: linking status is outside the folded work record`);
+    assert.equal(linking.closest(".codex-assistant-turn-resource"), null,
+      `${mode}: linking results do not need a nested artifact disclosure`);
+    assert.equal(surface.findByClass("codex-ai-elements-chain-of-thought")?.hidden, true,
+      `${mode}: the successful work record remains folded`);
+    assert.ok(surface.findByClass("codex-kb-maintain-card")?.closest(".codex-assistant-turn-resource"),
+      `${mode}: the existing maintenance report retains its previous location`);
+    assert.equal(surface.findAllByClass("codex-kb-maintain-linking").length, 1,
+      `${mode}: no second linking block remains inside the old report`);
+    if (mode === "live") {
+      assert.equal(linking.findAllByTag("a").length, 0);
+      assert.match(renderedText(linking), /可继续/u);
+      listener?.({ ...completedTask, phase: "judging", results: [] });
+      assert.doesNotMatch(renderedText(linking), /可继续/u);
+      listener?.({ ...completedTask, phase: "writing", results: [] });
+      assert.match(renderedText(linking), /写入/u);
+      listener?.(completedTask);
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.match(renderedText(linking), /本次补链接的老笔记/u);
+    assert.match(renderedText(linking), /projects\/Alpha\.md/u);
+    assert.doesNotMatch(renderedText(linking), /outputs\/Result\.md/u,
+      "newly produced knowledge stays in the artifacts and is not presented as an old note");
+    assert.equal(linking.findAllByTag("a").length, 1);
+    const status = linking.findAllByTag("button")[0]!;
+    assert.match(renderedText(status), /已完成/u);
+    clickElement(status);
+    assert.deepEqual(detailsOpened, [taskId]);
+    clickElement(linking.findAllByTag("a")[0]!);
+    await Promise.resolve();
+    assert.deepEqual(context.openedPaths, ["projects/Alpha.md"]);
+    assert.ok(readIds.length > 0 && readIds.every(id => id === taskId),
+      `${mode}: restoration reads the receipt's archive even when a different task is current`);
+    renderer.resetVirtualWindow();
+    assert.equal(unsubscribed, 1);
+  }
 }
 
 function testConversationSession(
@@ -1913,6 +2043,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     }
   });
   try {
+    await assertMaintenanceLinkingResultVisibleFromPiProjection();
     const answer = renderMessage(renderer, {
       id: "smooth:entry:answer-1",
       role: "assistant",

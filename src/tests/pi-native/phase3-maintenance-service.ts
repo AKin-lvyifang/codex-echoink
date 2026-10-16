@@ -65,6 +65,7 @@ const PREFERENCE = Object.freeze({
  */
 export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void> {
   assertProtocolAllowsNaturalCompletion();
+  assertProtocolDelegatesPlacementToBackground();
   assertStrictDurableResultEnvelope();
   await assertMaintenanceScopeSecurityIsFailClosed();
   await assertReliableExistingKnowledgeReturnsNoopBeforeWrites();
@@ -98,6 +99,25 @@ function assertProtocolAllowsNaturalCompletion(): void {
     /实际阅读并判断无需新增时自然说明结果即可/u
   );
   assert.match(prompt, /不要求固定话术、JSON 或维护工具调用/u);
+}
+
+function assertProtocolDelegatesPlacementToBackground(): void {
+  // Both authoring prompt branches delegate placement to the actual shared
+  // semantic task, rather than requiring the writer to keep rewriting prose.
+  for (const prompt of [
+    echoInkKnowledgeMaintenanceProtocolPrompt(),
+    echoInkKnowledgeMaintenanceProtocolPrompt(emptyKnowledgeFolderBindings())
+  ]) {
+    const identity = prompt.indexOf("受控模型逐处判断是否同一概念并返回所有通过的提及");
+    const position = prompt.indexOf("程序跨批按正文字符位置选择同一目标最早一处");
+    assert.ok(identity >= 0 && position > identity,
+      "concept classification precedes ordering all same-concept mentions by position");
+    assert.match(prompt, /新增提及使用原词，不手工选择或插入新的知识链接/u);
+    assert.match(prompt, /原有链接保持原写法/u);
+    assert.match(prompt, /HTTP user agent 等不同含义/u);
+    assert.match(prompt, /不要因为立即回读尚未出现首次链接而反复调用 knowledge_maintain 或重写正文/u);
+    assert.match(prompt, /不能把正文写入成功声称为关联已完成/u);
+  }
 }
 
 async function assertMaintenanceScopeSecurityIsFailClosed(): Promise<void> {

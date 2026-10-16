@@ -39,19 +39,6 @@ export interface HomeEntrySummary {
   targetPath?: string;
 }
 
-export type HomeKnowledgeEntryId = Extract<HomeEntryId, "wiki" | "outputs" | "projects" | "inbox">;
-
-export const HOME_ENTRY_INDEX_PATHS: Readonly<Record<HomeKnowledgeEntryId, string>> = Object.freeze({
-  wiki: "wiki/index.md",
-  outputs: "outputs/index.md",
-  projects: "projects/index.md",
-  inbox: "inbox/index.md"
-});
-
-export function homeEntryIndexPath(id: HomeEntryId): string | null {
-  return HOME_ENTRY_INDEX_PATHS[id as HomeKnowledgeEntryId] ?? null;
-}
-
 export interface HomeCustomTemplateSummary {
   id: string;
   name: string;
@@ -298,7 +285,6 @@ function buildEntrySummaries(
     const matching = bindings && role ? records.filter((record) => classifyKnowledgePath(bindings, record.path) === role) : records;
     const folder = bindings && role ? bindings.roles[role].enabled ? bindings.roles[role].writePath ?? undefined : undefined : definition.folder;
     const recent = bindings && role ? [...matching].sort((a, b) => b.mtime - a.mtime)[0] ?? null : folder ? mostRecentRecordInFolder(records, folder) : null;
-    const wikiIndex = id === "wiki" ? matching.find((record) => record.path === `${folder}/index.md`) : null;
     const reviews = id === "review"
       ? records.filter((record) => isKnowledgeBaseReviewPath(record.path)).sort((left, right) => right.mtime - left.mtime)
       : [];
@@ -308,7 +294,7 @@ function buildEntrySummaries(
       label: definition.label,
       description: definition.description,
       count: bindings && role ? matching.length : folder ? countRecordsInFolder(records, folder) : reviews.length,
-      targetPath: wikiIndex?.path ?? recent?.path ?? review?.path
+      targetPath: recent?.path ?? review?.path
     };
   });
 }

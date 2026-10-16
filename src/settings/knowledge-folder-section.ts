@@ -1,3 +1,5 @@
+import { openObsidianFolderGraphLeaf } from "../home/open-native-graph";
+import { knowledgeRoleRoots } from "../knowledge-base/root-paths";
 import type { KnowledgeInitializationJob } from "../knowledge-base/initializer";
 import { Modal, Notice, TFolder, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -174,6 +176,16 @@ export class KnowledgeFolderSection {
   }
   render(page: HTMLElement, zh: boolean): void {
     if (this.localOpen) { this.renderDetail(page, zh); return; }
+    if (this.showDashboard) {
+      const actions = page.createDiv({ cls: "echoink-knowledge-init-actions" });
+      createOriginButton(actions, { text: zh ? "打开 Wiki 图谱" : "Open Wiki graph" }).onclick = () => { void openObsidianFolderGraphLeaf(this.plugin.app, knowledgeRoleRoots(this.plugin.getVaultPath(), "wiki"), this.plugin.settings.settingsLanguage); };
+      createOriginButton(actions, { text: zh ? "补全知识关联" : "Complete knowledge links" }).onclick = () => {
+        const service = this.plugin.getKnowledgeSurfaceService()?.linking;
+        if (service) void service.start().then(task => this.plugin.openKnowledgeLinkingDetails(task.id)).catch(error => new Notice(error instanceof Error ? error.message : String(error)));
+      };
+      const previous = this.plugin.getKnowledgeSurfaceService()?.linking?.snapshot();
+      if (previous && ["completed", "partial", "failed", "cancelled"].includes(previous.phase)) createSettingsNavigationRow(page, { title: zh ? "上次关联结果" : "Previous linking result", onActivate: () => { void this.plugin.openKnowledgeLinkingDetails(previous.id); } });
+    }
     createSettingsNavigationRow(page, {
       title: zh ? "目录方案" : "Folder plan",
       description: knowledgeFolderPlanSummary(this.plugin.settings.knowledgeBase.folderBindings, path => this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder, zh),

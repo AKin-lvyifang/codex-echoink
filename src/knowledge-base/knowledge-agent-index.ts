@@ -6,6 +6,8 @@ import { createReadStream, type Stats } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { isMissingPathError, writeFileAtomic } from "./utils";
+import { readKnowledgeLinkingDocument } from "./knowledge-linking";
+import type { KnowledgeLinkingDocument } from "./knowledge-linking-types";
 
 export const KNOWLEDGE_AGENT_INDEX_SCHEMA_VERSION = 1 as const;
 export const KNOWLEDGE_AGENT_INDEX_FILE = "index-v1.json" as const;
@@ -120,6 +122,7 @@ interface StoredKnowledgeEntry {
   vaultRelativePath: string;
   kind: KnowledgeAgentKind;
   title: string;
+  aliases?: string[];
   contentRevision: string;
   size: number;
   mtimeMs: number;
@@ -130,7 +133,7 @@ interface StoredKnowledgeEntry {
   rawSources: StoredRawSource[];
   links?: KnowledgeLink[];
   applicability?: KnowledgeApplicability;
-  relationSchema?: 1;
+  relationSchema?: 2;
 }
 
 interface StoredKnowledgeAgentIndex {
@@ -373,6 +376,23 @@ export class KnowledgeAgentIndex {
     return this.relationPage(relativePath, input.limit ?? 8, input.cursor);
   }
 
+  /** Full original documents, independent of ranked search pages and snippet limits. */
+  async *scanLinkingDocuments(): AsyncGenerator<KnowledgeLinkingDocument> {
+    await this.ensureFresh();
+    const entries = Object.values(this.requireCurrent().entries)
+      .filter((entry) => entry.kind === "wiki" || entry.kind === "projects")
+      .sort((left, right) => left.vaultRelativePath.localeCompare(right.vaultRelativePath));
+    let processed = 0;
+    for (const entry of entries) {
+      const role = knowledgePathRole(this.vaultPath, entry.vaultRelativePath);
+      if (role !== "wiki" && role !== "projects") continue;
+      const current = await this.read({ vaultRelativePath: entry.vaultRelativePath, expectedContentRevision: entry.contentRevision });
+      yield readKnowledgeLinkingDocument(current.vaultRelativePath, current.content, current.contentRevision);
+      processed += 1;
+      if (processed % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
   private relationPage(relativePath: string, limit: number, cursor?: string): KnowledgeRelationPage {
     const index = this.requireCurrent();
     const entry = index.entries[relativePath];
@@ -390,11 +410,12 @@ export class KnowledgeAgentIndex {
 
   private rebuildRelations(index: StoredKnowledgeAgentIndex): void {
     const paths = Object.keys(index.entries);
+    const names = Object.fromEntries(paths.map((entryPath) => [entryPath, [index.entries[entryPath].title, ...(index.entries[entryPath].aliases ?? [])]]));
     const graph = new Map<string, KnowledgeRelation[]>();
     const target = (value: string) => { const entry = index.entries[value]; return { vaultRelativePath: value, title: entry.title, contentRevision: entry.contentRevision }; };
     for (const sourcePath of paths) {
       for (const link of index.entries[sourcePath].links ?? []) {
-        const resolved = resolveKnowledgeLink({ link, sourcePath, paths, resolveAlias: (value) => resolveKnowledgePath(this.vaultPath, value), hostResolver: this.linkResolver });
+        const resolved = resolveKnowledgeLink({ link, sourcePath, paths, names, resolveAlias: (value) => resolveKnowledgePath(this.vaultPath, value), hostResolver: this.linkResolver });
         const relation: KnowledgeRelation = { direction: "outgoing", relation: "link", original: link.original,
           ...(link.anchor ? { anchor: link.anchor, anchorStatus: "not_located" } : {}),
           source: { ...target(sourcePath), line: link.line, context: link.context },
@@ -461,13 +482,16 @@ export class KnowledgeAgentIndex {
     const reused = new Map<string, StoredKnowledgeEntry>();
     let indexedCount = 0;
     let reusedCount = 0;
+    let scannedCount = 0;
 
     for (const kind of KNOWLEDGE_ROOTS) {
       const files = (await Promise.all(knowledgeRoleRoots(vaultRoot, kind).map((root) => walkKnowledgeRoot(vaultRoot, kind, root)))).flat();
       for (const file of files) {
+        scannedCount += 1;
+        if (scannedCount % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
         if (knowledgePathRole(vaultRoot, file.vaultRelativePath) !== kind) continue;
         const oldEntry = previous.entries[file.vaultRelativePath];
-        if (oldEntry?.relationSchema === 1 && oldEntry.kind === kind && (previous.bindingRevision ?? 0) === (getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0) && metadataMatches(oldEntry, file.stat)) {
+        if (oldEntry?.relationSchema === 2 && oldEntry.kind === kind && (previous.bindingRevision ?? 0) === (getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0) && metadataMatches(oldEntry, file.stat)) {
           reused.set(file.vaultRelativePath, oldEntry);
           reusedCount += 1;
           continue;
@@ -612,12 +636,13 @@ async function buildCandidateEntry(
     || RAW_TEXT_EXTENSIONS.has(path.extname(file.vaultRelativePath).toLowerCase());
   const bytes = isText ? await fsp.readFile(file.absolutePath) : null;
   const text = bytes ? decodeUtf8(bytes) : "";
-  const title = knowledgeTitle(file.vaultRelativePath, text);
+  const { title, aliases } = readKnowledgeLinkingDocument(file.vaultRelativePath, text, "");
   return {
     entryId: stableEntryId(file.vaultRelativePath),
     vaultRelativePath: file.vaultRelativePath,
     kind,
     title,
+    aliases,
     contentRevision: bytes
       ? contentRevision(bytes, file.vaultRelativePath, vaultRoot)
       : await streamedContentRevision(file.absolutePath),
@@ -625,9 +650,9 @@ async function buildCandidateEntry(
     mtimeMs: file.stat.mtimeMs,
     ctimeMs: file.stat.ctimeMs,
     pathTokens: tokenCounts(file.vaultRelativePath),
-    titleTokens: tokenCounts(title),
+    titleTokens: tokenCounts([title, ...aliases].join("\n")),
     bodyTokens: isText ? tokenCounts(text) : {},
-    relationSchema: 1,
+    relationSchema: 2,
     links: extractKnowledgeLinks(text),
     applicability: extractKnowledgeApplicability(text),
     rawLinks: kind === "raw"
@@ -1067,6 +1092,7 @@ function normalizeStoredEntry(value: unknown, vaultRoot = ""): StoredKnowledgeEn
       title: typeof record.title === "string" && record.title.trim()
         ? record.title.trim()
         : path.posix.basename(relativePath, path.posix.extname(relativePath)),
+      aliases: Array.isArray(record.aliases) ? record.aliases.filter((alias): alias is string => typeof alias === "string") : [],
       contentRevision: revision,
       size: normalizeNonNegativeNumber(record.size),
       mtimeMs: normalizeNonNegativeNumber(record.mtimeMs),
@@ -1075,8 +1101,8 @@ function normalizeStoredEntry(value: unknown, vaultRoot = ""): StoredKnowledgeEn
       titleTokens: normalizeTokenRecord(record.titleTokens),
       bodyTokens: normalizeTokenRecord(record.bodyTokens),
       rawSources,
-      ...(record.relationSchema === 1 && Array.isArray(record.links) ? {
-        relationSchema: 1 as const,
+      ...(record.relationSchema === 2 && Array.isArray(record.links) ? {
+        relationSchema: 2 as const,
         links: record.links.filter((link) => link && typeof link.target === "string" && typeof link.original === "string" && typeof link.context === "string" && Number.isSafeInteger(link.line) && link.line > 0),
         applicability: record.applicability && typeof record.applicability === "object" ? record.applicability : {}
       } : {})
@@ -1118,6 +1144,7 @@ function sameEntry(
     path: left.vaultRelativePath,
     kind: left.kind,
     title: left.title,
+    aliases: left.aliases,
     revision: left.contentRevision,
     pathTokens: left.pathTokens,
     titleTokens: left.titleTokens,
@@ -1130,6 +1157,7 @@ function sameEntry(
     path: right.vaultRelativePath,
     kind: right.kind,
     title: right.title,
+    aliases: right.aliases,
     revision: right.contentRevision,
     pathTokens: right.pathTokens,
     titleTokens: right.titleTokens,
@@ -1285,11 +1313,6 @@ function isTextEntry(entry: StoredKnowledgeEntry): boolean {
     || RAW_TEXT_EXTENSIONS.has(path.extname(entry.vaultRelativePath).toLowerCase());
 }
 
-function knowledgeTitle(relativePath: string, text: string): string {
-  return text.match(/^#\s+(.+)$/mu)?.[1]?.trim()
-    || path.posix.basename(relativePath, path.posix.extname(relativePath));
-}
-
 function contentRevision(bytes: Uint8Array, relativePath = "", vaultRoot = ""): string {
   if (knowledgePathRole(vaultRoot, relativePath) === "raw" && isRawMarkdownPath(relativePath)) return `sha256:${rawDigestFingerprint(relativePath, Buffer.from(bytes)).split(":").at(-1)}`;
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -1315,7 +1338,8 @@ function stableEntryId(relativePath: string): string {
 
 function decodeUtf8(bytes: Uint8Array): string {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // A linking patch must hash and reproduce the same bytes, including an UTF-8 BOM.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     throw new KnowledgeAgentIndexError(
       "unsupported_content",

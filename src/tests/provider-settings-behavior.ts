@@ -13303,6 +13303,8 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
   return {
     register: () => undefined,
     getKnowledgeSurfaceService: () => null,
+    consumeKnowledgeLinkingFocus: () => false,
+    consumeKnowledgeLinkingTaskId: () => null,
     applyAppearanceTheme: () => undefined,
     onConversationCatalogChanged: () => () => undefined,
     getEchoInkKnowledgeInitializationState: async () => null,

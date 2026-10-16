@@ -1,3 +1,4 @@
+export type { KnowledgeLinkingProposal as PiKnowledgeLinkingProposal, KnowledgeLinkingFileResult as PiKnowledgeLinkingResult } from "../../knowledge-base/knowledge-linking-types";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { PiPreparedInlineImage } from "../pi/contracts";
 import type { PiContextLedger } from "./pi-context-budget";

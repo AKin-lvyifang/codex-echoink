@@ -40,6 +40,13 @@ export const ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_STEPS = Object.freeze([
 
 const REVISION = /^sha256:[a-f0-9]{64}$/u;
 
+// The authoring Agent supplies prose; the shared background judge owns new link placement.
+const KNOWLEDGE_LINKING_INSTRUCTION = [
+  "为新知识生成有依据的常见中文/英文 aliases，保留已有别名。正文自然表达概念与关系，保留原有知识链接；新增提及使用原词，不手工选择或插入新的知识链接，不为双链改写原句、追加无提及的句子或相关知识区块。",
+  "本批正文出链和老笔记反向补链统一由插件后台关联任务完成：受控模型逐处判断是否同一概念并返回所有通过的提及，程序跨批按正文字符位置选择同一目标最早一处，其余保留原词。名称、别名、缩写和复合词中的同概念都参与；HTTP user agent 等不同含义、无效或有歧义目标不强行链接。原有链接保持原写法。",
+  "knowledge_maintain 回执只确认正文安全写入与回读；收到关联任务后自然结束本轮写作，不要因为立即回读尚未出现首次链接而反复调用 knowledge_maintain 或重写正文。关联状态由后台结果显示，不能把正文写入成功声称为关联已完成。老知识不伪装成本轮 Raw 成果。"
+].join("\n");
+
 export interface KnowledgeMaintenanceRawBinding {
   readonly relativePath: string;
   readonly contentSha256: string;
@@ -59,6 +66,7 @@ export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./f
     "只读取本轮已选资料来源；未启用或失效用途不可写。候选必须使用真实路径，只写已绑定的知识成果或项目位置，保护来源正文和附件。",
     "来源父目录中的成果子目录不属于来源。先理解资料、检查质量并对照已有知识，避免重复。允许直接平铺，沿用已有子目录；不新建未确认的分类树，不改名目录。",
     knowledgeFolderOrganizationPrompt(bindings),
+    KNOWLEDGE_LINKING_INSTRUCTION,
     "有候选时通过 knowledge_maintain 提交；携带已读目标版本或明确不存在的目标。不改 Raw 正文，程序补齐已采用的来源与版本。",
     "维护记录和内部状态由插件私有保存；无需读取或生成 Tracker、Raw index、报告或指南。",
     "无需新增时可自然说明结果；未读或读取失败的来源单列为待处理，不能称为无需提炼。目标或来源变化时按当前内容重新判断。",
@@ -69,6 +77,7 @@ export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./f
     ...ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_STEPS.map(
       (step, index) => `${index + 1}. ${step.title}：${step.instruction}`
     ),
+    KNOWLEDGE_LINKING_INSTRUCTION,
     "Wiki 分类及其分类子目录必须采用 中文（english-slug），顶层使用真实双语目录（如知识库（wiki）、原始资料（raw）），旧英文路径只是兼容输入别名；隐藏目录、附件目录不改。保留已有英文标识，复用已有分类及其双语路径，禁止另建同义目录；不确定归属时保留原目录并说明。页面展示为 中文 / english-slug。",
     "按资料需要补充主题或具体对象、适用时间/条件、资料性质（如预算、实际记录、实验、复盘）。可用短区块：## 适用范围与关联；- 对象：...；- 适用时间：...；- 资料性质：...；- 对照材料：[[真实路径]]，说明关系与依据。字段全部可选，概念笔记不硬套活动信息；保留自由格式和缺项，不为补格式重试。",
     "只有已读依据支持时才写原始依据、结果、限制、反例或修订关系；普通双链仅是线索。可由多份来源支持多个结论，不要求一一对应或逐条精确行号。推断说明根据与性质，无法确定的分歧保留双方出处和未决状态，不按日期或版本号直接覆盖旧说法。只处理本次选中的 Raw，不扩展为全库整理。",

@@ -1,3 +1,4 @@
+import { renderKnowledgeLinkingSection } from "./knowledge-linking-section";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import { knowledgeRoleStatus, resolveKnowledgeRoleTarget } from "../knowledge-base/root-paths";
 import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
@@ -226,6 +227,8 @@ export class CodexSettingTab extends PluginSettingTab {
     Readonly<KnowledgeMaintenancePreferenceEditorState> | null = null;
   private knowledgePreferenceLoading = false;
   private knowledgePreferenceLoadError: string | null = null;
+  private knowledgeLinkingTaskId: string | null = null;
+  private knowledgeLinkingCleanup: (() => void) | null = null;
   private knowledgeInitSection: KnowledgeFolderSection | null = null;
   private knowledgePreferenceClosePromptRunning = false;
   private knowledgeDashboardEl: HTMLElement | null = null;
@@ -422,6 +425,7 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private disposeSettingsView(): void {
+    this.knowledgeLinkingCleanup?.(); this.knowledgeLinkingCleanup = null;
     this.knowledgeMaintenanceListCleanup?.();
     this.knowledgeMaintenanceListCleanup = null;
     this.membershipRowsDisposers.splice(0).forEach(dispose => dispose());
@@ -2448,6 +2452,12 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderKnowledgeBaseSettings(container: HTMLElement): void {
+    this.knowledgeLinkingCleanup?.(); this.knowledgeLinkingCleanup = null;
+    if (this.plugin.consumeKnowledgeLinkingFocus()) { this.knowledgeLinkingTaskId = this.plugin.consumeKnowledgeLinkingTaskId(); this.settingsDetail = "knowledge-linking"; }
+    if (this.settingsDetail === "knowledge-linking") {
+      this.knowledgeLinkingCleanup = renderKnowledgeLinkingSection(container, this.plugin, () => { void this.closeSettingsDetail(); }, this.knowledgeLinkingTaskId ?? undefined);
+      return;
+    }
     const copy = this.copy;
     const zh = this.plugin.settings.settingsLanguage !== "en";
     if (this.settingsDetail === "knowledge-folders") {
@@ -5830,6 +5840,7 @@ type SettingsDetail =
   | "pdf-reading"
   | "english-diary"
   | "selection-ask"
+  | "knowledge-linking"
   | "knowledge-folders"
   | "knowledge-preferences"
   | "knowledge-maintenance-history"

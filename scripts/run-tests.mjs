@@ -7,6 +7,7 @@ const suites = [
   "test:conversation-ui",
   "test:personal-memory",
   "test:knowledge",
+  "test:knowledge-linking",
   "test:mcp-vault"
 ];
 

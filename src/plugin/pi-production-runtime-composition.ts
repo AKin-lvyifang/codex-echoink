@@ -1,3 +1,4 @@
+import { getPiKnowledgeLinkingBatch, createPiKnowledgeLinkingTool, knowledgeLinkingInlineExtension, PI_KNOWLEDGE_LINKING_TOOL } from "../harness/pi-native/pi-knowledge-linking-tool";
 import { privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
 import { readPrivateMaintenanceRecords, FilePhase3MaintenanceStateStore } from "./pi-knowledge-maintenance-production";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
@@ -257,6 +258,7 @@ export interface PiProductionPluginHost {
   readonly app: App;
   readonly lifestyle?: { readonly finance: LifestyleFinanceService };
   readonly pdfReading?: PdfReadingController | null;
+  queueKnowledgeLinking?(targetPaths: readonly string[], sourcePaths?: readonly string[], taskId?: string): Promise<{ id: string }>;
   prepareWikiFolderNamesForMaintenance?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   readonly settings: CodexForObsidianSettings;
   recordModelUsage?(event: UsageRequestEvent): Promise<void>;
@@ -465,8 +467,10 @@ export async function createPiProductionRuntimeBundle(
     deviceId: deviceScope.deviceIdDigest,
     domainService: maintenanceVaultDomainService,
     knowledgeAgentIndex,
-    onCommitted: async () => {
+    linkingOwnsDraftLinks: typeof plugin.queueKnowledgeLinking === "function",
+    onCommitted: async (paths, targets, taskId) => {
       await knowledgeAgentIndex.refresh();
+      if (paths.length) return (await plugin.queueKnowledgeLinking?.(targets ?? [], paths, taskId))?.id;
     },
     onTerminal: async (event) => {
       await syncPrivateMaintenanceOverview(plugin, privateKnowledgeRootPath);
@@ -758,6 +762,15 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       });
     },
     async retrieveChat(request) {
+      // Internal linking turns already carry bounded, explicit source spans.
+      // Their dedicated extension intentionally does not publish ordinary-chat
+      // reference envelopes, so never retrieve or claim those references here.
+      if (getPiKnowledgeLinkingBatch(request.conversationId)) return Object.freeze({
+        status: "no_evidence" as const,
+        references: Object.freeze([]),
+        providerResourceText: "",
+        retrieval: Object.freeze({ elapsedMs: 0, total: 0, returned: 0, remaining: 0, hasMore: false, exhausted: true })
+      });
       const startedAt = Date.now();
       const result = await retriever.retrieve({
         question: request.question,
@@ -1776,6 +1789,7 @@ async function createProductionAgentSession(input: {
   approvalBroker: PiAgentApprovalBroker;
   interactionBroker: PiTurnInteractionBroker;
 }): Promise<PiNativeAgentSessionFactoryResult> {
+  const linkingBatch = getPiKnowledgeLinkingBatch(input.input.catalog.conversationId);
   const preparedProvider = await preparePiProductionProvider({
     ...input,
     modelSelection: input.input
@@ -1979,7 +1993,7 @@ async function createProductionAgentSession(input: {
     },
     egress: new EchoInkVaultToolEgressPolicy()
   });
-  const mcpSnapshot = await discoverPiMcpTools(input, mcpSecurity);
+  const mcpSnapshot: PiMcpCustomToolSnapshot = linkingBatch ? { toolNames: [], customTools: [], toolSecurity: [], warnings: [] } : await discoverPiMcpTools(input, mcpSecurity);
   const pdfGenerationDraft = Object.freeze({
     providerSettingsId: configured.provider.id, providerId: productProviderId,
     runtimeProviderId: configured.providerId, apiProtocol: configured.apiProtocol,
@@ -2153,7 +2167,7 @@ async function createProductionAgentSession(input: {
       : [...(input.input.skillPaths ?? [])],
     systemPrompt: buildEchoInkRuntimeSystemPrompt(),
     appendSystemPrompt: [WEB_SEARCH_INSTRUCTIONS],
-    inlineExtension
+    inlineExtension: linkingBatch ? knowledgeLinkingInlineExtension() : inlineExtension
   });
   const loadedSkills = resourceLoader.getSkills();
   let skillCommandName: string | undefined;
@@ -2179,7 +2193,7 @@ async function createProductionAgentSession(input: {
     );
   }
 
-  const registeredTools = [
+  const registeredTools = linkingBatch ? [createPiKnowledgeLinkingTool(linkingBatch)] : [
     createWebSearchTool(webSearchSecurity),
     ...vaultTools,
     ...obsidianTools,
@@ -2240,7 +2254,7 @@ async function createProductionAgentSession(input: {
     resourceLoader,
     ...toolRegistration
   });
-  created.session.setActiveToolsByName([
+  created.session.setActiveToolsByName(linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : [
     WEB_SEARCH_TOOL_NAME,
     ...PI_VAULT_TOOL_IDS,
     ...PI_OBSIDIAN_TOOL_IDS,
@@ -2281,8 +2295,8 @@ async function createProductionAgentSession(input: {
     memoryToolNames: configured.toolCalling
       ? PI_PERSONAL_MEMORY_TOOL_IDS
       : Object.freeze([]),
-    planToolNames: Object.freeze(planToolNames),
-    externalReadToolNames: Object.freeze([WEB_SEARCH_TOOL_NAME, ...mcpSnapshot.toolSecurity
+    planToolNames: Object.freeze(linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : planToolNames),
+    externalReadToolNames: Object.freeze(linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : [WEB_SEARCH_TOOL_NAME, ...mcpSnapshot.toolSecurity
       .filter((descriptor) => descriptor.readOnly)
       .map((descriptor) => descriptor.name)]),
     ...(skillCommandName ? { skillCommandName } : {}),
@@ -2447,7 +2461,7 @@ export async function synchronizePiConversationShells(
     sessions: plugin.settings.sessions,
     activeSessionId: plugin.settings.activeSessionId
   });
-  const catalogEntries = await runtime.listConversations(["active"]);
+  const catalogEntries = (await runtime.listConversations(["active"])).filter(entry => !entry.conversationId.startsWith("knowledge-linking-"));
   const activeIds = new Set(
     catalogEntries.map((entry) => entry.conversationId)
   );

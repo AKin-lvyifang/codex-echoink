@@ -30,6 +30,7 @@ export interface KnowledgeBaseRunPhase {
 
 export interface KnowledgeBaseMaintainReportPayload {
   kind: "maintain-report";
+  linkingTaskId?: string;
   mode: KnowledgeBaseCommandUiMode;
   status: KnowledgeBaseRunResult["status"];
   runId?: string;

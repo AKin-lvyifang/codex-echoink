@@ -10,4 +10,6 @@ export interface KnowledgeMaintenanceRecord {
   result: KnowledgeMaintenanceResultEnvelope;
   sources: { path: string; fingerprint: string; status: "processed" | "unread" | "failed"; evidencePaths: string[] }[];
   summary: string;
+  /** Only new maintenance WALs that explicitly delegated linking can carry this intent. */
+  pendingLinking?: { taskId: string; sourcePaths: string[]; targetPaths: string[] };
 }

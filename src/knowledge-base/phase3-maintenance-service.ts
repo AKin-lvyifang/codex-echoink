@@ -100,7 +100,7 @@ export interface Phase3MaintenanceProposalAction {
 }
 
 export interface Phase3MaintenanceProposal {
-  bookkeeping?: { readSourcePaths: readonly string[]; failedSourcePaths?: readonly string[]; assessments?: readonly import("./knowledge-maintenance-result").KnowledgeMaintenanceAssessment[]; issues: readonly { code: string; message: string; path?: string }[] };
+  bookkeeping?: { readSourcePaths: readonly string[]; failedSourcePaths?: readonly string[]; linkingTargetPaths?: readonly string[]; assessments?: readonly import("./knowledge-maintenance-result").KnowledgeMaintenanceAssessment[]; issues: readonly { code: string; message: string; path?: string }[] };
   /** Existing Shadow attempt/control identity. */
   shadowId: string;
   /** Sealed Shadow/change-set digest. */
@@ -361,7 +361,7 @@ export interface Phase3MaintenanceRecoveryResult {
 }
 
 export type Phase3MaintenanceFaultPoint =
-  "after-wal-before-first-write" | "before-private-record" | "after-private-record";
+  "after-wal-before-first-write" | "before-private-record" | "after-private-record" | "after-linking-enqueue";
 
 export interface Phase3KnowledgeMaintenanceServiceOptions {
   domain: Phase3MaintenanceVaultDomain;

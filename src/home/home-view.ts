@@ -13,7 +13,7 @@ import { JournalTemplateModal } from "./journal-template-modal";
 import { chooseEnglishDiaryHomeShortcut } from "./english-diary-shortcut-modal";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { formatHomeFullDate, formatHomeRelativeTime, homeCopy, type HomeCopy } from "./home-i18n";
-import { openObsidianFolderGraphLeaf, openObsidianLocalGraphLeaf } from "./open-native-graph";
+import { openObsidianFolderGraphLeaf } from "./open-native-graph";
 import { homeWorkspaceMarkup } from "./home-workspace-template";
 import { bindHomeBentoMagnet } from "./home-bento-magnet";
 import { HomeSearchService, type HomeSearchMatch } from "./home-search";
@@ -937,11 +937,7 @@ export class EchoInkHomeView extends ItemView {
         return;
       }
       if (!directories.length) directories.push(mappedRole);
-      const preferred = binding?.writePath;
-      const ordered = preferred && directories.includes(preferred) ? [preferred, ...directories.filter((path) => path !== preferred)] : directories;
-      const index = ordered.map((path) => this.app.vault.getAbstractFileByPath(`${path}/index.md`)).find((file) => file instanceof TFile);
-      if (index instanceof TFile) await openObsidianLocalGraphLeaf(this.app, index.path, this.language);
-      else await openObsidianFolderGraphLeaf(this.app, directories, this.language);
+      await openObsidianFolderGraphLeaf(this.app, directories, this.language);
       return;
     }
     if (entry.id === "journal") {

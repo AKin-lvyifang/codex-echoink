@@ -26,7 +26,6 @@ export interface HomeCopy {
     ariaLabel: (id: HomeEntryId) => string;
     wikiKnowledgeCount: (count: number) => string;
     wikiUpdatedToday: (count: number) => string;
-    waitingForWikiIndex: string;
     noLocalOutputs: string;
     updatedRecently: (time: string) => string;
     outputsAfterMaintenance: string;
@@ -122,6 +121,7 @@ export interface HomeCopy {
   }>;
   readonly graph: Readonly<{
     cannotOpenGraph: string;
+    folderFilterUnavailable: string;
     cannotOpenLocalGraph: string;
     missingVaultFile: (path: string) => string;
   }>;
@@ -171,7 +171,6 @@ const ZH: HomeCopy = {
     ariaLabel: (id) => `${({ wiki: "打开 Wiki", outputs: "查看成果", projects: "继续项目", inbox: "处理输入", journal: "写日记", review: "开始复盘" }[id])}：${({ wiki: "Wiki", outputs: "Outputs", projects: "Projects", inbox: "Inbox", journal: "Journal", review: "Review" }[id])}`,
     wikiKnowledgeCount: (count) => `${count} 篇知识`,
     wikiUpdatedToday: (count) => `今日更新 ${count}`,
-    waitingForWikiIndex: "等待建立 Wiki 索引",
     noLocalOutputs: "还没有本地成果",
     updatedRecently: (time) => `最近更新 ${time}`,
     outputsAfterMaintenance: "完成一次知识维护后会在这里出现",
@@ -267,6 +266,7 @@ const ZH: HomeCopy = {
   },
   graph: {
     cannotOpenGraph: "暂时无法打开 Obsidian 原生图谱，请稍后重试。",
+    folderFilterUnavailable: "目录筛选暂不可用，正在打开普通全局图谱并保留原有筛选。",
     cannotOpenLocalGraph: "暂时无法打开 Obsidian 原生局部图谱，请稍后重试。",
     missingVaultFile: (path) => `没有在当前 Vault 找到：${path}`
   }
@@ -302,7 +302,6 @@ const EN: HomeCopy = {
     ariaLabel: (id) => `${({ wiki: "Open Wiki", outputs: "View outputs", projects: "Continue project", inbox: "Process inputs", journal: "Write journal", review: "Start review" }[id])}: ${({ wiki: "Wiki", outputs: "Outputs", projects: "Projects", inbox: "Inbox", journal: "Journal", review: "Review" }[id])}`,
     wikiKnowledgeCount: (count) => `${count} ${count === 1 ? "note" : "notes"}`,
     wikiUpdatedToday: (count) => `${count} updated today`,
-    waitingForWikiIndex: "Waiting for the Wiki index",
     noLocalOutputs: "No local outputs yet",
     updatedRecently: (time) => `Updated ${time}`,
     outputsAfterMaintenance: "It will appear here after one knowledge-maintenance run",
@@ -398,6 +397,7 @@ const EN: HomeCopy = {
   },
   graph: {
     cannotOpenGraph: "Could not open Obsidian's native graph. Please try again.",
+    folderFilterUnavailable: "Folder filtering is unavailable. Opening the global graph with your existing filters.",
     cannotOpenLocalGraph: "Could not open Obsidian's native local graph. Please try again.",
     missingVaultFile: (path) => `The current Vault does not contain: ${path}`
   }

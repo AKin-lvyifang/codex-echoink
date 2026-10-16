@@ -1,3 +1,4 @@
+import { createProductionKnowledgeLinkingService } from "./knowledge-linking-production";
 import { rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult } from "../knowledge-base/folder-plan";
@@ -68,6 +69,7 @@ import { resolveKnowledgeMaintenanceSubmitSnapshot } from "../settings/knowledge
 
 /** Current Knowledge dashboard and capture surfaces. Pi owns agent execution. */
 export class EchoInkKnowledgeSurfaceService {
+  readonly linking: ReturnType<typeof createProductionKnowledgeLinkingService>;
   private readonly captureService: KnowledgeBaseCaptureService;
   private readonly directoryHistory: InitializationDirectoryHistory;
   private restoring = false;
@@ -95,6 +97,8 @@ export class EchoInkKnowledgeSurfaceService {
   private namingFlight: Promise<WikiFolderNameResult> | null = null;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
+    this.linking = createProductionKnowledgeLinkingService(plugin);
+    void this.linking.ready.catch(error => console.error("EchoInk knowledge linking recovery failed", error));
     this.captureService = new KnowledgeBaseCaptureService(plugin);
     const host = createKnowledgeInitializationHost(plugin, (identity) => { this.initializationInteraction = identity; });
     this.directoryHistory = new InitializationDirectoryHistory({
@@ -645,7 +649,7 @@ export class EchoInkKnowledgeSurfaceService {
     return await this.captureService.captureExternalFiles(files);
   }
 
-  async unload(): Promise<void> {}
+  async unload(): Promise<void> { await this.linking.dispose(); }
 }
 
 export function createKnowledgeInitializationHost(

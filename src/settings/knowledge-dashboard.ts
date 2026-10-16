@@ -17,8 +17,7 @@ export function renderSettingsKnowledgeDashboard(
 ): void {
   const zh = state.language !== "en";
   const t = (cn: string, en: string) => zh ? cn : en;
-  const terms = (text: string) => text.replace(/wiki\/index\.md/giu, t("知识入口页", "Knowledge index"))
-    .replace(/\bTracker\b/giu, t("来源处理记录", "Source processing records"))
+  const terms = (text: string) => text.replace(/\bTracker\b/giu, t("来源处理记录", "Source processing records"))
     .replace(/\bRaw\b/giu, t("资料来源", "Sources")).replace(/\bWiki\b/giu, t("知识成果", "Knowledge"))
     .replace(/\bInbox\b/giu, t("收件箱", "Inbox"));
   const time = (at: number) => at ? new Date(at).toLocaleString(zh ? "zh-CN" : "en-US", {
@@ -102,9 +101,9 @@ export function renderSettingsKnowledgeDashboard(
     row.createEl("strong", { text: `−${reason.penalty}` });
   }
   if (available && !health.scoreReasons.length) explanation.createEl("p", { text: t("已检查的范围内没有扣分项。", "No deductions in the inspected scope.") });
-  explanation.createEl("p", { text: terms(t(health.coverage, health.assessment === "limited" ? "Coverage is limited: each folder is capped at 3,000 files; some source content remains unread within the reading budget." : "Checks cover sources, knowledge, the knowledge index, and source processing records only.")) });
+  explanation.createEl("p", { text: terms(t(health.coverage, health.assessment === "limited" ? "Coverage is limited: each folder is capped at 3,000 files; some source content remains unread within the reading budget." : "Checks cover sources, knowledge, and source processing records only.")) });
   explanation.createEl("p", { text: t("尚未检查：断链、孤儿页面、过时内容和索引链接有效性。", "Not checked: broken links, orphan pages, stale content, and index-link validity.") });
-  explanation.createDiv({ cls: "score-thresholds", text: terms(t(health.scoreThresholdText, "85+ healthy; 60–84 at risk; below 60 unhealthy. Missing sources, knowledge, the knowledge index, or source processing records deducts 24 points each and overrides the score to unhealthy.")) });
+  explanation.createDiv({ cls: "score-thresholds", text: terms(t(health.scoreThresholdText, "85+ healthy; 60–84 at risk; below 60 unhealthy. Missing sources, knowledge, or source processing records deducts 24 points each and overrides the score to unhealthy.")) });
   explanation.createEl("small", { text: t(health.scoreCheckNote, "Score = max(0, min(100, 100 − deductions)). Queues and failed maintenance do not deduct structural points.") });
   const facts = container.createEl("dl", { cls: "status-facts" });
   const runStatus = knowledgeRunStatusLabel(snapshot.lastRun.status, snapshot.lastRun.at, snapshot.lastRun.completion, snapshot.lastRun.pendingSourceCount, state.language);

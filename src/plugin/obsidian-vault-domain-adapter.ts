@@ -22,7 +22,7 @@ import {
 
 const SEARCH_SCAN_LIMIT_BYTES = 32_000;
 const SEARCH_EXCERPT_LIMIT_BYTES = 2_000;
-const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const MANAGED_HIDDEN_UPDATE = Symbol("echoink.managed-hidden-update");
 
 export interface CreatePhase3MaintenanceVaultDomainAdapterOptions {
