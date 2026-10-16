@@ -135,6 +135,7 @@ export class KnowledgeFolderSection {
   private animateEntry = false;
   private readonly expandedRoles = new Set<KnowledgeRootRole>();
   private readonly selectingRoles = new Set<KnowledgeRootRole>();
+  private readonly drawerMotionCleanups = new Set<() => void>();
   private readonly drawerId = ++folderDrawerSequence;
   private timer: number | null = null;
   private job: Readonly<KnowledgeInitializationJob> | null = null;
@@ -166,6 +167,7 @@ export class KnowledgeFolderSection {
   get submitting(): boolean { return this.busy; }
   invalidate(): void { this.jobLoaded = false; }
   dispose(): void {
+    this.clearDrawerMotion();
     if (this.root) disposeOriginControls(this.root);
     if (this.timer !== null) this.root?.ownerDocument.defaultView?.clearTimeout(this.timer);
     this.timer = null; this.root = null; this.footer = null; this.issueEl = null;
@@ -184,6 +186,7 @@ export class KnowledgeFolderSection {
     });
   }
   renderDetail(container: HTMLElement, zh: boolean): void {
+    this.clearDrawerMotion();
     if (!this.opened) { this.draft = this.readDraft(); this.opened = true; this.animateEntry = true; }
     const page = createSettingsPage(container, {
       title: this.preview ? (zh ? "预览目录方案" : "Preview folder plan") : this.draft.initialized ? (zh ? "目录方案" : "Folder plan") : (zh ? "初始化知识库" : "Initialize knowledge base"),
@@ -305,10 +308,54 @@ export class KnowledgeFolderSection {
       reselect.disabled = locked || this.selectingRoles.has(role);
       reselect.onclick = event => { event.stopPropagation(); this.chooseFolder(role, zh, missing[0]); };
     }
-    const nested = purpose.createDiv({ cls: "echoink-folder-bindings", attr: { id: contentId } });
-    const updateExpanded = () => {
+    // Keep the existing mobile structure. Desktop's extra grid track can shrink
+    // around the padded content without measuring or retaining a fixed height.
+    const desktop = !purpose.ownerDocument.body.classList.contains("is-mobile");
+    const viewport = desktop ? purpose.createDiv({ cls: "echoink-folder-drawer-viewport" }) : null;
+    const contentParent = viewport ? viewport.createDiv({ cls: "echoink-folder-drawer-clip" }) : purpose;
+    const nested = contentParent.createDiv({ cls: "echoink-folder-bindings", attr: { id: contentId } });
+    let cancelMotion: (() => void) | null = null;
+    const updateExpanded = (animate = false) => {
       const expanded = binding.enabled && this.expandedRoles.has(role);
-      nested.hidden = !expanded;
+      cancelMotion?.();
+      const win = purpose.ownerDocument.defaultView;
+      const reducedMotion = win?.matchMedia?.("(prefers-reduced-motion: reduce)");
+      const shouldAnimate = animate && viewport && win && !reducedMotion?.matches;
+      if (!expanded && nested.contains(purpose.ownerDocument.activeElement)) disclosure.focus({ preventScroll: true });
+      nested.inert = !expanded;
+      nested.setAttr("aria-hidden", String(!expanded));
+      if (shouldAnimate) {
+        const wasHidden = nested.hidden;
+        nested.hidden = false;
+        viewport.addClass("is-animating");
+        // Establish the collapsed track before revealing a previously hidden body.
+        // A reversal keeps its current interpolated size and needs no forced reset.
+        if (wasHidden) void viewport.offsetHeight;
+        const cleanup = () => {
+          win.clearTimeout(timeout);
+          viewport.removeEventListener("transitionend", onTransitionEnd);
+          reducedMotion?.removeEventListener("change", onMotionChange);
+          this.drawerMotionCleanups.delete(cleanup);
+          cancelMotion = null;
+        };
+        const finish = () => {
+          cleanup();
+          viewport.removeClass("is-animating");
+          nested.hidden = !expanded;
+        };
+        const onTransitionEnd = (event: TransitionEvent) => {
+          if (event.target === viewport && event.propertyName === "grid-template-rows") finish();
+        };
+        const onMotionChange = () => { if (reducedMotion?.matches) finish(); };
+        const timeout = win.setTimeout(finish, 240);
+        viewport.addEventListener("transitionend", onTransitionEnd);
+        reducedMotion?.addEventListener("change", onMotionChange);
+        this.drawerMotionCleanups.add(cleanup);
+        cancelMotion = cleanup;
+      } else {
+        viewport?.removeClass("is-animating");
+        nested.hidden = !expanded;
+      }
       disclosure.setAttr("aria-expanded", String(expanded));
       purpose.toggleClass("is-expanded", expanded);
       if (!expanded) purpose.querySelectorAll<HTMLElement>(".echoink-folder-help, .echoink-folder-purpose-help").forEach(trigger => trigger.dispatchEvent(new trigger.ownerDocument.defaultView!.Event("blur")));
@@ -316,7 +363,7 @@ export class KnowledgeFolderSection {
     const toggleExpanded = () => {
       if (locked || !binding.enabled || this.selectingRoles.has(role)) return;
       if (this.expandedRoles.has(role)) this.expandedRoles.delete(role); else this.expandedRoles.add(role);
-      updateExpanded();
+      updateExpanded(true);
     };
     disclosure.onclick = event => { event.stopPropagation(); toggleExpanded(); };
     disclosure.onkeydown = event => {
@@ -340,7 +387,7 @@ export class KnowledgeFolderSection {
       return;
     }
     const listHeader = nested.createDiv({ cls: "echoink-folder-list-header" });
-    listHeader.createSpan({ text: zh ? "文件夹" : "Folders" });
+    listHeader.createSpan({ text: zh ? "指定文件夹" : "Assigned folders" });
     if (role === "raw" && !created) {
       const add = createOriginButton(listHeader, { cls: "is-icon icon-button", attr: { "aria-label": zh ? "添加来源目录" : "Add source folder" } });
       setIcon(add, "plus"); add.disabled = locked || this.selectingRoles.has(role);
@@ -373,6 +420,9 @@ export class KnowledgeFolderSection {
         for (const path of binding.readPaths) select.addOption(path, path);
         select.setValue(binding.writePath ?? "unbound").setDisabled(locked).onChange(path => { binding.writePath = path === "unbound" ? null : path; this.updateFooter(zh, locked); });
       });
+  }
+  private clearDrawerMotion(): void {
+    for (const cleanup of this.drawerMotionCleanups) cleanup();
   }
   private renderOrganize(parent: HTMLElement, role: KnowledgeRootRole, path: string, zh: boolean, locked: boolean): void {
     const row = new OriginSetting(parent).setClass("echoink-folder-organize");

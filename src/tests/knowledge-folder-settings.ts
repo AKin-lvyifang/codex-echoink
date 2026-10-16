@@ -38,8 +38,16 @@ function prepareDOM() {
     setAttr(name: string, value: string) { this.setAttribute(name, value); },
     createEl: create, createDiv(options: unknown) { return create.call(this, "div", options); }, createSpan(options: unknown) { return create.call(this, "span", options); }
   });
-  win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }) as any;
-  return { win, close() { dom.window.close(); for (const [name, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); } } };
+  let reducedMotion = false;
+  const motionListeners = new Set<() => void>();
+  const motionQuery = {
+    get matches() { return reducedMotion; },
+    addEventListener(_type: string, listener: () => void) { motionListeners.add(listener); },
+    removeEventListener(_type: string, listener: () => void) { motionListeners.delete(listener); },
+    addListener() {}, removeListener() {}
+  };
+  win.matchMedia = () => motionQuery as any;
+  return { win, motionListeners, setReducedMotion(value: boolean) { reducedMotion = value; for (const listener of [...motionListeners]) listener(); }, close() { dom.window.close(); for (const [name, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); } } };
 }
 
 export async function runKnowledgeFolderSettingsTests(): Promise<void> {
@@ -156,17 +164,56 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert.equal(host.querySelectorAll('.echoink-folder-bindings [role="switch"]').length, 0, "drawers contain no nested Switches");
     const disclosure = () => host.querySelector<HTMLButtonElement>('[data-folder-role="raw"] .echoink-folder-disclosure')!;
     const rawContent = () => host.querySelector<HTMLElement>('[data-folder-role="raw"] .echoink-folder-bindings')!;
+    const finishDrawerMotion = () => {
+      const event = new dom.win.Event("transitionend", { bubbles: true });
+      Object.defineProperty(event, "propertyName", { value: "grid-template-rows" });
+      rawContent().closest(".echoink-folder-drawer-viewport")!.dispatchEvent(event);
+    };
+    assert.equal(dom.motionListeners.size, 0, "initial rendering starts no drawer animation");
+    assert.equal(raw.querySelector(".echoink-folder-list-header > span")?.textContent, "指定文件夹");
     assert(raw.querySelector(".echoink-folder-summary")?.textContent?.includes("阅读/资料"), "collapsed headers summarize bound folders");
     disclosure().focus();
     disclosure().dispatchEvent(new dom.win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     assert.equal(rawContent().hidden, false, "Enter expands an enabled drawer");
     assert.equal(disclosure().getAttribute("aria-expanded"), "true");
     disclosure().dispatchEvent(new dom.win.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
-    assert.equal(rawContent().hidden, true, "Space collapses the drawer");
+    assert.equal(rawContent().hidden, false, "closing keeps the content rendered until its slide finishes");
+    assert.equal(rawContent().inert, true, "closing content immediately leaves keyboard interaction");
+    assert.equal(rawContent().getAttribute("aria-hidden"), "true");
+    assert.equal(disclosure().getAttribute("aria-expanded"), "false");
+    disclosure().click();
+    finishDrawerMotion();
+    assert.equal(rawContent().hidden, false, "a quick reversal finishes in the latest requested state");
+    assert.equal(rawContent().inert, false);
+    assert.equal(dom.motionListeners.size, 0, "completed motion releases its listener");
+    raw.querySelector<HTMLButtonElement>(".echoink-folder-path")!.focus();
+    disclosure().click(); finishDrawerMotion();
+    assert.equal(rawContent().hidden, true, "the completed close restores hidden semantics");
+    assert.equal(dom.win.document.activeElement, disclosure(), "closing returns content focus to its disclosure");
+    disclosure().click(); finishDrawerMotion();
+    disclosure().click();
+    dom.setReducedMotion(true);
+    assert.equal(rawContent().hidden, true, "enabling reduced motion immediately finishes an active close");
+    disclosure().click();
+    assert.equal(rawContent().hidden, false);
+    assert.equal(dom.motionListeners.size, 0, "reduced motion starts no transition");
+    disclosure().click();
+    assert.equal(rawContent().hidden, true, "reduced motion closes immediately");
+    dom.setReducedMotion(false);
+    dom.win.document.body.classList.add("is-mobile"); draw();
+    assert.equal(host.querySelector(".echoink-folder-drawer-viewport"), null, "mobile keeps the existing drawer structure");
+    disclosure().click();
+    assert.equal(rawContent().hidden, false);
+    disclosure().click();
+    assert.equal(rawContent().hidden, true, "mobile still closes immediately");
+    assert.equal(dom.motionListeners.size, 0);
+    dom.win.document.body.classList.remove("is-mobile"); draw();
     disclosure().click(); draw(); raw = host.querySelector<HTMLElement>('[data-folder-role="raw"]')!;
+    assert.equal(dom.motionListeners.size, 0, "redraw releases an interrupted animation");
     assert.equal(rawContent().hidden, false, "redraw preserves UI expansion");
     assert.equal(section.hasDraft, false, "expansion never dirties business settings");
     raw.querySelector<HTMLElement>(".echoink-folder-purpose-header")!.click();
+    finishDrawerMotion();
     assert.equal(rawContent().hidden, true, "empty header space folds the same drawer");
     raw.querySelector<HTMLElement>(".echoink-folder-purpose-header")!.click();
     const purposeHelp = raw.querySelector<HTMLButtonElement>(".echoink-folder-purpose-help")!;
@@ -193,6 +240,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     help.blur();
     assert.equal(dom.win.document.getElementById(tooltipId), null);
     help.click(); disclosure().click();
+    finishDrawerMotion();
     assert.equal(rawContent().hidden, true);
     assert.equal(dom.win.document.getElementById(tooltipId), null, "collapsing a drawer closes its detached tooltip");
     disclosure().click();

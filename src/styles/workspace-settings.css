@@ -2174,6 +2174,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 }
 :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose.is-expanded > .echoink-folder-purpose-header {
   border-radius: 10px 10px 0 0;
+  border-bottom: 1px solid var(--line);
 }
 :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose-header:is(:hover, :focus-within) {
   background: var(--background-modifier-hover);
@@ -2239,6 +2240,25 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 }
 :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-header-summary > button {
   flex: none;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-drawer-viewport {
+  display: grid;
+  grid-template-rows: 0fr;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-purpose.is-expanded > .echoink-folder-drawer-viewport {
+  grid-template-rows: 1fr;
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-drawer-viewport.is-animating {
+  transition: grid-template-rows 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-drawer-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-drawer-viewport.is-animating {
+    transition: none;
+  }
 }
 :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-folder-bindings {
   display: grid;
