@@ -15,6 +15,8 @@ export interface AgentDefinition {
   styleId: AgentStyleId;
   /** Other Agents explicitly opt into these capabilities; new capabilities stay off. */
   capabilityIds?: string[];
+  /** Set when this identity is saved by the Agent editor. */
+  identityEdited?: boolean;
   /** General assistant only: all capabilities are on unless explicitly disabled. */
   disabledCapabilityIds?: string[];
 }
@@ -23,6 +25,7 @@ export interface AgentRegistry {
   schemaVersion: 1;
   /** Set only after the one-time, read-only legacy inspection. */
   legacyMigrationVersion: 0 | 1;
+  legacyIdentitySyncVersion?: 1;
   agents: AgentDefinition[];
   moduleOwners: Record<AgentModuleId, string>;
 }

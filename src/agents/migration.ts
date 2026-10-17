@@ -47,3 +47,20 @@ async function readJson(filePath: string): Promise<Record<string, unknown> | nul
     throw error;
   }
 }
+
+/** P3 display cutover: inspect only the formal identity file, once, without writing it. */
+export async function synchronizeLegacyAgentIdentity(registry: AgentRegistry, storageRoot: string): Promise<AgentRegistry> {
+  if (registry.legacyIdentitySyncVersion === 1) return registry;
+  const sol = registry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID);
+  if (sol?.identityEdited) return { ...registry, legacyIdentitySyncVersion: 1 };
+  const raw = await readJson(path.join(storageRoot, AGENT_IDENTITY_RELATIVE_PATH));
+  // A damaged existing file is retryable; absence is a completed inspection.
+  if (raw === null) throw new Error("legacy_agent_identity_invalid");
+  const identity = raw ? parseAgentIdentityState(raw) : null;
+  if (raw && !identity) throw new Error("legacy_agent_identity_invalid");
+  return { ...registry, legacyIdentitySyncVersion: 1, agents: registry.agents.map(agent =>
+    agent.id !== GENERAL_ASSISTANT_ID ? agent : { ...agent,
+      ...(identity && identity.displayName !== DEFAULT_AGENT_DISPLAY_NAME ? { name: identity.displayName } : {}),
+      ...(identity && identity.avatar.kind !== "default" ? { avatar: identity.avatar } : {})
+    }) };
+}

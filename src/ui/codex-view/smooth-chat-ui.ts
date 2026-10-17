@@ -1,5 +1,7 @@
 import type { SettingsLanguage } from "../../settings/settings";
+import { Platform } from "obsidian";
 import { conversationCopy } from "../../settings/i18n";
+import { formatApprovalPresentation, renderApprovalPresentation } from "./approval-presentation";
 
 export const SMOOTH_BLUR_OUT_UP_DURATION_MS = 560;
 export const SMOOTH_BLUR_OUT_UP_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
@@ -335,9 +337,16 @@ export function createAIElementsConfirmation(
     language?: SettingsLanguage;
   }>
 ): SmoothAIApprovalCardElements {
-  const elements = createSmoothAIApprovalCard(container, options);
+  const elements = createSmoothAIApprovalCard(container, Platform.isMobile ? options : { ...options, target: undefined, preview: undefined });
   elements.root.addClass("codex-ai-elements-confirmation");
   elements.root.setAttribute("data-ai-elements-pattern", "confirmation");
+  if (Platform.isMobile) return elements;
+  elements.root.addClass("has-readable-approval");
+  // Move the original action node after the new body; callers still bind these exact buttons.
+  const actions = elements.root.querySelector<HTMLElement>(".codex-smooth-ai-approval-actions");
+  actions?.remove();
+  renderApprovalPresentation(elements.root, formatApprovalPresentation(options));
+  if (actions) elements.root.append(actions);
   return elements;
 }
 

@@ -1,6 +1,6 @@
-import { Notice } from "obsidian";
+import { Notice, Platform } from "obsidian";
 import path from "node:path";
-import { migrateLegacyAgentRegistry } from "../agents/migration";
+import { migrateLegacyAgentRegistry, synchronizeLegacyAgentIdentity } from "../agents/migration";
 import { pluginDataDir } from "./plugin-data-paths";
 import type CodexForObsidianPlugin from "../main";
 import { prepareRawMessage, readRawText, writeRawText } from "../core/raw-message-store";
@@ -98,13 +98,15 @@ export class EchoInkSettingsStore {
     this.plugin.settings = normalized.settings;
     let agentsMigrated = false;
     try {
-      const migratedRegistry = await migrateLegacyAgentRegistry(
+      let migratedRegistry = await migrateLegacyAgentRegistry(
         this.plugin.settings.agentRegistry,
         path.join(
           pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()),
           "pi-agent-product-v1", ".echoink"
         )
       );
+      if (!Platform.isMobile) migratedRegistry = await synchronizeLegacyAgentIdentity(migratedRegistry,
+        path.join(pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()), "pi-agent-product-v1", ".echoink"));
       agentsMigrated = migratedRegistry !== this.plugin.settings.agentRegistry;
       this.plugin.settings.agentRegistry = migratedRegistry;
     } catch (error) {

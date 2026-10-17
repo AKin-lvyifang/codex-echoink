@@ -150,11 +150,12 @@ export async function resetSessionNativeCache(host: CodexSessionHost, session: S
 }
 
 export async function refreshPiConversationShells(
-  host: CodexSessionHost
+  host: CodexSessionHost,
+  options: { createIfEmpty?: boolean } = {}
 ): Promise<void> {
   const before = conversationShellFingerprint(host);
   let catalogEntries = await host.plugin.listPiConversations(["active"]);
-  if (catalogEntries.length === 0) {
+  if (catalogEntries.length === 0 && options.createIfEmpty !== false) {
     catalogEntries = [await host.plugin.createPiConversation({
       conversationId: newId("conversation"),
       title: conversationUiText(host.plugin.settings.settingsLanguage, "新会话", "New conversation"),
@@ -250,7 +251,7 @@ async function activateSessionInTransitionLane(
     renderConversationShellChange(host);
     // The durable projection was read and rendered before marking this task read.
     // A later data.json failure cannot roll back the Catalog commit through a shell.
-    if (unreadAnswerAt !== undefined) await host.plugin.setPiConversationTaskMetadata(session.id, { unreadAnswerAt: undefined, lastReadAt: Date.now() });
+    if (unreadAnswerAt !== undefined) await host.plugin.setPiConversationTaskMetadata(session.id, { unreadAnswerAt: undefined, lastReadAt: Date.now() }, { markReadThrough: unreadAnswerAt });
     return { status: "selected" };
   } catch (error) {
     if (!isCurrentConversationSelection(host, generation)) {
@@ -912,7 +913,7 @@ export function activeRunSession(host: CodexSessionHost): StoredSession {
   return active ?? ensureSession(host);
 }
 
-function createPiConversationShell(
+export function createPiConversationShell(
   host: CodexSessionHost,
   catalogEntry: Readonly<PiConversationCatalogEntry>
 ): StoredSession {
@@ -960,7 +961,7 @@ function applyPiCatalogEntryToShell(
   return shell;
 }
 
-function applyPiConversationProjectionToShell(
+export function applyPiConversationProjectionToShell(
   host: CodexSessionHost,
   shell: StoredSession,
   projection: Readonly<PiConversationProjection>

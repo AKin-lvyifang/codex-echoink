@@ -257,7 +257,7 @@ export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<
     if (access?.permission === item.turnOptions.permission && access.mode === item.turnOptions.mode) {
       try {
         await view.plugin.followUpPiConversation(session.id, item.text.trim());
-        view.clearComposerDraft();
+        clearComposerAfterPiAcceptance(view, item, "composer");
         view.renderQueue();
         view.renderToolbar();
         showNotice(view, "已加入当前 Pi 任务的后续消息", "Added to the current Pi task as a follow-up.");
@@ -268,14 +268,14 @@ export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<
     }
     // Pi's text-only followUp cannot change access inside the active ProductRun.
     view.turnQueue.enqueue(item);
-    view.clearComposerDraft();
+    clearComposerAfterPiAcceptance(view, item, "composer");
     view.renderQueue();
     view.renderToolbar();
     showNotice(view, "已加入队列", "Added to the queue.");
     return;
   }
   view.turnQueue.enqueue(item);
-  view.clearComposerDraft();
+  clearComposerAfterPiAcceptance(view, item, "composer");
   view.renderQueue();
   view.renderToolbar();
   showNotice(view, "已加入队列", "Added to the queue.");
@@ -317,9 +317,13 @@ export async function steerPiChatFromComposer(
     await enqueueComposerDraft(view);
     return;
   }
+  const acceptedDraft: QueuedTurnItem = {
+    id: newId("steering-draft"), sessionId: session.id, text, composerTextSnapshot: view.inputEl.value,
+    attachments: [], skill: null, turnOptions: { ...options }, kind: "chat", createdAt: Date.now()
+  };
   try {
     await view.plugin.steerPiConversation(session.id, text);
-    view.clearComposerDraft();
+    clearComposerAfterPiAcceptance(view, acceptedDraft, "composer");
     view.renderQueue();
     view.renderToolbar();
     showNotice(view, "已调整当前 Pi 任务方向", "Updated the direction of the current Pi task.");
@@ -658,6 +662,11 @@ async function startPreparedQueuedTurnItemSafely(
     new Notice(uiText(view, `任务收口失败：${message}`, `Task finalization failed: ${message}`));
     return "failed";
   }
+}
+
+/** Shared preflight for a list draft before creating its durable Conversation. */
+export async function validateTaskTurnBeforeCreation(view: CodexViewTurnContext, item: QueuedTurnItem): Promise<boolean> {
+  return await prepareTurnProviderModel(view, item, false);
 }
 
 async function prepareTurnProviderModel(
@@ -1442,12 +1451,44 @@ function applyPiChatLiveProjection(
   );
   view.setPendingInteraction(
     session.id,
-    projection.pendingInteraction ?? null,
+    piChatPendingInteraction(view, session, projection),
     projection.productRunId
   );
   return changedEvent
     ? changedPiChatMessageForRuntimeEvent(session.messages, changedEvent)
     : undefined;
+}
+
+/** The live approval broker is authoritative; a durable pending Ticket can outlive its decision. */
+function piChatPendingInteraction(
+  view: CodexViewTurnContext,
+  session: StoredSession,
+  projection: Readonly<PiChatUiViewModel>
+): Readonly<import("../../types/conversation-turn").EchoInkTurnInteraction> | null {
+  const runId = projection.productRunId;
+  const projected = projection.pendingInteraction;
+  if (projected && (projected.status === "pending" || projected.status === "submitting")) return projected;
+  // Approval readback rebuilds from the durable Branch. Retain a simultaneous
+  // structured Question only while its actual one-shot broker still accepts it.
+  const current = view.plugin.getConversationRunService?.().pendingInteractions?.get(session.id);
+  if (current?.kind === "question" && current.turnId === runId && (current.status === "pending" || current.status === "submitting")
+    && view.plugin.piTurnInteractionBinding?.({ conversationId: session.id, piSessionId: projection.piSessionId,
+      productRunId: current.turnId, interactionId: current.interactionId })) return current;
+  if (runId && view.plugin.piAgentApprovalBinding) {
+    for (const message of projection.messages.slice().reverse()) {
+      if (message.runId !== runId) continue;
+      const toolCallId = piToolCallIdFromProjectedMessageId(message.id);
+      if (!toolCallId) continue;
+      const binding = view.plugin.piAgentApprovalBinding({ conversationId: session.id, piSessionId: projection.piSessionId, productRunId: runId, toolCallId });
+      if (!binding) continue;
+      return { kind: "confirmation", interactionId: `pi-agent-approval:${encodeURIComponent(toolCallId)}`,
+        conversationId: session.id, piSessionId: projection.piSessionId, turnId: runId, toolCallId,
+        status: "pending", createdAt: message.createdAt, updatedAt: projection.updatedAt,
+        // The real parameters remain exclusively in the existing approval binding/card.
+        preview: uiText(view, "是否批准本次操作？", "Approve this operation?") };
+    }
+  }
+  return projected ?? null;
 }
 
 function changedPiChatMessageForRuntimeEvent(

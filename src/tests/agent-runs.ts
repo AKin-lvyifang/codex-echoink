@@ -1,10 +1,11 @@
+import { PiAgentApprovalBroker } from "../plugin/pi-agent-approval-broker";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createAgentSession, ModelRuntime, SettingsManager, SessionManager, CURRENT_SESSION_VERSION, VERSION } from "@earendil-works/pi-coding-agent";
-import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
-import { fauxProvider, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
-import { createControlledVaultResourceLoader } from "../harness/pi-native/controlled-resources";
+import { createAgentSession, defineTool, ModelRuntime, SettingsManager, SessionManager, CURRENT_SESSION_VERSION, VERSION } from "@earendil-works/pi-coding-agent";
+import { InMemoryCredentialStore, InMemoryModelsStore, Type } from "@earendil-works/pi-ai";
+import { fauxProvider, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { createControlledVaultResourceLoader, createControlledPiToolRegistration } from "../harness/pi-native/controlled-resources";
 import { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
 import { FileProductRunStore } from "../harness/pi-native/file-product-run-store";
 import { PiNativeConversationRuntime } from "../harness/pi-native/pi-native-conversation-runtime";
@@ -14,7 +15,7 @@ import type { QueuedTurnItem } from "../ui/turn-queue";
 import { applyConversationTaskMetadata } from "../agents/task-metadata";
 
 export async function runAgentRunTests(root: string, createHost: (catalog: any, runtime: any, settings: any) => any, createView: (plugin: any, detach: () => void) => any): Promise<void> {
-  const fixture = await createFixture(root, createHost);
+  const fixture = await createAgentRunFixture(root, createHost);
   try {
     await metadataInterleaving(fixture);
     await viewLifetimeAndConcurrency(fixture, createView);
@@ -26,10 +27,11 @@ export async function runAgentRunTests(root: string, createHost: (catalog: any, 
   } finally {
     await fixture.service.dispose();
     await fixture.runtime.shutdown();
+    fixture.approvalBroker.dispose();
   }
 }
 
-async function createFixture(root: string, createHost: (catalog: any, runtime: any, settings: any) => any) {
+export async function createAgentRunFixture(root: string, createHost: (catalog: any, runtime: any, settings: any) => any) {
   const storage = path.join(root, "pi-store");
   await mkdir(storage, { recursive: true });
   const catalog = new FileConversationCatalog({ storageRootPath: storage, vaultId: "agent-runs" });
@@ -39,6 +41,10 @@ async function createFixture(root: string, createHost: (catalog: any, runtime: a
   const gates = new Map<string, ReturnType<typeof deferred>>();
   const started = new Map<string, ReturnType<typeof deferred>>();
   const failures = new Set<string>();
+  const approvalBroker = new PiAgentApprovalBroker();
+  const approvalRequests = new Map<string, { conversationId: string; piSessionId: string; productRunId: string; toolCallId: string }>();
+  const approvalAfterDecision = new Map<string, ReturnType<typeof deferred>>();
+  const approvalEffects = new Map<string, number>();
   let linkingStop: (origins: readonly string[]) => Promise<void> = async () => undefined;
   const settings = normalizeSettingsData(structuredClone(DEFAULT_SETTINGS)).settings;
   settings.agentRegistry.legacyMigrationVersion = 1;
@@ -73,14 +79,28 @@ async function createFixture(root: string, createHost: (catalog: any, runtime: a
           try { await Promise.race([gate.promise, aborted.promise]); } finally { options?.signal?.removeEventListener("abort", onAbort); }
         }
         if (failures.has(task)) throw new Error("offline_fixture_provider_failed");
+        if (task.startsWith("approval-") && responses++ === 0) return fauxAssistantMessage(
+          fauxToolCall("approval_fixture_write", {}, { id: `approval-tool-${task}` }), { stopReason: "toolUse" });
         return fauxAssistantMessage(`RESULT:${task}:${++responses} ` + "Original task evidence. ".repeat(150));
       }));
       const models = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), modelsPath: null, allowModelNetwork: false });
       models.registerNativeProvider(faux.provider);
       const selected = faux.getModel();
-      const { session } = await createAgentSession({ cwd: root, agentDir: root, modelRuntime: models, model: selected, noTools: "all", sessionManager: input.sessionManager,
+      const approvalTool = defineTool({ name: "approval_fixture_write", label: "Approval fixture write", description: "Wait for a real broker decision in the synthetic fixture.", parameters: Type.Object({}),
+        execute: async (toolCallId, _args, signal) => {
+          const identity = { ...input.currentToolExecutionContext(), toolCallId };
+          approvalRequests.set(task, identity);
+          const approved = await approvalBroker.waitForDecision({ ...identity, requestId: `request-${identity.productRunId}-${toolCallId}`,
+            target: JSON.stringify({ path: `outputs/${task}.md` }), preview: JSON.stringify({ content: "RAW-APPROVAL-ARGUMENTS" }), signal });
+          await approvalAfterDecision.get(task)?.promise;
+          if (approved) approvalEffects.set(task, (approvalEffects.get(task) ?? 0) + 1);
+          return { content: [{ type: "text" as const, text: approved ? "approved" : "rejected" }], details: { approved } };
+        } });
+      const { session } = await createAgentSession({ cwd: root, agentDir: root, modelRuntime: models, model: selected,
+        ...(task.startsWith("approval-") ? createControlledPiToolRegistration([approvalTool]) : { noTools: "all" as const }), sessionManager: input.sessionManager,
         settingsManager: SettingsManager.inMemory({ defaultProvider: selected.provider, defaultModel: selected.id, defaultThinkingLevel: "off", compaction: { enabled: true, reserveTokens: 512, keepRecentTokens: 128 }, retry: { enabled: false }, packages: [], extensions: [], skills: [], prompts: [], themes: [], enableAnalytics: false }),
         resourceLoader: await createControlledVaultResourceLoader({ vaultRoot: root, systemPrompt: `Offline task ${task}.` }) });
+      if (task.startsWith("approval-")) session.setActiveToolsByName(["approval_fixture_write"]);
       sessions.set(task, session); return { session };
     }
   });
@@ -100,7 +120,8 @@ async function createFixture(root: string, createHost: (catalog: any, runtime: a
     submitPiChat: (request: any) => runtime.submit(request),
     readPiConversationProjection: (id: string) => runtime.readProjection(id),
     subscribePiRun: (id: string, listener: any) => runtime.subscribeProductRun(id, listener),
-    subscribePiAgentApproval: () => ({ unsubscribe() {} }),
+    subscribePiAgentApproval: (identity: any, listener: () => void) => approvalBroker.subscribeRun(identity, listener),
+    piAgentApprovalBinding: (identity: any) => approvalBroker.bindingFor(identity),
     isPiProductionRun: () => true, releasePiProductionRun: (id: string) => runtime.releaseProductRun(id),
     releasePiConversationIfInactive: async () => undefined,
     releasePiConversation: (id: string) => runtime.releaseConversation(id),
@@ -110,9 +131,10 @@ async function createFixture(root: string, createHost: (catalog: any, runtime: a
   const service: ConversationRunService = plugin.getConversationRunService();
   const item = (task: string, text = `PRIVATE-${task}`): QueuedTurnItem => ({ id: `queued-${task}-${Date.now()}`, sessionId: task, text, attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
     turnOptions: { providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: model.id, reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false } });
-  return { root, catalog, productRuns, runtime, plugin, settings, service, sessions, requests, gates, started, failures, item, dataPath, setLinkingStop: (stop: typeof linkingStop) => { linkingStop = stop; } };
+  return { root, catalog, productRuns, runtime, plugin, settings, service, sessions, requests, gates, started, failures, item, dataPath,
+    approvalBroker, approvalRequests, approvalAfterDecision, approvalEffects, setLinkingStop: (stop: typeof linkingStop) => { linkingStop = stop; } };
 }
-type Fixture = Awaited<ReturnType<typeof createFixture>>;
+type Fixture = Awaited<ReturnType<typeof createAgentRunFixture>>;
 
 async function metadataInterleaving(f: Fixture): Promise<void> {
   const original = (await f.catalog.get("A"))!;
@@ -233,11 +255,17 @@ async function deletionStopsBeforeHandoff(f: Fixture): Promise<void> {
   assert.equal(await flight, "cancelled");
   const after = (await f.catalog.get("delete-task"))!;
   assert.equal(after.agentId, "sol"); assert.equal(after.piSessionId, entryBefore.piSessionId);
+  assert.equal(after.taskTransfers?.at(-1)?.fromName, "整理员");
+  assert.ok(after.taskTransfers?.at(-1)?.at);
+  assert.equal(JSON.stringify((await f.runtime.readProjection("delete-task")).messages).includes("taskTransfers"), false);
+  f.gates.delete("delete-task");
+  assert.equal(await f.service.run(f.item("delete-task", "resume original task after handoff")), "completed");
+  assert.equal(f.requests.get("delete-task")!.at(-1)!.includes("taskTransfers"), false, "Catalog display events never enter the actual model request");
   assert.equal((await f.catalog.get("late-colleague-judge"))!.agentId, "sol", "Handoff must include internal Conversations created by the just-drained business write");
   assert.equal(f.settings.agentRegistry.agents.some(agent => agent.id === "colleague"), false);
   assert.equal(f.service.turnQueue.isSessionQueuePaused("delete-task"), true);
   const runs = await f.productRuns.list("delete-task");
-  assert.equal(runs.length, 1); assert.equal(runs[0].agentSnapshot!.agentId, "colleague"); assert.equal(runs[0].terminalState, "cancelled");
+  assert.equal(runs.length, 2); assert.equal(runs[0].agentSnapshot!.agentId, "colleague"); assert.equal(runs[0].terminalState, "cancelled");
   assert.ok((await f.runtime.readProjection("delete-task")).messages.some(message => message.text.includes("DELETE-TASK-CONTEXT")));
   await assert.rejects(f.plugin.deleteAgent("sol"), /cannot_be_deleted/);
 }

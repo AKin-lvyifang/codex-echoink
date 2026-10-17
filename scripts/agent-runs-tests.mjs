@@ -15,18 +15,19 @@ const runRoot = await mkdtemp(path.join(fixture, "run-agent-runs-"));
 try {
   const source = ts.createSourceFile("main.ts", await readFile(path.join(root, "src/main.ts"), "utf8"), ts.ScriptTarget.Latest, true);
   const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CodexForObsidianPlugin");
-  const members = ["piTaskMetadataWriteTails", "piTaskMetadataSyncTail", "conversationRunService", "setPiConversationTaskMetadata", "syncPiConversationTaskMetadata", "getConversationRunService", "deleteAgent"].map(name => {
+  const members = ["piTaskMetadataWriteTails", "piTaskMetadataSyncTail", "conversationRunService", "setPiConversationTaskMetadata", "syncPiConversationTaskMetadata", "getConversationRunService", "consumeAcceptedTaskComposerDraft", "deleteAgent"].map(name => {
     const member = declaration.members.find(member => member.name?.getText(source) === name);
     if (!member) throw new Error(`Missing production member ${name}`);
     return member.getText(source);
   });
   const viewSource = ts.createSourceFile("codex-view.ts", await readFile(path.join(root, "src/ui/codex-view.ts"), "utf8"), ts.ScriptTarget.Latest, true);
   const viewClass = viewSource.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CodexView");
-  const viewMembers = ["onClose", "pendingInteractionsBySession"].map(name => viewClass.members.find(member => member.name?.getText(viewSource) === name).getText(viewSource));
+  const viewMembers = ["onClose", "pendingInteractionsBySession", "settleTaskUiReady"].map(name => viewClass.members.find(member => member.name?.getText(viewSource) === name).getText(viewSource));
   const output = path.join(runRoot, "agent-runs.mjs");
   await esbuild.build({ stdin: { contents: [
     'import { runAgentRunTests } from "./src/tests/agent-runs";',
     'import { ConversationRunService } from "./src/plugin/conversation-run-service";',
+    'import { consumeAcceptedTaskDraft } from "./src/agents/task-workspace";',
     'import { removeAgentDefinition } from "./src/agents/registry";',
     'import { GENERAL_ASSISTANT_ID } from "./src/agents/types";',
     'import { applyConversationTaskMetadata, normalizeConversationTaskMetadata, patchConversationTaskMetadata } from "./src/agents/task-metadata";',

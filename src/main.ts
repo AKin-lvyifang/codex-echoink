@@ -1,6 +1,7 @@
+import { consumeAcceptedTaskDraft } from "./agents/task-workspace";
 import { ConversationRunService } from "./plugin/conversation-run-service";
-import { GENERAL_ASSISTANT_ID } from "./agents/types";
-import { removeAgentDefinition } from "./agents/registry";
+import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "./agents/types";
+import { normalizeAgentRegistry, removeAgentDefinition } from "./agents/registry";
 import { patchConversationTaskMetadata, type ConversationTaskMetadataPatch } from "./agents/task-metadata";
 import { registerKnowledgePrivateRoot } from "./knowledge-base/root-paths";
 import { applyConversationTaskMetadata, normalizeConversationTaskMetadata } from "./agents/task-metadata";
@@ -19,7 +20,7 @@ import type { LifestyleKind } from "./lifestyle/settings";
 import type { CodexSettingTab } from "./settings/settings-tab";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { Notice, Plugin } from "obsidian";
+import { Notice, Platform, Plugin } from "obsidian";
 import { DeveloperModeAccess } from "./plugin/developer-mode/access";
 import { DeveloperModeService } from "./plugin/developer-mode/service";
 import { MemoryDeveloperBackups, type DeveloperMemoryChange } from "./plugin/developer-mode/memory-backups";
@@ -917,7 +918,16 @@ export default class CodexForObsidianPlugin extends Plugin {
     return await (await this.ensurePiLocalData()).catalog.get(conversationId);
   }
   getConversationRunService(): ConversationRunService {
-    return this.conversationRunService ??= new ConversationRunService(this);
+    if (!this.conversationRunService) {
+      this.conversationRunService = new ConversationRunService(this);
+      // Owned by the same service: dispose() clears this subscription on plugin unload.
+      this.conversationRunService.subscribe({ refresh() {}, isTaskVisible: () => false,
+        clearAcceptedDraft: item => this.consumeAcceptedTaskComposerDraft(item) });
+    }
+    return this.conversationRunService;
+  }
+  private consumeAcceptedTaskComposerDraft(item: Parameters<typeof consumeAcceptedTaskDraft>[2]): void {
+    if (this.settings.taskWorkspace) consumeAcceptedTaskDraft(this.settings.taskWorkspace, item.sessionId, item);
   }
   /** Import unstamped P1 projections once. Afterwards Catalog only hydrates settings. */
   async syncPiConversationTaskMetadata(): Promise<void> {
@@ -942,7 +952,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async setPiConversationTaskMetadata(
     conversationId: string,
     patch: ConversationTaskMetadataPatch,
-    options: { importOnlyIfUnstamped?: boolean } = {},
+    options: { importOnlyIfUnstamped?: boolean; markReadThrough?: number; onlyIfStatusMissing?: boolean } = {},
     metadataUpdatedAt = Date.now()
   ): Promise<Readonly<PiConversationCatalogEntry>> {
     const submitted = structuredClone(patch);
@@ -951,10 +961,11 @@ export default class CodexForObsidianPlugin extends Plugin {
       const localData = await this.ensurePiLocalData();
       const current = await localData.catalog.get(conversationId);
       if (!current) throw new Error(`Conversation ${conversationId} not found`);
-      if (options.importOnlyIfUnstamped && current.taskMetadataUpdatedAt !== undefined) {
+      if (options.onlyIfStatusMissing && current.taskStatus !== undefined || options.importOnlyIfUnstamped && current.taskMetadataUpdatedAt !== undefined) {
         for (const shell of this.settings.sessions) if (shell.id === conversationId) applyConversationTaskMetadata(shell, current);
         return current;
       }
+      if (options.markReadThrough !== undefined && current.unreadAnswerAt !== undefined && current.unreadAnswerAt > options.markReadThrough) delete submitted.unreadAnswerAt;
       const metadata = patchConversationTaskMetadata(current, submitted);
       const entry = this.piRuntimeBundle
         ? await this.piRuntimeBundle.runtime.setConversationTaskMetadata(conversationId, metadata, current.taskMetadataUpdatedAt, metadataUpdatedAt)
@@ -967,6 +978,64 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.piTaskMetadataWriteTails.set(conversationId, write);
     try { return await write; }
     finally { if (this.piTaskMetadataWriteTails.get(conversationId) === write) this.piTaskMetadataWriteTails.delete(conversationId); }
+  }
+  async saveAgentDefinition(agent: AgentDefinition, moduleIds: readonly AgentModuleId[]): Promise<void> {
+    const previous = this.settings.agentRegistry;
+    const candidate = normalizeAgentRegistry({ ...previous, agents: previous.agents.some(entry => entry.id === agent.id) ? previous.agents.map(entry => entry.id === agent.id ? { ...agent, identityEdited: true } : entry) : [...previous.agents, { ...agent, identityEdited: true }] });
+    if (!candidate.agents.some(entry => entry.id === agent.id)) throw new Error("agent_definition_invalid");
+    for (const id of AGENT_MODULE_IDS) candidate.moduleOwners[id] = moduleIds.includes(id)
+      ? agent.id : previous.moduleOwners[id] === agent.id ? GENERAL_ASSISTANT_ID : previous.moduleOwners[id];
+    this.settings.agentRegistry = candidate;
+    try { await this.saveSettings(true); }
+    catch (error) { this.settings.agentRegistry = previous; throw error; }
+    this.getCodexView()?.refreshAgentTasks();
+  }
+  async listAgentTaskEntries(): Promise<Readonly<PiConversationCatalogEntry>[]> {
+    const entries = (await this.listPiConversations()).filter(entry => entry.status !== "deleted");
+    const localData = await this.ensurePiLocalData();
+    const visible: Readonly<PiConversationCatalogEntry>[] = [];
+    for (const entry of entries) {
+      if (entry.taskStatus) { visible.push(entry); continue; }
+      const runs = await localData.productRuns.list(entry.conversationId);
+      const last = [...runs].sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0];
+      if (!last) {
+        try {
+          const projection = await localData.readConversationProjection(entry.conversationId);
+          if (!projection.messages.some(message => message.role === "user")) continue;
+        } catch {
+          visible.push(await this.setPiConversationTaskMetadata(entry.conversationId, {
+            taskStatus: "interrupted", taskInterruptedAt: entry.updatedAt, pendingResponse: undefined
+          }, { onlyIfStatusMissing: true }));
+          continue;
+        }
+      }
+      const active = this.conversationRunService?.runs.get(entry.conversationId);
+      visible.push(await this.setPiConversationTaskMetadata(entry.conversationId,
+        active?.running ? { taskStatus: entry.pendingResponse ? "waiting" : "running", taskStartedAt: last?.createdAt ?? entry.updatedAt }
+          : last?.terminalState === "completed" && !entry.pendingResponse
+            ? { taskStatus: "completed", taskCompletedAt: last.settledAt ?? last.updatedAt }
+            : { taskStatus: "interrupted", taskInterruptedAt: last?.settledAt ?? last?.updatedAt ?? entry.updatedAt, pendingResponse: undefined }, { onlyIfStatusMissing: true }));
+    }
+    return visible;
+  }
+  async getAgentDeleteCounts(agentId: string): Promise<{ total: number; running: number }> {
+    const tasks = (await this.listAgentTaskEntries()).filter(entry => (entry.agentId ?? GENERAL_ASSISTANT_ID) === agentId);
+    const service = this.getConversationRunService();
+    return { total: tasks.length, running: tasks.filter(entry => {
+      const run = service.runs.get(entry.conversationId);
+      return run?.running || run?.queueStartInProgress || !!run?.flight || this.piSubmittingConversations.has(entry.conversationId)
+        || [...this.piRunConversations.values()].includes(entry.conversationId);
+    }).length };
+  }
+  async openTaskDetail(taskId: string): Promise<void> {
+    await this.activateView();
+    const view = this.getCodexView();
+    if (view && await view.waitForTaskUiReady()) await view.openTaskDetail(taskId);
+  }
+  async openAgentTaskList(agentId: string, prefill?: string): Promise<boolean> {
+    await this.activateView();
+    const view = this.getCodexView();
+    return view && await view.waitForTaskUiReady() ? await view.openAgentTaskList(agentId, prefill) : false;
   }
   async deleteAgent(agentId: string): Promise<void> {
     if (agentId === GENERAL_ASSISTANT_ID) throw new Error("general_assistant_cannot_be_deleted");
@@ -989,7 +1058,12 @@ export default class CodexForObsidianPlugin extends Plugin {
       const known = new Set(tasks.map(task => task.conversationId));
       const late = (await localData.catalog.list()).filter(entry => entry.agentId === agentId && entry.status !== "deleted" && !known.has(entry.conversationId));
       if (late.length) { await stopForHandoff(late); tasks.push(...late); }
-      for (const task of tasks) await this.setPiConversationTaskMetadata(task.conversationId, { agentId: GENERAL_ASSISTANT_ID });
+      const fromName = this.settings.agentRegistry.agents.find(agent => agent.id === agentId)!.name;
+      const at = Date.now();
+      for (const task of tasks) await this.setPiConversationTaskMetadata(task.conversationId, {
+        agentId: GENERAL_ASSISTANT_ID,
+        taskTransfers: [...(task.taskTransfers ?? []), { fromAgentId: agentId, fromName, at }]
+      });
       const previous = this.settings.agentRegistry;
       this.settings.agentRegistry = removeAgentDefinition(previous, agentId);
       try { await this.saveSettings(true); }
@@ -1450,6 +1524,12 @@ export default class CodexForObsidianPlugin extends Plugin {
    * EchoInk / bot 图标与无模板状态，绝不在消息渲染时读磁盘。
    */
   getEchoInkAgentIdentityView(): AgentIdentityView {
+    if (!Platform.isMobile && this.settings.agentRegistry) {
+      const page = this.settings.taskWorkspace.page;
+      const id = page.kind === "list" ? page.agentId : this.settings.sessions.find(session => session.id === page.taskId)?.agentId;
+      const agent = this.settings.agentRegistry.agents.find(agent => agent.id === (id ?? GENERAL_ASSISTANT_ID)) ?? this.settings.agentRegistry.agents[0];
+      return Object.freeze({ displayName: agent.name, avatarUrl: resolveAgentAvatarUrl(agent.avatar), personalityTemplateId: null });
+    }
     const system = this.cognitiveSystem;
     if (!system) {
       return Object.freeze({

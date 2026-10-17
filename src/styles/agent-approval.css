@@ -1,0 +1,117 @@
+/* Readable approval body; original state and action buttons stay on their existing card. */
+.codex-ai-elements-confirmation.has-readable-approval.codex-smooth-ai-approval-card {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 0;
+  max-height: min(46vh, 420px);
+  overflow: hidden;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-header {
+  flex-shrink: 0;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-notices {
+  display: grid;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: var(--echoink-conversation-space-1);
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-presentation,
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-presentation-section,
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-field {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--echoink-conversation-space-1);
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-presentation {
+  gap: var(--echoink-conversation-space-3);
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-action,
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-field-value {
+  color: var(--text-normal);
+  font-family: var(--font-interface);
+  font-size: var(--echoink-conversation-font-body);
+  font-weight: 400;
+  line-height: var(--echoink-conversation-line-body);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  min-width: 0;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-field-value {
+  max-height: 180px;
+  overflow: auto;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-field-label {
+  color: var(--text-muted);
+  font-size: var(--echoink-conversation-font-label-primary);
+  line-height: var(--echoink-conversation-line-label);
+  overflow-wrap: anywhere;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-notice {
+  color: var(--text-warning);
+  font-size: var(--echoink-conversation-font-body);
+  line-height: var(--echoink-conversation-line-body);
+  overflow-wrap: anywhere;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-technical-details {
+  min-width: 0;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-technical-details > summary {
+  min-height: 30px;
+  padding-block: 4px;
+  border-radius: var(--echoink-conversation-radius-sm);
+  color: var(--text-muted);
+  font-size: var(--echoink-conversation-font-label-primary);
+  line-height: var(--echoink-conversation-line-label);
+  cursor: pointer;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-technical-details > .codex-approval-field + .codex-approval-field {
+  margin-top: var(--echoink-conversation-space-2);
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-technical-details .codex-approval-field-value {
+  font-family: var(--font-monospace);
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-actions {
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve {
+  background: var(--echoink-theme-accent, var(--interactive-accent)) !important;
+  color: var(--echoink-theme-on-accent, var(--text-on-accent)) !important;
+}
+.echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:is(:hover, :focus-visible) {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-normal) !important;
+}
+
+.codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button:focus-visible,
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-presentation:focus-visible,
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-field-value:focus-visible,
+.codex-ai-elements-confirmation.has-readable-approval .codex-approval-technical-details > summary:is(:hover, :focus-visible) {
+  outline: none;
+  box-shadow: none;
+  background: var(--background-modifier-hover);
+}

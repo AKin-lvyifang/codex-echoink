@@ -22,7 +22,7 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
     const name = typeof agent?.name === "string" ? normalizeAgentDisplayName(agent.name) : null;
     if (!agent || !id || !name || seen.has(id)) continue;
     seen.add(id);
-    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, position: text(agent.position), styleId: normalizeAgentStyleId(agent.styleId),
+    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, position: text(agent.position), ...(agent.identityEdited === true ? { identityEdited: true } : {}), styleId: normalizeAgentStyleId(agent.styleId),
       ...(id === GENERAL_ASSISTANT_ID
         ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds) }
         : { capabilityIds: normalizeCapabilityIds(agent.capabilityIds) }) });
@@ -30,7 +30,7 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
   if (!seen.has(GENERAL_ASSISTANT_ID)) agents.unshift(fallback.agents[0]);
   const owners = record(raw.moduleOwners);
   return {
-    schemaVersion: 1, legacyMigrationVersion: raw.legacyMigrationVersion === 1 ? 1 : 0, agents,
+    schemaVersion: 1, legacyMigrationVersion: raw.legacyMigrationVersion === 1 ? 1 : 0, ...(raw.legacyIdentitySyncVersion === 1 ? { legacyIdentitySyncVersion: 1 as const } : {}), agents,
     moduleOwners: Object.fromEntries(AGENT_MODULE_IDS.map(id => [id, agents.some(agent => agent.id === owners?.[id]) ? owners![id] : GENERAL_ASSISTANT_ID])) as AgentRegistry["moduleOwners"]
   };
 }
