@@ -339,6 +339,21 @@ export async function resolvePiProductionSkillById(
   return await skillRuntime.resolveById(skillId);
 }
 
+export async function selectPiProductionSkillForTask(
+  plugin: PiProductionPluginHost,
+  skillRuntime: Pick<SkillRuntimeCoordinator, "selectForTask">,
+  catalog: FileConversationCatalog,
+  input: Readonly<{ text: string; conversationId: string }>
+) {
+  // Catalog refresh inspects this coordinator; finish it before selection holds
+  // the mutation queue so its permission callback cannot re-enter that queue.
+  const context = await currentAgentCapabilityContext(plugin, catalog, input.conversationId);
+  return await skillRuntime.selectForTask({
+    text: input.text,
+    isSkillAllowed: id => checkAgentSkill(context, id).allowed
+  });
+}
+
 /** Builds the same configured Pi model shape used by AgentSession before a
  * Provider transaction is allowed to persist or replace the active Runtime. */
 export function createPiProductionModelDefinition(
@@ -528,9 +543,7 @@ export async function createPiProductionRuntimeBundle(
       skills: {
         selectForTask: async ({ text, catalog: entry }) => {
           if (!entry) throw new Error("agent_capability_catalog_required");
-          return await skillRuntime.selectForTask({ text,
-            isSkillAllowed: async id => checkAgentSkill(await currentAgentCapabilityContext(plugin, catalog, entry.conversationId), id).allowed
-          });
+          return await selectPiProductionSkillForTask(plugin, skillRuntime, catalog, { text, conversationId: entry.conversationId });
         },
         resolveById: async ({ id, catalog: entry }) => {
           if (!entry) throw new Error("agent_capability_catalog_required");

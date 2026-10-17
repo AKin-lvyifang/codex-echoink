@@ -3,7 +3,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { AGENT_MODULE_CAPABILITIES, checkAgentCapability, checkAgentSkill, checkAgentSkillPath, checkAgentTool, requireAgentCapability, resolveAgentRunSnapshot, vaultSkillCapabilityId, mcpToolCapabilityId, type AgentCapabilityContext } from "../agents/capability-policy";
-import { createPiAgentCapabilityContext, createPiKnowledgeInlineExtension, createProductionPiKnowledgeRuntime, isPiMcpExternalOnly, isPiMcpToolCurrentlyAllowed, piMcpSchemaHasExecutableTarget, type PiProductionPluginHost } from "../plugin/pi-production-runtime-composition";
+import { createPiAgentCapabilityContext, createPiKnowledgeInlineExtension, createProductionPiKnowledgeRuntime, isPiMcpExternalOnly, isPiMcpToolCurrentlyAllowed, piMcpSchemaHasExecutableTarget, selectPiProductionSkillForTask, type PiProductionPluginHost } from "../plugin/pi-production-runtime-composition";
+import { EchoInkResourceCatalogService } from "../plugin/resource-catalog-service";
 import { createControlledPiToolRegistration, createControlledVaultResourceLoader } from "../harness/pi-native/controlled-resources";
 import { SkillRuntimeCoordinator } from "../harness/resources/skill-runtime";
 import { loadVaultEchoInkResources } from "../resources/vault-resource-catalog";
@@ -41,6 +42,7 @@ import { createApiProviderConfig, createApiProviderModelConfig, activateApiProvi
 
 export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.ok(root && path.basename(root).startsWith("capabilities-run-"));
+  await productionSkillSelectionTests(path.join(root, "production-skill-selection"));
   await unrestrictedAgentCompatibility(path.join(root, "unrestricted-agent"));
   const fixture = await nativeJournalFixture(root);
   const settings = fixture.plugin.settings;
@@ -324,6 +326,52 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.equal(hiddenRetrieval, 0);
   console.log("PASS current-task controlled identity and blocked hidden Knowledge resource path");
   await linkingWriteAndHandoffTests(path.join(root, "linking-origin"));
+}
+
+async function productionSkillSelectionTests(root: string): Promise<void> {
+  const fixture = await nativeJournalFixture(root);
+  const skillRuntime = new SkillRuntimeCoordinator(root);
+  await skillRuntime.initialize();
+  const catalog = new FileConversationCatalog({ storageRootPath: path.join(root, "catalog-store"), vaultId: "skill-selection" });
+  await catalog.initialize();
+  const conversationId = "skill-selection-task";
+  await catalog.upsert({ conversationId, piSessionId: "skill-selection-session", vaultId: catalog.vaultId, title: "Skill selection", status: "active", defaultMemoryMode: "normal", agentId: "sol", createdAt: 1, updatedAt: 1 });
+  let scans = 0;
+  const resources = new EchoInkResourceCatalogService({
+    ...fixture.plugin,
+    getSkillRuntimeCoordinator: () => skillRuntime,
+    withEchoInkResourceMutation: async <T>(action: () => Promise<T>) => await action(),
+    saveEchoInkResourceMutation: async () => {}
+  });
+  const host = { ...fixture.plugin,
+    buildRuntimeEchoInkResourceCatalog: async () => {
+      scans++;
+      // The real service re-enters this same coordinator via inspectBuiltinSkills.
+      return await resources.buildRuntimeCatalog();
+    }
+  } as unknown as PiProductionPluginHost;
+  const select = async (text: string) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        selectPiProductionSkillForTask(host, skillRuntime, catalog, { text, conversationId }),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("production_skill_selection_timeout: resource scan and Skill selection must not wait on each other")), 3_000);
+        })
+      ]);
+    } finally { clearTimeout(timer); }
+  };
+  const ordinary = await select("请读取「原始资料（raw）/P2验收-输入.md」，只回复里面的代号和已确认决定。");
+  assert.equal(ordinary, null, "an ordinary file-read request completes without selecting a Skill");
+  assert.equal(scans, 1, "selection builds the real resource catalog once before entering the Skill queue");
+  assert.ok(fixture.plugin.settings.resources.catalog.some((resource: EchoInkResource) => resource.metadata?.resourceId === "knowledge-review" && resource.metadata?.fileStatus === "ready"), "the actual scan inspected builtin files on the shared coordinator");
+  const request = "请帮我做一次知识复盘。";
+  const selected = await select(request);
+  assert.ok(selected?.skills.some(skill => skill.id === "knowledge-review"), "a matching permitted Skill is selected through production wiring");
+  fixture.plugin.settings.agentRegistry.agents[0].disabledCapabilityIds = ["review"];
+  assert.equal(await select(request), null, "revoking the Agent capability denies the same Skill on the next selection");
+  assert.equal(scans, 3, "every selection refreshes current resources outside the Skill queue");
+  console.log("PASS production Skill selection with real catalog/coordinator: ordinary read completes, matching Skill selects, revoked capability denies");
 }
 
 async function unrestrictedAgentCompatibility(root: string): Promise<void> {
