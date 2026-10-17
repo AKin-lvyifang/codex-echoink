@@ -1,4 +1,7 @@
 import { Notice } from "obsidian";
+import path from "node:path";
+import { migrateLegacyAgentRegistry } from "../agents/migration";
+import { pluginDataDir } from "./plugin-data-paths";
 import type CodexForObsidianPlugin from "../main";
 import { prepareRawMessage, readRawText, writeRawText } from "../core/raw-message-store";
 import {
@@ -93,6 +96,15 @@ export class EchoInkSettingsStore {
     const emptyData = isEmptyEchoInkPluginData(data);
     const normalized = normalizeSettingsData(data);
     this.plugin.settings = normalized.settings;
+    const migratedRegistry = await migrateLegacyAgentRegistry(
+      this.plugin.settings.agentRegistry,
+      path.join(
+        pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()),
+        "pi-agent-product-v1", ".echoink"
+      )
+    );
+    const agentsMigrated = migratedRegistry !== this.plugin.settings.agentRegistry;
+    this.plugin.settings.agentRegistry = migratedRegistry;
     let bindingsMigrated = false;
     if (!this.plugin.settings.knowledgeBase.folderBindings) {
       const mobilePaths = (data as { mobileUi?: { knowledgePaths?: Partial<Record<"raw" | "wiki" | "inbox", string>> } } | null)?.mobileUi?.knowledgePaths;
@@ -104,7 +116,7 @@ export class EchoInkSettingsStore {
     this.settingsPersistenceRecoveryError = null;
     this.resourceMutationRecoveryError = null;
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
-    if (normalized.changed || knowledgeStatusRecovered || bindingsMigrated) {
+    if (normalized.changed || knowledgeStatusRecovered || bindingsMigrated || agentsMigrated) {
       await this.saveSettings(true, {
         flushConversationStore: false
       });
@@ -331,6 +343,7 @@ export class EchoInkSettingsStore {
       if (options.flushRawWrites !== false) {
         await this.flushRawWrites();
       }
+      await this.plugin.syncPiConversationTaskMetadata?.();
       const prepared = await this.prepareCanonicalSettingsCandidate();
       await this.persistSettingsDataCandidate(
         prepared.candidate,

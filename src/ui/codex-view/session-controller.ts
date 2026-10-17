@@ -1,4 +1,5 @@
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
+import { applyConversationTaskMetadata, normalizeConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
 import { emptySelectionDraft, restoreSelectionDraft } from "../../selection-ask/draft";
 import { Notice, type App } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
@@ -46,7 +47,7 @@ export interface CodexSessionHost {
   createSession(title?: string, options?: CreateSessionOptions): Promise<StoredSession>;
 }
 
-export interface CreateSessionOptions {
+export interface CreateSessionOptions extends ConversationTaskMetadata {
   readonly defaultSkillId?: string;
   readonly journalDirectory?: string;
 }
@@ -795,6 +796,7 @@ async function createSessionForSelection(
     const catalogEntry = await host.plugin.createPiConversation({
       conversationId,
       title,
+      ...normalizeConversationTaskMetadata(options),
       cwd: host.plugin.getVaultPath(),
       defaultMemoryMode: "normal",
       ...(options.defaultSkillId
@@ -946,6 +948,17 @@ function applyPiCatalogEntryToShell(
   shell: StoredSession,
   catalogEntry: Readonly<PiConversationCatalogEntry>
 ): StoredSession {
+  // Old catalogs lack a metadata revision. Retain their existing settings-only
+  // projection until the plugin imports it; stamped catalogs own all task fields.
+  if (catalogEntry.taskMetadataUpdatedAt !== undefined) {
+    // On the same revision, the shell may carry edits made during an awaited
+    // save. Preserve them for the next sync; a late older projection cannot win.
+    if (shell.taskMetadataUpdatedAt === undefined || catalogEntry.taskMetadataUpdatedAt > shell.taskMetadataUpdatedAt) {
+      applyConversationTaskMetadata(shell, catalogEntry);
+    }
+  } else {
+    applyConversationTaskMetadata(shell, { ...catalogEntry, ...shell });
+  }
   shell.title = catalogEntry.title;
   shell.piSessionId = catalogEntry.piSessionId;
   shell.defaultMemoryMode = catalogEntry.defaultMemoryMode;
@@ -1046,6 +1059,7 @@ function conversationShellFingerprint(host: CodexSessionHost): string {
     activeSessionId: host.plugin.settings.activeSessionId,
     sessions: host.plugin.settings.sessions.map((session) => ({
       id: session.id,
+      ...normalizeConversationTaskMetadata(session),
       title: session.title,
       piSessionId: session.piSessionId,
       defaultMemoryMode: session.defaultMemoryMode,

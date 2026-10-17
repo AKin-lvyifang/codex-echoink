@@ -1,4 +1,8 @@
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { defaultAgentRegistry, normalizeAgentRegistry } from "../agents/registry";
+import type { AgentRegistry } from "../agents/types";
+import { defaultTaskWorkspace, normalizeTaskWorkspace, type TaskWorkspace } from "../agents/task-workspace";
+import { normalizeConversationTaskMetadata } from "../agents/task-metadata";
 import { normalizeSelectionAskSettings } from "../selection-ask/settings";
 import { newId } from "../core/new-id";
 export { newId } from "../core/new-id";
@@ -544,6 +548,8 @@ export interface CodexForObsidianSettings {
   workspaceResources: WorkspaceResourceToggles;
   workspaceResourceCache: WorkspaceResourceCache;
   sessions: StoredSession[];
+  agentRegistry: AgentRegistry;
+  taskWorkspace: TaskWorkspace;
   activeSessionId: string;
 }
 
@@ -650,6 +656,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   },
   workspaceResourceCache: {},
   sessions: [],
+  agentRegistry: defaultAgentRegistry(),
+  taskWorkspace: defaultTaskWorkspace(),
   activeSessionId: ""
 };
 
@@ -764,6 +772,8 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     workspaceResources: normalizeWorkspaceResources(data?.workspaceResources),
     workspaceResourceCache: normalizeWorkspaceResourceCache(data?.workspaceResourceCache),
     sessions: currentProductData ? normalizeStoredSessions(data?.sessions) : [],
+    agentRegistry: normalizeAgentRegistry(data.agentRegistry),
+    taskWorkspace: normalizeTaskWorkspace(data.taskWorkspace),
     activeSessionId: currentProductData && typeof data?.activeSessionId === "string"
       ? data.activeSessionId
       : ""
@@ -831,6 +841,8 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
       || retiredDataPresent
       || legacyTokenPlanCustomPresent
       || JSON.stringify(data.englishDiary) !== JSON.stringify(settings.englishDiary)
+      || JSON.stringify(data.agentRegistry) !== JSON.stringify(settings.agentRegistry)
+      || JSON.stringify(data.taskWorkspace) !== JSON.stringify(settings.taskWorkspace)
   };
 }
 
@@ -1913,6 +1925,7 @@ function normalizeStoredSessions(value: unknown): StoredSession[] {
       );
       return {
         id,
+        ...normalizeConversationTaskMetadata(session),
         title: normalizeText(session.title, "新会话"),
         piSessionId,
         defaultMemoryMode: normalizeStoredSessionMemoryMode(session.defaultMemoryMode),

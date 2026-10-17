@@ -1,4 +1,5 @@
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../../knowledge-base/root-paths";
+import { normalizeConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
 import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { maintenanceRequestsAdviceOnly } from "../../knowledge-base/wiki-folder-names";
@@ -457,7 +458,7 @@ export interface ReadDurablePiConversationProjectionOptions {
   now?: () => number;
 }
 
-export interface CreatePiNativeConversationInput {
+export interface CreatePiNativeConversationInput extends ConversationTaskMetadata {
   conversationId: string;
   title: string;
   cwd: string;
@@ -492,6 +493,8 @@ export async function createPiConversation(
       piSessionId: durable.piSessionId,
       vaultId: catalog.vaultId,
       title: conversation.title,
+      ...normalizeConversationTaskMetadata(conversation),
+      taskMetadataUpdatedAt: createdAt,
       status: "active",
       defaultMemoryMode: conversation.defaultMemoryMode ?? "normal",
       ...(conversation.defaultSkillId
@@ -953,6 +956,8 @@ export class PiNativeConversationRuntime {
         piSessionId: durable.piSessionId,
         vaultId: this.catalog.vaultId,
         title,
+        agentId: source.catalog.agentId,
+        taskMetadataUpdatedAt: createdAt,
         status: "active",
         defaultMemoryMode: source.catalog.defaultMemoryMode,
         ...(source.catalog.defaultSkillId
@@ -1137,6 +1142,19 @@ export class PiNativeConversationRuntime {
       defaultMemoryMode,
       updatedAt: this.now()
     });
+    const active = this.active.get(conversationId);
+    if (active) active.catalog = updated;
+    return updated;
+  }
+
+  async setConversationTaskMetadata(
+    conversationId: string,
+    metadata: ConversationTaskMetadata,
+    expectedRevision: number | undefined,
+    updatedAt = this.now()
+  ): Promise<Readonly<PiConversationCatalogEntry>> {
+    this.assertReady();
+    const updated = await this.catalog.updateTaskMetadata(conversationId, metadata, expectedRevision, updatedAt);
     const active = this.active.get(conversationId);
     if (active) active.catalog = updated;
     return updated;

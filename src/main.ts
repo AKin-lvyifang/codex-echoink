@@ -1,4 +1,5 @@
 import { registerKnowledgePrivateRoot } from "./knowledge-base/root-paths";
+import { applyConversationTaskMetadata, applySavedTaskMetadataWithoutLosingEdits, normalizeConversationTaskMetadata, taskMetadataProjectionIsCurrent, type ConversationTaskMetadata } from "./agents/task-metadata";
 import { knowledgeFolderOrganizationPrompt } from "./knowledge-base/folder-bindings";
 import { PdfReadingController } from "./pdf-reading/controller";
 import { createPluginAccountService } from "./membership/plugin-service";
@@ -216,6 +217,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   >();
   private piActivatedConversationId: string | null = null;
   private piLocalData: PiLocalDataService | null = null;
+  private piTaskMetadataSyncTail: Promise<void> = Promise.resolve();
   private piLocalDataFlight: Promise<PiLocalDataService> | null = null;
   private cognitiveSystem: CognitiveSystem | null = null;
   private cognitiveSystemFlight: Promise<CognitiveSystem> | null = null;
@@ -894,7 +896,47 @@ export default class CodexForObsidianPlugin extends Plugin {
   async listPiConversations(
     statuses?: readonly PiConversationCatalogStatus[]
   ): Promise<Readonly<PiConversationCatalogEntry>[]> {
-    return (await (await this.ensurePiLocalData()).listConversations(statuses)).filter(entry => !entry.conversationId.startsWith("knowledge-linking-"));
+    const localData = await this.ensurePiLocalData();
+    await this.syncPiConversationTaskMetadata();
+    return (await localData.listConversations(statuses)).filter(entry => !entry.conversationId.startsWith("knowledge-linking-"));
+  }
+  /** Keep the data.json projection durable before refresh/archive can remove it. */
+  async syncPiConversationTaskMetadata(): Promise<void> {
+    const sync = this.piTaskMetadataSyncTail.then(async () => {
+      const localData = this.piLocalData;
+      if (!localData) return;
+      const entries = new Map((await localData.catalog.list()).map(entry => [entry.conversationId, entry]));
+      for (const shell of this.settings.sessions) {
+        const entry = entries.get(shell.id);
+        if (!entry || entry.status === "deleted" || (shell.piSessionId && shell.piSessionId !== entry.piSessionId)) continue;
+        if (!taskMetadataProjectionIsCurrent(shell, entry)) {
+          applyConversationTaskMetadata(shell, entry);
+          continue;
+        }
+        const metadata = normalizeConversationTaskMetadata(shell);
+        if (entry.taskMetadataUpdatedAt !== undefined && JSON.stringify(metadata) === JSON.stringify(normalizeConversationTaskMetadata(entry))) continue;
+        await this.setPiConversationTaskMetadata(shell.id, metadata, entry.taskMetadataUpdatedAt);
+      }
+    });
+    this.piTaskMetadataSyncTail = sync.catch(() => undefined);
+    await sync;
+  }
+  async setPiConversationTaskMetadata(
+    conversationId: string,
+    metadata: ConversationTaskMetadata,
+    expectedRevision: number | undefined,
+    metadataUpdatedAt = Date.now()
+  ): Promise<Readonly<PiConversationCatalogEntry>> {
+    const shellAtStart = this.settings.sessions.find(session => session.id === conversationId);
+    const before = shellAtStart ? normalizeConversationTaskMetadata(shellAtStart) : undefined;
+    const submitted = normalizeConversationTaskMetadata(metadata);
+    const localData = await this.ensurePiLocalData();
+    const entry = this.piRuntimeBundle
+      ? await this.piRuntimeBundle.runtime.setConversationTaskMetadata(conversationId, submitted, expectedRevision, metadataUpdatedAt)
+      : await localData.catalog.updateTaskMetadata(conversationId, submitted, expectedRevision, metadataUpdatedAt);
+    const shell = this.settings.sessions.find(session => session.id === conversationId);
+    if (shell && shell === shellAtStart && before) applySavedTaskMetadataWithoutLosingEdits(shell, entry, before);
+    return entry;
   }
   async createPiConversation(
     input: CreatePiNativeConversationInput
@@ -980,6 +1022,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     conversationId: string,
     status: PiConversationCatalogStatus
   ): Promise<Readonly<PiConversationCatalogEntry>> {
+    await this.syncPiConversationTaskMetadata();
     const runtime = this.piRuntimeBundle;
     if (status !== "active") {
       // A task waiting for its Production Runtime has not created an

@@ -1,5 +1,6 @@
 export type { KnowledgeLinkingProposal as PiKnowledgeLinkingProposal, KnowledgeLinkingFileResult as PiKnowledgeLinkingResult } from "../../knowledge-base/knowledge-linking-types";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ConversationTaskMetadata } from "../../agents/task-metadata";
 import type { PiPreparedInlineImage } from "../pi/contracts";
 import type { PiContextLedger } from "./pi-context-budget";
 import type {
@@ -29,7 +30,7 @@ export type PiConversationCatalogStatus = "active" | "archived" | "deleted";
 export const PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE =
   "当前模型不支持图片输入，请切换支持图片的模型。";
 
-export interface PiConversationCatalogEntry {
+export interface PiConversationCatalogEntry extends ConversationTaskMetadata {
   conversationId: string;
   piSessionId: string;
   vaultId: string;

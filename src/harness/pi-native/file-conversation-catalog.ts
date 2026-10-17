@@ -1,4 +1,5 @@
 import { unlink } from "node:fs/promises";
+import { CONVERSATION_TASK_METADATA_KEYS, normalizeConversationTaskMetadata, applyConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
 import * as path from "node:path";
 import type {
   PiConversationCatalogEntry,
@@ -72,6 +73,7 @@ export interface FileConversationCatalogOptions {
 
 export interface PiConversationCatalogListOptions {
   statuses?: readonly PiConversationCatalogStatus[];
+  agentId?: string;
 }
 
 export interface AdoptVerifiedRecoverySessionFileInput {
@@ -140,6 +142,7 @@ export class FileConversationCatalog {
       : null;
     return document.entries
       .filter((entry) => !statuses || statuses.has(entry.status))
+      .filter((entry) => !options.agentId || entry.agentId === options.agentId)
       .sort((left, right) =>
         right.updatedAt - left.updatedAt
         || left.conversationId.localeCompare(right.conversationId)
@@ -307,6 +310,25 @@ export class FileConversationCatalog {
         return { ...entry, status: normalizedStatus };
       }
     );
+  }
+
+  /** Optimistic projection writes cannot replace newer Catalog metadata. */
+  async updateTaskMetadata(
+    conversationId: string,
+    metadata: ConversationTaskMetadata,
+    expectedRevision: number | undefined,
+    metadataUpdatedAt = this.now()
+  ): Promise<Readonly<PiConversationCatalogEntry>> {
+    const metadataTimestamp = requireTimestamp(metadataUpdatedAt, "taskMetadataUpdatedAt");
+    // Metadata projections are not conversation activity (sorting/auto-archive).
+    return await this.updateEntry(conversationId, undefined, entry => {
+      if (entry.taskMetadataUpdatedAt !== expectedRevision) {
+        throw new PiNativeFileStoreError("invalid-input", "Conversation task metadata changed; reload before saving");
+      }
+      const next = applyConversationTaskMetadata(entry, metadata);
+      next.taskMetadataUpdatedAt = Math.max(metadataTimestamp, (expectedRevision ?? 0) + 1);
+      return next;
+    });
   }
 
   async sessionFile(conversationId: string): Promise<string | null>;
@@ -630,7 +652,7 @@ export class FileConversationCatalog {
 
   private async updateEntry(
     conversationId: string,
-    updatedAt: number,
+    updatedAt: number | undefined,
     update: (
       entry: PiConversationCatalogEntry
     ) => PiConversationCatalogEntry
@@ -639,7 +661,7 @@ export class FileConversationCatalog {
       conversationId,
       "conversationId"
     );
-    const normalizedUpdatedAt = requireTimestamp(updatedAt, "updatedAt");
+    const normalizedUpdatedAt = updatedAt === undefined ? undefined : requireTimestamp(updatedAt, "updatedAt");
     return await serializePiNativeFileWrite(
       this.storageRootPath,
       async () => {
@@ -649,14 +671,14 @@ export class FileConversationCatalog {
         );
         if (index < 0) throw notFound(normalizedConversationId);
         const existing = document.entries[index];
-        if (normalizedUpdatedAt < existing.updatedAt) {
+        if (normalizedUpdatedAt !== undefined && normalizedUpdatedAt < existing.updatedAt) {
           throw new PiNativeFileStoreError(
             "invalid-input",
             `Conversation ${normalizedConversationId} 的 updatedAt 不得回退`
           );
         }
         const candidate = normalizeCatalogEntry(
-          update({ ...cloneCatalogEntry(existing), updatedAt: normalizedUpdatedAt }),
+          update({ ...cloneCatalogEntry(existing), ...(normalizedUpdatedAt === undefined ? {} : { updatedAt: normalizedUpdatedAt }) }),
           this.vaultId,
           this.layout
         );
@@ -844,7 +866,7 @@ function normalizeCatalogEntry(
       "createdAt",
       "updatedAt"
     ],
-    ["sessionFile", "defaultSkillId", "journalDirectory"],
+    ["sessionFile", "defaultSkillId", "journalDirectory", ...CONVERSATION_TASK_METADATA_KEYS],
     "Conversation Catalog Entry"
   );
   const vaultId = requireNonEmptyString(object.vaultId, "entry.vaultId");
@@ -873,7 +895,21 @@ function normalizeCatalogEntry(
         object.journalDirectory,
         "entry.journalDirectory"
       );
+  const taskMetadata = normalizeConversationTaskMetadata(object);
+  for (const key of CONVERSATION_TASK_METADATA_KEYS) {
+    const raw = object[key];
+    const expected = taskMetadata[key];
+    const matches = key === "pendingResponse" && raw && expected
+      ? typeof raw === "object" && !Array.isArray(raw)
+        && Object.keys(raw).sort().join(",") === "kind,questionId,runId"
+        && Object.entries(raw).every(([name, value]) => value === (expected as unknown as Record<string, unknown>)[name])
+      : raw === expected;
+    if (raw !== undefined && !matches) {
+      throw new PiNativeFileStoreError("invalid-input", `Conversation task metadata ${key} invalid`);
+    }
+  }
   return {
+    ...taskMetadata,
     conversationId: requireNonEmptyString(
       object.conversationId,
       "entry.conversationId"
@@ -1321,6 +1357,7 @@ function cloneCatalogEntry(
   entry: PiConversationCatalogEntry
 ): PiConversationCatalogEntry {
   return {
+    ...normalizeConversationTaskMetadata(entry),
     conversationId: entry.conversationId,
     piSessionId: entry.piSessionId,
     vaultId: entry.vaultId,

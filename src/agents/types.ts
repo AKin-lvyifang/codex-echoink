@@ -1,0 +1,26 @@
+import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
+
+export const GENERAL_ASSISTANT_ID = "sol";
+export const AGENT_MODULE_IDS = [
+  "journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"
+] as const;
+export type AgentModuleId = typeof AGENT_MODULE_IDS[number];
+export type AgentStyleId = "execution" | "analysis" | "companion" | "creative";
+
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  avatar: AgentAvatarState;
+  position: string;
+  styleId: AgentStyleId;
+  /** Stable capability identities. Runtime admission is implemented separately. */
+  capabilityIds: string[];
+}
+
+export interface AgentRegistry {
+  schemaVersion: 1;
+  /** Set only after the one-time, read-only legacy inspection. */
+  legacyMigrationVersion: 0 | 1;
+  agents: AgentDefinition[];
+  moduleOwners: Record<AgentModuleId, string>;
+}
