@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { checkAgentCapability, checkAgentSkill, checkAgentSkillPath, checkAgentTool, requireAgentCapability, resolveAgentRunSnapshot, vaultSkillCapabilityId, mcpToolCapabilityId, type AgentCapabilityContext } from "../agents/capability-policy";
+import { AGENT_MODULE_CAPABILITIES, checkAgentCapability, checkAgentSkill, checkAgentSkillPath, checkAgentTool, requireAgentCapability, resolveAgentRunSnapshot, vaultSkillCapabilityId, mcpToolCapabilityId, type AgentCapabilityContext } from "../agents/capability-policy";
 import { createPiAgentCapabilityContext, createPiKnowledgeInlineExtension, createProductionPiKnowledgeRuntime, isPiMcpExternalOnly, isPiMcpToolCurrentlyAllowed, piMcpSchemaHasExecutableTarget, type PiProductionPluginHost } from "../plugin/pi-production-runtime-composition";
 import { createControlledPiToolRegistration, createControlledVaultResourceLoader } from "../harness/pi-native/controlled-resources";
 import { SkillRuntimeCoordinator } from "../harness/resources/skill-runtime";
@@ -41,6 +41,7 @@ import { createApiProviderConfig, createApiProviderModelConfig, activateApiProvi
 
 export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.ok(root && path.basename(root).startsWith("capabilities-run-"));
+  await unrestrictedAgentCompatibility(path.join(root, "unrestricted-agent"));
   const fixture = await nativeJournalFixture(root);
   const settings = fixture.plugin.settings;
   settings.journalDirectory = "journal";
@@ -253,8 +254,10 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   sol.disabledCapabilityIds = [];
   settings.resources.mcpConnections[mcpResource.id] = { transport: "stdio", command: "synthetic-not-launched", trusted: true, tools: [cached, pathTool], toolPolicies: { write_item: { enabled: true, trusted: true }, write_note: { enabled: true, trusted: true } } };
   assert.equal(isPiMcpExternalOnly(context(), descriptor), false);
+  sol.disabledCapabilityIds = ["knowledge"];
   assert.ok((await mcpSecurity.handleToolCall({ toolName: descriptor.name, toolCallId: "local-no-scope", input: { title: "finance record" } } as never, undefined))?.block);
   assert.ok((await mcpSecurity.handleToolCall({ toolName: descriptor.name, toolCallId: "local-forged-scope", input: { title: "finance record", path: "wiki/dummy.md" } } as never, undefined))?.block, "an undeclared argument cannot manufacture an authorized scope");
+  sol.disabledCapabilityIds = [];
   const localDescriptor = mcp.toolSecurity.find(tool => tool.toolName === "write_note")!;
   const localTool = mcp.customTools.find(tool => tool.name === localDescriptor.name)!;
   assert.equal(await mcpSecurity.handleToolCall({ toolName: localDescriptor.name, toolCallId: "local-permitted", input: { path: "wiki/mcp.md", content: "fixture" } } as never, undefined), undefined);
@@ -321,6 +324,88 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.equal(hiddenRetrieval, 0);
   console.log("PASS current-task controlled identity and blocked hidden Knowledge resource path");
   await linkingWriteAndHandoffTests(path.join(root, "linking-origin"));
+}
+
+async function unrestrictedAgentCompatibility(root: string): Promise<void> {
+  const fixture = await nativeJournalFixture(root);
+  const settings = fixture.plugin.settings;
+  const sol = settings.agentRegistry.agents[0];
+  const resource: EchoInkResource = { id: "manual:mcp-server:legacy-local", name: "Local compatibility", kind: "mcp-server", source: "manual", enabled: true, bridgeMode: "structured-tools", description: "Synthetic legacy MCP" };
+  const rawTools = [
+    { name: "add_todo", inputSchema: { type: "object", properties: { title: { type: "string" } }, required: ["title"] }, annotations: { readOnlyHint: false, destructiveHint: false } },
+    { name: "country", inputSchema: { type: "object", properties: { code: { type: "string" } }, required: ["code"] }, annotations: { readOnlyHint: true, destructiveHint: false } }
+  ];
+  settings.resources.mcpConnections[resource.id] = { transport: "stdio", command: "synthetic-not-launched", trusted: true,
+    tools: inspectMcpToolList(rawTools).tools,
+    toolPolicies: { add_todo: { enabled: true, trusted: true }, country: { enabled: true, trusted: true } } };
+  let agentId = sol.id;
+  let permission: PiWorkspaceAccess["permission"] = "workspace-write";
+  const context = () => createPiAgentCapabilityContext({ ...fixture.plugin, buildRuntimeEchoInkResourceCatalog: async () => [resource] } as unknown as PiProductionPluginHost,
+    agentId, [resource], { permission, mode: "agent", memoryMode: "normal" });
+  const target = (name: string, readOnly: boolean) => ({ resourceId: resource.id, toolName: name, readOnly });
+  const operations = () => [
+    checkAgentTool(context(), "vault_search", { query: "compatibility" }),
+    checkAgentTool(context(), "obsidian_cli", { command: "search", query: "compatibility" }),
+    checkAgentTool(context(), "add_todo", { title: "Synthetic task" }, undefined, target("add_todo", false)),
+    checkAgentTool(context(), "country", { code: "CN" }, undefined, { ...target("country", true), executable: true })
+  ];
+  assert.deepEqual(operations().map(result => result.allowed ? "allowed" : result.reason), ["allowed", "allowed", "allowed", "allowed"],
+    "default Sol preserves full Vault/CLI search, local pathless writes and read-only code parameters");
+  settings.agentRegistry.agents.push({ id: "all-modules", name: "All modules", avatar: { kind: "default" }, position: "Fixture", styleId: "analysis",
+    capabilityIds: [...AGENT_MODULE_CAPABILITIES, mcpToolCapabilityId(resource.id, "add_todo"), mcpToolCapabilityId(resource.id, "country")] });
+  agentId = "all-modules";
+  assert.ok(operations().every(result => result.allowed), "compatibility depends on module grants, not a hardcoded Sol bypass");
+  agentId = sol.id;
+  for (const capability of AGENT_MODULE_CAPABILITIES) {
+    sol.disabledCapabilityIds = [capability];
+    assert.deepEqual(operations().map(result => result.reason), ["scope_required", "scope_required", "scope_required", "scope_required"],
+      `removing ${capability} restores restricted-Agent scope checks`);
+  }
+  sol.disabledCapabilityIds = [];
+  const identity = { vaultId: "scope-compatibility", conversationId: "compatibility", piSessionId: "session", productRunId: "run" };
+  const storeRoot = path.join(root, "mcp-state");
+  const approvals = new FileApprovalTicketStore({ storageRootPath: storeRoot, vaultId: identity.vaultId });
+  const receipts = new FileDomainReceiptStore({ storageRootPath: storeRoot, vaultId: identity.vaultId });
+  await approvals.initialize(); await receipts.initialize();
+  let confirmations = 0;
+  let confirmed = true;
+  let calls = 0;
+  const security = createPiMcpToolSecurity({ currentExecutionContext: () => identity, approvals, receipts, userId: "fixture", deviceId: "fixture",
+    confirmation: { async confirm() { confirmations++; return confirmed; } },
+    isToolAllowed: async (descriptor, args) => checkAgentTool(context(), descriptor.name, args, undefined, {
+      ...target(descriptor.toolName, descriptor.readOnly), inputSchema: descriptor.inputSchema, executable: piMcpSchemaHasExecutableTarget(descriptor.inputSchema)
+    }).allowed });
+  const snapshot = await new PiMcpCustomToolAdapter({ loadCatalog: async () => [resource], connections: () => settings.resources.mcpConnections,
+    listTools: async () => rawTools, callTool: async () => { calls++; return { ok: true }; }, currentExecutionContext: () => identity, executionSecurity: security }).discover(new AbortController().signal);
+  const write = snapshot.customTools.find(tool => snapshot.toolSecurity.find(item => item.name === tool.name)?.toolName === "add_todo")!;
+  const args = { title: "Synthetic task" };
+  assert.equal(await security.handleToolCall({ toolName: write.name, toolCallId: "approved-pathless", input: args } as never), undefined);
+  assert.equal(confirmations, 1);
+  assert.equal(calls, 0, "confirmation precedes the broker side effect");
+  const result = await write.execute("approved-pathless", args, undefined, undefined);
+  await security.handleToolResult({ toolName: write.name, toolCallId: "approved-pathless", input: args, ...result, isError: false } as never);
+  assert.equal(calls, 1);
+  assert.ok((await receipts.listUiViews({ conversationId: identity.conversationId })).some(row => row.receipt?.toolCallId === "approved-pathless"), "legacy pathless writes still produce durable receipts");
+  confirmed = false;
+  assert.ok((await security.handleToolCall({ toolName: write.name, toolCallId: "declined-pathless", input: args } as never))?.block);
+  assert.equal(confirmations, 2);
+  assert.equal(calls, 1, "declining confirmation never executes the MCP write");
+  permission = "read-only";
+  assert.equal(checkAgentTool(context(), "add_todo", args, undefined, target("add_todo", false)).reason, "read_only");
+  permission = "workspace-write";
+  resource.enabled = false;
+  assert.equal(checkAgentTool(context(), "add_todo", args, undefined, target("add_todo", false)).reason, "resource_disabled");
+  resource.enabled = true;
+  sol.disabledCapabilityIds = [mcpToolCapabilityId(resource.id, "add_todo")];
+  assert.equal(checkAgentTool(context(), "add_todo", args, undefined, target("add_todo", false)).reason, "agent_disabled");
+  sol.disabledCapabilityIds = [];
+  settings.agentRegistry.agents.push({ id: "diary-restricted", name: "Diary", avatar: { kind: "default" }, position: "Fixture", styleId: "companion",
+    capabilityIds: ["journal", mcpToolCapabilityId(resource.id, "add_todo")] });
+  agentId = "diary-restricted";
+  assert.equal(checkAgentTool(context(), "vault_search", { query: "private" }).reason, "scope_required");
+  assert.equal(checkAgentTool(context(), "obsidian_cli", { command: "search", query: "private" }).reason, "scope_required");
+  assert.equal(checkAgentTool(context(), "add_todo", args, undefined, target("add_todo", false)).reason, "scope_required");
+  console.log("PASS unrestricted Agent compatibility: four legacy operations, module revocation, real MCP confirmation/denial and durable receipt");
 }
 
 function deferred() {

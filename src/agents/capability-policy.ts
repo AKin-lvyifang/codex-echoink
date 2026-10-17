@@ -59,6 +59,13 @@ export function agentTaskSystemPrompt(snapshot: AgentRunSnapshot): string {
 }
 function decision(capabilityId: string, reason: AgentCapabilityDecision["reason"]): AgentCapabilityDecision { return { allowed: reason === "allowed", capabilityId, reason }; }
 function currentAgent(context: AgentCapabilityContext): AgentDefinition | undefined { return context.settings.agentRegistry.agents.find(agent => agent.id === context.agentId); }
+/** Agent grants only; module switches, PRO and workspace access still apply per action. */
+function hasAllModuleCapabilities(context: AgentCapabilityContext): boolean {
+  const agent = currentAgent(context);
+  return !!agent && AGENT_MODULE_CAPABILITIES.every(capability => agent.id === GENERAL_ASSISTANT_ID
+    ? !agent.disabledCapabilityIds?.includes(capability)
+    : agent.capabilityIds?.includes(capability));
+}
 export function checkAgentCapability(context: AgentCapabilityContext, capabilityId: string, effect: Effect = "read"): AgentCapabilityDecision {
   const agent = currentAgent(context);
   if (!agent) return decision(capabilityId, "agent_missing");
@@ -159,9 +166,10 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     const resource = context.resources.find(item => item.id === mcp.resourceId && item.kind === "mcp-server");
     if (!resource?.enabled) return decision(capability, "resource_disabled");
     const result = checkAgentCapability(context, capability, mcp.readOnly ? "read" : "write"); if (!result.allowed || !args) return result;
-    if (mcp.executable || hasExecutableArguments(args)) return decision(capability, "scope_required");
+    const requiresScope = !hasAllModuleCapabilities(context);
+    if (requiresScope && (mcp.executable || hasExecutableArguments(args))) return decision(capability, "scope_required");
     const targets = mcp.readOnly ? structuredTargets(args) : declaredMcpTargets(mcp.inputSchema, args);
-    if (!mcp.readOnly && !targets.length && !mcp.externalOnly) return decision(capability, "scope_required");
+    if (requiresScope && !mcp.readOnly && !targets.length && !mcp.externalOnly) return decision(capability, "scope_required");
     return targets.length ? checkTargets(context, targets, mcp.readOnly ? "read" : "write", true) : result;
   }
   if (toolName === "web_search") return checkAgentCapability(context, "web-search");
@@ -178,13 +186,13 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     const scope = obsidianCliCapabilityScope(request);
     const capability = scope.capability;
     const targets = structuredTargets(resolvedTarget ?? { ...args, file: undefined });
+    if (!targets.length && scope.broad && currentAgent(context) && !hasAllModuleCapabilities(context)) return decision(capability, "scope_required");
     // Ordinary file commands derive their module from the resolved path. A
     // journal-only Agent does not need Knowledge permission to read its diary.
     const result = checkAgentCapability(context, capability === "knowledge" && (targets.length || scope.exactTarget) ? "conversation" : capability, scope.write ? "write" : "read"); if (!result.allowed) return result;
     // file/active selectors are resolved by the native port before execution.
     if (!targets.length && scope.exactTarget && resolvedTarget === undefined && (request.file || request.active || request.ref)) return result;
     if (!targets.length && scope.exactTarget) return decision(capability, "scope_required");
-    if (!targets.length && scope.broad) return decision(capability, "scope_required");
     return targets.length ? checkTargets(context, targets, scope.write ? "write" : "read", scope.broad) : result;
   }
   if (KNOWLEDGE_TOOLS.has(toolName)) {
@@ -201,7 +209,9 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
       return allowed ? decision("conversation", "allowed") : decision("knowledge", "agent_disabled");
     }
     const targets = [args.relativePath, args.sourcePath, args.targetPath, args.scopePath].filter((value): value is string => typeof value === "string");
-    if (!targets.length) return decision("knowledge", "scope_required");
+    if (!targets.length) return hasAllModuleCapabilities(context)
+      ? checkAgentCapability(context, "knowledge", effect)
+      : decision("knowledge", "scope_required");
     return checkTargets(context, targets, effect, toolName === "vault_search");
   }
   // Pi builtins and unclassified registered Tools never obtain implicit authority.
