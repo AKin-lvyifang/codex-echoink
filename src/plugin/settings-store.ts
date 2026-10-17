@@ -96,15 +96,21 @@ export class EchoInkSettingsStore {
     const emptyData = isEmptyEchoInkPluginData(data);
     const normalized = normalizeSettingsData(data);
     this.plugin.settings = normalized.settings;
-    const migratedRegistry = await migrateLegacyAgentRegistry(
-      this.plugin.settings.agentRegistry,
-      path.join(
-        pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()),
-        "pi-agent-product-v1", ".echoink"
-      )
-    );
-    const agentsMigrated = migratedRegistry !== this.plugin.settings.agentRegistry;
-    this.plugin.settings.agentRegistry = migratedRegistry;
+    let agentsMigrated = false;
+    try {
+      const migratedRegistry = await migrateLegacyAgentRegistry(
+        this.plugin.settings.agentRegistry,
+        path.join(
+          pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()),
+          "pi-agent-product-v1", ".echoink"
+        )
+      );
+      agentsMigrated = migratedRegistry !== this.plugin.settings.agentRegistry;
+      this.plugin.settings.agentRegistry = migratedRegistry;
+    } catch {
+      // Keep normalized defaults and migrationVersion=0 so the next load retries.
+      console.warn("EchoInk Agent identity migration could not complete; it will retry on the next load.");
+    }
     let bindingsMigrated = false;
     if (!this.plugin.settings.knowledgeBase.folderBindings) {
       const mobilePaths = (data as { mobileUi?: { knowledgePaths?: Partial<Record<"raw" | "wiki" | "inbox", string>> } } | null)?.mobileUi?.knowledgePaths;
@@ -343,7 +349,11 @@ export class EchoInkSettingsStore {
       if (options.flushRawWrites !== false) {
         await this.flushRawWrites();
       }
-      await this.plugin.syncPiConversationTaskMetadata?.();
+      try {
+        await this.plugin.syncPiConversationTaskMetadata?.();
+      } catch {
+        console.warn("EchoInk task metadata could not sync; saving the settings projection for a later retry.");
+      }
       const prepared = await this.prepareCanonicalSettingsCandidate();
       await this.persistSettingsDataCandidate(
         prepared.candidate,

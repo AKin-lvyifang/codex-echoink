@@ -37,7 +37,7 @@ export function prefillNewTask(workspace: TaskWorkspace, agentId: string, draft:
   const accepted = !previous || (!previous.text.trim() && previous.attachments.length === 0);
   return {
     accepted,
-    workspace: { ...workspace, page: { kind: "list", agentId }, newTaskDrafts: accepted ? { ...workspace.newTaskDrafts, [agentId]: structuredClone(draft) } : workspace.newTaskDrafts }
+    workspace: { ...workspace, page: { kind: "list", agentId }, newTaskDrafts: accepted ? { ...workspace.newTaskDrafts, [agentId]: normalizeDrafts({ [agentId]: draft })[agentId] } : workspace.newTaskDrafts }
   };
 }
 

@@ -1,4 +1,5 @@
-import { unlink } from "node:fs/promises";
+import { copyFile, lstat, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
 import { CONVERSATION_TASK_METADATA_KEYS, normalizeConversationTaskMetadata, applyConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
 import * as path from "node:path";
 import type {
@@ -104,6 +105,7 @@ export class FileConversationCatalog {
 
   private readonly layout: PiNativeVaultFileLayout;
   private readonly now: () => number;
+  private preAgentMetadataBackupReady = false;
 
   constructor(options: FileConversationCatalogOptions) {
     this.vaultId = requireNonEmptyString(options.vaultId, "vaultId");
@@ -707,12 +709,41 @@ export class FileConversationCatalog {
   private async writeDocument(
     document: ConversationCatalogDocumentV1
   ): Promise<ConversationCatalogDocumentV1> {
+    await this.ensurePreAgentMetadataBackup(document);
     return await atomicWriteJsonFile(
       this.filePath,
       document,
       "Pi Conversation Catalog",
       (value) => parseCatalogDocument(value, this.vaultId, this.layout)
     );
+  }
+
+  /** Back up actual old bytes before any writer publishes the new strict-schema fields. */
+  private async ensurePreAgentMetadataBackup(document: ConversationCatalogDocumentV1): Promise<void> {
+    // Every nonempty document gains agentId during schema normalization.
+    if (this.preAgentMetadataBackupReady || document.entries.length === 0) return;
+    try {
+      const original = await readJsonFileIfPresent(this.filePath, "Pi Conversation Catalog");
+      // There is no pre-migration document to recover on a new install. Once
+      // upgraded, never label a P1 document as an old-version backup either.
+      if (original !== null) {
+        const raw = requirePlainObject(original, "Pi Conversation Catalog");
+        if (!Array.isArray(raw.entries)) throw new Error("Catalog entries invalid");
+        const alreadyUpgraded = raw.entries.some(entry => entry && typeof entry === "object"
+          && CONVERSATION_TASK_METADATA_KEYS.some(key => Object.hasOwn(entry, key)));
+        if (!alreadyUpgraded) {
+          const backupPath = this.filePath.replace(/\.json$/u, ".pre-agent-metadata-v1.json");
+          try {
+            await copyFile(this.filePath, backupPath, constants.COPYFILE_EXCL);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !(await lstat(backupPath)).isFile()) throw error;
+          }
+        }
+      }
+      this.preAgentMetadataBackupReady = true;
+    } catch (error) {
+      throw new Error("Pi Conversation Catalog backup failed; task metadata was not written.", { cause: error });
+    }
   }
 
   private async ensureBindingClaims(

@@ -5,7 +5,7 @@ import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type Agen
 export function defaultAgentRegistry(): AgentRegistry {
   return {
     schemaVersion: 1, legacyMigrationVersion: 0,
-    agents: [{ id: GENERAL_ASSISTANT_ID, name: "总助", avatar: { kind: "preset", presetId: "sol" }, position: "什么都能接，专门的活转给同事", styleId: "execution", capabilityIds: ["journal", "todos", "finance", "knowledge", "english-diary", "pdf-reading", "review", "web-search"] }],
+    agents: [{ id: GENERAL_ASSISTANT_ID, name: "总助", avatar: { kind: "preset", presetId: "sol" }, position: "什么都能接，专门的活转给同事", styleId: "execution", disabledCapabilityIds: [] }],
     moduleOwners: Object.fromEntries(AGENT_MODULE_IDS.map(id => [id, GENERAL_ASSISTANT_ID])) as AgentRegistry["moduleOwners"]
   };
 }
@@ -22,7 +22,10 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
     const name = typeof agent?.name === "string" ? normalizeAgentDisplayName(agent.name) : null;
     if (!agent || !id || !name || seen.has(id)) continue;
     seen.add(id);
-    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, position: text(agent.position), styleId: normalizeAgentStyleId(agent.styleId), capabilityIds: [...new Set((Array.isArray(agent.capabilityIds) ? agent.capabilityIds : []).filter((id): id is string => typeof id === "string" && !!id.trim()).map(id => id.trim()))] });
+    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, position: text(agent.position), styleId: normalizeAgentStyleId(agent.styleId),
+      ...(id === GENERAL_ASSISTANT_ID
+        ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds) }
+        : { capabilityIds: normalizeCapabilityIds(agent.capabilityIds) }) });
   }
   if (!seen.has(GENERAL_ASSISTANT_ID)) agents.unshift(fallback.agents[0]);
   const owners = record(raw.moduleOwners);
@@ -51,3 +54,7 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 function text(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
+function normalizeCapabilityIds(value: unknown): string[] {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .filter((id): id is string => typeof id === "string" && !!id.trim()).map(id => id.trim()))];
+}

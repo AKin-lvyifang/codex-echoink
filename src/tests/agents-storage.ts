@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile, rm, access } from "node:fs/promises";
 import path from "node:path";
 import { SessionManager, CURRENT_SESSION_VERSION, VERSION } from "@earendil-works/pi-coding-agent";
 import { defaultAgentRegistry, normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "../agents/registry";
@@ -20,10 +20,14 @@ import { assertPiSessionPreAssistantDurable, openDurablePiSession } from "../har
 import { archiveSession, refreshPiConversationShells, restoreArchivedConversation } from "../ui/codex-view/session-controller";
 import { ConversationAutoArchive } from "../plugin/conversation-auto-archive";
 import { pluginDataDir } from "../plugin/plugin-data-paths";
+import { FileConversationCatalog as LegacyFileConversationCatalog } from "legacy-catalog-v1";
+import { openTestNoticeMessages } from "./obsidian-shim";
 
 interface MetadataSyncHost {
   syncPiConversationTaskMetadata(): Promise<void>;
   setPiConversationTaskMetadata(id: string, metadata: unknown, expectedRevision: number | undefined, updatedAt?: number): Promise<unknown>;
+  listPiConversations(statuses?: readonly string[]): Promise<readonly unknown[]>;
+  setPiConversationStatus(id: string, status: string): Promise<unknown>;
 }
 type CreateMetadataSyncHost = (catalog: FileConversationCatalog, sessions: StoredSession[]) => MetadataSyncHost;
 
@@ -31,11 +35,191 @@ const API = { codingAgentVersion: VERSION, currentSessionVersion: CURRENT_SESSIO
   open: (file: string, root: string, cwd: string) => SessionManager.open(file, root, cwd) };
 
 export async function runAgentsStorageTests(root: string, createSyncHost: CreateMetadataSyncHost): Promise<void> {
+  await hardeningRegressions(root, createSyncHost);
+  if (process.env.ECHOINK_AGENTS_TEST_CASE === "hardening") return;
   await reviewRegressions(root, createSyncHost);
   await migrationCases(root);
   await storageRoundtrip(root);
   draftAndRegistryCases();
   console.log("Agents storage A1-A4: PASS (synthetic local data; no Provider or Obsidian)");
+}
+
+async function hardeningRegressions(root: string, createHost: CreateMetadataSyncHost): Promise<void> {
+  const failures: string[] = [];
+  const cases: Array<[string, () => Promise<void>]> = [
+    ["raw Catalog backup/old reader", () => catalogBackupRoundtrip(root)],
+    ["Catalog backup failure blocks writes", () => catalogBackupFailure(root)],
+    ["missing/empty/already-upgraded Catalog", () => catalogBackupBoundaries(root)],
+    ["migration IO failure and retry", () => migrationFailureRetry(root)],
+    ["sync failure still saves settings", () => settingsSaveAfterSyncFailure(root)],
+    ["sync failure still lists conversations", () => listAfterSyncFailure(root, createHost)],
+    ["sync failure rejects real archive", () => archiveAfterSyncFailure(root, createHost)],
+    ["assistant exclusions and Agent opt-ins persist", () => capabilityStorageRoundtrip(root)],
+    ["prefill draft canonical key order", async () => draftCanonicalOrder()]
+  ];
+  for (const [name, run] of cases) {
+    try { await run(); console.log(`P1 hardening ${name}: PASS`); }
+    catch (error) { const message = `${name}: ${(error as Error).message}`; failures.push(message); console.log(`P1 hardening FAIL ${message}`); }
+  }
+  assert.equal(failures.length, 0, failures.join("\n"));
+}
+
+async function oldCatalogFixture(root: string, name: string): Promise<{ catalog: FileConversationCatalog; original: Buffer; backupPath: string }> {
+  const options = { storageRootPath: path.join(root, name), vaultId: name };
+  const legacy = new LegacyFileConversationCatalog(options);
+  await legacy.initialize();
+  await legacy.upsert({ conversationId: name, piSessionId: `pi-${name}`, vaultId: name, title: "旧任务", status: "active", defaultMemoryMode: "normal", createdAt: 1, updatedAt: 100 });
+  const value = JSON.parse(await readFile(legacy.filePath, "utf8"));
+  const original = Buffer.from(`${JSON.stringify(value, null, "\t").replaceAll("\n", "\r\n")}\r\n\t`);
+  await writeFile(legacy.filePath, original);
+  const catalog = new FileConversationCatalog(options);
+  return { catalog, original, backupPath: catalog.filePath.replace(/\.json$/u, ".pre-agent-metadata-v1.json") };
+}
+
+async function catalogBackupRoundtrip(root: string): Promise<void> {
+  for (const operation of ["rename", "status", "task", "draft"] as const) {
+    const name = `backup-${operation}`;
+    const { catalog, original, backupPath } = await oldCatalogFixture(root, name);
+    if (operation === "rename") await catalog.rename(name, "改名", 101);
+    else if (operation === "status") await catalog.status(name, "archived", 101);
+    else if (operation === "task") await catalog.updateTaskMetadata(name, { agentId: "sol", businessKey: "real-task" }, undefined, 101);
+    else await catalog.upsertDraft({ draftId: "draft-1", conversationId: name, piSessionId: `pi-${name}`, source: "restart", text: "待发送", createdAt: 101 });
+    assert.deepEqual(await readFile(backupPath), original, "Backup must preserve the exact pre-migration bytes");
+    const reader = new LegacyFileConversationCatalog({ storageRootPath: catalog.storageRootPath, vaultId: name });
+    Object.defineProperty(reader, "filePath", { value: backupPath });
+    assert.equal((await reader.list())[0].title, "旧任务", "Actual a1bdd5cb strict Catalog must read the backup");
+    const markedBackup = Buffer.concat([original, Buffer.from("\n\t")]);
+    await writeFile(backupPath, markedBackup);
+    await catalog.rename(name, "再次改名", 102);
+    assert.deepEqual(await readFile(backupPath), markedBackup, "A later write must not replace an existing backup");
+    assert.equal(JSON.parse(await readFile(catalog.filePath, "utf8")).entries[0].agentId, "sol");
+  }
+}
+
+async function catalogBackupFailure(root: string): Promise<void> {
+  const { catalog, original, backupPath } = await oldCatalogFixture(root, "backup-failure");
+  await mkdir(backupPath);
+  await assert.rejects(catalog.rename("backup-failure", "不应写入", 101), /backup|备份/iu);
+  assert.deepEqual(await readFile(catalog.filePath), original);
+  assert.equal(Object.hasOwn(JSON.parse(original.toString("utf8")).entries[0], "agentId"), false);
+  await rm(backupPath, { recursive: true });
+  await catalog.rename("backup-failure", "修好后可重试", 102);
+  assert.deepEqual(await readFile(backupPath), original);
+}
+
+async function catalogBackupBoundaries(root: string): Promise<void> {
+  const absent = new FileConversationCatalog({ storageRootPath: path.join(root, "absent-catalog"), vaultId: "absent" });
+  await absent.upsert({ conversationId: "absent", piSessionId: "pi-absent", vaultId: "absent", title: "新建", status: "active", defaultMemoryMode: "normal", createdAt: 1, updatedAt: 1 });
+  const backupPath = absent.filePath.replace(/\.json$/u, ".pre-agent-metadata-v1.json");
+  await assert.rejects(access(backupPath), { code: "ENOENT" }, "A missing original cannot become a fabricated backup");
+  await absent.rename("absent", "已升级", 2);
+  await assert.rejects(access(backupPath), { code: "ENOENT" }, "An already-upgraded Catalog cannot become an old-version backup");
+  const empty = new FileConversationCatalog({ storageRootPath: path.join(root, "empty-catalog"), vaultId: "empty" });
+  await empty.initialize();
+  const original = await readFile(empty.filePath);
+  const emptyBackup = empty.filePath.replace(/\.json$/u, ".pre-agent-metadata-v1.json");
+  await assert.rejects(access(emptyBackup), { code: "ENOENT" });
+  await empty.upsert({ conversationId: "first", piSessionId: "pi-first", vaultId: "empty", title: "第一条", status: "active", defaultMemoryMode: "normal", createdAt: 1, updatedAt: 1 });
+  assert.deepEqual(await readFile(emptyBackup), original, "An existing empty Catalog can only be backed up as its actual empty bytes");
+}
+
+async function migrationFailureRetry(root: string): Promise<void> {
+  const vaultRoot = path.join(root, "unreadable-identity");
+  const memoryRoot = path.join(pluginDataDir(vaultRoot, "codex-echoink"), "pi-agent-product-v1", ".echoink");
+  const metadataPath = path.join(memoryRoot, "agents/echoink/agent-self-meta.json");
+  await legacyFile(memoryRoot, "agent-identity.json", { ...defaultAgentIdentityState(), displayName: "恢复后身份", avatar: { kind: "preset", presetId: "aya" } });
+  await mkdir(metadataPath);
+  let persisted: unknown = { ...structuredClone(DEFAULT_SETTINGS), agentRegistry: undefined };
+  const plugin = { settings: structuredClone(DEFAULT_SETTINGS), getVaultPath: () => vaultRoot, getPluginDataDirName: () => "codex-echoink",
+    loadData: async () => structuredClone(persisted), saveData: async (value: unknown) => { persisted = structuredClone(value); } };
+  const store = new EchoInkSettingsStore(plugin as any);
+  const before = await snapshot(memoryRoot);
+  const notices = openTestNoticeMessages.length;
+  await store.loadSettings();
+  assert.equal(plugin.settings.agentRegistry.agents[0].name, "总助");
+  assert.equal(plugin.settings.agentRegistry.legacyMigrationVersion, 0);
+  assert.equal(openTestNoticeMessages.length, notices, "Optional migration failure must not display a Notice");
+  assert.deepEqual(await snapshot(memoryRoot), before);
+  await rm(metadataPath, { recursive: true });
+  await legacyFile(memoryRoot, "agent-self-meta.json", { schema: "echoink.agent-self-meta.v1", templateId: "creative" });
+  const repairedBefore = await snapshot(memoryRoot);
+  await store.loadSettings();
+  assert.equal(plugin.settings.agentRegistry.agents[0].name, "恢复后身份");
+  assert.equal(plugin.settings.agentRegistry.agents[0].styleId, "creative");
+  assert.equal(plugin.settings.agentRegistry.legacyMigrationVersion, 1);
+  assert.deepEqual(await snapshot(memoryRoot), repairedBefore);
+}
+
+async function settingsSaveAfterSyncFailure(root: string): Promise<void> {
+  const filePath = path.join(root, "settings-after-sync-failure.json");
+  const settings = normalizeSettingsData(structuredClone(DEFAULT_SETTINGS)).settings;
+  settings.agentRegistry.legacyMigrationVersion = 1;
+  await writeFile(filePath, JSON.stringify(settings));
+  settings.customWelcomeTitle = "本次设置必须保存";
+  const plugin = { settings, getVaultPath: () => root, getPluginDataDirName: () => "codex-echoink",
+    syncPiConversationTaskMetadata: async () => { throw new Error("injected-sync-failure"); },
+    loadData: async () => JSON.parse(await readFile(filePath, "utf8")), saveData: async (value: unknown) => { await writeFile(filePath, JSON.stringify(value)); } };
+  await new EchoInkSettingsStore(plugin as any).saveSettings(true);
+  assert.equal(JSON.parse(await readFile(filePath, "utf8")).customWelcomeTitle, "本次设置必须保存");
+}
+
+async function listAfterSyncFailure(root: string, createHost: CreateMetadataSyncHost): Promise<void> {
+  const { catalog, shell } = await metadataFixture(root, "list-sync-failure");
+  const plugin = createHost(catalog, [shell]);
+  plugin.syncPiConversationTaskMetadata = async () => { throw new Error("injected-sync-failure"); };
+  const entries = await plugin.listPiConversations(["active"]);
+  assert.deepEqual(entries.map((entry: any) => entry.conversationId), [shell.id]);
+}
+
+async function archiveAfterSyncFailure(root: string, createHost: CreateMetadataSyncHost): Promise<void> {
+  const { catalog, shell } = await metadataFixture(root, "archive-sync-failure");
+  const plugin: any = createHost(catalog, [shell]);
+  plugin.settings.activeSessionId = shell.id;
+  plugin.syncPiConversationTaskMetadata = async () => { throw new Error("injected-sync-failure"); };
+  const host: any = { plugin, runningSessionIds: new Set() };
+  await assert.rejects(archiveSession(host, shell.id), /injected-sync-failure/u);
+  assert.equal(plugin.settings.sessions[0], shell);
+  assert.equal((await catalog.get(shell.id))!.status, "active");
+}
+
+function draftCanonicalOrder(): void {
+  for (const draft of [
+    { prefillSource: "knowledge:inbox", attachments: [{ path: "Inbox/a.md", name: "a.md", type: "file" as const }], text: "整理这篇" },
+    { attachments: [{ name: "a.md", type: "file" as const, path: "Inbox/a.md" }], text: "整理这篇", prefillSource: "knowledge:inbox" }
+  ]) {
+    const settings = normalizeSettingsData(structuredClone(DEFAULT_SETTINGS)).settings;
+    settings.agentRegistry.legacyMigrationVersion = 1;
+    settings.taskWorkspace = prefillNewTask(defaultTaskWorkspace(), "sol", draft).workspace;
+    assert.equal(normalizeSettingsData(settingsForDataSave(settings)).changed, false, "Key order must already be canonical before saving the prefill");
+  }
+}
+
+async function capabilityStorageRoundtrip(root: string): Promise<void> {
+  const fresh = defaultAgentRegistry().agents[0];
+  assert.deepEqual(fresh.disabledCapabilityIds, []);
+  assert.equal(Object.hasOwn(fresh, "capabilityIds"), false, "The default assistant must not freeze a capability allowlist");
+  const legacyAssistant = { ...fresh, capabilityIds: ["journal", "knowledge", "legacy-only-capability"] };
+  delete legacyAssistant.disabledCapabilityIds;
+  const colleague = { ...structuredClone(AGENT_PRESETS[0].agent), id: "user-colleague", capabilityIds: ["knowledge", "vault-skill:existing"] };
+  const dataPath = path.join(root, "capability-settings-data.json");
+  const settings = normalizeSettingsData(structuredClone(DEFAULT_SETTINGS)).settings;
+  const legacyRegistry = { ...defaultAgentRegistry(), legacyMigrationVersion: 1, agents: [legacyAssistant, colleague] };
+  await writeFile(dataPath, JSON.stringify({ ...settings, agentRegistry: legacyRegistry }));
+  const plugin = { settings, getVaultPath: () => root, getPluginDataDirName: () => "codex-echoink",
+    loadData: async () => JSON.parse(await readFile(dataPath, "utf8")), saveData: async (value: unknown) => { await writeFile(dataPath, JSON.stringify(value)); } };
+  const store = new EchoInkSettingsStore(plugin as any);
+  await store.loadSettings();
+  const upgraded = plugin.settings.agentRegistry.agents[0];
+  assert.deepEqual(upgraded.disabledCapabilityIds, [], "Old assistant allowlists become unrestricted at Agent scope");
+  assert.equal(Object.hasOwn(upgraded, "capabilityIds"), false);
+  upgraded.disabledCapabilityIds = ["mcp:disabled-server", " vault-skill:disabled ", "mcp:disabled-server", ""];
+  await store.saveSettings(true);
+  await store.loadSettings();
+  const restored = plugin.settings.agentRegistry;
+  assert.deepEqual(restored.agents[0].disabledCapabilityIds, ["mcp:disabled-server", "vault-skill:disabled"]);
+  assert.deepEqual(restored.agents[1].capabilityIds, colleague.capabilityIds);
+  assert.equal(restored.agents[1].capabilityIds!.includes("mcp:future-server"), false);
+  assert.equal(Object.hasOwn(restored.agents[1], "disabledCapabilityIds"), false);
 }
 
 async function reviewRegressions(root: string, createHost: CreateMetadataSyncHost): Promise<void> {

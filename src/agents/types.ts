@@ -13,8 +13,10 @@ export interface AgentDefinition {
   avatar: AgentAvatarState;
   position: string;
   styleId: AgentStyleId;
-  /** Stable capability identities. Runtime admission is implemented separately. */
-  capabilityIds: string[];
+  /** Other Agents explicitly opt into these capabilities; new capabilities stay off. */
+  capabilityIds?: string[];
+  /** General assistant only: all capabilities are on unless explicitly disabled. */
+  disabledCapabilityIds?: string[];
 }
 
 export interface AgentRegistry {

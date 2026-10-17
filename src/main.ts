@@ -897,7 +897,11 @@ export default class CodexForObsidianPlugin extends Plugin {
     statuses?: readonly PiConversationCatalogStatus[]
   ): Promise<Readonly<PiConversationCatalogEntry>[]> {
     const localData = await this.ensurePiLocalData();
-    await this.syncPiConversationTaskMetadata();
+    try {
+      await this.syncPiConversationTaskMetadata();
+    } catch {
+      console.warn("EchoInk task metadata could not sync; loading the existing conversation list.");
+    }
     return (await localData.listConversations(statuses)).filter(entry => !entry.conversationId.startsWith("knowledge-linking-"));
   }
   /** Keep the data.json projection durable before refresh/archive can remove it. */
