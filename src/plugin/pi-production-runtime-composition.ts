@@ -1,3 +1,8 @@
+import { agentTaskSystemPrompt, checkAgentCapability, checkAgentSkill, checkAgentSkillPath, checkAgentTool, isAgentCapabilityPathField, requireAgentCapability, resolveAgentRunSnapshot, type AgentCapabilityContext } from "../agents/capability-policy";
+import { FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT } from "../lifestyle/finance-paths";
+import type { AgentRunSnapshot } from "../agents/types";
+import type { CapabilityAccess } from "../membership/types";
+import { nativeRootJournalPaths, readNativeJournalSettings } from "../home/native-journal";
 import { getPiKnowledgeLinkingBatch, createPiKnowledgeLinkingTool, knowledgeLinkingInlineExtension, PI_KNOWLEDGE_LINKING_TOOL } from "../harness/pi-native/pi-knowledge-linking-tool";
 import { privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
 import { readPrivateMaintenanceRecords, FilePhase3MaintenanceStateStore } from "./pi-knowledge-maintenance-production";
@@ -224,8 +229,6 @@ import {
   resolvePersonalMemoryCapability
 } from "../harness/memory/personal-memory-contracts";
 import { DreamExperienceInboxStore } from "../harness/memory/dream-experience-inbox";
-import { AgentSelfMetadataStore } from "../harness/memory/agent-self-metadata";
-import { getAgentTemplate } from "../harness/memory/agent-templates";
 import {
   SkillRuntimeCoordinator,
   type SkillReviewLlmPort
@@ -258,7 +261,8 @@ export interface PiProductionPluginHost {
   readonly app: App;
   readonly lifestyle?: { readonly finance: LifestyleFinanceService };
   readonly pdfReading?: PdfReadingController | null;
-  queueKnowledgeLinking?(targetPaths: readonly string[], sourcePaths?: readonly string[], taskId?: string): Promise<{ id: string }>;
+  readonly accountService?: CapabilityAccess | null;
+  queueKnowledgeLinking?(targetPaths: readonly string[], sourcePaths?: readonly string[], taskId?: string, originConversationId?: string): Promise<{ id: string }>;
   prepareWikiFolderNamesForMaintenance?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   readonly settings: CodexForObsidianSettings;
   recordModelUsage?(event: UsageRequestEvent): Promise<void>;
@@ -327,8 +331,10 @@ export function hasPiProductionProviderConfiguration(
 export async function resolvePiProductionSkillById(
   plugin: Pick<PiProductionPluginHost, "requireAvailableEchoInkSkill">,
   skillRuntime: Pick<SkillRuntimeCoordinator, "resolveById">,
-  skillId: string
+  skillId: string,
+  capabilityContext?: AgentCapabilityContext
 ) {
+  if (capabilityContext) requireAgentCapability(checkAgentSkill(capabilityContext, skillId));
   await plugin.requireAvailableEchoInkSkill(skillId);
   return await skillRuntime.resolveById(skillId);
 }
@@ -442,6 +448,7 @@ export async function createPiProductionRuntimeBundle(
     vaultRootPath,
     knowledgeAgentIndex,
     knowledgePreferences,
+    isConversationKnowledgeAllowed: async (id, write) => checkAgentCapability(await currentAgentCapabilityContext(plugin, catalog, id), "knowledge", write ? "resource" : "read").allowed,
     prepareStructure: (initialization) => plugin.prepareWikiFolderNamesForMaintenance?.(initialization) ?? Promise.resolve(""),
     usage: new KnowledgeUsageBridge(knowledgeUsageStore),
     onNaturalMaintenance: (request) => knowledgeMaintenance.finalizeNatural(request)
@@ -468,9 +475,9 @@ export async function createPiProductionRuntimeBundle(
     domainService: maintenanceVaultDomainService,
     knowledgeAgentIndex,
     linkingOwnsDraftLinks: typeof plugin.queueKnowledgeLinking === "function",
-    onCommitted: async (paths, targets, taskId) => {
+    onCommitted: async (paths, targets, taskId, originConversationId) => {
       await knowledgeAgentIndex.refresh();
-      if (paths.length) return (await plugin.queueKnowledgeLinking?.(targets ?? [], paths, taskId))?.id;
+      if (paths.length) return (await plugin.queueKnowledgeLinking?.(targets ?? [], paths, taskId, originConversationId))?.id;
     },
     onTerminal: async (event) => {
       await syncPrivateMaintenanceOverview(plugin, privateKnowledgeRootPath);
@@ -496,7 +503,6 @@ export async function createPiProductionRuntimeBundle(
   const approvalBroker = new PiAgentApprovalBroker();
   const interactionBroker = new PiTurnInteractionBroker();
   const dreamExperienceInbox = new DreamExperienceInboxStore(personalMemory.layout.root);
-  const agentSelfMetadata = new AgentSelfMetadataStore(personalMemory.layout.root);
   const skillRuntime = plugin.getSkillRuntimeCoordinator?.()
     ?? new SkillRuntimeCoordinator(vaultRootPath, {
       reviewLlm: () => plugin.createSkillReviewLlmPort()
@@ -510,24 +516,26 @@ export async function createPiProductionRuntimeBundle(
       catalog,
       productRuns,
       sessionApi,
+      resolveAgentRunSnapshot: entry => resolveAgentRunSnapshot(plugin.settings, entry.agentId),
+      assertAgentActionAllowed: async ({ catalog: entry, action, access }) => {
+        const context = await currentAgentCapabilityContext(plugin, catalog, entry.conversationId, access);
+        requireAgentCapability(checkAgentCapability(context, "knowledge", action === "knowledge-write" ? "write" : "read"));
+      },
       knowledge: knowledgeRuntime,
       recordDreamExperience: async (experience) => {
         await dreamExperienceInbox.append(experience);
       },
       skills: {
-        selectForTask: async ({ text }) => {
-          const metadata = await agentSelfMetadata.read();
-          const resources = await plugin.buildRuntimeEchoInkResourceCatalog();
-          const financeSkill = resources.find(r => r.kind === "skill" && r.metadata?.resourceId === "finance-operations");
-          return await skillRuntime.selectForTask({
-            text,
-            excludedSkillIds: financeSkill?.enabled === true ? [] : ["finance-operations"],
-            preferredSkillIds: getAgentTemplate(metadata?.templateId)
-              ?.preferredSkillIds ?? []
+        selectForTask: async ({ text, catalog: entry }) => {
+          if (!entry) throw new Error("agent_capability_catalog_required");
+          return await skillRuntime.selectForTask({ text,
+            isSkillAllowed: async id => checkAgentSkill(await currentAgentCapabilityContext(plugin, catalog, entry.conversationId), id).allowed
           });
         },
-        resolveById: async ({ id }) => {
-          return await resolvePiProductionSkillById(plugin, skillRuntime, id);
+        resolveById: async ({ id, catalog: entry }) => {
+          if (!entry) throw new Error("agent_capability_catalog_required");
+          const context = await currentAgentCapabilityContext(plugin, catalog, entry.conversationId);
+          return await resolvePiProductionSkillById(plugin, skillRuntime, id, context);
         },
         recordUse: async (skillId, usedAt) => {
           await skillRuntime.recordUse(skillId, usedAt);
@@ -670,6 +678,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
   onNaturalMaintenance?: (request: Parameters<NonNullable<PiKnowledgeRuntimePort["finalizeMaintenance"]>>[0]) => Promise<void | Readonly<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceSettlement>>;
   prepareStructure?: (input: { initialization: boolean; assertActive(): void }) => Promise<string>;
   usage: KnowledgeUsageBridge;
+  isConversationKnowledgeAllowed?(conversationId: string, write: boolean): Promise<boolean>;
 }>): PiKnowledgeRuntimePort {
   const retriever = new KnowledgeRetriever(input.vaultRootPath, {
     agentIndex: input.knowledgeAgentIndex
@@ -707,6 +716,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       });
     },
     async retrieveAsk(request) {
+      if (input.isConversationKnowledgeAllowed && !await input.isConversationKnowledgeAllowed(request.conversationId, false)) throw new Error("agent_capability_knowledge_denied");
       const startedAt = Date.now();
       const result = await retriever.retrieve({
         question: request.question,
@@ -765,7 +775,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       // Internal linking turns already carry bounded, explicit source spans.
       // Their dedicated extension intentionally does not publish ordinary-chat
       // reference envelopes, so never retrieve or claim those references here.
-      if (getPiKnowledgeLinkingBatch(request.conversationId)) return Object.freeze({
+      if (getPiKnowledgeLinkingBatch(request.conversationId) || input.isConversationKnowledgeAllowed && !await input.isConversationKnowledgeAllowed(request.conversationId, false)) return Object.freeze({
         status: "no_evidence" as const,
         references: Object.freeze([]),
         providerResourceText: "",
@@ -811,6 +821,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       });
     },
     async verifyAskReferences(request) {
+      if (input.isConversationKnowledgeAllowed && !await input.isConversationKnowledgeAllowed(request.conversationId, false)) throw new Error("agent_capability_knowledge_denied");
       // Freshness annotates the exact delivered snapshots; it never discards the
       // entire answer or automatically starts another model turn.
       const changed = new Set<string>();
@@ -875,6 +886,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       });
     },
     async finalizeMaintenance(request) {
+      if (input.isConversationKnowledgeAllowed && !await input.isConversationKnowledgeAllowed(request.conversationId, true)) throw new Error("agent_capability_knowledge_denied");
       const root = knowledgePrivateRoot(input.vaultRootPath);
       const turnEntries = request.turnEntries ?? request.entries;
       const toolReceipts = turnEntries.filter((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "knowledge_maintain");
@@ -1007,6 +1019,8 @@ function parsePiKnowledgeReference(value: unknown): PiKnowledgeReference | null 
 export function createPiKnowledgeInlineExtension(input: Readonly<{
   knowledgeBindings?: () => import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;
   vaultSecurity: InlineExtension;
+  currentAgentSnapshot?(): AgentRunSnapshot | Promise<AgentRunSnapshot>;
+  assertCurrentSkillsAllowed?(): Promise<void>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
   currentSkillTurn?(): Readonly<PiNativeSkillTurnContext> | null;
@@ -1075,6 +1089,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
       }> | null = null;
       let transientAskPersonalMemorySourcesReported = false;
       pi.on("before_agent_start", async (event) => {
+        await input.assertCurrentSkillsAllowed?.();
         transientTurnContext = null;
         transientResourceContextSignature = null;
         transientAskPersonalMemorySources = null;
@@ -1215,7 +1230,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             ...(recallObservation ? { recall: recallObservation } : {})
           });
           if (fixed) {
-            systemPrompt = personalMemoryAgentSystemPrompt(
+            if (!input.currentAgentSnapshot) systemPrompt = personalMemoryAgentSystemPrompt(
               systemPrompt,
               fixed.agent
             );
@@ -1240,7 +1255,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
               capability: "not_applicable",
               fixedContextRevision: identity.revision
             });
-            systemPrompt = personalMemoryAgentSystemPrompt(
+            if (!input.currentAgentSnapshot) systemPrompt = personalMemoryAgentSystemPrompt(
               systemPrompt,
               identity.agent
             );
@@ -1263,6 +1278,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             });
           }
         }
+        if (input.currentAgentSnapshot) systemPrompt += `\n\n${agentTaskSystemPrompt(await input.currentAgentSnapshot())}`;
         if (turn?.kind === "chat") systemPrompt += `\n\n${KNOWLEDGE_ASK_PROTOCOL}`;
         systemPrompt = taskPlanSystemPrompt(systemPrompt, taskPlanTurn);
         input.contextLedger?.captureBeforeAgentStart({
@@ -1742,7 +1758,7 @@ function taskPlanPromptSnapshot(
 async function discoverPiMcpTools(input: {
   plugin: PiProductionPluginHost;
   input: PiNativeAgentSessionFactoryInput;
-}, executionSecurity: PiMcpExecutionSecurityPort): Promise<PiMcpCustomToolSnapshot> {
+}, executionSecurity: PiMcpExecutionSecurityPort, assertInvocationAllowed?: (call: import("../harness/pi-native/pi-mcp-custom-tool-adapter").PiMcpDomainToolCallInput) => Promise<void>): Promise<PiMcpCustomToolSnapshot> {
   try {
     return await new PiMcpCustomToolAdapter({
       loadCatalog: async () => await input.plugin.buildRuntimeEchoInkResourceCatalog(),
@@ -1758,6 +1774,7 @@ async function discoverPiMcpTools(input: {
         signal: call.signal
       }),
       currentExecutionContext: () => input.input.currentToolExecutionContext(),
+      assertInvocationAllowed,
       executionSecurity
     }).discover(AbortSignal.timeout(30_000));
   } catch {
@@ -1856,6 +1873,22 @@ async function createProductionAgentSession(input: {
   if (Boolean(input.input.skillPath) !== Boolean(input.input.skillName)) {
     throw new Error("Pi-native Skill path and name must be selected together");
   }
+  // The task ID exists before a run is bound (Skill loading happens during activation).
+  const liveCapabilityContext = async () => await currentAgentCapabilityContext(input.plugin, input.catalog, input.input.catalog.conversationId, input.input.currentWorkspaceAccess?.());
+  const assertToolAllowed = async (name: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown) => {
+    const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
+    const context = await liveCapabilityContext();
+    requireAgentCapability(checkAgentTool(context, name, args, resolvedTarget, descriptor ? {
+      resourceId: descriptor.resourceId, toolName: descriptor.toolName, readOnly: descriptor.readOnly,
+      externalOnly: isPiMcpExternalOnly(context, descriptor), executable: piMcpSchemaHasExecutableTarget(descriptor.inputSchema), inputSchema: descriptor.inputSchema
+    } : undefined));
+    const access = context.access;
+    if (!access || !configured.toolCalling && PI_PERSONAL_MEMORY_TOOL_IDS.some(tool => tool === name)
+      || !piWorkspaceAllowsTool({ ...access, toolName: name, toolArguments: { ...args }, planToolNames: linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : planToolNames,
+        memoryMode: context.settings.memory.useLongTermMemory === false ? "no_memory" : access.memoryMode,
+        memoryToolNames: PI_PERSONAL_MEMORY_TOOL_IDS,
+        externalReadToolNames: [WEB_SEARCH_TOOL_NAME, ...(linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : []), ...mcpSnapshot.toolSecurity.filter(tool => tool.readOnly).map(tool => tool.name)] })) throw new Error("agent_capability_workspace_blocked");
+  };
   const vaultModalConfirmation = createObsidianPiVaultApprovalConfirmation(
     input.plugin.app
   );
@@ -1903,8 +1936,14 @@ async function createProductionAgentSession(input: {
   });
   const mcpSecurity = createPiMcpToolSecurity({
     currentExecutionContext: () => input.input.currentToolExecutionContext(),
-    isToolAllowed: async (descriptor) =>
-      await isPiMcpToolCurrentlyAllowed(input.plugin, descriptor),
+    isToolAllowed: async (descriptor, args) => {
+      if (!await isPiMcpToolCurrentlyAllowed(input.plugin, descriptor)) return false;
+      const context = await liveCapabilityContext();
+      return checkAgentTool(context, descriptor.name, args, undefined, {
+        resourceId: descriptor.resourceId, toolName: descriptor.toolName, readOnly: descriptor.readOnly,
+        externalOnly: isPiMcpExternalOnly(context, descriptor), executable: piMcpSchemaHasExecutableTarget(descriptor.inputSchema), inputSchema: descriptor.inputSchema
+      }).allowed;
+    },
     approvals: input.approvals,
     receipts: input.receipts,
     confirmation: {
@@ -1946,6 +1985,7 @@ async function createProductionAgentSession(input: {
   });
   const userQuestionSecurity = new PiUserQuestionToolSecurity();
   const obsidianSecurity = new PiObsidianToolSecurity({
+    assertToolAllowed,
     currentUserEntry: () => { const context = input.input.currentToolExecutionContext(); return { entryId: context.userEntryId, text: context.userEntryText }; },
     currentAccess: () => input.input.currentWorkspaceAccess?.(),
     currentRunIdentity: () => {
@@ -1993,7 +2033,11 @@ async function createProductionAgentSession(input: {
     },
     egress: new EchoInkVaultToolEgressPolicy()
   });
-  const mcpSnapshot: PiMcpCustomToolSnapshot = linkingBatch ? { toolNames: [], customTools: [], toolSecurity: [], warnings: [] } : await discoverPiMcpTools(input, mcpSecurity);
+  const mcpSnapshot: PiMcpCustomToolSnapshot = linkingBatch ? { toolNames: [], customTools: [], toolSecurity: [], warnings: [] } : await discoverPiMcpTools(input, mcpSecurity, async call => {
+    const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.resourceId === call.resourceId && tool.toolName === call.toolName);
+    if (!descriptor || !await isPiMcpToolCurrentlyAllowed(input.plugin, descriptor)) throw new Error("agent_capability_mcp_admission_revoked");
+    await assertToolAllowed(descriptor.name, call.arguments);
+  });
   const pdfGenerationDraft = Object.freeze({
     providerSettingsId: configured.provider.id, providerId: productProviderId,
     runtimeProviderId: configured.providerId, apiProtocol: configured.apiProtocol,
@@ -2002,7 +2046,7 @@ async function createProductionAgentSession(input: {
     reasoning: configured.reasoning, discovery: configured.discovery, contextWindow: configured.contextWindow,
     modelMaxTokens: configured.modelMaxTokens, maxOutputTokens: configured.maxOutputTokens
   });
-  const pdfSecurity = new PiPdfReadingSecurity({ generator: () => {
+  const pdfSecurity = new PiPdfReadingSecurity({ assertToolAllowed, generator: () => {
     const host = input.plugin.pdfReading;
     if (!host) throw new Error("PDF 插件不可用。");
     return host.plugin.createPdfReadingGenerator(pdfGenerationDraft);
@@ -2013,9 +2057,10 @@ async function createProductionAgentSession(input: {
   }, documents: () => input.input.currentDocumentTurnContext?.()?.documents ?? [], consume: (id, hash) => input.input.consumePdfDocument?.(id, hash) ?? null, host: () => input.plugin.pdfReading, access: () => input.input.currentWorkspaceAccess?.(),
     identity: () => JSON.stringify(input.input.currentToolExecutionContext()), intentId: () => { const c = input.input.currentToolExecutionContext(); return `${c.conversationId}:${c.userEntryId}`; } });
   const pdfTools = createPdfReadingTools(pdfSecurity);
-  const webSearchSecurity = new PiWebSearchSecurity(() => input.plugin.settings.tavily);
+  const webSearchSecurity = new PiWebSearchSecurity(() => input.plugin.settings.tavily, async () => await assertToolAllowed(WEB_SEARCH_TOOL_NAME, {}));
   const security = createPiVaultToolSecurityAdapter({
-    isToolAllowed: (toolName) => {
+    isToolAllowed: async (toolName, args) => {
+      try { await assertToolAllowed(toolName, args ?? {}); } catch { return false; }
       const access = input.input.currentWorkspaceAccess?.();
       if (!access) return false;
       if (toolName === WEB_SEARCH_TOOL_NAME && !webSearchSecurity.available()) return false;
@@ -2025,6 +2070,7 @@ async function createProductionAgentSession(input: {
         // A disabled Memory switch and current MCP admission remain authoritative.
         memoryMode: input.plugin.settings.memory?.useLongTermMemory === false ? "no_memory" : access.memoryMode,
         toolName,
+        toolArguments: args ? { ...args } : undefined,
         planToolNames,
         memoryToolNames: PI_PERSONAL_MEMORY_TOOL_IDS,
         externalReadToolNames: [WEB_SEARCH_TOOL_NAME, ...mcpSnapshot.toolSecurity.filter((tool) => tool.readOnly).map((tool) => tool.name)]
@@ -2052,6 +2098,7 @@ async function createProductionAgentSession(input: {
     )
   });
   const vaultTools = createPiVaultToolDefinitions({
+    assertToolAllowed,
     domainService: input.vaultDomainService,
     security,
     writeExecution: input.writeExecution
@@ -2062,6 +2109,7 @@ async function createProductionAgentSession(input: {
   );
   const maintenanceTool = createPiKnowledgeMaintenanceToolDefinition({
     port: { execute: async (request) => {
+      await assertToolAllowed("knowledge_maintain", request as unknown as Record<string, unknown>);
       const turn = input.input.currentKnowledgeTurnContext();
       const result = await input.knowledgeMaintenance.execute({ ...request, folderBindingsRevision: turn?.kind === "maintain" ? turn.command.folderBindingsRevision : undefined, globalSourcePaths: turn?.kind === "maintain" && turn.command.scope.mode === "global" ? turn.command.scope.sourcePaths : undefined, sourceBodyFingerprints: { ...sourceBodyFingerprints } });
       Object.assign(sourceBodyFingerprints, result.refreshedSources ?? {});
@@ -2135,6 +2183,17 @@ async function createProductionAgentSession(input: {
   const inlineExtension = createPiKnowledgeInlineExtension({
     knowledgeBindings: () => input.plugin.settings.knowledgeBase.folderBindings,
     vaultSecurity: security.inlineExtension,
+    currentAgentSnapshot: async () => { const context = await liveCapabilityContext(); return resolveAgentRunSnapshot(context.settings, context.agentId); },
+    assertCurrentSkillsAllowed: async () => {
+      const context = await liveCapabilityContext();
+      const paths = input.input.skillPath ? [input.input.skillPath] : [...(input.input.skillPaths ?? [])];
+      for (const skillPath of paths) requireAgentCapability(checkAgentSkillPath(context, skillPath));
+      const turn = input.input.currentSkillTurnContext?.();
+      if (turn) requireAgentCapability(checkAgentSkill(context, turn.skillId));
+      for (const note of input.input.currentNoteMentionTurnContext?.()?.noteMentions ?? []) {
+        requireAgentCapability(checkAgentTool(context, "note_read", { relativePath: note.vaultRelativePath }));
+      }
+    },
     currentWorkspaceAccess: () => input.input.currentWorkspaceAccess?.() ?? null,
     currentTurn: () => input.input.currentKnowledgeTurnContext(),
     currentSkillTurn: () => input.input.currentSkillTurnContext?.() ?? null,
@@ -2165,6 +2224,11 @@ async function createProductionAgentSession(input: {
     skillPaths: input.input.skillPath
       ? [input.input.skillPath]
       : [...(input.input.skillPaths ?? [])],
+    assertSkillAllowed: async skillPath => requireAgentCapability(checkAgentSkillPath(await liveCapabilityContext(), skillPath)),
+    assertBeforeAgentStart: async () => {
+      const context = await liveCapabilityContext();
+      requireAgentCapability(checkAgentCapability(context, linkingBatch ? "knowledge" : "conversation"));
+    },
     systemPrompt: buildEchoInkRuntimeSystemPrompt(),
     appendSystemPrompt: [WEB_SEARCH_INSTRUCTIONS],
     inlineExtension: linkingBatch ? knowledgeLinkingInlineExtension() : inlineExtension
@@ -2210,7 +2274,7 @@ async function createProductionAgentSession(input: {
     maintenanceTool,
     ...knowledgeReadTools
   ]);
-  const toolRegistration = createControlledPiToolRegistration(registeredTools);
+  const toolRegistration = createControlledPiToolRegistration(registeredTools, assertToolAllowed);
   const settingsManager = SettingsManager.inMemory({
     defaultProvider: model.provider,
     defaultModel: model.id,
@@ -2290,7 +2354,13 @@ async function createProductionAgentSession(input: {
     .map((warning) => redactEchoInkLocalSecretsV1(warning));
   return {
     providerSettingsId: configured.provider.id,
-    isToolCurrentlyEnabled: (name) => name !== WEB_SEARCH_TOOL_NAME || webSearchSecurity.available(),
+    isToolCurrentlyEnabled: (name) => {
+      const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
+      const context = createPiAgentCapabilityContext(input.plugin, input.input.catalog.agentId ?? "sol", [], input.input.currentWorkspaceAccess?.());
+      // Publication is advisory; dispatch and execute re-read Catalog, settings and resources.
+      return descriptor ? checkAgentCapability(context, `mcp:${encodeURIComponent(descriptor.resourceId)}:${encodeURIComponent(descriptor.toolName)}`).allowed
+        : checkAgentTool(context, name).allowed;
+    },
     session: created.session,
     memoryToolNames: configured.toolCalling
       ? PI_PERSONAL_MEMORY_TOOL_IDS
@@ -2375,7 +2445,59 @@ function providerRuntimeConfig(
   });
 }
 
-async function isPiMcpToolCurrentlyAllowed(
+/** Production and tests share the exact module roots and current settings interpretation. */
+export function createPiAgentCapabilityContext(plugin: PiProductionPluginHost, agentId: string, resources: readonly EchoInkResource[], access?: Readonly<PiWorkspaceAccess> | null): AgentCapabilityContext {
+  const s = plugin.settings;
+  const journal = readNativeJournalSettings(plugin.app, s.journalDirectory, s.knowledgeBase.folderBindings);
+  const finance = plugin.lifestyle?.finance.ledger.paths();
+  return { settings: s, agentId, resources, vaultRoot: plugin.getVaultPath(), access,
+    proAccess: plugin.accountService ?? plugin.lifestyle?.finance.access,
+    modulePaths: {
+      journal: [journal.folder, s.journalDirectory].filter(Boolean),
+      finance: [finance?.root, FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT, s.lifestyle.finance.analysisDirectory].filter((value): value is string => !!value),
+      "english-diary": [s.englishDiary.englishDirectory, s.englishDiary.expressionDirectory, ...(s.englishDiary.legacyEnglishDirectories ?? []), ...(s.englishDiary.legacyExpressionDirectories ?? []), "outputs/.english-diary", ".echoink/english-diary"],
+      review: [s.review.outputDir]
+    },
+    isRootJournalPath: value => nativeRootJournalPaths(plugin.app, [value]).length > 0
+  };
+}
+async function currentAgentCapabilityContext(plugin: PiProductionPluginHost, catalog: FileConversationCatalog, conversationId: string, access?: Readonly<PiWorkspaceAccess> | null): Promise<AgentCapabilityContext> {
+  const entry = await catalog.get(conversationId);
+  if (!entry) throw new Error("agent_capability_catalog_missing");
+  return createPiAgentCapabilityContext(plugin, entry.agentId ?? "sol", await plugin.buildRuntimeEchoInkResourceCatalog(), access);
+}
+export function piMcpSchemaHasExecutableTarget(schema: unknown): boolean {
+  if (!schema || typeof schema !== "object") return false;
+  const item = schema as Record<string, unknown>;
+  return !!(item.properties && typeof item.properties === "object" && Object.keys(item.properties).some(key => /^(?:command|code|script|program|shell|cwd)$/iu.test(key)))
+    || Object.values(item).some(value => !!value && typeof value === "object" && piMcpSchemaHasExecutableTarget(value));
+}
+/** A remote HTTP endpoint plus a closed, non-executable schema proves an external action. */
+export function isPiMcpExternalOnly(context: AgentCapabilityContext, descriptor: Readonly<PiMcpToolSecurityDescriptor>): boolean {
+  const resource = context.resources.find(item => item.id === descriptor.resourceId);
+  if (!resource) return false;
+  const connection = resolveMcpConnectionRecord(resource, context.settings.resources);
+  if (connection?.transport !== "http" || !descriptor.inputSchema) return false;
+  let url: URL;
+  try { url = new URL(connection.url); } catch { return false; }
+  if (!["http:", "https:"].includes(url.protocol) || /^(?:localhost|.*\.(?:localhost|local)|0\.0\.0\.0|127(?:\.[0-9]+){3}|10(?:\.[0-9]+){3}|192\.168(?:\.[0-9]+){2}|172\.(?:1[6-9]|2[0-9]|3[01])(?:\.[0-9]+){2}|\[.*\])$/iu.test(url.hostname)) return false;
+  const unsafe = /^(?:command|code|script|program|shell|cwd)$/iu;
+  const inspect = (schema: unknown): boolean => {
+    if (!schema || typeof schema !== "object" || Array.isArray(schema)) return false;
+    const item = schema as Record<string, unknown>;
+    if (item.$ref || item.patternProperties || !item.type && !["anyOf", "oneOf", "allOf"].some(key => Array.isArray(item[key]))) return false;
+    if ((item.type === "object" || item.properties) && item.additionalProperties !== false) return false;
+    if (item.properties && typeof item.properties === "object") for (const [key, value] of Object.entries(item.properties)) {
+      if (unsafe.test(key) || isAgentCapabilityPathField(key) || !inspect(value)) return false;
+    }
+    if (item.items && !inspect(item.items)) return false;
+    for (const key of ["anyOf", "oneOf", "allOf"]) if (Array.isArray(item[key]) && !(item[key] as unknown[]).every(inspect)) return false;
+    return true;
+  };
+  return inspect(descriptor.inputSchema);
+}
+
+export async function isPiMcpToolCurrentlyAllowed(
   plugin: PiProductionPluginHost,
   descriptor: Readonly<PiMcpToolSecurityDescriptor>
 ): Promise<boolean> {

@@ -24,18 +24,18 @@ try {
     if (!member) throw new Error(`Missing production metadata method: ${name}`);
     return member.getText(mainSource);
   });
-  const syncLane = pluginClass.members.find(member => member.name?.getText(mainSource) === "piTaskMetadataSyncTail");
+  const syncLanes = ["piTaskMetadataSyncTail", "piTaskMetadataWriteTails"].map(name => pluginClass.members.find(member => member.name?.getText(mainSource) === name));
   const legacyCatalogSource = execFileSync("git", ["show", "a1bdd5cb:src/harness/pi-native/file-conversation-catalog.ts"], { cwd: rootDir, encoding: "utf8" });
   await esbuild.build({
     stdin: { contents: [
       'import { runAgentsStorageTests } from "./src/tests/agents-storage";',
-      'import { applyConversationTaskMetadata, applySavedTaskMetadataWithoutLosingEdits, normalizeConversationTaskMetadata, taskMetadataProjectionIsCurrent } from "./src/agents/task-metadata";',
+      'import { applyConversationTaskMetadata, patchConversationTaskMetadata, normalizeConversationTaskMetadata } from "./src/agents/task-metadata";',
       'class ProductionMetadataHost {',
       'settings; piLocalData; piRuntimeBundle = null;',
       'constructor(catalog, sessions) { this.piLocalData = { catalog, listConversations: statuses => catalog.list({ statuses }), setConversationStatus: (id, status) => catalog.status(id, status) }; this.settings = { sessions }; }',
       'async ensurePiLocalData() { return this.piLocalData; }',
       'async cancelPiConversationActivation() {}',
-      ...(syncLane ? [syncLane.getText(mainSource)] : []),
+      ...syncLanes.filter(Boolean).map(member => member.getText(mainSource)),
       ...syncMembers,
       '}',
       'import { runPiConversationStartupTests } from "./src/tests/pi-native/conversation-startup";',

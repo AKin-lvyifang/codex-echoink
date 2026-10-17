@@ -1,14 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
-const outputDir = path.join(rootDir, ".tmp");
+const temporaryOutput = Boolean(process.env.TMPDIR);
+const outputDir = temporaryOutput
+  ? await mkdtemp(path.join(await realpath(process.env.TMPDIR), "run-conversation-ui-"))
+  : path.join(rootDir, ".tmp");
 const outputFile = path.join(outputDir, "pi-conversation-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
 
+try {
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
@@ -71,7 +75,7 @@ await esbuild.build({
   format: "esm",
   // Preserve Node's CommonJS bridge for bundled CJS dependencies such as
   // read-excel-file/unzipper; the test entry itself still uses top-level await.
-  banner: { js: 'import { createRequire as createConversationTestRequire } from "node:module"; const require = createConversationTestRequire(import.meta.url);' },
+  banner: { js: `import { createRequire as createConversationTestRequire } from "node:module"; const require = createConversationTestRequire(${JSON.stringify(path.join(rootDir, "package.json"))});` },
   external: [
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",
@@ -82,6 +86,9 @@ await esbuild.build({
   plugins: [{
     name: "pi-conversation-test-shims",
     setup(build) {
+      build.onResolve({ filter: /^(?:@earendil-works\/pi-(?:agent-core|ai|coding-agent)(?:\/.*)?|yaml|jsdom)$/ }, args => ({
+        path: fileURLToPath(import.meta.resolve(args.path)), external: true
+      }));
       build.onResolve({ filter: /provider-brand-icons$/ }, () => ({
         path: path.join(rootDir, "src", "tests", "composer-provider-brand-shim.ts")
       }));
@@ -103,4 +110,7 @@ const result = spawnSync(process.execPath, [outputFile], {
   stdio: "inherit"
 });
 
-process.exit(result.status ?? 1);
+process.exitCode = result.status ?? 1;
+} finally {
+  if (temporaryOutput) await rm(outputDir, { recursive: true, force: true });
+}

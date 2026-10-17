@@ -55,8 +55,13 @@ export interface KnowledgeLinkingFileResult {
   aliases: number;
   message?: string;
 }
+/** A Catalog reference survives handoff; mutable Agent identity is never copied here. */
+export interface KnowledgeLinkingOrigin {
+  originConversationId?: string;
+  authorizationSource?: "conversation" | "manual-user" | "unknown";
+}
 
-export interface KnowledgeLinkingTask {
+export interface KnowledgeLinkingTask extends KnowledgeLinkingOrigin {
   schemaVersion: 1;
   id: string;
   mode: "manual" | "automatic";
@@ -74,7 +79,8 @@ export interface KnowledgeLinkingTask {
   targetPaths?: string[];
   /** Committed drafts may link out to every valid knowledge target. */
   sourcePaths?: string[];
-  queuedAutomatic?: Array<{ id: string; paths: string[]; sourcePaths?: string[]; at: number }>;
+  queuedAutomatic?: Array<KnowledgeLinkingOrigin & { id: string; paths: string[]; sourcePaths?: string[]; at: number; pausedForHandoff?: boolean }>;
+  pausedForHandoff?: boolean;
   targetVersions?: Record<string, string>;
   dismissed?: boolean;
   writeConfirmed?: boolean;

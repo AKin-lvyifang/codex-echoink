@@ -1,3 +1,5 @@
+import type { ConversationRunState } from "../plugin/conversation-run-service";
+export type { ConversationRunState } from "../plugin/conversation-run-service";
 import { addSelectionAnnotation as appendSelectionAnnotation, composerSelectionAnnotations, selectionDraft, snapshotSelectionDraft, restoreSelectionDraft, emptySelectionDraft, type SelectionDraft } from "../selection-ask/draft";
 import { selectionAnnotationsMatch, type SelectionAnnotation, type SelectionCapture } from "../types/selection-annotations";
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
@@ -162,24 +164,10 @@ export interface HomeConversationStartInput {
   readonly journalDirectory?: string;
 }
 
-export interface ConversationRunState {
-  running: boolean;
-  activeRunId: string;
-  activeRunKind: "chat" | "";
-  activeRunSessionId: string;
-  activeTurnId: string;
-  turnStartedAt: number;
-  turnWatchdog: number | null;
-  queueStartInProgress: boolean;
-  readonly controller: AbortController;
-  context?: CodexViewTurnContext;
-}
-
 /**
- * Serializable-enough handoff bundle used when the conversation view moves
- * between the sidebar and the quick-chat popout window. Run states, the queue
- * and interaction maps are transferred by reference (Obsidian popouts share
- * the renderer JS heap); the successor view rebinds UI-facing closures.
+ * Composer migration snapshot for sidebar/popout moves. Runtime references
+ * remain for compatibility with the window controller; their ownership stays
+ * with the plugin service and importing a View never rebinds a run host.
  */
 export interface CodexViewMigrationState {
   readonly runs: Array<[string, ConversationRunState]>;
@@ -285,7 +273,8 @@ export class CodexView extends ItemView {
   private mcpPanelEl!: HTMLElement;
   private attachmentsEl!: HTMLElement;
   private queueEl!: HTMLElement;
-  private readonly conversationRuns = new Map<string, ConversationRunState>();
+  private get conversationRuns(): Map<string, ConversationRunState> { return this.plugin.getConversationRunService().runs; }
+  private runSubscriptionDispose?: () => void;
   private get currentConversationRun(): ConversationRunState | undefined {
     return this.conversationRuns.get(this.plugin.settings.activeSessionId);
   }
@@ -309,10 +298,7 @@ export class CodexView extends ItemView {
   private turnNavigator: TurnNavigator | null = null;
   private readonly taskPlanDock = new TaskPlanDockController();
   private readonly interactionDock = new InteractionDockController();
-  private readonly pendingInteractionsBySession = new Map<
-    string,
-    Readonly<EchoInkTurnInteraction>
-  >();
+  private get pendingInteractionsBySession(): Map<string, Readonly<EchoInkTurnInteraction>> { return this.plugin.getConversationRunService().pendingInteractions; }
   private selectedSkill: EchoInkResource | null = null;
   private attachments: StoredAttachment[] = [];
   private selectedProviderSettingsId = "";
@@ -322,7 +308,7 @@ export class CodexView extends ItemView {
   private skillsRequested = false;
   private viewLifecycleGeneration = 0;
   private viewLifecycleAbortController = new AbortController();
-  private turnQueue: RuntimeTurnQueue = new RuntimeTurnQueue();
+  private get turnQueue(): RuntimeTurnQueue { return this.plugin.getConversationRunService().turnQueue; }
   private migrationMode = false;
   private migrationSuccessor: CodexView | null = null;
   private guidedSessionStartInProgress = false;
@@ -380,45 +366,22 @@ export class CodexView extends ItemView {
     return host;
   }
 
-  private conversationRun(sessionId: string): ConversationRunState {
-    let state = this.conversationRuns.get(sessionId);
-    if (!state) {
-      state = {
-        running: false, activeRunId: "", activeRunKind: "", activeRunSessionId: "",
-        activeTurnId: "", turnStartedAt: 0, turnWatchdog: null, queueStartInProgress: false,
-        controller: new AbortController()
-      };
-      if (this.viewLifecycleAbortController.signal.aborted) state.controller.abort();
-      this.conversationRuns.set(sessionId, state);
-    }
-    return state;
-  }
-
-  private clearConversationRun(sessionId: string, state: ConversationRunState): void {
-    state.activeRunId = "";
-    state.activeRunKind = "";
-    state.activeRunSessionId = "";
-    state.activeTurnId = "";
-    if (!state.running && !state.queueStartInProgress && this.conversationRuns.get(sessionId) === state) {
-      this.conversationRuns.delete(sessionId);
-    }
-  }
+  private conversationRun(sessionId: string): ConversationRunState { return this.plugin.getConversationRunService().stateFor(sessionId); }
+  private clearConversationRun(sessionId: string, state: ConversationRunState): void { this.plugin.getConversationRunService().clearActiveRun(sessionId, state); }
   private shellHost(): CodexViewShellHost { return this as unknown as CodexViewShellHost; }
 
   private createTurnRunnerContext(sessionId: string): CodexViewTurnContext {
     const view = this;
     const state = this.conversationRun(sessionId);
-    if (state.context) return state.context;
     const lifecycle = this.turnLifecycleHost(sessionId);
     const context: CodexViewTurnContext = {
-      get lifecycleSignal() { return state.controller.signal; }, get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return state.running; }, set running(value) { state.running = value; }, get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; }, get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; }, get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; }, get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
+      get lifecycleSignal() { return view.viewLifecycleAbortController.signal; }, get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return state.running; }, set running(value) { state.running = value; }, get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; }, get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; }, get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; }, get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
       get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return state.queueStartInProgress; }, set queueStartInProgress(value) { state.queueStartInProgress = value; if (!value && !state.running) view.clearConversationRun(sessionId, state); }, get turnStartedAt() { return state.turnStartedAt; }, set turnStartedAt(value) { state.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get selectedProviderSettingsId() { return view.selectedProviderSettingsId; }, set selectedProviderSettingsId(value) { view.selectedProviderSettingsId = value; }, get selectedModel() { return view.selectedModel; }, set selectedModel(value) { view.selectedModel = value; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
-      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => armTurnWatchdogAction(lifecycle, timeoutMs, timeoutText), clearTurnWatchdog: () => clearTurnWatchdogAction(lifecycle), clearActiveRun: () => view.clearConversationRun(sessionId, state), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.sessionById(sessionId) ?? view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => enqueueComposerDraftRunner(context), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => stopTurnAction(lifecycle), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
+      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => armTurnWatchdogAction(lifecycle, timeoutMs, timeoutText), clearTurnWatchdog: () => clearTurnWatchdogAction(lifecycle), clearActiveRun: () => view.clearConversationRun(sessionId, state), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.sessionById(sessionId) ?? view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => enqueueComposerDraftRunner(context), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.plugin.getConversationRunService().stopTask(sessionId), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
       clearAcceptedComposerDraft: (item) => view.clearAcceptedComposerDraft(item),
       createQueuedTurnFromComposer: (options) => createQueuedTurnFromComposerRunner(context, options), startQueuedTurnItem: (item, source) => view.startQueuedTurnItem(item, source), startQueuedTurnItemSafely: (item, source) => view.startQueuedTurnItemSafely(item, source), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), startNextQueuedTurn: (sessionId) => view.startNextQueuedTurn(sessionId), startChatTurn: (session, item, source) => view.startChatTurn(session, item, source), clearComposerDraft: () => { if (view.plugin.settings.activeSessionId === sessionId) view.clearComposerDraft(); },
       ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session, updatedMessage) => view.renderMessagesIfActive(session, updatedMessage), setPendingInteraction: (sessionId, interaction, expectedTurnId) => view.setPendingInteraction(sessionId, interaction, expectedTurnId), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), dismissThinkingMessage: (session) => view.dismissThinkingMessage(session), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command)
     } satisfies CodexViewTurnContext;
-    state.context = context;
     return context;
   }
 
@@ -488,6 +451,17 @@ export class CodexView extends ItemView {
     }
     const initialConversation = await ensureInitialConversationAction(this.sessionHost());
     this.render();
+    this.runSubscriptionDispose?.();
+    this.runSubscriptionDispose = this.plugin.getConversationRunService().subscribe({
+      isTaskVisible: id => !this.viewLifecycleAbortController.signal.aborted && this.plugin.settings.activeSessionId === id,
+      clearAcceptedDraft: item => this.clearAcceptedComposerDraft(item),
+      refresh: (id, message) => {
+        if (this.viewLifecycleAbortController.signal.aborted) return;
+        this.renderTabs(); this.renderQueue(); this.renderToolbar(); this.applyStatus();
+        const session = this.sessionById(id);
+        if (session) { this.renderMessagesIfActive(session, message); if (this.plugin.settings.activeSessionId === id) this.renderInteractionDock(session); }
+      }
+    });
     if (!initialConversation.created) {
       try {
         await activateSessionAction(this.sessionHost(), initialConversation.session);
@@ -505,81 +479,19 @@ export class CodexView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    this.knowledgeLinkingProgressDispose?.();
-    this.knowledgeLinkingProgressDispose = undefined;
-    // Window migration (quick-chat popout <-> sidebar) must NOT cancel live
-    // runs: the harness run, queue and Pi conversation stay owned by the
-    // plugin layer and are handed over to the successor view instance.
-    const migrating = this.migrationMode;
-    this.viewLifecycleGeneration = (
-      Number.isSafeInteger(this.viewLifecycleGeneration)
-        ? this.viewLifecycleGeneration
-        : 0
-    ) + 1;
+    this.runSubscriptionDispose?.(); this.runSubscriptionDispose = undefined;
+    this.knowledgeLinkingProgressDispose?.(); this.knowledgeLinkingProgressDispose = undefined;
+    this.viewLifecycleGeneration++;
     this.viewLifecycleAbortController?.abort();
     try {
-      closeComposerParameterMenu();
-      disposeContextPopover(this.composerHost());
-      this.contextPanelOpen = false;
-      this.clearKnowledgeBaseRunProgressTimer();
-      const closingRuns = [...this.conversationRuns];
-      if (migrating) {
-        // Only disarm timers bound to this dying DOM context; run state itself
-        // was exported before the move and survives on the successor.
-        for (const [, state] of closingRuns) {
-          if (state.turnWatchdog !== null) window.clearTimeout(state.turnWatchdog);
-          state.turnWatchdog = null;
-        }
-        this.promptEnhancerRunning = false;
-        this.promptEnhancerRunId = "";
-        this.promptEnhancerTurnId = "";
-      } else {
-        for (const [sessionId, state] of closingRuns) {
-          state.controller.abort();
-          this.turnQueue.pauseSessionQueue(sessionId);
-          if (state.turnWatchdog !== null) window.clearTimeout(state.turnWatchdog);
-          state.turnWatchdog = null;
-        }
-        const promptEnhancerRunId = this.promptEnhancerRunId;
-        this.promptEnhancerRunning = false;
-        this.promptEnhancerRunId = "";
-        this.promptEnhancerTurnId = "";
-        if (promptEnhancerRunId) {
-          await this.plugin.cancelHarnessRun(promptEnhancerRunId).catch((error) => {
-            console.error("Prompt enhancer cancellation failed while closing EchoInk", error);
-          });
-        }
-        await Promise.all(closingRuns.map(async ([sessionId, state]) => {
-          if (state.activeRunId) {
-            await this.plugin.cancelHarnessRun(state.activeRunId).catch((error) => {
-              console.error("Chat cancellation failed while closing EchoInk", error);
-            });
-          }
-          await this.plugin.releasePiConversation(sessionId).catch((error) => {
-            console.error("Pi Conversation release failed while closing EchoInk", error);
-          });
-        }));
-      }
-      await this.flushSessionSave();
-      if (!migrating) {
-        const activeSession = this.plugin.settings.sessions.find(
-          (session) => session.id === this.plugin.settings.activeSessionId
-        );
-        if (activeSession && !closingRuns.some(([id]) => id === activeSession.id)) {
-          await this.plugin.releasePiConversation(activeSession.id).catch((error) => {
-            console.error("Pi Conversation release failed while closing EchoInk", error);
-          });
-        }
-      }
+      closeComposerParameterMenu(); disposeContextPopover(this.composerHost());
+      this.contextPanelOpen = false; this.clearKnowledgeBaseRunProgressTimer();
+      if (!this.migrationMode && this.promptEnhancerRunId) await this.plugin.cancelHarnessRun(this.promptEnhancerRunId);
+      this.promptEnhancerRunning = false; this.promptEnhancerRunId = ""; this.promptEnhancerTurnId = "";
+      await this.plugin.getConversationRunService().flushSave();
     } finally {
-      this.conversationRuns.clear();
-      this.clearHomeAttentionFrame();
-      this.taskPlanDock.dispose();
-      this.interactionDock.dispose();
-      this.pendingInteractionsBySession.clear();
-      this.messageListRenderer.dispose();
-      this.turnNavigator?.dispose();
-      this.turnNavigator = null;
+      this.clearHomeAttentionFrame(); this.taskPlanDock.dispose(); this.interactionDock.dispose();
+      this.messageListRenderer.dispose(); this.turnNavigator?.dispose(); this.turnNavigator = null;
     }
   }
 
@@ -638,14 +550,6 @@ export class CodexView extends ItemView {
   }
 
   importMigrationState(state: Readonly<CodexViewMigrationState>): void {
-    for (const [sessionId, runState] of state.runs) {
-      runState.turnWatchdog = null;
-      // The cached turn context closes over the previous instance's DOM;
-      // force this view to rebuild its own context lazily.
-      runState.context = undefined;
-      this.conversationRuns.set(sessionId, runState);
-    }
-    this.turnQueue = state.turnQueue;
     this.composerDraftOwner = state.draftOwner ?? this.plugin.settings.activeSessionId;
     this.composerSessionDrafts.clear();
     for (const [id, draft] of state.sessionDrafts ?? []) this.composerSessionDrafts.set(id, draft);
@@ -670,11 +574,6 @@ export class CodexView extends ItemView {
         addComposerNoteMentionSelection(this.inputEl, mention);
       }
     }
-    for (const [sessionId, runState] of this.conversationRuns) {
-      if (!runState.running && !runState.queueStartInProgress) continue;
-      if (runState.turnWatchdog !== null) continue;
-      armTurnWatchdogAction(this.turnLifecycleHost(sessionId));
-    }
     this.renderAttachments();
     this.renderQueue();
     this.renderTabs();
@@ -689,11 +588,9 @@ export class CodexView extends ItemView {
   }
 
   /**
-   * After a migration rebuilt the view, old turn-runner subscriptions still
-   * close over THIS instance. Forward the UI-facing methods to the successor
-   * so streaming updates keep rendering while run data keeps flowing into the
-   * shared session objects. Data-layer methods that write to shared settings
-   * (scheduleSessionSave/flushSessionSave) intentionally stay local.
+   * Forward transient composer/prompt-enhancer UI callbacks during migration.
+   * Accepted task subscriptions and message persistence belong to the plugin
+   * service and never use this forwarding layer.
    */
   installMigrationForwarding(target: CodexView): void {
     if (target === this) return;
@@ -1171,15 +1068,15 @@ export class CodexView extends ItemView {
     this.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
     this.focusInput();
   }
-  private async resumeQueuedTurns(sessionId: string): Promise<void> { await resumeQueuedTurnsRunner(this.createTurnRunnerContext(sessionId), sessionId); }
-  private async afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void> { if (this.viewLifecycleAbortController.signal.aborted) return; await afterTurnSettledRunner(this.createTurnRunnerContext(sessionId), sessionId, succeeded); }
-  private async startNextQueuedTurn(sessionId: string): Promise<void> { if (this.viewLifecycleAbortController.signal.aborted) return; await startNextQueuedTurnRunner(this.createTurnRunnerContext(sessionId), sessionId); }
+  private async resumeQueuedTurns(sessionId: string): Promise<void> { await this.plugin.getConversationRunService().resumeQueuedTurns(sessionId); }
+  private async afterTurnSettled(_sessionId: string, _succeeded: boolean): Promise<void> { /* The plugin service settles and advances the queue. */ }
+  private async startNextQueuedTurn(sessionId: string): Promise<void> { await this.plugin.getConversationRunService().startNextQueuedTurn(sessionId); }
   private async createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> { return await createQueuedTurnFromComposerRunner(this.turnRunnerContext, options); }
-  private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await startQueuedTurnItemRunner(this.createTurnRunnerContext(item.sessionId), item, source); }
-  private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await startQueuedTurnItemSafelyRunner(this.createTurnRunnerContext(item.sessionId), item, source); }
-  private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await startChatTurnRunner(this.createTurnRunnerContext(session.id), session, item, source); }
+  private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await this.plugin.getConversationRunService().start(item, source); }
+  private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await this.plugin.getConversationRunService().start(item, source); }
+  private async startChatTurn(session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await this.plugin.getConversationRunService().start(item, source); }
   private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> { await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner); }
-  private async stopTurn(): Promise<void> { await stopTurnAction(this.turnLifecycleHost()); }
+  private async stopTurn(): Promise<void> { await this.plugin.getConversationRunService().stopTask(this.plugin.settings.activeSessionId); }
   private settleStaleMessages(session: StoredSession): void { settleStaleMessagesAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost, session); }
   private armTurnWatchdog(timeoutMs?: number, timeoutText?: string): void { armTurnWatchdogAction(this.turnLifecycleHost(), timeoutMs, timeoutText); }
   private clearTurnWatchdog(): void { clearTurnWatchdogAction(this.turnLifecycleHost()); }

@@ -615,7 +615,8 @@ export async function startQueuedTurnItem(view: CodexViewTurnContext, item: Queu
   const ownsStart = !view.queueStartInProgress;
   if (ownsStart) view.queueStartInProgress = true;
   try {
-    if (!await prepareTurnProviderModel(view, item, false)) return "failed";
+    const retainQueueHead = source === "queue" && view.turnQueue.itemsForSession(item.sessionId).some(queued => queued.id === item.id);
+    if (!await prepareTurnProviderModel(view, item, retainQueueHead)) return "failed";
     return await startPreparedQueuedTurnItem(view, item, source);
   } finally {
     if (ownsStart) view.queueStartInProgress = false;
@@ -903,6 +904,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   let terminalObserved = false;
   let finalizingProjectionError: unknown = null;
   let finalizingProjectionFlight: Promise<void> = Promise.resolve();
+  let acceptedTaskMetadataFailed = false;
 
   view.running = true;
   let accessByConversation = submittedPiAccess.get(view.plugin);
@@ -946,6 +948,20 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       ...(item.noteMentions?.length ? { noteMentions: item.noteMentions } : {})
     });
     item.piUserEntryAccepted = true;
+    if (source === "queue") {
+      view.turnQueue.acceptPiUserEntry(session.id, item.id);
+      view.renderQueue();
+    }
+    clearComposerAfterPiAcceptance(view, item, source);
+    try {
+      await view.plugin.setPiConversationTaskMetadata(session.id, {
+        taskStatus: "running", taskStartedAt: submittedAt,
+        taskCompletedAt: undefined, taskInterruptedAt: undefined, pendingResponse: undefined
+      });
+    } catch (error) {
+      acceptedTaskMetadataFailed = true;
+      throw error;
+    }
     if (preparedImages.length) {
       recordPiImageAttachmentsForEntry(
         session,
@@ -969,10 +985,6 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
         );
       });
     }
-    if (source === "queue") {
-      view.turnQueue.acceptPiUserEntry(session.id, item.id);
-      view.renderQueue();
-    }
     if (view.lifecycleSignal?.aborted) {
       clearComposerAfterPiAcceptance(view, item, source);
       await view.plugin.abortPiConversation(session.id);
@@ -983,6 +995,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     view.activeRunKind = "chat";
     view.activeRunSessionId = session.id;
     view.activeTurnId = handle.productRunId;
+    view.onPiRunAccepted?.(item);
     liveProjection = piChatLiveProjectionFromSession(
       session,
       handle,
@@ -1157,9 +1170,13 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     }
     return queuedTurnOutcomeForPiTerminal(settledEvent.terminalState);
   } catch (error) {
-    if (piUserEntryWasAccepted(error)) {
+    if (item.piUserEntryAccepted || piUserEntryWasAccepted(error)) {
       item.piUserEntryAccepted = true;
-      const acceptedEntryId = piAcceptedUserEntryId(error);
+      if (source === "queue") {
+        view.turnQueue.acceptPiUserEntry(session.id, item.id);
+        view.renderQueue();
+      }
+      const acceptedEntryId = handle?.userEntryId ?? piAcceptedUserEntryId(error);
       if (acceptedEntryId) {
         if (preparedImages.length) {
           recordPiImageAttachmentsForEntry(
@@ -1205,7 +1222,13 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     const rawMessage = normalizePiChatError(error).message;
     const message = localizedPiChatErrorMessage(view, error);
     new Notice(
-      rawMessage === PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE
+      acceptedTaskMetadataFailed
+        ? uiText(
+          view,
+          `消息已受理，但状态保存失败，本轮已停止：${message}`,
+          `The message was accepted, but its status could not be saved. This turn was stopped: ${message}`
+        )
+        : rawMessage === PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE
         ? message
         : uiText(
           view,
@@ -1338,25 +1361,17 @@ export async function markUnreadCompletedAnswerIfBackground(
 ): Promise<void> {
   const unreadAnswerAt = piConversationUnreadAnswerAt({
     sessionId: session.id,
-    activeSessionId: view.plugin.settings.activeSessionId,
+    activeSessionId: view.plugin.getConversationRunService?.().isTaskVisible(session.id)
+      ? view.plugin.settings.activeSessionId : "",
     event,
     run,
     projection
   });
   if (unreadAnswerAt === undefined) return;
 
-  const previousUnreadAnswerAt = session.unreadAnswerAt;
-  session.unreadAnswerAt = unreadAnswerAt;
   try {
-    await view.plugin.persistPiNativeSettings();
+    await view.plugin.setPiConversationTaskMetadata(session.id, { unreadAnswerAt });
   } catch (error) {
-    if (session.unreadAnswerAt === unreadAnswerAt) {
-      if (previousUnreadAnswerAt === undefined) {
-        delete session.unreadAnswerAt;
-      } else {
-        session.unreadAnswerAt = previousUnreadAnswerAt;
-      }
-    }
     console.error("Unread Pi answer persistence failed", error);
   }
 }

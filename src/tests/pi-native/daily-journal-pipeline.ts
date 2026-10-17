@@ -19,6 +19,7 @@ import { createObsidianNativePort } from "../../plugin/obsidian-native-tools";
 import { ObsidianVaultDomainAdapter } from "../../plugin/obsidian-vault-domain-adapter";
 import { piWorkspaceAllowsTool } from "../../harness/pi-native/pi-workspace-access";
 import { startChatTurn } from "../../ui/codex-view/turn-runner";
+import { attachTestConversationRunService } from "../conversation-run-host";
 import { EchoInkHomeView } from "../../home/home-view";
 import { nativeJournalFixture } from "../native-journal-fixture";
 import { openTestNoticeMessages } from "../obsidian-shim";
@@ -126,10 +127,14 @@ export async function runDailyJournalPipelineTests(): Promise<void> {
         setPendingInteraction() {}, setSessionTaskPlan() {}, renderTaskPlanDock() {}, renderInteractionDock() {},
         clearComposerDraft() {}, renderTabs() {}, renderMessages() {}, renderMessagesIfActive() {}, renderToolbar() {}, applyStatus() {}, armTurnWatchdog() {}, clearTurnWatchdog() {}, clearActiveRun() { this.activeRunId = ""; }
       };
+      const service = attachTestConversationRunService(plugin);
+      const detach = service.subscribe({ refresh() {}, clearAcceptedDraft() {}, isTaskVisible: id => plugin.settings.activeSessionId === id });
+      try {
       homeOutcome = await startChatTurn(view, shell, {
         id: "home-turn", sessionId: shell.id, text: start.message, attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
         turnOptions: { runtimeProviderId: "offline-journal", model: "journal-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false }
       } as never, "composer");
+      } finally { detach(); }
     } });
     callbacks.push((context) => {
       const text = JSON.stringify(context);

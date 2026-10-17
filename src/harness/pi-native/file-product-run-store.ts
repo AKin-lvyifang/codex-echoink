@@ -1,3 +1,4 @@
+import type { AgentRunSnapshot } from "../../agents/types";
 import { normalizePiWorkspacePermission } from "./pi-workspace-access";
 import { isDeepStrictEqual } from "node:util";
 import { readdir, stat } from "node:fs/promises";
@@ -632,7 +633,8 @@ function normalizeProductRun(value: unknown): PiProductRunRecord {
       "error",
       "memoryRecall",
       "knowledge",
-      "maintenance"
+      "maintenance",
+      "agentSnapshot"
     ],
     "ProductRun record"
   );
@@ -749,6 +751,7 @@ function normalizeProductRun(value: unknown): PiProductRunRecord {
       "productRun.userEntryId"
     ),
     ...(assistantEntryId ? { assistantEntryId } : {}),
+    ...(object.agentSnapshot === undefined ? {} : { agentSnapshot: requireAgentRunSnapshot(object.agentSnapshot) }),
     toolCallIds,
     memoryMode: requireMemoryMode(object.memoryMode),
     ...(object.permission === undefined ? {} : { permission: normalizePiWorkspacePermission(object.permission) }),
@@ -1087,6 +1090,7 @@ function optionalTimestamp(value: unknown, label: string): number | undefined {
 
 function cloneProductRun(run: Readonly<PiProductRunRecord>): PiProductRunRecord {
   return {
+    ...(run.agentSnapshot ? { agentSnapshot: requireAgentRunSnapshot(run.agentSnapshot) } : {}),
     productRunId: run.productRunId,
     conversationId: run.conversationId,
     piSessionId: run.piSessionId,
@@ -1109,4 +1113,19 @@ function cloneProductRun(run: Readonly<PiProductRunRecord>): PiProductRunRecord 
     createdAt: run.createdAt,
     updatedAt: run.updatedAt
   };
+}
+
+function requireAgentRunSnapshot(value: unknown): AgentRunSnapshot {
+  const raw = requirePlainObject(value, "agentSnapshot");
+  requireExactKeys(raw, ["agentId", "name", "position", "styleId"], ["capabilityIds", "disabledCapabilityIds"], "agentSnapshot");
+  if (typeof raw.position !== "string" || !["execution", "analysis", "companion", "creative"].includes(raw.styleId as string)) {
+    throw new PiNativeFileStoreError("invalid-input", "Agent run snapshot identity invalid");
+  }
+  const capabilities: Partial<AgentRunSnapshot> = {};
+  for (const key of ["capabilityIds", "disabledCapabilityIds"] as const) {
+    if (raw[key] === undefined) continue;
+    if (!Array.isArray(raw[key])) throw new PiNativeFileStoreError("invalid-input", "Agent run snapshot capabilities invalid");
+    Object.assign(capabilities, { [key]: raw[key].map((id, index) => requireNonEmptyString(id, `agentSnapshot.${key}[${index}]`)) });
+  }
+  return { agentId: requireNonEmptyString(raw.agentId, "agentSnapshot.agentId"), name: requireNonEmptyString(raw.name, "agentSnapshot.name"), position: raw.position, styleId: raw.styleId as AgentRunSnapshot["styleId"], ...capabilities };
 }

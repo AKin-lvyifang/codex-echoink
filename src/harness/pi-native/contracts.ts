@@ -1,6 +1,7 @@
 export type { KnowledgeLinkingProposal as PiKnowledgeLinkingProposal, KnowledgeLinkingFileResult as PiKnowledgeLinkingResult } from "../../knowledge-base/knowledge-linking-types";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ConversationTaskMetadata } from "../../agents/task-metadata";
+import type { AgentRunSnapshot } from "../../agents/types";
 import type { PiPreparedInlineImage } from "../pi/contracts";
 import type { PiContextLedger } from "./pi-context-budget";
 import type {
@@ -136,6 +137,7 @@ export interface PiKnowledgeMaintenanceOutcome {
 }
 
 export interface PiProductRunRecord {
+  agentSnapshot?: AgentRunSnapshot;
   productRunId: string;
   conversationId: string;
   piSessionId: string;

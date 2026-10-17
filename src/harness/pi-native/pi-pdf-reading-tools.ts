@@ -21,7 +21,7 @@ interface PdfCall { name: string; args: PdfArgs; identity: string; consumed: boo
 export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
   readonly toolName = PDF_TOOL_NAMES[0]; readonly toolNames = PDF_TOOL_NAMES;
   private calls = new Map<string, PdfCall>();
-  constructor(private readonly options: { host(): PdfReadingController | null | undefined; access(): PiWorkspaceAccess | null | undefined; identity(): string; intentId(): string; generator?: PdfDependencies["generator"]; bindSources(paths: readonly string[]): void; wikiPaths(rawPath: string): Promise<readonly string[]>; documents(): readonly Readonly<PiChatPreparedDocument>[]; consume(attachmentId: string, sha256: string): Readonly<{ conversationId: string; userEntryId: string }> | null }) {}
+  constructor(private readonly options: { assertToolAllowed?(name: string, args: Readonly<Record<string, unknown>>): Promise<void>; host(): PdfReadingController | null | undefined; access(): PiWorkspaceAccess | null | undefined; identity(): string; intentId(): string; generator?: PdfDependencies["generator"]; bindSources(paths: readonly string[]): void; wikiPaths(rawPath: string): Promise<readonly string[]>; documents(): readonly Readonly<PiChatPreparedDocument>[]; consume(attachmentId: string, sha256: string): Readonly<{ conversationId: string; userEntryId: string }> | null }) {}
   private attachment(id: string): Readonly<PiChatPreparedDocument> {
     const document = this.options.documents().find(d => d.transport === "tool_reference" && d.attachmentId === id);
     if (!document) throw new Error("本轮 PDF 附件不可用；请查询当前附件或重新上传同一文件以恢复。");
@@ -35,6 +35,7 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
     try {
       if (this.calls.has(event.toolCallId) || signal?.aborted || !PDF_TOOL_NAMES.some(name => name === event.toolName)) throw new Error("authorization_failed");
       const args = normalize(event.input, event.toolName);
+      await this.options.assertToolAllowed?.(event.toolName, args);
       const identity = this.options.identity();
       if (event.toolName === "pdf_reading_process") {
         this.writable(); const host = this.options.host(); if (!host) throw new Error("PDF 插件不可用。");
@@ -52,6 +53,7 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
   async execute(id: string, name: string, args: PdfArgs, signal?: AbortSignal): Promise<void> {
     const call = this.calls.get(id);
     if (!call || call.consumed || call.name !== name || call.identity !== this.options.identity() || JSON.stringify(call.args) !== JSON.stringify(normalize(args, name))) throw new Error("authorization_failed");
+    await this.options.assertToolAllowed?.(name, args);
     call.consumed = true;
     try {
       const host = this.options.host(); if (!host) throw new Error("PDF 插件尚未准备好。");

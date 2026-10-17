@@ -212,18 +212,11 @@ export function addMessageToSession(host: CodexMessageHost, session: StoredSessi
 }
 
 export function scheduleSessionSave(host: CodexMessageHost): void {
-  if (host.sessionSaveTimer) return;
-  host.sessionSaveTimer = window.setTimeout(() => {
-    host.sessionSaveTimer = null;
-    void host.plugin.saveSettings(true).catch(swallowError("scheduled session save failed"));
-  }, CHAT_SESSION_SAVE_DEBOUNCE_MS);
+  host.plugin.getConversationRunService().scheduleSave();
 }
 
 export async function flushSessionSave(host: CodexMessageHost): Promise<void> {
-  if (!host.sessionSaveTimer) return;
-  window.clearTimeout(host.sessionSaveTimer);
-  host.sessionSaveTimer = null;
-  await host.plugin.saveSettings(true);
+  await host.plugin.getConversationRunService().flushSave();
 }
 
 export function moveMessageToEnd(host: CodexMessageHost, session: StoredSession, messageId: string): void {

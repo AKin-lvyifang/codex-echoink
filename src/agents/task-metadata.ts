@@ -24,6 +24,18 @@ export interface ConversationTaskMetadata {
   taskMetadataUpdatedAt?: number;
 }
 
+/** Own undefined values explicitly clear fields. Omitted fields are unchanged. */
+export type ConversationTaskMetadataPatch = Partial<Omit<ConversationTaskMetadata, "taskMetadataUpdatedAt">>;
+
+export function patchConversationTaskMetadata(current: ConversationTaskMetadata, patch: ConversationTaskMetadataPatch): ConversationTaskMetadata {
+  const next = normalizeConversationTaskMetadata(current);
+  for (const key of CONVERSATION_TASK_METADATA_KEYS) {
+    if (key === "taskMetadataUpdatedAt" || !Object.hasOwn(patch, key)) continue;
+    Object.assign(next, { [key]: patch[key] });
+  }
+  return normalizeConversationTaskMetadata(next);
+}
+
 export const CONVERSATION_TASK_METADATA_KEYS = [
   "agentId", "businessKey", "taskStatus", "taskStage", "taskStartedAt", "taskCompletedAt",
   "taskInterruptedAt", "pendingResponse", "unreadAnswerAt", "lastReadAt", "taskMetadataUpdatedAt"

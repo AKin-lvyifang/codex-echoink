@@ -1,5 +1,6 @@
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../../knowledge-base/root-paths";
 import { normalizeConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
+import type { AgentRunSnapshot } from "../../agents/types";
 import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { maintenanceRequestsAdviceOnly } from "../../knowledge-base/wiki-folder-names";
@@ -376,10 +377,10 @@ export interface PiNativeAgentSessionFactoryResult {
 
 export interface PiRuntimeSkillPort {
   selectForTask(
-    input: Readonly<{ text: string }>
+    input: Readonly<{ text: string; catalog?: Readonly<PiConversationCatalogEntry> }>
   ): Promise<Readonly<PiRuntimeResolvedSkill> | null>;
   resolveById?(
-    input: Readonly<{ id: string }>
+    input: Readonly<{ id: string; catalog?: Readonly<PiConversationCatalogEntry> }>
   ): Promise<Readonly<PiRuntimeResolvedSkill>>;
   recordUse(skillId: string, usedAt: number): Promise<void>;
   reviewCompletedTask(input: Readonly<{
@@ -406,6 +407,8 @@ export interface PiRuntimeResolvedSkill {
 }
 
 export interface PiNativeConversationRuntimeOptions {
+  resolveAgentRunSnapshot?: (catalog: Readonly<PiConversationCatalogEntry>) => AgentRunSnapshot;
+  assertAgentActionAllowed?: (input: Readonly<{ catalog: Readonly<PiConversationCatalogEntry>; action: "knowledge-read" | "knowledge-write"; access?: Readonly<PiWorkspaceAccess> }>) => void | Promise<void>;
   catalog: FileConversationCatalog;
   productRuns: FileProductRunStore;
   sessionApi: PiSessionManagerApi;
@@ -1400,9 +1403,9 @@ export class PiNativeConversationRuntime {
 
     const selectedRuntimeSkill = !request.skillPath
       ? catalog.defaultSkillId
-        ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId)
+        ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId, catalog)
         : mode !== "plan"
-          ? await this.options.skills?.selectForTask({ text: request.text }) ?? null
+          ? await this.options.skills?.selectForTask({ text: request.text, catalog }) ?? null
           : null
       : null;
     const selectedRuntimeSkills = selectedRuntimeSkill
@@ -1638,6 +1641,7 @@ export class PiNativeConversationRuntime {
           references: Object.freeze([])
         });
       } else if (knowledgeCommand.kind === "maintain") {
+        await this.options.assertAgentActionAllowed?.({ catalog, action: "knowledge-write", access: { permission, mode, memoryMode } });
         const preference =
           await this.options.knowledge!.prepareMaintenancePreferences?.();
         if (!preference) {
@@ -1814,6 +1818,7 @@ export class PiNativeConversationRuntime {
     let accepted: Readonly<PiProductRunRecord>;
     try {
       accepted = await this.productRuns.create({
+        ...(this.options.resolveAgentRunSnapshot ? { agentSnapshot: this.options.resolveAgentRunSnapshot(catalog) } : {}),
         productRunId,
         conversationId: catalog.conversationId,
         piSessionId: catalog.piSessionId,
@@ -2580,6 +2585,7 @@ export class PiNativeConversationRuntime {
       currentMaintenanceCommand: async () => {
         const run = holder.active?.currentRun;
         if (!run) throw new Error("knowledge_maintenance_command_unavailable");
+        await this.options.assertAgentActionAllowed?.({ catalog: holder.active?.catalog ?? catalog, action: "knowledge-write", access: { permission: run.permission, mode: run.mode, memoryMode: run.memoryMode } });
         if (run.knowledgeWorkflow?.kind === "maintain") return run.knowledgeWorkflow.command;
         const preference = await this.options.knowledge?.prepareMaintenancePreferences?.();
         if (!preference) throw new Error("knowledge_maintenance_preferences_unavailable");
@@ -2867,7 +2873,8 @@ export class PiNativeConversationRuntime {
   }
 
   private async resolveConversationDefaultSkill(
-    skillId: string
+    skillId: string,
+    catalog: Readonly<PiConversationCatalogEntry>
   ): Promise<Readonly<PiRuntimeResolvedSkill>> {
     const skills = this.options.skills;
     if (!skills?.resolveById) {
@@ -2877,7 +2884,7 @@ export class PiNativeConversationRuntime {
       );
     }
     try {
-      const resolved = await skills.resolveById({ id: skillId });
+      const resolved = await skills.resolveById({ id: skillId, catalog });
       if (resolved.id !== skillId) {
         throw new Error("resolved_skill_identity_mismatch");
       }

@@ -1,5 +1,9 @@
+import { ConversationRunService } from "./plugin/conversation-run-service";
+import { GENERAL_ASSISTANT_ID } from "./agents/types";
+import { removeAgentDefinition } from "./agents/registry";
+import { patchConversationTaskMetadata, type ConversationTaskMetadataPatch } from "./agents/task-metadata";
 import { registerKnowledgePrivateRoot } from "./knowledge-base/root-paths";
-import { applyConversationTaskMetadata, applySavedTaskMetadataWithoutLosingEdits, normalizeConversationTaskMetadata, taskMetadataProjectionIsCurrent, type ConversationTaskMetadata } from "./agents/task-metadata";
+import { applyConversationTaskMetadata, normalizeConversationTaskMetadata } from "./agents/task-metadata";
 import { knowledgeFolderOrganizationPrompt } from "./knowledge-base/folder-bindings";
 import { PdfReadingController } from "./pdf-reading/controller";
 import { createPluginAccountService } from "./membership/plugin-service";
@@ -218,6 +222,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   private piActivatedConversationId: string | null = null;
   private piLocalData: PiLocalDataService | null = null;
   private piTaskMetadataSyncTail: Promise<void> = Promise.resolve();
+  private piTaskMetadataWriteTails = new Map<string, Promise<unknown>>();
+  private conversationRunService: ConversationRunService | null = null;
   private piLocalDataFlight: Promise<PiLocalDataService> | null = null;
   private cognitiveSystem: CognitiveSystem | null = null;
   private cognitiveSystemFlight: Promise<CognitiveSystem> | null = null;
@@ -326,6 +332,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   private async performUnload(): Promise<void> {
+    await this.conversationRunService?.dispose().catch(error => console.error("Conversation shutdown could not finalize", error));
     this.accountService?.dispose();this.accountService=null;
     this.pdfReading?.api.cancel();
     this.pdfReading = null;
@@ -801,6 +808,8 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.piSubmittingConversations.add(conversationId);
     try {
       return await this.productActivity.run(async () => {
+        const entry = await this.readPiConversationCatalogEntry(conversationId);
+        if (entry && this.conversationRunService?.isAgentBlocked(entry.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("agent_removal_in_progress");
         await this.waitForPiConversationActivation(conversationId);
         const bundle = await this.ensurePiProductionRuntime();
         const handle = await bundle.runtime.submit(request);
@@ -899,27 +908,32 @@ export default class CodexForObsidianPlugin extends Plugin {
     const localData = await this.ensurePiLocalData();
     try {
       await this.syncPiConversationTaskMetadata();
-    } catch {
-      console.warn("EchoInk task metadata could not sync; loading the existing conversation list.");
+    } catch (error) {
+      console.warn("EchoInk task metadata could not sync; loading the existing conversation list.", error);
     }
     return (await localData.listConversations(statuses)).filter(entry => !entry.conversationId.startsWith("knowledge-linking-"));
   }
-  /** Keep the data.json projection durable before refresh/archive can remove it. */
+  async readPiConversationCatalogEntry(conversationId: string): Promise<Readonly<PiConversationCatalogEntry> | null> {
+    return await (await this.ensurePiLocalData()).catalog.get(conversationId);
+  }
+  getConversationRunService(): ConversationRunService {
+    return this.conversationRunService ??= new ConversationRunService(this);
+  }
+  /** Import unstamped P1 projections once. Afterwards Catalog only hydrates settings. */
   async syncPiConversationTaskMetadata(): Promise<void> {
     const sync = this.piTaskMetadataSyncTail.then(async () => {
       const localData = this.piLocalData;
       if (!localData) return;
-      const entries = new Map((await localData.catalog.list()).map(entry => [entry.conversationId, entry]));
       for (const shell of this.settings.sessions) {
-        const entry = entries.get(shell.id);
+        await this.piTaskMetadataWriteTails.get(shell.id)?.catch(() => undefined);
+        const entry = await localData.catalog.get(shell.id);
         if (!entry || entry.status === "deleted" || (shell.piSessionId && shell.piSessionId !== entry.piSessionId)) continue;
-        if (!taskMetadataProjectionIsCurrent(shell, entry)) {
+        if (entry.taskMetadataUpdatedAt === undefined) {
+          const { taskMetadataUpdatedAt: _revision, ...metadata } = normalizeConversationTaskMetadata(shell);
+          await this.setPiConversationTaskMetadata(shell.id, metadata, { importOnlyIfUnstamped: true });
+        } else if ((shell.taskMetadataUpdatedAt ?? -1) <= entry.taskMetadataUpdatedAt) {
           applyConversationTaskMetadata(shell, entry);
-          continue;
         }
-        const metadata = normalizeConversationTaskMetadata(shell);
-        if (entry.taskMetadataUpdatedAt !== undefined && JSON.stringify(metadata) === JSON.stringify(normalizeConversationTaskMetadata(entry))) continue;
-        await this.setPiConversationTaskMetadata(shell.id, metadata, entry.taskMetadataUpdatedAt);
       }
     });
     this.piTaskMetadataSyncTail = sync.catch(() => undefined);
@@ -927,24 +941,65 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   async setPiConversationTaskMetadata(
     conversationId: string,
-    metadata: ConversationTaskMetadata,
-    expectedRevision: number | undefined,
+    patch: ConversationTaskMetadataPatch,
+    options: { importOnlyIfUnstamped?: boolean } = {},
     metadataUpdatedAt = Date.now()
   ): Promise<Readonly<PiConversationCatalogEntry>> {
-    const shellAtStart = this.settings.sessions.find(session => session.id === conversationId);
-    const before = shellAtStart ? normalizeConversationTaskMetadata(shellAtStart) : undefined;
-    const submitted = normalizeConversationTaskMetadata(metadata);
-    const localData = await this.ensurePiLocalData();
-    const entry = this.piRuntimeBundle
-      ? await this.piRuntimeBundle.runtime.setConversationTaskMetadata(conversationId, submitted, expectedRevision, metadataUpdatedAt)
-      : await localData.catalog.updateTaskMetadata(conversationId, submitted, expectedRevision, metadataUpdatedAt);
-    const shell = this.settings.sessions.find(session => session.id === conversationId);
-    if (shell && shell === shellAtStart && before) applySavedTaskMetadataWithoutLosingEdits(shell, entry, before);
-    return entry;
+    const submitted = structuredClone(patch);
+    const previous = this.piTaskMetadataWriteTails.get(conversationId) ?? Promise.resolve();
+    const write = previous.catch(() => undefined).then(async () => {
+      const localData = await this.ensurePiLocalData();
+      const current = await localData.catalog.get(conversationId);
+      if (!current) throw new Error(`Conversation ${conversationId} not found`);
+      if (options.importOnlyIfUnstamped && current.taskMetadataUpdatedAt !== undefined) {
+        for (const shell of this.settings.sessions) if (shell.id === conversationId) applyConversationTaskMetadata(shell, current);
+        return current;
+      }
+      const metadata = patchConversationTaskMetadata(current, submitted);
+      const entry = this.piRuntimeBundle
+        ? await this.piRuntimeBundle.runtime.setConversationTaskMetadata(conversationId, metadata, current.taskMetadataUpdatedAt, metadataUpdatedAt)
+        : await localData.catalog.updateTaskMetadata(conversationId, metadata, current.taskMetadataUpdatedAt, metadataUpdatedAt);
+      for (const shell of this.settings.sessions) {
+        if (shell.id === conversationId) applyConversationTaskMetadata(shell, entry);
+      }
+      return entry;
+    });
+    this.piTaskMetadataWriteTails.set(conversationId, write);
+    try { return await write; }
+    finally { if (this.piTaskMetadataWriteTails.get(conversationId) === write) this.piTaskMetadataWriteTails.delete(conversationId); }
+  }
+  async deleteAgent(agentId: string): Promise<void> {
+    if (agentId === GENERAL_ASSISTANT_ID) throw new Error("general_assistant_cannot_be_deleted");
+    if (!this.settings.agentRegistry.agents.some(agent => agent.id === agentId)) return;
+    const service = this.getConversationRunService();
+    if (service.isAgentBlocked(agentId)) throw new Error("agent_removal_in_progress");
+    service.blockAgent(agentId);
+    try {
+      const localData = await this.ensurePiLocalData();
+      const tasks = (await localData.catalog.list()).filter(entry => entry.agentId === agentId && entry.status !== "deleted");
+      const stopForHandoff = async (entries: readonly Readonly<PiConversationCatalogEntry>[]) => {
+        await Promise.all(entries.map(entry => service.stopTask(entry.conversationId)));
+        await this.requireKnowledgeSurfaceService().linking.stopForOrigins(entries.map(task => task.conversationId));
+        // Rebuild fixed identity next turn, retaining the durable Pi Session.
+        await Promise.all(entries.map(task => this.releasePiConversation(task.conversationId)));
+      };
+      await stopForHandoff(tasks);
+      // A business write that was already in flight can finish creating its
+      // internal judge Conversation while being drained. Include it as well.
+      const known = new Set(tasks.map(task => task.conversationId));
+      const late = (await localData.catalog.list()).filter(entry => entry.agentId === agentId && entry.status !== "deleted" && !known.has(entry.conversationId));
+      if (late.length) { await stopForHandoff(late); tasks.push(...late); }
+      for (const task of tasks) await this.setPiConversationTaskMetadata(task.conversationId, { agentId: GENERAL_ASSISTANT_ID });
+      const previous = this.settings.agentRegistry;
+      this.settings.agentRegistry = removeAgentDefinition(previous, agentId);
+      try { await this.saveSettings(true); }
+      catch (error) { this.settings.agentRegistry = previous; throw error; }
+    } finally { service.unblockAgent(agentId); }
   }
   async createPiConversation(
     input: CreatePiNativeConversationInput
   ): Promise<Readonly<PiConversationCatalogEntry>> {
+    if (this.conversationRunService?.isAgentBlocked(input.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("agent_removal_in_progress");
     return await createPiLocalConversation(await this.ensurePiLocalData(), input);
   }
   async derivePiConversation(
@@ -1147,8 +1202,8 @@ export default class CodexForObsidianPlugin extends Plugin {
     await bundle.runtime.followUp(conversationId, text);
   }
   async abortPiConversation(conversationId: string): Promise<void> {
-    const bundle = await this.ensurePiProductionRuntime();
-    await bundle.runtime.abort(conversationId);
+    await this.cancelPiConversationActivation(conversationId, this.piRuntimeBundle !== null);
+    await this.piRuntimeBundle?.runtime.abort(conversationId);
   }
   async transitionPiTaskPlan(
     request: Readonly<PiTaskPlanTransitionRequest>
@@ -1554,7 +1609,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async readRawMessageText(rawRef: string): Promise<string> { return this.getSettingsStore().readRawMessageText(rawRef); }
   getKnowledgeSurfaceService(): EchoInkKnowledgeSurfaceService | null { return this.knowledgeBase; }
   async getKnowledgeLinkingIndex() { return (await this.ensurePiProductionRuntime()).knowledgeAgentIndex; }
-  async queueKnowledgeLinking(targetPaths: readonly string[], sourcePaths: readonly string[] = [], taskId?: string) { return await this.requireKnowledgeSurfaceService().linking.start("automatic", [...targetPaths], taskId, [...sourcePaths]); }
+  async queueKnowledgeLinking(targetPaths: readonly string[], sourcePaths: readonly string[] = [], taskId?: string, originConversationId?: string) { return await this.requireKnowledgeSurfaceService().linking.start("automatic", [...targetPaths], taskId, [...sourcePaths], originConversationId); }
   private pendingKnowledgeLinkingFocus = false;
   private pendingKnowledgeLinkingTaskId: string | null = null;
   async openKnowledgeLinkingDetails(taskId?: string): Promise<void> { this.pendingKnowledgeLinkingTaskId = taskId ?? null; this.pendingKnowledgeLinkingFocus = true; await this.openEchoInkKnowledgeSettings(); }
@@ -2045,8 +2100,13 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (this.piLocalData) return this.piLocalData;
     if (this.piLocalDataFlight) return await this.piLocalDataFlight;
     const flight = PiLocalDataService.create(this)
-      .then((localData) => {
+      .then(async (localData) => {
         this.piLocalData = localData;
+        for (const entry of await localData.catalog.list()) {
+          if (entry.taskStatus !== "running" || entry.status === "deleted") continue;
+          await this.setPiConversationTaskMetadata(entry.conversationId, { taskStatus: "interrupted", taskInterruptedAt: Date.now(), taskCompletedAt: undefined })
+            .catch(error => console.warn("Interrupted conversation state could not be saved", error));
+        }
         return localData;
       })
       .finally(() => {

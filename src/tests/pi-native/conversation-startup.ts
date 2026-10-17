@@ -330,6 +330,16 @@ async function unreadAnswersClearOnlyAfterSuccessfulOpen(): Promise<void> {
   assert.equal(target.unreadAnswerAt, undefined);
   assert.deepEqual(persisted, [{ unreadAnswerAt: undefined, updatedAt: 20 }]);
 
+  const markReadTarget = storedSession("conversation-mark-read-failure");
+  markReadTarget.unreadAnswerAt = 55;
+  const markReadHost = conversationHost({ sessions: [markReadTarget], activeSessionId: markReadTarget.id,
+    switchPiConversation: async () => conversationProjection(markReadTarget, "read-before-mark-failure"),
+    saveSettings: async () => undefined, rendered: [] });
+  markReadHost.plugin.setPiConversationTaskMetadata = async () => { throw new Error("mark_read_catalog_failed"); };
+  await assert.rejects(activateSession(markReadHost, markReadTarget), /mark_read_catalog_failed/);
+  assert.equal(markReadTarget.unreadAnswerAt, 55, "Failed Catalog mark-read must retain unread, even when the history was rendered");
+  assert.equal(markReadTarget.messages[0]?.id, "read-before-mark-failure", "A failed mark-read must not discard successfully loaded history");
+
   for (const failureStage of ["projection", "persistence"] as const) {
     const failureCurrent = storedSession(`conversation-${failureStage}-current`);
     const failureTarget = storedSession(`conversation-${failureStage}-target`);
@@ -360,8 +370,8 @@ async function unreadAnswersClearOnlyAfterSuccessfulOpen(): Promise<void> {
     );
     assert.equal(
       failureTarget.unreadAnswerAt,
-      60,
-      `${failureStage} failure must retain the unread answer`
+      failureStage === "projection" ? 60 : undefined,
+      "Only a successful read/render may commit mark-read; a later settings failure cannot roll back Catalog"
     );
     assert.equal(failureTarget.updatedAt, 30);
   }
@@ -1011,7 +1021,15 @@ function conversationHost(input: Readonly<{
     plugin: {
       settings,
       switchPiConversation: input.switchPiConversation,
-      saveSettings: input.saveSettings
+      saveSettings: input.saveSettings,
+      setPiConversationTaskMetadata: async (id: string, patch: Record<string, unknown>) => {
+        const session = settings.sessions.find(session => session.id === id)!;
+        // The fixture represents a successful Catalog patch and its projection.
+        for (const [key, value] of Object.entries(patch)) {
+          if (value === undefined) delete (session as any)[key];
+          else (session as any)[key] = value;
+        }
+      }
     },
     updateInputPlaceholder: () => undefined,
     resetVirtualWindow: () => undefined,

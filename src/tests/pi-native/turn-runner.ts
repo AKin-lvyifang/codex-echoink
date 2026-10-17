@@ -1,4 +1,6 @@
 import { annotationFixture } from "../selection-annotations";
+import { attachTestConversationRunService } from "../conversation-run-host";
+import { applyConversationTaskMetadata, patchConversationTaskMetadata, type ConversationTaskMetadataPatch } from "../../agents/task-metadata";
 import { restoreSelectionDraft, emptySelectionDraft } from "../../selection-ask/draft";
 import * as assert from "node:assert/strict";
 import { CodexView } from "../../ui/codex-view";
@@ -29,7 +31,7 @@ import {
   piChatMemoryModeForGlobalSetting,
   piConversationUnreadAnswerAt,
   sendMessage,
-  startChatTurn,
+  startChatTurn as runChatTurn,
   steerPiChatFromComposer,
   startQueuedTurnItem,
   startNextQueuedTurn
@@ -84,6 +86,17 @@ const PNG_1X1 = Buffer.from(
   "base64"
 );
 
+async function startChatTurn(...args: Parameters<typeof runChatTurn>): ReturnType<typeof runChatTurn> {
+  const [view] = args;
+  const service = attachTestConversationRunService(view.plugin);
+  const detach = service.subscribe({
+    refresh() {}, clearAcceptedDraft() {},
+    isTaskVisible: id => !view.lifecycleSignal?.aborted && view.plugin.settings?.activeSessionId === id
+  });
+  try { return await runChatTurn(...args); }
+  finally { detach(); }
+}
+
 export async function runPiNativeTurnRunnerTests(): Promise<void> {
   localAttachmentClassificationUsesMimeOrExtension();
   asyncSkillMenuOnlyReturnsEnabledSkills();
@@ -100,6 +113,7 @@ export async function runPiNativeTurnRunnerTests(): Promise<void> {
   await inFlightComposerImageTransferCannotDuplicate();
   await imageCapabilityPreflightPreservesCompletedTurn();
   await imageCapabilityFailurePreservesComposerAndAcceptedFailureRecordsMetadata();
+  await acceptedMetadataFailureConsumesDraftAndQueue();
   await queuedNativeDocumentCapabilityLossUsesFrozenTextOnly();
   await agentSettlementOnlyFinalizesPiChatTurn();
   await failedSettlementNoticeMatchesDurableFailureReason();
@@ -111,6 +125,59 @@ export async function runPiNativeTurnRunnerTests(): Promise<void> {
   await maintainScopeIsResolvedBeforeProviderSubmit();
   await queuedTurnsKeepExactProviderModelAndRetainUnavailableHead();
   await concurrentViewRunsRemainIndependent();
+}
+
+export async function acceptedMetadataFailureConsumesDraftAndQueue(): Promise<void> {
+  for (const source of ["composer", "queue"] as const) {
+    const session = piSessionShell(`conversation-metadata-failure-${source}`);
+    const item: QueuedTurnItem = {
+      id: "already-accepted", sessionId: session.id, text: "send exactly once",
+      attachments: [], skill: null, kind: "chat", createdAt: 2,
+      clearComposerAfterPiAcceptance: true,
+      turnOptions: { model: "offline", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false }
+    };
+    const submitted: string[] = [];
+    const result = deferred<Readonly<PiProductRunRecord>>();
+    const view = imageFailureView({
+      session, composerItem: item,
+      onSubmit: (async (request: PiChatSubmitRequest) => {
+        submitted.push(request.text);
+        if (submitted.length > 1) throw new Error("offline next turn rejected");
+        return { productRunId: "accepted-run", conversationId: session.id,
+          piSessionId: session.piSessionId, userEntryId: "durable-user", result: result.promise };
+      }) as never,
+      onClearComposer: () => { view.inputEl.value = ""; }
+    });
+    view.turnQueue = new RuntimeTurnQueue();
+    view.renderQueue = () => undefined;
+    view.setPendingInteraction = () => undefined;
+    let metadataWrites = 0;
+    view.plugin.setPiConversationTaskMetadata = async () => {
+      metadataWrites += 1;
+      throw new Error("task metadata disk failure");
+    };
+    view.plugin.abortPiConversation = async () => { result.resolve({} as PiProductRunRecord); };
+    if (source === "queue") {
+      view.turnQueue.enqueue(item);
+      view.turnQueue.enqueue({ ...item, id: "next", text: "next message", clearComposerAfterPiAcceptance: false });
+    }
+    openTestNoticeMessages.length = 0;
+    assert.equal(await startChatTurn(view, session, item, source), "failed");
+    assert.equal(metadataWrites, 1, "the failure occurs after durable Pi acceptance");
+    assert.equal(item.piUserEntryAccepted, true);
+    assert.equal(view.inputEl.value, "", "accepted Composer content cannot be offered for resend");
+    assert.deepEqual(submitted, [item.text]);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /已受理.*状态保存失败/u);
+    if (source === "queue") {
+      assert.deepEqual(view.turnQueue.itemsForSession(session.id).map((queued: QueuedTurnItem) => queued.id), ["next"],
+        "consume only the accepted queue lease, leaving the next message intact");
+      view.turnQueue.pauseSessionQueue(session.id);
+      view.turnQueue.resumeSessionQueue(session.id);
+      const next = view.turnQueue.peekNext(session.id)!;
+      assert.equal(await startChatTurn(view, session, next, "queue"), "failed");
+      assert.deepEqual(submitted, [item.text, "next message"], "resuming cannot replay the accepted message");
+    }
+  }
 }
 
 async function concurrentViewRunsRemainIndependent(): Promise<void> {
@@ -183,8 +250,10 @@ async function concurrentViewRunsRemainIndependent(): Promise<void> {
     isPiProductionRun: (id: string) => runs.has(id),
     cancelHarnessRun: async (id: string) => { cancellations.push(id); await settle(id, "cancelled"); },
     abortPiConversation: async (id: string) => {
-      cancellations.push(latestId(id));
-      await settle(latestId(id), "cancelled");
+      const runId = latestId(id);
+      if (!runId || runs.get(runId)?.terminal) return;
+      cancellations.push(runId);
+      await settle(runId, "cancelled");
     },
     releasePiProductionRun: () => undefined,
     releasePiConversationIfInactive: async () => undefined,
@@ -200,7 +269,13 @@ async function concurrentViewRunsRemainIndependent(): Promise<void> {
       return projection;
     }
   };
+  const service = attachTestConversationRunService(plugin);
   const view: any = new CodexView({} as any, plugin);
+  view.runSubscriptionDispose = service.subscribe({
+    refresh() {},
+    clearAcceptedDraft: item => view.clearAcceptedComposerDraft(item),
+    isTaskVisible: id => !view.viewLifecycleAbortController.signal.aborted && settings.activeSessionId === id
+  });
   view.inputEl = { value: "A1" };
   view.promptEnhanceReviewEl = new FakeElement("div");
   const firstPreparation = deferred<boolean>();
@@ -251,6 +326,7 @@ async function concurrentViewRunsRemainIndependent(): Promise<void> {
     timers.delete(aWatchdog);
     timeout();
     await firstA;
+    await waitFor(() => !service.runs.get("A")?.flight);
     assert.deepEqual(cancellations, [latestId("A")], "A's timeout must cancel only A");
     assert.equal(view.activeRunId, bRunId);
     assert.ok(timers.has(bWatchdog));
@@ -271,14 +347,21 @@ async function concurrentViewRunsRemainIndependent(): Promise<void> {
     await waitFor(() => requests.length === 6 && Boolean(runs.get(latestId("B"))?.listener));
     view.turnQueue.enqueue({ id: "C2", sessionId: "C", text: "C2", attachments: [], skill: null,
       turnOptions: view.currentTurnOptions(), kind: "chat", createdAt: 3 });
+    const cancellationsBeforeClose = [...cancellations];
     await view.onClose();
     await Promise.all([firstC, secondB]);
-    assert.deepEqual([...view.runningSessionIds], []);
-    assert.equal(requests.length, 6, "closing the View must not start C's remaining queue");
+    assert.deepEqual([...view.runningSessionIds].sort(), ["B", "C"]);
+    assert.deepEqual(cancellations, cancellationsBeforeClose, "closing the View cannot cancel accepted runs");
+    assert.equal(timers.size, 2, "watchdogs remain owned by the plugin while its View is closed");
+    await settle(latestId("C"), "completed");
+    await waitFor(() => requests.length === 7 && Boolean(runs.get(latestId("C"))?.listener));
+    assert.equal(requests[6]!.text, "C2", "the closed View's queue continues after C1 settles");
+    await settle(latestId("C"), "completed");
+    await settle(latestId("B"), "completed");
+    await waitFor(() => service.runs.size === 0);
     assert.equal(timers.size, 0);
-    assert.deepEqual(new Set(cancellations.slice(-2)), new Set([latestId("C"), latestId("B")]));
 
-    // A closing View must also cancel a request whose Pi acceptance arrives late.
+    // A closing View also releases requests whose Pi acceptance arrives late.
     view.viewLifecycleAbortController = new AbortController();
     const accepted = deferred<void>();
     const submit = plugin.submitPiChat;
@@ -292,17 +375,22 @@ async function concurrentViewRunsRemainIndependent(): Promise<void> {
     view.turnQueue.enqueue({ id: "late-C", sessionId: "C", text: "late-C", attachments: [], skill: null,
       turnOptions: view.currentTurnOptions(), kind: "chat", createdAt: 4 });
     const lateC = view.startNextQueuedTurn("C");
-    await waitFor(() => requests.length === 7).catch(() => {
+    await waitFor(() => requests.length === 8).catch(() => {
       assert.fail(`Late submit did not start: ${openTestNoticeMessages.at(-1)}; run=${view.conversationRuns.get("C")?.running}; starting=${view.conversationRuns.get("C")?.queueStartInProgress}; aborted=${view.conversationRuns.get("C")?.controller.signal.aborted}`);
     });
     await view.onClose();
     accepted.resolve();
+    await waitFor(() => Boolean(runs.get(latestId("C"))?.listener));
+    assert.equal(runs.get(latestId("C"))?.terminal, undefined);
+    assert.deepEqual(cancellations, cancellationsBeforeClose, "late acceptance survives View closure");
+    await settle(latestId("C"), "completed");
     await lateC;
-    assert.equal(runs.get(latestId("C"))?.terminal, "cancelled");
+    assert.equal(runs.get(latestId("C"))?.terminal, "completed");
     assert.equal(view.turnQueue.hasQueuedItems("C"), false,
-      "an accepted then cancelled request must not remain queued for duplicate submission");
+      "an accepted request must not remain queued for duplicate submission");
     assert.equal(timers.size, 0);
   } finally {
+    await service.dispose();
     dom.restore();
   }
 }
@@ -2467,7 +2555,12 @@ Promise<void> {
       drafts: []
     }),
     saveSettings: async () => undefined,
-    persistPiNativeSettings: async () => { unreadPersistenceCalls += 1; }
+    persistPiNativeSettings: async () => undefined,
+    setPiConversationTaskMetadata: async (id: string, patch: ConversationTaskMetadataPatch) => {
+      const target = [runningSession, targetSession].find(candidate => candidate.id === id)!;
+      if (patch.unreadAnswerAt !== undefined) unreadPersistenceCalls += 1;
+      applyConversationTaskMetadata(target, patchConversationTaskMetadata(target, patch));
+    }
   };
   let running = false;
   let activeRunId = "";
@@ -2706,18 +2799,28 @@ Promise<void> {
     updatedAt: 25
   };
   const persistence = deferred<void>();
+  let unreadWriteStarted = false;
+  const plugin = {
+    settings: { activeSessionId: "conversation-foreground", sessions: [session] },
+    setPiConversationTaskMetadata: async (_id: string, patch: ConversationTaskMetadataPatch) => {
+      if (patch.unreadAnswerAt !== undefined) {
+        unreadWriteStarted = true;
+        await persistence.promise;
+      }
+      applyConversationTaskMetadata(session, patchConversationTaskMetadata(session, patch));
+    }
+  };
+  attachTestConversationRunService(plugin);
   const originalConsoleError = console.error;
   console.error = () => undefined;
   try {
     const marking = markUnreadCompletedAnswerIfBackground({
-      plugin: {
-        settings: { activeSessionId: "conversation-foreground" },
-        persistPiNativeSettings: async () => await persistence.promise
-      }
+      plugin
     } as never, session, event, run, projection);
-    await waitFor(() => session.unreadAnswerAt === 25);
+    await waitFor(() => unreadWriteStarted);
+    assert.equal(session.unreadAnswerAt, 10, "uncommitted metadata cannot replace the Catalog projection");
 
-    delete session.unreadAnswerAt;
+    await plugin.setPiConversationTaskMetadata(session.id, { unreadAnswerAt: undefined });
     persistence.reject(new Error("older unread save failed"));
     await marking;
     assert.equal(
@@ -2846,6 +2949,7 @@ function imageFailureView(input: Readonly<{
   let running = false;
   let activeRunId = "";
   return {
+    turnQueue: new RuntimeTurnQueue(),
     plugin: {
       settings: {
         memory: { useLongTermMemory: true },
@@ -2878,6 +2982,7 @@ function imageFailureView(input: Readonly<{
     selectedSkill: input.composerItem?.skill ?? null,
     clearComposerDraft: input.onClearComposer,
     renderTabs: () => undefined,
+    renderQueue: () => undefined,
     renderMessages: () => undefined,
     renderMessagesIfActive: () => undefined,
     renderToolbar: () => undefined,

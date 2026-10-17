@@ -26,3 +26,13 @@ export interface AgentRegistry {
   agents: AgentDefinition[];
   moduleOwners: Record<AgentModuleId, string>;
 }
+
+/** Frozen identity/capabilities for historical attribution; never an authorization source. */
+export interface AgentRunSnapshot {
+  readonly agentId: string;
+  readonly name: string;
+  readonly position: string;
+  readonly styleId: AgentStyleId;
+  readonly capabilityIds?: readonly string[];
+  readonly disabledCapabilityIds?: readonly string[];
+}

@@ -49,6 +49,7 @@ export interface CodexViewRunnerBaseContext {
 }
 
 export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, MessageRenderFollowContext {
+  onPiRunAccepted?(item: Readonly<QueuedTurnItem>): void;
   readonly turnQueue: RuntimeTurnQueue;
   queueStartInProgress: boolean;
   turnStartedAt: number;

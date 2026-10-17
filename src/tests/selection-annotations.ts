@@ -1,4 +1,5 @@
 import { Scope, type App } from "obsidian";
+import { attachTestConversationRunService } from "./conversation-run-host";
 import { EchoInkViewService } from "../plugin/view-service";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { piProjectedEntryMessageId } from "../harness/pi-native/pi-chat-ui-projector";
@@ -364,8 +365,15 @@ async function relayedEscapeKeepsQuickWindowFocus(main: Window & typeof globalTh
   }
 }
 
+const draftPlugins = new WeakMap<object, any>();
 function createView(doc: Document, settings: any): any {
-  const view: any = new CodexView({} as never, { settings } as never);
+  let plugin = draftPlugins.get(settings);
+  if (!plugin) {
+    plugin = { settings };
+    attachTestConversationRunService(plugin);
+    draftPlugins.set(settings, plugin);
+  }
+  const view: any = new CodexView({} as never, plugin);
   Object.assign(view, { inputEl: doc.createElement("textarea"), attachments: [], selectedSkill: null, renderAttachments() {}, renderQueue() {}, renderTabs() {}, renderMessages() {}, renderToolbar() {}, applyStatus() {}, resetVirtualWindow() {}, updateInputPlaceholder() {}, closeComposerMenus() {}, sessionById: () => null, clearComposerDraft() { this.inputEl.value = ""; clearSelectionDraft(this.inputEl); this.attachments = []; } });
   return view;
 }

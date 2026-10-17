@@ -206,10 +206,6 @@ type ConversationSelectionOutcome =
   | Readonly<{
       status: "selected";
       error?: unknown;
-      clearedUnread?: Readonly<{
-        session: StoredSession;
-        unreadAnswerAt: number;
-      }>;
     }>;
 
 async function completeSessionActivation(
@@ -218,18 +214,7 @@ async function completeSessionActivation(
 ): Promise<void> {
   const outcome = await selection;
   if (outcome.status === "stale") return;
-  try {
-    await persistPiConversationShells(host);
-  } catch (error) {
-    if (
-      outcome.clearedUnread
-      && outcome.clearedUnread.session.unreadAnswerAt === undefined
-    ) {
-      outcome.clearedUnread.session.unreadAnswerAt =
-        outcome.clearedUnread.unreadAnswerAt;
-    }
-    throw error;
-  }
+  await persistPiConversationShells(host);
   if ("error" in outcome) throw outcome.error;
 }
 
@@ -260,16 +245,13 @@ async function activateSessionInTransitionLane(
     host.switchComposerDraft?.(session.id);
     host.plugin.settings.activeSessionId = session.id;
     const unreadAnswerAt = session.unreadAnswerAt;
-    if (unreadAnswerAt !== undefined) delete session.unreadAnswerAt;
     releaseInactiveConversationBodies(host);
     host.updateInputPlaceholder();
     renderConversationShellChange(host);
-    return {
-      status: "selected",
-      ...(unreadAnswerAt === undefined
-        ? {}
-        : { clearedUnread: { session, unreadAnswerAt } })
-    };
+    // The durable projection was read and rendered before marking this task read.
+    // A later data.json failure cannot roll back the Catalog commit through a shell.
+    if (unreadAnswerAt !== undefined) await host.plugin.setPiConversationTaskMetadata(session.id, { unreadAnswerAt: undefined, lastReadAt: Date.now() });
+    return { status: "selected" };
   } catch (error) {
     if (!isCurrentConversationSelection(host, generation)) {
       return { status: "stale" };

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Platform } from "obsidian";
+import { attachTestConversationRunService } from "./conversation-run-host";
 import type CodexForObsidianPlugin from "../main";
 import { QuickChatWindowController } from "../plugin/quick-chat-window";
 import type { QuickGlobalShortcutBridge } from "../core/quick-window-bridge";
@@ -89,6 +90,7 @@ export async function runQuickChatWindowTests(): Promise<void> {
 
 function migrationRetainsNoteReferencesWithTheDraft(): void {
   const plugin = { settings: { activeSessionId: "conversation-a" } } as unknown as CodexForObsidianPlugin;
+  attachTestConversationRunService(plugin);
   const createView = (draft: string) => {
     const view = new CodexView({} as CodexView["leaf"], plugin);
     const input = { value: draft, setSelectionRange: () => undefined } as unknown as HTMLTextAreaElement;

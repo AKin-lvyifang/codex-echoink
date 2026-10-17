@@ -5,6 +5,8 @@ export interface KnowledgeMaintenanceRecord {
   cancelled?: boolean;
   recordId: string;
   runId: string;
+  /** Exact source Conversation from the maintenance/WAL contract, never parsed from runId. */
+  originConversationId?: string;
   at: number;
   date: string;
   result: KnowledgeMaintenanceResultEnvelope;

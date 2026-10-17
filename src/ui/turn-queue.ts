@@ -193,7 +193,7 @@ function clampIndex(index: number, maxInclusive: number): number {
   return Math.max(0, Math.min(Math.trunc(index), maxInclusive));
 }
 
-function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
+export function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
   return {
     ...item,
     attachments: item.attachments.map((attachment) => ({ ...attachment })),

@@ -1216,6 +1216,8 @@ function pluginHost(overrides: Record<string, unknown>): any {
     piActivatedConversationId: null,
     piRunConversations: new Map<string, string>(),
     piSubmittingConversations: new Set<string>(),
+    readPiConversationCatalogEntry: async () => null,
+    syncPiConversationTaskMetadata: async () => undefined,
     productActivity: new ProductActivityGate()
   }, overrides);
 }

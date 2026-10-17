@@ -197,6 +197,9 @@ export class FileConversationCatalog {
         if (existingIndex >= 0) {
           const existing = document.entries[existingIndex];
           assertStableCatalogIdentity(existing, candidate);
+          // Existing task fields have their own CAS writer. A stale full-entry
+          // upsert for memory/session metadata must not erase a newer task patch.
+          applyConversationTaskMetadata(candidate, existing);
           if (existing.status === "deleted" && candidate.status !== "deleted") {
             throw mappingConflict(
               `已删除的 Conversation ${candidate.conversationId} 不能重新激活或复用`

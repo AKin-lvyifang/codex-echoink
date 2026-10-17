@@ -296,8 +296,7 @@ async function metadataPreservesInactivity(root: string, createHost: CreateMetad
   const host = createHost(catalog, [shell]);
   await host.syncPiConversationTaskMetadata();
   assert.equal((await catalog.get(shell.id))!.updatedAt, 100, "Opening a historical task must not create real activity");
-  shell.unreadAnswerAt = 123;
-  await host.syncPiConversationTaskMetadata();
+  await host.setPiConversationTaskMetadata(shell.id, { unreadAnswerAt: 123 }, undefined);
   assert.equal((await catalog.get(shell.id))!.updatedAt, 100, "Read/unread persistence must not reset the idle clock");
   const archived: string[] = [];
   const autoArchive = new ConversationAutoArchive({
@@ -312,13 +311,11 @@ async function metadataPreservesInactivity(root: string, createHost: CreateMetad
 }
 
 async function unreadEditsDuringWrite(root: string, createHost: CreateMetadataSyncHost): Promise<void> {
-  const failures: string[] = [];
   for (const operation of ["new-answer", "mark-read"] as const) {
     const { catalog, shell } = await metadataFixture(root, operation);
     const host = createHost(catalog, [shell]);
-    shell.unreadAnswerAt = 123;
     await host.syncPiConversationTaskMetadata();
-    shell.taskStage = "开始保存这一步";
+    await host.setPiConversationTaskMetadata(shell.id, { unreadAnswerAt: 123 }, undefined);
     const actualUpdate = catalog.updateTaskMetadata.bind(catalog);
     const started = deferred(); const release = deferred();
     let first = true;
@@ -326,27 +323,22 @@ async function unreadEditsDuringWrite(root: string, createHost: CreateMetadataSy
       if (first) { first = false; started.resolve(); await release.promise; }
       return await actualUpdate(...args);
     };
-    const saving = host.syncPiConversationTaskMetadata();
+    const saving = host.setPiConversationTaskMetadata(shell.id, { taskStatus: "running", taskStage: "开始保存这一步" }, undefined);
     await started.promise;
-    if (operation === "new-answer") shell.unreadAnswerAt = 456;
-    else delete shell.unreadAnswerAt;
-    release.resolve();
-    await saving;
     const expected = operation === "new-answer" ? 456 : undefined;
-    if (shell.unreadAnswerAt !== expected) failures.push(`${operation} overwritten with ${String(shell.unreadAnswerAt)}`);
-    // A list refresh immediately after the IO must not apply the older saved
-    // values over edits retained on the same Catalog revision.
-    const projectionHost: any = {
-      plugin: { settings: { sessions: [shell], activeSessionId: shell.id }, getVaultPath: () => root,
-        listPiConversations: () => catalog.list(), saveSettings: async () => undefined },
-      runningSessionIds: new Set()
-    };
-    await refreshPiConversationShells(projectionHost);
-    if (shell.unreadAnswerAt !== expected) failures.push(`${operation} overwritten by immediate list refresh`);
+    const unread = host.setPiConversationTaskMetadata(shell.id, { unreadAnswerAt: expected, lastReadAt: 900 }, undefined);
+    release.resolve();
+    await Promise.all([saving, unread]);
+    const stored = (await catalog.get(shell.id))!;
+    assert.equal(stored.taskStatus, "running");
+    assert.equal(stored.taskStage, "开始保存这一步");
+    assert.equal(stored.unreadAnswerAt, expected);
+    assert.equal(stored.lastReadAt, 900);
+    shell.unreadAnswerAt = 999;
     await host.syncPiConversationTaskMetadata();
-    if ((await catalog.get(shell.id))!.unreadAnswerAt !== expected) failures.push(`${operation} was not saved by the next sync`);
+    assert.equal(shell.unreadAnswerAt, expected, "A stamped settings shell is projection only, never a task-field writer");
+    assert.equal((await catalog.get(shell.id))!.unreadAnswerAt, expected);
   }
-  assert.deepEqual(failures, [], "New unread edits and mark-read deletions during file IO must survive the writeback");
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {

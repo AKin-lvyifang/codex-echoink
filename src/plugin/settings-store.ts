@@ -107,9 +107,9 @@ export class EchoInkSettingsStore {
       );
       agentsMigrated = migratedRegistry !== this.plugin.settings.agentRegistry;
       this.plugin.settings.agentRegistry = migratedRegistry;
-    } catch {
+    } catch (error) {
       // Keep normalized defaults and migrationVersion=0 so the next load retries.
-      console.warn("EchoInk Agent identity migration could not complete; it will retry on the next load.");
+      console.warn("EchoInk Agent identity migration could not complete; it will retry on the next load.", error);
     }
     let bindingsMigrated = false;
     if (!this.plugin.settings.knowledgeBase.folderBindings) {
@@ -351,8 +351,8 @@ export class EchoInkSettingsStore {
       }
       try {
         await this.plugin.syncPiConversationTaskMetadata?.();
-      } catch {
-        console.warn("EchoInk task metadata could not sync; saving the settings projection for a later retry.");
+      } catch (error) {
+        console.warn("EchoInk task metadata could not sync; saving the settings projection for a later retry.", error);
       }
       const prepared = await this.prepareCanonicalSettingsCandidate();
       await this.persistSettingsDataCandidate(
