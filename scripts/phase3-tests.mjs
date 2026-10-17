@@ -16,7 +16,7 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
-  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests } from "./src/tests/knowledge-body-search";',
+  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests } from "./src/tests/knowledge-body-search";',
   'import { runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
@@ -32,6 +32,7 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeBodySearchBoilerplateTests();",
   "await runKnowledgeBodySearchTopicTests();",
   "await runKnowledgeBodySearchConcurrencyTests();",
   "await runVaultBodySearchConcurrencyTests();",
@@ -58,7 +59,10 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--body-search-topic") ? [
+    contents: (process.argv.includes("--body-search-boilerplate") ? [
+      'import { runKnowledgeBodySearchBoilerplateTests } from "./src/tests/knowledge-body-search";',
+      'await runKnowledgeBodySearchBoilerplateTests();'
+    ] : process.argv.includes("--body-search-topic") ? [
       'import { runKnowledgeBodySearchTopicTests } from "./src/tests/knowledge-body-search";',
       'await runKnowledgeBodySearchTopicTests();'
     ] : process.argv.includes("--body-search-concurrency") ? [

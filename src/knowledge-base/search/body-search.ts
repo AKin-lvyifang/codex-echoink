@@ -280,16 +280,45 @@ function queryTermWeights(text: string, dictionary: readonly string[], exactName
   const weights = tokenTermWeights(text, dictionary);
   const name = normalizedSearchName(text);
   if (exactNames.has(name) || exactNames.has(name.replace(/[?？。.!！]+$/u, "").trim())) return weights;
+  const boilerplate = ["我", "我的", "关于", "有关", "的", "笔记", "记录", "资料", "文章", "哪些", "什么", "有没有", "找一下", "相关", "方面"];
+  const signals = new Set(boilerplate);
+  const weakenBoilerplate = (input: string, inputWeights: Map<string, number>) => {
+    const tokens = [...iterateSearchTokens(input, dictionary)].filter(token => token !== undefined);
+    const names = tokens.filter(token => token.kind === "word" && Array.from(token.token).length > 2 && !signals.has(token.token));
+    const protectedTerms = new Set(tokens.filter(token => names.some(word => token.start >= word.start && token.end <= word.end)).map(token => token.token));
+    const covered = new Set<number>();
+    for (const phrase of boilerplate) {
+      for (let start = input.indexOf(phrase); start >= 0; start = input.indexOf(phrase, start + 1)) {
+        for (let offset = start; offset < start + phrase.length; offset++) covered.add(offset);
+      }
+    }
+    const weakTerms = new Set<string>();
+    for (const token of tokens) {
+      if (protectedTerms.has(token.token)) continue;
+      let coveredCharacters = 0;
+      for (let offset = token.start; offset < token.end; offset++) if (covered.has(offset)) coveredCharacters++;
+      if (signals.has(token.token) || coveredCharacters === token.end - token.start
+        || (token.kind === "bigram" && coveredCharacters > 0)) weakTerms.add(token.token);
+    }
+    // Keep every signal searchable. A short phrase must not weaken the complete
+    // recognized name containing it (or that name's necessary partial-match terms).
+    for (const token of weakTerms) inputWeights.set(token, inputWeights.get(token)! * 0.1);
+    return inputWeights;
+  };
+  const adjusted = weakenBoilerplate(text, new Map(weights));
   const topic = text.trim().match(/^(?:我(?:的)?\s*)?(?:关于|有关)\s*(.+?)\s*的\s*(?:笔记|记录|资料|文章)\s*(?:有哪些)?\s*[?？。.!！]*$/u)?.[1]?.trim();
-  if (!topic) return weights;
-  const topicWeights = tokenTermWeights(topic, dictionary);
-  if (!topicWeights.size) return weights;
+  if (!topic) return adjusted;
+  const originalTopicWeights = tokenTermWeights(topic, dictionary);
+  if (!originalTopicWeights.size) return adjusted;
+  // This optional syntax also disambiguates an explicitly requested topic such as
+  // "notes" itself; the general signal handling above does not depend on word order.
+  const topicWeights = boilerplate.includes(normalizedSearchName(topic)) ? originalTopicWeights : weakenBoilerplate(topic, originalTopicWeights);
   // The wording around a requested topic describes the lookup, rather than a second
   // subject. Preserve it as weak fallback evidence; names and topic parts use the
   // same tokenizer and weights as a direct topic query.
-  for (const [token, weight] of weights) weights.set(token, weight * 0.1);
-  for (const [token, weight] of topicWeights) weights.set(token, Math.max(weight, weights.get(token) ?? 0));
-  return weights;
+  for (const [token, weight] of weights) adjusted.set(token, Math.min(adjusted.get(token) ?? weight, weight * 0.1));
+  for (const [token, weight] of topicWeights) adjusted.set(token, Math.max(weight, adjusted.get(token) ?? 0));
+  return adjusted;
 }
 
 function prepareSearch(options: BodySearchOptions): PreparedSearch {

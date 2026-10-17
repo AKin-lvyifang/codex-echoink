@@ -5,7 +5,7 @@ import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vaul
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { buildSearchDictionary, tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import { yieldSearchTask } from "../knowledge-base/search/scheduling";
-import type { BodySearchDocument, BodySearchRequest } from "../knowledge-base/search/contracts";
+import type { BodySearchDocument, BodySearchOptions, BodySearchRequest, BodySearchResult } from "../knowledge-base/search/contracts";
 
 function note(path: string, body: string, metadata: Partial<BodySearchDocument> = {}): BodySearchDocument {
   return { vaultRelativePath: path, title: path.split("/").at(-1)!.replace(/\.md$/u, ""), kind: "notes", recordedAt: 100,
@@ -911,4 +911,100 @@ export async function runKnowledgeBodySearchTopicTests(): Promise<void> {
     assert.equal((await index.search({ documents, request: { query: queries[0] } })).coverage.cachedFiles, 3);
   } finally { index.dispose(); }
   console.log("Knowledge body search topics: generic query framing, exact names, aliases, versions, partial matches and cache equivalence PASS");
+}
+
+function boilerplateDevelopmentDocuments(): BodySearchDocument[] {
+  return [
+    note("field/ecology.md", "# 水塘观察\n生态由水温、食物和鱼群一起影响，先记录各自变化再比较。", { title: "生态与例子" }),
+    note("actual/format.md", "# 保存格式\n笔记统一采用 Markdown 格式存储，附件放在同级目录。", { title: "格式约定" }),
+    note("noise/phrases.md", "# 短句\n我的笔记记过哪些东西，相关资料与什么方面有关。", { title: "短句摘录" }),
+    note("noise/lookup.md", "# 旧页\n关于哪些资料，找一下相关的记录。", { title: "旧页" }),
+    ...Array.from({ length: 20 }, (_, i) => note(`background-${i}.md`, "# 背景\n门框尺寸要先测量。")),
+  ];
+}
+
+/** Pure synthetic inputs; the caller may supply a fixed-source engine for before/after evidence. */
+export async function collectKnowledgeBodySearchBoilerplateEvidence(searcher: (options: BodySearchOptions) => Promise<BodySearchResult> = searchBodyDocuments) {
+  const documents = boilerplateDevelopmentDocuments();
+  const cases = [
+    { id: "ecology-reordered", query: "我有哪些关于生态的笔记", targetPath: "field/ecology.md" },
+    { id: "ecology-related", query: "生态相关的笔记", targetPath: "field/ecology.md" },
+    { id: "ecology-recorded", query: "我记过哪些生态方面的东西", targetPath: "field/ecology.md" },
+    { id: "format-development", query: "我的笔记采用什么格式存", targetPath: "actual/format.md" },
+  ];
+  const rows = [];
+  for (const item of cases) {
+    const result = await searcher({ documents, request: { query: item.query, limit: 50 } });
+    const rank = result.hits.findIndex(hit => hit.vaultRelativePath === item.targetPath);
+    const brief = (hit: typeof result.hits[number]) => ({ path: hit.vaultRelativePath, title: hit.title, sectionTitle: hit.sectionTitle,
+      lineStart: hit.lineStart, lineEnd: hit.lineEnd, excerpt: hit.excerpt, score: hit.score });
+    rows.push({ ...item, targetRank: rank < 0 ? null : rank + 1, target: rank < 0 ? null : brief(result.hits[rank]),
+      top: result.hits.slice(0, 5).map(brief), coverage: result.coverage });
+  }
+  return rows;
+}
+
+export async function runKnowledgeBodySearchBoilerplateTests(): Promise<void> {
+  const evidence = await collectKnowledgeBodySearchBoilerplateEvidence();
+  for (const row of evidence) {
+    assert.equal(row.targetRank, 1, "real subject/format evidence leads unrelated question wording in each fixed development case");
+    assert.equal(row.top[0].path, row.targetPath);
+    assert.equal(row.coverage.complete, true);
+  }
+  const notesAsTopic = [
+    note("subject-notes.md", "# 方法\n笔记应保留原话、时间和可核验的例子。", { title: "笔记方法" }),
+    note("unrelated.md", "# 清单\n哪些资料还没有归档？", { title: "清单" }),
+  ];
+  for (const query of ["笔记", "关于笔记的资料有哪些？"]) {
+    const result = await search(notesAsTopic, { query });
+    assert.equal(result.hits[0].vaultRelativePath, "subject-notes.md", "notes remains searchable as an actual subject");
+    assert.ok(result.hits[0].score > 0);
+  }
+  const words = ["我", "我的", "关于", "有关", "的", "笔记", "记录", "资料", "文章", "哪些", "什么", "有没有", "找一下", "相关", "方面"];
+  const onlyWording = [note("wording.md", words.join("，"), { title: "短句" })];
+  for (const query of ["我的笔记", ...words.filter(word => word.length > 1)]) {
+    const result = await search(onlyWording, { query });
+    assert.ok(result.hits.length > 0 && result.hits[0].score > 0, "boilerplate and derived token/bigram signals retain positive weights");
+  }
+  const meaningfulFragments = [note("negation.md", "没有", { title: "否定" }), note("pause.md", "一下", { title: "停顿" })];
+  const negation = (await search(meaningfulFragments, { query: "没有" })).hits[0];
+  const question = (await search(meaningfulFragments, { query: "有没有" })).hits[0];
+  assert.equal(negation.vaultRelativePath, "negation.md");
+  assert.ok(negation.score > question.score, "a negation outside the complete question phrase is not added to the boilerplate list");
+  const pause = (await search(meaningfulFragments, { query: "一下" })).hits[0];
+  const lookup = (await search(meaningfulFragments, { query: "找一下" })).hits[0];
+  assert.equal(pause.vaultRelativePath, "pause.md");
+  assert.ok(pause.score > lookup.score, "a derived fragment is only weakened where its complete listed phrase occurs");
+  const names = [
+    note("game.md", "# 设置\n游戏设置独立保存。", { title: "我的世界", aliases: ["我的世界"] }),
+    note("recorder.md", "# 设备\n设备在通电后保存声音。", { title: "便携记录器", aliases: ["记录器"] }),
+    note("version.md", "# 发布\n此版修复了导出换行。", { title: "发布说明", aliases: ["PKM 4.8.1"] }),
+    note("framed.md", "some evidence", { title: "关于光学的笔记" }),
+    note("framed-alias.md", "some evidence", { title: "ordinary", aliases: ["关于光学的笔记"] }),
+    note("noise.md", "# 句子\n我的记录、资料和笔记与什么有关？"),
+    note("other-version.md", "# 旧稿\nPKM 4.8.0。"),
+  ];
+  for (const [query, path] of [
+    ["我的世界", "game.md"], ["找一下我的世界相关资料", "game.md"],
+    ["便携记录器", "recorder.md"], ["记录器相关的文章", "recorder.md"],
+    ["PKM 4.8.1", "version.md"], ["有没有 PKM 4.8.1 相关资料", "version.md"],
+  ]) assert.equal((await search(names, { query })).hits[0].vaultRelativePath, path, "short boilerplate fragments cannot outweigh an intact title, alias or dotted version");
+  const exactNames = await search(names, { query: "关于光学的笔记" });
+  assert.deepEqual(new Set(exactNames.hits.slice(0, 2).map(hit => hit.vaultRelativePath)), new Set(["framed.md", "framed-alias.md"]));
+  assert.equal(exactNames.hits[0].score, exactNames.hits[1].score);
+  const descriptor = Object.getOwnPropertyDescriptor(Intl, "Segmenter");
+  try {
+    Object.defineProperty(Intl, "Segmenter", { configurable: true, value: undefined });
+    const baselineRanks = new Map([["ecology-reordered", 3], ["ecology-related", 3], ["ecology-recorded", 2], ["format-development", 1]]);
+    for (const row of await collectKnowledgeBodySearchBoilerplateEvidence()) {
+      assert.ok(row.targetRank !== null && row.targetRank <= baselineRanks.get(row.id)!, "Chinese fallback does not regress from the same development fixture on 74bd1ef7");
+    }
+    assert.equal((await search(notesAsTopic, { query: "笔记" })).hits[0].vaultRelativePath, "subject-notes.md");
+    assert.equal((await search(names, { query: "找一下我的世界相关资料" })).hits[0].vaultRelativePath, "game.md");
+    assert.equal((await search(names, { query: "有没有 PKM 4.8.1 相关资料" })).hits[0].vaultRelativePath, "version.md");
+  } finally {
+    if (descriptor) Object.defineProperty(Intl, "Segmenter", descriptor);
+    else Reflect.deleteProperty(Intl, "Segmenter");
+  }
+  console.log("Knowledge body search boilerplate: varied wording, positive signals, real topics, complete names and Chinese fallback PASS");
 }
