@@ -276,9 +276,12 @@ function assertPersistedMaintenanceSourceVersions(): void {
   const entries = [
     { type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references: [{ vaultRelativePath: "raw/a.md", contentRevision: old }] } } },
     { type: "message", message: { role: "toolResult", toolName: "knowledge_maintain", isError: true, details: { sourceBodyFingerprints: { "raw/a.md": refreshed } } } },
-    { type: "message", message: { role: "toolResult", toolName: "knowledge_read", isError: false, details: { references: [{ vaultRelativePath: "raw/b.md", contentRevision: old }] } } }
+    { type: "message", message: { role: "toolResult", toolName: "knowledge_read", isError: false, details: { references: [{ vaultRelativePath: "raw/b.md", contentRevision: old }], sourceBodyFingerprints: { "raw/b.md": refreshed } } } },
+    { type: "message", message: { role: "toolResult", toolName: "knowledge_read", isError: false, details: { references: [{ vaultRelativePath: "raw/partial.md", contentRevision: old }] } } },
+    { type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references: [{ vaultRelativePath: "raw/legacy.md", contentRevision: old }] } } },
+    { type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references: [{ vaultRelativePath: "raw/c.md", contentRevision: old }], sourceBodyFingerprints: { "raw/c.md": refreshed } } } }
   ] as unknown as SessionEntry[];
-  assert.deepEqual(maintenanceSourceFingerprintsFromEntries(entries), { "raw/a.md": refreshed, "raw/b.md": old });
+  assert.deepEqual(maintenanceSourceFingerprintsFromEntries(entries), { "raw/a.md": refreshed, "raw/b.md": refreshed, "raw/c.md": refreshed });
 }
 
 async function assertNaturalMaintenanceAndCorrection(): Promise<void> {
@@ -361,7 +364,94 @@ export async function runPiNativePromptEntryStartupTests(): Promise<void> {
   console.log("PASS prompt startup: >5s native preflight, late timer final read, rejected/finished-without-Entry fail promptly, one accepted user Entry");
 }
 
+export async function runPiSubmissionCancellationTests(): Promise<void> {
+  const tracked = () => {
+    const controller = new AbortController();
+    const listeners = new Set<unknown>();
+    const add = controller.signal.addEventListener.bind(controller.signal);
+    const remove = controller.signal.removeEventListener.bind(controller.signal);
+    controller.signal.addEventListener = ((type, listener, options) => { if (type === "abort") listeners.add(listener); add(type, listener, options); }) as typeof add;
+    controller.signal.removeEventListener = ((type, listener, options) => { listeners.delete(listener); remove(type, listener, options); }) as typeof remove;
+    return { controller, listeners };
+  };
+  await withFixture([], async fixture => {
+    const { controller, listeners } = tracked();
+    const options = (fixture.runtime as any).options;
+    const original = options.createAgentSession;
+    const entered = deferred(), release = deferred();
+    options.createAgentSession = async (input: unknown) => { entered.resolve(); await release.promise; return original(input); };
+    const pending = fixture.submit({ conversationId: "cancel-init", text: "pending initialization", submittedAt: 1, signal: controller.signal });
+    await entered.promise; controller.abort(); release.resolve();
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.equal(fixture.latestSession().promptTexts.length, 0, "cancel during activation cannot later prompt a Provider");
+    assert.equal(listeners.size, 0);
+  });
+  for (const kind of ["ask", "chat"] as const) {
+    const entered = deferred();
+    let reads = 0, boundSignal: AbortSignal | undefined;
+    const retrieve = async (request: { signal?: AbortSignal }) => {
+      boundSignal = request.signal;
+      while (reads < 2940) {
+        if (request.signal?.aborted) throw Object.assign(new Error("search aborted"), { name: "AbortError" });
+        reads++;
+        if (reads === 18) entered.resolve();
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      throw new Error("cancel did not stop retrieval");
+    };
+    await withFixture([`cancel-${kind}`], async fixture => {
+      const { controller, listeners } = tracked();
+      const pending = fixture.submit({ conversationId: `cancel-${kind}`, text: kind === "ask" ? "/ask local question" : "local question", submittedAt: 1, signal: controller.signal });
+      await entered.promise; controller.abort();
+      assert.equal(boundSignal?.aborted, true, "lifecycle abort immediately reaches the exact Knowledge search before any handle exists");
+      await assert.rejects(pending, { name: "AbortError" });
+      assert.ok(reads >= 18 && reads < 2940);
+      assert.equal(fixture.latestSession().promptTexts.length, 0);
+      assert.equal(listeners.size, 0);
+    }, { knowledge: { retrieveAsk: retrieve, retrieveChat: retrieve } as never });
+  }
+  await withFixture(["cancel-before-agent-start"], async fixture => {
+    await fixture.runtime.createConversation({ conversationId: "before-agent", title: "Preflight", cwd: fixture.root });
+    await fixture.runtime.activateConversation("before-agent");
+    const session = fixture.latestSession();
+    const prompt = session.prompt.bind(session), entered = deferred(), release = deferred();
+    let providerStarts = 0;
+    session.prompt = async (text, options) => {
+      entered.resolve(); await release.promise;
+      options.preflightResult?.(true);
+      providerStarts++;
+      return prompt(text, options);
+    };
+    const { controller, listeners } = tracked();
+    const pending = fixture.submit({ conversationId: "before-agent", text: "pending before_agent_start", submittedAt: 1, signal: controller.signal });
+    await entered.promise; controller.abort(); release.resolve();
+    await assert.rejects(pending, /cancelled/u);
+    assert.equal(providerStarts, 0, "an early session.abort cannot be lost when before_agent_start resumes");
+    assert.equal(listeners.size, 0);
+    assert.equal(fixture.currentKnowledgeTurn(), null);
+  });
+  await withFixture(["settled-lifecycle", "next-lifecycle", "cancel-after-handle"], async fixture => {
+    const first = tracked();
+    const handle = await fixture.submit({ conversationId: "lifecycle", text: "complete first", submittedAt: 1, signal: first.controller.signal });
+    fixture.latestSession().finishSuccessful("done"); await handle.result;
+    assert.equal(first.listeners.size, 0);
+    const next = tracked();
+    const nextHandle = await fixture.submit({ conversationId: "lifecycle", text: "independent next", submittedAt: 2, signal: next.controller.signal });
+    first.controller.abort();
+    assert.equal(fixture.latestSession().isStreaming, true, "a completed turn's signal cannot cancel the next turn");
+    fixture.latestSession().finishSuccessful("next done"); await nextHandle.result;
+    assert.equal(next.listeners.size, 0);
+    const last = tracked();
+    const lastHandle = await fixture.submit({ conversationId: "lifecycle", text: "stop after handle", submittedAt: 3, signal: last.controller.signal });
+    last.controller.abort();
+    assert.equal((await lastHandle.result).terminalState, "cancelled");
+    assert.equal(last.listeners.size, 0);
+  });
+  console.log("PASS submission lifecycle: initialization, ask/chat preflight read18, before_agent_start, handle cancellation and listener isolation");
+}
+
 export async function runPiNativeConversationRuntimeTests(): Promise<void> {
+  await runPiSubmissionCancellationTests();
   await assertWorkspacePermissionsAndLateSources();
   await assertConversationDefaultSkillPriorityAndTurnContext();
   await assertRuntimeAutoSkillSelectionAndReviewLifecycle();

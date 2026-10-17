@@ -1,3 +1,4 @@
+import { assertPiSubmissionActive, waitForPiSubmission } from "./harness/pi-native/pi-submission-lifecycle";
 import { registerKnowledgePrivateRoot } from "./knowledge-base/root-paths";
 import { knowledgeFolderOrganizationPrompt } from "./knowledge-base/folder-bindings";
 import { PdfReadingController } from "./pdf-reading/controller";
@@ -789,6 +790,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async submitPiChat(
     request: PiChatSubmitRequest
   ): Promise<PiChatRunHandle> {
+    assertPiSubmissionActive(request.signal);
     const conversationId = request.conversationId;
     if (
       this.piSubmittingConversations.has(conversationId)
@@ -799,8 +801,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.piSubmittingConversations.add(conversationId);
     try {
       return await this.productActivity.run(async () => {
-        await this.waitForPiConversationActivation(conversationId);
-        const bundle = await this.ensurePiProductionRuntime();
+        assertPiSubmissionActive(request.signal);
+        await waitForPiSubmission(this.waitForPiConversationActivation(conversationId), request.signal);
+        const bundle = await waitForPiSubmission(this.ensurePiProductionRuntime(), request.signal);
+        assertPiSubmissionActive(request.signal);
         const handle = await bundle.runtime.submit(request);
         void handle.result.then(async (result) => {
           if (result.terminalState === "completed") {

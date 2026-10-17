@@ -325,7 +325,7 @@ function assertOpenAiCompatibleMemoryToolSchemas(): void {
   assert.match(String(createProperties.recallWhen.description ?? ""), /未来.*召回/iu);
   assert.match(String(schemas.memory_write.description ?? ""), /跨轮价值.*新增或更新.*USER 画像.*忘记/iu);
   assert.doesNotMatch(String(schemas.memory_write.description ?? ""), /nextCursor|revision|outcome=/iu);
-  assert.match(String(schemas.memory_search.description ?? ""), /相关历史可能影响当前回答.*定位现有记录/iu);
+  assert.match(String(schemas.memory_search.description ?? ""), /默认只返回current.*statuses包含superseded.*scope\/from\/to.*定位现有记录/iu);
   assert.doesNotMatch(String(schemas.memory_search.description ?? ""), /nextCursor|revision|冲突/iu);
   assert.equal(profileProperties.text.maxLength, 120);
 
@@ -409,7 +409,7 @@ async function scenarioProviderVisibleDescriptionsStayAligned(): Promise<void> {
     >>;
 
     assert.equal(searchDescription, schemas.memory_search.description);
-    assert.match(searchDescription, /相关历史可能影响当前回答.*新增、更新、修正画像、忘记前定位现有记录/iu);
+    assert.match(searchDescription, /current与superseded.*supersedes.*写入、修正或忘记前按需定位现有记录/iu);
     assert.doesNotMatch(searchDescription, /exhausted|nextCursor|revision|冲突/iu);
 
     assert.equal(writeDescription, schemas.memory_write.description);
@@ -800,6 +800,11 @@ async function scenarioSearchBeforeAutonomousWriteAndCurrentEntryBinding(): Prom
     assert.equal(read.record.kind, "view");
     assert.equal(read.record.basis, "explicit");
     assert.equal(read.record.contentOrigin, "user_statement");
+    assert.equal(found.items[0]!.basis, "explicit");
+    assert.equal(found.items[0]!.contentOrigin, "user_statement");
+    assert.equal(found.items[0]!.status, "current");
+    assert.equal(found.items[0]!.revision, read.record.revision);
+    assert.equal(found.items[0]!.file, read.record.file);
     assert.match(
       read.record.file,
       /(?:^|\/)views\//u,
@@ -829,6 +834,11 @@ async function scenarioSearchBeforeAutonomousWriteAndCurrentEntryBinding(): Prom
       true,
       "the newly written primary view is reachable on the next turn"
     );
+    const recalledView = recalled.recall!.candidates.find((candidate) => candidate.id === read.record.id)!;
+    assert.equal(recalledView.basis, "explicit");
+    assert.equal(recalledView.contentOrigin, "user_statement");
+    assert.equal(recalledView.sourceSummary, found.items[0]!.sourceSummary);
+    assert.equal(recalledView.file, read.record.file);
     const chainedRead = await reopened.read(chainedPayload.recordId as string, fixture.runtime());
     assert.equal(chainedRead.record.kind, "task");
 

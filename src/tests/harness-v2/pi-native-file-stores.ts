@@ -327,10 +327,13 @@ function assertKnowledgeReferenceContract(): void {
     knowledgeReferenceEntryDetails([legacyReference]).references,
     [legacyReference]
   );
+  for (const sourceType of ["notes", "journal"] as const) {
+    assert.equal(knowledgeReferenceEntryDetails([{ ...currentReference, sourceType }]).references[0].sourceType, sourceType);
+  }
 
   const invalidReferences: Record<string, unknown>[] = [
     { ...currentReference, unknownField: true },
-    { ...currentReference, sourceType: "journal" },
+    { ...currentReference, sourceType: "assets" },
     { ...currentReference, recordedAt: Number.NaN },
     { ...currentReference, recordedAt: -1 },
     { ...currentReference, publishedAt: "2026-08-30\nforged" },

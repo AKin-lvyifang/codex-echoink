@@ -146,6 +146,11 @@ export interface SecondaryMatchView {
   readonly matchTerms: readonly string[];
   readonly relation: SecondaryRelation;
   readonly basis: SecondaryBasis;
+  readonly status?: SecondaryStatus;
+  /** Existing Dream support metadata; absent when an older snapshot has none. */
+  readonly supportLevel?: SecondarySupportLevel;
+  readonly evidence?: string;
+  readonly sourceMemoryRevision?: number;
 }
 
 export interface PersonalMemorySearchItem {
@@ -158,7 +163,13 @@ export interface PersonalMemorySearchItem {
   readonly date: string;
   readonly basis: PersonalMemoryBasis;
   readonly sourceSummary: string;
+  readonly contentOrigin?: PersonalMemoryContentOrigin;
   readonly scope?: string;
+  readonly asOf?: string;
+  readonly supersedes?: string;
+  /** Record identity within the same repository snapshot. */
+  readonly revision?: number;
+  readonly file?: string;
   readonly score: number;
   /**
    * The secondary fact (LLM-inferred) whose matchTerms helped this primary

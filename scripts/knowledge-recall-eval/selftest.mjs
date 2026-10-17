@@ -97,18 +97,22 @@ try {
   assert.equal(judgeDelivery({ empty: true, forbidden_excerpts: ['我支持量子计算'] }, [], '我支持量子计算').status, 'fail');
   const actualGold = byId.A1.actual.delivery_items[0];
   const goldRule = cases[0].expected.delivery;
+  const secondSpan = { ...actualGold, lineStart: 2, lineEnd: 2, excerpt: 'GOLD_TOKEN answer: preserve this exact sentence.' };
+  assert.equal(judgeDelivery(goldRule, [actualGold, secondSpan], JSON.stringify({ sources: [actualGold, secondSpan] })).status, 'pass', 'Multiple spans pair by version and line range');
+  assert.equal(judgeDelivery(goldRule, [actualGold, { ...secondSpan, excerpt: 'fabricated' }], JSON.stringify({ sources: [actualGold, secondSpan] })).status, 'fail', 'Span pairing still rejects fabricated original text');
+
   assert.equal(judgeDelivery(goldRule, [{ ...actualGold, contentRevision: 'bogus', lineStart: 'bogus', lineEnd: 'bogus' }], actualGold.excerpt).status, 'fail');
   assert.equal(judgeDelivery(goldRule, [actualGold], actualGold.excerpt).status, 'fail', 'Bare excerpt must not stand in for serialized source identity');
-  assert.equal(judgeDelivery(goldRule, [actualGold], byId.A1.actual.provider_text.replace(`版本：${actualGold.contentRevision}`, '版本：bogus')).status, 'fail');
+  assert.equal(judgeDelivery(goldRule, [actualGold], byId.A1.actual.provider_text.replace(actualGold.contentRevision, 'bogus')).status, 'fail');
   assert.equal(judgeDelivery({ identity_assertions: [{ id: 'not-delivered', required_fields: ['basis'] }] }, [], '').status, 'fail');
   assert.equal(byId.A3.candidate.status, 'fail');
   assert.equal(byId.A3.delivery.status, 'fail');
   assert.equal(byId.A4.candidate.status, 'blocked', 'Unperformed host configuration must not count as product failure');
   assert.equal(byId.A4.delivery.status, 'blocked');
-  assert.equal(byId.A1.actual.effective_configuration.opened_paths_applied, false);
+  assert.equal(byId.A1.actual.effective_configuration.opened_paths_applied, true);
   assert.equal(byId.A1.actual.effective_configuration.retrieval_request.includeUnrefined, false);
   assert.equal(byId.H1.candidate.status, 'pass', JSON.stringify({ verdict: byId.H1.candidate, raw: byId.H1.actual.raw.repository_search, delivered: byId.H1.actual.delivery_items }));
-  assert.equal(byId.H1.delivery.status, 'fail', 'Real recall currently drops basis; evaluator must expose this');
+  assert.equal(byId.H1.delivery.status, 'pass', 'Real recall delivers basis before budgeting');
   assert.equal(byId.H_INVALID.candidate.status, 'blocked');
   assert.equal(byId.H_INVALID.delivery.status, 'blocked');
   assert.equal(byId.H_INVALID.actual.raw.fixture_validation.status, 'invalid_fixture');
@@ -137,7 +141,7 @@ try {
   assert.equal(byId.J1.candidate.status, 'not_run');
   assert.equal(byId.K1.candidate.status, 'not_run');
   assert.equal(run.scores.candidate.score, '6/7');
-  assert.equal(run.scores.delivery.score, '4/7');
+  assert.equal(run.scores.delivery.score, '5/7');
   assert.equal(run.scores.answer.score, '');
   assert.equal(run.device, 'desktop-script');
   assert.equal(run.model, '');
@@ -153,11 +157,11 @@ try {
     const boundaryRun = await runEvaluation({ dataset, 'source-root': root, 'output-run': boundaryOutput, 'run-id': `${runId}-boundary`, phase: 'selftest', cases: 'I7', 'prompt-boundary': 'true' });
     const actual = JSON.parse((await readFile(path.join(boundaryOutput, 'results.jsonl'), 'utf8')).trim());
     assert.equal(actual.candidate.status, 'not_applicable');
-    assert.equal(actual.delivery.status, 'fail');
+    assert.equal(actual.delivery.status, 'pass');
     assert.equal(boundaryRun.configuration.execution_overrides[0].case_id, 'I7');
     assert.ok(actual.actual.prompt_boundary.actual.openai_compatible.output.length > 0);
     assert.ok(actual.delivery.assertions.some(assertion => assertion.name.includes('remain separate') && assertion.pass));
-    assert.ok(actual.delivery.assertions.some(assertion => assertion.name.includes('explicit closing structure') && !assertion.pass));
+    assert.ok(actual.delivery.assertions.some(assertion => assertion.name.includes('explicit closing structure') && assertion.pass));
     assert.equal(actual.actual.prompt_boundary.synthetic_last_excerpt_dash.capture.references.at(-1).excerpt, '---');
     assert.ok(actual.actual.calls.some(call => call.function === 'actual.convertToLlm'));
     assert.ok(actual.actual.calls.some(call => call.function === 'actual.openaiCompatible.convertMessages'));

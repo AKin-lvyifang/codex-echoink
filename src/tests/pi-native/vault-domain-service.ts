@@ -1,4 +1,5 @@
 import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
+import { maintenanceSourceFingerprintsFromEntries } from "../../harness/pi-native/pi-knowledge-maintenance-tool";
 import { FileApprovalTicketStore } from "../../harness/pi-native/tool-authorization";
 import { FileDomainReceiptStore } from "../../harness/pi-native/domain-receipt-store";
 import { createPiVaultProductionAuthorizationPort, createPiVaultProductionWriteExecutionPort } from "../../plugin/pi-vault-tool-production";
@@ -870,6 +871,7 @@ async function assertWorkspacePermissionDispatchAndJournalWrites(fixture: Fixtur
       confirmation: { async confirm() { approved += 1; return true; } }
     }),
     resultCorrection: createSecurePiVaultToolResultCorrectionPort(new EchoInkVaultToolEgressPolicy()),
+    includeNoteReadKnowledgeReferences: true,
     additionalToolSecurities: ["memory_write", "knowledge_maintain", "external_write", "external_read", "memory_read"].map((toolName) => ({
       toolName,
       async handleToolCall() { additionalDispatches += 1; },
@@ -900,6 +902,19 @@ async function assertWorkspacePermissionDispatchAndJournalWrites(fixture: Fixtur
   });
   assert.equal((await call("note_read", { relativePath: "journal/existing.md" })).isError, false,
     "a missing target does not prevent the next valid read");
+  const rawPath = "raw/source.md";
+  const rawContent = "---\ntags: [fixture]\n---\n# Source\nThe complete source body.\n";
+  await fixture.write(rawPath, rawContent);
+  const complete = await call("note_read", { relativePath: rawPath });
+  assert.equal(complete.details.references[0].contentRevision, `sha256:${sha256(rawContent)}`);
+  const restored = (result: any) => maintenanceSourceFingerprintsFromEntries([{ type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: result.details } }] as never, fixture.root);
+  assert.deepEqual(restored(complete), { [rawPath]: rawDigestFingerprint(rawPath, Buffer.from(rawContent)) });
+  assert.deepEqual(restored({ details: { references: complete.details.references } }), {}, "legacy unlabelled citation SHA requires a fresh complete read");
+  await fixture.write(rawPath, "x".repeat(40_000));
+  assert.deepEqual(restored(await call("note_read", { relativePath: rawPath })), {}, "a truncated source is not proof of full reading");
+  await fixture.write(rawPath, "\\".repeat(20_000));
+  assert.equal((await fixture.service.noteRead({ vaultId: identity.vaultId, relativePath: rawPath })).snapshot.truncated, false);
+  assert.deepEqual(restored(await call("note_read", { relativePath: rawPath })), {}, "egress truncation cannot establish full reading either");
   for (const workflow of ["chat", "ask", "maintain", "daily-journal"]) {
     for (const toolName of ["note_create", "note_update", "metadata_update", "note_move", "note_delete", "memory_write", "knowledge_maintain", "external_write"]) {
       assert.deepEqual(await call(toolName, { relativePath: "journal/existing.md", content: workflow }), { block: true, reason: "tool_policy_blocked" });

@@ -327,6 +327,7 @@ export interface KnowledgeBaseMaintenanceHistoryEntry {
 }
 
 export interface KnowledgeBaseSettings {
+  journalSearchDisclosureSeen?: boolean;
   folderBindings?: import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null;
   lastRunAt: number;
   lastRunStatus: KnowledgeBaseRunStatus;
@@ -1802,6 +1803,7 @@ function normalizeMemorySettings(input: unknown): EchoInkMemorySettings {
 function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
   const value = settingsRecord(input) ?? {};
   const normalized: KnowledgeBaseSettings = {
+    ...(value.journalSearchDisclosureSeen === true ? { journalSearchDisclosureSeen: true } : {}),
     folderBindings: normalizeKnowledgeFolderBindings(value.folderBindings),
     lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),
     lastRunStatus: normalizeKnowledgeBaseRunStatus(value?.lastRunStatus),

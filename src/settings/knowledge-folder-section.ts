@@ -390,6 +390,7 @@ export class KnowledgeFolderSection {
     };
     updateExpanded();
     if (!binding.enabled) return;
+    if (role !== "templates" && role !== "assets") this.renderSearch(nested, role, zh, locked);
     if (binding.native) {
       new OriginSetting(nested).setName(zh ? "沿用 Obsidian 设置" : "Use Obsidian settings").setDesc(binding.readPaths.join("、") || (zh ? "仓库根目录" : "Vault root"))
         .addOriginButton(button => button.setButtonText(zh ? "编辑 Obsidian 设置" : "Edit Obsidian settings").setDisabled(locked).onClick(() => {
@@ -435,6 +436,23 @@ export class KnowledgeFolderSection {
   }
   private clearDrawerMotion(): void {
     for (const cleanup of this.drawerMotionCleanups) cleanup();
+  }
+  private renderSearch(parent: HTMLElement, role: KnowledgeRootRole, zh: boolean, locked: boolean): void {
+    const binding = this.draft.bindings.roles[role];
+    const row = new OriginSetting(parent).setClass("echoink-folder-organize");
+    row.infoEl.empty(); row.controlEl.remove();
+    const option = row.infoEl.createDiv({ cls: "echoink-folder-organize-option" });
+    const id = `echoink-folder-search-${this.drawerId}-${role}`;
+    const check = createOriginCheck(option, { attr: { id, "aria-label": `${label(role, zh)} · ${zh ? "允许搜索正文" : "Allow body search"}`, "data-folder-control": "search" } });
+    check.setAttr("role", "checkbox"); check.checked = binding.searchEnabled !== false; check.disabled = locked;
+    check.onchange = () => { binding.searchEnabled = check.checked; this.updateFooter(zh, locked); };
+    option.createEl("label", { text: zh ? "允许搜索正文" : "Allow body search", attr: { for: id } });
+    const help = option.createSpan({ cls: "echoink-settings-help" });
+    const helpLabelId = `${id}-help`;
+    const trigger = createOriginButton(help, { cls: "echoink-folder-help is-icon", attr: { "aria-labelledby": helpLabelId } });
+    trigger.createSpan({ cls: "echoink-folder-help-label", text: zh ? "搜索范围说明" : "Search scope details", attr: { id: helpLabelId } });
+    setIcon(trigger, "circle-alert");
+    attachSettingsTooltip(trigger, zh ? "命中的正文片段会随问题发送给当前模型服务商。关闭后不搜索此用途，不改变自动整理权限。" : "Matching excerpts are sent with your question to the current model provider. Disabling search does not change organization permission.", help);
   }
   private renderOrganize(parent: HTMLElement, role: KnowledgeRootRole, path: string, zh: boolean, locked: boolean): void {
     const row = new OriginSetting(parent).setClass("echoink-folder-organize");

@@ -1,11 +1,14 @@
 // The only production-dependent adapter. Assertions live separately in judge.mjs.
 // @ts-nocheck -- bundled against the explicitly supplied source checkout.
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
+import { parse as parseYaml } from 'yaml';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { KnowledgeAgentIndex } from '@production/knowledge-base/knowledge-agent-index';
 import { KnowledgeRetriever } from '@production/knowledge-base/query';
-import { registerKnowledgeFolderBindings, normalizeKnowledgeFolderBindings } from '@production/knowledge-base/root-paths';
+import { VaultBodySearch } from '@production/knowledge-base/vault-body-search';
+import { getKnowledgeFolderBindings, registerKnowledgeFolderBindings, normalizeKnowledgeFolderBindings } from '@production/knowledge-base/root-paths';
 import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime, createPiKnowledgeInlineExtension } from '@production/plugin/pi-production-runtime-composition';
 import { PersonalMemoryRepository } from '@production/harness/memory/personal-memory-repository';
 import { PersonalMemoryRecallHarness } from '@production/harness/memory/personal-memory-recall-harness';
@@ -110,6 +113,13 @@ export async function evaluateProduction(input) {
         pages.push(page);
         if (pages.length > 1000) throw new Error('Memory pagination did not terminate');
       } while (page.nextCursor);
+      let scopedCandidates;
+      if (typeof setup.project === 'string') {
+        await observe('PersonalMemoryRepository.prepareTurnSnapshot.projectCandidates', { query: item.query, scope: setup.project }, () => repository.prepareTurnSnapshot({
+          memoryMode: 'normal', query: item.query, scope: setup.project,
+          selectCandidateIds(candidates) { scopedCandidates = [...candidates]; return []; }
+        }, runtime));
+      }
       candidateEvidence = { candidate_items: pages.flatMap(value => value.items), raw_candidate_pages: pages };
       const harness = new PersonalMemoryRecallHarness(repository);
       let prepared;
@@ -117,7 +127,7 @@ export async function evaluateProduction(input) {
       const extension = createPiKnowledgeInlineExtension({
         vaultSecurity: { name: 'eval-host-adapter', factory: async () => undefined },
         currentTurn: () => null,
-        currentMemoryTurn: () => ({ ...runtime, query: item.query, recentConversation: item.recent_conversation ?? setup.recent_conversation ?? [] }),
+        currentMemoryTurn: () => ({ ...runtime, ...(typeof setup.project === 'string' ? { projectId: setup.project } : {}), query: item.query, recentConversation: item.recent_conversation ?? setup.recent_conversation ?? [] }),
         personalMemory: {
           loadFixedContext: request => repository.loadFixedContext(request),
           prepareTurnContext: async request => (prepared = await observe('PersonalMemoryRecallHarness.prepareTurnContext', request, () => harness.prepareTurnContext(request)))
@@ -134,14 +144,16 @@ export async function evaluateProduction(input) {
       const secondaryBlock = text.match(/<echoink_memory_secondary\b[^>]*>\n([\s\S]*?)\n<\/echoink_memory_secondary>/u);
       const delivered = [...(block ? JSON.parse(block[1]).candidates : []), ...(secondaryBlock ? JSON.parse(secondaryBlock[1]).secondaryFacts.map(entry => entry.fact) : [])];
       return {
-        candidate_items: pages.flatMap(value => value.items), delivery_items: delivered,
+        candidate_items: scopedCandidates ?? pages.flatMap(value => value.items), delivery_items: delivered,
         provider_text: text, calls, raw: { fixture_validation: { status: 'valid', secondary_ids: validatedSecondaryIds, method: 'serializeSecondaryRecord (calls normalizeAssociationClueFields); provider fields unchanged' }, seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context },
         host_adapters: ['synthetic Vault and runtime IDs', 'deterministic Repository idFactory/now', 'Repository secondaryRecordsProvider from frozen synthetic SecondaryMemoryRecord records', 'Pi event registration host only; production handler and serialization unchanged'],
         unsupported_setup: unsupportedSetup(setup)
       };
     }
 
-    const index = new KnowledgeAgentIndex({ vaultPath, storageRootPath: statePath });
+    const host = syntheticVaultHost(vaultPath, setup.opened_paths ?? []);
+    const index = new KnowledgeAgentIndex({ vaultPath, storageRootPath: statePath,
+      ...(VaultBodySearch ? { bodySearch: new VaultBodySearch(host, () => getKnowledgeFolderBindings(vaultPath), { excludedRoots: () => manifest.settings?.excluded_directories ?? [] }) } : {}) });
     if (setup.mutations?.length) {
       vaultEventSource = new EventEmitter();
       const app = { vault: {
@@ -211,7 +223,7 @@ export async function evaluateProduction(input) {
         directory_bindings: savedBindings ?? null,
         knowledge_preferences_repository: 'Empty host adapter; only maintenance methods use it. retrieveChat/retrieveAsk do not consult this repository.',
         explicit_path_override_vs_native_chat: retrievalRequest.explicitPaths.length > 0 ? 'Function-level explicitPaths override; ordinary native chat preflight passes []. This is not a native noteMention test.' : null,
-        opened_paths_applied: false, history_applied_to_knowledge_preflight: false,
+        opened_paths_applied: Boolean(VaultBodySearch), history_applied_to_knowledge_preflight: false,
         host_hints: { opened_paths: setup.opened_paths ?? [], history: setup.history ?? [] }
       },
       host_adapters: ['synthetic Vault', 'Knowledge directory binding registration', ...(vaultEventBinding ? ['Synthetic Vault event source; unchanged production bindKnowledgeIndexToVault handlers. Native Obsidian event delivery/timeliness is not measured.'] : [])],
@@ -239,4 +251,34 @@ function unsupportedSetup(setup) {
       classification: productionDoesNotConsume ? 'host_hint_not_consumed_by_existing_preflight_api' : 'script_host_precondition_not_executed',
       reason: productionDoesNotConsume ? 'Existing Knowledge search/retriever/preflight APIs accept question and explicit paths, not open-file/history hints. Actual original query is run unchanged; full native host interaction is not exercised.' : 'Standard setup has not been performed by this script. Diagnostic output is retained; this check is blocked, not a product failure.' };
   });
+}
+
+// Synthetic public-API host; it only adapts file access and metadata. Ranking,
+// filtering, positions and delivery use the unchanged production implementation.
+function syntheticVaultHost(root, openedPaths) {
+  const file = relative => {
+    const stat = fsSync.statSync(inside(root, relative));
+    return { path: relative, basename: path.basename(relative, path.extname(relative)), extension: path.extname(relative).slice(1), stat: { mtime: stat.mtimeMs, ctime: stat.ctimeMs, size: stat.size } };
+  };
+  const files = () => {
+    const result = [];
+    const walk = directory => {
+      for (const entry of fsSync.readdirSync(path.join(root, directory), { withFileTypes: true })) {
+        if (entry.name.startsWith('.')) continue;
+        const relative = directory ? `${directory}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) walk(relative);
+        else if (entry.isFile() && /\.(md|markdown)$/iu.test(relative)) result.push(file(relative));
+      }
+    };
+    walk(''); return result;
+  };
+  return {
+    vault: { getMarkdownFiles: files, getAbstractFileByPath(relative) { try { return file(relative); } catch { return null; } }, read: item => fs.readFile(inside(root, item.path), 'utf8') },
+    metadataCache: { getFileCache(item) {
+      const content = fsSync.readFileSync(inside(root, item.path), 'utf8');
+      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(content);
+      return { frontmatter: frontmatter ? parseYaml(frontmatter[1]) : {}, tags: [...content.matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]+)/gu)].map(match => ({ tag: `#${match[1]}` })) };
+    } },
+    workspace: { getActiveFile: () => openedPaths[0] ? file(openedPaths[0]) : null, getLastOpenFiles: () => openedPaths }
+  };
 }
