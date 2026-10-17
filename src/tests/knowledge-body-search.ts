@@ -806,3 +806,109 @@ export async function runKnowledgeBodySearchInvalidationTests(): Promise<void> {
   } finally { port.dispose(); }
   console.log("Knowledge body search invalidation: effective paths, independent reads, source-change protocol and cursor protection PASS");
 }
+
+export async function runKnowledgeBodySearchConcurrencyTests(): Promise<void> {
+  const documents = [
+    note("普通/陶艺.md", "# 陶艺\nalpha beta gamma", { title: "陶艺安排", revisionKey: "a1" }),
+    note("知识/湿地.md", "# 湿地\nalpha beta gamma", { title: "湿地观察", kind: "wiki", revisionKey: "b1" }),
+    note("日记/2026-10-01.md", "# 日记\nalpha beta gamma", { kind: "journal", revisionKey: "c1" }),
+  ];
+  const requests: BodySearchRequest[] = [{ query: "alpha" }, { query: "beta", kinds: ["wiki"] }, { query: "gamma", kinds: ["journal"] }];
+  const expected = await Promise.all(requests.map(request => search(documents, request)));
+  for (const warm of [false, true]) {
+    const index = new BodySearchMemoryIndex();
+    if (warm) await index.search({ documents, request: requests[0] });
+    const actual = await Promise.all(requests.map(request => index.search({ documents, request })));
+    actual.forEach((result, index) => {
+      assert.equal(result.coverage.complete, true);
+      assert.deepEqual(result.hits, expected[index].hits, "independent dictionary views cannot change results or invalidate another live request");
+    });
+    const lastView = await index.search({ documents, request: requests[2] });
+    assert.equal(lastView.coverage.readFiles, 0, "only the latest view publishes, even when older views finish afterwards");
+    assert.equal(lastView.coverage.cachedFiles, 1);
+    index.dispose();
+  }
+
+  const released = deferred<void>();
+  const blocked = documents.map(document => ({ ...document, read: async () => { await released.promise; return document.read(); } }));
+  const cancelled = new AbortController();
+  const cancelIndex = new BodySearchMemoryIndex();
+  const pending = requests.map((request, index) => cancelIndex.search({ documents: blocked, request: { ...request, ...(index === 0 ? { signal: cancelled.signal } : {}) } }));
+  cancelled.abort(); released.resolve();
+  const cancelledResults = await Promise.allSettled(pending);
+  assert.equal(cancelledResults[0].status, "rejected");
+  if (cancelledResults[0].status === "rejected") assert.equal(cancelledResults[0].reason.name, "AbortError");
+  assert.equal(cancelledResults[1].status, "fulfilled");
+  assert.equal(cancelledResults[2].status, "fulfilled");
+  cancelIndex.dispose();
+
+  for (const metadataChange of [false, true]) {
+    const index = new BodySearchMemoryIndex();
+    const entered = deferred<void>(), release = deferred<void>();
+    const older = [{ ...documents[0], read: async () => { entered.resolve(); await release.promise; return documents[0].read(); } }];
+    const oldSearch = index.search({ documents: older, request: { query: "alpha" } });
+    await entered.promise;
+    const newer = [{ ...documents[0], ...(metadataChange ? { aliases: ["new alias"] } : { revisionKey: "a2" }) }];
+    const fresh = await index.search({ documents: newer, request: { query: "alpha" } });
+    assert.equal(fresh.coverage.complete, true);
+    release.resolve();
+    await assert.rejects(oldSearch, { code: "search_index_stale" }, "a newly observed body/metadata revision remains a real invalidation");
+    assert.equal((await index.search({ documents: newer, request: { query: "alpha" } })).coverage.cachedFiles, 1);
+    index.dispose();
+  }
+
+  const cleared = new BodySearchMemoryIndex();
+  const clearEntered = deferred<void>(), clearRelease = deferred<void>();
+  const clearing = cleared.search({ documents: [{ ...documents[0], read: async () => { clearEntered.resolve(); await clearRelease.promise; return documents[0].read(); } }], request: { query: "alpha" } });
+  await clearEntered.promise; cleared.clear(); clearRelease.resolve();
+  await assert.rejects(clearing, { code: "search_index_stale" }, "explicit clear still invalidates a live source snapshot");
+  cleared.dispose();
+  console.log("Knowledge body search concurrency: independent cold/warm views, cancellation, publication and true revisions PASS");
+}
+
+export async function runKnowledgeBodySearchTopicTests(): Promise<void> {
+  for (const topic of ["光学", "气象", "信息整理"]) {
+    const documents = [
+      note("subject.md", `# 从观察开始\n${topic}需要结合实际例子理解。`, { title: `${topic}与例子` }),
+      note("partial.md", `# 工具箱\n${topic}工具箱保存了示意图。`, { title: `${topic}工具箱` }),
+      note("notes.md", "# 手工\n我写了笔记。"),
+      note("about.md", "# 河流\n关于河流，另有一张地图。"),
+      note("which.md", "# 云朵\n哪些变化需要留下来？"),
+      ...Array.from({ length: 15 }, (_, i) => note(`background-${i}.md`, "# 其他\n将门框尺寸写在纸上，再去选木料。")),
+    ];
+    for (const query of [`我关于${topic}的笔记有哪些？`, `我 关于 ${topic} 的 笔记 有哪些 ？`, `有关${topic}的资料有哪些。`, `关于${topic}的记录!`]) {
+      const result = await search(documents, { query });
+      const rank = result.hits.findIndex(hit => hit.vaultRelativePath === "subject.md");
+      assert.ok(rank >= 0 && rank < 3, "a requested topic outranks the lookup wording across unrelated subject names");
+      assert.ok(result.hits.some(hit => hit.vaultRelativePath === "partial.md"), "topic grammar preserves partial matches inside longer names");
+    }
+  }
+  const framedName = "关于光学的笔记";
+  const named = await search([
+    note("a.md", "some evidence", { title: framedName }),
+    note("b.md", "some evidence", { title: "ordinary", aliases: [framedName] }),
+    note("topic.md", "# 光学\n光学需要先画光路。", { title: "光学" }),
+  ], { query: framedName });
+  assert.deepEqual(new Set(named.hits.slice(0, 2).map(hit => hit.vaultRelativePath)), new Set(["a.md", "b.md"]), "an exact full title/alias that resembles query grammar is not reduced to its inner topic");
+  assert.equal(named.hits[0].score, named.hits[1].score);
+  const precise = [
+    note("alias-version.md", "# 决定\n草稿采用离线格式。", { title: "方案说明", aliases: ["PKM 4.8.1"] }),
+    note("other-version.md", "# 旧稿\nPKM 4.8.0 是旧方案。"),
+    note("mountain.md", "# 路线\n莫干山徒步路线从山脚开始。", { title: "莫干山徒步路线" }),
+  ];
+  assert.equal((await search(precise, { query: "我关于 PKM 4.8.1 的笔记有哪些？" })).hits[0].vaultRelativePath, "alias-version.md");
+  assert.equal((await search(precise, { query: "关于4.8.1的记录有哪些？" })).hits[0].vaultRelativePath, "alias-version.md");
+  assert.equal((await search(precise, { query: "我关于莫干的资料有哪些？" })).hits[0].vaultRelativePath, "mountain.md");
+  const index = new BodySearchMemoryIndex();
+  const documents = precise.map(document => ({ ...document, revisionKey: "topic-v1" }));
+  try {
+    const queries = ["我关于 PKM 4.8.1 的笔记有哪些？", "我关于莫干的资料有哪些？"];
+    for (const query of queries) {
+      const expected = await search(documents, { query });
+      const actual = await index.search({ documents, request: { query } });
+      assert.deepEqual(actual.hits, expected.hits);
+    }
+    assert.equal((await index.search({ documents, request: { query: queries[0] } })).coverage.cachedFiles, 3);
+  } finally { index.dispose(); }
+  console.log("Knowledge body search topics: generic query framing, exact names, aliases, versions, partial matches and cache equivalence PASS");
+}

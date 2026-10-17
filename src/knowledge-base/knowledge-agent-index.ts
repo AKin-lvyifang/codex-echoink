@@ -228,7 +228,7 @@ export class KnowledgeAgentIndex {
   }
 
   private async ensureFresh(): Promise<void> {
-    if ((this.current?.bindingRevision ?? 0) !== (getKnowledgeFolderBindings(this.vaultPath)?.revision ?? 0)) this.invalidate();
+    if ((this.current?.bindingRevision ?? 0) !== (getKnowledgeFolderBindings(this.vaultPath)?.revision ?? 0)) this.invalidateMaintenance();
     while (!this.current || this.refreshedVersion !== this.invalidationVersion) {
       await this.refreshInvalidated();
     }

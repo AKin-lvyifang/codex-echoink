@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import type { App, TFile } from "obsidian";
 import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import * as path from "node:path";
 import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vault-body-search";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
@@ -9,6 +11,7 @@ import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime } from ".
 import { PiKnowledgeReadToolSecurity, createPiKnowledgeReadToolDefinitions } from "../harness/pi-native/pi-knowledge-read-tools";
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
+import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 
 export async function runVaultBodySearchTests(): Promise<void> {
   const bindings = emptyKnowledgeFolderBindings();
@@ -234,4 +237,131 @@ export async function runVaultBodySearchCacheTests(): Promise<void> {
     assert.equal(reads, before);
   } finally { release(); }
   console.log("Public Vault memory reuse, production events, scope, partial failure and disposal: PASS");
+}
+
+export async function runVaultBodySearchConcurrencyTests(): Promise<void> {
+  const requests = [{ query: "alpha" }, { query: "beta", kinds: ["wiki"] as const }, { query: "gamma", kinds: ["journal"] as const }];
+  for (const warm of [false, true]) {
+    const bindings = emptyKnowledgeFolderBindings();
+    bindings.roles.wiki.enabled = true; bindings.roles.wiki.readPaths = ["知识"];
+    bindings.roles.journal.enabled = true; bindings.roles.journal.readPaths = ["日记"];
+    const bodies = new Map([
+      ["普通/陶艺安排.md", "# 陶艺\nalpha beta gamma"],
+      ["知识/湿地观察.md", "# 湿地\nalpha beta gamma"],
+      ["日记/2026-10-01.md", "# 日记\nalpha beta gamma"],
+    ]);
+    const metadata = new Map<string, unknown>();
+    const vaultEvents = new EventEmitter(), metadataEvents = new EventEmitter();
+    let eventCount = 0, activeReads = 0, maxActiveReads = 0;
+    let pause: Promise<void> | undefined;
+    const file = (relativePath: string) => ({ path: relativePath, basename: relativePath.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 1, size: bodies.get(relativePath)?.length ?? 0 } }) as TFile;
+    const hostEvents = (events: EventEmitter) => ({
+      on: (name: string, callback: (...args: unknown[]) => void) => { events.on(name, callback); return { name, callback }; },
+      offref: ({ name, callback }: { name: string; callback: (...args: unknown[]) => void }) => { events.off(name, callback); },
+    });
+    const app = { vault: { ...hostEvents(vaultEvents), getMarkdownFiles: () => [...bodies.keys()].map(file),
+      getAbstractFileByPath: (relativePath: string) => bodies.has(relativePath) ? file(relativePath) : null,
+      read: async (source: TFile) => {
+        const content = bodies.get(source.path)!;
+        activeReads++; maxActiveReads = Math.max(maxActiveReads, activeReads);
+        try { await pause; return content; } finally { activeReads--; }
+      },
+    }, metadataCache: { ...hostEvents(metadataEvents), getFileCache: (source: TFile) => metadata.get(source.path) ?? null } } as unknown as App;
+    const baselinePort = new VaultBodySearch(app, () => bindings);
+    const expected = [];
+    for (const request of requests) expected.push(await baselinePort.search(request));
+    baselinePort.dispose();
+    const port = new VaultBodySearch(app, () => bindings);
+    const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-concurrent", storageRootPath: "/synthetic-concurrent-state", bodySearch: port });
+    const release = bindKnowledgeIndexToVault(app, index);
+    const startTogether = async (input: typeof requests, signal?: AbortSignal) => {
+      let resume!: () => void;
+      pause = new Promise<void>(resolve => { resume = resolve; });
+      maxActiveReads = 0;
+      const pending = input.map((request, i) => index.search({ ...request, ...(i === 0 && signal ? { signal } : {}) }));
+      // Observe blocked public reads, rather than inferring overlap from elapsed time.
+      for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+      return { pending, resume: () => { pause = undefined; resume(); } };
+    };
+    try {
+      if (warm) await index.search(requests[0]);
+      const together = await startTogether(requests);
+      assert.ok(maxActiveReads >= 2, "independent searches are not globally serialized");
+      together.resume();
+      const actual = await Promise.all(together.pending);
+      actual.forEach((result, i) => {
+        assert.deepEqual(result.hits, expected[i].hits);
+        assert.equal(result.coverage?.complete, true);
+      });
+      assert.equal(eventCount, 0, "static synthetic data has no host events during cold/warm mixed-view searches");
+      const page = await index.search({ query: "alpha", limit: 1 });
+      assert.ok(page.continuationCursor);
+      await Promise.all(requests.map(request => index.search(request)));
+      assert.equal((await index.search({ query: "alpha", limit: 1, cursor: page.continuationCursor })).generation, page.generation, "internal cache replacement preserves old cursors");
+
+      const cancel = new AbortController();
+      port.invalidate();
+      const cancelling = await startTogether(requests, cancel.signal);
+      cancel.abort(); cancelling.resume();
+      const cancelled = await Promise.allSettled(cancelling.pending);
+      assert.equal(cancelled[0].status, "rejected");
+      if (cancelled[0].status === "rejected") assert.equal(cancelled[0].reason.name, "AbortError");
+      assert.equal(cancelled[1].status, "fulfilled"); assert.equal(cancelled[2].status, "fulfilled");
+
+      for (const change of ["body", "metadata", "scope"] as const) {
+        port.invalidate();
+        const changing = await startTogether(requests);
+        if (change === "body") {
+          bodies.set("普通/陶艺安排.md", "# 陶艺\nomega beta gamma");
+          eventCount++; vaultEvents.emit("modify", file("普通/陶艺安排.md"));
+        } else if (change === "metadata") {
+          metadata.set("知识/湿地观察.md", { frontmatter: { aliases: ["新湿地别名"] } });
+          eventCount++; metadataEvents.emit("changed", file("知识/湿地观察.md"));
+        } else bindings.roles.wiki.searchEnabled = false;
+        changing.resume();
+        const changed = await Promise.allSettled(changing.pending);
+        assert.ok(changed.every(result => result.status === "rejected" && result.reason.code === "source_changed"), "real body/metadata/scope changes still reject old snapshots without silent retries");
+      }
+      await assert.rejects(index.search({ query: "alpha", cursor: page.continuationCursor }), { code: "cursor_stale" });
+      assert.equal((await index.search({ query: "新湿地别名" })).hits.length, 0, "disabled sources stay excluded after concurrent changes");
+    } finally { pause = undefined; release(); }
+  }
+
+  // The legacy relation index needs real files. Keep this owned synthetic fixture in
+  // the worktree; no native Obsidian Vault or operating-system temp Vault is used.
+  const temporaryRoot = path.join(process.cwd(), ".tmp");
+  await mkdir(temporaryRoot, { recursive: true });
+  const root = await mkdtemp(path.join(temporaryRoot, "body-search-related-"));
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.configured = true; bindings.revision = 1;
+  bindings.roles.wiki.enabled = true; bindings.roles.wiki.readPaths = ["知识"];
+  const bodies = new Map([["知识/A.md", "# A\nalpha [[B]]"], ["知识/B.md", "# B\nalpha [[A]]"]]);
+  await mkdir(path.join(root, "知识"));
+  for (const [relativePath, content] of bodies) await writeFile(path.join(root, relativePath), content);
+  const unregister = registerKnowledgeFolderBindings(root, () => bindings);
+  try {
+    for (const warm of [false, true]) {
+      let resume!: () => void, entered!: () => void;
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      const gate = new Promise<void>(resolve => { resume = resolve; });
+      let blocked = !warm;
+      const file = (relativePath: string) => ({ path: relativePath, basename: relativePath.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 1, size: bodies.get(relativePath)!.length } }) as TFile;
+      const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (relativePath: string) => bodies.has(relativePath) ? file(relativePath) : null,
+        read: async (source: TFile) => { if (blocked) { entered(); await gate; } return bodies.get(source.path)!; },
+      }, metadataCache: { getFileCache: () => null } } as unknown as App;
+      const port = new VaultBodySearch(app, () => bindings);
+      const index = new KnowledgeAgentIndex({ vaultPath: root, storageRootPath: path.join(root, warm ? "state-warm" : "state-cold"), bodySearch: port });
+      try {
+        if (warm) await port.search({ query: "alpha" });
+        const normal = index.search({ query: "alpha" });
+        if (!warm) await started;
+        const relations = await Promise.all([index.related({ vaultRelativePath: "知识/A.md" }), index.related({ vaultRelativePath: "知识/B.md" })]);
+        assert.ok(relations.every(result => result.items.length > 0));
+        blocked = false; resume();
+        assert.equal((await normal).hits.length, 2, "first relation-index initialization cannot clear an independent body search");
+        assert.equal((await port.search({ query: "alpha" })).coverage?.cachedFiles, 2);
+      } finally { blocked = false; resume(); port.dispose(); }
+    }
+  } finally { unregister(); await rm(root, { recursive: true, force: true }); }
+  console.log("Public Vault concurrency: cold/warm independent views, cancellation, real events, cursors and first related initialization PASS");
 }

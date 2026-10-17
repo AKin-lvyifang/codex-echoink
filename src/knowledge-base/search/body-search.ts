@@ -255,7 +255,7 @@ function queryTexts(request: BodySearchRequest): string[] {
   return [...new Set(supplied.map((query) => query.trim()).filter(Boolean))];
 }
 
-function queryTermWeights(text: string, dictionary: readonly string[]): Map<string, number> {
+function tokenTermWeights(text: string, dictionary: readonly string[]): Map<string, number> {
   const tokens = [...iterateSearchTokens(text, dictionary)].filter((token) => token !== undefined);
   const chineseWords = tokens.filter((token) => token.kind === "word" && /\p{Script=Han}/u.test(token.token));
   const weights = new Map<string, number>();
@@ -274,6 +274,24 @@ function queryTermWeights(text: string, dictionary: readonly string[]): Map<stri
   return weights;
 }
 
+function normalizedSearchName(text: string): string { return text.normalize("NFKC").trim().toLowerCase(); }
+
+function queryTermWeights(text: string, dictionary: readonly string[], exactNames: ReadonlySet<string>): Map<string, number> {
+  const weights = tokenTermWeights(text, dictionary);
+  const name = normalizedSearchName(text);
+  if (exactNames.has(name) || exactNames.has(name.replace(/[?？。.!！]+$/u, "").trim())) return weights;
+  const topic = text.trim().match(/^(?:我(?:的)?\s*)?(?:关于|有关)\s*(.+?)\s*的\s*(?:笔记|记录|资料|文章)\s*(?:有哪些)?\s*[?？。.!！]*$/u)?.[1]?.trim();
+  if (!topic) return weights;
+  const topicWeights = tokenTermWeights(topic, dictionary);
+  if (!topicWeights.size) return weights;
+  // The wording around a requested topic describes the lookup, rather than a second
+  // subject. Preserve it as weak fallback evidence; names and topic parts use the
+  // same tokenizer and weights as a direct topic query.
+  for (const [token, weight] of weights) weights.set(token, weight * 0.1);
+  for (const [token, weight] of topicWeights) weights.set(token, Math.max(weight, weights.get(token) ?? 0));
+  return weights;
+}
+
 function prepareSearch(options: BodySearchOptions): PreparedSearch {
   const { request } = options;
   checkAbort(request.signal);
@@ -284,6 +302,7 @@ function prepareSearch(options: BodySearchOptions): PreparedSearch {
   const kinds = request.kinds ? new Set(request.kinds) : undefined;
   const excluded = new Set(request.excludePaths ?? []);
   const seen = new Set<string>();
+  const exactNames = new Set<string>();
   let unknownJournalDates = 0;
   const documents = options.documents.filter((document) => {
     if (seen.has(document.vaultRelativePath) || excluded.has(document.vaultRelativePath) || (kinds && !kinds.has(document.kind))) return false;
@@ -293,12 +312,13 @@ function prepareSearch(options: BodySearchOptions): PreparedSearch {
     if (document.kind === "journal" && (dateFrom || dateTo)) {
       if (!date || (dateFrom && date < dateFrom) || (dateTo && date > dateTo)) return false;
     }
+    for (const title of [document.title, ...(document.aliases ?? [])]) exactNames.add(normalizedSearchName(title));
     return true;
   });
   const coverage: BodySearchCoverage = { totalFiles: documents.length, scannedFiles: 0, readFiles: 0, cachedFiles: 0, indexedFiles: 0,
     failedFiles: 0, complete: !(unknownJournalDates && (dateFrom || dateTo)), unknownJournalDates };
   const dictionary = buildSearchDictionary(documents);
-  const queryWeights = texts.map((query) => queryTermWeights(query, dictionary)).filter((tokens) => tokens.size);
+  const queryWeights = texts.map((query) => queryTermWeights(query, dictionary, exactNames)).filter((tokens) => tokens.size);
   const queries = queryWeights.map((weights) => new Set(weights.keys()));
   const union = new Set(queries.flatMap((query) => [...query]));
   return { documents, dictionary, queryWeights, queries, union, coverage };
@@ -461,13 +481,14 @@ function memoryLimit(value: number | undefined, fallback: number): number {
 /** One Vault-local dictionary view, bounded in memory and never persisted. */
 export class BodySearchMemoryIndex implements BodySearchMemoryPort {
   private readonly records = new Map<string, CachedDocument>();
-  private readonly activeSearches = new Set<{ paths: ReadonlySet<string>; invalidated: boolean }>();
+  private readonly activeSearches = new Set<{ paths: ReadonlySet<string>; keys: ReadonlyMap<string, string>; invalidated: boolean }>();
   private readonly maxCharacters: number;
   private readonly maxTokenEntries: number;
   private readonly maxDocuments: number;
   private characters = 0;
   private tokenEntries = 0;
   private epoch = 0;
+  private viewVersion = 0;
   private disposed = false;
   private dictionarySignature?: string;
   private segmenterIdentity: unknown;
@@ -484,14 +505,25 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
     const signature = JSON.stringify([...prepared.dictionary].sort());
     const identity = (Intl as typeof Intl & { Segmenter?: unknown }).Segmenter;
     if (this.dictionarySignature !== signature || this.segmenterIdentity !== identity) {
-      this.clear();
+      // Cache ownership changes are not source changes. Existing callers keep their
+      // own dictionary/statistics and may finish, but cannot publish into this view.
+      this.resetRecords();
+      this.viewVersion++;
       this.dictionarySignature = signature;
       this.segmenterIdentity = identity;
     }
     const keys = new Map(prepared.documents.map((document) => [document.vaultRelativePath, documentKey(document)]));
+    // A newly observed revision is real evidence of change, unlike a different
+    // request's kind/date filter or dictionary view. Reject overlapping old reads.
+    for (const running of this.activeSearches) {
+      for (const [path, key] of keys) {
+        if (running.keys.has(path) && running.keys.get(path) !== key) { running.invalidated = true; break; }
+      }
+    }
     for (const path of this.records.keys()) if (!keys.has(path)) this.remove(path);
     const epoch = this.epoch;
-    const active = { paths: new Set(keys.keys()), invalidated: false };
+    const viewVersion = this.viewVersion;
+    const active = { paths: new Set(keys.keys()), keys, invalidated: false };
     this.activeSearches.add(active);
     const staged = new Map<string, CachedDocument>();
     const check = (document?: BodySearchDocument) => {
@@ -503,7 +535,7 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
         check,
         get: (document) => {
           check(document);
-          if (document.revisionKey === undefined) return undefined;
+          if (document.revisionKey === undefined || viewVersion !== this.viewVersion) return undefined;
           const record = this.records.get(document.vaultRelativePath);
           return record && record.key === keys.get(document.vaultRelativePath) ? record.statistics : undefined;
         },
@@ -516,7 +548,7 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
       check();
       for (const document of prepared.documents) check(document);
       // A cancelled/failed/invalidated build never publishes partial state as complete.
-      if (result.coverage.complete) for (const [path, record] of staged) this.retain(path, record);
+      if (result.coverage.complete && viewVersion === this.viewVersion) for (const [path, record] of staged) this.retain(path, record);
       return result;
     } finally { this.activeSearches.delete(active); }
   }
@@ -533,10 +565,9 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
 
   clear(): void {
     this.epoch++;
-    this.records.clear();
+    this.viewVersion++;
+    this.resetRecords();
     this.activeSearches.clear();
-    this.characters = 0;
-    this.tokenEntries = 0;
     this.dictionarySignature = undefined;
     this.segmenterIdentity = undefined;
   }
@@ -548,6 +579,12 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
 
   private assertActive(): void {
     if (this.disposed) throw indexStateError("search_index_disposed");
+  }
+
+  private resetRecords(): void {
+    this.records.clear();
+    this.characters = 0;
+    this.tokenEntries = 0;
   }
 
   private remove(path: string): void {

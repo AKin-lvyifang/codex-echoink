@@ -16,8 +16,8 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
-  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests } from "./src/tests/knowledge-body-search";',
-  'import { runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
+  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests } from "./src/tests/knowledge-body-search";',
+  'import { runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
   'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
@@ -32,6 +32,9 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeBodySearchTopicTests();",
+  "await runKnowledgeBodySearchConcurrencyTests();",
+  "await runVaultBodySearchConcurrencyTests();",
   "await runKnowledgeBodySearchInvalidationTests();",
   "await runKnowledgeBodySearchSchedulingTests();",
   "await runKnowledgeBodySearchCacheTests();",
@@ -55,7 +58,15 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--maintenance-fingerprints") ? [
+    contents: (process.argv.includes("--body-search-topic") ? [
+      'import { runKnowledgeBodySearchTopicTests } from "./src/tests/knowledge-body-search";',
+      'await runKnowledgeBodySearchTopicTests();'
+    ] : process.argv.includes("--body-search-concurrency") ? [
+      'import { runKnowledgeBodySearchConcurrencyTests } from "./src/tests/knowledge-body-search";',
+      'import { runVaultBodySearchConcurrencyTests } from "./src/tests/vault-body-search";',
+      'await runKnowledgeBodySearchConcurrencyTests();',
+      'await runVaultBodySearchConcurrencyTests();'
+    ] : process.argv.includes("--maintenance-fingerprints") ? [
       'import { runMaintenanceReadFingerprintTests } from "./src/tests/pi-native/phase3-maintenance-service";',
       'await runMaintenanceReadFingerprintTests();'
     ] : process.argv.includes("--submission-cancellation") ? [
