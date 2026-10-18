@@ -6,9 +6,10 @@
  * （schema `echoink.memory-secondary.v1`）。绝不把二级事实塞进一级 Manifest。
  *
  * Lifecycle rules implemented here (做梦 PRD §9):
- * - 命中：hitCount += 1、lastHitAt = now、confidence = min(1, confidence + 0.05)。
- * - 衰减：30 天保护期；每完整 30 天未命中 confidence *= 0.8；用 lastDecayAt 保证幂等。
- * - confidence < 0.1 的 llm_inferred 可自动禁用；user_edited_inference 永不自动禁用。
+ * - 旧磁盘 confidence 数值仅作活动参考；命中增加、时间衰减不改变支持依据。
+ * - 命中：hitCount += 1、lastHitAt = now、活动值最多 +0.05 至 1。
+ * - 衰减：30 天保护期；每完整 30 天未命中活动值 *= 0.8；lastDecayAt 保证幂等。
+ * - 活动值 < 0.1 的 llm_inferred 可自动禁用；user_edited_inference 永不自动禁用。
  */
 
 import { createHash } from "node:crypto";
@@ -484,7 +485,7 @@ export interface NewSecondaryFactInput {
   readonly relation: SecondaryRelation;
   readonly reason: string;
   readonly basis: SecondaryBasis;
-  /** 代码计算的准入 confidence（不做真实概率解释）。 */
+  /** 新记录的初始活动参考值；沿用旧磁盘 confidence 键。 */
   readonly confidence: number;
   readonly supportLevel: SecondarySupportLevel;
   readonly evidence: string;
@@ -538,7 +539,7 @@ export function createSecondaryRecord(input: NewSecondaryFactInput): SecondaryMe
 }
 
 // ---------------------------------------------------------------------------
-// Candidate pipeline: 候选生成 → 字段验证 → 置信度计算 → 去重 → 多样性选择
+// Candidate pipeline: 候选生成 → 字段验证 → 支持评分 → 去重 → 多样性选择
 // → 动态落盘（做梦 PRD 最新决定；8 条是硬上限，不是生成目标）
 // ---------------------------------------------------------------------------
 
@@ -565,16 +566,16 @@ export const SECONDARY_RELATION_ADJUSTMENT: Readonly<Record<SecondaryRelation, n
   associated: -0.15
 });
 
-/** confidence 准入阈值：低于它的候选不落盘、不索引、不等待凑数。 */
+/** 兼容旧导出名：新候选支持准入与已存记录活动保留沿用现有阈值。 */
 export const SECONDARY_CONFIDENCE_THRESHOLD = 0.60 as const;
 /** 同一 relation 最多保留的 current 二级事实数。 */
 export const SECONDARY_MAX_PER_RELATION = 2 as const;
 
 /**
- * confidence = clamp(baseScore × basisWeight + relationAdjustment, 0, 1)。
- * 它只是「是否值得进入召回系统」的准入分，不宣称是真实概率。
+ * 依据现有支持等级、父 basis 和关系计算当前支持分；不是最初支持分的恢复，
+ * 也不是真实概率。候选准入/取舍不使用命中和衰减后的活动数值。
  */
-export function computeSecondaryConfidence(
+export function computeSecondarySupportScore(
   supportLevel: SecondarySupportLevel,
   parentBasis: PersonalMemoryBasis,
   relation: SecondaryRelation
@@ -583,6 +584,22 @@ export function computeSecondaryConfidence(
     * SECONDARY_BASIS_WEIGHT[parentBasis]
     + SECONDARY_RELATION_ADJUSTMENT[relation];
   return Math.max(0, Math.min(1, Math.round(score * 1000) / 1000));
+}
+
+/** Compatibility export for callers of the former support-calculation name. */
+export const computeSecondaryConfidence = computeSecondarySupportScore;
+
+function currentSecondarySupportScore(
+  record: SecondaryMemoryRecord,
+  parentBasis: PersonalMemoryBasis
+): number | null {
+  if (!isSecondarySupportLevel(record.supportLevel) || !isSecondaryRelation(record.relation)
+    || typeof record.evidence !== "string" || !record.evidence.trim()
+    || !Number.isSafeInteger(record.sourceMemoryRevision) || record.sourceMemoryRevision < 0) {
+    return null;
+  }
+  const score = computeSecondarySupportScore(record.supportLevel, parentBasis, record.relation);
+  return Number.isFinite(score) ? score : null;
 }
 
 /** 语义身份指纹：规范化 title + 排序后的匹配词（content 允许重新表述）。 */
@@ -634,15 +651,15 @@ export interface SecondaryReconcileResult {
  *
  * 1. user_edited_inference 永远保留、不参与衰减、不因做梦被覆盖，也不因总数
  *    超限被删除；但它们占用 relation 配额与总数预算，并预留自己的宽 key alias；
- * 2. 本轮候选重新评分筛选（confidence ≥ 阈值）；
+ * 2. 本轮候选只按支持元数据重新评分筛选；
  * 3. 一个旧 llm_inferred record 一轮内只能被消费一次（consumedOldIds）：
  *    无论原样保留、fingerprint 复用还是宽 key 原地替换，消费时删除旧记录
  *    自身的全部查找入口，并预留旧记录与候选各自的 title/terms 四组 alias；
  * 4. 最终预算统一核算：userEdited → keptOld → 新候选依次占用总数与
  *    relation 配额，禁止先选满新候选再追加 keptOld；
  * 5. 入选结果替换旧 llm_inferred：fingerprint 相同复用旧 ID、hitCount、
- *    lastHitAt 与历史 confidence；宽 key 匹配保留旧 ID 与命中历史、
- *    confidence 更新为获胜候选；revision 只增加一次；
+ *    lastHitAt 与历史活动值；宽 key 替换同样保留活动，不以支持分重置；
+ *    revision 只增加一次；
  * 6. 不再入选的旧 llm_inferred 标记 disabled；finalRecords 保证唯一 ID；
  * 7. 最终 current 集合满足：阈值、relation 多样性、每 relation ≤2、
  *    硬上限 SECONDARY_MAX_PER_PARENT（10）条。禁止 append。
@@ -664,21 +681,20 @@ export function reconcileSecondaryForParent(
       || (record.basis !== "llm_inferred" && record.basis !== "user_edited_inference")
   );
 
-  // --- 1. Confidence + threshold ------------------------------------------
+  // --- 1. Support admission -----------------------------------------------
   const scored = input.candidates
     .filter((candidate) => candidate.title.trim() && candidate.content.trim()
       && candidate.evidence.trim() && candidate.matchTerms.length > 0)
     .map((candidate) => ({
       candidate,
-      confidence: computeSecondaryConfidence(
+      supportScore: computeSecondarySupportScore(
         candidate.supportLevel, input.parentBasis, candidate.relation
-      ),
-      fingerprint: secondaryFingerprint(candidate.title, candidate.matchTerms)
+      )
     }))
-    .filter((entry) => entry.confidence >= SECONDARY_CONFIDENCE_THRESHOLD);
+    .filter((entry) => entry.supportScore >= SECONDARY_CONFIDENCE_THRESHOLD);
 
   // --- 2. Dedupe（有界本地去重，不做 embedding）：同一父节点内，标题相同
-  //    或非空匹配词集合相同即视为重复，保留 confidence 更高的一条；与
+  //    或非空匹配词集合相同即视为重复，保留当前支持分更高的一条；与
   //    user_edited_inference 冲突时始终保留用户编辑版本，丢弃 LLM 候选。
   const normalizeTitleKey = (value: string): string =>
     value.normalize("NFKC").toLocaleLowerCase().trim();
@@ -729,11 +745,11 @@ export function reconcileSecondaryForParent(
       normalizeTermSetKey(entry.candidate.matchTerms)
     );
   };
-  // Round 6 修复六（问题 2）：宽 key 命中且候选 confidence 更高时，记录
+  // Round 6 修复六（问题 2）：宽 key 命中且候选支持更高时，记录
   // 「候选 → 被替换旧记录」，第 4 步做原地更新（保留旧 ID 与命中历史），
   // 不再走 retire+新建。
   const wideKeyReplacement = new Map<typeof scored[number], SecondaryMemoryRecord>();
-  for (const entry of scored.sort((left, right) => right.confidence - left.confidence)) {
+  for (const entry of scored.sort((left, right) => right.supportScore - left.supportScore)) {
     const titleKey = normalizeTitleKey(entry.candidate.title);
     const termKey = normalizeTermSetKey(entry.candidate.matchTerms);
     // 与 user_edited_inference 冲突：始终保留用户编辑版本。
@@ -745,14 +761,15 @@ export function reconcileSecondaryForParent(
     const oldMatch = (titleKey ? oldLlmByTitleKey.get(titleKey) : undefined)
       ?? (termKey ? oldLlmByTermKey.get(termKey) : undefined);
     if (oldMatch) {
-      if (oldMatch.confidence >= entry.confidence) {
-        // 既有事实 confidence 不低于候选：原样保留旧记录
+      const oldSupport = currentSecondarySupportScore(oldMatch, input.parentBasis);
+      if (oldSupport !== null && oldSupport >= entry.supportScore) {
+        // 已知支持不低于候选：原样保留旧记录；未知不能拿活动值补支持。
         // （ID / hitCount / lastHitAt 不变，不重复写盘），丢弃候选。
         consumeOldRecord(oldMatch, entry);
         keptOldOrder.push(oldMatch);
         continue;
       }
-      // 候选 confidence 更高：原地替换既有记录（第 4 步保留旧 ID/命中历史）。
+      // 候选支持更高或旧支持未知：原地替换，保留旧 ID 和全部活动历史。
       consumeOldRecord(oldMatch, entry);
       wideKeyReplacement.set(entry, oldMatch);
     }
@@ -776,7 +793,7 @@ export function reconcileSecondaryForParent(
     slots -= 1;
     acceptedKeptOld.push(record);
   }
-  // Diversity: one best per relation first, then fill by confidence.
+  // Diversity: one best per relation first, then fill by support score.
   const selected: typeof scored = [];
   const picked = new Set<typeof scored[number]>();
   const tryTake = (entry: typeof scored[number]): boolean => {
@@ -822,19 +839,16 @@ export function reconcileSecondaryForParent(
   const reusedIds = new Set<string>();
   for (const entry of selected) {
     // 宽 key 替换目标就是该候选在去重阶段唯一消费的旧记录：
-    // - fingerprint 相等 → 语义未变，历史 confidence 原样复用（Round 6 冻结行为）；
-    // - 仅宽 key 相等 → confidence 更新为获胜候选。
+    // fingerprint 相等或仅宽 key 相等都保留旧活动值；新的支持描述不能
+    // 重置使用历史，更不能把支持分重新写成活动值。
     // 两者都保留旧 ID / file / hitCount / lastHitAt / createdAt，revision 只 +1，
     // 绝不 retire+新建（新建会丢失全部命中历史）。
     const replaced = wideKeyReplacement.get(entry);
     if (replaced) {
       const fields = normalizeAssociationClueFields(entry.candidate);
-      const fingerprintEqual =
-        secondaryFingerprint(replaced.title, replaced.matchTerms) === entry.fingerprint;
       const updated: SecondaryMemoryRecord = Object.freeze({
         ...replaced,
         ...fields,
-        confidence: fingerprintEqual ? replaced.confidence : entry.confidence,
         sourceMemoryRevision: input.parentRevision,
         updatedAt: input.now,
         revision: replaced.revision + 1
@@ -854,7 +868,7 @@ export function reconcileSecondaryForParent(
       relation: entry.candidate.relation,
       reason: entry.candidate.reason,
       basis: "llm_inferred",
-      confidence: entry.confidence,
+      confidence: entry.supportScore,
       supportLevel: entry.candidate.supportLevel,
       evidence: entry.candidate.evidence,
       sourceMemoryRevision: input.parentRevision,
@@ -928,15 +942,15 @@ export interface SecondaryDecayResult {
  * day 30) does NOT decay twice.
  */
 /**
- * 进入 Recall Index 的二级事实（做梦 PRD §11）：confidence 低于准入阈值
- * 0.60 后从索引移除（不再参与召回），但历史文件与记录保留。
+ * 已存线索继续按旧活动值保留：低于现有 0.60 门槛退出索引，不重筛其支持。
+ * 退出召回不改变支持描述、历史文件或依据。
  */
 export function indexableSecondaryRecords(
   records: readonly SecondaryMemoryRecord[]
 ): readonly SecondaryMemoryRecord[] {
   return records.filter(
     (record) => record.status === "current"
-      // 用户主动修改过的事实持续参与索引，不再被低置信阈值移出；
+      // 用户主动修改过的事实持续参与索引，不再被低活动阈值移出；
       // 只有删除或父 Memory 生命周期失效才停止召回。
       && (record.basis === "user_edited_inference" || record.confidence >= SECONDARY_CONFIDENCE_THRESHOLD)
   );
@@ -962,12 +976,12 @@ export function applySecondaryDecay(
   const elapsed = now - anchor;
   if (elapsed < graceMs) return { record, decayed: false, autoDisabled: false };
   const periods = Math.floor(elapsed / graceMs);
-  const confidence = Math.max(0, record.confidence * Math.pow(SECONDARY_DECAY_FACTOR, periods));
+  const activityScore = Math.max(0, record.confidence * Math.pow(SECONDARY_DECAY_FACTOR, periods));
   // 真正发生衰减才 revision +1；跨多个周期一次计算也只算一次持久化变更，
   // 自动 disabled 与衰减在同一次 revision 变化中完成。
   let next: SecondaryMemoryRecord = Object.freeze({
     ...record,
-    confidence,
+    confidence: activityScore,
     lastDecayAt: anchor + periods * graceMs,
     updatedAt: now,
     revision: record.revision + 1

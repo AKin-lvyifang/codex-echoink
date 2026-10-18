@@ -276,7 +276,8 @@ export type SecondaryRelation =
 export type SecondaryBasis = "llm_inferred" | "user_edited_inference";
 
 /**
- * 候选支持级别（做梦 PRD 最新决定）：由 LLM 标注、代码计算 confidence。
+ * 保存的候选支持描述：由 LLM 标注，代码依据元数据计算当前支持准入分。
+ * 不是概率，也不是代码对内容真实性的独立证明。
  * direct = 一级记忆直接陈述；strong_inference = 强推理；weak_inference = 弱联想。
  */
 export type SecondarySupportLevel = "direct" | "strong_inference" | "weak_inference";
@@ -293,7 +294,7 @@ export type SecondaryStatus = "current" | "disabled";
 
 /**
  * 停用原因（最新决定）：restore 只能重新启用因 parent forget/close 停用的
- * 事实，不能恢复低 confidence 自动停用或被重新做梦替换的事实。
+ * 事实，不能恢复低活动自动停用或被重新做梦替换的事实。
  */
 export type SecondaryDisabledReason =
   | "parent_lifecycle"  // 父 Memory supersede/forget/close 连带停用
@@ -327,6 +328,7 @@ export interface SecondaryMemoryRecord {
   readonly evidence: string;
   readonly basis: SecondaryBasis;
   readonly sourceMemoryRevision: number;
+  /** 旧磁盘键，仅作使用活跃度/保留参考；不得代替支持等级或证据。 */
   readonly confidence: number;
   readonly hitCount: number;
   readonly lastHitAt: number | null;
@@ -349,7 +351,7 @@ export function isSecondaryRelation(value: unknown): value is SecondaryRelation 
  * 每条一级记忆最多保留的 current 二级事实数量（硬上限，防异常输出与资源膨胀）。
  * Round 6.1 产品决定：8 → 10。五种 relation、每 relation 最多 2 条 → 5 × 2 = 10。
  * 这是「每条一级 Memory」的上限，不是整个记忆库的上限；是上限而不是生成目标，
- * 典型保存 2–5 条，允许 0 条，禁止为凑满 10 条降低 confidence 或保存重复推理。
+ * 典型保存 2–5 条，允许 0 条，禁止为凑满 10 条降低支持准入或保存重复推理。
  */
 export const SECONDARY_MAX_PER_PARENT = 10 as const;
 /** 每次做梦每条一级记忆允许 LLM 产出的临时候选上限（候选不落盘）。 */
@@ -363,13 +365,13 @@ export const SECONDARY_RECALL_WHEN_MAX_CHARS = 120 as const;
 export const SECONDARY_MATCH_TERM_MAX_CHARS = 40 as const;
 export const SECONDARY_REASON_MAX_CHARS = 80 as const;
 export const SECONDARY_EVIDENCE_MAX_CHARS = 120 as const;
-/** 命中一次带来的 confidence 增量。 */
+/** 命中一次带来的活动增量；保留旧导出名。 */
 export const SECONDARY_HIT_CONFIDENCE_STEP = 0.05 as const;
 /** 未命中衰减保护期（天）。 */
 export const SECONDARY_DECAY_GRACE_DAYS = 30 as const;
 /** 每个完整未命中周期应用的衰减系数。 */
 export const SECONDARY_DECAY_FACTOR = 0.8 as const;
-/** llm_inferred 记录低于该 confidence 时可自动禁用。 */
+/** llm_inferred 记录的活动值低于此值时可自动禁用；保留旧导出名。 */
 export const SECONDARY_MIN_CONFIDENCE = 0.1 as const;
 
 export const DREAM_STATE_SCHEMA = "echoink.dream.v1" as const;

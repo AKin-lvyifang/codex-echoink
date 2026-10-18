@@ -9,7 +9,10 @@ const outputDir = path.join(rootDir, ".tmp");
 const outputFile = path.join(outputDir, "personal-memory-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
 const focusedRecall = process.argv.includes("--recall");
-if (process.argv.slice(2).some((argument) => argument !== "--recall")) {
+const focusedSecondary = process.argv.includes("--secondary");
+const focusedPersistence = process.argv.includes("--secondary-persistence");
+if (process.argv.slice(2).some((argument) => !["--recall", "--secondary", "--secondary-persistence"].includes(argument))
+  || [focusedRecall, focusedSecondary, focusedPersistence].filter(Boolean).length > 1) {
   throw new Error("personal-memory-tests: unsupported argument");
 }
 
@@ -26,10 +29,16 @@ await esbuild.build({
       'import { runAgentSelfMigrationScenarios } from "./src/tests/agent-self-migration";',
       'import { runDreamGrowthScenarios } from "./src/tests/dream-growth";',
       'import { runDreamLedgerScenarios } from "./src/tests/dream-ledger";',
+      'import { runSecondaryMemoryPersistentRecallTests, runSecondaryMemorySupportActivityTests } from "./src/tests/secondary-memory-support-activity";',
       'import { buildEchoInkSystemConstitutionPrompt } from "./src/harness/memory/personal-memory-contracts";',
-      "await runMemoryRecallHarnessContractScenarios();",
-      "await runPersonalMemoryCorrectionTests();",
-      ...(focusedRecall ? [] : [
+      ...(focusedSecondary || focusedPersistence ? [focusedPersistence
+        ? "await runSecondaryMemoryPersistentRecallTests();"
+        : "await runSecondaryMemorySupportActivityTests();"] : [
+        "await runMemoryRecallHarnessContractScenarios();",
+        "await runPersonalMemoryCorrectionTests();"
+      ]),
+      ...(focusedRecall || focusedSecondary || focusedPersistence ? [] : [
+        "await runSecondaryMemorySupportActivityTests();",
         "await runPersonalMemoryToolContractScenarios();",
         "await runPersonalMemoryPathSafetyScenarios();",
         "await runAgentSelfMigrationScenarios();",
@@ -48,7 +57,9 @@ await esbuild.build({
         "assert.match(constitutionPrompt, /不得虚构事实、来源、引用、执行过程、Tool 结果或写入成功/u);",
         "assert.doesNotMatch(constitutionPrompt, /targetId|nextCursor|outcome=created/u);"
       ]),
-      focusedRecall
+      focusedSecondary || focusedPersistence
+        ? 'console.log("Focused secondary Memory acceptance: PASS");'
+        : focusedRecall
         ? 'console.log("Recall and correction Personal Memory acceptance: PASS");'
         : 'console.log("Current file-based Personal Memory acceptance: PASS");'
     ].join("\n"),
@@ -87,7 +98,7 @@ const result = spawnSync(process.execPath, [outputFile], {
 });
 
 if (result.status !== 0) process.exit(result.status ?? 1);
-if (focusedRecall) process.exit(0);
+if (focusedRecall || focusedSecondary || focusedPersistence) process.exit(0);
 
 const identityPathsResult = spawnSync(process.execPath, [path.join(rootDir, "src/tests/agent-identity-paths-tests.mjs")], {
   cwd: rootDir,
