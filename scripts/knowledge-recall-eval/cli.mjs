@@ -42,13 +42,17 @@ export async function buildAdapter(sourceRoot, workRoot) {
   const esbuild = await import('esbuild');
   const output = path.join(workRoot, 'production-adapter.mjs');
   await symlink(path.join(sourceRoot, 'node_modules'), path.join(workRoot, 'node_modules'), 'dir');
+  const bodySearchAvailable = await lstat(path.join(sourceRoot, 'src/knowledge-base/vault-body-search.ts')).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
   const result = await esbuild.build({
     entryPoints: [path.join(here, 'production-adapter.ts')],
     absWorkingDir: sourceRoot, outfile: output, bundle: true, platform: 'node', target: 'node22', format: 'esm', metafile: true,
     loader: { '.md': 'text', '.svg': 'text', '.webp': 'dataurl' },
     external: ['@earendil-works/pi-agent-core', '@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', 'yaml', 'jsdom'],
     plugins: [{ name: 'explicit-production-checkout', setup(build) {
-      build.onResolve({ filter: /^@production\// }, args => ({ path: path.join(sourceRoot, 'src', `${args.path.slice('@production/'.length)}.ts`) }));
+      build.onResolve({ filter: /^@production\// }, args => !bodySearchAvailable && args.path === '@production/knowledge-base/vault-body-search'
+        ? { path: args.path, namespace: 'legacy-body-search-absent' }
+        : { path: path.join(sourceRoot, 'src', `${args.path.slice('@production/'.length)}.ts`) });
+      build.onLoad({ filter: /.*/, namespace: 'legacy-body-search-absent' }, () => ({ contents: 'export const VaultBodySearch = undefined;', loader: 'js' }));
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(sourceRoot, 'src/tests/obsidian-shim.ts') }));
     } }], logLevel: 'silent'
   });
@@ -58,7 +62,7 @@ export async function buildAdapter(sourceRoot, workRoot) {
     if (contains(path.join(sourceRoot, 'src'), full) || contains(here, full)) sourceFiles.push({ path: contains(here, full) ? `evaluator/${path.relative(here, full)}` : path.relative(sourceRoot, full), sha256: createHash('sha256').update(await readFile(full)).digest('hex') });
   }
   const adapter = await import(pathToFileURL(output).href);
-  return { evaluate: adapter.evaluateProduction, metadata: { entry: path.relative(sourceRoot, path.join(here, 'production-adapter.ts')), source_root: sourceRoot, imported_files: sourceFiles, host_shim: 'src/tests/obsidian-shim.ts', bundle_sha256: createHash('sha256').update(await readFile(output)).digest('hex') } };
+  return { evaluate: adapter.evaluateProduction, metadata: { body_search_available: bodySearchAvailable, entry: path.relative(sourceRoot, path.join(here, 'production-adapter.ts')), source_root: sourceRoot, imported_files: sourceFiles, host_shim: 'src/tests/obsidian-shim.ts', bundle_sha256: createHash('sha256').update(await readFile(output)).digest('hex') } };
 }
 
 function flattenCases(cases, selected) {

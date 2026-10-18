@@ -227,7 +227,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert.equal(rawContent().hidden, false, "purpose help never folds the drawer");
     purposeHelp.blur();
     assert(!host.textContent?.includes("预览方案"));
-    const help = raw.querySelector<HTMLButtonElement>(".echoink-folder-help")!;
+    const help = raw.querySelector<HTMLButtonElement>(".echoink-folder-binding .echoink-folder-help")!;
     const tooltipId = help.getAttribute("aria-describedby")!;
     const helpLabelId = help.getAttribute("aria-labelledby")!;
     assert(helpLabelId, "permission help has a stable accessible name reference");
@@ -235,7 +235,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert.equal(help.getAttribute("title"), null, "permission help relies on the attached settings tooltip");
     assert.equal(raw.querySelector(`#${helpLabelId}`)?.textContent, "自动整理权限说明");
     assert.equal(help.querySelector(`#${helpLabelId}`)?.classList.contains("echoink-folder-help-label"), true);
-    assert.equal(raw.querySelector('[role="checkbox"]')?.getAttribute("aria-label"), "允许 Agent 自动整理 · 阅读/资料");
+    assert.equal(raw.querySelector('[data-folder-control="organize"]')?.getAttribute("aria-label"), "允许 Agent 自动整理 · 阅读/资料");
     assert.equal(raw.querySelector(".echoink-folder-organize .setting-item-description"), null, "organization explanations do not occupy permanent rows");
     help.click();
     let tooltip = dom.win.document.getElementById(tooltipId)!;
@@ -266,7 +266,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert(host.textContent?.includes("收藏保存位置"), "multiple sources reveal the default destination selector");
     const destination = host.querySelector<HTMLSelectElement>('[aria-label="收藏保存位置"]')!;
     assert.deepEqual([...destination.options].map(option => option.textContent), ["请选择收藏保存位置", "阅读/资料", "工作/调研"], "collection destination only lists this purpose's bound sources");
-    const rawHelpIds = [...host.querySelectorAll<HTMLElement>('[data-folder-role="raw"] .echoink-folder-help')]
+    const rawHelpIds = [...host.querySelectorAll<HTMLElement>('[data-folder-role="raw"] .echoink-folder-binding .echoink-folder-help')]
       .map(trigger => trigger.getAttribute("aria-labelledby"));
     assert.equal(rawHelpIds.length, 2, "each raw source has its own permission help name");
     assert.equal(new Set(rawHelpIds).size, rawHelpIds.length, "permission help labels remain unique across sources");

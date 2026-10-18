@@ -2,6 +2,7 @@ import { estimatePiContextTokens } from "../pi-native/pi-context-budget";
 import type {
   PersonalMemoryMode,
   PersonalMemorySearchItem,
+  PersonalMemorySearchRequest,
   SecondaryMatchView
 } from "./personal-memory-contracts";
 import { PersonalMemoryRepository } from "./personal-memory-repository";
@@ -9,6 +10,7 @@ import type { PersonalMemoryTurnCatalogCandidate } from "./personal-memory-repos
 
 export type PersonalMemoryRecallCandidate = Pick<PersonalMemorySearchItem,
   "id" | "kind" | "title" | "recallWhen" | "summary" | "date" | "scope" | "score"
+  | "basis" | "contentOrigin" | "status" | "asOf" | "supersedes" | "sourceSummary" | "revision" | "file"
 > & Readonly<{
   /** Secondary fact that decisively pulled this Memory into the candidates. */
   matchedSecondaryId?: string;
@@ -56,6 +58,11 @@ export class PersonalMemoryRecallHarness {
     memoryMode: PersonalMemoryMode;
     query: string;
     recentConversation?: readonly string[];
+    /** Explicit boundaries; project recall also retains unscoped global Memory. */
+    scope?: PersonalMemorySearchRequest["scope"];
+    statuses?: PersonalMemorySearchRequest["statuses"];
+    from?: PersonalMemorySearchRequest["from"];
+    to?: PersonalMemorySearchRequest["to"];
     tokenBudget: number;
     vaultId: string;
     conversationId: string;
@@ -81,6 +88,10 @@ export class PersonalMemoryRecallHarness {
       ...(input.memoryMode === "normal"
         ? {
             query,
+            scope: input.scope,
+            statuses: input.statuses,
+            from: input.from,
+            to: input.to,
             selectCandidateIds: (
               candidates: readonly Readonly<PersonalMemoryTurnCatalogCandidate>[]
             ) => selectRecallCandidateIds(candidates, tokenBudget)
@@ -321,9 +332,7 @@ function stripSecondaryCandidate(
 }
 
 function toRecallCandidate(
-  item: Readonly<Pick<PersonalMemorySearchItem,
-    "id" | "kind" | "title" | "recallWhen" | "summary" | "date" | "scope" | "score"
-  >> & Partial<Pick<PersonalMemorySearchItem, "matchedSecondaryId" | "secondaryMatches">>
+  item: Readonly<PersonalMemoryRecallCandidate>
 ): Readonly<PersonalMemoryRecallCandidate> {
   return Object.freeze({
     id: item.id,
@@ -332,7 +341,15 @@ function toRecallCandidate(
     recallWhen: item.recallWhen,
     summary: item.summary,
     date: item.date,
+    status: item.status,
+    basis: item.basis,
+    sourceSummary: item.sourceSummary,
+    ...(item.contentOrigin ? { contentOrigin: item.contentOrigin } : {}),
     ...(item.scope ? { scope: item.scope } : {}),
+    ...(item.asOf ? { asOf: item.asOf } : {}),
+    ...(item.supersedes ? { supersedes: item.supersedes } : {}),
+    ...(item.revision !== undefined ? { revision: item.revision } : {}),
+    ...(item.file ? { file: item.file } : {}),
     score: item.score,
     ...(item.matchedSecondaryId ? { matchedSecondaryId: item.matchedSecondaryId } : {}),
     ...(item.secondaryMatches && item.secondaryMatches.length > 0

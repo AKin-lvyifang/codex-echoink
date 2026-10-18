@@ -228,8 +228,8 @@ const MEMORY_WRITE_REQUEST_SCHEMA = Type.Union([
   FORGET_REQUEST_SCHEMA,
   Type.String({ maxLength: MEMORY_WRITE_REQUEST_JSON_MAX_CHARS })
 ]);
-const MEMORY_SEARCH_TOOL_DESCRIPTION = "搜索当前 Vault 的长期 Memory 摘要。相关历史可能影响当前回答，或需要新增、更新、修正画像、忘记前定位现有记录时调用。";
-const MEMORY_READ_TOOL_DESCRIPTION = "按 Memory ID 读取正文；只有确需核对真实内容时调用。";
+const MEMORY_SEARCH_TOOL_DESCRIPTION = "搜索当前 Vault 的长期 Memory 摘要，默认只返回current当前记录。问到过去或变更原因时，可用statuses包含superseded查找已被替代的历史，按需用scope/from/to缩小范围。current与superseded分别表达当前和历史，supersedes指向被替代记录。相关摘要已足够时可直接使用；写入、修正或忘记前按需定位现有记录。";
+const MEMORY_READ_TOOL_DESCRIPTION = "按Memory ID读取正文；读取历史记录时传includeHistorical=true。已有摘要不足以回答当前问题时再读取相关记录，保留current/superseded身份与supersedes替代关系，不把历史内容当成当前状态。";
 const MEMORY_WRITE_TOOL_DESCRIPTION = "当用户内容具有跨轮价值且对象明确时，新增或更新长期 Memory、修正 USER 画像，或按用户当前原话忘记旧 Memory。选择一种 schema operation；普通文字不会保存，只根据本 Tool 的真实结果说明是否成功。";
 
 export const PI_PERSONAL_MEMORY_TOOL_SCHEMAS: Readonly<Record<PiPersonalMemoryToolId, TSchema>> = Object.freeze({

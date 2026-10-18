@@ -47,6 +47,7 @@ export async function runPiPluginConversationBoundaryTests(): Promise<void> {
   await localHistoryDoesNotWaitForProductionRuntimeInitialization();
   await openingReturnsHistoryBeforeActivationCompletes();
   await sendingWaitsForTheExistingActivationTask();
+  await cancelledPreparationCannotSubmitLater();
   await backgroundSendSurvivesASelectionChange();
   await latestRapidSwitchWinsAndReleasesTheStaleSession();
   await inactiveReleaseIsSkippedWhenConversationBecomesActiveAgain();
@@ -61,6 +62,27 @@ export async function runPiPluginConversationBoundaryTests(): Promise<void> {
   await localManagementAndMemoryStayProviderIndependent();
   await releaseClearsPluginActivationStateEvenWhenRuntimeReleaseFails();
   await chatPropagatesTheMissingApiKeyError();
+}
+
+async function cancelledPreparationCannotSubmitLater(): Promise<void> {
+  for (const stage of ["activation", "runtime"] as const) {
+    const entered = deferred<void>(), release = deferred<void>();
+    let submits = 0;
+    const runtime = { submit: async () => { submits++; throw new Error("cancelled turn started"); } };
+    const host = pluginHost({
+      waitForPiConversationActivation: async () => { if (stage === "activation") { entered.resolve(); await release.promise; } },
+      ensurePiProductionRuntime: async () => { if (stage === "runtime") { entered.resolve(); await release.promise; } return { runtime }; }
+    });
+    const controller = new AbortController();
+    const pending = host.submitPiChat({ conversationId: `cancel-${stage}`, signal: controller.signal });
+    await entered.promise;
+    controller.abort();
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.equal(host.piSubmittingConversations.size, 0);
+    release.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(submits, 0, "late shared initialization cannot start a cancelled submission");
+  }
 }
 
 async function runtimeBundleInitializesConversationShellsWithoutBodyReads():

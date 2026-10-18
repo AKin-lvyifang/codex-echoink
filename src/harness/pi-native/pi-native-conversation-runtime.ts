@@ -1,3 +1,5 @@
+import { assertPiSubmissionActive } from "./pi-submission-lifecycle";
+import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../../knowledge-base/search/contracts";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../../knowledge-base/root-paths";
 import { normalizeConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
 import type { AgentRunSnapshot } from "../../agents/types";
@@ -686,6 +688,8 @@ interface ActiveProductRun {
   toolCallIds: Set<string>;
   agentSettledSeen: boolean;
   abortRequested: boolean;
+  knowledgeAbort: AbortController;
+  releaseSubmissionAbort?: () => void;
   eventError: unknown;
   channel: PiRuntimeEventChannel;
   settlementBarrier: PiProductRunSettlementBarrier;
@@ -1340,6 +1344,7 @@ export class PiNativeConversationRuntime {
     request: Readonly<PiChatSubmitRequest>
   ): Promise<PiChatRunHandle> {
     this.assertReady();
+    assertPiSubmissionActive(request.signal);
     if (this.submitting.has(request.conversationId)) {
       throw new PiNativeConversationRuntimeError(
         "conversation_busy",
@@ -1357,6 +1362,7 @@ export class PiNativeConversationRuntime {
   private async submitPrepared(
     request: Readonly<PiChatSubmitRequest>
   ): Promise<PiChatRunHandle> {
+    assertPiSubmissionActive(request.signal);
     this.assertConversationNotRecovering(request.conversationId);
     assertValidSkillBinding(request);
     const promptImages = normalizePiChatPreparedImages(request.images);
@@ -1392,6 +1398,7 @@ export class PiNativeConversationRuntime {
       );
     }
 
+    assertPiSubmissionActive(request.signal);
     const selectedDraft = request.draftId
       ? await this.requireDraftForSubmission(catalog, request.draftId)
       : null;
@@ -1418,6 +1425,7 @@ export class PiNativeConversationRuntime {
           })])
       : Object.freeze([]);
 
+    assertPiSubmissionActive(request.signal);
     const active = await this.requireActiveConversation(
       request.conversationId,
       {
@@ -1435,6 +1443,7 @@ export class PiNativeConversationRuntime {
             : {})
       }
     );
+    assertPiSubmissionActive(request.signal);
     if (active.currentRun || active.session.isStreaming) {
       throw new PiNativeConversationRuntimeError(
         "conversation_busy",
@@ -1500,6 +1509,7 @@ export class PiNativeConversationRuntime {
       toolCallIds: new Set(),
       agentSettledSeen: false,
       abortRequested: false,
+      knowledgeAbort: new AbortController(),
       eventError: null,
       channel,
       settlementBarrier: createSettlementBarrier(),
@@ -1540,8 +1550,19 @@ export class PiNativeConversationRuntime {
       productRunId,
       request.conversationId
     );
+    if (request.signal) {
+      const onAbort = () => {
+        if (active.currentRun !== execution) return;
+        // abort() sets the bound Knowledge signal before its first await.
+        void this.abort(request.conversationId).catch(error => console.error("Pi lifecycle cancellation failed", error));
+      };
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      execution.releaseSubmissionAbort = () => request.signal!.removeEventListener("abort", onAbort);
+      if (request.signal.aborted) onAbort();
+    }
 
     try {
+      assertPiSubmissionActive(execution.knowledgeAbort.signal);
       if (requestedThinkingLevel !== undefined) {
         active.session.setThinkingLevel(requestedThinkingLevel);
       }
@@ -1557,6 +1578,7 @@ export class PiNativeConversationRuntime {
           stage: "searching"
         });
         const preflight = await this.options.knowledge!.retrieveAsk({
+          signal: execution.knowledgeAbort.signal,
           vaultId: catalog.vaultId,
           conversationId: catalog.conversationId,
           piSessionId: catalog.piSessionId,
@@ -1595,6 +1617,7 @@ export class PiNativeConversationRuntime {
           stage: "searching"
         });
         const preflight = await this.options.knowledge.retrieveChat({
+          signal: execution.knowledgeAbort.signal,
           vaultId: catalog.vaultId,
           conversationId: catalog.conversationId,
           piSessionId: catalog.piSessionId,
@@ -1687,6 +1710,7 @@ export class PiNativeConversationRuntime {
           command
         });
       }
+      assertPiSubmissionActive(execution.knowledgeAbort.signal);
     } catch (error) {
       this.abandonUnstartedProductRun(active, execution);
       throw error;
@@ -1739,7 +1763,12 @@ export class PiNativeConversationRuntime {
         source: "interactive",
         // Pi appends the user Entry only after auth, compaction and
         // before_agent_start. Their duration is not an Entry-write timeout.
-        preflightResult: (accepted) => { if (accepted) promptStart.readyAt = Date.now(); },
+        preflightResult: (accepted) => {
+          // Pi calls this after auth/compaction/before_agent_start and immediately
+          // before starting its Agent, closing the early-abort startup race.
+          assertPiSubmissionActive(execution.knowledgeAbort.signal);
+          if (accepted) promptStart.readyAt = Date.now();
+        },
         ...(promptImages.length ? { images: promptImages } : {})
       });
     } catch (promptStartError) {
@@ -1946,6 +1975,8 @@ export class PiNativeConversationRuntime {
     active: ActiveConversation,
     execution: ActiveProductRun
   ): void {
+    execution.releaseSubmissionAbort?.();
+    execution.releaseSubmissionAbort = undefined;
     if (active.currentRun === execution) active.currentRun = null;
     if (active.currentExecution?.runId === execution.productRunId) {
       active.currentExecution = null;
@@ -2162,12 +2193,14 @@ export class PiNativeConversationRuntime {
     if (!active?.currentRun) return;
     const execution = active.currentRun;
     execution.abortRequested = true;
+    execution.knowledgeAbort.abort();
     const abortErrors: unknown[] = [];
     try {
       await this.pauseTaskPlanForAbort(active, execution);
     } catch (error) {
       abortErrors.push(error);
     }
+    if (active.currentRun !== execution) return;
     let cleared: { steering: string[]; followUp: string[] } | null = null;
     try {
       cleared = active.session.clearQueue();
@@ -2179,6 +2212,7 @@ export class PiNativeConversationRuntime {
     } catch (error) {
       abortErrors.push(error);
     }
+    if (active.currentRun !== execution) return;
     if (cleared) {
       try {
         await this.persistAbortDrafts(active, execution, cleared);
@@ -2186,6 +2220,7 @@ export class PiNativeConversationRuntime {
         abortErrors.push(error);
       }
     }
+    if (active.currentRun !== execution) return;
     try {
       active.session.abortCompaction();
     } catch (error) {
@@ -2549,6 +2584,7 @@ export class PiNativeConversationRuntime {
             "Provider request has no bound Pi-native execution"
           );
         }
+        assertPiSubmissionActive(run?.knowledgeAbort.signal);
         if (run && run.providerStartedAt === undefined) {
           const providerStartedAt = this.now();
           run.providerStartedAt = providerStartedAt;
@@ -2572,6 +2608,7 @@ export class PiNativeConversationRuntime {
             "Tool execution has no bound ProductRun"
           );
         }
+        assertPiSubmissionActive(run.knowledgeAbort.signal);
         const userEntry = currentRunUserEntry(active.sessionManager, run.baselineEntryIds);
         return {
           conversationId: catalog.conversationId,
@@ -5500,13 +5537,21 @@ function parseKnowledgeReference(value: unknown): PiKnowledgeReference | null {
     || (reference.lineEnd as number) < (reference.lineStart as number)
   ) return null;
   return Object.freeze({
+    ...(Number.isSafeInteger(reference.columnStart) && Number.isSafeInteger(reference.columnEnd) ? { columnStart: reference.columnStart as number, columnEnd: reference.columnEnd as number } : {}),
     referenceId: reference.referenceId,
     vaultRelativePath: reference.vaultRelativePath,
     title: reference.title,
     excerpt: reference.excerpt,
     contentRevision: reference.contentRevision,
     lineStart: reference.lineStart as number,
-    lineEnd: reference.lineEnd as number
+    lineEnd: reference.lineEnd as number,
+    ...(typeof reference.sectionTitle === "string" ? { sectionTitle: reference.sectionTitle } : {}),
+    ...(KNOWLEDGE_SEARCH_KINDS.includes(reference.sourceType as KnowledgeSearchKind) ? { sourceType: reference.sourceType as KnowledgeSearchKind } : {}),
+    ...(typeof reference.recordedAt === "number" && Number.isFinite(reference.recordedAt) ? { recordedAt: reference.recordedAt } : {}),
+    ...(typeof reference.publishedAt === "string" ? { publishedAt: reference.publishedAt } : {}),
+    ...(typeof reference.totalLines === "number" ? { totalLines: reference.totalLines } : {}),
+    ...(typeof reference.hasMore === "boolean" ? { hasMore: reference.hasMore } : {}),
+    ...(reference.verificationStatus === "local_revision_verified" || reference.verificationStatus === "source_link_changed" ? { verificationStatus: reference.verificationStatus } : {})
   });
 }
 

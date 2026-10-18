@@ -389,6 +389,34 @@ async function concurrentViewRunsRemainIndependent(): Promise<void> {
     assert.equal(view.turnQueue.hasQueuedItems("C"), false,
       "an accepted request must not remain queued for duplicate submission");
     assert.equal(timers.size, 0);
+
+    // Exercise the actual View stop path while submit still has no run handle.
+    view.viewLifecycleAbortController = new AbortController();
+    const preparing = deferred<void>();
+    let pendingSignal: AbortSignal | undefined;
+    plugin.submitPiChat = async (request: PiChatSubmitRequest) => {
+      pendingSignal = request.signal;
+      assert.ok(pendingSignal);
+      preparing.resolve();
+      await new Promise((_resolve, reject) => pendingSignal!.addEventListener("abort", () => reject(Object.assign(new Error("cancelled preparation"), { name: "AbortError" })), { once: true }));
+      assert.fail("cancelled preparation returned a handle");
+    };
+    settings.activeSessionId = "C";
+    view.inputEl.value = "pending preflight draft";
+    const noticesBeforeStop = openTestNoticeMessages.length;
+    const pending = view.sendMessage();
+    await preparing.promise;
+    assert.equal(view.activeRunId, "");
+    settings.activeSessionId = "B";
+    await view.stopTurn();
+    assert.equal(pendingSignal?.aborted, false, "stopping another conversation cannot abort C's pending submit");
+    settings.activeSessionId = "C";
+    await view.stopTurn();
+    assert.equal(pendingSignal?.aborted, true, "stop reaches the submit signal before activeRunId exists");
+    await pending;
+    assert.equal(openTestNoticeMessages.length, noticesBeforeStop, "user cancellation is not reported as a send failure");
+    assert.equal(view.inputEl.value, "pending preflight draft", "unaccepted cancelled drafts keep ordinary Composer semantics");
+    assert.equal(view.runningSessionIds.has("C"), false);
   } finally {
     await service.dispose();
     dom.restore();

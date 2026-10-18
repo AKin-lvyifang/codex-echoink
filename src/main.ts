@@ -3,6 +3,7 @@ import { ConversationRunService } from "./plugin/conversation-run-service";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "./agents/types";
 import { normalizeAgentRegistry, removeAgentDefinition } from "./agents/registry";
 import { patchConversationTaskMetadata, type ConversationTaskMetadataPatch } from "./agents/task-metadata";
+import { assertPiSubmissionActive, waitForPiSubmission } from "./harness/pi-native/pi-submission-lifecycle";
 import { registerKnowledgePrivateRoot } from "./knowledge-base/root-paths";
 import { applyConversationTaskMetadata, normalizeConversationTaskMetadata } from "./agents/task-metadata";
 import { knowledgeFolderOrganizationPrompt } from "./knowledge-base/folder-bindings";
@@ -799,6 +800,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async submitPiChat(
     request: PiChatSubmitRequest
   ): Promise<PiChatRunHandle> {
+    assertPiSubmissionActive(request.signal);
     const conversationId = request.conversationId;
     if (
       this.piSubmittingConversations.has(conversationId)
@@ -809,10 +811,12 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.piSubmittingConversations.add(conversationId);
     try {
       return await this.productActivity.run(async () => {
+        assertPiSubmissionActive(request.signal);
         const entry = await this.readPiConversationCatalogEntry(conversationId);
         if (entry && this.conversationRunService?.isAgentBlocked(entry.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("agent_removal_in_progress");
-        await this.waitForPiConversationActivation(conversationId);
-        const bundle = await this.ensurePiProductionRuntime();
+        await waitForPiSubmission(this.waitForPiConversationActivation(conversationId), request.signal);
+        const bundle = await waitForPiSubmission(this.ensurePiProductionRuntime(), request.signal);
+        assertPiSubmissionActive(request.signal);
         const handle = await bundle.runtime.submit(request);
         void handle.result.then(async (result) => {
           if (result.terminalState === "completed") {

@@ -166,10 +166,10 @@ export async function runPhase3KnowledgeRetrieverTests(): Promise<void> {
       sourceLines.slice(reference.lineStart - 1, reference.lineEnd).join("\n")
     );
     assert.ok(reference.lineStart <= 3 && reference.lineEnd >= 3);
-    assert.match(
-      formatKnowledgeReferencesForPrompt(explicit.references),
-      /notes\/explicit\.md[\s\S]*行号：[1-9][0-9]*-[1-9][0-9]*[\s\S]*P3_FIXTURE_ANSWER/u
-    );
+    const delivered = JSON.parse(formatKnowledgeReferencesForPrompt(explicit.references)).sources[0];
+    assert.equal(delivered.vaultRelativePath, "notes/explicit.md");
+    assert.ok(delivered.lineStart >= 1 && delivered.lineEnd >= delivered.lineStart);
+    assert.match(delivered.excerpt, /P3_FIXTURE_ANSWER/u);
     assert.equal(
       (await retriever.verifyReferences(explicit.references)).status,
       "valid"

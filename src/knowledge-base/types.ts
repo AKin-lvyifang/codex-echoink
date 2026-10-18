@@ -107,6 +107,9 @@ export interface KnowledgeBaseCitationSummary {
 
 /** Phase 3 durable pointer to one exact excerpt in the current Vault. */
 export interface KnowledgeReference {
+  columnStart?: number;
+  columnEnd?: number;
+  sectionTitle?: string;
   totalLines?: number;
   hasMore?: boolean;
   related?: import("./knowledge-relations").KnowledgeRelationPage;
@@ -119,7 +122,7 @@ export interface KnowledgeReference {
   lineStart: number;
   lineEnd: number;
   /** Vault collection that owns this source. */
-  sourceType?: "wiki" | "projects" | "raw";
+  sourceType?: import("./search/contracts").KnowledgeSearchKind;
   /** File modification time observed while the exact revision was read. */
   recordedAt?: number;
   /** Optional publication date declared in Markdown frontmatter. */
@@ -129,6 +132,7 @@ export interface KnowledgeReference {
 }
 
 export interface KnowledgeRetrievalRequest {
+  signal?: AbortSignal;
   question: string;
   /** Exact Vault-relative Markdown paths explicitly named by the user. */
   explicitPaths?: readonly string[];
@@ -141,6 +145,7 @@ export interface KnowledgeRetrievalRequest {
 }
 
 export interface KnowledgeRetrievalReadyResult {
+  coverage?: import("./search/contracts").BodySearchResult["coverage"];
   localIssues?: { vaultRelativePath: string; status: string }[];
   status: "ready";
   shouldInvokePi: true;
@@ -154,6 +159,7 @@ export interface KnowledgeRetrievalReadyResult {
 }
 
 export interface KnowledgeRetrievalNoEvidenceResult {
+  coverage?: import("./search/contracts").BodySearchResult["coverage"];
   localIssues?: { vaultRelativePath: string; status: string }[];
   status: "no_evidence";
   /** New Knowledge Agent index paths invoke Pi; legacy scan callers may not. */

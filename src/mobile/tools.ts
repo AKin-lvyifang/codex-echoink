@@ -1,3 +1,7 @@
+import { boundKnowledgeSourceSpan, sliceKnowledgeSourceSpan, sourceSpanHasMore } from "../knowledge-base/source-span";
+import { VaultBodySearch, type KnowledgeBodySearchPort } from "../knowledge-base/vault-body-search";
+import { tokenizeSearchText } from "../knowledge-base/search/tokenize";
+import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { App, TFile } from "obsidian";
 import { Type } from "typebox";
@@ -21,8 +25,7 @@ export function checkedNotePath(value: string): string {
 }
 export function searchMemories(records: readonly PersonalMemoryRecord[], query: string, limit = 20): PersonalMemoryRecord[] {
   const text = query.trim().toLocaleLowerCase();
-  const terms: readonly string[] = text.match(/[a-z0-9]+|[\u3400-\u9fff]{1,}/gu) ?? [];
-  const fragments = terms.flatMap(t => /[\u3400-\u9fff]/u.test(t) && t.length > 2 ? [t, ...Array.from({ length: t.length - 1 }, (_, i) => t.slice(i, i + 2))] : [t]);
+  const fragments = tokenizeSearchText(text);
   return records.filter(r => r.status === "current").map(record => {
     const haystack = `${record.title}\n${record.content}\n${record.recallWhen}`.toLocaleLowerCase();
     return { record, score: text ? fragments.reduce((s, term) => s + (haystack.includes(term) ? term.length : 0), 0) : 1 };
@@ -30,26 +33,37 @@ export function searchMemories(records: readonly PersonalMemoryRecord[], query: 
 }
 function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Error("已停止，未开始此操作。"); }
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
-export function mobileTools(app: App, store: MobileStore, selectedNote: () => string): AgentTool[] {
+export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort): AgentTool[] {
+  const bodySearch = sharedBodySearch ?? new VaultBodySearch(app, bindings);
   const tools: AgentTool[] = [
     {
-      name: "vault_search", label: "查找笔记", description: "按标题或路径查找当前笔记库的 Markdown 笔记。", parameters: Type.Object({ query: Type.String() }),
-      async execute(_id, args: { query: string }, signal) {
+      name: "vault_search", label: "查找笔记", description: "搜索允许用途和普通笔记的真实正文。query或queries(1-5问法)二选一；可用dateFrom/dateTo筛选日记日期。结果含命中章节、原文片段、版本和行号；可直接使用已交付原文，需要更多时note_read续读。", parameters: Type.Object({ query: Type.Optional(Type.String()), queries: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 5 })), dateFrom: Type.Optional(Type.String()), dateTo: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), cursor: Type.Optional(Type.String()) }),
+      async execute(_id, args: { query?: string; queries?: string[]; dateFrom?: string; dateTo?: string; limit?: number; cursor?: string }, signal) {
         checkStopped(signal);
-        const query = String(args.query).toLocaleLowerCase();
-        return result(app.vault.getMarkdownFiles().filter(f => !f.path.split("/").some(p => p.startsWith(".")) && f.path.toLocaleLowerCase().includes(query)).slice(0, 50).map(f => ({ path: f.path, title: f.basename })));
+        if ((args.query === undefined) === (args.queries === undefined)) throw new Error("请传入query或queries之一。");
+        // Standalone callers have no owning runtime to release host listeners.
+        if (!sharedBodySearch) bodySearch.invalidate();
+        return result(await bodySearch.search({ ...args, signal }));
       }
     },
     {
-      name: "note_read", label: "读取笔记", description: "读取当前/选定笔记或搜索得到的笔记。省略 path 时读取用户引用的笔记。", parameters: Type.Object({ path: Type.Optional(Type.String()) }),
-      async execute(_id, args: { path?: string }, signal) {
+      name: "note_read", label: "读取笔记", description: "读取允许搜索的当前/选定笔记或搜索命中章节。搜索后原样传expectedContentRevision并用lineStart/lineCount续读。结果含真实原文位置及是否还有后文。", parameters: Type.Object({ path: Type.Optional(Type.String()), expectedContentRevision: Type.Optional(Type.String()), lineStart: Type.Optional(Type.Integer({ minimum: 1 })), columnStart: Type.Optional(Type.Integer({ minimum: 0 })), columnEnd: Type.Optional(Type.Integer({ minimum: 0 })), lineCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 80 })) }),
+      async execute(_id, args: { path?: string; expectedContentRevision?: string; lineStart?: number; columnStart?: number; columnEnd?: number; lineCount?: number }, signal) {
         checkStopped(signal);
         const path = checkedNotePath(args.path || selectedNote());
-        const file = app.vault.getAbstractFileByPath(path);
-        if (!file || !("extension" in file)) throw new Error("笔记不存在。");
-        const content = await app.vault.read(file as TFile);
+        const source = await bodySearch.read({ vaultRelativePath: path, expectedContentRevision: args.expectedContentRevision });
         checkStopped(signal);
-        return result({ path, content });
+        const lines = source.content.split(/\r\n|\n|\r/u);
+        const lineStart = args.lineStart ?? 1;
+        const count = args.lineCount ?? 40;
+        if (!Number.isSafeInteger(lineStart) || lineStart < 1 || lineStart > lines.length || !Number.isSafeInteger(count) || count < 1 || count > 80) throw new Error("读取行号无效。");
+        const requestedEnd = Math.min(lines.length, lineStart + count - 1);
+        const span = boundKnowledgeSourceSpan(lines, { lineStart, lineEnd: requestedEnd, ...(args.columnStart === undefined && args.columnEnd === undefined ? {} : { columnStart: args.columnStart ?? 0, columnEnd: args.columnEnd ?? lines[requestedEnd - 1].length }) });
+        const lineEnd = span.lineEnd;
+        const partialLast = span.columnEnd !== undefined && span.columnEnd < lines[lineEnd - 1].length;
+        return result({ path, title: source.title, sourceType: source.kind, contentRevision: source.contentRevision,
+          ...span, totalLines: lines.length, content: sliceKnowledgeSourceSpan(lines, span),
+          hasMore: sourceSpanHasMore(lines, span), ...(partialLast || lineEnd < lines.length ? { nextLineStart: partialLast ? lineEnd : lineEnd + 1, ...(partialLast ? { nextColumnStart: span.columnEnd } : {}) } : {}) });
       }
     },
     {

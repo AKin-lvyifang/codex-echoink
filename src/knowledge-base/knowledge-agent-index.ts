@@ -8,6 +8,8 @@ import * as path from "node:path";
 import { isMissingPathError, writeFileAtomic } from "./utils";
 import { readKnowledgeLinkingDocument } from "./knowledge-linking";
 import type { KnowledgeLinkingDocument } from "./knowledge-linking-types";
+import type { KnowledgeSearchKind } from "./search/contracts";
+import type { KnowledgeBodySearchPort } from "./vault-body-search";
 
 export const KNOWLEDGE_AGENT_INDEX_SCHEMA_VERSION = 1 as const;
 export const KNOWLEDGE_AGENT_INDEX_FILE = "index-v1.json" as const;
@@ -19,7 +21,7 @@ const RAW_TEXT_EXTENSIONS = new Set([".md", ".markdown", ".txt"]);
 const MAX_PAGE_SIZE = 50;
 const REVISION_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
-export type KnowledgeAgentKind = typeof KNOWLEDGE_ROOTS[number];
+export type KnowledgeAgentKind = KnowledgeSearchKind;
 export type KnowledgeAgentRawSourceStatus = "available" | "changed" | "missing";
 export type KnowledgeAgentIndexErrorCode =
   | "cursor_invalid"
@@ -51,6 +53,14 @@ export interface KnowledgeAgentRawSource {
 }
 
 export interface KnowledgeAgentSearchHit extends KnowledgeApplicability {
+  sectionTitle?: string;
+  lineStart?: number;
+  lineEnd?: number;
+  columnStart?: number;
+  columnEnd?: number;
+  totalLines?: number;
+  excerpt?: string;
+  journalDate?: string;
   entryId: string;
   vaultRelativePath: string;
   kind: KnowledgeAgentKind;
@@ -64,6 +74,10 @@ export interface KnowledgeAgentSearchHit extends KnowledgeApplicability {
 export interface KnowledgeAgentSearchRequest {
   /** Omitted only when mode=recent. */
   query?: string;
+  queries?: readonly string[];
+  dateFrom?: string;
+  dateTo?: string;
+  signal?: AbortSignal;
   /** Default keyword relevance search remains unchanged. */
   mode?: "search" | "recent" | "related";
   vaultRelativePath?: string;
@@ -76,6 +90,7 @@ export interface KnowledgeAgentSearchRequest {
 }
 
 export interface KnowledgeAgentSearchResult {
+  coverage?: import("./search/contracts").BodySearchResult["coverage"];
   generation: number;
   total: number;
   returned: number;
@@ -162,6 +177,7 @@ interface CursorPayload {
 }
 
 export class KnowledgeAgentIndex {
+  readonly bodySearch?: KnowledgeBodySearchPort;
   readonly vaultPath: string;
   readonly storageRootPath: string;
   readonly indexPath: string;
@@ -176,6 +192,7 @@ export class KnowledgeAgentIndex {
     vaultPath: string;
     storageRootPath: string;
     linkResolver?: KnowledgeLinkResolver;
+    bodySearch?: KnowledgeBodySearchPort;
   }>) {
     if (!input.vaultPath.trim() || !input.storageRootPath.trim()) {
       throw new KnowledgeAgentIndexError(
@@ -184,6 +201,7 @@ export class KnowledgeAgentIndex {
       );
     }
     this.linkResolver = input.linkResolver;
+    this.bodySearch = input.bodySearch;
     this.vaultPath = path.resolve(input.vaultPath);
     this.storageRootPath = path.resolve(input.storageRootPath);
     this.indexPath = path.join(this.storageRootPath, KNOWLEDGE_AGENT_INDEX_FILE);
@@ -191,10 +209,16 @@ export class KnowledgeAgentIndex {
 
   /** Hosts call this for create/modify/rename/delete and committed local writes. */
   invalidate(relativePath?: string): void {
+    this.bodySearch?.invalidate(relativePath);
     if (relativePath !== undefined) {
       const root = knowledgePathRole(this.vaultPath, relativePath);
-      if (!KNOWLEDGE_ROOTS.includes(root as KnowledgeAgentKind)) return;
+      if (!(KNOWLEDGE_ROOTS as readonly string[]).includes(root as string)) return;
     }
+    this.invalidateMaintenance();
+  }
+
+  /** Mark only the maintenance index stale without invalidating body-search snapshots. */
+  invalidateMaintenance(): void {
     this.invalidationVersion += 1;
   }
 
@@ -204,7 +228,7 @@ export class KnowledgeAgentIndex {
   }
 
   private async ensureFresh(): Promise<void> {
-    if ((this.current?.bindingRevision ?? 0) !== (getKnowledgeFolderBindings(this.vaultPath)?.revision ?? 0)) this.invalidate();
+    if ((this.current?.bindingRevision ?? 0) !== (getKnowledgeFolderBindings(this.vaultPath)?.revision ?? 0)) this.invalidateMaintenance();
     while (!this.current || this.refreshedVersion !== this.invalidationVersion) {
       await this.refreshInvalidated();
     }
@@ -233,6 +257,7 @@ export class KnowledgeAgentIndex {
   async search(
     request: Readonly<KnowledgeAgentSearchRequest>
   ): Promise<KnowledgeAgentSearchResult> {
+    if (this.bodySearch && (!request.mode || request.mode === "search" || request.mode === "recent")) return this.bodySearch.search(request);
     await this.ensureFresh();
     const index = this.requireCurrent();
     const mode = request.mode ?? "search";
@@ -253,12 +278,13 @@ export class KnowledgeAgentIndex {
     const excludedPaths = normalizeExcludedPaths(request.excludePaths, this.vaultPath);
     const limit = normalizePageSize(request.limit);
     const queryTokens = tokenCounts(query);
-    const queryHash = knowledgeQueryHash(
+    const baseQueryHash = knowledgeQueryHash(
       queryTokens,
       kinds,
       excludedPaths,
       mode
     );
+    const queryHash = this.bodySearch ? createHash("sha256").update(baseQueryHash).update(this.bodySearch.scopeKey()).digest("hex") : baseQueryHash;
     const cursorGeneration = mode === "recent"
       ? index.recentGeneration
       : index.generation;
@@ -266,6 +292,7 @@ export class KnowledgeAgentIndex {
       ? decodeCursor(request.cursor, cursorGeneration, queryHash, mode)
       : 0;
     const candidates = Object.values(index.entries)
+      .filter((entry) => !this.bodySearch || this.bodySearch.allowsPath(entry.vaultRelativePath))
       .filter((entry) => kinds.includes(entry.kind))
       .filter((entry) => !excludedPaths.includes(entry.vaultRelativePath))
       .map((entry) => ({
@@ -297,8 +324,14 @@ export class KnowledgeAgentIndex {
       );
     }
     const page = matches.slice(offset, offset + limit);
-    const hits = page.map(({ entry }) => materializeHit(entry, index));
-    const nextOffset = offset + hits.length;
+    const hits: KnowledgeAgentSearchHit[] = [];
+    for (const { entry } of page) {
+      if (this.bodySearch) {
+        try { const { content: _body, ...hit } = await this.bodySearch.read({ vaultRelativePath: entry.vaultRelativePath }); hits.push(hit); }
+        catch (error) { if (error instanceof Error && error.name === "AbortError") throw error; }
+      } else hits.push(materializeHit(entry, index));
+    }
+    const nextOffset = offset + page.length;
     const hasMore = nextOffset < matches.length;
     return Object.freeze({
       generation: cursorGeneration,
@@ -371,6 +404,7 @@ export class KnowledgeAgentIndex {
   }
 
   async related(input: Readonly<{ vaultRelativePath: string; limit?: number; cursor?: string }>): Promise<KnowledgeRelationPage> {
+    if (this.bodySearch && !this.bodySearch.allowsPath(input.vaultRelativePath)) throw new KnowledgeAgentIndexError("invalid_path", "Knowledge relation source is outside the search scope.");
     await this.ensureFresh();
     const relativePath = normalizeKnowledgePath(resolveKnowledgePath(this.vaultPath, input.vaultRelativePath), this.vaultPath);
     return this.relationPage(relativePath, input.limit ?? 8, input.cursor);
@@ -397,9 +431,18 @@ export class KnowledgeAgentIndex {
     const index = this.requireCurrent();
     const entry = index.entries[relativePath];
     if (!entry) throw new KnowledgeAgentIndexError("not_found", "Knowledge relation source is unavailable.");
-    const queryHash = createHash("sha256").update(`related:${relativePath}`).digest("hex");
+    const queryHash = createHash("sha256").update(`related:${relativePath}${this.bodySearch ? this.bodySearch.scopeKey() : ""}`).digest("hex");
     const offset = cursor ? decodeCursor(cursor, index.generation, queryHash, "search") : 0;
-    const all = this.relations.get(relativePath) ?? [];
+    if (this.bodySearch && !this.bodySearch.allowsPath(relativePath)) throw new KnowledgeAgentIndexError("invalid_path", "Knowledge relation source is outside the search scope.");
+    const all = (this.relations.get(relativePath) ?? []).flatMap(relation => {
+      if (!this.bodySearch) return [relation];
+      if (!this.bodySearch.allowsPath(relation.source.vaultRelativePath) || (relation.target && !this.bodySearch.allowsPath(relation.target.vaultRelativePath))) return [];
+      if (relation.candidates) {
+        const candidates = relation.candidates.filter(candidate => this.bodySearch!.allowsPath(candidate.vaultRelativePath));
+        return candidates.length ? [{ ...relation, candidates }] : [];
+      }
+      return [relation];
+    });
     if (offset > all.length) throw new KnowledgeAgentIndexError("cursor_invalid", "Relation cursor is out of range.");
     const items = all.slice(offset, offset + normalizePageSize(limit));
     const next = offset + items.length;
@@ -1272,7 +1315,7 @@ function normalizeKinds(
 ): KnowledgeAgentKind[] {
   if (!value?.length) return [...KNOWLEDGE_ROOTS];
   return Array.from(new Set(value))
-    .filter((kind): kind is KnowledgeAgentKind => KNOWLEDGE_ROOTS.includes(kind))
+    .filter((kind): kind is KnowledgeAgentKind => (KNOWLEDGE_ROOTS as readonly string[]).includes(kind))
     .sort((left, right) => kindPriority(left) - kindPriority(right));
 }
 
@@ -1297,7 +1340,7 @@ function normalizeNonNegativeNumber(value: unknown): number {
 
 function knowledgeKindForPath(value: string, vaultRoot = ""): KnowledgeAgentKind | null {
   const root = knowledgePathRole(vaultRoot, value);
-  return KNOWLEDGE_ROOTS.includes(root as KnowledgeAgentKind)
+  return (KNOWLEDGE_ROOTS as readonly string[]).includes(root as string)
     ? root as KnowledgeAgentKind
     : null;
 }

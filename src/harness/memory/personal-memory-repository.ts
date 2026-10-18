@@ -257,6 +257,7 @@ export interface PersonalMemoryTurnSnapshot {
 
 export type PersonalMemoryTurnCatalogCandidate = Pick<PersonalMemorySearchItem,
   "id" | "kind" | "status" | "title" | "recallWhen" | "summary" | "date" | "basis" | "sourceSummary" | "scope" | "score"
+  | "contentOrigin" | "asOf" | "supersedes" | "revision" | "file"
 > & Readonly<{
   /**
    * 该一级记忆命中查询的全部二级事实（Recall PRD §12）：预算选择必须
@@ -644,6 +645,10 @@ export class PersonalMemoryRepository {
     input: Readonly<{
       memoryMode: "normal" | "no_memory";
       query?: string;
+      scope?: PersonalMemorySearchRequest["scope"];
+      statuses?: PersonalMemorySearchRequest["statuses"];
+      from?: PersonalMemorySearchRequest["from"];
+      to?: PersonalMemorySearchRequest["to"];
       selectCandidateIds?(
         candidates: readonly Readonly<PersonalMemoryTurnCatalogCandidate>[]
       ): readonly string[];
@@ -663,7 +668,7 @@ export class PersonalMemoryRepository {
       const fixed = await this.loadFixedContextSnapshot(manifest, input.memoryMode);
       const index = await this.readSearchIndexSnapshot(manifest);
       const search = await this.prepareTurnSearchSnapshot(
-        input.query ?? "",
+        { ...input, query: input.query ?? "" },
         manifest,
         index,
         input.selectCandidateIds
@@ -934,14 +939,11 @@ export class PersonalMemoryRepository {
       return Object.freeze({
         id: record.id,
         kind: record.kind,
-        status: record.status,
         title: record.title,
         recallWhen: record.recallWhen,
         summary: summarize(full.content),
         date: record.date,
-        basis: record.basis,
-        sourceSummary: record.sourceSummary,
-        ...(record.scope ? { scope: record.scope } : {}),
+        ...searchItemIdentity(full),
         score,
         ...(secondary ? { matchedSecondaryId: secondary.entry.id } : {})
       });
@@ -974,21 +976,41 @@ export class PersonalMemoryRepository {
   }
 
   private async prepareTurnSearchSnapshot(
-    rawQuery: string,
+    request: Readonly<Pick<PersonalMemorySearchRequest, "query" | "scope" | "statuses" | "from" | "to">>,
     manifest: PersonalMemoryManifest,
     index: Readonly<SearchIndex>,
     selectCandidateIds: ((
       candidates: readonly Readonly<PersonalMemoryTurnCatalogCandidate>[]
     ) => readonly string[]) | undefined
   ): Promise<Readonly<PersonalMemoryTurnSearchResult>> {
-    const query = cleanOptional(rawQuery, "query", 2_000) ?? "";
+    const query = cleanOptional(request.query, "query", 2_000) ?? "";
     const queryTokens = lexicalTokens(query);
     const browseAll = query.length === 0;
     const queryTokenSet = new Set(queryTokens);
     const secondaryBest = bestSecondaryScores(index, query, queryTokenSet);
     const secondaryMatches = groupSecondaryMatches(index, query, queryTokenSet);
-    const ranked = index.catalog
-      .filter((record) => record.status === "current")
+    const metadataById = new Map(manifest.records.map((record) => [record.id, record]));
+    const cachedRecordsById = new Map(this.recordsCache?.map((record) => [record.id, record]) ?? []);
+    const secondaryById = new Map(this.secondaryCache.map((record) => [record.id, record]));
+    const identityFor = (id: string) => {
+      const record = cachedRecordsById.get(id) ?? metadataById.get(id);
+      if (!record) {
+        throw new PersonalMemoryAccessError("invalid_request", "Personal Memory turn index contains an unavailable record");
+      }
+      return searchItemIdentity(record);
+    };
+    const secondaryViewFor = (entry: SecondaryCatalogEntry) =>
+      toSecondaryMatchView(entry, secondaryById.get(entry.id));
+    const statuses = new Set(request.statuses ?? ["current"]);
+    const scope = cleanOptional(request.scope, "scope", 240)?.toLocaleLowerCase();
+    // A project boundary keeps global preferences alongside this project's
+    // records. Historical records remain opt-in through explicit statuses.
+    const eligible = index.catalog
+      .filter((record) => statuses.has(record.status))
+      .filter((record) => matchesRecallScope(record.scope, scope))
+      .filter((record) => !request.from || record.date >= request.from)
+      .filter((record) => !request.to || record.date <= request.to);
+    const ranked = eligible
       .map((record) => {
         const primaryScore = scorePrimaryEntry(record, query, queryTokenSet);
         const secondary = secondaryBest.get(record.id);
@@ -1010,17 +1032,14 @@ export class PersonalMemoryRepository {
       return Object.freeze({
         id: record.id,
         kind: record.kind,
-        status: record.status,
         title: record.title,
         recallWhen: record.recallWhen,
         summary: record.summary,
         date: record.date,
-        basis: record.basis,
-        sourceSummary: record.sourceSummary,
-        ...(record.scope ? { scope: record.scope } : {}),
+        ...identityFor(record.id),
         score,
         ...(matches && matches.length > 0
-          ? { secondaryMatches: Object.freeze(matches.map(toSecondaryMatchView)) }
+          ? { secondaryMatches: Object.freeze(matches.map(secondaryViewFor)) }
           : {})
       });
     }));
@@ -1043,8 +1062,7 @@ export class PersonalMemoryRepository {
     // production selector over a primary-only ranking: candidate count is not
     // a valid proxy because the token-budget selector can skip one oversized
     // record and still admit smaller records that follow it.
-    const primaryOnlyCandidates = Object.freeze(index.catalog
-      .filter((record) => record.status === "current")
+    const primaryOnlyCandidates = Object.freeze(eligible
       .map((record) => ({
         record,
         primaryScore: scorePrimaryEntry(record, query, queryTokenSet)
@@ -1058,14 +1076,11 @@ export class PersonalMemoryRepository {
       .map(({ record, primaryScore }) => Object.freeze({
         id: record.id,
         kind: record.kind,
-        status: record.status,
         title: record.title,
         recallWhen: record.recallWhen,
         summary: record.summary,
         date: record.date,
-        basis: record.basis,
-        sourceSummary: record.sourceSummary,
-        ...(record.scope ? { scope: record.scope } : {}),
+        ...identityFor(record.id),
         score: primaryScore
       })));
     const primaryOnlyRequestedIds = selectCandidateIds
@@ -1082,7 +1097,6 @@ export class PersonalMemoryRepository {
         pendingSecondaryHits.push(Object.freeze({ secondaryId: entry.secondary.entry.id, parentId: id }));
       }
     }
-    const metadataById = new Map(manifest.records.map((record) => [record.id, record]));
     const items = await Promise.all(requestedIds.map(async (id) => {
       const rankedEntry = rankedById.get(id)!;
       const metadata = metadataById.get(id);
@@ -1098,17 +1112,14 @@ export class PersonalMemoryRepository {
       return Object.freeze({
         id: record.id,
         kind: record.kind,
-        status: record.status,
         title: record.title,
         recallWhen: record.recallWhen,
         summary: summarize(full.content),
         date: record.date,
-        basis: record.basis,
-        sourceSummary: record.sourceSummary,
-        ...(record.scope ? { scope: record.scope } : {}),
+        ...searchItemIdentity(full),
         score: rankedEntry.score,
         ...(decisiveSecondaryId.has(id) ? { matchedSecondaryId: decisiveSecondaryId.get(id)! } : {}),
-        ...(matched.length > 0 ? { secondaryMatches: Object.freeze(matched.map(toSecondaryMatchView)) } : {})
+        ...(matched.length > 0 ? { secondaryMatches: Object.freeze(matched.map(secondaryViewFor)) } : {})
       });
     }));
     const total = ranked.length;
@@ -4162,7 +4173,35 @@ function groupSecondaryMatches(
   return matches;
 }
 
-function toSecondaryMatchView(entry: SecondaryCatalogEntry): SecondaryMatchView {
+function matchesRecallScope(recordScope: string | undefined, requestedScope: string | undefined): boolean {
+  if (!requestedScope) return true;
+  const scope = recordScope?.trim().toLocaleLowerCase();
+  return !scope
+    || scope === "global"
+    || scope.replace(/^project:/u, "").trim() === requestedScope.replace(/^project:/u, "").trim();
+}
+
+function searchItemIdentity(record: Omit<PersonalMemoryRecord, "content">): Pick<PersonalMemorySearchItem,
+  "status" | "basis" | "sourceSummary" | "contentOrigin" | "scope" | "asOf" | "supersedes" | "revision" | "file"
+> {
+  return {
+    status: record.status,
+    basis: record.basis,
+    sourceSummary: summarize(summarizeSource(record.source)),
+    ...(record.contentOrigin ? { contentOrigin: record.contentOrigin } : {}),
+    ...(record.scope ? { scope: record.scope } : {}),
+    ...(record.asOf ? { asOf: record.asOf } : {}),
+    ...(record.supersedes ? { supersedes: record.supersedes } : {}),
+    revision: record.revision,
+    file: record.file
+  };
+}
+
+function toSecondaryMatchView(
+  entry: SecondaryCatalogEntry,
+  cached?: SecondaryMemoryRecord
+): SecondaryMatchView {
+  const support = cached?.parentId === entry.parentId ? cached : undefined;
   return Object.freeze({
     id: entry.id,
     parentId: entry.parentId,
@@ -4171,7 +4210,13 @@ function toSecondaryMatchView(entry: SecondaryCatalogEntry): SecondaryMatchView 
     recallWhen: entry.recallWhen,
     matchTerms: Object.freeze([...entry.matchTerms]),
     relation: entry.relation,
-    basis: entry.basis
+    basis: entry.basis,
+    ...(support?.status ? { status: support.status } : {}),
+    ...(support?.supportLevel ? { supportLevel: support.supportLevel } : {}),
+    ...(support?.evidence ? { evidence: support.evidence } : {}),
+    ...(support?.sourceMemoryRevision !== undefined
+      ? { sourceMemoryRevision: support.sourceMemoryRevision }
+      : {})
   });
 }
 

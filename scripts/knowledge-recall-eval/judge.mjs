@@ -9,6 +9,11 @@ export const notRun = reason => ({ status: 'not_run', assertions: [], reasons: [
 export function parseDeliveryPayload(text) {
   const items = [];
   const errors = [];
+  try {
+    const resource = JSON.parse(text);
+    const sources = resource?.sources ?? resource?.references;
+    if (Array.isArray(sources)) items.push(...sources);
+  } catch { /* Preserve compatibility with earlier production text. */ }
   const marker = /^### [1-9]\d*\. ([^\n]*)\n来源：([^\n]+)\n行号：([1-9]\d*)-([1-9]\d*)；([^\n]+)\n版本：(sha256:[a-f0-9]{64})\n来源类型：([^\n]+)\n记录时间：([^\n]+)\n发布时间：([^\n]+)\n核验状态：([^；\n]+)；[^\n]*/gmu;
   const matches = [...text.matchAll(marker)];
   for (let index = 0; index < matches.length; index++) {
@@ -39,6 +44,7 @@ function validField(item, field) {
   if (value === undefined || value === null) return false;
   if (field === 'contentRevision') return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/u.test(value);
   if (['lineStart', 'lineEnd', 'totalLines', 'sourceMemoryRevision'].includes(field)) return Number.isSafeInteger(value) && value >= 1 && (field !== 'lineEnd' || value >= item.lineStart);
+  if (['columnStart', 'columnEnd'].includes(field)) return Number.isSafeInteger(value) && value >= 0;
   if (field === 'recordedAt') return typeof value === 'number' && Number.isFinite(value) && value >= 0;
   if (['date', 'asOf'].includes(field)) return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(value) && Number.isFinite(Date.parse(value));
   if (field === 'status') return ['current', 'superseded', 'closed', 'disabled'].includes(value);
@@ -100,9 +106,15 @@ export function judgeDelivery(expected, items, text, promptBoundary) {
   const sidecarPaths = items.map(identity);
   if (parsed.errors.length) assert('production payload parses', false, parsed.errors);
   for (const item of items) {
-    const payload = delivered.find(candidate => identity(candidate) === identity(item));
+    // A file can deliver several independently versioned chapter ranges. Pair
+    // the exact delivered span before validating all unchanged field rules.
+    const payload = delivered.find(candidate => identity(candidate) === identity(item)
+      && (!item.vaultRelativePath || (candidate.contentRevision === item.contentRevision
+        && candidate.lineStart === item.lineStart && candidate.lineEnd === item.lineEnd
+        && candidate.columnStart === item.columnStart && candidate.columnEnd === item.columnEnd)))
+      ?? delivered.find(candidate => identity(candidate) === identity(item));
     assert(`sidecar ${identity(item)} exists in actual provider payload`, Boolean(payload), { sidecar_id: identity(item), payload_ids: paths });
-    const fields = item.vaultRelativePath ? ['vaultRelativePath', 'contentRevision', 'lineStart', 'lineEnd', 'sourceType', 'recordedAt', 'verificationStatus'] : Object.keys(item).filter(key => key !== 'excerpt');
+    const fields = item.vaultRelativePath ? ['vaultRelativePath', 'contentRevision', 'lineStart', 'lineEnd', 'sourceType', 'recordedAt', 'verificationStatus', ...(item.columnStart === undefined ? [] : ['columnStart', 'columnEnd'])] : Object.keys(item).filter(key => key !== 'excerpt');
     for (const field of fields) assert(`payload ${identity(item)}.${field} agrees with sidecar`, Boolean(payload) && validField(item, field) && validField(payload, field) && sameField(item, payload, field), { sidecar: get(item, field) ?? null, payload: get(payload, field) ?? null });
     if (item.vaultRelativePath) assert(`payload ${identity(item)} preserves exact excerpt`, Boolean(payload) && payload.excerpt.includes(item.excerpt ?? ''), { excerpt: item.excerpt, payload_excerpt: payload?.excerpt ?? null });
   }

@@ -2,6 +2,11 @@ import { emptyKnowledgeFolderBindings, registerKnowledgeFolderBindings, register
 import { readPrivateMaintenanceRecords } from "../../plugin/pi-knowledge-maintenance-production";
 import { rawDigestFingerprint, readRawDigestRegistry, writeRawDigestRegistry } from "../../knowledge-base/raw-digest";
 import { KnowledgeAgentIndex } from "../../knowledge-base/knowledge-agent-index";
+import { VaultBodySearch } from "../../knowledge-base/vault-body-search";
+import { KnowledgeRetriever } from "../../knowledge-base/query";
+import { PiKnowledgeReadToolSecurity, createPiKnowledgeReadToolDefinitions } from "../../harness/pi-native/pi-knowledge-read-tools";
+import { recordMaintenanceSourceBodyFingerprint, maintenanceSourceFingerprintsFromEntries } from "../../harness/pi-native/pi-knowledge-maintenance-tool";
+import { EchoInkVaultToolEgressPolicy } from "../../harness/pi-native/vault-tool-result-safety";
 import { discoverKnowledgeBaseSources } from "../../knowledge-base/discovery";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -64,6 +69,7 @@ const PREFERENCE = Object.freeze({
  * fixture as the only filesystem acceptance Vault.
  */
 export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void> {
+  await runMaintenanceReadFingerprintTests();
   assertProtocolAllowsNaturalCompletion();
   assertProtocolDelegatesPlacementToBackground();
   assertStrictDurableResultEnvelope();
@@ -90,6 +96,68 @@ export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void>
   await assertStaleUnwrittenWalDoesNotBlockCorrection();
   await assertCompletedCheckpointFailureIsWriteUncertainAndRecoveredFirst();
   await assertRecoveredWalContinuesWithCurrentTargets();
+}
+
+export async function runMaintenanceReadFingerprintTests(): Promise<void> {
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "echoink-raw-read-fingerprint-")));
+  const vault = path.join(root, "vault"), sourcePath = "raw/source.md";
+  const original = "---\ntags: [fixture]\n---\n# Source\nRAW_BRIDGE_TOKEN canonical body.\nSecond body line.\n";
+  const domain = new FakeVaultDomain(vault);
+  await fsp.mkdir(path.join(vault, "raw"), { recursive: true });
+  const setSource = async (text: string) => { await fsp.writeFile(path.join(vault, sourcePath), text); domain.seed(sourcePath, text); };
+  await setSource(original);
+  const canonical = rawDigestFingerprint(sourcePath, Buffer.from(original));
+  const fullRevision = `sha256:${sha256(original)}`;
+  assert.notEqual(canonical.split(":").at(-1), fullRevision.split(":").at(-1));
+  const file = { path: sourcePath, basename: "source", extension: "md", stat: { mtime: 1, size: Buffer.byteLength(original) } };
+  const app = { vault: { getMarkdownFiles: () => [file], getAbstractFileByPath: (p: string) => p === sourcePath ? file : null,
+    read: async () => fsp.readFile(path.join(vault, sourcePath), "utf8") }, metadataCache: { getFileCache: () => null } };
+  const bodySearch = new VaultBodySearch(app as never, () => null);
+  const index = new KnowledgeAgentIndex({ vaultPath: vault, storageRootPath: path.join(root, "index"), bodySearch });
+  const maintenance = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: path.join(root, "private"), vaultId: VAULT_ID, userId: "user", deviceId: "device", domainService: domain as never, dateKey: () => DATE_KEY });
+  let sequence = 0;
+  try {
+    await maintenance.initialize();
+    for (const order of ["note-search", "search-note", "parallel", "knowledge-only"] as const) {
+      await setSource(original); bodySearch.invalidate();
+      const fingerprints: Record<string, string> = {};
+      const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: VAULT_ID, conversationId: order, piSessionId: order, productRunId: order }), currentWorkflow: () => "maintain",
+        onSourceRead: (reference, bodyFingerprint) => recordMaintenanceSourceBodyFingerprint(fingerprints, reference.vaultRelativePath, bodyFingerprint, vault), egress: new EchoInkVaultToolEgressPolicy() });
+      const tools = createPiKnowledgeReadToolDefinitions({ retriever: new KnowledgeRetriever(vault, { agentIndex: index }), security });
+      const invoke = async (name: "knowledge_search" | "knowledge_read", args: unknown) => {
+        const id = `bridge-${++sequence}`;
+        await security.handleToolCall({ toolName: name, toolCallId: id, input: args } as never, undefined);
+        await tools.find(tool => tool.name === name)!.execute(id, args as never, undefined, undefined);
+        const result = await security.handleToolResult({ toolName: name, toolCallId: id, isError: false } as never);
+        assert.equal(result.isError, false);
+        return result;
+      };
+      const note = async () => { await Promise.resolve(); recordMaintenanceSourceBodyFingerprint(fingerprints, sourcePath, canonical, vault); };
+      const search = () => invoke("knowledge_search", { query: "RAW_BRIDGE_TOKEN" });
+      if (order === "note-search") { await note(); await search(); }
+      if (order === "search-note") { await search(); await note(); }
+      if (order === "parallel") await Promise.all([note(), search()]);
+      if (order === "knowledge-only") {
+        await search();
+        assert.deepEqual(fingerprints, {}, "search fragments never establish a full Raw read");
+        const partial = await invoke("knowledge_read", { vaultRelativePath: sourcePath, expectedContentRevision: fullRevision, lineStart: 5, lineCount: 1 });
+        assert.equal((partial.details as any).sourceBodyFingerprints, undefined);
+        assert.deepEqual(fingerprints, {}, "a partial read cannot establish a full Raw fingerprint");
+        const complete = await invoke("knowledge_read", { vaultRelativePath: sourcePath, expectedContentRevision: fullRevision, lineStart: 1, lineCount: 80 });
+        const restored = maintenanceSourceFingerprintsFromEntries([{ type: "message", message: { role: "toolResult", toolName: "knowledge_read", isError: false, details: complete.details } }] as never, vault);
+        assert.deepEqual(restored, { [sourcePath]: canonical });
+        assert.equal((complete.details as any).references[0].contentRevision, fullRevision, "citation identity remains the full file revision");
+      }
+      assert.equal(fingerprints[sourcePath], canonical);
+      const input = { vaultId: VAULT_ID, conversationId: order, piSessionId: order, productRunId: order, toolCallId: order, mode: "maintain" as const, request: "", sourcePaths: [sourcePath], sourceBodyFingerprints: fingerprints, preferenceSnapshot: PREFERENCE, candidateActions: [] };
+      const result = await maintenance.execute(input);
+      assert.equal(result.status, "completed", `first unchanged maintenance must succeed: ${JSON.stringify(result)}`);
+      await setSource(original + "Actual new fact.\n");
+      const changed = await maintenance.execute({ ...input, toolCallId: `${order}-changed`, productRunId: `${order}-changed` });
+      assert.equal(changed.status, "failed"); assert.equal(changed.errorCode, "preview_stale", "true body changes retain the original comparison");
+    }
+  } finally { bodySearch.dispose(); await fsp.rm(root, { recursive: true, force: true }); }
+  console.log("PASS Raw maintenance fingerprints: note/search order and concurrency, full knowledge_read, partial refusal and true changes");
 }
 
 function assertProtocolAllowsNaturalCompletion(): void {
@@ -1959,7 +2027,7 @@ async function assertFailedNaturalSettlementKeepsEverySourcePending(): Promise<v
   try {
     await port.initialize();
     const read = await index.read({ vaultRelativePath: a });
-    const entries = [{ type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references: [{ vaultRelativePath: a, contentRevision: read.contentRevision }] } } }] as never;
+    const entries = [{ type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references: [{ vaultRelativePath: a, contentRevision: read.contentRevision }], sourceBodyFingerprints: { [a]: rawDigestFingerprint(a, Buffer.from(bodyA)) } } } }] as never;
     assert.equal((await readRawDigestRegistry(vault, true)).entries[a], undefined);
     const settlement = await port.finalizeNatural({ vaultId: VAULT_ID, conversationId: "failed-natural", piSessionId: "failed-natural", productRunId: "failed-natural", scope: { mode: "batch", sourcePaths: [a, b] }, terminalState: "failed", noteReadPaths: [a], producedPaths: [], assistantEntryId: "assistant", entries, turnEntries: entries });
     assert.deepEqual(settlement.processedSourcePaths, []);
@@ -2033,7 +2101,7 @@ async function assertPrivateSettlementBoundaries(): Promise<void> {
     assert.equal(disallowed.status, "failed"); assert.equal(await fsp.stat(path.join(vault, "知识/卡片/unapproved")).catch(() => null), null);
     index.invalidate();
     const references = await Promise.all([a, b].map(async vaultRelativePath => ({ vaultRelativePath, contentRevision: (await index.read({ vaultRelativePath })).contentRevision })));
-    const entries = [{ type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references } } }] as never;
+    const entries = [{ type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: { references, sourceBodyFingerprints: { [a]: revisionA, [b]: revisionB } } } }] as never;
     await port.finalizeNatural({ ...base, productRunId: "natural-query", scope: { mode: "query", candidatePaths: [a] }, terminalState: "completed", noteReadPaths: [a, b], producedPaths: [], assistantEntryId: "assistant", entries, turnEntries: entries });
     const natural = (await readPrivateMaintenanceRecords(privateRoot)).find(record => record.runId === "natural-query:natural")!;
     assert.deepEqual(natural.sources.map(source => source.path), [a]); assert.equal(natural.sources[0].status, "processed");
