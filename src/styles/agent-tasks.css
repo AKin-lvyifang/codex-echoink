@@ -39,9 +39,8 @@
 .echoink-task-empty { color: var(--text-muted); font-size: 13px; padding: 18px 0; }
 .echoink-task-detail-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 8px; border-bottom: 1px solid var(--background-modifier-border); flex: 0 0 auto; }
 .echoink-task-detail-titles { flex: 1; min-width: 0; }
-.echoink-task-transfer, .echoink-task-readonly, .echoink-task-error { padding: 10px 12px; font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
+.echoink-task-readonly, .echoink-task-error { padding: 10px 12px; font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
 .echoink-task-error { color: var(--text-error); }
-.echoink-task-transfer { font-size: 12px; }
 .echoink-task-detail > .codex-messages-shell { flex: 1; min-height: 0; }
 @keyframes echoink-task-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .echoink-agent-badge.is-running svg { animation: none; } }

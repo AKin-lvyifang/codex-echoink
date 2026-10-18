@@ -8,13 +8,9 @@ export interface TaskPendingResponse {
   kind: "question" | "confirmation";
 }
 
-export interface TaskTransfer { fromAgentId: string; fromName: string; at: number }
-
 /** Conversation.id is the taskId; Conversation.title is its task title. No second task store. */
 export interface ConversationTaskMetadata {
   agentId?: string;
-  /** Display-only handoff events; never transcript or model context. */
-  taskTransfers?: TaskTransfer[];
   businessKey?: string;
   taskStatus?: ConversationTaskStatus;
   taskStage?: string;
@@ -41,24 +37,13 @@ export function patchConversationTaskMetadata(current: ConversationTaskMetadata,
 }
 
 export const CONVERSATION_TASK_METADATA_KEYS = [
-  "agentId", "taskTransfers", "businessKey", "taskStatus", "taskStage", "taskStartedAt", "taskCompletedAt",
+  "agentId", "businessKey", "taskStatus", "taskStage", "taskStartedAt", "taskCompletedAt",
   "taskInterruptedAt", "pendingResponse", "unreadAnswerAt", "lastReadAt", "taskMetadataUpdatedAt"
 ] as const;
 
 export function normalizeConversationTaskMetadata(value: unknown): ConversationTaskMetadata {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const result: ConversationTaskMetadata = { agentId: normalizeAgentId(raw.agentId) ?? GENERAL_ASSISTANT_ID };
-  if (Array.isArray(raw.taskTransfers)) {
-    const events = raw.taskTransfers.flatMap(value => {
-      if (!value || typeof value !== "object") return [];
-      const event = value as Record<string, unknown>;
-      const fromAgentId = normalizeAgentId(event.fromAgentId);
-      return fromAgentId && typeof event.fromName === "string" && event.fromName.trim()
-        && typeof event.at === "number" && Number.isSafeInteger(event.at) && event.at >= 0
-        ? [{ fromAgentId, fromName: event.fromName.trim(), at: event.at }] : [];
-    });
-    if (events.length) result.taskTransfers = events;
-  }
   for (const key of ["businessKey", "taskStage"] as const) {
     if (typeof raw[key] === "string" && raw[key].trim()) result[key] = raw[key].trim();
   }
@@ -79,6 +64,8 @@ export function normalizeConversationTaskMetadata(value: unknown): ConversationT
 
 export function applyConversationTaskMetadata<T extends ConversationTaskMetadata>(target: T, source: ConversationTaskMetadata): T {
   const metadata = normalizeConversationTaskMetadata(source);
+  // A short-lived P3 preview stored display-only handoff rows. Drop that obsolete projection.
+  delete (target as T & { taskTransfers?: unknown }).taskTransfers;
   for (const key of CONVERSATION_TASK_METADATA_KEYS) delete target[key];
   return Object.assign(target, metadata);
 }

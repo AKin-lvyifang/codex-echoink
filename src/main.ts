@@ -1058,12 +1058,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       const known = new Set(tasks.map(task => task.conversationId));
       const late = (await localData.catalog.list()).filter(entry => entry.agentId === agentId && entry.status !== "deleted" && !known.has(entry.conversationId));
       if (late.length) { await stopForHandoff(late); tasks.push(...late); }
-      const fromName = this.settings.agentRegistry.agents.find(agent => agent.id === agentId)!.name;
-      const at = Date.now();
-      for (const task of tasks) await this.setPiConversationTaskMetadata(task.conversationId, {
-        agentId: GENERAL_ASSISTANT_ID,
-        taskTransfers: [...(task.taskTransfers ?? []), { fromAgentId: agentId, fromName, at }]
-      });
+      for (const task of tasks) await this.setPiConversationTaskMetadata(task.conversationId, { agentId: GENERAL_ASSISTANT_ID });
       const previous = this.settings.agentRegistry;
       this.settings.agentRegistry = removeAgentDefinition(previous, agentId);
       try { await this.saveSettings(true); }

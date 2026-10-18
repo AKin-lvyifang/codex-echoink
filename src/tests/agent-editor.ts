@@ -63,6 +63,10 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
   {
     const f = fixture(); await f.open();
     assert.equal(f.root.querySelectorAll("[data-preset]").length, 5); assert.equal(f.saved.length, 0);
+    assert.equal(f.root.querySelector('[aria-label="返回 Agent 任务"]')!.textContent, "");
+    assert.equal(f.root.querySelector('[data-field="position"]')!.tagName, "INPUT");
+    assert.equal(f.root.querySelector("details .echoink-agent-editor-avatar-grid"), null, "avatar choices stay directly visible");
+    assert.equal(f.root.querySelectorAll(".echoink-agent-editor-style-card .echoink-agent-editor-style-summary").length, 4);
     f.root.querySelector<HTMLButtonElement>('[data-preset="organizer"]')!.click(); await settle();
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "整理员");
     assert.equal(f.root.querySelector('[data-module-id="knowledge-base"]')!.getAttribute("aria-checked"), "true");
@@ -77,7 +81,7 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "保留修改");
     button(f.root, "保留修改").click(); await settle();
     f.root.querySelector<HTMLButtonElement>('[data-preset="bookkeeper"]')!.click(); await settle(); button(f.root, "使用预设").click(); await settle();
-    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "记账员"); assert.match(f.root.textContent!, /PRO 已到期/);
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "记账员"); assert.match(check(f.root, "finance").getAttribute("aria-description")!, /PRO 已到期/);
     assert.equal(f.settings.lifestyle.finance.enabled, false, "selecting capabilities must not enable the global module");
     const gate = deferred(); f.saveGate(gate.promise); f.failSave(true);
     f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click();
@@ -113,13 +117,13 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     f.settings.agentRegistry.agents.push({ id: "ordinary", name: "普通同事", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: ["unknown-preserved"] });
     await f.open("ordinary");
     const serviceCheck = () => f.root.querySelector<HTMLButtonElement>('[aria-label="MCP 服务：Alpha"]')!;
-    assert.equal(f.root.querySelector<HTMLButtonElement>('[aria-label="MCP 服务：Empty"]')!.disabled, true); assert.match(f.root.textContent!, /尚未发现可用工具/);
+    assert.equal(f.root.querySelector<HTMLButtonElement>('[aria-label="MCP 服务：Empty"]')!.disabled, true); assert.match(f.root.querySelector('[aria-label="MCP 服务：Empty"]')!.getAttribute("aria-description")!, /尚未发现可用工具/);
     const details = f.root.querySelector<HTMLDetailsElement>(`details[data-resource-id="${server.id}"]`)!;
     assert.equal(details.open, false); serviceCheck().click(); await settle(); assert.equal(serviceCheck().getAttribute("aria-checked"), "true");
     details.open = true; await settle(); check(f.root, mcpToolCapabilityId(server.id, "write")).click(); await settle();
     assert.equal(serviceCheck().getAttribute("aria-checked"), "mixed");
     assert.equal(check(f.root, mcpToolCapabilityId(server.id, "read")).getAttribute("aria-checked"), "true");
-    assert.match(f.root.textContent!, /资源未启用/); check(f.root, vaultSkillCapabilityId(skill.id)).click();
+    assert.match(check(f.root, vaultSkillCapabilityId(skill.id)).getAttribute("aria-description")!, /资源未启用/); check(f.root, vaultSkillCapabilityId(skill.id)).click();
     f.root.querySelector<HTMLButtonElement>('[data-module-id="journal"]')!.click(); await settle(); assert.match(f.root.textContent!, /缺少「日记」能力/);
     f.settings.resources.mcpConnections[server.id].tools.push(tool("new-tool")); button(f.root, "刷新资源").click(); await settle();
     const again = f.root.querySelector<HTMLDetailsElement>(`details[data-resource-id="${server.id}"]`)!; again.open = true; await settle();
@@ -202,12 +206,12 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     f.settings.resources.mcpConnections[server.id] = { transport: "http", url: "https://mcp.invalid", trusted: true, tools: [{ name: "用户工具名称", description: "", readOnly: true, destructive: false, inputSchema: { type: "object" } }], toolPolicies: {} };
     await f.open("english-ui");
     assert.equal(f.root.lang, "en"); assert.equal(f.root.querySelector("h2")?.textContent, "Edit Agent");
-    assert.ok(button(f.root, "Back")); assert.ok(button(f.root, "Save")); assert.ok(button(f.root, "Cancel")); assert.ok(button(f.root, "Delete Agent"));
-    assert.deepEqual([...f.root.querySelectorAll("h3")].map(node => node.textContent), ["Name, avatar and role", "Responsible for", "Capabilities", "Style"]);
-    assert.match(f.root.textContent!, /PRO membership has expired/); assert.match(f.root.textContent!, /Resource disabled/);
+    assert.ok(f.root.querySelector('[aria-label="Back to Agent tasks"]')); assert.ok(button(f.root, "Save")); assert.ok(button(f.root, "Cancel")); assert.ok(button(f.root, "Delete Agent"));
+    assert.deepEqual([...f.root.querySelectorAll("h3")].map(node => node.textContent), ["Responsible for", "Capabilities", "Style"]);
+    assert.match(check(f.root, "finance").getAttribute("aria-description")!, /PRO membership has expired/); assert.match(check(f.root, vaultSkillCapabilityId(skill.id)).getAttribute("aria-description")!, /Resource disabled/);
     assert.match(f.root.textContent!, /用户自建 Skill 名字/); assert.match(f.root.textContent!, /用户服务名称/);
     const details = f.root.querySelector<HTMLDetailsElement>("details[data-resource-id]")!; assert.match(details.textContent!, /1 tool/); details.open = true; await settle();
-    assert.match(details.textContent!, /用户工具名称/); assert.match(details.textContent!, /Tool disabled/);
+    assert.match(details.textContent!, /用户工具名称/); assert.match(check(f.root, mcpToolCapabilityId(server.id, "用户工具名称")).getAttribute("aria-description")!, /Tool disabled/);
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "用户原名");
     assert.equal(f.root.querySelector<HTMLTextAreaElement>('[data-field="position"]')!.value, "用户的原始职位，不翻译");
     assert.ok(f.root.querySelector('[role="radiogroup"][aria-label="Style"] [aria-label="Careful analysis"]'));

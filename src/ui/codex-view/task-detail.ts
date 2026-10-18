@@ -15,8 +15,6 @@ export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition
   const at = completed ? entry.taskCompletedAt ?? entry.updatedAt : entry.taskInterruptedAt;
   titles.createDiv({ cls: "echoink-task-detail-subtitle", text: `${agent.name}${at !== undefined ? ` · ${localDateLabel(at, Date.now(), language)} ${localTaskTime(at)}` : ""}` });
   header.createSpan({ cls: `echoink-task-card-status is-${taskState(entry)}`, text: taskStateLabel(entry, language) });
-  // These rows are display metadata, separate from every transcript/message array.
-  for (const event of entry.taskTransfers ?? []) root.createDiv({ cls: "echoink-task-transfer", text: language === "en" ? `Transferred from ${event.fromName} to the general assistant · ${localDateLabel(event.at, Date.now(), language)} ${localTaskTime(event.at)}` : `由 ${event.fromName} 转交给总助 · ${localDateLabel(event.at)} ${localTaskTime(event.at)}` });
 }
 const entered = new WeakMap<HTMLElement, number>();
 export function animateTaskDetailEntry(root: HTMLElement, navigationToken: number): void {

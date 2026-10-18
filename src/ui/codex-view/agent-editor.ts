@@ -1,5 +1,5 @@
 import type { AgentEditorHost } from "./agent-editor-contract";
-import { setIcon } from "obsidian";
+import { setIcon, setTooltip } from "obsidian";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "../../agents/types";
 import { AGENT_PRESETS } from "../../agents/presets";
 import { AGENT_STYLES } from "../../agents/styles";
@@ -28,6 +28,12 @@ const STYLE_COPY_EN: Record<AgentDefinition["styleId"], { name: string; descript
   analysis: { name: "Careful analysis", description: "Check assumptions, evidence and omissions; weigh the strongest alternatives before deciding. Stay measured and evidence-led. Judgment → evidence → uncertainty." },
   companion: { name: "Gentle companion", description: "Acknowledge feelings and circumstances, clarify the problem and constraints, then suggest a small practical step. Be warm and considerate. Response → clarity → one suggestion." },
   creative: { name: "Creative exploration", description: "Explore distinct possibilities, then choose a direction that fits the goal and constraints. Be lively and imaginative. Options → recommendation → next step." }
+};
+const STYLE_SUMMARIES: Record<AgentDefinition["styleId"], [string, string]> = {
+  execution: ["先给结论，直接推进；少铺垫", "Lead with the conclusion and move forward"],
+  analysis: ["先把选择和依据摆清楚，再给判断", "Weigh the options and evidence before deciding"],
+  companion: ["先听你说，再一起理清", "Listen first, then work through it together"],
+  creative: ["多给几个方向，再挑最好的", "Explore several directions, then choose the best"]
 };
 interface EditorDraft { agent: AgentDefinition; moduleIds: AgentModuleId[]; presetId: string; dirty: boolean; revision: number }
 // No DOM, View, host callback, promise or runtime is retained across View instances.
@@ -106,9 +112,13 @@ export class AgentEditorController {
     root.replaceChildren(); root.lang = this.host.settings.settingsLanguage === "en" ? "en" : "zh-CN"; root.classList.add("echoink-agent-editor", "echoink-theme-boundary");
     this.ownership.clear(); this.capabilityChecks.clear(); this.mcpChecks = [];
     const header = this.el(root, "header", "echoink-agent-editor-header");
-    const back = this.button(header, this.t("返回", "Back"), "tertiary", () => this.close(false));
+    const back = this.button(header, "", "tertiary", () => this.close(false));
+    back.classList.add("echoink-agent-editor-back"); setIcon(back, "arrow-left");
     back.setAttribute("aria-label", this.t("返回 Agent 任务", "Back to Agent tasks"));
-    this.el(header, "h2", "echoink-agent-editor-title", this.editingId ? this.t("编辑 Agent", "Edit Agent") : this.t("新建 Agent", "New Agent"));
+    const avatar = this.el(header, "img", "echoink-agent-editor-avatar-preview"); avatar.alt = ""; this.setAvatarImage(avatar);
+    const heading = this.el(header, "div", "echoink-agent-editor-heading");
+    this.el(heading, "h2", "echoink-agent-editor-title", this.editingId ? this.t("编辑 Agent", "Edit Agent") : this.t("新建 Agent", "New Agent"));
+    this.el(heading, "div", "echoink-agent-editor-subtitle", this.t("共用你的画像和记忆，只定身份和能做的事", "Shares your profile and memory; choose its identity and capabilities"));
     const body = this.el(root, "div", "echoink-agent-editor-body");
     const fields = this.el(body, "fieldset", "echoink-agent-editor-fields");
     if (!this.editingId) this.renderPresets(fields);
@@ -191,26 +201,24 @@ export class AgentEditorController {
     });
     group.element.classList.add("echoink-agent-editor-presets");
     for (const preset of AGENT_PRESETS) {
-      const row = this.el(group.element, "label", "echoink-agent-editor-choice");
+      const row = this.el(group.element, "label", "echoink-agent-editor-preset");
       const radio = group.addItem(row, preset.presetId, false); radio.dataset.preset = preset.presetId; radio.setAttribute("aria-label", this.t(preset.agent.name, PRESET_NAMES_EN[preset.presetId]));
+      const image = this.el(row, "img"); image.alt = "";
+      const url = resolveAgentAvatarUrl(preset.agent.avatar); if (url) image.src = url;
       this.el(row, "span", "", this.t(preset.agent.name, PRESET_NAMES_EN[preset.presetId]));
     }
   }
 
   private renderIdentity(parent: HTMLElement): void {
-    const section = this.section(parent, this.t("名字与头像、职位", "Name, avatar and role"));
+    const section = this.el(parent, "section", "echoink-agent-editor-identity");
+    const avatar = this.el(section, "div", "echoink-agent-editor-section");
+    this.el(avatar, "div", "echoink-agent-editor-label", this.t("头像", "Avatar"));
     const nameId = `${this.instanceId}-name`;
     const label = this.el(section, "label", "echoink-agent-editor-label", this.t("名字", "Name")); label.htmlFor = nameId;
     this.nameInput = createOriginInput(section, { value: this.draft!.agent.name, attr: { id: nameId, autocomplete: "off", maxlength: "96", "aria-describedby": `${nameId}-error` } });
     this.nameInput.dataset.field = "name";
     this.nameError = this.el(section, "div", "echoink-agent-editor-error"); this.nameError.id = `${nameId}-error`; this.nameError.setAttribute("aria-live", "polite");
     this.nameInput.oninput = () => { this.draft!.agent.name = this.nameInput!.value; this.changed(); };
-    const avatar = this.el(section, "details", "echoink-agent-editor-avatars");
-    const summary = this.el(avatar, "summary", "echoink-agent-editor-avatar-summary");
-    const image = this.el(summary, "img", "echoink-agent-editor-avatar-preview"); image.alt = this.t("当前头像", "Current avatar");
-    this.setAvatarImage(image);
-    this.el(summary, "span", "", this.t("头像", "Avatar"));
-    const chevron = this.el(summary, "span", "echoink-agent-editor-avatar-chevron"); chevron.setAttribute("aria-hidden", "true"); setIcon(chevron, "chevron-down");
     const grid = this.el(avatar, "div", "echoink-agent-editor-avatar-grid");
     const selected = this.draft!.agent.avatar;
     const choices = [{ value: "default", label: this.t("默认头像", "Default avatar"), avatar: { kind: "default" as const } }, ...AGENT_AVATAR_PRESETS.map(preset => ({ value: `preset:${preset.id}`, label: this.t(preset.labelZh, preset.labelEn), avatar: { kind: "preset" as const, presetId: preset.id } })),
@@ -219,7 +227,7 @@ export class AgentEditorController {
     const radios = createOriginRadioGroup(grid, value, this.t("选择头像", "Choose an avatar"), value => {
       const choice = choices.find(choice => choice.value === value); if (!choice) return;
       this.draft!.agent.avatar = structuredClone(choice.avatar); this.avatarError = "";
-      this.setAvatarImage(image); this.changed();
+      const image = this.root?.querySelector<HTMLImageElement>(".echoink-agent-editor-avatar-preview"); if (image) this.setAvatarImage(image); this.changed();
     });
     radios.element.classList.add("echoink-agent-editor-avatar-grid-inner");
     for (const choice of choices) {
@@ -247,9 +255,11 @@ export class AgentEditorController {
       });
     };
     avatarError.textContent = this.avatarError;
+    // The avatar field precedes the name, while preserving its existing draft handlers.
+    section.prepend(avatar);
     const positionId = `${this.instanceId}-position`;
     const positionLabel = this.el(section, "label", "echoink-agent-editor-label", this.t("职位", "Role")); positionLabel.htmlFor = positionId;
-    const position = this.el(section, "textarea", "echoink-agent-editor-position"); position.id = positionId; position.rows = 2; position.value = this.draft!.agent.position;
+    const position = createOriginInput(section, { value: this.draft!.agent.position, attr: { id: positionId } }); position.classList.add("echoink-agent-editor-position");
     position.dataset.field = "position"; position.oninput = () => { this.draft!.agent.position = position.value; this.changed(); };
   }
   private setAvatarImage(image: HTMLImageElement): void {
@@ -257,9 +267,10 @@ export class AgentEditorController {
   }
 
   private renderResponsibilities(parent: HTMLElement): void {
-    const section = this.section(parent, this.t("负责模块", "Responsible for"));
+    const section = this.section(parent, this.t("负责的模块", "Responsible for"));
+    const options = this.el(section, "div", "echoink-agent-editor-options");
     for (const id of AGENT_MODULE_IDS) {
-      const row = this.el(section, "label", "echoink-agent-editor-module");
+      const row = this.el(options, "label", "echoink-agent-editor-module");
       const check = createOriginCheck(row, { attr: { "aria-label": this.t(`负责${MODULE_NAMES[id]}`, `Responsible for ${MODULE_NAMES_EN[id]}`), "data-module-id": id } });
       check.checked = this.draft!.moduleIds.includes(id);
       const copy = this.el(row, "span", "echoink-agent-editor-choice-copy"); this.el(copy, "span", "", this.moduleName(id));
@@ -283,26 +294,33 @@ export class AgentEditorController {
     const copy = this.el(row, "span", "echoink-agent-editor-choice-copy"); this.el(copy, "span", "", name);
     const availability = this.host.getCapabilityAvailability?.(id);
     const reasons = [...new Set([availability?.available === false ? this.availabilityReason(availability.reason ?? this.t("当前不可用", "Currently unavailable")) : "", resource?.enabled === false ? this.t("资源未启用", "Resource disabled") : "", extraReason ?? ""].filter(Boolean))];
-    if (reasons.length) this.el(copy, "span", "echoink-agent-editor-availability", reasons.join(this.t("；", "; ")));
+    if (reasons.length) {
+      row.classList.add("is-unavailable"); const reason = reasons.join(this.t("；", "; "));
+      row.title = check.title = reason; check.setAttribute("aria-description", reason); setTooltip(row, reason);
+    }
     check.onchange = () => { this.setCapability(id, check.checked); this.changed(); };
   }
   private renderResources(): void {
     const area = this.resourceArea; if (!area) return;
     disposeOriginControls(area); area.replaceChildren(); this.capabilityChecks.clear(); this.mcpChecks = [];
     this.el(area, "h3", "echoink-agent-editor-section-title", this.t("能用的能力", "Capabilities"));
+    this.el(area, "h4", "echoink-agent-editor-resource-heading", this.t("内置技能", "Built-in Skills"));
     const base = this.el(area, "div", "echoink-agent-editor-capabilities");
     for (const [id] of CAPABILITIES) this.capability(base, id, this.capabilityName(id));
     const bar = this.el(area, "div", "echoink-agent-editor-resource-heading"); this.el(bar, "h4", "", this.t("我的 Skill", "My Skills"));
     const reload = this.button(bar, this.loadingResources ? this.t("正在读取…", "Loading…") : this.t("刷新资源", "Refresh resources"), "tertiary", () => { void this.reloadResources(); }); reload.disabled = this.loadingResources;
     if (this.resourceError) this.el(area, "div", "echoink-agent-editor-error", this.resourceError).setAttribute("role", "alert");
     const custom = this.resources.filter(resource => resource.kind === "skill" && !(BUILTIN_SKILL_IDS as readonly string[]).includes(String(resource.metadata?.resourceId ?? "")));
-    for (const resource of custom) this.capability(area, vaultSkillCapabilityId(resource.id), resource.name, resource);
+    const skills = this.el(area, "div", "echoink-agent-editor-options");
+    for (const resource of custom) this.capability(skills, vaultSkillCapabilityId(resource.id), resource.name, resource);
     if (!custom.length && !this.loadingResources && !this.resourceError) this.el(area, "div", "echoink-agent-editor-empty", this.t("暂无自建 Skill", "No custom Skills"));
-    this.el(area, "h4", "echoink-agent-editor-resource-heading", this.t("MCP 服务", "MCP services"));
+    this.el(area, "h4", "echoink-agent-editor-resource-heading", "MCP");
     const servers = this.resources.filter(resource => resource.kind === "mcp-server");
+    const services = this.el(area, "div", "echoink-agent-editor-services");
     for (const resource of servers) {
       const record = resolveMcpConnectionRecord(resource, this.host.settings.resources);
-      const details = this.el(area, "details", "echoink-agent-editor-mcp"); details.dataset.resourceId = resource.id;
+      const service = this.el(services, "div", "echoink-agent-editor-service");
+      const details = this.el(service, "details", "echoink-agent-editor-mcp"); details.dataset.resourceId = resource.id;
       const head = this.el(details, "div", "echoink-agent-editor-mcp-heading");
       const label = this.el(head, "label", "echoink-agent-editor-choice");
       const check = createOriginCheck(label, { attr: { "aria-label": this.t(`MCP 服务：${resource.name}`, `MCP service: ${resource.name}`) } });
@@ -314,7 +332,7 @@ export class AgentEditorController {
       const ids = (record?.tools ?? []).map(tool => mcpToolCapabilityId(resource.id, tool.name));
       this.mcpChecks.push({ check, ids }); check.disabled = !ids.length;
       const reason = !record ? this.t("尚未连接服务", "Service not connected") : !record.tools.length ? this.t("尚未发现可用工具", "No tools discovered") : !record.trusted ? this.t("服务尚未信任", "Service not trusted") : !resource.enabled ? this.t("服务未启用", "Service disabled") : "";
-      if (reason) this.el(head, "span", "echoink-agent-editor-availability", reason);
+      if (reason) { head.classList.add("is-unavailable"); head.title = check.title = reason; check.setAttribute("aria-description", reason); setTooltip(head, reason); }
       check.onchange = () => { for (const id of ids) this.setCapability(id, check.checked); this.changed(); };
       let rendered = false;
       details.ontoggle = () => {
@@ -351,10 +369,13 @@ export class AgentEditorController {
       description.textContent = this.t(`${style.thinking} ${style.tone}；${style.responseStructure}。`, STYLE_COPY_EN[style.id].description);
     };
     const group = createOriginRadioGroup(section, this.draft!.agent.styleId, this.t("风格", "Style"), id => { this.draft!.agent.styleId = id as AgentDefinition["styleId"]; describe(); this.changed(); });
+    group.element.classList.add("echoink-agent-editor-styles");
     for (const style of AGENT_STYLES) {
-      const row = this.el(group.element, "label", "echoink-agent-editor-choice");
+      const row = this.el(group.element, "label", "echoink-agent-editor-style-card");
       const name = this.t(style.name, STYLE_COPY_EN[style.id].name);
-      group.addItem(row, style.id, false).setAttribute("aria-label", name); this.el(row, "span", "", name);
+      group.addItem(row, style.id, false).setAttribute("aria-label", name);
+      const copy = this.el(row, "span", "echoink-agent-editor-style-copy"); this.el(copy, "span", "echoink-agent-editor-style-name", name);
+      this.el(copy, "span", "echoink-agent-editor-style-summary", this.t(...STYLE_SUMMARIES[style.id]));
     }
     section.append(description); describe();
   }

@@ -31,7 +31,21 @@ export function localDateLabel(at: number, now = Date.now(), language: SettingsL
 export function localTaskTime(at: number): string {
   return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
 }
+/** Text-only projection for one-line list cards; the full message remains untouched. */
+export function plainTaskSummary(text: string): string {
+  return text.replace(/^\s*(`{3,}|~{3,})[^\n]*$/gmu, "")
+    .replace(/!?\[([^\]]*)\]\([^\n)]*\)/gu, "$1")
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/gu, "$2").replace(/\[\[([^\]]+)\]\]/gu, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s*|[-+*]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)/gmu, "")
+    .replace(/<\/?[a-zA-Z][^>]*>/gu, "")
+    .replace(/(\*\*|__|~~)(.+?)\1/gu, "$2").replace(/\*([^*\n]+)\*/gu, "$1")
+    .replace(/(^|[^\w])_([^_\n]+)_(?!\w)/gu, "$1$2")
+    .replace(/`/gu, "").replace(/\s+/gu, " ").trim();
+}
 export function taskSummary(entry: TaskEntry, session?: Pick<StoredSession, "messages">, language: SettingsLanguage = "zh-CN", pending?: Readonly<EchoInkTurnInteraction>): string {
+  return plainTaskSummary(taskSummaryContent(entry, session, language, pending));
+}
+function taskSummaryContent(entry: TaskEntry, session?: Pick<StoredSession, "messages">, language: SettingsLanguage = "zh-CN", pending?: Readonly<EchoInkTurnInteraction>): string {
   const state = taskState(entry), messages = session?.messages ?? [];
   if (state === "waiting") {
     if (pending?.conversationId === entry.conversationId && pending.turnId === entry.pendingResponse?.runId) {
@@ -51,7 +65,7 @@ export function taskSummary(entry: TaskEntry, session?: Pick<StoredSession, "mes
     return (entry.taskStage || latest?.title)?.replace(/\s+/gu, " ").trim() || taskStateLabel(entry, language);
   }
   const answer = [...messages].reverse().find(message => message.text.trim() && message.role === "assistant");
-  return answer?.text.replace(/\s+/gu, " ").trim() || taskStateLabel(entry, language);
+  return answer?.text || taskStateLabel(entry, language);
 }
 
 export function groupAgentTasks(entries: readonly TaskEntry[], agentId: string, now = Date.now(), language: SettingsLanguage = "zh-CN"): { label: string; tasks: TaskEntry[] }[] {

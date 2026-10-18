@@ -19,6 +19,7 @@ import { addComposerNoteMentionSelection, composerNoteMentionSelections } from "
 import { AGENT_IDENTITY_RELATIVE_PATH } from "../harness/memory/agent-identity-model";
 import { piEntryIdFromProjectedMessageId, piProjectedEntryMessageId } from "../harness/pi-native/pi-chat-ui-projector";
 import type { PiConversationCatalogEntry } from "../harness/pi-native/contracts";
+import { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
 
 function createHost(catalog: any, runtime: any, settings: any): any {
   const host = Object.assign(Object.create(CodexForObsidianPlugin.prototype), {
@@ -32,6 +33,7 @@ function createHost(catalog: any, runtime: any, settings: any): any {
 }
 export async function runAgentTaskTests(root: string): Promise<void> {
   await identityCutover(root);
+  await ignoredLegacyTransferMetadata(root);
   draftsAndDates();
   const dom = new JSDOM("<!doctype html><body></body>", { url: "https://local.test/", pretendToBeVisual: true });
   const descriptors = new Map<string, PropertyDescriptor | undefined>();
@@ -105,6 +107,22 @@ function draftsAndDates(): void {
   assert.equal(taskSummary(task("stopped-summary", { taskStatus: "interrupted", taskStage: "等待工具确认" }), internal), "等待工具确认", "interruption summary describes the actual stage, never raw tool arguments");
   assert.equal(taskSummary(task("stopped-node", { taskStatus: "interrupted" }), { messages: [{ ...internal.messages[0], assistantTurn: { processNodes: [{ title: "核对文件版本", summary: "internal tool payload" }] } }] } as any), "核对文件版本", "legacy interruptions fall back to the recorded step title");
   assert.equal(taskSummary(task("result-summary", { taskStatus: "completed" }), { messages: [{ role: "assistant", text: "已经整理好三条待办", details: '{"arguments":{}}' } as any] }), "已经整理好三条待办", "completed summaries use the human result text");
+  const markdown = { messages: [{ role: "assistant", text: "# **结论**\n已写入 `my_note.md`，见[结果](outputs/result.md)。\n- ~~旧项~~和*重点*" } as any] };
+  assert.equal(taskSummary(task("markdown", { taskStatus: "completed" }), markdown), "结论 已写入 my_note.md，见结果。 旧项和重点");
+  assert.ok(markdown.messages[0].text.includes("**结论**"), "summary formatting never changes the full record");
+}
+async function ignoredLegacyTransferMetadata(root: string): Promise<void> {
+  const options = { storageRootPath: path.join(root, "legacy-transfer"), vaultId: "legacy-transfer" };
+  const catalog = new FileConversationCatalog(options); await catalog.initialize();
+  await catalog.upsert({ conversationId: "old", piSessionId: "pi-old", vaultId: options.vaultId, title: "Old task", status: "active", defaultMemoryMode: "normal", createdAt: 1, updatedAt: 2 });
+  const raw = JSON.parse(await readFile(catalog.filePath, "utf8"));
+  // Even obsolete malformed display data must not prevent reading the user's tasks.
+  raw.entries[0].taskTransfers = { obsolete: "ignored" }; await writeFile(catalog.filePath, JSON.stringify(raw));
+  const reader = new FileConversationCatalog(options);
+  assert.equal(Object.hasOwn((await reader.get("old"))!, "taskTransfers"), false);
+  await reader.updateTaskMetadata("old", { agentId: "sol", taskStatus: "completed" }, undefined);
+  assert.equal(Object.hasOwn(JSON.parse(await readFile(reader.filePath, "utf8")).entries[0], "taskTransfers"), false);
+  console.log("Agent metadata: obsolete transfer field ignored on read and omitted on next write PASS");
 }
 function task(id: string, metadata: Partial<PiConversationCatalogEntry> = {}): PiConversationCatalogEntry {
   return { conversationId: id, piSessionId: `pi-${id}`, vaultId: "task-tests", agentId: "sol", title: id, status: "active", defaultMemoryMode: "normal", createdAt: 1, updatedAt: 2, ...metadata };
@@ -531,10 +549,12 @@ async function handoffBoundary(f: any, doc: Document): Promise<void> {
   const before = structuredClone((await f.runtime.readProjection("C")).messages);
   await f.plugin.deleteAgent("colleague");
   const entry = (await f.catalog.get("C"))!;
-  assert.equal(entry.agentId, "sol"); assert.equal(entry.taskTransfers[0].fromName, "整理员");
+  assert.equal(entry.agentId, "sol"); assert.equal(Object.hasOwn(entry, "taskTransfers"), false);
   assert.deepEqual((await f.runtime.readProjection("C")).messages, before);
   const mount = doc.body.createDiv(); renderTaskDetailHeader(mount, f.settings.agentRegistry.agents[0], entry, () => undefined);
-  assert.match(mount.textContent!, /由 整理员 转交给总助/);
+  assert.doesNotMatch(mount.textContent!, /转交给总助/);
+  renderTaskDetailHeader(mount, f.settings.agentRegistry.agents[0], { ...entry, taskTransfers: [{ fromAgentId: "old", fromName: "旧同事", at: 1 }] } as any, () => undefined);
+  assert.doesNotMatch(mount.textContent!, /转交给总助/, "old data cannot restore the removed display row");
   let animations = 0; mount.animate = (() => { animations++; return {} as Animation; }) as any;
   animateTaskDetailEntry(mount, 1); animateTaskDetailEntry(mount, 1); assert.equal(animations, 1);
   const match = doc.defaultView!.matchMedia; doc.defaultView!.matchMedia = (() => ({ matches: true })) as any;

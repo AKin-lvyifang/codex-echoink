@@ -255,8 +255,7 @@ async function deletionStopsBeforeHandoff(f: Fixture): Promise<void> {
   assert.equal(await flight, "cancelled");
   const after = (await f.catalog.get("delete-task"))!;
   assert.equal(after.agentId, "sol"); assert.equal(after.piSessionId, entryBefore.piSessionId);
-  assert.equal(after.taskTransfers?.at(-1)?.fromName, "整理员");
-  assert.ok(after.taskTransfers?.at(-1)?.at);
+  assert.equal(Object.hasOwn(after, "taskTransfers"), false, "handoff stores only the new owner");
   assert.equal(JSON.stringify((await f.runtime.readProjection("delete-task")).messages).includes("taskTransfers"), false);
   f.gates.delete("delete-task");
   assert.equal(await f.service.run(f.item("delete-task", "resume original task after handoff")), "completed");

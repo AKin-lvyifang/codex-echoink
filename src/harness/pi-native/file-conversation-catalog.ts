@@ -900,7 +900,8 @@ function normalizeCatalogEntry(
       "createdAt",
       "updatedAt"
     ],
-    ["sessionFile", "defaultSkillId", "journalDirectory", ...CONVERSATION_TASK_METADATA_KEYS],
+    // Legacy P3 display metadata is accepted only for reading and omitted from normalized entries.
+    ["sessionFile", "defaultSkillId", "journalDirectory", "taskTransfers", ...CONVERSATION_TASK_METADATA_KEYS],
     "Conversation Catalog Entry"
   );
   const vaultId = requireNonEmptyString(object.vaultId, "entry.vaultId");
@@ -933,12 +934,7 @@ function normalizeCatalogEntry(
   for (const key of CONVERSATION_TASK_METADATA_KEYS) {
     const raw = object[key];
     const expected = taskMetadata[key];
-    const matches = key === "taskTransfers"
-      ? Array.isArray(raw) && Array.isArray(expected) && raw.length === expected.length
-        && raw.every((event, index) => event && typeof event === "object" && !Array.isArray(event)
-          && Object.keys(event).sort().join(",") === "at,fromAgentId,fromName"
-          && Object.entries(event).every(([name, value]) => value === (expected[index] as unknown as Record<string, unknown>)[name]))
-      : key === "pendingResponse" && raw && expected
+    const matches = key === "pendingResponse" && raw && expected
       ? typeof raw === "object" && !Array.isArray(raw)
         && Object.keys(raw).sort().join(",") === "kind,questionId,runId"
         && Object.entries(raw).every(([name, value]) => value === (expected as unknown as Record<string, unknown>)[name])
