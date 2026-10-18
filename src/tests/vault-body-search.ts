@@ -66,6 +66,95 @@ export async function runVaultBodySearchMetadataTests(): Promise<void> {
   console.log("Public Vault metadata evidence: verified search/preflight JSON, strict provenance storage and legacy compatibility PASS");
 }
 
+export async function runVaultBodySearchReferenceTests(): Promise<void> {
+  const bindings = emptyKnowledgeFolderBindings();
+  for (const role of ["wiki", "projects", "journal"] as const) {
+    bindings.roles[role].enabled = role !== "projects";
+    bindings.roles[role].readPaths = [role];
+  }
+  const currentPath = "notes/current.md";
+  const recentPath = "notes/recent.md";
+  const bodies = new Map([
+    [currentPath, "---\nstatus: draft\n---\n# Current source\n\nUse a silver label on the current crate."],
+    [recentPath, "# Recent source\nUse a violet label on the recent crate."],
+    ["notes/target-a.md", "# Target A\nQUARTZ_TARGET first independent evidence."],
+    ["notes/target-b.md", "# Target B\nQUARTZ_TARGET second independent evidence."],
+    ["wiki/guide.md", "# Guide\nThe guide requires an amber label."],
+    ["journal/2026-08-01.md", "# Old journal\nThe older entry requires a brown label."],
+    ["journal/2026-09-03.md", "# Current journal\nThe newer entry requires a blue label."],
+    ["private/secret.md", "PRIVATE_REFERENCE_SECRET"], ["projects/disabled.md", "DISABLED_REFERENCE_SECRET"], [".hidden/secret.md", "HIDDEN_REFERENCE_SECRET"]
+  ]);
+  let activePath: string | undefined = currentPath;
+  let recentPaths = [recentPath];
+  const reads: string[] = [];
+  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
+  const app = { vault: {
+    getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => { reads.push(source.path); return bodies.get(source.path)!; }
+  }, metadataCache: { getFileCache: () => null }, workspace: { getActiveFile: () => activePath ? file(activePath) : null, getLastOpenFiles: () => recentPaths } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings, { excludedRoots: () => ["private"] });
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-reference-search", storageRootPath: "/synthetic-reference-state", bodySearch: port });
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const production = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  try {
+    const query = "这篇的重点是什么？";
+    const retrieval = await retriever.retrieve({ question: query, limit: 1 });
+    const reference = retrieval.references[0];
+    assert.equal(reference.vaultRelativePath, currentPath);
+    assert.equal(reference.excerpt, "Use a silver label on the current crate.");
+    assert.equal(reference.inclusionReason, "按指代带入");
+    assert.equal(reference.matchSources, undefined);
+    assert.equal((await retriever.verifyReferences([reference])).status, "valid");
+    const stored = knowledgeReferenceEntryDetails([reference]).references[0];
+    assert.equal(stored.inclusionReason, "按指代带入");
+    assert.equal(stored.referenceId, reference.referenceId);
+    const { inclusionReason: _reason, ...legacy } = reference;
+    assert.equal(Object.hasOwn(knowledgeReferenceEntryDetails([legacy]).references[0], "inclusionReason"), false);
+    for (const inclusionReason of [null, undefined, "body", "", ["按指代带入"]]) {
+      assert.throws(() => knowledgeReferenceEntryDetails([{ ...reference, inclusionReason } as never]), /inclusionReason 无效/u);
+    }
+    const chat = await production.retrieveChat!({ question: query, explicitPaths: [], includeUnrefined: false } as never);
+    const delivered = JSON.parse(chat.providerResourceText).sources[0];
+    assert.equal(delivered.inclusionReason, "按指代带入");
+    assert.equal(delivered.matchSources, undefined);
+    assert.equal(delivered.contentRevision, reference.contentRevision);
+
+    activePath = undefined;
+    assert.equal((await index.search({ query })).hits[0].vaultRelativePath, recentPath);
+    for (const unavailable of ["private/secret.md", ".hidden/secret.md", "projects/disabled.md", "notes/deleted.md", "../outside.md"]) {
+      activePath = unavailable;
+      recentPaths = [unavailable, "private/secret.md", "projects/disabled.md", recentPath, currentPath];
+      const result = await index.search({ query });
+      assert.equal(result.hits[0].vaultRelativePath, recentPath);
+      assert.equal(result.hits.some(hit => hit.vaultRelativePath === unavailable), false);
+    }
+    assert.equal(reads.some(path => path.startsWith("private/") || path.startsWith(".hidden/") || path.startsWith("projects/")), false);
+    activePath = currentPath; recentPaths = [recentPath, "wiki/guide.md"];
+    assert.equal((await index.search({ query, excludePaths: [currentPath] })).hits[0].vaultRelativePath, recentPath);
+    assert.equal((await index.search({ query, kinds: ["wiki"] })).hits[0].vaultRelativePath, "wiki/guide.md");
+    activePath = "journal/2026-08-01.md"; recentPaths = [activePath, "journal/2026-09-03.md"];
+    assert.equal((await index.search({ query, kinds: ["journal"], dateFrom: "2026-09-01", dateTo: "2026-09-30" })).hits[0].vaultRelativePath, "journal/2026-09-03.md");
+
+    activePath = currentPath; recentPaths = [recentPath];
+    const page = await index.search({ query: "这篇提到 QUARTZ_TARGET 了吗？", limit: 1 });
+    assert.equal(page.hits[0].vaultRelativePath, currentPath);
+    assert.ok(page.continuationCursor);
+    const next = await index.search({ query: "这篇提到 QUARTZ_TARGET 了吗？", limit: 1, cursor: page.continuationCursor });
+    assert.equal(next.hits[0].inclusionReason, undefined);
+    activePath = recentPath;
+    await assert.rejects(() => index.search({ query: "这篇提到 QUARTZ_TARGET 了吗？", limit: 1, cursor: page.continuationCursor }), { code: "cursor_stale" });
+    const ordinary = await index.search({ query: "QUARTZ_TARGET", limit: 1 });
+    assert.ok(ordinary.continuationCursor);
+    activePath = currentPath; recentPaths = [currentPath, recentPath];
+    const ordinaryNext = await index.search({ query: "QUARTZ_TARGET", limit: 1, cursor: ordinary.continuationCursor });
+    assert.equal(ordinaryNext.hits[0].inclusionReason, undefined, "ordinary cursors do not depend on unrelated browsing changes");
+    bodies.delete(currentPath);
+    assert.equal((await index.search({ query })).hits[0].vaultRelativePath, recentPath, "deleted current sources cannot be directly included");
+  } finally { port.dispose(); }
+  console.log("Public Vault explicit references: verified preflight/storage, private/disabled/deleted scope, kind/date/exclusions and context-aware cursors PASS");
+}
+
 export async function runVaultBodySearchTests(): Promise<void> {
   const bindings = emptyKnowledgeFolderBindings();
   for (const [role, folder] of [["wiki", "知识"], ["journal", "日记"], ["templates", "模板"], ["projects", "项目"]] as const) {

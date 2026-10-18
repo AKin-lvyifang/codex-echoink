@@ -1,4 +1,4 @@
-import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchMatchSource, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult } from "./contracts";
+import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchInclusionReason, BodySearchMatchSource, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult } from "./contracts";
 import { buildSearchDictionary, iterateSearchTokens, tokenizeSearchText } from "./tokenize";
 import { yieldSearchTask as yieldToUi } from "./scheduling";
 
@@ -50,6 +50,7 @@ interface PreparedSearch {
   queryWeights: readonly Map<string, number>[];
   queries: readonly Set<string>[];
   bodyQueries: readonly Set<string>[];
+  referencePath?: string;
   union: Set<string>;
   coverage: BodySearchCoverage;
 }
@@ -306,6 +307,10 @@ function queryTexts(request: BodySearchRequest): string[] {
   return [...new Set(supplied.map((query) => query.trim()).filter(Boolean))];
 }
 
+export function hasExplicitNoteReference(request: BodySearchRequest): boolean {
+  return queryTexts(request).some(text => /(?:刚才那篇|当前这篇|这篇)/u.test(text));
+}
+
 function tokenTermWeights(text: string, dictionary: readonly string[]): Map<string, number> {
   const tokens = [...iterateSearchTokens(text, dictionary)].filter((token) => token !== undefined);
   const chineseWords = tokens.filter((token) => token.kind === "word" && /\p{Script=Han}/u.test(token.token));
@@ -426,15 +431,19 @@ function prepareSearch(options: BodySearchOptions): PreparedSearch {
   const queryWeights = preparedQueries.map(query => query.weights);
   const queries = queryWeights.map((weights) => new Set(weights.keys()));
   const bodyQueries = preparedQueries.map(query => bodyQueryTerms(query.text, query.weights, dictionary, exactNames));
+  const eligiblePaths = new Set(documents.map(document => document.vaultRelativePath));
+  const referencePath = hasExplicitNoteReference(request)
+    ? [options.activePath, ...(options.recentPaths ?? [])].find((path): path is string => path !== undefined && eligiblePaths.has(path))
+    : undefined;
   const union = new Set(queries.flatMap((query) => [...query]));
-  return { documents, dictionary, queryWeights, queries, bodyQueries, union, coverage };
+  return { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, union, coverage };
 }
 
 async function executeSearch(options: BodySearchOptions, prepared: PreparedSearch, cache?: SearchCacheHooks): Promise<BodySearchResult> {
   const { request } = options;
-  const { documents, dictionary, queryWeights, queries, bodyQueries, union } = prepared;
+  const { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, union } = prepared;
   const coverage = { ...prepared.coverage };
-  if (!queries.length) return { hits: [], total: 0, coverage: { ...coverage, complete: coverage.totalFiles === 0 && coverage.complete } };
+  if (!queries.length && !referencePath) return { hits: [], total: 0, coverage: { ...coverage, complete: coverage.totalFiles === 0 && coverage.complete } };
   const sections: Section[] = [];
   let scannedSections = 0;
   let freshFilesSinceYield = 0;
@@ -540,18 +549,28 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
       } else fused.set(result.section, { ...result, score, bestRank: rank });
     }
   }
-  const ordered = [...fused.values()].sort((left, right) => right.score - left.score || left.bestRank - right.bestRank
+  const ordered: { section: Section; score: number; query?: number; bestRank: number; inclusionReason?: BodySearchInclusionReason }[] = [...fused.values()].sort((left, right) => right.score - left.score || left.bestRank - right.bestRank
     || left.section.document.vaultRelativePath.localeCompare(right.section.document.vaultRelativePath) || left.section.sectionStart - right.section.sectionStart);
+  if (referencePath) {
+    const matched = ordered.findIndex(result => result.section.document.vaultRelativePath === referencePath);
+    const section = sections.find(section => section.document.vaultRelativePath === referencePath);
+    // This pointer uses only the same successfully read statistics as keyword hits.
+    if (matched >= 0) ordered.unshift({ ...ordered.splice(matched, 1)[0], inclusionReason: "按指代带入" });
+    else if (section) ordered.unshift({ section, score: 0, bestRank: 0, inclusionReason: "按指代带入" });
+  }
   const offset = Number.isFinite(request.offset) ? Math.max(0, Math.trunc(request.offset!)) : 0;
   const limit = Number.isFinite(request.limit) ? Math.max(0, Math.min(100, Math.trunc(request.limit!))) : 8;
-  const hits: BodySearchHit[] = ordered.slice(offset, offset + limit).map(({ section, score, query }) => ({
+  const hits: BodySearchHit[] = ordered.slice(offset, offset + limit).map(({ section, score, query, inclusionReason }) => ({
     vaultRelativePath: section.document.vaultRelativePath,
     title: section.document.title,
     kind: section.document.kind,
     recordedAt: section.document.recordedAt,
     contentRevision: section.contentRevision,
     totalLines: section.totalLines,
-    ...searchEvidence(section, queries[query], bodyQueries[query], dictionary),
+    ...(query === undefined
+      ? section.firstBodyParagraph ?? { ...sectionEvidence(section, new Set()), sectionTitle: section.sectionTitle }
+      : searchEvidence(section, queries[query], bodyQueries[query], dictionary)),
+    ...(inclusionReason ? { inclusionReason } : {}),
     score,
     ...(section.journalDate ? { journalDate: section.journalDate } : {}),
   }));

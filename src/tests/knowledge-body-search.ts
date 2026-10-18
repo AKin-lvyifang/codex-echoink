@@ -104,6 +104,55 @@ export async function runKnowledgeBodySearchMetadataTests(): Promise<void> {
   console.log("Knowledge metadata evidence: title, alias, tag, boilerplate, partial-name/body priority, bounded columns and cached provenance PASS");
 }
 
+export async function runKnowledgeBodySearchReferenceTests(): Promise<void> {
+  const currentBody = "---\nstatus: draft\n---\n# Current source\n\nThe current source requires a silver label.\n\nA later paragraph concerns packing.";
+  const current = note("notes/current.md", currentBody, { revisionKey: "current-1" });
+  const recent = note("notes/recent.md", "# Recent source\n\nThe recent source requires a violet label.", { revisionKey: "recent-1" });
+  const matching = note("notes/matching.md", "# Matching source\nQUARTZ_TARGET appears in this separate source.", { revisionKey: "matching-1" });
+  const documents = [current, recent, matching];
+  for (const query of ["刚才那篇讲了什么？", "这篇的重点是什么？", "当前这篇有什么条件？"]) {
+    const result = await searchBodyDocuments({ documents, request: { query }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] });
+    assert.equal(result.hits.length, 1);
+    const hit = result.hits[0];
+    assert.equal(hit.vaultRelativePath, current.vaultRelativePath, "current source takes precedence over a different most-recent source");
+    assert.equal(hit.excerpt, "The current source requires a silver label.");
+    assert.equal(hit.inclusionReason, "按指代带入");
+    assert.equal(hit.score, 0, "a directly included source does not invent a keyword score");
+    assert.equal(hit.matchSources, undefined, "an unmatched source does not claim a title, alias, tag or body match");
+    assert.equal(hit.excerpt, sliceKnowledgeSourceSpan(currentBody.split("\n"), hit));
+  }
+  const fallback = await searchBodyDocuments({ documents, request: { query: "这篇的重点是什么？" }, recentPaths: ["missing.md", recent.vaultRelativePath, current.vaultRelativePath] });
+  assert.equal(fallback.hits[0].vaultRelativePath, recent.vaultRelativePath);
+  assert.equal(fallback.hits.length, 1, "only the first eligible recent source is directly included");
+  const excluded = await searchBodyDocuments({ documents, request: { query: "这篇的重点是什么？", excludePaths: [current.vaultRelativePath] }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] });
+  assert.equal(excluded.hits[0].vaultRelativePath, recent.vaultRelativePath);
+  const restricted = await searchBodyDocuments({ documents, request: { query: "这篇的重点是什么？", kinds: ["wiki"] }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] });
+  assert.equal(restricted.hits.length, 0);
+  for (const query of ["QUARTZ_TARGET", "最近读过哪些资料？", "我那个想法是什么？", "它的截止时间呢？"]) {
+    const result = await searchBodyDocuments({ documents, request: { query }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] });
+    assert.equal(result.hits.some(hit => hit.vaultRelativePath === current.vaultRelativePath), false, "ordinary questions and broad pronouns do not include browsing context");
+    assert.equal(result.hits.some(hit => hit.inclusionReason !== undefined), false);
+  }
+  const memory = new BodySearchMemoryIndex();
+  try {
+    const options = { documents, request: { query: "这篇提到 QUARTZ_TARGET 了吗？" }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] };
+    const full = await memory.search(options);
+    assert.equal(full.hits[0].vaultRelativePath, current.vaultRelativePath, "the current source is directly included even when only another file matches the topic");
+    assert.ok(full.hits.some(hit => hit.vaultRelativePath === matching.vaultRelativePath));
+    const first = await memory.search({ ...options, request: { ...options.request, limit: 1 } });
+    const next = await memory.search({ ...options, request: { ...options.request, limit: 1, offset: 1 } });
+    assert.deepEqual([...first.hits, ...next.hits], full.hits);
+    assert.equal(first.coverage.readFiles, 0);
+    assert.equal(next.coverage.cachedFiles, documents.length);
+    assert.equal(next.hits[0].inclusionReason, undefined);
+    const matchingCurrent = await memory.search({ ...options, activePath: matching.vaultRelativePath });
+    assert.equal(matchingCurrent.total, (await memory.search({ documents, request: options.request })).total, "moving an existing keyword hit does not duplicate it");
+    assert.equal(matchingCurrent.hits[0].inclusionReason, "按指代带入");
+    assert.ok(matchingCurrent.hits[0].matchSources?.includes("body"), "actual keyword provenance remains available when the current source really matches");
+  } finally { memory.dispose(); }
+  console.log("Knowledge explicit references: current priority, recent fallback, truthful evidence, filters, ordinary queries and warm pagination PASS");
+}
+
 export async function runKnowledgeBodySearchColumnTests(): Promise<void> {
   const cases = [
     `${"无关📌背景。".repeat(4000)}尾部金丝雀答案。`,

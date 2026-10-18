@@ -2,7 +2,7 @@ import type { App, TFile } from "obsidian";
 import { sha256Hex } from "../utils/sha256";
 import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole } from "./root-paths-core";
 import type { KnowledgeFolderBindings } from "./folder-bindings";
-import { BodySearchMemoryIndex } from "./search/body-search";
+import { BodySearchMemoryIndex, hasExplicitNoteReference } from "./search/body-search";
 import type { BodySearchDocument, KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeAgentReadResult, KnowledgeAgentSearchRequest, KnowledgeAgentSearchResult } from "./knowledge-agent-index";
 
@@ -148,8 +148,11 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     });
     this.observedPaths = new Set(documents.map(document => document.vaultRelativePath));
     if (documents.some(document => document.kind === "journal")) await this.options.onJournalSearch?.();
+    const activePath = this.app.workspace?.getActiveFile()?.path;
+    const recentPaths = [...(this.app.workspace?.getLastOpenFiles?.() ?? [])];
     const queryKey = sha256Hex(JSON.stringify({ mode: request.mode, query: request.query, queries: request.queries, kinds: request.kinds,
       dateFrom: request.dateFrom, dateTo: request.dateTo, excludePaths: request.excludePaths, bindingSignature,
+      ...(hasExplicitNoteReference(request) ? { referenceContext: [activePath ?? null, recentPaths] } : {}),
       excludedRoots, files: documents.map(d => [d.vaultRelativePath, d.revisionKey]) }));
     let offset = 0;
     if (request.cursor) {
@@ -186,7 +189,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     let result: Awaited<ReturnType<BodySearchMemoryIndex["search"]>>;
     try {
       result = await this.memory.search({ documents, request: { ...request, offset, limit },
-        activePath: this.app.workspace?.getActiveFile()?.path, recentPaths: this.app.workspace?.getLastOpenFiles?.() ?? [] });
+        activePath, recentPaths });
     } catch (error) {
       if ((error as { code?: string })?.code !== "search_index_stale") throw error;
       // A real change rejects the snapshot; it is a cursor error only for pagination.

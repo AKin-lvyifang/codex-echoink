@@ -118,6 +118,7 @@ const REFERENCE_KEYS = [
 ] as const;
 
 const OPTIONAL_REFERENCE_KEYS = [
+  "inclusionReason",
   "matchSources",
   "columnStart",
   "columnEnd",
@@ -617,6 +618,10 @@ function normalizeKnowledgeReference(
   }
   const hasSourceType = Object.hasOwn(object, "sourceType");
   const hasMatchSources = Object.hasOwn(object, "matchSources");
+  const hasInclusionReason = Object.hasOwn(object, "inclusionReason");
+  if (hasInclusionReason && object.inclusionReason !== "按指代带入") {
+    throw new PiNativeFileStoreError(errorCode, "KnowledgeReference inclusionReason 无效");
+  }
   if (hasMatchSources && (!Array.isArray(object.matchSources)
     || Array.from(object.matchSources).some(source => !["title", "alias", "tag", "body"].includes(source)))) {
     throw new PiNativeFileStoreError(errorCode, "KnowledgeReference matchSources 无效");
@@ -664,6 +669,7 @@ function normalizeKnowledgeReference(
     );
   }
   return {
+    ...(hasInclusionReason ? { inclusionReason: "按指代带入" as const } : {}),
     ...(hasMatchSources ? { matchSources: Object.freeze([...(object.matchSources as BodySearchMatchSource[])]) } : {}),
     ...(Number.isSafeInteger(object.columnStart) && Number.isSafeInteger(object.columnEnd) && (object.columnStart as number) >= 0 && (object.columnEnd as number) >= 0 ? { columnStart: object.columnStart as number, columnEnd: object.columnEnd as number } : {}),
     ...(typeof object.sectionTitle === "string" ? { sectionTitle: object.sectionTitle } : {}),

@@ -64,6 +64,56 @@ export async function runPiKnowledgeMetadataToolTests(): Promise<void> {
   console.log("Knowledge metadata tools: explicit provider JSON, onSourceRead and durable reference provenance PASS");
 }
 
+export async function runPiKnowledgeReferenceToolTests(): Promise<void> {
+  const currentPath = "notes/current.md";
+  const recentPath = "notes/recent.md";
+  const bodies = new Map([
+    [currentPath, "# Current source\n\nUse a bronze seal on the current case."],
+    [recentPath, "# Recent source\n\nUse a violet seal on the recent case."]
+  ]);
+  let activePath: string | undefined = currentPath;
+  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const app = { vault: {
+    getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => bodies.get(source.path)!
+  }, metadataCache: { getFileCache: () => null }, workspace: { getActiveFile: () => activePath ? file(activePath) : null, getLastOpenFiles: () => [recentPath] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-reference-tool", storageRootPath: "/synthetic-reference-tool-state", bodySearch: port });
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const captured: KnowledgeReference[] = [];
+  const security = new PiKnowledgeReadToolSecurity({
+    currentRunIdentity: () => ({ vaultId: "reference-vault", conversationId: "reference-chat", piSessionId: "reference-session", productRunId: "reference-run" }),
+    currentWorkflow: () => "chat",
+    onSourceRead: reference => captured.push(reference),
+    egress: new EchoInkVaultToolEgressPolicy()
+  });
+  const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+  try {
+    for (const path of [currentPath, recentPath]) {
+      const result = await executeTool(security, tools[0]!, "knowledge_search", `reference-search-${path}`, { query: "这篇的重点是什么？", limit: 1 });
+      assert.equal(result.isError, false);
+      const hit = JSON.parse(result.content[0]!.text).hits[0];
+      assert.equal(hit.vaultRelativePath, path);
+      assert.equal(hit.inclusionReason, "按指代带入");
+      assert.equal(hit.matchSources, undefined, "provider JSON does not turn explicit inclusion into a keyword match");
+      const reference = captured.at(-1)!;
+      assert.equal(reference.inclusionReason, "按指代带入");
+      assert.equal(reference.matchSources, undefined);
+      assert.equal(reference.contentRevision, revision(bodies.get(path)!));
+      assert.equal((await retriever.verifyReferences([reference])).status, "valid");
+      assert.equal((result.details.references as KnowledgeReference[])[0].inclusionReason, "按指代带入");
+      assert.equal(knowledgeReferenceEntryDetails([reference]).references[0].inclusionReason, "按指代带入");
+      activePath = undefined;
+    }
+    activePath = currentPath;
+    const ordinary = await executeTool(security, tools[0]!, "knowledge_search", "reference-ordinary-query", { query: "我那个想法是什么？", limit: 1 });
+    assert.deepEqual(JSON.parse(ordinary.content[0]!.text).hits, []);
+    assert.equal(captured.length, 2);
+  } finally { port.dispose(); }
+  console.log("Knowledge explicit reference tools: provider JSON, onSourceRead, verified pointers and ordinary-query isolation PASS");
+}
+
 export async function runPiKnowledgeReadToolTests(): Promise<void> {
   successfulPersonalMemoryToolResultsContributeOnlyPrimarySources();
   const vaultPath = await mkdtemp(path.join(tmpdir(), "echoink-knowledge-tools-vault-"));
