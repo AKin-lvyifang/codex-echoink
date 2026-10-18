@@ -1,6 +1,47 @@
 /** Shared, Node-free contracts for desktop and mobile body retrieval. */
 export const KNOWLEDGE_SEARCH_KINDS = ["wiki", "projects", "raw", "journal", "work", "inbox", "outputs", "archive", "notes"] as const;
 export type KnowledgeSearchKind = typeof KNOWLEDGE_SEARCH_KINDS[number];
+export type BodySearchMatchSource = "title" | "alias" | "tag" | "body";
+export type BodySearchInclusionReason = "按指代带入";
+
+/** Shared links are unread navigation, never agreement or another body hit. */
+export interface KnowledgeLinkCue {
+  readonly schemaVersion: 1;
+  readonly readStatus: "unread";
+  readonly label: "可能相关";
+  readonly vaultRelativePath: string;
+  readonly title: string;
+  readonly via: readonly Readonly<{ vaultRelativePath: string; contentRevision: string }>[];
+}
+
+/** Navigation over the current source revision; these ranges are not read evidence. */
+export interface KnowledgeOutlineEntry {
+  readonly heading: string;
+  readonly level: number;
+  readonly lineStart: number;
+  readonly lineEnd: number;
+}
+
+export interface KnowledgeDocumentOutline {
+  readonly schemaVersion: 1;
+  readonly readStatus: "unread";
+  readonly contentRevision: string;
+  readonly entries: readonly Readonly<KnowledgeOutlineEntry>[];
+  readonly totalHeadings: number;
+  readonly truncated: boolean;
+}
+
+/** Program-resolved navigation over one target revision; it adds no read evidence. */
+export type KnowledgeAnchorLocation = Readonly<{
+  schemaVersion: 1;
+  readStatus: "unread";
+  vaultRelativePath: string;
+  anchor: string;
+  kind: "heading" | "block";
+} & (
+  | { status: "located"; contentRevision: string; lineStart: number; lineEnd: number }
+  | { status: "not_located"; contentRevision?: string; reason: "missing" | "ambiguous" | "unavailable" | "invalid" }
+)>;
 
 export interface BodySearchDocument {
   /** Host-observed body/metadata/event version; omitted documents are never reused. */
@@ -30,6 +71,8 @@ export interface BodySearchRequest {
 }
 
 export interface BodySearchHit {
+  readonly linkCues?: readonly KnowledgeLinkCue[];
+  readonly related?: import("../knowledge-relations").KnowledgeRelationPage;
   readonly vaultRelativePath: string;
   readonly title: string;
   readonly kind: KnowledgeSearchKind;
@@ -43,6 +86,10 @@ export interface BodySearchHit {
   readonly columnEnd?: number;
   readonly totalLines: number;
   readonly excerpt: string;
+  /** Fields that matched the selected query; the excerpt may instead be the first body paragraph. */
+  readonly matchSources?: readonly BodySearchMatchSource[];
+  readonly inclusionReason?: BodySearchInclusionReason;
+  readonly outline?: Readonly<KnowledgeDocumentOutline>;
   readonly score: number;
   readonly journalDate?: string;
 }

@@ -16,22 +16,43 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
-  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests } from "./src/tests/knowledge-body-search";',
-  'import { runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests } from "./src/tests/vault-body-search";',
+  'import { runKnowledgeLinkNeighborhoodTests, runKnowledgeAnchorNavigationTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests, runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchReferenceTests, runKnowledgeBodySearchReferenceBoundaryTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests } from "./src/tests/knowledge-body-search";',
+  'import { runVaultBodySearchLinkCueTests, runVaultBodySearchSourceRevisionTests, runVaultBodySearchExplicitAnchorTests, runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchMetadataTests, runVaultBodySearchReferenceTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
   'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
   'import { runKnowledgeFolderBindingsTests } from "./src/tests/knowledge-folder-bindings";',
-  'import { runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
+  'import { runKnowledgeLegacySourceRevisionTests, runKnowledgeAnchorReadingTests, runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
   'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
   'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
   'import { runKnowledgeMaintenancePreferenceTests } from "./src/tests/knowledge-maintenance-preferences";',
-  'import { runPiKnowledgeReadToolTests } from "./src/tests/pi-native/knowledge-read-tools";',
+  'import { runPiKnowledgeLinkCueBudgetTests, runPiKnowledgeAnchorBudgetTests, runPiKnowledgeReadToolTests, runPiKnowledgeMetadataToolTests, runPiKnowledgeReferenceToolTests, runPiKnowledgeOutlineBudgetTests } from "./src/tests/pi-native/knowledge-read-tools";',
   'import { runPhase3KnowledgeMaintenanceServiceTests } from "./src/tests/pi-native/phase3-maintenance-service";',
   'import { runKnowledgeInitializationTests } from "./src/tests/knowledge-initialization";',
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runPiKnowledgeLinkCueBudgetTests();",
+  "await runKnowledgeLinkNeighborhoodTests();",
+  "await runVaultBodySearchLinkCueTests();",
+  "await runVaultBodySearchSourceRevisionTests();",
+  "await runKnowledgeLegacySourceRevisionTests();",
+  "await runKnowledgeAnchorNavigationTests();",
+  "await runVaultBodySearchExplicitAnchorTests();",
+  "await runVaultBodySearchAnchorTests();",
+  "await runKnowledgeAnchorReadingTests();",
+  "await runPiKnowledgeAnchorBudgetTests();",
+  "await runKnowledgeBodySearchOutlineEligibilityTests();",
+  "await runKnowledgeBodySearchOutlineTests();",
+  "await runVaultBodySearchOutlineTests();",
+  "await runPiKnowledgeOutlineBudgetTests();",
+  "await runKnowledgeBodySearchReferenceBoundaryTests();",
+  "await runKnowledgeBodySearchReferenceTests();",
+  "await runVaultBodySearchReferenceTests();",
+  "await runPiKnowledgeReferenceToolTests();",
+  "await runKnowledgeBodySearchMetadataTests();",
+  "await runVaultBodySearchMetadataTests();",
+  "await runPiKnowledgeMetadataToolTests();",
   "await runKnowledgeBodySearchBoilerplateTests();",
   "await runKnowledgeBodySearchTopicTests();",
   "await runKnowledgeBodySearchConcurrencyTests();",
@@ -59,7 +80,111 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--body-search-boilerplate") ? [
+    contents: (process.argv.includes("--body-search-link-cues") ? [
+      'import { runVaultBodySearchLinkCueTests } from "./src/tests/vault-body-search";',
+      'await runVaultBodySearchLinkCueTests();'
+    ] : process.argv.includes("--body-search-source-revision") ? [
+      'import { runVaultBodySearchSourceRevisionTests } from "./src/tests/vault-body-search";',
+      'import { runKnowledgeLegacySourceRevisionTests } from "./src/tests/knowledge-associative-reading";',
+      'let sourceRevisionFailed = false;',
+      'for (const run of [runVaultBodySearchSourceRevisionTests, runKnowledgeLegacySourceRevisionTests]) { try { await run(); } catch (error) { console.error(error); sourceRevisionFailed = true; } }',
+      'if (sourceRevisionFailed) process.exitCode = 1;'
+    ] : process.argv.includes("--body-search-explicit-anchors") ? [
+      'import { runVaultBodySearchExplicitAnchorTests } from "./src/tests/vault-body-search";',
+      'await runVaultBodySearchExplicitAnchorTests();'
+    ] : (process.argv.includes("--body-search-links") || process.argv.includes("--body-search-anchors")) ? [
+      'import { runKnowledgeLinkNeighborhoodTests, runKnowledgeAnchorNavigationTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests, runKnowledgeBodySearchReferenceBoundaryTests } from "./src/tests/knowledge-body-search";',
+      'import { runVaultBodySearchLinkCueTests, runVaultBodySearchSourceRevisionTests, runVaultBodySearchExplicitAnchorTests, runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
+      'import { runKnowledgeLegacySourceRevisionTests, runKnowledgeAnchorReadingTests, runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
+      'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
+      'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
+      'import { runPiKnowledgeLinkCueBudgetTests, runPiKnowledgeAnchorBudgetTests, runPiKnowledgeReadToolTests, runPiKnowledgeOutlineBudgetTests } from "./src/tests/pi-native/knowledge-read-tools";',
+      'await runPiKnowledgeLinkCueBudgetTests();',
+      'await runKnowledgeLinkNeighborhoodTests();',
+      'await runVaultBodySearchLinkCueTests();',
+      'await runVaultBodySearchSourceRevisionTests();',
+      'await runKnowledgeLegacySourceRevisionTests();',
+      'await runKnowledgeAnchorNavigationTests();',
+      'await runVaultBodySearchExplicitAnchorTests();',
+      'await runVaultBodySearchAnchorTests();',
+      'await runKnowledgeAnchorReadingTests();',
+      'await runPiKnowledgeAnchorBudgetTests();',
+      'await runKnowledgeAssociativeReadingTests();',
+      'await runKnowledgeAgentIndexTests();',
+      'await runPhase3KnowledgeRetrieverTests();',
+      'await runPiKnowledgeReadToolTests();',
+      'await runKnowledgeBodySearchTests();',
+      'await runKnowledgeBodySearchCacheTests();',
+      'await runKnowledgeBodySearchConcurrencyTests();',
+      'await runKnowledgeBodySearchOutlineTests();',
+      'await runKnowledgeBodySearchOutlineEligibilityTests();',
+      'await runKnowledgeBodySearchReferenceBoundaryTests();',
+      'await runVaultBodySearchTests();',
+      'await runVaultBodySearchCacheTests();',
+      'await runVaultBodySearchConcurrencyTests();',
+      'await runVaultBodySearchOutlineTests();',
+      'await runPiKnowledgeOutlineBudgetTests();'
+    ] : process.argv.includes("--body-search-outline-eligibility") ? [
+      'import { runKnowledgeBodySearchOutlineEligibilityTests } from "./src/tests/knowledge-body-search";',
+      'await runKnowledgeBodySearchOutlineEligibilityTests();'
+    ] : process.argv.includes("--body-search-outline") ? [
+      'import { runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchReferenceTests, runKnowledgeBodySearchReferenceBoundaryTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchConcurrencyTests } from "./src/tests/knowledge-body-search";',
+      'import { runVaultBodySearchOutlineTests, runVaultBodySearchTests, runVaultBodySearchMetadataTests, runVaultBodySearchReferenceTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests } from "./src/tests/vault-body-search";',
+      'import { runPiKnowledgeOutlineBudgetTests, runPiKnowledgeReadToolTests, runPiKnowledgeMetadataToolTests, runPiKnowledgeReferenceToolTests } from "./src/tests/pi-native/knowledge-read-tools";',
+      'await runKnowledgeBodySearchOutlineTests();',
+      'await runKnowledgeBodySearchOutlineEligibilityTests();',
+      'await runVaultBodySearchOutlineTests();',
+      'await runPiKnowledgeOutlineBudgetTests();',
+      'await runKnowledgeBodySearchTests();',
+      'await runKnowledgeBodySearchMetadataTests();',
+      'await runKnowledgeBodySearchReferenceTests();',
+      'await runKnowledgeBodySearchReferenceBoundaryTests();',
+      'await runKnowledgeBodySearchCacheTests();',
+      'await runKnowledgeBodySearchConcurrencyTests();',
+      'await runVaultBodySearchTests();',
+      'await runVaultBodySearchMetadataTests();',
+      'await runVaultBodySearchReferenceTests();',
+      'await runVaultBodySearchCacheTests();',
+      'await runVaultBodySearchConcurrencyTests();',
+      'await runPiKnowledgeReadToolTests();',
+      'await runPiKnowledgeMetadataToolTests();',
+      'await runPiKnowledgeReferenceToolTests();'
+    ] : process.argv.includes("--body-search-reference-boundary") ? [
+      'import { runKnowledgeBodySearchReferenceBoundaryTests } from "./src/tests/knowledge-body-search";',
+      'await runKnowledgeBodySearchReferenceBoundaryTests();'
+    ] : process.argv.includes("--body-search-reference") ? [
+      'import { runKnowledgeBodySearchReferenceTests, runKnowledgeBodySearchReferenceBoundaryTests, runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchConcurrencyTests } from "./src/tests/knowledge-body-search";',
+      'import { runVaultBodySearchReferenceTests, runVaultBodySearchMetadataTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests } from "./src/tests/vault-body-search";',
+      'import { runPiKnowledgeReferenceToolTests, runPiKnowledgeMetadataToolTests, runPiKnowledgeReadToolTests } from "./src/tests/pi-native/knowledge-read-tools";',
+      'await runKnowledgeBodySearchReferenceTests();',
+      'await runKnowledgeBodySearchReferenceBoundaryTests();',
+      'await runVaultBodySearchReferenceTests();',
+      'await runPiKnowledgeReferenceToolTests();',
+      'await runKnowledgeBodySearchMetadataTests();',
+      'await runVaultBodySearchMetadataTests();',
+      'await runPiKnowledgeMetadataToolTests();',
+      'await runKnowledgeBodySearchTests();',
+      'await runKnowledgeBodySearchCacheTests();',
+      'await runKnowledgeBodySearchConcurrencyTests();',
+      'await runVaultBodySearchTests();',
+      'await runVaultBodySearchCacheTests();',
+      'await runVaultBodySearchConcurrencyTests();',
+      'await runPiKnowledgeReadToolTests();'
+    ] : process.argv.includes("--body-search-metadata") ? [
+      'import { runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests } from "./src/tests/knowledge-body-search";',
+      'import { runVaultBodySearchMetadataTests, runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
+      'import { runPiKnowledgeMetadataToolTests, runPiKnowledgeReadToolTests } from "./src/tests/pi-native/knowledge-read-tools";',
+      'await runKnowledgeBodySearchMetadataTests();',
+      'await runVaultBodySearchMetadataTests();',
+      'await runPiKnowledgeMetadataToolTests();',
+      'await runKnowledgeBodySearchTests();',
+      'await runKnowledgeBodySearchCacheTests();',
+      'await runKnowledgeBodySearchTopicTests();',
+      'await runKnowledgeBodySearchBoilerplateTests();',
+      'await runVaultBodySearchTests();',
+      'await runVaultBodySearchCacheTests();',
+      'await runPiKnowledgeReadToolTests();'
+    ] : process.argv.includes("--body-search-boilerplate") ? [
       'import { runKnowledgeBodySearchBoilerplateTests } from "./src/tests/knowledge-body-search";',
       'await runKnowledgeBodySearchBoilerplateTests();'
     ] : process.argv.includes("--body-search-topic") ? [

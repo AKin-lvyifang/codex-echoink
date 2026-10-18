@@ -139,19 +139,50 @@ await test("shared mobile body search delivers chapters, revisions, journal date
   const search = tools.find(tool => tool.name === "vault_search");
   const read = tools.find(tool => tool.name === "note_read");
   const page = (await search.execute("body", { queries: ["MOBILE_BODY_ONLY", "2.6.2"] })).details;
-  assert.equal(page.hits[0].kind, "notes"); assert.ok(page.hits[0].lineStart > 100);
+  assert.equal(page.hits[0].kind, "notes"); assert.equal(page.hits[0].sourceType, page.hits[0].kind); assert.ok(page.hits[0].lineStart > 100);
   assert.ok(!page.hits.some(hit => hit.vaultRelativePath.startsWith("模板/")));
   const source = page.hits[0];
   const span = (await read.execute("read", { path: source.vaultRelativePath, expectedContentRevision: source.contentRevision, lineStart: source.lineStart })).details;
-  assert.match(span.content, /MOBILE_BODY_ONLY/u); assert.equal(span.lineStart, source.lineStart);
+  assert.match(span.content, /MOBILE_BODY_ONLY/u); assert.equal(span.lineStart, source.lineStart); assert.equal(span.path, span.vaultRelativePath); assert.equal(span.vaultRelativePath, source.vaultRelativePath);
   state.files.set(source.vaultRelativePath, "已修改");
   await assert.rejects(read.execute("changed", { path: source.vaultRelativePath, expectedContentRevision: source.contentRevision }), /changed/u);
   const dated = (await search.execute("date", { query: "JOURNAL_DATE_TOKEN", dateFrom: "2026-09-01", dateTo: "2026-09-30" })).details;
-  assert.equal(dated.hits.length, 1); assert.equal(dated.hits[0].vaultRelativePath, "日记/2026-09-20.md");
+  assert.equal(dated.hits.length, 1); assert.equal(dated.hits[0].kind, "journal"); assert.equal(dated.hits[0].sourceType, dated.hits[0].kind); assert.equal(dated.hits[0].vaultRelativePath, "日记/2026-09-20.md");
   bindings.roles.journal.searchEnabled = false;
   assert.equal((await search.execute("off", { query: "JOURNAL_DATE_TOKEN" })).details.hits.length, 0);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(search.execute("stopped", { query: "token" }, controller.signal));
+});
+
+await test("mobile model receives complete JSON search and read evidence", async () => {
+  let calls = 0, source;
+  const state = await setup("openai-completions", async request => {
+    const body = JSON.parse(request.body);
+    const toolContent = body.messages.filter(message => message.role === "tool").map(message => message.content);
+    if (calls++ === 0) return answer("openai-completions", "", [["notes-search", "vault_search", { query: "MODEL_EVIDENCE" }]]);
+    if (calls === 2) {
+      const page = JSON.parse(toolContent.at(-1)); source = page.hits[0];
+      assert.equal(source.kind, "notes"); assert.equal(source.sourceType, source.kind);
+      return answer("openai-completions", "", [["journal-search", "vault_search", { query: "MODEL_JOURNAL" }]]);
+    }
+    if (calls === 3) {
+      const page = JSON.parse(toolContent.at(-1));
+      assert.ok(page.hits.some(hit => hit.kind === "journal" && hit.sourceType === hit.kind));
+      return answer("openai-completions", "", [["read-evidence", "note_read", { path: source.vaultRelativePath, expectedContentRevision: source.contentRevision }]]);
+    }
+    const span = JSON.parse(toolContent.at(-1));
+    assert.equal(span.vaultRelativePath, source.vaultRelativePath);
+    assert.equal(span.path, span.vaultRelativePath);
+    assert.equal(span.vaultRelativePath, source.vaultRelativePath);
+    return answer("openai-completions", "证据已收到。");
+  });
+  state.files.set("笔记/来源.md", "MODEL_EVIDENCE 依据正文。\n");
+  state.files.set("日记/2026-09-20.md", "MODEL_JOURNAL 日记正文。\n");
+  state.config.knowledgeBase.folderBindings = loadMobileSettings({ knowledgeBase: { folderBindings: { schemaVersion: 1, revision: 1, roles: {
+    journal: { enabled: true, readPaths: ["日记"], writePath: "日记", allowedSubdirectories: [] }
+  } } } }).knowledgeBase.folderBindings;
+  await state.runtime.send("搜索并读取证据");
+  assert.equal(calls, 4);
 });
 
 await test("mobile runtime shares warm statistics across preflight, tools and sends, then releases on unload", async () => {

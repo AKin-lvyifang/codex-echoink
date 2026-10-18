@@ -1,4 +1,5 @@
 import { assertPiSubmissionActive } from "./pi-submission-lifecycle";
+import { selectMemoryRecallPreviousUserContext } from "../memory/personal-memory-recall-harness";
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../../knowledge-base/search/contracts";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../../knowledge-base/root-paths";
 import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/root-paths";
@@ -2621,6 +2622,14 @@ export class PiNativeConversationRuntime {
         const active = holder.active;
         const run = active?.currentRun;
         if (!active || !run) return null;
+        const branch = active.sessionManager.getBranch();
+        // before_agent_start may run before or after Pi appends this turn's
+        // user message. Entry identity preserves earlier identical text.
+        const currentUserEntry = branch.find((entry) =>
+          !run.baselineEntryIds.has(entry.id)
+          && entry.type === "message"
+          && entry.message.role === "user"
+        );
         return Object.freeze({
           vaultId: catalog.vaultId,
           conversationId: catalog.conversationId,
@@ -2629,12 +2638,10 @@ export class PiNativeConversationRuntime {
           memoryMode: run.memoryMode,
           ...(run.projectId ? { projectId: run.projectId } : {}),
           query: run.requestText,
-          recentConversation: Object.freeze(active.sessionManager.getBranch()
-            .filter((entry) => entry.type === "message")
-            .filter((entry) => isValidRecentConversationMessage(entry.message))
-            .map((entry) => publicMessageText(entry.message).trim())
-            .filter(Boolean)
-            .slice(-6))
+          recentConversation: selectMemoryRecallPreviousUserContext(branch.flatMap((entry) =>
+            entry.id !== currentUserEntry?.id && entry.type === "message" && entry.message.role === "user"
+              ? [{ role: entry.message.role, content: publicMessageText(entry.message) }]
+              : []))
         });
       },
       currentSelectionAnnotationTurnContext: () => holder.active?.currentRun?.selectionAnnotations ?? [],
@@ -5314,14 +5321,6 @@ function stripInternalSkillPromptPrefix(text: string): string {
     stripped = true;
   }
   return stripped ? remaining : text;
-}
-
-function isValidRecentConversationMessage(message: AgentMessage): boolean {
-  if (message.role === "user") return true;
-  return message.role === "assistant"
-    && message.stopReason !== "error"
-    && message.stopReason !== "aborted"
-    && message.stopReason !== "length";
 }
 
 function classifyTerminalState(

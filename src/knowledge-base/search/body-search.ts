@@ -1,12 +1,13 @@
-import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult } from "./contracts";
+import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchInclusionReason, BodySearchMatchSource, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult, KnowledgeDocumentOutline } from "./contracts";
 import { buildSearchDictionary, iterateSearchTokens, tokenizeSearchText } from "./tokenize";
 import { yieldSearchTask as yieldToUi } from "./scheduling";
+import { createKnowledgeDocumentOutline, extractMarkdownAnchorLinks, extractMarkdownLinkTargets, knowledgeLinkNeighborhood, knowledgeOutlineCharacters, KNOWLEDGE_BODY_FRAGMENT_LIMITS, KNOWLEDGE_LINK_LIMITS, KNOWLEDGE_OUTLINE_LIMITS, limitKnowledgeOutline, parseMarkdownHeadings, type MarkdownHeading as Heading } from "./markdown-navigation";
 
-interface Heading { heading: string; line: number; level: number }
 interface Fragment {
   start: number;
   end: number;
   frequencies: Map<string, number>;
+  bodyTerms: Set<string>;
 }
 interface Evidence {
   lineStart: number;
@@ -27,10 +28,14 @@ interface IndexedSection {
   frequencies: Map<string, number>;
 }
 interface DocumentStatistics {
+  linkTargets: readonly string[];
+  anchorLinks: ReturnType<typeof extractMarkdownAnchorLinks>;
   contentRevision: string;
   sections: readonly IndexedSection[];
   titleTerms: Set<string>;
   tagTerms: Set<string>;
+  firstBodyParagraph?: Evidence & { sectionTitle: string };
+  outline?: Readonly<KnowledgeDocumentOutline>;
   characters: number;
   tokenEntries: number;
 }
@@ -40,12 +45,18 @@ interface Section extends IndexedSection {
   journalDate?: string;
   titleTerms: Set<string>;
   tagTerms: Set<string>;
+  firstBodyParagraph?: Evidence & { sectionTitle: string };
+  outline?: Readonly<KnowledgeDocumentOutline>;
 }
 interface PreparedSearch {
+  exactQuery: boolean;
   documents: readonly BodySearchDocument[];
   dictionary: readonly string[];
   queryWeights: readonly Map<string, number>[];
   queries: readonly Set<string>[];
+  bodyQueries: readonly Set<string>[];
+  referencePath?: string;
+  referenceScope?: "single" | "cross";
   union: Set<string>;
   coverage: BodySearchCoverage;
 }
@@ -59,9 +70,10 @@ interface CachedDocument {
   statistics: DocumentStatistics;
 }
 
-const MAX_FRAGMENT_CHARACTERS = 2400;
-const MAX_FRAGMENT_LINES = 24;
+const MAX_FRAGMENT_CHARACTERS = KNOWLEDGE_BODY_FRAGMENT_LIMITS.characters;
+const MAX_FRAGMENT_LINES = KNOWLEDGE_BODY_FRAGMENT_LIMITS.lines;
 const EMPTY_DICTIONARY: readonly string[] = [];
+const QUERY_BOILERPLATE = ["我", "我的", "关于", "有关", "的", "笔记", "记录", "资料", "文章", "哪些", "什么", "有没有", "找一下", "相关", "方面"];
 
 function checkAbort(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -87,42 +99,9 @@ function journalDate(document: BodySearchDocument): string | undefined {
   return calendarDate(basename.match(/^(\d{4}-\d{2}-\d{2})(?:\.md|[ _].*\.md)$/iu)?.[1]);
 }
 
-function parseHeadings(lines: readonly string[]): Heading[] {
-  const headings: Heading[] = [];
-  let fence: { character: string; length: number } | undefined;
-  let frontmatter = lines[0]?.trim() === "---";
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
-    if (frontmatter) {
-      if (index > 0 && /^(?:---|\.\.\.)\s*$/u.test(line)) frontmatter = false;
-      continue;
-    }
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
-    if (fence) {
-      if (marker && marker[1][0] === fence.character && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
-      continue;
-    }
-    if (marker) {
-      fence = { character: marker[1][0], length: marker[1].length };
-      continue;
-    }
-    const atx = line.match(/^ {0,3}(#{1,6})(?:[\t ]+(.+?)|[\t ]*)$/u);
-    if (atx) {
-      headings.push({ heading: (atx[2] ?? "").replace(/[\t ]+#+[\t ]*$/u, "").trim(), line: index + 1, level: atx[1].length });
-      continue;
-    }
-    if (index > 0 && /^ {0,3}(?:=+|-+)\s*$/u.test(line) && lines[index - 1].trim()
-      && !/^\s*(?:[-*+]>?|>|#{1,6}\s|`{3,}|~{3,})/u.test(lines[index - 1])
-      && headings.at(-1)?.line !== index) {
-      headings.push({ heading: lines[index - 1].trim(), line: index, level: line.trim()[0] === "=" ? 1 : 2 });
-    }
-  }
-  return headings;
-}
-
 function currentHeadings(document: BodySearchDocument, lines: readonly string[]): readonly Heading[] {
   // A structural pass also catches omitted/new headings and headings inside code fences.
-  const parsed = parseHeadings(lines);
+  const parsed = parseMarkdownHeadings(lines);
   const cached = document.headings;
   if (cached?.length === parsed.length && cached.every((heading, index) => {
     const actual = parsed[index];
@@ -145,7 +124,7 @@ function fragmentRanges(text: string): Fragment[] {
       }
     }
     if (end < text.length && lastNewline > start && lineCount < MAX_FRAGMENT_LINES) end = lastNewline + 1;
-    fragments.push({ start, end, frequencies: new Map() });
+    fragments.push({ start, end, frequencies: new Map(), bodyTerms: new Set() });
     start = end;
   }
   return fragments;
@@ -185,9 +164,38 @@ function evidenceFor(text: string, fragment: Fragment, sectionStart: number, sec
   return { lineStart, lineEnd, excerpt, ...(!wholeLines ? { columnStart, columnEnd } : {}) };
 }
 
+function bodyLines(lines: readonly string[], headings: readonly Heading[]): boolean[] {
+  const included = lines.map(() => true);
+  if (lines[0]?.trim() === "---") {
+    let end = 1;
+    while (end < lines.length && !/^(?:---|\.\.\.)\s*$/u.test(lines[end])) end++;
+    for (let index = 0; index <= end && index < lines.length; index++) included[index] = false;
+  }
+  for (const heading of headings) {
+    included[heading.line - 1] = false;
+    if (!/^ {0,3}#/u.test(lines[heading.line - 1]) && /^ {0,3}(?:=+|-+)\s*$/u.test(lines[heading.line] ?? "")) included[heading.line] = false;
+  }
+  return included;
+}
+
+function firstBodyParagraph(lines: readonly string[], included: readonly boolean[], headings: readonly Heading[], title: string): DocumentStatistics["firstBodyParagraph"] {
+  const start = lines.findIndex((line, index) => included[index] && line.trim());
+  if (start < 0) return undefined;
+  let end = start + 1;
+  while (end < lines.length && included[end] && lines[end].trim()) end++;
+  const text = lines.slice(start, end).join("\n");
+  return { ...evidenceFor(text, fragmentRanges(text)[0], start + 1, end),
+    sectionTitle: headings.filter(heading => heading.line <= start + 1).at(-1)?.heading ?? title };
+}
+
 async function buildDocumentStatistics(document: BodySearchDocument, content: string, contentRevision: string, dictionary: readonly string[], signal?: AbortSignal): Promise<DocumentStatistics> {
   const lines = content.split(/\r\n|\n|\r/u);
   const headings = currentHeadings(document, lines);
+  const outline = createKnowledgeDocumentOutline(headings, lines, contentRevision);
+  const anchorLinks = content.includes("[[") && content.includes("#") ? extractMarkdownAnchorLinks(content) : { links: [], total: 0 };
+  const linkTargets = extractMarkdownLinkTargets(content);
+  const includedBodyLines = bodyLines(lines, headings);
+  const paragraph = firstBodyParagraph(lines, includedBodyLines, headings, document.title);
   const ranges: { title: string; start: number; end: number }[] = [];
   if (!headings.length || headings[0].line > 1) ranges.push({ title: document.title, start: 1, end: headings[0] ? headings[0].line - 1 : lines.length });
   for (let index = 0; index < headings.length; index++) {
@@ -199,13 +207,15 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
   }
   const tagTerms = new Set(tokenizeSearchText((document.tags ?? []).join("\n"), dictionary));
   const sections: IndexedSection[] = [];
-  let characters = 0;
+  let characters = (paragraph?.excerpt.length ?? 0) + (outline ? knowledgeOutlineCharacters(outline) : 0) + (anchorLinks.total ? JSON.stringify(anchorLinks).length : 0) + (linkTargets.length ? JSON.stringify(linkTargets).length : 0);
   let tokenEntries = titleTerms.size + tagTerms.size;
   for (const range of ranges) {
     checkAbort(signal);
     const text = lines.slice(range.start - 1, range.end).join("\n");
     if (!text.trim()) continue;
     const fragments = fragmentRanges(text);
+    const lineRanges = lines.slice(range.start - 1, range.end).map((line, index) => ({ start: 0, length: line.length, body: includedBodyLines[range.start - 1 + index] }));
+    for (let index = 1; index < lineRanges.length; index++) lineRanges[index].start = lineRanges[index - 1].start + lineRanges[index - 1].length + 1;
     const frequencies = new Map<string, number>();
     let length = 0;
     for (const result of iterateSearchTokens(text, dictionary)) {
@@ -216,6 +226,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
       frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
       const fragment = fragments[rangeIndex(fragments, start)];
       fragment.frequencies.set(token, (fragment.frequencies.get(token) ?? 0) + 1);
+      if (lineRanges[rangeIndex(lineRanges, start)].body) fragment.bodyTerms.add(token);
     }
     const fragmentFrequency = new Map<string, number>();
     for (const fragment of fragments) {
@@ -224,17 +235,18 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
     sections.push({ sectionTitle: range.title, sectionStart: range.start, sectionEnd: range.end, totalLines: lines.length,
       text, fragments, fragmentFrequency, length: Math.max(1, length), frequencies });
     characters += text.length;
-    tokenEntries += frequencies.size + fragmentFrequency.size + fragments.reduce((count, fragment) => count + fragment.frequencies.size, 0);
+    tokenEntries += frequencies.size + fragmentFrequency.size + fragments.reduce((count, fragment) => count + fragment.frequencies.size + fragment.bodyTerms.size, 0);
     if (sections.length % 16 === 0 || text.length >= 32_000) await yieldToUi(signal);
   }
-  return { contentRevision, sections, titleTerms, tagTerms, characters, tokenEntries };
+  return { contentRevision, sections, titleTerms, tagTerms, firstBodyParagraph: paragraph, outline, anchorLinks, linkTargets, characters, tokenEntries };
 }
 
-function sectionEvidence(section: IndexedSection, query: ReadonlySet<string>): Evidence {
+function sectionEvidence(section: IndexedSection, query: ReadonlySet<string>, bodyQuery?: ReadonlySet<string>): Evidence {
   const { fragments, fragmentFrequency } = section;
   let best = fragments[0];
   let bestScore = -1;
   for (const fragment of fragments) {
+    if (bodyQuery && ![...bodyQuery].some(token => fragment.bodyTerms.has(token))) continue;
     let score = 0;
     for (const token of query) {
       const count = fragment.frequencies.get(token) ?? 0;
@@ -249,10 +261,56 @@ function sectionEvidence(section: IndexedSection, query: ReadonlySet<string>): E
   return evidenceFor(section.text, best, section.sectionStart, section.sectionEnd);
 }
 
+function searchEvidence(section: Section, query: ReadonlySet<string>, bodyQuery: ReadonlySet<string>, dictionary: readonly string[]): Evidence & { sectionTitle: string; matchSources?: readonly BodySearchMatchSource[] } {
+  const matches = (text: string) => tokenizeSearchText(text, dictionary).some(token => query.has(token));
+  const matchSources: BodySearchMatchSource[] = [];
+  if (matches(section.document.title)) matchSources.push("title");
+  if ((section.document.aliases ?? []).some(matches)) matchSources.push("alias");
+  if ([...query].some(token => section.tagTerms.has(token))) matchSources.push("tag");
+  const metadataMatch = matchSources.length > 0;
+  const bodyMatch = section.fragments.some(fragment => [...query].some(token => fragment.bodyTerms.has(token)));
+  if (bodyMatch) matchSources.push("body");
+  const bodyEvidenceMatch = section.fragments.some(fragment => [...bodyQuery].some(token => fragment.bodyTerms.has(token)));
+  const evidence = metadataMatch && !bodyEvidenceMatch && section.firstBodyParagraph
+    ? section.firstBodyParagraph
+    : { ...sectionEvidence(section, query, metadataMatch && bodyEvidenceMatch ? bodyQuery : undefined), sectionTitle: section.sectionTitle };
+  return { ...evidence, ...(matchSources.length ? { matchSources } : {}) };
+}
+
 function queryTexts(request: BodySearchRequest): string[] {
   const supplied = request.queries?.length ? request.queries : request.query ? [request.query] : [];
   if (supplied.length > 5) throw new Error("Knowledge search accepts at most five queries");
   return [...new Set(supplied.map((query) => query.trim()).filter(Boolean))];
+}
+
+export function explicitNoteReferenceScope(request: BodySearchRequest, documents: readonly BodySearchDocument[]): "single" | "cross" | undefined {
+  const texts = queryTexts(request);
+  if (!texts.some(text => /(?:刚才那篇|当前这篇|这篇)/u.test(text))) return undefined;
+  const dateFrom = calendarDate(request.dateFrom);
+  const dateTo = calendarDate(request.dateTo);
+  const names = new Set(documents.filter(document => {
+    if (request.excludePaths?.includes(document.vaultRelativePath) || (request.kinds && !request.kinds.includes(document.kind))) return false;
+    if (document.kind !== "journal" || (!dateFrom && !dateTo)) return true;
+    const date = journalDate(document);
+    return Boolean(date && (!dateFrom || date >= dateFrom) && (!dateTo || date <= dateTo));
+  }).flatMap(document => [document.title, ...(document.aliases ?? [])]).map(normalizedSearchName).filter(Boolean));
+  let scope: "single" | "cross" | undefined;
+  for (const text of texts) {
+    if (exactSearchName(text, names)) continue;
+    const query = normalizedSearchName(text);
+    const namedRanges: { start: number; end: number }[] = [];
+    for (const name of names) {
+      if (!/(?:刚才那篇|当前这篇|这篇)/u.test(name)) continue;
+      for (let start = query.indexOf(name); start >= 0; start = query.indexOf(name, start + 1)) namedRanges.push({ start, end: start + name.length });
+    }
+    const reference = [...query.matchAll(/(?:刚才那篇|当前这篇|这篇)/gu)]
+      .some(match => !namedRanges.some(range => match.index >= range.start && match.index + match[0].length <= range.end));
+    if (!reference) continue;
+    // These explicit words widen a note reference; no topic/entity classification is needed.
+    if (/(?:别处|其[他它]地方|其[他它](?:笔记|文章|材料)|别的(?:笔记|文章|材料))/u.test(query)) return "cross";
+    scope = "single";
+  }
+  return scope;
 }
 
 function tokenTermWeights(text: string, dictionary: readonly string[]): Map<string, number> {
@@ -276,43 +334,67 @@ function tokenTermWeights(text: string, dictionary: readonly string[]): Map<stri
 
 function normalizedSearchName(text: string): string { return text.normalize("NFKC").trim().toLowerCase(); }
 
+function exactSearchName(text: string, exactNames: ReadonlySet<string>): boolean {
+  const name = normalizedSearchName(text);
+  return exactNames.has(name) || exactNames.has(name.replace(/[?？。.!！]+$/u, "").trim());
+}
+
+function queryTopic(text: string): string | undefined {
+  return text.trim().match(/^(?:我(?:的)?\s*)?(?:关于|有关)\s*(.+?)\s*的\s*(?:笔记|记录|资料|文章)\s*(?:有哪些)?\s*[?？。.!！]*$/u)?.[1]?.trim();
+}
+
+function queryBoilerplateTerms(input: string, dictionary: readonly string[]): Set<string> {
+  const signals = new Set(QUERY_BOILERPLATE);
+  const tokens = [...iterateSearchTokens(input, dictionary)].filter(token => token !== undefined);
+  const names = tokens.filter(token => token.kind === "word" && Array.from(token.token).length > 2 && !signals.has(token.token));
+  const protectedTerms = new Set(tokens.filter(token => names.some(word => token.start >= word.start && token.end <= word.end)).map(token => token.token));
+  const covered = new Set<number>();
+  for (const phrase of QUERY_BOILERPLATE) {
+    for (let start = input.indexOf(phrase); start >= 0; start = input.indexOf(phrase, start + 1)) {
+      for (let offset = start; offset < start + phrase.length; offset++) covered.add(offset);
+    }
+  }
+  const weakTerms = new Set<string>();
+  for (const token of tokens) {
+    if (protectedTerms.has(token.token)) continue;
+    let coveredCharacters = 0;
+    for (let offset = token.start; offset < token.end; offset++) if (covered.has(offset)) coveredCharacters++;
+    if (signals.has(token.token) || coveredCharacters === token.end - token.start
+      || (token.kind === "bigram" && coveredCharacters > 0)) weakTerms.add(token.token);
+  }
+  return weakTerms;
+}
+
+function bodyQueryTerms(text: string, weights: ReadonlyMap<string, number>, dictionary: readonly string[], exactNames: ReadonlySet<string>): Set<string> {
+  if (exactSearchName(text, exactNames)) return new Set(weights.keys());
+  // Only the existing syntactic boilerplate is ignored for excerpt placement.
+  // Low-weight partial words remain evidence, regardless of their numeric weight.
+  const weakTerms = queryBoilerplateTerms(text, dictionary);
+  const terms = new Set([...weights.keys()].filter(token => !weakTerms.has(token)));
+  const topic = queryTopic(text);
+  if (topic && QUERY_BOILERPLATE.includes(normalizedSearchName(topic))) {
+    for (const token of tokenizeSearchText(topic, dictionary)) terms.add(token);
+  }
+  return terms;
+}
+
 function queryTermWeights(text: string, dictionary: readonly string[], exactNames: ReadonlySet<string>): Map<string, number> {
   const weights = tokenTermWeights(text, dictionary);
-  const name = normalizedSearchName(text);
-  if (exactNames.has(name) || exactNames.has(name.replace(/[?？。.!！]+$/u, "").trim())) return weights;
-  const boilerplate = ["我", "我的", "关于", "有关", "的", "笔记", "记录", "资料", "文章", "哪些", "什么", "有没有", "找一下", "相关", "方面"];
-  const signals = new Set(boilerplate);
+  if (exactSearchName(text, exactNames)) return weights;
   const weakenBoilerplate = (input: string, inputWeights: Map<string, number>) => {
-    const tokens = [...iterateSearchTokens(input, dictionary)].filter(token => token !== undefined);
-    const names = tokens.filter(token => token.kind === "word" && Array.from(token.token).length > 2 && !signals.has(token.token));
-    const protectedTerms = new Set(tokens.filter(token => names.some(word => token.start >= word.start && token.end <= word.end)).map(token => token.token));
-    const covered = new Set<number>();
-    for (const phrase of boilerplate) {
-      for (let start = input.indexOf(phrase); start >= 0; start = input.indexOf(phrase, start + 1)) {
-        for (let offset = start; offset < start + phrase.length; offset++) covered.add(offset);
-      }
-    }
-    const weakTerms = new Set<string>();
-    for (const token of tokens) {
-      if (protectedTerms.has(token.token)) continue;
-      let coveredCharacters = 0;
-      for (let offset = token.start; offset < token.end; offset++) if (covered.has(offset)) coveredCharacters++;
-      if (signals.has(token.token) || coveredCharacters === token.end - token.start
-        || (token.kind === "bigram" && coveredCharacters > 0)) weakTerms.add(token.token);
-    }
     // Keep every signal searchable. A short phrase must not weaken the complete
     // recognized name containing it (or that name's necessary partial-match terms).
-    for (const token of weakTerms) inputWeights.set(token, inputWeights.get(token)! * 0.1);
+    for (const token of queryBoilerplateTerms(input, dictionary)) inputWeights.set(token, inputWeights.get(token)! * 0.1);
     return inputWeights;
   };
   const adjusted = weakenBoilerplate(text, new Map(weights));
-  const topic = text.trim().match(/^(?:我(?:的)?\s*)?(?:关于|有关)\s*(.+?)\s*的\s*(?:笔记|记录|资料|文章)\s*(?:有哪些)?\s*[?？。.!！]*$/u)?.[1]?.trim();
+  const topic = queryTopic(text);
   if (!topic) return adjusted;
   const originalTopicWeights = tokenTermWeights(topic, dictionary);
   if (!originalTopicWeights.size) return adjusted;
   // This optional syntax also disambiguates an explicitly requested topic such as
   // "notes" itself; the general signal handling above does not depend on word order.
-  const topicWeights = boilerplate.includes(normalizedSearchName(topic)) ? originalTopicWeights : weakenBoilerplate(topic, originalTopicWeights);
+  const topicWeights = QUERY_BOILERPLATE.includes(normalizedSearchName(topic)) ? originalTopicWeights : weakenBoilerplate(topic, originalTopicWeights);
   // The wording around a requested topic describes the lookup, rather than a second
   // subject. Preserve it as weak fallback evidence; names and topic parts use the
   // same tokenizer and weights as a direct topic query.
@@ -347,18 +429,26 @@ function prepareSearch(options: BodySearchOptions): PreparedSearch {
   const coverage: BodySearchCoverage = { totalFiles: documents.length, scannedFiles: 0, readFiles: 0, cachedFiles: 0, indexedFiles: 0,
     failedFiles: 0, complete: !(unknownJournalDates && (dateFrom || dateTo)), unknownJournalDates };
   const dictionary = buildSearchDictionary(documents);
-  const queryWeights = texts.map((query) => queryTermWeights(query, dictionary, exactNames)).filter((tokens) => tokens.size);
+  const preparedQueries = texts.map(text => ({ text, weights: queryTermWeights(text, dictionary, exactNames) })).filter(query => query.weights.size);
+  const queryWeights = preparedQueries.map(query => query.weights);
   const queries = queryWeights.map((weights) => new Set(weights.keys()));
+  const bodyQueries = preparedQueries.map(query => bodyQueryTerms(query.text, query.weights, dictionary, exactNames));
+  const eligiblePaths = new Set(documents.map(document => document.vaultRelativePath));
+  const referenceScope = explicitNoteReferenceScope(request, documents);
+  const referencePath = referenceScope
+    ? [options.activePath, ...(options.recentPaths ?? [])].find((path): path is string => path !== undefined && eligiblePaths.has(path))
+    : undefined;
   const union = new Set(queries.flatMap((query) => [...query]));
-  return { documents, dictionary, queryWeights, queries, union, coverage };
+  return { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, referenceScope, union, coverage, exactQuery: texts.some(text => exactSearchName(text, exactNames)) };
 }
 
 async function executeSearch(options: BodySearchOptions, prepared: PreparedSearch, cache?: SearchCacheHooks): Promise<BodySearchResult> {
   const { request } = options;
-  const { documents, dictionary, queryWeights, queries, union } = prepared;
+  const { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, referenceScope, union } = prepared;
   const coverage = { ...prepared.coverage };
-  if (!queries.length) return { hits: [], total: 0, coverage: { ...coverage, complete: coverage.totalFiles === 0 && coverage.complete } };
+  if (!queries.length && !referencePath) return { hits: [], total: 0, coverage: { ...coverage, complete: coverage.totalFiles === 0 && coverage.complete } };
   const sections: Section[] = [];
+  const linkStatistics = new Map<string, DocumentStatistics>();
   let scannedSections = 0;
   let freshFilesSinceYield = 0;
   let filesSinceYield = 0;
@@ -381,8 +471,9 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
         scannedSections += statistics.sections.length;
         freshFilesSinceYield++;
       }
+      linkStatistics.set(document.vaultRelativePath, statistics);
       for (const section of statistics.sections) sections.push({ ...section, document, contentRevision: statistics.contentRevision,
-        journalDate: journalDate(document), titleTerms: statistics.titleTerms, tagTerms: statistics.tagTerms });
+        journalDate: journalDate(document), titleTerms: statistics.titleTerms, tagTerms: statistics.tagTerms, firstBodyParagraph: statistics.firstBodyParagraph, outline: statistics.outline });
       coverage.indexedFiles++;
     } catch (error) {
       checkAbort(request.signal);
@@ -463,19 +554,57 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
       } else fused.set(result.section, { ...result, score, bestRank: rank });
     }
   }
-  const ordered = [...fused.values()].sort((left, right) => right.score - left.score || left.bestRank - right.bestRank
+  let ordered: { section: Section; score: number; query?: number; bestRank: number; inclusionReason?: BodySearchInclusionReason }[] = [...fused.values()].sort((left, right) => right.score - left.score || left.bestRank - right.bestRank
     || left.section.document.vaultRelativePath.localeCompare(right.section.document.vaultRelativePath) || left.section.sectionStart - right.section.sectionStart);
+  const matchedPaths = new Set(ordered.map(result => result.section.document.vaultRelativePath));
+  const candidates = [...matchedPaths].slice(0, KNOWLEDGE_LINK_LIMITS.candidates).map(vaultRelativePath => ({ vaultRelativePath,
+    contentRevision: linkStatistics.get(vaultRelativePath)!.contentRevision, targets: linkStatistics.get(vaultRelativePath)!.linkTargets }));
+  const neighborhood = referenceScope === "single" || prepared.exactQuery
+    ? { boosted: new Set<string>(), cues: new Map<string, readonly import("./contracts").KnowledgeLinkCue[]>() }
+    : knowledgeLinkNeighborhood(candidates, documents, matchedPaths);
+  if (neighborhood.boosted.size) {
+    ordered = ordered.map(result => neighborhood.boosted.has(result.section.document.vaultRelativePath) ? { ...result, score: result.score * (1 + KNOWLEDGE_LINK_LIMITS.boost) } : result)
+      .sort((left, right) => right.score - left.score || left.bestRank - right.bestRank || left.section.document.vaultRelativePath.localeCompare(right.section.document.vaultRelativePath) || left.section.sectionStart - right.section.sectionStart);
+  }
+  if (referencePath) {
+    const matched = ordered.findIndex(result => result.section.document.vaultRelativePath === referencePath);
+    const section = sections.find(section => section.document.vaultRelativePath === referencePath);
+    // This pointer uses only the same successfully read statistics as keyword hits.
+    if (matched >= 0) ordered.unshift({ ...ordered.splice(matched, 1)[0], inclusionReason: "按指代带入" });
+    else if (section) ordered.unshift({ section, score: 0, bestRank: 0, inclusionReason: "按指代带入" });
+  }
+  if (referenceScope === "single") ordered = ordered.filter(result => result.section.document.vaultRelativePath === referencePath);
+  const cueSections = new Map<string, Section>();
+  for (const { section } of ordered) if (neighborhood.cues.has(section.document.vaultRelativePath) && !cueSections.has(section.document.vaultRelativePath)) cueSections.set(section.document.vaultRelativePath, section);
+  const outlines = new Map<Section, Readonly<KnowledgeDocumentOutline>>();
+  const outlinedPaths = new Set<string>();
+  let outlineEntries = 0;
+  let outlineCharacters = 0;
+  for (const { section } of ordered) {
+    if (outlinedPaths.size >= KNOWLEDGE_OUTLINE_LIMITS.documents) break;
+    if (!section.outline || outlinedPaths.has(section.document.vaultRelativePath)) continue;
+    const outline = limitKnowledgeOutline(section.outline, KNOWLEDGE_OUTLINE_LIMITS.totalEntries - outlineEntries, KNOWLEDGE_OUTLINE_LIMITS.totalCharacters - outlineCharacters);
+    if (!outline) continue;
+    outlinedPaths.add(section.document.vaultRelativePath);
+    outlines.set(section, outline);
+    outlineEntries += outline.entries.length;
+    outlineCharacters += knowledgeOutlineCharacters(outline);
+  }
   const offset = Number.isFinite(request.offset) ? Math.max(0, Math.trunc(request.offset!)) : 0;
   const limit = Number.isFinite(request.limit) ? Math.max(0, Math.min(100, Math.trunc(request.limit!))) : 8;
-  const hits: BodySearchHit[] = ordered.slice(offset, offset + limit).map(({ section, score, query }) => ({
+  const hits: BodySearchHit[] = ordered.slice(offset, offset + limit).map(({ section, score, query, inclusionReason }) => ({
     vaultRelativePath: section.document.vaultRelativePath,
     title: section.document.title,
     kind: section.document.kind,
     recordedAt: section.document.recordedAt,
     contentRevision: section.contentRevision,
-    sectionTitle: section.sectionTitle,
     totalLines: section.totalLines,
-    ...sectionEvidence(section, queries[query]),
+    ...(query === undefined
+      ? section.firstBodyParagraph ?? { ...sectionEvidence(section, new Set()), sectionTitle: section.sectionTitle }
+      : searchEvidence(section, queries[query], bodyQueries[query], dictionary)),
+    ...(inclusionReason ? { inclusionReason } : {}),
+    ...(outlines.has(section) ? { outline: outlines.get(section)! } : {}),
+    ...(cueSections.get(section.document.vaultRelativePath) === section ? { linkCues: neighborhood.cues.get(section.document.vaultRelativePath)! } : {}),
     score,
     ...(section.journalDate ? { journalDate: section.journalDate } : {}),
   }));
@@ -526,6 +655,12 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
     this.maxCharacters = memoryLimit(options.maxCachedCharacters, 16_000_000);
     this.maxTokenEntries = memoryLimit(options.maxCachedTokenEntries, 1_000_000);
     this.maxDocuments = memoryLimit(options.maxCachedDocuments, 10_000);
+  }
+
+  navigationLinks(path: string, contentRevision: string): ReturnType<typeof extractMarkdownAnchorLinks> | undefined {
+    this.assertActive();
+    const record = this.records.get(path)?.statistics;
+    return record?.contentRevision === contentRevision ? record.anchorLinks : undefined;
   }
 
   async search(options: BodySearchOptions): Promise<BodySearchResult> {

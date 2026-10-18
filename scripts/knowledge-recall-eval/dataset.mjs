@@ -5,7 +5,7 @@ import path from 'node:path';
 export const DIGEST_ALGORITHM = 'sha256-path-content-u64be-v1';
 export const DIGEST_EXCLUDED_FIELDS = ['manifest.json#/content_sha256'];
 export const RULE_VERSION = 'kb-recall-mechanical-v2';
-const SUPPORTED_RULE_VERSIONS = ['kb-recall-mechanical-v1', RULE_VERSION];
+const SUPPORTED_RULE_VERSIONS = ['kb-recall-mechanical-v1', RULE_VERSION, 'kb-recall-mechanical-v3'];
 
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
