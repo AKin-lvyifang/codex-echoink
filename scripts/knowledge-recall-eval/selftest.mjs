@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile, rm, symlink, access } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile, rm, symlink, access, lstat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -11,17 +12,118 @@ import { judgePromptBoundary } from './prompt-boundary.mjs';
 process.env.PI_OFFLINE = '1';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const temporary = path.join(os.homedir(), 'EchoInk-TestVaults/90-任务临时');
-await mkdir(temporary, { recursive: true });
-const fixture = await mkdtemp(path.join(temporary, '知识库-召回评测-selftest-'));
+const registry = path.join(os.homedir(), 'EchoInk-TestVaults/README.md');
+const runId = `selftest-${process.pid}-${Date.now()}-${randomUUID()}`;
+const fixture = path.join(temporary, `知识库-召回评测-${runId}-fixture`);
 const dataset = path.join(fixture, 'dataset');
-const runId = `selftest-${process.pid}-${Date.now()}`;
 const work = path.join(temporary, `知识库-召回评测-${runId}`);
+const registeredRoots = new Set();
+async function registerRoot(directory, purpose) {
+  try { await lstat(directory); throw new Error(`Selftest root already exists: ${directory}`); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  await appendFile(registry, `\n- \`${path.relative(path.dirname(registry), directory)}\`：evaluator selftest ${runId}，${purpose}；仅独立合成数据，不启动 Obsidian 或 Provider。创建前登记。\n`);
+  registeredRoots.add(directory);
+  console.log(JSON.stringify({ selftest_root: directory, lifecycle: 'registered_before_creation', purpose }));
+}
+async function retireRoot(directory) {
+  if (!registeredRoots.has(directory)) return;
+  await rm(directory, { recursive: true, force: true });
+  await appendFile(registry, `\n- \`${path.relative(path.dirname(registry), directory)}\`：evaluator selftest ${runId} 已结束，已按登记的独有路径精确清理并退役。\n`);
+  registeredRoots.delete(directory);
+  console.log(JSON.stringify({ selftest_root: directory, lifecycle: 'removed_and_retired' }));
+}
+
+async function testCurrentProjectScope() {
+  const scopeDataset = path.join(fixture, 'scope-dataset');
+  await mkdir(path.join(scopeDataset, '记忆'), { recursive: true });
+  await writeFile(path.join(scopeDataset, 'manifest.json'), JSON.stringify({ dataset_version: 'selftest-project-scope', fixed_date: '2026-10-16T12:00:00+08:00', settings: {} }));
+  const token = 'SYNTHETIC_SCOPE_SIGNAL';
+  const allIds = ['mem_scope_alpha', 'mem_scope_beta', 'mem_scope_global'];
+  await writeFile(path.join(scopeDataset, '记忆/seed.json'), JSON.stringify({ operations: [
+    { id: allIds[0], request: { operation: 'create', kind: 'fact', title: 'Harbor schedule', recallWhen: token, content: `${token} Harbor ferries depart at dawn.`, scope: 'fixture-alpha', basis: 'explicit' } },
+    { id: allIds[1], request: { operation: 'create', kind: 'fact', title: 'Orchard harvest', recallWhen: token, content: `${token} Orchard apples ripen in autumn.`, scope: 'fixture-beta', basis: 'explicit' } },
+    { id: allIds[2], request: { operation: 'create', kind: 'fact', title: 'Library hours', recallWhen: token, content: `${token} The public library closes at six.`, basis: 'explicit' } }
+  ] }));
+  const scenarios = [
+    { id: 'DECLARED_ONLY', query: token, declared: 'fixture-alpha', projectId: null },
+    { id: 'CURRENT_OVERRIDES_DECLARED', query: `Project: fixture-beta\n${token}`, declared: 'fixture-alpha', projectId: 'fixture-beta' },
+    { id: 'HISTORY_ONLY', query: token, history: [{ role: 'user', content: `Project: fixture-alpha\n${token}` }, { role: 'assistant', content: 'Earlier project discussion.' }], projectId: null },
+    { id: 'CHINESE_TOP_LEVEL', query: `项目：fixture-beta\n${token}`, declared: 'fixture-alpha', projectId: 'fixture-beta' },
+    { id: 'FENCED_DIRECTIVE', query: `\`\`\`text\nProject: fixture-beta\n\`\`\`\n${token}`, declared: 'fixture-alpha', projectId: null },
+    { id: 'INLINE_PROSE', query: `For Project: fixture-beta, find ${token}.`, declared: 'fixture-alpha', projectId: null },
+    { id: 'INDENTED_DIRECTIVE', query: `  Project: fixture-beta\n${token}`, declared: 'fixture-alpha', projectId: null },
+    { id: 'CONFLICTING_DIRECTIVES', query: `Project: fixture-alpha\nProject: fixture-beta\n${token}`, declared: 'fixture-alpha', projectId: null }
+  ];
+  const scopeCases = scenarios.map(scenario => ({
+    case_id: `SCOPE_${scenario.id}`, starter: false, domain: 'memory', query: scenario.query,
+    setup: { memory_seed: '记忆/seed.json', ...(scenario.declared ? { project: scenario.declared } : {}), ...(scenario.history ? { history: scenario.history } : {}) },
+    expected: {
+      candidate: { required_ids: scenario.projectId ? allIds.slice(1) : allIds, ...(scenario.projectId ? { forbidden_ids: [allIds[0]] } : {}) },
+      delivery: { required_ids: scenario.projectId ? allIds.slice(1) : allIds, ...(scenario.projectId ? { forbidden_ids: [allIds[0]] } : {}) }
+    }
+  }));
+  await writeFile(path.join(scopeDataset, 'cases.jsonl'), `${scopeCases.map(item => JSON.stringify(item)).join('\n')}\n`);
+  const scopeFrozen = await freezeDataset(scopeDataset);
+  const scopeWork = `${work}-scope`;
+  await registerRoot(scopeWork, '当前 query 项目指令回归运行副本');
+  try {
+    const scopeOutput = path.join(fixture, 'scope-run');
+    const scopeRun = await runEvaluation({ dataset: scopeDataset, 'source-root': root, 'output-run': scopeOutput, 'run-id': `${runId}-scope`, phase: 'selftest', cases: scopeCases.map(item => item.case_id).join(',') });
+    const scopeResults = (await readFile(path.join(scopeOutput, 'results.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    // Keep the actual production calls, serialized context, and audit in red/green logs.
+    console.log(JSON.stringify({ diagnostic: 'synthetic-only current memory project scope', dataset_sha256: scopeFrozen.digest.content_sha256, run: scopeRun, results: scopeResults }));
+    const failures = [];
+    const check = (label, callback) => { try { callback(); } catch (error) { failures.push(`${label}: ${error.message}`); } };
+    for (const [index, scenario] of scenarios.entries()) {
+      const result = scopeResults.find(item => item.case_id === scopeCases[index].case_id);
+      const label = scopeCases[index].case_id;
+      check(`${label} candidate`, () => assert.equal(result.candidate.status, 'pass'));
+      check(`${label} delivery`, () => assert.equal(result.delivery.status, 'pass'));
+      const actual = result.actual;
+      const expectedIds = [...(scenario.projectId ? allIds.slice(1) : allIds)].sort();
+      check(`${label} actual candidates`, () => assert.deepEqual(actual.candidate_items.map(item => item.id).sort(), expectedIds));
+      check(`${label} serialized delivery`, () => assert.deepEqual(actual.delivery_items.map(item => item.id).sort(), expectedIds));
+      const probes = actual.calls.filter(call => call.function === 'PersonalMemoryRepository.prepareTurnSnapshot.projectCandidates');
+      check(`${label} candidate probe scope`, () => assert.deepEqual(probes.map(call => call.request), scenario.projectId ? [{ query: scenario.query, scope: scenario.projectId }] : []));
+      const recall = actual.calls.find(call => call.function === 'PersonalMemoryRecallHarness.prepareTurnContext');
+      check(`${label} Recall input`, () => {
+        assert.ok(recall, 'Production Recall must actually be called');
+        assert.equal(recall.request.query, scenario.query);
+        assert.equal(recall.request.scope ?? null, scenario.projectId);
+        assert.equal(Object.hasOwn(recall.request, 'scope'), scenario.projectId !== null, 'No current directive must omit scope from actual Recall input');
+        assert.deepEqual(recall.request.recentConversation, (scenario.history ?? []).map(turn => turn.content));
+      });
+      check(`${label} serialized audit`, () => {
+        const audit = actual.effective_configuration;
+        assert.equal(audit.declared_project, scenario.declared ?? null);
+        assert.equal(audit.projectId, scenario.projectId);
+        assert.equal(audit.current_query, scenario.query);
+        assert.deepEqual(audit.frozen_history, scenario.history ?? []);
+        assert.deepEqual(audit.recent_conversation, (scenario.history ?? []).map(turn => turn.content));
+      });
+    }
+    assert.deepEqual(failures, [], 'Current query alone must determine both production project-scope calls and serialized audit');
+    assert.ok(scopeRun.adapter.imported_files.some(item => item.path === 'src/harness/memory/project-identity.ts'));
+    console.log(`PASS: ${scenarios.length} independent synthetic project-scope cases; actual candidate probe, Recall input, delivery serialization, and frozen-input audit.`);
+  } finally { await retireRoot(scopeWork); }
+}
+
 try {
+  await registerRoot(fixture, '独立合成 fixture、冻结数据与自测输出');
+  await mkdir(fixture);
+  if (!process.argv.includes('--scope-only')) {
   await mkdir(path.join(dataset, '笔记/wiki'), { recursive: true });
+  await mkdir(path.join(dataset, '笔记/journal'), { recursive: true });
   await mkdir(path.join(dataset, '记忆'), { recursive: true });
   await writeFile(path.join(dataset, 'manifest.json'), JSON.stringify({ dataset_version: 'selftest', fixed_date: '2026-10-16T12:00:00+08:00', settings: {} }));
   await writeFile(path.join(dataset, '笔记/wiki/gold.md'), '# Golden fixture\nGOLD_TOKEN answer: preserve this exact sentence.\n');
   await writeFile(path.join(dataset, '笔记/wiki/change.md'), '# Change fixture\nBEFOREMUTATION original sentence.\n');
+  await writeFile(path.join(dataset, '笔记/wiki/search-policy.md'), '# Search policy\nJOURNAL_FILTER_TOKEN WIKI_CONFIGURATION_EVIDENCE belongs to the knowledge note.\n');
+  await writeFile(path.join(dataset, '笔记/journal/interference.md'), '# Daily entry\nJOURNAL_FILTER_TOKEN JOURNAL_CONFIGURATION_DECOY belongs to the diary.\n');
+  const journalBindings = { schemaVersion: 1, revision: 1, configured: true, migrationIssues: [], roles: {
+    wiki: { enabled: true, readPaths: ['wiki'], writePath: 'wiki', allowedSubdirectories: [], autoOrganizePaths: [] },
+    journal: { enabled: true, searchEnabled: true, readPaths: ['journal'], writePath: 'journal', allowedSubdirectories: [], autoOrganizePaths: ['journal'] }
+  } };
   await writeFile(path.join(dataset, '记忆/seed.json'), JSON.stringify({
     operations: [
       { id: 'mem_eval_coffee', request: { operation: 'create', kind: 'fact', title: 'COFFEE_MEMORY_TOKEN', recallWhen: 'COFFEE_MEMORY_TOKEN', content: 'COFFEE_MEMORY_TOKEN I do not drink coffee.', basis: 'explicit' } },
@@ -35,7 +137,9 @@ try {
   const cases = [
     { case_id: 'A1', starter: true, query: 'GOLD_TOKEN', setup: { opened_paths: ['wiki/gold.md'], history: [{ role: 'user', content: 'Prior host hint' }], model_must_derive_date_range: true }, expected: { candidate: { required_paths: ['wiki/gold.md'], max_rank: 1 }, delivery: { required_paths: ['wiki/gold.md'], required_excerpts: ['preserve this exact sentence.'], required_fields: ['contentRevision', 'lineStart', 'lineEnd'] } } },
     { case_id: 'A3', starter: true, query: 'GOLD_TOKEN', expected: { candidate: { required_paths: ['missing.md'] }, delivery: { required_excerpts: ['THIS_IS_NOT_IN_THE_VAULT'] } } },
-    { case_id: 'A4', starter: true, query: 'GOLD_TOKEN', setup: { settings_override: { search_journal: false } }, expected: { candidate: { required_paths: ['wiki/gold.md'] }, delivery: { required_paths: ['wiki/gold.md'] } } },
+    { case_id: 'A4', starter: true, query: 'JOURNAL_FILTER_TOKEN', setup: { folder_bindings: journalBindings, settings_override: { search_journal: false } }, expected: { candidate: { required_paths: ['wiki/search-policy.md'], forbidden_paths: ['journal/interference.md'] }, delivery: { required_paths: ['wiki/search-policy.md'], forbidden_paths: ['journal/interference.md'], required_excerpts: ['WIKI_CONFIGURATION_EVIDENCE'], forbidden_excerpts: ['JOURNAL_CONFIGURATION_DECOY'] } } },
+    { case_id: 'A4_JOURNAL_ENABLED', starter: false, query: 'JOURNAL_FILTER_TOKEN', setup: { folder_bindings: journalBindings, settings_override: { search_journal: true } }, expected: { candidate: { required_paths: ['wiki/search-policy.md', 'journal/interference.md'] }, delivery: { required_paths: ['wiki/search-policy.md', 'journal/interference.md'], required_excerpts: ['WIKI_CONFIGURATION_EVIDENCE', 'JOURNAL_CONFIGURATION_DECOY'] } } },
+    { case_id: 'A_UNKNOWN_SETUP', starter: false, query: 'GOLD_TOKEN', setup: { unsupported_fixture_host_switch: 'not-performed' }, expected: { candidate: { required_paths: ['wiki/gold.md'] }, delivery: { required_paths: ['wiki/gold.md'], required_excerpts: ['preserve this exact sentence.'] } } },
     { case_id: 'H1', starter: true, domain: 'memory', query: 'COFFEE_MEMORY_TOKEN', setup: { memory_seed: '记忆/seed.json' }, expected: { candidate: { required_ids: ['mem_eval_coffee'], required_secondary_ids: ['secondary_eval_tea'] }, delivery: { required_ids: ['mem_eval_coffee', 'secondary_eval_tea'], required_excerpts: ['I do not drink coffee.', 'Maybe tea.'], required_fields: ['basis'] } } },
     { case_id: 'H_INVALID', starter: true, domain: 'memory', query: 'COFFEE_MEMORY_TOKEN', setup: { memory_seed: '记忆/invalid-seed.json' }, expected: { candidate: { required_ids: ['mem_eval_coffee'] }, delivery: { required_ids: ['mem_eval_coffee'] } } },
     { case_id: 'H2', starter: true, domain: 'memory', query: 'split', setup: { memory_seed: '记忆/seed.json' }, subcases: [
@@ -88,6 +192,7 @@ try {
   assert.equal(judgeCandidate({}, []).status, 'pending_review', 'An empty applicable rule must not automatically pass');
   assert.equal(judgeDelivery({ required_excerpts: ['evidence'] }, [{ excerpt: 'other' }], 'wrapper evidence').status, 'fail');
   const output = path.join(fixture, 'run');
+  await registerRoot(work, '原 starter 评测运行副本');
   const run = await runEvaluation({ dataset, 'source-root': root, 'output-run': output, 'run-id': runId, phase: 'selftest' });
   const results = (await readFile(path.join(output, 'results.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   const byId = Object.fromEntries(results.map(item => [item.case_id, item]));
@@ -107,8 +212,45 @@ try {
   assert.equal(judgeDelivery({ identity_assertions: [{ id: 'not-delivered', required_fields: ['basis'] }] }, [], '').status, 'fail');
   assert.equal(byId.A3.candidate.status, 'fail');
   assert.equal(byId.A3.delivery.status, 'fail');
-  assert.equal(byId.A4.candidate.status, 'blocked', 'Unperformed host configuration must not count as product failure');
-  assert.equal(byId.A4.delivery.status, 'blocked');
+  assert.equal(byId.A4.candidate.status, 'pass', 'Implemented journal search override must run against the real directory binding');
+  assert.equal(byId.A4.delivery.status, 'pass');
+  const a4Configuration = byId.A4.actual.effective_configuration;
+  assert.equal(journalBindings.roles.journal.searchEnabled, true, 'The fixture starts with journal search enabled');
+  assert.equal(a4Configuration.settings_override.search_journal, false);
+  assert.equal(a4Configuration.directory_bindings.roles.journal.enabled, true, 'Search is disabled without disabling the journal role');
+  assert.equal(a4Configuration.directory_bindings.roles.journal.searchEnabled, false, 'The production binding must receive the override');
+  assert.deepEqual(a4Configuration.directory_bindings.roles.journal.autoOrganizePaths, ['journal']);
+  assert.equal(a4Configuration.journal_auto_organize_unchanged, true);
+  assert.deepEqual(byId.A4.actual.candidate_items.map(item => item.vaultRelativePath), ['wiki/search-policy.md']);
+  assert.deepEqual(byId.A4.actual.delivery_items.map(item => item.vaultRelativePath), ['wiki/search-policy.md']);
+  assert.ok(byId.A4.actual.provider_text.includes('WIKI_CONFIGURATION_EVIDENCE'));
+  assert.ok(!byId.A4.actual.provider_text.includes('JOURNAL_CONFIGURATION_DECOY'));
+  const configurationWork = `${work}-configuration`;
+  await registerRoot(configurationWork, 'journal 开启正控制与未知 setup 阻断反例运行副本');
+  try {
+    const configurationOutput = path.join(fixture, 'configuration-run');
+    const configurationRun = await runEvaluation({ dataset, 'source-root': root, 'output-run': configurationOutput, 'run-id': `${runId}-configuration`, phase: 'selftest', cases: 'A4_JOURNAL_ENABLED,A_UNKNOWN_SETUP' });
+    const configurationResults = (await readFile(path.join(configurationOutput, 'results.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    console.log(JSON.stringify({ diagnostic: 'synthetic-only journal setting and unknown setup controls', starter_scores: run.scores, disabled_journal: byId.A4, run: configurationRun, results: configurationResults }));
+    const enabled = configurationResults.find(item => item.case_id === 'A4_JOURNAL_ENABLED');
+    assert.equal(enabled.candidate.status, 'pass', 'The same diary must be retrievable when journal search is enabled');
+    assert.equal(enabled.delivery.status, 'pass');
+    assert.equal(enabled.actual.effective_configuration.directory_bindings.roles.journal.searchEnabled, true);
+    assert.ok(enabled.actual.candidate_items.some(item => item.vaultRelativePath === 'journal/interference.md'));
+    assert.ok(enabled.actual.delivery_items.some(item => item.vaultRelativePath === 'journal/interference.md'));
+    assert.ok(enabled.actual.provider_text.includes('JOURNAL_CONFIGURATION_DECOY'));
+    const unknown = configurationResults.find(item => item.case_id === 'A_UNKNOWN_SETUP');
+    assert.equal(unknown.candidate.status, 'blocked', 'A genuinely unknown host precondition must remain blocked');
+    assert.equal(unknown.delivery.status, 'blocked');
+    assert.ok(unknown.actual.unsupported_setup.some(issue => issue.key === 'unsupported_fixture_host_switch' && issue.classification === 'script_host_precondition_not_executed' && issue.blocks_standard_setup));
+    assert.equal(judgeCandidate(unknown.expected.candidate, unknown.actual.candidate_items).status, 'pass', 'Blocking is caused by the unsupported setup, not a failed retrieval');
+    assert.equal(judgeDelivery(unknown.expected.delivery, unknown.actual.delivery_items, unknown.actual.provider_text).status, 'pass');
+    assert.ok(!results.some(item => ['A4_JOURNAL_ENABLED', 'A_UNKNOWN_SETUP'].includes(item.case_id)), 'Independent controls must not enter the original starter denominator');
+    assert.equal(configurationRun.scores.candidate.blocked, 1);
+    assert.equal(configurationRun.scores.delivery.blocked, 1);
+    assert.equal(configurationRun.scores.candidate.executed, 1);
+    assert.equal(configurationRun.scores.delivery.executed, 1);
+  } finally { await retireRoot(configurationWork); }
   assert.equal(byId.A1.actual.effective_configuration.opened_paths_applied, true);
   assert.equal(byId.A1.actual.effective_configuration.retrieval_request.includeUnrefined, false);
   assert.equal(byId.H1.candidate.status, 'pass', JSON.stringify({ verdict: byId.H1.candidate, raw: byId.H1.actual.raw.repository_search, delivered: byId.H1.actual.delivery_items }));
@@ -140,8 +282,9 @@ try {
   assert.equal(judgeDelivery({ identity_assertions: [{ path: changedReference.vaultRelativePath, fields: { contentRevision: `sha256:${'0'.repeat(64)}` } }] }, byId.I2.actual.delivery_items, byId.I2.actual.provider_text).status, 'fail', 'Correct excerpt with a different expected revision must fail delivery');
   assert.equal(byId.J1.candidate.status, 'not_run');
   assert.equal(byId.K1.candidate.status, 'not_run');
-  assert.equal(run.scores.candidate.score, '6/7');
-  assert.equal(run.scores.delivery.score, '5/7');
+  // A4 now runs and passes: it adds one actual result to each former 6/7 and 5/7 score.
+  assert.equal(run.scores.candidate.score, '7/8');
+  assert.equal(run.scores.delivery.score, '6/8');
   assert.equal(run.scores.answer.score, '');
   assert.equal(run.device, 'desktop-script');
   assert.equal(run.model, '');
@@ -152,6 +295,7 @@ try {
   assert.deepEqual(csvRow({ ...run, answer_metrics: { summary: { tool_calls_median: 3, elapsed_seconds_median: 1.25 } } }, 'run.json').split('","').slice(10, 12), ['3', '1.25']);
   assert.deepEqual(csvRow({ ...run, answer_metrics: { summary: { tool_calls_median: 0, elapsed_seconds_median: 0 } } }, 'run.json').split('","').slice(10, 12), ['0', '0']);
   const boundaryWork = `${work}-boundary`;
+  await registerRoot(boundaryWork, '原 I7 prompt-boundary 自测运行副本');
   try {
     const boundaryOutput = path.join(fixture, 'boundary-run');
     const boundaryRun = await runEvaluation({ dataset, 'source-root': root, 'output-run': boundaryOutput, 'run-id': `${runId}-boundary`, phase: 'selftest', cases: 'I7', 'prompt-boundary': 'true' });
@@ -165,7 +309,7 @@ try {
     assert.equal(actual.actual.prompt_boundary.synthetic_last_excerpt_dash.capture.references.at(-1).excerpt, '---');
     assert.ok(actual.actual.calls.some(call => call.function === 'actual.convertToLlm'));
     assert.ok(actual.actual.calls.some(call => call.function === 'actual.openaiCompatible.convertMessages'));
-  } finally { await rm(boundaryWork, { recursive: true, force: true }); }
+  } finally { await retireRoot(boundaryWork); }
   const boundaryQuestion = 'CURRENT_QUESTION';
   const boundaryControl = (resource, dashResource, excerpt = 'proof') => {
     const capture = (text, original) => ({ question: boundaryQuestion, provider_resource_text: text, references: [{ vaultRelativePath: 'wiki/control.md', excerpt: original }], openai_compatible: { output: [{ role: 'user', content: text }, { role: 'user', content: boundaryQuestion }] } });
@@ -185,16 +329,18 @@ try {
   assert.equal(judgePromptBoundary(boundaryControl(jsonText(markerOriginal), jsonText('---'), markerOriginal)).status, 'pass', 'Closed JSON source/string boundaries are also explicit and safe for literal marker characters');
   console.log(JSON.stringify({ diagnostic: 'synthetic-only boundary controls', open: { input: openControl.actual.provider_resource_text, output: openControl.actual.openai_compatible.output, verdict: judgePromptBoundary(openControl).status }, closed: { input: closedControl.actual.provider_resource_text, output: closedControl.actual.openai_compatible.output, verdict: judgePromptBoundary(closedControl).status } }));
   const legacyWork = `${work}-v1`;
+  await registerRoot(legacyWork, '原 v1 兼容自测运行副本');
   try {
     const legacyRun = await runEvaluation({ dataset: legacyDataset, 'source-root': root, 'output-run': path.join(fixture, 'legacy-run'), 'run-id': `${runId}-v1`, phase: 'selftest' });
     assert.equal(legacyRun.dataset.scoring_rule_version, 'kb-recall-mechanical-v1', 'Archived manifest rule version must not be relabeled as the latest rule');
-  } finally { await rm(legacyWork, { recursive: true, force: true }); }
+  } finally { await retireRoot(legacyWork); }
   assert.ok(byId.A1.actual.calls.some(item => item.function === 'createProductionPiKnowledgeRuntime.retrieveChat'));
   assert.ok(byId.A1.actual.calls.some(item => item.function === 'KnowledgeRetriever.retrieve'));
   assert.ok(byId.H1.actual.calls.some(item => item.function === 'PersonalMemoryRecallHarness.prepareTurnContext'));
   assert.ok(run.adapter.imported_files.some(item => item.path === 'src/plugin/pi-production-runtime-composition.ts'));
   console.log('PASS: v1/v2 freeze and run metadata, digest rejection, real production retrieval/Recall, inapplicable candidate and revision assertions, output/14-column CSV with unmeasured blanks.');
+  }
+  await testCurrentProjectScope();
 } finally {
-  await rm(fixture, { recursive: true, force: true });
-  await rm(work, { recursive: true, force: true });
+  for (const directory of [...registeredRoots].reverse()) await retireRoot(directory);
 }

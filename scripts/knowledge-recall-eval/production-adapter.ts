@@ -12,6 +12,7 @@ import { getKnowledgeFolderBindings, registerKnowledgeFolderBindings, normalizeK
 import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime, createPiKnowledgeInlineExtension } from '@production/plugin/pi-production-runtime-composition';
 import { PersonalMemoryRepository } from '@production/harness/memory/personal-memory-repository';
 import { PersonalMemoryRecallHarness } from '@production/harness/memory/personal-memory-recall-harness';
+import { resolveExplicitMemoryProjectId } from '@production/harness/memory/project-identity';
 import { serializeSecondaryRecord } from '@production/harness/memory/secondary-memory-store';
 import { capturePromptBoundary } from './prompt-boundary-adapter';
 
@@ -75,6 +76,7 @@ export async function evaluateProduction(input) {
       unregister = registerKnowledgeFolderBindings(vaultPath, () => bindings);
     }
     if (item.domain === 'memory' || item.case_id.startsWith('H')) {
+      const projectId = resolveExplicitMemoryProjectId(item.query);
       let nextId;
       const seedPaths = setup.memory_seed ? (Array.isArray(setup.memory_seed) ? setup.memory_seed : [setup.memory_seed]) : [];
       const seeds = await Promise.all(seedPaths.map(async seedPath => JSON.parse(await fs.readFile(inside(datasetPath, seedPath), 'utf8'))));
@@ -138,9 +140,9 @@ export async function evaluateProduction(input) {
         if (pages.length > 1000) throw new Error('Memory pagination did not terminate');
       } while (page.nextCursor);
       let scopedCandidates;
-      if (typeof setup.project === 'string') {
-        await observe('PersonalMemoryRepository.prepareTurnSnapshot.projectCandidates', { query: item.query, scope: setup.project }, () => repository.prepareTurnSnapshot({
-          memoryMode: 'normal', query: item.query, scope: setup.project,
+      if (projectId) {
+        await observe('PersonalMemoryRepository.prepareTurnSnapshot.projectCandidates', { query: item.query, scope: projectId }, () => repository.prepareTurnSnapshot({
+          memoryMode: 'normal', query: item.query, scope: projectId,
           selectCandidateIds(candidates) { scopedCandidates = [...candidates]; return []; }
         }, runtime));
       }
@@ -151,7 +153,7 @@ export async function evaluateProduction(input) {
       const extension = createPiKnowledgeInlineExtension({
         vaultSecurity: { name: 'eval-host-adapter', factory: async () => undefined },
         currentTurn: () => null,
-        currentMemoryTurn: () => ({ ...runtime, ...(typeof setup.project === 'string' ? { projectId: setup.project } : {}), query: item.query, recentConversation }),
+        currentMemoryTurn: () => ({ ...runtime, ...(projectId ? { projectId } : {}), query: item.query, recentConversation }),
         personalMemory: {
           loadFixedContext: request => repository.loadFixedContext(request),
           prepareTurnContext: async request => { preparedInput = request; return (prepared = await observe('PersonalMemoryRecallHarness.prepareTurnContext', request, () => harness.prepareTurnContext(request))); }
@@ -197,7 +199,7 @@ export async function evaluateProduction(input) {
         candidate_items: scopedCandidates ?? pages.flatMap(value => value.items), delivery_items: delivered,
         provider_text: text, calls, raw: { fixture_validation: { status: 'valid', secondary_ids: validatedSecondaryIds, method: 'serializeSecondaryRecord (calls normalizeAssociationClueFields); provider fields unchanged' }, seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context, repeat_recall: repeatEvidence, repeat_observations: repeatObservations, secondary_hit_write_errors: hitWriteErrors },
         host_adapters: ['synthetic Vault and runtime IDs', 'deterministic Repository idFactory/now', 'Repository secondaryRecordsProvider from frozen synthetic SecondaryMemoryRecord records', 'Pi event registration host only; production handler and serialization unchanged'],
-        effective_configuration: { frozen_history: frozenHistory, recent_conversation: recentConversation, history_applied_to_memory_preflight: true, history_roles_preserved_in_audit: true, current_query: item.query },
+        effective_configuration: { declared_project: setup.project ?? null, projectId: projectId ?? null, frozen_history: frozenHistory, recent_conversation: recentConversation, history_applied_to_memory_preflight: true, history_roles_preserved_in_audit: true, current_query: item.query },
         unsupported_setup: unsupportedSetup(setup).filter(issue => issue.key !== 'history')
       };
     }
