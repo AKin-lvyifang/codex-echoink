@@ -39,6 +39,9 @@ export async function writeMemorySeed(repository, seed, runtime, beforeWrite = (
 export async function evaluateProduction(input) {
   const { vaultPath, statePath, datasetPath, manifest, item, runId } = input;
   const setup = item.setup ?? {};
+  const frozenHistory = setup.history ?? [];
+  if (!Array.isArray(frozenHistory) || frozenHistory.some(turn => !['user', 'assistant'].includes(turn.role) || typeof turn.content !== 'string')) throw new Error('Invalid frozen history');
+  const recentConversation = item.recent_conversation ?? setup.recent_conversation ?? frozenHistory.map(turn => turn.content);
   const calls = [];
   async function observe(name, request, callback) {
     const start = performance.now();
@@ -63,7 +66,9 @@ export async function evaluateProduction(input) {
   let vaultEventSource;
   let vaultEventBinding;
   try {
-    const savedBindings = setup.folder_bindings ?? manifest.settings?.folder_bindings ?? manifest.folder_bindings;
+    const savedBindings = structuredClone(setup.folder_bindings ?? manifest.settings?.folder_bindings ?? manifest.folder_bindings);
+    const journalOrganizeBefore = structuredClone(savedBindings?.roles?.journal?.autoOrganizePaths ?? []);
+    if (setup.settings_override?.search_journal !== undefined && savedBindings?.roles?.journal) savedBindings.roles.journal.searchEnabled = setup.settings_override.search_journal;
     if (savedBindings) {
       const bindings = normalizeKnowledgeFolderBindings(savedBindings);
       if (!bindings) throw new Error('Invalid dataset folder_bindings');
@@ -93,12 +98,31 @@ export async function evaluateProduction(input) {
       }
       let timestamp = Date.parse(setup.fixed_now ?? seeds[0]?.clock ?? manifest.fixed_date ?? manifest.fixed_today ?? '2026-10-16T12:00:00+08:00');
       if (!Number.isFinite(timestamp)) throw new Error('Invalid fixed_date');
+      let secondarySnapshot = structuredClone(secondaryRecords);
       repository = new PersonalMemoryRepository({
         vaultPath, vaultId: runtime.vaultId, now: () => ++timestamp,
         idFactory: () => { if (!nextId) throw new Error('Memory seed must supply a stable ID for each create/supersede'); return nextId; },
-        secondaryRecordsProvider: async () => secondaryRecords,
+        secondaryRecordsProvider: async () => secondarySnapshot,
         watchExternalChanges: false
       });
+      const hitWrites = [], hitWriteErrors = [];
+      const snapshotTrace = [];
+      if (setup.repeat_query_count !== undefined) {
+        const prepareSnapshot = repository.prepareTurnSnapshot.bind(repository);
+        repository.prepareTurnSnapshot = async (...args) => {
+          const snapshot = await prepareSnapshot(...args);
+          snapshotTrace.push({ query: args[0].query, productRunId: args[1]?.productRunId ?? null,
+            candidates: snapshot.search?.items ?? [], pendingSecondaryHits: snapshot.search?.pendingSecondaryHits ?? [] });
+          return snapshot;
+        };
+      }
+      repository.setSecondaryChangedHook(records => { secondarySnapshot = structuredClone(records); });
+      const recordHits = repository.recordSecondaryRecallHits.bind(repository);
+      repository.recordSecondaryRecallHits = (...args) => {
+        const promise = observe('PersonalMemoryRepository.recordSecondaryRecallHits', args[0], () => recordHits(...args));
+        hitWrites.push(promise.catch(error => { hitWriteErrors.push(String(error)); }));
+        return promise;
+      };
       await observe('PersonalMemoryRepository.initialize', {}, () => repository.initialize());
       const seedResults = [];
       for (const seed of seeds) {
@@ -122,15 +146,15 @@ export async function evaluateProduction(input) {
       }
       candidateEvidence = { candidate_items: pages.flatMap(value => value.items), raw_candidate_pages: pages };
       const harness = new PersonalMemoryRecallHarness(repository);
-      let prepared;
+      let prepared, preparedInput;
       const handlers = new Map();
       const extension = createPiKnowledgeInlineExtension({
         vaultSecurity: { name: 'eval-host-adapter', factory: async () => undefined },
         currentTurn: () => null,
-        currentMemoryTurn: () => ({ ...runtime, ...(typeof setup.project === 'string' ? { projectId: setup.project } : {}), query: item.query, recentConversation: item.recent_conversation ?? setup.recent_conversation ?? [] }),
+        currentMemoryTurn: () => ({ ...runtime, ...(typeof setup.project === 'string' ? { projectId: setup.project } : {}), query: item.query, recentConversation }),
         personalMemory: {
           loadFixedContext: request => repository.loadFixedContext(request),
-          prepareTurnContext: async request => (prepared = await observe('PersonalMemoryRecallHarness.prepareTurnContext', request, () => harness.prepareTurnContext(request)))
+          prepareTurnContext: async request => { preparedInput = request; return (prepared = await observe('PersonalMemoryRecallHarness.prepareTurnContext', request, () => harness.prepareTurnContext(request))); }
         },
         personalMemoryRecallTokenBudget: setup.memory_token_budget ?? 1200,
         personalMemoryAvailable: true
@@ -138,20 +162,52 @@ export async function evaluateProduction(input) {
       await extension.factory({ on: (name, handler) => handlers.set(name, handler) });
       const before = await observe('createPiKnowledgeInlineExtension.before_agent_start', { prompt: item.query }, () => handlers.get('before_agent_start')({ systemPrompt: 'EchoInk offline evaluation', prompt: item.query }));
       const context = await observe('createPiKnowledgeInlineExtension.context', { query: item.query }, () => handlers.get('context')({ messages: [{ role: 'user', content: item.query, timestamp }] }));
+      const repeatEvidence = [];
+      if (setup.repeat_query_count !== undefined) {
+        if (!Number.isSafeInteger(setup.repeat_query_count) || setup.repeat_query_count < 1 || setup.repeat_query_count > 20) throw new Error('Invalid repeat_query_count');
+        await Promise.all(hitWrites.splice(0));
+        repeatEvidence.push({ round: 1, before: structuredClone(secondaryRecords), after: structuredClone(secondarySnapshot), prepared });
+        for (let round = 2; round <= setup.repeat_query_count; round++) {
+          const previous = structuredClone(secondarySnapshot);
+          const request = { ...preparedInput, productRunId: `${runtime.productRunId}-repeat-${round}` };
+          const value = await observe('PersonalMemoryRecallHarness.prepareTurnContext.repeat', request, () => harness.prepareTurnContext(request));
+          await Promise.all(hitWrites.splice(0));
+          repeatEvidence.push({ round, before: previous, after: structuredClone(secondarySnapshot), prepared: value });
+        }
+      }
+      const repeatObservations = repeatEvidence.length ? {
+        recall_calls: repeatEvidence.length,
+        actual_snapshot_trace: snapshotTrace,
+        secondary_hit_condition_triggered: snapshotTrace.some(snapshot => snapshot.pendingSecondaryHits.length > 0),
+        activity_update_verification: snapshotTrace.some(snapshot => snapshot.pendingSecondaryHits.length > 0) ? 'condition_triggered_inspect_actual_writes_and_counts' : 'not_triggered',
+        activity_increased: secondarySnapshot.some(record => record.hitCount > (secondaryRecords.find(before => before.id === record.id)?.hitCount ?? record.hitCount)),
+        evidence_support_unchanged: secondaryRecords.every(before => {
+          const after = secondarySnapshot.find(record => record.id === before.id);
+          return after && ['supportLevel', 'evidence', 'basis', 'sourceMemoryRevision'].every(key => JSON.stringify(after[key]) === JSON.stringify(before[key]));
+        }),
+        note: 'Observed production state only. Without actual pendingSecondaryHits the update condition was not triggered; unchanged activity alone does not establish a product defect. No hit or support update was injected.'
+      } : null;
       const text = context.messages.filter(message => message.role === 'custom' && message.customType === 'echoink-personal-memory-context-v1').map(message => message.content).join('\n');
       // Decode the production serialization, not a reconstructed recall payload.
       const block = text.match(/<echoink_memory_recall\b[^>]*>\n([\s\S]*?)\n<\/echoink_memory_recall>/u);
       const secondaryBlock = text.match(/<echoink_memory_secondary\b[^>]*>\n([\s\S]*?)\n<\/echoink_memory_secondary>/u);
       const delivered = [...(block ? JSON.parse(block[1]).candidates : []), ...(secondaryBlock ? JSON.parse(secondaryBlock[1]).secondaryFacts.map(entry => entry.fact) : [])];
+      if (repeatObservations) repeatObservations.delivered_secondary_facts = secondaryBlock ? JSON.parse(secondaryBlock[1]).secondaryFacts : [];
       return {
         candidate_items: scopedCandidates ?? pages.flatMap(value => value.items), delivery_items: delivered,
-        provider_text: text, calls, raw: { fixture_validation: { status: 'valid', secondary_ids: validatedSecondaryIds, method: 'serializeSecondaryRecord (calls normalizeAssociationClueFields); provider fields unchanged' }, seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context },
+        provider_text: text, calls, raw: { fixture_validation: { status: 'valid', secondary_ids: validatedSecondaryIds, method: 'serializeSecondaryRecord (calls normalizeAssociationClueFields); provider fields unchanged' }, seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context, repeat_recall: repeatEvidence, repeat_observations: repeatObservations, secondary_hit_write_errors: hitWriteErrors },
         host_adapters: ['synthetic Vault and runtime IDs', 'deterministic Repository idFactory/now', 'Repository secondaryRecordsProvider from frozen synthetic SecondaryMemoryRecord records', 'Pi event registration host only; production handler and serialization unchanged'],
-        unsupported_setup: unsupportedSetup(setup)
+        effective_configuration: { frozen_history: frozenHistory, recent_conversation: recentConversation, history_applied_to_memory_preflight: true, history_roles_preserved_in_audit: true, current_query: item.query },
+        unsupported_setup: unsupportedSetup(setup).filter(issue => issue.key !== 'history')
       };
     }
 
-    const host = syntheticVaultHost(vaultPath, setup.opened_paths ?? []);
+    const host = syntheticVaultHost(vaultPath, setup.opened_paths ?? [], setup.active_path, setup.read_failures ?? []);
+    const linkSeedEvidence = (setup.link_seeds ?? []).map(name => {
+      const links = host.metadataCache.resolvedLinks[name] ?? {};
+      if (!Object.keys(links).length) throw new Error(`Frozen link seed has no actual resolvable link: ${name}`);
+      return { path: name, actual_resolved_links: links, source: 'Parsed actual frozen Markdown links, no gold neighbors inserted' };
+    });
     const index = new KnowledgeAgentIndex({ vaultPath, storageRootPath: statePath,
       ...(VaultBodySearch ? { bodySearch: new VaultBodySearch(host, () => getKnowledgeFolderBindings(vaultPath), { excludedRoots: () => manifest.settings?.excluded_directories ?? [] }) } : {}) });
     if (setup.mutations?.length) {
@@ -217,14 +273,17 @@ export async function evaluateProduction(input) {
       candidate_items: pages.flatMap(value => value.hits), delivery_items: selected.references,
       provider_text: selected.providerResourceText, calls,
       ...(promptBoundary ? { prompt_boundary: promptBoundary } : {}),
-      raw: { initial_refresh: initialRefresh, vault_event_binding: vaultEventBinding ?? null, mutations: mutationResults, index_search: pages, retriever: retrieved, production_chat: chat, production_ask: ask, scored_delivery: selectedMode },
+      raw: { initial_refresh: initialRefresh, vault_event_binding: vaultEventBinding ?? null, mutations: mutationResults, index_search: pages, retriever: retrieved, production_chat: chat, production_ask: ask, scored_delivery: selectedMode, injected_read_failures: host.readFailureEvents, link_seed_evidence: linkSeedEvidence, resolved_links: host.metadataCache.resolvedLinks },
       effective_configuration: {
         retrieval_request: retrievalRequest, selected_preflight: selectedMode,
         directory_bindings: savedBindings ?? null,
+        settings_override: setup.settings_override ?? null,
+        journal_auto_organize_unchanged: JSON.stringify(journalOrganizeBefore) === JSON.stringify(savedBindings?.roles?.journal?.autoOrganizePaths ?? []),
         knowledge_preferences_repository: 'Empty host adapter; only maintenance methods use it. retrieveChat/retrieveAsk do not consult this repository.',
         explicit_path_override_vs_native_chat: retrievalRequest.explicitPaths.length > 0 ? 'Function-level explicitPaths override; ordinary native chat preflight passes []. This is not a native noteMention test.' : null,
-        opened_paths_applied: Boolean(VaultBodySearch), history_applied_to_knowledge_preflight: false,
-        host_hints: { opened_paths: setup.opened_paths ?? [], history: setup.history ?? [] }
+        opened_paths_applied: Boolean(VaultBodySearch), active_path_applied: Boolean(VaultBodySearch), history_applied_to_knowledge_preflight: false,
+        host_hints: { opened_paths: setup.opened_paths ?? [], active_path: host.workspace.getActiveFile()?.path ?? null, history: frozenHistory },
+        history_consumption: 'Knowledge API has no history parameter: actual current query is unchanged; frozen history is audited and not synthesized into the query.'
       },
       host_adapters: ['synthetic Vault', 'Knowledge directory binding registration', ...(vaultEventBinding ? ['Synthetic Vault event source; unchanged production bindKnowledgeIndexToVault handlers. Native Obsidian event delivery/timeliness is not measured.'] : [])],
       unsupported_setup: unsupportedSetup(setup)
@@ -244,7 +303,7 @@ export async function evaluateProduction(input) {
 }
 
 function unsupportedSetup(setup) {
-  const known = new Set(['folder_bindings', 'memory_seed', 'memory_search', 'memory_token_budget', 'recent_conversation', 'mutations', 'explicit_paths', 'include_unrefined', 'preflight_mode', 'isolation', 'restore', 'reload_plugin', 'project', 'fixed_now', 'timezone', 'query_terms_only_in_aliases', 'query_terms_only_in_tags', 'preserve_settings', 'model_must_derive_date_range']);
+  const known = new Set(['folder_bindings', 'memory_seed', 'memory_search', 'memory_token_budget', 'recent_conversation', 'mutations', 'explicit_paths', 'include_unrefined', 'preflight_mode', 'isolation', 'restore', 'reload_plugin', 'project', 'fixed_now', 'timezone', 'query_terms_only_in_aliases', 'query_terms_only_in_tags', 'preserve_settings', 'model_must_derive_date_range', 'active_path', 'opened_paths', 'settings_override', 'read_failures', 'link_seeds', 'repeat_query_count']);
   return Object.entries(setup).filter(([key, value]) => !known.has(key) && value !== undefined && value !== null && value !== false && (!Array.isArray(value) || value.length)).map(([key, value]) => {
     const productionDoesNotConsume = ['opened_paths', 'history'].includes(key);
     return { key, value, blocks_standard_setup: !productionDoesNotConsume,
@@ -255,7 +314,8 @@ function unsupportedSetup(setup) {
 
 // Synthetic public-API host; it only adapts file access and metadata. Ranking,
 // filtering, positions and delivery use the unchanged production implementation.
-function syntheticVaultHost(root, openedPaths) {
+function syntheticVaultHost(root, openedPaths, activePath, readFailures) {
+  const failedReads = new Set(readFailures), readFailureEvents = [];
   const file = relative => {
     const stat = fsSync.statSync(inside(root, relative));
     return { path: relative, basename: path.basename(relative, path.extname(relative)), extension: path.extname(relative).slice(1), stat: { mtime: stat.mtimeMs, ctime: stat.ctimeMs, size: stat.size } };
@@ -272,13 +332,27 @@ function syntheticVaultHost(root, openedPaths) {
     };
     walk(''); return result;
   };
+  const markdown = files(), resolvedLinks = {};
+  for (const source of markdown) {
+    const content = fsSync.readFileSync(inside(root, source.path), 'utf8');
+    const links = {};
+    for (const match of content.matchAll(/\[\[([^\]\n]+)\]\]/gu)) {
+      const target = match[1].split('|')[0].split('#')[0].trim();
+      if (!target) continue;
+      const normalized = target.replace(/\.md$/iu, '');
+      const matches = markdown.filter(candidate => candidate.path.replace(/\.md$/iu, '') === normalized || candidate.path.replace(/\.md$/iu, '') === path.posix.join(path.posix.dirname(source.path), normalized) || candidate.basename === normalized);
+      if (matches.length === 1) links[matches[0].path] = (links[matches[0].path] ?? 0) + 1;
+    }
+    resolvedLinks[source.path] = links;
+  }
   return {
-    vault: { getMarkdownFiles: files, getAbstractFileByPath(relative) { try { return file(relative); } catch { return null; } }, read: item => fs.readFile(inside(root, item.path), 'utf8') },
-    metadataCache: { getFileCache(item) {
+    readFailureEvents,
+    vault: { getMarkdownFiles: files, getAbstractFileByPath(relative) { try { return file(relative); } catch { return null; } }, read: item => { if (failedReads.has(item.path)) { readFailureEvents.push({ path: item.path, method: 'vault.read', error: 'injected_read_failure' }); throw new Error(`Injected fixture read failure: ${item.path}`); } return fs.readFile(inside(root, item.path), 'utf8'); } },
+    metadataCache: { resolvedLinks, getFileCache(item) {
       const content = fsSync.readFileSync(inside(root, item.path), 'utf8');
       const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(content);
       return { frontmatter: frontmatter ? parseYaml(frontmatter[1]) : {}, tags: [...content.matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]+)/gu)].map(match => ({ tag: `#${match[1]}` })) };
     } },
-    workspace: { getActiveFile: () => openedPaths[0] ? file(openedPaths[0]) : null, getLastOpenFiles: () => openedPaths }
+    workspace: { getActiveFile: () => (activePath ?? openedPaths[0]) ? file(activePath ?? openedPaths[0]) : null, getLastOpenFiles: () => openedPaths }
   };
 }
