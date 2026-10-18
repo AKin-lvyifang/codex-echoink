@@ -2,9 +2,12 @@ import type { KnowledgeDocumentOutline, KnowledgeOutlineEntry } from "./contract
 
 export interface MarkdownHeading { heading: string; line: number; level: number }
 
+export const KNOWLEDGE_BODY_FRAGMENT_LIMITS = Object.freeze({ lines: 24, characters: 2400 });
+
 export const KNOWLEDGE_OUTLINE_LIMITS = Object.freeze({
   longDocumentLines: 120,
   longDocumentCharacters: 8000,
+  sectionedDocumentHeadings: 3,
   documents: 3,
   entriesPerDocument: 12,
   totalEntries: 24,
@@ -69,10 +72,22 @@ export function limitKnowledgeOutline(outline: Readonly<KnowledgeDocumentOutline
   return undefined;
 }
 
-export function createKnowledgeDocumentOutline(headings: readonly MarkdownHeading[], totalLines: number, characters: number, contentRevision: string): Readonly<KnowledgeDocumentOutline> | undefined {
-  if (!headings.length || (totalLines < KNOWLEDGE_OUTLINE_LIMITS.longDocumentLines && characters < KNOWLEDGE_OUTLINE_LIMITS.longDocumentCharacters)) return undefined;
+export function createKnowledgeDocumentOutline(headings: readonly MarkdownHeading[], lines: readonly string[], contentRevision: string): Readonly<KnowledgeDocumentOutline> | undefined {
+  if (!headings.length) return undefined;
+  let bodyStart = 0;
+  if (lines[0]?.trim() === "---") {
+    bodyStart = 1;
+    while (bodyStart < lines.length && !/^(?:---|\.\.\.)\s*$/u.test(lines[bodyStart])) bodyStart++;
+    bodyStart = Math.min(lines.length, bodyStart + 1);
+  }
+  const bodyLines = lines.length - bodyStart;
+  let bodyCharacters = Math.max(0, bodyLines - 1);
+  for (let index = bodyStart; index < lines.length; index++) bodyCharacters += lines[index].length;
+  const extremeLength = bodyLines >= KNOWLEDGE_OUTLINE_LIMITS.longDocumentLines || bodyCharacters >= KNOWLEDGE_OUTLINE_LIMITS.longDocumentCharacters;
+  const spansFragments = bodyLines > KNOWLEDGE_BODY_FRAGMENT_LIMITS.lines || bodyCharacters > KNOWLEDGE_BODY_FRAGMENT_LIMITS.characters;
+  if (!extremeLength && !(headings.length >= KNOWLEDGE_OUTLINE_LIMITS.sectionedDocumentHeadings && spansFragments)) return undefined;
   return limitKnowledgeOutline({ schemaVersion: 1, readStatus: "unread", contentRevision,
-    entries: outlineEntries(headings, totalLines), totalHeadings: headings.length, truncated: false },
+    entries: outlineEntries(headings, lines.length), totalHeadings: headings.length, truncated: false },
   KNOWLEDGE_OUTLINE_LIMITS.entriesPerDocument, KNOWLEDGE_OUTLINE_LIMITS.totalCharacters);
 }
 

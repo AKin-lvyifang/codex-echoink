@@ -17,7 +17,7 @@ import { searchBodyDocuments } from "../knowledge-base/search/body-search";
 export async function runVaultBodySearchOutlineTests(): Promise<void> {
   const sourcePath = "notes/guide.md";
   const content = ["# Guide", "OUTLINE_DEV_TOKEN is the delivered claim.", ...Array.from({ length: 25 }, () => "Background."),
-    "## Details", "UNREAD_BODY_SENTINEL is outside the delivered passage.", "### Conditions", ...Array.from({ length: 120 }, () => "Unrelated background.")].join("\n");
+    "## Details", "UNREAD_BODY_SENTINEL is outside the delivered passage.", "### Conditions", ...Array.from({ length: 12 }, () => "Unrelated background.")].join("\n");
   const bodies = new Map([[sourcePath, content]]);
   let clock = 10;
   let reads = 0;

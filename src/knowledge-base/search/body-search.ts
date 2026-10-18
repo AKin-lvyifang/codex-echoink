@@ -1,7 +1,7 @@
 import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchInclusionReason, BodySearchMatchSource, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult, KnowledgeDocumentOutline } from "./contracts";
 import { buildSearchDictionary, iterateSearchTokens, tokenizeSearchText } from "./tokenize";
 import { yieldSearchTask as yieldToUi } from "./scheduling";
-import { createKnowledgeDocumentOutline, knowledgeOutlineCharacters, KNOWLEDGE_OUTLINE_LIMITS, limitKnowledgeOutline, parseMarkdownHeadings, type MarkdownHeading as Heading } from "./markdown-navigation";
+import { createKnowledgeDocumentOutline, knowledgeOutlineCharacters, KNOWLEDGE_BODY_FRAGMENT_LIMITS, KNOWLEDGE_OUTLINE_LIMITS, limitKnowledgeOutline, parseMarkdownHeadings, type MarkdownHeading as Heading } from "./markdown-navigation";
 
 interface Fragment {
   start: number;
@@ -67,8 +67,8 @@ interface CachedDocument {
   statistics: DocumentStatistics;
 }
 
-const MAX_FRAGMENT_CHARACTERS = 2400;
-const MAX_FRAGMENT_LINES = 24;
+const MAX_FRAGMENT_CHARACTERS = KNOWLEDGE_BODY_FRAGMENT_LIMITS.characters;
+const MAX_FRAGMENT_LINES = KNOWLEDGE_BODY_FRAGMENT_LIMITS.lines;
 const EMPTY_DICTIONARY: readonly string[] = [];
 const QUERY_BOILERPLATE = ["我", "我的", "关于", "有关", "的", "笔记", "记录", "资料", "文章", "哪些", "什么", "有没有", "找一下", "相关", "方面"];
 
@@ -188,7 +188,7 @@ function firstBodyParagraph(lines: readonly string[], included: readonly boolean
 async function buildDocumentStatistics(document: BodySearchDocument, content: string, contentRevision: string, dictionary: readonly string[], signal?: AbortSignal): Promise<DocumentStatistics> {
   const lines = content.split(/\r\n|\n|\r/u);
   const headings = currentHeadings(document, lines);
-  const outline = createKnowledgeDocumentOutline(headings, lines.length, content.length, contentRevision);
+  const outline = createKnowledgeDocumentOutline(headings, lines, contentRevision);
   const includedBodyLines = bodyLines(lines, headings);
   const paragraph = firstBodyParagraph(lines, includedBodyLines, headings, document.title);
   const ranges: { title: string; start: number; end: number }[] = [];

@@ -36,6 +36,46 @@ async function withCheckpointTask<T>(onTask: () => void, action: () => Promise<T
   }
 }
 
+export async function runKnowledgeBodySearchOutlineEligibilityTests(): Promise<void> {
+  const body = (lineCount: number, headingCount = 3, characters?: number) => {
+    const lines = Array.from({ length: lineCount }, () => "Ordinary body.");
+    for (let index = 0; index < headingCount; index++) lines[index * 4] = `${index ? "##" : "#"} Section ${index}`;
+    lines[1] = "OUTLINE_MID_TOKEN is local evidence.";
+    let text = lines.join("\n");
+    if (characters !== undefined) { assert.ok(text.length <= characters); lines[2] += "q".repeat(characters - text.length); text = lines.join("\n"); }
+    return text;
+  };
+  const cases = [
+    { scenario: "medium-multiple-sections", body: body(40), expected: true },
+    { scenario: "short-multiple-headings", body: body(12), expected: false },
+    { scenario: "long-without-headings", body: body(160, 0), expected: false },
+    { scenario: "one-fragment-line-boundary", body: body(24), expected: false },
+    { scenario: "second-fragment-by-line", body: body(25), expected: true },
+    { scenario: "one-fragment-character-boundary", body: body(12, 3, 2400), expected: false },
+    { scenario: "second-fragment-by-character", body: body(12, 3, 2401), expected: true },
+    { scenario: "two-headings-medium-body", body: body(40, 2), expected: false },
+    { scenario: "extreme-length-fallback", body: body(120, 1), expected: true },
+    { scenario: "long-properties-short-body", prefix: `---\n${Array.from({ length: 125 }, (_, index) => `field${index}: draft`).join("\n")}\n---\n`, body: body(12), expected: false },
+    { scenario: "medium-body-with-property-offsets", prefix: "---\naliases: [Independent development source]\n---\n", body: body(40), expected: true }
+  ];
+  const rows: { scenario: string; bodyLines: number; bodyCharacters: number; headings: number; expected: boolean; actual: boolean }[] = [];
+  for (const fixture of cases) {
+    const content = `${fixture.prefix ?? ""}${fixture.body}`;
+    const result = await search([note(`${fixture.scenario}.md`, content)], { query: "OUTLINE_MID_TOKEN", limit: 1 });
+    assert.equal(result.hits.length, 1);
+    const outline = result.hits[0].outline;
+    rows.push({ scenario: fixture.scenario, bodyLines: fixture.body.split("\n").length, bodyCharacters: fixture.body.length,
+      headings: parseMarkdownHeadings(content.split("\n")).length, expected: fixture.expected, actual: Boolean(outline) });
+    if (outline) {
+      assert.equal(verifyKnowledgeOutlineLines(outline, content.split("\n")), true);
+      assert.equal(outline.entries[0].lineStart, (fixture.prefix?.split("\n").length ?? 1), "outline coordinates retain original source lines after properties");
+    }
+  }
+  console.log("Outline readability development evidence:", JSON.stringify(rows));
+  assert.deepEqual(rows.filter(row => row.actual !== row.expected), [], "multi-section navigation follows body fragment boundaries, not raw document size");
+  console.log("Knowledge outline eligibility: medium sections, short complete notes, heading-free text, exact fragment boundaries and property exclusions PASS");
+}
+
 export async function runKnowledgeBodySearchOutlineTests(): Promise<void> {
   const structured = ["---", "description: |", "  # Property fake", "---", "# Main", "OUTLINE_DEV_TOKEN is local evidence.",
     "## Parent", "Body.", "```md", "# Fence fake", "## Fence child fake", "```", "### Child", "Child body.",
@@ -43,7 +83,7 @@ export async function runKnowledgeBodySearchOutlineTests(): Promise<void> {
   const lines = structured.split(/\r\n|\n|\r/u);
   const headings = parseMarkdownHeadings(lines);
   assert.deepEqual(headings.map(heading => heading.heading), ["Main", "Parent", "Child", "Sibling", "Setext ending"]);
-  const outline = createKnowledgeDocumentOutline(headings, lines.length, structured.length, "revision-structural")!;
+  const outline = createKnowledgeDocumentOutline(headings, lines, "revision-structural")!;
   assert.equal(outline.entries[0].lineEnd, 17, "a parent outline range ends before the next same-level heading");
   assert.equal(outline.entries[1].lineEnd, 15);
   assert.equal(outline.entries[2].lineEnd, 15);
@@ -61,11 +101,13 @@ export async function runKnowledgeBodySearchOutlineTests(): Promise<void> {
   assert.equal(Object.isFrozen(removed[0]), true, "removing navigation also preserves the frozen result");
   assert.equal(removed[0].label, immutable.label);
   assert.equal(fitKnowledgeOutlines([immutable], () => true)[0], immutable, "unchanged results retain their original object");
-  assert.equal(createKnowledgeDocumentOutline(headings, 30, 300, "short"), undefined);
-  assert.ok(createKnowledgeDocumentOutline(headings, 30, 8100, "long-by-characters"));
+  const shortLines = ["# Short", "Body.", "## One", "Body.", "## Two", "Body."];
+  assert.equal(createKnowledgeDocumentOutline(parseMarkdownHeadings(shortLines), shortLines, "short"), undefined);
+  const longCharacters = ["# Long", "Background ".repeat(800), "## Tail", "Body."];
+  assert.ok(createKnowledgeDocumentOutline(parseMarkdownHeadings(longCharacters), longCharacters, "long-by-characters"));
 
   const denseLines = Array.from({ length: 40 }, (_, index) => `## Heading ${index} ${"长标题".repeat(16)}\nDetails.\nMore background.\nFurther background.`).join("\n").split("\n");
-  const dense = createKnowledgeDocumentOutline(parseMarkdownHeadings(denseLines), denseLines.length, denseLines.join("\n").length, "dense")!;
+  const dense = createKnowledgeDocumentOutline(parseMarkdownHeadings(denseLines), denseLines, "dense")!;
   assert.equal(dense.totalHeadings, 40);
   assert.equal(dense.truncated, true);
   assert.ok(dense.entries.length <= KNOWLEDGE_OUTLINE_LIMITS.entriesPerDocument);
