@@ -55,6 +55,7 @@ export interface KnowledgeAgentRawSource {
 export interface KnowledgeAgentSearchHit extends KnowledgeApplicability {
   matchSources?: readonly import("./search/contracts").BodySearchMatchSource[];
   inclusionReason?: import("./search/contracts").BodySearchInclusionReason;
+  outline?: Readonly<import("./search/contracts").KnowledgeDocumentOutline>;
   sectionTitle?: string;
   lineStart?: number;
   lineEnd?: number;

@@ -3,6 +3,7 @@ import { sha256Hex } from "../utils/sha256";
 import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole } from "./root-paths-core";
 import type { KnowledgeFolderBindings } from "./folder-bindings";
 import { BodySearchMemoryIndex, explicitNoteReferenceScope } from "./search/body-search";
+import { fitKnowledgeOutlines } from "./search/markdown-navigation";
 import type { BodySearchDocument, KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeAgentReadResult, KnowledgeAgentSearchRequest, KnowledgeAgentSearchResult } from "./knowledge-agent-index";
 
@@ -198,8 +199,9 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     }
     // Scope changes during a scan cannot leak material from an earlier setting.
     this.assertCurrent(scope, generation, Boolean(request.cursor));
-    const hits = result.hits.map(hit => ({ ...hit, entryId: `body:${hit.vaultRelativePath}:${hit.lineStart}`,
+    let hits = result.hits.map(hit => ({ ...hit, entryId: `body:${hit.vaultRelativePath}:${hit.lineStart}`,
       verificationStatus: "local_revision_verified" as const, rawSources: [] }));
+    hits = fitKnowledgeOutlines(hits, values => new TextEncoder().encode(JSON.stringify(values)).length <= 10_000);
     while (hits.length > 1 && new TextEncoder().encode(JSON.stringify(hits)).length > 10_000) hits.pop();
     const remaining = Math.max(0, result.total - offset - hits.length);
     return { generation, total: result.total, returned: hits.length, remaining, hasMore: remaining > 0,

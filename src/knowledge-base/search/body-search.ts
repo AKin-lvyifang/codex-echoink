@@ -1,8 +1,8 @@
-import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchInclusionReason, BodySearchMatchSource, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult } from "./contracts";
+import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchInclusionReason, BodySearchMatchSource, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult, KnowledgeDocumentOutline } from "./contracts";
 import { buildSearchDictionary, iterateSearchTokens, tokenizeSearchText } from "./tokenize";
 import { yieldSearchTask as yieldToUi } from "./scheduling";
+import { createKnowledgeDocumentOutline, knowledgeOutlineCharacters, KNOWLEDGE_OUTLINE_LIMITS, limitKnowledgeOutline, parseMarkdownHeadings, type MarkdownHeading as Heading } from "./markdown-navigation";
 
-interface Heading { heading: string; line: number; level: number }
 interface Fragment {
   start: number;
   end: number;
@@ -33,6 +33,7 @@ interface DocumentStatistics {
   titleTerms: Set<string>;
   tagTerms: Set<string>;
   firstBodyParagraph?: Evidence & { sectionTitle: string };
+  outline?: Readonly<KnowledgeDocumentOutline>;
   characters: number;
   tokenEntries: number;
 }
@@ -43,6 +44,7 @@ interface Section extends IndexedSection {
   titleTerms: Set<string>;
   tagTerms: Set<string>;
   firstBodyParagraph?: Evidence & { sectionTitle: string };
+  outline?: Readonly<KnowledgeDocumentOutline>;
 }
 interface PreparedSearch {
   documents: readonly BodySearchDocument[];
@@ -94,42 +96,9 @@ function journalDate(document: BodySearchDocument): string | undefined {
   return calendarDate(basename.match(/^(\d{4}-\d{2}-\d{2})(?:\.md|[ _].*\.md)$/iu)?.[1]);
 }
 
-function parseHeadings(lines: readonly string[]): Heading[] {
-  const headings: Heading[] = [];
-  let fence: { character: string; length: number } | undefined;
-  let frontmatter = lines[0]?.trim() === "---";
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
-    if (frontmatter) {
-      if (index > 0 && /^(?:---|\.\.\.)\s*$/u.test(line)) frontmatter = false;
-      continue;
-    }
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
-    if (fence) {
-      if (marker && marker[1][0] === fence.character && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
-      continue;
-    }
-    if (marker) {
-      fence = { character: marker[1][0], length: marker[1].length };
-      continue;
-    }
-    const atx = line.match(/^ {0,3}(#{1,6})(?:[\t ]+(.+?)|[\t ]*)$/u);
-    if (atx) {
-      headings.push({ heading: (atx[2] ?? "").replace(/[\t ]+#+[\t ]*$/u, "").trim(), line: index + 1, level: atx[1].length });
-      continue;
-    }
-    if (index > 0 && /^ {0,3}(?:=+|-+)\s*$/u.test(line) && lines[index - 1].trim()
-      && !/^\s*(?:[-*+]>?|>|#{1,6}\s|`{3,}|~{3,})/u.test(lines[index - 1])
-      && headings.at(-1)?.line !== index) {
-      headings.push({ heading: lines[index - 1].trim(), line: index, level: line.trim()[0] === "=" ? 1 : 2 });
-    }
-  }
-  return headings;
-}
-
 function currentHeadings(document: BodySearchDocument, lines: readonly string[]): readonly Heading[] {
   // A structural pass also catches omitted/new headings and headings inside code fences.
-  const parsed = parseHeadings(lines);
+  const parsed = parseMarkdownHeadings(lines);
   const cached = document.headings;
   if (cached?.length === parsed.length && cached.every((heading, index) => {
     const actual = parsed[index];
@@ -219,6 +188,7 @@ function firstBodyParagraph(lines: readonly string[], included: readonly boolean
 async function buildDocumentStatistics(document: BodySearchDocument, content: string, contentRevision: string, dictionary: readonly string[], signal?: AbortSignal): Promise<DocumentStatistics> {
   const lines = content.split(/\r\n|\n|\r/u);
   const headings = currentHeadings(document, lines);
+  const outline = createKnowledgeDocumentOutline(headings, lines.length, content.length, contentRevision);
   const includedBodyLines = bodyLines(lines, headings);
   const paragraph = firstBodyParagraph(lines, includedBodyLines, headings, document.title);
   const ranges: { title: string; start: number; end: number }[] = [];
@@ -232,7 +202,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
   }
   const tagTerms = new Set(tokenizeSearchText((document.tags ?? []).join("\n"), dictionary));
   const sections: IndexedSection[] = [];
-  let characters = paragraph?.excerpt.length ?? 0;
+  let characters = (paragraph?.excerpt.length ?? 0) + (outline ? knowledgeOutlineCharacters(outline) : 0);
   let tokenEntries = titleTerms.size + tagTerms.size;
   for (const range of ranges) {
     checkAbort(signal);
@@ -263,7 +233,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
     tokenEntries += frequencies.size + fragmentFrequency.size + fragments.reduce((count, fragment) => count + fragment.frequencies.size + fragment.bodyTerms.size, 0);
     if (sections.length % 16 === 0 || text.length >= 32_000) await yieldToUi(signal);
   }
-  return { contentRevision, sections, titleTerms, tagTerms, firstBodyParagraph: paragraph, characters, tokenEntries };
+  return { contentRevision, sections, titleTerms, tagTerms, firstBodyParagraph: paragraph, outline, characters, tokenEntries };
 }
 
 function sectionEvidence(section: IndexedSection, query: ReadonlySet<string>, bodyQuery?: ReadonlySet<string>): Evidence {
@@ -496,7 +466,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
         freshFilesSinceYield++;
       }
       for (const section of statistics.sections) sections.push({ ...section, document, contentRevision: statistics.contentRevision,
-        journalDate: journalDate(document), titleTerms: statistics.titleTerms, tagTerms: statistics.tagTerms, firstBodyParagraph: statistics.firstBodyParagraph });
+        journalDate: journalDate(document), titleTerms: statistics.titleTerms, tagTerms: statistics.tagTerms, firstBodyParagraph: statistics.firstBodyParagraph, outline: statistics.outline });
       coverage.indexedFiles++;
     } catch (error) {
       checkAbort(request.signal);
@@ -587,6 +557,20 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
     else if (section) ordered.unshift({ section, score: 0, bestRank: 0, inclusionReason: "按指代带入" });
   }
   if (referenceScope === "single") ordered = ordered.filter(result => result.section.document.vaultRelativePath === referencePath);
+  const outlines = new Map<Section, Readonly<KnowledgeDocumentOutline>>();
+  const outlinedPaths = new Set<string>();
+  let outlineEntries = 0;
+  let outlineCharacters = 0;
+  for (const { section } of ordered) {
+    if (outlinedPaths.size >= KNOWLEDGE_OUTLINE_LIMITS.documents) break;
+    if (!section.outline || outlinedPaths.has(section.document.vaultRelativePath)) continue;
+    const outline = limitKnowledgeOutline(section.outline, KNOWLEDGE_OUTLINE_LIMITS.totalEntries - outlineEntries, KNOWLEDGE_OUTLINE_LIMITS.totalCharacters - outlineCharacters);
+    if (!outline) continue;
+    outlinedPaths.add(section.document.vaultRelativePath);
+    outlines.set(section, outline);
+    outlineEntries += outline.entries.length;
+    outlineCharacters += knowledgeOutlineCharacters(outline);
+  }
   const offset = Number.isFinite(request.offset) ? Math.max(0, Math.trunc(request.offset!)) : 0;
   const limit = Number.isFinite(request.limit) ? Math.max(0, Math.min(100, Math.trunc(request.limit!))) : 8;
   const hits: BodySearchHit[] = ordered.slice(offset, offset + limit).map(({ section, score, query, inclusionReason }) => ({
@@ -600,6 +584,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
       ? section.firstBodyParagraph ?? { ...sectionEvidence(section, new Set()), sectionTitle: section.sectionTitle }
       : searchEvidence(section, queries[query], bodyQueries[query], dictionary)),
     ...(inclusionReason ? { inclusionReason } : {}),
+    ...(outlines.has(section) ? { outline: outlines.get(section)! } : {}),
     score,
     ...(section.journalDate ? { journalDate: section.journalDate } : {}),
   }));

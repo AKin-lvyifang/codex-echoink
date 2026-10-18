@@ -109,6 +109,7 @@ export interface KnowledgeBaseCitationSummary {
 export interface KnowledgeReference {
   matchSources?: readonly import("./search/contracts").BodySearchMatchSource[];
   inclusionReason?: import("./search/contracts").BodySearchInclusionReason;
+  outline?: Readonly<import("./search/contracts").KnowledgeDocumentOutline>;
   columnStart?: number;
   columnEnd?: number;
   sectionTitle?: string;

@@ -10,6 +10,9 @@ import { VaultBodySearch } from "../../knowledge-base/vault-body-search";
 import { emptyKnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
 import { knowledgeReferenceEntryDetails } from "../../knowledge-base/usage";
 import type { KnowledgeReference } from "../../knowledge-base/types";
+import { searchBodyDocuments } from "../../knowledge-base/search/body-search";
+import { knowledgeOutlineCharacters } from "../../knowledge-base/search/markdown-navigation";
+import { createProductionPiKnowledgeRuntime } from "../../plugin/pi-production-runtime-composition";
 import {
   PI_KNOWLEDGE_READ_TOOL_IDS,
   PiKnowledgeReadToolSecurity,
@@ -18,6 +21,74 @@ import {
 } from "../../harness/pi-native/pi-knowledge-read-tools";
 import { collectSuccessfulAskPersonalMemoryToolSources } from "../../harness/pi-native/pi-native-conversation-runtime";
 import { EchoInkVaultToolEgressPolicy } from "../../harness/pi-native/vault-tool-result-safety";
+
+export async function runPiKnowledgeOutlineBudgetTests(): Promise<void> {
+  const bodies = new Map<string, string>(Array.from({ length: 4 }, (_, index): [string, string] => [`notes/budget-${index}.md`, ["# Overview", `BUDGET_ENV_TOKEN ${"文".repeat(2250)}`,
+    ...Array.from({ length: 5 }, (_, heading) => `## ${heading}${"目录标题".repeat(65)}\nDetails.`), ...Array.from({ length: 120 }, () => "Background.")].join("\n")]));
+  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => bodies.get(source.path)! }, metadataCache: { getFileCache: () => null } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-outline-budgets", storageRootPath: "/synthetic-outline-budgets-state", bodySearch: port });
+  try {
+    const raw = await searchBodyDocuments({ documents: [...bodies.keys()].map(path => ({ vaultRelativePath: path, title: file(path).basename, kind: "notes" as const, recordedAt: 10,
+      read: () => port.read({ vaultRelativePath: path }) })), request: { query: "BUDGET_ENV_TOKEN", limit: 4 } });
+    assert.equal(raw.hits.length, 4);
+    let includeOutlines = false;
+    // Supply verified source snapshots directly to exercise the larger production
+    // envelopes independently of the public Vault adapter's smaller 10KB page.
+    index.search = async request => {
+      const hits = raw.hits.slice(0, request.limit ?? 4).map(hit => {
+        const { outline, ...body } = hit;
+        return { ...body, ...(includeOutlines && outline ? { outline } : {}), entryId: `body:${hit.vaultRelativePath}:${hit.lineStart}`,
+          verificationStatus: "local_revision_verified" as const, rawSources: [] };
+      });
+      return { generation: 1, total: hits.length, returned: hits.length, remaining: 0, hasMore: false, exhausted: true, coverage: raw.coverage, hits };
+    };
+    const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+    const captured: KnowledgeReference[] = [];
+    const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "outline-budget-v", conversationId: "outline-budget-c", piSessionId: "outline-budget-s", productRunId: "outline-budget-r" }),
+      currentWorkflow: () => "chat", onSourceRead: (reference, fingerprint) => { captured.push(reference); assert.equal(fingerprint, undefined); }, egress: new EchoInkVaultToolEgressPolicy() });
+    const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+    const baselineTool = await executeTool(security, tools[0]!, "knowledge_search", "outline-budget-tool-baseline", { query: "BUDGET_ENV_TOKEN", limit: 2 });
+    includeOutlines = true;
+    captured.length = 0;
+    const outlinedTool = await executeTool(security, tools[0]!, "knowledge_search", "outline-budget-tool-with-navigation", { query: "BUDGET_ENV_TOKEN", limit: 2 });
+    assert.equal(outlinedTool.isError, false);
+    assert.equal(outlinedTool.details.truncated, false);
+    const baselineHits = JSON.parse(baselineTool.content[0].text).hits;
+    const deliveredHits = JSON.parse(outlinedTool.content[0].text).hits;
+    assert.ok(Buffer.byteLength(baselineTool.content[0].text, "utf8") > 13_000);
+    assert.ok(Buffer.byteLength(outlinedTool.content[0].text, "utf8") <= 16_000);
+    assert.deepEqual(deliveredHits.map((hit: { excerpt: string }) => hit.excerpt), baselineHits.map((hit: { excerpt: string }) => hit.excerpt));
+    assert.equal(captured.length, baselineHits.length);
+    assert.deepEqual(deliveredHits.map((hit: { outline: unknown }) => hit.outline), captured.map(reference => reference.outline));
+    assert.deepEqual((outlinedTool.details.references as KnowledgeReference[]).map(reference => reference.outline), captured.map(reference => reference.outline));
+    assert.ok(captured.every(reference => reference.lineEnd < reference.totalLines!));
+
+    const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+    const request = { question: "BUDGET_ENV_TOKEN", explicitPaths: [], includeUnrefined: false } as never;
+    includeOutlines = false;
+    const baselineChat = await runtime.retrieveChat!(request);
+    const baselineAsk = await runtime.retrieveAsk(request);
+    assert.equal(baselineChat.references.length, 4, "the baseline fixture's complete body payload fits the existing chat budget");
+    includeOutlines = true;
+    const chat = await runtime.retrieveChat!(request);
+    const ask = await runtime.retrieveAsk(request);
+    for (const [baseline, outlined] of [[baselineChat, chat], [baselineAsk, ask]]) {
+      assert.deepEqual(outlined.references.map(reference => reference.referenceId), baseline.references.map(reference => reference.referenceId), "adding navigation cannot drop a previously deliverable body reference");
+      assert.deepEqual(outlined.references.map(reference => reference.excerpt), baseline.references.map(reference => reference.excerpt));
+      assert.ok(Buffer.byteLength(outlined.providerResourceText, "utf8") <= 32_000);
+      const sources = JSON.parse(outlined.providerResourceText).sources;
+      assert.deepEqual(sources.map((source: { outline: unknown }) => source.outline), outlined.references.map(reference => reference.outline));
+      assert.deepEqual(knowledgeReferenceEntryDetails([...outlined.references]).references.map(reference => reference.outline), outlined.references.map(reference => reference.outline));
+    }
+    const beforeCharacters = raw.hits.reduce((sum, hit) => sum + (hit.outline ? knowledgeOutlineCharacters(hit.outline) : 0), 0);
+    const afterCharacters = chat.references.reduce((sum, reference) => sum + (reference.outline ? knowledgeOutlineCharacters(reference.outline) : 0), 0);
+    assert.ok(afterCharacters < beforeCharacters, "the near-cap fixture actually exercises navigation trimming");
+  } finally { port.dispose(); }
+  console.log("Knowledge outline budgets: 16KB explicit search and 32KB chat/ask preserve body references and exact delivered navigation PASS");
+}
 
 export async function runPiKnowledgeMetadataToolTests(): Promise<void> {
   const paragraph = "The replacement prism stays in the western cupboard.\nCheck its padded sleeve before transport.";

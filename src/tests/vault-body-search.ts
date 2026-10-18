@@ -12,6 +12,82 @@ import { PiKnowledgeReadToolSecurity, createPiKnowledgeReadToolDefinitions } fro
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+import { searchBodyDocuments } from "../knowledge-base/search/body-search";
+
+export async function runVaultBodySearchOutlineTests(): Promise<void> {
+  const sourcePath = "notes/guide.md";
+  const content = ["# Guide", "OUTLINE_DEV_TOKEN is the delivered claim.", ...Array.from({ length: 25 }, () => "Background."),
+    "## Details", "UNREAD_BODY_SENTINEL is outside the delivered passage.", "### Conditions", ...Array.from({ length: 120 }, () => "Unrelated background.")].join("\n");
+  const bodies = new Map([[sourcePath, content]]);
+  let clock = 10;
+  let reads = 0;
+  const file = (path: string) => ({ path, basename: "guide", extension: "md", stat: { mtime: clock, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => { reads++; return bodies.get(source.path)!; } },
+  metadataCache: { getFileCache: () => ({ headings: [{ heading: "Stale fake", level: 1, position: { start: { line: 0 } } }] }) },
+  workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-outline-search", storageRootPath: "/synthetic-outline-state", bodySearch: port });
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const production = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  try {
+    const search = await index.search({ query: "OUTLINE_DEV_TOKEN" });
+    assert.equal(reads, 1, "search navigation adds no second body read");
+    const hit = search.hits[0];
+    assert.deepEqual(hit.outline!.entries.map(entry => entry.heading), ["Guide", "Details", "Conditions"]);
+    const retrieval = await retriever.retrieve({ question: "OUTLINE_DEV_TOKEN" });
+    const reference = retrieval.references[0];
+    assert.deepEqual(reference.outline, hit.outline);
+    assert.equal(reference.lineEnd, hit.lineEnd);
+    assert.ok(reference.lineEnd < reference.outline!.entries[0].lineEnd);
+    assert.equal((await retriever.verifyReferences([reference])).status, "valid");
+    assert.deepEqual(knowledgeReferenceEntryDetails([reference]).references[0].outline, hit.outline);
+    const chat = await production.retrieveChat!({ question: "OUTLINE_DEV_TOKEN", explicitPaths: [], includeUnrefined: false } as never);
+    assert.deepEqual(JSON.parse(chat.providerResourceText).sources[0].outline, chat.references[0].outline);
+    assert.equal(chat.references[0].referenceId, reference.referenceId);
+    assert.doesNotMatch(chat.providerResourceText, /UNREAD_BODY_SENTINEL/u);
+    const captured: import("../knowledge-base/types").KnowledgeReference[] = [];
+    const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "outline-v", conversationId: "outline-c", piSessionId: "outline-s", productRunId: "outline-r" }),
+      currentWorkflow: () => "chat", onSourceRead: (item, fingerprint) => { captured.push(item); assert.equal(fingerprint, undefined); }, egress: new EchoInkVaultToolEgressPolicy() });
+    const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+    const input = { query: "OUTLINE_DEV_TOKEN", limit: 1 };
+    await security.handleToolCall({ toolName: "knowledge_search", toolCallId: "outline-search", input } as never, undefined);
+    await tools[0].execute("outline-search", input, undefined, undefined);
+    const tool = await security.handleToolResult({ toolName: "knowledge_search", toolCallId: "outline-search", isError: false } as never);
+    assert.equal(tool.isError, false);
+    const delivered = JSON.parse(tool.content[0].text).hits[0];
+    assert.deepEqual(delivered.outline, captured[0].outline);
+    assert.deepEqual((tool.details.references as typeof captured)[0].outline, delivered.outline);
+    assert.equal(captured[0].lineEnd, reference.lineEnd, "onSourceRead records only excerpt lines, never the outline's document-wide range");
+    assert.equal(captured[0].referenceId, reference.referenceId);
+    for (const outline of [undefined, null, { ...hit.outline, schemaVersion: 2 }, { ...hit.outline, readStatus: "read" }, { ...hit.outline, contentRevision: "stale" },
+      { ...hit.outline, entries: [] }, { ...hit.outline, extra: true }, { ...hit.outline, entries: [{ ...hit.outline!.entries[0], level: 0 }] },
+      { ...hit.outline, entries: [{ ...hit.outline!.entries[0], lineEnd: reference.totalLines! + 1 }] }]) {
+      assert.throws(() => knowledgeReferenceEntryDetails([{ ...reference, outline } as never]), /outline 无效/u);
+    }
+    const forged = { ...reference, outline: { ...reference.outline!, entries: reference.outline!.entries.map((entry, index) => index ? entry : { ...entry, heading: "Forged heading" }) } };
+    assert.equal((await retriever.verifyReferences([forged])).status, "source_changed");
+    const { outline: _outline, ...legacy } = reference;
+    assert.equal(Object.hasOwn(knowledgeReferenceEntryDetails([legacy]).references[0], "outline"), false);
+    bodies.set(sourcePath, content.replace("## Details", "## Revised details")); clock++; port.invalidate(sourcePath);
+    assert.equal((await retriever.verifyReferences([reference])).status, "source_changed");
+    const revised = (await index.search({ query: "OUTLINE_DEV_TOKEN" })).hits[0];
+    assert.notEqual(revised.outline!.contentRevision, reference.contentRevision);
+    assert.ok(revised.outline!.entries.some(entry => entry.heading === "Revised details"));
+
+    const budgetContent = ["# Guide", `BUDGET_NAV_TOKEN ${"文".repeat(5000)}`, ...Array.from({ length: 5 }, (_, index) => `## ${index}${"目录标题".repeat(65)}\nDetails.`), ...Array.from({ length: 120 }, () => "Background.")].join("\n");
+    bodies.set(sourcePath, budgetContent); clock++; port.invalidate(sourcePath);
+    const raw = await searchBodyDocuments({ documents: [{ vaultRelativePath: sourcePath, title: "guide", kind: "notes", recordedAt: clock, read: () => port.read({ vaultRelativePath: sourcePath }) }], request: { query: "BUDGET_NAV_TOKEN" } });
+    const budget = (await index.search({ query: "BUDGET_NAV_TOKEN" })).hits[0];
+    const { outline: fittedOutline, ...body } = budget;
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+    assert.ok(bytes([body]) < 10_000 && bytes([{ ...body, outline: raw.hits[0].outline }]) > 10_000, "the fixture crosses the real Vault cap only when its full outline is added");
+    assert.ok(bytes([budget]) <= 10_000);
+    assert.equal(budget.excerpt, raw.hits[0].excerpt);
+    assert.ok(!fittedOutline || fittedOutline.entries.length < raw.hits[0].outline!.entries.length);
+  } finally { port.dispose(); }
+  console.log("Public Vault outlines: preflight/tool/storage parity, excerpt-only read accounting, strict validation, revision changes and 10KB body preservation PASS");
+}
 
 export async function runVaultBodySearchMetadataTests(): Promise<void> {
   const paragraph = "Keep the amber filter in the upper drawer.\nCheck the spare lens before departure.";

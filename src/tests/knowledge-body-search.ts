@@ -6,6 +6,7 @@ import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings"
 import { buildSearchDictionary, tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import { yieldSearchTask } from "../knowledge-base/search/scheduling";
 import { sliceKnowledgeSourceSpan } from "../knowledge-base/source-span";
+import { createKnowledgeDocumentOutline, fitKnowledgeOutlines, knowledgeOutlineCharacters, KNOWLEDGE_OUTLINE_LIMITS, normalizeKnowledgeDocumentOutline, parseMarkdownHeadings, verifyKnowledgeOutlineLines } from "../knowledge-base/search/markdown-navigation";
 import type { BodySearchDocument, BodySearchOptions, BodySearchRequest, BodySearchResult } from "../knowledge-base/search/contracts";
 
 function note(path: string, body: string, metadata: Partial<BodySearchDocument> = {}): BodySearchDocument {
@@ -33,6 +34,74 @@ async function withCheckpointTask<T>(onTask: () => void, action: () => Promise<T
     if (descriptor) Object.defineProperty(globalThis, "scheduler", descriptor);
     else Reflect.deleteProperty(globalThis, "scheduler");
   }
+}
+
+export async function runKnowledgeBodySearchOutlineTests(): Promise<void> {
+  const structured = ["---", "description: |", "  # Property fake", "---", "# Main", "OUTLINE_DEV_TOKEN is local evidence.",
+    "## Parent", "Body.", "```md", "# Fence fake", "## Fence child fake", "```", "### Child", "Child body.",
+    "    # Indented fake", "## Sibling", "Sibling body.", "Setext ending", "==============", ...Array.from({ length: 125 }, () => "Ordinary background.")].join("\r\n");
+  const lines = structured.split(/\r\n|\n|\r/u);
+  const headings = parseMarkdownHeadings(lines);
+  assert.deepEqual(headings.map(heading => heading.heading), ["Main", "Parent", "Child", "Sibling", "Setext ending"]);
+  const outline = createKnowledgeDocumentOutline(headings, lines.length, structured.length, "revision-structural")!;
+  assert.equal(outline.entries[0].lineEnd, 17, "a parent outline range ends before the next same-level heading");
+  assert.equal(outline.entries[1].lineEnd, 15);
+  assert.equal(outline.entries[2].lineEnd, 15);
+  assert.equal(outline.entries[3].lineEnd, 17);
+  assert.equal(outline.entries[4].lineStart, 18);
+  assert.equal(outline.readStatus, "unread");
+  assert.equal(verifyKnowledgeOutlineLines(outline, lines), true);
+  assert.deepEqual(normalizeKnowledgeDocumentOutline(outline, "revision-structural", lines.length), outline);
+  const immutable: Readonly<{ label: string; outline?: typeof outline }> = Object.freeze({ label: "body preserved", outline });
+  const smaller = fitKnowledgeOutlines([immutable], values => (values[0].outline?.entries.length ?? 0) <= 2);
+  assert.equal(Object.isFrozen(smaller[0]), true, "shortened navigation preserves the result's frozen-object invariant");
+  assert.equal(Object.isFrozen(smaller[0].outline), true);
+  assert.equal(immutable.outline!.entries.length, 5);
+  const removed = fitKnowledgeOutlines([immutable], values => !Object.hasOwn(values[0], "outline"));
+  assert.equal(Object.isFrozen(removed[0]), true, "removing navigation also preserves the frozen result");
+  assert.equal(removed[0].label, immutable.label);
+  assert.equal(fitKnowledgeOutlines([immutable], () => true)[0], immutable, "unchanged results retain their original object");
+  assert.equal(createKnowledgeDocumentOutline(headings, 30, 300, "short"), undefined);
+  assert.ok(createKnowledgeDocumentOutline(headings, 30, 8100, "long-by-characters"));
+
+  const denseLines = Array.from({ length: 40 }, (_, index) => `## Heading ${index} ${"长标题".repeat(16)}\nDetails.\nMore background.\nFurther background.`).join("\n").split("\n");
+  const dense = createKnowledgeDocumentOutline(parseMarkdownHeadings(denseLines), denseLines.length, denseLines.join("\n").length, "dense")!;
+  assert.equal(dense.totalHeadings, 40);
+  assert.equal(dense.truncated, true);
+  assert.ok(dense.entries.length <= KNOWLEDGE_OUTLINE_LIMITS.entriesPerDocument);
+  assert.ok(knowledgeOutlineCharacters(dense) <= KNOWLEDGE_OUTLINE_LIMITS.totalCharacters);
+
+  let reads = 0;
+  const document = (path: string, content: string) => note(path, content, { revisionKey: path, read: async () => {
+    reads++; return { content, contentRevision: `sha256:${path}` };
+  } });
+  const documents = [document("short.md", "# Short\nOUTLINE_DEV_TOKEN is concise."),
+    ...Array.from({ length: 5 }, (_, index) => document(`long-${index}.md`, structured))];
+  const memory = new BodySearchMemoryIndex();
+  try {
+    const options = { documents, request: { query: "OUTLINE_DEV_TOKEN", limit: 100 } };
+    const cold = await memory.search(options);
+    const warm = await memory.search(options);
+    assert.equal(reads, documents.length, "outlines reuse the same body reads and warm statistics");
+    assert.deepEqual(warm.hits, cold.hits);
+    const selected = cold.hits.filter(hit => hit.outline);
+    const longPaths = [...new Set(cold.hits.filter(hit => hit.vaultRelativePath !== "short.md").map(hit => hit.vaultRelativePath))];
+    assert.deepEqual(selected.map(hit => hit.vaultRelativePath), longPaths.slice(0, 3));
+    assert.equal(cold.hits.find(hit => hit.vaultRelativePath === "short.md")!.outline, undefined);
+    assert.ok(selected.reduce((sum, hit) => sum + hit.outline!.entries.length, 0) <= KNOWLEDGE_OUTLINE_LIMITS.totalEntries);
+    assert.ok(selected.reduce((sum, hit) => sum + knowledgeOutlineCharacters(hit.outline!), 0) <= KNOWLEDGE_OUTLINE_LIMITS.totalCharacters);
+    for (const hit of selected) {
+      assert.equal(hit.outline!.contentRevision, hit.contentRevision);
+      assert.equal(hit.excerpt, sliceKnowledgeSourceSpan(lines, hit));
+      assert.ok(hit.lineEnd < hit.outline!.entries.at(-1)!.lineEnd, "navigation never widens the body excerpt's read range");
+    }
+    const changedContent = structured.replace("## Sibling", "## Revised sibling");
+    const changed = note("long-0.md", changedContent, { revisionKey: "changed", read: async () => ({ content: changedContent, contentRevision: "revision-new" }) });
+    const fresh = await memory.search({ ...options, documents: [changed] });
+    assert.equal(fresh.hits[0].outline!.contentRevision, "revision-new");
+    assert.ok(fresh.hits[0].outline!.entries.some(entry => entry.heading === "Revised sibling"));
+  } finally { memory.dispose(); }
+  console.log("Knowledge outlines: true hierarchy, property/code exclusions, long/short files, first-three selection, bounded totals and revisions PASS");
 }
 
 export async function runKnowledgeBodySearchMetadataTests(): Promise<void> {

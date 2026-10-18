@@ -1,4 +1,5 @@
 import { KNOWLEDGE_SEARCH_KINDS, type BodySearchMatchSource, type KnowledgeSearchKind } from "./search/contracts";
+import { normalizeKnowledgeDocumentOutline } from "./search/markdown-navigation";
 import { isDeepStrictEqual } from "node:util";
 import { mkdir, readdir } from "node:fs/promises";
 import * as path from "node:path";
@@ -118,6 +119,7 @@ const REFERENCE_KEYS = [
 ] as const;
 
 const OPTIONAL_REFERENCE_KEYS = [
+  "outline",
   "inclusionReason",
   "matchSources",
   "columnStart",
@@ -617,6 +619,11 @@ function normalizeKnowledgeReference(
     throw new PiNativeFileStoreError(errorCode, "KnowledgeReference contentRevision 无效");
   }
   const hasSourceType = Object.hasOwn(object, "sourceType");
+  let outline: KnowledgeReference["outline"];
+  if (Object.hasOwn(object, "outline")) {
+    try { outline = normalizeKnowledgeDocumentOutline(object.outline, contentRevision, object.totalLines as number); }
+    catch { throw new PiNativeFileStoreError(errorCode, "KnowledgeReference outline 无效"); }
+  }
   const hasMatchSources = Object.hasOwn(object, "matchSources");
   const hasInclusionReason = Object.hasOwn(object, "inclusionReason");
   if (hasInclusionReason && object.inclusionReason !== "按指代带入") {
@@ -669,6 +676,7 @@ function normalizeKnowledgeReference(
     );
   }
   return {
+    ...(outline ? { outline } : {}),
     ...(hasInclusionReason ? { inclusionReason: "按指代带入" as const } : {}),
     ...(hasMatchSources ? { matchSources: Object.freeze([...(object.matchSources as BodySearchMatchSource[])]) } : {}),
     ...(Number.isSafeInteger(object.columnStart) && Number.isSafeInteger(object.columnEnd) && (object.columnStart as number) >= 0 && (object.columnEnd as number) >= 0 ? { columnStart: object.columnStart as number, columnEnd: object.columnEnd as number } : {}),
