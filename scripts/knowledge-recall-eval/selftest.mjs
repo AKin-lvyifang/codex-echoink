@@ -3,10 +3,10 @@ import { appendFile, mkdir, readFile, writeFile, rm, symlink, access, lstat } fr
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { freezeDataset, verifyDataset, canonicalJson } from './dataset.mjs';
 import { judgeCandidate, judgeDelivery } from './judge.mjs';
-import { runEvaluation, CSV_COLUMNS, csvRow } from './cli.mjs';
+import { buildAdapter, runEvaluation, CSV_COLUMNS, csvRow } from './cli.mjs';
 import { judgePromptBoundary } from './prompt-boundary.mjs';
 
 process.env.PI_OFFLINE = '1';
@@ -91,7 +91,7 @@ async function testCurrentProjectScope() {
         assert.equal(recall.request.query, scenario.query);
         assert.equal(recall.request.scope ?? null, scenario.projectId);
         assert.equal(Object.hasOwn(recall.request, 'scope'), scenario.projectId !== null, 'No current directive must omit scope from actual Recall input');
-        assert.deepEqual(recall.request.recentConversation, (scenario.history ?? []).map(turn => turn.content));
+        assert.deepEqual(recall.request.recentConversation, scenario.history ? [scenario.history[0].content] : []);
       });
       check(`${label} serialized audit`, () => {
         const audit = actual.effective_configuration;
@@ -99,7 +99,7 @@ async function testCurrentProjectScope() {
         assert.equal(audit.projectId, scenario.projectId);
         assert.equal(audit.current_query, scenario.query);
         assert.deepEqual(audit.frozen_history, scenario.history ?? []);
-        assert.deepEqual(audit.recent_conversation, (scenario.history ?? []).map(turn => turn.content));
+        assert.deepEqual(audit.recent_conversation, scenario.history ? [scenario.history[0].content] : []);
       });
     }
     assert.deepEqual(failures, [], 'Current query alone must determine both production project-scope calls and serialized audit');
@@ -108,10 +108,101 @@ async function testCurrentProjectScope() {
   } finally { await retireRoot(scopeWork); }
 }
 
+async function testMemoryRecallHistory() {
+  const bundleRoot = path.join(fixture, 'history-capability-bundle');
+  await mkdir(bundleRoot);
+  await buildAdapter(root, bundleRoot);
+  const { memoryRecallHistoryInput } = await import(pathToFileURL(path.join(bundleRoot, 'production-adapter.mjs')).href);
+  const history = [
+    { role: 'user', content: '更旧的紫藤工程。' },
+    { role: 'assistant', content: 'OLDER_ASSISTANT_ENTITY' },
+    { role: 'user', content: 'Project: cedar\n雪松迁移的负责人是林晓。' },
+    { role: 'assistant', content: 'ASSISTANT_ENTITY_CANARY' }
+  ];
+  const legacy = memoryRecallHistoryInput({}, {}, history, {});
+  assert.deepEqual(legacy.recentConversation, history.map(turn => turn.content), 'Missing product capability must retain legacy complete strings, including assistants');
+  assert.equal(legacy.history_policy, 'legacy_all_recent_conversation_v1');
+  let selections = 0;
+  const capability = {
+    PERSONAL_MEMORY_RECALL_HISTORY_POLICY: 'synthetic-capability',
+    selectMemoryRecallPreviousUserContext(input) {
+      selections++;
+      assert.equal(input, history);
+      return ['CAPABILITY_SELECTED_TEXT'];
+    }
+  };
+  assert.deepEqual(memoryRecallHistoryInput({}, {}, history, capability).recentConversation, ['CAPABILITY_SELECTED_TEXT']);
+  assert.equal(selections, 1, 'Role-aware input must use the tested product export');
+  const opaque = ['opaque user text', 'opaque assistant-like text'];
+  const explicit = memoryRecallHistoryInput({ recent_conversation: opaque }, {}, history, capability);
+  assert.equal(explicit.recentConversation, opaque, 'Explicit string[] must not guess or filter roles');
+  assert.equal(selections, 1, 'Opaque strings bypass role-based selection');
+  assert.equal(explicit.history_input_source, 'explicit_opaque_strings');
+  assert.deepEqual(memoryRecallHistoryInput({}, { recent_conversation: opaque }, history, {}).recentConversation, opaque);
+
+  const historyDataset = path.join(fixture, 'history-dataset');
+  await mkdir(path.join(historyDataset, '记忆'), { recursive: true });
+  await writeFile(path.join(historyDataset, 'manifest.json'), JSON.stringify({ dataset_version: 'selftest-memory-history', fixed_date: '2026-10-16T12:00:00+08:00', settings: {} }));
+  await writeFile(path.join(historyDataset, '记忆/seed.json'), JSON.stringify({ operations: [
+    { id: 'mem_context', request: { operation: 'create', kind: 'fact', title: '合成负责人', recallWhen: '询问负责人时', content: '合成负责人是林晓。', basis: 'explicit' } }
+  ] }));
+  const previous = history[2].content;
+  const repeated = '它的负责人是谁？';
+  const scenarios = [
+    { id: 'TOPIC_SWITCH', query: '换个话题，海港工程的负责人是谁？', history, previous, expected: '换个话题，海港工程的负责人是谁？' },
+    { id: 'NAMED_SUBJECT', query: '那海港工程呢？', history, previous, expected: '那海港工程呢？' },
+    { id: 'PRONOUN', query: repeated, history, previous, expected: `${repeated}\n${previous}` },
+    { id: 'SAME_TEXT_PREVIOUS_USER', query: repeated, history: [{ role: 'user', content: repeated }, history[3]], previous: repeated, expected: `${repeated}\n${repeated}` },
+    { id: 'ASSISTANT_ONLY', query: repeated, history: [history[3]], previous: null, expected: repeated },
+    { id: 'OPAQUE_STRINGS', query: repeated, history, opaque, previous: null, expected: `${repeated}\n${opaque[1]}` },
+    { id: 'CURRENT_PROJECT', query: 'Project: harbor\n它的负责人是谁？', history, previous, scope: 'harbor', expected: 'Project: harbor\n它的负责人是谁？' },
+    { id: 'HISTORY_BUDGET', query: repeated, history: [{ role: 'user', content: `最近用户前文-${'丙'.repeat(2500)}` }, history[3]], previous: `最近用户前文-${'丙'.repeat(2500)}`, budget: 80 }
+  ];
+  const cases = scenarios.map(scenario => ({
+    case_id: `CONTEXT_${scenario.id}`, domain: 'memory', starter: false, query: scenario.query,
+    ...(scenario.opaque ? { recent_conversation: scenario.opaque } : {}),
+    setup: { history: scenario.history, memory_seed: '记忆/seed.json', ...(scenario.budget ? { memory_token_budget: scenario.budget } : {}) },
+    expected: { candidate: { applicable: false }, delivery: { applicable: false } }
+  }));
+  await writeFile(path.join(historyDataset, 'cases.jsonl'), `${cases.map(item => JSON.stringify(item)).join('\n')}\n`);
+  await freezeDataset(historyDataset);
+  const historyWork = `${work}-history`;
+  await registerRoot(historyWork, '当前问题与历史策略独立合成反例');
+  try {
+    const output = path.join(fixture, 'history-run');
+    await runEvaluation({ dataset: historyDataset, 'source-root': root, 'output-run': output, 'run-id': `${runId}-history`, phase: 'selftest', cases: cases.map(item => item.case_id).join(',') });
+    const results = (await readFile(path.join(output, 'results.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    for (const scenario of scenarios) {
+      const { actual } = results.find(result => result.case_id === `CONTEXT_${scenario.id}`);
+      const recall = actual.calls.find(call => call.function === 'PersonalMemoryRecallHarness.prepareTurnContext');
+      const snapshots = actual.calls.filter(call => call.function === 'PersonalMemoryRepository.prepareTurnSnapshot');
+      const snapshot = snapshots.at(-1);
+      assert.ok(recall && snapshot, `${scenario.id} must observe actual production inputs`);
+      assert.equal(recall.request.query, scenario.query);
+      assert.deepEqual(recall.request.recentConversation, scenario.opaque ?? (scenario.previous ? [scenario.previous] : []));
+      assert.equal(recall.request.scope, scenario.scope);
+      assert.equal(snapshot.request.scope, scenario.scope, 'History Project never adds an actual scope');
+      if (scenario.expected) assert.equal(snapshot.request.query, scenario.expected, scenario.id);
+      else {
+        assert.ok(snapshot.request.query.startsWith(`${repeated}\n最近用户前文-`));
+        assert.ok(snapshot.request.query.length <= 2000);
+      }
+      const audit = actual.effective_configuration;
+      assert.deepEqual(audit.frozen_history, scenario.history, 'Full role-bearing input remains available for audit');
+      assert.equal(audit.current_query, scenario.query);
+      assert.deepEqual(audit.recent_conversation, recall.request.recentConversation);
+      assert.equal(audit.history_policy, 'current_query_with_unresolved_reference_previous_user_v1');
+      assert.equal(audit.history_context_selection, scenario.opaque ? 'strings_passed_without_role_inference' : 'tested_product_selectMemoryRecallPreviousUserContext');
+      assert.ok(!snapshot.request.query.includes('ASSISTANT_ENTITY_CANARY'));
+    }
+    console.log(`PASS: ${scenarios.length} actual Memory snapshot/context audits; legacy capability absence and explicit string[] compatibility controls.`);
+  } finally { await retireRoot(historyWork); }
+}
+
 try {
   await registerRoot(fixture, '独立合成 fixture、冻结数据与自测输出');
   await mkdir(fixture);
-  if (!process.argv.includes('--scope-only')) {
+  if (!process.argv.includes('--scope-only') && !process.argv.includes('--history-only')) {
   await mkdir(path.join(dataset, '笔记/wiki'), { recursive: true });
   await mkdir(path.join(dataset, '笔记/journal'), { recursive: true });
   await mkdir(path.join(dataset, '记忆'), { recursive: true });
@@ -340,7 +431,8 @@ try {
   assert.ok(run.adapter.imported_files.some(item => item.path === 'src/plugin/pi-production-runtime-composition.ts'));
   console.log('PASS: v1/v2 freeze and run metadata, digest rejection, real production retrieval/Recall, inapplicable candidate and revision assertions, output/14-column CSV with unmeasured blanks.');
   }
-  await testCurrentProjectScope();
+  if (!process.argv.includes('--history-only')) await testCurrentProjectScope();
+  if (!process.argv.includes('--scope-only')) await testMemoryRecallHistory();
 } finally {
   for (const directory of [...registeredRoots].reverse()) await retireRoot(directory);
 }

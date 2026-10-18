@@ -70,6 +70,7 @@ export async function runMemoryRecallHarnessContractScenarios(): Promise<void> {
   await scenarioNoMemoryIdentityOnlyAndWarmSnapshotReuse();
   await scenarioCreateIsIdempotentAndBroadConflictsDoNotWrite();
   await scenarioRecallUsesOneBoundedTurnSnapshot();
+  await scenarioRecallHistoryOnlyResolvesExplicitReferences();
   scenarioRecallProgressReusesAndDismissesOneTemporaryMessage();
   await scenarioControlledInlineExtensionUsesOneBeforeAgentStartHandler();
   await scenarioHotPathPreparesRecallBeforeProviderRequest();
@@ -334,6 +335,66 @@ async function snapshotTreeBytes(root: string): Promise<readonly Readonly<{
   };
   await visit(root);
   return Object.freeze(snapshot);
+}
+
+async function scenarioRecallHistoryOnlyResolvesExplicitReferences(): Promise<void> {
+  const requests: Array<{ memoryMode: string; query?: string; scope?: string }> = [];
+  const harness = new PersonalMemoryRecallHarness({
+    async prepareTurnSnapshot(input: typeof requests[number]) {
+      requests.push(input);
+      return { revision: 1, scanned: 0, agent: "AGENT", user: null, memory: null,
+        injectionKeys: [], search: input.memoryMode === "normal" ? {
+          revision: 1, total: 0, returned: 0, remaining: 0,
+          exhausted: true, nextCursor: null, items: []
+        } : null };
+    }
+  } as never);
+  const previous = "Project: cedar\n雪松迁移的负责人是林晓。";
+  const cases = [
+    { query: "换个话题，海港工程的负责人是谁？", expected: "换个话题，海港工程的负责人是谁？" },
+    { query: "海港工程的负责人是谁？", expected: "海港工程的负责人是谁？" },
+    { query: "那海港工程呢？", expected: "那海港工程呢？" },
+    { query: "那现在呢？", expected: "那现在呢？" },
+    { query: "海港工程为什么替代它？", expected: "海港工程为什么替代它？" },
+    { query: "那个项目 Harbor 的负责人是谁？", expected: "那个项目 Harbor 的负责人是谁？" },
+    { query: "它山石刻的开放时间是什么？", expected: "它山石刻的开放时间是什么？" },
+    { query: "It Takes Two 的联机方式是什么？", expected: "It Takes Two 的联机方式是什么？" },
+    { query: "它的负责人是谁？", expected: `它的负责人是谁？\n${previous}` },
+    { query: "它是什么时候启动的？", expected: `它是什么时候启动的？\n${previous}` },
+    { query: "它是谁？", expected: `它是谁？\n${previous}` },
+    { query: "那个项目的负责人是谁？", expected: `那个项目的负责人是谁？\n${previous}` },
+    { query: "那个项目是什么时候启动的？", expected: `那个项目是什么时候启动的？\n${previous}` },
+    { query: "What is its deadline?", expected: `What is its deadline?\n${previous}` },
+    { query: "Project: harbor\n它的负责人是谁？", scope: "harbor", expected: "Project: harbor\n它的负责人是谁？" }
+  ];
+  for (const scenario of cases) {
+    await harness.prepareTurnContext({
+      memoryMode: "normal", query: scenario.query,
+      recentConversation: ["更旧的主题不应进入检索。", previous],
+      ...(scenario.scope ? { scope: scenario.scope } : {}),
+      tokenBudget: 1200, vaultId: "v", conversationId: "c", piSessionId: "p", productRunId: "r"
+    });
+    assert.equal(requests.at(-1)?.query, scenario.expected, scenario.query);
+    assert.equal(requests.at(-1)?.scope, scenario.scope,
+      "历史中的 Project 文本不能变成实际 scope");
+  }
+  const short = "它的负责人是谁？";
+  await harness.prepareTurnContext({
+    memoryMode: "normal", query: short,
+    recentConversation: ["旧历史".repeat(2000), `最近用户前文-${"丙".repeat(2500)}`],
+    tokenBudget: 80, vaultId: "v", conversationId: "c", piSessionId: "p", productRunId: "r"
+  });
+  const bounded = requests.at(-1)!.query!;
+  assert.ok(bounded.startsWith(`${short}\n最近用户前文-`));
+  assert.ok(bounded.length <= 2000);
+  assert.ok(estimatePiContextTokens(bounded).tokens <= 80);
+  assert.ok(!bounded.includes("旧历史"));
+  await harness.prepareTurnContext({
+    memoryMode: "no_memory", query: short, recentConversation: [previous],
+    tokenBudget: 80, vaultId: "v", conversationId: "c", piSessionId: "p", productRunId: "r"
+  });
+  assert.equal(requests.at(-1)?.query, undefined);
+  console.log("PASS Memory Recall actual snapshot queries use history only for unresolved references");
 }
 
 async function scenarioRecallUsesOneBoundedTurnSnapshot(): Promise<void> {

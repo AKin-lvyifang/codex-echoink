@@ -11,7 +11,7 @@ import { VaultBodySearch } from '@production/knowledge-base/vault-body-search';
 import { getKnowledgeFolderBindings, registerKnowledgeFolderBindings, normalizeKnowledgeFolderBindings } from '@production/knowledge-base/root-paths';
 import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime, createPiKnowledgeInlineExtension } from '@production/plugin/pi-production-runtime-composition';
 import { PersonalMemoryRepository } from '@production/harness/memory/personal-memory-repository';
-import { PersonalMemoryRecallHarness } from '@production/harness/memory/personal-memory-recall-harness';
+import * as productionMemoryRecall from '@production/harness/memory/personal-memory-recall-harness';
 import { resolveExplicitMemoryProjectId } from '@production/harness/memory/project-identity';
 import { serializeSecondaryRecord } from '@production/harness/memory/secondary-memory-store';
 import { capturePromptBoundary } from './prompt-boundary-adapter';
@@ -20,6 +20,26 @@ const inside = (root, relative) => {
   if (typeof relative !== 'string' || !relative || relative.includes('\\') || relative.startsWith('/') || relative.split('/').some(part => !part || part === '.' || part === '..')) throw new Error(`Unsafe setup path: ${relative}`);
   return path.join(root, ...relative.split('/'));
 };
+
+export function memoryRecallHistoryInput(item, setup, frozenHistory, product = productionMemoryRecall) {
+  // Capability belongs to the tested checkout. Never apply the new native
+  // producer policy to a legacy product merely because this evaluator is new.
+  const selectPreviousUser = Reflect.get(product, 'selectMemoryRecallPreviousUserContext');
+  const policy = Reflect.get(product, 'PERSONAL_MEMORY_RECALL_HISTORY_POLICY');
+  const roleAware = typeof selectPreviousUser === 'function' && typeof policy === 'string';
+  const explicit = item.recent_conversation ?? setup.recent_conversation;
+  const recentConversation = explicit ?? (roleAware
+    ? selectPreviousUser(frozenHistory)
+    : frozenHistory.map(turn => turn.content));
+  if (!Array.isArray(recentConversation) || recentConversation.some(value => typeof value !== 'string')) throw new Error('Invalid recent_conversation');
+  return {
+    recentConversation,
+    history_policy: roleAware ? policy : 'legacy_all_recent_conversation_v1',
+    history_input_source: explicit !== undefined ? 'explicit_opaque_strings' : 'frozen_history_prior_turns',
+    history_context_selection: explicit !== undefined ? 'strings_passed_without_role_inference'
+      : roleAware ? 'tested_product_selectMemoryRecallPreviousUserContext' : 'legacy_all_history_contents'
+  };
+}
 
 /** Also usable with a native Repository: keep the returned stable->actual ID map. */
 export async function writeMemorySeed(repository, seed, runtime, beforeWrite = () => undefined, invoke = async (_name, _request, callback) => callback()) {
@@ -42,7 +62,7 @@ export async function evaluateProduction(input) {
   const setup = item.setup ?? {};
   const frozenHistory = setup.history ?? [];
   if (!Array.isArray(frozenHistory) || frozenHistory.some(turn => !['user', 'assistant'].includes(turn.role) || typeof turn.content !== 'string')) throw new Error('Invalid frozen history');
-  const recentConversation = item.recent_conversation ?? setup.recent_conversation ?? frozenHistory.map(turn => turn.content);
+  const { recentConversation, ...historyAudit } = memoryRecallHistoryInput(item, setup, frozenHistory);
   const calls = [];
   async function observe(name, request, callback) {
     const start = performance.now();
@@ -109,13 +129,18 @@ export async function evaluateProduction(input) {
       });
       const hitWrites = [], hitWriteErrors = [];
       const snapshotTrace = [];
-      if (setup.repeat_query_count !== undefined) {
+      {
         const prepareSnapshot = repository.prepareTurnSnapshot.bind(repository);
         repository.prepareTurnSnapshot = async (...args) => {
-          const snapshot = await prepareSnapshot(...args);
-          snapshotTrace.push({ query: args[0].query, productRunId: args[1]?.productRunId ?? null,
-            candidates: snapshot.search?.items ?? [], pendingSecondaryHits: snapshot.search?.pendingSecondaryHits ?? [] });
-          return snapshot;
+          // Observe the real Repository input; do not reconstruct the query
+          // from the expected policy. The selector callback is not JSON data.
+          const { selectCandidateIds, ...request } = args[0];
+          return await observe('PersonalMemoryRepository.prepareTurnSnapshot', request, async () => {
+            const snapshot = await prepareSnapshot(...args);
+            if (setup.repeat_query_count !== undefined) snapshotTrace.push({ query: args[0].query, productRunId: args[1]?.productRunId ?? null,
+              candidates: snapshot.search?.items ?? [], pendingSecondaryHits: snapshot.search?.pendingSecondaryHits ?? [] });
+            return snapshot;
+          });
         };
       }
       repository.setSecondaryChangedHook(records => { secondarySnapshot = structuredClone(records); });
@@ -147,7 +172,7 @@ export async function evaluateProduction(input) {
         }, runtime));
       }
       candidateEvidence = { candidate_items: pages.flatMap(value => value.items), raw_candidate_pages: pages };
-      const harness = new PersonalMemoryRecallHarness(repository);
+      const harness = new productionMemoryRecall.PersonalMemoryRecallHarness(repository);
       let prepared, preparedInput;
       const handlers = new Map();
       const extension = createPiKnowledgeInlineExtension({
@@ -199,7 +224,7 @@ export async function evaluateProduction(input) {
         candidate_items: scopedCandidates ?? pages.flatMap(value => value.items), delivery_items: delivered,
         provider_text: text, calls, raw: { fixture_validation: { status: 'valid', secondary_ids: validatedSecondaryIds, method: 'serializeSecondaryRecord (calls normalizeAssociationClueFields); provider fields unchanged' }, seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context, repeat_recall: repeatEvidence, repeat_observations: repeatObservations, secondary_hit_write_errors: hitWriteErrors },
         host_adapters: ['synthetic Vault and runtime IDs', 'deterministic Repository idFactory/now', 'Repository secondaryRecordsProvider from frozen synthetic SecondaryMemoryRecord records', 'Pi event registration host only; production handler and serialization unchanged'],
-        effective_configuration: { declared_project: setup.project ?? null, projectId: projectId ?? null, frozen_history: frozenHistory, recent_conversation: recentConversation, history_applied_to_memory_preflight: true, history_roles_preserved_in_audit: true, current_query: item.query },
+        effective_configuration: { declared_project: setup.project ?? null, projectId: projectId ?? null, frozen_history: frozenHistory, recent_conversation: recentConversation, ...historyAudit, history_applied_to_memory_preflight: true, history_roles_preserved_in_audit: true, current_query: item.query },
         unsupported_setup: unsupportedSetup(setup).filter(issue => issue.key !== 'history')
       };
     }

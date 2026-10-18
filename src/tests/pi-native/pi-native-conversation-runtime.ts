@@ -487,6 +487,7 @@ export async function runPiNativeConversationRuntimeTests(): Promise<void> {
   await assertVerifiedPrefixRecoveryIsExplicitAndFailClosed();
   await assertExperienceSourceRefsArePointerOnlyAndDeleteAware();
   await assertMemoryTurnIsAvailableBeforeUserEntryPersistence();
+  await assertMemoryRecallKeepsOnlyPreviousUserEntry();
   await assertUserEntryReadbackFailureIsSafelyDiagnosed();
   await assertDraftRemoveFailureIsSafelyDiagnosed();
   await assertProductRunCreateFailureCleansRuntime();
@@ -2417,7 +2418,10 @@ Promise<void> {
     const recentConversation = reopenedSession
       .memoryTurnsBeforeUserEntryAppend.at(-1)?.recentConversation ?? [];
     assert.match(recentConversation.join("\n"), /触发中断前的用户问题/u);
-    assert.match(recentConversation.join("\n"), /保留的完整 Assistant 历史/u);
+    assert.doesNotMatch(recentConversation.join("\n"), /保留的完整 Assistant 历史/u);
+    assert.ok(reopenedSession.sessionManager.getBranch().some((entry) =>
+      entry.type === "message" && JSON.stringify(entry.message.content).includes("保留的完整 Assistant 历史")),
+    "完整助手消息仍保留在模型聊天 branch 中");
     assert.doesNotMatch(
       recentConversation.join("\n"),
       /FAILED_ASSISTANT|ABORTED_ASSISTANT|LENGTH_ASSISTANT/u,
@@ -3928,6 +3932,46 @@ function visibleConversationText(
 
 export async function runPiNativeMemoryProjectIdentityTests(): Promise<void> {
   await assertNormalMemoryTurnResolvesExplicitProjectIdentity();
+}
+
+export async function runPiNativeMemoryRecallContextTests(): Promise<void> {
+  await assertMemoryRecallKeepsOnlyPreviousUserEntry();
+  await assertMemoryTurnIsAvailableBeforeUserEntryPersistence();
+  await assertFailedAssistantHistoryIsDurableButExcludedFromMemory();
+  await assertNormalMemoryTurnResolvesExplicitProjectIdentity();
+  console.log("PASS native Memory previous-user context, durable identity and project scope");
+}
+
+async function assertMemoryRecallKeepsOnlyPreviousUserEntry(): Promise<void> {
+  await withFixture(["memory-reference-first", "memory-reference-second"], async (fixture) => {
+    const conversationId = "memory-reference-context";
+    await fixture.runtime.createConversation({ conversationId, title: "Memory reference context", cwd: fixture.root, createdAt: 2 });
+    await fixture.runtime.activateConversation(conversationId);
+    const first = await fixture.submit({ conversationId, text: "Project: cedar\n雪松迁移计划", submittedAt: 3 });
+    assert.deepEqual(fixture.latestSession().memoryTurnsBeforeUserEntryAppend.at(-1)?.recentConversation, []);
+    assert.deepEqual(fixture.currentMemoryTurn()?.recentConversation, [],
+      "本轮 user 已入 branch 时不能将自己作为检索前文");
+    fixture.latestSession().finishSuccessful("助手提及无关的海港工程。");
+    await first.result;
+
+    const session = fixture.latestSession();
+    const repeated = "它的负责人是谁？";
+    session.sessionManager.appendMessage({ role: "user", content: repeated, timestamp: 400_001 });
+    session.sessionManager.appendMessage(assistantMessage("ASSISTANT_ENTITY_CANARY", 400_002));
+    const second = await fixture.submit({ conversationId, text: repeated, submittedAt: 4 });
+    assert.deepEqual(session.memoryTurnsBeforeUserEntryAppend.at(-1)?.recentConversation, [repeated],
+      "user 尚未入 branch 时保留最近前文，即使和本轮文本相同");
+    const turn = fixture.currentMemoryTurn()!;
+    assert.deepEqual(turn.recentConversation, [repeated],
+      "按当前 entry 身份排除本轮，不能删除更早同文本的前文");
+    assert.equal(turn.projectId, undefined, "历史 Project 不继承权限");
+    const branch = session.sessionManager.getBranch();
+    assert.equal(branch.filter((entry) => entry.type === "message" && entry.message.role === "user" && entry.message.content === repeated).length, 2);
+    assert.ok(branch.some((entry) => entry.type === "message" && JSON.stringify(entry.message.content).includes("ASSISTANT_ENTITY_CANARY")),
+      "检索过滤不改变模型完整历史");
+    session.finishSuccessful("上下文边界已检查。");
+    await second.result;
+  });
 }
 
 export async function runPiNativeTaskPlanRuntimeTests(): Promise<void> {

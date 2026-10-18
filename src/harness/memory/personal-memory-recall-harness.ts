@@ -51,12 +51,29 @@ export interface PersonalMemoryRecallSafeStats {
   readonly exhausted: boolean;
 }
 
+/** Capability shared with role-aware hosts; legacy string[] callers stay valid. */
+export const PERSONAL_MEMORY_RECALL_HISTORY_POLICY =
+  "current_query_with_unresolved_reference_previous_user_v1";
+
+export function selectMemoryRecallPreviousUserContext(
+  history: readonly Readonly<{ role: string; content: string }>[]
+): readonly string[] {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const turn = history[index];
+    if (turn.role === "user" && turn.content.trim()) {
+      return Object.freeze([turn.content.trim()]);
+    }
+  }
+  return Object.freeze([]);
+}
+
 export class PersonalMemoryRecallHarness {
   constructor(private readonly repository: PersonalMemoryRepository) {}
 
   async prepareTurnContext(input: Readonly<{
     memoryMode: PersonalMemoryMode;
     query: string;
+    /** Previous user context when known; untyped legacy text is never role-inferred. */
     recentConversation?: readonly string[];
     /** Explicit boundaries; project recall also retains unscoped global Memory. */
     scope?: PersonalMemorySearchRequest["scope"];
@@ -367,6 +384,18 @@ function toRecallCandidate(
 
 const MAX_RECALL_QUERY_CHARS = 2_000;
 
+function needsPreviousUserContext(currentQuery: string): boolean {
+  // A leading explicit pronoun has no antecedent in this question. Keep this
+  // gate narrow: a named subject, a bare 那/呢 or a later pronoun cannot opt in.
+  const query = currentQuery.trim();
+  return /^(?:它们?|他们?|她们?)(?=的|是|呢|何时|什么时候|为什么|为何|怎么|如何|是否|能否|会|能|要|还|已经|之前|现在|[，,？?]|$)/u.test(query)
+    || /^(?:这|那)(?:个(?:项目|方案|计划|任务|决定)?|件事)(?=的|是|呢|何时|什么时候|为什么|怎么|是否|能否|还|现在|之前|[，,？?]|$)/u.test(query)
+    || /^(?:(?:what|when|where|why|how|who)\s+)?(?:(?:is|are|was|were|does|do|did|can|could|should|would)\s+)?(?:its|their)\b/iu.test(query)
+    || /^(?:it|they)\s+(?:is|are|was|were|has|have|does|do|can|could|should|would)\b/iu.test(query)
+    || /^(?:(?:what|when|where|why|how|who)\s+)?(?:is|are|was|were|does|do|did|can|could|should|would)\s+(?:it|they)\b/iu.test(query)
+    || /^(?:this|that)\s+(?:project|plan|decision|task)\s+(?:is|was|has|does|can|should)\b/iu.test(query);
+}
+
 function buildBoundedRecallQuery(
   currentQuery: string,
   recentConversation: readonly string[],
@@ -374,7 +403,7 @@ function buildBoundedRecallQuery(
 ): string {
   const segments = [
     currentQuery,
-    ...recentConversation.slice(-6).reverse()
+    ...(needsPreviousUserContext(currentQuery) ? recentConversation.slice(-1) : [])
   ].map((value) => value.trim()).filter(Boolean);
   let result = "";
   for (const segment of segments) {
