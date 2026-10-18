@@ -17,7 +17,7 @@ const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
   'import { runKnowledgeAnchorNavigationTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests, runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchReferenceTests, runKnowledgeBodySearchReferenceBoundaryTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests } from "./src/tests/knowledge-body-search";',
-  'import { runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchMetadataTests, runVaultBodySearchReferenceTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
+  'import { runVaultBodySearchExplicitAnchorTests, runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchMetadataTests, runVaultBodySearchReferenceTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
   'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
@@ -33,6 +33,7 @@ const fullSuiteImports = [
 ];
 const fullSuiteRuns = [
   "await runKnowledgeAnchorNavigationTests();",
+  "await runVaultBodySearchExplicitAnchorTests();",
   "await runVaultBodySearchAnchorTests();",
   "await runKnowledgeAnchorReadingTests();",
   "await runPiKnowledgeAnchorBudgetTests();",
@@ -74,14 +75,18 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--body-search-anchors") ? [
+    contents: (process.argv.includes("--body-search-explicit-anchors") ? [
+      'import { runVaultBodySearchExplicitAnchorTests } from "./src/tests/vault-body-search";',
+      'await runVaultBodySearchExplicitAnchorTests();'
+    ] : process.argv.includes("--body-search-anchors") ? [
       'import { runKnowledgeAnchorNavigationTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests, runKnowledgeBodySearchReferenceBoundaryTests } from "./src/tests/knowledge-body-search";',
-      'import { runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
+      'import { runVaultBodySearchExplicitAnchorTests, runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
       'import { runKnowledgeAnchorReadingTests, runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
       'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
       'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
       'import { runPiKnowledgeAnchorBudgetTests, runPiKnowledgeReadToolTests, runPiKnowledgeOutlineBudgetTests } from "./src/tests/pi-native/knowledge-read-tools";',
       'await runKnowledgeAnchorNavigationTests();',
+      'await runVaultBodySearchExplicitAnchorTests();',
       'await runVaultBodySearchAnchorTests();',
       'await runKnowledgeAnchorReadingTests();',
       'await runPiKnowledgeAnchorBudgetTests();',

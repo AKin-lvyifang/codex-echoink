@@ -83,6 +83,9 @@ export class KnowledgeRetrievalError extends Error {
 }
 
 export interface KnowledgeReferenceBuildInput {
+  /** Explicit source navigation uses the existing bounded adapter, without widening the excerpt. */
+  includeAnchorNavigation?: boolean;
+  signal?: AbortSignal;
   related?: import("./knowledge-relations").KnowledgeRelationPage;
   anchorLocation?: import("./search/contracts").KnowledgeAnchorLocation;
   matchSources?: readonly import("./search/contracts").BodySearchMatchSource[];
@@ -173,6 +176,21 @@ export class KnowledgeReferenceBuilder {
         if (!knowledgeAnchorCoversSpan(anchorLocation, span) || !verifyKnowledgeAnchorLines(anchorLocation, snapshot.contentRevision, snapshot.lines)) throw new Error("knowledge_anchor_changed");
       } catch { throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath); }
     }
+    let related = input.related;
+    if (input.includeAnchorNavigation && this.bodySearch && snapshot.text.includes("[[") && snapshot.text.includes("#")
+      && extractMarkdownAnchorLinks(snapshot.text, 0).total > 0) {
+      const scope = this.bodySearch.scopeKey();
+      try {
+        const page = (await this.bodySearch.search({ mode: "related", vaultRelativePath: snapshot.vaultRelativePath, limit: 4, signal: input.signal })).related;
+        if (page?.vaultRelativePath === snapshot.vaultRelativePath && page.contentRevision === snapshot.contentRevision) related = page;
+      } catch (error) {
+        if (input.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+        // Optional navigation never replaces an already readable source snapshot.
+      }
+      if (scope !== this.bodySearch.scopeKey() || !this.bodySearch.allowsPath(snapshot.vaultRelativePath)) {
+        throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath);
+      }
+    }
     return freezeKnowledgeReference({
       referenceId: knowledgeSpanReferenceId(snapshot.vaultRelativePath, snapshot.contentRevision, span),
       vaultRelativePath: snapshot.vaultRelativePath,
@@ -190,7 +208,7 @@ export class KnowledgeReferenceBuilder {
       ...(input.inclusionReason ? { inclusionReason: input.inclusionReason } : {}),
       ...(outline ? { outline } : {}),
       ...(anchorLocation ? { anchorLocation } : {}),
-      ...(input.related?.vaultRelativePath === snapshot.vaultRelativePath && input.related.contentRevision === snapshot.contentRevision ? { related: input.related } : {}),
+      ...(related?.vaultRelativePath === snapshot.vaultRelativePath && related.contentRevision === snapshot.contentRevision ? { related } : {}),
       recordedAt: snapshot.recordedAt,
       ...(snapshot.publishedAt ? { publishedAt: snapshot.publishedAt } : {}),
       verificationStatus: "local_revision_verified"
@@ -442,16 +460,20 @@ export class KnowledgeRetriever {
     const references: KnowledgeReference[] = [];
     const localIssues: { vaultRelativePath: string; status: string }[] = [];
     const explicitSet = new Set<string>();
+    let explicitNavigationSources = 0;
     for (const explicitPath of explicitPaths.slice(0, limit)) {
       try {
       const reference = await this.referenceBuilder.buildReference({
         vaultRelativePath: explicitPath,
         question,
-        allowUnrefined: true
+        allowUnrefined: true,
+        includeAnchorNavigation: !request.cursor && explicitNavigationSources < 3,
+        signal: request.signal
       });
       if (!explicitSet.has(reference.vaultRelativePath)) {
         explicitSet.add(reference.vaultRelativePath);
         if (!request.cursor) references.push(reference);
+        if (reference.related) explicitNavigationSources++;
       }
       } catch (error) {
         if (!(error instanceof KnowledgeRetrievalError) || !["not-found", "source-changed", "not-markdown", "invalid-utf8", "read-failed", "forbidden-path"].includes(error.code)) throw error;
@@ -503,6 +525,18 @@ export class KnowledgeRetriever {
       } catch (error) {
         if (!(error instanceof KnowledgeRetrievalError) || !["not-found", "source-changed", "not-markdown", "invalid-utf8", "read-failed", "forbidden-path"].includes(error.code)) throw error;
         localIssues.push({ vaultRelativePath: hit.vaultRelativePath, status: error.code });
+      }
+    }
+    if (this.agentIndex?.bodySearch) {
+      const navigationSources = new Set<string>();
+      for (let i = 0; i < references.length; i++) {
+        const reference = references[i];
+        if (!reference.related) continue;
+        if (navigationSources.has(reference.vaultRelativePath) || navigationSources.size < 3) navigationSources.add(reference.vaultRelativePath);
+        else {
+          const { related: _related, ...body } = reference;
+          references[i] = Object.freeze(body);
+        }
       }
     }
     for (let i = 0; !this.agentIndex?.bodySearch && i < references.length; i += 1) {

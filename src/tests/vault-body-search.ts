@@ -6,13 +6,100 @@ import * as path from "node:path";
 import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vault-body-search";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
-import { KnowledgeRetriever, formatKnowledgeReferencesForPrompt } from "../knowledge-base/query";
+import { KnowledgeReferenceBuilder, KnowledgeRetriever, formatKnowledgeReferencesForPrompt } from "../knowledge-base/query";
 import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime } from "../plugin/pi-production-runtime-composition";
 import { PiKnowledgeReadToolSecurity, createPiKnowledgeReadToolDefinitions } from "../harness/pi-native/pi-knowledge-read-tools";
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { searchBodyDocuments } from "../knowledge-base/search/body-search";
+
+export async function runVaultBodySearchExplicitAnchorTests(): Promise<void> {
+  const sourcePath = "projects/exports/Brief.md", targetPath = "notes/Checklist.md";
+  const source = ["# Brief", "EXPLICIT_ANCHOR_TOKEN is the selected claim.", ...Array.from({ length: 65 }, () => "Background."),
+    "[[notes/Checklist#Packing]]", "[[notes/Checklist#^sleeve]]", "[[notes/Checklist#Missing]]"].join("\n");
+  const target = ["# Checklist", ...Array.from({ length: 40 }, () => "Preface."), "## Packing", "UNREAD_PACKING_BODY", "## Other", "Other detail.", "", "Use the padded sleeve. ^sleeve"].join("\n");
+  const bodies = new Map([[sourcePath, source], [targetPath, target]]);
+  const reads: string[] = [];
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.projects.enabled = true; bindings.roles.projects.readPaths = ["projects"];
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => { reads.push(entry.path); return bodies.get(entry.path)!; } }, metadataCache: { getFileCache: () => null } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings);
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-explicit-anchors", storageRootPath: "/synthetic-explicit-anchor-state", bodySearch: port });
+  index.refresh = async () => { assert.fail("explicit anchors never initialize the maintained index"); };
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const builder = new KnowledgeReferenceBuilder(index.vaultPath, port);
+  const question = sourcePath;
+  try {
+    const baseline = await builder.buildReference({ vaultRelativePath: sourcePath, question, allowUnrefined: true });
+    reads.length = 0;
+    const result = await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 });
+    assert.equal(result.references.length, 1);
+    const reference = result.references[0];
+    assert.ok(reference.related, "an explicit source excluded from normal search still delivers bounded anchor navigation");
+    const { related, ...body } = reference;
+    assert.deepEqual(body, baseline, "adding explicit anchor navigation never expands the delivered body range or identity");
+    assert.equal(related!.contentRevision, reference.contentRevision);
+    assert.equal(related!.returned, 3);
+    assert.equal(related!.items[0].anchorLocation!.status, "located");
+    assert.equal(related!.items[0].anchorLocation!.readStatus, "unread");
+    assert.equal(related!.items[0].anchorLocation!.contentRevision, related!.items[0].target!.contentRevision);
+    assert.equal(related!.items[1].anchorLocation!.kind, "block");
+    assert.equal(related!.items[2].anchorLocation!.status, "not_located");
+    assert.ok(reference.lineEnd < 65);
+    assert.deepEqual(reads, [sourcePath, sourcePath, targetPath], "only this explicit source and its one unique target are read; no global scan is needed");
+    assert.equal((await retriever.verifyReferences([reference])).status, "valid");
+    assert.deepEqual(knowledgeReferenceEntryDetails([reference]).references[0].related, related);
+    assert.doesNotMatch(formatKnowledgeReferencesForPrompt([reference]), /UNREAD_PACKING_BODY/u);
+    const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+    for (const delivered of [await runtime.retrieveChat!({ question, explicitPaths: [sourcePath], includeUnrefined: false } as never),
+      await runtime.retrieveAsk({ question, explicitPaths: [sourcePath], includeUnrefined: false } as never)]) {
+      assert.deepEqual(JSON.parse(delivered.providerResourceText).sources[0].related, delivered.references[0].related);
+      assert.deepEqual(delivered.references[0].related, related);
+      assert.equal(delivered.references[0].referenceId, baseline.referenceId);
+    }
+    bodies.set(targetPath, `New preface.\n\n${target}`);
+    const moved = (await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 })).references[0];
+    assert.notEqual(moved.related!.items[0].target!.contentRevision, related!.items[0].target!.contentRevision);
+    if (moved.related!.items[0].anchorLocation!.status === "located" && related!.items[0].anchorLocation!.status === "located") {
+      assert.equal(moved.related!.items[0].anchorLocation!.lineStart, related!.items[0].anchorLocation!.lineStart + 2);
+    }
+    // A source edit between the body snapshot and optional navigation cannot mix revisions.
+    const search = port.search.bind(port);
+    port.search = async request => {
+      if (request.mode === "related") bodies.set(sourcePath, `${source}\nChanged source.`);
+      return await search(request);
+    };
+    const changed = (await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 })).references[0];
+    assert.equal(changed.referenceId, baseline.referenceId);
+    assert.equal(changed.related, undefined);
+    port.search = search; bodies.set(sourcePath, source); port.invalidate(sourcePath);
+    port.search = async request => {
+      if (request.mode === "related") bindings.roles.projects.searchEnabled = false;
+      return await search(request);
+    };
+    const revoked = await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 });
+    assert.equal(revoked.references.length, 0, "a scope revocation while decorating explicit navigation cannot publish the earlier body snapshot");
+    assert.equal(revoked.localIssues![0].status, "source-changed");
+    port.search = search; bindings.roles.projects.searchEnabled = true; port.invalidate(sourcePath);
+    for (let i = 0; i < 5; i++) bodies.set(`notes/Other-${i}.md`, source.replace("# Brief", `# Other ${i}`));
+    const mixed = await retriever.retrieve({ question: "EXPLICIT_ANCHOR_TOKEN", explicitPaths: [sourcePath], limit: 6 });
+    assert.equal(mixed.references.length, 6);
+    const navigation = mixed.references.filter(item => item.related);
+    assert.equal(navigation.length, 3, "explicit and ordinary search share the first-three navigation source budget");
+    assert.equal(navigation[0].vaultRelativePath, sourcePath);
+    assert.ok(navigation.every(item => item.related!.returned <= 4));
+    assert.deepEqual(knowledgeReferenceEntryDetails(mixed.references).references.map(item => item.related), mixed.references.map(item => item.related));
+    bodies.set(sourcePath, "# Brief\nOrdinary [[notes/Checklist]] link and `[[notes/Checklist#Fake]]` code."); port.invalidate(sourcePath);
+    reads.length = 0;
+    const plain = (await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 })).references[0];
+    assert.equal(plain.related, undefined);
+    assert.deepEqual(reads, [sourcePath], "anchorless explicit sources retain their single original body read");
+  } finally { port.dispose(); }
+  console.log("Explicit source anchors: bounded same-source revision navigation, current target SHA, exact body/provider/storage parity and shared first-three source budget PASS");
+}
 
 export async function runVaultBodySearchAnchorTests(): Promise<void> {
   const sourcePath = "notes/Source.md", targetPath = "notes/Target.md";
