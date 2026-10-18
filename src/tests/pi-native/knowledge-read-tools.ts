@@ -69,7 +69,8 @@ export async function runPiKnowledgeReferenceToolTests(): Promise<void> {
   const recentPath = "notes/recent.md";
   const bodies = new Map([
     [currentPath, "# Current source\n\nUse a bronze seal on the current case."],
-    [recentPath, "# Recent source\n\nUse a violet seal on the recent case."]
+    [recentPath, "# Recent source\n\nUse a violet seal on the recent case."],
+    ["notes/other-actions.md", "# Other actions\n这种方法的下一步安排是先检查封套。"]
   ]);
   let activePath: string | undefined = currentPath;
   const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
@@ -91,9 +92,11 @@ export async function runPiKnowledgeReferenceToolTests(): Promise<void> {
   const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
   try {
     for (const path of [currentPath, recentPath]) {
-      const result = await executeTool(security, tools[0]!, "knowledge_search", `reference-search-${path}`, { query: "这篇的重点是什么？", limit: 1 });
+      const result = await executeTool(security, tools[0]!, "knowledge_search", `reference-search-${path}`, { query: "当前这篇里，下一步安排是什么？", limit: 8 });
       assert.equal(result.isError, false);
-      const hit = JSON.parse(result.content[0]!.text).hits[0];
+      const hits = JSON.parse(result.content[0]!.text).hits;
+      assert.deepEqual([...new Set(hits.map((hit: { vaultRelativePath: string }) => hit.vaultRelativePath))], [path], "single-note tool results do not mix another source's action plan");
+      const hit = hits[0];
       assert.equal(hit.vaultRelativePath, path);
       assert.equal(hit.inclusionReason, "按指代带入");
       assert.equal(hit.matchSources, undefined, "provider JSON does not turn explicit inclusion into a keyword match");
@@ -110,6 +113,10 @@ export async function runPiKnowledgeReferenceToolTests(): Promise<void> {
     const ordinary = await executeTool(security, tools[0]!, "knowledge_search", "reference-ordinary-query", { query: "我那个想法是什么？", limit: 1 });
     assert.deepEqual(JSON.parse(ordinary.content[0]!.text).hits, []);
     assert.equal(captured.length, 2);
+    const cross = await executeTool(security, tools[0]!, "knowledge_search", "reference-cross-query", { query: "刚才那篇讲的方法我在别处还用过吗？", limit: 8 });
+    const crossHits = JSON.parse(cross.content[0]!.text).hits;
+    assert.equal(crossHits[0].vaultRelativePath, currentPath);
+    assert.ok(crossHits.some((hit: { vaultRelativePath: string }) => hit.vaultRelativePath === "notes/other-actions.md"));
   } finally { port.dispose(); }
   console.log("Knowledge explicit reference tools: provider JSON, onSourceRead, verified pointers and ordinary-query isolation PASS");
 }

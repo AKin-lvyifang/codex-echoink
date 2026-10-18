@@ -79,6 +79,8 @@ export async function runVaultBodySearchReferenceTests(): Promise<void> {
     [recentPath, "# Recent source\nUse a violet label on the recent crate."],
     ["notes/target-a.md", "# Target A\nQUARTZ_TARGET first independent evidence."],
     ["notes/target-b.md", "# Target B\nQUARTZ_TARGET second independent evidence."],
+    ["notes/other-actions.md", "# Other actions\n这种方法的下一步安排是先检查封套。"],
+    ["wiki/这篇材料.md", "# 这篇材料\n\nCheck the spare paper count.\n\n## Appendix\nReview the packing sheet."],
     ["wiki/guide.md", "# Guide\nThe guide requires an amber label."],
     ["journal/2026-08-01.md", "# Old journal\nThe older entry requires a brown label."],
     ["journal/2026-09-03.md", "# Current journal\nThe newer entry requires a blue label."],
@@ -120,8 +122,28 @@ export async function runVaultBodySearchReferenceTests(): Promise<void> {
     assert.equal(delivered.matchSources, undefined);
     assert.equal(delivered.contentRevision, reference.contentRevision);
 
+    const singleQuestion = "当前这篇里，下一步安排是什么？";
+    const single = await production.retrieveChat!({ question: singleQuestion, explicitPaths: [], includeUnrefined: false } as never);
+    assert.deepEqual([...new Set(JSON.parse(single.providerResourceText).sources.map((source: { vaultRelativePath: string }) => source.vaultRelativePath))], [currentPath], "a current-note question cannot receive another note's action plan");
+    const exact = await index.search({ query: "这篇材料", limit: 1 });
+    assert.equal(exact.hits[0].vaultRelativePath, "wiki/这篇材料.md");
+    assert.equal(exact.hits[0].inclusionReason, undefined);
+    assert.ok(exact.continuationCursor);
+    activePath = recentPath; recentPaths = [currentPath];
+    const exactNext = await index.search({ query: "这篇材料", limit: 1, cursor: exact.continuationCursor });
+    assert.equal(exactNext.hits[0].vaultRelativePath, "wiki/这篇材料.md", "exact-name pagination does not bind unrelated browsing context");
+    assert.equal(exactNext.hits[0].inclusionReason, undefined);
+
     activePath = undefined;
+    recentPaths = [recentPath];
     assert.equal((await index.search({ query })).hits[0].vaultRelativePath, recentPath);
+    const recentSingle = await index.search({ query: "刚才那篇里面，下一步安排是什么？" });
+    assert.deepEqual([...new Set(recentSingle.hits.map(hit => hit.vaultRelativePath))], [recentPath]);
+    for (const crossQuestion of ["刚才那篇讲的方法我在别处还用过吗？", "刚才那篇讲的方法在其他地方还用过吗？"]) {
+      const cross = await index.search({ query: crossQuestion });
+      assert.equal(cross.hits[0].vaultRelativePath, recentPath);
+      assert.ok(cross.hits.some(hit => hit.vaultRelativePath === "notes/other-actions.md"), "an explicit elsewhere question keeps cross-source retrieval");
+    }
     for (const unavailable of ["private/secret.md", ".hidden/secret.md", "projects/disabled.md", "notes/deleted.md", "../outside.md"]) {
       activePath = unavailable;
       recentPaths = [unavailable, "private/secret.md", "projects/disabled.md", recentPath, currentPath];
@@ -137,13 +159,13 @@ export async function runVaultBodySearchReferenceTests(): Promise<void> {
     assert.equal((await index.search({ query, kinds: ["journal"], dateFrom: "2026-09-01", dateTo: "2026-09-30" })).hits[0].vaultRelativePath, "journal/2026-09-03.md");
 
     activePath = currentPath; recentPaths = [recentPath];
-    const page = await index.search({ query: "这篇提到 QUARTZ_TARGET 了吗？", limit: 1 });
+    const page = await index.search({ query: "这篇提到的 QUARTZ_TARGET 在别处还有吗？", limit: 1 });
     assert.equal(page.hits[0].vaultRelativePath, currentPath);
     assert.ok(page.continuationCursor);
-    const next = await index.search({ query: "这篇提到 QUARTZ_TARGET 了吗？", limit: 1, cursor: page.continuationCursor });
+    const next = await index.search({ query: "这篇提到的 QUARTZ_TARGET 在别处还有吗？", limit: 1, cursor: page.continuationCursor });
     assert.equal(next.hits[0].inclusionReason, undefined);
     activePath = recentPath;
-    await assert.rejects(() => index.search({ query: "这篇提到 QUARTZ_TARGET 了吗？", limit: 1, cursor: page.continuationCursor }), { code: "cursor_stale" });
+    await assert.rejects(() => index.search({ query: "这篇提到的 QUARTZ_TARGET 在别处还有吗？", limit: 1, cursor: page.continuationCursor }), { code: "cursor_stale" });
     const ordinary = await index.search({ query: "QUARTZ_TARGET", limit: 1 });
     assert.ok(ordinary.continuationCursor);
     activePath = currentPath; recentPaths = [currentPath, recentPath];

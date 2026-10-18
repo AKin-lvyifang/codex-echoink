@@ -51,6 +51,7 @@ interface PreparedSearch {
   queries: readonly Set<string>[];
   bodyQueries: readonly Set<string>[];
   referencePath?: string;
+  referenceScope?: "single" | "cross";
   union: Set<string>;
   coverage: BodySearchCoverage;
 }
@@ -307,8 +308,34 @@ function queryTexts(request: BodySearchRequest): string[] {
   return [...new Set(supplied.map((query) => query.trim()).filter(Boolean))];
 }
 
-export function hasExplicitNoteReference(request: BodySearchRequest): boolean {
-  return queryTexts(request).some(text => /(?:刚才那篇|当前这篇|这篇)/u.test(text));
+export function explicitNoteReferenceScope(request: BodySearchRequest, documents: readonly BodySearchDocument[]): "single" | "cross" | undefined {
+  const texts = queryTexts(request);
+  if (!texts.some(text => /(?:刚才那篇|当前这篇|这篇)/u.test(text))) return undefined;
+  const dateFrom = calendarDate(request.dateFrom);
+  const dateTo = calendarDate(request.dateTo);
+  const names = new Set(documents.filter(document => {
+    if (request.excludePaths?.includes(document.vaultRelativePath) || (request.kinds && !request.kinds.includes(document.kind))) return false;
+    if (document.kind !== "journal" || (!dateFrom && !dateTo)) return true;
+    const date = journalDate(document);
+    return Boolean(date && (!dateFrom || date >= dateFrom) && (!dateTo || date <= dateTo));
+  }).flatMap(document => [document.title, ...(document.aliases ?? [])]).map(normalizedSearchName).filter(Boolean));
+  let scope: "single" | "cross" | undefined;
+  for (const text of texts) {
+    if (exactSearchName(text, names)) continue;
+    const query = normalizedSearchName(text);
+    const namedRanges: { start: number; end: number }[] = [];
+    for (const name of names) {
+      if (!/(?:刚才那篇|当前这篇|这篇)/u.test(name)) continue;
+      for (let start = query.indexOf(name); start >= 0; start = query.indexOf(name, start + 1)) namedRanges.push({ start, end: start + name.length });
+    }
+    const reference = [...query.matchAll(/(?:刚才那篇|当前这篇|这篇)/gu)]
+      .some(match => !namedRanges.some(range => match.index >= range.start && match.index + match[0].length <= range.end));
+    if (!reference) continue;
+    // These explicit words widen a note reference; no topic/entity classification is needed.
+    if (/(?:别处|其[他它]地方|其[他它](?:笔记|文章|材料)|别的(?:笔记|文章|材料))/u.test(query)) return "cross";
+    scope = "single";
+  }
+  return scope;
 }
 
 function tokenTermWeights(text: string, dictionary: readonly string[]): Map<string, number> {
@@ -432,16 +459,17 @@ function prepareSearch(options: BodySearchOptions): PreparedSearch {
   const queries = queryWeights.map((weights) => new Set(weights.keys()));
   const bodyQueries = preparedQueries.map(query => bodyQueryTerms(query.text, query.weights, dictionary, exactNames));
   const eligiblePaths = new Set(documents.map(document => document.vaultRelativePath));
-  const referencePath = hasExplicitNoteReference(request)
+  const referenceScope = explicitNoteReferenceScope(request, documents);
+  const referencePath = referenceScope
     ? [options.activePath, ...(options.recentPaths ?? [])].find((path): path is string => path !== undefined && eligiblePaths.has(path))
     : undefined;
   const union = new Set(queries.flatMap((query) => [...query]));
-  return { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, union, coverage };
+  return { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, referenceScope, union, coverage };
 }
 
 async function executeSearch(options: BodySearchOptions, prepared: PreparedSearch, cache?: SearchCacheHooks): Promise<BodySearchResult> {
   const { request } = options;
-  const { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, union } = prepared;
+  const { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, referenceScope, union } = prepared;
   const coverage = { ...prepared.coverage };
   if (!queries.length && !referencePath) return { hits: [], total: 0, coverage: { ...coverage, complete: coverage.totalFiles === 0 && coverage.complete } };
   const sections: Section[] = [];
@@ -549,7 +577,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
       } else fused.set(result.section, { ...result, score, bestRank: rank });
     }
   }
-  const ordered: { section: Section; score: number; query?: number; bestRank: number; inclusionReason?: BodySearchInclusionReason }[] = [...fused.values()].sort((left, right) => right.score - left.score || left.bestRank - right.bestRank
+  let ordered: { section: Section; score: number; query?: number; bestRank: number; inclusionReason?: BodySearchInclusionReason }[] = [...fused.values()].sort((left, right) => right.score - left.score || left.bestRank - right.bestRank
     || left.section.document.vaultRelativePath.localeCompare(right.section.document.vaultRelativePath) || left.section.sectionStart - right.section.sectionStart);
   if (referencePath) {
     const matched = ordered.findIndex(result => result.section.document.vaultRelativePath === referencePath);
@@ -558,6 +586,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
     if (matched >= 0) ordered.unshift({ ...ordered.splice(matched, 1)[0], inclusionReason: "按指代带入" });
     else if (section) ordered.unshift({ section, score: 0, bestRank: 0, inclusionReason: "按指代带入" });
   }
+  if (referenceScope === "single") ordered = ordered.filter(result => result.section.document.vaultRelativePath === referencePath);
   const offset = Number.isFinite(request.offset) ? Math.max(0, Math.trunc(request.offset!)) : 0;
   const limit = Number.isFinite(request.limit) ? Math.max(0, Math.min(100, Math.trunc(request.limit!))) : 8;
   const hits: BodySearchHit[] = ordered.slice(offset, offset + limit).map(({ section, score, query, inclusionReason }) => ({

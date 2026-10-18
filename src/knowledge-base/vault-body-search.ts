@@ -2,7 +2,7 @@ import type { App, TFile } from "obsidian";
 import { sha256Hex } from "../utils/sha256";
 import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole } from "./root-paths-core";
 import type { KnowledgeFolderBindings } from "./folder-bindings";
-import { BodySearchMemoryIndex, hasExplicitNoteReference } from "./search/body-search";
+import { BodySearchMemoryIndex, explicitNoteReferenceScope } from "./search/body-search";
 import type { BodySearchDocument, KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeAgentReadResult, KnowledgeAgentSearchRequest, KnowledgeAgentSearchResult } from "./knowledge-agent-index";
 
@@ -152,7 +152,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     const recentPaths = [...(this.app.workspace?.getLastOpenFiles?.() ?? [])];
     const queryKey = sha256Hex(JSON.stringify({ mode: request.mode, query: request.query, queries: request.queries, kinds: request.kinds,
       dateFrom: request.dateFrom, dateTo: request.dateTo, excludePaths: request.excludePaths, bindingSignature,
-      ...(hasExplicitNoteReference(request) ? { referenceContext: [activePath ?? null, recentPaths] } : {}),
+      ...(explicitNoteReferenceScope(request, documents) ? { referenceContext: [activePath ?? null, recentPaths] } : {}),
       excludedRoots, files: documents.map(d => [d.vaultRelativePath, d.revisionKey]) }));
     let offset = 0;
     if (request.cursor) {

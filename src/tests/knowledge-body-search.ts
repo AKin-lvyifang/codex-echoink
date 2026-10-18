@@ -104,6 +104,27 @@ export async function runKnowledgeBodySearchMetadataTests(): Promise<void> {
   console.log("Knowledge metadata evidence: title, alias, tag, boilerplate, partial-name/body priority, bounded columns and cached provenance PASS");
 }
 
+export async function runKnowledgeBodySearchReferenceBoundaryTests(): Promise<void> {
+  const current = note("wiki/current.md", "# Current source\n\n这份书单的下一步安排是先整理卡片。", { kind: "wiki", title: "Current source" });
+  const exact = note("wiki/exact.md", "# 这篇材料\n\n下一步安排先核对纸张数量。", { kind: "wiki", title: "这篇材料" });
+  const alias = note("wiki/alias.md", "# Alias source\n\n下一步安排先统计包装规格。", { kind: "wiki", aliases: ["刚才那篇方案"] });
+  const rows: { scenario: string; expected: string[]; actual: string[]; passes: boolean }[] = [];
+  const record = async (scenario: string, documents: readonly BodySearchDocument[], query: string, expected: string[], activePath?: string, recentPaths: string[] = []) => {
+    const result = await searchBodyDocuments({ documents, request: { query }, activePath, recentPaths });
+    const actual = [...new Set(result.hits.map(hit => hit.vaultRelativePath))];
+    rows.push({ scenario, expected, actual, passes: JSON.stringify(actual) === JSON.stringify(expected) });
+  };
+  await record("exact-title-is-not-a-pronoun", [current, exact], "这篇材料", [exact.vaultRelativePath], current.vaultRelativePath);
+  await record("exact-alias-is-not-a-pronoun", [current, alias], "刚才那篇方案", [alias.vaultRelativePath], current.vaultRelativePath);
+  await record("pronoun-text-inside-a-title-is-protected", [current, exact], "找一下这篇材料", [exact.vaultRelativePath], current.vaultRelativePath);
+  const recent = note("notes/recent.md", "# Recent source\n\n下一步安排先检查封口，再登记箱数。", { title: "Recent source" });
+  await record("current-single-source-boundary", [current, exact, recent], "当前这篇里，下一步安排是什么？", [current.vaultRelativePath], current.vaultRelativePath, [recent.vaultRelativePath]);
+  await record("recent-single-source-boundary", [current, exact, recent], "刚才那篇里面，下一步安排是什么？", [recent.vaultRelativePath], undefined, [recent.vaultRelativePath]);
+  console.log("Explicit reference boundary development evidence:", JSON.stringify(rows));
+  assert.deepEqual(rows.filter(row => !row.passes), [], "exact names and single-source boundaries must both hold");
+  console.log("Knowledge explicit reference boundaries: exact title/alias, internal name text and current/recent single-source evidence PASS");
+}
+
 export async function runKnowledgeBodySearchReferenceTests(): Promise<void> {
   const currentBody = "---\nstatus: draft\n---\n# Current source\n\nThe current source requires a silver label.\n\nA later paragraph concerns packing.";
   const current = note("notes/current.md", currentBody, { revisionKey: "current-1" });
@@ -135,7 +156,7 @@ export async function runKnowledgeBodySearchReferenceTests(): Promise<void> {
   }
   const memory = new BodySearchMemoryIndex();
   try {
-    const options = { documents, request: { query: "这篇提到 QUARTZ_TARGET 了吗？" }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] };
+    const options = { documents, request: { query: "这篇提到的 QUARTZ_TARGET 在别处还有吗？" }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] };
     const full = await memory.search(options);
     assert.equal(full.hits[0].vaultRelativePath, current.vaultRelativePath, "the current source is directly included even when only another file matches the topic");
     assert.ok(full.hits.some(hit => hit.vaultRelativePath === matching.vaultRelativePath));
