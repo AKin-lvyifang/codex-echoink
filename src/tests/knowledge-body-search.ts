@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import type { App, TFile } from "obsidian";
 import { BodySearchMemoryIndex, searchBodyDocuments } from "../knowledge-base/search/body-search";
 import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vault-body-search";
@@ -6,7 +7,7 @@ import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings"
 import { buildSearchDictionary, tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import { yieldSearchTask } from "../knowledge-base/search/scheduling";
 import { sliceKnowledgeSourceSpan } from "../knowledge-base/source-span";
-import { createKnowledgeDocumentOutline, fitKnowledgeOutlines, knowledgeOutlineCharacters, KNOWLEDGE_OUTLINE_LIMITS, locateKnowledgeAnchor, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, parseMarkdownHeadings, verifyKnowledgeOutlineLines } from "../knowledge-base/search/markdown-navigation";
+import { createKnowledgeDocumentOutline, extractMarkdownLinkTargets, fitKnowledgeOutlines, knowledgeLinkNeighborhood, knowledgeOutlineCharacters, KNOWLEDGE_LINK_LIMITS, KNOWLEDGE_OUTLINE_LIMITS, locateKnowledgeAnchor, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, parseMarkdownHeadings, verifyKnowledgeOutlineLines } from "../knowledge-base/search/markdown-navigation";
 import type { BodySearchDocument, BodySearchOptions, BodySearchRequest, BodySearchResult } from "../knowledge-base/search/contracts";
 
 function note(path: string, body: string, metadata: Partial<BodySearchDocument> = {}): BodySearchDocument {
@@ -16,6 +17,72 @@ function note(path: string, body: string, metadata: Partial<BodySearchDocument> 
 
 async function search(documents: readonly BodySearchDocument[], request: BodySearchRequest) {
   return searchBodyDocuments({ documents, request });
+}
+
+export async function runKnowledgeLinkNeighborhoodTests(): Promise<void> {
+  const bodies = new Map([["notes/A.md", "# A\nclay workshop claim.\n\n[[B]] [[Guide]] [[Guide]]"],
+    ["notes/B.md", "# B\nclay workshop claim.\n\n[A](A.md) [[Guide]]"], ["notes/C.md", "# C\nclay workshop claim.\n\n[[Alone]]"],
+    ["notes/Guide.md", "# Guide\nSupplemental instructions."], ["notes/Alone.md", "# Alone\nAnother reference."]]);
+  let reads = 0;
+  const documents = (code = false) => [...bodies].map(([path, body]) => {
+    const content = code ? body.replace(/(\[\[[^\]]+\]\]|\[A\]\(A.md\))/gu, "`$1`") : body;
+    return note(path, content, { revisionKey: code ? "code" : "real", read: async () => { reads++; return { content, contentRevision: `sha256:${createHash("sha256").update(content).digest("hex")}` }; } });
+  });
+  assert.deepEqual(extractMarkdownLinkTargets("---\nlink: '[[Property]]'\n---\n```md\n[[Fence]]\n```\n    [[Indent]]\n`[[Inline]]`\n<!-- [[HTML]] -->\n%% [[Comment]] %%\n\\[[Escaped]]\n`multiline code\n[[Multiline]]\nend`\n[[Real#Heading|label]] [doc](./Other.md#part) [web](https://example.com)"), ["Real", "./Other.md"]);
+  const docs = documents();
+  const candidates = [...bodies].slice(0, 3).map(([vaultRelativePath, content]) => ({ vaultRelativePath, contentRevision: `sha256:${createHash("sha256").update(content).digest("hex")}`, targets: extractMarkdownLinkTargets(content) }));
+  const neighborhood = knowledgeLinkNeighborhood(candidates, docs, new Set(candidates.map(candidate => candidate.vaultRelativePath)));
+  assert.deepEqual([...neighborhood.boosted].sort(), ["notes/A.md", "notes/B.md"]);
+  assert.equal([...neighborhood.cues.values()].flat().length, 1);
+  const cue = neighborhood.cues.get("notes/A.md")![0];
+  assert.equal(cue.vaultRelativePath, "notes/Guide.md"); assert.equal(cue.readStatus, "unread"); assert.equal(cue.label, "可能相关");
+  assert.equal(cue.via.length, 2, "duplicate links in one source cannot imitate multiple supporters");
+  const single = knowledgeLinkNeighborhood([candidates[0]], docs, new Set(["notes/A.md"]));
+  assert.equal(single.boosted.size, 0); assert.equal(single.cues.size, 0);
+  const externalTargets = extractMarkdownLinkTargets("[external](//example.test/path)");
+  const external = knowledgeLinkNeighborhood(candidates.slice(0, 2).map(candidate => ({ ...candidate, targets: externalTargets })),
+    [...docs, note("example.test/path.md", "External-name collision.", { title: "path" })], new Set(candidates.map(candidate => candidate.vaultRelativePath)));
+  assert.equal(external.boosted.size, 0); assert.equal(external.cues.size, 0, "protocol-relative external URLs never resolve to a coincidentally named Vault file");
+  const baseline = await search(documents(true), { query: "clay", limit: 20 });
+  const linked = await search(docs, { query: "clay", limit: 20 });
+  for (const hit of linked.hits) {
+    const before = baseline.hits.find(value => value.vaultRelativePath === hit.vaultRelativePath && value.lineStart === hit.lineStart)!;
+    const factor = neighborhood.boosted.has(hit.vaultRelativePath) ? 1 + KNOWLEDGE_LINK_LIMITS.boost : 1;
+    assert.ok(Math.abs(hit.score - before.score * factor) < 1e-10, "actual body retrieval applies one bounded 3% boost, never per edge");
+  }
+  assert.equal(linked.total, baseline.total); assert.ok(linked.hits.every(hit => hit.vaultRelativePath !== "notes/Guide.md"));
+  const namedDocs = docs.map(document => document.vaultRelativePath === "notes/A.md" ? { ...document, title: "Clay case" } : document);
+  const exact = await search(namedDocs, { query: "Clay case", limit: 20 });
+  assert.equal(exact.hits[0].vaultRelativePath, "notes/A.md"); assert.ok(exact.hits.every(hit => !hit.linkCues));
+  const aliasDocs = docs.map(document => document.vaultRelativePath === "notes/A.md" ? { ...document, aliases: ["Pottery master"] } : document);
+  const alias = await search(aliasDocs, { query: "Pottery master", limit: 20 });
+  assert.equal(alias.hits[0].vaultRelativePath, "notes/A.md"); assert.ok(alias.hits.every(hit => !hit.linkCues));
+  const isolated = await searchBodyDocuments({ documents: docs, activePath: "notes/A.md", recentPaths: ["notes/B.md"], request: { query: "这篇笔记讲什么", limit: 20 } });
+  assert.ok(isolated.hits.length > 0 && isolated.hits.every(hit => hit.vaultRelativePath === "notes/A.md" && !hit.linkCues));
+  const cache = new BodySearchMemoryIndex(); reads = 0;
+  const cold = await cache.search({ documents: docs, request: { query: "clay", limit: 20 } }); const coldReads = reads;
+  const warm = await cache.search({ documents: docs, request: { query: "clay", limit: 20 } });
+  assert.deepEqual(warm.hits, cold.hits); assert.equal(reads, coldReads);
+  const pages = [];
+  for (let offset = 0; offset < cold.total; offset++) pages.push(...(await cache.search({ documents: docs, request: { query: "clay", limit: 1, offset } })).hits);
+  assert.deepEqual(pages, cold.hits, "the neighborhood is computed before slicing, so page size and warm cache cannot alter rank or cues"); cache.dispose();
+  const many = Array.from({ length: 21 }, (_, index) => ({ vaultRelativePath: `notes/N${index}.md`, contentRevision: candidates[0].contentRevision, targets: index === 0 || index === 20 ? ["Guide"] : [] }));
+  assert.equal(knowledgeLinkNeighborhood(many, docs, new Set(many.map(candidate => candidate.vaultRelativePath))).boosted.size, 0, "a candidate outside the first twenty cannot form a shared-link vote");
+  let distributedBoundary = false;
+  for (let padding = 200; padding < 600 && !distributedBoundary; padding++) {
+    const sources = Array.from({ length: 4 }, (_, index) => ({ vaultRelativePath: `notes/${index}${"x".repeat(padding)}.md`, contentRevision: candidates[0].contentRevision, targets: [`Target${Math.floor(index / 2)}`] }));
+    const expected = [0, 1].map(index => ({ schemaVersion: 1 as const, readStatus: "unread" as const, label: "可能相关" as const, vaultRelativePath: `notes/Target${index}.md`, title: `Target${index}`,
+      via: sources.slice(index * 2, index * 2 + 2).map(({ vaultRelativePath, contentRevision }) => ({ vaultRelativePath, contentRevision })) }));
+    const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+    if (bytes({ linkCues: expected }) <= 2400 && expected.reduce((sum, cue) => sum + bytes({ linkCues: [cue] }) - 1, 0) > 2400) {
+      const bounded = knowledgeLinkNeighborhood(sources, expected.map(cue => ({ vaultRelativePath: cue.vaultRelativePath, title: cue.title })), new Set(sources.map(source => source.vaultRelativePath)));
+      assert.equal([...bounded.cues.values()].flat().length, 1);
+      assert.ok([...bounded.cues.values()].reduce((sum, cues) => sum + bytes({ linkCues: cues }) - 1, 0) <= 2400);
+      distributedBoundary = true;
+    }
+  }
+  assert.ok(distributedBoundary, "the independent fixture crosses 2400B specifically because each owner adds its own field/array wrapper");
+  console.log("Candidate link neighborhood: real wiki/Markdown parsing, reciprocal/shared one-time 3% gain, single-link rejection, unread cue, exact/current isolation and cache/paging parity PASS");
 }
 
 async function withCheckpointTask<T>(onTask: () => void, action: () => Promise<T>): Promise<T> {

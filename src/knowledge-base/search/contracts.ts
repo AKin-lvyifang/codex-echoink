@@ -4,6 +4,16 @@ export type KnowledgeSearchKind = typeof KNOWLEDGE_SEARCH_KINDS[number];
 export type BodySearchMatchSource = "title" | "alias" | "tag" | "body";
 export type BodySearchInclusionReason = "按指代带入";
 
+/** Shared links are unread navigation, never agreement or another body hit. */
+export interface KnowledgeLinkCue {
+  readonly schemaVersion: 1;
+  readonly readStatus: "unread";
+  readonly label: "可能相关";
+  readonly vaultRelativePath: string;
+  readonly title: string;
+  readonly via: readonly Readonly<{ vaultRelativePath: string; contentRevision: string }>[];
+}
+
 /** Navigation over the current source revision; these ranges are not read evidence. */
 export interface KnowledgeOutlineEntry {
   readonly heading: string;
@@ -61,6 +71,7 @@ export interface BodySearchRequest {
 }
 
 export interface BodySearchHit {
+  readonly linkCues?: readonly KnowledgeLinkCue[];
   readonly related?: import("../knowledge-relations").KnowledgeRelationPage;
   readonly vaultRelativePath: string;
   readonly title: string;

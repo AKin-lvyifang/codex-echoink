@@ -1,7 +1,7 @@
 import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchInclusionReason, BodySearchMatchSource, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult, KnowledgeDocumentOutline } from "./contracts";
 import { buildSearchDictionary, iterateSearchTokens, tokenizeSearchText } from "./tokenize";
 import { yieldSearchTask as yieldToUi } from "./scheduling";
-import { createKnowledgeDocumentOutline, extractMarkdownAnchorLinks, knowledgeOutlineCharacters, KNOWLEDGE_BODY_FRAGMENT_LIMITS, KNOWLEDGE_OUTLINE_LIMITS, limitKnowledgeOutline, parseMarkdownHeadings, type MarkdownHeading as Heading } from "./markdown-navigation";
+import { createKnowledgeDocumentOutline, extractMarkdownAnchorLinks, extractMarkdownLinkTargets, knowledgeLinkNeighborhood, knowledgeOutlineCharacters, KNOWLEDGE_BODY_FRAGMENT_LIMITS, KNOWLEDGE_LINK_LIMITS, KNOWLEDGE_OUTLINE_LIMITS, limitKnowledgeOutline, parseMarkdownHeadings, type MarkdownHeading as Heading } from "./markdown-navigation";
 
 interface Fragment {
   start: number;
@@ -28,6 +28,7 @@ interface IndexedSection {
   frequencies: Map<string, number>;
 }
 interface DocumentStatistics {
+  linkTargets: readonly string[];
   anchorLinks: ReturnType<typeof extractMarkdownAnchorLinks>;
   contentRevision: string;
   sections: readonly IndexedSection[];
@@ -48,6 +49,7 @@ interface Section extends IndexedSection {
   outline?: Readonly<KnowledgeDocumentOutline>;
 }
 interface PreparedSearch {
+  exactQuery: boolean;
   documents: readonly BodySearchDocument[];
   dictionary: readonly string[];
   queryWeights: readonly Map<string, number>[];
@@ -191,6 +193,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
   const headings = currentHeadings(document, lines);
   const outline = createKnowledgeDocumentOutline(headings, lines, contentRevision);
   const anchorLinks = content.includes("[[") && content.includes("#") ? extractMarkdownAnchorLinks(content) : { links: [], total: 0 };
+  const linkTargets = extractMarkdownLinkTargets(content);
   const includedBodyLines = bodyLines(lines, headings);
   const paragraph = firstBodyParagraph(lines, includedBodyLines, headings, document.title);
   const ranges: { title: string; start: number; end: number }[] = [];
@@ -204,7 +207,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
   }
   const tagTerms = new Set(tokenizeSearchText((document.tags ?? []).join("\n"), dictionary));
   const sections: IndexedSection[] = [];
-  let characters = (paragraph?.excerpt.length ?? 0) + (outline ? knowledgeOutlineCharacters(outline) : 0) + (anchorLinks.total ? JSON.stringify(anchorLinks).length : 0);
+  let characters = (paragraph?.excerpt.length ?? 0) + (outline ? knowledgeOutlineCharacters(outline) : 0) + (anchorLinks.total ? JSON.stringify(anchorLinks).length : 0) + (linkTargets.length ? JSON.stringify(linkTargets).length : 0);
   let tokenEntries = titleTerms.size + tagTerms.size;
   for (const range of ranges) {
     checkAbort(signal);
@@ -235,7 +238,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
     tokenEntries += frequencies.size + fragmentFrequency.size + fragments.reduce((count, fragment) => count + fragment.frequencies.size + fragment.bodyTerms.size, 0);
     if (sections.length % 16 === 0 || text.length >= 32_000) await yieldToUi(signal);
   }
-  return { contentRevision, sections, titleTerms, tagTerms, firstBodyParagraph: paragraph, outline, anchorLinks, characters, tokenEntries };
+  return { contentRevision, sections, titleTerms, tagTerms, firstBodyParagraph: paragraph, outline, anchorLinks, linkTargets, characters, tokenEntries };
 }
 
 function sectionEvidence(section: IndexedSection, query: ReadonlySet<string>, bodyQuery?: ReadonlySet<string>): Evidence {
@@ -436,7 +439,7 @@ function prepareSearch(options: BodySearchOptions): PreparedSearch {
     ? [options.activePath, ...(options.recentPaths ?? [])].find((path): path is string => path !== undefined && eligiblePaths.has(path))
     : undefined;
   const union = new Set(queries.flatMap((query) => [...query]));
-  return { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, referenceScope, union, coverage };
+  return { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, referenceScope, union, coverage, exactQuery: texts.some(text => exactSearchName(text, exactNames)) };
 }
 
 async function executeSearch(options: BodySearchOptions, prepared: PreparedSearch, cache?: SearchCacheHooks): Promise<BodySearchResult> {
@@ -445,6 +448,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
   const coverage = { ...prepared.coverage };
   if (!queries.length && !referencePath) return { hits: [], total: 0, coverage: { ...coverage, complete: coverage.totalFiles === 0 && coverage.complete } };
   const sections: Section[] = [];
+  const linkStatistics = new Map<string, DocumentStatistics>();
   let scannedSections = 0;
   let freshFilesSinceYield = 0;
   let filesSinceYield = 0;
@@ -467,6 +471,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
         scannedSections += statistics.sections.length;
         freshFilesSinceYield++;
       }
+      linkStatistics.set(document.vaultRelativePath, statistics);
       for (const section of statistics.sections) sections.push({ ...section, document, contentRevision: statistics.contentRevision,
         journalDate: journalDate(document), titleTerms: statistics.titleTerms, tagTerms: statistics.tagTerms, firstBodyParagraph: statistics.firstBodyParagraph, outline: statistics.outline });
       coverage.indexedFiles++;
@@ -551,6 +556,16 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
   }
   let ordered: { section: Section; score: number; query?: number; bestRank: number; inclusionReason?: BodySearchInclusionReason }[] = [...fused.values()].sort((left, right) => right.score - left.score || left.bestRank - right.bestRank
     || left.section.document.vaultRelativePath.localeCompare(right.section.document.vaultRelativePath) || left.section.sectionStart - right.section.sectionStart);
+  const matchedPaths = new Set(ordered.map(result => result.section.document.vaultRelativePath));
+  const candidates = [...matchedPaths].slice(0, KNOWLEDGE_LINK_LIMITS.candidates).map(vaultRelativePath => ({ vaultRelativePath,
+    contentRevision: linkStatistics.get(vaultRelativePath)!.contentRevision, targets: linkStatistics.get(vaultRelativePath)!.linkTargets }));
+  const neighborhood = referenceScope === "single" || prepared.exactQuery
+    ? { boosted: new Set<string>(), cues: new Map<string, readonly import("./contracts").KnowledgeLinkCue[]>() }
+    : knowledgeLinkNeighborhood(candidates, documents, matchedPaths);
+  if (neighborhood.boosted.size) {
+    ordered = ordered.map(result => neighborhood.boosted.has(result.section.document.vaultRelativePath) ? { ...result, score: result.score * (1 + KNOWLEDGE_LINK_LIMITS.boost) } : result)
+      .sort((left, right) => right.score - left.score || left.bestRank - right.bestRank || left.section.document.vaultRelativePath.localeCompare(right.section.document.vaultRelativePath) || left.section.sectionStart - right.section.sectionStart);
+  }
   if (referencePath) {
     const matched = ordered.findIndex(result => result.section.document.vaultRelativePath === referencePath);
     const section = sections.find(section => section.document.vaultRelativePath === referencePath);
@@ -559,6 +574,8 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
     else if (section) ordered.unshift({ section, score: 0, bestRank: 0, inclusionReason: "按指代带入" });
   }
   if (referenceScope === "single") ordered = ordered.filter(result => result.section.document.vaultRelativePath === referencePath);
+  const cueSections = new Map<string, Section>();
+  for (const { section } of ordered) if (neighborhood.cues.has(section.document.vaultRelativePath) && !cueSections.has(section.document.vaultRelativePath)) cueSections.set(section.document.vaultRelativePath, section);
   const outlines = new Map<Section, Readonly<KnowledgeDocumentOutline>>();
   const outlinedPaths = new Set<string>();
   let outlineEntries = 0;
@@ -587,6 +604,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
       : searchEvidence(section, queries[query], bodyQueries[query], dictionary)),
     ...(inclusionReason ? { inclusionReason } : {}),
     ...(outlines.has(section) ? { outline: outlines.get(section)! } : {}),
+    ...(cueSections.get(section.document.vaultRelativePath) === section ? { linkCues: neighborhood.cues.get(section.document.vaultRelativePath)! } : {}),
     score,
     ...(section.journalDate ? { journalDate: section.journalDate } : {}),
   }));

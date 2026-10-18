@@ -109,6 +109,7 @@ interface KnowledgeSearchToolResult {
     matchSources?: readonly BodySearchMatchSource[];
     inclusionReason?: BodySearchInclusionReason;
     outline?: Readonly<KnowledgeDocumentOutline>;
+    linkCues?: PiKnowledgeReference["linkCues"];
     related?: KnowledgeRelationPage;
     rawSources: readonly Readonly<KnowledgeAgentRawSource>[];
   }>[];
@@ -274,6 +275,7 @@ implements PiVaultAdditionalToolSecurityPort {
               ...(hit.inclusionReason ? { inclusionReason: hit.inclusionReason } : {}),
               ...(hit.outline ? { outline: hit.outline } : {}),
               ...(hit.related ? { related: hit.related } : {}),
+              ...(hit.linkCues ? { linkCues: hit.linkCues } : {}),
               hasMore: hit.lineStart > 1 || hit.lineEnd < (hit.totalLines ?? hit.lineEnd), sourceType: hit.kind,
               recordedAt: hit.recordedAt, verificationStatus: hit.verificationStatus, sectionTitle: hit.sectionTitle }];
           }) : [];
@@ -333,6 +335,7 @@ export function createPiKnowledgeReadToolDefinitions(input: Readonly<{
     description: [
       "按相关度搜索已启用用途的 Markdown 正文，包含日记和普通笔记。query 或 queries（1-5个问法）二选一；多问法按排名融合。",
       "日记日期可传 dateFrom/dateTo（含首尾的YYYY-MM-DD），相对日期由你依据当前日期换算。未传时不筛日期。",
+      "linkCues是共同链接产生的未读可能相关线索，不是目标正文命中；链接不证明观点一致，补读目标正文后才可引用。",
       "命中带章节、excerpt原文、版本和lineStart/lineEnd；长行另带columnStart/columnEnd（0起始UTF-16列，终点不含）。可直接使用已交付原文，按需续读。",
       "outline 是 readStatus=unread 的有限标题目录；目录范围未读，不能替代 excerpt 原文或视为已读整篇。",
       "使用 mode=recent 时不传 query/queries，可按 recordedAt 倒序浏览指定 kinds 的近期条目。",
@@ -527,6 +530,7 @@ function searchToolResult(
       ...(hit.inclusionReason ? { inclusionReason: hit.inclusionReason } : {}),
       ...(hit.outline ? { outline: normalizeKnowledgeDocumentOutline(hit.outline, hit.contentRevision, hit.totalLines!) } : {}),
       ...(hit.related ? { related: hit.related } : {}),
+      ...(hit.linkCues ? { linkCues: hit.linkCues } : {}),
       sectionTitle: hit.sectionTitle, lineStart: hit.lineStart, lineEnd: hit.lineEnd, columnStart: hit.columnStart, columnEnd: hit.columnEnd, totalLines: hit.totalLines, excerpt: hit.excerpt,
       vaultRelativePath: hit.vaultRelativePath,
       kind: hit.kind,

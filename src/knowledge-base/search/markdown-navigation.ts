@@ -1,9 +1,10 @@
-import type { KnowledgeAnchorLocation, KnowledgeDocumentOutline, KnowledgeOutlineEntry } from "./contracts";
+import type { BodySearchDocument, KnowledgeAnchorLocation, KnowledgeDocumentOutline, KnowledgeLinkCue, KnowledgeOutlineEntry } from "./contracts";
 import type { KnowledgeLink, KnowledgeRelation, KnowledgeRelationPage, KnowledgeRelationTarget } from "../knowledge-relations";
 
 export interface MarkdownHeading { heading: string; line: number; level: number }
 
 export const KNOWLEDGE_BODY_FRAGMENT_LIMITS = Object.freeze({ lines: 24, characters: 2400 });
+export const KNOWLEDGE_LINK_LIMITS = Object.freeze({ targetsPerSource: 16, candidates: 20, boost: 0.03, cues: 3, supporters: 3, cueBytes: 2400 });
 
 export const KNOWLEDGE_OUTLINE_LIMITS = Object.freeze({
   longDocumentLines: 120,
@@ -107,12 +108,132 @@ export function fitKnowledgeOutlines<T extends { readonly outline?: Readonly<Kno
 }
 
 /** New relation navigation yields before any previously deliverable body is removed. */
-export function fitKnowledgeNavigation<T extends { readonly outline?: Readonly<KnowledgeDocumentOutline>; readonly related?: Readonly<KnowledgeRelationPage> }>(values: readonly T[], fits: (values: readonly T[]) => boolean): T[] {
+export function fitKnowledgeNavigation<T extends { readonly outline?: Readonly<KnowledgeDocumentOutline>; readonly related?: Readonly<KnowledgeRelationPage>; readonly linkCues?: readonly KnowledgeLinkCue[] }>(values: readonly T[], fits: (values: readonly T[]) => boolean): T[] {
   const result = [...values];
+  for (let index = result.length - 1; index >= 0 && !fits(result); index--) {
+    if (result[index].linkCues) { const { linkCues: _cues, ...body } = result[index]; result[index] = Object.freeze(body) as T; }
+  }
   for (let index = result.length - 1; index >= 0 && !fits(result); index--) {
     if (result[index].related) { const { related: _related, ...body } = result[index]; result[index] = Object.freeze(body) as T; }
   }
   return fitKnowledgeOutlines(result, fits);
+}
+
+/** Only actual authored wiki/inline Markdown links; no body/graph traversal. */
+export function extractMarkdownLinkTargets(content: string): readonly string[] {
+  if (!content.includes("[[") && !content.includes("](")) return Object.freeze([]);
+  const targets = new Set<string>();
+  const add = (raw: string) => {
+    let target = raw.trim();
+    try { target = decodeURIComponent(target); } catch { /* Literal malformed escapes cannot widen resolution. */ }
+    target = target.split("#")[0].replace(/\\([\\ ()])/gu, "$1").replace(/\\/gu, "/");
+    if (target && !target.startsWith("//") && target.length <= 1024 && !/[:\x00-\x1f\x7f]/u.test(target)) targets.add(target);
+  };
+  const visible = anchorVisibleLines(content.split(/\r\n|\n|\r/u)).map(line => line ?? "").join("\n");
+  const escaped = (index: number) => { let count = 0; while (index > 0 && visible[--index] === "\\") count++; return (count & 1) !== 0; };
+  const pieces: string[] = []; let copied = 0;
+  for (let index = 0; index < visible.length; index++) {
+    if (visible[index] !== "`" || escaped(index)) continue;
+    const run = visible.slice(index).match(/^`+/u)![0];
+    let close = visible.indexOf(run, index + run.length);
+    while (close >= 0 && (visible[close - 1] === "`" || visible[close + run.length] === "`")) close = visible.indexOf(run, close + run.length);
+    if (close < 0) { index += run.length - 1; continue; }
+    const end = close + run.length;
+    pieces.push(visible.slice(copied, index), visible.slice(index, end).replace(/[^\n]/g, " ")); copied = end; index = end - 1;
+  }
+  const prose = pieces.length ? pieces.join("") + visible.slice(copied) : visible;
+  for (const match of prose.matchAll(/\[\[([^\]\r\n]+)\]\]|\[[^\]\r\n]*\]\(\s*(?:<([^>\r\n]+)>|((?:\\.|[^()\s])+(?:\([^()\r\n]*\)(?:\\.|[^()\s])*)?))(?:\s+["'][^\r\n]*["'])?\s*\)/gu)) {
+    if (escaped(match.index)) continue;
+    add(match[1] === undefined ? match[2] ?? match[3] : match[1].split("|")[0]);
+    if (targets.size >= KNOWLEDGE_LINK_LIMITS.targetsPerSource) return Object.freeze([...targets]);
+  }
+  return Object.freeze([...targets]);
+}
+
+interface LinkCandidate { vaultRelativePath: string; contentRevision: string; targets: readonly string[] }
+
+/** Bounded metadata-only neighborhood of the existing keyword candidates. */
+export function knowledgeLinkNeighborhood(candidates: readonly LinkCandidate[], documents: readonly Pick<BodySearchDocument, "vaultRelativePath" | "title" | "aliases">[], matchedPaths: ReadonlySet<string>) {
+  const selected = candidates.slice(0, KNOWLEDGE_LINK_LIMITS.candidates);
+  const byPath = new Map(documents.map(document => [document.vaultRelativePath, document]));
+  const byName = new Map<string, Set<string>>();
+  const name = (value: string) => value.normalize("NFKC").trim().toLowerCase();
+  const safePath = (value: string) => value.length <= 1024 && !value.startsWith("/") && !/[\\:\x00-\x1f\x7f]/u.test(value) && value.split("/").every(part => part && !part.startsWith("."));
+  for (const document of documents) for (const title of [document.title, ...(document.aliases ?? [])]) {
+    const key = name(title); if (!byName.has(key)) byName.set(key, new Set()); byName.get(key)!.add(document.vaultRelativePath);
+  }
+  const resolve = (target: string, source: string): string | undefined => {
+    if (target.startsWith("//") || /[:\x00-\x1f\x7f]/u.test(target)) return undefined;
+    const directory = source.slice(0, Math.max(0, source.lastIndexOf("/")));
+    const paths = target.startsWith(".") ? [`${directory}/${target}`] : target.includes("/") ? [target, `${directory}/${target}`] : [];
+    for (const candidate of paths) {
+      const parts: string[] = [];
+      for (const part of candidate.split("/")) {
+        if (!part || part === ".") continue;
+        if (part === "..") { if (!parts.length) return undefined; parts.pop(); } else parts.push(part);
+      }
+      const path = parts.join("/");
+      const exact = [path, `${path}.md`, `${path}.markdown`].filter(path => byPath.has(path) && safePath(path));
+      if (exact.length) return exact.length === 1 ? exact[0] : undefined;
+    }
+    if (target.includes("/")) return undefined;
+    const matches = [...(byName.get(name(target.replace(/\.(?:md|markdown)$/iu, ""))) ?? [])].filter(safePath);
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+  const edges = new Map(selected.map(candidate => [candidate.vaultRelativePath, new Set(candidate.targets.flatMap(target => {
+    const resolved = resolve(target, candidate.vaultRelativePath); return resolved && resolved !== candidate.vaultRelativePath ? [resolved] : [];
+  }))]));
+  const boosted = new Set<string>();
+  const shared = new Map<string, LinkCandidate[]>();
+  for (const candidate of selected) for (const target of edges.get(candidate.vaultRelativePath)!) {
+    if (edges.get(target)?.has(candidate.vaultRelativePath)) { boosted.add(candidate.vaultRelativePath); boosted.add(target); }
+    if (!shared.has(target)) shared.set(target, []); shared.get(target)!.push(candidate);
+  }
+  const cues = new Map<string, readonly KnowledgeLinkCue[]>();
+  const allCues: KnowledgeLinkCue[] = [];
+  for (const [target, supporters] of shared) {
+    if (supporters.length < 2) continue;
+    supporters.forEach(supporter => boosted.add(supporter.vaultRelativePath));
+    if (matchedPaths.has(target) || allCues.length >= KNOWLEDGE_LINK_LIMITS.cues) continue;
+    const document = byPath.get(target)!;
+    const via = supporters.slice(0, KNOWLEDGE_LINK_LIMITS.supporters).map(({ vaultRelativePath, contentRevision }) => Object.freeze({ vaultRelativePath, contentRevision }));
+    if (!document.title || document.title.length > 200 || /[\x00-\x1f\x7f]/u.test(document.title) || !via.every(item => safePath(item.vaultRelativePath) && /^sha256:[a-f0-9]{64}$/u.test(item.contentRevision))) continue;
+    const cue: KnowledgeLinkCue = Object.freeze({ schemaVersion: 1, readStatus: "unread", label: "可能相关", vaultRelativePath: target, title: document.title, via: Object.freeze(via) });
+    const owner = via[0].vaultRelativePath;
+    const ownerCues = Object.freeze([...(cues.get(owner) ?? []), cue]);
+    const bytes = [...cues].reduce((sum, [path, items]) => sum + (path === owner ? 0 : new TextEncoder().encode(JSON.stringify({ linkCues: items })).length), 0)
+      + new TextEncoder().encode(JSON.stringify({ linkCues: ownerCues })).length;
+    if (bytes > KNOWLEDGE_LINK_LIMITS.cueBytes) continue;
+    allCues.push(cue); cues.set(owner, ownerCues);
+  }
+  return { boosted, cues };
+}
+
+export function normalizeKnowledgeLinkCues(value: unknown, sourcePath: string, sourceRevision: string): readonly KnowledgeLinkCue[] {
+  const invalid = (): never => { throw new TypeError("knowledge_link_cues_invalid"); };
+  const object = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : invalid();
+  const exact = (value: Record<string, unknown>, keys: readonly string[]) => { if (Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) invalid(); };
+  const path = (value: unknown): string => typeof value === "string" && value.length > 0 && value.length <= 1024 && !value.startsWith("/") && !/[\\:\x00-\x1f\x7f]/u.test(value) && value.split("/").every(part => part && !part.startsWith(".")) ? value : invalid();
+  if (!Array.isArray(value) || !value.length || value.length > KNOWLEDGE_LINK_LIMITS.cues) return invalid();
+  const targets = new Set<string>();
+  const cues = value.map(raw => {
+    const cue = object(raw); exact(cue, ["schemaVersion", "readStatus", "label", "vaultRelativePath", "title", "via"]);
+    const target = path(cue.vaultRelativePath);
+    if (cue.schemaVersion !== 1 || cue.readStatus !== "unread" || cue.label !== "可能相关" || typeof cue.title !== "string" || !cue.title || cue.title.length > 200 || /[\x00-\x1f\x7f]/u.test(cue.title)
+      || targets.has(target) || !Array.isArray(cue.via) || cue.via.length < 2 || cue.via.length > KNOWLEDGE_LINK_LIMITS.supporters) return invalid();
+    targets.add(target);
+    const sources = new Set<string>();
+    const via = cue.via.map(raw => {
+      const item = object(raw); exact(item, ["vaultRelativePath", "contentRevision"]);
+      const source = path(item.vaultRelativePath);
+      if (source === target || sources.has(source) || typeof item.contentRevision !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(item.contentRevision)) return invalid();
+      sources.add(source); return Object.freeze({ vaultRelativePath: source, contentRevision: item.contentRevision });
+    });
+    if (!via.some(item => item.vaultRelativePath === sourcePath && item.contentRevision === sourceRevision)) return invalid();
+    return Object.freeze({ schemaVersion: 1 as const, readStatus: "unread" as const, label: "可能相关" as const, vaultRelativePath: target, title: cue.title, via: Object.freeze(via) });
+  });
+  if (new TextEncoder().encode(JSON.stringify({ linkCues: cues })).length > KNOWLEDGE_LINK_LIMITS.cueBytes) return invalid();
+  return Object.freeze(cues);
 }
 
 /** Strict transport/storage validation; the source revision remains the authority. */
@@ -154,6 +275,7 @@ function anchorVisibleLines(lines: readonly string[]): (string | undefined)[] {
   let properties = lines[0]?.trim() === "---";
   let fence: { character: string; length: number } | undefined;
   let comment = false;
+  let obsidianComment = false;
   return lines.map((raw, index) => {
     if (properties) { if (index > 0 && /^(?:---|\.\.\.)\s*$/u.test(raw)) properties = false; return undefined; }
     const marker = raw.match(/^ {0,3}(?:>[\t ]?)* {0,3}(?:(?:[-+*]|\d+[.)])[\t ]+)?(`{3,}|~{3,})(.*)$/u);
@@ -172,6 +294,14 @@ function anchorVisibleLines(lines: readonly string[]): (string | undefined)[] {
     line = line.replace(/<!--.*?-->/gu, value => " ".repeat(value.length));
     const start = line.indexOf("<!--");
     if (start >= 0) { line = line.slice(0, start); comment = true; }
+    if (obsidianComment) {
+      const end = line.indexOf("%%");
+      if (end < 0) return undefined;
+      line = " ".repeat(end + 2) + line.slice(end + 2); obsidianComment = false;
+    }
+    line = line.replace(/%%.*?%%/gu, value => " ".repeat(value.length));
+    const hidden = line.indexOf("%%");
+    if (hidden >= 0) { line = line.slice(0, hidden); obsidianComment = true; }
     return line;
   });
 }

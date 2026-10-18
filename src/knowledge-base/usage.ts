@@ -1,5 +1,5 @@
 import { KNOWLEDGE_SEARCH_KINDS, type BodySearchMatchSource, type KnowledgeSearchKind } from "./search/contracts";
-import { knowledgeAnchorCoversSpan, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, normalizeKnowledgeRelationPage } from "./search/markdown-navigation";
+import { knowledgeAnchorCoversSpan, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, normalizeKnowledgeLinkCues, normalizeKnowledgeRelationPage } from "./search/markdown-navigation";
 import { isDeepStrictEqual } from "node:util";
 import { mkdir, readdir } from "node:fs/promises";
 import * as path from "node:path";
@@ -119,6 +119,7 @@ const REFERENCE_KEYS = [
 ] as const;
 
 const OPTIONAL_REFERENCE_KEYS = [
+  "linkCues",
   "anchorLocation",
   "outline",
   "inclusionReason",
@@ -637,6 +638,11 @@ function normalizeKnowledgeReference(
     try { related = normalizeKnowledgeRelationPage(object.related, object.vaultRelativePath as string, contentRevision); }
     catch { throw new PiNativeFileStoreError(errorCode, "KnowledgeReference related 无效"); }
   }
+  let linkCues: KnowledgeReference["linkCues"];
+  if (Object.hasOwn(object, "linkCues")) {
+    try { linkCues = normalizeKnowledgeLinkCues(object.linkCues, object.vaultRelativePath as string, contentRevision); }
+    catch { throw new PiNativeFileStoreError(errorCode, "KnowledgeReference linkCues 无效"); }
+  }
   const hasMatchSources = Object.hasOwn(object, "matchSources");
   const hasInclusionReason = Object.hasOwn(object, "inclusionReason");
   if (hasInclusionReason && object.inclusionReason !== "按指代带入") {
@@ -692,6 +698,7 @@ function normalizeKnowledgeReference(
     ...(anchorLocation ? { anchorLocation } : {}),
     ...(outline ? { outline } : {}),
     ...(related ? { related } : {}),
+    ...(linkCues ? { linkCues } : {}),
     ...(hasInclusionReason ? { inclusionReason: "按指代带入" as const } : {}),
     ...(hasMatchSources ? { matchSources: Object.freeze([...(object.matchSources as BodySearchMatchSource[])]) } : {}),
     ...(Number.isSafeInteger(object.columnStart) && Number.isSafeInteger(object.columnEnd) && (object.columnStart as number) >= 0 && (object.columnEnd as number) >= 0 ? { columnStart: object.columnStart as number, columnEnd: object.columnEnd as number } : {}),

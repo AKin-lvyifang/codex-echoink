@@ -107,6 +107,7 @@ export interface KnowledgeBaseCitationSummary {
 
 /** Phase 3 durable pointer to one exact excerpt in the current Vault. */
 export interface KnowledgeReference {
+  linkCues?: readonly import("./search/contracts").KnowledgeLinkCue[];
   anchorLocation?: import("./search/contracts").KnowledgeAnchorLocation;
   matchSources?: readonly import("./search/contracts").BodySearchMatchSource[];
   inclusionReason?: import("./search/contracts").BodySearchInclusionReason;

@@ -4,7 +4,7 @@ import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole } from "./root-paths-core";
 import type { KnowledgeFolderBindings } from "./folder-bindings";
 import { BodySearchMemoryIndex, explicitNoteReferenceScope } from "./search/body-search";
 import { extractMarkdownAnchorLinks, fitKnowledgeNavigation, locateKnowledgeAnchor } from "./search/markdown-navigation";
-import type { BodySearchDocument, KnowledgeSearchKind } from "./search/contracts";
+import type { BodySearchDocument, KnowledgeLinkCue, KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeLink, KnowledgeRelation, KnowledgeRelationPage } from "./knowledge-relations";
 import type { KnowledgeAgentReadResult, KnowledgeAgentSearchRequest, KnowledgeAgentSearchResult } from "./knowledge-agent-index";
 
@@ -219,6 +219,23 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     let hits = result.hits.map(hit => ({ ...hit, entryId: `body:${hit.vaultRelativePath}:${hit.lineStart}`,
       verificationStatus: "local_revision_verified" as const, rawSources: [] }));
     const snapshots = new Map<string, Promise<KnowledgeAgentReadResult>>();
+    for (let index = 0; index < hits.length; index++) {
+      const hit = hits[index];
+      if (!hit.linkCues) continue;
+      const cues: KnowledgeLinkCue[] = [];
+      for (const cue of hit.linkCues) {
+        const target = this.app.vault.getAbstractFileByPath(cue.vaultRelativePath);
+        if (!this.allowsPath(cue.vaultRelativePath) || !target || !("extension" in target)) continue;
+        for (const source of cue.via) {
+          if (!snapshots.has(source.vaultRelativePath)) snapshots.set(source.vaultRelativePath, this.read({ vaultRelativePath: source.vaultRelativePath, expectedContentRevision: source.contentRevision }));
+          if ((await snapshots.get(source.vaultRelativePath)!).contentRevision !== source.contentRevision) throw this.changedSearch(Boolean(request.cursor));
+        }
+        const currentTarget = this.app.vault.getAbstractFileByPath(cue.vaultRelativePath);
+        if (this.allowsPath(cue.vaultRelativePath) && currentTarget && "extension" in currentTarget) cues.push(cue);
+      }
+      if (cues.length) hits[index] = { ...hit, linkCues: Object.freeze(cues) };
+      else { const { linkCues: _cues, ...body } = hit; hits[index] = body; }
+    }
     const visited = new Set<string>();
     let navigationSources = 0;
     for (let index = 0; index < hits.length && navigationSources < 3; index++) {
@@ -228,7 +245,8 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       const cached = this.memory.navigationLinks(hit.vaultRelativePath, hit.contentRevision);
       if (cached?.total === 0) continue;
       navigationSources++;
-      const source = await this.read({ vaultRelativePath: hit.vaultRelativePath, expectedContentRevision: hit.contentRevision });
+      const source = snapshots.has(hit.vaultRelativePath) ? await snapshots.get(hit.vaultRelativePath)! : await this.read({ vaultRelativePath: hit.vaultRelativePath, expectedContentRevision: hit.contentRevision });
+      if (source.contentRevision !== hit.contentRevision) throw this.changedSearch(Boolean(request.cursor));
       snapshots.set(source.vaultRelativePath, Promise.resolve(source));
       const links = cached ?? extractMarkdownAnchorLinks(source.content);
       if (links.total) hits[index] = { ...hit, related: await this.anchorPage(source, links, documents, 0, 4, snapshots, request.signal) };

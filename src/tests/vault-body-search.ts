@@ -14,6 +14,99 @@ import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { searchBodyDocuments } from "../knowledge-base/search/body-search";
 
+export async function runVaultBodySearchLinkCueTests(): Promise<void> {
+  const targetPath = "support/Guide.md";
+  const links = "[[support/Guide]] [[private/Hidden]] [[disabled/Hidden]] [[.obsidian/Hidden]] [[Missing]] [[Duplicate]]";
+  const bodies = new Map([["notes/A.md", `# A\nCOHORT_LINK_TOKEN local claim A.\n\n[[B]] ${links}`], ["notes/B.md", `# B\nCOHORT_LINK_TOKEN local claim B.\n\n[[A]] ${links}`],
+    ["notes/C.md", "# C\nCOHORT_LINK_TOKEN separate claim C.\n\n[[Alone]]"], [targetPath, "# Guide\nUNREAD_CUE_TARGET_BODY"], ["notes/Alone.md", "# Alone\nOther material."],
+    ["one/Duplicate.md", "# One\nOther material."], ["two/Duplicate.md", "# Two\nOther material."], ["private/Hidden.md", "PRIVATE_CUE_BODY"], ["disabled/Hidden.md", "DISABLED_CUE_BODY"], [".obsidian/Hidden.md", "HIDDEN_CUE_BODY"]]);
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.wiki.enabled = true; bindings.roles.wiki.readPaths = ["support"];
+  bindings.roles.work.enabled = false; bindings.roles.work.readPaths = ["disabled"];
+  const reads = new Map<string, number>();
+  let pause: { entered: () => void; wait: Promise<void> } | undefined;
+  let activePath: string | undefined;
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => {
+      assert.ok(!entry.path.startsWith("private/") && !entry.path.startsWith("disabled/") && !entry.path.startsWith(".obsidian/"));
+      reads.set(entry.path, (reads.get(entry.path) ?? 0) + 1);
+      if (entry.path === "notes/A.md" && pause) { pause.entered(); await pause.wait; }
+      return bodies.get(entry.path)!;
+    } }, metadataCache: { getFileCache: () => null }, workspace: { getActiveFile: () => activePath ? file(activePath) : null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings, { excludedRoots: () => ["private"] });
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-link-cues", storageRootPath: "/synthetic-link-cue-state", bodySearch: port });
+  index.refresh = async () => { assert.fail("candidate link cues never initialize a maintained graph"); };
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const captured: import("../knowledge-base/types").KnowledgeReference[] = [];
+  const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "cue-v", conversationId: "cue-c", piSessionId: "cue-s", productRunId: "cue-r" }),
+    currentWorkflow: () => "chat", onSourceRead: reference => { captured.push(reference); }, egress: new EchoInkVaultToolEgressPolicy() });
+  const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+  let sequence = 0;
+  const call = async (signal?: AbortSignal) => {
+    const id = `cue-${++sequence}`, input = { query: "COHORT_LINK_TOKEN", limit: 10 };
+    await security.handleToolCall({ toolName: "knowledge_search", toolCallId: id, input } as never, undefined);
+    try { await tools[0].execute(id, input, signal, undefined); } catch { /* security owns the safe failure */ }
+    return await security.handleToolResult({ toolName: "knowledge_search", toolCallId: id, isError: false } as never);
+  };
+  const gate = () => { let entered!: () => void, resume!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); pause = { entered, wait: new Promise<void>(resolve => { resume = resolve; }) }; return { started, resume: () => { pause = undefined; resume(); } }; };
+  try {
+    const cold = await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 });
+    const owner = cold.hits.find(hit => hit.linkCues)!;
+    assert.ok(owner); assert.equal(owner.linkCues!.length, 1);
+    const cue = owner.linkCues![0]; assert.equal(cue.vaultRelativePath, targetPath); assert.equal(cue.via.length, 2);
+    assert.equal(cue.readStatus, "unread"); assert.equal(cue.label, "可能相关");
+    assert.ok(!cold.hits.some(hit => hit.vaultRelativePath === targetPath));
+    assert.equal(reads.get(targetPath), 1, "the normal statistics scan is the only target body read; publishing a cue never reads it again");
+    const warm = await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 }); assert.deepEqual(warm.hits, cold.hits);
+    assert.equal(reads.get(targetPath), 1);
+    const pages = [];
+    let cursor: string | undefined;
+    do { const page = await index.search({ query: "COHORT_LINK_TOKEN", limit: 1, cursor }); pages.push(...page.hits); cursor = page.continuationCursor; } while (cursor);
+    assert.deepEqual(pages, cold.hits);
+    const references = (await retriever.retrieve({ question: "COHORT_LINK_TOKEN", limit: 6 })).references;
+    const reference = references.find(item => item.linkCues)!;
+    assert.deepEqual(reference.linkCues, owner.linkCues);
+    assert.equal((await retriever.verifyReferences(references)).status, "valid");
+    assert.deepEqual(knowledgeReferenceEntryDetails(references).references.map(item => item.linkCues), references.map(item => item.linkCues));
+    const result = await call(); assert.equal(result.isError, false);
+    const delivered = JSON.parse(result.content[0].text).hits;
+    assert.deepEqual(delivered.map((hit: { linkCues: unknown }) => hit.linkCues), captured.map(item => item.linkCues));
+    assert.deepEqual((result.details.references as typeof captured).map(item => item.linkCues), captured.map(item => item.linkCues));
+    assert.equal(captured.length, cold.hits.length); assert.ok(captured.every(item => item.vaultRelativePath !== targetPath));
+    const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+    const contexts = [await runtime.retrieveChat!({ question: "COHORT_LINK_TOKEN", explicitPaths: [], includeUnrefined: false } as never), await runtime.retrieveAsk({ question: "COHORT_LINK_TOKEN", explicitPaths: [], includeUnrefined: false } as never)];
+    for (const context of contexts) {
+      assert.deepEqual(JSON.parse(context.providerResourceText).sources.map((source: { linkCues: unknown }) => source.linkCues), context.references.map(item => item.linkCues));
+      assert.doesNotMatch(context.providerResourceText, /UNREAD_CUE_TARGET_BODY|PRIVATE_CUE_BODY|DISABLED_CUE_BODY/u);
+      assert.match(context.providerResourceText, /链接不代表观点一致/u);
+    }
+    const identity = (item: import("../knowledge-base/types").KnowledgeReference) => ({ referenceId: item.referenceId, vaultRelativePath: item.vaultRelativePath,
+      contentRevision: item.contentRevision, lineStart: item.lineStart, lineEnd: item.lineEnd, columnStart: item.columnStart, columnEnd: item.columnEnd, excerpt: item.excerpt, linkCues: item.linkCues });
+    console.log(JSON.stringify({ kind: "knowledge-link-cue-delivery-dev", runtime: contexts.map(context => ({ providerResourceText: context.providerResourceText, references: context.references.map(identity) })),
+      tool: { text: result.content[0].text, detailsReferences: result.details.references }, onSourceRead: captured.map(identity), usage: knowledgeReferenceEntryDetails(captured).references.map(identity),
+      targetPath, targetBodyReadsForSearchStatistics: reads.get(targetPath), targetReadReferences: captured.filter(item => item.vaultRelativePath === targetPath).length }));
+    for (const linkCues of [undefined, [], [{ ...cue, extra: true }], [{ ...cue, readStatus: "read" }], [{ ...cue, contentRevision: reference.contentRevision }],
+      [{ ...cue, via: cue.via.slice(0, 1) }], [{ ...cue, via: [cue.via[0], cue.via[0]] }], [{ ...cue, via: cue.via.map(item => ({ ...item, contentRevision: `sha256:${"a".repeat(64)}` })) }],
+      [{ ...cue, vaultRelativePath: "private/../Hidden.md" }], [{ ...cue, title: "x".repeat(201) }]]) {
+      assert.throws(() => knowledgeReferenceEntryDetails([{ ...reference, linkCues } as never]), /linkCues 无效/u);
+    }
+    activePath = "notes/A.md";
+    const single = await index.search({ query: "这篇笔记讲什么", limit: 10 });
+    assert.ok(single.hits.length && single.hits.every(hit => hit.vaultRelativePath === activePath && !hit.linkCues)); activePath = undefined;
+    const blocked = gate(); const pending = index.search({ query: "COHORT_LINK_TOKEN", limit: 10 });
+    const rejected = assert.rejects(pending, { code: "source_changed" }); await blocked.started; port.invalidate("notes/A.md"); blocked.resume(); await rejected;
+    await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 });
+    const beforeCancel = captured.length, cancel = new AbortController(), waiting = gate(); const cancelled = call(cancel.signal);
+    await waiting.started; cancel.abort(); waiting.resume(); assert.equal((await cancelled).isError, true); assert.equal(captured.length, beforeCancel);
+    bindings.roles.wiki.searchEnabled = false;
+    assert.ok((await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 })).hits.every(hit => !hit.linkCues));
+    bindings.roles.wiki.searchEnabled = true; bodies.delete(targetPath);
+    assert.ok((await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 })).hits.every(hit => !hit.linkCues));
+  } finally { port.dispose(); }
+  console.log("Public link cues: actual search/preflight/tool/usage parity, unread target accounting, bounded candidate verification, private/disabled/deleted isolation, cache/paging and cancellation PASS");
+}
+
 export async function runVaultBodySearchSourceRevisionTests(): Promise<void> {
   const sourcePath = "projects/Decision.md", targetPath = "notes/Target.md";
   const oldMarker = "OLD_DELIVERED_ZQWERTY", newMarker = "NEW_CURRENT_ASDFGHJ";

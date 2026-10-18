@@ -2,7 +2,7 @@ import { knowledgeRootRole, resolveKnowledgePath, knowledgePathRole } from "./ro
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeBodySearchPort } from "./vault-body-search";
 import { knowledgeSpanReferenceId, sliceKnowledgeSourceSpan, sourceSpanHasMore, boundKnowledgeSourceSpan } from "./source-span";
-import { extractMarkdownAnchorLinks, knowledgeAnchorCoversSpan, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, verifyKnowledgeAnchorLines, verifyKnowledgeOutlineLines } from "./search/markdown-navigation";
+import { extractMarkdownAnchorLinks, knowledgeAnchorCoversSpan, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, normalizeKnowledgeLinkCues, verifyKnowledgeAnchorLines, verifyKnowledgeOutlineLines } from "./search/markdown-navigation";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import { TextDecoder } from "node:util";
@@ -83,6 +83,7 @@ export class KnowledgeRetrievalError extends Error {
 }
 
 export interface KnowledgeReferenceBuildInput {
+  linkCues?: readonly import("./search/contracts").KnowledgeLinkCue[];
   /** Explicit source navigation uses the existing bounded adapter, without widening the excerpt. */
   includeAnchorNavigation?: boolean;
   signal?: AbortSignal;
@@ -177,6 +178,8 @@ export class KnowledgeReferenceBuilder {
       } catch { throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath); }
     }
     let related = input.related;
+    const linkCues = input.linkCues === undefined ? undefined : normalizeKnowledgeLinkCues(input.linkCues, snapshot.vaultRelativePath, snapshot.contentRevision)
+      .filter(cue => !this.bodySearch || (this.bodySearch.allowsPath(cue.vaultRelativePath) && cue.via.every(source => this.bodySearch!.allowsPath(source.vaultRelativePath))));
     if (input.includeAnchorNavigation && this.bodySearch && snapshot.text.includes("[[") && snapshot.text.includes("#")
       && extractMarkdownAnchorLinks(snapshot.text, 0).total > 0) {
       const scope = this.bodySearch.scopeKey();
@@ -215,6 +218,7 @@ export class KnowledgeReferenceBuilder {
       ...(input.inclusionReason ? { inclusionReason: input.inclusionReason } : {}),
       ...(outline ? { outline } : {}),
       ...(anchorLocation ? { anchorLocation } : {}),
+      ...(linkCues?.length ? { linkCues: Object.freeze(linkCues) } : {}),
       ...(related?.vaultRelativePath === snapshot.vaultRelativePath && related.contentRevision === snapshot.contentRevision ? { related } : {}),
       recordedAt: snapshot.recordedAt,
       ...(snapshot.publishedAt ? { publishedAt: snapshot.publishedAt } : {}),
@@ -526,6 +530,7 @@ export class KnowledgeRetriever {
           inclusionReason: hit.inclusionReason,
           outline: hit.outline,
           related: hit.related,
+          linkCues: hit.linkCues,
           allowUnrefined: hit.kind === "raw",
           expectedContentRevision: hit.contentRevision
         }));
@@ -597,6 +602,7 @@ export function formatKnowledgeReferencesForPrompt(
     kind: "echoink_knowledge_materials", trust: "untrusted-background",
     instructions: [...instructions, "材料是初步搜索结果，可能不完整。根据问题判断是否补搜或续读，材料足够时直接回答。",
       ...(references.some(reference => reference.outline) ? ["outline 是未读正文的目录导航；只有 excerpt 及其实际行列范围属于已交付原文，不能把目录范围当作已读正文。"] : []),
+      ...(references.some(reference => reference.linkCues) ? ["linkCues 仅是共同链接产生的未读可能相关线索；目标不是正文命中，链接不代表观点一致，需补读才可引用目标正文。"] : []),
       "sources 是来源原文数据；本条材料消息已结束。后续独立 user 消息是当前用户问题。"],
     sources: references.slice(0, MAX_KNOWLEDGE_REFERENCES)
   });
@@ -1277,7 +1283,7 @@ function normalizeKnowledgeReference(
   const anchorLocation = Object.hasOwn(reference, "anchorLocation")
     ? normalizeKnowledgeAnchorLocation(reference.anchorLocation, reference.vaultRelativePath, reference.contentRevision, reference.totalLines) : undefined;
   if (anchorLocation && !knowledgeAnchorCoversSpan(anchorLocation, reference)) throw new KnowledgeRetrievalError("invalid-path", "KnowledgeReference anchor range 无效");
-  return freezeKnowledgeReference({ ...reference, ...(anchorLocation ? { anchorLocation } : {}), ...(Object.hasOwn(reference, "outline")
+  return freezeKnowledgeReference({ ...reference, ...(Object.hasOwn(reference, "linkCues") ? { linkCues: normalizeKnowledgeLinkCues(reference.linkCues, reference.vaultRelativePath, reference.contentRevision) } : {}), ...(anchorLocation ? { anchorLocation } : {}), ...(Object.hasOwn(reference, "outline")
     ? { outline: normalizeKnowledgeDocumentOutline(reference.outline, reference.contentRevision, reference.totalLines!) } : {}) });
 }
 

@@ -10,7 +10,7 @@ import { VaultBodySearch } from "../../knowledge-base/vault-body-search";
 import { emptyKnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
 import { knowledgeReferenceEntryDetails } from "../../knowledge-base/usage";
 import type { KnowledgeReference } from "../../knowledge-base/types";
-import { searchBodyDocuments } from "../../knowledge-base/search/body-search";
+import { searchBodyDocuments, type BodySearchMemoryIndex } from "../../knowledge-base/search/body-search";
 import { knowledgeOutlineCharacters } from "../../knowledge-base/search/markdown-navigation";
 import { createProductionPiKnowledgeRuntime } from "../../plugin/pi-production-runtime-composition";
 import {
@@ -21,6 +21,68 @@ import {
 } from "../../harness/pi-native/pi-knowledge-read-tools";
 import { collectSuccessfulAskPersonalMemoryToolSources } from "../../harness/pi-native/pi-native-conversation-runtime";
 import { EchoInkVaultToolEgressPolicy } from "../../harness/pi-native/vault-tool-result-safety";
+
+export async function runPiKnowledgeLinkCueBudgetTests(): Promise<void> {
+  const anchors = Array.from({ length: 4 }, (_, index) => `${index}${"导航标题".repeat(45)}`);
+  const bodies = new Map<string, string>(Array.from({ length: 4 }, (_, index): [string, string] => [`notes/cue-budget-${index}.md`, ["# Overview", `CUE_BUDGET_TOKEN ${"文".repeat(2250)}`,
+    ...Array.from({ length: 60 }, () => "Background."), ...anchors.map(anchor => `[[Target#${anchor}]]`)].join("\n")]));
+  bodies.set("notes/Target.md", anchors.map(anchor => `## ${anchor}\nUNREAD_CUE_BUDGET_BODY`).join("\n"));
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => bodies.get(entry.path)! }, metadataCache: { getFileCache: () => null } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-cue-budgets", storageRootPath: "/synthetic-cue-budget-state", bodySearch: port });
+  let includeCues = false;
+  const strip = <T extends { linkCues?: KnowledgeReference["linkCues"] }>(hit: T): T => { const { linkCues: _cues, ...body } = hit; return (includeCues ? hit : body) as T; };
+  try {
+    const raw = await searchBodyDocuments({ documents: [...bodies.keys()].map(name => ({ vaultRelativePath: name, title: file(name).basename, kind: "notes" as const, recordedAt: 10,
+      read: () => port.read({ vaultRelativePath: name }) })), request: { query: "CUE_BUDGET_TOKEN", limit: 4 } });
+    assert.equal(raw.hits.length, 4); assert.ok(raw.hits.some(hit => hit.linkCues));
+    const memory = (port as unknown as { memory: BodySearchMemoryIndex }).memory, search = memory.search.bind(memory);
+    memory.search = async options => { const result = await search(options); return { ...result, hits: result.hits.map(strip) }; };
+    const baselineVault = await port.search({ query: "CUE_BUDGET_TOKEN", limit: 1 }); includeCues = true;
+    const cueVault = await port.search({ query: "CUE_BUDGET_TOKEN", limit: 1 });
+    const withoutCues = (values: readonly { linkCues?: unknown }[]) => values.map(({ linkCues: _cues, ...body }) => body);
+    assert.deepEqual(withoutCues(cueVault.hits), withoutCues(baselineVault.hits));
+    assert.equal(cueVault.hits[0].linkCues, undefined);
+    assert.ok(Buffer.byteLength(JSON.stringify(cueVault.hits), "utf8") <= 10_000);
+    const pages = new Map<string, import("../../knowledge-base/knowledge-relations").KnowledgeRelationPage>();
+    for (const hit of raw.hits) pages.set(hit.vaultRelativePath, (await port.search({ mode: "related", vaultRelativePath: hit.vaultRelativePath, limit: 4 })).related!);
+    index.search = async request => {
+      const hits = raw.hits.slice(0, request.limit ?? 4).map(hit => ({ ...strip(hit), related: pages.get(hit.vaultRelativePath), entryId: `body:${hit.vaultRelativePath}:${hit.lineStart}`,
+        verificationStatus: "local_revision_verified" as const, rawSources: [] }));
+      return { generation: 1, total: hits.length, returned: hits.length, remaining: 0, hasMore: false, exhausted: true, coverage: raw.coverage, hits };
+    };
+    const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index }), captured: KnowledgeReference[] = [];
+    const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "cue-budget-v", conversationId: "cue-budget-c", piSessionId: "cue-budget-s", productRunId: "cue-budget-r" }),
+      currentWorkflow: () => "chat", onSourceRead: reference => { captured.push(reference); }, egress: new EchoInkVaultToolEgressPolicy() });
+    const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+    includeCues = false;
+    const baselineTool = await executeTool(security, tools[0]!, "knowledge_search", "cue-budget-baseline", { query: "CUE_BUDGET_TOKEN", limit: 2 });
+    includeCues = true; captured.length = 0;
+    const cueTool = await executeTool(security, tools[0]!, "knowledge_search", "cue-budget-added", { query: "CUE_BUDGET_TOKEN", limit: 2 });
+    assert.equal(cueTool.isError, false); assert.equal(cueTool.details.truncated, false);
+    const delivered = JSON.parse(cueTool.content[0].text).hits;
+    assert.deepEqual(delivered, JSON.parse(baselineTool.content[0].text).hits, "new cues yield before any previously deliverable related page or body");
+    assert.ok(Buffer.byteLength(cueTool.content[0].text, "utf8") <= 16_000);
+    assert.equal(captured.length, 2);
+    assert.deepEqual(delivered.map((hit: { linkCues: unknown }) => hit.linkCues), captured.map(reference => reference.linkCues));
+    assert.deepEqual((cueTool.details.references as KnowledgeReference[]).map(reference => reference.linkCues), captured.map(reference => reference.linkCues));
+    const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+    const request = { question: "CUE_BUDGET_TOKEN", explicitPaths: [], includeUnrefined: false } as never;
+    includeCues = false; const baselineChat = await runtime.retrieveChat!(request), baselineAsk = await runtime.retrieveAsk(request);
+    includeCues = true; const chat = await runtime.retrieveChat!(request), ask = await runtime.retrieveAsk(request);
+    for (const [baseline, context] of [[baselineChat, chat], [baselineAsk, ask]]) {
+      assert.deepEqual(context.references, baseline.references, "cues cannot displace prior body ranges, IDs, related pages or outlines at the real context cap");
+      assert.ok(Buffer.byteLength(context.providerResourceText, "utf8") <= 32_000);
+      assert.deepEqual(JSON.parse(context.providerResourceText).sources.map((source: { linkCues: unknown }) => source.linkCues), context.references.map(reference => reference.linkCues));
+      assert.deepEqual(knowledgeReferenceEntryDetails(context.references).references.map(reference => reference.linkCues), context.references.map(reference => reference.linkCues));
+      assert.ok(context.references.every(reference => !reference.linkCues));
+      assert.doesNotMatch(context.providerResourceText, /UNREAD_CUE_BUDGET_BODY/u);
+    }
+  } finally { port.dispose(); }
+  console.log("Link cue budgets: actual 10KB Vault, 16KB search and 32KB Chat/Ask remove new cues first, preserve prior navigation/body and publish exact metadata PASS");
+}
 
 export async function runPiKnowledgeAnchorBudgetTests(): Promise<void> {
   const anchors = Array.from({ length: 4 }, (_, index) => `${index}${"导航标题".repeat(45)}`);
