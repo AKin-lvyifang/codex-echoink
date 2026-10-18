@@ -366,7 +366,13 @@ export class KnowledgeAgentIndex {
   }>): Promise<KnowledgeAgentReadResult> {
     const snapshot = await this.readIndexedSnapshot(input);
     const related = await this.relationPage(snapshot.vaultRelativePath, 8);
-    return Object.freeze({ ...snapshot, ...(related.contentRevision === snapshot.contentRevision ? { related } : {}) });
+    if (related.contentRevision !== snapshot.contentRevision) {
+      // The relation index may lag a freshly located expected SHA. Prove this
+      // snapshot is still current before omitting the older navigation page.
+      await this.readIndexedSnapshot({ vaultRelativePath: snapshot.vaultRelativePath, expectedContentRevision: snapshot.contentRevision });
+      return Object.freeze({ ...snapshot });
+    }
+    return Object.freeze({ ...snapshot, related });
   }
 
   /** No relation decoration: anchor targets may link back to the source. */

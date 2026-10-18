@@ -13,6 +13,54 @@ import { createProductionPiKnowledgeRuntime, createPiKnowledgeInlineExtension } 
 import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
 import type { KnowledgeReference } from "../knowledge-base/types";
 
+export async function runKnowledgeLegacySourceRevisionTests(): Promise<void> {
+  const root = await mkdtemp(path.join(tmpdir(), "echoink-legacy-source-revision-"));
+  const vaultPath = path.join(root, "vault");
+  const sourcePath = "wiki/Source.md";
+  const oldMarker = "LEGACY_OLD_DELIVERED_ZXCVBN", newMarker = "LEGACY_NEW_CURRENT_QWERTY";
+  const source = `# Source\n${oldMarker}\n\n[[Target#Heading]]`;
+  const write = async (name: string, content: string) => { const target = path.join(vaultPath, name); await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, content, "utf8"); };
+  try {
+    await write(sourcePath, source);
+    await write("wiki/Target.md", "# Heading\nTarget body.\n[[Source#Source]]");
+    const index = new KnowledgeAgentIndex({ vaultPath, storageRootPath: path.join(root, "state") });
+    await index.refresh();
+    const baseline = await index.read({ vaultRelativePath: sourcePath });
+    const exposed = index as unknown as { relationPage(name: string, limit: number, cursor?: string): Promise<import("../knowledge-base/knowledge-relations").KnowledgeRelationPage> };
+    const relationPage = exposed.relationPage.bind(index);
+    let entered!: () => void, resume!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const wait = new Promise<void>(resolve => { resume = resolve; });
+    exposed.relationPage = async (...args) => { entered(); await wait; return await relationPage(...args); };
+    const pending = index.read({ vaultRelativePath: sourcePath, expectedContentRevision: baseline.contentRevision })
+      .then(value => ({ value, errorCode: undefined }), (error: { code?: string }) => ({ value: undefined, errorCode: error.code }));
+    await started;
+    const revised = source.replace(oldMarker, newMarker);
+    await write(sourcePath, revised); index.invalidate(sourcePath); resume();
+    const raced = await pending;
+    exposed.relationPage = relationPage;
+    const current = await index.read({ vaultRelativePath: sourcePath });
+    assert.notEqual(current.contentRevision, baseline.contentRevision);
+    assert.ok(current.content.includes(newMarker));
+    const observation = { route: "legacy.index.read", errorCode: raced.errorCode, oldBodyDelivered: Boolean(raced.value?.content.includes(oldMarker)), currentShaChanged: current.contentRevision !== baseline.contentRevision };
+    console.log(`Legacy source revision replacement development evidence: ${JSON.stringify(observation)}`);
+    assert.equal(observation.oldBodyDelivered, false, "legacy read cannot return the replaced paragraph after its relation page exposes a newer source SHA");
+    assert.equal(raced.errorCode, "source_changed");
+    // A current snapshot with a freshly located expected SHA must still work
+    // when only the maintained source relation page is older (no host event).
+    const latestMarker = "LEGACY_LATEST_ASDFGH";
+    await write(sourcePath, revised.replace(newMarker, latestMarker));
+    const located = await index.related({ vaultRelativePath: "wiki/Target.md" });
+    const freshRevision = located.items.find(item => item.direction === "outgoing" && item.target?.vaultRelativePath === sourcePath)!.target!.contentRevision;
+    assert.notEqual(freshRevision, current.contentRevision);
+    const fresh = await index.read({ vaultRelativePath: sourcePath, expectedContentRevision: freshRevision });
+    assert.ok(fresh.content.includes(latestMarker));
+    assert.equal(fresh.contentRevision, freshRevision);
+    assert.equal(fresh.related, undefined, "a truly current source may safely omit the maintained old relation page");
+  } finally { await rm(root, { recursive: true, force: true }); }
+  console.log("Legacy source revisions: reject genuinely changed source bodies, preserve current expected SHA with stale relation metadata PASS");
+}
+
 export async function runKnowledgeAnchorReadingTests(): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "echoink-anchor-reading-"));
   const vaultPath = path.join(root, "vault");

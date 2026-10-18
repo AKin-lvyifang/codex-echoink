@@ -182,10 +182,17 @@ export class KnowledgeReferenceBuilder {
       const scope = this.bodySearch.scopeKey();
       try {
         const page = (await this.bodySearch.search({ mode: "related", vaultRelativePath: snapshot.vaultRelativePath, limit: 4, signal: input.signal })).related;
-        if (page?.vaultRelativePath === snapshot.vaultRelativePath && page.contentRevision === snapshot.contentRevision) related = page;
+        if (page && (page.vaultRelativePath !== snapshot.vaultRelativePath || page.contentRevision !== snapshot.contentRevision)) {
+          throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath);
+        }
+        related = page;
       } catch (error) {
         if (input.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
-        // Optional navigation never replaces an already readable source snapshot.
+        const code = (error as { code?: string })?.code;
+        if (["source_changed", "source-changed", "invalid_path", "not_found", "invalid-path", "not-found"].includes(code ?? "")) {
+          throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath);
+        }
+        // Only an optional navigation failure may preserve the source snapshot.
       }
       if (scope !== this.bodySearch.scopeKey() || !this.bodySearch.allowsPath(snapshot.vaultRelativePath)) {
         throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath);

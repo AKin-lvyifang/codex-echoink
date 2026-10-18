@@ -17,12 +17,12 @@ const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
   'import { runKnowledgeAnchorNavigationTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests, runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchReferenceTests, runKnowledgeBodySearchReferenceBoundaryTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests } from "./src/tests/knowledge-body-search";',
-  'import { runVaultBodySearchExplicitAnchorTests, runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchMetadataTests, runVaultBodySearchReferenceTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
+  'import { runVaultBodySearchSourceRevisionTests, runVaultBodySearchExplicitAnchorTests, runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchMetadataTests, runVaultBodySearchReferenceTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
   'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
   'import { runKnowledgeFolderBindingsTests } from "./src/tests/knowledge-folder-bindings";',
-  'import { runKnowledgeAnchorReadingTests, runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
+  'import { runKnowledgeLegacySourceRevisionTests, runKnowledgeAnchorReadingTests, runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
   'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
   'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
   'import { runKnowledgeMaintenancePreferenceTests } from "./src/tests/knowledge-maintenance-preferences";',
@@ -32,6 +32,8 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runVaultBodySearchSourceRevisionTests();",
+  "await runKnowledgeLegacySourceRevisionTests();",
   "await runKnowledgeAnchorNavigationTests();",
   "await runVaultBodySearchExplicitAnchorTests();",
   "await runVaultBodySearchAnchorTests();",
@@ -75,16 +77,24 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--body-search-explicit-anchors") ? [
+    contents: (process.argv.includes("--body-search-source-revision") ? [
+      'import { runVaultBodySearchSourceRevisionTests } from "./src/tests/vault-body-search";',
+      'import { runKnowledgeLegacySourceRevisionTests } from "./src/tests/knowledge-associative-reading";',
+      'let sourceRevisionFailed = false;',
+      'for (const run of [runVaultBodySearchSourceRevisionTests, runKnowledgeLegacySourceRevisionTests]) { try { await run(); } catch (error) { console.error(error); sourceRevisionFailed = true; } }',
+      'if (sourceRevisionFailed) process.exitCode = 1;'
+    ] : process.argv.includes("--body-search-explicit-anchors") ? [
       'import { runVaultBodySearchExplicitAnchorTests } from "./src/tests/vault-body-search";',
       'await runVaultBodySearchExplicitAnchorTests();'
     ] : process.argv.includes("--body-search-anchors") ? [
       'import { runKnowledgeAnchorNavigationTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests, runKnowledgeBodySearchReferenceBoundaryTests } from "./src/tests/knowledge-body-search";',
-      'import { runVaultBodySearchExplicitAnchorTests, runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
-      'import { runKnowledgeAnchorReadingTests, runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
+      'import { runVaultBodySearchSourceRevisionTests, runVaultBodySearchExplicitAnchorTests, runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
+      'import { runKnowledgeLegacySourceRevisionTests, runKnowledgeAnchorReadingTests, runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
       'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
       'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
       'import { runPiKnowledgeAnchorBudgetTests, runPiKnowledgeReadToolTests, runPiKnowledgeOutlineBudgetTests } from "./src/tests/pi-native/knowledge-read-tools";',
+      'await runVaultBodySearchSourceRevisionTests();',
+      'await runKnowledgeLegacySourceRevisionTests();',
       'await runKnowledgeAnchorNavigationTests();',
       'await runVaultBodySearchExplicitAnchorTests();',
       'await runVaultBodySearchAnchorTests();',

@@ -14,6 +14,79 @@ import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { searchBodyDocuments } from "../knowledge-base/search/body-search";
 
+export async function runVaultBodySearchSourceRevisionTests(): Promise<void> {
+  const sourcePath = "projects/Decision.md", targetPath = "notes/Target.md";
+  const oldMarker = "OLD_DELIVERED_ZQWERTY", newMarker = "NEW_CURRENT_ASDFGHJ";
+  const oldSource = `# Decision\n${oldMarker}\n\n[[notes/Target#Heading]]`;
+  const newSource = oldSource.replace(oldMarker, newMarker);
+  const bodies = new Map([[sourcePath, oldSource], [targetPath, "# Heading\nTarget navigation body."]]);
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.projects.enabled = true; bindings.roles.projects.readPaths = ["projects"];
+  let targetWait: { entered: () => void; wait: Promise<void> } | undefined;
+  let sourceWait: { entered: () => void; wait: Promise<void> } | undefined;
+  let sourceReads = 0;
+  let targetUnavailable = false;
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => {
+      if (entry.path === sourcePath && sourceWait && ++sourceReads === 2) { sourceWait.entered(); await sourceWait.wait; }
+      if (entry.path === targetPath && targetUnavailable) throw new Error("Target is unavailable");
+      if (entry.path === targetPath && targetWait) { targetWait.entered(); await targetWait.wait; }
+      return bodies.get(entry.path)!;
+    } }, metadataCache: { getFileCache: () => null } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings);
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-source-revision", storageRootPath: "/synthetic-source-revision-state", bodySearch: port });
+  index.refresh = async () => { assert.fail("source revision checks cannot initialize a maintained index"); };
+  const builder = new KnowledgeReferenceBuilder(index.vaultPath, port);
+  const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  const search = port.search.bind(port);
+  const observations: { route: string; race: string; oldBodyDelivered: boolean; errorCode?: string; sourceChanged?: boolean }[] = [];
+  const race = async <T>(mode: "page" | "event" | "deleted" | "deleted-read", action: () => Promise<T>) => {
+    bodies.set(sourcePath, oldSource); port.invalidate(sourcePath);
+    sourceReads = 0;
+    let entered!: () => void, resume!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const wait = new Promise<void>(resolve => { resume = resolve; });
+    if (mode === "page" || mode === "deleted") port.search = async request => { if (request.mode === "related") { entered(); await wait; } return await search(request); };
+    else if (mode === "event") targetWait = { entered, wait };
+    else sourceWait = { entered, wait };
+    const pending = action().then(value => ({ value, errorCode: undefined }), (error: { code?: string }) => ({ value: undefined, errorCode: error.code }));
+    await started;
+    if (mode.startsWith("deleted")) bodies.delete(sourcePath); else bodies.set(sourcePath, newSource);
+    if (mode === "event") port.invalidate(sourcePath);
+    resume();
+    const result = await pending;
+    targetWait = undefined; sourceWait = undefined; port.search = search;
+    return result;
+  };
+  try {
+    const baseline = await builder.buildReference({ vaultRelativePath: sourcePath, question: oldMarker, includeAnchorNavigation: true });
+    assert.equal(baseline.excerpt, oldMarker, "the replaced marker is the actual delivered paragraph, not an unread tail");
+    const baselineChat = await runtime.retrieveChat!({ question: oldMarker, explicitPaths: [sourcePath], includeUnrefined: false } as never);
+    assert.ok(baselineChat.providerResourceText.includes(oldMarker), "the production baseline actually delivers the paragraph that the race replaces");
+    for (const mode of ["page", "event", "deleted", "deleted-read"] as const) {
+      const built = await race(mode, () => builder.buildReference({ vaultRelativePath: sourcePath, question: oldMarker, includeAnchorNavigation: true }));
+      observations.push({ route: "builder", race: mode, errorCode: built.errorCode, oldBodyDelivered: Boolean(built.value?.excerpt.includes(oldMarker)) });
+      const chat = await race(mode, () => runtime.retrieveChat!({ question: oldMarker, explicitPaths: [sourcePath], includeUnrefined: false } as never));
+      observations.push({ route: "production.retrieveChat", race: mode, errorCode: chat.errorCode,
+        oldBodyDelivered: Boolean(chat.value?.providerResourceText.includes(oldMarker) || chat.value?.references.some(reference => reference.excerpt.includes(oldMarker))),
+        sourceChanged: chat.value ? (JSON.stringify(chat.value).includes("source-changed") || chat.value.status === "no_evidence") : undefined });
+    }
+    console.log(`Source revision replacement development evidence: ${JSON.stringify(observations)}`);
+    assert.ok(observations.every(item => !item.oldBodyDelivered), "a known source revision change must never deliver the replaced old paragraph");
+    assert.ok(observations.filter(item => item.route === "builder").every(item => item.errorCode === "source-changed"));
+    bodies.set(sourcePath, oldSource); port.invalidate(sourcePath); targetUnavailable = true;
+    const unavailable = await builder.buildReference({ vaultRelativePath: sourcePath, question: oldMarker, includeAnchorNavigation: true });
+    assert.equal(unavailable.excerpt, oldMarker, "a stable source remains readable when only its target is unavailable");
+    assert.equal(unavailable.related!.items[0].anchorLocation!.status, "not_located");
+    if (unavailable.related!.items[0].anchorLocation!.status === "not_located") assert.equal(unavailable.related!.items[0].anchorLocation!.reason, "unavailable");
+    const unavailableChat = await runtime.retrieveChat!({ question: oldMarker, explicitPaths: [sourcePath], includeUnrefined: false } as never);
+    assert.ok(unavailableChat.providerResourceText.includes(oldMarker), "target-only failure still delivers the stable source through the real Chat route");
+    assert.equal(unavailableChat.references[0].related!.items[0].anchorLocation!.status, "not_located");
+  } finally { port.dispose(); }
+  console.log("Source revision replacement: builder and actual Chat reject page mismatches and async source_changed; target-only failures retain stable source body PASS");
+}
+
 export async function runVaultBodySearchExplicitAnchorTests(): Promise<void> {
   const sourcePath = "projects/exports/Brief.md", targetPath = "notes/Checklist.md";
   const source = ["# Brief", "EXPLICIT_ANCHOR_TOKEN is the selected claim.", ...Array.from({ length: 65 }, () => "Background."),
@@ -69,12 +142,12 @@ export async function runVaultBodySearchExplicitAnchorTests(): Promise<void> {
     // A source edit between the body snapshot and optional navigation cannot mix revisions.
     const search = port.search.bind(port);
     port.search = async request => {
-      if (request.mode === "related") bodies.set(sourcePath, `${source}\nChanged source.`);
+      if (request.mode === "related") bodies.set(sourcePath, source.replace("EXPLICIT_ANCHOR_TOKEN is the selected claim.", "EXPLICIT_NEW_SOURCE_CLAIM"));
       return await search(request);
     };
-    const changed = (await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 })).references[0];
-    assert.equal(changed.referenceId, baseline.referenceId);
-    assert.equal(changed.related, undefined);
+    const changed = await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 });
+    assert.equal(changed.references.length, 0, "a known source SHA mismatch rejects the old body rather than only omitting navigation");
+    assert.equal(changed.localIssues![0].status, "source-changed");
     port.search = search; bodies.set(sourcePath, source); port.invalidate(sourcePath);
     port.search = async request => {
       if (request.mode === "related") bindings.roles.projects.searchEnabled = false;
