@@ -138,6 +138,16 @@ await test("shared mobile body search delivers chapters, revisions, journal date
   const tools = mobileTools(state.app, state.store, () => "", () => bindings);
   const search = tools.find(tool => tool.name === "vault_search");
   const read = tools.find(tool => tool.name === "note_read");
+  for (const name of ["私有记忆/偏好.md", ".obsidian/plugins/echoink/cache.md"]) state.files.set(name, "MOBILE_PRIVATE_ONLY");
+  state.files.set("私有记忆备份/公开.md", "MOBILE_PUBLIC_BOUNDARY");
+  const privateReads = [];
+  const vaultRead = state.app.vault.read;
+  state.app.vault.read = async file => { if (file.path.startsWith("私有记忆/") || file.path.startsWith(".obsidian/plugins/")) privateReads.push(file.path); return await vaultRead(file); };
+  assert.equal((await search.execute("private-search", { query: "MOBILE_PRIVATE_ONLY" })).details.hits.length, 0);
+  for (const name of ["私有记忆/偏好.md", ".obsidian/plugins/echoink/cache.md"]) await assert.rejects(read.execute("private-read", { path: name }));
+  assert.equal((await search.execute("public-boundary", { query: "MOBILE_PUBLIC_BOUNDARY" })).details.hits[0].vaultRelativePath, "私有记忆备份/公开.md");
+  await state.runtime.send("MOBILE_PRIVATE_ONLY");
+  assert.deepEqual(privateReads, [], "mobile tools and runtime preflight never read private note bodies");
   const page = (await search.execute("body", { queries: ["MOBILE_BODY_ONLY", "2.6.2"] })).details;
   assert.equal(page.hits[0].kind, "notes"); assert.equal(page.hits[0].sourceType, page.hits[0].kind); assert.ok(page.hits[0].lineStart > 100);
   assert.ok(!page.hits.some(hit => hit.vaultRelativePath.startsWith("模板/")));

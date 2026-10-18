@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, symlink } from "node:fs/promises";
 import * as path from "node:path";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { nativeJournalPathForDate } from "../home/native-journal";
@@ -20,6 +20,54 @@ import { LifestyleStore } from "../lifestyle/store";
 import type { LifestyleService } from "../lifestyle/service";
 import { parseFinanceNote } from "../lifestyle/finance-ledger";
 import type { CapabilityAccess } from "../membership/types";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+
+export async function runObsidianCliPrivateBoundaryTests(root: string): Promise<void> {
+  const fixture = await nativeJournalFixture(root), fake = officialCliFixture(fixture, root);
+  const adapter = new ObsidianVaultDomainAdapter(fixture.app, "private-cli-vault", root);
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.templates.enabled = true; bindings.roles.templates.readPaths = ["私有记忆"]; bindings.roles.templates.writePath = "私有记忆";
+  const port = createObsidianNativePort(fixture.app, adapter, () => "journal", { transport: fake.transport, knowledgeBindings: () => bindings });
+  for (const name of ["私有记忆/偏好.md", ".obsidian/plugins/echoink/cache.md", "私有记忆/view.base", "私有记忆备份/公开.md", "公开/view.base", "公开/board.canvas", "公开/race.md"]) await fixture.write(name, `CLI_BOUNDARY_BODY ${name}`);
+  await symlink(path.join(root, "私有记忆/偏好.md"), path.join(root, "linked-private.md"));
+  fake.state.activeFile = "私有记忆/偏好.md";
+  fake.state.dailyPath = "私有记忆/偏好.md";
+  const observations = [];
+  const contextObservations = [];
+  const originalRead = adapter.readFile.bind(adapter), contextReads: string[] = [];
+  adapter.readFile = async (target, options) => { contextReads.push(target.relativePath); return await originalRead(target, options); };
+  const records = fixture.records as Record<string, { instance: { options: Record<string, string> } }>;
+  for (const template of ["私有记忆/偏好.md", ".obsidian/plugins/echoink/cache.md", "linked-private.md", "私有记忆备份/公开.md"]) {
+    records["daily-notes"].instance.options = { folder: "公开", format: "YYYY-MM-DD", template };
+    contextReads.length = 0;
+    try { contextObservations.push({ template, value: await port.context(), reads: [...contextReads] }); }
+    catch (error) { contextObservations.push({ template, error: String(error), reads: [...contextReads] }); }
+  }
+  console.log(JSON.stringify({ kind: "private-boundary-obsidian-context", contextObservations }));
+  for (const row of contextObservations) {
+    if (row.template.startsWith("私有记忆备份/")) assert.match(row.value?.templateContent ?? "", /CLI_BOUNDARY_BODY/u);
+    else { assert.match(row.error ?? "", /private_note_source/u); assert.deepEqual(row.reads, []); }
+  }
+  records["daily-notes"].instance.options = {};
+  adapter.readFile = originalRead;
+  for (const request of [{ command: "read", path: "私有记忆/偏好.md" }, { command: "read", file: "偏好" }, { command: "read", path: "linked-private.md" }, { command: "read", path: ".obsidian/plugins/echoink/cache.md" }, { command: "history:read", path: "私有记忆/偏好.md" }, { command: "property:read", path: "私有记忆/偏好.md", name: "preference" }, { command: "base:query", path: "私有记忆/view.base" }, { command: "task", ref: "私有记忆/偏好.md:1" }, { command: "tasks", active: true }, { command: "daily:read" }, { command: "template:read", name: "偏好" }, { command: "search:context", path: "私有记忆", query: "CLI_BOUNDARY_BODY" }]) {
+    const before = fake.calls.length;
+    try { const result = await port.cli(request as never); observations.push({ request, blocked: false, output: result.output }); }
+    catch (error) { observations.push({ request, blocked: /private_note_source/u.test(String(error)), contentCommands: fake.calls.slice(before).filter(call => !["vault", "help", "daily:path"].includes(call[0])) }); }
+  }
+  const pending = await port.prepare({ command: "read", path: "公开/race.md" });
+  await rename(path.join(root, "公开/race.md"), path.join(root, "公开/race-original.md"));
+  await symlink(path.join(root, "私有记忆/偏好.md"), path.join(root, "公开/race.md"));
+  const beforeRace = fake.calls.length;
+  try { await pending.execute(); observations.push({ request: { command: "read-race" }, blocked: false }); }
+  catch (error) { observations.push({ request: { command: "read-race" }, blocked: /private_note_source/u.test(String(error)), contentCommands: fake.calls.slice(beforeRace).filter(call => !["vault", "help"].includes(call[0])) }); }
+  await rm(path.join(root, "公开/race.md"));
+  console.log(JSON.stringify({ kind: "private-boundary-cli", observations }));
+  assert.ok(observations.every(value => value.blocked && value.contentCommands?.length === 0), "resolved CLI targets must reject before content command execution");
+  assert.match((await port.cli({ command: "read", path: "私有记忆备份/公开.md" })).output!, /CLI_BOUNDARY_BODY/u);
+  for (const request of [{ command: "base:query", path: "公开/view.base" }, { command: "read", path: "公开/board.canvas" }, { command: "search", query: "ordinary" }]) assert.ok(["completed", "empty"].includes((await port.cli(request as never)).status));
+  console.log("Private CLI explicit targets: path/file/ref/active/daily/template/canonical and execute-time symlink protection; public Base/Canvas and global search retained PASS");
+}
 
 type Fixture = Awaited<ReturnType<typeof nativeJournalFixture>>;
 export function officialCliFixture(fixture: Fixture, root: string) {
