@@ -16,8 +16,8 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
-  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests } from "./src/tests/knowledge-body-search";',
-  'import { runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests } from "./src/tests/vault-body-search";',
+  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests, runKnowledgeBodySearchMetadataTests } from "./src/tests/knowledge-body-search";',
+  'import { runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchMetadataTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
   'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
@@ -26,12 +26,15 @@ const fullSuiteImports = [
   'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
   'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
   'import { runKnowledgeMaintenancePreferenceTests } from "./src/tests/knowledge-maintenance-preferences";',
-  'import { runPiKnowledgeReadToolTests } from "./src/tests/pi-native/knowledge-read-tools";',
+  'import { runPiKnowledgeReadToolTests, runPiKnowledgeMetadataToolTests } from "./src/tests/pi-native/knowledge-read-tools";',
   'import { runPhase3KnowledgeMaintenanceServiceTests } from "./src/tests/pi-native/phase3-maintenance-service";',
   'import { runKnowledgeInitializationTests } from "./src/tests/knowledge-initialization";',
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeBodySearchMetadataTests();",
+  "await runVaultBodySearchMetadataTests();",
+  "await runPiKnowledgeMetadataToolTests();",
   "await runKnowledgeBodySearchBoilerplateTests();",
   "await runKnowledgeBodySearchTopicTests();",
   "await runKnowledgeBodySearchConcurrencyTests();",
@@ -59,7 +62,21 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--body-search-boilerplate") ? [
+    contents: (process.argv.includes("--body-search-metadata") ? [
+      'import { runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests } from "./src/tests/knowledge-body-search";',
+      'import { runVaultBodySearchMetadataTests, runVaultBodySearchTests, runVaultBodySearchCacheTests } from "./src/tests/vault-body-search";',
+      'import { runPiKnowledgeMetadataToolTests, runPiKnowledgeReadToolTests } from "./src/tests/pi-native/knowledge-read-tools";',
+      'await runKnowledgeBodySearchMetadataTests();',
+      'await runVaultBodySearchMetadataTests();',
+      'await runPiKnowledgeMetadataToolTests();',
+      'await runKnowledgeBodySearchTests();',
+      'await runKnowledgeBodySearchCacheTests();',
+      'await runKnowledgeBodySearchTopicTests();',
+      'await runKnowledgeBodySearchBoilerplateTests();',
+      'await runVaultBodySearchTests();',
+      'await runVaultBodySearchCacheTests();',
+      'await runPiKnowledgeReadToolTests();'
+    ] : process.argv.includes("--body-search-boilerplate") ? [
       'import { runKnowledgeBodySearchBoilerplateTests } from "./src/tests/knowledge-body-search";',
       'await runKnowledgeBodySearchBoilerplateTests();'
     ] : process.argv.includes("--body-search-topic") ? [

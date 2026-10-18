@@ -1,6 +1,7 @@
 /** Shared, Node-free contracts for desktop and mobile body retrieval. */
 export const KNOWLEDGE_SEARCH_KINDS = ["wiki", "projects", "raw", "journal", "work", "inbox", "outputs", "archive", "notes"] as const;
 export type KnowledgeSearchKind = typeof KNOWLEDGE_SEARCH_KINDS[number];
+export type BodySearchMatchSource = "title" | "alias" | "tag" | "body";
 
 export interface BodySearchDocument {
   /** Host-observed body/metadata/event version; omitted documents are never reused. */
@@ -43,6 +44,8 @@ export interface BodySearchHit {
   readonly columnEnd?: number;
   readonly totalLines: number;
   readonly excerpt: string;
+  /** Fields that matched the selected query; the excerpt may instead be the first body paragraph. */
+  readonly matchSources?: readonly BodySearchMatchSource[];
   readonly score: number;
   readonly journalDate?: string;
 }

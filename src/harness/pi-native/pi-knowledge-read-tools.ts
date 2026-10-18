@@ -1,6 +1,6 @@
 import { knowledgeSpanReferenceId, sliceKnowledgeSourceSpan, sourceSpanHasMore, boundKnowledgeSourceSpan } from "../../knowledge-base/source-span";
 import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
-import { KNOWLEDGE_SEARCH_KINDS } from "../../knowledge-base/search/contracts";
+import { KNOWLEDGE_SEARCH_KINDS, type BodySearchMatchSource } from "../../knowledge-base/search/contracts";
 import { isDeepStrictEqual } from "node:util";
 import {
   defineTool,
@@ -104,6 +104,7 @@ interface KnowledgeSearchToolResult {
     lineEnd?: number;
     totalLines?: number;
     excerpt?: string;
+    matchSources?: readonly BodySearchMatchSource[];
     rawSources: readonly Readonly<KnowledgeAgentRawSource>[];
   }>[];
 }
@@ -264,6 +265,7 @@ implements PiVaultAdditionalToolSecurityPort {
               vaultRelativePath: hit.vaultRelativePath, title: hit.title, contentRevision: hit.contentRevision,
               excerpt: hit.excerpt, lineStart: hit.lineStart, lineEnd: hit.lineEnd, totalLines: hit.totalLines,
               ...(hit.columnStart === undefined ? {} : { columnStart: hit.columnStart, columnEnd: hit.columnEnd }),
+              ...(hit.matchSources ? { matchSources: hit.matchSources } : {}),
               hasMore: hit.lineStart > 1 || hit.lineEnd < (hit.totalLines ?? hit.lineEnd), sourceType: hit.kind,
               recordedAt: hit.recordedAt, verificationStatus: hit.verificationStatus, sectionTitle: hit.sectionTitle }];
           }) : [];
@@ -509,6 +511,7 @@ function searchToolResult(
       ...(hit.subjects ? { subjects: hit.subjects } : {}),
       ...(hit.applicableTime ? { applicableTime: hit.applicableTime } : {}),
       ...(hit.documentKind ? { documentKind: hit.documentKind } : {}),
+      ...(hit.matchSources ? { matchSources: Object.freeze([...hit.matchSources]) } : {}),
       sectionTitle: hit.sectionTitle, lineStart: hit.lineStart, lineEnd: hit.lineEnd, columnStart: hit.columnStart, columnEnd: hit.columnEnd, totalLines: hit.totalLines, excerpt: hit.excerpt,
       vaultRelativePath: hit.vaultRelativePath,
       kind: hit.kind,

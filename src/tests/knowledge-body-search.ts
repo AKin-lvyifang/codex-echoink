@@ -5,6 +5,7 @@ import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vaul
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { buildSearchDictionary, tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import { yieldSearchTask } from "../knowledge-base/search/scheduling";
+import { sliceKnowledgeSourceSpan } from "../knowledge-base/source-span";
 import type { BodySearchDocument, BodySearchOptions, BodySearchRequest, BodySearchResult } from "../knowledge-base/search/contracts";
 
 function note(path: string, body: string, metadata: Partial<BodySearchDocument> = {}): BodySearchDocument {
@@ -32,6 +33,75 @@ async function withCheckpointTask<T>(onTask: () => void, action: () => Promise<T
     if (descriptor) Object.defineProperty(globalThis, "scheduler", descriptor);
     else Reflect.deleteProperty(globalThis, "scheduler");
   }
+}
+
+export async function runKnowledgeBodySearchMetadataTests(): Promise<void> {
+  const paragraph = "The glass samples stay in the north drawer.\nCount the lenses before packing.";
+  const cases = [
+    { query: "Nacre Atlas", metadata: { title: "Nacre Atlas" }, properties: "status: draft", heading: "# Nacre Atlas", source: "title" },
+    { query: "Tidal Compass", metadata: { title: "Field kit", aliases: ["Tidal Compass"] }, properties: "aliases: [Tidal Compass]", heading: "Field kit\n========", source: "alias" },
+    { query: "reserve-batch", metadata: { title: "Field kit", tags: ["#reserve-batch"] }, properties: "tags: [reserve-batch]", heading: "# Field kit", source: "tag" },
+  ] as const;
+  for (const fixture of cases) {
+    const content = ["\uFEFF---", fixture.properties, "---", "", fixture.heading, "", paragraph, "", "## Later notes", "A separate paragraph concerns the empty crates."].join("\r\n");
+    const document = note("metadata-fixture.md", content, fixture.metadata);
+    const result = await search([document], { query: fixture.query });
+    assert.ok(result.hits.length > 0);
+    for (const hit of result.hits) {
+      assert.equal(hit.excerpt, paragraph, "metadata matches deliver the first actual paragraph, excluding properties and headings");
+      assert.deepEqual(hit.matchSources, [fixture.source]);
+      assert.equal(hit.sectionTitle, fixture.metadata.title);
+      assert.equal(hit.excerpt, sliceKnowledgeSourceSpan(content.split(/\r\n|\n|\r/u), hit));
+      assert.equal(hit.contentRevision, "sha256:metadata-fixture.md");
+    }
+  }
+
+  const preciseBody = ["---", "aliases: [Tidal Compass]", "---", "# Tidal Compass", "A short introduction without the search name.", "",
+    ...Array.from({ length: 90 }, () => "Background about storage boxes."), "Tidal Compass uses the eastern loading gate."].join("\n");
+  const precise = (await search([note("precise.md", preciseBody, { title: "Field kit", aliases: ["Tidal Compass"] })], { query: "Tidal Compass" })).hits.find(hit => hit.matchSources?.includes("body"))!;
+  assert.ok(precise.lineStart > 70, "a real body match stays at its source position even when properties and headings repeat the name");
+  assert.match(precise.excerpt, /eastern loading gate/u);
+  assert.deepEqual(precise.matchSources, ["alias", "body"]);
+  assert.equal(precise.excerpt, sliceKnowledgeSourceSpan(preciseBody.split("\n"), precise));
+
+  const boilerplateBody = ["---", "status: draft", "---", "# Nacre Atlas", "", paragraph, "",
+    ...Array.from({ length: 90 }, () => "Background about storage boxes."), "这里的笔记和记录稍后再补充。"].join("\n");
+  for (const query of ["关于Nacre Atlas的笔记有哪些？", "找一下Nacre Atlas相关的记录"]) {
+    const result = await search([note("metadata-with-boilerplate.md", boilerplateBody, { title: "Nacre Atlas" })], { query });
+    assert.ok(result.hits.length > 0);
+    assert.equal(result.hits[0].excerpt, paragraph, "body boilerplate alone does not replace the first substantive paragraph for a metadata-led query");
+    assert.ok(result.hits[0].matchSources?.includes("title"));
+  }
+  const partialName = "青岚跨海物资转运总方案";
+  const partialBody = ["# Field kit", "An unrelated introduction.", "", ...Array.from({ length: 90 }, () => "Background about storage boxes."), "青岚装箱应先检查密封。"].join("\n");
+  const partialHit = (await search([note("metadata-partial-name.md", partialBody, { aliases: [partialName] })], { query: `关于${partialName}的笔记有哪些？` })).hits[0];
+  assert.ok(partialHit.lineStart > 70, "genuine partial-name bigrams retain their body position even at a small existing token weight");
+  assert.match(partialHit.excerpt, /青岚装箱/u);
+  assert.equal(partialHit.excerpt, sliceKnowledgeSourceSpan(partialBody.split("\n"), partialHit));
+
+  const longParagraph = "📌Lens measurements ".repeat(1500);
+  const longContent = `---\naliases: [Copper Beacon]\n---\n\n# Field kit\n\n${longParagraph}\n\nA later paragraph.`;
+  let reads = 0;
+  const longDocument = note("long-metadata.md", longContent, { aliases: ["Copper Beacon"], revisionKey: "first", read: async () => {
+    reads++; return { content: longContent, contentRevision: "sha256:long-metadata" };
+  } });
+  const memory = new BodySearchMemoryIndex();
+  try {
+    const options = { documents: [longDocument], request: { query: "Copper Beacon" } };
+    const cold = await memory.search(options);
+    const warm = await memory.search(options);
+    assert.equal(reads, 1);
+    assert.deepEqual(warm.hits, cold.hits, "cached statistics retain the same metadata provenance and first body coordinates");
+    const hit = cold.hits[0];
+    assert.equal(hit.lineStart, 7);
+    assert.equal(hit.lineEnd, 7);
+    assert.equal(hit.columnStart, 0);
+    assert.ok(hit.columnEnd! > 0 && hit.columnEnd! < longParagraph.length);
+    assert.ok(hit.excerpt.length <= 3200, "metadata fallback uses the original fragment budget for long single lines");
+    assert.equal(hit.excerpt, sliceKnowledgeSourceSpan(longContent.split("\n"), hit));
+    assert.deepEqual(hit.matchSources, ["alias"]);
+  } finally { memory.dispose(); }
+  console.log("Knowledge metadata evidence: title, alias, tag, boilerplate, partial-name/body priority, bounded columns and cached provenance PASS");
 }
 
 export async function runKnowledgeBodySearchColumnTests(): Promise<void> {

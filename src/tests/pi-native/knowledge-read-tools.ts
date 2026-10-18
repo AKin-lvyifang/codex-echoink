@@ -3,8 +3,13 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import type { App, TFile } from "obsidian";
 import { KnowledgeAgentIndex } from "../../knowledge-base/knowledge-agent-index";
 import { KnowledgeRetriever } from "../../knowledge-base/query";
+import { VaultBodySearch } from "../../knowledge-base/vault-body-search";
+import { emptyKnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
+import { knowledgeReferenceEntryDetails } from "../../knowledge-base/usage";
+import type { KnowledgeReference } from "../../knowledge-base/types";
 import {
   PI_KNOWLEDGE_READ_TOOL_IDS,
   PiKnowledgeReadToolSecurity,
@@ -13,6 +18,51 @@ import {
 } from "../../harness/pi-native/pi-knowledge-read-tools";
 import { collectSuccessfulAskPersonalMemoryToolSources } from "../../harness/pi-native/pi-native-conversation-runtime";
 import { EchoInkVaultToolEgressPolicy } from "../../harness/pi-native/vault-tool-result-safety";
+
+export async function runPiKnowledgeMetadataToolTests(): Promise<void> {
+  const paragraph = "The replacement prism stays in the western cupboard.\nCheck its padded sleeve before transport.";
+  const content = `---\naliases: [Copper Beacon]\ntags: [reserve-batch]\n---\n\n# Field kit\n\n${paragraph}\n\n## Background\nThe old packing list needs a separate review.`;
+  const file = { path: "notes/Field kit.md", basename: "Field kit", extension: "md", stat: { mtime: 10, ctime: 1, size: content.length } } as TFile;
+  const app = { vault: {
+    getMarkdownFiles: () => [file],
+    getAbstractFileByPath: (path: string) => path === file.path ? file : null,
+    read: async () => content
+  }, metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["Copper Beacon"], tags: ["reserve-batch"] } }) },
+  workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-metadata-tool", storageRootPath: "/synthetic-metadata-tool-state", bodySearch: port });
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const captured: KnowledgeReference[] = [];
+  const security = new PiKnowledgeReadToolSecurity({
+    currentRunIdentity: () => ({ vaultId: "metadata-vault", conversationId: "metadata-chat", piSessionId: "metadata-session", productRunId: "metadata-run" }),
+    currentWorkflow: () => "chat",
+    onSourceRead: (reference, fingerprint) => { captured.push(reference); assert.equal(fingerprint, undefined); },
+    egress: new EchoInkVaultToolEgressPolicy()
+  });
+  const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+  try {
+    for (const [query, source] of [["Field kit", "title"], ["Copper Beacon", "alias"], ["reserve-batch", "tag"]] as const) {
+      const result = await executeTool(security, tools[0]!, "knowledge_search", `metadata-search-${source}`, { query, limit: 1 });
+      assert.equal(result.isError, false);
+      const hit = JSON.parse(result.content[0]!.text).hits[0];
+      assert.equal(hit.excerpt, paragraph);
+      assert.equal(hit.lineStart, 8);
+      assert.equal(hit.lineEnd, 9);
+      assert.deepEqual(hit.matchSources, [source], "explicit search provider JSON preserves the actual matching field");
+      const reference = captured.at(-1)!;
+      assert.deepEqual(reference.matchSources, [source], "onSourceRead preserves the same provenance");
+      assert.equal(reference.excerpt, paragraph);
+      assert.equal(reference.contentRevision, revision(content));
+      assert.equal((await retriever.verifyReferences([reference])).status, "valid");
+      assert.deepEqual((result.details.references as KnowledgeReference[])[0].matchSources, [source]);
+      assert.deepEqual(knowledgeReferenceEntryDetails([reference]).references[0].matchSources, [source]);
+      const preflight = await retriever.retrieve({ question: query, limit: 1 });
+      assert.equal(reference.referenceId, preflight.references[0].referenceId, "tool and preflight retain the same exact body identity");
+    }
+    assert.equal(captured.length, 3);
+  } finally { port.dispose(); }
+  console.log("Knowledge metadata tools: explicit provider JSON, onSourceRead and durable reference provenance PASS");
+}
 
 export async function runPiKnowledgeReadToolTests(): Promise<void> {
   successfulPersonalMemoryToolResultsContributeOnlyPrimarySources();

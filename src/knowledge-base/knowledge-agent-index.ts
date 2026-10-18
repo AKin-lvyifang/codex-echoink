@@ -53,6 +53,7 @@ export interface KnowledgeAgentRawSource {
 }
 
 export interface KnowledgeAgentSearchHit extends KnowledgeApplicability {
+  matchSources?: readonly import("./search/contracts").BodySearchMatchSource[];
   sectionTitle?: string;
   lineStart?: number;
   lineEnd?: number;

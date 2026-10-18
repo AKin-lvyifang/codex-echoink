@@ -82,6 +82,7 @@ export class KnowledgeRetrievalError extends Error {
 }
 
 export interface KnowledgeReferenceBuildInput {
+  matchSources?: readonly import("./search/contracts").BodySearchMatchSource[];
   columnStart?: number;
   columnEnd?: number;
   excerpt?: string;
@@ -166,6 +167,7 @@ export class KnowledgeReferenceBuilder {
       hasMore: sourceSpanHasMore(snapshot.lines, span),
       sourceType: snapshot.sourceType,
       ...(input.sectionTitle ? { sectionTitle: input.sectionTitle } : {}),
+      ...(input.matchSources ? { matchSources: Object.freeze([...input.matchSources]) } : {}),
       recordedAt: snapshot.recordedAt,
       ...(snapshot.publishedAt ? { publishedAt: snapshot.publishedAt } : {}),
       verificationStatus: "local_revision_verified"
@@ -460,6 +462,7 @@ export class KnowledgeRetriever {
           columnEnd: hit.columnEnd,
           excerpt: hit.excerpt,
           sectionTitle: hit.sectionTitle,
+          matchSources: hit.matchSources,
           allowUnrefined: hit.kind === "raw",
           expectedContentRevision: hit.contentRevision
         }));

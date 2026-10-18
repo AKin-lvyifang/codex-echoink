@@ -1,4 +1,4 @@
-import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "./search/contracts";
+import { KNOWLEDGE_SEARCH_KINDS, type BodySearchMatchSource, type KnowledgeSearchKind } from "./search/contracts";
 import { isDeepStrictEqual } from "node:util";
 import { mkdir, readdir } from "node:fs/promises";
 import * as path from "node:path";
@@ -118,6 +118,7 @@ const REFERENCE_KEYS = [
 ] as const;
 
 const OPTIONAL_REFERENCE_KEYS = [
+  "matchSources",
   "columnStart",
   "columnEnd",
   "sectionTitle",
@@ -615,6 +616,11 @@ function normalizeKnowledgeReference(
     throw new PiNativeFileStoreError(errorCode, "KnowledgeReference contentRevision 无效");
   }
   const hasSourceType = Object.hasOwn(object, "sourceType");
+  const hasMatchSources = Object.hasOwn(object, "matchSources");
+  if (hasMatchSources && (!Array.isArray(object.matchSources)
+    || Array.from(object.matchSources).some(source => !["title", "alias", "tag", "body"].includes(source)))) {
+    throw new PiNativeFileStoreError(errorCode, "KnowledgeReference matchSources 无效");
+  }
   if ((Object.hasOwn(object, "columnStart") || Object.hasOwn(object, "columnEnd"))
     && (!Number.isSafeInteger(object.columnStart) || !Number.isSafeInteger(object.columnEnd) || (object.columnStart as number) < 0 || (object.columnEnd as number) < 0
       || (lineStart === lineEnd && (object.columnEnd as number) < (object.columnStart as number)))) throw new PiNativeFileStoreError(errorCode, "KnowledgeReference columns are invalid");
@@ -658,6 +664,7 @@ function normalizeKnowledgeReference(
     );
   }
   return {
+    ...(hasMatchSources ? { matchSources: Object.freeze([...(object.matchSources as BodySearchMatchSource[])]) } : {}),
     ...(Number.isSafeInteger(object.columnStart) && Number.isSafeInteger(object.columnEnd) && (object.columnStart as number) >= 0 && (object.columnEnd as number) >= 0 ? { columnStart: object.columnStart as number, columnEnd: object.columnEnd as number } : {}),
     ...(typeof object.sectionTitle === "string" ? { sectionTitle: object.sectionTitle } : {}),
     referenceId: requireUsageString(object.referenceId, "referenceId", errorCode),

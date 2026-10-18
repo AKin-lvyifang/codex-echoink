@@ -13,6 +13,59 @@ import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-re
 import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 
+export async function runVaultBodySearchMetadataTests(): Promise<void> {
+  const paragraph = "Keep the amber filter in the upper drawer.\nCheck the spare lens before departure.";
+  const bodies = new Map([
+    ["notes/Field kit.md", `---\naliases: [Copper Beacon]\ntags: [reserve-batch]\n---\n\n# Field kit\n\n${paragraph}\n\n## Archive\nThe earlier packing list is obsolete.`]
+  ]);
+  const file = (path: string) => ({ path, basename: "Field kit", extension: "md", stat: { mtime: 20, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const app = { vault: {
+    getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => bodies.get(source.path)!
+  }, metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["Copper Beacon"], tags: ["reserve-batch"] } }) },
+  workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-metadata-search", storageRootPath: "/synthetic-metadata-state", bodySearch: port });
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const production = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  try {
+    for (const [query, source] of [["Field kit", "title"], ["Copper Beacon", "alias"], ["reserve-batch", "tag"]] as const) {
+      const search = await index.search({ query, limit: 1 });
+      assert.equal(search.hits[0].excerpt, paragraph);
+      assert.equal(search.hits[0].lineStart, 8);
+      assert.equal(search.hits[0].lineEnd, 9);
+      assert.deepEqual(search.hits[0].matchSources, [source]);
+      const retrieval = await retriever.retrieve({ question: query, limit: 1 });
+      assert.equal(retrieval.references.length, 1);
+      assert.equal(retrieval.references[0].excerpt, paragraph);
+      assert.deepEqual(retrieval.references[0].matchSources, [source]);
+      assert.equal((await retriever.verifyReferences(retrieval.references)).status, "valid");
+      const reference = retrieval.references[0];
+      const recorded = knowledgeReferenceEntryDetails([reference]).references[0];
+      assert.deepEqual(recorded.matchSources, [source]);
+      assert.equal(recorded.referenceId, reference.referenceId, "provenance does not change body-range identity");
+      const { matchSources: _matchSources, ...legacy } = reference;
+      assert.equal(Object.hasOwn(knowledgeReferenceEntryDetails([legacy]).references[0], "matchSources"), false, "legacy references remain valid without provenance");
+      for (const matchSources of [[], ["body", "alias", "title", "tag", "alias"]] as const) {
+        const normalized = knowledgeReferenceEntryDetails([{ ...reference, matchSources }]).references[0];
+        assert.deepEqual(normalized.matchSources, matchSources, "valid provenance arrays retain their original order and entries");
+        assert.equal(Object.isFrozen(normalized.matchSources), true);
+      }
+      for (const matchSources of ["title", null, undefined, ["unknown"], ["body", 1], ["Alias"], new Array(1)]) {
+        assert.throws(() => knowledgeReferenceEntryDetails([{ ...reference, matchSources } as never]), /matchSources 无效/u);
+      }
+      const result = await production.retrieveChat!({ question: query, explicitPaths: [], includeUnrefined: false } as never);
+      const delivered = JSON.parse(result.providerResourceText).sources[0];
+      assert.equal(delivered.excerpt, paragraph);
+      assert.equal(delivered.lineStart, 8);
+      assert.deepEqual(delivered.matchSources, [source], "production preflight JSON retains the actual matching field");
+      assert.equal(delivered.contentRevision, retrieval.references[0].contentRevision);
+    }
+  } finally { port.dispose(); }
+  console.log("Public Vault metadata evidence: verified search/preflight JSON, strict provenance storage and legacy compatibility PASS");
+}
+
 export async function runVaultBodySearchTests(): Promise<void> {
   const bindings = emptyKnowledgeFolderBindings();
   for (const [role, folder] of [["wiki", "知识"], ["journal", "日记"], ["templates", "模板"], ["projects", "项目"]] as const) {
