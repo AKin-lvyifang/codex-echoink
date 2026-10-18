@@ -10,6 +10,129 @@ import { PiKnowledgeReadToolSecurity, createPiKnowledgeReadToolDefinitions } fro
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import { knowledgeReadingState } from "../harness/pi-native/knowledge-ask-protocol";
 import { createProductionPiKnowledgeRuntime, createPiKnowledgeInlineExtension } from "../plugin/pi-production-runtime-composition";
+import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
+import type { KnowledgeReference } from "../knowledge-base/types";
+
+export async function runKnowledgeAnchorReadingTests(): Promise<void> {
+  const root = await mkdtemp(path.join(tmpdir(), "echoink-anchor-reading-"));
+  const vaultPath = path.join(root, "vault");
+  const write = async (name: string, content: string) => { const target = path.join(vaultPath, name); await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, content, "utf8"); };
+  const source = "# Source heading\nANCHOR_SOURCE_TOKEN\n[[Target#Exact heading]]\n[[Target#^paragraph]]\n[[Target#^quote]]\n[[Target#Absent]]\n[[Missing#Unknown]]\n[[../private/Outside#Hidden]]";
+  const targetLines = ["# Target", ...Array.from({ length: 55 }, () => "Preface background."), "## Exact heading", "LOCATED_SECTION_BODY is the real claim.", "### Child",
+    ...Array.from({ length: 45 }, () => "Child detail."), "## Tail", "NEXT_SECTION_SENTINEL must stay outside this heading.", "", "Paragraph first.", "Paragraph second. ^paragraph", "",
+    "> Quote first paragraph.", ">", "> Quote second paragraph.", "", "^quote", "", "Setext heading", "==============", "SETEXT_ANCHOR_BODY", "", "[[Source#Source heading]]"];
+  try {
+    await write("wiki/Source.md", source);
+    await write("wiki/Target.md", targetLines.join("\n"));
+    await write("wiki/Long.md", `# Long\n${"📌材料".repeat(3000)} ^long`);
+    await write("private/Outside.md", "# Hidden\nPrivate source.");
+    const index = new KnowledgeAgentIndex({ vaultPath, storageRootPath: path.join(root, "state") });
+    await index.refresh();
+    const retriever = new KnowledgeRetriever(vaultPath, { agentIndex: index });
+    const page = await index.related({ vaultRelativePath: "wiki/Source.md", limit: 20 });
+    const headingRelation = page.items.find(item => item.anchor === "Exact heading")!;
+    assert.equal(headingRelation.anchorLocation?.status, "located");
+    assert.equal(headingRelation.anchorStatus, "located");
+    assert.equal(headingRelation.anchorLocation?.contentRevision, headingRelation.target?.contentRevision);
+    assert.equal(headingRelation.anchorLocation?.readStatus, "unread");
+    assert.equal(page.items.find(item => item.anchor === "Absent")!.anchorLocation?.status, "not_located");
+    assert.equal(page.items.find(item => item.anchor === "Unknown")!.status, "unresolved");
+    assert.equal(page.items.find(item => item.anchor === "Hidden")!.target, undefined);
+    const preflight = await retriever.retrieve({ question: "ANCHOR_SOURCE_TOKEN", limit: 1 });
+    assert.equal(preflight.status, "ready");
+    const initialLocation = JSON.parse(formatKnowledgeReferencesForPrompt(preflight.references)).sources[0].related.items.find((item: { anchor: string }) => item.anchor === "Exact heading").anchorLocation;
+    assert.equal(initialLocation.status, "located", "preflight related navigation contains the program-resolved target location");
+    const observed: KnowledgeReference[] = [];
+    const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "anchor-v", conversationId: "anchor-c", piSessionId: "anchor-s", productRunId: "anchor-r" }),
+      currentWorkflow: () => "ask", onSourceRead: reference => observed.push(reference), egress: new EchoInkVaultToolEgressPolicy() });
+    const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+    let sequence = 0;
+    const call = async (name: "knowledge_search" | "knowledge_read", input: Record<string, unknown>) => {
+      const id = `anchor-${++sequence}`;
+      assert.equal(await security.handleToolCall({ toolName: name, toolCallId: id, input } as never, undefined), undefined);
+      try { await tools.find(tool => tool.name === name)!.execute(id, input, undefined, undefined); } catch { /* safe result owns failure */ }
+      return await security.handleToolResult({ toolName: name, toolCallId: id, isError: false } as never);
+    };
+    const related = await call("knowledge_search", { mode: "related", vaultRelativePath: "wiki/Source.md", limit: 20 });
+    assert.equal(related.isError, false);
+    assert.equal(JSON.parse(related.content[0].text).related.items.find((item: { anchor: string }) => item.anchor === "Exact heading").anchorLocation.status, "located");
+    assert.equal(observed.length, 0, "program location metadata is not delivered target body evidence");
+    const revision = headingRelation.target!.contentRevision;
+    const input = { vaultRelativePath: "wiki/Target.md", expectedContentRevision: revision, anchor: "Exact heading" };
+    const read = await call("knowledge_read", input);
+    assert.equal(read.isError, false);
+    const payload = JSON.parse(read.content[0].text);
+    assert.equal(payload.lineStart, initialLocation.lineStart, "anchor alone selects the actual target section, without a caller-supplied line number");
+    assert.match(payload.excerpt, /LOCATED_SECTION_BODY/u);
+    assert.doesNotMatch(payload.excerpt, /NEXT_SECTION_SENTINEL/u);
+    assert.ok(payload.lineEnd < payload.anchorLocation.lineEnd, "a located section is still read under the original line budget");
+    assert.equal(payload.hasMore, true);
+    assert.deepEqual(observed[0].anchorLocation, payload.anchorLocation);
+    assert.deepEqual(knowledgeReferenceEntryDetails([observed[0]]).references[0].anchorLocation, payload.anchorLocation);
+    assert.equal((await retriever.verifyReferences([observed[0]])).status, "valid");
+    const paragraph = await call("knowledge_read", { ...input, anchor: "^paragraph" });
+    assert.equal(paragraph.isError, false);
+    const paragraphPayload = JSON.parse(paragraph.content[0].text);
+    assert.equal(paragraphPayload.excerpt, "Paragraph first.\nParagraph second. ^paragraph");
+    assert.equal(paragraphPayload.hasMore, false, "anchor continuation ends at the block boundary");
+    const quote = await call("knowledge_read", { ...input, anchor: "^quote" });
+    assert.match(JSON.parse(quote.content[0].text).excerpt, /Quote first paragraph[^]*Quote second paragraph/u);
+    const setext = await call("knowledge_read", { ...input, anchor: "Setext heading" });
+    assert.match(JSON.parse(setext.content[0].text).excerpt, /SETEXT_ANCHOR_BODY/u);
+    const fallback = await call("knowledge_read", { ...input, anchor: "Absent" });
+    const fallbackPayload = JSON.parse(fallback.content[0].text);
+    assert.equal(fallbackPayload.anchorLocation.status, "not_located");
+    assert.equal(fallbackPayload.anchorLocation.reason, "missing");
+    assert.equal("lineStart" in fallbackPayload.anchorLocation, false);
+    assert.equal(fallbackPayload.lineStart, 1, "missing anchors retain the ordinary bounded whole-document read");
+    const firstReference = observed[0];
+    for (const anchorLocation of [undefined, { ...firstReference.anchorLocation, extra: true }, { ...firstReference.anchorLocation, readStatus: "read" },
+      { ...firstReference.anchorLocation, vaultRelativePath: "wiki/Other.md" }, { ...firstReference.anchorLocation, contentRevision: "stale" },
+      { ...firstReference.anchorLocation, lineEnd: 1 }]) assert.throws(() => knowledgeReferenceEntryDetails([{ ...firstReference, anchorLocation } as never]), /anchorLocation 无效/u);
+    const movedLines = [...targetLines]; movedLines.splice(1, 0, "Fresh preface.", "");
+    await write("wiki/Target.md", movedLines.join("\n"));
+    const moved = await index.related({ vaultRelativePath: "wiki/Source.md", limit: 20 });
+    const movedRelation = moved.items.find(item => item.anchor === "Exact heading")!;
+    assert.equal(movedRelation.anchorLocation!.status, "located");
+    if (movedRelation.anchorLocation!.status === "located") assert.equal(movedRelation.anchorLocation!.lineStart, initialLocation.lineStart + 2, "changed targets are freshly located even before a host event");
+    assert.notEqual(movedRelation.target!.contentRevision, revision);
+    const directFreshRead = await call("knowledge_read", { ...input, expectedContentRevision: movedRelation.target!.contentRevision });
+    assert.equal(directFreshRead.isError, false, "a freshly located SHA is directly readable while the maintained index still contains its old SHA");
+    const beforeStale = observed.length;
+    const stale = await call("knowledge_read", input);
+    assert.equal(stale.isError, true);
+    assert.equal(stale.details.errorCode, "knowledge_source_changed");
+    assert.equal(observed.length, beforeStale);
+    const freshRead = await call("knowledge_read", { ...input, expectedContentRevision: movedRelation.target!.contentRevision });
+    assert.equal(freshRead.isError, false);
+    const freshReference = observed.at(-1)!;
+    assert.equal((await retriever.verifyReferences([{ ...freshReference, anchorLocation: { ...firstReference.anchorLocation!, contentRevision: freshReference.contentRevision } }])).status, "source_changed", "historical line numbers cannot be made valid by swapping in a new SHA");
+    const longSnapshot = await index.read({ vaultRelativePath: "wiki/Long.md" });
+    const long = await call("knowledge_read", { vaultRelativePath: "wiki/Long.md", expectedContentRevision: longSnapshot.contentRevision, anchor: "^long", lineCount: 1 });
+    assert.equal(long.isError, false);
+    const longReference = observed.at(-1)!;
+    assert.equal(longReference.lineStart, 2);
+    assert.equal(longReference.columnStart, 0);
+    assert.equal(longReference.columnEnd, 6000);
+    assert.equal(longReference.excerpt.length, 6000);
+    assert.equal((await retriever.verifyReferences([longReference])).status, "valid");
+    const duplicate = [...movedLines, "## Exact heading", "Duplicate body."];
+    await write("wiki/Target.md", duplicate.join("\n")); index.invalidate("wiki/Target.md");
+    const duplicated = await index.related({ vaultRelativePath: "wiki/Source.md", limit: 20 });
+    const duplicateRelation = duplicated.items.find(item => item.anchor === "Exact heading")!;
+    assert.equal(duplicateRelation.anchorLocation!.status, "not_located");
+    if (duplicateRelation.anchorLocation!.status === "not_located") assert.equal(duplicateRelation.anchorLocation!.reason, "ambiguous");
+    const duplicateRead = await call("knowledge_read", { ...input, expectedContentRevision: duplicateRelation.target!.contentRevision });
+    assert.equal(JSON.parse(duplicateRead.content[0].text).anchorLocation.reason, "ambiguous");
+    await rm(path.join(vaultPath, "wiki/Target.md"));
+    const unavailable = await index.related({ vaultRelativePath: "wiki/Source.md", limit: 20 });
+    assert.equal(unavailable.items.find(item => item.anchor === "Exact heading")!.target, undefined, "an unavailable target never advertises a historical SHA as available");
+    index.invalidate("wiki/Target.md");
+    const deleted = await index.related({ vaultRelativePath: "wiki/Source.md", limit: 20 });
+    assert.equal(deleted.items.find(item => item.anchor === "Exact heading")!.target, undefined);
+  } finally { await rm(root, { recursive: true, force: true }); }
+  console.log("Knowledge anchor reading: current relation locations, nonrecursive mutual links, bounded real tool reads, storage, stale SHA, relocation and deletion PASS");
+}
 
 export async function runKnowledgeAssociativeReadingTests(): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "echoink-associative-"));

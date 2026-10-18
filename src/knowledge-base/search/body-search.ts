@@ -1,7 +1,7 @@
 import type { BodySearchCoverage, BodySearchDocument, BodySearchHit, BodySearchInclusionReason, BodySearchMatchSource, BodySearchMemoryOptions, BodySearchMemoryPort, BodySearchOptions, BodySearchRequest, BodySearchResult, KnowledgeDocumentOutline } from "./contracts";
 import { buildSearchDictionary, iterateSearchTokens, tokenizeSearchText } from "./tokenize";
 import { yieldSearchTask as yieldToUi } from "./scheduling";
-import { createKnowledgeDocumentOutline, knowledgeOutlineCharacters, KNOWLEDGE_BODY_FRAGMENT_LIMITS, KNOWLEDGE_OUTLINE_LIMITS, limitKnowledgeOutline, parseMarkdownHeadings, type MarkdownHeading as Heading } from "./markdown-navigation";
+import { createKnowledgeDocumentOutline, extractMarkdownAnchorLinks, knowledgeOutlineCharacters, KNOWLEDGE_BODY_FRAGMENT_LIMITS, KNOWLEDGE_OUTLINE_LIMITS, limitKnowledgeOutline, parseMarkdownHeadings, type MarkdownHeading as Heading } from "./markdown-navigation";
 
 interface Fragment {
   start: number;
@@ -28,6 +28,7 @@ interface IndexedSection {
   frequencies: Map<string, number>;
 }
 interface DocumentStatistics {
+  anchorLinks: ReturnType<typeof extractMarkdownAnchorLinks>;
   contentRevision: string;
   sections: readonly IndexedSection[];
   titleTerms: Set<string>;
@@ -189,6 +190,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
   const lines = content.split(/\r\n|\n|\r/u);
   const headings = currentHeadings(document, lines);
   const outline = createKnowledgeDocumentOutline(headings, lines, contentRevision);
+  const anchorLinks = content.includes("[[") && content.includes("#") ? extractMarkdownAnchorLinks(content) : { links: [], total: 0 };
   const includedBodyLines = bodyLines(lines, headings);
   const paragraph = firstBodyParagraph(lines, includedBodyLines, headings, document.title);
   const ranges: { title: string; start: number; end: number }[] = [];
@@ -202,7 +204,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
   }
   const tagTerms = new Set(tokenizeSearchText((document.tags ?? []).join("\n"), dictionary));
   const sections: IndexedSection[] = [];
-  let characters = (paragraph?.excerpt.length ?? 0) + (outline ? knowledgeOutlineCharacters(outline) : 0);
+  let characters = (paragraph?.excerpt.length ?? 0) + (outline ? knowledgeOutlineCharacters(outline) : 0) + (anchorLinks.total ? JSON.stringify(anchorLinks).length : 0);
   let tokenEntries = titleTerms.size + tagTerms.size;
   for (const range of ranges) {
     checkAbort(signal);
@@ -233,7 +235,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
     tokenEntries += frequencies.size + fragmentFrequency.size + fragments.reduce((count, fragment) => count + fragment.frequencies.size + fragment.bodyTerms.size, 0);
     if (sections.length % 16 === 0 || text.length >= 32_000) await yieldToUi(signal);
   }
-  return { contentRevision, sections, titleTerms, tagTerms, firstBodyParagraph: paragraph, outline, characters, tokenEntries };
+  return { contentRevision, sections, titleTerms, tagTerms, firstBodyParagraph: paragraph, outline, anchorLinks, characters, tokenEntries };
 }
 
 function sectionEvidence(section: IndexedSection, query: ReadonlySet<string>, bodyQuery?: ReadonlySet<string>): Evidence {
@@ -635,6 +637,12 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
     this.maxCharacters = memoryLimit(options.maxCachedCharacters, 16_000_000);
     this.maxTokenEntries = memoryLimit(options.maxCachedTokenEntries, 1_000_000);
     this.maxDocuments = memoryLimit(options.maxCachedDocuments, 10_000);
+  }
+
+  navigationLinks(path: string, contentRevision: string): ReturnType<typeof extractMarkdownAnchorLinks> | undefined {
+    this.assertActive();
+    const record = this.records.get(path)?.statistics;
+    return record?.contentRevision === contentRevision ? record.anchorLinks : undefined;
   }
 
   async search(options: BodySearchOptions): Promise<BodySearchResult> {

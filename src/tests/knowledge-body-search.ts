@@ -6,7 +6,7 @@ import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings"
 import { buildSearchDictionary, tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import { yieldSearchTask } from "../knowledge-base/search/scheduling";
 import { sliceKnowledgeSourceSpan } from "../knowledge-base/source-span";
-import { createKnowledgeDocumentOutline, fitKnowledgeOutlines, knowledgeOutlineCharacters, KNOWLEDGE_OUTLINE_LIMITS, normalizeKnowledgeDocumentOutline, parseMarkdownHeadings, verifyKnowledgeOutlineLines } from "../knowledge-base/search/markdown-navigation";
+import { createKnowledgeDocumentOutline, fitKnowledgeOutlines, knowledgeOutlineCharacters, KNOWLEDGE_OUTLINE_LIMITS, locateKnowledgeAnchor, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, parseMarkdownHeadings, verifyKnowledgeOutlineLines } from "../knowledge-base/search/markdown-navigation";
 import type { BodySearchDocument, BodySearchOptions, BodySearchRequest, BodySearchResult } from "../knowledge-base/search/contracts";
 
 function note(path: string, body: string, metadata: Partial<BodySearchDocument> = {}): BodySearchDocument {
@@ -34,6 +34,58 @@ async function withCheckpointTask<T>(onTask: () => void, action: () => Promise<T
     if (descriptor) Object.defineProperty(globalThis, "scheduler", descriptor);
     else Reflect.deleteProperty(globalThis, "scheduler");
   }
+}
+
+export async function runKnowledgeAnchorNavigationTests(): Promise<void> {
+  const lines = ["---", "description: |", "  ## Property fake", "  property ^property", "---", "# Root", "## Exact heading", "First claim.",
+    "### Child", "Child detail.", "## Tail", "Tail detail.", "Setext heading", "==============", "Setext detail.",
+    "```md", "## Code fake", "code ^code", "```", "    ## Indented fake", "    code ^indented", "Inline `^inline` example.", "",
+    "Paragraph first.", "Paragraph second. ^paragraph", "", "> Quote first paragraph.", ">", "> Quote second paragraph.", "", "^quote", "",
+    "- First list item.", "  Continued detail.", "", "- Second list item.", "", "^list", "", "## Duplicate", "One.", "## Duplicate", "Two.",
+    "", "First repeated block. ^repeated", "", "Second repeated block. ^repeated"];
+  const path = "notes/anchor-development.md";
+  const locate = (anchor: string) => locateKnowledgeAnchor(path, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", lines, anchor);
+  const line = (text: string) => lines.indexOf(text) + 1;
+  const heading = locate("Exact heading");
+  assert.equal(heading.status, "located");
+  if (heading.status === "located") {
+    assert.equal(heading.lineStart, line("## Exact heading"));
+    assert.equal(heading.lineEnd, line("## Tail") - 1, "a heading range includes its nested child but stops before its sibling");
+  }
+  const setext = locate("Setext heading");
+  assert.equal(setext.status, "located");
+  if (setext.status === "located") assert.equal(setext.lineStart, line("Setext heading"));
+  for (const [anchor, start, end] of [["^paragraph", "Paragraph first.", "Paragraph second. ^paragraph"],
+    ["^quote", "> Quote first paragraph.", "^quote"], ["^list", "- First list item.", "^list"]]) {
+    const block = locate(anchor);
+    assert.equal(block.status, "located");
+    if (block.status === "located") { assert.equal(block.lineStart, line(start)); assert.equal(block.lineEnd, line(end)); }
+    assert.equal(block.readStatus, "unread");
+    assert.deepEqual(normalizeKnowledgeAnchorLocation(block, path, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", lines.length), block);
+  }
+  const inlineItem = locateKnowledgeAnchor(path, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ["- First item", "- Second item ^item", "  Continuation.", "- Third item"], "^item");
+  assert.equal(inlineItem.status, "located");
+  if (inlineItem.status === "located") { assert.equal(inlineItem.lineStart, 2); assert.equal(inlineItem.lineEnd, 3); }
+  for (const anchor of ["Property fake", "Code fake", "Indented fake", "^property", "^code", "^indented", "^inline", "Missing"]) {
+    const result = locate(anchor); assert.equal(result.status, "not_located");
+    if (result.status === "not_located") assert.equal(result.reason, "missing");
+    assert.equal("lineStart" in result, false);
+  }
+  for (const anchor of ["Duplicate", "^repeated"]) {
+    const result = locate(anchor); assert.equal(result.status, "not_located");
+    if (result.status === "not_located") assert.equal(result.reason, "ambiguous");
+  }
+  const invalid = locate("^bad_id");
+  assert.equal(invalid.status, "not_located");
+  if (invalid.status === "not_located") assert.equal(invalid.reason, "invalid");
+  const shifted = [...lines]; shifted.splice(5, 0, "New body preface.", "");
+  const fresh = locateKnowledgeAnchor(path, "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", shifted, "Exact heading");
+  assert.equal(fresh.status, "located");
+  if (fresh.status === "located" && heading.status === "located") assert.equal(fresh.lineStart, heading.lineStart + 2);
+  const literalHash = locateKnowledgeAnchor(path, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ["# #Literal", "First.", "# Literal", "Second."], "#Literal");
+  assert.equal(literalHash.status, "located");
+  if (literalHash.status === "located") assert.equal(literalHash.lineStart, 1, "a literal hash in the heading name is never stripped");
+  console.log("Knowledge anchors: exact heading/Setext/paragraph and multi-paragraph containers, duplicate/missing/code rejection and relocation PASS");
 }
 
 export async function runKnowledgeBodySearchOutlineEligibilityTests(): Promise<void> {

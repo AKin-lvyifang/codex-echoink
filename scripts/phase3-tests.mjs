@@ -16,22 +16,26 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
-  'import { runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests, runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchReferenceTests, runKnowledgeBodySearchReferenceBoundaryTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests } from "./src/tests/knowledge-body-search";',
-  'import { runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchMetadataTests, runVaultBodySearchReferenceTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
+  'import { runKnowledgeAnchorNavigationTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests, runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchReferenceTests, runKnowledgeBodySearchReferenceBoundaryTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests } from "./src/tests/knowledge-body-search";',
+  'import { runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchMetadataTests, runVaultBodySearchReferenceTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
   'import { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";',
   'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
   'import { runKnowledgeFolderBindingsTests } from "./src/tests/knowledge-folder-bindings";',
-  'import { runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
+  'import { runKnowledgeAnchorReadingTests, runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
   'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
   'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
   'import { runKnowledgeMaintenancePreferenceTests } from "./src/tests/knowledge-maintenance-preferences";',
-  'import { runPiKnowledgeReadToolTests, runPiKnowledgeMetadataToolTests, runPiKnowledgeReferenceToolTests, runPiKnowledgeOutlineBudgetTests } from "./src/tests/pi-native/knowledge-read-tools";',
+  'import { runPiKnowledgeAnchorBudgetTests, runPiKnowledgeReadToolTests, runPiKnowledgeMetadataToolTests, runPiKnowledgeReferenceToolTests, runPiKnowledgeOutlineBudgetTests } from "./src/tests/pi-native/knowledge-read-tools";',
   'import { runPhase3KnowledgeMaintenanceServiceTests } from "./src/tests/pi-native/phase3-maintenance-service";',
   'import { runKnowledgeInitializationTests } from "./src/tests/knowledge-initialization";',
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runKnowledgeAnchorNavigationTests();",
+  "await runVaultBodySearchAnchorTests();",
+  "await runKnowledgeAnchorReadingTests();",
+  "await runPiKnowledgeAnchorBudgetTests();",
   "await runKnowledgeBodySearchOutlineEligibilityTests();",
   "await runKnowledgeBodySearchOutlineTests();",
   "await runVaultBodySearchOutlineTests();",
@@ -70,7 +74,33 @@ const fullSuiteRuns = [
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
   stdin: {
-    contents: (process.argv.includes("--body-search-outline-eligibility") ? [
+    contents: (process.argv.includes("--body-search-anchors") ? [
+      'import { runKnowledgeAnchorNavigationTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests, runKnowledgeBodySearchReferenceBoundaryTests } from "./src/tests/knowledge-body-search";',
+      'import { runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
+      'import { runKnowledgeAnchorReadingTests, runKnowledgeAssociativeReadingTests } from "./src/tests/knowledge-associative-reading";',
+      'import { runKnowledgeAgentIndexTests } from "./src/tests/knowledge-agent-index";',
+      'import { runPhase3KnowledgeRetrieverTests } from "./src/tests/phase3-knowledge-retriever";',
+      'import { runPiKnowledgeAnchorBudgetTests, runPiKnowledgeReadToolTests, runPiKnowledgeOutlineBudgetTests } from "./src/tests/pi-native/knowledge-read-tools";',
+      'await runKnowledgeAnchorNavigationTests();',
+      'await runVaultBodySearchAnchorTests();',
+      'await runKnowledgeAnchorReadingTests();',
+      'await runPiKnowledgeAnchorBudgetTests();',
+      'await runKnowledgeAssociativeReadingTests();',
+      'await runKnowledgeAgentIndexTests();',
+      'await runPhase3KnowledgeRetrieverTests();',
+      'await runPiKnowledgeReadToolTests();',
+      'await runKnowledgeBodySearchTests();',
+      'await runKnowledgeBodySearchCacheTests();',
+      'await runKnowledgeBodySearchConcurrencyTests();',
+      'await runKnowledgeBodySearchOutlineTests();',
+      'await runKnowledgeBodySearchOutlineEligibilityTests();',
+      'await runKnowledgeBodySearchReferenceBoundaryTests();',
+      'await runVaultBodySearchTests();',
+      'await runVaultBodySearchCacheTests();',
+      'await runVaultBodySearchConcurrencyTests();',
+      'await runVaultBodySearchOutlineTests();',
+      'await runPiKnowledgeOutlineBudgetTests();'
+    ] : process.argv.includes("--body-search-outline-eligibility") ? [
       'import { runKnowledgeBodySearchOutlineEligibilityTests } from "./src/tests/knowledge-body-search";',
       'await runKnowledgeBodySearchOutlineEligibilityTests();'
     ] : process.argv.includes("--body-search-outline") ? [

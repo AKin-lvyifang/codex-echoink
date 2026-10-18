@@ -2,7 +2,7 @@ import { knowledgeRootRole, resolveKnowledgePath, knowledgePathRole } from "./ro
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeBodySearchPort } from "./vault-body-search";
 import { knowledgeSpanReferenceId, sliceKnowledgeSourceSpan, sourceSpanHasMore, boundKnowledgeSourceSpan } from "./source-span";
-import { normalizeKnowledgeDocumentOutline, verifyKnowledgeOutlineLines } from "./search/markdown-navigation";
+import { extractMarkdownAnchorLinks, knowledgeAnchorCoversSpan, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, verifyKnowledgeAnchorLines, verifyKnowledgeOutlineLines } from "./search/markdown-navigation";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import { TextDecoder } from "node:util";
@@ -83,6 +83,8 @@ export class KnowledgeRetrievalError extends Error {
 }
 
 export interface KnowledgeReferenceBuildInput {
+  related?: import("./knowledge-relations").KnowledgeRelationPage;
+  anchorLocation?: import("./search/contracts").KnowledgeAnchorLocation;
   matchSources?: readonly import("./search/contracts").BodySearchMatchSource[];
   inclusionReason?: import("./search/contracts").BodySearchInclusionReason;
   outline?: Readonly<import("./search/contracts").KnowledgeDocumentOutline>;
@@ -164,6 +166,13 @@ export class KnowledgeReferenceBuilder {
         if (!verifyKnowledgeOutlineLines(outline, snapshot.lines)) throw new Error("knowledge_outline_changed");
       } catch { throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath); }
     }
+    let anchorLocation: KnowledgeReference["anchorLocation"];
+    if (input.anchorLocation !== undefined) {
+      try {
+        anchorLocation = normalizeKnowledgeAnchorLocation(input.anchorLocation, snapshot.vaultRelativePath, snapshot.contentRevision, snapshot.lines.length);
+        if (!knowledgeAnchorCoversSpan(anchorLocation, span) || !verifyKnowledgeAnchorLines(anchorLocation, snapshot.contentRevision, snapshot.lines)) throw new Error("knowledge_anchor_changed");
+      } catch { throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath); }
+    }
     return freezeKnowledgeReference({
       referenceId: knowledgeSpanReferenceId(snapshot.vaultRelativePath, snapshot.contentRevision, span),
       vaultRelativePath: snapshot.vaultRelativePath,
@@ -180,6 +189,8 @@ export class KnowledgeReferenceBuilder {
       ...(input.matchSources ? { matchSources: Object.freeze([...input.matchSources]) } : {}),
       ...(input.inclusionReason ? { inclusionReason: input.inclusionReason } : {}),
       ...(outline ? { outline } : {}),
+      ...(anchorLocation ? { anchorLocation } : {}),
+      ...(input.related?.vaultRelativePath === snapshot.vaultRelativePath && input.related.contentRevision === snapshot.contentRevision ? { related: input.related } : {}),
       recordedAt: snapshot.recordedAt,
       ...(snapshot.publishedAt ? { publishedAt: snapshot.publishedAt } : {}),
       verificationStatus: "local_revision_verified"
@@ -208,6 +219,7 @@ export class KnowledgeReferenceBuilder {
           || expectedExcerpt !== normalized.excerpt
           || expectedId !== normalized.referenceId
           || (normalized.outline && !verifyKnowledgeOutlineLines(normalized.outline, snapshot.lines))
+          || (normalized.anchorLocation && !verifyKnowledgeAnchorLines(normalized.anchorLocation, snapshot.contentRevision, snapshot.lines))
         ) {
           changedReferenceIds.push(normalized.referenceId);
           continue;
@@ -410,7 +422,13 @@ export class KnowledgeRetriever {
         "Knowledge Agent index is not configured"
       );
     }
-    return await (this.agentIndex.bodySearch ?? this.agentIndex).read(input);
+    const snapshot = await (this.agentIndex.bodySearch ?? this.agentIndex).read(input);
+    if (this.agentIndex.bodySearch && snapshot.content.includes("[[") && snapshot.content.includes("#") && extractMarkdownAnchorLinks(snapshot.content, 0).total > 0) {
+      const related = (await this.agentIndex.bodySearch.search({ mode: "related", vaultRelativePath: snapshot.vaultRelativePath, limit: 8 })).related;
+      if (related?.contentRevision !== snapshot.contentRevision) throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath);
+      return Object.freeze({ ...snapshot, related });
+    }
+    return snapshot;
   }
 
   private async retrieveFromAgentIndex(
@@ -478,6 +496,7 @@ export class KnowledgeRetriever {
           matchSources: hit.matchSources,
           inclusionReason: hit.inclusionReason,
           outline: hit.outline,
+          related: hit.related,
           allowUnrefined: hit.kind === "raw",
           expectedContentRevision: hit.contentRevision
         }));
@@ -1214,7 +1233,10 @@ function normalizeKnowledgeReference(
       "KnowledgeReference 结构无效"
     );
   }
-  return freezeKnowledgeReference({ ...reference, ...(Object.hasOwn(reference, "outline")
+  const anchorLocation = Object.hasOwn(reference, "anchorLocation")
+    ? normalizeKnowledgeAnchorLocation(reference.anchorLocation, reference.vaultRelativePath, reference.contentRevision, reference.totalLines) : undefined;
+  if (anchorLocation && !knowledgeAnchorCoversSpan(anchorLocation, reference)) throw new KnowledgeRetrievalError("invalid-path", "KnowledgeReference anchor range 无效");
+  return freezeKnowledgeReference({ ...reference, ...(anchorLocation ? { anchorLocation } : {}), ...(Object.hasOwn(reference, "outline")
     ? { outline: normalizeKnowledgeDocumentOutline(reference.outline, reference.contentRevision, reference.totalLines!) } : {}) });
 }
 

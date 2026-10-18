@@ -1,5 +1,5 @@
 import { KNOWLEDGE_SEARCH_KINDS, type BodySearchMatchSource, type KnowledgeSearchKind } from "./search/contracts";
-import { normalizeKnowledgeDocumentOutline } from "./search/markdown-navigation";
+import { knowledgeAnchorCoversSpan, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, normalizeKnowledgeRelationPage } from "./search/markdown-navigation";
 import { isDeepStrictEqual } from "node:util";
 import { mkdir, readdir } from "node:fs/promises";
 import * as path from "node:path";
@@ -119,6 +119,7 @@ const REFERENCE_KEYS = [
 ] as const;
 
 const OPTIONAL_REFERENCE_KEYS = [
+  "anchorLocation",
   "outline",
   "inclusionReason",
   "matchSources",
@@ -619,10 +620,22 @@ function normalizeKnowledgeReference(
     throw new PiNativeFileStoreError(errorCode, "KnowledgeReference contentRevision 无效");
   }
   const hasSourceType = Object.hasOwn(object, "sourceType");
+  let anchorLocation: KnowledgeReference["anchorLocation"];
+  if (Object.hasOwn(object, "anchorLocation")) {
+    try {
+      anchorLocation = normalizeKnowledgeAnchorLocation(object.anchorLocation, object.vaultRelativePath as string, contentRevision, object.totalLines as number);
+      if (!knowledgeAnchorCoversSpan(anchorLocation, { lineStart: lineStart as number, lineEnd: lineEnd as number })) throw new Error("anchor_range_invalid");
+    } catch { throw new PiNativeFileStoreError(errorCode, "KnowledgeReference anchorLocation 无效"); }
+  }
   let outline: KnowledgeReference["outline"];
   if (Object.hasOwn(object, "outline")) {
     try { outline = normalizeKnowledgeDocumentOutline(object.outline, contentRevision, object.totalLines as number); }
     catch { throw new PiNativeFileStoreError(errorCode, "KnowledgeReference outline 无效"); }
+  }
+  let related: KnowledgeReference["related"];
+  if (Object.hasOwn(object, "related")) {
+    try { related = normalizeKnowledgeRelationPage(object.related, object.vaultRelativePath as string, contentRevision); }
+    catch { throw new PiNativeFileStoreError(errorCode, "KnowledgeReference related 无效"); }
   }
   const hasMatchSources = Object.hasOwn(object, "matchSources");
   const hasInclusionReason = Object.hasOwn(object, "inclusionReason");
@@ -676,7 +689,9 @@ function normalizeKnowledgeReference(
     );
   }
   return {
+    ...(anchorLocation ? { anchorLocation } : {}),
     ...(outline ? { outline } : {}),
+    ...(related ? { related } : {}),
     ...(hasInclusionReason ? { inclusionReason: "按指代带入" as const } : {}),
     ...(hasMatchSources ? { matchSources: Object.freeze([...(object.matchSources as BodySearchMatchSource[])]) } : {}),
     ...(Number.isSafeInteger(object.columnStart) && Number.isSafeInteger(object.columnEnd) && (object.columnStart as number) >= 0 && (object.columnEnd as number) >= 0 ? { columnStart: object.columnStart as number, columnEnd: object.columnEnd as number } : {}),
@@ -692,7 +707,7 @@ function normalizeKnowledgeReference(
     lineEnd: lineEnd as number,
     ...(Number.isSafeInteger(object.totalLines) && (object.totalLines as number) >= (lineEnd as number) ? { totalLines: object.totalLines as number } : {}),
     ...(typeof object.hasMore === "boolean" ? { hasMore: object.hasMore } : {}),
-    // Relation hints stay in the delivered resource; Sources store body ranges only.
+    // Unread navigation is metadata; only this reference's excerpt range counts as read.
     ...(hasSourceType
       ? { sourceType: object.sourceType as KnowledgeReference["sourceType"] }
       : {}),

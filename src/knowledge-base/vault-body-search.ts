@@ -3,8 +3,9 @@ import { sha256Hex } from "../utils/sha256";
 import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole } from "./root-paths-core";
 import type { KnowledgeFolderBindings } from "./folder-bindings";
 import { BodySearchMemoryIndex, explicitNoteReferenceScope } from "./search/body-search";
-import { fitKnowledgeOutlines } from "./search/markdown-navigation";
+import { extractMarkdownAnchorLinks, fitKnowledgeNavigation, locateKnowledgeAnchor } from "./search/markdown-navigation";
 import type { BodySearchDocument, KnowledgeSearchKind } from "./search/contracts";
+import type { KnowledgeLink, KnowledgeRelation, KnowledgeRelationPage } from "./knowledge-relations";
 import type { KnowledgeAgentReadResult, KnowledgeAgentSearchRequest, KnowledgeAgentSearchResult } from "./knowledge-agent-index";
 
 export interface KnowledgeBodySearchPort {
@@ -151,7 +152,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     if (documents.some(document => document.kind === "journal")) await this.options.onJournalSearch?.();
     const activePath = this.app.workspace?.getActiveFile()?.path;
     const recentPaths = [...(this.app.workspace?.getLastOpenFiles?.() ?? [])];
-    const queryKey = sha256Hex(JSON.stringify({ mode: request.mode, query: request.query, queries: request.queries, kinds: request.kinds,
+    const queryKey = request.mode === "related" ? this.relatedKey(request.vaultRelativePath ?? "", documents) : sha256Hex(JSON.stringify({ mode: request.mode, query: request.query, queries: request.queries, kinds: request.kinds,
       dateFrom: request.dateFrom, dateTo: request.dateTo, excludePaths: request.excludePaths, bindingSignature,
       ...(explicitNoteReferenceScope(request, documents) ? { referenceContext: [activePath ?? null, recentPaths] } : {}),
       excludedRoots, files: documents.map(d => [d.vaultRelativePath, d.revisionKey]) }));
@@ -168,6 +169,22 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       }
     }
     const limit = Math.max(0, Math.min(50, request.limit ?? 20));
+    if (request.mode === "related") {
+      if (!request.vaultRelativePath || !documents.some(document => document.vaultRelativePath === request.vaultRelativePath)) throw Object.assign(new Error("Knowledge relation source is outside the search scope"), { code: "invalid_path" });
+      const source = await this.read({ vaultRelativePath: request.vaultRelativePath });
+      if (request.cursor && JSON.parse(request.cursor).sourceRevision !== source.contentRevision) throw this.changedSearch(true);
+      const links = extractMarkdownAnchorLinks(source.content, Number.POSITIVE_INFINITY);
+      if (offset > links.total) throw Object.assign(new Error("Relation cursor is out of range"), { code: "cursor_invalid" });
+      const snapshots = new Map([[source.vaultRelativePath, Promise.resolve(source)]]);
+      let pageLimit = Math.min(8, limit);
+      let related = await this.anchorPage(source, links, documents, offset, pageLimit, snapshots, request.signal);
+      while (pageLimit > 1 && new TextEncoder().encode(JSON.stringify(related)).length > 9000) related = await this.anchorPage(source, links, documents, offset, --pageLimit, snapshots, request.signal);
+      if (new TextEncoder().encode(JSON.stringify(related)).length > 9000) throw Object.assign(new Error("Knowledge navigation exceeds its result budget"), { code: "read_failed" });
+      if (request.signal?.aborted) throw Object.assign(new Error("Knowledge navigation aborted"), { name: "AbortError" });
+      this.assertCurrent(scope, generation, Boolean(request.cursor));
+      return { generation, total: related.total, returned: related.returned, remaining: related.remaining, hasMore: related.hasMore, exhausted: related.exhausted,
+        ...(related.continuationCursor ? { continuationCursor: related.continuationCursor } : {}), hits: [], related };
+    }
     if (request.mode === "recent") {
       if (request.query !== undefined || request.queries !== undefined) throw Object.assign(new Error("Recent browsing does not accept a query"), { code: "invalid_query" });
       const eligible = documents.filter(document => (!request.kinds?.length || request.kinds.includes(document.kind)) && !request.excludePaths?.includes(document.vaultRelativePath))
@@ -201,7 +218,24 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     this.assertCurrent(scope, generation, Boolean(request.cursor));
     let hits = result.hits.map(hit => ({ ...hit, entryId: `body:${hit.vaultRelativePath}:${hit.lineStart}`,
       verificationStatus: "local_revision_verified" as const, rawSources: [] }));
-    hits = fitKnowledgeOutlines(hits, values => new TextEncoder().encode(JSON.stringify(values)).length <= 10_000);
+    const snapshots = new Map<string, Promise<KnowledgeAgentReadResult>>();
+    const visited = new Set<string>();
+    let navigationSources = 0;
+    for (let index = 0; index < hits.length && navigationSources < 3; index++) {
+      const hit = hits[index];
+      if (visited.has(hit.vaultRelativePath)) continue;
+      visited.add(hit.vaultRelativePath);
+      const cached = this.memory.navigationLinks(hit.vaultRelativePath, hit.contentRevision);
+      if (cached?.total === 0) continue;
+      navigationSources++;
+      const source = await this.read({ vaultRelativePath: hit.vaultRelativePath, expectedContentRevision: hit.contentRevision });
+      snapshots.set(source.vaultRelativePath, Promise.resolve(source));
+      const links = cached ?? extractMarkdownAnchorLinks(source.content);
+      if (links.total) hits[index] = { ...hit, related: await this.anchorPage(source, links, documents, 0, 4, snapshots, request.signal) };
+    }
+    if (request.signal?.aborted) throw Object.assign(new Error("Knowledge navigation aborted"), { name: "AbortError" });
+    this.assertCurrent(scope, generation, Boolean(request.cursor));
+    hits = fitKnowledgeNavigation(hits, values => new TextEncoder().encode(JSON.stringify(values)).length <= 10_000);
     while (hits.length > 1 && new TextEncoder().encode(JSON.stringify(hits)).length > 10_000) hits.pop();
     const remaining = Math.max(0, result.total - offset - hits.length);
     return { generation, total: result.total, returned: hits.length, remaining, hasMore: remaining > 0,
@@ -218,5 +252,71 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       if (scope !== this.scopeKey()) this.ensureScope();
       throw this.changedSearch(cursor, scope !== this.scopeKey());
     }
+  }
+
+  private relatedKey(sourcePath: string, documents: readonly BodySearchDocument[]): string {
+    return sha256Hex(JSON.stringify(["related", sourcePath, this.scopeKey(), documents.map(document => [document.vaultRelativePath, document.revisionKey])]));
+  }
+
+  private linkTargets(link: KnowledgeLink, sourcePath: string, documents: readonly BodySearchDocument[]): BodySearchDocument[] {
+    if (!link.target) return documents.filter(document => document.vaultRelativePath === sourcePath);
+    const normalize = (value: string): string | undefined => {
+      const parts: string[] = [];
+      for (const part of value.replace(/^\//u, "").split("/")) {
+        if (!part || part === ".") continue;
+        if (part === "..") { if (!parts.length) return undefined; parts.pop(); } else parts.push(part);
+      }
+      return parts.join("/");
+    };
+    const target = link.target;
+    const directory = sourcePath.slice(0, Math.max(0, sourcePath.lastIndexOf("/")));
+    const candidates = target.startsWith(".") ? [`${directory}/${target}`] : target.includes("/") ? [target, `${directory}/${target}`] : [];
+    for (const candidate of candidates) {
+      const path = normalize(candidate);
+      if (!path) continue;
+      const exact = documents.filter(document => [path, `${path}.md`, `${path}.markdown`].includes(document.vaultRelativePath));
+      if (exact.length) return exact;
+    }
+    if (!target.includes("/")) {
+      const name = target.replace(/\.(?:md|markdown)$/iu, "").normalize("NFKC").toLowerCase();
+      const named = documents.filter(document => [document.title, ...(document.aliases ?? [])].some(title => title.normalize("NFKC").toLowerCase() === name));
+      if (named.length) return named;
+    }
+    let host: TFile | null | undefined;
+    try { host = this.app.metadataCache?.getFirstLinkpathDest?.(target, sourcePath); } catch { /* A host hint cannot widen the allowed document list. */ }
+    return host ? documents.filter(document => document.vaultRelativePath === host!.path) : [];
+  }
+
+  private async anchorPage(source: KnowledgeAgentReadResult, links: ReturnType<typeof extractMarkdownAnchorLinks>, documents: readonly BodySearchDocument[], offset: number, limit: number,
+    snapshots: Map<string, Promise<KnowledgeAgentReadResult>>, signal?: AbortSignal): Promise<KnowledgeRelationPage> {
+    const selected = links.links.slice(offset, offset + Math.min(8, limit));
+    const items: KnowledgeRelation[] = [];
+    for (const link of selected) {
+      if (signal?.aborted) throw Object.assign(new Error("Knowledge navigation aborted"), { name: "AbortError" });
+      const candidates = this.linkTargets(link, source.vaultRelativePath, documents);
+      const relation: KnowledgeRelation = { direction: "outgoing", relation: "link", original: link.original, anchor: link.anchor, anchorStatus: "not_located",
+        source: { vaultRelativePath: source.vaultRelativePath, title: source.title, contentRevision: source.contentRevision, line: link.line, context: link.context },
+        status: candidates.length === 1 ? "available" : candidates.length > 1 ? "ambiguous" : "unresolved" };
+      if (candidates.length === 1) {
+        const targetPath = candidates[0].vaultRelativePath;
+        try {
+          if (!snapshots.has(targetPath)) snapshots.set(targetPath, this.read({ vaultRelativePath: targetPath }));
+          const target = await snapshots.get(targetPath)!;
+          relation.target = { vaultRelativePath: targetPath, title: target.title, contentRevision: target.contentRevision };
+          relation.anchorLocation = locateKnowledgeAnchor(targetPath, target.contentRevision, target.content.split(/\r\n|\n|\r/u), link.anchor!);
+          relation.anchorStatus = relation.anchorLocation.status;
+        } catch (error) {
+          if (error instanceof Error && error.name === "AbortError") throw error;
+          relation.status = "unresolved";
+          relation.anchorLocation = { schemaVersion: 1, readStatus: "unread", status: "not_located", vaultRelativePath: targetPath,
+            anchor: link.anchor!, kind: link.anchor!.startsWith("^") ? "block" : "heading", reason: "unavailable" };
+        }
+      }
+      items.push(Object.freeze(relation));
+    }
+    const remaining = Math.max(0, links.total - offset - items.length);
+    return Object.freeze({ vaultRelativePath: source.vaultRelativePath, contentRevision: source.contentRevision, total: links.total, returned: items.length, remaining,
+      hasMore: remaining > 0, exhausted: remaining === 0, items,
+      ...(remaining ? { continuationCursor: JSON.stringify({ key: this.relatedKey(source.vaultRelativePath, documents), generation: this.generation, offset: offset + items.length, sourceRevision: source.contentRevision }) } : {}) });
   }
 }

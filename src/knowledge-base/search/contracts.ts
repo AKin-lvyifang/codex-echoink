@@ -21,6 +21,18 @@ export interface KnowledgeDocumentOutline {
   readonly truncated: boolean;
 }
 
+/** Program-resolved navigation over one target revision; it adds no read evidence. */
+export type KnowledgeAnchorLocation = Readonly<{
+  schemaVersion: 1;
+  readStatus: "unread";
+  vaultRelativePath: string;
+  anchor: string;
+  kind: "heading" | "block";
+} & (
+  | { status: "located"; contentRevision: string; lineStart: number; lineEnd: number }
+  | { status: "not_located"; contentRevision?: string; reason: "missing" | "ambiguous" | "unavailable" | "invalid" }
+)>;
+
 export interface BodySearchDocument {
   /** Host-observed body/metadata/event version; omitted documents are never reused. */
   readonly revisionKey?: string;
@@ -49,6 +61,7 @@ export interface BodySearchRequest {
 }
 
 export interface BodySearchHit {
+  readonly related?: import("../knowledge-relations").KnowledgeRelationPage;
   readonly vaultRelativePath: string;
   readonly title: string;
   readonly kind: KnowledgeSearchKind;

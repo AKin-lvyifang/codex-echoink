@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import type { KnowledgeAnchorLocation } from "./search/contracts";
 
 /** Text-authored hints, never programmatic claims that two facts agree. */
 export interface KnowledgeApplicability {
@@ -28,7 +29,8 @@ export interface KnowledgeRelation {
   original: string;
   anchor?: string;
   /** Anchor is a navigation hint; the file revision is the read authority. */
-  anchorStatus?: "not_located";
+  anchorStatus?: "located" | "not_located";
+  anchorLocation?: KnowledgeAnchorLocation;
   source: KnowledgeRelationTarget & { line: number; context: string };
   target?: KnowledgeRelationTarget;
   candidates?: KnowledgeRelationTarget[];

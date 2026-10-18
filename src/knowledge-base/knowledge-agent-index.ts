@@ -1,4 +1,6 @@
 import { extractKnowledgeLinks, extractKnowledgeApplicability, resolveKnowledgeLink, type KnowledgeLink, type KnowledgeApplicability, type KnowledgeLinkResolver, type KnowledgeRelation, type KnowledgeRelationPage } from "./knowledge-relations";
+import { locateKnowledgeAnchor } from "./search/markdown-navigation";
+import type { KnowledgeAnchorLocation } from "./search/contracts";
 import { knowledgeRootRole, knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath, knowledgePathRole, knowledgePathPolicy, getKnowledgeFolderBindings } from "./root-paths";
 import { isRawMarkdownPath, rawDigestFingerprint } from "./raw-digest";
 import { createHash } from "node:crypto";
@@ -53,6 +55,7 @@ export interface KnowledgeAgentRawSource {
 }
 
 export interface KnowledgeAgentSearchHit extends KnowledgeApplicability {
+  related?: KnowledgeRelationPage;
   matchSources?: readonly import("./search/contracts").BodySearchMatchSource[];
   inclusionReason?: import("./search/contracts").BodySearchInclusionReason;
   outline?: Readonly<import("./search/contracts").KnowledgeDocumentOutline>;
@@ -260,7 +263,8 @@ export class KnowledgeAgentIndex {
   async search(
     request: Readonly<KnowledgeAgentSearchRequest>
   ): Promise<KnowledgeAgentSearchResult> {
-    if (this.bodySearch && (!request.mode || request.mode === "search" || request.mode === "recent")) return this.bodySearch.search(request);
+    if (this.bodySearch && (!request.mode || request.mode === "search" || request.mode === "recent"
+      || (request.mode === "related" && !["wiki", "projects", "raw"].includes(knowledgePathRole(this.vaultPath, request.vaultRelativePath ?? "") ?? "")))) return this.bodySearch.search(request);
     await this.ensureFresh();
     const index = this.requireCurrent();
     const mode = request.mode ?? "search";
@@ -360,6 +364,13 @@ export class KnowledgeAgentIndex {
     vaultRelativePath: string;
     expectedContentRevision?: string;
   }>): Promise<KnowledgeAgentReadResult> {
+    const snapshot = await this.readIndexedSnapshot(input);
+    const related = await this.relationPage(snapshot.vaultRelativePath, 8);
+    return Object.freeze({ ...snapshot, ...(related.contentRevision === snapshot.contentRevision ? { related } : {}) });
+  }
+
+  /** No relation decoration: anchor targets may link back to the source. */
+  private async readIndexedSnapshot(input: Readonly<{ vaultRelativePath: string; expectedContentRevision?: string }>, navigationCurrent = false): Promise<KnowledgeAgentReadResult> {
     await this.ensureFresh();
     const index = this.requireCurrent();
     const relativePath = normalizeKnowledgePath(resolveKnowledgePath(this.vaultPath, input.vaultRelativePath), this.vaultPath);
@@ -368,15 +379,6 @@ export class KnowledgeAgentIndex {
       throw new KnowledgeAgentIndexError(
         "not_found",
         "Knowledge entry is not present in the current index."
-      );
-    }
-    if (
-      input.expectedContentRevision
-      && input.expectedContentRevision !== entry.contentRevision
-    ) {
-      throw new KnowledgeAgentIndexError(
-        "source_changed",
-        "Knowledge entry changed before it could be read."
       );
     }
     if (!isTextEntry(entry)) {
@@ -391,7 +393,8 @@ export class KnowledgeAgentIndex {
     );
     const bytes = await fsp.readFile(absolutePath);
     const currentRevision = contentRevision(bytes, relativePath, this.vaultPath);
-    if (currentRevision !== entry.contentRevision) {
+    if ((input.expectedContentRevision !== undefined && currentRevision !== input.expectedContentRevision)
+      || (!navigationCurrent && input.expectedContentRevision === undefined && currentRevision !== entry.contentRevision)) {
       this.invalidate(relativePath);
       throw new KnowledgeAgentIndexError(
         "source_changed",
@@ -401,16 +404,19 @@ export class KnowledgeAgentIndex {
     const content = decodeUtf8(bytes);
     return Object.freeze({
       ...materializeHit(entry, index),
-      related: this.relationPage(relativePath, 8),
+      contentRevision: currentRevision,
       content
     });
   }
 
   async related(input: Readonly<{ vaultRelativePath: string; limit?: number; cursor?: string }>): Promise<KnowledgeRelationPage> {
     if (this.bodySearch && !this.bodySearch.allowsPath(input.vaultRelativePath)) throw new KnowledgeAgentIndexError("invalid_path", "Knowledge relation source is outside the search scope.");
+    if (this.bodySearch && !["wiki", "projects", "raw"].includes(knowledgePathRole(this.vaultPath, input.vaultRelativePath) ?? "")) {
+      return (await this.bodySearch.search({ mode: "related", ...input })).related!;
+    }
     await this.ensureFresh();
     const relativePath = normalizeKnowledgePath(resolveKnowledgePath(this.vaultPath, input.vaultRelativePath), this.vaultPath);
-    return this.relationPage(relativePath, input.limit ?? 8, input.cursor);
+    return await this.relationPage(relativePath, input.limit ?? 8, input.cursor);
   }
 
   /** Full original documents, independent of ranked search pages and snippet limits. */
@@ -430,8 +436,9 @@ export class KnowledgeAgentIndex {
     }
   }
 
-  private relationPage(relativePath: string, limit: number, cursor?: string): KnowledgeRelationPage {
+  private async relationPage(relativePath: string, limit: number, cursor?: string, attempt = 0): Promise<KnowledgeRelationPage> {
     const index = this.requireCurrent();
+    const scope = this.bodySearch?.scopeKey();
     const entry = index.entries[relativePath];
     if (!entry) throw new KnowledgeAgentIndexError("not_found", "Knowledge relation source is unavailable.");
     const queryHash = createHash("sha256").update(`related:${relativePath}${this.bodySearch ? this.bodySearch.scopeKey() : ""}`).digest("hex");
@@ -447,7 +454,37 @@ export class KnowledgeAgentIndex {
       return [relation];
     });
     if (offset > all.length) throw new KnowledgeAgentIndexError("cursor_invalid", "Relation cursor is out of range.");
-    const items = all.slice(offset, offset + normalizePageSize(limit));
+    const targetSnapshots = new Map<string, Promise<KnowledgeAgentReadResult>>();
+    const readTarget = (targetPath: string) => {
+      if (!targetSnapshots.has(targetPath)) targetSnapshots.set(targetPath, this.bodySearch
+        ? this.bodySearch.read({ vaultRelativePath: targetPath })
+        : this.readIndexedSnapshot({ vaultRelativePath: targetPath }, true));
+      return targetSnapshots.get(targetPath)!;
+    };
+    const items = await Promise.all(all.slice(offset, offset + normalizePageSize(limit)).map(async (relation): Promise<KnowledgeRelation> => {
+      if (!relation.anchor || !relation.target) return relation;
+      let anchorLocation: KnowledgeAnchorLocation;
+      let target = relation.target;
+      try {
+        const snapshot = await readTarget(target.vaultRelativePath);
+        target = { ...target, contentRevision: snapshot.contentRevision };
+        anchorLocation = locateKnowledgeAnchor(snapshot.vaultRelativePath, snapshot.contentRevision, snapshot.content.split(/\r\n|\n|\r/u), relation.anchor);
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        anchorLocation = Object.freeze({ schemaVersion: 1, readStatus: "unread", status: "not_located", vaultRelativePath: target.vaultRelativePath,
+          anchor: relation.anchor, kind: relation.anchor.startsWith("^") ? "block" : "heading", reason: "unavailable" });
+        const { target: _previousTarget, ...unresolved } = relation;
+        return { ...unresolved, status: "unresolved", anchorStatus: "not_located", anchorLocation };
+      }
+      return { ...relation, target, anchorStatus: anchorLocation.status, anchorLocation };
+    }));
+    if (scope !== this.bodySearch?.scopeKey()) throw new KnowledgeAgentIndexError(cursor ? "cursor_stale" : "source_changed", "Knowledge relation scope changed.");
+    await this.ensureFresh();
+    if (index.generation !== this.requireCurrent().generation) {
+      if (cursor) throw new KnowledgeAgentIndexError("cursor_stale", "Knowledge relation cursor is stale.");
+      if (attempt === 0) return await this.relationPage(relativePath, limit, undefined, 1);
+      throw new KnowledgeAgentIndexError("source_changed", "Knowledge relations changed while locating anchors.");
+    }
     const next = offset + items.length;
     const hasMore = next < all.length;
     return { vaultRelativePath: relativePath, contentRevision: entry.contentRevision, total: all.length, returned: items.length, remaining: Math.max(0, all.length - next), hasMore, exhausted: !hasMore,

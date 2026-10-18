@@ -1,4 +1,5 @@
-import type { KnowledgeDocumentOutline, KnowledgeOutlineEntry } from "./contracts";
+import type { KnowledgeAnchorLocation, KnowledgeDocumentOutline, KnowledgeOutlineEntry } from "./contracts";
+import type { KnowledgeLink, KnowledgeRelation, KnowledgeRelationPage, KnowledgeRelationTarget } from "../knowledge-relations";
 
 export interface MarkdownHeading { heading: string; line: number; level: number }
 
@@ -105,6 +106,15 @@ export function fitKnowledgeOutlines<T extends { readonly outline?: Readonly<Kno
   return result;
 }
 
+/** New relation navigation yields before any previously deliverable body is removed. */
+export function fitKnowledgeNavigation<T extends { readonly outline?: Readonly<KnowledgeDocumentOutline>; readonly related?: Readonly<KnowledgeRelationPage> }>(values: readonly T[], fits: (values: readonly T[]) => boolean): T[] {
+  const result = [...values];
+  for (let index = result.length - 1; index >= 0 && !fits(result); index--) {
+    if (result[index].related) { const { related: _related, ...body } = result[index]; result[index] = Object.freeze(body) as T; }
+  }
+  return fitKnowledgeOutlines(result, fits);
+}
+
 /** Strict transport/storage validation; the source revision remains the authority. */
 export function normalizeKnowledgeDocumentOutline(value: unknown, contentRevision: string, totalLines: number): Readonly<KnowledgeDocumentOutline> {
   const invalid = () => { throw new TypeError("knowledge_outline_invalid"); };
@@ -137,4 +147,222 @@ export function verifyKnowledgeOutlineLines(outline: Readonly<KnowledgeDocumentO
   const entries = outlineEntries(parseMarkdownHeadings(lines), lines.length);
   return entries.length === outline.totalHeadings && outline.entries.every(entry => entries.some(actual =>
     actual.heading === entry.heading && actual.level === entry.level && actual.lineStart === entry.lineStart && actual.lineEnd === entry.lineEnd));
+}
+
+/** Undefined lines are non-prose boundaries; real blank lines retain their position. */
+function anchorVisibleLines(lines: readonly string[]): (string | undefined)[] {
+  let properties = lines[0]?.trim() === "---";
+  let fence: { character: string; length: number } | undefined;
+  let comment = false;
+  return lines.map((raw, index) => {
+    if (properties) { if (index > 0 && /^(?:---|\.\.\.)\s*$/u.test(raw)) properties = false; return undefined; }
+    const marker = raw.match(/^ {0,3}(?:>[\t ]?)* {0,3}(?:(?:[-+*]|\d+[.)])[\t ]+)?(`{3,}|~{3,})(.*)$/u);
+    if (fence) {
+      if (marker && marker[1][0] === fence.character && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
+      return undefined;
+    }
+    if (marker) { fence = { character: marker[1][0], length: marker[1].length }; return undefined; }
+    if (/^(?: {4}|\t)/u.test(raw)) return undefined;
+    let line = raw;
+    if (comment) {
+      const end = line.indexOf("-->");
+      if (end < 0) return undefined;
+      line = " ".repeat(end + 3) + line.slice(end + 3); comment = false;
+    }
+    line = line.replace(/<!--.*?-->/gu, value => " ".repeat(value.length));
+    const start = line.indexOf("<!--");
+    if (start >= 0) { line = line.slice(0, start); comment = true; }
+    return line;
+  });
+}
+
+/** Only outgoing wiki anchors are needed here; no graph or target body is scanned. */
+export function extractMarkdownAnchorLinks(content: string, limit = 4): { links: readonly KnowledgeLink[]; total: number } {
+  const lines = content.split(/\r\n|\n|\r/u);
+  const links: KnowledgeLink[] = [];
+  let total = 0;
+  anchorVisibleLines(lines).forEach((line, index) => {
+    if (line === undefined) return;
+    const prose = line.replace(/(`+).*?\1/gu, value => " ".repeat(value.length));
+    for (const match of prose.matchAll(/!?\[\[([^\]\r\n]+)\]\]/gu)) {
+      if (((lines[index].slice(0, match.index).match(/\\+$/u)?.[0].length ?? 0) & 1) !== 0) continue;
+      let target = match[1].split("|")[0].trim();
+      try { target = decodeURIComponent(target); } catch { /* Preserve the literal target. */ }
+      const hash = target.indexOf("#");
+      if (hash < 0 || hash === target.length - 1 || target.length > 2048 || target.length - hash - 1 > 1024) continue;
+      total++;
+      if (links.length < limit) links.push({ original: lines[index].slice(match.index, match.index + match[0].length).slice(0, 400),
+        target: target.slice(0, hash).replace(/\\/gu, "/"), anchor: target.slice(hash + 1), line: index + 1, context: lines[index].trim().slice(0, 200) });
+    }
+  });
+  return { links: Object.freeze(links.map(link => Object.freeze(link))), total };
+}
+
+function blockRange(lines: readonly string[], visible: readonly (string | undefined)[], marker: number, standalone: boolean): { lineStart: number; lineEnd: number } | undefined {
+  let end = marker;
+  if (standalone) {
+    end--;
+    while (end >= 0 && visible[end] !== undefined && !visible[end]!.trim()) end--;
+  }
+  if (end < 0 || visible[end] === undefined || !visible[end]!.trim()) return undefined;
+  const isHeading = (index: number) => /^ {0,3}#{1,6}(?:\s|$)/u.test(lines[index]) || /^ {0,3}(?:=+|-+)\s*$/u.test(lines[index]);
+  if (isHeading(end)) return undefined;
+  const quote = /^ {0,3}>/u;
+  const list = /^ {0,3}(?:[-+*]|\d+[.)])[\t ]+/u;
+  let start = end;
+  if (quote.test(lines[end])) {
+    while (start > 0) {
+      let previous = start - 1;
+      while (previous >= 0 && !lines[previous].trim()) previous--;
+      if (previous < 0 || !quote.test(lines[previous])) break;
+      start = previous;
+    }
+  } else {
+    let candidate = end;
+    let firstItem = list.test(lines[end]) ? end : -1;
+    while (candidate > 0 && (standalone || firstItem < 0)) {
+      const previous = candidate - 1;
+      if (!lines[previous].trim() || list.test(lines[previous]) || /^[\t ]+\S/u.test(lines[previous])) {
+        candidate = previous; if (list.test(lines[previous])) firstItem = previous;
+      } else break;
+    }
+    if (firstItem >= 0) start = firstItem;
+    else {
+      while (start > 0 && visible[start - 1] !== undefined && visible[start - 1]!.trim() && !isHeading(start - 1)
+        && !quote.test(lines[start - 1]) && !list.test(lines[start - 1])) start--;
+    }
+  }
+  if (!standalone) {
+    const itemIndent = list.test(lines[start]) ? lines[start].match(/^ */u)![0].length : undefined;
+    while (end + 1 < lines.length) {
+      if (itemIndent !== undefined) {
+        let next = end + 1;
+        while (next < lines.length && !lines[next].trim()) next++;
+        if (next >= lines.length || (lines[next].match(/^ */u)?.[0].length ?? 0) <= itemIndent) break;
+        end = next;
+      } else {
+        if (visible[end + 1] === undefined || !visible[end + 1]!.trim() || isHeading(end + 1) || quote.test(lines[end + 1]) || list.test(lines[end + 1])) break;
+        end++;
+      }
+    }
+  }
+  return { lineStart: start + 1, lineEnd: standalone ? marker + 1 : end + 1 };
+}
+
+/** Resolve exactly one real heading or block against this snapshot, never cached lines. */
+export function locateKnowledgeAnchor(vaultRelativePath: string, contentRevision: string, lines: readonly string[], requestedAnchor: string): KnowledgeAnchorLocation {
+  const anchor = requestedAnchor.trim();
+  const kind = anchor.startsWith("^") ? "block" : "heading";
+  const base = { schemaVersion: 1 as const, readStatus: "unread" as const, vaultRelativePath, contentRevision, anchor, kind: kind as "heading" | "block" };
+  const missing = (reason: "missing" | "ambiguous" | "invalid"): KnowledgeAnchorLocation => Object.freeze({ ...base, status: "not_located", reason });
+  if (!anchor || anchor.length > 1024 || /[\x00-\x1f\x7f]/u.test(anchor) || (kind === "block" && !/^\^[A-Za-z0-9-]+$/u.test(anchor))) return missing("invalid");
+  const visible = anchorVisibleLines(lines);
+  if (kind === "heading") {
+    const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase();
+    const entries = outlineEntries(parseMarkdownHeadings(visible.map(line => line ?? "")), lines.length);
+    const found = entries.filter(entry => normalize(entry.heading) === normalize(anchor));
+    if (found.length !== 1) return missing(found.length ? "ambiguous" : "missing");
+    return Object.freeze({ ...base, status: "located", lineStart: found[0].lineStart, lineEnd: found[0].lineEnd });
+  }
+  const found: { marker: number; standalone: boolean }[] = [];
+  visible.forEach((line, index) => {
+    if (line === undefined) return;
+    const prose = line.replace(/(`+).*?\1/gu, value => " ".repeat(value.length));
+    const id = prose.match(/(?:^|\s)\^([A-Za-z0-9-]+)\s*$/u);
+    if (id && `^${id[1]}` === anchor) found.push({ marker: index, standalone: prose.trim() === anchor });
+  });
+  if (found.length !== 1) return missing(found.length ? "ambiguous" : "missing");
+  const range = blockRange(lines, visible, found[0].marker, found[0].standalone);
+  return range ? Object.freeze({ ...base, status: "located", ...range }) : missing("invalid");
+}
+
+export function normalizeKnowledgeAnchorLocation(value: unknown, vaultRelativePath: string, contentRevision?: string, totalLines?: number): KnowledgeAnchorLocation {
+  const invalid = () => { throw new TypeError("knowledge_anchor_location_invalid"); };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
+  const location = value as Record<string, unknown>;
+  const located = location.status === "located";
+  const keys = ["schemaVersion", "readStatus", "vaultRelativePath", "anchor", "kind", "status", ...(located ? ["contentRevision", "lineStart", "lineEnd"] : ["reason", ...(Object.hasOwn(location, "contentRevision") ? ["contentRevision"] : [])])];
+  if (Object.keys(location).length !== keys.length || keys.some(key => !Object.hasOwn(location, key)) || location.schemaVersion !== 1 || location.readStatus !== "unread"
+    || location.vaultRelativePath !== vaultRelativePath || typeof location.anchor !== "string" || location.anchor.length > 1024
+    || location.kind !== ((location.anchor as string).startsWith("^") ? "block" : "heading") || (located ? typeof location.contentRevision !== "string" : location.status !== "not_located")
+    || (Object.hasOwn(location, "contentRevision") && (typeof location.contentRevision !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(location.contentRevision) || (contentRevision !== undefined && location.contentRevision !== contentRevision)))) return invalid();
+  if (located) {
+    if (!Number.isSafeInteger(location.lineStart) || !Number.isSafeInteger(location.lineEnd) || (location.lineStart as number) < 1
+      || (location.lineEnd as number) < (location.lineStart as number) || (totalLines !== undefined && (location.lineEnd as number) > totalLines)) return invalid();
+  } else if (!["missing", "ambiguous", "unavailable", "invalid"].includes(location.reason as string)) return invalid();
+  return Object.freeze({ ...location }) as KnowledgeAnchorLocation;
+}
+
+/** A delivered page is bounded unread navigation, never another source reference. */
+export function normalizeKnowledgeRelationPage(value: unknown, vaultRelativePath: string, contentRevision: string): Readonly<KnowledgeRelationPage> {
+  const invalid = (): never => { throw new TypeError("knowledge_related_invalid"); };
+  const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : invalid();
+  const keys = (value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []) => {
+    if (required.some(key => !Object.hasOwn(value, key)) || Object.keys(value).some(key => !required.includes(key) && !optional.includes(key))) invalid();
+  };
+  const string = (value: unknown, max: number): string => typeof value === "string" && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/u.test(value) ? value : invalid();
+  const path = (value: unknown): string => {
+    const result = string(value, 1024);
+    if (result.startsWith("/") || result.includes("\\") || result.includes(":") || result.split("/").some(part => !part || part === "." || part === "..")) invalid();
+    return result;
+  };
+  const revision = (value: unknown): string => typeof value === "string" && /^sha256:[a-f0-9]{64}$/u.test(value) ? value : invalid();
+  const integer = (value: unknown, minimum = 0): number => Number.isSafeInteger(value) && (value as number) >= minimum ? value as number : invalid();
+  const target = (value: unknown): KnowledgeRelationTarget => {
+    const item = object(value); keys(item, ["vaultRelativePath", "title", "contentRevision"]);
+    return Object.freeze({ vaultRelativePath: path(item.vaultRelativePath), title: string(item.title, 1024), contentRevision: revision(item.contentRevision) });
+  };
+  const page = object(value);
+  keys(page, ["vaultRelativePath", "contentRevision", "total", "returned", "remaining", "hasMore", "exhausted", "items"], ["continuationCursor"]);
+  if (path(page.vaultRelativePath) !== vaultRelativePath || revision(page.contentRevision) !== contentRevision || !Array.isArray(page.items) || page.items.length > 8) return invalid();
+  const total = integer(page.total); const returned = integer(page.returned); const remaining = integer(page.remaining);
+  if (returned !== page.items.length || returned + remaining > total || page.hasMore !== (remaining > 0) || page.exhausted !== (remaining === 0)
+    || (page.hasMore && !Object.hasOwn(page, "continuationCursor"))) return invalid();
+  let candidatesTotal = 0;
+  const items = page.items.map(value => {
+    const item = object(value);
+    keys(item, ["direction", "status", "relation", "original", "source"], ["anchor", "anchorStatus", "anchorLocation", "target", "candidates"]);
+    if (!["outgoing", "incoming"].includes(item.direction as string) || !["available", "ambiguous", "unresolved"].includes(item.status as string) || item.relation !== "link") return invalid();
+    const sourceObject = object(item.source); keys(sourceObject, ["vaultRelativePath", "title", "contentRevision", "line", "context"]);
+    const source = Object.freeze({ vaultRelativePath: path(sourceObject.vaultRelativePath), title: string(sourceObject.title, 1024), contentRevision: revision(sourceObject.contentRevision),
+      line: integer(sourceObject.line, 1), context: typeof sourceObject.context === "string" && sourceObject.context.length <= 2048 && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(sourceObject.context) ? sourceObject.context : invalid() });
+    const destination = Object.hasOwn(item, "target") ? target(item.target) : undefined;
+    if (item.status === "available" ? !destination : destination !== undefined) return invalid();
+    if (item.direction === "outgoing" ? source.vaultRelativePath !== vaultRelativePath || source.contentRevision !== contentRevision
+      : !destination || destination.vaultRelativePath !== vaultRelativePath || destination.contentRevision !== contentRevision) return invalid();
+    const anchor = Object.hasOwn(item, "anchor") ? string(item.anchor, 1024) : undefined;
+    if (Object.hasOwn(item, "anchorStatus") && (!anchor || !["located", "not_located"].includes(item.anchorStatus as string))) return invalid();
+    let anchorLocation: KnowledgeAnchorLocation | undefined;
+    if (Object.hasOwn(item, "anchorLocation")) {
+      const raw = object(item.anchorLocation);
+      anchorLocation = normalizeKnowledgeAnchorLocation(raw, destination?.vaultRelativePath ?? path(raw.vaultRelativePath), destination?.contentRevision);
+      if (!anchor || anchorLocation.anchor !== anchor.trim() || item.anchorStatus !== anchorLocation.status
+        || (destination && anchorLocation.contentRevision !== destination.contentRevision)
+        || (anchorLocation.status === "located" && !destination)
+        || (!destination && (anchorLocation.status !== "not_located" || anchorLocation.reason !== "unavailable" || anchorLocation.contentRevision !== undefined))) return invalid();
+    } else if (item.anchorStatus === "located") return invalid();
+    let candidates: KnowledgeRelationTarget[] | undefined;
+    if (Object.hasOwn(item, "candidates")) {
+      if (!Array.isArray(item.candidates) || !item.candidates.length || (candidatesTotal += item.candidates.length) > 32) return invalid();
+      candidates = item.candidates.map(target);
+    }
+    return Object.freeze({ direction: item.direction, status: item.status, relation: "link", original: string(item.original, 2048), source,
+      ...(anchor ? { anchor } : {}), ...(item.anchorStatus ? { anchorStatus: item.anchorStatus } : {}), ...(anchorLocation ? { anchorLocation } : {}),
+      ...(destination ? { target: destination } : {}), ...(candidates ? { candidates: Object.freeze(candidates) } : {}) }) as KnowledgeRelation;
+  });
+  const normalized = { vaultRelativePath, contentRevision, total, returned, remaining, hasMore: remaining > 0, exhausted: remaining === 0,
+    items: Object.freeze(items), ...(Object.hasOwn(page, "continuationCursor") ? { continuationCursor: string(page.continuationCursor, 4096) } : {}) };
+  if (new TextEncoder().encode(JSON.stringify(normalized)).length > 24_000) return invalid();
+  return Object.freeze(normalized) as Readonly<KnowledgeRelationPage>;
+}
+
+export function knowledgeAnchorCoversSpan(location: KnowledgeAnchorLocation, span: { lineStart: number; lineEnd: number }): boolean {
+  return location.status !== "located" || (span.lineStart >= location.lineStart && span.lineEnd <= location.lineEnd);
+}
+
+export function verifyKnowledgeAnchorLines(location: KnowledgeAnchorLocation, contentRevision: string, lines: readonly string[]): boolean {
+  const actual = locateKnowledgeAnchor(location.vaultRelativePath, contentRevision, lines, location.anchor);
+  return actual.status === location.status && actual.kind === location.kind && (actual.status === "located" && location.status === "located"
+    ? actual.lineStart === location.lineStart && actual.lineEnd === location.lineEnd
+    : actual.status === "not_located" && location.status === "not_located" && actual.reason === location.reason);
 }
