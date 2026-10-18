@@ -11792,6 +11792,38 @@ button.codex-message-note-mention-chip:focus-visible {
   transform: none !important;
 }
 
+/* Desktop Composer: the send action follows the workbench Demo. */
+.is-desktop-composer .codex-composer-send-button.codex-send-button.is-send-action {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  flex-basis: 28px;
+  padding: 0;
+  border-radius: 50%;
+  corner-shape: round;
+}
+
+.is-desktop-composer .codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) {
+  color: var(--echoink-theme-on-accent, var(--text-on-accent));
+  background: var(--echoink-theme-accent, var(--interactive-accent)) !important;
+}
+
+.is-desktop-composer .codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):is(:hover, :focus-visible, :active),
+.is-desktop-composer .codex-composer-mention-button:is(:hover, :focus-visible, :active) {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover) !important;
+  outline: none;
+  box-shadow: none !important;
+}
+
+.is-desktop-composer .codex-composer-send-button.is-send-action .codex-composer-send-icon-wrap,
+.is-desktop-composer .codex-composer-send-button.is-send-action .codex-composer-send-icon-wrap svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.7;
+}
+
 .codex-composer-send-icon-wrap {
   display: inline-flex;
   width: 20px;
