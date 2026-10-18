@@ -10,7 +10,7 @@ import type { PersonalMemoryTurnCatalogCandidate } from "./personal-memory-repos
 
 export type PersonalMemoryRecallCandidate = Pick<PersonalMemorySearchItem,
   "id" | "kind" | "title" | "recallWhen" | "summary" | "date" | "scope" | "score"
-  | "basis" | "contentOrigin" | "status" | "asOf" | "supersedes" | "sourceSummary" | "revision" | "file"
+  | "basis" | "contentOrigin" | "status" | "asOf" | "supersedes" | "supersededRecord" | "sourceSummary" | "revision" | "file"
 > & Readonly<{
   /** Secondary fact that decisively pulled this Memory into the candidates. */
   matchedSecondaryId?: string;
@@ -348,6 +348,13 @@ function toRecallCandidate(
     ...(item.scope ? { scope: item.scope } : {}),
     ...(item.asOf ? { asOf: item.asOf } : {}),
     ...(item.supersedes ? { supersedes: item.supersedes } : {}),
+    ...(item.supersededRecord ? {
+      supersededRecord: Object.freeze({
+        id: item.supersededRecord.id,
+        ...(item.supersededRecord.asOf ? { asOf: item.supersededRecord.asOf } : {}),
+        readHint: item.supersededRecord.readHint
+      })
+    } : {}),
     ...(item.revision !== undefined ? { revision: item.revision } : {}),
     ...(item.file ? { file: item.file } : {}),
     score: item.score,

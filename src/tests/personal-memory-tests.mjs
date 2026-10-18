@@ -8,6 +8,10 @@ const rootDir = fileURLToPath(new URL("../../", import.meta.url));
 const outputDir = path.join(rootDir, ".tmp");
 const outputFile = path.join(outputDir, "personal-memory-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
+const focusedRecall = process.argv.includes("--recall");
+if (process.argv.slice(2).some((argument) => argument !== "--recall")) {
+  throw new Error("personal-memory-tests: unsupported argument");
+}
 
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
@@ -24,25 +28,29 @@ await esbuild.build({
       'import { runDreamLedgerScenarios } from "./src/tests/dream-ledger";',
       'import { buildEchoInkSystemConstitutionPrompt } from "./src/harness/memory/personal-memory-contracts";',
       "await runMemoryRecallHarnessContractScenarios();",
-      "await runPersonalMemoryToolContractScenarios();",
       "await runPersonalMemoryCorrectionTests();",
-      "await runPersonalMemoryPathSafetyScenarios();",
-      "await runAgentSelfMigrationScenarios();",
-      "await runDreamGrowthScenarios();",
-      "await runDreamLedgerScenarios();",
-      "await withPersonalMemoryFixture(async (fixture) => {",
-      "  const fixed = await fixture.repository.loadFixedContext({ memoryMode: 'normal' });",
-      "  assert.ok(fixed.agent && fixed.user && fixed.memory);",
-      "  assert.match(fixture.repository.layout.agent, /AGENT\\.md$/u);",
-      "  assert.match(fixture.repository.layout.user, /USER\\.md$/u);",
-      "  assert.match(fixture.repository.layout.memory, /MEMORY\\.md$/u);",
-      "  assert.equal(Object.hasOwn(fixed, 'personalityState'), false);",
-      "});",
-      "const constitutionPrompt = buildEchoInkSystemConstitutionPrompt();",
-      "assert.match(constitutionPrompt, /产品身份与使命/u);",
-      "assert.match(constitutionPrompt, /不得虚构事实、来源、引用、执行过程、Tool 结果或写入成功/u);",
-      "assert.doesNotMatch(constitutionPrompt, /targetId|nextCursor|outcome=created/u);",
-      'console.log("Current file-based Personal Memory acceptance: PASS");'
+      ...(focusedRecall ? [] : [
+        "await runPersonalMemoryToolContractScenarios();",
+        "await runPersonalMemoryPathSafetyScenarios();",
+        "await runAgentSelfMigrationScenarios();",
+        "await runDreamGrowthScenarios();",
+        "await runDreamLedgerScenarios();",
+        "await withPersonalMemoryFixture(async (fixture) => {",
+        "  const fixed = await fixture.repository.loadFixedContext({ memoryMode: 'normal' });",
+        "  assert.ok(fixed.agent && fixed.user && fixed.memory);",
+        "  assert.match(fixture.repository.layout.agent, /AGENT\\.md$/u);",
+        "  assert.match(fixture.repository.layout.user, /USER\\.md$/u);",
+        "  assert.match(fixture.repository.layout.memory, /MEMORY\\.md$/u);",
+        "  assert.equal(Object.hasOwn(fixed, 'personalityState'), false);",
+        "});",
+        "const constitutionPrompt = buildEchoInkSystemConstitutionPrompt();",
+        "assert.match(constitutionPrompt, /产品身份与使命/u);",
+        "assert.match(constitutionPrompt, /不得虚构事实、来源、引用、执行过程、Tool 结果或写入成功/u);",
+        "assert.doesNotMatch(constitutionPrompt, /targetId|nextCursor|outcome=created/u);"
+      ]),
+      focusedRecall
+        ? 'console.log("Recall and correction Personal Memory acceptance: PASS");'
+        : 'console.log("Current file-based Personal Memory acceptance: PASS");'
     ].join("\n"),
     resolveDir: rootDir,
     sourcefile: "personal-memory-test-entry.ts",
@@ -79,6 +87,7 @@ const result = spawnSync(process.execPath, [outputFile], {
 });
 
 if (result.status !== 0) process.exit(result.status ?? 1);
+if (focusedRecall) process.exit(0);
 
 const identityPathsResult = spawnSync(process.execPath, [path.join(rootDir, "src/tests/agent-identity-paths-tests.mjs")], {
   cwd: rootDir,

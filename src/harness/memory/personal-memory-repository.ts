@@ -257,7 +257,7 @@ export interface PersonalMemoryTurnSnapshot {
 
 export type PersonalMemoryTurnCatalogCandidate = Pick<PersonalMemorySearchItem,
   "id" | "kind" | "status" | "title" | "recallWhen" | "summary" | "date" | "basis" | "sourceSummary" | "scope" | "score"
-  | "contentOrigin" | "asOf" | "supersedes" | "revision" | "file"
+  | "contentOrigin" | "asOf" | "supersedes" | "supersededRecord" | "revision" | "file"
 > & Readonly<{
   /**
    * 该一级记忆命中查询的全部二级事实（Recall PRD §12）：预算选择必须
@@ -992,24 +992,46 @@ export class PersonalMemoryRepository {
     const metadataById = new Map(manifest.records.map((record) => [record.id, record]));
     const cachedRecordsById = new Map(this.recordsCache?.map((record) => [record.id, record]) ?? []);
     const secondaryById = new Map(this.secondaryCache.map((record) => [record.id, record]));
+    const forgottenIds = new Set(manifest.tombstones.map((entry) => entry.recordId));
+    const scope = cleanOptional(request.scope, "scope", 240)?.toLocaleLowerCase();
+    const withinBoundary = (record: Pick<PersonalMemoryRecord, "scope" | "date">) =>
+      matchesRecallScope(record.scope, scope)
+      && (!request.from || record.date >= request.from)
+      && (!request.to || record.date <= request.to);
     const identityFor = (id: string) => {
       const record = cachedRecordsById.get(id) ?? metadataById.get(id);
       if (!record) {
         throw new PersonalMemoryAccessError("invalid_request", "Personal Memory turn index contains an unavailable record");
       }
-      return searchItemIdentity(record);
+      const { supersedes, ...identity } = searchItemIdentity(record);
+      // Resolve historical metadata only from this turn's manifest. A current
+      // global record cannot expose a project history outside the turn scope.
+      const previous = supersedes ? metadataById.get(supersedes) : undefined;
+      const historyScope = scope ?? record.scope?.trim().toLocaleLowerCase() ?? "global";
+      if (!previous || previous.id === id || forgottenIds.has(previous.id)
+        || !withinBoundary(previous) || !matchesRecallScope(previous.scope, historyScope)) {
+        return identity;
+      }
+      return {
+        ...identity,
+        supersedes,
+        ...(record.status === "current" ? {
+          supersededRecord: Object.freeze({
+            id: previous.id,
+            ...(previous.asOf ? { asOf: previous.asOf } : {}),
+            readHint: "需要旧原文时按此 id 调用 memory_read，includeHistorical=true；旧内容只作历史参考。"
+          })
+        } : {})
+      };
     };
     const secondaryViewFor = (entry: SecondaryCatalogEntry) =>
       toSecondaryMatchView(entry, secondaryById.get(entry.id));
     const statuses = new Set(request.statuses ?? ["current"]);
-    const scope = cleanOptional(request.scope, "scope", 240)?.toLocaleLowerCase();
     // A project boundary keeps global preferences alongside this project's
     // records. Historical records remain opt-in through explicit statuses.
     const eligible = index.catalog
       .filter((record) => statuses.has(record.status))
-      .filter((record) => matchesRecallScope(record.scope, scope))
-      .filter((record) => !request.from || record.date >= request.from)
-      .filter((record) => !request.to || record.date <= request.to);
+      .filter(withinBoundary);
     const ranked = eligible
       .map((record) => {
         const primaryScore = scorePrimaryEntry(record, query, queryTokenSet);
@@ -1116,7 +1138,7 @@ export class PersonalMemoryRepository {
         recallWhen: record.recallWhen,
         summary: summarize(full.content),
         date: record.date,
-        ...searchItemIdentity(full),
+        ...identityFor(id),
         score: rankedEntry.score,
         ...(decisiveSecondaryId.has(id) ? { matchedSecondaryId: decisiveSecondaryId.get(id)! } : {}),
         ...(matched.length > 0 ? { secondaryMatches: Object.freeze(matched.map(secondaryViewFor)) } : {})

@@ -153,6 +153,14 @@ export interface SecondaryMatchView {
   readonly sourceMemoryRevision?: number;
 }
 
+/** Transient recall hint; the historical record body stays behind memory_read. */
+export interface PersonalMemorySupersededRecordHint {
+  readonly id: string;
+  /** Existing effective date only; the record's creation date is not a substitute. */
+  readonly asOf?: string;
+  readonly readHint: string;
+}
+
 export interface PersonalMemorySearchItem {
   readonly id: string;
   readonly kind: PersonalMemoryKind;
@@ -167,6 +175,7 @@ export interface PersonalMemorySearchItem {
   readonly scope?: string;
   readonly asOf?: string;
   readonly supersedes?: string;
+  readonly supersededRecord?: Readonly<PersonalMemorySupersededRecordHint>;
   /** Record identity within the same repository snapshot. */
   readonly revision?: number;
   readonly file?: string;
