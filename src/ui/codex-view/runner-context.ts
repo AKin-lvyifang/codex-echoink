@@ -49,6 +49,7 @@ export interface CodexViewRunnerBaseContext {
 }
 
 export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, MessageRenderFollowContext {
+  onPiRunFailure?(message: string): void;
   onPiRunAccepted?(item: Readonly<QueuedTurnItem>): void;
   readonly turnQueue: RuntimeTurnQueue;
   queueStartInProgress: boolean;
@@ -64,7 +65,7 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
   resumeQueuedTurns(sessionId: string): Promise<void>;
   stopTurn(): Promise<void>;
   pauseQueueForSession(sessionId: string): void;
-  createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null>;
+  createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean; onError?: (message: string) => void }): Promise<QueuedTurnItem | null>;
   startQueuedTurnItem(item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome>;
   startQueuedTurnItemSafely(item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome>;
   afterTurnSettled(sessionId: string, succeeded: boolean): Promise<void>;

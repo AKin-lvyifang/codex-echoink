@@ -25075,8 +25075,16 @@ body.is-tablet :is(.echoink-mobile-finance.echoink-lifestyle-view,.echoink-mobil
 .echoink-task-empty { color: var(--text-muted); font-size: 13px; padding: 18px 0; }
 .echoink-task-detail-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 8px; border-bottom: 1px solid var(--background-modifier-border); flex: 0 0 auto; }
 .echoink-task-detail-titles { flex: 1; min-width: 0; }
-.echoink-task-readonly, .echoink-task-error { padding: 10px 12px; font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
+.echoink-task-error { padding: 10px 12px; font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
 .echoink-task-error { color: var(--text-error); }
+.echoink-task-interruption { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; padding: 12px; border: 1px solid var(--background-modifier-border); border-radius: var(--echoink-conversation-radius-lg, 10px); font-size: 13px; line-height: 1.6; color: var(--text-normal); overflow-wrap: anywhere; }
+.echoink-agent-tasks .codex-messages:has(> [data-message-tail]:not([hidden])) > .codex-virtual-list { min-height: 0; }
+.echoink-task-interruption-detail { color: var(--text-muted); }
+.echoink-task-interruption-warning { color: var(--echoink-theme-warn, var(--text-warning)); }
+.echoink-task-interruption-error { color: var(--text-error); }
+.echoink-task-interruption-operations { margin: 0; padding-left: 20px; }
+.echoink-task-interruption-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.echoink-agent-tasks .echoink-task-interruption-actions .echoink-origin-control[data-slot="button"] { height: auto; min-height: 26px; padding: 2px 10px; font-size: 12px; line-height: 20px; }
 .echoink-task-detail > .codex-messages-shell { flex: 1; min-height: 0; }
 @keyframes echoink-task-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .echoink-agent-badge.is-running svg { animation: none; } }
@@ -25158,6 +25166,7 @@ body.is-tablet :is(.echoink-mobile-finance.echoink-lifestyle-view,.echoink-mobil
 .echoink-agent-editor :is(.echoink-agent-editor-preset,.echoink-agent-editor-avatar-option):is(:hover,:has([data-state=checked]),:has(:focus-visible)) { background: var(--agent-editor-hover); }
 .echoink-agent-editor :is(.echoink-agent-editor-preset,.echoink-agent-editor-avatar-option) .echoink-origin-control[data-slot=radio-group-item] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; }
 .echoink-agent-editor-resource-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 0; }
+.echoink-agent-editor-resource-heading > button { flex: 0 0 auto; white-space: nowrap; }
 .echoink-agent-editor-resource-heading h4, .echoink-agent-editor h4.echoink-agent-editor-resource-heading { margin: 0; font-size: 12px; font-weight: 400; color: var(--agent-editor-muted); }
 .echoink-agent-editor-service { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; }
 .echoink-agent-editor-mcp-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 8px; min-width: 0; }
@@ -25169,6 +25178,10 @@ body.is-tablet :is(.echoink-mobile-finance.echoink-lifestyle-view,.echoink-mobil
 .echoink-agent-editor-style-copy { display: flex; flex-direction: column; min-width: 0; }
 .echoink-agent-editor-style-name { font-weight: 500; }
 .echoink-agent-editor-style-summary { font-size: 12px; color: var(--agent-editor-muted); }
+.echoink-agent-editor-style-description { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.echoink-agent-editor-style-description-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px; min-width: 0; }
+.echoink-agent-editor-style-description-label { font-size: 11px; color: var(--text-faint); }
+.echoink-agent-editor-style-description-value { min-width: 0; overflow-wrap: anywhere; }
 .echoink-agent-editor-error { color: var(--agent-editor-error); overflow-wrap: anywhere; }
 .echoink-agent-editor-error:empty, .echoink-agent-editor-status:empty, .echoink-agent-editor-ownership:empty { display: none; }
 .echoink-agent-editor-footer { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--agent-editor-line); }
@@ -25182,9 +25195,6 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-agent-editor .echoink-settings-inline-confirm { padding: 8px 0; }
 .echoink-agent-editor .echoink-settings-inline-confirm p { margin: 0 0 8px; }
 .echoink-agent-editor .settings-inline { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-@container (max-width: 760px) {
-  .echoink-agent-editor-resource-heading { align-items: center; flex-wrap: wrap; }
-}
 @container (max-width: 520px) {
   .echoink-agent-editor-styles { grid-template-columns: 1fr; }
 }

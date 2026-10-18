@@ -10,6 +10,7 @@ export type QueueSettlement = "continue" | "paused" | "idle";
 import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
 
 export interface QueuedTurnItem {
+  resumeContext?: import("../agents/task-resume").TaskResumeContext;
   id: string;
   sessionId: string;
   text: string;
@@ -196,6 +197,7 @@ function clampIndex(index: number, maxInclusive: number): number {
 export function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
   return {
     ...item,
+    ...(item.resumeContext ? { resumeContext: structuredClone(item.resumeContext) } : {}),
     attachments: item.attachments.map((attachment) => ({ ...attachment })),
     ...(item.preparedDocuments
       ? {

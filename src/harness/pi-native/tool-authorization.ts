@@ -351,6 +351,20 @@ export class FileApprovalTicketStore {
   async listViews(
     options: Readonly<ApprovalTicketListOptions> = {}
   ): Promise<Readonly<ApprovalTicketState>[]> {
+    return await this.listStoredViews(options, false);
+  }
+
+  /** History/card inspection must not expire or otherwise rewrite a Ticket. */
+  async listReadOnlyViews(
+    options: Readonly<ApprovalTicketListOptions> = {}
+  ): Promise<Readonly<ApprovalTicketState>[]> {
+    return await this.listStoredViews(options, true);
+  }
+
+  private async listStoredViews(
+    options: Readonly<ApprovalTicketListOptions>,
+    readOnly: boolean
+  ): Promise<Readonly<ApprovalTicketState>[]> {
     const conversationId = options.conversationId === undefined
       ? undefined
       : requireNonEmptyString(options.conversationId, "conversationId");
@@ -390,12 +404,13 @@ export class FileApprovalTicketStore {
               `Approval Ticket view ${name} 的文件名与身份不匹配`
             );
           }
-          const state = await this.expireIfNeeded({
+          const storedState: ApprovalTicketState = {
             ticket: document.ticket,
             status: document.status,
             resolvedAt: document.resolvedAt,
             consumedAt: document.consumedAt
-          });
+          };
+          const state = readOnly ? storedState : await this.expireIfNeeded(storedState);
           if (
             (conversationId === undefined
               || state.ticket.conversationId === conversationId)

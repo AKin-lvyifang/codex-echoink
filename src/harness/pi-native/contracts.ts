@@ -137,6 +137,7 @@ export interface PiKnowledgeMaintenanceOutcome {
 }
 
 export interface PiProductRunRecord {
+  interruption?: import("../../agents/task-resume").TaskInterruptionRecord;
   agentSnapshot?: AgentRunSnapshot;
   productRunId: string;
   conversationId: string;
@@ -391,6 +392,8 @@ export interface PiKnowledgeMaintenanceToolPort {
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface PiChatSubmitRequest {
+  /** Trusted product recovery facts, scoped to this explicit resumed turn. */
+  resumeContext?: import("../../agents/task-resume").TaskResumeContext;
   /** This turn's lifecycle, including initialization before a run handle exists. */
   signal?: AbortSignal;
   conversationId: string;

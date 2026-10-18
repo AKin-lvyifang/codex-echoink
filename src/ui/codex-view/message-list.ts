@@ -469,7 +469,7 @@ export class CodexMessageListRenderer {
       scrollTop: previousScrollTop,
       viewportHeight
     });
-    virtualListEl.setCssStyles({ height: `${messageListVirtualHeight(virtual.totalHeight, viewportHeight)}px` });
+    virtualListEl.setCssStyles({ height: `${messageListVirtualHeight(virtual.totalHeight, this.hasMessageTail(messagesEl) ? 0 : viewportHeight)}px` });
 
     for (const virtualRow of virtual.rows) {
       const row = rows[virtualRow.index];
@@ -523,6 +523,7 @@ export class CodexMessageListRenderer {
   }
 
   private layoutMeasuredRows(messagesEl: HTMLElement, virtualListEl: HTMLElement): boolean {
+    const hasTail = this.hasMessageTail(messagesEl);
     const last = this.currentRows.at(-1);
     const hasAnswer = last?.kind === "assistantTurn"
       && Boolean(last.turn.finalAnswer && displayTextForMessage(last.turn.finalAnswer).trim());
@@ -536,7 +537,7 @@ export class CodexMessageListRenderer {
       if (Number.isFinite(height) && height > 0) this.answerReadingTail = { rowId: last.id, height };
     }
     if (!hasAnswer) this.answerReadingTail = null;
-    const spacer = hasAnswer && this.answerReadingTail?.rowId === last?.id
+    const spacer = !hasTail && hasAnswer && this.answerReadingTail?.rowId === last?.id
       ? answerReadingSpacer(messagesEl.clientHeight, this.answerReadingTail.height)
       : 0;
     let top = 0;
@@ -544,11 +545,17 @@ export class CodexMessageListRenderer {
       renderedRows.get(row.id)?.setCssStyles({ transform: `translateY(${top}px)` });
       top += this.virtualRowHeightFor(row.id);
     }
-    const height = messageListVirtualHeight(top + spacer, messagesEl.clientHeight);
+    const height = messageListVirtualHeight(top + spacer, hasTail ? 0 : messagesEl.clientHeight);
     virtualListEl.setCssStyles({ height: `${height}px` });
     const changed = this.virtualLayoutHeight !== height;
     this.virtualLayoutHeight = height;
     return changed;
+  }
+
+  private hasMessageTail(messagesEl: HTMLElement): boolean {
+    // A real action card follows the transcript; do not leave answer-reading
+    // padding between the final record and that card.
+    return Array.from(messagesEl.children).some(child => child.hasAttribute("data-message-tail") && !(child as HTMLElement).hidden);
   }
 
   private captureReadingAnchor(): { rowId: string; answer: boolean; top: number } | null {

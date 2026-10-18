@@ -7,6 +7,8 @@ import { renderAgentRoster } from "./codex-view/agent-roster";
 import { renderAgentTaskList } from "./codex-view/task-list";
 import { animateTaskDetailEntry, renderTaskDetailHeader } from "./codex-view/task-detail";
 import { AgentEditorController } from "./codex-view/agent-editor";
+import { renderTaskInterruption } from "./codex-view/task-interruption";
+import type { TaskInterruptionInfo } from "../agents/task-resume";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { copyPiImageAttachmentsForProjection, piComposerImageAttachmentsForEntry, piConversationSupport, rememberPiConversationProjection } from "./codex-view/pi-conversation-support";
@@ -227,7 +229,9 @@ export class CodexView extends ItemView {
   private taskDetailHeaderEl?: HTMLElement;
   private taskEditorEl?: HTMLElement;
   private taskErrorEl?: HTMLElement;
-  private taskReadonlyEl?: HTMLElement;
+  private taskInterruptionEl?: HTMLElement;
+  private readonly taskInterruptions = new Map<string, { key: string; info?: TaskInterruptionInfo | null; error?: string }>();
+  private readonly taskResumeErrors = new Map<string, string>();
   private taskEditor?: AgentEditorController;
   private taskEditorReturnPage?: TaskPage;
   private taskDetailLoaded = false;
@@ -264,8 +268,8 @@ export class CodexView extends ItemView {
     this.rootEl.insertBefore(this.taskDetailEl, shell);
     this.taskDetailHeaderEl = this.taskDetailEl.createDiv();
     this.taskDetailEl.append(shell, this.taskPlanDockEl, this.interactionDockEl);
-    this.taskReadonlyEl = this.rootEl.createDiv({ cls: "echoink-task-readonly", text: this.taskText("任务已中断，当前可查看记录。", "This task was interrupted. You can view its history.") });
-    this.rootEl.insertBefore(this.taskReadonlyEl, this.inputEl.parentElement);
+    this.taskInterruptionEl = this.messagesEl.createDiv({ cls: "echoink-task-interruption" });
+    this.taskInterruptionEl.dataset.messageTail = "interruption";
     this.restoreTaskComposerDraft();
     this.renderTaskPages();
   }
@@ -386,17 +390,64 @@ export class CodexView extends ItemView {
     this.taskMidnightTimer = window.setTimeout(() => { if (this.viewLifecycleAbortController.signal.aborted) return; this.renderTaskPages(); this.scheduleTaskMidnightRefresh(); }, tomorrow.getTime() - Date.now());
   }
   private showTaskError(message: string): void { this.taskLoadError = message; this.renderTaskPages(); }
+  private renderTaskInterruptionCard(): void {
+    const element = this.taskInterruptionEl, entry = this.currentTaskEntry();
+    if (!element) return;
+    element.hidden = !entry || entry.taskStatus !== "interrupted" || !this.taskDetailLoaded || !!this.taskEditor || this.taskDerivationInProgress;
+    if (entry && entry.taskStatus !== "interrupted") { this.taskResumeErrors.delete(entry.conversationId); this.taskInterruptions.delete(entry.conversationId); }
+    if (element.hidden || !entry) return;
+    const id = entry.conversationId;
+    const key = `${entry.taskInterruptedAt ?? 0}:${entry.taskStage ?? ""}`;
+    let record = this.taskInterruptions.get(id);
+    if (!record || record.key !== key) {
+      record = { key }; this.taskInterruptions.set(id, record);
+      const current = record;
+      // Opening a task only reads local records. It never starts recovery or a model.
+      void this.plugin.readTaskInterruption(id).then(info => { current.info = info; }).catch(error => {
+        current.error = this.taskText("读取中断记录失败：", "Could not read interruption details: ") + (error instanceof Error ? error.message : String(error));
+      }).finally(() => {
+        if (this.viewLifecycleAbortController.signal.aborted || this.currentTaskEntry()?.conversationId !== id || this.taskInterruptions.get(id) !== current) return;
+        const follow = this.isMessagesNearBottom();
+        this.renderTaskInterruptionCard();
+        if (follow) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+      });
+    }
+    const pending = this.taskSubmitting.has(`resume:${id}`) || this.plugin.isTaskResuming(id);
+    renderTaskInterruption(element, { info: record.info, error: pending ? undefined : this.taskResumeErrors.get(id) ?? this.plugin.getTaskResumeError(id) ?? record.error,
+      pending, language: this.plugin.settings.settingsLanguage,
+      onResume: () => { void this.resumeInterruptedTask(id, false); } });
+  }
+  private async resumeInterruptedTask(taskId: string, withComposer: boolean): Promise<void> {
+    const key = `resume:${taskId}`;
+    if (this.taskSubmitting.has(key) || this.plugin.isTaskResuming(taskId)) return;
+    this.taskSubmitting.add(key); this.taskResumeErrors.delete(taskId);
+    this.saveTaskComposerDraft(); this.renderTaskInterruptionCard();
+    try {
+      let item: QueuedTurnItem | null = null;
+      if (withComposer) {
+        item = await createQueuedTurnFromComposerRunner(this.createTurnRunnerContext(taskId), { allowLocalKnowledgeCommands: true,
+          onError: message => this.taskResumeErrors.set(taskId, message) });
+        if (!item || this.viewLifecycleAbortController.signal.aborted) return;
+        item.clearComposerAfterPiAcceptance = true;
+      }
+      await this.plugin.resumeTask(taskId, item?.text, item ?? undefined);
+    } catch (error) {
+      this.taskResumeErrors.set(taskId, error instanceof Error ? error.message : String(error));
+    } finally {
+      this.taskSubmitting.delete(key);
+      if (!this.viewLifecycleAbortController.signal.aborted) { await this.reloadTaskCatalog(); this.renderToolbar(); }
+    }
+  }
   private renderTaskPages(): void {
-    if (!this.taskListEl || !this.taskDetailEl || !this.taskEditorEl || !this.taskErrorEl || !this.taskReadonlyEl) return;
+    if (!this.taskListEl || !this.taskDetailEl || !this.taskEditorEl || !this.taskErrorEl || !this.taskInterruptionEl) return;
     const page = this.taskNavigation.page, agent = this.currentTaskAgent(), entry = this.currentTaskEntry();
     renderAgentRoster(this.tabBarEl, this.plugin.settings.agentRegistry.agents, this.taskEntries, agent.id,
       { onSelect: id => void this.openAgentTaskList(id), onCreate: () => this.openAgentEditor() }, this.plugin.settings.settingsLanguage);
     this.taskEditorEl.hidden = !this.taskEditor; this.taskListEl.hidden = !!this.taskEditor || page.kind !== "list";
     this.taskDetailEl.hidden = !!this.taskEditor || page.kind !== "detail";
     const interrupted = page.kind === "detail" && !!entry && taskState(entry) === "interrupted";
-    this.inputEl.parentElement!.hidden = this.taskDerivationInProgress || !!this.taskEditor || interrupted || page.kind === "detail" && !this.taskDetailLoaded;
-    this.taskReadonlyEl.hidden = this.taskDerivationInProgress || !!this.taskEditor || !interrupted;
-    this.taskReadonlyEl.textContent = this.taskText("任务已中断，当前可查看记录。", "This task was interrupted. You can view its history.");
+    this.inputEl.parentElement!.hidden = this.taskDerivationInProgress || !!this.taskEditor || page.kind === "detail" && !this.taskDetailLoaded;
+    this.renderTaskInterruptionCard();
     const ready = page.kind === "detail" && this.taskDetailLoaded && !this.taskEditor && !this.taskDerivationInProgress;
     this.messagesEl.parentElement!.hidden = !ready;
     this.taskPlanDockEl.hidden = !ready || interrupted; this.interactionDockEl.hidden = !ready || interrupted;
@@ -1245,6 +1296,7 @@ export class CodexView extends ItemView {
   }
   private renderMessages(options: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean } = {}): void {
     if (this.taskUiMounted && (this.taskDerivationInProgress || this.taskNavigation.page.kind !== "detail" || !this.taskDetailLoaded || this.taskEditor)) return;
+    if (this.taskUiMounted) this.renderTaskInterruptionCard();
     renderMessagesAction(this.messageHost(), options);
     this.turnNavigator?.handleRender();
   }
@@ -1471,7 +1523,8 @@ export class CodexView extends ItemView {
       const taskId = this.taskNavigation.page.taskId, token = this.taskNavigation.token;
       const entry = await this.plugin.readPiConversationCatalogEntry(taskId);
       if (token !== this.taskNavigation.token) return;
-      if (!entry || !isUserTask(entry) || entry.taskStatus === "interrupted") return;
+      if (!entry || !isUserTask(entry)) return;
+      if (entry.taskStatus === "interrupted") { await this.resumeInterruptedTask(taskId, true); return; }
       await sendMessageRunner(this.createTurnRunnerContext(taskId));
       return;
     }
@@ -1481,7 +1534,7 @@ export class CodexView extends ItemView {
   private async enqueueComposerDraft(): Promise<void> {
     if (this.taskDerivationInProgress) return;
     if (this.taskUiMounted && this.taskNavigation.page.kind === "list") { await this.sendNewAgentTask(); return; }
-    if (this.taskUiMounted && this.currentTaskEntry() && taskState(this.currentTaskEntry()!) === "interrupted") return;
+    if (this.taskUiMounted && this.currentTaskEntry()?.taskStatus === "interrupted") { await this.resumeInterruptedTask(this.currentTaskEntry()!.conversationId, true); return; }
     if (this.promptEnhancerRunning) {
       new Notice(conversationUiText(this.plugin.settings.settingsLanguage, "提示词正在增强，请稍候", "The prompt is being enhanced. Please wait."));
       return;
@@ -1517,7 +1570,15 @@ export class CodexView extends ItemView {
     this.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
     this.focusInput();
   }
-  private async resumeQueuedTurns(sessionId: string): Promise<void> { await this.plugin.getConversationRunService().resumeQueuedTurns(sessionId); }
+  private async resumeQueuedTurns(sessionId: string): Promise<void> {
+    try { await this.plugin.getConversationRunService().resumeQueuedTurns(sessionId); }
+    catch (error) {
+      if (this.viewLifecycleAbortController.signal.aborted) return;
+      const message = error instanceof Error ? error.message : String(error);
+      if (this.taskUiMounted) { this.taskResumeErrors.set(sessionId, message); this.renderTaskInterruptionCard(); }
+      else new Notice(message);
+    }
+  }
   private async afterTurnSettled(_sessionId: string, _succeeded: boolean): Promise<void> { /* The plugin service settles and advances the queue. */ }
   private async startNextQueuedTurn(sessionId: string): Promise<void> { await this.plugin.getConversationRunService().startNextQueuedTurn(sessionId); }
   private async createQueuedTurnFromComposer(options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> { return await createQueuedTurnFromComposerRunner(this.turnRunnerContext, options); }

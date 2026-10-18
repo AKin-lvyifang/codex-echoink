@@ -1,3 +1,4 @@
+import { TASK_INTERRUPTION_REASONS, type TaskInterruptionRecord } from "../../agents/task-resume";
 import type { AgentRunSnapshot } from "../../agents/types";
 import { normalizePiWorkspacePermission } from "./pi-workspace-access";
 import { isDeepStrictEqual } from "node:util";
@@ -107,6 +108,7 @@ export type PiProductRunUpdate = Partial<Pick<
   | "memoryRecall"
   | "knowledge"
   | "maintenance"
+  | "interruption"
 >> & {
   updatedAt?: number;
 };
@@ -309,6 +311,23 @@ export class FileProductRunStore {
       left.createdAt - right.createdAt
       || left.productRunId.localeCompare(right.productRunId)
     );
+  }
+
+  /** Inspection does not create storage directories or modify run records. */
+  async listReadOnly(conversationId?: string): Promise<Readonly<PiProductRunRecord>[]> {
+    const id = conversationId === undefined ? undefined : requireNonEmptyString(conversationId, "conversationId");
+    let names: string[];
+    try { names = await readdir(this.rootPath); }
+    catch (error) { if (isNodeErrorWithCode(error, "ENOENT")) return []; throw error; }
+    const runs: PiProductRunRecord[] = [];
+    for (const name of names.sort()) {
+      if (!name.endsWith(".json")) continue;
+      const loaded = await this.loadProductRunFile(path.join(this.rootPath, name), `ProductRun file ${name}`);
+      if (!loaded) continue;
+      this.assertFileNameMatchesRun(name, loaded.run);
+      if (id === undefined || loaded.run.conversationId === id) runs.push(cloneProductRun(loaded.run));
+    }
+    return runs.sort((a, b) => a.createdAt - b.createdAt || a.productRunId.localeCompare(b.productRunId));
   }
 
   private runFilePath(productRunId: string): string {
@@ -634,7 +653,8 @@ function normalizeProductRun(value: unknown): PiProductRunRecord {
       "memoryRecall",
       "knowledge",
       "maintenance",
-      "agentSnapshot"
+      "agentSnapshot",
+      "interruption"
     ],
     "ProductRun record"
   );
@@ -764,6 +784,7 @@ function normalizeProductRun(value: unknown): PiProductRunRecord {
     ...(memoryRecall ? { memoryRecall } : {}),
     ...(knowledge ? { knowledge } : {}),
     ...(object.maintenance === undefined ? {} : { maintenance: requireMaintenanceOutcome(object.maintenance) }),
+    ...(object.interruption === undefined ? {} : { interruption: requireInterruption(object.interruption) }),
     createdAt,
     updatedAt
   };
@@ -781,6 +802,7 @@ function definedUpdate(update: Readonly<PiProductRunUpdate>): PiProductRunUpdate
   if (update.agentSettledAt !== undefined) output.agentSettledAt = update.agentSettledAt;
   if (update.settledAt !== undefined) output.settledAt = update.settledAt;
   if (update.error !== undefined) output.error = update.error;
+  if (update.interruption !== undefined) output.interruption = requireInterruption(update.interruption);
   if (update.memoryRecall !== undefined) {
     output.memoryRecall = { ...update.memoryRecall };
   }
@@ -804,6 +826,7 @@ function assertUpdateKeys(update: Readonly<PiProductRunUpdate>): void {
     "memoryRecall",
     "knowledge",
     "maintenance",
+    "interruption",
     "updatedAt"
   ]);
   for (const key of Object.keys(update)) {
@@ -1110,6 +1133,7 @@ function cloneProductRun(run: Readonly<PiProductRunRecord>): PiProductRunRecord 
     ...(run.memoryRecall ? { memoryRecall: { ...run.memoryRecall } } : {}),
     ...(run.knowledge ? { knowledge: { ...run.knowledge } } : {}),
     ...(run.maintenance ? { maintenance: requireMaintenanceOutcome(run.maintenance) } : {}),
+    ...(run.interruption ? { interruption: requireInterruption(run.interruption) } : {}),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt
   };
@@ -1128,4 +1152,13 @@ function requireAgentRunSnapshot(value: unknown): AgentRunSnapshot {
     Object.assign(capabilities, { [key]: raw[key].map((id, index) => requireNonEmptyString(id, `agentSnapshot.${key}[${index}]`)) });
   }
   return { agentId: requireNonEmptyString(raw.agentId, "agentSnapshot.agentId"), name: requireNonEmptyString(raw.name, "agentSnapshot.name"), position: raw.position, styleId: raw.styleId as AgentRunSnapshot["styleId"], ...capabilities };
+}
+
+function requireInterruption(value: unknown): TaskInterruptionRecord {
+  const raw = requirePlainObject(value, "productRun.interruption");
+  requireExactKeys(raw, ["at", "reason", "stage"], ["detail"], "productRun.interruption");
+  if (!TASK_INTERRUPTION_REASONS.includes(raw.reason as TaskInterruptionRecord["reason"])) throw new Error("Invalid task interruption reason");
+  if (typeof raw.stage !== "string" || raw.stage.length > 500) throw new Error("Invalid task interruption stage");
+  if (raw.detail !== undefined && (typeof raw.detail !== "string" || raw.detail.length > 2000)) throw new Error("Invalid task interruption detail");
+  return { at: requireTimestamp(raw.at, "productRun.interruption.at"), reason: raw.reason as TaskInterruptionRecord["reason"], stage: raw.stage, ...(raw.detail ? { detail: raw.detail as string } : {}) };
 }

@@ -1,3 +1,4 @@
+import type { TaskInterruptionReason, TaskResumeContext } from "../agents/task-resume";
 import type CodexForObsidianPlugin from "../main";
 import { Notice } from "obsidian";
 import { diagnoseProviderError } from "../core/provider-diagnostics";
@@ -35,9 +36,14 @@ export class ConversationRunService {
   readonly turnQueue = new RuntimeTurnQueue();
   readonly pendingInteractions = new Map<string, Readonly<EchoInkTurnInteraction>>();
   private readonly subscribers = new Set<ConversationRunSubscriber>();
+  private readonly resumeFlights = new Map<string, Promise<QueuedTurnOutcome>>();
+  private readonly resumeControllers = new Map<string, AbortController>();
+  private readonly resumeErrors = new Map<string, string>();
+  private readonly resumeContexts = new Map<string, Readonly<TaskResumeContext>>();
   private readonly blockedAgents = new Set<string>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  private disposalFlight?: Promise<void>;
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
@@ -69,6 +75,53 @@ export class ConversationRunService {
   unblockAgent(id: string): void { this.blockedAgents.delete(id); }
   isAgentBlocked(id: string): boolean { return this.blockedAgents.has(id); }
 
+  isResuming(id: string): boolean { return this.resumeFlights.has(id); }
+  getResumeError(id: string): string | undefined { return this.resumeErrors.get(id); }
+  get activeResumeContexts(): ReadonlyMap<string, Readonly<TaskResumeContext>> { return this.resumeContexts; }
+
+  /** Claim this task before any IO; every entry point shares the same acceptance. */
+  resumeTask(id: string, message?: string, item?: QueuedTurnItem, source: QueuedTurnSource = "composer"): Promise<QueuedTurnOutcome> {
+    const existing = this.resumeFlights.get(id);
+    if (existing) return existing;
+    if (this.disposed) return Promise.reject(new Error("插件已停用，请重新启用后继续。"));
+    if (this.runs.get(id)?.flight || this.runs.get(id)?.running) return Promise.reject(new Error("这个任务正在运行，请等待本轮完成。"));
+    const submitted = item ? cloneQueuedTurnItem(item) : undefined;
+    const controller = new AbortController();
+    this.resumeControllers.set(id, controller);
+    this.resumeErrors.delete(id);
+    const flight = Promise.resolve().then(async () => {
+      const prepared = await this.plugin.prepareTaskResume(id, message, submitted, controller.signal);
+      if (controller.signal.aborted) return "cancelled";
+      if (this.disposed) throw new Error("插件已停用，本次没有继续。文字和附件已保留。");
+      this.resumeContexts.set(id, prepared.resumeContext!);
+      let accepted!: (outcome: QueuedTurnOutcome) => void;
+      let wasAccepted = false;
+      const acceptance = new Promise<QueuedTurnOutcome>(resolve => { accepted = resolve; });
+      const completion = this.run(prepared, source, () => {
+        if (source === "queue") this.turnQueue.resumeSessionQueue(id);
+        wasAccepted = true; accepted("running");
+      });
+      void completion.catch(error => { if (wasAccepted) console.error("Resumed task could not finalize", error); });
+      const outcome = await Promise.race([acceptance, completion]);
+      if (outcome === "failed" && !wasAccepted) throw new Error(this.resumeErrors.get(id) ?? "任务暂时无法继续，请检查模型和附件后重试。文字和附件已保留。");
+      return outcome;
+    }).catch(error => {
+      if (controller.signal.aborted) return "cancelled" as const;
+      this.resumeErrors.set(id, error instanceof Error ? error.message : String(error));
+      throw error;
+    }).finally(() => {
+      if (this.resumeFlights.get(id) === flight) this.resumeFlights.delete(id);
+      if (this.resumeControllers.get(id) === controller) this.resumeControllers.delete(id);
+      // On acceptance run() owns the context until its durable settlement.
+      if (!this.runs.get(id)?.flight) this.resumeContexts.delete(id);
+      this.notify(id);
+      if (!this.runs.get(id)?.flight && this.turnQueue.peekNext(id)) void this.startNextQueuedTurn(id).catch(error => console.error("Resumed queue could not continue", error));
+    });
+    this.resumeFlights.set(id, flight);
+    this.notify(id);
+    return flight;
+  }
+
   /** UI handlers release their View as soon as the durable Pi run is accepted. */
   async start(item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome> {
     let accepted!: (outcome: QueuedTurnOutcome) => void;
@@ -90,12 +143,14 @@ export class ConversationRunService {
   async run(item: QueuedTurnItem, source: QueuedTurnSource = "composer", onAccepted?: () => void): Promise<QueuedTurnOutcome> {
     const session = this.session(item.sessionId);
     if (this.disposed || this.blockedAgents.has(session.agentId ?? "sol")) return "cancelled";
+    if (this.resumeFlights.has(session.id) && !item.resumeContext) throw new Error("这个任务正在核对恢复信息，请稍候。");
+    if (source === "queue" && session.taskStatus === "interrupted" && !item.resumeContext) throw new Error("任务已中断，请先核对恢复信息后继续队列。");
     const state = this.stateFor(session.id);
     if (state.flight || state.running) throw new Error("conversation_already_running");
     const frozen = cloneQueuedTurnItem(item);
     const context = this.createHost(state, frozen, onAccepted);
     state.context = context;
-    const flight = (async (): Promise<QueuedTurnOutcome> => {
+    const flight = Promise.resolve().then(async (): Promise<QueuedTurnOutcome> => {
       let outcome: QueuedTurnOutcome = "failed";
       try {
         outcome = await startQueuedTurnItemSafely(context, frozen, source);
@@ -113,6 +168,7 @@ export class ConversationRunService {
         state.running = false; state.queueStartInProgress = false;
         state.flight = undefined;
         state.context = undefined;
+        this.resumeContexts.delete(session.id);
         this.clearWatchdog(state);
         this.clearActiveRun(session.id, state);
         const next = this.turnQueue.settleSessionQueue(session.id, outcome === "completed");
@@ -122,37 +178,52 @@ export class ConversationRunService {
           void this.startNextQueuedTurn(session.id).catch(error => console.error("Conversation queue failed", error));
         }
       }
-    })();
+    });
     state.flight = flight;
     return await flight;
   }
   async startNextQueuedTurn(id: string): Promise<void> {
     const state = this.runs.get(id);
-    if (this.disposed || state?.flight || state?.running || state?.queueStartInProgress) return;
+    if (this.disposed || this.resumeFlights.has(id) || state?.flight || state?.running || state?.queueStartInProgress) return;
     const item = this.turnQueue.peekNext(id);
     if (item) await this.run(item, "queue");
   }
   async resumeQueuedTurns(id: string): Promise<void> {
+    if (this.turnQueue.isSessionRecoveryRequired(id)) throw new Error("当前任务记录需要先恢复，请检查中断信息。队列已保留。");
+    if (this.session(id).taskStatus === "interrupted") {
+      this.turnQueue.pauseSessionQueue(id);
+      const head = this.turnQueue.itemsForSession(id)[0];
+      if (head) await this.resumeTask(id, head.text, head, "queue");
+      return;
+    }
     this.turnQueue.resumeSessionQueue(id);
     await this.startNextQueuedTurn(id);
   }
-  async stopTask(id: string): Promise<void> {
+  async stopTask(id: string, reason: TaskInterruptionReason = "user_stopped"): Promise<void> {
+    const resumeFlight = this.resumeFlights.get(id);
+    this.resumeControllers.get(id)?.abort();
     const state = this.runs.get(id);
     const flight = state?.flight;
     this.turnQueue.pauseSessionQueue(id);
+    await this.plugin.recordTaskInterruption?.(id, reason).catch(error => console.error("Task interruption cause could not be saved", error));
     if (state) { state.controller.abort(); this.clearWatchdog(state); }
     await this.plugin.abortPiConversation(id);
     if (flight) await flight;
+    if (resumeFlight) await resumeFlight.catch(() => undefined);
     await this.flushSave();
   }
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(reason: TaskInterruptionReason = "plugin_disabled"): Promise<void> {
+    if (this.disposalFlight) return this.disposalFlight;
     this.disposed = true;
     this.subscribers.clear();
-    await Promise.all([...this.runs.keys()].map(id => this.stopTask(id)));
-    await this.flushSave();
-    this.runs.clear();
-    this.pendingInteractions.clear();
+    const flight = Promise.resolve().then(async () => {
+      await Promise.all([...new Set([...this.runs.keys(), ...this.resumeFlights.keys()])].map(id => this.stopTask(id, reason)));
+      await this.flushSave();
+      this.runs.clear();
+      this.pendingInteractions.clear();
+    });
+    this.disposalFlight = flight;
+    return flight;
   }
   private session(id: string): StoredSession {
     const session = this.plugin.settings.sessions.find(session => session.id === id);
@@ -187,6 +258,7 @@ export class ConversationRunService {
     });
     const context: CodexViewTurnContext = {
       onPiRunAccepted: () => onAccepted?.(),
+      onPiRunFailure: message => { if (item.resumeContext) service.resumeErrors.set(id, message); },
       get lifecycleSignal() { return state.controller.signal; }, get app() { return plugin.app; }, plugin,
       get running() { return state.running; }, set running(value) { state.running = value; },
       get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; },
@@ -206,7 +278,7 @@ export class ConversationRunService {
         service.clearWatchdog(state);
         state.turnWatchdog = window.setTimeout(() => {
           state.turnWatchdog = null;
-          if (state.running) void service.stopTask(id).catch(error => console.error("Conversation timeout cancellation failed", error));
+          if (state.running) void service.stopTask(id, "watchdog").catch(error => console.error("Conversation timeout cancellation failed", error));
         }, timeout);
       }, clearTurnWatchdog: () => service.clearWatchdog(state),
       diagnoseCodexFailure: (error, model) => diagnoseProviderError(error, { model: model ?? item.turnOptions.model }),

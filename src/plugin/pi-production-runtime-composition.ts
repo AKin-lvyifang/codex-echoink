@@ -1,6 +1,8 @@
 import { agentTaskSystemPrompt, checkAgentCapability, checkAgentSkill, checkAgentSkillPath, checkAgentTool, isAgentCapabilityPathField, requireAgentCapability, resolveAgentRunSnapshot, type AgentCapabilityContext } from "../agents/capability-policy";
 import { FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT } from "../lifestyle/finance-paths";
 import type { AgentRunSnapshot } from "../agents/types";
+import type { TaskResumeContext } from "../agents/task-resume";
+import { assertTaskResumeToolAllowed, type TaskResumePendingAction } from "./task-resume-safety";
 import type { CapabilityAccess } from "../membership/types";
 import { nativeRootJournalPaths, readNativeJournalSettings } from "../home/native-journal";
 import { bindVaultBodySearchEvents, VaultBodySearch } from "../knowledge-base/vault-body-search";
@@ -261,6 +263,7 @@ import {
 } from "../resources/mcp-connections";
 
 export interface PiProductionPluginHost {
+  readonly activeTaskResumeSafety?: ReadonlyMap<string, Readonly<TaskResumeContext>>;
   readonly app: App;
   readonly lifestyle?: { readonly finance: LifestyleFinanceService };
   readonly pdfReading?: PdfReadingController | null;
@@ -529,7 +532,12 @@ export async function createPiProductionRuntimeBundle(
     createPiVaultProductionWriteExecutionPort({
       receipts,
       domainService: vaultDomainService,
-      adapter: vaultAdapter
+      adapter: vaultAdapter,
+      assertToolAllowed: async (toolName, args, resolvedTarget, authorization) => {
+        const snapshot = authorization && plugin.activeTaskResumeSafety?.get(authorization.conversationId)?.safety;
+        if (snapshot) await assertTaskResumeToolAllowed({ snapshot, receipts, approvals, vaultRootPath, toolName, arguments: args, resolvedTarget,
+          currentOperation: { productRunId: authorization!.productRunId, toolCallId: authorization!.toolCallId } });
+      }
     });
   const settingsBeforeCutover = snapshotPiConversationShellSettings(
     plugin.settings
@@ -1053,6 +1061,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   knowledgeBindings?: () => import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;
   vaultSecurity: InlineExtension;
   currentAgentSnapshot?(): AgentRunSnapshot | Promise<AgentRunSnapshot>;
+  currentTaskResumeContext?(): TaskResumeContext | undefined;
   assertCurrentSkillsAllowed?(): Promise<void>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
@@ -1408,7 +1417,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         // Personal Memory context is request-scoped and never persisted into
         // the Pi conversation body.
         const messages = event.messages.filter(
-          (message) => !isPiTransientPersonalMemoryContext(message) && !(message.role === "custom" && message.customType === "echoink-knowledge-reading-state-v1")
+          (message) => !isPiTransientPersonalMemoryContext(message) && !(message.role === "custom" && ["echoink-knowledge-reading-state-v1", "echoink-task-resume-v1"].includes(message.customType))
         );
         const currentUserIndex = currentPiUserMessageIndex(messages);
         const currentResourceContext = currentUserIndex < 0
@@ -1425,6 +1434,10 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           currentUserIndex < 0 ? [] : messages.slice(currentUserIndex + 1)
         );
         const backgroundMessages: AgentMessage[] = [];
+        const recovery = input.currentTaskResumeContext?.();
+        if (recovery) backgroundMessages.push({ role: "custom", customType: "echoink-task-resume-v1", display: false,
+          content: JSON.stringify({ type: "echoink.turn-material.v1", contextType: "echoink-task-resume-v1",
+            source: "host-recovery-check", instructions: recovery.safety.recoveryInstructions }), timestamp: Date.now() });
         if (transientTurnContext) {
           backgroundMessages.push(structuredClone(transientTurnContext));
           input.contextLedger?.captureTransientContextMessages([
@@ -1914,13 +1927,17 @@ async function createProductionAgentSession(input: {
   }
   // The task ID exists before a run is bound (Skill loading happens during activation).
   const liveCapabilityContext = async () => await currentAgentCapabilityContext(input.plugin, input.catalog, input.input.catalog.conversationId, input.input.currentWorkspaceAccess?.());
-  const assertToolAllowed = async (name: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown) => {
+  const assertToolAllowed = async (name: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown, currentOperation?: Readonly<{ productRunId: string; toolCallId: string }>) => {
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
     const context = await liveCapabilityContext();
     requireAgentCapability(checkAgentTool(context, name, args, resolvedTarget, descriptor ? {
       resourceId: descriptor.resourceId, toolName: descriptor.toolName, readOnly: descriptor.readOnly,
       externalOnly: isPiMcpExternalOnly(context, descriptor), executable: piMcpSchemaHasExecutableTarget(descriptor.inputSchema), inputSchema: descriptor.inputSchema
     } : undefined));
+    const resume = input.input.currentTaskResumeContext?.();
+    if (resume) await assertTaskResumeToolAllowed({ snapshot: resume.safety, receipts: input.receipts, approvals: input.approvals,
+      vaultRootPath: input.plugin.getVaultPath(), toolName: descriptor?.approvalToolId ?? name, arguments: args,
+      resolvedTarget: resolvedTarget ?? (descriptor ? { resourceId: descriptor.resourceId, toolName: descriptor.toolName } : undefined), currentOperation });
     const access = context.access;
     if (!access || !configured.toolCalling && PI_PERSONAL_MEMORY_TOOL_IDS.some(tool => tool === name)
       || !piWorkspaceAllowsTool({ ...access, toolName: name, toolArguments: { ...args }, planToolNames: linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : planToolNames,
@@ -2075,7 +2092,7 @@ async function createProductionAgentSession(input: {
   const mcpSnapshot: PiMcpCustomToolSnapshot = linkingBatch ? { toolNames: [], customTools: [], toolSecurity: [], warnings: [] } : await discoverPiMcpTools(input, mcpSecurity, async call => {
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.resourceId === call.resourceId && tool.toolName === call.toolName);
     if (!descriptor || !await isPiMcpToolCurrentlyAllowed(input.plugin, descriptor)) throw new Error("agent_capability_mcp_admission_revoked");
-    await assertToolAllowed(descriptor.name, call.arguments);
+    await assertToolAllowed(descriptor.name, call.arguments, undefined, { productRunId: call.executionContext.productRunId, toolCallId: call.toolCallId });
   });
   const pdfGenerationDraft = Object.freeze({
     providerSettingsId: configured.provider.id, providerId: productProviderId,
@@ -2094,7 +2111,9 @@ async function createProductionAgentSession(input: {
     const result = await input.knowledgeAgentIndex.readReliableKnowledgeForRaw(rawPath);
     return result?.entries.map(entry => entry.vaultRelativePath) ?? [];
   }, documents: () => input.input.currentDocumentTurnContext?.()?.documents ?? [], consume: (id, hash) => input.input.consumePdfDocument?.(id, hash) ?? null, host: () => input.plugin.pdfReading, access: () => input.input.currentWorkspaceAccess?.(),
-    identity: () => JSON.stringify(input.input.currentToolExecutionContext()), intentId: () => { const c = input.input.currentToolExecutionContext(); return `${c.conversationId}:${c.userEntryId}`; } });
+    identity: () => JSON.stringify(input.input.currentToolExecutionContext()), intentId: () => { const c = input.input.currentToolExecutionContext(); return `${c.conversationId}:${c.userEntryId}`; },
+    resumeIntentId: () => { const safety = input.input.currentTaskResumeContext?.()?.safety; return safety ? `${safety.conversationId}:${safety.originalUserEntryId}` : undefined; },
+    resumeOperations: () => input.input.currentTaskResumeContext?.()?.safety.pdfOperations ?? [] });
   const pdfTools = createPdfReadingTools(pdfSecurity);
   const webSearchSecurity = new PiWebSearchSecurity(() => input.plugin.settings.tavily, async () => await assertToolAllowed(WEB_SEARCH_TOOL_NAME, {}));
   const security = createPiVaultToolSecurityAdapter({
@@ -2223,6 +2242,7 @@ async function createProductionAgentSession(input: {
     knowledgeBindings: () => input.plugin.settings.knowledgeBase.folderBindings,
     vaultSecurity: security.inlineExtension,
     currentAgentSnapshot: async () => { const context = await liveCapabilityContext(); return resolveAgentRunSnapshot(context.settings, context.agentId); },
+    currentTaskResumeContext: () => input.input.currentTaskResumeContext?.(),
     assertCurrentSkillsAllowed: async () => {
       const context = await liveCapabilityContext();
       const paths = input.input.skillPath ? [input.input.skillPath] : [...(input.input.skillPaths ?? [])];
@@ -2504,6 +2524,56 @@ async function currentAgentCapabilityContext(plugin: PiProductionPluginHost, cat
   const entry = await catalog.get(conversationId);
   if (!entry) throw new Error("agent_capability_catalog_missing");
   return createPiAgentCapabilityContext(plugin, entry.agentId ?? "sol", await plugin.buildRuntimeEchoInkResourceCatalog(), access);
+}
+
+/** Resume uses current policy before creating a run; this only reads local resource records. */
+export async function assertTaskResumeCapabilities(
+  plugin: PiProductionPluginHost, catalog: FileConversationCatalog, conversationId: string,
+  access: Readonly<PiWorkspaceAccess>, previousSnapshot: AgentRunSnapshot | undefined,
+  actions: readonly TaskResumePendingAction[]
+): Promise<void> {
+  const context = await currentAgentCapabilityContext(plugin, catalog, conversationId, access);
+  const en = plugin.settings.settingsLanguage === "en";
+  const names: Record<string, string> = { knowledge: "知识库", journal: "日记", todos: "待办", finance: "财务", "english-diary": "英文日记", "pdf-reading": "PDF 精读", review: "复盘", "web-search": "联网搜索" };
+  const fail = (reason: string, capability: string): never => {
+    const label = en ? capability : names[capability] ?? (capability.startsWith("mcp:") ? "MCP 工具" : capability.startsWith("vault-skill:") ? "我的 Skill" : "这项能力");
+    const messages: Record<string, [string, string]> = {
+      agent_missing: ["负责这件事的 Agent 已不存在。", "The assigned Agent no longer exists."],
+      agent_disabled: [`${label}能力已被关闭，请开启后再继续。`, `${label} is disabled for this Agent. Enable it before continuing.`],
+      module_disabled: [`${label}已关闭，请开启后再继续。`, `${label} is disabled. Enable it before continuing.`],
+      pro_required: [`继续使用${label}需要 PRO。`, `Continuing with ${label} requires PRO.`],
+      read_only: ["当前只允许读取，不能继续这项写入。", "The current workspace is read-only; this write cannot continue."],
+      resource_disabled: ["这项工具或 Skill 已关闭，请开启后再继续。", "This tool or Skill is disabled. Enable it before continuing."],
+      scope_required: ["这项操作没有可核对的范围，无法在当前能力下继续。", "This operation has no verifiable scope under the current capabilities."]
+    };
+    throw new Error((messages[reason] ?? ["这项操作当前不可用，请检查能力和工具设置后再继续。", "This operation is unavailable. Check capability and tool settings before continuing."])[en ? 1 : 0]);
+  };
+  const basic = checkAgentCapability(context, "conversation");
+  if (!basic.allowed) fail(basic.reason, basic.capabilityId);
+  const current = resolveAgentRunSnapshot(plugin.settings, context.agentId);
+  if (previousSnapshot?.agentId === current.agentId) {
+    const removed = current.agentId === "sol"
+      ? (current.disabledCapabilityIds ?? []).filter(id => !previousSnapshot.disabledCapabilityIds?.includes(id))
+      : (previousSnapshot.capabilityIds ?? []).filter(id => !current.capabilityIds?.includes(id));
+    if (removed.length) fail("agent_disabled", removed[0]);
+  }
+  for (const action of actions) {
+    const args: Readonly<Record<string, unknown>> = action.arguments && typeof action.arguments === "object" && !Array.isArray(action.arguments) ? action.arguments as Readonly<Record<string, unknown>> : {};
+    let mcp: Parameters<typeof checkAgentTool>[4];
+    if (action.resourceId && action.externalToolName) {
+      const resource = context.resources.find(item => item.id === action.resourceId);
+      const record = resource ? resolveMcpConnectionRecord(resource, context.settings.resources) : undefined;
+      const tool = record?.tools.find(item => item.name === action.externalToolName);
+      if (!resource?.enabled || !record || !tool || !isMcpBrokerConnectable(resource, context.settings.resources.mcpConnections) || !mcpToolIsAdmitted(record, tool)) return fail("resource_disabled", "mcp:");
+      const descriptor: PiMcpToolSecurityDescriptor = { name: action.toolName, approvalToolId: action.toolName as PiMcpToolSecurityDescriptor["approvalToolId"], resourceId: resource.id,
+        resourceName: resource.name, toolName: tool.name, readOnly: tool.readOnly, destructive: tool.destructive,
+        inputSchema: tool.inputSchema, contractFingerprint: mcpToolContractFingerprint(tool) };
+      mcp = { resourceId: resource.id, toolName: tool.name, readOnly: tool.readOnly,
+        externalOnly: isPiMcpExternalOnly(context, descriptor), executable: piMcpSchemaHasExecutableTarget(tool.inputSchema), inputSchema: tool.inputSchema };
+    }
+    const result = checkAgentTool(context, action.toolName, args, action.resolvedTarget, mcp);
+    if (!result.allowed) fail(result.reason, result.capabilityId);
+  }
 }
 export function piMcpSchemaHasExecutableTarget(schema: unknown): boolean {
   if (!schema || typeof schema !== "object") return false;

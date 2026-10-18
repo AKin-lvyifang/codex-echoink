@@ -1,3 +1,10 @@
+import { latestTaskRun, type TaskInterruptionInfo, type TaskInterruptionReason, type TaskResumeContext } from "./agents/task-resume";
+import { prepareTaskResumeSafety, readTaskResumeSafety } from "./plugin/task-resume-safety";
+import { assertTaskResumeCapabilities } from "./plugin/pi-production-runtime-composition";
+import { cloneQueuedTurnItem, type QueuedTurnItem } from "./ui/turn-queue";
+import { frozenTurnReasoningSelectionIsValid } from "./ui/codex-view/turn-runner";
+import { resolveComposerReasoningState } from "./ui/composer-reasoning";
+import { readDurableTaskInterruptionStage } from "./harness/pi-native/pi-native-conversation-runtime";
 import { consumeAcceptedTaskDraft } from "./agents/task-workspace";
 import { ConversationRunService } from "./plugin/conversation-run-service";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "./agents/types";
@@ -35,6 +42,9 @@ import type { EchoInkResource } from "./resources/types";
 import { enabledSkillResources } from "./resources/registry";
 import type { ReviewManager } from "./review/manager";
 import {
+  getApiProviderModel,
+  validateApiProvider,
+  newId,
   apiProviderModelSupportsImage,
   apiProviderHasUsableCredential,
   getActiveApiProvider,
@@ -226,6 +236,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private piTaskMetadataSyncTail: Promise<void> = Promise.resolve();
   private piTaskMetadataWriteTails = new Map<string, Promise<unknown>>();
   private conversationRunService: ConversationRunService | null = null;
+  private applicationQuitObserved = false;
   private piLocalDataFlight: Promise<PiLocalDataService> | null = null;
   private cognitiveSystem: CognitiveSystem | null = null;
   private cognitiveSystemFlight: Promise<CognitiveSystem> | null = null;
@@ -249,6 +260,10 @@ export default class CodexForObsidianPlugin extends Plugin {
   private onboardingDesktopWaitCleanup: (() => void) | null = null;
   private appearance: EchoInkAppearance | null = null;
   async onload(): Promise<void> {
+    this.registerEvent(this.app.workspace.on("quit", tasks => {
+      this.applicationQuitObserved = true;
+      tasks.add(async () => { await this.conversationRunService?.dispose("app_closed"); });
+    }));
     const enabledAfterLayoutReady = this.app.workspace.layoutReady;
     const dataRoot = await preparePluginDataRoot(this.getVaultPath(), this.manifest, this.app.vault.configDir);
     this.register(() => dataRoot.dispose());
@@ -334,7 +349,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   private async performUnload(): Promise<void> {
-    await this.conversationRunService?.dispose().catch(error => console.error("Conversation shutdown could not finalize", error));
+    await this.conversationRunService?.dispose(this.applicationQuitObserved ? "app_closed" : "plugin_disabled").catch(error => console.error("Conversation shutdown could not finalize", error));
     this.accountService?.dispose();this.accountService=null;
     this.pdfReading?.api.cancel();
     this.pdfReading = null;
@@ -930,6 +945,111 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     return this.conversationRunService;
   }
+  resumeTask(taskId: string, optionalMessage?: string, frozenItem?: QueuedTurnItem): Promise<import("./ui/codex-view/runner-context").QueuedTurnOutcome> {
+    return this.getConversationRunService().resumeTask(taskId, optionalMessage, frozenItem);
+  }
+  isTaskResuming(taskId: string): boolean { return this.conversationRunService?.isResuming(taskId) ?? false; }
+  getTaskResumeError(taskId: string): string | undefined { return this.conversationRunService?.getResumeError(taskId); }
+  get activeTaskResumeSafety(): ReadonlyMap<string, Readonly<TaskResumeContext>> {
+    return this.getConversationRunService().activeResumeContexts;
+  }
+  async resumeTaskAndOpenDetail(taskId: string, optionalMessage?: string, frozenItem?: QueuedTurnItem): Promise<import("./ui/codex-view/runner-context").QueuedTurnOutcome> {
+    const [opening, resumed] = await Promise.allSettled([this.openTaskDetail(taskId), this.resumeTask(taskId, optionalMessage, frozenItem)]);
+    if (opening.status === "rejected") throw opening.reason;
+    if (resumed.status === "rejected") throw resumed.reason;
+    return resumed.value;
+  }
+  async readTaskInterruption(taskId: string): Promise<TaskInterruptionInfo | null> {
+    const local = await this.ensurePiLocalData();
+    const entry = await local.catalog.get(taskId);
+    if (!entry || entry.status === "deleted" || entry.taskStatus !== "interrupted") return null;
+    const runs = await local.productRuns.listReadOnly(taskId);
+    const last = latestTaskRun(runs);
+    const safety = last ? await readTaskResumeSafety({ ...local, conversationId: taskId, vaultRootPath: this.getVaultPath(), interruptedRunId: last.productRunId }) : null;
+    const stage = last?.interruption?.stage?.trim() || entry.taskStage?.trim()
+      || (last ? readDurableTaskInterruptionStage({ catalogStore: local.catalog, catalog: entry, runs, productRunId: last.productRunId }) : "");
+    return {
+      taskId, at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.settledAt ?? last?.updatedAt ?? entry.updatedAt,
+      reason: last?.interruption?.reason ?? (last?.terminalState === "failed" ? "run_failed" : "process_unknown"),
+      stage,
+      ...(last?.interruption?.detail ? { detail: last.interruption.detail } : last?.error ? { detail: last.error } : {}),
+      uncertainOperations: (safety?.operations ?? []).filter(operation => operation.status === "uncertain").map(operation => ({ id: operation.operationIdentity, label: operation.label }))
+    };
+  }
+  async recordTaskInterruption(taskId: string, reason: TaskInterruptionReason): Promise<void> {
+    await this.piRuntimeBundle?.runtime.recordTaskInterruption(taskId, reason);
+  }
+  /** Only the run service calls this after synchronously taking its resume lease. */
+  async prepareTaskResume(taskId: string, message?: string, frozenItem?: QueuedTurnItem, signal?: AbortSignal): Promise<QueuedTurnItem> {
+    assertPiSubmissionActive(signal);
+    const reply = this.settings.taskWorkspace?.replyDrafts[taskId];
+    const choice = reply ? { providerId: reply.selectedProviderSettingsId, model: reply.selectedModel, permission: reply.selectedPermission, mode: reply.selectedMode } : undefined;
+    const local = await this.ensurePiLocalData();
+    assertPiSubmissionActive(signal);
+    const entry = await local.catalog.get(taskId);
+    assertPiSubmissionActive(signal);
+    if (!entry || entry.status === "deleted") throw new Error("这个任务已不存在，无法继续。");
+    if (entry.taskStatus !== "interrupted") throw new Error("这个任务当前不是已中断状态，请查看最新记录。");
+    if (this.getConversationRunService().isAgentBlocked(entry.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("这个 Agent 正在调整，请稍后继续。");
+    // Loading this original JSONL validates its active branch and keeps native compaction intact.
+    const projection = await this.readPiConversationProjection(taskId);
+    assertPiSubmissionActive(signal);
+    if (projection.catalog.piSessionId !== entry.piSessionId) throw new Error("任务的原始记录已变化，请重新打开后继续。");
+    const last = latestTaskRun(await local.productRuns.listReadOnly(taskId));
+    assertPiSubmissionActive(signal);
+    if (!last) throw new Error("这件任务没有可核对的运行记录，暂时无法安全继续。已有文字和附件已保留。");
+    const snapshotInput = { ...local, conversationId: taskId, vaultRootPath: this.getVaultPath(), ...(last ? { interruptedRunId: last.productRunId } : {}) };
+    const inspected = await readTaskResumeSafety(snapshotInput);
+    assertPiSubmissionActive(signal);
+    let item: QueuedTurnItem;
+    if (frozenItem) {
+      if (frozenItem.sessionId !== taskId) throw new Error("这份文字和附件不属于当前任务，请重新发送。");
+      item = cloneQueuedTurnItem(frozenItem);
+      if (message !== undefined && message !== frozenItem.text) throw new Error("发送内容与已保存的快照不一致，请重新发送。");
+    } else {
+      const providerId = choice?.providerId ?? this.settings.activeApiProviderId;
+      const modelId = choice?.model ?? this.settings.defaultModel;
+      const provider = this.settings.apiProviders.find(provider => provider.id === providerId);
+      const model = provider && getApiProviderModel(provider, modelId);
+      if (!provider || !model) throw new Error("没有可用模型，请先在设置中选择模型。");
+      item = { id: newId("task-resume"), sessionId: taskId, text: message?.trim() || "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。", attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
+        turnOptions: { cwd: this.getVaultPath(), providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: model.id,
+          reasoning: resolveComposerReasoningState(this.settings, provider.id, model.id)?.effort ?? "none",
+          permission: choice?.permission ?? this.settings.defaultPermission, mode: choice?.mode ?? this.settings.defaultMode, mcpEnabled: true }, clearComposerAfterPiAcceptance: false };
+    }
+    const selection = item.turnOptions;
+    const provider = this.settings.apiProviders.find(provider => provider.id === selection.providerSettingsId);
+    if (!provider || !getApiProviderModel(provider, selection.model)) throw new Error("没有可用模型，请检查当前 Provider 和模型设置。");
+    if (!apiProviderHasUsableCredential(provider, this.settings.openAICodexCredential)) throw new Error("当前模型尚未登录或缺少 API Key，请先检查模型设置。");
+    const validation = validateApiProvider(provider);
+    if (validation.length) throw new Error(`当前模型配置不可用：${validation.join("；")}`);
+    if (!frozenTurnReasoningSelectionIsValid(this.settings, selection)) throw new Error("当前模型或思考强度已变化，请重新选择后继续。");
+    await assertTaskResumeCapabilities(this, local.catalog, taskId, { permission: selection.permission, mode: selection.mode === "plan" ? "plan" : "agent", memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" }, last?.agentSnapshot, inspected.operations);
+    assertPiSubmissionActive(signal);
+    const safety = await prepareTaskResumeSafety(snapshotInput);
+    assertPiSubmissionActive(signal);
+    if (safety.fileConflicts.length) throw new Error(`文件已被修改，本次没有继续，也不会覆盖：${safety.fileConflicts.map(conflict => conflict.relativePath).join("、")}`);
+    const interruption = {
+      at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.updatedAt ?? entry.updatedAt,
+      reason: last?.interruption?.reason ?? (last?.terminalState === "failed" ? "run_failed" as const : "process_unknown" as const),
+      stage: last?.interruption?.stage ?? entry.taskStage ?? "",
+      ...(last?.interruption?.detail ? { detail: last.interruption.detail } : {})
+    };
+    item.resumeContext = { safety, interruption };
+    const current = await local.catalog.get(taskId);
+    assertPiSubmissionActive(signal);
+    if (!current || current.status === "deleted" || current.agentId !== entry.agentId || current.piSessionId !== entry.piSessionId || current.taskStatus !== "interrupted") throw new Error("任务负责人或记录已变化，请重新打开后继续。");
+    if (this.getConversationRunService().isAgentBlocked(current.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("这个 Agent 正在调整，请稍后继续。");
+    let session = this.settings.sessions.find(session => session.id === taskId);
+    if (!session) {
+      session = { id: taskId, piSessionId: entry.piSessionId, title: entry.title, cwd: this.getVaultPath(), messages: projection.messages,
+        bodyAuthority: "pi_session_only", defaultMemoryMode: entry.defaultMemoryMode, ...(entry.defaultSkillId ? { defaultSkillId: entry.defaultSkillId } : {}), createdAt: entry.createdAt, updatedAt: entry.updatedAt };
+      applyConversationTaskMetadata(session, entry);
+      this.settings.sessions.push(session);
+    }
+    return item;
+  }
+
   private consumeAcceptedTaskComposerDraft(item: Parameters<typeof consumeAcceptedTaskDraft>[2]): void {
     if (this.settings.taskWorkspace) consumeAcceptedTaskDraft(this.settings.taskWorkspace, item.sessionId, item);
   }
@@ -1027,7 +1147,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const service = this.getConversationRunService();
     return { total: tasks.length, running: tasks.filter(entry => {
       const run = service.runs.get(entry.conversationId);
-      return run?.running || run?.queueStartInProgress || !!run?.flight || this.piSubmittingConversations.has(entry.conversationId)
+      return service.isResuming(entry.conversationId) || run?.running || run?.queueStartInProgress || !!run?.flight || this.piSubmittingConversations.has(entry.conversationId)
         || [...this.piRunConversations.values()].includes(entry.conversationId);
     }).length };
   }
@@ -2182,8 +2302,8 @@ export default class CodexForObsidianPlugin extends Plugin {
       .then(async (localData) => {
         this.piLocalData = localData;
         for (const entry of await localData.catalog.list()) {
-          if (entry.taskStatus !== "running" || entry.status === "deleted") continue;
-          await this.setPiConversationTaskMetadata(entry.conversationId, { taskStatus: "interrupted", taskInterruptedAt: Date.now(), taskCompletedAt: undefined })
+          if (!["running", "waiting"].includes(entry.taskStatus ?? "") || entry.status === "deleted") continue;
+          await this.setPiConversationTaskMetadata(entry.conversationId, { taskStatus: "interrupted", taskInterruptedAt: entry.taskInterruptedAt ?? entry.taskMetadataUpdatedAt ?? entry.updatedAt, taskCompletedAt: undefined, pendingResponse: undefined })
             .catch(error => console.warn("Interrupted conversation state could not be saved", error));
         }
         return localData;

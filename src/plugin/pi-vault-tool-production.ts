@@ -104,6 +104,7 @@ export interface CreatePiVaultProductionWriteExecutionOptions {
   readonly domainService: VaultDomainService;
   /** Production rechecks folder consent immediately before invoking the domain. */
   readonly adapter?: VaultDomainAdapter;
+  readonly assertToolAllowed?: (toolName: string, args: Readonly<Record<string, unknown>>, resolvedTarget: unknown, authorization: Readonly<WriteToolAuthorizationContext>) => Promise<void>;
   readonly finance?: LifestyleFinanceService;
   readonly now?: () => number;
   readonly failureInjection?: (
@@ -259,8 +260,10 @@ export function createPiVaultProductionWriteExecutionPort(
       await options.receipts.beginAuthorizedOperation(input.authorization);
       let result: Readonly<VaultOperationResult>;
       try {
+        await options.assertToolAllowed?.(input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>, input.authorization.resolvedTarget, input.authorization);
         if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>);
         result = await invokeDomainOnce(async () => {
+          await options.assertToolAllowed?.(input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>, input.authorization.resolvedTarget, input.authorization);
           if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>);
           await options.receipts.markEffectStarted(
             input.authorization.operationIdentity

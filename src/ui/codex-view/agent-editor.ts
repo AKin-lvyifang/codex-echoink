@@ -23,11 +23,11 @@ const CAPABILITIES = [
 ] as const;
 const MODULE_NAMES_EN: Record<AgentModuleId, string> = { journal: "Journal", todos: "To-dos", finance: "Finance", "knowledge-base": "Knowledge base", "english-diary": "English diary", "pdf-reading": "PDF reading", review: "Review" };
 const PRESET_NAMES_EN: Record<string, string> = { organizer: "Organizer", bookkeeper: "Bookkeeper", researcher: "Researcher", "journal-companion": "Journal companion", reviewer: "Reviewer" };
-const STYLE_COPY_EN: Record<AgentDefinition["styleId"], { name: string; description: string }> = {
-  execution: { name: "Direct execution", description: "Focus on the goal, constraints and acceptance criteria, then take the shortest useful path. Be concise and direct. Conclusion → actions → risks." },
-  analysis: { name: "Careful analysis", description: "Check assumptions, evidence and omissions; weigh the strongest alternatives before deciding. Stay measured and evidence-led. Judgment → evidence → uncertainty." },
-  companion: { name: "Gentle companion", description: "Acknowledge feelings and circumstances, clarify the problem and constraints, then suggest a small practical step. Be warm and considerate. Response → clarity → one suggestion." },
-  creative: { name: "Creative exploration", description: "Explore distinct possibilities, then choose a direction that fits the goal and constraints. Be lively and imaginative. Options → recommendation → next step." }
+const STYLE_COPY_EN: Record<AgentDefinition["styleId"], { name: string; thinking: string; tone: string; responseStructure: string }> = {
+  execution: { name: "Direct execution", thinking: "Focus on the goal, constraints and acceptance criteria, then reduce them to the shortest action path. Move ahead when information is sufficient; use a small check when needed.", tone: "Brief, confident and direct", responseStructure: "Conclusion → actions → risks" },
+  analysis: { name: "Careful analysis", thinking: "Check assumptions, evidence and omissions; give the strongest case for each option before deciding.", tone: "Measured, calm and evidence-led", responseStructure: "Judgment → evidence → uncertainty" },
+  companion: { name: "Gentle companion", thinking: "Acknowledge feelings and circumstances, clarify the problem and constraints, then suggest one small practical step.", tone: "Warm, thoughtful and considerate", responseStructure: "Response → clarity → one suggestion" },
+  creative: { name: "Creative exploration", thinking: "Explore distinct directions, then narrow them to an option that fits the goal and constraints.", tone: "Relaxed, lively and vivid", responseStructure: "Several directions → recommendation → next step" }
 };
 const STYLE_SUMMARIES: Record<AgentDefinition["styleId"], [string, string]> = {
   execution: ["先给结论，直接推进；少铺垫", "Lead with the conclusion and move forward"],
@@ -215,7 +215,7 @@ export class AgentEditorController {
     this.el(avatar, "div", "echoink-agent-editor-label", this.t("头像", "Avatar"));
     const nameId = `${this.instanceId}-name`;
     const label = this.el(section, "label", "echoink-agent-editor-label", this.t("名字", "Name")); label.htmlFor = nameId;
-    this.nameInput = createOriginInput(section, { value: this.draft!.agent.name, attr: { id: nameId, autocomplete: "off", maxlength: "96", "aria-describedby": `${nameId}-error` } });
+    this.nameInput = createOriginInput(section, { value: this.draft!.agent.name, attr: { id: nameId, autocomplete: "off", maxlength: "96", placeholder: this.t("例如：选题编辑", "e.g., Topic Editor"), "aria-describedby": `${nameId}-error` } });
     this.nameInput.dataset.field = "name";
     this.nameError = this.el(section, "div", "echoink-agent-editor-error"); this.nameError.id = `${nameId}-error`; this.nameError.setAttribute("aria-live", "polite");
     this.nameInput.oninput = () => { this.draft!.agent.name = this.nameInput!.value; this.changed(); };
@@ -259,7 +259,7 @@ export class AgentEditorController {
     section.prepend(avatar);
     const positionId = `${this.instanceId}-position`;
     const positionLabel = this.el(section, "label", "echoink-agent-editor-label", this.t("职位", "Role")); positionLabel.htmlFor = positionId;
-    const position = createOriginInput(section, { value: this.draft!.agent.position, attr: { id: positionId } }); position.classList.add("echoink-agent-editor-position");
+    const position = createOriginInput(section, { value: this.draft!.agent.position, attr: { id: positionId, placeholder: this.t("一句话：负责什么", "In one sentence: what it handles") } }); position.classList.add("echoink-agent-editor-position");
     position.dataset.field = "position"; position.oninput = () => { this.draft!.agent.position = position.value; this.changed(); };
   }
   private setAvatarImage(image: HTMLImageElement): void {
@@ -311,15 +311,17 @@ export class AgentEditorController {
     const reload = this.button(bar, this.loadingResources ? this.t("正在读取…", "Loading…") : this.t("刷新资源", "Refresh resources"), "tertiary", () => { void this.reloadResources(); }); reload.disabled = this.loadingResources;
     if (this.resourceError) this.el(area, "div", "echoink-agent-editor-error", this.resourceError).setAttribute("role", "alert");
     const custom = this.resources.filter(resource => resource.kind === "skill" && !(BUILTIN_SKILL_IDS as readonly string[]).includes(String(resource.metadata?.resourceId ?? "")));
-    const skills = this.el(area, "div", "echoink-agent-editor-options");
-    for (const resource of custom) this.capability(skills, vaultSkillCapabilityId(resource.id), resource.name, resource);
+    if (custom.length) {
+      const skills = this.el(area, "div", "echoink-agent-editor-options");
+      for (const resource of custom) this.capability(skills, vaultSkillCapabilityId(resource.id), resource.name, resource);
+    }
     if (!custom.length && !this.loadingResources && !this.resourceError) this.el(area, "div", "echoink-agent-editor-empty", this.t("暂无自建 Skill", "No custom Skills"));
     this.el(area, "h4", "echoink-agent-editor-resource-heading", "MCP");
     const servers = this.resources.filter(resource => resource.kind === "mcp-server");
-    const services = this.el(area, "div", "echoink-agent-editor-services");
+    const services = servers.length ? this.el(area, "div", "echoink-agent-editor-services") : null;
     for (const resource of servers) {
       const record = resolveMcpConnectionRecord(resource, this.host.settings.resources);
-      const service = this.el(services, "div", "echoink-agent-editor-service");
+      const service = this.el(services!, "div", "echoink-agent-editor-service");
       const details = this.el(service, "details", "echoink-agent-editor-mcp"); details.dataset.resourceId = resource.id;
       const head = this.el(details, "div", "echoink-agent-editor-mcp-heading");
       const label = this.el(head, "label", "echoink-agent-editor-choice");
@@ -363,10 +365,20 @@ export class AgentEditorController {
 
   private renderStyles(parent: HTMLElement): void {
     const section = this.section(parent, this.t("风格", "Style"));
-    const description = this.el(section, "p", "echoink-agent-editor-style-description");
+    const description = this.el(section, "div", "echoink-agent-editor-style-description");
     const describe = () => {
       const style = AGENT_STYLES.find(style => style.id === this.draft!.agent.styleId)!;
-      description.textContent = this.t(`${style.thinking} ${style.tone}；${style.responseStructure}。`, STYLE_COPY_EN[style.id].description);
+      description.replaceChildren();
+      const english = STYLE_COPY_EN[style.id];
+      for (const [label, zh, en, value] of [
+        ["thinking", "思考方式", "Thinking", style.thinking],
+        ["tone", "语气", "Tone", style.tone],
+        ["responseStructure", "回答结构", "Response structure", style.responseStructure]
+      ] as const) {
+        const row = this.el(description, "div", "echoink-agent-editor-style-description-row");
+        this.el(row, "span", "echoink-agent-editor-style-description-label", this.t(zh, en));
+        this.el(row, "span", "echoink-agent-editor-style-description-value", this.t(value, english[label]));
+      }
     };
     const group = createOriginRadioGroup(section, this.draft!.agent.styleId, this.t("风格", "Style"), id => { this.draft!.agent.styleId = id as AgentDefinition["styleId"]; describe(); this.changed(); });
     group.element.classList.add("echoink-agent-editor-styles");
@@ -428,7 +440,11 @@ export class AgentEditorController {
     if (this.deleteError) this.el(area, "p", "echoink-agent-editor-error", this.deleteError).setAttribute("role", "alert");
     if (!this.deleteCounts) return;
     const panel = this.el(area, "div", "echoink-agent-editor-confirm"); panel.setAttribute("role", "group"); panel.setAttribute("aria-label", this.t("确认删除 Agent", "Confirm Agent deletion"));
-    this.el(panel, "p", "", this.t(`它名下有 ${this.deleteCounts.total} 件事（${this.deleteCounts.running} 件正在进行）会交给总助。正在进行的会先停下，不会自动重新执行。`, `Its ${this.deleteCounts.total} ${this.deleteCounts.total === 1 ? "task" : "tasks"} (${this.deleteCounts.running} running) will be transferred to the general assistant. Running tasks will be stopped first and will not restart automatically.`));
+    const { total, running } = this.deleteCounts;
+    const message = running === 0
+      ? this.t(`它名下有 ${total} 件事会交给总助。`, `Its ${total} ${total === 1 ? "task" : "tasks"} will be transferred to the general assistant.`)
+      : this.t(`它名下有 ${total} 件事（${running} 件正在进行）会交给总助。正在进行的会先停下，不会自动重新执行。`, `Its ${total} ${total === 1 ? "task" : "tasks"} (${running} running) will be transferred to the general assistant. Running tasks will be stopped first and will not restart automatically.`);
+    this.el(panel, "p", "", message);
     const actions = this.el(panel, "div", "echoink-agent-editor-actions");
     const cancel = this.button(actions, this.t("取消删除", "Cancel deletion"), "secondary", () => { this.deleteCounts = null; this.deleteError = ""; this.renderDelete(); this.refresh(); this.deleteArea?.querySelector<HTMLButtonElement>("button")?.focus(); });
     const confirm = this.button(actions, this.busy === "delete" ? this.t("正在停止任务并交回总助…", "Stopping tasks and transferring them to the general assistant…") : this.t("删除并交回总助", "Delete and transfer to the general assistant"), "danger", () => { void this.delete(); });

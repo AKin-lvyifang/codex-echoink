@@ -519,7 +519,7 @@ export async function startNextQueuedTurn(view: CodexViewTurnContext, sessionId:
   }
 }
 
-export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> {
+export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, options: { allowLocalKnowledgeCommands: boolean; onError?: (message: string) => void }): Promise<QueuedTurnItem | null> {
   const session = view.ensureSession();
   const turnOptions = view.currentTurnOptions(session);
   const text = view.inputEl.value.trim();
@@ -529,15 +529,20 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
   const selectedNoteMentions = composerNoteMentionSelections(view.inputEl);
   const selectionAnnotations = composerSelectionAnnotations(view.inputEl);
   if (selectionAnnotations.length && !text) {
+    options.onError?.(uiText(view, "请先输入问题，再发送注释。", "Enter a question before sending annotations."));
     showNotice(view, "请先输入问题，再发送注释。", "Enter a question before sending annotations."); return null;
   }
   if (!text && !attachments.length && !selectedNoteMentions.length && !skill) return null;
   const workspaceReady = await view.ensureChatWorkspaceSelected(session);
-  if (!workspaceReady || view.lifecycleSignal?.aborted) return null;
+  if (!workspaceReady || view.lifecycleSignal?.aborted) {
+    options.onError?.(uiText(view, "工作区尚未就绪，本次没有发送。文字和附件已保留。", "The workspace is not ready. The draft and attachments were kept."));
+    return null;
+  }
   let noteMentions: Awaited<ReturnType<typeof snapshotComposerNoteMentions>>;
   try {
     noteMentions = await snapshotComposerNoteMentions(view.app, view.inputEl, selectedNoteMentions);
   } catch (error) {
+    options.onError?.(localizedPiChatErrorMessage(view, error));
     new Notice(localizedPiChatErrorMessage(view, error));
     return null;
   }
@@ -549,6 +554,7 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
     view.plugin.settings,
     turnOptions
   )) {
+    options.onError?.(uiText(view, "当前 Provider、模型或思考强度已失效，请重新选择后发送。", "The current Provider, model, or reasoning level is unavailable. Select it again before sending."));
     showNotice(
       view,
       "当前 Provider、模型或思考强度已失效，本轮没有入队；请重新选择后发送。",
@@ -574,6 +580,7 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
       (candidate) => candidate.id === turnOptions.providerSettingsId
     );
     if (!provider) {
+      options.onError?.(uiText(view, "当前 Provider 已不可用，请重新选择后发送。", "The current Provider is unavailable. Select it again before sending."));
       showNotice(
         view,
         "当前 Provider 已不可用，本轮文档没有入队；请重新选择后发送。",
@@ -594,6 +601,7 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
       });
       preparedDocuments = prepared.documents;
     } catch (error) {
+      options.onError?.(localizedPiChatErrorMessage(view, error));
       new Notice(localizedPiChatErrorMessage(view, error));
       return null;
     }
@@ -916,7 +924,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   let finalizingProjectionFlight: Promise<void> = Promise.resolve();
   let acceptedTaskMetadataFailed = false;
 
-  view.running = true;
+  if (!item.resumeContext) view.running = true;
   let accessByConversation = submittedPiAccess.get(view.plugin);
   if (!accessByConversation) {
     accessByConversation = new Map();
@@ -935,6 +943,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   try {
     const submittedAt = Date.now();
     handle = await view.plugin.submitPiChat({
+      ...(item.resumeContext ? { resumeContext: item.resumeContext } : {}),
       signal: submissionSignal,
       conversationId: session.id,
       text: submittedText,
@@ -959,6 +968,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       ...(item.noteMentions?.length ? { noteMentions: item.noteMentions } : {})
     });
     item.piUserEntryAccepted = true;
+    view.running = true;
     if (source === "queue") {
       view.turnQueue.acceptPiUserEntry(session.id, item.id);
       view.renderQueue();
@@ -1185,6 +1195,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     }
     return queuedTurnOutcomeForPiTerminal(settledEvent.terminalState);
   } catch (error) {
+    view.onPiRunFailure?.(localizedPiChatErrorMessage(view, error));
     if (item.piUserEntryAccepted || piUserEntryWasAccepted(error)) {
       item.piUserEntryAccepted = true;
       if (source === "queue") {
@@ -1309,7 +1320,7 @@ function stableSkillIdForResource(skill: Readonly<EchoInkResource>): string {
   return resourceId || skill.id.trim();
 }
 
-function frozenTurnReasoningSelectionIsValid(
+export function frozenTurnReasoningSelectionIsValid(
   settings: CodexViewTurnContext["plugin"]["settings"],
   selection: Pick<
     TurnOptions,

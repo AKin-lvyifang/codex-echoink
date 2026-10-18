@@ -18,10 +18,11 @@ import type { PdfArtifact, PdfJob } from "../../pdf-reading/types";
 export const PDF_TOOL_NAMES = ["pdf_reading_query", "pdf_reading_process"] as const;
 type PdfArgs = { path?: string; attachmentId?: string; jobId?: string; enhanced?: boolean; reading?: boolean; translation?: boolean; translationLanguage?: string; readingOffset?: number };
 interface PdfCall { name: string; args: PdfArgs; identity: string; consumed: boolean; result?: string; error?: boolean; status?: string; readbackVerified?: boolean; receipt?: PdfAttachmentReceipt }
+export interface PiPdfResumeOperation { readonly toolCallId: string; readonly userEntryId: string; readonly arguments: Readonly<Record<string, unknown>>; readonly jobId: string }
 export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
   readonly toolName = PDF_TOOL_NAMES[0]; readonly toolNames = PDF_TOOL_NAMES;
   private calls = new Map<string, PdfCall>();
-  constructor(private readonly options: { assertToolAllowed?(name: string, args: Readonly<Record<string, unknown>>): Promise<void>; host(): PdfReadingController | null | undefined; access(): PiWorkspaceAccess | null | undefined; identity(): string; intentId(): string; generator?: PdfDependencies["generator"]; bindSources(paths: readonly string[]): void; wikiPaths(rawPath: string): Promise<readonly string[]>; documents(): readonly Readonly<PiChatPreparedDocument>[]; consume(attachmentId: string, sha256: string): Readonly<{ conversationId: string; userEntryId: string }> | null }) {}
+  constructor(private readonly options: { assertToolAllowed?(name: string, args: Readonly<Record<string, unknown>>): Promise<void>; host(): PdfReadingController | null | undefined; access(): PiWorkspaceAccess | null | undefined; identity(): string; intentId(): string; resumeIntentId?(): string | undefined; resumeOperations?(): readonly PiPdfResumeOperation[]; generator?: PdfDependencies["generator"]; bindSources(paths: readonly string[]): void; wikiPaths(rawPath: string): Promise<readonly string[]>; documents(): readonly Readonly<PiChatPreparedDocument>[]; consume(attachmentId: string, sha256: string): Readonly<{ conversationId: string; userEntryId: string }> | null }) {}
   private attachment(id: string): Readonly<PiChatPreparedDocument> {
     const document = this.options.documents().find(d => d.transport === "tool_reference" && d.attachmentId === id);
     if (!document) throw new Error("本轮 PDF 附件不可用；请查询当前附件或重新上传同一文件以恢复。");
@@ -61,10 +62,31 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
       if (name === "pdf_reading_query") jobs = args.jobId ? [await host.api.load(args.jobId)] : (await host.api.history()).slice(0, 20);
       else {
         this.writable();
-        const operation = createHash("sha256").update(`${this.options.intentId()}\n${JSON.stringify(call.args)}`).digest("hex");
+        const resumeIntent = this.options.resumeIntentId?.();
+        const operation = createHash("sha256").update(`${resumeIntent ?? this.options.intentId()}\n${JSON.stringify(call.args)}`).digest("hex");
         const document = args.attachmentId ? this.attachment(args.attachmentId) : undefined;
         const options = { engine: args.enhanced === undefined ? host.plugin.settings.pdfReading.engine : args.enhanced ? "mineru" as const : "local" as const, reading: args.reading !== false, translation: args.translation === true, translationLanguage: pdfLanguage(args.translationLanguage ?? host.plugin.settings.pdfReading.translationLanguage), wiki: args.reading !== false };
-        const job = args.jobId ? await host.api.resume(args.jobId, signal, document ? document.bytes as Uint8Array : undefined, this.options.generator)
+        let oldJobId = args.jobId;
+        if (!oldJobId && resumeIntent) {
+          const savedIds = new Set(await host.api.files.listJobs());
+          if (savedIds.has(operation)) oldJobId = operation;
+          else {
+            const matches: string[] = [];
+            for (const previous of this.options.resumeOperations?.() ?? []) {
+              if (!savedIds.has(previous.jobId)) continue;
+              const samePath = args.path && previous.arguments.path === args.path;
+              const sameAttachment = args.attachmentId && previous.arguments.attachmentId === args.attachmentId;
+              const sameBytes = document && (await host.api.load(previous.jobId)).sourceFingerprint === document.sha256;
+              if ((samePath || sameAttachment || sameBytes) && !matches.includes(previous.jobId)) matches.push(previous.jobId);
+            }
+            if (matches.length > 1) throw new Error("中断任务有多个相同来源的 PDF 任务；请先查询，再用明确的原 jobId 继续。");
+            oldJobId = matches[0];
+          }
+        }
+        const saved = oldJobId ? await host.api.load(oldJobId) : undefined;
+        if (saved && document && saved.sourceFingerprint !== document.sha256) throw new Error("请选择本任务的同一 PDF，未替换远端任务。");
+        const job = saved?.state === "completed" ? saved
+          : oldJobId ? await host.api.resume(oldJobId, signal, document ? document.bytes as Uint8Array : undefined, this.options.generator)
           : document ? await host.api.start(document.attachment.name, document.bytes as Uint8Array, options, signal, operation, this.options.generator)
           : await host.processVault(args.path!, options, signal, operation, this.options.generator);
         call.status = job.state; call.error = job.state !== "completed";

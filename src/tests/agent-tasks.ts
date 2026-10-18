@@ -20,14 +20,20 @@ import { AGENT_IDENTITY_RELATIVE_PATH } from "../harness/memory/agent-identity-m
 import { piEntryIdFromProjectedMessageId, piProjectedEntryMessageId } from "../harness/pi-native/pi-chat-ui-projector";
 import type { PiConversationCatalogEntry } from "../harness/pi-native/contracts";
 import { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
+import { FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
+import { FileApprovalTicketStore } from "../harness/pi-native/tool-authorization";
 
 function createHost(catalog: any, runtime: any, settings: any): any {
+  const local = { catalog, productRuns: runtime.productRuns,
+    receipts: new FileDomainReceiptStore({ storageRootPath: catalog.storageRootPath, vaultId: catalog.vaultId }),
+    approvals: new FileApprovalTicketStore({ storageRootPath: catalog.storageRootPath, vaultId: catalog.vaultId }),
+    readConversationProjection: (id: string) => runtime.readProjection(id), listConversations: (statuses?: string[]) => catalog.list({ statuses }) };
   const host = Object.assign(Object.create(CodexForObsidianPlugin.prototype), {
     settings, piRuntimeBundle: { runtime }, piTaskMetadataWriteTails: new Map(), piTaskMetadataSyncTail: Promise.resolve(),
     piSubmittingConversations: new Set(), piRunConversations: new Map(), piConversationActivationTasks: new Map(),
     getCodexView: () => null, createPiConversation: (input: any) => runtime.createConversation(input),
-    ensurePiLocalData: async () => ({ catalog, productRuns: runtime.productRuns,
-      readConversationProjection: (id: string) => runtime.readProjection(id), listConversations: (statuses?: string[]) => catalog.list({ statuses }) })
+    ensurePiLocalData: async () => local,
+    buildRuntimeEchoInkResourceCatalog: async () => []
   });
   return host;
 }
@@ -43,6 +49,7 @@ export async function runAgentTaskTests(root: string): Promise<void> {
   }
   prepareDocument(dom.window as any);
   const f = await createAgentRunFixture(path.join(root, "runtime"), createHost);
+  f.plugin.app.vault = { getRoot: () => ({ children: [] }), getAbstractFileByPath: () => null };
   try {
     await coldNavigationReadiness(f, dom.window.document);
     await navigationAndSubmission(f, dom.window.document);
@@ -250,8 +257,29 @@ async function navigationAndSubmission(f: any, doc: Document): Promise<void> {
     assert.equal((await f.catalog.list()).length, before + 1, "detail send continues the original Conversation");
     assert.equal((await f.productRuns.list(originalId)).length, 2);
     await f.plugin.setPiConversationTaskMetadata(originalId, { taskStatus: "interrupted", taskInterruptedAt: Date.now() });
-    await view.reloadTaskCatalog(); await view.sendMessage();
-    assert.equal((await f.productRuns.list(originalId)).length, 2, "P3 interrupted detail has no send action");
+    await view.reloadTaskCatalog(); await view.openTaskDetail(originalId);
+    assert.equal(view.inputEl.parentElement.hidden, false, "interrupted detail keeps its reply Composer available");
+    assert.equal((await f.productRuns.list(originalId)).length, 2, "opening an interrupted task never resumes it");
+    view.inputEl.value = "P4-REPLY-KEPT-ON-FAILURE"; view.saveTaskComposerDraft();
+    const provider = f.settings.apiProviders[0], credential = provider.apiKey; provider.apiKey = "";
+    await view.sendMessage();
+    assert.equal((await f.catalog.get(originalId)).taskStatus, "interrupted");
+    assert.equal(view.inputEl.value, "P4-REPLY-KEPT-ON-FAILURE");
+    assert.match(view.taskInterruptionEl.textContent, /没有可用模型|模型/);
+    const queuedResume = f.item(originalId, "P4-QUEUED-FAILURE");
+    f.service.turnQueue.enqueue(queuedResume);
+    await assert.doesNotReject(view.resumeQueuedTurns(originalId), "queue UI presents a failed preflight instead of rejecting an unobserved event handler");
+    assert.equal(f.service.turnQueue.itemsForSession(originalId).length, 1);
+    assert.equal(f.service.turnQueue.isSessionQueuePaused(originalId), true);
+    assert.equal(view.inputEl.value, "P4-REPLY-KEPT-ON-FAILURE");
+    assert.match(view.taskInterruptionEl.textContent, /API Key|模型/);
+    f.service.turnQueue.removeQueuedItem(originalId, queuedResume.id);
+    provider.apiKey = credential;
+    await view.sendMessage(); await f.service.runs.get(originalId)?.flight;
+    assert.equal((await f.productRuns.list(originalId)).length, 3, `interrupted detail sends through resumeTask into the same Conversation: ${view.taskInterruptionEl.textContent}`);
+    assert.equal((await f.catalog.get(originalId)).piSessionId, created.piSessionId);
+    assert.ok(f.requests.get(originalId).at(-1).includes("P4-REPLY-KEPT-ON-FAILURE"));
+    assert.equal(view.inputEl.value, "", "only durable resume acceptance clears the reply");
     await view.openAgentTaskList("sol"); assert.equal(view.inputEl.value, "list task");
     await view.openTaskDetail(originalId); assert.equal(view.inputEl.value, "");
     // Closing preserves the list draft; reopening is a new View with the same pure data workspace.

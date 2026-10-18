@@ -65,6 +65,8 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.root.querySelectorAll("[data-preset]").length, 5); assert.equal(f.saved.length, 0);
     assert.equal(f.root.querySelector('[aria-label="返回 Agent 任务"]')!.textContent, "");
     assert.equal(f.root.querySelector('[data-field="position"]')!.tagName, "INPUT");
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.placeholder, "例如：选题编辑");
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.placeholder, "一句话：负责什么");
     assert.equal(f.root.querySelector("details .echoink-agent-editor-avatar-grid"), null, "avatar choices stay directly visible");
     assert.equal(f.root.querySelectorAll(".echoink-agent-editor-style-card .echoink-agent-editor-style-summary").length, 4);
     f.root.querySelector<HTMLButtonElement>('[data-preset="organizer"]')!.click(); await settle();
@@ -149,6 +151,10 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle();
     assert.equal(f.countCalls, 1); assert.match(f.root.textContent!, /3 件事（1 件正在进行）会交给总助/);
     assert.match(f.root.textContent!, /不会自动重新执行/); button(f.root, "取消删除").click(); await settle(); assert.equal(f.deletes, 0);
+    f.setCounts({ total: 3, running: 0 }); f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle();
+    const idleCopy = f.root.querySelector(".echoink-agent-editor-confirm p")!.textContent!;
+    assert.equal(idleCopy, "它名下有 3 件事会交给总助。");
+    button(f.root, "取消删除").click(); await settle(); assert.equal(f.deletes, 0);
     f.setCounts({ total: 5, running: 2 }); f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle(); assert.match(f.root.textContent!, /5 件事（2 件正在进行）/);
     const gate = deferred(); f.deleteGate(gate.promise); f.failDelete(true);
     f.root.querySelector<HTMLButtonElement>('[data-action="confirm-delete"]')!.click(); f.root.querySelector<HTMLButtonElement>('[data-action="confirm-delete"]')!.click();
@@ -156,7 +162,7 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     gate.resolve(); await settle(); assert.match(f.root.textContent!, /停止任务失败/); assert.ok(f.settings.agentRegistry.agents.find(agent => agent.id === "colleague"));
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "未保存的新名字");
     f.deleteGate(null); f.failDelete(false); f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle();
-    assert.equal(f.countCalls, 3); f.root.querySelector<HTMLButtonElement>('[data-action="confirm-delete"]')!.click(); await settle();
+    assert.equal(f.countCalls, 4); f.root.querySelector<HTMLButtonElement>('[data-action="confirm-delete"]')!.click(); await settle();
     assert.equal(f.closed[0], "sol"); assert.equal(f.settings.agentRegistry.agents.some(agent => agent.id === "colleague"), false); f.dispose();
     console.log("PASS latest deletion totals/running counts, inline cancel, in-flight duplicate guard and failure preservation");
   }
@@ -215,9 +221,16 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "用户原名");
     assert.equal(f.root.querySelector<HTMLTextAreaElement>('[data-field="position"]')!.value, "用户的原始职位，不翻译");
     assert.ok(f.root.querySelector('[role="radiogroup"][aria-label="Style"] [aria-label="Careful analysis"]'));
+    assert.deepEqual([...f.root.querySelectorAll(".echoink-agent-editor-style-description-label")].map(node => node.textContent), ["Thinking", "Tone", "Response structure"]);
     assert.match(f.root.querySelector(".echoink-agent-editor-style-description")!.textContent!, /Check assumptions, evidence/);
+    assert.equal(f.root.querySelectorAll(".echoink-agent-editor-style-description-row").length, 3);
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.placeholder, "e.g., Topic Editor");
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.placeholder, "In one sentence: what it handles");
     input(f.root, ""); assert.match(f.root.textContent!, /Use 1–24 characters without line breaks or tabs/); input(f.root, "用户原名");
-    f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle();
+    f.setCounts({ total: 3, running: 0 }); f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle();
+    assert.equal(f.root.querySelector(".echoink-agent-editor-confirm p")!.textContent, "Its 3 tasks will be transferred to the general assistant.");
+    button(f.root, "Cancel deletion").click(); await settle();
+    f.setCounts({ total: 3, running: 1 }); f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle();
     assert.match(f.root.textContent!, /Its 3 tasks \(1 running\) will be transferred to the general assistant/);
     assert.match(f.root.textContent!, /will not restart automatically/); assert.ok(button(f.root, "Delete and transfer to the general assistant"));
     button(f.root, "Cancel deletion").click(); await settle(); assert.equal(f.deletes, 0);
@@ -225,6 +238,8 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.saved[0].agent.name, "用户原名"); assert.equal(f.saved[0].agent.position, "用户的原始职位，不翻译"); f.dispose();
     const creation = fixture(); creation.settings.settingsLanguage = "en"; await creation.open();
     assert.equal(creation.root.querySelector("h2")!.textContent, "New Agent"); assert.match(creation.root.textContent!, /Start from a preset/);
+    assert.equal(creation.root.querySelectorAll(".echoink-agent-editor-resources > .echoink-agent-editor-options").length, 0, "no empty custom Skill list is rendered");
+    assert.equal(creation.root.querySelectorAll(".echoink-agent-editor-resources > .echoink-agent-editor-services").length, 0, "no empty MCP service list is rendered");
     assert.ok(creation.root.querySelector('[data-preset="organizer"][aria-label="Organizer"]'));
     assert.match(creation.root.textContent!, /No custom Skills/); assert.match(creation.root.textContent!, /No connected MCP services/); assert.ok(button(creation.root, "Create"));
     creation.dispose();
