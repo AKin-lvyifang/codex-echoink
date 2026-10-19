@@ -1,0 +1,153 @@
+/* The aligned settings canvas uses the Demo's page surface, not the legacy raised card surface. */
+body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned {
+  --bg: var(--echoink-theme-bg);
+  --background-primary: var(--echoink-theme-bg);
+  --interactive-normal: var(--echoink-theme-bg);
+}
+/* Desktop settings presentation. Mobile retains its existing settings surfaces. */
+.echoink-settings-demo.echoink-settings-aligned {
+  max-width: none; padding: 20px 32px 48px; font-size: 13px; line-height: 1.55;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title { padding: 0; margin: 0 0 14px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title .setting-item { display: block; min-height: 0; padding: 0; border: 0; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title .setting-item-info { flex: none; width: auto; min-height: 0; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title .setting-item-control:empty { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title .setting-item-name { font-size: 15px; font-weight: 600; letter-spacing: normal; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs-slot { position: static; padding: 0; margin-bottom: 26px; border-bottom: 1px solid var(--line); }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs-slot::before,
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs-slot::after { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px; height: auto; min-height: 0;
+  margin: 0; padding: 0 0 12px; overflow: visible; border: 0; background: transparent;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs > .echoink-native-settings-row { height: auto; min-height: 0; margin: 0; padding: 0; border: 0; background: transparent; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab {
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 7px;
+  flex: none; width: auto; min-width: 0; height: auto; min-height: 34px; margin: 0; padding: 8px 13px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--secondary); font-size: 13px;
+  transform: none; clip-path: none; box-shadow: none; transition: background-color 150ms, color 150ms;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab::before,
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab::after { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab.is-active { background: var(--accent-bg); color: var(--accent); font-weight: 500; transform: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab:is(:hover, :focus-visible) { background: var(--soft); outline: none; box-shadow: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs .codex-settings-tab .codex-settings-tab-label {
+  display: inline-flex; width: auto; max-width: none; grid-template-columns: none; opacity: 1; visibility: visible;
+  overflow: visible; color: inherit; font-size: 13px; line-height: 1.4; transform: none; transition: none;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tab-label > span { overflow: visible; white-space: nowrap; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tab-icon { width: 14px; height: 14px; flex: 0 0 14px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tab-icon svg { width: 14px; height: 14px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page-header.is-title-hidden,
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-summary {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page { --settings-page-gap: 0px; --settings-intro-content: 16px; --settings-page-title-size: 17px; --settings-tabs-toolbar: 16px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page-header { margin: 0 0 16px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page-heading h2,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-title { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.55; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section { margin: 0 0 26px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+/* The theme boundary still paints legacy settings-card surfaces; headings stay outside. */
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section.settings-card:not(.echoink-module-drawer) { background: transparent; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section-header { display: flex; flex-direction: row; align-items: center; gap: 8px; margin: 0 0 10px; padding: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section-header h3,
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-list-header h3 { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.55; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group { display: block; gap: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section > .echoink-settings-group {
+  border: 1px solid var(--line); border-radius: 10px; padding: 0; margin: 0; background: var(--bg); overflow: hidden;
+}
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > .setting-item,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button]:not(.echoink-agent-settings-row),
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-row {
+  display: flex; flex-direction: row; align-items: center; text-align: left; gap: 12px; min-height: 52px; margin: 0; padding: 13px 18px; border: 0; border-radius: 0; background: transparent;
+}
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > .setting-item + .setting-item,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button]:not(.echoink-agent-settings-row):not(:first-child),
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-row + .echoink-settings-compact-row { border-top: 1px solid var(--line); }
+/* Keep navigation copy and its trailing value/arrow together against legacy narrow button rows. */
+.echoink-settings-demo.echoink-settings-aligned button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] { flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: space-between; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row > .echoink-settings-navigation-copy { flex: 1 1 auto; min-width: 0; width: auto; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row > .echoink-settings-navigation-trailing { flex-direction: row; flex-wrap: nowrap; align-items: center; align-self: center; width: auto; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item { flex-direction: row; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-info { flex: 1 1 0; width: auto; min-width: 0; margin: 0; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-name,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-title { font-size: 13px; font-weight: 500; line-height: 1.55; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-description,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-description { font-size: 12px; line-height: 1.55; margin-top: 1px; color: var(--secondary); }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-control { flex: 0 1 auto; width: auto; max-width: 55%; gap: 8px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section-description { font-size: 12px; color: var(--secondary); }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-editor > .settings-back,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page > .settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-surface { margin: 0; padding: 0; border: 0; background: transparent; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-title { margin-bottom: 16px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer > summary { margin: 0; padding: 0; border-radius: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer > summary .setting-item { min-height: 52px; padding: 16px 18px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer[open] > summary { margin: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-options { padding: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-options > .setting-item { padding: 13px 18px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-about-compact { padding: 13px 18px; min-height: 52px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-icon,
+.echoink-settings-demo.echoink-settings-aligned button.echoink-about-compact-icon { display: grid; place-items: center; flex: 0 0 31px; width: 31px; height: 31px; padding: 0; border: 0; border-radius: 8px; background: var(--soft); color: var(--secondary); }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-icon svg { width: 15px; height: 15px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-about-compact-brand { flex: 1 1 auto; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-about-compact-actions { flex: 0 0 auto; margin-left: auto; flex-wrap: nowrap; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-section.settings-card { padding: 0; border: 0; background: transparent; margin: 0 0 26px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-add-section { padding: 0; margin: 0 0 10px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-add-title { font-size: 13px; font-weight: 600; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-list { padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-row { margin: 0; padding: 13px 18px; min-height: 52px; gap: 8px 12px; border: 0; background: transparent; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-row + .codex-provider-saved-row { border-top: 1px solid var(--line); }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-identity { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 220px; padding: 0; height: auto; border: 0; background: transparent; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-copy { flex: 1; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-arrow { flex: none; color: var(--muted); }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-model strong { font-size: 13px; font-weight: 500; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-details { font-size: 12px; line-height: 1.55; margin-top: 1px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta > button:not(.echoink-delete-button) { min-height: 28px; padding: 3px 6px; font-size: 12px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-tabs { gap: 22px; margin-bottom: 16px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-tabs > button.codex-resource-tab { font-size: 13px; font-weight: 400; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-tab .settings-motion-icon { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-toolbar { gap: 12px; margin-bottom: 16px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-toolbar-actions > button { min-height: 30px; padding: 5px 8px; font-size: 12px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-list-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-list-header .codex-resource-group-title { flex: 1; min-height: 0; margin: 0; padding: 0; border: 0; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-group-title .setting-item-name { font-size: 13px; font-weight: 600; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-list-header > .codex-resource-add { margin-left: auto; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-body { display: block; padding: 0; gap: 0; border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-body > .echoink-settings-section { margin-bottom: 26px; }
+.echoink-settings-demo.echoink-settings-aligned [data-resource-group]:not(:has(.codex-resource-row:not(.is-search-hidden))) { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-body .codex-resource-row {
+  display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 13px 18px; margin: 0; border: 0; border-radius: 0; background: transparent;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-body .codex-resource-row + .codex-resource-row { border-top: 1px solid var(--line); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-body .codex-resource-row.is-search-hidden { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row-open.codex-resource-row-name { display: flex; align-items: center; justify-content: flex-start; gap: 12px; flex: 1; min-width: 0; max-width: 100%; height: auto; margin: 0; padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; white-space: normal; font-size: 13px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row-content { min-width: 0; flex: 1; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-row-icon { display: grid; place-items: center; width: 31px; height: 31px; min-width: 31px; flex: 0 0 31px; border: 0; border-radius: 8px; background: var(--soft); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-row-icon > svg { width: 15px; height: 15px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row-title { font-size: 13px; font-weight: 500; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-row-desc { margin-top: 1px; font-size: 12px; line-height: 1.55; white-space: normal; overflow-wrap: anywhere; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state { flex: none; font-size: 12px; color: var(--secondary); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state.is-failed { color: var(--text-warning); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-assignment { font-size: 12px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-toggle { flex: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row:has(.codex-resource-row-open:is(:hover, :focus-visible)) { background: var(--soft); }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-row:has(.codex-provider-saved-identity:is(:hover, :focus-visible)) { background: var(--soft); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row-open:focus-visible,
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-identity:focus-visible { outline: none; box-shadow: none; }
+@container settings (max-width: 760px) {
+  .echoink-settings-demo.echoink-settings-aligned { padding-inline: 20px; }
+  .echoink-settings-demo.echoink-settings-aligned .codex-resource-body .codex-resource-row { flex-wrap: wrap; }
+  .echoink-settings-demo.echoink-settings-aligned .codex-resource-row-open { flex-basis: calc(100% - 70px); }
+  .echoink-settings-demo.echoink-settings-aligned .codex-resource-assignment { margin-left: auto; }
+}
+@container settings (max-width: 520px) {
+  .echoink-settings-demo.echoink-settings-aligned { padding-inline: 16px; }
+  .echoink-settings-demo.echoink-settings-aligned .setting-item { flex-wrap: wrap; }
+  .echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > .setting-item > .setting-item-info { flex: 1 1 130px; }
+  .echoink-settings-demo.echoink-settings-aligned .setting-item-control { max-width: 100%; margin-left: auto; }
+  .echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta { flex-wrap: wrap; }
+  .echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state { flex-basis: auto; }
+}

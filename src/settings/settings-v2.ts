@@ -11,6 +11,8 @@ export interface SettingsPageOptions {
   readonly detail?: boolean;
   readonly onBack?: () => void;
   readonly backLabel?: string;
+  /** Keep a top-level heading available to assistive technology without duplicating the tab label. */
+  readonly titleVisibility?: "visible" | "screen-reader";
 }
 
 export interface SettingsSectionOptions {
@@ -50,6 +52,7 @@ export function createSettingsPage(
     back.onclick = options.onBack;
   }
   const header = page.createDiv({ cls: "echoink-settings-page-header page-intro" });
+  if (options.titleVisibility === "screen-reader") header.addClass("is-title-hidden");
   const heading = header.createDiv({ cls: "echoink-settings-page-heading" });
   heading.createEl("h2", {
     text: options.title,

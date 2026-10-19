@@ -1907,6 +1907,7 @@ async function assertProviderApiKeyPersistenceLifecycle(): Promise<void> {
   const reloadedPlugin = {
     settings: structuredClone(DEFAULT_SETTINGS),
     getVaultPath: () => path.join(tmpdir(), "echoink-provider-key-persistence-fixture"),
+    getPluginDataDirName: () => ".obsidian/plugins/echoink",
     loadData: async () => structuredClone(persisted),
     saveData: async (value: unknown) => {
       persisted = structuredClone(value);
@@ -5608,6 +5609,73 @@ async function assertSettingsDeleteFailuresKeepAuthoritativeRows(): Promise<void
   console.log("PASS P11 delete failures: actual settings Provider/MCP methods keep configuration, current model, rows and retry; no false refresh/save");
 }
 
+async function assertDesktopDemoResourceGroupsPreserveSearch(): Promise<void> {
+  installProviderModalDomFixture();
+  const previousDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.settingsTab = "providers";
+  const provider = createApiProviderConfig("deepseek", "align-provider"); provider.apiKey = "synthetic-key";
+  settings.apiProviders = [provider]; activateApiProvider(settings, provider);
+  const custom = { id: "echoink-local:skill:align-custom", kind: "skill" as const, source: "echoink-local" as const,
+    name: "CUSTOM-SEARCH", description: "用户自建原文", enabled: false, bridgeMode: "prompt-only" as const };
+  const builtin = { ...custom, id: "echoink-local:skill:daily-journal", name: "内置日记", metadata: { resourceId: "daily-journal", userModified: true, fileStatus: "missing" } };
+  const server = { ...mcpResourceFixture("align-mcp", true), bridgeMode: "native-mcp" as const };
+  settings.resources.catalog = [custom, builtin, server];
+  settings.resources.mcpConnections[server.id] = { transport: "http", url: "https://mcp-fixture.invalid", trusted: false, tools: [], toolPolicies: {} };
+  let saves = 0;
+  const plugin = withSettingsTabDefaults({ app: new App(), manifest: { id: "align-fixture" }, settings, saveSettings: async () => { saves++; } });
+  const tab = new CodexSettingTab(plugin as never), mutable = tab as any;
+  mutable.runtimeEchoInkResources = [custom, builtin, server];
+  try {
+    tab.display();
+    assert.ok(tab.containerEl.querySelector(".echoink-settings-aligned"));
+    assert.equal(tab.containerEl.querySelectorAll("button[data-settings-tab]").length, 6);
+    assert.ok(tab.containerEl.querySelector('[data-echoink-focus-key="providers:add"]'));
+    assert.ok(tab.containerEl.querySelector('[data-echoink-focus-key="provider:align-provider:delete"]'));
+    const originalOnOpen = ProviderModelModal.prototype.onOpen;
+    let openedDetached = false, inheritedPresentation = false;
+    try {
+      ProviderModelModal.prototype.onOpen = function() {
+        // This legacy DOM fixture defaults isConnected to true; actual shell
+        // ancestry still distinguishes the production detached mount phase.
+        openedDetached = !tab.containerEl.contains(this.modalEl);
+        inheritedPresentation = this.modalEl.closest(".echoink-settings-aligned") !== null;
+        originalOnOpen.call(this);
+      };
+      mutable.openProviderModelModal(provider, true);
+    } finally { ProviderModelModal.prototype.onOpen = originalOnOpen; }
+    assert.equal(openedDetached, true, "the production editor still opens before its host is attached to the settings shell");
+    assert.equal(inheritedPresentation, true, "the production detached host passes desktop presentation before onOpen");
+    assert.ok(tab.containerEl.querySelector(".echoink-provider-form-brand"), "the first real editor render uses its configured presentation");
+    assert.equal(tab.containerEl.querySelectorAll(".provider-form-section").length, 2);
+    mutable.resourceSnapshot = emptyWorkspaceResourceSnapshot(); mutable.resourceLoaded.skills = true; mutable.resourceLoaded.mcp = true;
+    resetSynchronousSettingsDisplayFrame(tab); tab.openDesktopRoute({ tab: "capabilities", capabilityTab: "skills" }); mutable.renderSettingsContent();
+    const customRow = tab.containerEl.querySelector<ProviderModalTestElement>(`[data-resource-key="${custom.id}"]`)!;
+    const builtinRow = tab.containerEl.querySelector<ProviderModalTestElement>(`[data-resource-key="${builtin.id}"]`)!;
+    assert.ok(customRow); assert.ok(builtinRow);
+    assert.equal(customRow.closest('[data-resource-group="custom"]')?.getAttribute("data-resource-group"), "custom");
+    assert.equal(builtinRow.closest('[data-resource-group="builtin"]')?.getAttribute("data-resource-group"), "builtin");
+    assert.equal(builtinRow.querySelector("[data-resource-preset]"), null, "the desktop built-in group does not repeat a static preset badge");
+    assert.ok(builtinRow.querySelector('[data-resource-skill-state="customized"]'));
+    assert.ok(builtinRow.querySelector('[data-resource-skill-state="missing"]'), "real customization and file errors stay visible");
+    const detail = customRow.querySelector(`[data-echoink-focus-key="resource:${custom.id}:detail"]`)!;
+    assert.match(detail.textContent, /CUSTOM-SEARCH.*用户自建原文/u, "the left navigation control includes the description");
+    assert.equal(customRow.querySelector(".codex-resource-row-desc")!.textContent, "用户自建原文", "desktop descriptions retain source text without appending UI provenance");
+    assert.equal(detail.querySelector('[role="switch"]'), null, "the resource toggle remains an independent control");
+    mutable.resourceSearchQuery.skills = "CUSTOM-SEARCH"; mutable.applyResourceSearchFilter("skills");
+    assert.equal(customRow.hasClass("is-search-hidden"), false); assert.equal(builtinRow.hasClass("is-search-hidden"), true);
+    mutable.resourceSearchQuery.skills = ""; mutable.applyResourceSearchFilter("skills"); assert.equal(builtinRow.hasClass("is-search-hidden"), false);
+    resetSynchronousSettingsDisplayFrame(tab); tab.openDesktopRoute({ tab: "capabilities", capabilityTab: "mcp" }); mutable.renderSettingsContent();
+    const mcpAdd = tab.containerEl.querySelector('[data-echoink-focus-key="resources:mcp:add"]');
+    assert.ok(mcpAdd); assert.ok(mcpAdd.closest(".codex-resource-list-header"));
+    const mcpRow = tab.containerEl.querySelector(`[data-resource-key="${server.id}"]`)!;
+    assert.ok(mcpRow.querySelector(".codex-resource-connection-state"));
+    assert.doesNotMatch(mcpRow.querySelector(".codex-resource-connection-state")!.textContent, /已连接|Connection verified/iu, "a configured endpoint is not a verified connection");
+    assert.equal(saves, 0, "opening, searching and switching presentation do not persist settings");
+  } finally { tab.hide(); Platform.isDesktopApp = previousDesktop; }
+  console.log("PASS aligned desktop shell/resource groups: six search rows, retained actions, independent controls, filtering, real MCP status and zero navigation writes");
+}
+
 async function assertSettingsRouteTargetsHostCopy(): Promise<void> {
   const previousDesktop = Platform.isDesktopApp;
   try {
@@ -6081,6 +6149,7 @@ async function assertRetiredSettingsRewritePersistence(): Promise<void> {
   const plugin = {
     settings: structuredClone(DEFAULT_SETTINGS),
     getVaultPath: () => path.join(tmpdir(), "echoink-retired-settings-rewrite-fixture"),
+    getPluginDataDirName: () => ".obsidian/plugins/echoink",
     loadData: async () => structuredClone(persisted),
     saveData: async (value: unknown) => {
       saveCount += 1;
@@ -6091,8 +6160,12 @@ async function assertRetiredSettingsRewritePersistence(): Promise<void> {
   await store.loadSettings();
   assert.equal(saveCount, 1);
   const serialized = JSON.stringify(persisted);
-  assert.doesNotMatch(serialized, /sentinel-not-a-real-key|"agents"|"hermes"/u);
+  assert.doesNotMatch(serialized, /sentinel-not-a-real-key/u);
   const data = persisted as Record<string, any>;
+  assert.equal(Object.hasOwn(data, "agents"), false, "retired top-level Agent settings must be removed");
+  assert.equal(Object.hasOwn(data, "hermes"), false, "retired top-level Hermes settings must be removed");
+  assert.ok(Array.isArray(data.agentRegistry.agents), "the current registry retains its legitimate agents array");
+  assert.ok(data.agentRegistry.agents.some((agent: { id: string }) => agent.id === "sol"));
   assert.equal(Object.hasOwn(data.knowledgeBase, "enabled"), false);
   assert.equal(Object.hasOwn(data.knowledgeBase, "scheduleTime"), false);
   assert.equal(Object.hasOwn(data.knowledgeBase, "catchUpOnStartup"), false);
@@ -11350,7 +11423,7 @@ async function assertProviderModelModalCloseCancelsPendingPreflight(): Promise<v
       status: "available"
     })
   };
-  const modal = new ProviderModelModal({
+  const createModal = () => new ProviderModelModal({
     app: new App(),
     draft: provider,
     editing: true,
@@ -11359,6 +11432,7 @@ async function assertProviderModelModalCloseCancelsPendingPreflight(): Promise<v
     preflight: service,
     save: async () => ({ saved: true })
   });
+  let modal = createModal();
   const closedRequestModel = "closed-request-model";
 
   modal.open();
@@ -11368,7 +11442,11 @@ async function assertProviderModelModalCloseCancelsPendingPreflight(): Promise<v
   modal.close();
   first.resolve({ status: "available", models: [{ id: closedRequestModel }] });
   await flushProviderModalTasks();
+  assert.equal(modal.contentEl.textContent, "", "a late discovery response cannot rebuild the disposed form");
 
+  // Settings creates a fresh editor for a new open. Closing the previous
+  // instance deliberately clears its transient key and its copied draft key.
+  modal = createModal();
   modal.open();
   assert.equal(attempt, 1);
   assertProviderModalStatus(modal, "idle");
@@ -13780,7 +13858,10 @@ async function writeSettingsVisualFixtures(): Promise<void> {
 }
 
 Platform.isDesktopApp = false;
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p11-settings") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "settings-demo-align") {
+  await assertDesktopDemoResourceGroupsPreserveSearch();
+  await assertSettingsRouteTargetsHostCopy();
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p11-settings") {
   await assertProviderActivationMainTransactionContract();
   await assertPersistedProviderRollbackPreservesQueuedSettingsSave();
   console.log("PASS P11 Provider activation transaction and persisted rollback preserve queued unrelated settings saves");

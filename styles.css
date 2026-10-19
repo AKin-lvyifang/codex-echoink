@@ -19803,7 +19803,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 .echoink-settings-demo .codex-settings-body pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.9 ui-monospace,SFMono-Regular,Menlo,monospace}
 .echoink-settings-demo main[role=tabpanel]:focus-visible{outline:2px solid var(--accent);outline-offset:6px}
 @container settings (max-width:760px){.echoink-settings-demo .settings-card{padding:17px}.echoink-settings-demo .settings-grid{gap:12px}.echoink-settings-demo .settings-card-header{gap:12px}.echoink-settings-demo .settings-toolbar{flex-wrap:wrap}.echoink-settings-demo .settings-search{flex:1;min-width:140px}.echoink-settings-demo .setting-controls>.settings-input{width:200px}.echoink-settings-demo .codex-settings-body .setting-controls{max-width:48%}.echoink-settings-demo .settings-card-header p{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-settings-demo .settings-stack>.setting-row{padding:15px}}
-@container settings (max-width:600px){.echoink-settings-demo .settings-grid{grid-template-columns:1fr}.echoink-settings-demo .settings-card{padding:16px}.echoink-settings-demo .settings-toolbar{gap:10px}.echoink-settings-demo .settings-toolbar>.settings-search{width:100%;flex-basis:100%}.echoink-settings-demo .codex-settings-body .setting-row{flex-direction:column;gap:11px}.echoink-settings-demo .codex-settings-body .setting-controls{max-width:none;width:100%;justify-content:flex-end}.echoink-settings-demo .setting-controls>.settings-input{width:100%;flex:1}.echoink-settings-demo .settings-stack>.setting-row:has(>.setting-controls>.settings-switch){flex-direction:row;align-items:center}.echoink-settings-demo .settings-stack>.setting-row:has(>.setting-controls>.settings-switch)>.setting-controls{width:auto}.echoink-settings-demo .settings-card-header{flex-wrap:wrap}.echoink-settings-demo .settings-card-header>div:first-child{min-width:0}.echoink-settings-demo .settings-section-title{align-items:flex-start}.echoink-settings-demo .settings-note{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-settings-demo .settings-inline{gap:8px}}
+@container settings (max-width:600px){.echoink-settings-demo .settings-grid{grid-template-columns:1fr}.echoink-settings-demo .settings-card{padding:16px}.echoink-settings-demo .settings-toolbar{gap:10px}.echoink-settings-demo .settings-toolbar>.settings-search{width:100%;flex-basis:100%}.echoink-settings-demo:not(.echoink-settings-aligned) .codex-settings-body .setting-row{flex-direction:column;gap:11px}.echoink-settings-demo:not(.echoink-settings-aligned) .codex-settings-body .setting-controls{max-width:none;width:100%;justify-content:flex-end}.echoink-settings-demo .setting-controls>.settings-input{width:100%;flex:1}.echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-row:has(>.setting-controls>.settings-switch){flex-direction:row;align-items:center}.echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-row:has(>.setting-controls>.settings-switch)>.setting-controls{width:auto}.echoink-settings-demo .settings-card-header{flex-wrap:wrap}.echoink-settings-demo .settings-card-header>div:first-child{min-width:0}.echoink-settings-demo .settings-section-title{align-items:flex-start}.echoink-settings-demo .settings-note{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-settings-demo .settings-inline{gap:8px}}
 .theme-dark .echoink-settings-demo{--danger:#da999d;--danger-bg:#423035}
 .theme-dark .echoink-settings-demo .settings-input,.theme-dark .echoink-settings-demo .settings-search{background:var(--soft)}
 @media(prefers-reduced-motion:reduce){.echoink-settings-demo .settings-switch,.echoink-settings-demo .settings-switch:after{transition:none}}
@@ -20971,13 +20971,13 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 }
 @container settings (max-width:600px){
  /* Navigation rows stack here; stretch their copy despite the shared button's centered alignment. */
- .echoink-settings-demo .echoink-settings-navigation-row>.echoink-settings-navigation-copy{align-self:stretch;width:100%;text-align:start}
- .echoink-settings-demo .setting-item:not(:has([data-slot=switch])){flex-direction:column;align-items:stretch;gap:11px}
- .echoink-settings-demo .setting-item:not(:has([data-slot=switch]))>.setting-item-control{max-width:none;width:100%;justify-content:flex-end}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .echoink-settings-navigation-row>.echoink-settings-navigation-copy{align-self:stretch;width:100%;text-align:start}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch])){flex-direction:column;align-items:stretch;gap:11px}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch]))>.setting-item-control{max-width:none;width:100%;justify-content:flex-end}
  /* Keep Demo switch rows compact after the legacy narrow setting-row layout. */
- .echoink-settings-demo .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch]){flex-direction:row;flex-wrap:nowrap;align-items:stretch}
- .echoink-settings-demo .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-info{width:auto;align-self:stretch;text-align:left}
- .echoink-settings-demo .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-control{width:auto;max-width:none;align-self:center;justify-content:flex-end}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch]){flex-direction:row;flex-wrap:nowrap;align-items:stretch}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-info{width:auto;align-self:stretch;text-align:left}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-control{width:auto;max-width:none;align-self:center;justify-content:flex-end}
  .echoink-settings-demo .setting-item-control input:not([type=range]){width:100%}
  .echoink-settings-demo .echoink-agent-profile-card-body{grid-template-columns:1fr}
  .echoink-settings-demo .echoink-agent-profile-identity{border:0;border-bottom:1px solid var(--line);padding:0 0 17px}
@@ -23725,6 +23725,686 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
     animation: none;
   }
 }
+/* The aligned settings canvas uses the Demo's page surface, not the legacy raised card surface. */
+body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned {
+  --bg: var(--echoink-theme-bg);
+  --background-primary: var(--echoink-theme-bg);
+  --interactive-normal: var(--echoink-theme-bg);
+}
+/* Desktop settings presentation. Mobile retains its existing settings surfaces. */
+.echoink-settings-demo.echoink-settings-aligned {
+  max-width: none; padding: 20px 32px 48px; font-size: 13px; line-height: 1.55;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title { padding: 0; margin: 0 0 14px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title .setting-item { display: block; min-height: 0; padding: 0; border: 0; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title .setting-item-info { flex: none; width: auto; min-height: 0; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title .setting-item-control:empty { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-title .setting-item-name { font-size: 15px; font-weight: 600; letter-spacing: normal; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs-slot { position: static; padding: 0; margin-bottom: 26px; border-bottom: 1px solid var(--line); }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs-slot::before,
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs-slot::after { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px; height: auto; min-height: 0;
+  margin: 0; padding: 0 0 12px; overflow: visible; border: 0; background: transparent;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs > .echoink-native-settings-row { height: auto; min-height: 0; margin: 0; padding: 0; border: 0; background: transparent; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab {
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 7px;
+  flex: none; width: auto; min-width: 0; height: auto; min-height: 34px; margin: 0; padding: 8px 13px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--secondary); font-size: 13px;
+  transform: none; clip-path: none; box-shadow: none; transition: background-color 150ms, color 150ms;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab::before,
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab::after { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab.is-active { background: var(--accent-bg); color: var(--accent); font-weight: 500; transform: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab:is(:hover, :focus-visible) { background: var(--soft); outline: none; box-shadow: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs .codex-settings-tab .codex-settings-tab-label {
+  display: inline-flex; width: auto; max-width: none; grid-template-columns: none; opacity: 1; visibility: visible;
+  overflow: visible; color: inherit; font-size: 13px; line-height: 1.4; transform: none; transition: none;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tab-label > span { overflow: visible; white-space: nowrap; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tab-icon { width: 14px; height: 14px; flex: 0 0 14px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-settings-tab-icon svg { width: 14px; height: 14px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page-header.is-title-hidden,
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-summary {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page { --settings-page-gap: 0px; --settings-intro-content: 16px; --settings-page-title-size: 17px; --settings-tabs-toolbar: 16px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page-header { margin: 0 0 16px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page-heading h2,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-title { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.55; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section { margin: 0 0 26px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+/* The theme boundary still paints legacy settings-card surfaces; headings stay outside. */
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section.settings-card:not(.echoink-module-drawer) { background: transparent; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section-header { display: flex; flex-direction: row; align-items: center; gap: 8px; margin: 0 0 10px; padding: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section-header h3,
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-list-header h3 { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.55; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group { display: block; gap: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section > .echoink-settings-group {
+  border: 1px solid var(--line); border-radius: 10px; padding: 0; margin: 0; background: var(--bg); overflow: hidden;
+}
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > .setting-item,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button]:not(.echoink-agent-settings-row),
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-row {
+  display: flex; flex-direction: row; align-items: center; text-align: left; gap: 12px; min-height: 52px; margin: 0; padding: 13px 18px; border: 0; border-radius: 0; background: transparent;
+}
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > .setting-item + .setting-item,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button]:not(.echoink-agent-settings-row):not(:first-child),
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-row + .echoink-settings-compact-row { border-top: 1px solid var(--line); }
+/* Keep navigation copy and its trailing value/arrow together against legacy narrow button rows. */
+.echoink-settings-demo.echoink-settings-aligned button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] { flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: space-between; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row > .echoink-settings-navigation-copy { flex: 1 1 auto; min-width: 0; width: auto; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row > .echoink-settings-navigation-trailing { flex-direction: row; flex-wrap: nowrap; align-items: center; align-self: center; width: auto; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item { flex-direction: row; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-info { flex: 1 1 0; width: auto; min-width: 0; margin: 0; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-name,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-title { font-size: 13px; font-weight: 500; line-height: 1.55; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-description,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-description { font-size: 12px; line-height: 1.55; margin-top: 1px; color: var(--secondary); }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-control { flex: 0 1 auto; width: auto; max-width: 55%; gap: 8px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section-description { font-size: 12px; color: var(--secondary); }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-editor > .settings-back,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page > .settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-surface { margin: 0; padding: 0; border: 0; background: transparent; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-title { margin-bottom: 16px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer > summary { margin: 0; padding: 0; border-radius: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer > summary .setting-item { min-height: 52px; padding: 16px 18px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer[open] > summary { margin: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-options { padding: 0; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-options > .setting-item { padding: 13px 18px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-about-compact { padding: 13px 18px; min-height: 52px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-icon,
+.echoink-settings-demo.echoink-settings-aligned button.echoink-about-compact-icon { display: grid; place-items: center; flex: 0 0 31px; width: 31px; height: 31px; padding: 0; border: 0; border-radius: 8px; background: var(--soft); color: var(--secondary); }
+.echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-icon svg { width: 15px; height: 15px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-about-compact-brand { flex: 1 1 auto; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-about-compact-actions { flex: 0 0 auto; margin-left: auto; flex-wrap: nowrap; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-section.settings-card { padding: 0; border: 0; background: transparent; margin: 0 0 26px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-add-section { padding: 0; margin: 0 0 10px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-add-title { font-size: 13px; font-weight: 600; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-list { padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-row { margin: 0; padding: 13px 18px; min-height: 52px; gap: 8px 12px; border: 0; background: transparent; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-row + .codex-provider-saved-row { border-top: 1px solid var(--line); }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-identity { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 220px; padding: 0; height: auto; border: 0; background: transparent; text-align: left; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-copy { flex: 1; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-arrow { flex: none; color: var(--muted); }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-model strong { font-size: 13px; font-weight: 500; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-details { font-size: 12px; line-height: 1.55; margin-top: 1px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta > button:not(.echoink-delete-button) { min-height: 28px; padding: 3px 6px; font-size: 12px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-tabs { gap: 22px; margin-bottom: 16px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-tabs > button.codex-resource-tab { font-size: 13px; font-weight: 400; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-tab .settings-motion-icon { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-toolbar { gap: 12px; margin-bottom: 16px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-toolbar-actions > button { min-height: 30px; padding: 5px 8px; font-size: 12px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-list-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-list-header .codex-resource-group-title { flex: 1; min-height: 0; margin: 0; padding: 0; border: 0; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-group-title .setting-item-name { font-size: 13px; font-weight: 600; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-list-header > .codex-resource-add { margin-left: auto; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-body { display: block; padding: 0; gap: 0; border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-body > .echoink-settings-section { margin-bottom: 26px; }
+.echoink-settings-demo.echoink-settings-aligned [data-resource-group]:not(:has(.codex-resource-row:not(.is-search-hidden))) { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-body .codex-resource-row {
+  display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 13px 18px; margin: 0; border: 0; border-radius: 0; background: transparent;
+}
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-body .codex-resource-row + .codex-resource-row { border-top: 1px solid var(--line); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-body .codex-resource-row.is-search-hidden { display: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row-open.codex-resource-row-name { display: flex; align-items: center; justify-content: flex-start; gap: 12px; flex: 1; min-width: 0; max-width: 100%; height: auto; margin: 0; padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; white-space: normal; font-size: 13px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row-content { min-width: 0; flex: 1; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-row-icon { display: grid; place-items: center; width: 31px; height: 31px; min-width: 31px; flex: 0 0 31px; border: 0; border-radius: 8px; background: var(--soft); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-row-icon > svg { width: 15px; height: 15px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row-title { font-size: 13px; font-weight: 500; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-manager .codex-resource-row-desc { margin-top: 1px; font-size: 12px; line-height: 1.55; white-space: normal; overflow-wrap: anywhere; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state { flex: none; font-size: 12px; color: var(--secondary); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state.is-failed { color: var(--text-warning); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-assignment { font-size: 12px; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-toggle { flex: none; }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row:has(.codex-resource-row-open:is(:hover, :focus-visible)) { background: var(--soft); }
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-row:has(.codex-provider-saved-identity:is(:hover, :focus-visible)) { background: var(--soft); }
+.echoink-settings-demo.echoink-settings-aligned .codex-resource-row-open:focus-visible,
+.echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-identity:focus-visible { outline: none; box-shadow: none; }
+@container settings (max-width: 760px) {
+  .echoink-settings-demo.echoink-settings-aligned { padding-inline: 20px; }
+  .echoink-settings-demo.echoink-settings-aligned .codex-resource-body .codex-resource-row { flex-wrap: wrap; }
+  .echoink-settings-demo.echoink-settings-aligned .codex-resource-row-open { flex-basis: calc(100% - 70px); }
+  .echoink-settings-demo.echoink-settings-aligned .codex-resource-assignment { margin-left: auto; }
+}
+@container settings (max-width: 520px) {
+  .echoink-settings-demo.echoink-settings-aligned { padding-inline: 16px; }
+  .echoink-settings-demo.echoink-settings-aligned .setting-item { flex-wrap: wrap; }
+  .echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > .setting-item > .setting-item-info { flex: 1 1 130px; }
+  .echoink-settings-demo.echoink-settings-aligned .setting-item-control { max-width: 100%; margin-left: auto; }
+  .echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta { flex-wrap: wrap; }
+  .echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state { flex-basis: auto; }
+}
+/* Settings-only form composition. Shared controllers keep their original lifecycle. */
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-options {
+  display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0;
+  width: fit-content; max-width: 100%; padding: 3px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--bg);
+}
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-choice {
+  flex: 1 1 auto; width: auto; height: auto; min-width: 0; min-height: 26px;
+  padding: 4px 10px; border-radius: 5px; color: var(--secondary);
+  font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; text-align: center;
+}
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-swatch { display: none; }
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-choice-title { white-space: normal; }
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-choice:has(> input:checked) { color: var(--text); background: var(--soft); font-weight: 500; }
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-choice:has(> input:not(:disabled)):is(:hover, :has(> input:focus-visible)) { background: var(--soft); }
+
+.echoink-settings-aligned .echoink-provider-service-cards { grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 10px; }
+.echoink-settings-aligned button.echoink-provider-service-card.echoink-origin-control[data-slot=button] { height: auto; min-height: 0; padding: 12px 14px; gap: 12px; }
+.echoink-settings-aligned .echoink-provider-service-icon { width: 31px; height: 31px; flex: 0 0 31px; border-radius: 8px; background: var(--soft); color: var(--secondary); }
+.echoink-settings-aligned .echoink-provider-service-icon > svg { width: 18px; height: 18px; }
+.echoink-settings-aligned .echoink-provider-service-copy { display: flex; flex: 1; flex-direction: column; gap: 0; min-width: 0; }
+.echoink-settings-aligned .echoink-provider-service-name { font-size: 13px; font-weight: 500; line-height: 1.55; }
+.echoink-settings-aligned .echoink-provider-service-description { color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; overflow-wrap: anywhere; }
+.echoink-settings-aligned .echoink-provider-service-status { display: inline-flex; align-items: center; flex: none; gap: 4px; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-settings-aligned .echoink-provider-service-status svg { width: 13px; height: 13px; }
+
+/* Provider fields remain complete; outer headings sit above continuous groups. */
+.echoink-settings-aligned .codex-provider-modal-title { align-items: center; }
+.echoink-settings-aligned .echoink-provider-form-brand { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 8px; background: var(--soft); }
+.echoink-settings-aligned .echoink-provider-form-brand svg { width: 22px; height: 22px; }
+.echoink-settings-aligned .codex-provider-modal-form { display: flex; flex-direction: column; gap: 22px; }
+.echoink-settings-aligned .provider-form-section { min-width: 0; }
+.echoink-settings-aligned .provider-form-section > .settings-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 8px; padding: 0; }
+.echoink-settings-aligned .provider-form-section > .settings-card-header h3 { margin: 0; font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 600; line-height: 1.6; }
+.echoink-settings-aligned .provider-form-section > .settings-card-header p { margin: 3px 0 0; font-size: calc(var(--font-text-size, 16px) * .75); color: var(--secondary); line-height: 1.7; }
+.echoink-settings-aligned :is(.provider-connection-card, .provider-model-card) { margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); box-shadow: none; }
+.echoink-settings-aligned .provider-connection-grid { display: contents; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-modal-field {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px); align-items: center; gap: 6px 18px;
+  margin: 0; padding: 13px 18px; min-height: 52px; border: 0; border-radius: 0;
+}
+.echoink-settings-aligned .provider-connection-card :is(.codex-provider-modal-field, .codex-provider-endpoint-summary, .codex-provider-oauth-card) + :is(.codex-provider-modal-field, .codex-provider-endpoint-summary, .codex-provider-oauth-card),
+.echoink-settings-aligned .provider-connection-card .provider-connection-grid + :is(.codex-provider-modal-field, .codex-provider-endpoint-summary, .codex-provider-oauth-card),
+.echoink-settings-aligned .provider-connection-grid > .codex-provider-modal-field + .codex-provider-modal-field { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .provider-connection-card .codex-provider-modal-label { grid-column: 1; grid-row: 1; margin: 0; color: var(--text); font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 400; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-modal-field > :is(.codex-provider-modal-input, .codex-provider-modal-input-control, .codex-provider-combobox, .provider-picker, [data-slot=select]) { grid-column: 2; grid-row: 1 / span 2; min-width: 0; width: 100%; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-modal-field > :is(.codex-provider-modal-description, .codex-provider-field-error) { grid-column: 1 / -1; margin: 0; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-endpoint-summary { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 18px; padding: 13px 18px; min-width: 0; }
+.echoink-settings-aligned .codex-provider-endpoint-summary code { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-oauth-card { margin: 0; padding: 13px 18px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
+.echoink-settings-aligned .provider-model-card > .codex-provider-modal-field { display: flex; flex-direction: column; gap: 12px; padding: 13px 18px; }
+.echoink-settings-aligned .codex-provider-model-choice { margin: 0; padding: 12px 0; border: 0; border-radius: 0; background: none; }
+.echoink-settings-aligned .codex-provider-model-choice + .codex-provider-model-choice { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .codex-provider-modal-footer { margin-top: 18px; }
+.echoink-settings-aligned .codex-provider-modal-actions { justify-content: flex-end; }
+.echoink-settings-aligned .codex-provider-combobox-search:focus-within { border-color: var(--line); background: var(--soft); outline: none; box-shadow: none; }
+.echoink-settings-aligned .codex-provider-combobox-option.is-selected { color: var(--text); background: var(--soft); }
+.echoink-settings-aligned :is(.provider-form-section h3, .codex-provider-modal-label, .codex-provider-manual-model-copy, .codex-provider-model-advanced-heading) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help).echoink-origin-control[data-slot=button] { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; border: 0; background: transparent; color: var(--secondary); vertical-align: middle; }
+.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help).echoink-origin-control[data-slot=button]:is(:hover, :focus-visible) { background: var(--soft); }
+.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help) svg { width: 13px; height: 13px; }
+.echoink-settings-aligned :is(.codex-provider-modal-label:has(> .echoink-provider-form-help), .codex-mcp-server-label:has(> .echoink-mcp-form-help)) { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px; }
+.echoink-settings-aligned .codex-mcp-server-label > .echoink-mcp-form-help { margin-left: 0; }
+
+/* MCP groups share the settings row rhythm without reducing their field set. */
+.echoink-settings-aligned .codex-mcp-server-form { display: flex; flex-direction: column; gap: 22px; }
+.echoink-settings-aligned .codex-mcp-server-form > .echoink-settings-section { margin: 0; }
+.echoink-settings-aligned .codex-mcp-form-card { display: flex; flex-direction: column; gap: 0; padding: 0; }
+.echoink-settings-aligned .codex-mcp-form-card .codex-mcp-server-field {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px); align-items: start; gap: 6px 18px;
+  min-width: 0; min-height: 52px; margin: 0; padding: 13px 18px;
+}
+.echoink-settings-aligned .codex-mcp-form-card > .codex-mcp-server-field + .codex-mcp-server-field { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .codex-mcp-server-label { grid-column: 1; margin: 0; font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 400; line-height: 1.6; }
+.echoink-settings-aligned .codex-mcp-server-field-description { display: block; margin-top: 4px; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.7; }
+.echoink-settings-aligned .codex-mcp-server-field > :is(input, textarea, .echoink-origin-control) { grid-column: 2; min-width: 0; width: 100%; }
+.echoink-settings-aligned .codex-mcp-server-field > .codex-mcp-server-field-error { grid-column: 1 / -1; }
+.echoink-settings-aligned .codex-mcp-credential-description { padding: 13px 18px; border-bottom: 1px solid var(--line); line-height: 1.7; }
+.echoink-settings-aligned .codex-mcp-credential-clear { padding: 13px 18px; border-top: 1px solid var(--line); }
+.echoink-settings-aligned .codex-mcp-server-modal-footer { justify-content: flex-end; }
+
+/* Search enablement comes first; quota, outbound scope and real result stay visible. */
+.echoink-settings-aligned .echoink-tavily-card { display: flex; flex-direction: column; gap: 0; }
+.echoink-settings-aligned .echoink-tavily-key-label { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 340px); align-items: start; gap: 8px 18px; padding: 13px 18px; margin: 0; border-top: 1px solid var(--line); font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 400; }
+.echoink-settings-aligned .echoink-tavily-key-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.echoink-settings-aligned .echoink-tavily-links { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 0; font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-settings-aligned .echoink-tavily-key-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.echoink-settings-aligned .echoink-tavily-key-control > input { flex: 1 1 160px; width: auto; min-width: 0; }
+.echoink-settings-aligned .echoink-tavily-test { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; width: 100%; margin: 0; }
+.echoink-settings-aligned .echoink-tavily-state:empty { display: none; }
+.echoink-settings-aligned .echoink-tavily-state:not(:empty) { padding: 0 18px 13px; }
+
+/* Agent overview: one continuous group, with ownership separate from role copy. */
+.echoink-settings-aligned .echoink-agent-settings > .echoink-settings-section > .echoink-settings-section-header { gap: 12px; margin-bottom: 8px; }
+.echoink-settings-aligned .echoink-agent-settings > .echoink-settings-section > .echoink-settings-section-header > button { margin-left: auto; }
+.echoink-settings-aligned .echoink-agent-settings-list { gap: 0; }
+.echoink-settings-aligned.echoink-settings-aligned button.echoink-agent-settings-row.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] {
+  display: grid; grid-template-columns: 31px minmax(0, 1fr) minmax(0, auto) 16px; align-items: center; gap: 12px;
+  width: 100%; min-height: 52px; margin: 0; padding: 13px 18px; border: 0; border-radius: 0; background: transparent;
+}
+.echoink-settings-aligned button.echoink-agent-settings-row:first-child { border-radius: 9px 9px 0 0; }
+.echoink-settings-aligned button.echoink-agent-settings-row:last-child { border-radius: 0 0 9px 9px; }
+.echoink-settings-aligned button.echoink-agent-settings-row:only-child { border-radius: 9px; }
+.echoink-settings-aligned button.echoink-agent-settings-row + button.echoink-agent-settings-row { border-top: 1px solid var(--line); }
+.echoink-settings-aligned button.echoink-agent-settings-row:is(:hover, :focus-visible) { background: var(--soft); }
+.echoink-settings-aligned .echoink-agent-settings-row .echoink-settings-navigation-trailing { grid-column: 4; grid-row: 1; }
+.echoink-settings-aligned .echoink-agent-settings-modules { grid-column: 3; grid-row: 1; max-width: 230px; margin: 0; text-align: right; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.7; }
+.echoink-settings-aligned .echoink-agent-owner-row { grid-template-columns: minmax(0, 1fr) minmax(0, 210px); padding: 13px 18px; min-height: 52px; }
+.echoink-settings-aligned .echoink-agent-owner-row + .echoink-agent-owner-row { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-agent-owner-control { display: flex; align-items: center; gap: 8px; }
+.echoink-settings-aligned .echoink-agent-owner-avatar { width: 22px; height: 22px; flex: 0 0 22px; }
+.echoink-settings-aligned .echoink-agent-owner-control .echoink-origin-control { flex: 1; width: auto; }
+.echoink-settings-aligned .echoink-memory-settings > .echoink-module-drawer.settings-card { margin: 0 0 10px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-header { padding-right: 18px; }
+.echoink-settings-aligned .echoink-memory-settings button.echoink-module-drawer-trigger.echoink-origin-control[data-slot=button] { min-height: 64px; padding: 16px 0 16px 18px; gap: 12px; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-title { font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 500; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-summary { font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.6; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content { padding: 0; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-dream-options { display: contents; margin: 0; padding: 0; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item,
+.echoink-settings-aligned .echoink-memory-settings button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] {
+  box-sizing: border-box; display: flex; flex-direction: row; align-items: center; gap: 12px;
+  width: 100%; min-width: 0; min-height: 52px; height: auto; margin: 0; padding: 13px 18px;
+  border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left;
+}
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content > .setting-item:first-child,
+.echoink-settings-aligned .echoink-memory-settings > .echoink-settings-group > button.echoink-settings-navigation-row:first-child { border-top: 0; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item-info { flex: 1 1 0%; width: auto; min-width: 0; min-height: 0; height: auto; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item-name { display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 6px; font-size: calc(var(--font-text-size, 16px) * .8125); }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item-control { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; width: auto; min-width: 0; max-width: 60%; gap: 8px; margin: 0; }
+.echoink-settings-aligned .echoink-memory-settings .setting-item:has([data-echoink-focus-key="general:memory:dream"]) > .setting-item-control { order: -1; flex: none; width: auto; max-width: none; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item-control.general-range { flex: 0 1 210px; max-width: min(60%, 210px); flex-wrap: nowrap; }
+.echoink-settings-aligned .echoink-memory-settings .general-range > .echoink-origin-control[data-slot=slider] { flex: 1 1 120px; width: auto; min-width: 80px; max-width: 150px; }
+.echoink-settings-aligned .echoink-memory-settings .general-range > output { flex: none; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-settings-navigation-copy { flex: 1 1 0%; width: auto; min-width: 0; text-align: left; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-settings-navigation-trailing { flex: none; width: auto; margin-left: auto; }
+.echoink-settings-aligned .echoink-memory-settings button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button]:is(:hover, :focus-visible) { background: var(--soft); }
+
+/* The settings variant has its own return row; the task sidebar keeps its header. */
+.echoink-settings-aligned .echoink-agent-editor.is-settings { height: auto; min-height: 0; overflow: visible; font-size: calc(var(--font-text-size, 16px) * .8125); }
+.echoink-settings-aligned .echoink-agent-editor.is-settings > .echoink-agent-editor-back {
+  display: inline-flex; align-items: center; align-self: flex-start; justify-content: flex-start; flex: none;
+  width: auto; min-height: 30px; padding: 6px 0; margin: 0 0 14px; gap: 6px; border: 0; color: var(--secondary);
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-header { gap: 10px; margin: 0 0 18px; padding: 0; border: 0; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-avatar-preview { flex-basis: 34px; width: 34px; height: 34px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-title { font-size: calc(var(--font-text-size, 16px) * 1.0625); }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-body { padding: 0; overflow: visible; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line); border-radius: 10px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity { display: contents; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-section,
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-resources,
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity > :is(.echoink-agent-editor-section, .echoink-agent-editor-identity-field) { padding: 14px 18px; margin: 0; gap: 8px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > :is(.echoink-agent-editor-major, .echoink-agent-editor-identity):not(:first-child),
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity > .echoink-agent-editor-identity-field,
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-section + .echoink-agent-editor-identity > .echoink-agent-editor-section { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity-field { display: flex; flex-direction: column; min-width: 0; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity-field > .echoink-origin-control[data-slot=input] { max-width: min(100%, 420px); border-radius: 6px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-resources { padding-top: 22px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-label { margin: 0; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-avatar-grid { width: min(100%, 600px); max-width: 100%; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-avatar-grid-inner { grid-template-columns: repeat(16, minmax(0, 1fr)); }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-footer { margin: 0; padding: 18px 0 0; border: 0; }
+
+/* Profile labels, values and actions use independent columns in a wide window. */
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row { grid-template-columns: 110px minmax(0, 1fr) auto; gap: 12px; padding: 13px 18px; min-height: 52px; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row + .echoink-profile-row { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-name { color: var(--secondary); font-weight: 400; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-value { line-height: 1.85; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-edit { grid-column: 2 / -1; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row:has(> .echoink-profile-edit) > .echoink-profile-copy,
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-actions:empty { display: none; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-empty > summary { padding: 13px 18px; border-top: 1px solid var(--line); border-radius: 0 0 9px 9px; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-empty[open] > summary { border-bottom: 1px solid var(--line); border-radius: 0; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-empty:only-child > summary { border-top: 0; }
+.echoink-settings-aligned .echoink-memory-record-list { gap: 0; border: 1px solid var(--line); border-radius: 10px; }
+.echoink-settings-aligned .echoink-memory-record-list > .echoink-memory-correction-row { padding: 13px 18px; border: 0; border-radius: 0; }
+.echoink-settings-aligned .echoink-memory-record-list > .echoink-memory-correction-row + .echoink-memory-correction-row { border-top: 1px solid var(--line); }
+
+@container settings (max-width: 760px) {
+  .echoink-settings-aligned .provider-connection-card .codex-provider-modal-field,
+  .echoink-settings-aligned .codex-mcp-form-card .codex-mcp-server-field { grid-template-columns: minmax(0, 1fr) minmax(0, 220px); }
+  .echoink-settings-aligned .echoink-agent-settings-modules { max-width: 160px; }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row { grid-template-columns: 90px minmax(0, 1fr); }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row > .echoink-profile-actions { grid-column: 2; justify-content: flex-start; }
+}
+@container settings (max-width: 520px) {
+  .echoink-settings-aligned .echoink-tavily-key-label { grid-template-columns: minmax(0, 1fr); }
+  .echoink-settings-aligned .provider-connection-card .codex-provider-modal-field,
+  .echoink-settings-aligned .codex-mcp-form-card .codex-mcp-server-field { grid-template-columns: minmax(0, 1fr); }
+  .echoink-settings-aligned .provider-connection-card .codex-provider-modal-field > :is(.codex-provider-modal-input, .codex-provider-modal-input-control, .codex-provider-combobox, .provider-picker, [data-slot=select]),
+  .echoink-settings-aligned .codex-mcp-server-field > :is(input, textarea, .echoink-origin-control) { grid-column: 1; grid-row: auto; }
+  .echoink-settings-aligned.echoink-settings-aligned button.echoink-agent-settings-row.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] { grid-template-columns: 31px minmax(0, 1fr) 16px; gap: 6px 12px; }
+  .echoink-settings-aligned .echoink-agent-settings-row .echoink-settings-navigation-trailing { grid-column: 3; grid-row: 1; }
+  .echoink-settings-aligned .echoink-agent-settings-row:has(.echoink-agent-settings-modules) .echoink-settings-navigation-trailing { grid-row: 1 / span 2; }
+  .echoink-settings-aligned .echoink-agent-settings-modules { grid-column: 2; grid-row: 2; text-align: left; max-width: none; }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row > .echoink-profile-actions,
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-edit { grid-column: 1; }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row > .echoink-profile-actions { justify-content: flex-end; justify-self: stretch; }
+}
+@container settings (max-width: 320px) {
+  .echoink-settings-aligned .echoink-agent-owner-row { grid-template-columns: minmax(0, 1fr); }
+  .echoink-settings-aligned .echoink-agent-owner-control { width: 100%; }
+}
+/* Desktop module and account presentation within the aligned settings shell. */
+
+/* The drawer supplies the outside edge; each row owns its own 13/18 inset. */
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-group {
+  padding: 0;
+  margin: 0 0 26px;
+}
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-group > .echoink-settings-section-header {
+  margin: 0 0 10px;
+  padding: 0;
+}
+.echoink-settings-demo.echoink-settings-aligned .echoink-desktop-modules > .echoink-module-group > .echoink-module-drawer.echoink-settings-section {
+  margin: 0 0 10px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.echoink-settings-demo.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-chevron { transform: none; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer.is-expanded .echoink-module-drawer-chevron { transform: rotate(180deg); }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-header { padding-right: 18px; }
+.echoink-settings-aligned .echoink-desktop-modules button.echoink-module-drawer-trigger.echoink-origin-control[data-slot=button] {
+  min-height: 64px;
+  padding: 16px 0 16px 18px;
+  gap: 12px;
+}
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-copy { gap: 1px; }
+.echoink-settings-aligned .echoink-module-drawer-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-title { font-size: 13px; font-weight: 500; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-summary { font-size: 12px; line-height: 1.6; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content { padding: 0; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content :is(.echoink-settings-section, .echoink-settings-group, .echoink-life-settings-page) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-settings-section-header {
+  margin: 0;
+  padding: 12px 18px 4px;
+}
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-settings-section-header h3 {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) :is(.setting-item, .echoink-life-setting-row, button.echoink-settings-navigation-row) {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 52px;
+  margin: 0;
+  padding: 13px 18px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) :is(.setting-item, .echoink-life-setting-row):first-child,
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) button.echoink-settings-navigation-row:first-child {
+  border-top: 0;
+}
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item {
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item > .setting-item-info { flex: 1 1 0%; min-width: 0; min-height: 0; height: auto; }
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item-name,
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row strong { font-size: 13px; font-weight: 500; }
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item-description { margin-top: 1px; font-size: 12px; line-height: 1.7; }
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item-control {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: auto;
+  max-width: 55%;
+  min-width: 0;
+  margin: 0;
+}
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item-control > :is(input, [data-slot=select-trigger]) { max-width: 100%; }
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) button.echoink-settings-navigation-row {
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+}
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .echoink-settings-navigation-copy { flex: 1 1 0%; width: auto; min-width: 0; text-align: left; }
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .echoink-settings-navigation-trailing {
+  display: flex;
+  flex-flow: row nowrap;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 55%;
+  min-width: 0;
+  margin-left: auto;
+  align-self: center;
+  justify-content: flex-end;
+  text-align: right;
+}
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .echoink-settings-navigation-value,
+.echoink-settings-aligned .echoink-module-path-value { min-width: 0; font-size: 12px; color: var(--secondary); white-space: normal; overflow-wrap: anywhere; }
+.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) button.echoink-settings-navigation-row:is(:hover, :focus-visible) { background: var(--soft); }
+.echoink-settings-aligned .echoink-knowledge-purpose-row .echoink-settings-navigation-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.echoink-settings-aligned .echoink-knowledge-purpose-commands { color: var(--secondary); font-size: 11px; font-weight: 400; }
+
+/* Knowledge detail pages retain their original binding and transaction handlers. */
+.echoink-settings-aligned .echoink-knowledge-source-list,
+.echoink-settings-aligned .echoink-knowledge-init-group {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section { margin: 0 0 26px; padding: 0; border: 0; }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section-header { padding: 0; margin: 0 0 10px; }
+.echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source { display: block; padding: 0; border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source:first-child { border-top: 0; }
+.echoink-settings-aligned .echoink-knowledge-source-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 52px; padding: 13px 18px; }
+.echoink-settings-aligned .echoink-knowledge-source-heading:is(:hover, :focus-within) { background: var(--soft); }
+.echoink-settings-aligned .echoink-knowledge-source-path { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.echoink-settings-aligned .echoink-knowledge-source-path > span:last-child { min-width: 0; }
+.echoink-settings-aligned .echoink-knowledge-source-icon { display: inline-flex; flex: none; color: var(--secondary); }
+.echoink-settings-aligned .echoink-knowledge-source-icon svg { width: 14px; height: 14px; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-source > .setting-item { min-height: 0; padding-top: 0; border: 0; }
+.echoink-settings-aligned .echoink-knowledge-source > .settings-error,
+.echoink-settings-aligned .echoink-knowledge-source-empty { padding: 0 18px 13px; }
+.echoink-settings-aligned .echoink-knowledge-source-empty { padding-top: 13px; }
+/* These real Origin navigation buttons must outrank the shared module-row reset. */
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-routes { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-routes > button.echoink-knowledge-init-route.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] {
+  display: grid;
+  grid-template-columns: 31px minmax(0, 1fr) 16px;
+  align-items: center;
+  justify-content: start;
+  gap: 12px;
+  width: 100%;
+  min-height: 76px;
+  margin: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  text-align: left;
+}
+.echoink-settings-aligned .echoink-knowledge-init-route-icon { grid-column: 1; grid-row: 1; display: grid; place-items: center; width: 31px; height: 31px; background: var(--soft); border-radius: 8px; }
+.echoink-settings-aligned .echoink-knowledge-init-route-icon svg { width: 16px; height: 16px; }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-route > .echoink-settings-navigation-copy { grid-column: 2; grid-row: 1; min-width: 0; text-align: left; }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-route > .echoink-settings-navigation-trailing { grid-column: 3; grid-row: 1; display: flex; width: 16px; max-width: none; margin: 0; }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group > .echoink-settings-section { margin: 0; border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group .echoink-settings-section-header { margin: 0; padding: 12px 18px 4px; }
+.echoink-settings-aligned .echoink-knowledge-role-group .echoink-settings-section-header h3 { margin: 0; color: var(--secondary); font-size: 12px; font-weight: 400; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group > .echoink-settings-section > .setting-item { border-top: 0; }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group > button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button]:first-child { border-top: 0; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group .setting-item:has([role=checkbox]) > .setting-item-control:last-child { order: 0; }
+.echoink-settings-aligned .echoink-knowledge-role-unbind { margin-top: 16px; }
+.echoink-settings-aligned .echoink-knowledge-init-fields { margin-top: 16px; }
+.echoink-settings-aligned .echoink-knowledge-init-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+
+/* Folder management inline pages share the outside heading and continuous list frame. */
+.echoink-settings-aligned .echoink-knowledge-folder-editor > .echoink-knowledge-folder-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
+.echoink-settings-aligned .echoink-knowledge-folder-heading > h3 { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.55; }
+.echoink-settings-aligned .echoink-knowledge-folder-count { color: var(--secondary); font-size: 12px; }
+.echoink-settings-aligned .echoink-knowledge-folder-editor > :is(.echoink-knowledge-folder-list, .echoink-knowledge-folder-record) { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+.echoink-settings-aligned .echoink-knowledge-folder-editor > .echoink-knowledge-folder-list > .setting-item { box-sizing: border-box; display: flex; flex-flow: row nowrap; align-items: center; gap: 10px; min-height: 52px; margin: 0; padding: 13px 18px; border: 0; border-radius: 0; background: transparent; }
+.echoink-settings-aligned .echoink-knowledge-folder-list > .setting-item + .setting-item { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-knowledge-folder-list > .setting-item > .setting-item-control { order: -1; flex: none; width: auto; max-width: none; margin: 0; gap: 0; }
+.echoink-settings-aligned .echoink-knowledge-folder-list > .setting-item > .setting-item-info { flex: 1; min-width: 0; margin: 0; }
+.echoink-settings-aligned .echoink-knowledge-folder-list .setting-item-name { font-weight: 400; }
+.echoink-settings-aligned .echoink-knowledge-folder-list > .setting-item-description,
+.echoink-settings-aligned .echoink-knowledge-folder-editor > .echoink-knowledge-folder-record { box-sizing: border-box; min-height: 52px; padding: 13px 18px; margin: 0; font-size: 12px; line-height: 1.7; }
+.echoink-settings-aligned .echoink-knowledge-folder-editor > .echoink-knowledge-init-actions { justify-content: flex-end; margin-top: 26px; }
+
+/* Existing finance controls stay in their original form and permission chain. */
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row > div { flex: 1; min-width: 0; }
+.echoink-settings-aligned .echoink-finance-analysis-location > form { display: flex; flex: 0 1 55%; flex-wrap: wrap; align-items: center; gap: 8px; width: auto; max-width: 55%; min-width: 0; margin: 0; }
+.echoink-settings-aligned .echoink-finance-analysis-location > form input { flex: 1 1 160px; width: 100%; min-width: 0; }
+.echoink-settings-aligned .echoink-finance-analysis-location > form small { flex-basis: 100%; }
+.echoink-settings-aligned .echoink-finance-analysis-location > form small:empty { display: none; }
+.echoink-settings-aligned .echoink-finance-root-location > .echoink-module-path-value { max-width: 60%; text-align: right; }
+.echoink-settings-aligned .echoink-module-detail > :is(h2, .echoink-life-settings-back) { margin-inline: 18px; }
+.echoink-settings-aligned .echoink-module-detail > h2 { font-size: 17px; margin-top: 8px; margin-bottom: 16px; }
+.echoink-settings-aligned .echoink-module-detail > .echoink-life-settings-back { padding: 4px 6px; color: var(--secondary); background: transparent; border: 0; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-life-hint { margin: 0; padding: 0 18px 13px; font-size: 12px; line-height: 1.7; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-catalog-list { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 0 18px; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-catalog-item { padding: 13px 18px; border-top: 1px solid var(--line); gap: 8px; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-catalog-item:first-child { border-top: 0; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-catalog-edit { min-width: 0; padding: 0; background: transparent; border: 0; text-align: left; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-catalog-add { margin: 13px 18px; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form { gap: 0; margin: 0 18px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form > :is(label, .echoink-finance-icon-field) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 55%); align-items: center; gap: 12px; min-height: 52px; padding: 13px 18px; border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form > label:first-child { border-top: 0; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form :is(input, select, button) { min-width: 0; max-width: 100%; }
+.echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form > .echoink-finance-dialog-actions { margin: 0; padding: 13px 18px; }
+
+/* Finance detail keeps its existing route while taking the full desktop settings body. */
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:not(:has(.echoink-module-detail)),
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-settings-section-header,
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer:not(:has(.echoink-module-detail)),
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer:has(.echoink-module-detail) > .echoink-module-drawer-header { display: none; }
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:has(.echoink-module-detail) { margin: 0; }
+.echoink-settings-aligned.echoink-settings-demo .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer.echoink-settings-section:has(.echoink-module-detail) {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer-content:has(.echoink-module-detail) { border-top: 0; }
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > h2 { margin-inline: 0; }
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-hint { padding-inline: 0; }
+.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }
+
+.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded { display: flex; flex-direction: column; gap: 0; width: 100%; max-width: none; align-self: stretch; padding: 0; margin: 0; }
+.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-setting-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 55%);
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 13px 18px;
+  border-top: 1px solid var(--line);
+}
+.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-setting-field:first-child { border-top: 0; }
+.echoink-settings-aligned .echoink-pdf-setting-name { font-size: 13px; font-weight: 500; }
+.echoink-settings-aligned .echoink-pdf-setting-field > :is(input, [data-slot=select-trigger]) { width: 100%; min-width: 0; max-width: 100%; }
+.echoink-settings-aligned .echoink-pdf-setting-field > button:not([data-slot=select-trigger]) { grid-column: 2; justify-self: end; }
+.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > p { margin: 0; padding: 0 18px 13px; color: var(--secondary); font-size: 12px; line-height: 1.7; }
+.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-settings-actions { display: flex; justify-content: flex-end; margin: 0; padding: 13px 18px; border-top: 1px solid var(--line); }
+
+/* Detail content from the former standalone settings keeps one continuous frame. */
+.echoink-settings-aligned .echoink-selection-inline-list { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.echoink-settings-aligned .echoink-selection-inline-row { padding: 13px 18px; border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-selection-inline-row:first-child { border-top: 0; }
+.echoink-settings-aligned .echoink-selection-inline-summary { min-height: 26px; }
+.echoink-settings-aligned .echoink-selection-inline-summary strong { font-size: 13px; font-weight: 500; }
+.echoink-settings-aligned .echoink-selection-inline-editor { gap: 12px; margin-top: 13px; }
+.echoink-settings-aligned .echoink-selection-inline-editor > label { display: flex; flex-direction: column; gap: 6px; color: var(--secondary); font-size: 12px; }
+.echoink-settings-aligned .echoink-selection-inline-editor input { max-width: 420px; }
+.echoink-settings-aligned .echoink-selection-inline-actions { margin-top: 12px; }
+.echoink-settings-aligned .echoink-selection-inline-editor .echoink-selection-inline-actions { margin-top: 0; }
+.echoink-settings-aligned .echoink-journal-template-management > h3 { margin-top: 26px; margin-bottom: 10px; }
+.echoink-settings-aligned .echoink-journal-template-management :is(.echoink-journal-template-grid, .echoink-journal-custom-list) { gap: 10px; }
+.echoink-settings-aligned .echoink-journal-template-management :is(.echoink-journal-template-card, .echoink-journal-custom-template) { padding: 13px 18px; border-radius: 10px; }
+
+/* P14 account data and actions are unchanged; only the desktop surface aligns. */
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account :is(.desktop-account-header, .desktop-account-usage, .desktop-account-benefits, .desktop-account-plans) { margin-bottom: 26px; }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .section-heading { margin-bottom: 10px; }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .section-heading > h2 { font-size: 13px; font-weight: 600; }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .profile-copy { gap: 14px; }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div { gap: 9px; }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(n) { border: 0; }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(odd) { border-right: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .desktop-account-benefits-group { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .plan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account button.desktop-account-device-navigation { min-height: 52px; padding: 13px 18px; border: 1px solid var(--line); border-radius: 10px; }
+.echoink-settings-aligned .echoink-desktop-account-settings .desktop-account-form :is(.form-field, .device-row) { min-width: 0; }
+.echoink-settings-aligned .echoink-desktop-account-settings .desktop-account-form .device-row { padding: 13px 18px; border-bottom: 1px solid var(--line); }
+
+@container desktop-account (min-width: 761px) {
+  .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account :is(.metrics, .plan-grid) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(n) { border: 0; }
+  .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:not(:last-child) { border-right: 1px solid var(--line); }
+}
+@container desktop-account (max-width: 359px) {
+  .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account :is(.metrics, .plan-grid) { grid-template-columns: minmax(0, 1fr); }
+  .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(n) { border: 0; }
+  .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:not(:last-child) { border-bottom: 1px solid var(--line); }
+}
+@container settings (max-width: 520px) {
+  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item-control > :is(input, [data-slot=select-trigger]) { width: 100%; }
+  .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-finance-analysis-location { flex-direction: column; align-items: stretch; }
+  .echoink-settings-aligned .echoink-finance-analysis-location > form { width: 100%; max-width: 100%; }
+  .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form > :is(label, .echoink-finance-icon-field),
+  .echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-setting-field { grid-template-columns: minmax(0, 1fr); }
+  .echoink-settings-aligned .echoink-pdf-setting-field > button:not([data-slot=select-trigger]) { grid-column: 1; }
+  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) { flex-direction: row; align-items: center; }
+  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) .setting-item-control { flex: none; width: auto; max-width: none; }
+}
+
+/* Module values are paths/status text; only action controls retain their surface. */
+.echoink-settings-demo.echoink-settings-aligned :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .echoink-settings-navigation-value {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--secondary);
+  font-weight: 400;
+}
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-navigation-help { display: inline-flex; margin-left: 4px; vertical-align: middle; color: var(--secondary); }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-navigation-help svg { width: 13px; height: 13px; }
+
+/* Boolean controls lead their copy. Switches keep their original trailing slot. */
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-control {
+  order: -1;
+  flex: none;
+  width: auto;
+  max-width: none;
+  align-self: flex-start;
+  padding-top: 2px;
+}
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-info { flex: 1; min-width: 0; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row:has(> [role=checkbox]) { justify-content: flex-start; align-items: flex-start; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row > [role=checkbox] { order: -1; flex: none; margin-top: 2px; }
 /* ECHOINK_WORKSPACE_SETTINGS_END */
 
 /* ===== EchoInk 快捷 AI 小窗（quick chat popout）===== */
@@ -26089,6 +26769,8 @@ body:not(.is-mobile) .echoink-agent-editor-resource-section { display: flex; fle
 .echoink-agent-editor-ownership, .echoink-agent-editor-availability, .echoink-agent-editor-empty, .echoink-agent-editor-style-description {
   color: var(--agent-editor-muted); font-size: var(--echoink-conversation-font-label-secondary, var(--font-ui-smaller, 12px)); line-height: 1.55; overflow-wrap: anywhere;
 }
+body:not(.is-mobile) .echoink-agent-editor-module .echoink-agent-editor-choice-copy { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 3px 6px; }
+body:not(.is-mobile) .echoink-agent-editor-ownership { color: var(--text-faint, var(--agent-editor-muted)); }
 .echoink-agent-editor-style-description { margin: 0; }
 .echoink-agent-editor .echoink-origin-control[data-slot=input], .echoink-agent-editor-position {
   box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; min-height: 32px; margin: 0; padding: 6px 10px;

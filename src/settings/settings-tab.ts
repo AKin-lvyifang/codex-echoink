@@ -454,6 +454,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.containerEl.addClass("echoink-settings-host");
       workspaceEl.addClass("echoink-settings-demo", "echoink-native-settings-workspace");
       workspaceEl.toggleClass("echoink-settings-desktop", Platform.isDesktopApp);
+      workspaceEl.toggleClass("echoink-settings-aligned", Platform.isDesktopApp);
       this.nativeSettingsNavigation = { listEl: group.listEl, workspaceEl, rows: new Map() };
       this.settingsTitleEl = workspaceEl.createDiv({ cls: "codex-settings-title" });
       workspaceEl.insertBefore(this.settingsTitleEl, group.listEl);
@@ -665,6 +666,7 @@ export class CodexSettingTab extends PluginSettingTab {
     containerEl.empty();
     const workspace = containerEl.createDiv({ cls: "echoink-settings-demo" });
     workspace.toggleClass("echoink-settings-desktop", Platform.isDesktopApp);
+    workspace.toggleClass("echoink-settings-aligned", Platform.isDesktopApp);
     this.settingsTitleEl = workspace.createDiv({ cls: "codex-settings-title" });
     this.settingsTabsEl = workspace.createDiv({ cls: "codex-settings-tabs-slot" });
     this.createSettingsBody(workspace);
@@ -742,7 +744,7 @@ export class CodexSettingTab extends PluginSettingTab {
       disposeOriginControls(bodyEl);
       bodyEl.empty();
       const pageTitle = new OriginSetting(titleEl)
-        .setName(copy.title)
+        .setName(Platform.isDesktopApp ? "EchoInk" : copy.title)
         .setHeading();
       pageTitle.settingEl.addClass("echoink-settings-page-title-row");
       pageTitle.nameEl.addClass("codex-settings-page-title");
@@ -1179,24 +1181,26 @@ export class CodexSettingTab extends PluginSettingTab {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const page = createSettingsPage(containerEl, {
       title: zh ? (Platform.isDesktopApp ? "通用" : "基础设置") : "General",
+      titleVisibility: Platform.isDesktopApp ? "screen-reader" : "visible",
       description: Platform.isDesktopApp ? undefined : zh
         ? "调整 EchoInk 的界面语言、启动方式、长期记忆和个性化。"
         : "Choose EchoInk's language, startup behavior, long-term memory, and personalization."
     });
-    const appearanceSection = createSettingsSection(page, { surface: "group" });
+    page.addClass("echoink-general-page");
+    const appearanceSection = createSettingsSection(page, { title: Platform.isDesktopApp ? (zh ? "外观" : "Appearance") : undefined, surface: "group" });
     appearanceSection.addClass("echoink-appearance-section");
-    const appearanceRow = applySettingsRow(new OriginSetting(appearanceSection)
-      .setName(zh ? "外观" : "Appearance")
+    const appearanceRow = applySettingsRow(new OriginSetting(Platform.isDesktopApp ? createSettingsGroup(appearanceSection) : appearanceSection)
+      .setName(Platform.isDesktopApp ? (zh ? "配色" : "Color theme") : zh ? "外观" : "Appearance")
       .setDesc(zh
-        ? "选择主题颜色，浅色与深色跟随 Obsidian。"
-        : "Choose a color theme. Light and dark modes follow Obsidian."));
+        ? Platform.isDesktopApp ? "跟随 Obsidian 明暗" : "选择主题颜色，浅色与深色跟随 Obsidian。"
+        : Platform.isDesktopApp ? "Follows Obsidian light and dark modes" : "Choose a color theme. Light and dark modes follow Obsidian."));
     renderAppearancePicker(appearanceRow.controlEl, this.plugin, zh);
     const interfaceSection = createSettingsSection(page, {
       title: zh ? "界面与启动" : "Interface and startup",
       surface: "group"
     });
     const interfaceGroup = createSettingsGroup(interfaceSection);
-    applySettingsRow(new OriginSetting(interfaceGroup).setName(copy.general.settingsLanguage).setDesc(copy.general.settingsLanguageDesc).addOriginDropdown(this.app, (dropdown) => {
+    applySettingsRow(new OriginSetting(interfaceGroup).setName(copy.general.settingsLanguage).setDesc(Platform.isDesktopApp ? "" : copy.general.settingsLanguageDesc).addOriginDropdown(this.app, (dropdown) => {
       dropdown.selectEl.setAttr("aria-label", copy.general.settingsLanguage);
       for (const language of SETTINGS_LANGUAGE_OPTIONS) dropdown.addOption(language, copy.general.languageOptions[language]);
       dropdown.setValue(this.plugin.settings.settingsLanguage);
@@ -1213,24 +1217,9 @@ export class CodexSettingTab extends PluginSettingTab {
       });
     }));
 
-    applySettingsRow(new OriginSetting(interfaceGroup)
-      .setName(Platform.isDesktopApp ? (zh ? "启动时打开 Agent 侧栏" : "Open Agent sidebar on startup") : copy.general.autoOpen)
-      .setDesc(zh ? "Obsidian 启动后自动打开 EchoInk 侧栏。" : "Open the EchoInk sidebar when Obsidian starts.")
-      .addOriginToggle((toggle) => {
-        labelSettingsToggle(toggle, Platform.isDesktopApp ? (zh ? "启动时打开 Agent 侧栏" : "Open Agent sidebar on startup") : copy.general.autoOpen);
-        toggle.setValue(this.plugin.settings.autoOpen).onChange(async (value) => {
-          const previous = this.plugin.settings.autoOpen;
-          this.plugin.settings.autoOpen = value;
-          try { await this.plugin.saveSettings(); }
-          catch { this.plugin.settings.autoOpen = previous; toggle.setValue(previous); new Notice(zh ? "启动设置未保存，请重试" : "Startup setting was not saved. Try again."); }
-        });
-      }));
-
-    applySettingsRow(new OriginSetting(interfaceGroup)
+    const workbenchStartup = applySettingsRow(new OriginSetting(interfaceGroup)
       .setName(Platform.isDesktopApp ? (zh ? "启动时打开工作台" : "Open workbench on startup") : copy.general.autoOpenHome)
-      .setDesc(Platform.isDesktopApp
-        ? (zh ? "Obsidian 启动后显示 EchoInk 工作台。" : "Show the EchoInk workbench when Obsidian starts.")
-        : (zh ? "Obsidian 启动后显示 EchoInk 首页概览。" : "Show the EchoInk home overview when Obsidian starts."))
+      .setDesc(Platform.isDesktopApp ? "" : (zh ? "Obsidian 启动后显示 EchoInk 首页概览。" : "Show the EchoInk home overview when Obsidian starts."))
       .addOriginToggle((toggle) => {
         labelSettingsToggle(toggle, Platform.isDesktopApp ? (zh ? "启动时打开工作台" : "Open workbench on startup") : copy.general.autoOpenHome);
         toggle.setValue(this.plugin.settings.autoOpenHome).onChange(async (value) => {
@@ -1241,9 +1230,26 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
 
+    const sidebarStartup = applySettingsRow(new OriginSetting(interfaceGroup)
+      .setName(Platform.isDesktopApp ? (zh ? "启动时打开 Agent 侧栏" : "Open Agent sidebar on startup") : copy.general.autoOpen)
+      .setDesc(Platform.isDesktopApp ? "" : zh ? "Obsidian 启动后自动打开 EchoInk 侧栏。" : "Open the EchoInk sidebar when Obsidian starts.")
+      .addOriginToggle((toggle) => {
+        labelSettingsToggle(toggle, Platform.isDesktopApp ? (zh ? "启动时打开 Agent 侧栏" : "Open Agent sidebar on startup") : copy.general.autoOpen);
+        toggle.setValue(this.plugin.settings.autoOpen).onChange(async (value) => {
+          const previous = this.plugin.settings.autoOpen;
+          this.plugin.settings.autoOpen = value;
+          try { await this.plugin.saveSettings(); }
+          catch { this.plugin.settings.autoOpen = previous; toggle.setValue(previous); new Notice(zh ? "启动设置未保存，请重试" : "Startup setting was not saved. Try again."); }
+        });
+      }));
+
+    if (Platform.isDesktopApp) {
+      addSettingsHelp(workbenchStartup, "", zh ? "Obsidian 启动后显示 EchoInk 工作台。" : "Show the EchoInk workbench when Obsidian starts.");
+      addSettingsHelp(sidebarStartup, "", zh ? "Obsidian 启动后自动打开 EchoInk 侧栏。" : "Open the EchoInk sidebar when Obsidian starts.");
+    } else interfaceGroup.insertBefore(sidebarStartup.settingEl, workbenchStartup.settingEl);
     renderObsidianCliStatus(interfaceGroup, zh);
 
-    const quickChatSection = createSettingsSection(page, { title: Platform.isDesktopApp ? undefined : (zh ? "快捷 AI 小窗" : "Quick AI window"), surface: "group" });
+    const quickChatSection = createSettingsSection(page, { title: zh ? "快捷 AI 小窗" : "Quick AI window", surface: "group" });
     const quickDrawer = Platform.isDesktopApp ? quickChatSection.createEl("details", { cls: "echoink-quick-chat-drawer" }) : quickChatSection;
     if (quickDrawer instanceof this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement) {
       quickDrawer.open = this.plugin.settings.quickChat.enabled && (this.quickChatExpanded ?? true);
@@ -1251,10 +1257,10 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     const quickHeader = Platform.isDesktopApp ? quickDrawer.createEl("summary") : quickDrawer;
     const quickChatGroup = createSettingsGroup(quickHeader);
-    const quickChatToggleLabel = zh ? "全局快捷键唤起 AI 小窗" : "Global quick AI window hotkey";
+    const quickChatToggleLabel = Platform.isDesktopApp ? (zh ? "快捷 AI 小窗" : "Quick AI window") : zh ? "全局快捷键唤起 AI 小窗" : "Global quick AI window hotkey";
     applySettingsRow(new OriginSetting(quickChatGroup)
       .setName(quickChatToggleLabel)
-      .setDesc(zh
+      .setDesc(Platform.isDesktopApp ? this.plugin.settings.quickChat.enabled ? formatAcceleratorForDisplay(this.plugin.settings.quickChat.hotkey, Platform.isMacOS) : (zh ? "未启用" : "Not enabled") : zh
         ? "在任意应用前台时按快捷键，EchoInk 对话小窗浮现在当前屏幕上，直接提问；再次按下收起，按 Esc 关闭。收起保留草稿与正在生成的回答。需要 Obsidian 桌面端保持运行。"
         : "From any app, press the hotkey to float the EchoInk chat window over the current screen and ask directly. Press again or hit Esc to collapse; drafts and running generations survive. Requires the Obsidian desktop app to stay running.")
       .addOriginToggle((toggle) => {
@@ -1278,6 +1284,14 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
 
+    if (Platform.isDesktopApp) {
+      const row = quickChatGroup.querySelector<HTMLElement>(".setting-item");
+      if (row) {
+        const icon = row.createSpan({ cls: "echoink-quick-chat-icon", attr: { "aria-hidden": "true" } });
+        setIcon(icon, "zap");
+        row.prepend(icon);
+      }
+    }
     if (Platform.isDesktopApp) quickHeader.addEventListener("click", event => {
       if ((event.target as HTMLElement).closest("[role=switch]")) { event.preventDefault(); return; }
       if (!this.plugin.settings.quickChat.enabled) event.preventDefault();
@@ -1363,8 +1377,8 @@ export class CodexSettingTab extends PluginSettingTab {
     applySettingsRow(new OriginSetting(journalGroup)
       .setName(zh ? "日记保存文件夹" : "Journal folder")
       .setDesc(zh
-        ? "与 Obsidian 原生日记共用文件夹。日期格式和模板可在原生日记设置中调整；默认按月存放，每天一篇。"
-        : "Shared with Obsidian Daily notes. Set the date format and template there; the default is one note per day in monthly folders.")
+        ? embedded ? "与 Obsidian 原生日记共用文件夹、日期格式和模板。" : "与 Obsidian 原生日记共用文件夹。日期格式和模板可在原生日记设置中调整；默认按月存放，每天一篇。"
+        : embedded ? "Shares the Obsidian Daily notes folder, date format, and template." : "Shared with Obsidian Daily notes. Set the date format and template there; the default is one note per day in monthly folders.")
       .addOriginText((text) => {
         const label = zh ? "日记保存文件夹" : "Journal folder";
         text.setPlaceholder("journal").setValue(readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder);
@@ -1496,7 +1510,7 @@ export class CodexSettingTab extends PluginSettingTab {
       || typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "review-memory-category") {
       this.renderReviewSettings(container); return;
     }
-    const page = createSettingsPage(container, { title: "Agent" });
+    const page = createSettingsPage(container, { title: "Agent", titleVisibility: "screen-reader" });
     page.addClass("echoink-desktop-agent-page");
     agents.renderSummary(page);
     this.desktopMemory ??= new DesktopMemorySettings(this.plugin, {
@@ -1573,7 +1587,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (this.settingsDetail === "english-diary") { this.desktopModuleExpanded.add("english"); this.settingsDetail = null; this.settingsFocusIntent = "explicit:module:english"; }
     if (typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "lifestyle") { this.desktopModuleExpanded.add("finance"); this.settingsDetail = null; }
     this.plugin.settings.resourceManagementTab = "plugins";
-    const page = createSettingsPage(container, { title: zh ? "模块" : "Modules" });
+    const page = createSettingsPage(container, { title: zh ? "模块" : "Modules", titleVisibility: "screen-reader" });
     this.desktopModuleCleanup = mountDesktopModuleSettings(page, {
       plugin: this.plugin, expanded: this.desktopModuleExpanded,
       summary: module => module === "knowledge" ? zh ? `${this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0} 个资料来源` : `${this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0} source folders` : module === "journal" ? readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder : module === "review" ? this.plugin.settings.review.outputDir : module === "todo" ? TODO_SOURCE_PATH : module === "finance" ? this.plugin.lifestyle.finance.ledger.paths().root : module === "english" ? this.plugin.settings.englishDiary.englishDirectory : module === "pdf" ? this.plugin.settings.pdfReading.engine === "mineru" ? "MinerU" : zh ? "本地文字提取" : "Local text extraction" : "",
@@ -1966,7 +1980,8 @@ export class CodexSettingTab extends PluginSettingTab {
     const version = this.plugin.manifest.version ?? "unknown";
 
     if (Platform.isDesktopApp) {
-      this.membershipRowsDisposers.push(renderCompactAbout(page, {
+      const section = createSettingsSection(page, { title: zh ? "关于" : "About", surface: "flat" });
+      this.membershipRowsDisposers.push(renderCompactAbout(section, {
         version, language: this.plugin.settings.settingsLanguage,
         websiteUrl: membershipWebsiteLink("plugin.about"),
         update: this.releaseUpdate,
@@ -3222,7 +3237,7 @@ export class CodexSettingTab extends PluginSettingTab {
       value: this.archivedConversations
         ? String(this.archivedConversations.length)
         : (zh ? "查看" : "View"),
-      actionLabel: zh ? "打开" : "Open",
+      actionLabel: Platform.isDesktopApp ? undefined : (zh ? "打开" : "Open"),
       focusKey: "review:archives",
       onActivate: () => this.openSettingsDetail("review-archives")
     });
@@ -3898,6 +3913,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.settingsTabsResizeObserver.observe(tabs);
     }
     const now = Date.now();
+    const flatNavigation = Boolean(tabs.closest(".echoink-settings-aligned"));
     const reducedMotion = Boolean(
       container.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches
     );
@@ -3906,7 +3922,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (justSwitched) {
       // Bookmark rise finishes first (transitionend below), then the icon's own
       // animation starts. Reduced motion skips straight to the final state.
-      this.settingsTabIconAnimation = reducedMotion
+      this.settingsTabIconAnimation = reducedMotion || flatNavigation
         ? { tabId: activeTab, startedAtMs: now }
         : null;
     }
@@ -3959,7 +3975,7 @@ export class CodexSettingTab extends PluginSettingTab {
         tab.icon,
         isActive ? activeAnimationProgress : null
       );
-      if (isActive && justSwitched && !reducedMotion) {
+      if (isActive && justSwitched && !reducedMotion && !flatNavigation) {
         // Sequential handoff: play the icon's own animation only after the
         // bookmark rise transition completes; stale switches self-cancel.
         // NOTE: no `{ once: true }` — earlier background/color transitionend
@@ -4266,7 +4282,7 @@ export class CodexSettingTab extends PluginSettingTab {
     );
     const modelSetting = applySettingsRow(new OriginSetting(runGroup)
       .setName(Platform.isDesktopApp ? (zh ? "EchoInk 默认模型" : "EchoInk default model") : (zh ? "EchoInk 当前模型" : "Current EchoInk model"))
-      .setDesc(zh
+      .setDesc(Platform.isDesktopApp ? (zh ? "所有 Agent 默认使用" : "Default for all Agents") : zh
         ? "普通聊天、/ask、/maintain 与选区翻译共用这个模型。"
         : "Chat, /ask, /maintain, and selection translation share this model.")
       .addOriginDropdown(this.app, (dropdown) => {
@@ -4369,12 +4385,14 @@ export class CodexSettingTab extends PluginSettingTab {
       const page = createSettingsPage(container, { title: label("添加模型服务", "Add model service"), detail: true,
         backLabel: label("返回模型", "Back to models"), onBack: () => { this.providerPickerOpen = false; this.settingsFocusIntent = "explicit:providers:add"; this.scheduleDisplay(); } });
       renderProviderServicePicker(page, { language: this.plugin.settings.settingsLanguage,
+        addedProviderIds: this.plugin.settings.apiProviders.map(provider => normalizeApiProviderId(provider.providerId, provider.baseUrl, provider.name)),
         onSelect: preset => this.openProviderModelModal(createApiProviderConfig(preset.id), false) });
       for (const card of Array.from(page.querySelectorAll<HTMLElement>("[data-provider-service]"))) card.setAttr("data-echoink-focus-key", `provider-service:${card.dataset.providerService}`);
       return;
     }
     const page = createSettingsPage(container, {
-      title: Platform.isDesktopApp ? label("模型", "Models") : label("模型与提供商", "Models and providers")
+      title: Platform.isDesktopApp ? label("模型", "Models") : label("模型与提供商", "Models and providers"),
+      titleVisibility: Platform.isDesktopApp ? "screen-reader" : "visible"
     });
     page.addClass("codex-provider-model-manager");
     this.renderSettingsActionError(page, "providers");
@@ -4395,7 +4413,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const addCopy = addSection.createDiv({ cls: "codex-provider-add-copy" });
     addCopy.createDiv({
       cls: "codex-provider-add-title",
-      text: Platform.isDesktopApp ? label("已保存连接", "Saved connections") : label("已保存模型", "Saved models")
+      text: Platform.isDesktopApp ? label("模型服务", "Model services") : label("已保存模型", "Saved models")
     });
     const addButton = createOriginButton(addSection, {
       cls: "codex-provider-add-button",
@@ -4476,6 +4494,7 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }
 
+      if (Platform.isDesktopApp) setIcon(identity.createSpan({ cls: "codex-provider-saved-arrow", attr: { "aria-hidden": "true" } }), "chevron-right");
       const rowMeta = row.createDiv({ cls: "codex-provider-saved-meta" });
       const apiKeyRequired = apiProviderApiKeyRequired(providerId);
       const credentialReady = apiProviderHasUsableCredential(
@@ -4597,6 +4616,7 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     const host = this.containerEl.ownerDocument.createElement("div");
+    host.toggleClass("echoink-settings-aligned", Platform.isDesktopApp);
     const modelEditor = tab === "providers" || tab === "models";
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const backLabel = modelEditor ? (zh ? "返回模型" : "Back to models") : (zh ? "返回设置" : "Back to settings");
@@ -5007,6 +5027,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const page = createSettingsPage(container, {
       title: Platform.isDesktopApp ? this.settingsTabLabel(desktopModules ? "modules" : "capabilities") : copy.resources.title,
       headingId: RESOURCE_TITLE_ID,
+      titleVisibility: Platform.isDesktopApp ? "screen-reader" : "visible",
       description: Platform.isDesktopApp ? undefined : copy.resources.note
     });
     if (desktopModules) {
@@ -5084,7 +5105,7 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     this.renderResourceSearch(toolbar, activeTab);
     const toolbarActions = toolbar.createDiv({ cls: "codex-resource-toolbar-actions" });
-    if (activeTab === "mcp") {
+    if (activeTab === "mcp" && !Platform.isDesktopApp) {
       const add = createOriginButton(toolbarActions, {
         cls: "codex-resource-add",
         attr: {
@@ -5129,6 +5150,16 @@ export class CodexSettingTab extends PluginSettingTab {
         "aria-busy": String(isLoading)
       }
     });
+    if (Platform.isDesktopApp && activeTab === "mcp") {
+      const header = body.createDiv({ cls: "codex-resource-list-header" });
+      const heading = new OriginSetting(header).setName(this.plugin.settings.settingsLanguage === "en" ? "Added" : "已添加").setHeading();
+      heading.settingEl.addClass("codex-resource-group-title");
+      const add = createOriginButton(header, { cls: "codex-resource-add icon-button", attr: {
+        type: "button", "aria-label": this.plugin.settings.settingsLanguage === "en" ? "Add MCP server" : "新增 MCP Server",
+        "data-echoink-focus-key": "resources:mcp:add"
+      } });
+      setIcon(add, "plus"); add.onclick = () => this.openMcpServerModal();
+    }
     if (isLoading && activeTab !== "plugins") {
       createSettingsState(body, copy.resources.loadingTab(activeMeta ? copy.resources.tabs[activeMeta.id] : copy.tabs.resources));
     }
@@ -5810,7 +5841,7 @@ export class CodexSettingTab extends PluginSettingTab {
       void renderEnglishDiaryActivity(statistics, repository, this.app);
       this.disposeDiaryActivity = repository?.subscribe?.(renderStatistics) ?? null;
     }
-    const section = createSettingsSection(page, { title: "模型", surface: "flat" });
+    const section = createSettingsSection(page, { title: embedded ? undefined : "模型", surface: "flat" });
     const group = createSettingsGroup(section);
     const current = this.plugin.settings.englishDiary;
     const value = current.providerSettingsId ? providerModelSelectionValue(current.providerSettingsId, current.modelId) : "";
@@ -5854,11 +5885,15 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
     if (!embedded) this.decorateSetting(modelSetting, "brain-circuit");
-    const files = createSettingsGroup(createSettingsSection(page, { title: "文件与内容", description: "原稿、英文稿和词条都是可从文件夹查看的 Markdown 笔记。分类与备注可在表达库内修改。", surface: "flat" }));
+    const files = createSettingsGroup(createSettingsSection(page, { title: embedded ? undefined : "文件与内容", description: embedded ? undefined : "原稿、英文稿和词条都是可从文件夹查看的 Markdown 笔记。分类与备注可在表达库内修改。", surface: "flat" }));
     const native = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory);
     applySettingsRow(new OriginSetting(files).setName("日记原稿").setDesc(`沿用 Obsidian 日记：${native.folder || "Vault 根目录"}，可正常编辑。在英文面板更多菜单的“发送范围”中选择允许生成的段落。`));
-    applySettingsRow(new OriginSetting(files).setName("英文稿位置").setDesc(current.englishDirectory));
-    applySettingsRow(new OriginSetting(files).setName("表达库位置").setDesc(current.expressionDirectory));
+    for (const [name, value] of [["英文稿位置", current.englishDirectory], ["表达库位置", current.expressionDirectory]]) {
+      const row = new OriginSetting(files);
+      row.setName(name); applySettingsRow(row);
+      if (Platform.isDesktopApp && embedded) row.addOriginText(text => { text.setValue(value); text.inputEl.readOnly = true; text.inputEl.setAttr("aria-label", name); });
+      else row.setDesc(value);
+    }
     const openLibrary = async () => {
       try {
         if (!current.enabled) { new Notice("请先在插件列表中启用英文日记。"); return; }
@@ -6024,9 +6059,26 @@ export class CodexSettingTab extends PluginSettingTab {
     const clear = createOriginButton(empty, { cls: "text-button", text: copy.resources.clearSearch });
     clear.onclick = () => this.containerEl.querySelector<HTMLButtonElement>(".codex-resource-search-clear")?.click();
     const visibleKeys = new Set(filtered.map((row) => row.key));
-    for (const row of rows) {
-      if (row.lifeKind) this.renderBuiltinPluginRow(container, row.lifeKind, visibleKeys.has(row.key), row);
-      else if (row.resource) this.renderResourceRow(container, row.resource, visibleKeys.has(row.key), row);
+    const groups = new Map<string, HTMLElement>();
+    const groupFor = (row: typeof rows[number]): HTMLElement => {
+      if (!Platform.isDesktopApp || activeTab === "plugins") return container;
+      const key = activeTab === "mcp" ? "mcp" : row.resource && builtinSkillIdForResource(row.resource) ? "builtin" : "custom";
+      let group = groups.get(key);
+      if (!group) {
+        const section = createSettingsSection(container, { title: key === "mcp" ? undefined : key === "builtin"
+          ? (this.plugin.settings.settingsLanguage === "en" ? "Built-in" : "内置")
+          : (this.plugin.settings.settingsLanguage === "en" ? "My Skills" : "我的 Skill"), surface: "flat" });
+        section.setAttr("data-resource-group", key);
+        group = createSettingsGroup(section); groups.set(key, group);
+      }
+      return group;
+    };
+    const ordered = Platform.isDesktopApp && activeTab === "skills"
+      ? [...rows.filter(row => row.resource && builtinSkillIdForResource(row.resource)), ...rows.filter(row => !row.resource || !builtinSkillIdForResource(row.resource))] : rows;
+    for (const row of ordered) {
+      const target = groupFor(row);
+      if (row.lifeKind) this.renderBuiltinPluginRow(target, row.lifeKind, visibleKeys.has(row.key), row);
+      else if (row.resource) this.renderResourceRow(target, row.resource, visibleKeys.has(row.key), row);
     }
   }
 
@@ -6086,7 +6138,8 @@ export class CodexSettingTab extends PluginSettingTab {
     if (resource.kind !== "skill") return 0;
     const catalog = this.currentEchoInkResourceCatalog().map(item => item.id === resource.id ? { ...item, enabled: true } : item);
     return settings.agentRegistry.agents.filter(agent => {
-      const result = checkAgentSkill({ settings, agentId: agent.id, vaultRoot: "", resources: catalog }, String(resource.metadata?.resourceId ?? resource.id));
+      const skillId = typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id;
+      const result = checkAgentSkill({ settings, agentId: agent.id, vaultRoot: "", resources: catalog }, skillId);
       return !["agent_disabled", "agent_missing", "unknown_resource"].includes(result.reason);
     }).length;
   }
@@ -6094,6 +6147,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderResourceRow(container: HTMLElement, resource: EchoInkResource, visible = true, searchRow?: { key: string; name: string; meta?: string; desc?: string; aliases?: readonly string[] }): void {
     const copy = this.copy;
     const presentation = resourcePresentation(resource, this.plugin.settings.settingsLanguage);
+    const builtinSkillId = builtinSkillIdForResource(resource);
     if (resource.id === "echoink:selection-ask") {
       renderSelectionAskPluginRow(container, this.plugin, visible, () => this.openSettingsDetail("selection-ask")); return;
     }
@@ -6109,14 +6163,21 @@ export class CodexSettingTab extends PluginSettingTab {
         "data-resource-aliases": (searchRow?.aliases ?? presentation.aliases).join("\n")
       }
     });
-    const icon = row.createSpan({ cls: "codex-resource-row-icon" });
-    setIcon(icon, isEnglishDiary ? "languages" : resource.kind === "skill" ? "sparkles" : resource.kind === "mcp-server" ? "blocks" : "package");
-    const content = row.createDiv({ cls: "codex-resource-row-content" });
+    const openArea = Platform.isDesktopApp ? createOriginButton(row, {
+      cls: "codex-resource-row-open codex-resource-row-name text-button",
+      attr: { type: "button", "data-echoink-focus-key": `resource:${resource.id}:detail`,
+        "aria-label": this.plugin.settings.settingsLanguage === "en" ? `Open ${presentation.name} details` : `打开 ${presentation.name} 详情` }
+    }) : row;
+    const icon = openArea.createSpan({ cls: "codex-resource-row-icon" });
+    setIcon(icon, isEnglishDiary ? "languages" : resource.kind === "skill"
+      ? Platform.isDesktopApp && builtinSkillId ? DESKTOP_BUILTIN_SKILL_ICONS[builtinSkillId] ?? "sparkles" : "sparkles"
+      : resource.kind === "mcp-server" ? "blocks" : "package");
+    const content = openArea.createDiv({ cls: "codex-resource-row-content" });
     const name = presentation.name;
     const connectionStatus = resource.kind === "mcp-server" ? mcpConnectionStatus(resource, this.plugin.settings.resources) : "not-mcp";
     const meta = resourceDisplayMeta(resource, this.plugin.settings.resources, this.plugin.settings.settingsLanguage);
     const title = content.createDiv({ cls: "codex-resource-row-title" });
-    const nameButton = createOriginButton(title, {
+    const nameButton = Platform.isDesktopApp ? openArea as HTMLButtonElement : createOriginButton(title, {
       cls: "codex-resource-row-name",
       text: name,
       attr: {
@@ -6127,13 +6188,13 @@ export class CodexSettingTab extends PluginSettingTab {
           : `打开 ${name} 详情`
       }
     });
+    if (Platform.isDesktopApp) title.createSpan({ text: name });
     nameButton.onclick = () => this.openSettingsDetail(isEnglishDiary ? "english-diary" : { kind: "resource", resourceId: resource.id });
     if (resource.kind === "tool-bundle") {
       createPluginEditionBadge(title, isEnglishDiary && resource.metadata?.edition === "basic" ? "basic" : "pro", this.plugin.settings.settingsLanguage);
     }
-    const builtinSkillId = builtinSkillIdForResource(resource);
     if (builtinSkillId) {
-      title.createSpan({
+      if (!Platform.isDesktopApp) title.createSpan({
         cls: "codex-resource-preset-badge",
         text: builtinSkillId === "daily-journal"
           ? (this.plugin.settings.settingsLanguage === "en" ? "EchoInk default" : "EchoInk 默认")
@@ -6160,7 +6221,8 @@ export class CodexSettingTab extends PluginSettingTab {
       }
     }
     const desc = presentation.description || resource.contentPath || resource.configPath || copy.resources.noDesc;
-    const description = [desc, meta].filter(Boolean).join(" · ");
+    const description = Platform.isDesktopApp ? desc : [desc, meta].filter(Boolean).join(" · ");
+    if (Platform.isDesktopApp) setTooltip(icon, resourceSourceLabel(resource.source, this.plugin.settings.settingsLanguage));
     if (description) content.createDiv({ cls: "codex-resource-row-desc", text: description });
     let diarySettings: HTMLButtonElement | undefined;
     if (isEnglishDiary) {
@@ -6169,6 +6231,10 @@ export class CodexSettingTab extends PluginSettingTab {
       diarySettings = settings;
       settings.onclick = () => this.openSettingsDetail("english-diary");
     }
+    if (Platform.isDesktopApp && resource.kind === "mcp-server") row.createSpan({
+      cls: `codex-resource-connection-state is-${connectionStatus}`,
+      text: mcpConnectionStatusLabel(connectionStatus, this.plugin.settings.settingsLanguage)
+    });
     if (Platform.isDesktopApp && resource.kind !== "tool-bundle") row.createSpan({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(this.resourceAssignedAgentCount(resource)) });
     const toggle = createOriginSwitch(row, {
       cls: "codex-resource-toggle",
@@ -6626,6 +6692,17 @@ function tabIndexFromKeyboard(
 function resourceKindForResourceTab(tab: ResourceManagementTab): EchoInkResource["kind"] {
   return tab === "mcp" ? "mcp-server" : tab === "skills" ? "skill" : "tool-bundle";
 }
+
+/** The desktop Demo maps these stable built-in IDs to existing Lucide icons. */
+const DESKTOP_BUILTIN_SKILL_ICONS: Readonly<Record<string, string>> = {
+  "clarify-real-question": "circle-help", "two-layer-explanation": "layers",
+  "deep-understanding": "microscope", "evidence-freshness-audit": "badge-check",
+  "multi-lens-problem-solving": "shapes", "minimum-real-world-experiment": "flask-conical",
+  "knowledge-review": "graduation-cap", "self-discovery-life-design": "sprout",
+  "daily-journal": "book-open", "english-diary": "languages",
+  "finance-bill-import": "receipt", "finance-analysis": "chart-pie", "finance-operations": "wallet",
+  "obsidian-markdown": "hash", "obsidian-bases": "table", "json-canvas": "layout-dashboard", "obsidian-cli": "terminal"
+};
 
 function resourceDisplayMeta(
   resource: EchoInkResource,
