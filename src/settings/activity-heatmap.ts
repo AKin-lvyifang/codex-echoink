@@ -16,6 +16,14 @@ interface ActivityHeatmapOptions {
   app?: Pick<App, "keymap" | "scope">;
 }
 
+const activityScopes = new WeakMap<HTMLElement, (active: boolean) => void>();
+
+/** Hidden subpages keep their range draft without keeping an active Escape scope. */
+export function setActivityHeatmapsActive(container: HTMLElement, active: boolean): void {
+  if (container.matches(".echoink-activity-heatmap")) activityScopes.get(container)?.(active);
+  container.querySelectorAll<HTMLElement>(".echoink-activity-heatmap").forEach(body => activityScopes.get(body)?.(active));
+}
+
 /** One inclusive year or month range for activity counts and check results. */
 export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement, state: HTMLElement, options: ActivityHeatmapOptions): HTMLElement {
   const { label, title, zh, stateKey } = options;
@@ -31,11 +39,14 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
   const rangeClass = (name: string) => `activity-range-${name}`;
   const scope = options.app ? new Scope(options.app.scope) : null;
   let scopeActive = false;
+  let visible = true;
   const releaseScope = () => { if (scopeActive && scope && options.app) options.app.keymap.popScope(scope); scopeActive = false; };
-  const trigger = createOriginButton(controls, { cls: rangeClass("trigger"), attr: { "aria-expanded": "false", "aria-label": zh ? `${title}时间范围` : `${title} date range` } }, releaseScope);
+  const trigger = createOriginButton(controls, { cls: rangeClass("trigger"), attr: { "aria-expanded": "false", "aria-label": zh ? `${title}时间范围` : `${title} date range` } }, () => { releaseScope(); activityScopes.delete(body); });
   const body = parent.createDiv({ cls: "todo-history-body echoink-activity-heatmap" });
   const editor = body.createDiv({ cls: rangeClass("editor"), attr: { role: "group", "aria-label": zh ? "选择时间范围" : "Choose date range" } });
   editor.hidden = true;
+  const acquireScope = () => { if (visible && !scopeActive && !editor.hidden && scope && options.app) { options.app.keymap.pushScope(scope); scopeActive = true; } };
+  activityScopes.set(body, active => { visible = active; if (active) acquireScope(); else releaseScope(); });
   const fields = editor.createDiv({ cls: rangeClass("fields") });
   const field = (name: string) => { const el = fields.createEl("label", { cls: rangeClass("field") }); el.createEl("span", { text: name }); return el; };
   const modeSelector = createOriginSelect(field(zh ? "范围单位" : "Period"), { cls: rangeClass("mode"), attr: { "aria-label": zh ? "范围单位" : "Period" } },
@@ -66,7 +77,7 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
   trigger.onclick = () => {
     if (!editor.hidden) { closeEditor(); return; }
     modeSelector.value = mode; syncInputs(start, end); editor.hidden = false; trigger.setAttr("aria-expanded", "true");
-    if (scope && options.app) { options.app.keymap.pushScope(scope); scopeActive = true; }
+    acquireScope();
     startInput.focus({ preventScroll: true });
   };
   scope?.register(null, "Escape", () => { closeEditor(); return false; });

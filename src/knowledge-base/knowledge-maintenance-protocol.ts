@@ -161,7 +161,7 @@ export function validateKnowledgeMaintenanceCandidateSources(input: Readonly<{
   return Object.freeze(evidence);
 }
 
-function extractMachineSourceMarkers(content: string): Map<string, string> {
+export function extractMachineSourceMarkers(content: string): Map<string, string> {
   const markers = new Map<string, string>();
   const markerLikeCount = [...content.matchAll(/echoink-source/giu)].length;
   let parsedCount = 0;

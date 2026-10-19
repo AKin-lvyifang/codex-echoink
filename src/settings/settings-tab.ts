@@ -16,7 +16,8 @@ import { SETTINGS_TAB_ICONS } from "./settings-tab-icons";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { renderManualDreamAction } from "./manual-dream-action";
 import { OriginSetting } from "./origin-setting";
-import { createOriginInput, createOriginButton, createOriginSwitch, createOriginSlider, createOriginPagination, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
+import { mergeKnowledgeMaintenanceHistory, renderKnowledgeMaintenanceHistoryList, renderKnowledgeMaintenanceRecordDetail, openKnowledgeMaintenancePath } from "./knowledge-maintenance-history";
+import { createOriginInput, createOriginButton, createOriginSwitch, createOriginSlider, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
 import { renderSettingsKnowledgeDashboard } from "./knowledge-dashboard";
 import { BUILTIN_SKILLS } from "../harness/resources/builtin-skills";
 import { mountSettingsEditor } from "./inline-editor";
@@ -2140,6 +2141,19 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private mountKnowledgeDashboard(page: HTMLElement, zh: boolean): void {
     const manager = this.plugin.getKnowledgeSurfaceService?.();
+    if (Platform.isDesktopApp) {
+      this.knowledgeDashboardEl = null;
+      if (manager) renderKnowledgeFolderActions(page, manager, this.plugin.settings.settingsLanguage,
+        async () => { this.knowledgeDashboardSnapshot = null; this.scheduleDisplay(); },
+        group => this.mountKnowledgeInitializationSection(group, zh));
+      else this.mountKnowledgeInitializationSection(page, zh);
+      createSettingsNavigationRow(createSettingsGroup(createSettingsSection(page, { surface: "flat" })), {
+        title: zh ? "知识库数据" : "Knowledge data", value: zh ? "工作台" : "Workbench",
+        actionLabel: zh ? "查看" : "View", focusKey: "knowledge:dashboard",
+        onActivate: () => void this.openKnowledgeDataPage("overview")
+      });
+      return;
+    }
     if (!this.knowledgeInitSection?.showDashboard) {
       this.knowledgeDashboardEl = null;
       page.createEl("p", { cls: "init-awaiting", text: zh
@@ -2252,7 +2266,20 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
+  private async openKnowledgeDataPage(page: "overview" | "health" | "history"): Promise<void> {
+    (this.app as unknown as { setting?: { close(): void } }).setting?.close();
+    await this.plugin.activateKnowledgeView(page);
+  }
+
   private renderKnowledgeMaintenanceHistory(page: HTMLElement, zh: boolean): void {
+    if (Platform.isDesktopApp) {
+      createSettingsNavigationRow(createSettingsGroup(createSettingsSection(page, { surface: "flat" })), {
+        title: zh ? "维护记录" : "Maintenance records", value: zh ? "知识库数据页" : "Knowledge data",
+        actionLabel: zh ? "查看" : "View", focusKey: "knowledge:maintenance-history",
+        onActivate: () => void this.openKnowledgeDataPage("history")
+      });
+      return;
+    }
     if (!this.knowledgeMaintenanceRecordsLoaded && !this.knowledgeMaintenanceRecordsLoading && !this.knowledgeMaintenanceRecordsError) void this.loadKnowledgeMaintenanceRecords();
     const section = createSettingsSection(page, {
       title: zh ? "维护记录" : "Maintenance records",
@@ -2279,122 +2306,46 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderKnowledgeMaintenanceHistoryDetail(container: HTMLElement, zh: boolean): void {
     this.knowledgeMaintenanceListCleanup?.();
     this.knowledgeMaintenanceListCleanup = null;
-    if (this.knowledgeMaintenanceSelectedRecord) { this.renderKnowledgeMaintenanceRecordDetail(container, zh, this.knowledgeMaintenanceSelectedRecord); return; }
-    const page = createSettingsPage(container, {
-      title: zh ? "维护记录" : "Maintenance records",
-      description: zh
-        ? "按日期查看来源、知识成果与未完成项。"
-        : "View sources, knowledge notes, and unfinished items by date.",
-      detail: true,
-      backLabel: zh ? "返回知识库" : "Back to Knowledge",
-      onBack: () => void this.closeSettingsDetail()
-    });
-    page.addClass("echoink-maintenance-history-page");
-    const selectedDate = this.knowledgeMaintenanceHistoryDate;
-    const filter = page.createDiv({ cls: "history-filter" });
-    const filterLabel = zh ? "维护日志日期筛选" : "Maintenance log date filter";
-    filter.createSpan({ text: zh ? "按日期筛选" : "Filter by date" });
-    const date = createOriginInput(filter, { attr: {
-      type: "date", "aria-label": filterLabel,
-      "data-echoink-focus-key": "knowledge:maintenance-history:date"
-    } });
-    date.value = selectedDate;
-    date.onchange = () => {
-      this.knowledgeMaintenanceHistoryDate = date.value;
-      this.knowledgeMaintenanceHistoryPage = 1;
-      this.knowledgeMaintenanceListScroll = 0;
-      this.scheduleDisplay();
+    if (this.knowledgeMaintenanceSelectedRecord) {
+      this.knowledgeMaintenanceListCleanup = renderKnowledgeMaintenanceRecordDetail(container, {
+        zh, record: this.knowledgeMaintenanceSelectedRecord,
+        onBack: () => {
+          this.knowledgeMaintenanceSelectedRecord = null;
+          this.pendingKnowledgeHistoryScroll = this.knowledgeMaintenanceHistoryScroll;
+          this.scheduleDisplay();
+        },
+        onOpenPath: (path) => this.openKnowledgeMaintenanceReport(path)
+      });
+      return;
+    }
+    const state = { date: this.knowledgeMaintenanceHistoryDate, page: this.knowledgeMaintenanceHistoryPage, listScroll: this.knowledgeMaintenanceListScroll };
+    const syncState = () => {
+      this.knowledgeMaintenanceHistoryDate = state.date;
+      this.knowledgeMaintenanceHistoryPage = state.page;
+      this.knowledgeMaintenanceListScroll = state.listScroll;
     };
-    const clear = createOriginButton(filter, { cls: "text-button", text: zh ? "清除" : "Clear", attr: {
-      type: "button", "aria-label": zh ? "清除日期筛选" : "Clear date filter",
-      "data-echoink-focus-key": "knowledge:maintenance-history:clear"
-    } });
-    clear.disabled = !selectedDate;
-    clear.onclick = () => {
-      this.knowledgeMaintenanceHistoryDate = "";
-      this.knowledgeMaintenanceHistoryPage = 1;
-      this.knowledgeMaintenanceListScroll = 0;
-      this.settingsFocusIntent = "explicit:knowledge:maintenance-history:date";
-      this.scheduleDisplay();
-    };
-    const group = createSettingsGroup(page);
-    if (this.knowledgeMaintenanceRecordsLoading || (!this.knowledgeMaintenanceRecordsLoaded && !this.knowledgeMaintenanceRecordsError)) {
-      group.createDiv({ text: zh ? "正在读取维护记录" : "Loading maintenance records", attr: { role: "status" } });
-      return;
-    }
-    if (this.knowledgeMaintenanceRecordsError) group.createDiv({ text: this.knowledgeMaintenanceRecordsError, cls: "settings-error" });
-    const allEntries = this.mergedKnowledgeMaintenanceHistory();
-    if (!allEntries.length && this.knowledgeMaintenanceRecordsError) return;
-    if (!allEntries.length) {
-      filter.createSpan({ cls: "history-count", text: zh ? "0 条记录" : "0 records" });
-      this.renderHistoryEmpty(group, zh ? "还没有知识库维护记录" : "No Knowledge maintenance runs yet", zh ? "完成维护后，记录会显示在这里。" : "Records will appear here after maintenance.");
-      return;
-    }
-    const entries = selectedDate
-      ? allEntries.filter((entry) => entry.date === selectedDate)
-      : allEntries;
-    filter.createSpan({ cls: "history-count", text: zh ? `${entries.length} 条记录` : `${entries.length} records` });
-    if (!entries.length) {
-      this.renderHistoryEmpty(group, zh ? "所选日期没有维护记录" : "No maintenance runs on this date", zh ? "选择另一个日期，或清除筛选查看全部记录。" : "Choose another date or clear the filter to see all records.");
-      return;
-    }
-    const pageSize = 20;
-    const pages = Math.ceil(entries.length / pageSize);
-    const currentPage = Math.max(1, Math.min(pages, this.knowledgeMaintenanceHistoryPage));
-    this.knowledgeMaintenanceHistoryPage = currentPage;
-    group.addClass("echoink-maintenance-record-list");
-    group.setAttr("aria-label", zh ? "维护记录列表" : "Maintenance record list");
-    group.onscroll = () => { this.knowledgeMaintenanceListScroll = group.scrollTop; };
-    for (const entry of entries.slice((currentPage - 1) * pageSize, currentPage * pageSize)) {
-      const row = new OriginSetting(group)
-        .setName(knowledgeMaintenanceHistoryTitle(entry, zh))
-        .setDesc(knowledgeMaintenanceHistoryDescription(entry, zh));
-      if (entry.reportPath || entry.recordId) {
-        row.addOriginButton((button) => {
-          const label = zh ? "查看明细" : "View details";
-          button
-            .setButtonText(label)
-            .onClick(() => {
-              if (!entry.recordId) { void this.openKnowledgeMaintenanceReport(entry.reportPath); return; }
-              const record = this.knowledgeMaintenanceRecords.find((item) => item.recordId === entry.recordId);
-              if (!record) { new Notice(zh ? "维护记录尚未读取或已缺失" : "Maintenance record is unavailable"); return; }
-              this.knowledgeMaintenanceHistoryScroll = captureSettingsScrollSnapshot(this.containerEl);
-              this.knowledgeMaintenanceSelectedRecord = record;
-              this.scheduleDisplay();
-            });
-          button.buttonEl.setAttr(
-            "aria-label",
-            `${label} ${knowledgeMaintenanceHistoryTitle(entry, zh)}`
-          );
-        });
+    const cleanup = renderKnowledgeMaintenanceHistoryList(container, {
+      zh, state, entries: this.mergedKnowledgeMaintenanceHistory(), records: this.knowledgeMaintenanceRecords,
+      loading: this.knowledgeMaintenanceRecordsLoading || (!this.knowledgeMaintenanceRecordsLoaded && !this.knowledgeMaintenanceRecordsError),
+      error: this.knowledgeMaintenanceRecordsError,
+      onBack: () => { syncState(); void this.closeSettingsDetail(); },
+      onChange: () => { syncState(); this.scheduleDisplay(); },
+      onClearFocus: () => { this.settingsFocusIntent = "explicit:knowledge:maintenance-history:date"; },
+      onOpenPath: (path) => this.openKnowledgeMaintenanceReport(path),
+      onUnavailable: () => { new Notice(zh ? "维护记录尚未读取或已缺失" : "Maintenance record is unavailable"); },
+      onSelectRecord: (record) => {
+        syncState();
+        this.knowledgeMaintenanceHistoryScroll = captureSettingsScrollSnapshot(this.containerEl);
+        this.knowledgeMaintenanceSelectedRecord = record;
+        this.scheduleDisplay();
       }
-      applySettingsRow(row);
-    }
-    const footer = page.createDiv({ cls: "echoink-maintenance-pagination" });
-    footer.createSpan({ text: zh ? `${currentPage} / ${pages} 页 · 每页 ${pageSize} 条` : `${currentPage} / ${pages} pages · ${pageSize} per page`, attr: { role: "status" } });
-    createOriginPagination(footer, currentPage, pages, (nextPage) => {
-      this.knowledgeMaintenanceHistoryPage = nextPage;
-      this.knowledgeMaintenanceListScroll = 0;
-      this.scheduleDisplay();
     });
-    const win = page.ownerDocument.defaultView;
-    if (win) {
-      const scrollTop = this.knowledgeMaintenanceListScroll;
-      const fit = () => {
-        if (!group.isConnected) return;
-        const available = win.innerHeight - group.getBoundingClientRect().top - footer.getBoundingClientRect().height - 18;
-        group.style.maxHeight = `${Math.floor(Math.max(144, Math.min(560, win.innerHeight * .65, available)))}px`;
-      };
-      const frame = win.requestAnimationFrame(() => { fit(); group.scrollTop = scrollTop; });
-      win.addEventListener("resize", fit);
-      this.knowledgeMaintenanceListCleanup = () => { win.cancelAnimationFrame(frame); win.removeEventListener("resize", fit); };
-    }
+    syncState();
+    this.knowledgeMaintenanceListCleanup = () => { syncState(); cleanup(); };
   }
 
   private mergedKnowledgeMaintenanceHistory(): KnowledgeBaseMaintenanceHistoryEntry[] {
-    const privateEntries: KnowledgeBaseMaintenanceHistoryEntry[] = this.knowledgeMaintenanceRecords.map((record) => ({ recordId: record.recordId, runId: record.runId, date: record.date, at: record.at, status: record.cancelled ? "canceled" : record.result.status === "completed" || record.result.status === "noop" ? "success" : "failed", mode: "maintain", reportPath: "", resultStatus: record.cancelled ? "cancelled" : record.result.status, completion: record.result.status === "partial" ? "partial" : record.result.status === "noop" ? "noop" : record.result.status === "completed" ? "full" : undefined, pendingSources: record.sources.filter((source) => source.status !== "processed").map((source) => source.path), warnings: record.result.issues.map((issue) => ({ id: issue.code, message: issue.message })) }));
-    return [...this.plugin.settings.knowledgeBase.maintenanceHistory.filter((entry) => !privateEntries.some((item) => item.recordId === entry.recordId || Boolean(item.runId && item.runId === entry.runId))), ...privateEntries]
-      .sort((left, right) => right.at - left.at || right.date.localeCompare(left.date));
+    return mergeKnowledgeMaintenanceHistory(this.plugin.settings.knowledgeBase.maintenanceHistory, this.knowledgeMaintenanceRecords);
   }
 
   private async loadKnowledgeMaintenanceRecords(): Promise<void> {
@@ -2413,32 +2364,6 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
-  private renderKnowledgeMaintenanceRecordDetail(container: HTMLElement, zh: boolean, record: KnowledgeMaintenanceRecord): void {
-    const page = createSettingsPage(container, { title: zh ? "维护详情" : "Maintenance details", detail: true, backLabel: zh ? "返回维护记录" : "Back to records", onBack: () => {
-      this.knowledgeMaintenanceSelectedRecord = null;
-      this.pendingKnowledgeHistoryScroll = this.knowledgeMaintenanceHistoryScroll;
-      this.scheduleDisplay();
-    } });
-    const overview = createSettingsGroup(page);
-    new OriginSetting(overview).setName(knowledgeMaintenanceHistoryStatus({ status: record.cancelled ? "canceled" : "success", resultStatus: record.cancelled ? "cancelled" : record.result.status } as KnowledgeBaseMaintenanceHistoryEntry, zh)).setDesc(record.summary);
-    const sources = createSettingsGroup(createSettingsSection(page, { title: zh ? "来源" : "Sources", surface: "flat" }));
-    for (const source of record.sources) applySettingsRow(new OriginSetting(sources).setName(source.path).setDesc(zh ? { processed: "已处理", failed: "待处理：本轮未全部完成", unread: "未读，保留待处理" }[source.status] : source.status));
-    if (!record.sources.length) sources.createDiv({ text: zh ? "本轮没有选中来源" : "No sources selected" });
-    const notes = createSettingsGroup(createSettingsSection(page, { title: zh ? "知识成果" : "Knowledge notes", surface: "flat" }));
-    for (const note of record.result.notes) applySettingsRow(new OriginSetting(notes).setName(note.title).setDesc(`${zh ? (note.operation === "created" ? "新增" : "更新") : note.operation} · ${note.summary}\n${note.path}`).addOriginButton((button) => button.setButtonText(zh ? "打开笔记" : "Open note").onClick(() => void this.openKnowledgeMaintenanceReport(note.path))));
-    if (!record.result.notes.length) notes.createDiv({ text: zh ? "本轮没有新增或更新知识笔记" : "No notes created or updated" });
-    if (record.result.assessments.length) {
-      const assessments = createSettingsGroup(createSettingsSection(page, { title: zh ? "知识判断" : "Assessments", surface: "flat" }));
-      const statuses = { valid: "仍有效", needs_supplement: "需补充", outdated: "已过时", conflict: "存在冲突" };
-      const verification = { local_verified: "本地证据已核对", external_verified: "外部证据已核对", unverified: "未核验" };
-      for (const assessment of record.result.assessments) new OriginSetting(assessments).setName(assessment.claim).setDesc(`${zh ? statuses[assessment.status] : assessment.status} · ${assessment.asOf} · ${zh ? verification[assessment.verification] : assessment.verification}\n${assessment.evidence.join("、")}`);
-    }
-    if (record.result.issues.length) {
-      const issues = createSettingsGroup(createSettingsSection(page, { title: zh ? "问题与未完成项" : "Issues", surface: "flat" }));
-      for (const issue of record.result.issues) applySettingsRow(new OriginSetting(issues).setName(issue.path ?? issue.code).setDesc(issue.message));
-    }
-  }
-
   private renderHistoryEmpty(container: HTMLElement, title: string, description: string): void {
     const empty = container.createDiv({ cls: "settings-empty history-empty" });
     setIcon(empty.createSpan({ cls: "history-empty-icon" }), "history");
@@ -2447,14 +2372,7 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private async openKnowledgeMaintenanceReport(relativePath: string): Promise<void> {
-    const file = this.app.vault.getAbstractFileByPath(normalizePath(relativePath));
-    if (file instanceof TFile) {
-      await this.app.workspace.getLeaf("tab").openFile(file, { active: true });
-      return;
-    }
-    new Notice(this.plugin.settings.settingsLanguage === "en"
-      ? `The report was not found in this Vault: ${relativePath}`
-      : `当前 Vault 中没有找到维护报告：${relativePath}`);
+    await openKnowledgeMaintenancePath(this.app, relativePath, this.plugin.settings.settingsLanguage !== "en");
   }
 
   private renderKnowledgeBaseSettings(container: HTMLElement): void {
@@ -3677,6 +3595,10 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private openSettingsDetail(detail: Exclude<SettingsDetail, null>): void {
+    if (Platform.isDesktopApp && detail === "knowledge-maintenance-history") {
+      void this.openKnowledgeDataPage("history");
+      return;
+    }
     this.settingsDetail = detail;
     this.settingsFocusIntent = "explicit:settings-detail:back";
     if (typeof detail === "object" && detail.kind === "resource") {
@@ -5909,75 +5831,6 @@ function isPersonalMemoryRevisionConflict(error: unknown): boolean {
   return record.code === "revision_conflict"
     || (typeof record.message === "string"
       && record.message.includes("revision_conflict"));
-}
-
-function knowledgeMaintenanceHistoryTitle(
-  entry: Readonly<KnowledgeBaseMaintenanceHistoryEntry>,
-  zh: boolean
-): string {
-  const modeLabels = zh
-    ? {
-        maintain: "知识提炼",
-        lint: "知识体检",
-        reingest: "重新提炼",
-        outputs: "输出整理",
-        inbox: "Inbox 整理",
-        unknown: "知识维护"
-      }
-    : {
-        maintain: "Knowledge refinement",
-        lint: "Knowledge check",
-        reingest: "Re-refinement",
-        outputs: "Output organization",
-        inbox: "Inbox organization",
-        unknown: "Knowledge maintenance"
-      };
-  return `${formatKnowledgeMaintenanceTime(entry.at, entry.date, zh)} · ${modeLabels[entry.mode]}`;
-}
-
-function knowledgeMaintenanceHistoryDescription(
-  entry: Readonly<KnowledgeBaseMaintenanceHistoryEntry>,
-  zh: boolean
-): string {
-  const status = knowledgeMaintenanceHistoryStatus(entry, zh);
-  const pending = entry.pendingSources?.length
-    ? (zh
-      ? `${entry.pendingSources.length} 项待处理`
-      : `${entry.pendingSources.length} pending`)
-    : "";
-  const warnings = entry.warnings?.length
-    ? (zh
-      ? `${entry.warnings.length} 条提醒`
-      : `${entry.warnings.length} warnings`)
-    : "";
-  return [status, pending, warnings, entry.reportPath].filter(Boolean).join(" · ");
-}
-
-function knowledgeMaintenanceHistoryStatus(
-  entry: Readonly<KnowledgeBaseMaintenanceHistoryEntry>,
-  zh: boolean
-): string {
-  if (entry.resultStatus) {
-    const labels = zh ? { completed: "已完成", partial: "部分完成", noop: "已检查，无需新增", failed: "失败", write_uncertain: "写入状态待核对", cancelled: "已取消" } : { completed: "Completed", partial: "Partially completed", noop: "Checked, no new content", failed: "Failed", write_uncertain: "Write needs verification", cancelled: "Cancelled" };
-    return labels[entry.resultStatus];
-  }
-  if (entry.status === "failed") return zh ? "失败" : "Failed";
-  if (entry.status === "canceled") return zh ? "已取消" : "Canceled";
-  if (entry.completion === "partial") return zh ? "部分完成" : "Partially completed";
-  if (entry.completion === "recovered") return zh ? "恢复后完成" : "Completed after recovery";
-  if (entry.completion === "noop") return zh ? "已检查，无新内容" : "Checked, no new content";
-  return zh ? "已完成" : "Completed";
-}
-
-function formatKnowledgeMaintenanceTime(at: number, date: string, zh: boolean): string {
-  if (!Number.isFinite(at) || at <= 0) return date;
-  return new Date(at).toLocaleString(zh ? "zh-CN" : "en-US", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
 }
 
 const SETTINGS_PANEL_ID = "echoink-settings-panel";

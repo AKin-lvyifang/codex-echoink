@@ -408,6 +408,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
   async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> { return this.getViewService().activateLegacyHomeView(section); }
+  async activateKnowledgeView(page: "overview" | "health" | "history" = "overview"): Promise<void> { return this.getViewService().activateKnowledgeView(page); }
+
   async activateTodoView(): Promise<void> { return this.getViewService().activateTodoView(); }
 
   async activateJournalView(): Promise<void> { return this.getViewService().activateJournalView(); }

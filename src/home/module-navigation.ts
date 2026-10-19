@@ -29,7 +29,7 @@ export async function openWorkbenchModule(plugin: CodexForObsidianPlugin, module
     case "journal": await plugin.activateJournalView(); break;
     case "todos": await plugin.activateTodoView(); break;
     case "finance": await plugin.lifestyle.open("finance"); break;
-    case "knowledge-base": await plugin.openEchoInkKnowledgeSettings(); break;
+    case "knowledge-base": await plugin.activateKnowledgeView(); break;
     case "english-diary": await plugin.englishDiary?.openToday(); break;
     case "pdf-reading":
       await plugin.openAgentTaskList(plugin.settings.agentRegistry.moduleOwners[moduleId] ?? GENERAL_ASSISTANT_ID);

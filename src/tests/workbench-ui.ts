@@ -72,6 +72,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
     async readPiConversationCatalogEntry(id: string) { return tasks.find(task => task.conversationId === id); },
     piTurnInteractionBinding(identity: unknown) { return { submit(answers: unknown) { calls.push(["answer", identity, answers]); return true; } }; },
+    async activateKnowledgeView() { calls.push(["knowledge"]); },
     async activateTodoView() { calls.push(["todos"]); },
     async activateJournalView() { calls.push(["journal"]); },
     async activateLegacyHomeView(section: string) { calls.push(["legacy", section]); },

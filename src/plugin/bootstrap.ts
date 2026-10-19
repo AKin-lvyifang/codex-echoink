@@ -1,3 +1,4 @@
+import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
 import { TodoPageView, TODO_PAGE_VIEW_TYPE } from "../home/todo-page";
 import { EchoInkJournalView, VIEW_TYPE_ECHOINK_JOURNAL } from "../home/journal-page";
 import { Notice, Platform, type WorkspaceLeaf } from "obsidian";
@@ -28,6 +29,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
   plugin.registerView(VIEW_TYPE_ECHOINK_HOME, (leaf: WorkspaceLeaf) => Platform.isDesktopApp
     ? new EchoInkWorkbenchView(leaf, plugin) : new EchoInkHomeView(leaf, plugin));
   if (Platform.isDesktopApp) {
+    plugin.registerView(KNOWLEDGE_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new KnowledgePageView(leaf, plugin));
     plugin.registerView(TODO_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TodoPageView(leaf, plugin));
     plugin.registerView(VIEW_TYPE_ECHOINK_JOURNAL, (leaf: WorkspaceLeaf) => new EchoInkJournalView(leaf, plugin));
     plugin.registerView("echoink-legacy-home", (leaf: WorkspaceLeaf) => new EchoInkLegacyHomeView(leaf, plugin));

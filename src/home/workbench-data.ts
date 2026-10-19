@@ -30,7 +30,7 @@ interface CachedSourceContent {
   rawDigest: RawDigestFrontmatterRecord | null;
 }
 
-export function getWorkbenchDataService(plugin: WorkbenchHost): WorkbenchDataPort {
+export function getWorkbenchDataService(plugin: WorkbenchHost): WorkbenchDataService {
   let service = instances.get(plugin);
   if (!service) { service = new WorkbenchDataService(plugin); instances.set(plugin, service); }
   return service;
@@ -54,6 +54,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     this.links = new KnowledgeLinkHealthService(plugin.app);
     this.ready = this.initialize().catch(error => { this.initializationError = error; });
   }
+  loadKnowledgeLinkHealth(bindings: KnowledgeFolderBindings): Promise<KnowledgeLinkHealth> { return this.links.load(bindings); }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   private changed = (): void => { if (!this.disposed) for (const listener of this.listeners) listener(); };
   private get bindings(): KnowledgeFolderBindings | null { return this.plugin.settings.knowledgeBase.folderBindings ?? null; }
@@ -268,7 +269,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     if (modules.includes("knowledge-base")) {
       facts.raw = await attempt("来源状态读取失败", [], () => this.readPendingRaw(issues));
       if (bindings) {
-        const health = await attempt<KnowledgeLinkHealth | null>("笔记链接读取失败", null, () => this.links.load(bindings));
+        const health = await attempt<KnowledgeLinkHealth | null>("笔记链接读取失败", null, () => this.loadKnowledgeLinkHealth(bindings));
         if (health?.state === "ready") facts.isolated = health.isolatedPaths;
         else if (health?.reason) issues.push(health.reason);
       }
