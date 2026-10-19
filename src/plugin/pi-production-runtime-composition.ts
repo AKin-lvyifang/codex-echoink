@@ -1,3 +1,5 @@
+import { buildEnglishDiaryTaskContext, type EnglishDiaryTaskContext } from "../english-diary/task-context";
+import { PiEnglishDiaryToolSecurity, createPiEnglishDiaryToolDefinitions } from "../harness/pi-native/pi-english-diary-tools";
 import { PiTodoToolSecurity, createPiTodoToolDefinitions, PI_TODO_TOOL_IDS } from "../harness/pi-native/pi-todo-tools";
 import { getTodoProjects } from "../home/todo-projects";
 import { agentTaskSystemPrompt, checkAgentCapability, checkAgentSkill, checkAgentSkillPath, checkAgentTool, isAgentCapabilityPathField, requireAgentCapability, resolveAgentRunSnapshot, type AgentCapabilityContext } from "../agents/capability-policy";
@@ -267,6 +269,9 @@ import {
 } from "../resources/mcp-connections";
 
 export interface PiProductionPluginHost {
+  englishDiary?: { api: import("../english-diary/types").EnglishDiaryApi } | null;
+  createEnglishDiaryTaskGenerator?(): import("../english-diary/types").DiaryGenerator;
+  validateEnglishDiaryTaskSource?(sourcePath: string): Promise<void>;
   getTodoStore(options?: { initialize?: boolean }): import("../home/todo-store").EchoInkTodoStore;
   readonly activeTaskResumeSafety?: ReadonlyMap<string, Readonly<TaskResumeContext>>;
   readonly app: App;
@@ -1068,6 +1073,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   currentAgentSnapshot?(): AgentRunSnapshot | Promise<AgentRunSnapshot>;
   currentTaskResumeContext?(): TaskResumeContext | undefined;
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
+  currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   assertCurrentSkillsAllowed?(): Promise<void>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
@@ -1157,6 +1163,8 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           capability: "not_applicable",
           fixedContextRevision: null
         });
+        const englishDiary = input.currentEnglishDiaryRequest?.();
+        if (englishDiary) return { systemPrompt: event.systemPrompt + "\n" + piWorkspaceAccessPrompt(input.currentWorkspaceAccess?.() ?? { permission: "read-only", mode: "agent", memoryMode: "no_memory" }), message: buildEnglishDiaryTaskContext(englishDiary) };
         const turn = input.currentTurn();
         const taskPlanTurn = turn
           ? null
@@ -1941,6 +1949,7 @@ async function createProductionAgentSession(input: {
   // The task ID exists before a run is bound (Skill loading happens during activation).
   const liveCapabilityContext = async () => await currentAgentCapabilityContext(input.plugin, input.catalog, input.input.catalog.conversationId, input.input.currentWorkspaceAccess?.());
   const assertToolAllowed = async (name: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown, currentOperation?: Readonly<{ productRunId: string; toolCallId: string }>) => {
+    if (input.input.currentEnglishDiaryRequest?.() && name !== "english_diary_generate") throw new Error("english_diary_task_scope_required");
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
     const context = await liveCapabilityContext();
     requireAgentCapability(checkAgentTool(context, name, args, resolvedTarget, descriptor ? {
@@ -2084,6 +2093,20 @@ async function createProductionAgentSession(input: {
     } }
   });
   const todoTools = createPiTodoToolDefinitions({ store: input.plugin.getTodoStore({ initialize: false }), projects: () => getTodoProjects(input.plugin) }, todoSecurity);
+  const englishDiarySecurity = new PiEnglishDiaryToolSecurity({ assertToolAllowed,
+    currentRequest: () => input.input.currentEnglishDiaryRequest?.() ?? null,
+    currentUserEntry: () => { const context = input.input.currentToolExecutionContext(); return { entryId: context.userEntryId, text: context.userEntryText }; },
+    currentAccess: () => input.input.currentWorkspaceAccess?.(), currentRunIdentity: () => input.input.currentToolExecutionContext(),
+    approvals: input.approvals, receipts: input.receipts, userId: localPiVaultUserId(input.deviceScope.deviceIdDigest), deviceId: input.deviceScope.deviceIdDigest,
+    confirmation: { async confirm(request) { return input.approvalBroker.waitForDecision({ requestId: request.requestId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: request.toolCallId, target: canonicalJsonStringify(request.target), preview: canonicalJsonStringify(request.preview), signal: request.signal }); } }
+  });
+  const englishDiaryApi = input.plugin.englishDiary?.api;
+  const englishDiaryGenerator = input.plugin.createEnglishDiaryTaskGenerator?.();
+  const validateEnglishDiarySource = input.plugin.validateEnglishDiaryTaskSource?.bind(input.plugin);
+  const englishDiaryTools = englishDiaryApi && englishDiaryGenerator && validateEnglishDiarySource ? createPiEnglishDiaryToolDefinitions({ api: englishDiaryApi,
+    inspect: async sourcePath => { if (!englishDiaryApi.repository.inspect) throw new Error("英文日记尚未就绪。"); return englishDiaryApi.repository.inspect(await englishDiaryApi.readSource(sourcePath)); },
+    generator: englishDiaryGenerator, validateSource: validateEnglishDiarySource
+  }, englishDiarySecurity) : [];
   const personalMemorySecurity = new PiPersonalMemoryToolSecurity({
     currentRuntime: () => {
       const execution = input.input.currentToolExecutionContext();
@@ -2179,6 +2202,7 @@ async function createProductionAgentSession(input: {
       knowledgeReadSecurity,
       obsidianSecurity,
       todoSecurity,
+      englishDiarySecurity,
       pdfSecurity
     ],
     resultCorrection: createSecurePiVaultToolResultCorrectionPort(
@@ -2274,6 +2298,7 @@ async function createProductionAgentSession(input: {
     currentAgentSnapshot: async () => { const context = await liveCapabilityContext(); return resolveAgentRunSnapshot(context.settings, context.agentId); },
     currentTaskResumeContext: () => input.input.currentTaskResumeContext?.(),
     currentWorkbenchSource: () => input.input.currentWorkbenchSource?.() ?? null,
+    currentEnglishDiaryRequest: () => input.input.currentEnglishDiaryRequest?.() ?? null,
     assertCurrentSkillsAllowed: async () => {
       const context = await liveCapabilityContext();
       const paths = input.input.skillPath ? [input.input.skillPath] : [...(input.input.skillPaths ?? [])];
@@ -2352,6 +2377,7 @@ async function createProductionAgentSession(input: {
     ...vaultTools,
     ...obsidianTools,
     ...todoTools,
+    ...englishDiaryTools,
     ...pdfTools,
     maintenanceTool,
     taskPlanTool,
@@ -2414,6 +2440,7 @@ async function createProductionAgentSession(input: {
     ...PI_VAULT_TOOL_IDS,
     ...PI_OBSIDIAN_TOOL_IDS,
     ...PI_TODO_TOOL_IDS,
+    ...englishDiaryTools.map(tool => tool.name),
     ...PDF_TOOL_NAMES,
     maintenanceTool.name,
     taskPlanTool.name,

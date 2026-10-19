@@ -1,7 +1,7 @@
 import {showEchoInkMenu} from "../ui/theme-boundary";
 import { capabilityMessage, unavailableCapabilityAccess } from "../membership/access";
-import { ItemView, Menu, Notice, setIcon, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
-import { createOriginInput, disposeOriginControls } from "../settings/origin-controls";
+import { ItemView, Menu, Notice, setIcon, type App, type EventRef, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { createOriginInput, createOriginPagination, disposeOriginControls } from "../settings/origin-controls";
 import { confirmModal } from "../ui/modals";
 import { ENGLISH_EXPRESSION_VIEW, type DiaryGenerationDay, type ExpressionEntry, type ExpressionOccurrence } from "./types";
 import type { EnglishDiaryViewHost } from "./view-host";
@@ -10,12 +10,13 @@ import { renderDiaryProgress } from "./activity";
 import { ForegroundView } from "../ui/foreground-view";
 import { filterExpressions, pathsOverlap } from "./expression-search";
 
-type ExpressionViewState = { query?: string; category?: string; expressionId?: string };
+export type ExpressionViewState = { query?: string; category?: string; expressionId?: string; page?: number };
+interface ExpressionBrowserOptions { embedded?: boolean; managed?: boolean; onChanged?: () => void }
 interface ExpressionDraft { id: string; category: string; note: string; initialCategory: string; initialNote: string }
 const unsavedExpressionDrafts = new WeakMap<EnglishDiaryViewHost, ExpressionDraft>();
 
 /** Searches and renders saved expression records; this view adds no learning state. */
-export class EnglishExpressionView extends ItemView {
+export class EnglishExpressionBrowser {
   private query = "";
   private category = "";
   private selectedId = "";
@@ -32,74 +33,98 @@ export class EnglishExpressionView extends ItemView {
   private closed = false;
   private refreshSequence = 0;
   private timer: number | null = null;
-  private foreground: ForegroundView | null = null;
+  private active = true;
+  private releases: Array<() => void> = [];
+  private pageNumber = 1;
+  private listScroll = 0;
+  private returnFocus = "";
   private refreshPending = false;
   private renderPending = false;
   private sourcePaths = new Set<string>();
 
-  constructor(leaf: WorkspaceLeaf, private readonly host: EnglishDiaryViewHost) { super(leaf); }
-  getViewType(): string { return ENGLISH_EXPRESSION_VIEW; }
-  getDisplayText(): string { return "表达库"; }
-  getIcon(): string { return "book-open"; }
-  getState(): ExpressionViewState { return { query: this.query, category: this.category, expressionId: this.selectedId }; }
+  constructor(private readonly app: App, readonly contentEl: HTMLElement, private readonly host: EnglishDiaryViewHost, private readonly options: ExpressionBrowserOptions = {}) {}
+  getState(): ExpressionViewState { return { query: this.query, category: this.category, expressionId: this.selectedId, page: this.pageNumber }; }
 
-  async setState(state: ExpressionViewState, result: ViewStateResult): Promise<void> {
+  async setState(state: ExpressionViewState): Promise<void> {
     this.query = typeof state?.query === "string" ? state.query : "";
     this.category = typeof state?.category === "string" ? state.category : "";
     this.selectedId = typeof state?.expressionId === "string" ? state.expressionId : this.selectedId;
+    this.pageNumber = typeof state?.page === "number" && Number.isFinite(state.page) ? Math.max(1, Math.floor(state.page)) : 1;
     await this.refresh();
-    await super.setState(state, result);
   }
 
-  async onOpen(): Promise<void> {
+  mount(active = true): void {
     this.closed = false;
-    this.foreground = new ForegroundView(this, (active) => this.foregroundChanged(active));
-    this.register((this.host.api.access ?? unavailableCapabilityAccess).subscribe(() => this.render()));
     this.contentEl.addClass("echoink-diary-view", "echoink-expression-view");
+    this.contentEl.toggleClass("echoink-expression-embedded", Boolean(this.options.embedded));
     const retained = unsavedExpressionDrafts.get(this.host);
     if (retained) { this.selectedId = retained.id; this.draft = { ...retained }; this.editingMetadata = true; }
+    this.setActive(active);
+  }
+
+  private subscribe(): void {
+    if (this.options.managed || this.releases.length || this.closed) return;
+    this.releases.push((this.host.api.access ?? unavailableCapabilityAccess).subscribe(() => this.render()));
     const changed = () => this.scheduleRefresh();
     const unsubscribe = this.host.api.repository.subscribe?.(changed);
-    if (unsubscribe) this.register(unsubscribe);
+    if (unsubscribe) this.releases.push(unsubscribe);
     const fileChanged = (file: { path: string }, oldPath?: string) => {
       if (this.affectsExpressions(file.path) || (oldPath !== undefined && this.affectsExpressions(oldPath))) changed();
     };
-    this.registerEvent(this.app.vault.on("modify", fileChanged));
-    this.registerEvent(this.app.vault.on("create", fileChanged));
-    this.registerEvent(this.app.vault.on("delete", fileChanged));
-    this.registerEvent(this.app.vault.on("rename", fileChanged));
-    await this.refresh();
+    const observe = (ref: EventRef) => this.releases.push(() => this.app.vault.offref(ref));
+    observe(this.app.vault.on("modify", fileChanged));
+    observe(this.app.vault.on("create", fileChanged));
+    observe(this.app.vault.on("delete", fileChanged));
+    observe(this.app.vault.on("rename", fileChanged));
   }
 
-  async onClose(): Promise<void> {
+  close(): void {
     if (this.isDirty() && this.draft) {
       unsavedExpressionDrafts.set(this.host, { ...this.draft });
       new Notice("未保存的分类和备注已暂存在本次会话，重新打开可继续。退出 Obsidian 前请保存。", 8000);
     }
     this.closed = true;
-    this.foreground?.dispose(); this.foreground = null;
+    this.setActive(false);
     this.refreshSequence++;
-    if (this.timer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.timer);
-    this.timer = null;
     disposeOriginControls(this.contentEl);
     this.contentEl.empty();
   }
 
-  private isForeground(): boolean { return !this.closed && (this.foreground?.isActive() ?? true); }
+  private isForeground(): boolean { return !this.closed && this.active; }
+
+  setActive(active: boolean): void {
+    this.active = active;
+    if (!active) {
+      this.refreshPending = true;
+      for (const release of this.releases.splice(0)) release();
+      if (this.timer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.timer);
+      this.timer = null;
+      if (this.loading) { this.refreshSequence++; this.loading = false; this.refreshPending = true; }
+    } else {
+      this.subscribe();
+      if (this.refreshPending && !this.options.managed) this.scheduleRefresh(0);
+      else if (this.renderPending) this.render();
+    }
+  }
+
+  /** The navigation page already loaded the same repository; do not scan it twice. */
+  setEntries(entries: readonly ExpressionEntry[], error = ""): void {
+    this.refreshSequence++; this.refreshPending = false;
+    this.acceptEntries([...entries]);
+    this.error = error;
+    this.loading = false;
+    this.render();
+  }
+
+  async openExpression(id: string): Promise<void> {
+    if (this.selectedId === id) return;
+    if (this.isDirty() && !(await confirmModal(this.app, "放弃未保存的修改？", "分类和备注还没有保存。", "放弃并查看", "继续编辑"))) return;
+    await this.openEntry(id);
+  }
 
   private affectsExpressions(path: string): boolean {
     return (this.host.api.repository.affectsExpressions?.(path) ?? true)
       || [...this.sourcePaths].some((source) => pathsOverlap(path, source));
-  }
-
-  private foregroundChanged(active: boolean): void {
-    if (this.closed) return;
-    if (!active) {
-      if (this.timer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.timer);
-      this.timer = null;
-      if (this.loading) { this.refreshSequence++; this.loading = false; this.refreshPending = true; }
-    } else if (this.refreshPending) this.scheduleRefresh(0);
-    else if (this.renderPending) this.render();
   }
 
   private scheduleRefresh(delay = 200): void {
@@ -121,21 +146,13 @@ export class EnglishExpressionView extends ItemView {
     this.loading = true;
     try {
       const [all, activity] = await Promise.all([
-        this.host.api.repository.listExpressions(),
-        this.host.api.repository.listGenerationActivity().catch(() => null)
+        this.host.api.repository.listExpressions("", undefined, { readOnly: true }),
+        this.options.embedded ? Promise.resolve(null) : this.host.api.repository.listGenerationActivity({ readOnly: true }).catch(() => null)
       ]);
       if (this.closed || sequence !== this.refreshSequence) return;
       if (!this.isForeground()) { this.refreshPending = true; return; }
-      this.allEntries = all;
-      this.entries = filterExpressions(all, this.query, this.category);
-      this.sourcePaths = new Set(all.flatMap((entry) => entry.occurrences.map((item) => item.sourcePath)));
+      this.acceptEntries(all);
       this.activity = activity;
-      const counts = new Map<string, number>();
-      for (const entry of all) counts.set(entry.category, (counts.get(entry.category) || 0) + 1);
-      this.categories = [...counts].map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
-      this.selected = all.find((entry) => entry.id === this.selectedId) ?? null;
-      if (this.selected && (!this.draft || this.draft.id !== this.selected.id || !this.isDirty())) this.resetDraft(this.selected);
       this.error = "";
     } catch (error) {
       if (this.closed || sequence !== this.refreshSequence) return;
@@ -145,10 +162,25 @@ export class EnglishExpressionView extends ItemView {
     }
   }
 
+  private acceptEntries(all: ExpressionEntry[]): void {
+    this.allEntries = all;
+    this.entries = filterExpressions(all, this.query, this.category);
+    this.sourcePaths = new Set(all.flatMap(entry => entry.occurrences.map(item => item.sourcePath)));
+    const counts = new Map<string, number>();
+    for (const entry of all) counts.set(entry.category, (counts.get(entry.category) || 0) + 1);
+    this.categories = [...counts].map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
+    this.selected = all.find(entry => entry.id === this.selectedId) ?? null;
+    if (this.selected && (!this.draft || this.draft.id !== this.selected.id || !this.isDirty())) this.resetDraft(this.selected);
+    this.pageNumber = Math.min(this.pageNumber, Math.max(1, Math.ceil(this.entries.length / 20)));
+  }
+
   private resetDraft(entry: ExpressionEntry): void {
     this.draft = { id: entry.id, category: entry.category, note: entry.note, initialCategory: entry.category, initialNote: entry.note };
     if (unsavedExpressionDrafts.get(this.host)?.id === entry.id) unsavedExpressionDrafts.delete(this.host);
   }
+
+  private canWrite(): boolean { return this.host.enabled() && (this.host.api.access ?? unavailableCapabilityAccess).checkCapability("diary.expression.write"); }
 
   private isDirty(): boolean { return !!this.draft && (this.draft.category !== this.draft.initialCategory || this.draft.note !== this.draft.initialNote); }
 
@@ -161,6 +193,8 @@ export class EnglishExpressionView extends ItemView {
     const focusedCategory = active?.dataset.expressionCategory;
     const selection = field ? { start: active.selectionStart, end: active.selectionEnd, scroll: active.scrollTop } : null;
     const scroll = this.contentEl.scrollTop;
+    const previousList = this.contentEl.querySelector<HTMLElement>(".echoink-expression-list");
+    if (previousList) this.listScroll = previousList.scrollTop;
     disposeOriginControls(this.contentEl);
     this.contentEl.empty();
     const page = this.contentEl.createDiv({ cls: "echoink-diary-page" });
@@ -168,7 +202,7 @@ export class EnglishExpressionView extends ItemView {
     if (this.selectedId) {
       header.addClass("echoink-expression-detail-nav");
       diaryButton(header, "返回表达库", () => this.back(), { tertiary: true });
-    } else {
+    } else if (!this.options.embedded) {
       header.createEl("h2", { cls: "echoink-diary-title", text: "表达库" });
       if (this.query || this.category) header.createSpan({ cls: "echoink-diary-count", text: `显示 ${this.entries.length} 个表达` });
     }
@@ -177,17 +211,21 @@ export class EnglishExpressionView extends ItemView {
     if (this.error) {
       const error = page.createDiv({ cls: "echoink-diary-notice is-error", attr: { role: "alert" } });
       error.createSpan({ text: this.error });
-      diaryButton(error, "重试", () => this.refresh());
+      diaryButton(error, "重试", () => { if (this.options.managed && this.options.onChanged) this.options.onChanged(); else return this.refresh(); });
     }
     if (this.selectedId) {
       if (this.selected) this.renderDetail(page, this.selected);
       else page.createDiv({ cls: "echoink-diary-empty", text: "这个表达已移除，或暂时无法读取。" });
     } else {
-      this.renderProgress(page);
+      if (!this.options.embedded) this.renderProgress(page);
       this.renderSearch(page);
       this.renderList(page);
     }
     this.contentEl.scrollTop = scroll;
+    if (this.returnFocus && !this.selectedId) {
+      Array.from(this.contentEl.querySelectorAll<HTMLElement>("[data-expression-id]")).find(row => row.dataset.expressionId === this.returnFocus)?.focus({ preventScroll: true });
+      this.returnFocus = "";
+    }
     if (field && selection) {
       const next = this.contentEl.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-expression-field="${field}"]`);
       next?.focus({ preventScroll: true });
@@ -206,15 +244,20 @@ export class EnglishExpressionView extends ItemView {
   private renderSearch(page: HTMLElement): void {
     const browserTools = page.createDiv({ cls: "echoink-expression-browser-tools" });
     const tools = browserTools.createDiv({ cls: "echoink-expression-tools" });
-    const search = createOriginInput(tools, { cls: "echoink-expression-search", value: this.query, attr: { type: "search", placeholder: "搜索表达、意思、日期或日记", "aria-label": "搜索表达库" } });
+    const searchField = this.options.embedded ? tools.createDiv({ cls: "echoink-expression-search-field" }) : tools;
+    if (this.options.embedded) setIcon(searchField.createSpan({ cls: "echoink-expression-search-icon", attr: { "aria-hidden": "true" } }), "search");
+    const search = createOriginInput(searchField, { cls: "echoink-expression-search", value: this.query, attr: { type: "search", placeholder: "搜索表达、意思、日期或日记", "aria-label": "搜索表达库" } });
     search.dataset.expressionField = "search";
-    const searchChanged = () => { this.query = search.value; this.app.workspace.requestSaveLayout(); this.filterLoadedEntries(); };
+    const searchChanged = () => { this.query = search.value; this.pageNumber = 1; this.listScroll = 0; this.contentEl.querySelector<HTMLElement>(".echoink-expression-list")?.scrollTo?.(0, 0); this.app.workspace.requestSaveLayout(); this.filterLoadedEntries(); };
     search.addEventListener("input", (event) => { if (!(event as InputEvent).isComposing) searchChanged(); });
     search.addEventListener("compositionend", searchChanged);
+    if (this.query || this.category) diaryButton(tools, "清除筛选", () => { this.query = ""; this.category = ""; this.pageNumber = 1; this.listScroll = 0; const list = this.contentEl.querySelector<HTMLElement>(".echoink-expression-list"); if (list) list.scrollTop = 0; this.filterLoadedEntries(); this.app.workspace.requestSaveLayout(); }, { tertiary: true });
     const categories = browserTools.createDiv({ cls: "echoink-diary-filters echoink-expression-categories", attr: { role: "group", "aria-label": "按分类筛选" } });
     for (const category of [{ name: "", count: this.allEntries.length }, ...this.categories]) {
       const button = diaryButton(categories, "", async () => {
         this.category = category.name;
+        this.pageNumber = 1; this.listScroll = 0;
+        const list = this.contentEl.querySelector<HTMLElement>(".echoink-expression-list"); if (list) list.scrollTop = 0;
         this.app.workspace.requestSaveLayout();
         this.filterLoadedEntries();
       }, { tertiary: true });
@@ -233,13 +276,16 @@ export class EnglishExpressionView extends ItemView {
 
   private renderList(page: HTMLElement): void {
     if (!this.entries.length) {
-      page.createDiv({ cls: "echoink-diary-empty", text: this.loading ? "正在读取表达…" : this.query || this.category ? "没有匹配的表达。" : "生成英文日记后，表达会自动收录到这里。" });
+      page.createDiv({ cls: "echoink-diary-empty", text: this.loading ? "正在读取表达…" : this.error ? "表达暂时读不到，请重试。" : this.query || this.category ? "没有匹配的表达。" : this.options.embedded ? "还没有收录的表达" : "生成英文日记后，表达会自动收录到这里。" });
       return;
     }
     const list = page.createDiv({ cls: "echoink-expression-list" });
-    for (const entry of this.entries) {
+    const pages = Math.max(1, Math.ceil(this.entries.length / 20));
+    this.pageNumber = Math.min(this.pageNumber, pages);
+    for (const entry of (this.options.embedded ? this.entries.slice((this.pageNumber - 1) * 20, this.pageNumber * 20) : this.entries)) {
       const row = diaryButton(list, "", () => this.openEntry(entry.id));
       row.addClass("echoink-expression-list-item");
+      row.dataset.expressionId = entry.id;
       row.createSpan({ cls: "echoink-expression-list-title", text: entry.term, attr: { lang: "en" } });
       const metadata = row.createSpan({ cls: "echoink-diary-row" });
       metadata.createSpan({ cls: "echoink-diary-badge", text: entry.type === "phrase" ? "短语" : "短句" });
@@ -248,6 +294,14 @@ export class EnglishExpressionView extends ItemView {
       row.createSpan({ cls: "echoink-diary-meaning", text: entry.meaning });
       if (entry.note) row.createSpan({ cls: "echoink-expression-note-preview", text: entry.note });
     }
+    list.scrollTop = this.listScroll;
+    if (!this.options.embedded) return;
+    const pagination = page.createDiv({ cls: "echoink-expression-pagination" });
+    pagination.createSpan({ text: `${this.pageNumber} / ${pages} 页 · ${this.entries.length} 个表达` });
+    createOriginPagination(pagination, this.pageNumber, pages, pageNumber => {
+      this.pageNumber = pageNumber; this.listScroll = 0; list.scrollTop = 0;
+      this.app.workspace.requestSaveLayout(); this.render();
+    });
   }
 
   private renderDetail(page: HTMLElement, entry: ExpressionEntry): void {
@@ -261,7 +315,7 @@ export class EnglishExpressionView extends ItemView {
     const edit = diaryButton(metadata, this.editingMetadata ? "收起编辑" : this.isDirty() ? "继续编辑分类与备注" : "分类与备注", () => {
       this.editingMetadata = !this.editingMetadata;
       this.render();
-    }, { tertiary: true, disabled: !(this.host.api.access ?? unavailableCapabilityAccess).checkCapability("diary.expression.write") });
+    }, { tertiary: true, disabled: !this.canWrite() });
     edit.setAttribute("aria-expanded", String(this.editingMetadata));
 
     const usage = savedExpressionUsage(entry.occurrences);
@@ -326,12 +380,12 @@ export class EnglishExpressionView extends ItemView {
     if (entry.category !== draft.initialCategory || entry.note !== draft.initialNote) form.createDiv({ cls: "echoink-diary-notice", text: "词条在其它位置有更新，当前填写内容已保留。" });
     const actions = form.createDiv({ cls: "echoink-diary-actions" });
     diaryButton(actions, "取消编辑", () => { this.resetDraft(entry); this.editingMetadata = false; this.render(); }, { disabled: this.saving });
-    const save = diaryButton(actions, this.saving ? "保存中…" : "保存分类与备注", () => this.saveEntry(), { primary: true, disabled: !this.isDirty() || this.saving });
-    const change = () => { draft.category = category.value; draft.note = note.value; save.disabled = !this.isDirty() || this.saving; };
+    const save = diaryButton(actions, this.saving ? "保存中…" : "保存分类与备注", () => this.saveEntry(), { primary: !this.options.embedded, disabled: !this.isDirty() || this.saving || !this.canWrite() });
+    const change = () => { draft.category = category.value; draft.note = note.value; save.disabled = !this.isDirty() || this.saving || !this.canWrite(); };
     category.addEventListener("input", change);
     note.addEventListener("input", change);
-    category.disabled = this.saving;
-    note.disabled = this.saving;
+    category.disabled = this.saving || !this.canWrite();
+    note.disabled = this.saving || !this.canWrite();
   }
 
   private renderOccurrence(parent: HTMLElement, entry: ExpressionEntry, occurrence: ExpressionOccurrence): void {
@@ -357,23 +411,24 @@ export class EnglishExpressionView extends ItemView {
     const menu = new Menu();
     const action = (callback: () => Promise<void>) => () => { void callback().catch((error) => new Notice(diaryError(error))); };
     menu.addItem((item) => item.setTitle("查看中英日记").setIcon("file-text").onClick(action(() => this.host.openDiary(occurrence.sourcePath))));
-    if (!(this.host.api.access ?? unavailableCapabilityAccess).checkCapability("diary.expression.write")) return menu;
+    if (!this.canWrite()) return menu;
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("移除此出处").setIcon("unlink").onClick(action(async () => {
       const confirmed = await confirmModal(this.app, "移除此出处？", `仅移除“${entry.term}”与“${occurrence.sourceTitle || occurrence.date}”的这条收录关联。日记原稿、英文稿、词条和备注都保留，其它出处也不受影响。`, "移除出处", "取消");
       if (!confirmed) return;
       await this.host.api.repository.removeOccurrence(entry.id, occurrence.id);
       await this.refresh();
+      this.options.onChanged?.();
       new Notice("已移除此出处。");
     })));
     return menu;
   }
 
   private async openEntry(id: string): Promise<void> {
-    this.editingMetadata = false;
+    this.editingMetadata = Boolean(this.draft?.id === id && this.isDirty());
     this.selectedId = id;
-    this.selected = this.entries.find((entry) => entry.id === id) ?? null;
-    if (this.selected) this.resetDraft(this.selected);
+    this.selected = this.allEntries.find((entry) => entry.id === id) ?? null;
+    if (this.selected && (!this.draft || this.draft.id !== id || !this.isDirty())) this.resetDraft(this.selected);
     this.app.workspace.requestSaveLayout();
     this.contentEl.scrollTop = 0;
     this.render();
@@ -381,6 +436,7 @@ export class EnglishExpressionView extends ItemView {
 
   private async back(): Promise<void> {
     if (this.isDirty() && !(await confirmModal(this.app, "放弃未保存的修改？", "分类和备注还没有保存。", "放弃并返回", "继续编辑"))) return;
+    this.returnFocus = this.selectedId;
     this.selectedId = "";
     this.selected = null;
     this.draft = null;
@@ -391,13 +447,13 @@ export class EnglishExpressionView extends ItemView {
   }
 
   private async saveEntry(): Promise<void> {
-    if (!this.draft || this.saving) return;
+    if (!this.draft || this.saving || !this.canWrite()) return;
     const draft = { ...this.draft };
     if (!draft.category.trim()) { new Notice("请填写分类。"); return; }
     this.saving = true;
     this.render();
     try {
-      const current = (await this.host.api.repository.listExpressions()).find((entry) => entry.id === draft.id);
+      const current = (await this.host.api.repository.listExpressions("", undefined, { readOnly: true })).find((entry) => entry.id === draft.id);
       if (!current) throw new Error("词条已被移除，当前修改尚未保存。");
       if ((current.category !== draft.initialCategory || current.note !== draft.initialNote) && !(await confirmModal(this.app, "词条已有其它修改", "保存将采用当前表单中的分类和备注，日记出处会保留。", "保存当前内容", "取消"))) return;
       const saved = await this.host.api.repository.updateExpression(draft.id, { category: draft.category.trim(), note: draft.note });
@@ -406,9 +462,38 @@ export class EnglishExpressionView extends ItemView {
       this.editingMetadata = false;
       this.error = "";
       await this.refresh();
+      this.options.onChanged?.();
       new Notice("已保存分类与备注。");
     } catch (error) { this.error = diaryError(error); }
     finally { this.saving = false; this.render(); }
+  }
+}
+
+/** Legacy/mobile route stays a native view and reuses the same browser controller. */
+export class EnglishExpressionView extends ItemView {
+  private browser: EnglishExpressionBrowser | null = null;
+  private foreground: ForegroundView | null = null;
+  private state: ExpressionViewState = {};
+  constructor(leaf: WorkspaceLeaf, private readonly host: EnglishDiaryViewHost) { super(leaf); }
+  getViewType(): string { return ENGLISH_EXPRESSION_VIEW; }
+  getDisplayText(): string { return "表达库"; }
+  getIcon(): string { return "book-open"; }
+  getState(): ExpressionViewState { return this.browser?.getState() ?? this.state; }
+  async setState(state: ExpressionViewState, result: ViewStateResult): Promise<void> {
+    this.state = state;
+    if (this.browser) await this.browser.setState(state);
+    await super.setState(state, result);
+  }
+  async onOpen(): Promise<void> {
+    this.browser = new EnglishExpressionBrowser(this.app, this.contentEl, this.host);
+    this.foreground = new ForegroundView(this, active => this.browser?.setActive(active));
+    this.browser.mount(this.foreground.isActive());
+    await this.browser.setState(this.state);
+  }
+  async refresh(): Promise<void> { await this.browser?.refresh(); }
+  async onClose(): Promise<void> {
+    this.state = this.getState(); this.foreground?.dispose(); this.foreground = null;
+    this.browser?.close(); this.browser = null;
   }
 }
 

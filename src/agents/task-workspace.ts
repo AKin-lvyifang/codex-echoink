@@ -1,3 +1,4 @@
+import { normalizeEnglishDiarySourcePath } from "../english-diary/task-context";
 import type { QueuedTurnItem } from "../ui/turn-queue";
 import { selectionAnnotationsMatch } from "../types/selection-annotations";
 import type { EchoInkResource } from "../resources/types";
@@ -12,6 +13,7 @@ export interface TaskDraft {
   text: string;
   attachments: StoredAttachment[];
   prefillSource?: string;
+  englishDiarySourcePath?: string;
   noteMentions?: NoteMentionSelection[];
   annotations?: SelectionAnnotation[];
   selectedSkill?: EchoInkResource | null;
@@ -69,6 +71,7 @@ function normalizeDrafts(value: unknown): Record<string, TaskDraft> {
         ...(documentReplay ? { documentReplay } : {}) });
     }
     const snapshot: TaskDraft = { text: typeof draft.text === "string" ? draft.text : "", attachments, ...(typeof draft.prefillSource === "string" ? { prefillSource: draft.prefillSource } : {}),
+      ...(normalizeEnglishDiarySourcePath(draft.englishDiarySourcePath) ? { englishDiarySourcePath: draft.englishDiarySourcePath as string } : {}),
       noteMentions: (Array.isArray(draft.noteMentions) ? draft.noteMentions : []).flatMap(value => {
         const mention = record(value);
         return typeof mention?.vaultRelativePath === "string" && typeof mention.fileName === "string"
@@ -120,6 +123,7 @@ export function consumeAcceptedTaskDraft(workspace: TaskWorkspace, key: string, 
   const draft = drafts[id];
   if (!draft || (item.composerTextSnapshot === undefined ? draft.text.trim() !== item.text : draft.text !== item.composerTextSnapshot)
     || draft.prefillSource !== item.prefillSource
+    || draft.englishDiarySourcePath !== item.englishDiarySourcePath
     || !selectionAnnotationsMatch(draft.annotations ?? [], item.selectionAnnotations ?? [])
     || (draft.selectedSkill?.id ?? null) !== (item.skill?.id ?? null)
     || (draft.noteMentions?.length ?? 0) !== (item.noteMentions?.length ?? 0)

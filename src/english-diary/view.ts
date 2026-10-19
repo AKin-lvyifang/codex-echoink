@@ -48,7 +48,7 @@ export class EnglishDiaryView extends ItemView {
   async setState(state: DiaryViewState, result: ViewStateResult): Promise<void> {
     const path = typeof state?.sourcePath === "string" ? state.sourcePath : "";
     if (path !== this.sourcePath) {
-      this.host.api.cancel(this.sourcePath);
+      this.host.api.cancel(this.sourcePath, "workspace");
       this.sourcePath = path;
       this.source = null;
       this.record = null;
@@ -73,7 +73,7 @@ export class EnglishDiaryView extends ItemView {
     }));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
       if (oldPath === this.sourcePath) {
-        this.host.api.cancel(oldPath);
+        this.host.api.cancel(oldPath, "workspace");
         this.sourcePath = file.path;
         this.app.workspace.requestSaveLayout();
         this.scheduleRefresh();
@@ -95,7 +95,7 @@ export class EnglishDiaryView extends ItemView {
     this.closed = true;
     this.refreshSequence++;
     this.renderSequence++;
-    this.host.api.cancel(this.sourcePath);
+    this.host.api.cancel(this.sourcePath, "workspace");
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.disposeMarkdown();
     disposeOriginControls(this.contentEl);
@@ -185,8 +185,12 @@ export class EnglishDiaryView extends ItemView {
     more.setAttribute("aria-haspopup", "menu");
     setIcon(more, "ellipsis");
     if (this.running()) {
+      if (this.host.api.isGenerating(this.sourcePath, "agent")) {
+        actions.createSpan({ cls: "echoink-diary-generation-stage", text: "正在任务中生成…", attr: { role: "status" } });
+        return;
+      }
       actions.createSpan({ cls: "echoink-diary-generation-stage", text: this.stage || "正在生成…", attr: { role: "status" } });
-      const stop = diaryButton(actions, "停止", () => { this.host.api.cancel(this.sourcePath); this.stage = "正在停止…"; this.render(); }, { primary: true, disabled: this.stage === "正在停止…" });
+      const stop = diaryButton(actions, "停止", () => { this.host.api.cancel(this.sourcePath, "workspace"); this.stage = "正在停止…"; this.render(); }, { primary: true, disabled: this.stage === "正在停止…" });
       applyAmicroButton(stop, { variant: "primary" });
       setAmicroButtonPending(stop, true);
       return;

@@ -125,6 +125,17 @@ export class EnglishDiaryVaultPort implements DiaryFilePort {
     return this.app.vault.adapter.read(path);
   }
 
+  /** Originals live outside output roots; this read never flushes or saves an editor. */
+  async readSource(value: string): Promise<string | null> {
+    const path = normalizeDiaryPath(value);
+    if (!/\.md$/iu.test(path)) throw new EnglishDiaryRepositoryError("INVALID_PATH", "日记原稿不是 Markdown 文件。");
+    if (!await this.app.vault.adapter.exists(path)) return null;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof TFolder) throw new Error("文件路径被文件夹占用。");
+    if (file instanceof TFile) return readNativeContent(this.app, file);
+    return this.app.vault.adapter.read(path);
+  }
+
   private async ensureParent(path: string): Promise<void> {
     const parts = path.split("/");
     parts.pop();

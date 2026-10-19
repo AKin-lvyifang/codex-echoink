@@ -5102,12 +5102,18 @@ export class CodexSettingTab extends PluginSettingTab {
       detail: true, backLabel: "返回插件", onBack: () => { void this.closeSettingsDetail(); }
     });
     page.addClass("echoink-english-settings");
-    const activity = createSettingsSection(page, { title: "日记足迹", surface: "flat" });
-    const statistics = activity.createDiv();
-    const repository = this.plugin.englishDiary?.api.repository;
-    const renderStatistics = () => { if (statistics.isConnected) void renderEnglishDiaryActivity(statistics, repository, this.app); };
-    void renderEnglishDiaryActivity(statistics, repository, this.app);
-    this.disposeDiaryActivity = repository?.subscribe?.(renderStatistics) ?? null;
+    if (Platform.isDesktopApp) {
+      createSettingsNavigationRow(createSettingsGroup(createSettingsSection(page, { surface: "flat" })), { title: "日记足迹", value: "英文日记数据页", actionLabel: "查看", focusKey: "english-diary:activity", onActivate: () => {
+        (this.app as unknown as { setting: { close(): void } }).setting.close(); void this.plugin.activateEnglishDiaryPage();
+      } });
+    } else {
+      const activity = createSettingsSection(page, { title: "日记足迹", surface: "flat" });
+      const statistics = activity.createDiv();
+      const repository = this.plugin.englishDiary?.api.repository;
+      const renderStatistics = () => { if (statistics.isConnected) void renderEnglishDiaryActivity(statistics, repository, this.app); };
+      void renderEnglishDiaryActivity(statistics, repository, this.app);
+      this.disposeDiaryActivity = repository?.subscribe?.(renderStatistics) ?? null;
+    }
     const section = createSettingsSection(page, { title: "模型", surface: "flat" });
     const group = createSettingsGroup(section);
     const current = this.plugin.settings.englishDiary;

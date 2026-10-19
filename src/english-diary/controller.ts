@@ -224,6 +224,7 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
   }
   async openLibrary(expressionId?: string): Promise<void> {
     this.requireEnabled();
+    if (Platform.isDesktopApp) return this.plugin.activateEnglishDiaryPage("expressions", expressionId);
     const workspace = this.plugin.app.workspace;
     const leaf = workspace.getLeavesOfType(ENGLISH_EXPRESSION_VIEW)[0] ?? workspace.getLeaf("tab");
     await leaf.setViewState({ type: ENGLISH_EXPRESSION_VIEW, active: true, ...(expressionId ? { state: { expressionId } } : {}) });

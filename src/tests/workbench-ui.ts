@@ -75,6 +75,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async activateKnowledgeView() { calls.push(["knowledge"]); },
     async activateTodoView() { calls.push(["todos"]); },
     async activateJournalView() { calls.push(["journal"]); },
+    async activateEnglishDiaryPage() { calls.push(["english"]); },
     async activateLegacyHomeView(section: string) { calls.push(["legacy", section]); },
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },

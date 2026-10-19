@@ -17,6 +17,8 @@ export interface QueuedTurnItem {
   composerTextSnapshot?: string;
   /** Local workbench intent, carried to the Catalog only after Pi accepts the turn. */
   prefillSource?: string;
+  /** Exact source chosen locally; the original is never a Composer attachment. */
+  englishDiarySourcePath?: string;
   attachments: StoredAttachment[];
   /** Document bytes/text/transport frozen before this turn enters the queue. */
   preparedDocuments?: readonly Readonly<PiChatPreparedDocument>[];

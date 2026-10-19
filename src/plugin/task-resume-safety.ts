@@ -226,6 +226,9 @@ function semanticOperation(toolName: string, args: unknown, target?: unknown): s
   const value = record(args);
   if (!value) return `${toolName}:missing_arguments`;
   const normalized = isPiTodoTool(toolName) ? normalizeTodoToolRequest(toolName, value) : { ...value };
+  if (toolName === "english_diary_generate" && typeof normalized.sourcePath === "string") {
+    normalized.sourcePath = normalizeVaultRelativePath(normalized.sourcePath);
+  }
   if (isFileTool(toolName)) {
     delete normalized.expectedVersion;
     for (const key of ["relativePath", "sourcePath", "targetPath"]) if (typeof normalized[key] === "string") normalized[key] = normalizeVaultRelativePath(normalized[key]);
@@ -260,6 +263,11 @@ function isTodoWrite(name: string): boolean {
 }
 function affectedFilePaths(toolName: string, args: unknown, target?: unknown): string[] {
   if (isTodoWrite(toolName)) return ["EchoInk/待办.md"];
+  if (toolName === "english_diary_generate") {
+    const input = record(args), resolved = record(target);
+    return [resolved?.sourcePath ?? input?.sourcePath, resolved?.englishPath]
+      .flatMap(raw => typeof raw === "string" ? [normalizeVaultRelativePath(raw)] : []);
+  }
   if (toolName === "obsidian_cli") {
     const input = record(args), resolved = record(target);
     if (!isCliFileWrite(input?.command)) return [];
@@ -270,6 +278,7 @@ function affectedFilePaths(toolName: string, args: unknown, target?: unknown): s
   return [value?.relativePath, value?.sourcePath, value?.targetPath].flatMap(raw => typeof raw === "string" ? [normalizeVaultRelativePath(raw)] : []);
 }
 function beforeFileVersions(tool: string, target: unknown, version: unknown, recordedAt: number): TaskResumeFileVersion[] {
+  if (tool === "english_diary_generate") return englishDiaryFileVersions(target, version, recordedAt);
   if (isTodoWrite(tool)) {
     const item = fileVersion("EchoInk/待办.md", record(version)?.beforeVersion, recordedAt);
     return item ? [item] : [];
@@ -287,6 +296,10 @@ function beforeFileVersions(tool: string, target: unknown, version: unknown, rec
   return item ? [item] : [];
 }
 function afterFileVersions(tool: string, target: unknown, version: unknown, recordedAt: number, observedVersion?: JsonValue): TaskResumeFileVersion[] {
+  if (tool === "english_diary_generate") {
+    // Approval only knows the before-version. Without a verified receipt the result remains unknown.
+    return observedVersion === undefined ? [] : englishDiaryFileVersions(target, observedVersion, recordedAt);
+  }
   if (isTodoWrite(tool)) {
     // No receipt means no known after-version: recovery must not guess success.
     const item = typeof observedVersion === "string" ? fileVersion("EchoInk/待办.md", observedVersion, recordedAt) : null;
@@ -311,6 +324,16 @@ function isCliFileWrite(command: unknown): boolean {
 function fileVersion(rawPath: unknown, rawVersion: unknown, recordedAt: number): TaskResumeFileVersion | null {
   if (typeof rawPath !== "string" || rawVersion !== null && typeof rawVersion !== "string") return null;
   return { relativePath: normalizeVaultRelativePath(rawPath), expectedVersion: rawVersion, recordedAt };
+}
+function englishDiaryFileVersions(target: unknown, version: unknown, recordedAt: number): TaskResumeFileVersion[] {
+  const t = record(target), v = record(version);
+  const entries = [[t?.sourcePath, v?.sourceFingerprint], [t?.englishPath, v?.englishFingerprint]];
+  return entries.flatMap(([relativePath, hash]) => {
+    // EnglishDiary fingerprint() is a lowercase, unprefixed SHA-256; null means the file was absent.
+    if (hash !== null && (typeof hash !== "string" || !/^[a-f0-9]{64}$/u.test(hash))) return [];
+    const item = fileVersion(relativePath, hash, recordedAt);
+    return item ? [item] : [];
+  });
 }
 function keepLatest(files: Map<string, TaskResumeFileVersion>, version: TaskResumeFileVersion): void {
   if ((files.get(version.relativePath)?.recordedAt ?? -1) <= version.recordedAt) files.set(version.relativePath, version);

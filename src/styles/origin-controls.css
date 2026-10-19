@@ -36,12 +36,12 @@
 .echoink-origin-control[data-slot=checkbox] svg {width:9px;height:9px;fill:currentColor;stroke:none}
 .echoink-origin-control[data-slot=radio-group-item] svg {width:6px;height:6px;fill:currentColor;stroke:none}
 .echoink-origin-radio-group {display:flex;flex-direction:column;gap:inherit;min-width:0}
-:is(.echoink-settings-demo,.modal,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-control:is([data-slot=input],[data-slot=select-trigger]) {
+:is(.echoink-settings-demo,.modal,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-control:is([data-slot=input],[data-slot=select-trigger]) {
   min-width:0;max-width:100%;min-height:32px;height:auto;margin:0;padding:7px 10px;
   border:1px solid var(--origin-line);border-radius:6px;background:var(--origin-bg);box-shadow:none;
   font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);line-height:1.55;color:var(--origin-text);
 }
-:is(.echoink-settings-demo,.modal,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-control[data-slot=select-trigger] {
+:is(.echoink-settings-demo,.modal,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-control[data-slot=select-trigger] {
   display:inline-flex;align-items:center;justify-content:space-between;gap:8px;text-align:start;cursor:pointer;
 }
 .echoink-origin-control[data-slot=select-trigger]>[data-slot=select-value] {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -97,7 +97,7 @@
 :is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item],[data-slot=select-trigger]):focus-visible,
 .echoink-origin-control [data-slot=slider-thumb]:focus-visible {outline:2px solid var(--origin-accent);outline-offset:3px}
 /* Desktop focus stays inside the control. Preserve mobile controls and previews. */
-body:not(.is-mobile) :is(.echoink-settings-demo,.modal,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-control:not(.echoink-mobile-finance-settings *):is([data-slot=input],[data-slot=select-trigger]):is(:focus,:focus-visible) {outline:none;box-shadow:none;border-color:var(--origin-line);background:var(--background-modifier-hover,var(--origin-soft))}
+body:not(.is-mobile) :is(.echoink-settings-demo,.modal,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-control:not(.echoink-mobile-finance-settings *):is([data-slot=input],[data-slot=select-trigger]):is(:focus,:focus-visible) {outline:none;box-shadow:none;border-color:var(--origin-line);background:var(--background-modifier-hover,var(--origin-soft))}
 body:not(.is-mobile) :is(.echoink-settings-demo,.modal) .echoink-origin-control:not(.echoink-mobile-finance-settings *):is([data-slot=switch],[data-slot=checkbox],[data-slot=radio-group-item]):focus-visible,
 body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-settings *) [data-slot=slider-thumb]:focus-visible {outline:none;box-shadow:none}
 body:not(.is-mobile) :is(.echoink-settings-demo,.modal) .echoink-origin-control:not(.echoink-mobile-finance-settings *)[data-slot=switch]:focus-visible [data-slot=switch-thumb] {background:color-mix(in srgb,var(--origin-soft) 85%,var(--origin-muted))}
@@ -127,13 +127,13 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
 }
 
 /* Shared Origin pagination for finance and maintenance records, without a Tailwind preflight. */
-:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-pagination ul{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:4px;list-style:none;margin:0;padding:0}
-:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-pagination li{margin:0;padding:0}
-:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-pagination :is(button,[data-slot=pagination-ellipsis]){display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:4px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text-muted);font-size:12px;line-height:1;box-shadow:none}
-:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-pagination button[aria-current=page]{border-color:transparent;color:var(--text-normal);font-weight:600;background:var(--background-secondary)}
-:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-pagination button:is(:hover,:focus-visible){background:var(--background-modifier-hover);outline:none;box-shadow:none}
-:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-pagination button:disabled{opacity:.45;cursor:default}
-:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page) .echoink-origin-pagination svg{width:16px;height:16px}
+:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-pagination ul{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:4px;list-style:none;margin:0;padding:0}
+:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-pagination li{margin:0;padding:0}
+:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-pagination :is(button,[data-slot=pagination-ellipsis]){display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:4px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text-muted);font-size:12px;line-height:1;box-shadow:none}
+:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-pagination button[aria-current=page]{border-color:transparent;color:var(--text-normal);font-weight:600;background:var(--background-secondary)}
+:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-pagination button:is(:hover,:focus-visible){background:var(--background-modifier-hover);outline:none;box-shadow:none}
+:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-pagination button:disabled{opacity:.45;cursor:default}
+:is(.echoink-finance-workspace,.echoink-maintenance-history-page,.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .echoink-origin-pagination svg{width:16px;height:16px}
 
 /* Settings-only desktop type scale. Shared .modal and Origin defaults above stay intact. */
 :where(body:not(.is-mobile)) :is(.echoink-settings-demo, .echoink-settings-modal) .echoink-origin-control:is([data-slot=input], [data-slot=select-trigger]),

@@ -675,6 +675,13 @@ async function startPreparedQueuedTurnItemSafely(
 
 /** Shared preflight for a list draft before creating its durable Conversation. */
 export async function validateTaskTurnBeforeCreation(view: CodexViewTurnContext, item: QueuedTurnItem): Promise<boolean> {
+  if (item.englishDiarySourcePath) {
+    try {
+      if (item.turnOptions.mode === "plan" || item.turnOptions.permission === "read-only") throw new Error("生成英文日记需要可写工作区和 Agent 模式。");
+      if (item.attachments.length || item.noteMentions?.length || item.selectionAnnotations?.length || item.skill) throw new Error("英文日记沿已确认的发送范围处理，请移除额外附件、引用和 Skill。");
+      await view.plugin.validateEnglishDiaryTaskSource(item.englishDiarySourcePath);
+    } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); return false; }
+  }
   return await prepareTurnProviderModel(view, item, false);
 }
 
@@ -946,6 +953,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     const workbenchSource = freezeWorkbenchTaskSource(item.prefillSource);
     handle = await view.plugin.submitPiChat({
       ...(workbenchSource ? { workbenchSource } : {}),
+      ...(item.englishDiarySourcePath ? { englishDiarySourcePath: item.englishDiarySourcePath } : {}),
       ...(item.resumeContext ? { resumeContext: item.resumeContext } : {}),
       signal: submissionSignal,
       conversationId: session.id,

@@ -56,6 +56,13 @@ export function formatApprovalPresentation(input: Readonly<{
       if (!before && (after[key] === "" || after[key] == null)) continue;
       add(changes, label, before && before[key] !== after[key] ? `${value(key, before[key])} → ${value(key, after[key])}` : value(key, after[key]));
     }
+  } else if (previewObject?.domain === "english-diary") {
+    action = previewObject.mode === "reuse" ? text("复用已有英文日记", "Reuse the saved English diary") : previewObject.mode === "restore-pending" ? text("完成上次英文日记的保存", "Finish saving the pending English diary") : text("生成英文日记并收录表达", "Generate an English diary and save expressions");
+    add(destination, text("原稿", "Original"), previewObject.sourcePath);
+    add(destination, text("英文稿", "English diary"), previewObject.englishPath);
+    notices.push(text("只处理已确认允许发送的段落；原稿保留，手工修改的英文稿不会直接覆盖。", "Only permitted paragraphs are processed. The original is kept, and manual English edits are not overwritten."));
+    Object.keys(targetObject ?? {}).forEach(key => consumedTarget.add(key));
+    Object.keys(previewObject).forEach(key => consumedPreview.add(key));
   } else if (mcp) {
     action = text("调用服务操作", "Call a service operation");
     const server = previewObject?.server ?? targetObject?.resourceName;

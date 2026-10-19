@@ -1,3 +1,9 @@
+import { HomeWorkbenchDataService } from "./home/home-workbench-data";
+import { hasEnglishDiarySourceContent } from "./home/english-diary-source";
+import { workbenchStoreForApp } from "./home/workbench-records";
+import { readNativeJournalContext, readNativeJournalSettings } from "./home/native-journal";
+import { journalDateFromPath } from "./home/home-workbench-model";
+import { normalizeEnglishDiarySourcePath } from "./english-diary/task-context";
 import { workbenchModuleOwner, prefillWorkbenchModule } from "./home/module-navigation";
 import { latestTaskRun, type TaskInterruptionInfo, type TaskInterruptionReason, type TaskResumeContext } from "./agents/task-resume";
 import { prepareTaskResumeSafety, readTaskResumeSafety } from "./plugin/task-resume-safety";
@@ -30,7 +36,7 @@ import type { LifestyleKind } from "./lifestyle/settings";
 import type { CodexSettingTab } from "./settings/settings-tab";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { Notice, Platform, Plugin } from "obsidian";
+import { Notice, Platform, Plugin, TFile } from "obsidian";
 import { DeveloperModeAccess } from "./plugin/developer-mode/access";
 import { DeveloperModeService } from "./plugin/developer-mode/service";
 import { MemoryDeveloperBackups, type DeveloperMemoryChange } from "./plugin/developer-mode/memory-backups";
@@ -409,6 +415,38 @@ export default class CodexForObsidianPlugin extends Plugin {
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
   async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> { return this.getViewService().activateLegacyHomeView(section); }
   async activateKnowledgeView(page: "overview" | "health" | "history" = "overview"): Promise<void> { return this.getViewService().activateKnowledgeView(page); }
+
+  async activateEnglishDiaryPage(page: "diary" | "expressions" = "diary", expressionId?: string): Promise<void> { return this.getViewService().activateEnglishDiaryPage(page, expressionId); }
+  async validateEnglishDiaryTaskSource(sourcePath: string): Promise<void> {
+    if (!this.settings.englishDiary.enabled || !this.englishDiary) throw new Error("英文日记已停用。");
+    if (!normalizeEnglishDiarySourcePath(sourcePath)) throw new Error("英文日记原稿位置无效。");
+    const native = readNativeJournalSettings(this.app, this.settings.journalDirectory, this.settings.knowledgeBase.folderBindings);
+    const file = this.app.vault.getAbstractFileByPath(sourcePath);
+    if (!native.available || !(file instanceof TFile) || !journalDateFromPath(sourcePath, native.folder, native.format)) throw new Error("原稿已移动或不在当前日记范围，请从英文日记页重新选择。");
+  }
+  async prepareEnglishDiaryNavigationToday(): Promise<{ path: string; hasContent: boolean; hasResult: boolean }> {
+    const now = new Date();
+    const data = new HomeWorkbenchDataService(this.app, () => this.settings.journalDirectory, this.homeActivity, undefined, () => this.settings.knowledgeBase.folderBindings);
+    const native = await readNativeJournalContext(this.app, { now, legacyDirectory: this.settings.journalDirectory, bindings: this.settings.knowledgeBase.folderBindings });
+    const file = data.existingJournalForDate(now), sourcePath = file?.path ?? data.journalPathForDate(now);
+    const template = this.app.vault.getAbstractFileByPath(native.template);
+    const baseline = (await workbenchStoreForApp(this.app)?.snapshot())?.journals[sourcePath];
+    const hasContent = file ? hasEnglishDiarySourceContent(await this.app.vault.read(file), {
+      template: template instanceof TFile ? await this.app.vault.read(template) : native.templateContent,
+      now, title: file.basename, formats: native, baseline
+    }) : false;
+    const saved = await this.englishDiary?.api.repository.listSavedDiaries?.();
+    return { path: sourcePath, hasContent, hasResult: saved?.entries.some(entry => entry.sourcePath === sourcePath && !entry.missingEnglish) ?? false };
+  }
+  async prefillEnglishDiaryTask(sourcePath: string): Promise<boolean> {
+    await this.validateEnglishDiaryTaskSource(sourcePath);
+    return this.openAgentTaskList(workbenchModuleOwner(this, "english-diary").id,
+      "请把今天的日记生成英文，沿用已确认的发送范围。", undefined, sourcePath);
+  }
+  createEnglishDiaryTaskGenerator() {
+    return { generate: (input: { systemPrompt: string; userPrompt: string; signal: AbortSignal }) => this.generateEnglishDiaryTextInRun(input),
+      providerLabel: () => this.englishDiaryProviderLabel(), skill: async () => { await this.requireAvailableEchoInkSkill("english-diary"); return (await this.readEchoInkBuiltinSkill("english-diary")).content; } };
+  }
 
   async activateTodoView(): Promise<void> { return this.getViewService().activateTodoView(); }
 
@@ -1171,10 +1209,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     const view = this.getCodexView();
     if (view && await view.waitForTaskUiReady()) await view.openTaskDetail(taskId);
   }
-  async openAgentTaskList(agentId: string, prefill?: string, prefillSource?: string): Promise<boolean> {
+  async openAgentTaskList(agentId: string, prefill?: string, prefillSource?: string, englishDiarySourcePath?: string): Promise<boolean> {
     await this.activateView();
     const view = this.getCodexView();
-    return view && await view.waitForTaskUiReady() ? await view.openAgentTaskList(agentId, prefill, prefillSource) : false;
+    return view && await view.waitForTaskUiReady() ? await view.openAgentTaskList(agentId, prefill, prefillSource, englishDiarySourcePath) : false;
   }
   async deleteAgent(agentId: string): Promise<void> {
     if (agentId === GENERAL_ASSISTANT_ID) throw new Error("general_assistant_cannot_be_deleted");
@@ -1967,7 +2005,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
   }
   async generateEnglishDiaryText(input: { systemPrompt: string; userPrompt: string; signal: AbortSignal }): Promise<string> {
-    return await this.withProductActivity(async () => {
+    return this.withProductActivity(() => this.generateEnglishDiaryTextInRun(input));
+  }
+  private async generateEnglishDiaryTextInRun(input: { systemPrompt: string; userPrompt: string; signal: AbortSignal }): Promise<string> {
       requireProPlugin(this.accountService ?? unavailableCapabilityAccess);
       (this.accountService ?? unavailableCapabilityAccess).requireCapability("diary.explanation.generate");
       if (!this.settings.englishDiary.enabled) throw new Error("英文日记已停用。");
@@ -2009,7 +2049,6 @@ export default class CodexForObsidianPlugin extends Plugin {
         throw new Error(failures[error instanceof Error ? error.message : ""]
           ?? "英文日记生成失败，请检查所选 API Provider 的连接与模型设置后重试。", { cause: error });
       }
-    });
   }
   async prepareWikiFolderNamesForMaintenance(input: { initialization: boolean; assertActive(): void }): Promise<string> {
     if (this.settings.knowledgeBase.folderBindings) { input.assertActive(); return `当前目录用途：${JSON.stringify(this.settings.knowledgeBase.folderBindings.roles)}；维护只提炼本轮已选资料，不改名目录。${knowledgeFolderOrganizationPrompt(this.settings.knowledgeBase.folderBindings)}`; }

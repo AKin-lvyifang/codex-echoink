@@ -392,6 +392,8 @@ export interface PiKnowledgeMaintenanceToolPort {
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface PiChatSubmitRequest {
+  /** Locally selected English generation source; never contains source body. */
+  englishDiarySourcePath?: string;
   /** User-sent local reminder scope; contextual data, never write authority. */
   workbenchSource?: Readonly<import("../../home/workbench-types").WorkbenchTaskSource>;
   /** Trusted product recovery facts, scoped to this explicit resumed turn. */

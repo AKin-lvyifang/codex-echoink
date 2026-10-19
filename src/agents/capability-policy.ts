@@ -183,6 +183,14 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     return checkAgentCapability(context, "finance", effect);
   }
   if (toolName === "pdf_reading_query" || toolName === "pdf_reading_process") return checkAgentCapability(context, "pdf-reading", toolName === "pdf_reading_process" ? "write" : "read");
+  if (toolName === "english_diary_generate") {
+    const capability = checkAgentCapability(context, "english-diary", "write");
+    if (!capability.allowed) return capability;
+    const sourcePath = args?.sourcePath;
+    if (typeof sourcePath === "string") { const source = checkTargets(context, [sourcePath], "read", false); if (!source.allowed) return source; }
+    const target = resolvedTarget && typeof resolvedTarget === "object" ? resolvedTarget as Record<string, unknown> : null;
+    return typeof target?.englishPath === "string" ? checkTargets(context, [target.englishPath], "write", false) : capability;
+  }
   if (toolName === "obsidian_context") return checkAgentCapability(context, "journal");
   if (toolName === "obsidian_plugin_search") return checkAgentCapability(context, "obsidian-plugins");
   if (toolName === "obsidian_cli") {

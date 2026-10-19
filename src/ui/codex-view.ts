@@ -277,9 +277,10 @@ export class CodexView extends ItemView {
     if (!this.taskUiMounted || !this.inputEl || !this.composerDraftOwner) return;
     const owner = this.composerDraftOwner;
     const page: TaskPage = owner.startsWith("agent:") ? { kind: "list", agentId: owner.slice(6) } : { kind: "detail", taskId: owner };
-    const prefillSource = this.taskNavigation.draft(page).prefillSource;
+    const { prefillSource, englishDiarySourcePath } = this.taskNavigation.draft(page);
     const draft: TaskDraft = { text: this.inputEl.value, attachments: this.attachments.map(attachment => ({ ...attachment })),
       ...(this.inputEl.value.trim() && prefillSource ? { prefillSource } : {}),
+      ...(this.inputEl.value.trim() && englishDiarySourcePath ? { englishDiarySourcePath } : {}),
       annotations: composerSelectionAnnotations(this.inputEl), noteMentions: [...composerNoteMentionSelections(this.inputEl)], selectedSkill: this.selectedSkill,
       selectedProviderSettingsId: this.selectedProviderSettingsId, selectedModel: this.selectedModel,
       selectedPermission: this.selectedPermission, selectedMode: this.selectedMode };
@@ -307,13 +308,13 @@ export class CodexView extends ItemView {
     if (page.kind !== "list") return;
     this.taskNavigation.listPositions.set(page.agentId, { scrollTop: this.taskListEl?.querySelector<HTMLElement>(".echoink-task-list-items")?.scrollTop ?? 0, taskId });
   }
-  async openAgentTaskList(agentId: string, prefill?: string, prefillSource?: string): Promise<boolean> {
+  async openAgentTaskList(agentId: string, prefill?: string, prefillSource?: string, englishDiarySourcePath?: string): Promise<boolean> {
     if (!this.taskUiMounted || this.viewLifecycleAbortController.signal.aborted) return false;
     if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) { this.showTaskError(this.taskText("这个 Agent 已不存在。", "This Agent no longer exists.")); return false; }
     this.saveTaskComposerDraft(); this.rememberTaskListPosition();
     this.taskEditor?.dispose(); this.taskEditor = undefined;
     this.taskNavigation.navigate({ kind: "list", agentId }); this.taskDetailLoaded = false; this.taskLoadError = "";
-    const accepted = prefill === undefined || this.taskNavigation.prefill(agentId, prefill, prefillSource);
+    const accepted = prefill === undefined || this.taskNavigation.prefill(agentId, prefill, prefillSource, englishDiarySourcePath);
     this.restoreTaskComposerDraft(); this.renderTaskPages();
     const position = this.taskNavigation.listPositions.get(agentId);
     const list = this.taskListEl?.querySelector<HTMLElement>(".echoink-task-list-items");
@@ -530,12 +531,13 @@ export class CodexView extends ItemView {
     const key = this.taskNavigation.draftKey, token = this.taskNavigation.token;
     if (this.taskSubmitting.has(key)) return;
     this.taskSubmitting.add(key); this.saveTaskComposerDraft();
-    const prefillSource = this.taskNavigation.draft(page).prefillSource;
+    const { prefillSource, englishDiarySourcePath } = this.taskNavigation.draft(page);
     let created: StoredSession | undefined, item: QueuedTurnItem | null = null;
     try {
       // This data-only Composer adapter prepares files and references before a Conversation exists.
       const context = this as unknown as CodexViewTurnContext;
       item = await createQueuedTurnFromComposerRunner(context, { allowLocalKnowledgeCommands: true });
+      if (item) item.englishDiarySourcePath = englishDiarySourcePath;
       if (!item || !await validateTaskTurnBeforeCreation(context, item) || this.viewLifecycleAbortController.signal.aborted) return;
       item.prefillSource = prefillSource;
       const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: item.text.trim().slice(0, 64) || item.attachments[0]?.name || this.taskText("新任务", "New task"),
@@ -592,7 +594,8 @@ export class CodexView extends ItemView {
     const draftOwner = this.taskDraftOrigins.get(item.id) ?? item.sessionId;
     if (this.taskUiMounted) {
       const page: TaskPage = draftOwner.startsWith("agent:") ? { kind: "list", agentId: draftOwner.slice(6) } : { kind: "detail", taskId: draftOwner };
-      if (this.taskNavigation.draft(page).prefillSource !== item.prefillSource) return;
+      if (this.taskNavigation.draft(page).prefillSource !== item.prefillSource
+        || this.taskNavigation.draft(page).englishDiarySourcePath !== item.englishDiarySourcePath) return;
     }
     const active = owner === draftOwner;
     const stored = active ? null : this.composerSessionDrafts.get(draftOwner);

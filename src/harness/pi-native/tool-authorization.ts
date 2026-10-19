@@ -33,7 +33,7 @@ export const APPROVAL_TOOL_IDS = [
   KNOWLEDGE_MAINTENANCE_APPROVAL_TOOL_ID,
   "obsidian_cli",
   "finance_record", "finance_budget", "finance_bill",
-  "todo_add", "todo_update", "todo_complete"
+  "todo_add", "todo_update", "todo_complete", "english_diary_generate"
 ] as const;
 
 export type McpApprovalToolId = `echoink_mcp_${string}`;
@@ -44,7 +44,7 @@ export const AUTO_ALLOWED_READ_TOOL_IDS = [
 ] as const;
 
 export type ApprovalWriteToolId = typeof APPROVAL_WRITE_TOOL_IDS[number];
-export type SideEffectApprovalToolId = ApprovalWriteToolId | McpApprovalToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill" | "todo_add" | "todo_update" | "todo_complete";
+export type SideEffectApprovalToolId = ApprovalWriteToolId | McpApprovalToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill" | "todo_add" | "todo_update" | "todo_complete" | "english_diary_generate";
 export type ApprovalToolId = typeof APPROVAL_TOOL_IDS[number] | McpApprovalToolId;
 export type AutoAllowedReadToolId = typeof AUTO_ALLOWED_READ_TOOL_IDS[number];
 export type AuthorizedVaultToolId =
@@ -676,7 +676,7 @@ export function isSideEffectApprovalToolId(value: unknown): value is SideEffectA
   return (typeof value === "string" && APPROVAL_WRITE_TOOL_IDS.includes(value as ApprovalWriteToolId))
     || value === "obsidian_cli"
     || value === "finance_record" || value === "finance_budget" || value === "finance_bill"
-    || value === "todo_add" || value === "todo_update" || value === "todo_complete"
+    || value === "todo_add" || value === "todo_update" || value === "todo_complete" || value === "english_diary_generate"
     || isMcpApprovalToolId(value);
 }
 

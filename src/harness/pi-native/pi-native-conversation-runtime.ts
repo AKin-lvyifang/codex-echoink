@@ -1,3 +1,4 @@
+import { normalizeEnglishDiarySourcePath, englishDiaryTaskContextFromEntries, type EnglishDiaryTaskContext } from "../../english-diary/task-context";
 import type { TaskInterruptionReason, TaskInterruptionRecord, TaskResumeContext } from "../../agents/task-resume";
 import { assertPiSubmissionActive } from "./pi-submission-lifecycle";
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../../knowledge-base/search/contracts";
@@ -222,6 +223,7 @@ export interface PiNativeAgentSessionFactoryInput {
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTaskResumeContext?(): Readonly<TaskResumeContext> | undefined;
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
+  currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
   currentMaintenanceCommand?(): Promise<Readonly<PiKnowledgeMaintenanceCommandContext>>;
   currentSkillTurnContext?(): Readonly<PiNativeSkillTurnContext> | null;
@@ -323,6 +325,7 @@ export function knowledgeReferencesRequireFreshnessVerification(
 
 export function resolvePiTurnToolNames(input: Readonly<{
   commandKind: "chat" | "ask" | "maintain";
+  englishDiary?: boolean;
   permission?: PiWorkspaceAccess["permission"];
   mode: PiChatMode;
   memoryMode: PiConversationMemoryMode;
@@ -332,7 +335,7 @@ export function resolvePiTurnToolNames(input: Readonly<{
   externalReadToolNames?: readonly string[];
   requiresFreshnessVerification?: boolean;
 }>): readonly string[] {
-  const candidates = input.mode === "plan" ? input.planToolNames : input.defaultToolNames;
+  const candidates = input.englishDiary ? (input.mode === "agent" ? input.defaultToolNames.filter(name => name === "english_diary_generate") : []) : input.mode === "plan" ? input.planToolNames : input.defaultToolNames;
   return [...new Set(candidates)].filter((toolName) => piWorkspaceAllowsTool({
     toolName,
     permission: normalizePiWorkspacePermission(input.permission),
@@ -687,6 +690,7 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  englishDiarySourcePath?: string;
   workbenchSource?: Readonly<WorkbenchTaskSource>;
   resumeContext?: TaskResumeContext;
   interruption?: TaskInterruptionRecord;
@@ -705,6 +709,7 @@ interface ActiveProductRun {
   settlementBarrier: PiProductRunSettlementBarrier;
   requestText: string;
   commandKind: "chat" | "ask" | "maintain";
+  englishDiary?: boolean;
   selectedSkillIds: readonly string[];
   requiresFreshnessVerification: boolean;
   successfulCapabilityIds: Set<string>;
@@ -1419,7 +1424,7 @@ export class PiNativeConversationRuntime {
         ? Object.freeze({ kind: "chat", originalText: request.text })
         : routeKnowledgeConversationCommand(request.text);
 
-    const selectedRuntimeSkill = !request.skillPath
+    const selectedRuntimeSkill = !request.englishDiarySourcePath && !request.skillPath
       ? catalog.defaultSkillId
         ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId, catalog)
         : mode !== "plan"
@@ -1462,6 +1467,13 @@ export class PiNativeConversationRuntime {
         `Conversation ${request.conversationId} 已有运行中的 ProductRun`
       );
     }
+    const inheritedEnglish = englishDiaryTaskContextFromEntries(active.sessionManager.getBranch());
+    const englishDiarySourcePath = normalizeEnglishDiarySourcePath(request.englishDiarySourcePath) ?? inheritedEnglish?.sourcePath;
+    if (request.englishDiarySourcePath && inheritedEnglish && request.englishDiarySourcePath !== inheritedEnglish.sourcePath) throw new PiNativeConversationRuntimeError("agent_session_invalid", "这件任务的原稿范围已固定，请从列表另建一件事。");
+    if (request.englishDiarySourcePath && !inheritedEnglish && active.sessionManager.getBranch().some(entry => entry.type === "message")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "请从英文日记页新建独立任务，避免把原有会话内容带入生成。");
+    if (request.englishDiarySourcePath && !normalizeEnglishDiarySourcePath(request.englishDiarySourcePath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记原稿位置无效，请从英文日记页重新选择。");
+    if (englishDiarySourcePath && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "生成英文日记需要可写工作区和 Agent 模式；原稿已保留。");
+    if (englishDiarySourcePath && (documents.length || promptImages.length || noteMentions.length || selectionAnnotations.length || request.skillPath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记任务沿已确认的发送范围处理，请移除额外附件、引用和 Skill 后再发送。");
     if (knowledgeCommand.kind === "maintain" && promptImages.length) {
       throw new PiNativeConversationRuntimeError(
         "agent_session_invalid",
@@ -1511,6 +1523,7 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
+      ...(englishDiarySourcePath ? { englishDiarySourcePath } : {}),
       ...(request.workbenchSource ? { workbenchSource: request.workbenchSource } : {}),
       ...(request.resumeContext ? { resumeContext: structuredClone(request.resumeContext) } : {}),
       productRunId,
@@ -1585,7 +1598,9 @@ export class PiNativeConversationRuntime {
         summary: cloneReasoningSummary(execution.reasoningSummary)
       });
       this.configureToolsForTurn(active, knowledgeCommand, mode, memoryMode);
-      if (knowledgeCommand.kind === "ask") {
+      if (englishDiarySourcePath) {
+        active.knowledgeTurnContext = null;
+      } else if (knowledgeCommand.kind === "ask") {
         await this.emitRuntimeEvent(active, execution, {
           type: "knowledge_progress",
           status: "active",
@@ -1730,7 +1745,7 @@ export class PiNativeConversationRuntime {
       throw error;
     }
 
-    const promptText = active.skillPromptPrefix
+    const promptText = englishDiarySourcePath ? request.text : active.skillPromptPrefix
       ? `${active.skillPromptPrefix}\n\n${request.text}`
       : knowledgeCommand.kind === "chat" && active.skillCommandName
         ? `/skill:${active.skillCommandName} ${request.text}`
@@ -1950,6 +1965,7 @@ export class PiNativeConversationRuntime {
   ): void {
     const names = resolvePiTurnToolNames({
       commandKind: command.kind,
+      englishDiary: Boolean(active.currentRun?.englishDiarySourcePath),
       permission: active.currentRun?.permission ?? "read-only",
       mode,
       memoryMode,
@@ -1960,6 +1976,7 @@ export class PiNativeConversationRuntime {
       requiresFreshnessVerification:
         active.currentRun?.requiresFreshnessVerification === true
     }).filter(name => active.isToolCurrentlyEnabled?.(name) !== false);
+    if (active.currentRun?.englishDiarySourcePath && names.length !== 1) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记能力、功能开关或 PRO 当前不可用。");
     if (mode === "plan") {
       if (
         names.length === 0
@@ -2712,6 +2729,14 @@ export class PiNativeConversationRuntime {
         return run ? Object.freeze({ permission: run.permission, mode: run.mode, memoryMode: run.memoryMode }) : null;
       },
       currentTaskResumeContext: () => holder.active?.currentRun?.resumeContext,
+      currentEnglishDiaryRequest: () => {
+        const active = holder.active, run = active?.currentRun;
+        if (!active || !run?.englishDiarySourcePath) return null;
+        const stored = englishDiaryTaskContextFromEntries(active.sessionManager.getBranch());
+        // before_agent_start runs before Pi appends this turn's user entry.
+        // Bind the source intent to the task; the tool separately binds the live user entry.
+        return { sourcePath: run.englishDiarySourcePath, intentEntryId: stored?.intentEntryId ?? `english-diary:${catalog.conversationId}` };
+      },
       currentWorkbenchSource: () => holder.active?.currentRun?.workbenchSource
         ?? workbenchTaskSourceFromEntries(holder.active?.sessionManager.getBranch() ?? []),
       currentKnowledgeTurnContext: () =>
@@ -2721,7 +2746,7 @@ export class PiNativeConversationRuntime {
       currentMemoryTurnContext: () => {
         const active = holder.active;
         const run = active?.currentRun;
-        if (!active || !run) return null;
+        if (!active || !run || run.englishDiarySourcePath) return null;
         return Object.freeze({
           vaultId: catalog.vaultId,
           conversationId: catalog.conversationId,
