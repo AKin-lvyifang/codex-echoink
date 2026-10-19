@@ -1,3 +1,4 @@
+import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, type DesktopSettingsTab } from "./desktop-settings-route";
 import type { Setting } from "obsidian";
 import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obsidian-settings";
 import { settingsCopy } from "./i18n";
@@ -41,4 +42,23 @@ export function settingsCategoryDefinitions(
       render: (setting, group) => render(tab, setting, group)
     }))
   }];
+}
+
+
+/** Index the desktop categories while retaining legacy search terms. */
+export function desktopSettingsCategoryDefinitions(
+  language: SettingsLanguage,
+  render: (tab: DesktopSettingsTab, setting: Setting, group: SettingGroup) => () => void
+): SettingsCategoryGroupDefinition[] {
+  const aliases: Record<DesktopSettingsTab, readonly string[]> = {
+    general: [...CATEGORY_ALIASES.general.filter(alias => !/memory|记忆|个性化|人格|头像|personalization|personality|avatar|journal|日记|folder|文件夹/iu.test(alias)), ...CATEGORY_ALIASES.layout, "快捷 AI 小窗", "Quick AI window", "关于", "检查更新"],
+    models: [...CATEGORY_ALIASES.providers, "providers", "agents", "大模型API", "默认模型"],
+    agent: ["Agent", "身份", "用户画像", "长期记忆", "Memory", "personality", "avatar", "Dream", "做梦", "归档", "archive", "记忆修正", "自动归档"],
+    capabilities: ["能力", "Skills & MCP", "resources", "技能", "Skills", "我的Skill", "MCP Server", "Tavily", "工具", "tools"],
+    modules: [...CATEGORY_ALIASES.knowledgeBase, ...CATEGORY_ALIASES.todos, ...CATEGORY_ALIASES.review.filter(alias => !/archive|归档|memory|记忆/iu.test(alias)), "plugins", "插件", "财务", "finance", "记账", "账单", "英文日记", "English diary", "PDF", "选文", "划词", "selection", "日记", "journal"],
+    account: CATEGORY_ALIASES.account
+  };
+  return [{ type: "group", cls: "echoink-native-settings-group", items: DESKTOP_SETTINGS_TABS.map(tab => ({
+    name: desktopSettingsTabLabel(tab, language), aliases: [...aliases[tab]], render: (setting, group) => render(tab, setting, group)
+  })) }];
 }

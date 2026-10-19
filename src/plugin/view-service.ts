@@ -7,6 +7,7 @@ import { Notice, Platform } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ResourceManagementTab } from "../settings/settings";
 import type { SettingsTab } from "../settings/settings";
+import { resolveDesktopSettingsRoute } from "../settings/desktop-settings-route";
 import { EchoInkHomeView, EchoInkLegacyHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { EchoInkWorkbenchView } from "../home/workbench-view";
 import { openObsidianGraphLeaf } from "../home/open-native-graph";
@@ -162,6 +163,7 @@ export class EchoInkViewService {
     this.plugin.settings.settingsTab = "resources";
     this.plugin.settings.resourceManagementTab = tab;
     await this.plugin.saveSettings(true);
+    this.plugin.prepareDesktopSettingsRoute(resolveDesktopSettingsRoute("resources", { resourceTab: tab }));
     const setting = (this.plugin.app as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
     if (!setting?.open || !setting?.openTabById) {
       new Notice("无法打开插件设置页");
@@ -171,9 +173,10 @@ export class EchoInkViewService {
     setting.openTabById(this.plugin.manifest.id);
   }
 
-  async openEchoInkSettings(tab: SettingsTab): Promise<void> {
+  async openEchoInkSettings(tab: SettingsTab, focus?: string): Promise<void> {
     this.plugin.settings.settingsTab = tab;
     await this.plugin.saveSettings(true);
+    this.plugin.prepareDesktopSettingsRoute(resolveDesktopSettingsRoute(tab, { focus }));
     const setting = (this.plugin.app as {
       setting?: { open?: () => void; openTabById?: (id: string) => void };
     }).setting;

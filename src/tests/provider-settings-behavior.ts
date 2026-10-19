@@ -1,4 +1,5 @@
 import { runProviderModelDiscoveryRegression } from "./provider-model-discovery-behavior";
+import { emptyWorkspaceResourceSnapshot } from "../core/workspace-resources";
 import { KnowledgeInitializationSection } from "../settings/knowledge-initialization-section";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
@@ -11,7 +12,7 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { App, Modal, TFile, TFolder, openTestModals, openTestNoticeMessages } from "obsidian";
+import { App, Modal, Platform, TFile, TFolder, openTestModals, openTestNoticeMessages } from "obsidian";
 import type {
   Api,
   AssistantMessage,
@@ -625,7 +626,7 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
     providerModalTestDocument.prefersReducedMotion = false;
   }
 
-  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+  const css = readFileSync(path.resolve("styles.css"), "utf8");
   for (const keyframe of [
     "settings-motion",
     "settings-gear-draw",
@@ -831,7 +832,7 @@ async function assertMemoryCorrectionModalContract(): Promise<void> {
 }
 
 function assertMemoryComposerVisualCssContract(): void {
-  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+  const css = readFileSync(path.resolve("styles.css"), "utf8");
   const currentRule = css.match(
     /\.echoink-memory-correction-current\s*\{([^}]*)\}/u
   )?.[1] ?? "";
@@ -1309,8 +1310,8 @@ function writeSettingsStyleFixture(root: HTMLElement, state: string): void {
     if (element.value) attributes.set("value", element.value);
     return `<${element.localName} ${[...attributes].map(([name, value]) => `${name}="${escape(value)}"`).join(" ")}>${escape(element.ownTextContent)}${element.children.map(serialize).join("")}</${element.localName}>`;
   };
-  mkdirSync(".tmp", { recursive: true });
-  writeFileSync(`.tmp/settings-style-${state}.html`, `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Resource filter ${state}</title><link rel="stylesheet" href="../styles.css"><style>:root{--font-interface:system-ui;--font-text-size:16px;--text-normal:#303238;--text-muted:#73767e;--background-primary:#fff;--background-secondary:#f7f7f9;--background-modifier-border:#e6e7eb;--interactive-accent:#7860b3}body{margin:0}.setting-item{display:flex}</style>${serialize(root)}`);
+  mkdirSync(process.env.ECHOINK_SETTINGS_TEST_OUTPUT || ".tmp", { recursive: true });
+  writeFileSync(path.join(process.env.ECHOINK_SETTINGS_TEST_OUTPUT || ".tmp", `settings-style-${state}.html`), `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Resource filter ${state}</title><link rel="stylesheet" href="../styles.css"><style>:root{--font-interface:system-ui;--font-text-size:16px;--text-normal:#303238;--text-muted:#73767e;--background-primary:#fff;--background-secondary:#f7f7f9;--background-modifier-border:#e6e7eb;--interactive-accent:#7860b3}body{margin:0}.setting-item{display:flex}</style>${serialize(root)}`);
 }
 
 async function assertBuiltinSkillPresetLabels(): Promise<void> {
@@ -2227,9 +2228,9 @@ async function assertSettingsPersistenceReadbackOutcomes(): Promise<void> {
 }
 
 function assertProviderBadgeReflowCssContract(): void {
-  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+  const css = readFileSync(path.resolve("styles.css"), "utf8");
   const settingsTab = readFileSync(
-    new URL("../src/settings/settings-tab.ts", import.meta.url),
+    path.resolve("src/settings/settings-tab.ts"),
     "utf8"
   );
   assert.match(css, /\.codex-provider-credential-badge,[\s\S]*\.codex-provider-connection-badge\s*\{[^}]*max-width:\s*100%;[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/u);
@@ -2266,7 +2267,7 @@ function assertProviderBadgeReflowCssContract(): void {
 }
 
 function assertProviderAdvancedSettingsCssContract(): void {
-  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+  const css = readFileSync(path.resolve("styles.css"), "utf8");
   assert.match(
     css,
     /\.codex-provider-model-advanced\s*\{[^}]*container-type:\s*inline-size;/su
@@ -5467,6 +5468,169 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.echoink-onboarding-coachmark\s*\{[\s\S]*?animation:\s*none/u);
   assert.doesNotMatch(css, /\.echoink-onboarding-coachmark \.echoink-onboarding-action\s*\{\s*width:\s*100%;/u);
 
+}
+
+async function assertSettingsDeleteFailuresKeepAuthoritativeRows(): Promise<void> {
+  installProviderModalDomFixture();
+  const previousDesktop = Platform.isDesktopApp;
+  Platform.isDesktopApp = true;
+  try {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.settingsTab = "providers";
+    settings.settingsLanguage = "en";
+    const provider = createApiProviderConfig("deepseek", "delete-rejected-active");
+    provider.apiKey = "synthetic-delete-key";
+    const fallback = createApiProviderConfig("ollama", "delete-rejected-fallback");
+    settings.apiProviders = [provider, fallback];
+    activateApiProvider(settings, provider);
+    const resource = { ...mcpResourceFixture("delete-rejected-mcp", true), bridgeMode: "native-mcp" as const };
+    settings.resources.catalog = [resource];
+    settings.resources.mcpConnections[resource.id] = { transport: "http", url: "https://mcp-fixture.invalid", trusted: false, tools: [], toolPolicies: {} };
+    let providerAttempts = 0;
+    let mcpAttempts = 0;
+    let saves = 0;
+    const plugin = withSettingsTabDefaults({ app: new App(), manifest: { id: "echoink-delete-rejection" }, settings,
+      saveSettings: async () => { saves++; },
+      activateApiProviderSettings: async (mutate: (candidate: typeof settings) => void, mode: string) => {
+        providerAttempts++;
+        const candidate = structuredClone(settings);
+        mutate(candidate);
+        assert.deepEqual(candidate.apiProviders.map(item => item.id), [fallback.id]);
+        assert.equal(candidate.activeApiProviderId, fallback.id);
+        assert.equal(mode, "replace");
+        throw new Error("synthetic Provider activation rejected");
+      },
+      deleteEchoInkMcpServer: async (id: string) => {
+        mcpAttempts++;
+        assert.equal(id, resource.id);
+        throw new Error("synthetic MCP delete rejected");
+      }
+    });
+    const tab = new CodexSettingTab(plugin as never);
+    const mutable = tab as any;
+    try {
+      tab.display();
+      const providerSnapshot = JSON.stringify({ providers: settings.apiProviders, active: settings.activeApiProviderId, model: settings.defaultModel });
+      const providerSelector = `[data-echoink-focus-key="provider:${provider.id}:edit"]`;
+      const providerRow = tab.containerEl.querySelector(providerSelector)?.closest(".codex-provider-saved-row");
+      assert.ok(providerRow);
+      const noticesBefore = openTestNoticeMessages.length;
+      await mutable.deleteSavedProviderModel(provider.id);
+      assert.equal(providerAttempts, 1);
+      assert.equal(JSON.stringify({ providers: settings.apiProviders, active: settings.activeApiProviderId, model: settings.defaultModel }), providerSnapshot,
+        "rejected activation preserves the deleted connection, active model and fallback configuration");
+      assert.equal(tab.containerEl.querySelector(providerSelector)?.closest(".codex-provider-saved-row"), providerRow,
+        "a failed delete leaves the original saved-model row mounted");
+      assert.ok(openTestNoticeMessages.slice(noticesBefore).includes("synthetic Provider activation rejected"));
+      mutable.renderSettingsContent();
+      assert.ok(tab.containerEl.querySelector(providerSelector), "the authoritative row survives a later redraw");
+      assert.equal(saves, 0);
+
+      mutable.resourceLoaded.mcp = true;
+      mutable.resourceSnapshot = emptyWorkspaceResourceSnapshot();
+      let reloads = 0;
+      mutable.loadWorkspaceResources = async () => { reloads++; };
+      resetSynchronousSettingsDisplayFrame(tab);
+      tab.openDesktopRoute({ tab: "capabilities", capabilityTab: "mcp" });
+      mutable.renderSettingsContent();
+      const resourceSelector = `[data-resource-key="${resource.id}"]`;
+      assert.ok(tab.containerEl.querySelector(resourceSelector));
+      const resourceSnapshot = JSON.stringify(settings.resources);
+      mutable.settingsDetail = { kind: "resource", resourceId: resource.id };
+      mutable.renderSettingsContent();
+      const remove = tab.containerEl.querySelector<ProviderModalTestElement>(`[data-echoink-focus-key="resource:${resource.id}:delete"]`);
+      assert.ok(remove);
+      await mutable.deleteMcpServer(resource, remove);
+      assert.equal(mcpAttempts, 1);
+      assert.equal(reloads, 0, "a rejected delete must not refresh away the still-authoritative MCP row");
+      assert.equal(JSON.stringify(settings.resources), resourceSnapshot, "failed MCP deletion preserves the catalog and connection fields");
+      assert.deepEqual(mutable.settingsDetail, { kind: "resource", resourceId: resource.id });
+      assert.equal(remove.disabled, false, "delete can be retried from the same detail");
+      assert.ok(openTestNoticeMessages.includes("The MCP server was not deleted."));
+      resetSynchronousSettingsDisplayFrame(tab);
+      await mutable.closeSettingsDetail();
+      mutable.renderSettingsContent();
+      assert.ok(tab.containerEl.querySelector(resourceSelector), "returning to the list still shows the failed MCP deletion");
+      assert.equal(reloads, 0);
+      assert.equal(saves, 0);
+    } finally { tab.hide(); }
+  } finally { Platform.isDesktopApp = previousDesktop; }
+  console.log("PASS P11 delete failures: actual settings Provider/MCP methods keep configuration, current model, rows and retry; no false refresh/save");
+}
+
+async function assertSettingsRouteTargetsHostCopy(): Promise<void> {
+  const previousDesktop = Platform.isDesktopApp;
+  try {
+    const plugin: any = Object.create(CodexForObsidianPlugin.prototype);
+    plugin.manifest = { id: "echoink-host-copy-fixture" };
+    plugin.settings = structuredClone(DEFAULT_SETTINGS);
+    const calls: unknown[][] = [];
+    const tab = (name: string, id = plugin.manifest.id) => ({ id,
+      openDesktopRoute: (route: unknown) => { calls.push([name, "route", route]); },
+      openLifestyleDetail: (kind: unknown) => { calls.push([name, "detail", kind]); }
+    });
+    const registered = tab("registered");
+    const activeCopy = tab("active-copy");
+    plugin.setSettingsTabInstance(registered);
+    plugin.app = { setting: { activeTab: activeCopy,
+      open: () => { calls.push(["host", "open"]); },
+      openTabById: (id: string) => { calls.push(["host", "open-tab", id]); }
+    } };
+    plugin.saveSettings = async (immediate: boolean) => { calls.push(["save", immediate]); };
+    const route = { tab: "capabilities", capabilityTab: "tools", focus: "providers/tools" } as const;
+    Platform.isDesktopApp = true;
+    plugin.prepareDesktopSettingsRoute(route);
+    assert.deepEqual(calls, [["registered", "route", route], ["active-copy", "route", route]],
+      "native search's visible same-id copy and detached registered tab both receive the public route");
+    calls.length = 0;
+    await plugin.openLifestyleSettings("finance");
+    assert.deepEqual(calls, [
+      ["registered", "route", { tab: "modules" }], ["active-copy", "route", { tab: "modules" }],
+      ["registered", "detail", "finance"], ["active-copy", "detail", "finance"],
+      ["save", true], ["host", "open"], ["host", "open-tab", plugin.manifest.id]
+    ], "the same host copy receives the actual lifestyle detail after module routing");
+    assert.equal(plugin.settings.settingsTab, "resources");
+    assert.equal(plugin.settings.resourceManagementTab, "plugins");
+    calls.length = 0;
+    plugin.app.setting.activeTab = tab("other-plugin", "another-plugin");
+    plugin.prepareDesktopSettingsRoute(route);
+    assert.deepEqual(calls, [["registered", "route", route]], "an unrelated plugin's active tab is not routed");
+    calls.length = 0;
+    plugin.app.setting.activeTab = registered;
+    plugin.prepareDesktopSettingsRoute(route);
+    assert.deepEqual(calls, [["registered", "route", route]], "the registered active tab is not routed twice");
+    calls.length = 0;
+    plugin.app.setting.activeTab = activeCopy;
+    Platform.isDesktopApp = false;
+    plugin.prepareDesktopSettingsRoute(route);
+    assert.deepEqual(calls, [], "mobile never receives a new desktop route");
+  } finally { Platform.isDesktopApp = previousDesktop; }
+  console.log("PASS P11 main navigation: same-id host copy and registered tab routed once; unrelated active tabs and mobile preserved");
+}
+
+async function assertOnboardingResumeSettingsRoute(): Promise<void> {
+  const previousDesktop = Platform.isDesktopApp;
+  try {
+    for (const desktop of [false, true]) {
+      Platform.isDesktopApp = desktop;
+      for (const [step, tab] of [["provider", "providers"], ["knowledge", "knowledgeBase"], ["personality", "general"]] as const) {
+        const plugin: any = Object.create(CodexForObsidianPlugin.prototype);
+        plugin.settings = structuredClone(DEFAULT_SETTINGS);
+        plugin.settings.setup.tutorialStep = step;
+        plugin.onboardingRequested = true;
+        const calls: unknown[][] = [];
+        plugin.getViewService = () => ({ openEchoInkSettings: async (...args: unknown[]) => { calls.push(args); } });
+        plugin.saveSettings = () => { throw new Error("resuming settings must not write configuration"); };
+        await CodexForObsidianPlugin.prototype.openPendingEchoInkOnboarding.call(plugin);
+        assert.deepEqual(calls, [[tab, desktop && step === "personality" ? "general:personality-template" : undefined]],
+          `resume ${step} keeps ${desktop ? "desktop focus mapping" : "the legacy mobile route"}`);
+        plugin.onboardingRequested = false;
+        await CodexForObsidianPlugin.prototype.openPendingEchoInkOnboarding.call(plugin);
+        assert.equal(calls.length, 1, "an inactive tutorial does not open settings");
+      }
+    }
+  } finally { Platform.isDesktopApp = previousDesktop; }
+  console.log("PASS P11 onboarding resume: desktop personality keeps focus; mobile, Provider and Knowledge routes remain unchanged");
 }
 
 async function assertOnboardingNavigationPersistence(): Promise<void> {
@@ -12787,6 +12951,7 @@ class ProviderModalTestDocument {
     MouseEvent: ProviderModalTestMouseEvent,
     ResizeObserver: ProviderModalTestResizeObserver,
     HTMLElement: ProviderModalTestElement,
+    HTMLDetailsElement: class extends ProviderModalTestElement {},
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
     queueMicrotask: globalThis.queueMicrotask,
@@ -13337,7 +13502,7 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
 
 async function writeSettingsVisualFixtures(): Promise<void> {
   installProviderModalDomFixture();
-  const directory = path.resolve(".tmp/settings-visual"); mkdirSync(directory, { recursive: true });
+  const directory = path.resolve(process.env.ECHOINK_SETTINGS_TEST_OUTPUT || ".tmp", "settings-visual"); mkdirSync(directory, { recursive: true });
   const root = await mkdtemp(path.join(tmpdir(), "echoink-settings-visual-"));
   try {
     for (const folder of ["raw", "wiki/concepts", "outputs", "inbox"]) mkdirSync(path.join(root, folder), { recursive: true });
@@ -13383,7 +13548,26 @@ async function writeSettingsVisualFixtures(): Promise<void> {
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "manual-dream") {
+Platform.isDesktopApp = false;
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p11-settings") {
+  await assertProviderActivationMainTransactionContract();
+  await assertPersistedProviderRollbackPreservesQueuedSettingsSave();
+  console.log("PASS P11 Provider activation transaction and persisted rollback preserve queued unrelated settings saves");
+  await assertSettingsDeleteFailuresKeepAuthoritativeRows();
+  await assertSettingsRouteTargetsHostCopy();
+  await assertOnboardingResumeSettingsRoute();
+  await assertAnimatedSettingsTabIcons();
+  await assertSettingsAccessibleNamesAndOverflow();
+  await assertMcpPanelUsesTurnResourceTruth();
+  await assertBuiltinSkillEditorLifecycle();
+  await assertSkillToggleNotCommittedRestoresAuthoritativeUi();
+  await assertKnowledgeSettingsDetailRetiresLegacyControls();
+  await assertMcpModalFieldAccessibility();
+  await assertInlineEditorAsyncRetirement();
+  await assertProviderLimitOverrideRoundTrip();
+  await runSettingsWindowRefreshTest();
+  console.log("PASS P11 mobile compatibility: legacy navigation/icons/focus, resources/permission truth, Knowledge, full Provider/MCP fields and detached window");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "manual-dream") {
   await assertManualDreamSettingsUi();
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "usage") {
   await assertUsageGenerationWiring();

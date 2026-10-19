@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
-import { App, Setting } from "obsidian";
+import { App, Platform, Setting } from "obsidian";
 import { CodexSettingTab } from "../settings/settings-tab";
-import { DEFAULT_SETTINGS, type SettingsLanguage, type SettingsTab } from "../settings/settings";
+import { DEFAULT_SETTINGS, createApiProviderConfig, activateApiProvider, type SettingsLanguage, type SettingsTab } from "../settings/settings";
 import { settingsCopy } from "../settings/i18n";
 import { disposeOriginControls, type OriginCheckElement } from "../settings/origin-controls";
 import { emptyWorkspaceResourceSnapshot } from "../core/workspace-resources";
@@ -9,6 +9,8 @@ import type { EchoInkResource } from "../resources/types";
 import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obsidian-settings";
 import { attachSettingsTooltip } from "../settings/settings-v2";
 import { paidTestAccess } from "./membership-access";
+import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
+import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, resolveDesktopSettingsRoute, type DesktopSettingsTab } from "../settings/desktop-settings-route";
 
 const categories: SettingsTab[] = ["general", "layout", "providers", "resources", "knowledgeBase", "review", "todos", "account"];
 
@@ -95,8 +97,16 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
     getCodexView: () => null,
     lifestyle: { label: () => "财务" },
     getQuickChatWindowController: () => null,
+    getTodoReminderService: () => ({
+      status: () => ({ enabled: settings.todoReminders.enabled, permission: "unavailable", busy: false, error: "" }),
+      subscribe: () => () => undefined,
+      setEnabled: async () => ({ ok: false, error: "unavailable" }),
+      testNotification: async () => ({ ok: false, error: "unavailable" })
+    }),
     getTodoStore: () => ({ completionStatistics: (now: Date) => ({ year: now.getFullYear(), years: [now.getFullYear()], total: 0, today: 0, yearTotal: 0, unknown: 0, days: [], activity: [] }), subscribe: () => () => undefined }),
     isEchoInkOnboardingRequested: () => false,
+    consumeKnowledgeLinkingFocus: () => false,
+    consumeKnowledgeLinkingTaskId: () => null,
     getEchoInkKnowledgeInitializationState: async () => null,
     getEchoInkKnowledgeBaseStructure: async () => ({ state: "uninitialized", roots: [] }),
     getEchoInkKnowledgeBaseDashboard: async () => null
@@ -182,6 +192,7 @@ async function checkBuiltinFinancePluginRows(win: Window & typeof globalThis, sc
     f.plugin.settings.settingsTab = "resources";
     f.plugin.settings.resourceManagementTab = "plugins";
     f.plugin.settings.resources.catalog = [];
+    f.plugin.settings.selectionAsk.enabled = false;
     f.state.runtimeEchoInkResources = [];
     f.state.resourceSnapshot = null;
     f.state.loadWorkspaceResources = async () => { loads++; };
@@ -209,14 +220,16 @@ async function checkBuiltinFinancePluginRows(win: Window & typeof globalThis, sc
         const body = render();
         assert.ok(builtin(), `${phase}: 财务不依赖外部目录加载`);
         assert.ok(diary(), `${phase}: 英文日记不依赖外部目录加载`);
-        assert.equal(body.querySelectorAll(".codex-resource-row").length, 2);
+        assert.equal(body.querySelectorAll(".codex-resource-row").length, 4);
+        assert.ok(body.querySelector('[data-resource-key="builtin-plugin:pdf"]'));
+        assert.ok(body.querySelector('[data-resource-key="echoink:selection-ask"]'));
         assert.equal(body.querySelector(".echoink-life-plugin-card"), null, "财务使用统一资源行");
         assert.equal(body.textContent?.includes(copy.resources.noPlugins), false);
         assert.equal(body.textContent?.includes(copy.resources.notLoaded), false);
         assert.equal(body.textContent?.includes(copy.resources.loadingTab(copy.resources.tabs.plugins)), false);
         assert.equal(body.getAttribute("aria-busy"), String(phase === "loading"));
         assert.equal(f.tab.containerEl.querySelector<HTMLButtonElement>(".codex-resource-refresh")!.disabled, phase === "loading");
-        counts(2, 0);
+        counts(4, 0);
       }
       assert.equal(loads, 1, "尚未同步时仍沿用现有加载入口");
       const row = builtin();
@@ -243,7 +256,7 @@ async function checkBuiltinFinancePluginRows(win: Window & typeof globalThis, sc
       assert.equal(name.disabled, true);
       settings.click(); name.click();
       assert.equal(f.state.settingsDetail, null, "保存期间不能进入设置详情");
-      counts(2, 0);
+      counts(4, 0);
       finishSave();
       await scheduler.flush();
       beforeSave = null;
@@ -252,7 +265,7 @@ async function checkBuiltinFinancePluginRows(win: Window & typeof globalThis, sc
       assert.ok(row.classList.contains("is-enabled"));
       assert.equal(settings.disabled, false);
       assert.equal(name.disabled, false);
-      counts(2, 1);
+      counts(4, 1);
       assert.deepEqual(enableCalls, [{ kind: "finance", enabled: true }]);
       for (const action of [settings, name]) {
         action.click();
@@ -268,14 +281,14 @@ async function checkBuiltinFinancePluginRows(win: Window & typeof globalThis, sc
       assert.equal(toggle.disabled, false);
       assert.equal(settings.disabled, false);
       assert.ok(row.classList.contains("is-enabled"));
-      counts(2, 1);
+      counts(4, 1);
       failSave = false;
       toggle.click();
       await scheduler.flush();
       assert.equal(toggle.checked, false);
       assert.equal(settings.disabled, false, "PRO keeps settings access after disabling the plugin");
       assert.equal(name.disabled, false);
-      counts(2, 0);
+      counts(4, 0);
 
       const external: EchoInkResource = { id: "fixture-tools", kind: "tool-bundle", source: "manual", name: "Example connector", description: "External fixture tools", enabled: true, bridgeMode: "plugin-tool" };
       f.plugin.settings.resources.catalog = [external];
@@ -285,8 +298,8 @@ async function checkBuiltinFinancePluginRows(win: Window & typeof globalThis, sc
       disposeOriginControls(body);
       body.empty();
       f.state.renderEchoInkResources(body, [external]);
-      assert.equal(body.querySelectorAll(".codex-resource-row").length, 2);
-      counts(2, 1);
+      assert.equal(body.querySelectorAll(".codex-resource-row").length, 3);
+      counts(3, 1);
       const search = f.tab.containerEl.querySelector<HTMLInputElement>(".codex-resource-search-input")!;
       const filter = (query: string) => {
         search.value = query;
@@ -299,7 +312,7 @@ async function checkBuiltinFinancePluginRows(win: Window & typeof globalThis, sc
       assert.ok(body.querySelector('[data-resource-key="fixture-tools"]')?.classList.contains("is-search-hidden"));
       assert.equal(body.querySelector<HTMLElement>("[data-resource-search-empty]")!.hidden, true);
       assert.ok(body.querySelector(".codex-resource-summary-count")?.textContent?.includes(language === "en" ? "1 shown" : "显示 1"));
-      counts(2, 1);
+      counts(3, 1);
       filter("no-such-fixture-plugin");
       assert.ok(builtin().classList.contains("is-search-hidden"));
       assert.equal(body.querySelector<HTMLElement>("[data-resource-search-empty]")!.hidden, false);
@@ -308,7 +321,7 @@ async function checkBuiltinFinancePluginRows(win: Window & typeof globalThis, sc
       assert.equal(search.value, "");
       assert.equal(body.querySelectorAll(".codex-resource-row.is-search-hidden").length, 0);
       assert.equal(body.querySelector<HTMLElement>("[data-resource-search-empty]")!.hidden, true);
-      counts(2, 1);
+      counts(3, 1);
       f.state.resourceLoadErrors.plugins = "synthetic external scan failure";
       assert.match(render().textContent ?? "", /资源同步未完成|Resources could not be synchronized/u);
       assert.ok(builtin(), "真正的同步错误不移除可用内置行");
@@ -386,6 +399,7 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
   globalThis.ResizeObserver = primary.ResizeObserver;
   globalThis.requestAnimationFrame = primary.requestAnimationFrame;
   globalThis.cancelAnimationFrame = primary.cancelAnimationFrame;
+  Platform.isDesktopApp = false;
   checkIndexIsCheap();
   await checkBuiltinFinancePluginRows(primary, scheduler);
   for (const language of ["zh-CN", "en"] as const) {
@@ -512,5 +526,300 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
   assert.ok(legacy.tab.containerEl.querySelector('input[aria-label="Journal folder"]'));
   legacy.tab.hide();
   legacy.tab.containerEl.remove();
-  console.log("PASS native settings: separate document and legacy display fallback");
+  console.log("PASS native settings: mobile eight categories, separate document and legacy display fallback");
+  Platform.isDesktopApp = true;
+  try {
+    await checkDesktopSettings(primary, scheduler, secondDocument);
+  } finally { Platform.isDesktopApp = false; }
+}
+
+
+async function checkCapabilitiesFromPlugins(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>, language: SettingsLanguage) {
+  for (const entry of ["route", "host-search"] as const) {
+    const f = fixture(win, language);
+    f.state.resourceSnapshot = emptyWorkspaceResourceSnapshot();
+    const refreshes: unknown[][] = [];
+    f.state.loadWorkspaceResources = async (...args: unknown[]) => { refreshes.push(args); };
+    const mount = mountDefinitions(f.tab);
+    await scheduler.flush();
+    f.tab.openDesktopRoute({ tab: "modules" });
+    await scheduler.flush();
+    assert.equal(f.plugin.settings.resourceManagementTab, "plugins");
+    assert.ok(f.tab.containerEl.querySelector('[data-resource-key="builtin-plugin:finance"]'));
+    if (entry === "route") f.tab.openDesktopRoute({ tab: "capabilities" });
+    else {
+      const search = win.document.createElement("input");
+      search.value = language === "en" ? "Capabilities" : "能力";
+      Object.assign(f.plugin.app, { setting: { searchComponent: { inputEl: search } } });
+      const row = mount.rows[DESKTOP_SETTINGS_TABS.indexOf("capabilities")].setting.settingEl;
+      row.tabIndex = -1;
+      row.focus();
+    }
+    await scheduler.flush();
+    assert.equal(f.plugin.settings.resourceManagementTab, "skills", `${entry}: first capability entry must leave the plugin data source`);
+    const skills = f.tab.containerEl.querySelector('[data-resource-tab="skills"][aria-selected="true"]');
+    assert.ok(skills);
+    assert.match(skills.textContent ?? "", /Skills/u);
+    const list = f.tab.containerEl.querySelector('.codex-resource-body')!;
+    assert.equal(list.getAttribute("aria-labelledby"), "echoink-resource-tab-skills");
+    assert.equal(list.querySelector('[data-resource-key="builtin-plugin:finance"]'), null);
+    assert.equal(list.querySelector('[data-resource-key="builtin-plugin:pdf"]'), null);
+    assert.match(list.textContent ?? "", /Skill/iu, "the actual list renders the Skills empty state and summary");
+    assert.ok(f.tab.containerEl.querySelector('.codex-resource-search-input'));
+    const refresh = f.tab.containerEl.querySelector<HTMLButtonElement>('.codex-resource-refresh')!;
+    assert.equal(refresh.getAttribute("aria-label"), settingsCopy(language).resources.refreshTitle);
+    refresh.click();
+    await scheduler.flush();
+    assert.deepEqual(refreshes, [[true, "skills"]], "refresh uses the selected Skills data source");
+    mount.cleanup();
+    f.registrations.forEach(cleanup => cleanup());
+    f.tab.containerEl.remove();
+    await scheduler.flush();
+  }
+  console.log(`PASS P11 capability entry (${language}): plugins → generic route/host search renders and refreshes Skills`);
+}
+
+async function checkDesktopSettings(
+  primary: Window & typeof globalThis,
+  scheduler: ReturnType<typeof prepareDocument>,
+  secondDocument: () => any
+) {
+  for (const language of ["zh-CN", "en"] as const) {
+    await checkCapabilitiesFromPlugins(primary, scheduler, language);
+    const receiver = Object.create(CodexSettingTab.prototype);
+    const reads: PropertyKey[] = [];
+    receiver.plugin = new Proxy({}, { get(_target, key) {
+      assert.equal(key, "settings", "desktop search must not load services or credentials");
+      return new Proxy({}, { get(_target, name) { reads.push(name); assert.equal(name, "settingsLanguage"); return language; } });
+    } });
+    const definitions = receiver.getSettingDefinitions() as SettingsCategoryGroupDefinition[];
+    assert.deepEqual(definitions[0].items.map(item => item.name), DESKTOP_SETTINGS_TABS.map(tab => desktopSettingsTabLabel(tab, language)));
+    assert.deepEqual(reads, ["settingsLanguage"]);
+    const probes: [string, DesktopSettingsTab][] = [
+      ["布局与外观", "general"], ["language", "general"], ["关于", "general"],
+      ["providers", "models"], ["agents", "models"], ["大模型API", "models"],
+      ["Memory", "agent"], ["长期记忆", "agent"], ["archive", "agent"],
+      ["Skills", "capabilities"], ["MCP Server", "capabilities"], ["Tavily", "capabilities"],
+      ["knowledge", "modules"], ["todo", "modules"], ["review", "modules"], ["journal", "modules"], ["PDF", "modules"],
+      ["subscription", "account"], ["兑换码", "account"]
+    ];
+    for (const [term, category] of probes) {
+      const item = definitions[0].items[DESKTOP_SETTINGS_TABS.indexOf(category)];
+      assert.ok([item.name, ...item.aliases!].join(" ").toLowerCase().includes(term.toLowerCase()), `${category}: ${term}`);
+    }
+
+    const f = fixture(primary, language);
+    const keyboardHost = createOriginSelectHostFixture(primary);
+    Object.assign(f.plugin.app, keyboardHost.app);
+    const firstProvider = createApiProviderConfig("deepseek", "p11-deepseek");
+    firstProvider.apiKey = "synthetic-fixture-key";
+    const secondProvider = createApiProviderConfig("ollama", "p11-ollama");
+    f.plugin.settings.apiProviders = [firstProvider, secondProvider];
+    activateApiProvider(f.plugin.settings, firstProvider);
+    Object.assign(f.plugin, { activateApiProviderSettings: async (mutate: (settings: typeof f.plugin.settings) => void) => {
+      mutate(f.plugin.settings);
+      await f.plugin.saveSettings();
+    } });
+    const legacyTab = f.plugin.settings.settingsTab;
+    const protectedSettings = () => JSON.stringify({ resources: f.plugin.settings.resources, agents: f.plugin.settings.agentRegistry, memory: f.plugin.settings.memory });
+    const unchangedPermissions = protectedSettings();
+    let mount = mountDefinitions(f.tab);
+    await scheduler.flush();
+    const active = () => f.tab.containerEl.querySelector('[role="tabpanel"]')?.getAttribute("aria-labelledby");
+    const navigate = async (tab: DesktopSettingsTab) => {
+      f.tab.containerEl.querySelector<HTMLButtonElement>(`button[data-settings-tab="${tab}"]`)!.click();
+      await scheduler.flush();
+      assert.equal(active(), `echoink-settings-tab-${tab}`);
+    };
+    const rows = mount.rows.map(row => row.setting.settingEl);
+    const buttons = DESKTOP_SETTINGS_TABS.map(category => f.tab.containerEl.querySelector<HTMLButtonElement>(`button[data-settings-tab="${category}"]`)!);
+    assert.equal(buttons.filter(Boolean).length, 6);
+    assert.equal(active(), "echoink-settings-tab-models", "legacy providers opens desktop Models");
+    for (let i = 0; i < rows.length; i++) {
+      assert.equal(rows[i].parentElement, mount.listEl);
+      assert.ok(rows[i].contains(buttons[i]));
+      assert.ok(buttons[i].contains(mount.rows[i].setting.nameEl));
+    }
+    for (const tab of DESKTOP_SETTINGS_TABS) await navigate(tab);
+    assert.equal(f.saved.length, 0, "desktop navigation is read-only");
+    assert.equal(f.plugin.settings.settingsTab, legacyTab, "desktop tabs must not overwrite mobile's persisted value");
+    assert.equal(protectedSettings(), unchangedPermissions, "navigation cannot change global switches or Agent assignments");
+    await navigate("general");
+    buttons[0].focus();
+    f.tab.display();
+    await scheduler.flush();
+    assert.equal(primary.document.activeElement, buttons[0]);
+    assert.equal(f.tab.containerEl.querySelector('button[data-settings-tab="general"]'), buttons[0]);
+    for (const [label, property] of [[language === "en" ? "Open Agent sidebar on startup" : "启动时打开 Agent 侧栏", "autoOpen"], [language === "en" ? "Open workbench on startup" : "启动时打开工作台", "autoOpenHome"]] as const) {
+      const toggle = f.tab.containerEl.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+      assert.ok(toggle);
+      const previous = f.plugin.settings[property];
+      toggle.click();
+      await scheduler.flush();
+      assert.equal(f.plugin.settings[property], !previous);
+    }
+    assert.equal(f.saved.length, 2, "both startup switches persist through original callbacks");
+    assert.equal(f.tab.containerEl.querySelector('input[aria-label="Journal folder"]'), null, "journal moved out of desktop General");
+    let updates = 0;
+    (f.tab as any).update = () => { updates++; mount.cleanup(); mount = mountDefinitions(f.tab); };
+    const languageControl = f.tab.containerEl.querySelector<HTMLButtonElement & { value: string }>(`button[aria-label="${settingsCopy(language).general.settingsLanguage}"]`)!;
+    languageControl.value = language === "en" ? "zh-CN" : "en";
+    languageControl.dispatchEvent(new primary.Event("change"));
+    await scheduler.flush();
+    assert.equal(updates, 1);
+    assert.equal(mount.definition.items[0].name, desktopSettingsTabLabel("general", f.plugin.settings.settingsLanguage));
+    assert.equal(f.tab.containerEl.querySelectorAll(".echoink-native-settings-row").length, 6);
+    assert.equal(f.tab.containerEl.querySelectorAll(".codex-settings-body").length, 1);
+    f.tab.containerEl.querySelector<HTMLButtonElement>('button[data-settings-tab="general"]')!.dispatchEvent(new primary.KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+    await scheduler.flush();
+    assert.equal(active(), "echoink-settings-tab-account");
+    assert.equal(primary.document.activeElement?.getAttribute("data-settings-tab"), "account");
+    f.tab.containerEl.querySelector<HTMLButtonElement>('button[data-settings-tab="account"]')!.dispatchEvent(new primary.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+    await scheduler.flush();
+    assert.equal(active(), "echoink-settings-tab-modules");
+
+    const routeCases = [
+      ["layout", {}, "general"], ["agents", {}, "models"],
+      ["providers", { focus: "providers:tools" }, "capabilities"],
+      ["resources", { resourceTab: "skills" }, "capabilities"],
+      ["resources", { resourceTab: "mcp" }, "capabilities"],
+      ["resources", { resourceTab: "plugins" }, "modules"],
+      ["knowledgeBase", {}, "modules"], ["todos", {}, "modules"], ["review", {}, "modules"],
+      ["general", { focus: "general:memory" }, "agent"], ["account", {}, "account"]
+    ] as const;
+    for (const [oldTab, options, target] of routeCases) {
+      f.tab.openDesktopRoute(resolveDesktopSettingsRoute(oldTab, options));
+      await scheduler.flush();
+      assert.equal(active(), `echoink-settings-tab-${target}`, `legacy ${oldTab}/${JSON.stringify(options)}`);
+      assert.equal(f.plugin.settings.settingsTab, legacyTab);
+    }
+    const searchInput = primary.document.createElement("input");
+    Object.assign(f.plugin.app, { setting: { searchComponent: { inputEl: searchInput } } });
+    for (const [query, category, selector, child] of [
+      ["Tavily", "capabilities", ".echoink-tavily-card", "tools"],
+      ["MCP", "capabilities", '[data-resource-tab="mcp"][aria-selected="true"]', "mcp"],
+      ["Skills", "capabilities", '[data-resource-tab="skills"][aria-selected="true"]', "skills"],
+      ["知识库", "modules", ".codex-knowledge-settings", "knowledgeBase"]
+    ] as const) {
+      await navigate("general");
+      searchInput.value = query;
+      const button = f.tab.containerEl.querySelector<HTMLButtonElement>(`button[data-settings-tab="${category}"]`)!;
+      button.focus();
+      await scheduler.flush();
+      assert.equal(active(), "echoink-settings-tab-general", "ordinary tab focus does not navigate even with a host query");
+      const row = mount.rows[DESKTOP_SETTINGS_TABS.indexOf(category)].setting.settingEl;
+      row.tabIndex = -1;
+      row.focus();
+      await scheduler.flush();
+      assert.equal(active(), `echoink-settings-tab-${category}`, `host result row focus routes ${query}`);
+      assert.ok(f.tab.containerEl.querySelector(selector), `${query} renders its actual target controls`);
+      assert.equal(f.state.desktopRoute[category === "modules" ? "section" : "capabilityTab"], child);
+    }
+    searchInput.value = "Tavily";
+    const capabilityRow = mount.rows[DESKTOP_SETTINGS_TABS.indexOf("capabilities")].setting.settingEl;
+    capabilityRow.tabIndex = -1;
+    capabilityRow.focus();
+    await scheduler.flush();
+    const beforeAssignments = JSON.stringify(f.plugin.settings.agentRegistry);
+    const key = f.tab.containerEl.querySelector<HTMLInputElement>('input[aria-label="Tavily API Key"]')!;
+    assert.equal(key.type, "password");
+    key.value = "tvly-synthetic-fixture";
+    key.dispatchEvent(new primary.Event("input", { bubbles: true }));
+    await scheduler.flush();
+    const webToggle = f.tab.containerEl.querySelector<OriginCheckElement>('.echoink-tavily-card button[role="switch"]')!;
+    webToggle.click();
+    await scheduler.flush();
+    assert.equal(f.plugin.settings.tavily.enabled, true);
+    assert.equal(f.plugin.settings.tavily.apiKey, "tvly-synthetic-fixture");
+    assert.equal(JSON.stringify(f.plugin.settings.agentRegistry), beforeAssignments, "a global capability switch preserves Agent assignments");
+    key.value = "";
+    key.dispatchEvent(new primary.Event("input", { bubbles: true }));
+    await scheduler.flush();
+    assert.equal(f.plugin.settings.tavily.enabled, false, "clearing the original Key still turns Tavily off");
+    searchInput.value = "";
+    f.tab.openDesktopRoute(resolveDesktopSettingsRoute("general", { focus: "general:journal" }));
+    await scheduler.flush();
+    const currentLanguage = f.plugin.settings.settingsLanguage;
+    const journal = f.tab.containerEl.querySelector<HTMLInputElement>(`input[aria-label="${currentLanguage === "en" ? "Journal folder" : "日记保存文件夹"}"]`)!;
+    assert.ok(journal, "old journal focus reaches its real relocated field");
+    journal.value = "Notes/DesktopDaily";
+    journal.dispatchEvent(new primary.Event("blur"));
+    await scheduler.flush();
+    assert.equal(f.plugin.app.internalPlugins.plugins["daily-notes"].instance.options.folder, "Notes/DesktopDaily");
+    assert.equal(f.nativeSaves.length, 1);
+    await navigate("models");
+    const modelRow = f.tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:provider"]')!;
+    assert.ok(modelRow);
+    const modelSelect = modelRow.querySelector<HTMLButtonElement & { value: string }>('button[role="combobox"]')!;
+    assert.ok(modelSelect.querySelector('[data-provider-brand="deepseek"]'), "selected brand is inside the default model control");
+    modelSelect.focus();
+    modelSelect.dispatchEvent(new primary.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await scheduler.flush();
+    const popup = primary.document.querySelector<HTMLElement>('[data-slot="select-content"]')!;
+    assert.ok(popup, "default model dropdown opens its actual Origin popup");
+    assert.equal(popup.querySelectorAll('[role="group"]').length, 2, "models are grouped by their saved connection");
+    assert.equal(popup.querySelectorAll('.echoink-origin-select-group-label').length, 2);
+    assert.ok(popup.querySelector('[role="option"] [data-provider-brand="deepseek"]'));
+    assert.ok(popup.querySelector('[role="option"] [data-provider-brand="ollama"]'));
+    const secondOption = Array.from(popup.querySelectorAll<HTMLElement>('[role="option"]')).find(option => option.querySelector('[data-provider-brand="ollama"]'))!;
+    secondOption.focus();
+    secondOption.dispatchEvent(new primary.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await scheduler.flush();
+    assert.equal(f.plugin.settings.activeApiProviderId, secondProvider.id);
+    assert.equal(f.plugin.settings.defaultModel, secondProvider.defaultModelId);
+    const changedSelect = f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:provider"] button[role="combobox"]')!;
+    assert.ok(changedSelect.querySelector('[data-provider-brand="ollama"]'), "the saved selection updates its in-control brand");
+    changedSelect.focus();
+    changedSelect.dispatchEvent(new primary.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await scheduler.flush();
+    primary.document.activeElement!.dispatchEvent(new primary.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await scheduler.flush();
+    assert.equal(primary.document.querySelector('[data-slot="select-content"]'), null);
+    assert.equal(primary.document.activeElement, changedSelect, "Escape closes the popup and returns to the selector");
+    assert.equal(keyboardHost.depth, 0);
+    assert.equal(f.plugin.settings.settingsTab, legacyTab);
+    await navigate("modules");
+    f.tab.openDesktopRoute(resolveDesktopSettingsRoute("knowledgeBase"));
+    await scheduler.flush();
+    assert.equal(f.tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:provider"]'), null, "Knowledge no longer duplicates the global model selector");
+    f.state.settingsDetail = "knowledge-preferences";
+    f.state.knowledgePreferenceEditor = { savedContent: "saved", draftContent: "edited" };
+    let confirmations = 0;
+    f.state.confirmKnowledgePreferenceDiscard = async () => { confirmations++; return false; };
+    await navigate("modules");
+    f.tab.containerEl.querySelector<HTMLButtonElement>('button[data-settings-tab="general"]')!.click();
+    await scheduler.flush();
+    assert.equal(confirmations, 1);
+    assert.equal(active(), "echoink-settings-tab-modules");
+    assert.equal(f.state.knowledgePreferenceEditor.draftContent, "edited");
+    f.state.settingsDetail = null;
+    f.state.knowledgePreferenceEditor = null;
+    mount.cleanup();
+    await scheduler.flush();
+    assert.equal(f.state.nativeSettingsNavigation, null);
+    assert.equal(f.state.settingsVisible, false);
+    mount = mountDefinitions(f.tab);
+    await scheduler.flush();
+    assert.equal(f.tab.containerEl.querySelectorAll(".echoink-native-settings-row").length, 6);
+    mount.cleanup();
+    f.registrations.forEach(cleanup => cleanup());
+    f.tab.containerEl.remove();
+    keyboardHost.dispose();
+    console.log(`PASS P11 desktop (${language}): six categories, host search row focus/legacy routes, saves, language, grouped model/brand/selection, keyboard/focus, permissions and cleanup`);
+  }
+  const secondary = secondDocument();
+  try {
+    const secondScheduler = prepareDocument(secondary.window);
+    const f = fixture(secondary.window, "en");
+    const mount = mountDefinitions(f.tab);
+    await secondScheduler.flush();
+    f.tab.containerEl.querySelector<HTMLButtonElement>('button[data-settings-tab="capabilities"]')!.click();
+    await secondScheduler.flush();
+    assert.equal(f.tab.containerEl.querySelector('[role="tabpanel"]')?.getAttribute("aria-labelledby"), "echoink-settings-tab-capabilities");
+    for (const row of mount.rows) assert.equal(row.setting.nameEl.ownerDocument, secondary.window.document);
+    mount.cleanup();
+    await secondScheduler.flush();
+    assert.ok(secondScheduler.observers.every(observer => observer.disconnected));
+  } finally { secondary.window.close(); }
+  console.log("PASS P11 desktop: independent settings document owns controls, listeners and teardown");
 }

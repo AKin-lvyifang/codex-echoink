@@ -88,8 +88,11 @@ export class ProviderModelModal extends Modal {
   private apiKeyInput = "";
   private readonly preflight: ProviderPreflightSession;
   private closed = true;
+  private inlineSuspended = false;
+  private authGeneration = 0;
   private suppressModalClose = false;
   private saving = false;
+  private saveError = "";
   private invalidatingPreflightInPlace = false;
   private formErrors: Partial<Record<ProviderFormField, string>> = {};
   private focusIntent: string | null = null;
@@ -149,7 +152,7 @@ export class ProviderModelModal extends Modal {
     this.preflight = new ProviderPreflightSession(
       options.preflight,
       (state) => {
-        if (this.closed) return;
+        if (this.closed || this.inlineSuspended) return;
         if (state.operation === "model_list" && (state.status === "available" || state.status === "incomplete") && state.source !== "catalog") {
           this.draft.models = this.draft.models.map((model) => {
             const discovered = state.models.find((candidate) => candidate.id === model.id);
@@ -168,6 +171,7 @@ export class ProviderModelModal extends Modal {
 
   onOpen(): void {
     this.closed = false;
+    this.inlineSuspended = false;
     this.modalEl.addClass("codex-provider-model-modal");
     this.liveRegionEl = this.modalEl.createDiv({
       cls: "codex-provider-modal-live-region",
@@ -177,14 +181,47 @@ export class ProviderModelModal extends Modal {
         "aria-atomic": "true"
       }
     });
-    (this.modalEl.ownerDocument.defaultView ?? window).addEventListener("keydown", this.handleEscapeCapture, true);
-    const view = this.modalEl.ownerDocument.defaultView ?? window;
-    view.addEventListener("resize", this.repositionOpenPickers);
-    view.addEventListener("scroll", this.repositionOpenPickers, true);
+    this.setWindowListeners(true);
     this.render();
     if (this.providerId === "openai-codex") {
       void this.loadCodexAuthStatus();
     }
+  }
+
+  private setWindowListeners(active: boolean): void {
+    const view = this.modalEl.ownerDocument.defaultView ?? window;
+    if (active) {
+      view.addEventListener("keydown", this.handleEscapeCapture, true);
+      view.addEventListener("resize", this.repositionOpenPickers);
+      view.addEventListener("scroll", this.repositionOpenPickers, true);
+    } else {
+      view.removeEventListener("keydown", this.handleEscapeCapture, true);
+      view.removeEventListener("resize", this.repositionOpenPickers);
+      view.removeEventListener("scroll", this.repositionOpenPickers, true);
+    }
+  }
+
+  onInlineSuspend(): void {
+    this.inlineSuspended = true;
+    this.setWindowListeners(false);
+    this.closeOpenPickers();
+    this.dismissProviderUrlTooltips();
+    // Invalidate pending work without resetting the draft or model parameters.
+    if (this.preflight.state.status === "loading") this.preflight.invalidate();
+    this.authGeneration += 1;
+    this.codexAuthLoading = false;
+    this.cancelCodexLogin();
+  }
+
+  onInlineResume(): void {
+    this.inlineSuspended = false;
+    this.setWindowListeners(true);
+    this.render();
+    if (this.providerId === "openai-codex") void this.loadCodexAuthStatus();
+  }
+
+  private authResponseCurrent(generation: number): boolean {
+    return generation === this.authGeneration && !this.closed && !this.inlineSuspended && this.providerId === "openai-codex";
   }
 
   private inlineCloseHandler?: () => void;
@@ -222,12 +259,11 @@ export class ProviderModelModal extends Modal {
 
   onClose(): void {
     this.closed = true;
+    this.authGeneration += 1;
+    this.codexAuthLoading = false;
     this.cancelCodexLogin();
     this.dismissProviderUrlTooltips();
-    (this.modalEl.ownerDocument.defaultView ?? window).removeEventListener("keydown", this.handleEscapeCapture, true);
-    const view = this.modalEl.ownerDocument.defaultView ?? window;
-    view.removeEventListener("resize", this.repositionOpenPickers);
-    view.removeEventListener("scroll", this.repositionOpenPickers, true);
+    this.setWindowListeners(false);
     this.preflight.reset();
     this.modalEl.onclick = null;
     this.liveRegionEl = null;
@@ -235,6 +271,8 @@ export class ProviderModelModal extends Modal {
     this.titleEl.empty();
     disposeOriginControls(this.contentEl);
     this.contentEl.empty();
+    this.apiKeyInput = "";
+    this.draft.apiKey = "";
   }
 
   private get zh(): boolean {
@@ -321,7 +359,8 @@ export class ProviderModelModal extends Modal {
 
     const footer = this.contentEl.createDiv({ cls: "codex-provider-modal-footer" });
     const saveState = footer.createDiv({
-      cls: "codex-provider-modal-save-state",
+      cls: `codex-provider-modal-save-state${this.saveError ? " is-error" : ""}`,
+      text: this.saving ? this.options.copy.providers.saving : this.saveError,
       attr: { "aria-live": "off" }
     });
     const actions = footer.createDiv({ cls: "codex-provider-modal-actions" });
@@ -350,8 +389,9 @@ export class ProviderModelModal extends Modal {
     save.disabled = this.saving || !this.codexSaveReady();
     save.onclick = () => {
       void (async () => {
-        if (!this.validateAndFocusForm()) return;
+        if (this.saving || this.closed || !this.validateAndFocusForm()) return;
         this.saving = true;
+        this.saveError = "";
         save.disabled = true;
         save.textContent = this.options.copy.providers.saving;
         saveState.removeClass("is-error");
@@ -359,11 +399,12 @@ export class ProviderModelModal extends Modal {
         this.announce(this.options.copy.providers.saving);
         try {
           const result = await this.options.save(
-            this.draft,
+            structuredClone(this.draft),
             this.apiKeyInput,
             this.preflight.state.operation === "connection"
               && this.preflight.state.status === "available"
           );
+          if (this.closed) return;
           if (result.saved) {
             this.announce(this.options.copy.providers.saved(
               apiProviderConfiguredDisplayName(
@@ -375,19 +416,19 @@ export class ProviderModelModal extends Modal {
             this.close();
             return;
           }
-          saveState.textContent = result.message ?? this.options.copy.providers.saveFailed;
+          this.saveError = result.message ?? this.options.copy.providers.saveFailed;
+          saveState.textContent = this.saveError;
           saveState.addClass("is-error");
           this.announce(saveState.textContent);
         } catch {
-          saveState.textContent = this.options.copy.providers.saveFailed;
+          if (this.closed) return;
+          this.saveError = this.options.copy.providers.saveFailed;
+          saveState.textContent = this.saveError;
           saveState.addClass("is-error");
           this.announce(saveState.textContent);
         } finally {
           this.saving = false;
-          if (save.isConnected) {
-            save.disabled = !this.codexSaveReady();
-            save.textContent = save.dataset.idleLabel ?? this.options.copy.providers.saveAndUse;
-          }
+          if (!this.closed && !this.inlineSuspended) this.render();
         }
       })();
     };
@@ -599,6 +640,8 @@ export class ProviderModelModal extends Modal {
       return;
     }
     if (this.providerId === "openai-codex") {
+      this.authGeneration += 1;
+      this.codexAuthLoading = false;
       this.cancelCodexLogin();
     }
     const replacement = createApiProviderConfig(providerId, this.draft.id);
@@ -826,26 +869,33 @@ export class ProviderModelModal extends Modal {
 
   private async loadCodexAuthStatus(): Promise<void> {
     if (!this.options.codexOAuth || this.codexAuthLoading) return;
+    const generation = ++this.authGeneration;
     this.codexAuthLoading = true;
     this.render();
     try {
-      this.codexAuthStatus = await this.options.codexOAuth.status();
+      const status = await this.options.codexOAuth.status();
+      if (!this.authResponseCurrent(generation)) return;
+      this.codexAuthStatus = status;
       this.codexAuthError = "";
     } catch {
+      if (!this.authResponseCurrent(generation)) return;
       this.codexAuthStatus = { state: "disconnected" };
       this.codexAuthError = this.label(
         "暂时无法读取登录状态。",
         "The sign-in status is temporarily unavailable."
       );
     } finally {
-      this.codexAuthLoading = false;
-      if (!this.closed) this.render();
+      if (this.authResponseCurrent(generation)) {
+        this.codexAuthLoading = false;
+        this.render();
+      }
     }
   }
 
   private async startCodexLogin(): Promise<void> {
     const service = this.options.codexOAuth;
     if (!service || this.codexLoginController) return;
+    const generation = ++this.authGeneration;
     const controller = new AbortController();
     this.codexLoginController = controller;
     this.codexManualCode = "";
@@ -854,35 +904,43 @@ export class ProviderModelModal extends Modal {
     this.render();
     const interaction: AuthInteraction = {
       signal: controller.signal,
-      notify: (event) => this.handleCodexAuthEvent(event),
-      prompt: async (prompt) => await this.handleCodexAuthPrompt(prompt)
+      notify: (event) => { if (this.authResponseCurrent(generation)) this.handleCodexAuthEvent(event, generation); },
+      prompt: async (prompt) => {
+        if (!this.authResponseCurrent(generation)) throw new Error("codex_oauth_login_cancelled");
+        return await this.handleCodexAuthPrompt(prompt);
+      }
     };
     try {
-      this.codexAuthStatus = await service.login(interaction);
+      const status = await service.login(interaction);
+      if (!this.authResponseCurrent(generation) || controller.signal.aborted) return;
+      this.codexAuthStatus = status;
       this.codexAuthUrl = "";
       this.codexAuthError = "";
       this.announce(this.label("OpenAI Codex 已连接。", "OpenAI Codex connected."));
     } catch {
-      if (!controller.signal.aborted) {
+      if (this.authResponseCurrent(generation) && !controller.signal.aborted) {
         this.codexAuthError = this.label(
           "OpenAI 授权未完成，请重试。",
           "OpenAI authorization did not finish. Try again."
         );
       }
     } finally {
-      this.codexLoginController = null;
-      this.codexManualCode = "";
-      this.codexManualResolve = null;
-      this.codexManualReject = null;
-      if (!this.closed) this.render();
+      if (this.codexLoginController === controller) {
+        this.codexLoginController = null;
+        this.codexManualCode = "";
+        this.codexManualResolve = null;
+        this.codexManualReject = null;
+        if (this.authResponseCurrent(generation)) this.render();
+      }
     }
   }
 
-  private handleCodexAuthEvent(event: AuthEvent): void {
+  private handleCodexAuthEvent(event: AuthEvent, generation: number): void {
     if (event.type !== "auth_url") return;
     this.codexAuthUrl = event.url;
     void this.options.codexOAuth?.openExternal(event.url)
       .then((opened) => {
+        if (!this.authResponseCurrent(generation)) return;
         if (!opened) {
           this.codexAuthError = this.label(
             "浏览器未能自动打开，请使用“重新打开登录页面”。",
@@ -892,6 +950,7 @@ export class ProviderModelModal extends Modal {
         if (!this.closed) this.render();
       })
       .catch(() => {
+        if (!this.authResponseCurrent(generation)) return;
         this.codexAuthError = this.label(
           "浏览器未能自动打开，请使用“重新打开登录页面”。",
           "The browser could not open automatically. Use “Reopen login page”."
@@ -942,22 +1001,27 @@ export class ProviderModelModal extends Modal {
 
   private async logoutCodex(): Promise<void> {
     if (!this.options.codexOAuth || this.codexAuthLoading) return;
+    const generation = ++this.authGeneration;
     this.codexAuthLoading = true;
     this.render();
     try {
       await this.options.codexOAuth.logout();
+      if (!this.authResponseCurrent(generation)) return;
       this.codexAuthStatus = { state: "disconnected" };
       this.codexAuthUrl = "";
       this.codexAuthError = "";
       this.announce(this.label("已退出 OpenAI Codex。", "Logged out of OpenAI Codex."));
     } catch {
+      if (!this.authResponseCurrent(generation)) return;
       this.codexAuthError = this.label(
         "退出登录失败，请重试。",
         "Log out failed. Try again."
       );
     } finally {
-      this.codexAuthLoading = false;
-      if (!this.closed) this.render();
+      if (this.authResponseCurrent(generation)) {
+        this.codexAuthLoading = false;
+        this.render();
+      }
     }
   }
 

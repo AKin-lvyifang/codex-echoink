@@ -22187,6 +22187,74 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-knowledge-linking-error { color: var(--text-error); }
 @container echoink-linking (max-width: 760px) { .echoink-knowledge-linking-progress-status { white-space: nowrap; } }
 @container echoink-linking (max-width: 520px) { .echoink-knowledge-linking-progress-button { grid-template-columns: minmax(0, 1fr); } .echoink-knowledge-linking-progress-title, .echoink-knowledge-linking-progress-status { grid-column: 1; } }
+
+
+/* P11 desktop settings shell: retained forms, compact connections and service choices. */
+.echoink-settings-desktop .echoink-settings-inline-editor>.settings-back:is(:hover,:focus,:focus-visible){background:var(--hover);border-color:transparent;outline:none;box-shadow:none}
+.echoink-settings-desktop .echoink-quick-chat-drawer>summary{list-style:none;cursor:pointer;margin:-16px -18px;padding:16px 18px;border-radius:10px}
+.echoink-settings-desktop .echoink-quick-chat-drawer>summary::-webkit-details-marker{display:none}
+.echoink-settings-desktop .echoink-quick-chat-drawer>summary:hover,.echoink-settings-desktop .echoink-quick-chat-drawer>summary:focus-visible{background:var(--hover);outline:none;box-shadow:none}
+.echoink-settings-desktop .echoink-quick-chat-drawer[open]>summary{border-radius:10px 10px 0 0;border-bottom:1px solid var(--line);margin-bottom:0}
+.echoink-settings-desktop .echoink-quick-chat-options{padding-top:16px}
+.echoink-settings-desktop .echoink-quick-chat-drawer>summary .setting-item{padding:0;border:0}
+.echoink-settings-desktop .echoink-quick-chat-drawer>summary .echoink-settings-group{margin:0}
+.echoink-settings-desktop .codex-provider-add-section{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:12px}
+.echoink-settings-desktop .codex-provider-add-copy{min-width:0;width:auto;flex:1}
+.echoink-settings-desktop .codex-provider-add-section .codex-provider-add-button{width:30px;min-width:30px;height:30px;min-height:30px;padding:0;flex:none;margin-left:auto}
+.echoink-settings-desktop .codex-provider-saved-row{min-width:0;flex-wrap:wrap}
+.echoink-settings-desktop .codex-provider-saved-identity{flex:1;min-width:180px}
+.echoink-settings-desktop .codex-provider-saved-meta{flex:none;max-width:100%;margin-left:auto}
+.echoink-settings-desktop .codex-provider-saved-model{flex-wrap:wrap}
+.echoink-settings-desktop .codex-provider-saved-copy{min-width:0;overflow-wrap:anywhere}
+.echoink-settings-desktop .codex-resource-assignment{flex:none;max-width:100%;color:var(--secondary);font-size:calc(var(--font-text-size,16px)*.6875);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.echoink-settings-desktop .codex-capability-tools>.codex-resource-assignment{margin-bottom:12px}
+.echoink-settings-desktop .echoink-provider-service-picker{display:flex;flex-direction:column;gap:22px}
+.echoink-settings-desktop .echoink-provider-service-category>h3{font-size:calc(var(--font-text-size,16px)*.8125);font-weight:600;line-height:1.6;margin:0 0 12px}
+.echoink-settings-desktop .echoink-provider-service-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.echoink-settings-desktop button.echoink-provider-service-card{display:flex;align-items:center;justify-content:flex-start;gap:12px;min-width:0;min-height:70px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);text-align:left;white-space:normal}
+.echoink-settings-desktop button.echoink-provider-service-card:is(:hover,:focus-visible){background:var(--hover);border-color:var(--line);outline:none;box-shadow:none}
+.echoink-settings-desktop .echoink-provider-service-icon{display:grid;place-items:center;width:38px;height:38px;flex:none}
+.echoink-settings-desktop .echoink-provider-service-icon>svg{width:22px;height:22px}
+.echoink-settings-desktop .echoink-provider-service-name{font-size:calc(var(--font-text-size,16px)*.8125);line-height:1.6;overflow-wrap:anywhere}
+.echoink-settings-desktop .echoink-provider-service-arrow{margin-left:auto;flex:none;width:14px;height:14px;color:var(--muted)}
+.echoink-settings-overlay .echoink-origin-select-group-label{font-size:calc(var(--font-text-size,16px)*.6875);font-weight:400;line-height:1.4;color:var(--text-muted);padding:7px 10px}
+.echoink-settings-desktop .echoink-about-compact{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 18px;border:1px solid var(--line);border-radius:10px}
+.echoink-settings-desktop .echoink-about-compact-brand{display:flex;align-items:center;gap:12px;min-width:0;flex:1}
+.echoink-settings-desktop button.echoink-about-compact-icon{display:grid;place-items:center;flex:none;width:31px;height:31px;min-height:31px;padding:0;border:0;border-radius:8px;background:var(--soft);color:var(--text)}
+.echoink-settings-desktop .echoink-about-compact-icon>svg{width:15px;height:15px}
+.echoink-settings-desktop .echoink-about-compact-name{font-size:calc(var(--font-text-size,16px)*.8125);font-weight:500;line-height:1.6}
+.echoink-settings-desktop .echoink-about-compact-version{font-size:calc(var(--font-text-size,16px)*.75);line-height:1.55;color:var(--secondary)}
+.echoink-settings-desktop .echoink-about-compact-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:none;max-width:100%}
+.echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check){width:30px;height:30px;min-height:30px;padding:0;flex:none}
+.echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check) svg{width:14px;height:14px}
+.echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check):is(:hover,:focus-visible) svg{animation:echoink-about-compact-sway .32s ease-out}
+.echoink-settings-desktop .echoink-about-compact-check{margin-left:4px}
+.echoink-settings-desktop .echoink-about-compact-status{flex-basis:100%;font-size:calc(var(--font-text-size,16px)*.75);line-height:1.7;color:var(--secondary)}
+.echoink-settings-desktop .echoink-about-compact-status.is-error{color:var(--text-error)}
+.echoink-settings-desktop .echoink-about-compact-status a{margin-left:12px}
+@keyframes echoink-about-compact-sway{0%,100%{transform:rotate(0)}35%{transform:rotate(-8deg)}70%{transform:rotate(6deg)}}
+@container settings (max-width:760px){
+ .echoink-settings-desktop .echoink-provider-service-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .echoink-settings-desktop .echoink-about-compact-actions{flex-basis:100%;margin-left:auto}
+ .echoink-settings-desktop .echoink-quick-chat-drawer>summary{margin:-14px;padding:14px}
+ .echoink-settings-desktop .echoink-quick-chat-drawer[open]>summary{margin-bottom:0}
+}
+@container settings (max-width:520px){
+ .echoink-settings-desktop .echoink-provider-service-cards{grid-template-columns:minmax(0,1fr)}
+ .echoink-settings-desktop .codex-provider-saved-meta{flex-basis:100%;justify-content:flex-end}
+ .echoink-settings-desktop .codex-resource-assignment{white-space:normal}
+ .echoink-settings-desktop .codex-resource-row:has(>.codex-resource-assignment){flex-wrap:wrap}
+ .echoink-settings-desktop .codex-resource-row>.codex-resource-assignment{margin-left:auto;order:2}
+ .echoink-settings-desktop .codex-resource-row:has(>.codex-resource-assignment)>.codex-resource-toggle{order:3}
+ .echoink-settings-desktop .codex-resource-row:has(>.codex-resource-assignment)>.codex-resource-row-content{flex-basis:calc(100% - 50px)}
+ .echoink-settings-desktop .echoink-about-compact-brand{flex-basis:100%}
+ .echoink-settings-desktop .echoink-about-compact-actions{flex-wrap:wrap}
+}
+@media (prefers-reduced-motion:reduce){.echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check):is(:hover,:focus-visible) svg{animation:none}}
+
+.echoink-settings-desktop button.codex-provider-saved-identity{justify-content:flex-start;text-align:left;white-space:normal;padding:0;border:0;background:transparent;height:auto;box-shadow:none}
+.echoink-settings-desktop button.codex-provider-saved-identity:is(:hover,:focus-visible){background:var(--hover);outline:none;box-shadow:none}
+.echoink-settings-desktop .codex-provider-saved-identity .codex-provider-saved-details{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
 /* MIT Origin UI primitive styling, scoped to the actual library controls.
    EchoInk maps Origin's utility styles to the approved Demo tokens. No preflight. */
 .echoink-origin-control {

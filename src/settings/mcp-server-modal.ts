@@ -32,6 +32,7 @@ export class McpServerModal extends Modal {
   private credentialSecret = "";
   private clearCredential = false;
   private saving = false;
+  private closed = true;
   private errorMessage = "";
   private fieldErrors: Record<string, string> = {};
 
@@ -60,11 +61,14 @@ export class McpServerModal extends Modal {
   }
 
   onOpen(): void {
+    this.closed = false;
     this.modalEl.addClass("codex-mcp-server-modal");
     this.render();
   }
 
   onClose(): void {
+    this.closed = true;
+    this.credentialSecret = "";
     this.titleEl.empty();
     disposeOriginControls(this.contentEl);
     this.contentEl.empty();
@@ -409,8 +413,9 @@ export class McpServerModal extends Modal {
     this.render();
     try {
       await this.options.save(draft);
-      this.close();
+      if (!this.closed) this.close();
     } catch (error) {
+      if (this.closed) return;
       this.saving = false;
       const fieldKey = this.fieldKeyForError(error);
       if (fieldKey) {

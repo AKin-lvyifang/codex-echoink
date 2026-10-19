@@ -521,10 +521,23 @@ export default class CodexForObsidianPlugin extends Plugin {
   getWorkbenchModuleOwner(moduleId: AgentModuleId): AgentDefinition { return workbenchModuleOwner(this, moduleId); }
   async prefillWorkbenchModule(moduleId: AgentModuleId, text: string): Promise<boolean> { return prefillWorkbenchModule(this, moduleId, text); }
   setSettingsTabInstance(tab: CodexSettingTab): void { this.settingsTabInstance = tab; }
+  private settingsNavigationTargets(): CodexSettingTab[] {
+    const targets = this.settingsTabInstance ? [this.settingsTabInstance] : [];
+    // Native settings search may display a host-owned copy of the registered
+    // tab. Route the visible copy too; otherwise external shortcuts update only
+    // the detached registration while leaving the open page where it was.
+    const active = (this.app as unknown as { setting?: { activeTab?: CodexSettingTab & { id?: string } } }).setting?.activeTab;
+    if (Platform.isDesktopApp && active?.id === this.manifest.id && typeof active.openDesktopRoute === "function" && !targets.includes(active)) targets.push(active);
+    return targets;
+  }
+  prepareDesktopSettingsRoute(route: import("./settings/desktop-settings-route").DesktopSettingsRoute): void {
+    if (Platform.isDesktopApp) for (const tab of this.settingsNavigationTargets()) tab.openDesktopRoute(route);
+  }
   async openLifestyleSettings(kind: LifestyleKind): Promise<void> {
     this.settings.settingsTab = "resources";
     this.settings.resourceManagementTab = "plugins";
-    this.settingsTabInstance?.openLifestyleDetail(kind);
+    this.prepareDesktopSettingsRoute({ tab: "modules" });
+    for (const tab of this.settingsNavigationTargets()) tab.openLifestyleDetail(kind);
     await this.saveSettings(true);
     const setting = (this.app as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
     if (!setting?.open || !setting.openTabById) { new Notice("无法打开 EchoInk 设置页"); return; }
@@ -580,7 +593,8 @@ export default class CodexForObsidianPlugin extends Plugin {
       return;
     }
     await this.getViewService().openEchoInkSettings(
-      echoInkOnboardingTab(step)
+      echoInkOnboardingTab(step),
+      Platform.isDesktopApp && step === "personality" ? "general:personality-template" : undefined
     );
   }
   setEchoInkOnboardingRibbonAnchor(anchor: HTMLElement): void {

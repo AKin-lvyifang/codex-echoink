@@ -8,7 +8,7 @@ import { Switch } from "../ui/components/origin/switch";
 import { Checkbox } from "../ui/components/origin/checkbox";
 import { Slider } from "../ui/components/origin/slider";
 import { RadioGroup, RadioGroupItem } from "../ui/components/origin/radio-group";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../ui/components/origin/select";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel } from "../ui/components/origin/select";
 import { OriginPagination } from "../ui/components/origin/pagination";
 
 type ElementOptions = { cls?: string; text?: string; attr?: Record<string, string | number | boolean>; type?: string; value?: string };
@@ -119,7 +119,7 @@ export function createOriginCheck(parent: HTMLElement, options: ElementOptions =
 }
 
 export type OriginSelectElement = HTMLButtonElement & { value: string };
-type OriginSelectOption = { value: string; label: string; disabled?: boolean; renderIcon?: (container: HTMLElement) => void };
+type OriginSelectOption = { value: string; label: string; disabled?: boolean; renderIcon?: (container: HTMLElement) => void; group?: string };
 export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
   choices: readonly OriginSelectOption[], initialValue = "", app?: Pick<App, "keymap" | "scope">) {
   const island = createIsland(parent);
@@ -188,6 +188,12 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
     popupElement = null;
   });
   const emptyValue = "__echoink_empty_selection__";
+  const renderItem = (item: OriginSelectOption) => <SelectItem className="echoink-origin-control" key={item.value} value={item.value || emptyValue} disabled={item.disabled} textValue={item.label}>
+        {item.renderIcon ? <span className="echoink-origin-select-label">
+          <span className="echoink-origin-select-icon" aria-hidden="true" ref={(container) => { if (container) item.renderIcon!(container); }} />
+          <span className="echoink-origin-select-text">{item.label}</span>
+        </span> : item.label}
+      </SelectItem>;
   const render = () => island.render(<Select value={value || emptyValue} disabled={disabled} open={open} onOpenChange={setOpen} onValueChange={(next) => {
     value = next === emptyValue ? "" : next; render();
     const element = island.element();
@@ -217,12 +223,9 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
         options[index]?.scrollIntoView({ block: "nearest" });
       }}
       onEscapeKeyDown={(event) => { event.preventDefault(); event.stopPropagation(); closePopup(); }}>
-      {items.map((item) => <SelectItem className="echoink-origin-control" key={item.value} value={item.value || emptyValue} disabled={item.disabled} textValue={item.label}>
-        {item.renderIcon ? <span className="echoink-origin-select-label">
-          <span className="echoink-origin-select-icon" aria-hidden="true" ref={(container) => { if (container) item.renderIcon!(container); }} />
-          <span className="echoink-origin-select-text">{item.label}</span>
-        </span> : item.label}
-      </SelectItem>)}
+      {Array.from(new Set(items.map(item => item.group ?? ""))).map(group => group
+        ? <SelectGroup key={group}><SelectLabel className="echoink-origin-select-group-label">{group}</SelectLabel>{items.filter(item => item.group === group).map(renderItem)}</SelectGroup>
+        : items.filter(item => !item.group).map(renderItem))}
     </SelectContent>
   </Select>);
   render();
@@ -231,7 +234,7 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
   Object.defineProperty(element, "disabled", { get: () => disabled, set: (next: boolean) => { disabled = Boolean(next); render(); } });
   decorate(element, options);
   return { element,
-    addOption(next: string, label: string, renderIcon?: OriginSelectOption["renderIcon"]) { items.push({ value: next, label, renderIcon }); if (!value) value = next; render(); },
+    addOption(next: string, label: string, renderIcon?: OriginSelectOption["renderIcon"], group?: string) { items.push({ value: next, label, renderIcon, group }); if (!value) value = next; render(); },
     setOptionDisabled(next: string, disabled: boolean) { const item = items.find((item) => item.value === next); if (item) { item.disabled = disabled; render(); } }
   };
 }
