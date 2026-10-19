@@ -31,7 +31,7 @@ export async function runAgentSettingsTests(): Promise<void> {
   });
   win.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
   const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
-  const container = () => { const el = document.createElement("div"); el.className = "echoink-settings-demo"; document.body.appendChild(el); return el; };
+  const container = () => { const el = document.createElement("div"); el.className = "echoink-settings-demo echoink-settings-aligned"; document.body.appendChild(el); return el; };
   const button = (parent: Element, text: string) => Array.from(parent.querySelectorAll<HTMLButtonElement>("button")).find(value => value.textContent === text)!;
   const nameField = (parent: Element) => parent.querySelector<HTMLInputElement>('[data-field="name"]')!;
   const changeName = (parent: Element, name: string) => { const input = nameField(parent); input.value = name; input.dispatchEvent(new win.Event("input", { bubbles: true })); };
@@ -70,17 +70,21 @@ export async function runAgentSettingsTests(): Promise<void> {
 
     panel.open(GENERAL_ASSISTANT_ID); panel.renderDetail(root); await settle(); assert.equal(panel.isDetail, true); assert.equal(root.querySelector('[data-action="delete-agent"]'), null);
     assert.equal(root.querySelector('[aria-label="返回 Agent 设置"]') !== null, true);
+    const settingsEditor = root.querySelector(".echoink-agent-settings-editor")!;
+    assert.equal(settingsEditor.querySelector(".echoink-agent-editor-back")?.parentElement, settingsEditor, "settings return remains a separate navigation row");
     changeName(root, "设置里的总助"); const retained = nameField(root); panel.suspend(); disposeOriginControls(root); root.empty();
     let detachedLeave = 0; panel.requestLeave(() => detachedLeave++); panel.renderDetail(root);
     assert.equal(nameField(root), retained); assert.equal(retained.value, "设置里的总助");
     assert.ok(root.querySelector(".echoink-settings-inline-confirm")); button(root, "继续编辑").click(); assert.equal(detachedLeave, 0);
     root.querySelector<HTMLButtonElement>(".echoink-agent-editor-back")!.click(); assert.ok(root.querySelector(".echoink-settings-inline-confirm")); button(root, "继续编辑").click(); assert.equal(panel.hasDraft, true);
-    failAgent = true; root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); assert.equal(panel.submitting, true); await settle();
+    failAgent = true; root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); assert.equal(panel.submitting, true);
+    assert.equal(root.querySelector<HTMLButtonElement>(".echoink-agent-editor-back")!.disabled, true, "the separate return row is disabled during save"); await settle();
     assert.equal(settings.agentRegistry.agents[0].name, "总助"); assert.equal(nameField(root).value, "设置里的总助"); assert.ok(root.textContent?.includes("Agent 保存失败"));
     assert.equal(saveBaselines[0]?.agent.name, "总助"); assert.equal(saveBaselines[0]?.moduleIds.includes("journal"), false);
     failAgent = false; root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); await settle(); assert.equal(panel.isDetail, false); assert.equal(settings.agentRegistry.agents[0].name, "设置里的总助"); assert.equal(focused, "agent:sol:edit");
 
     const sidebarRoot = container(); const sidebar = new AgentEditorController({ ...host, onClose() {} }); sidebar.open(GENERAL_ASSISTANT_ID); sidebar.render(sidebarRoot); await settle();
+    assert.equal(sidebarRoot.querySelector(".echoink-agent-editor-back")?.parentElement, sidebarRoot.querySelector(".echoink-agent-editor-header"), "a sidebar keeps its existing shared header even inside a themed test surface");
     assert.equal(nameField(sidebarRoot).value, "设置里的总助"); changeName(sidebarRoot, "侧栏未保存草稿"); sidebarRoot.querySelector<HTMLButtonElement>(".echoink-agent-editor-back")!.click(); assert.equal(sidebarRoot.querySelector(".echoink-settings-inline-confirm"), null);
     panel.open(GENERAL_ASSISTANT_ID); panel.renderDetail(root); await settle(); assert.equal(nameField(root).value, "侧栏未保存草稿");
     let left = 0; panel.requestLeave(() => left++); button(root, "继续编辑").click(); assert.equal(left, 0); panel.requestLeave(() => left++); button(root, "放弃修改").click(); await settle(); assert.equal(left, 1); assert.equal(panel.isDetail, false);

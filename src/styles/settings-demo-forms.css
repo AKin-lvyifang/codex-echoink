@@ -1,0 +1,206 @@
+/* Settings-only form composition. Shared controllers keep their original lifecycle. */
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-options {
+  display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0;
+  width: fit-content; max-width: 100%; padding: 3px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--bg);
+}
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-choice {
+  flex: 1 1 auto; width: auto; height: auto; min-width: 0; min-height: 26px;
+  padding: 4px 10px; border-radius: 5px; color: var(--secondary);
+  font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; text-align: center;
+}
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-swatch { display: none; }
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-choice-title { white-space: normal; }
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-choice:has(> input:checked) { color: var(--text); background: var(--soft); font-weight: 500; }
+.echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-choice:has(> input:not(:disabled)):is(:hover, :has(> input:focus-visible)) { background: var(--soft); }
+
+.echoink-settings-aligned .echoink-provider-service-cards { grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 10px; }
+.echoink-settings-aligned button.echoink-provider-service-card.echoink-origin-control[data-slot=button] { height: auto; min-height: 0; padding: 12px 14px; gap: 12px; }
+.echoink-settings-aligned .echoink-provider-service-icon { width: 31px; height: 31px; flex: 0 0 31px; border-radius: 8px; background: var(--soft); color: var(--secondary); }
+.echoink-settings-aligned .echoink-provider-service-icon > svg { width: 18px; height: 18px; }
+.echoink-settings-aligned .echoink-provider-service-copy { display: flex; flex: 1; flex-direction: column; gap: 0; min-width: 0; }
+.echoink-settings-aligned .echoink-provider-service-name { font-size: 13px; font-weight: 500; line-height: 1.55; }
+.echoink-settings-aligned .echoink-provider-service-description { color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; overflow-wrap: anywhere; }
+.echoink-settings-aligned .echoink-provider-service-status { display: inline-flex; align-items: center; flex: none; gap: 4px; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-settings-aligned .echoink-provider-service-status svg { width: 13px; height: 13px; }
+
+/* Provider fields remain complete; outer headings sit above continuous groups. */
+.echoink-settings-aligned .codex-provider-modal-title { align-items: center; }
+.echoink-settings-aligned .echoink-provider-form-brand { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 8px; background: var(--soft); }
+.echoink-settings-aligned .echoink-provider-form-brand svg { width: 22px; height: 22px; }
+.echoink-settings-aligned .codex-provider-modal-form { display: flex; flex-direction: column; gap: 22px; }
+.echoink-settings-aligned .provider-form-section { min-width: 0; }
+.echoink-settings-aligned .provider-form-section > .settings-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 8px; padding: 0; }
+.echoink-settings-aligned .provider-form-section > .settings-card-header h3 { margin: 0; font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 600; line-height: 1.6; }
+.echoink-settings-aligned .provider-form-section > .settings-card-header p { margin: 3px 0 0; font-size: calc(var(--font-text-size, 16px) * .75); color: var(--secondary); line-height: 1.7; }
+.echoink-settings-aligned :is(.provider-connection-card, .provider-model-card) { margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); box-shadow: none; }
+.echoink-settings-aligned .provider-connection-grid { display: contents; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-modal-field {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px); align-items: center; gap: 6px 18px;
+  margin: 0; padding: 13px 18px; min-height: 52px; border: 0; border-radius: 0;
+}
+.echoink-settings-aligned .provider-connection-card :is(.codex-provider-modal-field, .codex-provider-endpoint-summary, .codex-provider-oauth-card) + :is(.codex-provider-modal-field, .codex-provider-endpoint-summary, .codex-provider-oauth-card),
+.echoink-settings-aligned .provider-connection-card .provider-connection-grid + :is(.codex-provider-modal-field, .codex-provider-endpoint-summary, .codex-provider-oauth-card),
+.echoink-settings-aligned .provider-connection-grid > .codex-provider-modal-field + .codex-provider-modal-field { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .provider-connection-card .codex-provider-modal-label { grid-column: 1; grid-row: 1; margin: 0; color: var(--text); font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 400; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-modal-field > :is(.codex-provider-modal-input, .codex-provider-modal-input-control, .codex-provider-combobox, .provider-picker, [data-slot=select]) { grid-column: 2; grid-row: 1 / span 2; min-width: 0; width: 100%; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-modal-field > :is(.codex-provider-modal-description, .codex-provider-field-error) { grid-column: 1 / -1; margin: 0; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-endpoint-summary { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 18px; padding: 13px 18px; min-width: 0; }
+.echoink-settings-aligned .codex-provider-endpoint-summary code { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.echoink-settings-aligned .provider-connection-card .codex-provider-oauth-card { margin: 0; padding: 13px 18px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
+.echoink-settings-aligned .provider-model-card > .codex-provider-modal-field { display: flex; flex-direction: column; gap: 12px; padding: 13px 18px; }
+.echoink-settings-aligned .codex-provider-model-choice { margin: 0; padding: 12px 0; border: 0; border-radius: 0; background: none; }
+.echoink-settings-aligned .codex-provider-model-choice + .codex-provider-model-choice { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .codex-provider-modal-footer { margin-top: 18px; }
+.echoink-settings-aligned .codex-provider-modal-actions { justify-content: flex-end; }
+.echoink-settings-aligned .codex-provider-combobox-search:focus-within { border-color: var(--line); background: var(--soft); outline: none; box-shadow: none; }
+.echoink-settings-aligned .codex-provider-combobox-option.is-selected { color: var(--text); background: var(--soft); }
+.echoink-settings-aligned :is(.provider-form-section h3, .codex-provider-modal-label, .codex-provider-manual-model-copy, .codex-provider-model-advanced-heading) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help).echoink-origin-control[data-slot=button] { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; border: 0; background: transparent; color: var(--secondary); vertical-align: middle; }
+.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help).echoink-origin-control[data-slot=button]:is(:hover, :focus-visible) { background: var(--soft); }
+.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help) svg { width: 13px; height: 13px; }
+.echoink-settings-aligned :is(.codex-provider-modal-label:has(> .echoink-provider-form-help), .codex-mcp-server-label:has(> .echoink-mcp-form-help)) { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px; }
+.echoink-settings-aligned .codex-mcp-server-label > .echoink-mcp-form-help { margin-left: 0; }
+
+/* MCP groups share the settings row rhythm without reducing their field set. */
+.echoink-settings-aligned .codex-mcp-server-form { display: flex; flex-direction: column; gap: 22px; }
+.echoink-settings-aligned .codex-mcp-server-form > .echoink-settings-section { margin: 0; }
+.echoink-settings-aligned .codex-mcp-form-card { display: flex; flex-direction: column; gap: 0; padding: 0; }
+.echoink-settings-aligned .codex-mcp-form-card .codex-mcp-server-field {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px); align-items: start; gap: 6px 18px;
+  min-width: 0; min-height: 52px; margin: 0; padding: 13px 18px;
+}
+.echoink-settings-aligned .codex-mcp-form-card > .codex-mcp-server-field + .codex-mcp-server-field { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .codex-mcp-server-label { grid-column: 1; margin: 0; font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 400; line-height: 1.6; }
+.echoink-settings-aligned .codex-mcp-server-field-description { display: block; margin-top: 4px; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.7; }
+.echoink-settings-aligned .codex-mcp-server-field > :is(input, textarea, .echoink-origin-control) { grid-column: 2; min-width: 0; width: 100%; }
+.echoink-settings-aligned .codex-mcp-server-field > .codex-mcp-server-field-error { grid-column: 1 / -1; }
+.echoink-settings-aligned .codex-mcp-credential-description { padding: 13px 18px; border-bottom: 1px solid var(--line); line-height: 1.7; }
+.echoink-settings-aligned .codex-mcp-credential-clear { padding: 13px 18px; border-top: 1px solid var(--line); }
+.echoink-settings-aligned .codex-mcp-server-modal-footer { justify-content: flex-end; }
+
+/* Search enablement comes first; quota, outbound scope and real result stay visible. */
+.echoink-settings-aligned .echoink-tavily-card { display: flex; flex-direction: column; gap: 0; }
+.echoink-settings-aligned .echoink-tavily-key-label { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 340px); align-items: start; gap: 8px 18px; padding: 13px 18px; margin: 0; border-top: 1px solid var(--line); font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 400; }
+.echoink-settings-aligned .echoink-tavily-key-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.echoink-settings-aligned .echoink-tavily-links { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 0; font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-settings-aligned .echoink-tavily-key-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.echoink-settings-aligned .echoink-tavily-key-control > input { flex: 1 1 160px; width: auto; min-width: 0; }
+.echoink-settings-aligned .echoink-tavily-test { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; width: 100%; margin: 0; }
+.echoink-settings-aligned .echoink-tavily-state:empty { display: none; }
+.echoink-settings-aligned .echoink-tavily-state:not(:empty) { padding: 0 18px 13px; }
+
+/* Agent overview: one continuous group, with ownership separate from role copy. */
+.echoink-settings-aligned .echoink-agent-settings > .echoink-settings-section > .echoink-settings-section-header { gap: 12px; margin-bottom: 8px; }
+.echoink-settings-aligned .echoink-agent-settings > .echoink-settings-section > .echoink-settings-section-header > button { margin-left: auto; }
+.echoink-settings-aligned .echoink-agent-settings-list { gap: 0; }
+.echoink-settings-aligned.echoink-settings-aligned button.echoink-agent-settings-row.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] {
+  display: grid; grid-template-columns: 31px minmax(0, 1fr) minmax(0, auto) 16px; align-items: center; gap: 12px;
+  width: 100%; min-height: 52px; margin: 0; padding: 13px 18px; border: 0; border-radius: 0; background: transparent;
+}
+.echoink-settings-aligned button.echoink-agent-settings-row:first-child { border-radius: 9px 9px 0 0; }
+.echoink-settings-aligned button.echoink-agent-settings-row:last-child { border-radius: 0 0 9px 9px; }
+.echoink-settings-aligned button.echoink-agent-settings-row:only-child { border-radius: 9px; }
+.echoink-settings-aligned button.echoink-agent-settings-row + button.echoink-agent-settings-row { border-top: 1px solid var(--line); }
+.echoink-settings-aligned button.echoink-agent-settings-row:is(:hover, :focus-visible) { background: var(--soft); }
+.echoink-settings-aligned .echoink-agent-settings-row .echoink-settings-navigation-trailing { grid-column: 4; grid-row: 1; }
+.echoink-settings-aligned .echoink-agent-settings-modules { grid-column: 3; grid-row: 1; max-width: 230px; margin: 0; text-align: right; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.7; }
+.echoink-settings-aligned .echoink-agent-owner-row { grid-template-columns: minmax(0, 1fr) minmax(0, 210px); padding: 13px 18px; min-height: 52px; }
+.echoink-settings-aligned .echoink-agent-owner-row + .echoink-agent-owner-row { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-agent-owner-control { display: flex; align-items: center; gap: 8px; }
+.echoink-settings-aligned .echoink-agent-owner-avatar { width: 22px; height: 22px; flex: 0 0 22px; }
+.echoink-settings-aligned .echoink-agent-owner-control .echoink-origin-control { flex: 1; width: auto; }
+.echoink-settings-aligned .echoink-memory-settings > .echoink-module-drawer.settings-card { margin: 0 0 10px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-header { padding-right: 18px; }
+.echoink-settings-aligned .echoink-memory-settings button.echoink-module-drawer-trigger.echoink-origin-control[data-slot=button] { min-height: 64px; padding: 16px 0 16px 18px; gap: 12px; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-title { font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 500; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-summary { font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.6; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content { padding: 0; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-dream-options { display: contents; margin: 0; padding: 0; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item,
+.echoink-settings-aligned .echoink-memory-settings button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] {
+  box-sizing: border-box; display: flex; flex-direction: row; align-items: center; gap: 12px;
+  width: 100%; min-width: 0; min-height: 52px; height: auto; margin: 0; padding: 13px 18px;
+  border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left;
+}
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content > .setting-item:first-child,
+.echoink-settings-aligned .echoink-memory-settings > .echoink-settings-group > button.echoink-settings-navigation-row:first-child { border-top: 0; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item-info { flex: 1 1 0%; width: auto; min-width: 0; min-height: 0; height: auto; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item-name { display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 6px; font-size: calc(var(--font-text-size, 16px) * .8125); }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item-control { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; width: auto; min-width: 0; max-width: 60%; gap: 8px; margin: 0; }
+.echoink-settings-aligned .echoink-memory-settings .setting-item:has([data-echoink-focus-key="general:memory:dream"]) > .setting-item-control { order: -1; flex: none; width: auto; max-width: none; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item-control.general-range { flex: 0 1 210px; max-width: min(60%, 210px); flex-wrap: nowrap; }
+.echoink-settings-aligned .echoink-memory-settings .general-range > .echoink-origin-control[data-slot=slider] { flex: 1 1 120px; width: auto; min-width: 80px; max-width: 150px; }
+.echoink-settings-aligned .echoink-memory-settings .general-range > output { flex: none; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-settings-navigation-copy { flex: 1 1 0%; width: auto; min-width: 0; text-align: left; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-settings-navigation-trailing { flex: none; width: auto; margin-left: auto; }
+.echoink-settings-aligned .echoink-memory-settings button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button]:is(:hover, :focus-visible) { background: var(--soft); }
+
+/* The settings variant has its own return row; the task sidebar keeps its header. */
+.echoink-settings-aligned .echoink-agent-editor.is-settings { height: auto; min-height: 0; overflow: visible; font-size: calc(var(--font-text-size, 16px) * .8125); }
+.echoink-settings-aligned .echoink-agent-editor.is-settings > .echoink-agent-editor-back {
+  display: inline-flex; align-items: center; align-self: flex-start; justify-content: flex-start; flex: none;
+  width: auto; min-height: 30px; padding: 6px 0; margin: 0 0 14px; gap: 6px; border: 0; color: var(--secondary);
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-header { gap: 10px; margin: 0 0 18px; padding: 0; border: 0; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-avatar-preview { flex-basis: 34px; width: 34px; height: 34px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-title { font-size: calc(var(--font-text-size, 16px) * 1.0625); }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-body { padding: 0; overflow: visible; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line); border-radius: 10px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity { display: contents; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-section,
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-resources,
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity > :is(.echoink-agent-editor-section, .echoink-agent-editor-identity-field) { padding: 14px 18px; margin: 0; gap: 8px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > :is(.echoink-agent-editor-major, .echoink-agent-editor-identity):not(:first-child),
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity > .echoink-agent-editor-identity-field,
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-section + .echoink-agent-editor-identity > .echoink-agent-editor-section { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity-field { display: flex; flex-direction: column; min-width: 0; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity-field > .echoink-origin-control[data-slot=input] { max-width: min(100%, 420px); border-radius: 6px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-resources { padding-top: 22px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-label { margin: 0; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-avatar-grid { width: min(100%, 600px); max-width: 100%; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-avatar-grid-inner { grid-template-columns: repeat(16, minmax(0, 1fr)); }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-footer { margin: 0; padding: 18px 0 0; border: 0; }
+
+/* Profile labels, values and actions use independent columns in a wide window. */
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row { grid-template-columns: 110px minmax(0, 1fr) auto; gap: 12px; padding: 13px 18px; min-height: 52px; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row + .echoink-profile-row { border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-name { color: var(--secondary); font-weight: 400; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-value { line-height: 1.85; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-edit { grid-column: 2 / -1; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row:has(> .echoink-profile-edit) > .echoink-profile-copy,
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-actions:empty { display: none; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-empty > summary { padding: 13px 18px; border-top: 1px solid var(--line); border-radius: 0 0 9px 9px; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-empty[open] > summary { border-bottom: 1px solid var(--line); border-radius: 0; }
+.echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-empty:only-child > summary { border-top: 0; }
+.echoink-settings-aligned .echoink-memory-record-list { gap: 0; border: 1px solid var(--line); border-radius: 10px; }
+.echoink-settings-aligned .echoink-memory-record-list > .echoink-memory-correction-row { padding: 13px 18px; border: 0; border-radius: 0; }
+.echoink-settings-aligned .echoink-memory-record-list > .echoink-memory-correction-row + .echoink-memory-correction-row { border-top: 1px solid var(--line); }
+
+@container settings (max-width: 760px) {
+  .echoink-settings-aligned .provider-connection-card .codex-provider-modal-field,
+  .echoink-settings-aligned .codex-mcp-form-card .codex-mcp-server-field { grid-template-columns: minmax(0, 1fr) minmax(0, 220px); }
+  .echoink-settings-aligned .echoink-agent-settings-modules { max-width: 160px; }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row { grid-template-columns: 90px minmax(0, 1fr); }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row > .echoink-profile-actions { grid-column: 2; justify-content: flex-start; }
+}
+@container settings (max-width: 520px) {
+  .echoink-settings-aligned .echoink-tavily-key-label { grid-template-columns: minmax(0, 1fr); }
+  .echoink-settings-aligned .provider-connection-card .codex-provider-modal-field,
+  .echoink-settings-aligned .codex-mcp-form-card .codex-mcp-server-field { grid-template-columns: minmax(0, 1fr); }
+  .echoink-settings-aligned .provider-connection-card .codex-provider-modal-field > :is(.codex-provider-modal-input, .codex-provider-modal-input-control, .codex-provider-combobox, .provider-picker, [data-slot=select]),
+  .echoink-settings-aligned .codex-mcp-server-field > :is(input, textarea, .echoink-origin-control) { grid-column: 1; grid-row: auto; }
+  .echoink-settings-aligned.echoink-settings-aligned button.echoink-agent-settings-row.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] { grid-template-columns: 31px minmax(0, 1fr) 16px; gap: 6px 12px; }
+  .echoink-settings-aligned .echoink-agent-settings-row .echoink-settings-navigation-trailing { grid-column: 3; grid-row: 1; }
+  .echoink-settings-aligned .echoink-agent-settings-row:has(.echoink-agent-settings-modules) .echoink-settings-navigation-trailing { grid-row: 1 / span 2; }
+  .echoink-settings-aligned .echoink-agent-settings-modules { grid-column: 2; grid-row: 2; text-align: left; max-width: none; }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row > .echoink-profile-actions,
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-edit { grid-column: 1; }
+  .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row > .echoink-profile-actions { justify-content: flex-end; justify-self: stretch; }
+}
+@container settings (max-width: 320px) {
+  .echoink-settings-aligned .echoink-agent-owner-row { grid-template-columns: minmax(0, 1fr); }
+  .echoink-settings-aligned .echoink-agent-owner-control { width: 100%; }
+}

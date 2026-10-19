@@ -2,7 +2,7 @@ import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginCheck, createOriginSlider, createOriginSwitch, disposeOriginControls } from "./origin-controls";
 import { OriginSetting } from "./origin-setting";
-import { attachSettingsTooltip, applySettingsRow, createSettingsNavigationRow, createSettingsSection } from "./settings-v2";
+import { attachSettingsTooltip, applySettingsRow, createSettingsGroup, createSettingsNavigationRow, createSettingsSection } from "./settings-v2";
 import { renderManualDreamAction } from "./manual-dream-action";
 
 /** Desktop presentation only; existing memory/Dream settings remain authoritative. */
@@ -19,6 +19,7 @@ export class DesktopMemorySettings {
     this.suspend();
     const p = this.plugin, zh = p.settings.settingsLanguage !== "en", m = p.settings.memory;
     const section = createSettingsSection(parent, { title: zh ? "记忆" : "Memory", surface: "flat" });
+    section.addClass("echoink-memory-settings");
     const card = createSettingsSection(section, { surface: "group" }); this.root = section;
     card.addClass("echoink-module-drawer"); card.dataset.module = "memory";
     const header = card.createDiv({ cls: "echoink-module-drawer-header" });
@@ -67,7 +68,7 @@ export class DesktopMemorySettings {
         renderManualDreamAction(options, p, p.settings.settingsLanguage, this.actions.redraw);
       }
     }
-    const links = open ? content : section;
+    const links = open ? content : createSettingsGroup(section);
     createSettingsNavigationRow(links, { title: zh ? "记忆修正" : "Memory correction", focusKey: "review:memory", onActivate: this.actions.openCorrection });
     createSettingsNavigationRow(links, { title: zh ? "你的画像" : "Your profile", focusKey: "agent:profile", onActivate: this.actions.openProfile });
   }

@@ -83,6 +83,7 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.root.querySelector('[data-preset]')!.closest(".echoink-agent-editor-major"), null, "preset labels do not become major headings");
     assert.equal(f.root.querySelectorAll("[data-preset]").length, 5); assert.equal(f.saved.length, 0);
     assert.equal(f.root.querySelector('[aria-label="返回 Agent 任务"]')!.textContent, "");
+    assert.equal(f.root.querySelector(".echoink-agent-editor-back")?.parentElement, f.root.querySelector(".echoink-agent-editor-header"), "ordinary sidebar editor keeps its compact header");
     assert.equal(f.root.querySelector('[data-field="position"]')!.tagName, "INPUT");
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.placeholder, "例如：选题编辑");
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.placeholder, "一句话：负责什么");

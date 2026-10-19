@@ -48,6 +48,7 @@ import {
   type ProviderPreflightService
 } from "./provider-preflight";
 import { applyAmicroButton } from "./amicro-buttons";
+import { attachSettingsTooltip } from "./settings-v2";
 
 type ProviderFormField =
   | "name"
@@ -303,9 +304,11 @@ export class ProviderModelModal extends Modal {
     this.modalEl.toggleClass("is-custom-provider", providerId === "custom");
     this.titleEl.empty();
     this.titleEl.addClass("codex-provider-modal-title");
+    const aligned = this.modalEl.closest(".echoink-settings-aligned") !== null;
+    if (aligned) renderProviderBrandIcon(this.titleEl.createSpan({ cls: "echoink-provider-form-brand", attr: { "aria-hidden": "true" } }), providerId);
     this.titleEl.createSpan({
       cls: "codex-provider-modal-title-text",
-      text: this.options.editing
+      text: aligned ? apiProviderPresetDisplayName(providerId, this.options.language) : this.options.editing
         ? this.label("编辑模型", "Edit model")
         : this.label("添加模型", "Add model")
     });
@@ -330,11 +333,16 @@ export class ProviderModelModal extends Modal {
     form.setAttr("aria-busy", String(
       this.saving || this.preflight.state.status === "loading"
     ));
-    const connection = form.createDiv({ cls: "settings-card provider-connection-card" });
-    const connectionHeader = connection.createDiv({ cls: "settings-card-header provider-connection-header" });
+    const connectionSection = aligned ? form.createDiv({ cls: "provider-form-section" }) : form;
+    const connection = connectionSection.createDiv({ cls: "settings-card provider-connection-card" });
+    const connectionHeader = (aligned ? connectionSection : connection).createDiv({ cls: "settings-card-header provider-connection-header" });
+    if (aligned) connectionSection.insertBefore(connectionHeader, connection);
     const connectionCopy = connectionHeader.createDiv();
-    connectionCopy.createEl("h3", { text: this.label("连接设置", "Connection") });
-    connectionCopy.createEl("p", { text: this.label("同一提供商的多套配置，可以用名称区分。", "Use names to distinguish configurations for the same provider.") });
+    const connectionTitle = this.label("连接设置", "Connection");
+    const connectionHeading = connectionCopy.createEl("h3", { text: connectionTitle });
+    const connectionDescription = this.label("同一提供商的多套配置，可以用名称区分。", "Use names to distinguish configurations for the same provider.");
+    if (aligned) this.addOptionalHelp(connectionHeading, connectionTitle, connectionDescription);
+    else connectionCopy.createEl("p", { text: connectionDescription });
     connectionHeader.createSpan({ cls: "codex-provider-protocol-pill", text: protocolPill(this.draft.apiProtocol) });
     const connectionFields = connection.createDiv({ cls: "provider-connection-grid" });
     this.renderProviderPicker(connectionFields, providerId);
@@ -667,15 +675,11 @@ export class ProviderModelModal extends Modal {
       this.label("自定义供应商名称", "Custom provider name"),
       inputId
     );
+    const aligned = this.modalEl.closest(".echoink-settings-aligned") !== null;
     const descriptionId = `${inputId}-description`;
-    field.createDiv({
-      cls: "codex-provider-modal-description",
-      text: this.label(
-        "可选。用于区分同一供应商下的不同配置。",
-        "Optional. Use this to distinguish configurations from the same provider."
-      ),
-      attr: { id: descriptionId }
-    });
+    const description = this.label("可选。用于区分同一供应商下的不同配置。", "Optional. Use this to distinguish configurations from the same provider.");
+    if (aligned) this.addOptionalHelp(field.querySelector<HTMLElement>(".codex-provider-modal-label")!, this.label("自定义供应商名称", "Custom provider name"), description);
+    else field.createDiv({ cls: "codex-provider-modal-description", text: description, attr: { id: descriptionId } });
     const input = createOriginInput(field, {
       cls: "codex-provider-modal-input",
       attr: {
@@ -687,7 +691,7 @@ export class ProviderModelModal extends Modal {
           `Leave blank to show “${apiProviderPresetDisplayName(this.providerId, "en")}”`
         ),
         autocomplete: "off",
-        "aria-describedby": descriptionId,
+        ...(!aligned ? { "aria-describedby": descriptionId } : {}),
         "data-modal-focus-key": "name"
       }
     });
@@ -1031,12 +1035,18 @@ export class ProviderModelModal extends Modal {
   }
 
   private renderModelSelectionField(container: HTMLElement): void {
-    const modelCard = container.createDiv({ cls: "settings-card provider-model-card" });
+    const aligned = this.modalEl.closest(".echoink-settings-aligned") !== null;
+    const section = aligned ? container.createDiv({ cls: "provider-form-section" }) : container;
+    const modelCard = section.createDiv({ cls: "settings-card provider-model-card" });
     const field = modelCard.createDiv({ cls: "codex-provider-modal-field" });
-    const header = field.createDiv({ cls: "settings-card-header provider-model-header" });
+    const header = (aligned ? section : field).createDiv({ cls: "settings-card-header provider-model-header" });
+    if (aligned) section.insertBefore(header, modelCard);
     const copy = header.createDiv();
-    copy.createEl("h3", { text: this.label("已启用模型", "Enabled models") });
-    copy.createEl("p", { text: this.label("勾选可用模型，再指定一个默认模型。", "Enable available models and choose one as the default.") });
+    const modelTitle = this.label("已启用模型", "Enabled models");
+    const modelHeading = copy.createEl("h3", { text: modelTitle });
+    const modelDescription = this.label("勾选可用模型，再指定一个默认模型。", "Enable available models and choose one as the default.");
+    if (aligned) this.addOptionalHelp(modelHeading, modelTitle, modelDescription);
+    else copy.createEl("p", { text: modelDescription });
     const actions = header.createDiv({ cls: "codex-provider-model-actions" });
     const discover = createOriginButton(actions, {
       text: this.preflight.state.status === "idle"
@@ -1140,13 +1150,10 @@ export class ProviderModelModal extends Modal {
 
   private renderManualModelFallback(container: HTMLElement): void {
     const fallback = container.createDiv({ cls: "codex-provider-manual-model" });
-    fallback.createDiv({
-      cls: "codex-provider-manual-model-copy",
-      text: this.label(
-        "模型列表不可用或缺少目标模型时，可手动添加准确的 Model ID。",
-        "If model discovery is unavailable or incomplete, add the exact Model ID manually."
-      )
-    });
+    const description = this.label("模型列表不可用或缺少目标模型时，可手动添加准确的 Model ID。", "If model discovery is unavailable or incomplete, add the exact Model ID manually.");
+    const aligned = this.modalEl.closest(".echoink-settings-aligned") !== null;
+    const copy = fallback.createDiv({ cls: "codex-provider-manual-model-copy", text: aligned ? "Model ID" : description });
+    if (aligned) this.addOptionalHelp(copy, "Model ID", description);
     const controls = fallback.createDiv({ cls: "codex-provider-manual-model-controls" });
     const input = createOriginInput(controls, {
       cls: "codex-provider-modal-input",
@@ -1308,17 +1315,13 @@ export class ProviderModelModal extends Modal {
     const limits = advanced.createDiv({
       cls: "codex-provider-model-advanced-group is-limits"
     });
-    limits.createDiv({
+    const limitsHeading = limits.createDiv({
       cls: "codex-provider-model-advanced-heading",
       text: this.label("上下文与输出", "Context and output")
     });
-    limits.createDiv({
-      cls: "codex-provider-model-advanced-description",
-      text: this.label(
-        "默认留空并自动使用模型值，无需填写；只有需要手动覆盖时才输入。",
-        "Leave these fields blank to use automatic model values. Enter a value only when a manual override is needed."
-      )
-    });
+    const limitsDescription = this.label("默认留空并自动使用模型值，无需填写；只有需要手动覆盖时才输入。", "Leave these fields blank to use automatic model values. Enter a value only when a manual override is needed.");
+    if (this.modalEl.closest(".echoink-settings-aligned")) this.addOptionalHelp(limitsHeading, this.label("上下文与输出", "Context and output"), limitsDescription);
+    else limits.createDiv({ cls: "codex-provider-model-advanced-description", text: limitsDescription });
     const tokens = limits.createDiv({ cls: "codex-provider-context-grid" });
     this.renderModelNumberField(
       tokens,
@@ -1795,6 +1798,12 @@ export class ProviderModelModal extends Modal {
       ?.setText(protocolPill(this.draft.apiProtocol));
   }
 
+  private addOptionalHelp(parent: HTMLElement, label: string, description: string): void {
+    const help = createOriginButton(parent, { cls: "echoink-settings-help-trigger echoink-provider-form-help", attr: { type: "button", "aria-label": this.zh ? `${label}说明` : `${label} information` } });
+    setIcon(help, "info");
+    attachSettingsTooltip(help, description, help, { interactive: false });
+  }
+
   private createField(container: HTMLElement, label: string, controlId: string): HTMLElement {
     const field = container.createDiv({ cls: "codex-provider-modal-field" });
     field.createEl("label", {
@@ -2090,8 +2099,9 @@ export class ProviderModelModal extends Modal {
       const form = this.contentEl.querySelector<HTMLElement>(".codex-provider-modal-form");
       const card = form?.querySelector<HTMLElement>(".provider-model-card");
       if (form && card) {
-        disposeOriginControls(card);
-        card.remove();
+        const section = card.closest<HTMLElement>(".provider-form-section") ?? card;
+        disposeOriginControls(section);
+        section.remove();
         this.renderModelSelectionField(form);
       }
     }

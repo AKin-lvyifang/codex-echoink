@@ -16,7 +16,8 @@ import type { EchoInkMcpServerDraft } from "../plugin/mcp-settings-service";
 const settle = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 const app = () => new App() as never;
-function host(): HTMLElement { return document.body.createDiv(); }
+function host(aligned = true): HTMLElement { return document.body.createDiv(aligned ? { cls: "echoink-settings-demo echoink-settings-aligned" } : {}); }
+function detachedHost(): HTMLElement { const root = document.createElement("div"); root.classList.add("echoink-settings-aligned"); return root; }
 function field<T extends HTMLElement>(root: HTMLElement, key: string, mcp = false): T {
   const result = root.querySelector<T>(`[data-${mcp ? "mcp-" : ""}modal-focus-key="${key}"]`);
   assert(result, `Missing real editor field: ${key}`); return result;
@@ -40,11 +41,11 @@ function draft(): ApiProviderConfig {
   result.apiKey = "fixture-stored-key";
   return result;
 }
-function provider(overrides: Partial<ProviderModelModalOptions> = {}) {
+function provider(overrides: Partial<ProviderModelModalOptions> = {}, aligned = true, mountHost?: HTMLElement) {
   const modal = new ProviderModelModal({ app: app(), draft: draft(), editing: true, language: "zh-CN", copy: settingsCopy("zh-CN"),
     preflight: { listModels: async () => ({ status: "unsupported", models: [] }), testConnection: async () => ({ status: "available" }) },
     save: async () => ({ saved: true }), ...overrides });
-  const root = host(); let returned = 0, closed = 0;
+  const root = mountHost ?? host(aligned); let returned = 0, closed = 0;
   const handle = mountSettingsEditor(modal, root, "返回", () => { closed++; }, { onNavigateBack: () => { returned++; } });
   return { modal, root, handle, get returned() { return returned; }, get closed() { return closed; } };
 }
@@ -53,16 +54,61 @@ export async function runSettingsEditorTests(): Promise<void> {
   installProviderBrowserHost();
   {
     const root = host(); const selected: string[] = [];
-    renderProviderServicePicker(root, { language: "zh-CN", onSelect: preset => { selected.push(preset.id); } });
+    renderProviderServicePicker(root, { language: "zh-CN", addedProviderIds: ["deepseek"], onSelect: preset => { selected.push(preset.id); } });
     assert.equal(root.querySelectorAll("section").length, 5);
     assert.deepEqual([...root.querySelectorAll<HTMLElement>("[data-provider-service]")].map(node => node.dataset.providerService).sort(), API_PROVIDER_PRESETS.map(preset => preset.id).sort());
     assert.equal(root.querySelector('[data-provider-category="local"] [data-provider-service]')?.getAttribute("data-provider-service"), "ollama");
     assert.equal(root.querySelector('[data-provider-category="plan"] [data-provider-service]')?.getAttribute("data-provider-service"), "qwen-token-plan");
     assert.equal(selected.length, 0);
+    assert.equal(root.querySelector('[data-provider-service="deepseek"] .echoink-provider-service-status')?.textContent, "已添加");
+    assert.equal(root.querySelector('[data-provider-service="kimi"] .echoink-provider-service-status'), null, "unconfigured providers must not appear added");
     for (const card of root.querySelectorAll<HTMLButtonElement>("[data-provider-service]")) card.click();
     assert.equal(selected.length, API_PROVIDER_PRESETS.length);
     disposeOriginControls(root); root.remove();
     console.log("PASS five preset-backed service categories navigate without login, test or save");
+  }
+  {
+    const f = provider({}, false);
+    assert.equal(f.modal.titleEl.textContent, "编辑模型", "unscoped/mobile hosts keep their original model editor title");
+    assert.ok(f.root.querySelector(".provider-connection-card > .provider-connection-header"), "the existing independent form keeps its own header");
+    input(f.root, "name", "旧容器仍可编辑");
+    f.handle.suspend(); f.handle.resume(document.body);
+    assert.equal(field<HTMLInputElement>(f.root, "name").value, "旧容器仍可编辑");
+    click(f.root, "cancel"); assert.equal(f.handle.disposed, true);
+    console.log("PASS unscoped/mobile editor retains its original form and draft lifecycle");
+  }
+  {
+    let saves = 0;
+    const f = provider({ save: async () => { saves++; return { saved: true }; } }, true, detachedHost());
+    assert.equal(f.root.isConnected, false, "production mounts the form before attaching its host to the settings shell");
+    assert.ok(f.modal.titleEl.querySelector(".echoink-provider-form-brand svg"), "the first detached render already has the provider brand title");
+    assert.equal(f.root.querySelectorAll(".provider-form-section > .provider-connection-header, .provider-form-section > .provider-model-header").length, 2, "both titles are outside the group before attachment");
+    input(f.root, "name", "挂载前的连接草稿");
+    document.body.appendChild(f.root);
+    const help = f.root.querySelector<HTMLButtonElement>('[aria-label="自定义供应商名称说明"]')!;
+    const helpPanel = help.querySelector<HTMLElement>(".echoink-settings-help-panel")!;
+    assert.ok(helpPanel.hidden, "optional provider instructions start collapsed");
+    help.focus(); assert.equal(helpPanel.hidden, false, "keyboard focus exposes the existing instructions");
+    help.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(helpPanel.hidden, true); assert.equal(saves, 0, "reading help never submits the form");
+    f.handle.suspend(); f.handle.resume(document.body);
+    assert.equal(field<HTMLInputElement>(f.root, "name").value, "挂载前的连接草稿");
+    assert.equal(f.modal.titleEl.querySelectorAll(".echoink-provider-form-brand").length, 1);
+    assert.equal(saves, 0); f.handle();
+
+    const root = detachedHost();
+    const modal = new McpServerModal({ app: app(), language: "zh-CN", save: async () => { saves++; } });
+    const handle = mountSettingsEditor(modal, root, "返回", () => {}, { onNavigateBack: () => {} });
+    assert.equal(root.isConnected, false);
+    assert.equal(root.querySelectorAll(".codex-mcp-server-form > .echoink-settings-section > .echoink-settings-group").length, 3, "MCP groups receive desktop presentation on the first detached render");
+    assert.match(field(root, "endpoint", true).closest(".codex-mcp-server-field")!.querySelector(".codex-mcp-server-field-description")!.textContent!, /不要在 URL/);
+    assert.ok(root.querySelector(".codex-mcp-credential-description"), "credential safety remains visible beside the fields");
+    assert.match(field(root, "credential-secret", true).closest(".codex-mcp-server-field")!.querySelector(".codex-mcp-server-field-description")!.textContent!, /本次保存/);
+    input(root, "name", "挂载前的 MCP 草稿", true);
+    document.body.appendChild(root); handle.suspend(); handle.resume(document.body);
+    assert.equal(field<HTMLInputElement>(root, "name", true).value, "挂载前的 MCP 草稿");
+    assert.equal(saves, 0); handle();
+    console.log("PASS detached Provider/MCP hosts get desktop groups before attachment and retain their original draft lifecycle");
   }
   {
     let saves = 0; const f = provider({ save: async () => { saves++; return { saved: true }; } });
@@ -130,6 +176,17 @@ export async function runSettingsEditorTests(): Promise<void> {
     assert.equal(f.root.querySelector(".codex-provider-model-status")?.classList.contains("is-available"), false);
     f.handle();
     console.log("PASS real Provider ignores late model/test responses after input changes and navigation");
+  }
+  {
+    let reads = 0;
+    const f = provider({ preflight: { listModels: async () => { reads++; return { status: "available", source: "remote", models: [{ id: "discovered-model" }] }; }, testConnection: async () => ({ status: "available" }) } });
+    click(f.root, "model-discover"); await settle();
+    input(f.root, "apiKey", "fixture-replacement-key");
+    assert.equal(f.root.querySelectorAll('[data-modal-focus-key="model-discover"]').length, 1, "changing provider identity replaces the model section and its original discover control together");
+    click(f.root, "model-discover"); await settle();
+    assert.equal(reads, 2, "the remaining discover control still uses the live preflight session");
+    f.handle();
+    console.log("PASS aligned model section replacement releases the old header and retains one live discover action");
   }
   {
     const status = deferred<OpenAICodexAuthStatus>(); const refreshed = deferred<OpenAICodexAuthStatus>(); let reads = 0; const login = deferred<OpenAICodexAuthStatus>(); let interaction: AuthInteraction | undefined;

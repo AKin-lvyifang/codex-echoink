@@ -40,6 +40,8 @@ body:not(.is-mobile) .echoink-agent-editor-resource-section { display: flex; fle
 .echoink-agent-editor-ownership, .echoink-agent-editor-availability, .echoink-agent-editor-empty, .echoink-agent-editor-style-description {
   color: var(--agent-editor-muted); font-size: var(--echoink-conversation-font-label-secondary, var(--font-ui-smaller, 12px)); line-height: 1.55; overflow-wrap: anywhere;
 }
+body:not(.is-mobile) .echoink-agent-editor-module .echoink-agent-editor-choice-copy { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 3px 6px; }
+body:not(.is-mobile) .echoink-agent-editor-ownership { color: var(--text-faint, var(--agent-editor-muted)); }
 .echoink-agent-editor-style-description { margin: 0; }
 .echoink-agent-editor .echoink-origin-control[data-slot=input], .echoink-agent-editor-position {
   box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; min-height: 32px; margin: 0; padding: 6px 10px;
