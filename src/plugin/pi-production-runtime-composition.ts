@@ -1,3 +1,5 @@
+import { buildPdfTaskContextMessage, PDF_TASK_CONTEXT_KEY, PDF_TASK_CONTEXT_TYPE } from "../pdf-reading/task-context";
+import type { PdfTaskRequest } from "../pdf-reading/types";
 import { buildEnglishDiaryTaskContext, type EnglishDiaryTaskContext } from "../english-diary/task-context";
 import { PiEnglishDiaryToolSecurity, createPiEnglishDiaryToolDefinitions } from "../harness/pi-native/pi-english-diary-tools";
 import { PiTodoToolSecurity, createPiTodoToolDefinitions, PI_TODO_TOOL_IDS } from "../harness/pi-native/pi-todo-tools";
@@ -269,6 +271,7 @@ import {
 } from "../resources/mcp-connections";
 
 export interface PiProductionPluginHost {
+  verifyPdfTaskDelivery?(request: Readonly<PdfTaskRequest> | string, noNewSourcePaths: readonly string[]): Promise<void>;
   englishDiary?: { api: import("../english-diary/types").EnglishDiaryApi } | null;
   createEnglishDiaryTaskGenerator?(): import("../english-diary/types").DiaryGenerator;
   validateEnglishDiaryTaskSource?(sourcePath: string): Promise<void>;
@@ -568,6 +571,7 @@ export async function createPiProductionRuntimeBundle(
       catalog,
       productRuns,
       sessionApi,
+      verifyPdfTaskDelivery: plugin.verifyPdfTaskDelivery?.bind(plugin),
       resolveAgentRunSnapshot: entry => resolveAgentRunSnapshot(plugin.settings, entry.agentId),
       assertAgentActionAllowed: async ({ catalog: entry, action, access }) => {
         const context = await currentAgentCapabilityContext(plugin, catalog, entry.conversationId, access);
@@ -1073,6 +1077,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   currentAgentSnapshot?(): AgentRunSnapshot | Promise<AgentRunSnapshot>;
   currentTaskResumeContext?(): TaskResumeContext | undefined;
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
+  currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   assertCurrentSkillsAllowed?(): Promise<void>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
@@ -1175,6 +1180,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           : event.systemPrompt;
         const selectionMessage = buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
         const workbenchMessage = buildWorkbenchContextMessage(input.currentWorkbenchSource?.());
+        const pdfMessage = buildPdfTaskContextMessage(input.currentPdfTaskRequest?.());
         const noteMentionTurn = input.currentNoteMentionTurn?.() ?? null;
         const noteMentionMessage = noteMentionTurn
           ? buildPiNoteMentionContextMessage(noteMentionTurn.noteMentions)
@@ -1361,7 +1367,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             details: knowledgeReferenceEntryDetails(
               turn.references.map((reference) => ({ ...reference }))
             )
-          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage, workbenchMessage);
+          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage, workbenchMessage, pdfMessage);
           transientResourceContextSignature = piResourceContextSignature(message);
           return {
             ...systemPromptResult,
@@ -1396,7 +1402,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
               preferenceState: command.preference.state,
               preferenceRevision: command.preference.revision
             })
-          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage, workbenchMessage);
+          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage, workbenchMessage, pdfMessage);
           transientResourceContextSignature = piResourceContextSignature(message);
           return {
             ...systemPromptResult,
@@ -1409,7 +1415,8 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           noteMentionMessage,
           documentMessage,
           selectionMessage,
-          workbenchMessage
+          workbenchMessage,
+          pdfMessage
         );
         if (attachmentContextMessage) {
           transientResourceContextSignature = piResourceContextSignature(
@@ -1500,27 +1507,28 @@ function mergePiBeforeAgentStartContextMessages(
   noteMentionMessage: Extract<AgentMessage, { role: "custom" }> | null,
   documentMessage: Extract<AgentMessage, { role: "custom" }> | null,
   selectionMessage: Extract<AgentMessage, { role: "custom" }> | null,
-  workbenchMessage: Extract<AgentMessage, { role: "custom" }> | null = null
+  workbenchMessage: Extract<AgentMessage, { role: "custom" }> | null = null,
+  pdfMessage: Extract<AgentMessage, { role: "custom" }> | null = null
 ): Readonly<{
   customType: string;
   content: string;
   display: false;
   details: unknown;
 }> | null {
-  const primary = message ?? skillMessage ?? noteMentionMessage ?? documentMessage ?? selectionMessage ?? workbenchMessage;
+  const primary = message ?? skillMessage ?? noteMentionMessage ?? documentMessage ?? selectionMessage ?? workbenchMessage ?? pdfMessage;
   if (!primary) return null;
   const details = primary.details
     && typeof primary.details === "object"
     && !Array.isArray(primary.details)
     ? primary.details as Readonly<Record<string, unknown>>
     : Object.freeze({});
-  const materials = [message, skillMessage, noteMentionMessage, documentMessage, selectionMessage, workbenchMessage]
+  const materials = [message, skillMessage, noteMentionMessage, documentMessage, selectionMessage, workbenchMessage, pdfMessage]
     .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
   // Pi persists one before_agent_start message. With selected passages, keep
   // distinct typed sections in that entry, then deliver distinct bounded
   // background messages to the Provider. A trailing Knowledge "原文:" cannot
   // consume a selected passage or the actual user question.
-  const content = selectionMessage || workbenchMessage ? JSON.stringify({
+  const content = selectionMessage || workbenchMessage || pdfMessage ? JSON.stringify({
     type: "echoink.turn-material-partitions.v1",
     sections: materials.map((candidate) => ({ customType: candidate.customType, content: candidate.content }))
   }) : materials.map((candidate) => candidate.content as string).join("\n\n");
@@ -1542,6 +1550,7 @@ function mergePiBeforeAgentStartContextMessages(
       ...(documentMessage && documentMessage !== primary
         ? { [PI_DOCUMENT_CONTEXT_DETAILS_KEY]: documentMessage.details }
         : {}),
+      ...(pdfMessage && pdfMessage !== primary ? { [PDF_TASK_CONTEXT_KEY]: pdfMessage.details } : {}),
       ...(workbenchMessage && workbenchMessage !== primary
         ? { [WORKBENCH_CONTEXT_DETAILS_KEY]: workbenchMessage.details }
         : {})
@@ -1561,6 +1570,7 @@ function piProviderMaterialPartitions(message: AgentMessage): AgentMessage[] {
     "echoink-note-mentions-context-v1": PI_NOTE_MENTIONS_CONTEXT_DETAILS_KEY,
     "echoink-document-context-v1": PI_DOCUMENT_CONTEXT_DETAILS_KEY,
     "echoink-skill-turn-context-v1": "echoinkSkillTurnContext",
+    [PDF_TASK_CONTEXT_TYPE]: PDF_TASK_CONTEXT_KEY,
     [WORKBENCH_CONTEXT_TYPE]: WORKBENCH_CONTEXT_DETAILS_KEY
   };
   return envelope.sections.map((section) => ({
@@ -1952,7 +1962,9 @@ async function createProductionAgentSession(input: {
     if (input.input.currentEnglishDiaryRequest?.() && name !== "english_diary_generate") throw new Error("english_diary_task_scope_required");
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
     const context = await liveCapabilityContext();
-    requireAgentCapability(checkAgentTool(context, name, args, resolvedTarget, descriptor ? {
+    const pdfRequest = name === "pdf_reading_process" ? input.input.currentPdfTaskRequest?.() : undefined;
+    const capabilityTarget = resolvedTarget ?? (pdfRequest ? { options: pdfRequest.options } : undefined);
+    requireAgentCapability(checkAgentTool(context, name, args, capabilityTarget, descriptor ? {
       resourceId: descriptor.resourceId, toolName: descriptor.toolName, readOnly: descriptor.readOnly,
       externalOnly: isPiMcpExternalOnly(context, descriptor), executable: piMcpSchemaHasExecutableTarget(descriptor.inputSchema), inputSchema: descriptor.inputSchema
     } : undefined));
@@ -2154,7 +2166,15 @@ async function createProductionAgentSession(input: {
     reasoning: configured.reasoning, discovery: configured.discovery, contextWindow: configured.contextWindow,
     modelMaxTokens: configured.modelMaxTokens, maxOutputTokens: configured.maxOutputTokens
   });
-  const pdfSecurity = new PiPdfReadingSecurity({ assertToolAllowed, generator: () => {
+  const pdfSecurity = new PiPdfReadingSecurity({ assertToolAllowed,
+    request: () => input.input.currentPdfTaskRequest?.(),
+    bindDeliveryJob: jobId => input.input.bindPdfDeliveryJob?.(jobId),
+    conversationId: () => input.input.catalog.conversationId,
+    currentRunIdentity: () => input.input.currentToolExecutionContext(),
+    approvals: input.approvals, receipts: input.receipts,
+    userId: localPiVaultUserId(input.deviceScope.deviceIdDigest), deviceId: input.deviceScope.deviceIdDigest,
+    confirmation: { async confirm(request) { return input.approvalBroker.waitForDecision({ requestId: request.requestId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: request.toolCallId, target: canonicalJsonStringify(request.target), preview: canonicalJsonStringify(request.preview), signal: request.signal }); } },
+    generator: () => {
     const host = input.plugin.pdfReading;
     if (!host) throw new Error("PDF 插件不可用。");
     return host.plugin.createPdfReadingGenerator(pdfGenerationDraft);
@@ -2298,6 +2318,7 @@ async function createProductionAgentSession(input: {
     currentAgentSnapshot: async () => { const context = await liveCapabilityContext(); return resolveAgentRunSnapshot(context.settings, context.agentId); },
     currentTaskResumeContext: () => input.input.currentTaskResumeContext?.(),
     currentWorkbenchSource: () => input.input.currentWorkbenchSource?.() ?? null,
+    currentPdfTaskRequest: () => input.input.currentPdfTaskRequest?.(),
     currentEnglishDiaryRequest: () => input.input.currentEnglishDiaryRequest?.() ?? null,
     assertCurrentSkillsAllowed: async () => {
       const context = await liveCapabilityContext();

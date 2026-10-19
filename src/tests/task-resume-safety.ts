@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { Modal } from "obsidian";
+import { paidTestAccess } from "./membership-access";
 import { FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
 import { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
 import { FileProductRunStore } from "../harness/pi-native/file-product-run-store";
@@ -31,7 +31,7 @@ export async function runTaskResumeSafetyTests(testRoot: string): Promise<void> 
     await uncertainMcpIsNeverDispatchedAgain(path.join(root, "mcp"));
     await localReadbackAndReadonlyInspection(path.join(root, "readonly"));
     await pdfSessionEvidenceIsReadonly(path.join(root, "pdf-evidence"));
-    await pdfResumeReusesOriginalJob();
+    await pdfResumeReusesOriginalJob(path.join(root, "pdf-tool"));
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
@@ -300,12 +300,10 @@ async function treeContents(root: string): Promise<Record<string, string>> {
   return result;
 }
 
-async function pdfResumeReusesOriginalJob(): Promise<void> {
-  const originalDocument = globalThis.document, originalOpen = Modal.prototype.open;
-  // Confirmation remains a real PiPdfReadingSecurity boundary; only the host's
-  // DOM and the user's approval choice are substituted in this offline test.
-  globalThis.document = { createElement: () => ({ append() {}, appendChild() {} }) } as unknown as Document;
-  Modal.prototype.open = function () { (this as unknown as { done(accepted: boolean): void }).done(true); };
+async function pdfResumeReusesOriginalJob(root: string): Promise<void> {
+  const approvals = new FileApprovalTicketStore({ storageRootPath: root, vaultId: "pdf-resume" });
+  const receipts = new FileDomainReceiptStore({ storageRootPath: root, vaultId: "pdf-resume" });
+  await approvals.initialize(); await receipts.initialize();
   const args = { path: "source.pdf", reading: false };
   const originalId = sha(`task:user-old-run\n${JSON.stringify(args)}`);
   let job: PdfJob = { version: 1, id: originalId, name: "source.pdf", createdAt: 1, options: { engine: "mineru", reading: false, translation: false, wiki: false },
@@ -313,11 +311,14 @@ async function pdfResumeReusesOriginalJob(): Promise<void> {
   let starts = 0, resumes = 0;
   const attachmentId = "pdf-00000000-0000-0000-0000-000000000001";
   const security = new PiPdfReadingSecurity({ host: () => ({ plugin: { app: {}, settings: { pdfReading: { engine: "mineru", translationLanguage: "中文" } } },
-    api: { files: { listJobs: async () => [originalId], exists: async () => true, read: async () => "# saved" }, load: async () => structuredClone(job),
+    api: { deps: { access: paidTestAccess, enabled: () => true }, files: { listJobs: async () => [originalId], exists: async () => true, read: async () => "# saved", readBinary: async () => new TextEncoder().encode("source-pdf") },
+      prepareStartIntent: async (name: string, _bytes: Uint8Array, options: unknown, id: string) => ({ name, id, options, sourceFingerprint: sha("source-pdf"), byteLength: 10, rawDirectory: "Raw" }), load: async () => structuredClone(job),
       start: async () => { starts++; return job; }, resume: async (id: string) => { assert.equal(id, originalId); resumes++; return { ...job, state: "completed" }; },
       actualArtifacts: async () => job.artifacts }, processVault: async () => { starts++; return job; }
-  }) as never, access: () => ({ permission: "write", mode: "chat" }) as never, identity: () => "new-run", intentId: () => "task:user-new-run", resumeIntentId: () => "task:user-old-run",
-    documents: () => [{ transport: "tool_reference", attachmentId, attachment: { name: "source.pdf" }, sha256: sha("source-pdf"), bytes: new Uint8Array() }] as never,
+  }) as never, approvals, receipts, userId: "user", deviceId: "device",
+    currentRunIdentity: () => ({ vaultId: "pdf-resume", conversationId: "task", piSessionId: "same-session", productRunId: "new-run" }), confirmation: { confirm: async () => true },
+    access: () => ({ permission: "write", mode: "chat" }) as never, identity: () => "new-run", intentId: () => "task:user-new-run", resumeIntentId: () => "task:user-old-run",
+    documents: () => [{ transport: "tool_reference", attachmentId, attachment: { name: "source.pdf" }, sha256: sha("source-pdf"), bytes: new TextEncoder().encode("source-pdf") }] as never,
     resumeOperations: () => [{ toolCallId: "original-pdf", userEntryId: "user-old-run", arguments: args, jobId: originalId }],
     consume: () => ({ conversationId: "task", userEntryId: "user-new-run" }), bindSources() {}, wikiPaths: async () => [] });
   const invoke = async (id: string, input: object) => {
@@ -341,7 +342,7 @@ async function pdfResumeReusesOriginalJob(): Promise<void> {
     assert.equal((await invoke("pdf-new-step", { path: "next.pdf", reading: false })).isError, false, "new PDF step remains allowed");
     assert.equal(starts, 1, "first PDF step for a different source remains available in resumed tasks");
     console.log("PASS PDF original job/fingerprint reuse, changed options, and new resumed-task step");
-  } finally { globalThis.document = originalDocument; Modal.prototype.open = originalOpen; }
+  } finally { await rm(root, { recursive: true, force: true }); }
 }
 
 async function pdfSessionEvidenceIsReadonly(root: string): Promise<void> {

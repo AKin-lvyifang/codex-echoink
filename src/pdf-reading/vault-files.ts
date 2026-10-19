@@ -5,7 +5,7 @@ export class PdfVaultFiles implements PdfFiles {
   constructor(private readonly app: App, private readonly stateDirectory: string, private readonly mapped = false) {}
   roots(): string[] { return this.app.vault.getRoot().children.filter(item => item instanceof TFolder).map(item => item.path); }
   private safe(path: string): string {
-    if (!path || path.startsWith("/") || path.includes("\\") || path.split("/").some(part => !part || part === "." || part === "..")) throw new Error("PDF 成果路径无效。");
+    if (!path || path.startsWith("/") || /[\\:\p{Cc}]/u.test(path) || path.split("/").some(part => !part || part === "." || part === "..")) throw new Error("PDF 成果路径无效。");
     return path;
   }
   private state(path: string): boolean { return path.startsWith(this.stateDirectory + "/"); }
@@ -34,7 +34,14 @@ export class PdfVaultFiles implements PdfFiles {
   }
   async replace(path: string, value: string, expected?: string): Promise<void> {
     this.safe(path);
-    if (this.state(path)) { await this.app.vault.adapter.write(path, value); return; }
+    if (this.state(path)) {
+      if (expected === undefined) await this.app.vault.adapter.write(path, value);
+      else await this.app.vault.adapter.process(path, current => {
+        if (current !== expected) throw new Error("PDF 任务记录已有变化，未覆盖。");
+        return value;
+      });
+      return;
+    }
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) throw new Error("成果文件已移动或不存在。");
     await this.app.vault.process(file, current => {

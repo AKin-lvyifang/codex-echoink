@@ -1,3 +1,6 @@
+import type { PdfNavigationStart } from "../pdf-reading/types";
+import { freezePdfTaskRequest } from "../pdf-reading/task-context";
+import { workbenchModuleOwner } from "../home/module-navigation";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
 import { isUserTask, taskState, taskSummary, type TaskEntry } from "../agents/task-presentation";
 import { type TaskDraft, type TaskPage } from "../agents/task-workspace";
@@ -524,6 +527,54 @@ export class CodexView extends ItemView {
     }
     return { available: true };
   }
+  async startPdfNavigationTask(input: PdfNavigationStart): Promise<string> {
+    await this.plugin.validatePdfNavigationStart(input);
+    this.saveTaskComposerDraft();
+    // A separate data-only Composer prevents a navigation action from sending another task's draft.
+    const inputEl = this.inputEl.ownerDocument.createElement("textarea");
+    const choices = ["提取原文", ...(input.options.translation ? [`翻译为${input.options.translationLanguage || "中文"}`] : []),
+      ...(input.options.reading ? ["精读"] : []), ...(input.options.summary ? ["摘要"] : [])];
+    inputEl.value = `PDF 精读：处理「${input.attachment.name}」，本次选择：${choices.join("、")}。请保存并核对实际成果。`;
+    const draft: StoredSession = { id: newId("pdf-draft"), title: "", cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
+    const adapter = Object.create(this) as CodexViewTurnContext;
+    Object.defineProperties(adapter, {
+      inputEl: { value: inputEl }, attachments: { value: [{ ...input.attachment }] }, selectedSkill: { value: null },
+      ensureSession: { value: () => draft }, currentTurnOptions: { value: () => this.currentTurnOptions(draft) }
+    });
+    let failure = "PDF 尚未发送，请检查模型和工作区权限。";
+    const item = await createQueuedTurnFromComposerRunner(adapter, { allowLocalKnowledgeCommands: false, onError: message => { failure = message; } });
+    if (!item) throw new Error(failure);
+    if (item.turnOptions.permission === "read-only" || item.turnOptions.mode === "plan") throw new Error("处理 PDF 需要可写工作区和 Agent 模式，请调整对话栏权限后重试。");
+    if (!await validateTaskTurnBeforeCreation(adapter, item)) throw new Error(failure);
+    const document = item.preparedDocuments?.[0];
+    if (!document || document.transport !== "tool_reference" || !document.attachmentId) throw new Error("PDF 附件未准备好，尚未创建任务。");
+    const request = freezePdfTaskRequest({ jobId: crypto.randomUUID(), attachmentId: document.attachmentId,
+      name: document.attachment.name, sourceFingerprint: document.sha256, byteLength: document.bytes.length,
+      originalDirectory: input.originalDirectory, options: { ...input.options, summary: input.options.summary === true } });
+    if (!request) throw new Error("PDF 选项无效，请重新选择。");
+    item.pdfTaskRequest = request;
+    await this.plugin.validatePdfNavigationStart(input);
+    const owner = workbenchModuleOwner(this.plugin, "pdf-reading");
+    const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: input.attachment.name,
+      agentId: owner.id, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
+    const session = createPiConversationShell(this.sessionHost(), entry);
+    this.plugin.settings.sessions.push(session); item.sessionId = session.id;
+    try {
+      const outcome = await this.plugin.getConversationRunService().start(item, "composer");
+      if (outcome === "running") item.piUserEntryAccepted = true;
+      if (!item.piUserEntryAccepted) throw new Error("PDF 任务尚未受理，请检查输入区提示后重试。");
+      await this.reloadTaskCatalog();
+      await this.openTaskDetail(session.id);
+      return session.id;
+    } catch (error) {
+      if (!item.piUserEntryAccepted) {
+        await this.plugin.setPiConversationStatus(session.id, "deleted");
+        this.plugin.settings.sessions = this.plugin.settings.sessions.filter(value => value.id !== session.id);
+      }
+      throw error;
+    }
+  }
+
   private async sendNewAgentTask(): Promise<void> {
     if (this.taskDerivationInProgress) return;
     const page = this.taskNavigation.page;

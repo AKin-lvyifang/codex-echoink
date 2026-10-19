@@ -1,3 +1,8 @@
+import { assertPdfTaskDelivery, pdfKnowledgeSection } from "./pdf-reading/delivery";
+import type { PdfNavigationStart, PdfNavigationArtifact, PdfOptions, PdfTaskRequest } from "./pdf-reading/types";
+import { checkAgentCapability } from "./agents/capability-policy";
+import { KnowledgeAgentIndex } from "./knowledge-base/knowledge-agent-index";
+import { knowledgeRoleStatus } from "./knowledge-base/root-paths";
 import { HomeWorkbenchDataService } from "./home/home-workbench-data";
 import { hasEnglishDiarySourceContent } from "./home/english-diary-source";
 import { workbenchStoreForApp } from "./home/workbench-records";
@@ -415,6 +420,68 @@ export default class CodexForObsidianPlugin extends Plugin {
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
   async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> { return this.getViewService().activateLegacyHomeView(section); }
   async activateKnowledgeView(page: "overview" | "health" | "history" = "overview"): Promise<void> { return this.getViewService().activateKnowledgeView(page); }
+
+  private pdfNavigationFlight: Promise<string> | null = null;
+  private pdfNavigationIndex: KnowledgeAgentIndex | null = null;
+  async activatePdfReadingPage(): Promise<void> { return this.getViewService().activatePdfReadingPage(); }
+  pdfNavigationStartReason(options: PdfOptions): string {
+    const host = this.pdfReading;
+    if (!host || !this.settings.pdfReading.enabled) return "请先启用 PDF 精读。";
+    if (!host.policy().canWrite) return "需要有效 PRO；已有 PDF 和成果仍可查看。";
+    if (host.api.isBusy()) return "已有一份 PDF 正在处理。";
+    const owner = workbenchModuleOwner(this, "pdf-reading");
+    const context = { settings: this.settings, agentId: owner.id, vaultRoot: this.getVaultPath(), resources: [], proAccess: this.accountService ?? unavailableCapabilityAccess };
+    if (!checkAgentCapability(context, "pdf-reading", "resource").allowed) return `${owner.name}还不能处理 PDF。`;
+    if ((options.reading || options.summary) && !checkAgentCapability(context, "knowledge", "resource").allowed) return `${owner.name}还不能整理知识库；请调整能力，或取消精读和摘要。`;
+    if ((options.reading || options.summary) && knowledgeRoleStatus(this.getVaultPath(), "wiki") !== "ready") return "请先设置可用的知识成果位置，或取消精读和摘要。";
+    return "";
+  }
+  async validatePdfNavigationStart(input: PdfNavigationStart): Promise<void> {
+    const reason = this.pdfNavigationStartReason(input.options); if (reason) throw new Error(reason);
+    if (input.attachment.type !== "file" || !/\.pdf$/iu.test(input.attachment.name) || !input.attachment.path) throw new Error("请选择一份 PDF。");
+    if (!this.pdfReading!.originalDirectories().includes(input.originalDirectory)) throw new Error("原 PDF 保存位置已失效，请重新选择资料来源位置。");
+    if (input.options.wiki !== (input.options.reading || input.options.summary === true)) throw new Error("PDF 成果选项不一致，请重新选择。");
+  }
+  async startPdfNavigationTask(input: PdfNavigationStart): Promise<string> {
+    if (this.pdfNavigationFlight) return this.pdfNavigationFlight;
+    const frozen = structuredClone(input);
+    const flight = (async () => {
+      await this.validatePdfNavigationStart(frozen);
+      await this.activateView();
+      const view = this.getCodexView();
+      if (!view || !await view.waitForTaskUiReady()) throw new Error("对话栏尚未就绪，请重试。");
+      return view.startPdfNavigationTask(frozen);
+    })();
+    this.pdfNavigationFlight = flight;
+    try { return await flight; } finally { if (this.pdfNavigationFlight === flight) this.pdfNavigationFlight = null; }
+  }
+  async verifyPdfTaskDelivery(request: Readonly<PdfTaskRequest> | string, noNewSourcePaths: readonly string[]): Promise<void> {
+    const jobId = typeof request === "string" ? request : request.jobId;
+    const data = await this.pdfReading?.navigationData(jobId);
+    if (!data || data.errors.length) throw new Error(data?.errors[0] || "PDF 记录暂时读不到，已保存成果保留。");
+    const entry = data.entries.find(entry => entry.job.id === jobId);
+    if (!entry) throw new Error("PDF 任务记录暂时读不到，已保存成果保留。");
+    assertPdfTaskDelivery(typeof request === "string" ? { jobId, sourceFingerprint: entry.job.sourceFingerprint ?? "", options: entry.job.options, requiresOriginal: !!entry.job.original } : request, entry, noNewSourcePaths);
+  }
+  async readPdfKnowledgeArtifacts(rawPath: string): Promise<PdfNavigationArtifact[]> {
+    // Same local index and storage as Pi, with no Provider initialization or search disclosure.
+    const local = await this.ensurePiLocalData();
+    const index = this.piRuntimeBundle?.knowledgeAgentIndex ?? (this.pdfNavigationIndex ??= new KnowledgeAgentIndex({
+      vaultPath: this.getVaultPath(), storageRootPath: path.join(local.piNativeStorageRootPath, "knowledge"),
+      linkResolver: (linkpath, sourcePath) => this.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath)?.path
+    }));
+    index.invalidate();
+    const result = await index.readReliableKnowledgeForRaw(rawPath);
+    const artifacts: PdfNavigationArtifact[] = [];
+    for (const entry of result?.entries ?? []) {
+      artifacts.push({ kind: "wiki", path: entry.vaultRelativePath, label: entry.title || "知识成果" });
+      for (const [kind, label] of [["reading", "精读"], ["summary", "摘要"]] as const) {
+        const heading = pdfKnowledgeSection(entry.content, kind);
+        if (heading) artifacts.push({ kind, path: `${entry.vaultRelativePath}#${heading}`, label });
+      }
+    }
+    return artifacts;
+  }
 
   async activateEnglishDiaryPage(page: "diary" | "expressions" = "diary", expressionId?: string): Promise<void> { return this.getViewService().activateEnglishDiaryPage(page, expressionId); }
   async validateEnglishDiaryTaskSource(sourcePath: string): Promise<void> {

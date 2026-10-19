@@ -63,6 +63,21 @@ export function formatApprovalPresentation(input: Readonly<{
     notices.push(text("只处理已确认允许发送的段落；原稿保留，手工修改的英文稿不会直接覆盖。", "Only permitted paragraphs are processed. The original is kept, and manual English edits are not overwritten."));
     Object.keys(targetObject ?? {}).forEach(key => consumedTarget.add(key));
     Object.keys(previewObject).forEach(key => consumedPreview.add(key));
+  } else if (previewObject?.domain === "pdf") {
+    action = previewObject.action === "resume-same-job" ? text("继续处理这份 PDF", "Continue this PDF") : text("保存原 PDF 并开始处理", "Save and process this PDF");
+    if (targetObject?.originalPath) add(destination, text("原 PDF", "Original PDF"), targetObject.originalPath);
+    if (targetObject?.sourcePath) add(destination, text("来源文件", "Source file"), targetObject.sourcePath);
+    if (targetObject?.rawDirectory) add(destination, text("原文和译文位置", "Extracted text and translation"), targetObject.rawDirectory);
+    const delivery = objectValue(previewObject.delivery);
+    const options = objectValue(targetObject?.options);
+    add(changes, text("本次成果", "Requested results"), [text("提取原文（用于引用来源）", "Extracted text for citations"),
+      ...(delivery?.translation ? [text(`译文（${String(options?.translationLanguage ?? "中文")}）`, `Translation (${String(options?.translationLanguage ?? "Chinese")})`)] : []),
+      ...(delivery?.reading ? [text("精读 · 保存到知识成果", "Close reading in Knowledge notes")] : []),
+      ...(delivery?.summary ? [text("摘要 · 保存到知识成果", "Summary in Knowledge notes")] : [])].join("、"));
+    for (const key of ["recipient", "model"]) if (typeof previewObject[key] === "string") notices.push(previewObject[key] as string);
+    notices.push(text("原文件保留。处理中断或失败后，已保存的原件和成果也保留。", "Your source is kept. Saved originals and results remain after an interruption or failure."));
+    Object.keys(targetObject ?? {}).forEach(key => consumedTarget.add(key));
+    Object.keys(previewObject).forEach(key => consumedPreview.add(key));
   } else if (mcp) {
     action = text("调用服务操作", "Call a service operation");
     const server = previewObject?.server ?? targetObject?.resourceName;

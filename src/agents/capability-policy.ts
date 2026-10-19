@@ -182,7 +182,20 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     const effect = args && financeToolEffect(toolName, normalizeFinanceToolRequest(toolName, args)) !== "read" ? "write" : "read";
     return checkAgentCapability(context, "finance", effect);
   }
-  if (toolName === "pdf_reading_query" || toolName === "pdf_reading_process") return checkAgentCapability(context, "pdf-reading", toolName === "pdf_reading_process" ? "write" : "read");
+  if (toolName === "pdf_reading_query" || toolName === "pdf_reading_process") {
+    const capability = checkAgentCapability(context, "pdf-reading", toolName === "pdf_reading_process" ? "write" : "read");
+    if (!capability.allowed || toolName === "pdf_reading_query") return capability;
+    const target = resolvedTarget && typeof resolvedTarget === "object" ? resolvedTarget as Record<string, unknown> : null;
+    // The prepared target contains the host-frozen choices, including legacy job options.
+    const options = target?.options && typeof target.options === "object" ? target.options as Record<string, unknown> : args;
+    if (options && (options.reading === true || options.summary === true)) {
+      const knowledge = checkAgentCapability(context, "knowledge", "write"); if (!knowledge.allowed) return knowledge;
+    }
+    // PDF extraction is allowed in the bound source area without granting general Knowledge writes.
+    // The controller validates live bound directories again at every publication boundary.
+    for (const key of ["originalPath", "rawDirectory"] as const) if (typeof target?.[key] === "string" && !relativeTarget(context, target[key] as string)) return decision("pdf-reading", "invalid_target");
+    return capability;
+  }
   if (toolName === "english_diary_generate") {
     const capability = checkAgentCapability(context, "english-diary", "write");
     if (!capability.allowed) return capability;

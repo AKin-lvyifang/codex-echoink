@@ -19,6 +19,7 @@ export interface QueuedTurnItem {
   prefillSource?: string;
   /** Exact source chosen locally; the original is never a Composer attachment. */
   englishDiarySourcePath?: string;
+  pdfTaskRequest?: import("../pdf-reading/types").PdfTaskRequest;
   attachments: StoredAttachment[];
   /** Document bytes/text/transport frozen before this turn enters the queue. */
   preparedDocuments?: readonly Readonly<PiChatPreparedDocument>[];
@@ -201,6 +202,7 @@ function clampIndex(index: number, maxInclusive: number): number {
 export function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
   return {
     ...item,
+    ...(item.pdfTaskRequest ? { pdfTaskRequest: structuredClone(item.pdfTaskRequest) } : {}),
     ...(item.resumeContext ? { resumeContext: structuredClone(item.resumeContext) } : {}),
     attachments: item.attachments.map((attachment) => ({ ...attachment })),
     ...(item.preparedDocuments

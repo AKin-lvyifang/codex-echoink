@@ -32,7 +32,7 @@ export async function openWorkbenchModule(plugin: CodexForObsidianPlugin, module
     case "knowledge-base": await plugin.activateKnowledgeView(); break;
     case "english-diary": await plugin.activateEnglishDiaryPage(); break;
     case "pdf-reading":
-      await plugin.openAgentTaskList(plugin.settings.agentRegistry.moduleOwners[moduleId] ?? GENERAL_ASSISTANT_ID);
+      await plugin.activatePdfReadingPage();
       break;
   }
 }

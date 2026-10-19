@@ -1,3 +1,5 @@
+import { freezePdfTaskRequest, pdfTaskRequestFromEntries } from "../../pdf-reading/task-context";
+import type { PdfTaskRequest } from "../../pdf-reading/types";
 import { normalizeEnglishDiarySourcePath, englishDiaryTaskContextFromEntries, type EnglishDiaryTaskContext } from "../../english-diary/task-context";
 import type { TaskInterruptionReason, TaskInterruptionRecord, TaskResumeContext } from "../../agents/task-resume";
 import { assertPiSubmissionActive } from "./pi-submission-lifecycle";
@@ -223,6 +225,8 @@ export interface PiNativeAgentSessionFactoryInput {
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTaskResumeContext?(): Readonly<TaskResumeContext> | undefined;
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
+  bindPdfDeliveryJob?(jobId: string): void;
+  currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
   currentMaintenanceCommand?(): Promise<Readonly<PiKnowledgeMaintenanceCommandContext>>;
@@ -418,6 +422,7 @@ export interface PiRuntimeResolvedSkill {
 }
 
 export interface PiNativeConversationRuntimeOptions {
+  verifyPdfTaskDelivery?(request: Readonly<PdfTaskRequest> | string, noNewSourcePaths: readonly string[]): Promise<void>;
   resolveAgentRunSnapshot?: (catalog: Readonly<PiConversationCatalogEntry>) => AgentRunSnapshot;
   assertAgentActionAllowed?: (input: Readonly<{ catalog: Readonly<PiConversationCatalogEntry>; action: "knowledge-read" | "knowledge-write"; access?: Readonly<PiWorkspaceAccess> }>) => void | Promise<void>;
   catalog: FileConversationCatalog;
@@ -690,6 +695,8 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  pdfTaskRequest?: Readonly<PdfTaskRequest>;
+  pdfDeliveryJobs?: Set<string>;
   englishDiarySourcePath?: string;
   workbenchSource?: Readonly<WorkbenchTaskSource>;
   resumeContext?: TaskResumeContext;
@@ -1424,7 +1431,7 @@ export class PiNativeConversationRuntime {
         ? Object.freeze({ kind: "chat", originalText: request.text })
         : routeKnowledgeConversationCommand(request.text);
 
-    const selectedRuntimeSkill = !request.englishDiarySourcePath && !request.skillPath
+    const selectedRuntimeSkill = !request.pdfTaskRequest && !request.englishDiarySourcePath && !request.skillPath
       ? catalog.defaultSkillId
         ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId, catalog)
         : mode !== "plan"
@@ -1467,6 +1474,12 @@ export class PiNativeConversationRuntime {
         `Conversation ${request.conversationId} 已有运行中的 ProductRun`
       );
     }
+    const inheritedPdf = pdfTaskRequestFromEntries(active.sessionManager.getBranch());
+    const pdfTaskRequest = request.pdfTaskRequest ? freezePdfTaskRequest(request.pdfTaskRequest) : inheritedPdf;
+    if (request.pdfTaskRequest && (!pdfTaskRequest || inheritedPdf && JSON.stringify(inheritedPdf) !== JSON.stringify(pdfTaskRequest))) throw new PiNativeConversationRuntimeError("agent_session_invalid", "PDF任务的文件和成果已固定，请从PDF页另建任务。");
+    if (request.pdfTaskRequest && !inheritedPdf && active.sessionManager.getBranch().some(entry => entry.type === "message")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "请从PDF页新建独立任务。");
+    if (request.pdfTaskRequest && (documents.length !== 1 || documents[0].transport !== "tool_reference" || documents[0].attachmentId !== pdfTaskRequest!.attachmentId || documents[0].sha256 !== pdfTaskRequest!.sourceFingerprint || documents[0].bytes.length !== pdfTaskRequest!.byteLength || promptImages.length || noteMentions.length || selectionAnnotations.length || request.skillPath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "PDF任务的附件与本次选择不一致，未发送。");
+    if (pdfTaskRequest && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "处理PDF需要可写工作区和Agent模式，请调整对话栏权限后重试。");
     const inheritedEnglish = englishDiaryTaskContextFromEntries(active.sessionManager.getBranch());
     const englishDiarySourcePath = normalizeEnglishDiarySourcePath(request.englishDiarySourcePath) ?? inheritedEnglish?.sourcePath;
     if (request.englishDiarySourcePath && inheritedEnglish && request.englishDiarySourcePath !== inheritedEnglish.sourcePath) throw new PiNativeConversationRuntimeError("agent_session_invalid", "这件任务的原稿范围已固定，请从列表另建一件事。");
@@ -1523,6 +1536,7 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
+      ...(pdfTaskRequest ? { pdfTaskRequest } : {}),
       ...(englishDiarySourcePath ? { englishDiarySourcePath } : {}),
       ...(request.workbenchSource ? { workbenchSource: request.workbenchSource } : {}),
       ...(request.resumeContext ? { resumeContext: structuredClone(request.resumeContext) } : {}),
@@ -2729,6 +2743,8 @@ export class PiNativeConversationRuntime {
         return run ? Object.freeze({ permission: run.permission, mode: run.mode, memoryMode: run.memoryMode }) : null;
       },
       currentTaskResumeContext: () => holder.active?.currentRun?.resumeContext,
+      bindPdfDeliveryJob: jobId => { const run = holder.active?.currentRun; if (run) (run.pdfDeliveryJobs ??= new Set()).add(jobId); },
+      currentPdfTaskRequest: () => holder.active?.currentRun?.pdfTaskRequest,
       currentEnglishDiaryRequest: () => {
         const active = holder.active, run = active?.currentRun;
         if (!active || !run?.englishDiarySourcePath) return null;
@@ -3355,6 +3371,26 @@ export class PiNativeConversationRuntime {
           "projection_unsettled",
           "ProductRun still has pending Approval, Receipt, or product work"
         );
+      }
+
+      if (terminalState === "completed" && (execution.pdfTaskRequest || execution.pdfDeliveryJobs?.size) && this.options.verifyPdfTaskDelivery) {
+        const noNewSourcePaths = active.sessionManager.getBranch().flatMap(entry => {
+          if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== PI_KNOWLEDGE_MAINTAIN_TOOL_ID || entry.message.isError) return [];
+          const envelope = knowledgeMaintenanceEnvelopeFromToolResult(entry.message);
+          const details = safeRecord(entry.message.details);
+          return envelope?.status === "noop" && Array.isArray(details?.processedSourcePaths) ? details.processedSourcePaths.filter((value): value is string => typeof value === "string") : [];
+        });
+        try {
+          if (execution.pdfTaskRequest) await this.options.verifyPdfTaskDelivery(execution.pdfTaskRequest, noNewSourcePaths);
+          for (const jobId of execution.pdfDeliveryJobs ?? []) if (jobId !== execution.pdfTaskRequest?.jobId) await this.options.verifyPdfTaskDelivery(jobId, noNewSourcePaths);
+        } catch (error) {
+          // Missing selected outputs are an ordinary failed task, not a broken settlement.
+          // Persist a terminal run so explicit recovery can continue it normally.
+          terminalState = "failed"; promptError = error;
+          execution.interruption = { at: this.now(), reason: "run_failed", stage: "核对 PDF 成果",
+            detail: error instanceof Error ? error.message.slice(0, 1000) : "PDF 成果尚未核实，已有文件保留。" };
+          this.settleTaskPlanAfterRun(active, execution, terminalState);
+        }
       }
 
       await this.closeAndPersistReasoningSummary(

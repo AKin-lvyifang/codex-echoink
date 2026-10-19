@@ -953,6 +953,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     const workbenchSource = freezeWorkbenchTaskSource(item.prefillSource);
     handle = await view.plugin.submitPiChat({
       ...(workbenchSource ? { workbenchSource } : {}),
+      ...(item.pdfTaskRequest ? { pdfTaskRequest: item.pdfTaskRequest } : {}),
       ...(item.englishDiarySourcePath ? { englishDiarySourcePath: item.englishDiarySourcePath } : {}),
       ...(item.resumeContext ? { resumeContext: item.resumeContext } : {}),
       signal: submissionSignal,

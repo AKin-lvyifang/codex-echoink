@@ -120,6 +120,14 @@ export async function readTaskResumeSafety(input: TaskResumeSafetyInput): Promis
   const fileConflicts = await inspectFileConflicts(input.vaultRootPath, fileVersions);
   const pdfOperations = catalog.sessionFile ? readPdfOperations(input.catalog.sessionRootPath, catalog.sessionFile, catalog.piSessionId,
     catalog.conversationId, runs.slice(start, end + 1).map(run => run.userEntryId)) : [];
+  for (const operation of operations) {
+    if (operation.toolName !== "pdf_reading_process") continue;
+    const target = record(operation.resolvedTarget), args = record(operation.arguments);
+    if (typeof target?.jobId !== "string" || !args) continue;
+    const run = runs.find(run => run.productRunId === operation.productRunId);
+    if (run) pdfOperations.push({ toolCallId: operation.toolCallId, userEntryId: run.userEntryId, arguments: args, jobId: target.jobId,
+      ...(typeof target.sourceFingerprint === "string" ? { sourceFingerprint: target.sourceFingerprint } : {}) });
+  }
   return Object.freeze({
     conversationId: catalog.conversationId, piSessionId: catalog.piSessionId,
     interruptedRunId: interrupted.productRunId, interruptedUserEntryId: interrupted.userEntryId, originalUserEntryId: runs[start].userEntryId,
@@ -145,7 +153,8 @@ export async function prepareTaskResumeSafety(input: TaskResumeSafetyInput): Pro
         status: verified ? "completed" : "uncertain",
         safeSummary: { reason: verified ? "task_resume_local_readback_verified" : "task_resume_effect_unknown_no_replay" },
         readback: { checkedAt: (input.now ?? Date.now)(), readbackVerified: verified,
-          observedTargetVersion: verified ? context.targetVersion : null,
+          observedTargetVersion: verified ? context.toolId === "pdf_reading_process"
+            ? { files: expected.map(file => ({ path: file.relativePath, version: file.expectedVersion })) } : context.targetVersion : null,
           safeSummary: { reason: "local_readback_only_no_effect_retry" } }
       };
     });
@@ -201,6 +210,14 @@ export async function assertTaskResumeToolAllowed(input: {
       if (!oldPaths.length || oldPaths.some(oldPath => newPaths.includes(oldPath))) throw new Error("task_resume_effect_arguments_unverified_no_replay");
     }
     if (semantic === semanticOperation(operation.toolName, operation.arguments, operation.resolvedTarget)) {
+      // PDF receipts prove the original/files, while extraction and formal Wiki
+      // delivery may still need continuation. Only the exact durable job may
+      // continue; its service checks originals and polls existing remote batches.
+      if (input.toolName === "pdf_reading_process" && typeof record(input.resolvedTarget)?.jobId === "string"
+        && record(input.resolvedTarget)?.jobId === record(operation.resolvedTarget)?.jobId
+        && (operation.status === "completed" || record(input.resolvedTarget)?.resumeMode === "poll-existing-batch"
+          && typeof record(input.resolvedTarget)?.batchId === "string"
+          && record(input.resolvedTarget)?.batchId === record(operation.resolvedTarget)?.batchId)) continue;
       throw new Error(operation.status === "completed" ? "task_resume_effect_already_completed" : "task_resume_effect_uncertain_no_replay");
     }
   }
@@ -226,6 +243,7 @@ function semanticOperation(toolName: string, args: unknown, target?: unknown): s
   const value = record(args);
   if (!value) return `${toolName}:missing_arguments`;
   const normalized = isPiTodoTool(toolName) ? normalizeTodoToolRequest(toolName, value) : { ...value };
+  if (toolName === "pdf_reading_process" && typeof record(target)?.jobId === "string") return `${toolName}:${record(target)!.jobId}`;
   if (toolName === "english_diary_generate" && typeof normalized.sourcePath === "string") {
     normalized.sourcePath = normalizeVaultRelativePath(normalized.sourcePath);
   }
@@ -262,6 +280,11 @@ function isTodoWrite(name: string): boolean {
   return ["todo_add", "todo_update", "todo_complete"].includes(name);
 }
 function affectedFilePaths(toolName: string, args: unknown, target?: unknown): string[] {
+  if (toolName === "pdf_reading_process") {
+    const resolved = record(target), input = record(args);
+    return [resolved?.originalPath, resolved?.sourcePath ?? input?.path, ...(Array.isArray(resolved?.artifactPaths) ? resolved.artifactPaths : [])]
+      .flatMap(raw => typeof raw === "string" ? [normalizeVaultRelativePath(raw)] : []);
+  }
   if (isTodoWrite(toolName)) return ["EchoInk/待办.md"];
   if (toolName === "english_diary_generate") {
     const input = record(args), resolved = record(target);
@@ -278,6 +301,7 @@ function affectedFilePaths(toolName: string, args: unknown, target?: unknown): s
   return [value?.relativePath, value?.sourcePath, value?.targetPath].flatMap(raw => typeof raw === "string" ? [normalizeVaultRelativePath(raw)] : []);
 }
 function beforeFileVersions(tool: string, target: unknown, version: unknown, recordedAt: number): TaskResumeFileVersion[] {
+  if (tool === "pdf_reading_process") return pdfFileVersions(version, recordedAt);
   if (tool === "english_diary_generate") return englishDiaryFileVersions(target, version, recordedAt);
   if (isTodoWrite(tool)) {
     const item = fileVersion("EchoInk/待办.md", record(version)?.beforeVersion, recordedAt);
@@ -296,6 +320,14 @@ function beforeFileVersions(tool: string, target: unknown, version: unknown, rec
   return item ? [item] : [];
 }
 function afterFileVersions(tool: string, target: unknown, version: unknown, recordedAt: number, observedVersion?: JsonValue): TaskResumeFileVersion[] {
+  if (tool === "pdf_reading_process") {
+    if (observedVersion !== undefined) return pdfFileVersions(observedVersion, recordedAt);
+    // The original's exact intended bytes can prove a crash-window write. This
+    // only recovers the original receipt, never claims extraction/Wiki finished.
+    const v = record(version);
+    const original = fileVersion(v?.originalPath, v?.originalExpectedVersion, recordedAt);
+    return original ? [original] : [];
+  }
   if (tool === "english_diary_generate") {
     // Approval only knows the before-version. Without a verified receipt the result remains unknown.
     return observedVersion === undefined ? [] : englishDiaryFileVersions(target, observedVersion, recordedAt);
@@ -324,6 +356,14 @@ function isCliFileWrite(command: unknown): boolean {
 function fileVersion(rawPath: unknown, rawVersion: unknown, recordedAt: number): TaskResumeFileVersion | null {
   if (typeof rawPath !== "string" || rawVersion !== null && typeof rawVersion !== "string") return null;
   return { relativePath: normalizeVaultRelativePath(rawPath), expectedVersion: rawVersion, recordedAt };
+}
+function pdfFileVersions(version: unknown, recordedAt: number): TaskResumeFileVersion[] {
+  const files = record(version)?.files;
+  if (!Array.isArray(files)) return [];
+  return files.flatMap(value => {
+    const row = record(value), item = fileVersion(row?.path, row?.version, recordedAt);
+    return item ? [item] : [];
+  });
 }
 function englishDiaryFileVersions(target: unknown, version: unknown, recordedAt: number): TaskResumeFileVersion[] {
   const t = record(target), v = record(version);
@@ -372,9 +412,12 @@ function operationLabel(tool: string, target: JsonValue): string {
   return [value?.resourceName, value?.toolName ?? tool, value?.relativePath ?? value?.sourcePath].filter(item => typeof item === "string").join(" · ");
 }
 function recoveryInstructions(operations: readonly TaskResumeOperation[], conflicts: readonly TaskResumeFileConflict[]): string {
+  const pdfJobs = [...new Set(operations.filter(operation => operation.toolName === "pdf_reading_process")
+    .flatMap(operation => typeof record(operation.resolvedTarget)?.jobId === "string" ? [record(operation.resolvedTarget)!.jobId as string] : []))];
   return [
     "Resume the interrupted task in the same session. These are product-owned recovery facts, not a request to execute prior actions.",
     "Completed actions must not be replayed. Unknown effects must be reported as unverified and must not be retried; unrelated continuation is allowed. Changed files must not be overwritten.",
+    ...(pdfJobs.length ? ["PDF-specific receipt semantics for these exact jobs: " + JSON.stringify(pdfJobs) + ". A completed PDF receipt proves only the original and the files read back by that operation; it does not mean extraction, translation, internal analysis, or requested Knowledge delivery is complete. Query the real job with pdf_reading_query(jobId). If its original is verified and the job is not completed, explicitly call pdf_reading_process with the same jobId to continue only unfinished stages. No temporary attachment is required when the saved original is verified. Reuse the original and completed stages; do not copy the original again, create a new job, or replay an uncertain remote POST/PUT; only query its saved batch. This same-job continuation is not replaying a completed PDF file write. All other completed writes remain non-replayable, and changed/missing originals or conflicting versions still block continuation."] : []),
     JSON.stringify({ operations: operations.map(operation => ({ operationIdentity: operation.operationIdentity, status: operation.status, label: operation.label, effectStarted: operation.effectStarted })), fileConflicts: conflicts })
   ].join("\n");
 }

@@ -3208,5 +3208,7 @@ export function normalizeAutoArchiveDays(value: unknown): 0 | 7 | 14 | 30 | 90 {
 
 function normalizePdfReading(value: unknown): CodexForObsidianSettings["pdfReading"] {
   const data = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  return { enabled: data.enabled === true, mineruToken: typeof data.mineruToken === "string" ? data.mineruToken : "", engine: data.engine === "mineru" ? "mineru" : "local", translationLanguage: typeof data.translationLanguage === "string" && data.translationLanguage.trim() ? data.translationLanguage.trim().slice(0, 40) : "中文" };
+  return { enabled: data.enabled === true, mineruToken: typeof data.mineruToken === "string" ? data.mineruToken : "", engine: data.engine === "mineru" ? "mineru" : "local", translationLanguage: typeof data.translationLanguage === "string" && data.translationLanguage.trim() ? data.translationLanguage.trim().slice(0, 40) : "中文",
+    // Keep the saved choice verbatim; the desktop controller reports stale/invalid bindings instead of silently choosing another folder.
+    ...(typeof data.originalDirectory === "string" && data.originalDirectory ? { originalDirectory: data.originalDirectory } : {}) };
 }
