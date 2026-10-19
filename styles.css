@@ -23387,6 +23387,20 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
   background: var(--soft);
 }
 
+.echoink-desktop-account-settings .desktop-account-more-usage > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  list-style: none;
+}
+.echoink-desktop-account-settings .desktop-account-more-usage > summary::-webkit-details-marker { display: none; }
+.echoink-desktop-account-settings .desktop-account-disclosure-icon { flex: none; transition: transform 160ms ease; }
+.echoink-desktop-account-settings .desktop-account-more-usage[open] > summary .desktop-account-disclosure-icon { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .echoink-desktop-account-settings .desktop-account-disclosure-icon { transition: none; }
+}
+
 .echoink-desktop-account-settings .echoink-account .desktop-account-more-usage .model-rank-card {
   padding: 12px 10px 0;
 }

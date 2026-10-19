@@ -407,7 +407,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const hasModels = [30, 90, "all"].some(range => stats.rankings[range as 30 | 90 | "all"]?.models.length);
   if (!desktop || hasModels) {
   const more = desktop ? el(usage, "details", "desktop-account-more-usage") : page;
-  if (desktop) el(more, "summary", "", t("更多使用数据", "More usage data"));
+  if (desktop) { const summary = el(more, "summary", "", t("更多使用数据", "More usage data")); icon(summary, "chevron-right", "desktop-account-disclosure-icon"); }
   const preferencesHead = heading(more, desktop ? t("常用模型", "Models") : t("使用偏好", "Usage preferences")); const ranges = el(preferencesHead, "div", "segments");
   const preferences = el(more, "div", desktop ? "preferences" : "two-columns preferences");
   const modelCard = el(preferences, "section", "panel model-rank-card"), skillCard = desktop ? null : el(preferences, "section", "panel");
