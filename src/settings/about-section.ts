@@ -1,4 +1,4 @@
-import { setIcon, setTooltip } from "obsidian";
+import { Notice, setIcon, setTooltip } from "obsidian";
 import { openExternalInElectron } from "../core/electron";
 import { createOriginButton } from "./origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "./amicro-buttons";
@@ -10,6 +10,14 @@ export function renderCompactAbout(parent: HTMLElement, options: {
   update: ReleaseUpdateController;
 }): () => void {
   const zh = options.language !== "en";
+  const openLink = (url: string) => {
+    void openExternalInElectron(url).then(opened => {
+      if (!opened) new Notice(zh ? "暂时无法打开链接" : "Could not open this link");
+    }).catch(error => {
+      console.warn("[EchoInk] Could not open about link", error);
+      new Notice(zh ? "暂时无法打开链接" : "Could not open this link");
+    });
+  };
   const row = parent.createDiv({ cls: "echoink-about-compact" });
   const brand = row.createDiv({ cls: "echoink-about-compact-brand" });
   const logo = createOriginButton(brand, { cls: "echoink-about-compact-icon", attr: { type: "button", "aria-label": "EchoInk Agent" } });
@@ -28,7 +36,7 @@ export function renderCompactAbout(parent: HTMLElement, options: {
     const button = createOriginButton(actions, { attr: { type: "button", "aria-label": label } });
     applyAmicroButton(button, { variant: "icon" });
     setIcon(button, icon); setTooltip(button, label);
-    button.onclick = () => { openExternalInElectron(url); };
+    button.onclick = () => { openLink(url); };
   }
   const check = createOriginButton(actions, { cls: "echoink-about-compact-check", attr: { type: "button" } });
   applyAmicroButton(check, { variant: "primary", icon: "refresh-cw" });
@@ -47,7 +55,7 @@ export function renderCompactAbout(parent: HTMLElement, options: {
     if (state.status === "available") {
       status.createSpan({ text: zh ? `发现新版本 v${state.version}` : `New version v${state.version}` });
       const link = status.createEl("a", { text: zh ? "查看发布页" : "View release", attr: { href: state.url, target: "_blank", rel: "noopener noreferrer" } });
-      link.onclick = event => { event.preventDefault(); openExternalInElectron(state.url); };
+      link.onclick = event => { event.preventDefault(); openLink(state.url); };
     }
   };
   check.onclick = () => { void options.update.check(options.version); };

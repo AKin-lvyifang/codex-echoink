@@ -9,10 +9,13 @@
  * SVG layers and expose the same independently animated parts to styles.css.
  */
 
+import { getIcon } from "obsidian";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 export const ANIMATED_SETTINGS_TAB_ICON_NAMES = [
   "settings",
+  "bot",
   "key-round",
   "layout-list",
   "book-open-check",
@@ -52,6 +55,10 @@ const ICON_RENDERERS: Record<
   (doc: Document) => SVGSVGElement
 > = {
   settings: renderSettingsIcon,
+  bot: (doc) => {
+    const icon = getIcon("bot");
+    return icon ? doc.importNode(icon, true) : createIconSvg("bot", doc);
+  },
   "key-round": renderKeyRoundIcon,
   "layout-list": renderLayoutListIcon,
   "book-open-check": renderBookOpenCheckIcon,
