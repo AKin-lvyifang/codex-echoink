@@ -1,4 +1,5 @@
 import type { TaskInterruptionReason, TaskResumeContext } from "../agents/task-resume";
+import type { ConversationTaskMetadataPatch } from "../agents/task-metadata";
 import type CodexForObsidianPlugin from "../main";
 import { Notice, Platform } from "obsidian";
 import { getWorkbenchDataService } from "../home/workbench-data";
@@ -43,6 +44,9 @@ export class ConversationRunService {
   private readonly resumeErrors = new Map<string, string>();
   private readonly resumeContexts = new Map<string, Readonly<TaskResumeContext>>();
   private readonly blockedAgents = new Set<string>();
+  private readonly pendingRefreshes = new Map<string, ChatMessage | undefined>();
+  private readonly pendingInteractionWrites = new Map<string, { key: string }>();
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
   private disposalFlight?: Promise<void>;
@@ -52,14 +56,37 @@ export class ConversationRunService {
   subscribe(subscriber: ConversationRunSubscriber): () => void {
     if (this.disposed) throw new Error("conversation_run_service_disposed");
     this.subscribers.add(subscriber);
-    return () => { this.subscribers.delete(subscriber); };
+    return () => {
+      this.subscribers.delete(subscriber);
+      if (!this.subscribers.size) this.clearRefreshes();
+    };
   }
   isTaskVisible(id: string): boolean { return [...this.subscribers].some(subscriber => subscriber.isTaskVisible(id)); }
   private notify(id: string, message?: ChatMessage): void {
-    for (const subscriber of this.subscribers) {
-      try { subscriber.refresh(id, message); } catch (error) { console.error("Conversation subscriber refresh failed", error); }
-    }
+    if (this.disposed) return;
     this.scheduleSave();
+    if (!this.subscribers.size) return;
+    // A full refresh, or updates to different messages, must retain a full render.
+    const previous = this.pendingRefreshes.get(id);
+    this.pendingRefreshes.set(id, !this.pendingRefreshes.has(id) || previous && message && previous.id === message.id ? message : undefined);
+    if (this.refreshTimer !== null) return;
+    // Pi replays its buffered events in microtasks. Yield to the host event loop
+    // before rendering; a microtask flush would still starve input and timers.
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      const updates = [...this.pendingRefreshes];
+      this.pendingRefreshes.clear();
+      for (const [taskId, changedMessage] of updates) {
+        for (const subscriber of this.subscribers) {
+          try { subscriber.refresh(taskId, changedMessage); } catch (error) { console.error("Conversation subscriber refresh failed", error); }
+        }
+      }
+    }, 16);
+  }
+  private clearRefreshes(): void {
+    if (this.refreshTimer !== null) clearTimeout(this.refreshTimer);
+    this.refreshTimer = null;
+    this.pendingRefreshes.clear();
   }
   stateFor(id: string): ConversationRunState {
     let state = this.runs.get(id);
@@ -224,11 +251,13 @@ export class ConversationRunService {
     if (this.disposalFlight) return this.disposalFlight;
     this.disposed = true;
     this.subscribers.clear();
+    this.clearRefreshes();
     const flight = Promise.resolve().then(async () => {
       await Promise.all([...new Set([...this.runs.keys(), ...this.resumeFlights.keys()])].map(id => this.stopTask(id, reason)));
       await this.flushSave();
       this.runs.clear();
       this.pendingInteractions.clear();
+      this.pendingInteractionWrites.clear();
     });
     this.disposalFlight = flight;
     return flight;
@@ -325,16 +354,35 @@ export class ConversationRunService {
       afterTurnSettled: async () => undefined, stopTurn: () => service.stopTask(id), pauseQueueForSession: taskId => service.turnQueue.pauseSessionQueue(taskId),
       setPendingInteraction: (taskId, interaction, expectedTurnId) => {
         const current = service.pendingInteractions.get(taskId);
-        if (interaction && interaction.conversationId === taskId) service.pendingInteractions.set(taskId, cloneEchoInkTurnInteraction(interaction));
-        else if (!interaction && (!expectedTurnId || current?.turnId === expectedTurnId)) service.pendingInteractions.delete(taskId);
+        const task = service.session(taskId);
+        const taskState = service.runs.get(taskId);
+        const terminal = task.taskStatus === "completed" || task.taskStatus === "interrupted";
+        if ((interaction && interaction.conversationId !== taskId)
+          || (!interaction && expectedTurnId && current && current.turnId !== expectedTurnId)
+          || (interaction && terminal && !taskState?.activeTurnId)) return;
+        const changed = JSON.stringify(current ?? null) !== JSON.stringify(interaction);
+        if (changed) {
+          if (interaction) service.pendingInteractions.set(taskId, cloneEchoInkTurnInteraction(interaction));
+          else service.pendingInteractions.delete(taskId);
+        }
         const pending = service.pendingInteractions.get(taskId);
         const waiting = pending && (pending.status === "pending" || pending.status === "submitting");
-        void plugin.setPiConversationTaskMetadata(taskId, waiting
+        const patch: ConversationTaskMetadataPatch = waiting
           ? { taskStatus: "waiting", pendingResponse: { runId: pending.turnId,
               questionId: pending.kind === "question" ? pending.questions[pending.activeQuestionIndex ?? 0]?.questionId ?? pending.interactionId : pending.interactionId,
               kind: pending.kind } }
-          : { ...(state.running ? { taskStatus: "running" as const } : {}), pendingResponse: undefined }).catch(error => console.error("Conversation interaction state save failed", error));
-        refresh();
+          : { ...(taskState?.running && !terminal ? { taskStatus: "running" as const } : {}), pendingResponse: undefined };
+        const key = JSON.stringify([pending ?? null, patch]);
+        const metadataMatches = (!patch.taskStatus || task.taskStatus === patch.taskStatus)
+          && JSON.stringify(task.pendingResponse) === JSON.stringify(patch.pendingResponse);
+        if (changed || (!metadataMatches && service.pendingInteractionWrites.get(taskId)?.key !== key)) {
+          const write = { key };
+          service.pendingInteractionWrites.set(taskId, write);
+          void plugin.setPiConversationTaskMetadata(taskId, patch).catch(error => console.error("Conversation interaction state save failed", error)).finally(() => {
+            if (service.pendingInteractionWrites.get(taskId) === write) service.pendingInteractionWrites.delete(taskId);
+          });
+        }
+        if (changed || !metadataMatches) service.notify(taskId);
       },
       ensureThinkingMessage: (session, title, text) => store.ensureThinkingMessage(session, title, text),
       dismissThinkingMessage: session => store.dismissThinkingMessage(session),

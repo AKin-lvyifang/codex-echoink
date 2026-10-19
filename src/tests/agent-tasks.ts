@@ -622,11 +622,12 @@ async function approvalStateTracksBroker(f: any): Promise<void> {
   view.runSubscriptionDispose = f.service.subscribe({ refresh: () => { refreshes++; }, clearAcceptedDraft() {}, isTaskVisible: () => false });
   const questionBroker = new PiTurnInteractionBroker();
   const previousQuestionBinding = f.plugin.piTurnInteractionBinding;
-  const metadataSetter = f.plugin.setPiConversationTaskMetadata;
-  let questionWrites = 0;
-  f.plugin.setPiConversationTaskMetadata = async (...args: any[]) => {
-    if (args[0] === ids[0] && args[1].pendingResponse?.kind === "question") questionWrites++;
-    return await metadataSetter.call(f.plugin, ...args);
+  const readProjection = f.plugin.readPiConversationProjection;
+  let approvalProjectionReads = 0;
+  f.plugin.readPiConversationProjection = async (...args: any[]) => {
+    const projection = await readProjection.call(f.plugin, ...args);
+    if (args[0] === ids[0]) approvalProjectionReads++;
+    return projection;
   };
   f.plugin.piTurnInteractionBinding = (identity: any) => questionBroker.bindingFor(identity);
   const until = async (predicate: () => Promise<boolean>, message: string) => {
@@ -662,9 +663,9 @@ async function approvalStateTracksBroker(f: any): Promise<void> {
     state.context.setPendingInteraction(ids[0], question);
     await until(async () => (await f.catalog.get(ids[0])).pendingResponse?.kind === "question", "structured Question is visible before deciding approval");
     const approve = f.approvalBroker.bindingFor(request);
-    const beforeDecisionQuestionWrites = questionWrites;
+    const beforeDecisionProjectionReads = approvalProjectionReads;
     assert.equal(approve.decide("approve"), true); assert.equal(approve.decide("approve"), false, "the existing broker still rejects repeated decisions");
-    await until(async () => questionWrites > beforeDecisionQuestionWrites && f.approvalBroker.bindingFor(request) === null && (await f.catalog.get(ids[0])).pendingResponse?.kind === "question", "approval changes cannot replace a live Question after the actual broker readback");
+    await until(async () => approvalProjectionReads > beforeDecisionProjectionReads && f.approvalBroker.bindingFor(request) === null && (await f.catalog.get(ids[0])).pendingResponse?.kind === "question", "approval changes cannot replace a live Question after the actual broker readback");
     assert.equal(questionBroker.bindingFor(questionIdentity)!.submit([{ questionId: "q-priority", selectedOptionIds: ["yes"] }]), true);
     await answering; state.context.setPendingInteraction(ids[0], null, request.productRunId);
     await until(async () => { const entry = await f.catalog.get(ids[0]); return entry.taskStatus === "running" && !entry.pendingResponse; }, "approval/question resolution clears waiting while execution is still active");
@@ -690,7 +691,7 @@ async function approvalStateTracksBroker(f: any): Promise<void> {
     console.log("Agent approval state: real broker + Pi tool + plugin run service waiting/approve/reject/cancel/closed View PASS");
   } finally {
     oneGate.resolve(); twoGate.resolve(); questionBroker.dispose(); f.approvalBroker.dispose();
-    f.plugin.piTurnInteractionBinding = previousQuestionBinding; f.plugin.setPiConversationTaskMetadata = metadataSetter;
+    f.plugin.piTurnInteractionBinding = previousQuestionBinding; f.plugin.readPiConversationProjection = readProjection;
     if (!view.viewLifecycleAbortController.signal.aborted) await view.onClose();
   }
 }

@@ -18,12 +18,13 @@ export async function runAgentRunTests(root: string, createHost: (catalog: any, 
   const fixture = await createAgentRunFixture(root, createHost);
   try {
     await metadataInterleaving(fixture);
+    await batchedRefreshAndPendingWrites(fixture);
     await viewLifetimeAndConcurrency(fixture, createView);
     await compressionAndHistory(fixture);
     await deletionStopsBeforeHandoff(fixture);
     await failureIsNotCompletion(fixture);
     await unloadingStopsAll(fixture);
-    console.log("Agent runs: metadata/lifecycle/concurrency/deletion/compaction PASS (offline Pi AgentSession)");
+    console.log("Agent runs: batching/pending-dedup/metadata/lifecycle/concurrency/deletion/compaction PASS (offline Pi AgentSession)");
   } finally {
     await fixture.service.dispose();
     await fixture.runtime.shutdown();
@@ -105,7 +106,7 @@ export async function createAgentRunFixture(root: string, createHost: (catalog: 
     }
   });
   await runtime.initialize();
-  for (const id of ["A", "B", "C", "delete-task", "unload-task"]) {
+  for (const id of ["A", "B", "C", "delete-task", "unload-task", "burst-A", "burst-B", ...Array.from({ length: 29 }, (_, index) => `idle-${index}`)]) {
     const entry = await runtime.createConversation({ conversationId: id, title: id, cwd: root, agentId: id === "delete-task" || id === "C" ? "colleague" : "sol" });
     settings.sessions.push({ id, title: id, cwd: root, messages: [], piSessionId: entry.piSessionId, bodyAuthority: "pi_session_only", createdAt: entry.createdAt, updatedAt: entry.updatedAt });
     applyConversationTaskMetadata(settings.sessions.at(-1)!, entry);
@@ -135,6 +136,124 @@ export async function createAgentRunFixture(root: string, createHost: (catalog: 
     approvalBroker, approvalRequests, approvalAfterDecision, approvalEffects, setLinkingStop: (stop: typeof linkingStop) => { linkingStop = stop; } };
 }
 type Fixture = Awaited<ReturnType<typeof createAgentRunFixture>>;
+
+async function batchedRefreshAndPendingWrites(f: Fixture): Promise<void> {
+  const refreshed: { id: string; status: string | undefined; question?: string; answer?: string }[] = [];
+  let rebuiltRows = 0;
+  const detach = f.service.subscribe({ clearAcceptedDraft() {}, isTaskVisible: () => false, refresh: id => {
+    rebuiltRows += f.settings.sessions.length;
+    const session = f.settings.sessions.find(session => session.id === id)!;
+    const interaction = f.service.pendingInteractions.get(id);
+    refreshed.push({ id, status: session.taskStatus, question: interaction?.kind === "question" ? interaction.questions[0]?.prompt : undefined,
+      answer: session.messages.find(message => message.text?.includes(`RESULT:${id}:`))?.text });
+  } });
+  for (const id of ["burst-A", "burst-B"]) { f.gates.set(id, deferred()); f.started.set(id, deferred()); }
+  assert.deepEqual(await Promise.all(["burst-A", "burst-B"].map(id => f.service.start(f.item(id), "composer"))), ["running", "running"]);
+  await Promise.all(["burst-A", "burst-B"].map(id => f.started.get(id)!.promise));
+  await new Promise(resolve => setTimeout(resolve, 40));
+  refreshed.length = 0; rebuiltRows = 0;
+  const a = f.service.runs.get("burst-A")!;
+  const b = f.service.runs.get("burst-B")!;
+  const aContext = a.context!;
+  const aTurnId = a.activeTurnId;
+  const now = Date.now();
+  const question = { kind: "question" as const, interactionId: "burst-question", conversationId: "burst-A", piSessionId: (await f.catalog.get("burst-A"))!.piSessionId,
+    turnId: aTurnId, status: "pending" as const, createdAt: now, updatedAt: now,
+    questions: [{ questionId: "burst-question-1", prompt: "最终问题？", selection: "single" as const, allowSupplement: true, options: [{ optionId: "yes", label: "确认" }] }] };
+  // These are the real run host callbacks invoked for each replayed Pi event.
+  for (let index = 0; index < 1_000; index++) {
+    for (const state of [a, b]) {
+      state.context!.renderMessagesIfActive(f.settings.sessions.find(session => session.id === (state === a ? "burst-A" : "burst-B"))!);
+      state.context!.renderToolbar(); state.context!.applyStatus();
+    }
+    await Promise.resolve();
+  }
+  assert.equal(refreshed.length, 0, "A Pi replay burst must yield to a timer before rebuilding a 36-task list; microtask flushing still starves the UI");
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.deepEqual(refreshed.map(item => item.id).sort(), ["burst-A", "burst-B"], "One batch must retain both task updates");
+  assert.equal(rebuiltRows, 72, "Thousands of callbacks rebuild the 36-task list once per changed task");
+
+  const setMetadata = f.plugin.setPiConversationTaskMetadata.bind(f.plugin);
+  const writes: any[] = [];
+  let failNext = false;
+  f.plugin.setPiConversationTaskMetadata = (id: string, patch: any, ...args: any[]) => {
+    if (id === "burst-A") {
+      writes.push(patch);
+      if (failNext) { failNext = false; return Promise.reject(new Error("injected_pending_write_failure")); }
+    }
+    return setMetadata(id, patch, ...args);
+  };
+  try {
+    for (let index = 0; index < 1_000; index++) a.context!.setPendingInteraction("burst-A", null, a.activeTurnId);
+    assert.equal(writes.length, 0, "Repeated empty projections cannot rewrite already-running task metadata");
+    for (let index = 0; index < 400; index++) a.context!.setPendingInteraction("burst-A", structuredClone(question));
+    assert.equal(writes.length, 1, "Repeated identical questions share their in-flight metadata write");
+    await setMetadata("burst-A", { taskStage: "pending-write-barrier" });
+    assert.equal((await f.catalog.get("burst-A"))!.taskStatus, "waiting");
+    for (let index = 0; index < 400; index++) a.context!.setPendingInteraction("burst-A", structuredClone(question));
+    assert.equal(writes.length, 1, "Persisted identical questions do not write again after the first flight settles");
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(refreshed.at(-1)!.question, "最终问题？", "The latest question remains visible after batching");
+    a.context!.setPendingInteraction("burst-A", null, "stale-turn");
+    assert.equal(f.service.pendingInteractions.get("burst-A")!.interactionId, question.interactionId, "A stale clear cannot erase a newer question");
+    assert.equal(writes.length, 1);
+    await setMetadata("burst-A", { taskStatus: "running" });
+    a.context!.setPendingInteraction("burst-A", question);
+    assert.equal(writes.length, 2, "An unchanged question still repairs a changed task status");
+    await setMetadata("burst-A", { taskStage: "status-repair-barrier" });
+    a.context!.setPendingInteraction("burst-A", { ...question, status: "answered" });
+    assert.equal(writes.length, 3, "Answering the question persists the running state and clears pendingResponse");
+    await setMetadata("burst-A", { taskStage: "answer-write-barrier" });
+    assert.equal((await f.catalog.get("burst-A"))!.pendingResponse, undefined);
+    failNext = true;
+    a.context!.setPendingInteraction("burst-A", question);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    a.context!.setPendingInteraction("burst-A", question);
+    assert.equal(writes.length, 5, "A failed write remains retryable even when the interaction did not change");
+    await setMetadata("burst-A", { taskStage: "retry-write-barrier" });
+  } finally { f.plugin.setPiConversationTaskMetadata = setMetadata; }
+
+  refreshed.length = 0; rebuiltRows = 0;
+  f.gates.get("burst-B")!.resolve();
+  assert.equal(await b.flight, "completed");
+  await new Promise(resolve => setTimeout(resolve, 40));
+  const completed = refreshed.filter(item => item.id === "burst-B");
+  assert.ok(completed.length < 100, `A real Pi completion burst must have bounded refreshes, got ${completed.length}`);
+  assert.equal(completed.at(-1)!.status, "completed", "Final task status survives deferred refresh");
+  assert.ok(completed.at(-1)!.answer?.includes("RESULT:burst-B:"), "The final real Pi answer survives deferred refresh");
+  assert.equal((await f.catalog.get("burst-A"))!.taskStatus, "waiting", "Task B's real completion cannot clear task A's waiting state");
+  assert.equal(f.service.pendingInteractions.get("burst-A")!.interactionId, question.interactionId);
+  aContext.setPendingInteraction("burst-A", { ...question, status: "answered" });
+  await setMetadata("burst-A", { taskStage: "final-answer-barrier" });
+  console.log(`Agent runs batching: 36 tasks, 6000 burst callbacks -> 2 refreshes / 72 rows; real Pi completion -> ${completed.length} refreshes; pending empty=0 writes, repeated question=1 write`);
+  f.gates.get("burst-A")!.resolve();
+  assert.equal(await a.flight, "completed");
+  const settledWrites: any[] = [];
+  f.plugin.setPiConversationTaskMetadata = (id: string, patch: any, ...args: any[]) => { settledWrites.push(patch); return setMetadata(id, patch, ...args); };
+  try {
+    // A late projection callback must not turn an already-settled task back into running.
+    a.running = true;
+    aContext.setPendingInteraction("burst-A", null, aTurnId);
+    aContext.setPendingInteraction("burst-A", question);
+    assert.equal(settledWrites.length, 0);
+    assert.equal((await f.catalog.get("burst-A"))!.taskStatus, "completed");
+    assert.equal(f.service.pendingInteractions.has("burst-A"), false, "Late questions cannot revive a settled run");
+  } finally { a.running = false; f.plugin.setPiConversationTaskMetadata = setMetadata; }
+  f.gates.delete("burst-A"); f.gates.delete("burst-B");
+  await new Promise(resolve => setTimeout(resolve, 40));
+  const beforeClose = refreshed.length;
+  aContext.renderToolbar();
+  detach();
+  const reopenedRenders: string[] = [];
+  const detachReopened = f.service.subscribe({ clearAcceptedDraft() {}, isTaskVisible: () => false, refresh(id) { reopenedRenders.push(id); } });
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(refreshed.length, beforeClose, "Detaching the final View cancels its queued refresh");
+  // The plugin keeps a permanent draft-consumption subscriber. A newly opened
+  // View may receive the current task snapshot from that still-live batch.
+  assert.ok(reopenedRenders.length <= 1 && reopenedRenders.every(id => id === "burst-A"), "Reopening receives at most one current snapshot, never the replay burst");
+  assert.equal((await f.catalog.get("burst-A"))!.taskStatus, "completed");
+  detachReopened();
+}
 
 async function metadataInterleaving(f: Fixture): Promise<void> {
   const original = (await f.catalog.get("A"))!;
@@ -274,7 +393,12 @@ async function unloadingStopsAll(f: Fixture): Promise<void> {
   assert.equal(await f.service.start(f.item("unload-task"), "composer"), "running", "A UI start returns at acceptance without retaining its View until task completion");
   const flight = f.service.runs.get("unload-task")!.flight!;
   await f.started.get("unload-task")!.promise;
+  let renders = 0;
+  f.service.subscribe({ refresh() { renders++; }, clearAcceptedDraft() {}, isTaskVisible: () => false });
+  f.service.runs.get("unload-task")!.context!.renderToolbar();
   await f.service.dispose();
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(renders, 0, "Disposal cancels the pending timer before awaiting run shutdown");
   assert.equal(await flight, "cancelled");
   assert.equal((await f.catalog.get("unload-task"))!.taskStatus, "interrupted");
   assert.equal((await f.productRuns.list("unload-task"))[0].terminalState, "cancelled");
