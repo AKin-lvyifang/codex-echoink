@@ -17,7 +17,7 @@ import { getProPluginAccess, requireProPlugin, unavailableCapabilityAccess } fro
 import type { CapabilityAccess } from "../membership/types";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 
-interface JournalTemplateModalOptions {
+export interface JournalTemplateModalOptions {
   service: HomeWorkbenchDataService;
   customTemplates: HomeCustomTemplateSummary[];
   date: Date;
@@ -39,30 +39,55 @@ export class JournalTemplateModal extends Modal {
   private safeCopyPath = "";
   private submitting = false;
   private englishControls: ProPluginControls | null = null;
+  private managementHost: HTMLElement | null = null;
+  private active = true;
+  private previewVersion = 0;
 
   constructor(app: App, private readonly options: JournalTemplateModalOptions) {
     super(app);
   }
 
   onOpen(): void {
+    this.active = true;
     this.modalEl.addClass("echoink-journal-template-modal");
     this.render();
   }
 
   onClose(): void {
+    this.active = false;
+    this.previewVersion++;
     this.englishControls?.dispose();
     this.englishControls = null;
     disposeOriginControls(this.contentEl);
     this.contentEl.empty();
   }
 
+  /** Settings reuses the template business flow without opening a second Modal. */
+  mountManagement(container: HTMLElement): () => void {
+    this.managementHost = container.createDiv({ cls: "echoink-journal-template-management" });
+    this.active = true;
+    this.render();
+    const host = this.managementHost;
+    return () => {
+      this.active = false;
+      this.previewVersion++;
+      this.englishControls?.dispose();
+      this.englishControls = null;
+      disposeOriginControls(host);
+      host.remove();
+      this.managementHost = null;
+    };
+  }
+
   private render(focusChoice?: string): void {
+    if (!this.active) return;
     this.englishControls?.dispose();
     this.englishControls = null;
     const copy = this.copy;
-    const { contentEl } = this;
+    const contentEl = this.managementHost ?? this.contentEl;
     disposeOriginControls(contentEl);
     contentEl.empty();
+    if (!this.managementHost) {
     const head = contentEl.createDiv({ cls: "echoink-journal-modal-head" });
     const headCopy = head.createDiv();
     headCopy.createEl("h2", { text: copy.modal.title });
@@ -74,6 +99,7 @@ export class JournalTemplateModal extends Modal {
         attr: { type: "button", "aria-label": copy.modal.closeTemplatePicker }
       });
       close.onclick = () => this.close();
+    }
     }
 
     contentEl.createEl("h3", { text: copy.modal.builtInTemplates });
@@ -115,6 +141,17 @@ export class JournalTemplateModal extends Modal {
       };
     }
 
+    if (this.managementHost) {
+      const preview = contentEl.createEl("pre", { cls: "echoink-journal-template-preview", attr: { "aria-live": "polite", "aria-label": this.options.language === "en" ? "Template preview" : "模板预览" } });
+      const version = ++this.previewVersion;
+      preview.textContent = this.options.language === "en" ? "Loading…" : "正在读取…";
+      void this.options.service.readTemplate(this.selected, this.options.language).then(content => {
+        if (this.active && version === this.previewVersion) preview.textContent = content || copy.modal.blankTemplate;
+      }).catch(error => {
+        if (this.active && version === this.previewVersion) { preview.textContent = copy.modal.readFailed(errorMessage(error)); preview.setAttribute("role", "alert"); }
+      });
+    }
+
     const importPanel = contentEl.createDiv({ cls: "echoink-journal-import-panel" });
     const importCopy = importPanel.createDiv();
     importCopy.createEl("strong", { text: copy.modal.importMarkdown });
@@ -141,6 +178,7 @@ export class JournalTemplateModal extends Modal {
       });
     }
 
+    if (!this.managementHost) {
     const actions = contentEl.createDiv({ cls: "echoink-journal-modal-actions" });
     const cancel = actions.createEl("button", { text: copy.modal.cancel, attr: { type: "button" } });
     cancel.onclick = () => this.close();
@@ -161,9 +199,10 @@ export class JournalTemplateModal extends Modal {
       this.englishControls.bind(english, { businessDisabled: () => this.submitting || this.importState === "reading" || this.importState === "saving" || !this.options.englishEnabled?.() });
       english.onclick = () => void this.createJournal(true);
     }
+    }
     if (focusChoice) {
       window.requestAnimationFrame(() => {
-        this.contentEl.querySelector<HTMLButtonElement>(`[data-template-choice="${CSS.escape(focusChoice)}"]`)?.focus();
+        if (this.active) contentEl.querySelector<HTMLButtonElement>(`[data-template-choice="${CSS.escape(focusChoice)}"]`)?.focus();
       });
     }
   }
@@ -239,7 +278,7 @@ export class JournalTemplateModal extends Modal {
   }
 
   private async createJournal(english = false): Promise<void> {
-    if (this.submitting) return;
+    if (this.submitting || this.managementHost) return;
     if (english) {
       try {
         requireProPlugin(this.options.englishAccess ?? unavailableCapabilityAccess);

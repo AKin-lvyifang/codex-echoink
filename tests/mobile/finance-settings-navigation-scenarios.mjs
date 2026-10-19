@@ -151,4 +151,26 @@ export async function financeSettingsNavigationScenarios(api, test, settings, do
       assert.equal(state.chatOpens, 0);
     } finally { await state.dispose(); }
   });
+
+  await test("mobile catalog keeps its switch and modal confirmation instead of desktop inline deletion", async () => {
+    const state = await fixture(), { root, services } = state;
+    try {
+      click(root, "财务"); click(root, "管理商户");
+      assert.ok(root.querySelector('.echoink-finance-catalog-item [role="switch"]'));
+      assert.ok(!root.querySelector('.echoink-finance-catalog-item [role="checkbox"]'));
+      let saves = 0;
+      const save = services.lifestyle.finance.saveCatalog.bind(services.lifestyle.finance);
+      services.lifestyle.finance.saveCatalog = async (...args) => { saves++; return await save(...args); };
+      click(root, "删除");
+      let modal = dom.window.document.querySelector(".modal-container");
+      assert.ok(modal); assert.equal(root.querySelector(".echoink-settings-inline-confirm"), null);
+      assert.equal(saves, 0); assert.equal(root.querySelectorAll(".echoink-finance-catalog-item").length, 1);
+      click(modal, "取消"); await settle();
+      assert.equal(saves, 0); assert.equal(dom.window.document.querySelector(".modal-container"), null);
+      click(root, "删除"); modal = dom.window.document.querySelector(".modal-container"); assert.ok(modal);
+      click(modal, "删除"); await settle(); await settle();
+      assert.equal(saves, 1); assert.equal(root.querySelectorAll(".echoink-finance-catalog-item").length, 0);
+      assert.equal(dom.window.document.querySelector(".modal-container"), null);
+    } finally { dom.window.document.querySelector(".modal-container")?.remove(); await state.dispose(); }
+  });
 }

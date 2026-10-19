@@ -1,25 +1,30 @@
 import { ProPluginControls } from "../ui/pro-plugin-controls";
-import { Notice } from "obsidian";
+import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { LifestyleKind } from "./settings";
 import { FinanceCatalogPanel } from "./finance-catalog-dialog";
-import { createSettingsNavigationRow } from "../settings/settings-v2";
-import { createOriginSwitch } from "../settings/origin-controls";
+import { attachSettingsTooltip, createSettingsNavigationRow } from "../settings/settings-v2";
+import { createOriginCheck, createOriginInput, createOriginSwitch, disposeOriginControls } from "../settings/origin-controls";
 
 export class LifestyleSettingsPanel {
   private controls: ProPluginControls | null = null;
-  dispose(): void { this.controls?.dispose(); this.controls = null; this.financeCatalog?.dispose(); }
+  private page: HTMLElement | null = null;
+  private embedded = false;
+  dispose(): void { this.controls?.dispose(); this.controls = null; this.financeCatalog?.dispose(); if (this.page) disposeOriginControls(this.page); }
   private financeCatalog: FinanceCatalogPanel | null = null;
   constructor(private readonly plugin: CodexForObsidianPlugin, private readonly kind: LifestyleKind,
     private readonly back: () => void, private readonly redraw: () => void) {}
 
-  render(container: HTMLElement): void {
+  render(container: HTMLElement, options: { embedded?: boolean } = {}): void {
     this.dispose();
-    const page = container.createDiv({ cls: "echoink-life-settings-page" });
+    this.embedded = options.embedded === true;
+    const page = this.page = container.createDiv({ cls: "echoink-life-settings-page" });
+    if (!this.embedded || this.financeCatalog) {
     const back = page.createEl("button", { cls: "echoink-life-settings-back", text: `‹ ${this.financeCatalog?.backLabel() ?? "返回插件列表"}` });
     back.onclick = this.financeCatalog ? () => this.financeCatalog?.back() : this.back;
     back.disabled = this.financeCatalog?.isPending() ?? false;
     page.createEl("h2", { text: this.financeCatalog?.title() ?? `${this.plugin.lifestyle.label(this.kind)}设置` });
+    }
     this.controls = new ProPluginControls(this.plugin.lifestyle.finance.access, () => this.plugin.lifestyle.finance.accessState());
     if (this.financeCatalog) this.financeCatalog.render(page);
     else this.renderFinance(page);
@@ -37,16 +42,17 @@ export class LifestyleSettingsPanel {
     const copy=location.createDiv();copy.createEl("strong",{text:"分析保存位置"});
     copy.createEl("small",{text:"留空使用当前财务目录下的分析记录；改位置仅影响后续生成，旧报告保留。填写当前 Vault 内的相对目录。"});
     const form=location.createEl("form",{cls:"echoink-finance-form"});
-    const input=form.createEl("input",{attr:{type:"text","aria-label":"分析保存位置",placeholder:`${this.plugin.lifestyle.finance.ledger.paths().root}/分析记录`}});
+    const input=createOriginInput(form,{attr:{type:"text","aria-label":"分析保存位置",placeholder:`${this.plugin.lifestyle.finance.ledger.paths().root}/分析记录`}});
     input.value=settings.analysisDirectory??"";
     const message=form.createEl("small",{attr:{role:"status"}});
     const save=form.createEl("button",{text:"保存位置",attr:{type:"submit"}});let saving=false;
     this.controls?.bind(save,{businessDisabled:()=>saving});
+    this.controls?.bind(input,{businessDisabled:()=>saving});
     form.onsubmit=event=>{
-      event.preventDefault();if(saving)return;saving=true;input.disabled=true;this.controls?.refresh();
+      event.preventDefault();if(saving || save.disabled)return;saving=true;this.controls?.refresh();
       void this.plugin.lifestyle.finance.saveAnalysisDirectory(input.value).then(()=>{message.setText("保存位置已更新");})
         .catch(error=>{message.setText(error instanceof Error?error.message:String(error));})
-        .finally(()=>{saving=false;input.disabled=false;this.controls?.refresh();});
+        .finally(()=>{saving=false;this.controls?.refresh();});
     };
     this.toggle(page, "导入时智能整理", "使用当前模型提出商户、账户、分类与图标建议；失败时仍可基础导入。", settings.importAiEnabled, async (value) => {
       await this.plugin.lifestyle.finance.saveOption("importAiEnabled", value);
@@ -59,19 +65,24 @@ export class LifestyleSettingsPanel {
       createSettingsNavigationRow(page, { title, description: detail, focusKey: `finance-catalog:${kind}`,
         onActivate: () => {
           this.financeCatalog = new FinanceCatalogPanel(this.plugin, kind,
-            () => { this.financeCatalog?.dispose(); this.financeCatalog = null; this.redraw(); }, this.redraw);
+            () => { this.financeCatalog?.dispose(); this.financeCatalog = null; this.redraw(); }, this.redraw, { embedded: this.embedded });
           this.redraw();
         } });
     }
-    this.toggle(page, "在首页显示", "关闭后首页不留空位；数据和工作区保留。", this.plugin.settings.homeModules.finance !== false, async (value) => {
+    if (!this.embedded) this.toggle(page, "在首页显示", "关闭后首页不留空位；数据和工作区保留。", this.plugin.settings.homeModules.finance !== false, async (value) => {
       await this.plugin.lifestyle.finance.saveOption("showOnHome", value);
     });
   }
 
   private toggle(page: HTMLElement, title: string, detail: string, checked: boolean, save: (value: boolean) => Promise<void>): void {
     const row = page.createDiv({ cls: "echoink-life-setting-row" });
-    const copy = row.createDiv(); copy.createEl("strong", { text: title }); copy.createEl("small", { text: detail });
-    const input = createOriginSwitch(row, { attr: { "aria-label": title } }); input.checked = checked;
+    const copy = row.createDiv({ cls: this.embedded ? "echoink-module-boolean-copy" : "" }); copy.createEl("strong", { text: title });
+    if (this.embedded) {
+      const wrapper = copy.createSpan({ cls: "echoink-settings-help" });
+      const help = wrapper.createEl("button", { cls: "echoink-settings-help-trigger", attr: { type: "button", "aria-label": `${title}说明` } });
+      setIcon(help, "circle-alert"); attachSettingsTooltip(help, detail, wrapper);
+    } else copy.createEl("small", { text: detail });
+    const input = (this.embedded ? createOriginCheck : createOriginSwitch)(row, { attr: { "aria-label": title } }); input.checked = checked;
     let pending = false;
     this.controls?.bind(input, { businessDisabled: () => pending });
     input.onchange = () => {

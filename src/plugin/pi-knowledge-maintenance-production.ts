@@ -93,7 +93,8 @@ export interface CreateProductionPiKnowledgeMaintenanceOptions {
   readonly knowledgeAgentIndex?: Pick<
     KnowledgeAgentIndex,
     "readReliableKnowledgeForRaw"
-  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments">>;
+  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh">>;
+  readonly automaticLinkingEnabled?: () => boolean;
   readonly now?: () => number;
   readonly createPreviewId?: () => string;
   readonly dateKey?: () => string;
@@ -132,7 +133,8 @@ implements PiKnowledgeMaintenanceToolPort {
   private readonly knowledgeAgentIndex?: Pick<
     KnowledgeAgentIndex,
     "readReliableKnowledgeForRaw"
-  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments">>;
+  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh">>;
+  private readonly automaticLinkingEnabled: () => boolean;
   private readonly sources: FilePhase3MaintenanceSourceSnapshotPort;
   private readonly tracker: Phase3MaintenanceTrackerPort;
   private readonly now: () => number;
@@ -162,6 +164,7 @@ implements PiKnowledgeMaintenanceToolPort {
     this.deviceId = requireNonEmpty(options.deviceId, "deviceId");
     this.domainService = options.domainService;
     this.knowledgeAgentIndex = options.knowledgeAgentIndex;
+    this.automaticLinkingEnabled = options.automaticLinkingEnabled ?? (() => true);
     this.now = options.now ?? Date.now;
     this.createPreviewId = options.createPreviewId ?? randomUUID;
     this.dateKey = options.dateKey ?? localDateKey;
@@ -228,6 +231,8 @@ implements PiKnowledgeMaintenanceToolPort {
     const sources = pending.sourcePaths.filter(source => successful.has(source));
     const targets = pending.targetPaths.filter(target => successful.has(target));
     try {
+      await this.knowledgeAgentIndex?.refresh?.();
+      if (!this.automaticLinkingEnabled()) return record;
       if (!this.onCommitted) throw new Error("当前环境未接入后台关联调度器。");
       const taskId = await this.onCommitted(sources, targets, pending.taskId, record.originConversationId);
       if (!taskId) throw new Error("调度器未返回任务。");
@@ -237,6 +242,7 @@ implements PiKnowledgeMaintenanceToolPort {
         issues: record.result.issues.filter(issue => issue.code !== "linking_start_failed")
       }), LINKING_BACKGROUND_RECEIPT);
     } catch (error) {
+      if (!this.automaticLinkingEnabled()) return record;
       await this.state.updateLinkingMetadata(record.recordId, createKnowledgeMaintenanceResultEnvelope({ ...record.result,
         issues: [...record.result.issues.filter(issue => issue.code !== "linking_start_failed"), { code: "linking_start_failed", message: `知识已写入，关联补全待恢复：${knowledgeErrorDetail(error)}` }]
       }), "知识已写入；关联补全待恢复，原稿保留。");
@@ -454,8 +460,10 @@ implements PiKnowledgeMaintenanceToolPort {
             issues.push(...linked.result.issues.filter(issue => issue.code === "linking_start_failed"));
           }
         } else {
-          try { linkingTaskId = await this.onCommitted(committed.appliedPaths, committed.appliedPaths.filter(item => automaticTargets.has(item)), undefined, input.conversationId) || undefined; }
-          catch (error) { issues.push({ code: "linking_start_failed", message: `知识已写入，关联补全未启动：${knowledgeErrorDetail(error)}` }); }
+          try {
+            await this.knowledgeAgentIndex?.refresh?.();
+            if (this.automaticLinkingEnabled()) linkingTaskId = await this.onCommitted(committed.appliedPaths, committed.appliedPaths.filter(item => automaticTargets.has(item)), undefined, input.conversationId) || undefined;
+          } catch (error) { if (this.automaticLinkingEnabled()) issues.push({ code: "linking_start_failed", message: `知识已写入，关联补全未启动：${knowledgeErrorDetail(error)}` }); }
         }
       }
       return Object.freeze({

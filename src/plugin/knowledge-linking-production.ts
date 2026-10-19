@@ -56,6 +56,7 @@ export function createProductionKnowledgeLinkingHost(plugin: CodexForObsidianPlu
     await plugin.setPiConversationStatus(owned.conversationId, "archived").catch(() => undefined);
   };
   return {
+    automaticEnabled: () => plugin.settings.knowledgeBase.autoLinkEnabled !== false,
     release,
     async *documents(origin) {
       await assertOrigin(origin, "read");

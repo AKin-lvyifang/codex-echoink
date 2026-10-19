@@ -20,6 +20,12 @@ export interface KnowledgeFolderBindings {
   revision: number;
   /** An explicitly saved directory setup; separate from knowledge extraction. */
   configured?: boolean;
+  /** Desktop consent to create new child folders in approved wiki/projects roots only. */
+  allowAgentSubfolders?: boolean;
+  /** Missing legacy choices resolve to the existing raw write destination. */
+  collectionTargets?: { web: string | null; wechat: string | null };
+  /** Former Inbox roots withdrawn from ordinary-chat recall consent. */
+  inboxRecallExclusions?: string[];
   roles: Record<KnowledgeRootRole, KnowledgeFolderBinding>;
   migrationIssues: string[];
 }
@@ -43,6 +49,16 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
   const result = emptyKnowledgeFolderBindings();
   result.revision = Number.isSafeInteger(input.revision) && input.revision > 0 ? input.revision : 1;
   if (input.configured === true) result.configured = true;
+  if (typeof input.allowAgentSubfolders === "boolean") result.allowAgentSubfolders = input.allowAgentSubfolders;
+  if (input.collectionTargets && typeof input.collectionTargets === "object") {
+    const target = (value: unknown): string | null => {
+      try { return typeof value === "string" ? normalizeKnowledgeDirectory(value) : null; } catch { return null; }
+    };
+    result.collectionTargets = { web: target(input.collectionTargets.web), wechat: target(input.collectionTargets.wechat) };
+  }
+  if (Array.isArray(input.inboxRecallExclusions)) result.inboxRecallExclusions = [...new Set(input.inboxRecallExclusions.flatMap(value => {
+    try { return typeof value === "string" ? [normalizeKnowledgeDirectory(value)] : []; } catch { return []; }
+  }))];
   result.migrationIssues = Array.isArray(input.migrationIssues) ? input.migrationIssues.filter((item) => typeof item === "string") : [];
   for (const role of KNOWLEDGE_ROOT_ROLES) {
     const saved = input.roles?.[role];
@@ -58,6 +74,38 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
       compatibilityReadScopes: saved.compatibilityReadScopes === true, native: (role === "journal" || role === "templates") && saved.native === true };
   }
   return result;
+}
+
+/** An explicit missing/invalid choice must never fall back to another source. */
+export function knowledgeCollectionDirectory(config: KnowledgeFolderBindings | null | undefined, kind: "web" | "wechat"): string | null {
+  const raw = config?.roles.raw;
+  if (!raw?.enabled) return null;
+  const selected = config?.collectionTargets ? config.collectionTargets[kind] : raw.writePath;
+  if (!selected || !raw.readPaths.includes(selected)) return null;
+  try { return normalizeKnowledgeDirectory(selected) === selected ? selected : null; } catch { return null; }
+}
+
+/** Desktop selection rule only; existing shared/legacy bindings keep their scopes. */
+export function knowledgeWikiFolderSelectionIssues(config: KnowledgeFolderBindings): string[] {
+  const wiki = config.roles.wiki;
+  if (!wiki.enabled) return [];
+  if (wiki.readPaths.length !== 1) return ["知识成果：请选择一个一级文件夹"];
+  try {
+    const selected = normalizeKnowledgeDirectory(wiki.readPaths[0]);
+    if (selected !== wiki.readPaths[0] || selected.includes("/")) return ["知识成果：请选择一个一级文件夹"];
+  } catch { return ["知识成果：请选择一个一级文件夹"]; }
+  return [];
+}
+
+/** Remember withdrawn Inbox roots without changing any other role's consent. */
+export function knowledgeInboxRecallExclusions(previous: KnowledgeFolderBindings | null | undefined, next: KnowledgeFolderBindings): string[] {
+  const enabledPaths = (value: KnowledgeFolderBindings | null | undefined): string[] => {
+    const inbox = value?.roles.inbox;
+    return inbox?.enabled && inbox.searchEnabled !== false ? inbox.readPaths : [];
+  };
+  const active = new Set(enabledPaths(next));
+  return [...new Set([...(previous?.inboxRecallExclusions ?? []), ...(next.inboxRecallExclusions ?? []), ...enabledPaths(previous)])]
+    .filter(directory => !active.has(directory)).sort();
 }
 export function pathInKnowledgeDirectory(value: string, directory: string): boolean {
   return value === directory || value.startsWith(`${directory}/`);
@@ -117,13 +165,20 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
     if (binding.autoOrganizePaths) binding.autoOrganizePaths = binding.autoOrganizePaths.map((item) => rebaseKnowledgePath(item, from, to));
     if (binding.writePath) binding.writePath = rebaseKnowledgePath(binding.writePath, from, to);
   }
-  if (JSON.stringify(next.roles) !== JSON.stringify(config.roles)) next.revision += 1;
+  if (next.collectionTargets) for (const kind of ["web", "wechat"] as const) {
+    if (next.collectionTargets[kind]) next.collectionTargets[kind] = rebaseKnowledgePath(next.collectionTargets[kind]!, from, to);
+  }
+  if (next.inboxRecallExclusions) next.inboxRecallExclusions = [...new Set(next.inboxRecallExclusions.map(item => rebaseKnowledgePath(item, from, to)))];
+  if (knowledgeFolderBindingsSignature(next) !== knowledgeFolderBindingsSignature(config)) next.revision += 1;
   return next;
 }
 
 /** Compare effective drafts without revision numbers, order, or absent legacy defaults. */
 export function knowledgeFolderBindingsSignature(config: KnowledgeFolderBindings | null | undefined): string {
-  return JSON.stringify(KNOWLEDGE_ROOT_ROLES.map(role => {
+  return JSON.stringify({ allowAgentSubfolders: config?.allowAgentSubfolders === true,
+    collectionTargets: config?.collectionTargets ?? { web: config?.roles.raw.writePath ?? null, wechat: config?.roles.raw.writePath ?? null },
+    inboxRecallExclusions: [...(config?.inboxRecallExclusions ?? [])].sort(),
+    roles: KNOWLEDGE_ROOT_ROLES.map(role => {
     const binding = config?.roles[role];
     return { role, enabled: binding?.enabled === true, searchEnabled: binding?.searchEnabled !== false, readPaths: [...(binding?.readPaths ?? [])].sort(),
       writePath: binding?.readPaths.length === 1 ? binding.readPaths[0] : binding?.writePath ?? null,
@@ -131,7 +186,7 @@ export function knowledgeFolderBindingsSignature(config: KnowledgeFolderBindings
       allowedSubdirectoryRoots: binding?.allowedSubdirectories.length ? [...(binding.allowedSubdirectoryRoots ?? binding.readPaths)].filter(directory => binding.readPaths.includes(directory)).sort() : [],
       autoOrganizePaths: [...(binding?.autoOrganizePaths ?? [])].filter(directory => binding?.readPaths.includes(directory)).sort(),
       native: binding?.native === true, compatibilityReadScopes: binding?.compatibilityReadScopes === true };
-  }));
+  }) });
 }
 
 export function knowledgeMaintenanceFolderIssues(config: KnowledgeFolderBindings, baseline?: KnowledgeFolderBindings | null, build = false): string[] {

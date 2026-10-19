@@ -7,12 +7,13 @@ import { createHash, webcrypto } from "node:crypto";
 import { JSDOM } from "jsdom";
 import esbuild from "esbuild";
 import { mobileBuildOptions, mobilePiPlugin } from "./mobile-build.mjs";
+import { findDynamicScriptCreations } from "./react-dom-script-resources.mjs";
 import { profileScenarios } from "../tests/mobile/profile-scenarios.mjs";
 import { financeSettingsNavigationScenarios } from "../tests/mobile/finance-settings-navigation-scenarios.mjs";
 import { originControlScenarios } from "../tests/mobile/origin-controls-scenarios.mjs";
 import { createHost, answer, FixtureTFile } from "../tests/mobile/host.mjs";
 
-const build = await esbuild.build(mobileBuildOptions("tests/mobile/entry.ts"));
+const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile/entry.ts"), metafile: true });
 const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVisual: true, url: "https://fixture.example" });
 dom.window.SVGElement.prototype.addClass = function (...names) { this.classList.add(...names); };
 dom.window.HTMLElement.prototype.setAttr = function (name, value) { this.setAttribute(name, String(value)); };
@@ -52,7 +53,7 @@ await test("mobile build hooks recognize Windows and POSIX license/control paths
     assert.equal(loaded.contents, await fs.readFile("LICENSE", "utf8"));
   }
   assert.ok(!loaders.some(item => !item.namespace && item.filter.test("/repo/LICENSE.ts")));
-  for (const importer of ["src/home/todo-edit-modal.ts", "src/lifestyle/finance-view.ts", "src/ui/modals.ts", "src/settings/account-membership.ts"]) {
+  for (const importer of ["src/home/todo-edit-modal.ts", "src/lifestyle/finance-view.ts", "src/ui/modals.ts", "src/settings/account-membership.ts", "src/settings/settings-v2.ts"]) {
     for (const source of [`/repo/${importer}`, `C:\\repo\\${importer.replaceAll("/", "\\")}`]) {
       const handler = resolvers.find(item => item.filter.test("../settings/origin-controls"));
       assert.deepEqual(await handler.run({ path: "../settings/origin-controls", importer: source }), { path: path.resolve("src/ui/mobile/origin-controls.ts") });
@@ -60,6 +61,16 @@ await test("mobile build hooks recognize Windows and POSIX license/control paths
   }
   const controls = resolvers.find(item => item.filter.test("../settings/origin-controls"));
   assert.equal(await controls.run({ path: "../settings/origin-controls", importer: "C:\\repo\\src\\settings\\settings-tab.ts" }), undefined);
+});
+
+await test("shared finance settings retain the native mobile controls without a React DOM script loader", () => {
+  const inputs = Object.keys(build.metafile.inputs);
+  assert.ok(inputs.includes("src/lifestyle/finance-catalog-dialog.ts"));
+  assert.ok(inputs.includes("src/settings/settings-v2.ts"));
+  assert.ok(inputs.includes("src/ui/mobile/origin-controls.ts"));
+  assert.ok(!inputs.includes("src/settings/origin-controls.tsx"));
+  assert.ok(!inputs.some(input => input.includes("react-dom-client")));
+  assert.equal(findDynamicScriptCreations(build.outputFiles[0].text).length, 0);
 });
 
 await originControlScenarios(test);

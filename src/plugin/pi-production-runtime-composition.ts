@@ -147,6 +147,7 @@ import {
 import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { createPiObsidianToolDefinitions, PiObsidianToolSecurity, PI_OBSIDIAN_TOOL_IDS } from "../harness/pi-native/pi-obsidian-tools";
 import { createObsidianNativePort } from "./obsidian-native-tools";
+import { knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
 import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import {
@@ -525,8 +526,8 @@ export async function createPiProductionRuntimeBundle(
     domainService: maintenanceVaultDomainService,
     knowledgeAgentIndex,
     linkingOwnsDraftLinks: typeof plugin.queueKnowledgeLinking === "function",
+    automaticLinkingEnabled: () => plugin.settings.knowledgeBase.autoLinkEnabled !== false,
     onCommitted: async (paths, targets, taskId, originConversationId) => {
-      await knowledgeAgentIndex.refresh();
       if (paths.length) return (await plugin.queueKnowledgeLinking?.(targets ?? [], paths, taskId, originConversationId))?.id;
     },
     onTerminal: async (event) => {
@@ -725,6 +726,19 @@ async function syncPrivateMaintenanceOverview(plugin: PiProductionPluginHost, ro
   if (overview() !== previous) await plugin.persistPiNativeSettings();
 }
 
+function chatRecallCandidateAllowed(vaultRootPath: string, relativePath: string): boolean {
+  return knowledgeRecallCandidateAllowed(getKnowledgeFolderBindings(vaultRootPath), relativePath);
+}
+
+export function createProductionPiKnowledgeToolRetriever(vaultRootPath: string, agentIndex: KnowledgeAgentIndex, currentWorkflow: () => "chat" | "ask" | "maintain" | "none"): KnowledgeRetriever {
+  return new KnowledgeRetriever(vaultRootPath, { agentIndex, toolCandidatePolicy: () => {
+    const workflow = currentWorkflow();
+    if (workflow === "ask" || workflow === "maintain") return { kinds: ["wiki", "projects", "raw"] as const };
+    if (workflow === "chat") return { allowsCandidate: relativePath => chatRecallCandidateAllowed(vaultRootPath, relativePath) };
+    return { kinds: [] };
+  } });
+}
+
 export function createProductionPiKnowledgeRuntime(input: Readonly<{
   vaultRootPath: string;
   knowledgeAgentIndex: KnowledgeAgentIndex;
@@ -777,7 +791,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
         question: request.question,
         explicitPaths: request.explicitPaths,
         includeUnrefined: request.includeUnrefined
-      });
+      }, { kinds: ["wiki", "projects", "raw"] });
       if (result.status === "no_evidence") {
         const secured = await secureVaultToolResult({
           toolId: "knowledge_ask_resource",
@@ -842,7 +856,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
         explicitPaths: request.explicitPaths,
         includeUnrefined: request.includeUnrefined || request.explicitPaths.some((relative) => knowledgePathRole(input.vaultRootPath, relative) === "raw" || knowledgePathRole(input.vaultRootPath, relative) === "inbox") || (input.knowledgeAgentIndex && getKnowledgeFolderBindings(input.vaultRootPath) && !getKnowledgeFolderBindings(input.vaultRootPath)!.roles.wiki.enabled && !getKnowledgeFolderBindings(input.vaultRootPath)!.roles.projects.enabled ? true : false),
         limit: 6
-      });
+      }, { allowsCandidate: relativePath => chatRecallCandidateAllowed(input.vaultRootPath, relativePath) });
       const providerResource = result.status === "no_evidence"
         ? [
             "当前普通对话与用户个人 Knowledge 可能相关，但有界本地预检没有找到可引用依据。",
@@ -2283,9 +2297,7 @@ async function createProductionAgentSession(input: {
     security: personalMemorySecurity
   });
   const knowledgeReadTools = createPiKnowledgeReadToolDefinitions({
-    retriever: new KnowledgeRetriever(input.vaultRootPath, {
-      agentIndex: input.knowledgeAgentIndex
-    }),
+    retriever: createProductionPiKnowledgeToolRetriever(input.vaultRootPath, input.knowledgeAgentIndex, () => input.input.currentKnowledgeTurnContext()?.kind ?? "none"),
     security: knowledgeReadSecurity
   });
   const personalMemoryRecall = new PersonalMemoryRecallHarness(input.personalMemory);

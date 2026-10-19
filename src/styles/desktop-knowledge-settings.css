@@ -1,0 +1,23 @@
+/* Desktop module configuration follows the existing settings container. */
+.echoink-knowledge-module-page .setting-item-control { min-width: 0; }
+.echoink-knowledge-module-page .echoink-knowledge-folder-picker { max-height: min(380px, 55vh); overflow-y: auto; }
+.echoink-knowledge-module-page .echoink-settings-navigation-row { min-width: 0; }
+.echoink-knowledge-module-page .echoink-settings-navigation-title,
+.echoink-knowledge-module-page .echoink-settings-navigation-value { overflow-wrap: anywhere; }
+.echoink-knowledge-sources-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.echoink-knowledge-sources-heading h3 { margin: 0; }
+.echoink-knowledge-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 12px; padding: 12px 0; }
+.echoink-knowledge-source-path { overflow-wrap: anywhere; }
+.echoink-knowledge-source > .setting-item,
+.echoink-knowledge-source > .settings-error { grid-column: 1 / -1; }
+.echoink-knowledge-init-fields .setting-item-control input { max-width: 100%; }
+.echoink-knowledge-init-impact { flex: 1 1 240px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.echoink-knowledge-module-page details { margin-top: 12px; overflow-wrap: anywhere; }
+@container settings (max-width: 520px) {
+  .echoink-knowledge-init-fields .setting-item { align-items: stretch; flex-direction: column; }
+  .echoink-knowledge-init-fields .setting-item-control { width: 100%; justify-content: flex-start; }
+  .echoink-knowledge-init-fields .setting-item-control input { width: 100%; }
+  .echoink-knowledge-init-impact { flex-basis: 100%; }
+}
+
+.echoink-settings-demo .echoink-knowledge-module-page .echoink-knowledge-init-actions { justify-content: flex-end; }

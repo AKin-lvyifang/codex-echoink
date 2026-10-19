@@ -248,5 +248,5 @@ export async function initializeNativeJournal(app: App, legacyDirectory?: string
 }
 
 export async function saveNativeJournalFolder(app: App, folder: string): Promise<void> {
-  await updateCoreOptions(app, "daily-notes", { folder: relativePath(folder) }, false);
+  await updateCoreOptions(app, "daily-notes", { folder: folder.trim() === "" ? "" : relativePath(folder) }, false);
 }

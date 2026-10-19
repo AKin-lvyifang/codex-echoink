@@ -1,11 +1,12 @@
 import { KNOWLEDGE_ROOT_ROLES } from "./root-paths-core";
-import { classifyKnowledgePath, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeMaintenanceFolderIssues, normalizeKnowledgeDirectory, pathInKnowledgeDirectory, type KnowledgeFolderBinding, type KnowledgeFolderBindings } from "./folder-bindings";
+import { classifyKnowledgePath, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeMaintenanceFolderIssues, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, pathInKnowledgeDirectory, type KnowledgeFolderBinding, type KnowledgeFolderBindings } from "./folder-bindings";
 import type { KnowledgeRootRole } from "./root-paths-core";
 
 export type KnowledgeDirectoryMode = "existing" | "build";
 export interface KnowledgeDirectoryFile { path: string; size: number; mtime: number; symbolicLink?: boolean }
 export interface KnowledgeDirectoryMove { from: string; to: string; size: number; mtime: number }
-export interface KnowledgeDirectoryPlanOptions { mode?: KnowledgeDirectoryMode }
+export interface KnowledgeModuleDirectories { journal?: string; review?: string; english?: string; expressions?: string; pdfOriginal?: string }
+export interface KnowledgeDirectoryPlanOptions { mode?: KnowledgeDirectoryMode; wikiChanged?: boolean; moduleDirectories?: KnowledgeModuleDirectories }
 export interface KnowledgeDirectoryApplyResult {
   configured: true;
   created: string[];
@@ -23,6 +24,10 @@ export interface KnowledgeDirectoryPlan {
   issues: string[];
   mode: KnowledgeDirectoryMode;
   baseSignature: string;
+  /** Snapshot of module/native settings used to protect their existing files. */
+  baseSettingsSignature?: string;
+  wikiChanged?: boolean;
+  moduleDirectories?: KnowledgeModuleDirectories;
   changes: { role: KnowledgeRootRole; before: KnowledgeFolderBinding; after: KnowledgeFolderBinding }[];
   moves: KnowledgeDirectoryMove[];
   excluded: { path: string; reason: string }[];
@@ -38,8 +43,13 @@ export async function previewKnowledgeDirectoryPlan(input: {
   baseline?: KnowledgeFolderBindings | null;
   files?: readonly KnowledgeDirectoryFile[];
   protectedPaths?: readonly string[];
+  baseSettingsSignature?: string;
+  wikiChanged?: boolean;
+  moduleDirectories?: KnowledgeModuleDirectories;
 }): Promise<KnowledgeDirectoryPlan> {
   const bindings = structuredClone(input.bindings);
+  const inboxRecallExclusions = knowledgeInboxRecallExclusions(input.baseline, bindings);
+  if (inboxRecallExclusions.length || bindings.inboxRecallExclusions) bindings.inboxRecallExclusions = inboxRecallExclusions;
   bindings.migrationIssues = [];
   for (const binding of Object.values(bindings.roles)) {
     binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(directory => binding.readPaths.includes(directory));
@@ -47,6 +57,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
   }
   const mode = input.mode ?? "existing";
   const issues = [...knowledgeFolderIssues(bindings), ...knowledgeMaintenanceFolderIssues(bindings, input.baseline, mode === "build")];
+  if (input.wikiChanged) issues.push(...knowledgeWikiFolderSelectionIssues(bindings));
   const approved = new Set(input.createPaths.map(normalizeKnowledgeDirectory));
   const reuse = new Set<string>();
   const create = new Set<string>();
@@ -59,6 +70,20 @@ export async function previewKnowledgeDirectoryPlan(input: {
       else if (parentKind !== "folder") issues.push(`${parent}：父路径不是目录`);
     }
   };
+  const moduleDirectories: KnowledgeModuleDirectories = {};
+  for (const key of ["journal", "review", "english", "expressions", "pdfOriginal"] as const) {
+    const value = input.moduleDirectories?.[key];
+    if (value === undefined) continue;
+    if (key === "journal" && value.trim() === "") { moduleDirectories.journal = ""; continue; }
+    let directory: string;
+    try { directory = normalizeKnowledgeDirectory(value); }
+    catch { issues.push(`${key}：请选择合法的 Vault 相对目录。`); continue; }
+    moduleDirectories[key] = directory;
+    const kind = await input.kind(directory);
+    if (kind === "folder") reuse.add(directory);
+    else if (kind === "missing" && mode === "build") await addParents(directory);
+    else issues.push(`${directory}：原位置已失效或不是目录`);
+  }
   for (const role of KNOWLEDGE_ROOT_ROLES) {
     const binding = bindings.roles[role];
     if (!binding.enabled) continue;
@@ -70,6 +95,9 @@ export async function previewKnowledgeDirectoryPlan(input: {
       else {
         await addParents(directory);
       }
+      // Existing-directory setup only saves consent. Legacy child approvals do
+      // not implicitly create folders when no new root was explicitly selected.
+      if (mode === "existing" && !approved.has(directory)) continue;
       for (const child of binding.allowedSubdirectories) {
         if (!(binding.allowedSubdirectoryRoots ?? binding.readPaths).includes(directory)) continue;
         const target = `${directory}/${normalizeKnowledgeDirectory(child)}`;
@@ -84,7 +112,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
   const files: KnowledgeDirectoryFile[] = [...(input.files ?? input.sourcePaths.map(relative => ({ path: relative, size: 0, mtime: 0 })))].sort((a, b) => a.path.localeCompare(b.path));
   if (mode === "build") {
     const raw = bindings.roles.raw;
-    if (raw.readPaths.length !== 1) issues.push("帮我搭建使用一个资料来源目录。");
+    if (!raw.writePath || !raw.readPaths.includes(raw.writePath)) issues.push("资料来源：请选择一个明确的搬迁目的地。");
     const destination = raw.writePath;
     for (const file of files) {
       const segments = file.path.split("/");
@@ -109,14 +137,15 @@ export async function previewKnowledgeDirectoryPlan(input: {
   const sources = input.sourcePaths.map(relative => targetPaths.get(relative) ?? relative).filter(relative => classifyKnowledgePath(bindings, relative) === "raw");
   const changes = KNOWLEDGE_ROOT_ROLES.filter(role => knowledgeFolderBindingsSignature({ ...bindings, roles: { ...bindings.roles, [role]: input.baseline?.roles[role] ?? { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] } } }) !== knowledgeFolderBindingsSignature(bindings))
     .map(role => ({ role, before: structuredClone(input.baseline?.roles[role] ?? { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] }), after: structuredClone(bindings.roles[role]) }));
-  return { baseRevision: input.baseRevision, baseSignature: knowledgeFolderBindingsSignature(input.baseline), mode, bindings, changes, moves, excluded,
-    fileSnapshot: JSON.stringify(files.filter(file => moves.some(move => move.from === file.path) || sources.includes(file.path))),
+  return { baseRevision: input.baseRevision, baseSignature: knowledgeFolderBindingsSignature(input.baseline), baseSettingsSignature: input.baseSettingsSignature, wikiChanged: input.wikiChanged,
+    moduleDirectories: Object.keys(moduleDirectories).length ? moduleDirectories : undefined, mode, bindings, changes, moves, excluded,
+    fileSnapshot: JSON.stringify(files),
     reuse: [...reuse].sort(), create: [...create].sort((a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b)),
     sources: [...new Set(sources)].sort(), issues: [...new Set(issues)] };
 }
 
 export function knowledgeDirectoryPlanSignature(plan: KnowledgeDirectoryPlan): string {
-  return JSON.stringify({ mode: plan.mode, baseRevision: plan.baseRevision, baseSignature: plan.baseSignature,
+  return JSON.stringify({ mode: plan.mode, baseRevision: plan.baseRevision, baseSignature: plan.baseSignature, baseSettingsSignature: plan.baseSettingsSignature, wikiChanged: plan.wikiChanged, moduleDirectories: plan.moduleDirectories,
     bindings: knowledgeFolderBindingsSignature(plan.bindings), reuse: plan.reuse, create: plan.create,
     moves: plan.moves, sources: plan.sources, issues: plan.issues, fileSnapshot: plan.fileSnapshot });
 }

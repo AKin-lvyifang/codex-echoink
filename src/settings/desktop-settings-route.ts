@@ -56,10 +56,16 @@ export function resolveDesktopSettingsSearchRoute(tab: DesktopSettingsTab, query
     if (/skills?|技能/iu.test(term)) return { tab, capabilityTab: "skills" };
   }
   if (tab === "modules") {
-    if (/pdf/iu.test(term)) return { tab, focus: "pdf-reading:settings" };
-    if (/finance|财务|账单|记账/iu.test(term)) return { tab, focus: "finance:settings" };
-    if (/english|英文/iu.test(term)) return { tab, focus: "english-diary:settings" };
-    if (/selection|选文|划词|标注/iu.test(term)) return { tab, focus: "selection-ask:settings" };
+    if (/日记模板|journal.*template|template.*journal|导入.*模板/iu.test(term)) return { tab, focus: "journal:templates" };
+    if (/待办分类|todo.*categor/iu.test(term)) return { tab, focus: "todo:categories" };
+    if (/资料来源|raw.*source|sources?/iu.test(term)) return { tab, focus: "knowledge:sources" };
+    if (/初始化|initializ|复原仓库|restore/iu.test(term)) return { tab, focus: /复原|restore/iu.test(term) ? "knowledge:restore" : "knowledge:onboarding" };
+    if (/提炼偏好|refin.*prefer/iu.test(term)) return { tab, focus: "knowledge:preferences" };
+    if (/知识关联|knowledge.*link/iu.test(term)) return { tab, focus: "knowledge:linking" };
+    if (/pdf|mineru|默认翻译语言/iu.test(term)) return { tab, focus: "pdf-reading:settings" };
+    if (/finance|财务|账单|记账|商户|分析保存位置/iu.test(term)) return { tab, focus: "finance:settings" };
+    if (/english|英文|表达库/iu.test(term)) return { tab, focus: "english-diary:settings" };
+    if (/selection|选文|划词|标注|提问选项|提问模板/iu.test(term)) return { tab, focus: "selection-ask:settings" };
     if (/knowledge|知识|wiki|索引|初始化|提炼|维护/iu.test(term)) return { tab, section: "knowledgeBase" };
     if (/todos?|待办|提醒|通知|分类|截止/iu.test(term)) return { tab, section: "todos" };
     if (/review|复盘|周报|月报|报告|output|输出/iu.test(term)) return { tab, section: "review" };

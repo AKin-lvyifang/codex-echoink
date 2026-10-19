@@ -11,7 +11,7 @@ export async function originControlScenarios(test) {
     build.onResolve({ filter: /^origin-select-probe$/ }, () => ({ path: path.resolve("src/home/origin-select-probe.ts") }));
     build.onLoad({ filter: /[\\/]origin-select-probe\.ts$/ }, () => ({
       // Keep a value reference: a TS-only re-export can hide a missing export.
-      contents: 'import { createOriginSelect } from "../settings/origin-controls"; export const categorySelect = createOriginSelect;', loader: "ts"
+      contents: 'import { createOriginSelect, createOriginCheck } from "../settings/origin-controls"; export const categorySelect = createOriginSelect; export const nativeCheckbox = createOriginCheck;', loader: "ts"
     }));
   } };
   await test("Home Select virtual probe loads on Windows and POSIX paths", async () => {
@@ -90,6 +90,20 @@ export async function originControlScenarios(test) {
       control.element.focus();
       assert.equal(owner.window.document.activeElement, control.element);
       assert.equal(control.element.value, "读书");
+    });
+
+    await test("mobile Checkbox preserves its owning document, change event and disabled behavior", () => {
+      const checkbox = module.exports.nativeCheckbox(parent, { attr: { "aria-label": "原生勾选" } });
+      const changes = [];
+      checkbox.onchange = () => changes.push(checkbox.checked);
+      assert.equal(checkbox.ownerDocument, owner.window.document);
+      assert.equal(checkbox.getAttribute("role"), "checkbox");
+      assert.equal(checkbox.checked, false);
+      checkbox.click();
+      assert.equal(checkbox.checked, true); assert.equal(checkbox.getAttribute("aria-checked"), "true");
+      assert.deepEqual(changes, [true]);
+      checkbox.checked = false; assert.deepEqual(changes, [true], "programmatic rollback does not trigger another save");
+      checkbox.disabled = true; checkbox.click(); assert.equal(checkbox.checked, false); assert.deepEqual(changes, [true]);
     });
   } finally {
     main.window.close();

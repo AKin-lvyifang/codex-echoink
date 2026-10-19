@@ -331,6 +331,7 @@ export interface KnowledgeBaseMaintenanceHistoryEntry {
 }
 
 export interface KnowledgeBaseSettings {
+  autoLinkEnabled?: boolean;
   journalSearchDisclosureSeen?: boolean;
   folderBindings?: import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null;
   lastRunAt: number;
@@ -613,6 +614,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   },
   resourceManagementTab: "plugins",
   knowledgeBase: {
+    autoLinkEnabled: true,
     lastRunAt: 0,
     lastRunStatus: "idle",
     lastReportPath: "",
@@ -1815,6 +1817,7 @@ function normalizeMemorySettings(input: unknown): EchoInkMemorySettings {
 function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
   const value = settingsRecord(input) ?? {};
   const normalized: KnowledgeBaseSettings = {
+    autoLinkEnabled: value.autoLinkEnabled !== false,
     ...(value.journalSearchDisclosureSeen === true ? { journalSearchDisclosureSeen: true } : {}),
     folderBindings: normalizeKnowledgeFolderBindings(value.folderBindings),
     lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),

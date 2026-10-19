@@ -10,17 +10,21 @@ export class PdfReadingSettingsPanel {
   private page?: HTMLElement;
   constructor(private readonly plugin: CodexForObsidianPlugin, private readonly back: () => void) {}
   dispose(): void { this.controls?.dispose(); if (this.page) disposeOriginControls(this.page); }
-  render(container: HTMLElement): void {
+  render(container: HTMLElement, options: { embedded?: boolean } = {}): void {
     this.dispose();
     const host = this.plugin.pdfReading!;
     const page = this.page = container.createDiv({ cls: "echoink-life-settings-page echoink-pdf-settings" });
+    if (!options.embedded) {
     const back = page.createEl("button", { cls: "echoink-life-settings-back", text: "‹ 返回插件列表" }); back.onclick = this.back;
     const heading = page.createDiv({ cls: "echoink-pdf-settings-heading" }); heading.createEl("h2", { text: "PDF 精读 · 提取" });
     createPluginEditionBadge(heading, "pro", this.plugin.settings.settingsLanguage);
+    }
     this.controls = new ProPluginControls(host.api.deps.access, () => host.policy());
     const row = (title: string, description?: string) => { const el = page.createDiv({ cls: "echoink-life-setting-row" }); const text = el.createDiv(); text.createEl("strong", { text: title }); if (description) text.createEl("small", { text: description }); return el; };
+    if (!options.embedded) {
     const enabled = createOriginSwitch(row("启用插件"), { attr: { "aria-label": "启用 PDF 精读" } }); enabled.checked = this.plugin.settings.pdfReading.enabled;
     this.controls.bind(enabled); enabled.onchange = () => { void host.setEnabled(enabled.checked).catch(error => { enabled.checked = this.plugin.settings.pdfReading.enabled; new Notice(String(error)); }); };
+    }
     const form = page.createEl("form", { cls: "echoink-pdf-settings-form" });
     const method = form.createEl("label", { text: "解析方式" });
     const engine = createOriginSelect(method, {}, [{ value: "local", label: "本地文字提取" }, { value: "mineru", label: "MinerU 增强解析" }], this.plugin.settings.pdfReading.engine, this.plugin.app).element;

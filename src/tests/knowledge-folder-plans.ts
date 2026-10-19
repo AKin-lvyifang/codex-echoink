@@ -56,7 +56,7 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
   assert(pure.create.includes("资料/原文/课程"));
   assert.deepEqual(pure.sources, ["资料/原文/旧来源/原笔记.md", "资料/原文/课程/材料.md"].sort());
 
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "echoink-folder-plan-v2-")));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(process.env.ECHOINK_MODULES_TEST_ROOT ?? os.tmpdir(), "echoink-folder-plan-v2-")));
   try {
     await assertPlanApplication(path.join(root, "success"));
     await assertRestoreNativeEmptyDirectoryCleanup(path.join(root, "restore-native-api"));

@@ -14,6 +14,8 @@ import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { isEchoInkFinanceBase } from "../lifestyle/finance-paths";
 import { parseFinanceNote } from "../lifestyle/finance-ledger";
 import { financeConversationPort } from "../lifestyle/finance-conversation-port";
+import { getKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+import { knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
 
 export interface ObsidianNativeOptions {
   knowledgeBindings?: () => import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;
@@ -32,6 +34,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
     if (!appAdapter?.getBasePath || path.resolve(appAdapter.getBasePath()) !== path.resolve(adapter.vaultRootPath)) throw new Error("obsidian_cli_vault_mismatch");
   };
   const targetFor = async (relativePath: string, mustExist = true, expectedKind: "file" | "directory" = "file") => await resolver.resolve({ vaultId: adapter.vaultId, relativePath, mustExist, expectedKind, allowRoot: expectedKind === "directory", allowMissingParentDirectories: !mustExist });
+  const recallCandidateAllowed = (relativePath: string) => knowledgeRecallCandidateAllowed(options.knowledgeBindings?.() ?? getKnowledgeFolderBindings(adapter.vaultRootPath), relativePath);
   const snapshot = async (relativePath: string, maxBytes = 32_000) => {
     const target = await targetFor(relativePath, false);
     const value = target.exists ? await adapter.readFile(target, { maxBytes }) : null;
@@ -229,7 +232,36 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
             if (!onEffectStarted) throw new Error("obsidian_cli_authorization_required");
             await onEffectStarted();
           }
+          if (request.command === "search" || request.command === "search:context") {
+            const withdrawn = app.vault.getFiles().filter(file => !recallCandidateAllowed(file.path)).map(file => file.path);
+            if (withdrawn.length) {
+              // Apply before CLI's result limit, then verify structured paths again before egress.
+              const escaped = withdrawn.map(relative => relative.replace(/[\\^$.*+?()[\]{}|/]/gu, "\\$&"));
+              const query = `(${request.query}) -path:/^(?:${escaped.join("|")})$/`;
+              const filteredRequest = { ...request, query, format: "json" };
+              delete filteredRequest.total;
+              const result = await run(obsidianCliArgv(filteredRequest), executionSignal);
+              if (result.status === "empty") return { ...result, target };
+              if (result.status !== "completed") return { ...result, output: "", target };
+              let rows: unknown;
+              try { rows = JSON.parse(result.output ?? ""); } catch { throw new Error("obsidian_cli_search_scope_unverified"); }
+              if (!Array.isArray(rows)) throw new Error("obsidian_cli_search_scope_unverified");
+              const kept: unknown[] = [];
+              for (const row of rows) {
+                const relative = typeof row === "string" ? row : row && typeof row === "object" && !Array.isArray(row)
+                  ? (row as { file?: unknown; path?: unknown }).file ?? (row as { path?: unknown }).path : undefined;
+                if (typeof relative !== "string") throw new Error("obsidian_cli_search_scope_unverified");
+                const canonical = (await targetFor(relative)).relativePath;
+                if (recallCandidateAllowed(canonical)) kept.push(row);
+              }
+              const output = request.total ? String(kept.length) : request.command === "search" && request.format !== "json"
+                ? kept.map(row => typeof row === "string" ? row : (row as { file?: string; path?: string }).file ?? (row as { path?: string }).path).join("\n")
+                : JSON.stringify(kept);
+              return { ...result, output, status: kept.length ? "completed" : "empty", target };
+            }
+          }
           const result = await run(obsidianCliArgv(request), executionSignal);
+          if ((request.command === "search" || request.command === "search:context") && app.vault.getFiles().some(file => !recallCandidateAllowed(file.path))) throw new Error("obsidian_cli_search_scope_changed");
           if (!writing) {
             if (request.command === "base:views" && !activeBase(request.path!)) return { ...result, status: "uncertain", reason: "obsidian_cli_active_base_changed", target };
             if (effect === "ui" && ["open", "tab:open"].includes(request.command) && ["completed", "empty"].includes(result.status) && app.workspace.getActiveFile?.()?.path !== (request.path ?? request.file)) return { ...result, status: "uncertain", reason: "obsidian_cli_open_target_not_observed", target };

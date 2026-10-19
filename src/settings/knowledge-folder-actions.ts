@@ -14,7 +14,8 @@ export function renderKnowledgeFolderActions(
   service: EchoInkKnowledgeSurfaceService,
   language: string,
   refresh: () => Promise<void>,
-  renderPlan?: (group: HTMLElement) => void
+  renderPlan?: (group: HTMLElement) => void,
+  openEditor?: (editor: Modal) => void
 ): void {
   const zh = language !== "en";
   const state = operationStates.get(service) ?? { running: null };
@@ -112,7 +113,7 @@ export function renderKnowledgeFolderActions(
       finally { pending = false; body.removeAttribute("aria-busy"); preview.setText(zh ? "预览改名" : "Preview names"); checks.forEach(check => { check.disabled = preview.hidden; }); }
     };
     modal.onClose = () => disposeOriginControls(body);
-    modal.open();
+    if (openEditor) openEditor(modal); else modal.open();
   };
   const openRestore = () => {
     if (state.running || service.folderOperationBusy || recordLoading) return;
@@ -141,6 +142,6 @@ export function renderKnowledgeFolderActions(
       });
     }
     modal.onClose = () => disposeOriginControls(body);
-    modal.open();
+    if (openEditor) openEditor(modal); else modal.open();
   };
 }

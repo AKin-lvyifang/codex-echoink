@@ -4,6 +4,7 @@ import type { KnowledgeLinkingDocument, KnowledgeLinkingMention, KnowledgeLinkin
 import type { KnowledgeLinkingStateStore } from "../knowledge-base/knowledge-linking-state";
 
 export interface KnowledgeLinkingHost {
+  automaticEnabled?(): boolean;
   documents(origin?: Readonly<KnowledgeLinkingOrigin>): AsyncIterable<KnowledgeLinkingDocument>;
   judge(input: KnowledgeLinkingOrigin & { taskId: string; documents: KnowledgeLinkingDocument[]; targets: KnowledgeLinkingTarget[]; candidates: Array<KnowledgeLinkingMention & { path: string }>; allowAliases: boolean; signal: AbortSignal }): Promise<KnowledgeLinkingProposal[]>;
   read(path: string, origin?: Readonly<KnowledgeLinkingOrigin>): Promise<string>;
@@ -55,11 +56,14 @@ export class KnowledgeLinkingService {
   async start(mode: "manual" | "automatic" = "manual", targetPaths?: string[], queuedId?: string, sourcePaths?: string[], originConversationId?: string): Promise<KnowledgeLinkingTask> {
     const next = this.starts.then(() => this.startScoped(mode, targetPaths, queuedId, sourcePaths, originConversationId));
     this.starts = next.then(() => undefined, () => undefined);
-    return await next;
+    const task = await next;
+    this.advanceQueue();
+    return task;
   }
   private async startScoped(mode: "manual" | "automatic", targetPaths?: string[], queuedId?: string, sourcePaths?: string[], originConversationId?: string): Promise<KnowledgeLinkingTask> {
     await this.ready;
     if (this.disposed) throw new Error("知识关联服务已关闭。");
+    if (mode === "automatic" && this.host.automaticEnabled?.() === false) throw new Error("自动补链已关闭，待处理关联保留。");
     const origin: KnowledgeLinkingOrigin = originConversationId
       ? { originConversationId, authorizationSource: "conversation" }
       : { authorizationSource: mode === "manual" ? "manual-user" : "unknown" };
@@ -213,11 +217,17 @@ export class KnowledgeLinkingService {
     return { schemaVersion: 1, id: queued.id, ...this.originOf(queued), ...(queued.pausedForHandoff ? { pausedForHandoff: true } : {}), mode: "automatic", phase: queued.pausedForHandoff ? "interrupted" : "queued", bindingSignature: this.host.bindingSignature(), createdAt: queued.at, updatedAt: queued.at, processed: 0, total: null, proposals: [], patches: [], results: [], targetPaths: queued.paths, ...(queued.sourcePaths ? { sourcePaths: queued.sourcePaths } : {}) };
   }
   private advanceQueue(): void {
-    if (this.disposed || this.handoffStops || this.flight || running(this.task) || !this.automaticQueue.length) return;
+    if (this.disposed || this.host.automaticEnabled?.() === false || this.handoffStops || this.flight || running(this.task) || !this.automaticQueue.length) return;
     const index = this.automaticQueue.findIndex(item => !item.pausedForHandoff && !(item.originConversationId && this.blockedOrigins.has(item.originConversationId)));
     if (index < 0) return;
     const queued = this.automaticQueue.splice(index, 1)[0];
-    void this.start("automatic", queued.paths, queued.id, queued.sourcePaths, queued.originConversationId);
+    void this.start("automatic", queued.paths, queued.id, queued.sourcePaths, queued.originConversationId).catch(async error => {
+      // The setting may change after dequeue but before the serialized start.
+      if (!this.automaticQueue.some(item => item.id === queued.id)) this.automaticQueue.splice(index, 0, queued);
+      if (this.task) this.task.queuedAutomatic = this.automaticQueue;
+      if (!this.disposed) await this.persist();
+      if (this.host.automaticEnabled?.() !== false) console.error("EchoInk automatic linking queue could not start", error);
+    });
   }
   private async scan(signal: AbortSignal): Promise<void> {
     const task = this.task!; task.phase = "scanning"; task.processed = 0; task.total = null;

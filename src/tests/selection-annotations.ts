@@ -430,7 +430,7 @@ async function summaryFocusIsNotStolenByViewActivation(): Promise<void> {
 async function settingsBehavior(win: Window & typeof globalThis): Promise<void> {
   assert.equal(visibleCharacters("👨‍👩‍👧‍👦é中文").length, 4);
   const normalized = normalizeSelectionAskSettings({ enabled: false, actions: [{ id: "default", name: "改名", template: "解释" }, { id: "a", name: "第二", template: "" }, { id: "b", name: "第二", template: "" }, { id: "c", name: "第四" }] });
-  assert.equal(normalized.actions.length, 3); assert.equal(normalized.actions[0].name, "提问"); assert.equal(normalized.actions[2].name, "选项3");
+  assert.equal(normalized.actions.length, 4); assert.equal(normalized.actions[0].name, "提问"); assert.equal(normalized.actions[2].name, "选项3");
   assert.deepEqual(normalizeSettingsData({ ...structuredClone(DEFAULT_SETTINGS), selectionAsk: normalized }).settings.selectionAsk, normalized, "settings whitelist retains normalized free actions");
   let fail = true; const saved: any[] = [];
   const plugin: any = { settings: structuredClone(DEFAULT_SETTINGS), async saveSettings() { if (fail) throw new Error("disk failure"); saved.push(structuredClone(this.settings.selectionAsk)); } };

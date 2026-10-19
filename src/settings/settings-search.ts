@@ -55,7 +55,7 @@ export function desktopSettingsCategoryDefinitions(
     models: [...CATEGORY_ALIASES.providers, "providers", "agents", "大模型API", "默认模型"],
     agent: ["Agent", "身份", "用户画像", "长期记忆", "Memory", "personality", "avatar", "Dream", "做梦", "归档", "archive", "记忆修正", "自动归档"],
     capabilities: ["能力", "Skills & MCP", "resources", "技能", "Skills", "我的Skill", "MCP Server", "Tavily", "工具", "tools"],
-    modules: [...CATEGORY_ALIASES.knowledgeBase, ...CATEGORY_ALIASES.todos, ...CATEGORY_ALIASES.review.filter(alias => !/archive|归档|memory|记忆/iu.test(alias)), "plugins", "插件", "财务", "finance", "记账", "账单", "英文日记", "English diary", "PDF", "选文", "划词", "selection", "日记", "journal"],
+    modules: [...CATEGORY_ALIASES.knowledgeBase, ...CATEGORY_ALIASES.todos, ...CATEGORY_ALIASES.review.filter(alias => !/archive|归档|memory|记忆/iu.test(alias)), "plugins", "插件", "财务", "finance", "记账", "账单", "管理商户", "管理账户", "分析保存位置", "英文日记", "English diary", "表达库", "PDF", "MinerU", "默认翻译语言", "选文", "划词", "selection", "提问选项", "提问模板", "日记", "journal", "日记模板", "journal templates", "导入模板", "资料来源", "sources", "知识成果", "收件箱", "收藏保存到", "公众号", "新建子文件夹", "待办分类", "知识提炼偏好", "知识关联", "复原仓库"],
     account: CATEGORY_ALIASES.account
   };
   return [{ type: "group", cls: "echoink-native-settings-group", items: DESKTOP_SETTINGS_TABS.map(tab => ({

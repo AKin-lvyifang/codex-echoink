@@ -501,7 +501,7 @@ async function assertProductionFolderPolicy(
     for (let depth = 1; depth <= segments.length; depth++) {
       const directory = segments.slice(0, depth).join("/");
       const parent = await resolver.resolve({ vaultId: adapter.vaultId, relativePath: directory, mustExist: false, allowMissingParentDirectories: true, expectedKind: "directory" });
-      if (!parent.exists && !knowledgeMayCreateCategoryDirectory(config, directory)) throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+      if (!parent.exists && !knowledgeMayCreateCategoryDirectory(config, directory, { allowAgentSubfolders: toolId === "note_create" })) throw new PiVaultToolAuthorizationError("tool_policy_blocked");
     }
   }
   if (toolId === "note_update") {
