@@ -236,6 +236,7 @@ export class CodexView extends ItemView {
   private readonly taskInterruptions = new Map<string, { key: string; info?: TaskInterruptionInfo | null; error?: string }>();
   private readonly taskResumeErrors = new Map<string, string>();
   private taskEditor?: AgentEditorController;
+  private taskEditorOnboarding = false;
   private taskEditorReturnPage?: TaskPage;
   private taskDetailLoaded = false;
   private taskDerivationToken: number | null = null;
@@ -313,6 +314,7 @@ export class CodexView extends ItemView {
   }
   async openAgentTaskList(agentId: string, prefill?: string, prefillSource?: string, englishDiarySourcePath?: string): Promise<boolean> {
     if (!this.taskUiMounted || this.viewLifecycleAbortController.signal.aborted) return false;
+    if (this.taskEditorOnboarding) { this.requestOnboardingEditorLeave(() => { this.plugin.hideEchoInkOnboardingWorkspaceCard(); void this.openAgentTaskList(agentId, prefill, prefillSource, englishDiarySourcePath); }); return false; }
     if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) { this.showTaskError(this.taskText("这个 Agent 已不存在。", "This Agent no longer exists.")); return false; }
     this.saveTaskComposerDraft(); this.rememberTaskListPosition();
     this.taskEditor?.dispose(); this.taskEditor = undefined;
@@ -331,6 +333,7 @@ export class CodexView extends ItemView {
   }
   async openTaskDetail(taskId: string): Promise<void> {
     if (!this.taskUiMounted || this.viewLifecycleAbortController.signal.aborted) return;
+    if (this.taskEditorOnboarding) { this.requestOnboardingEditorLeave(() => { this.plugin.hideEchoInkOnboardingWorkspaceCard(); void this.openTaskDetail(taskId); }); return; }
     this.saveTaskComposerDraft(); this.rememberTaskListPosition(taskId);
     this.taskEditor?.dispose(); this.taskEditor = undefined;
     const token = this.taskNavigation.navigate({ kind: "detail", taskId });
@@ -491,20 +494,43 @@ export class CodexView extends ItemView {
   }
   private taskText(zh: string, en: string): string { return conversationUiText(this.plugin.settings.settingsLanguage, zh, en); }
 
-  private openAgentEditor(agentId?: string): void {
+  get onboardingAgentAnchor(): HTMLElement | null { return this.rootEl.querySelector<HTMLElement>(".echoink-agent-roster") ?? this.taskEditorEl ?? this.rootEl; }
+  openOnboardingAgentEditor(): HTMLElement | null {
+    this.openAgentEditor(undefined, true);
+    return this.taskEditorEl?.querySelector<HTMLElement>(".echoink-agent-editor-header") ?? this.taskEditorEl ?? null;
+  }
+  requestOnboardingEditorLeave(done: () => void): void {
+    if (!this.taskEditorOnboarding || !this.taskEditor) { done(); return; }
+    this.taskEditor.requestLeave(() => { this.taskEditor?.dispose(); this.taskEditor = undefined; this.taskEditorOnboarding = false; this.renderTaskPages(); done(); });
+  }
+  private openAgentEditor(agentId?: string, onboarding = false): void {
+    if (this.taskEditorOnboarding && this.taskEditor) {
+      // The roster's + points at the form already on screen. Never replace a
+      // pending guided editor with a normal editor and lose its completion.
+      if (!agentId) { this.taskEditor.element?.querySelector<HTMLElement>("input")?.focus(); return; }
+      this.requestOnboardingEditorLeave(() => { this.plugin.hideEchoInkOnboardingWorkspaceCard(); this.openAgentEditor(agentId, onboarding); });
+      return;
+    }
     const view = this;
     this.saveTaskComposerDraft(); this.rememberTaskListPosition(); this.closeComposerMenus();
     this.taskEditorReturnPage = this.taskNavigation.page;
     this.taskEditor?.dispose();
+    this.taskEditorOnboarding = onboarding;
     this.taskEditor = new AgentEditorController({
+      onboarding, confirmLeave: onboarding,
       get settings() { return view.plugin.settings; }, draftCacheKey: this.plugin,
       loadResources: () => this.plugin.buildRuntimeEchoInkResourceCatalog(),
-      saveAgent: (agent, moduleIds, baseline) => this.plugin.saveAgentDefinition(agent, moduleIds, baseline),
+      saveAgent: (agent, moduleIds, baseline) => onboarding ? this.plugin.saveOnboardingAgentDefinition(agent, moduleIds) : this.plugin.saveAgentDefinition(agent, moduleIds, baseline),
       deleteAgent: async id => { await this.plugin.deleteAgent(id); this.taskEditorReturnPage = { kind: "list", agentId: GENERAL_ASSISTANT_ID }; await this.reloadTaskCatalog(); },
       getDeleteCounts: id => this.plugin.getAgentDeleteCounts(id),
       getCapabilityAvailability: id => this.taskCapabilityAvailability(id),
       onClose: id => {
-        const target = this.taskEditorReturnPage; this.taskEditor?.dispose(); this.taskEditor = undefined;
+        const target = this.taskEditorReturnPage; this.taskEditor?.dispose(); this.taskEditor = undefined; this.taskEditorOnboarding = false;
+        if (onboarding) {
+          if (id) void this.openAgentTaskList(id).then(() => this.plugin.showEchoInkOnboardingCompletion());
+          else { this.plugin.hideEchoInkOnboardingWorkspaceCard(); void this.openAgentTaskList(GENERAL_ASSISTANT_ID); }
+          return;
+        }
         if (id && id !== agentId) void this.openAgentTaskList(id);
         else if (target?.kind === "detail") void this.openTaskDetail(target.taskId);
         else void this.openAgentTaskList(target?.agentId ?? GENERAL_ASSISTANT_ID);

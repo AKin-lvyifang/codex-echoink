@@ -1,6 +1,14 @@
 import type CodexForObsidianPlugin from "../main";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { PaperGuideModal, type PaperGuideScene, type PaperGuideSceneId } from "../ui/paper-guide-modal";
+import { workbenchModuleOwner } from "../home/module-navigation";
+import type { AgentModuleId } from "../agents/types";
+
+const sceneTargets: Readonly<Record<PaperGuideSceneId, { module: AgentModuleId; zh: string; en: string }>> = {
+  english: { module: "english-diary", zh: "我想用日记练习英语，先帮我看看今天的日记。", en: "I'd like to practice English with my diary. First, help me look at today's entry." },
+  finance: { module: "finance", zh: "帮我看看本月的收支和预算，先告诉我有哪些值得留意的地方。", en: "Help me review this month's spending, income and budget. First, tell me what deserves attention." },
+  knowledge: { module: "knowledge-base", zh: "帮我看看有哪些笔记适合整理，先给我一个方案。", en: "Help me find notes that would benefit from organizing. Give me a plan first." }
+};
 
 /** Called only by the tutorial's completion card, after it returns home. */
 export class PaperGuideController {
@@ -42,9 +50,10 @@ export class PaperGuideController {
         }
       });
       this.modal.open();
-      this.unsubscribe = this.plugin.accountService?.subscribe(() => {
-        this.modal?.updateScenes(this.scenes());
-      }) ?? null;
+      const refreshScenes = () => { this.modal?.updateScenes(this.scenes()); };
+      const unsubscribeAccount = this.plugin.accountService?.subscribe(refreshScenes);
+      const unsubscribeRegistry = this.plugin.onAgentRegistryChanged(refreshScenes);
+      this.unsubscribe = () => { unsubscribeAccount?.(); unsubscribeRegistry(); };
     } finally {
       this.opening = false;
     }
@@ -91,56 +100,40 @@ export class PaperGuideController {
   private scenes(): readonly PaperGuideScene[] {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const access = this.plugin.accountService ?? unavailableCapabilityAccess;
-    const description = (enabled: boolean, readyZh: string, readyEn: string) => {
-      const policy = getProPluginAccess(access, enabled);
-      if (!policy.canEnter) return zh ? "查看 PRO 权益" : "View PRO access";
-      if (!policy.canWrite) return zh ? "查看已有记录" : "View existing records";
-      if (!enabled) return zh ? "启用后开始使用" : "Enable and get started";
-      return zh ? readyZh : readyEn;
+    const description = (scene: PaperGuideSceneId, enabled?: boolean) => {
+      const owner = workbenchModuleOwner(this.plugin, sceneTargets[scene].module);
+      const parts = [zh ? `交给 ${owner.name}，仅预填` : `Prepare a draft for ${owner.name}`];
+      if (enabled !== undefined) {
+        if (!getProPluginAccess(access, enabled).canWrite) parts.push(zh ? "需要 PRO" : "PRO required");
+        if (!enabled) parts.push(scene === "english"
+          ? zh ? "需先启用英文日记" : "Enable English Diary first"
+          : zh ? "需先启用财务" : "Enable Finance first");
+      }
+      return parts.join(" · ");
     };
     return [
       {
         id: "english", icon: "book-open", badge: "PRO",
         title: zh ? "用日记练习英语" : "Practice English with a diary",
-        description: description(this.plugin.settings.englishDiary.enabled,
-          "打开今天的日记，写下生活里的小事", "Open today's diary and write about your day")
+        description: description("english", this.plugin.settings.englishDiary.enabled)
       },
       {
         id: "finance", icon: "wallet", badge: "PRO",
         title: zh ? "梳理收支和预算" : "Organize spending and budgets",
-        description: description(this.plugin.settings.lifestyle.finance.enabled,
-          "进入财务工作区", "Open your finance workspace")
+        description: description("finance", this.plugin.settings.lifestyle.finance.enabled)
       },
       {
         id: "knowledge", icon: "files",
         title: zh ? "整理和检索我的笔记" : "Organize and find my notes",
-        description: zh ? "打开知识库，选择要整理的资料" : "Open Knowledge and choose your source notes"
+        description: description("knowledge")
       }
     ];
   }
 
   private async openScene(scene: PaperGuideSceneId): Promise<void> {
-    if (scene === "knowledge") {
-      await this.plugin.openEchoInkKnowledgeSettings();
-      return;
-    }
-    // Re-read access after the dialog closes; the account may have changed.
-    const enabled = scene === "english" ? this.plugin.settings.englishDiary.enabled
-      : this.plugin.settings.lifestyle.finance.enabled;
-    const policy = getProPluginAccess(this.plugin.accountService ?? unavailableCapabilityAccess, enabled);
-    if (!policy.canEnter) {
-      await this.plugin.openEchoInkAccountSettings();
-      return;
-    }
-    if (scene === "english") {
-      const diary = this.plugin.englishDiary;
-      if (!diary) throw new Error(this.plugin.settings.settingsLanguage === "en"
-        ? "English Diary is not ready. Try again from Plugins." : "英文日记尚未准备好，请从插件设置重试。");
-      if (!enabled) await diary.setEnabled(true);
-      await diary.openToday();
-    } else {
-      if (!enabled) await this.plugin.lifestyle.setEnabled("finance", true);
-      await this.plugin.lifestyle.open("finance");
-    }
+    const target = sceneTargets[scene];
+    // The task list owns draft conflicts; execution checks run only on Send.
+    const owner = workbenchModuleOwner(this.plugin, target.module);
+    await this.plugin.openAgentTaskList(owner.id, this.plugin.settings.settingsLanguage === "en" ? target.en : target.zh);
   }
 }

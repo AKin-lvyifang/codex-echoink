@@ -5090,7 +5090,7 @@ function assertOnboardingTruthContract(): void {
   assert.equal(
     shouldAutoStartEchoInkOnboarding(false, settings.setup),
     true,
-    "an unseen onboarding version starts once after an update"
+    "an unfinished tutorial starts without depending on configuration truth"
   );
   assert.equal(prepareEchoInkOnboardingTutorial(settings.setup, { forceRestart: false }), true);
   assert.equal(settings.setup.tutorialVersion, ECHOINK_ONBOARDING_VERSION);
@@ -5104,8 +5104,8 @@ function assertOnboardingTruthContract(): void {
   );
   assert.equal(
     shouldAutoStartEchoInkOnboarding(false, settings.setup, true),
-    true,
-    "enabling the plugin after layout-ready restarts onboarding"
+    false,
+    "enabling the plugin after layout-ready preserves an explicit skip"
   );
   settings.setup.tutorialStep = "knowledge";
   assert.equal(prepareEchoInkOnboardingTutorial(settings.setup, { forceRestart: true }), true);
@@ -5131,14 +5131,10 @@ function assertOnboardingTruthContract(): void {
   assert.equal(settings.setup.tutorialStep, "sidebar");
 
   const first = advanceEchoInkOnboardingTutorial(settings.setup, "sidebar", 101);
-  assert.deepEqual(first, { changed: true, completed: false, nextStep: "settings" });
+  assert.deepEqual(first, { changed: true, completed: false, nextStep: "provider" });
   assert.equal(settings.setup.completedAt, 0);
   const stale = advanceEchoInkOnboardingTutorial(settings.setup, "sidebar", 102);
-  assert.deepEqual(stale, { changed: false, completed: false, nextStep: "settings" });
-  assert.deepEqual(
-    advanceEchoInkOnboardingTutorial(settings.setup, "settings", 103),
-    { changed: true, completed: false, nextStep: "provider" }
-  );
+  assert.deepEqual(stale, { changed: false, completed: false, nextStep: "provider" });
   assert.deepEqual(
     advanceEchoInkOnboardingTutorial(settings.setup, "provider", 104),
     { changed: true, completed: false, nextStep: "knowledge" }
@@ -5147,10 +5143,14 @@ function assertOnboardingTruthContract(): void {
     advanceEchoInkOnboardingTutorial(settings.setup, "knowledge", 105),
     { changed: true, completed: false, nextStep: "personality" }
   );
-  const finish = advanceEchoInkOnboardingTutorial(settings.setup, "personality", 106);
+  assert.deepEqual(
+    advanceEchoInkOnboardingTutorial(settings.setup, "personality", 106),
+    { changed: true, completed: false, nextStep: "colleague" }
+  );
+  const finish = advanceEchoInkOnboardingTutorial(settings.setup, "colleague", 107);
   assert.deepEqual(finish, { changed: true, completed: true, nextStep: null });
-  assert.equal(settings.setup.completedAt, 106);
-  assert.equal(settings.setup.lastCheckedAt, 106);
+  assert.equal(settings.setup.completedAt, 107);
+  assert.equal(settings.setup.lastCheckedAt, 107);
   assert.equal(settings.setup.dismissedVersion, ECHOINK_ONBOARDING_VERSION);
   assert.equal(shouldAutoStartEchoInkOnboarding(false, settings.setup), false);
   assert.equal(settings.setup.tutorialStep, "sidebar");
@@ -5189,11 +5189,11 @@ function assertOnboardingTruthContract(): void {
 function assertFiveStepOnboardingEntrypoints(): void {
   installProviderModalDomFixture();
   const expected = [
-    ["sidebar", "认识 EchoInk · 01 / 05", "先认识你的 Agent"],
-    ["settings", "认识 EchoInk · 02 / 05", "让 EchoInk 适合你"],
-    ["provider", "认识 EchoInk · 03 / 05", "连接一个模型"],
-    ["knowledge", "认识 EchoInk · 04 / 05", "给笔记一个归处"],
-    ["personality", "认识 EchoInk · 05 / 05", "选择一种相处方式"]
+    ["sidebar", "认识 EchoInk · 01 / 05", "认识工作台和你的 Agent"],
+    ["provider", "认识 EchoInk · 02 / 05", "连接一个模型"],
+    ["knowledge", "认识 EchoInk · 03 / 05", "给知识库安个家"],
+    ["personality", "认识 EchoInk · 04 / 05", "认识总助"],
+    ["colleague", "认识 EchoInk · 05 / 05", "再请一位同事"]
   ] as const;
   for (const [step, stepLabel, title] of expected) {
     const copy = onboardingCoachmarkCopy(step, true);
@@ -5201,11 +5201,12 @@ function assertFiveStepOnboardingEntrypoints(): void {
     assert.equal(copy.title, title);
     assert.doesNotMatch(copy.description, /本教程|配置完整|可恢复的预览|Memory 学习|稍后/u);
   }
-  assert.equal(onboardingCoachmarkCopy("sidebar", true).action, "打开 EchoInk");
-  assert.equal(onboardingCoachmarkCopy("settings", true).action, "进入设置");
+  assert.equal(onboardingCoachmarkCopy("sidebar", true).action, "下一步");
+  assert.equal(onboardingCoachmarkCopy("settings", true).step, "认识 EchoInk · 01 / 05");
   assert.equal(onboardingCoachmarkCopy("provider", true).action, "下一步");
   assert.equal(onboardingCoachmarkCopy("knowledge", true).action, "下一步");
-  assert.equal(onboardingCoachmarkCopy("personality", true).action, "开始积累");
+  assert.equal(onboardingCoachmarkCopy("personality", true).action, "下一步");
+  assert.equal(onboardingCoachmarkCopy("colleague", true).action, "", "creation only belongs to the sidebar form");
 
   const root = providerModalTestDocument.createElement("div");
   let settingsCalls = 0;
@@ -5219,17 +5220,9 @@ function assertFiveStepOnboardingEntrypoints(): void {
   settingsButton!.click();
   assert.equal(settingsCalls, 1);
 
-  const bootstrapSource = readFileSync("src/plugin/bootstrap.ts", "utf8");
-  assert.match(bootstrapSource, /setEchoInkOnboardingRibbonAnchor/u);
-  assert.match(bootstrapSource, /handleEchoInkOnboardingTargetActivated\("sidebar"\)/u);
-  const mainSource = readFileSync("src/main.ts", "utf8");
-  assert.match(mainSource, /workspace\.layoutReady/u);
-  assert.match(mainSource, /prepareEchoInkOnboardingTutorial/u);
-  assert.match(mainSource, /\.modal\.mod-settings/u);
-  assert.match(mainSource, /MutationObserver/u);
-  assert.match(mainSource, /actionLabel:\s*copy\.action/u);
-  assert.match(mainSource, /await this\.activateHomeAndSidebar\(\)/u);
-  console.log("PASS settings: onboarding starts from ribbon and sidebar settings gear");
+  // Actual resume routes and workspace actions are exercised below; source
+  // spellings are not evidence that a guide opens the intended product page.
+  console.log("PASS settings: five visible onboarding steps and the existing settings entry");
 }
 
 function assertCodexHeaderIdentityContract(): void {
@@ -5270,6 +5263,19 @@ function assertCodexHeaderIdentityContract(): void {
 
 async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
   installProviderModalDomFixture();
+  // The guide's Escape guard queries the owning document for an upper layer.
+  const quotedSelector = (selector: string) => selector.replace(/\[([\w-]+)=([\w-]+)\]/gu, '[$1="$2"]');
+  const queryLayers = (selector: string) => providerModalTestDocument.body.querySelectorAll(quotedSelector(selector)).map(element => Object.assign(element, {
+    getClientRects: () => {
+      for (let node: ProviderModalTestElement | null = element; node; node = node.parentElement) {
+        if (node.getAttribute("hidden") !== null || node.style.getPropertyValue("display") === "none") return [];
+      }
+      return element.isConnected ? [element.getBoundingClientRect()] : [];
+    }
+  }));
+  const computedStyle = (element: ProviderModalTestElement) => ({ visibility: element.style.getPropertyValue("visibility") || "visible" });
+  Object.assign(providerModalTestDocument, { querySelector: (selector: string) => queryLayers(selector)[0] ?? null, querySelectorAll: queryLayers });
+  Object.assign(providerModalTestDocument.defaultView, { getComputedStyle: computedStyle });
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.settingsLanguage = "zh-CN";
   let dismissCalls = 0;
@@ -5281,8 +5287,12 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
     settings,
     saveSettings: async () => undefined,
     dismissEchoInkOnboarding: async () => { dismissCalls += 1; },
+    openPendingEchoInkOnboarding: async () => undefined,
+    runEchoInkOnboardingNavigation(this: unknown, action: () => Promise<void>): Promise<void> {
+      return CodexForObsidianPlugin.prototype.runEchoInkOnboardingNavigation.call(this as CodexForObsidianPlugin, action);
+    },
     advanceEchoInkOnboarding: async (
-      step: "sidebar" | "settings" | "provider" | "knowledge" | "personality"
+      step: "sidebar" | "settings" | "provider" | "knowledge" | "personality" | "colleague"
     ) => {
       advanceCalls.push(step);
       return advanceEchoInkOnboardingTutorial(settings.setup, step, ++now).nextStep;
@@ -5291,20 +5301,22 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
   const tab = new CodexSettingTab(plugin as never);
   const mutable = tab as unknown as {
     renderOnboardingCoachmark(
-      step: "sidebar" | "settings" | "provider" | "knowledge" | "personality"
+      step: "sidebar" | "settings" | "provider" | "knowledge" | "personality" | "colleague"
     ): void;
     clearOnboardingCoachmark(restoreFocus: boolean): void;
+    showOnboardingCompletion(): void;
   };
   const restoreFocus = providerModalTestDocument.createElement("button");
   providerModalTestDocument.body.appendChild(restoreFocus);
 
   for (const fixture of [
     { step: "provider" as const, key: "providers:add", label: "连接一个模型", action: "下一步" },
-    { step: "knowledge" as const, key: "knowledge:onboarding", label: "给笔记一个归处", action: "下一步" },
-    { step: "personality" as const, key: "general:personality-template", label: "选择一种相处方式", action: "开始积累" }
+    { step: "knowledge" as const, key: "knowledge:onboarding", label: "给知识库安个家", action: "下一步" },
+    { step: "personality" as const, key: "general:personality-template", label: "认识总助", action: "下一步" }
   ]) {
     tab.containerEl.empty();
     const anchor = tab.containerEl.createEl("button", {
+      cls: fixture.step === "personality" ? "echoink-agent-editor-header" : "",
       attr: { "data-echoink-focus-key": fixture.key }
     });
     restoreFocus.focus();
@@ -5327,7 +5339,7 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
     assert.equal(action?.getAttribute("aria-label"), fixture.action);
     assert.equal(
       action?.querySelector(".echoink-onboarding-action-icon")?.getAttribute("data-echoink-icon"),
-      fixture.step === "personality" ? "check" : "arrow-right"
+      "arrow-right"
     );
     assert.equal(action?.querySelectorAll(".echoink-onboarding-action-icon").length, 1);
     assert.equal(
@@ -5353,7 +5365,7 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
   });
   const detachedMutable = detachedTab as unknown as {
     renderOnboardingCoachmark(
-      step: "sidebar" | "settings" | "provider" | "knowledge" | "personality"
+      step: "sidebar" | "settings" | "provider" | "knowledge" | "personality" | "colleague"
     ): void;
     clearOnboardingCoachmark(restoreFocus: boolean): void;
   };
@@ -5375,13 +5387,14 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
   settings.setup.tutorialStep = "provider";
   settings.setup.tutorialVersion = ECHOINK_ONBOARDING_VERSION;
   for (const fixture of [
-    { step: "provider" as const, key: "providers:add", tab: "providers" as const, nextTab: "knowledgeBase" as const },
-    { step: "knowledge" as const, key: "knowledge:onboarding", tab: "knowledgeBase" as const, nextTab: "general" as const },
-    { step: "personality" as const, key: "general:personality-template", tab: "general" as const, nextTab: null }
+    { step: "provider" as const, key: "providers:add", tab: "providers" as const, nextStep: "knowledge" },
+    { step: "knowledge" as const, key: "knowledge:onboarding", tab: "knowledgeBase" as const, nextStep: "personality" },
+    { step: "personality" as const, key: "general:personality-template", tab: "general" as const, nextStep: "colleague" }
   ]) {
     settings.settingsTab = fixture.tab;
     tab.containerEl.empty();
     tab.containerEl.createEl("button", {
+      cls: fixture.step === "personality" ? "echoink-agent-editor-header" : "",
       attr: { "data-echoink-focus-key": fixture.key }
     });
     mutable.renderOnboardingCoachmark(fixture.step);
@@ -5391,11 +5404,13 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
     assert.ok(next);
     next.click();
     await flushProviderModalTasks();
-    if (fixture.nextTab) assert.equal(settings.settingsTab, fixture.nextTab);
+    assert.equal(settings.setup.tutorialStep, fixture.nextStep);
   }
   assert.deepEqual(advanceCalls, ["provider", "knowledge", "personality"]);
-  assert.equal(settings.setup.completedAt, 203);
-  assert.equal(settings.setup.tutorialStep, "sidebar");
+  assert.equal(settings.setup.completedAt, 0, "the first four steps cannot complete before the colleague is saved");
+  assert.equal(settings.setup.tutorialStep, "colleague");
+  assert.equal(providerModalTestDocument.body.querySelector(".echoink-onboarding-coachmark.is-complete"), null);
+  mutable.showOnboardingCompletion();
   const completion = providerModalTestDocument.body.querySelector(".echoink-onboarding-coachmark.is-complete");
   assert.ok(completion);
   assert.equal(completion.querySelectorAll("button").length, 2);
@@ -5464,10 +5479,43 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
   assert.equal(mandatoryActionCalls, 1);
   mandatoryHandle.destroy();
 
+  await assertOnboardingVisibleLayerEscape();
+
   const css = readFileSync("styles.css", "utf8");
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.echoink-onboarding-coachmark\s*\{[\s\S]*?animation:\s*none/u);
   assert.doesNotMatch(css, /\.echoink-onboarding-coachmark \.echoink-onboarding-action\s*\{\s*width:\s*100%;/u);
 
+}
+
+async function assertOnboardingVisibleLayerEscape(): Promise<void> {
+  const anchor = providerModalTestDocument.body.createEl("button");
+  for (const step of ["sidebar", "colleague"] as const) {
+    for (const [role, display, visibility] of [["listbox", "none", "visible"], ["menu", "block", "hidden"]] as const) {
+      const layer = providerModalTestDocument.body.createDiv({ attr: { role } });
+      layer.style.setProperty("display", display); layer.style.setProperty("visibility", visibility);
+      let dismisses = 0, prevented = 0;
+      const guide = mountEchoInkOnboardingCoachmark({ anchor: anchor as never, stepClass: step, stepLabel: step, title: "Guide", description: "Fixture", dismissLabel: "Skip guide", onDismiss: () => { dismisses++; } });
+      providerModalTestDocument.fireEvent("keydown", { key: "Escape", preventDefault: () => { prevented++; } });
+      await flushProviderModalTasks();
+      assert.equal(dismisses, 1, `${step}: hidden ${role} must not block Escape`);
+      assert.equal(guide.element.isConnected, false); assert.equal(prevented, 1);
+      layer.remove(); guide.destroy();
+    }
+    for (const role of ["listbox", "menu"] as const) {
+      const layer = providerModalTestDocument.body.createDiv({ attr: { role } });
+      let dismisses = 0, prevented = 0;
+      const guide = mountEchoInkOnboardingCoachmark({ anchor: anchor as never, stepClass: step, stepLabel: step, title: "Guide", description: "Fixture", dismissLabel: "Skip guide", onDismiss: () => { dismisses++; } });
+      providerModalTestDocument.fireEvent("keydown", { key: "Escape", preventDefault: () => { prevented++; } });
+      await flushProviderModalTasks();
+      assert.equal(dismisses, 0, `${step}: visible ${role} handles Escape before the guide`);
+      assert.equal(guide.element.isConnected, true); assert.equal(prevented, 0, "the guide must not consume the upper layer's Escape");
+      layer.remove();
+      providerModalTestDocument.fireEvent("keydown", { key: "Escape" }); await flushProviderModalTasks();
+      assert.equal(dismisses, 1); assert.equal(guide.element.isConnected, false); guide.destroy();
+    }
+  }
+  anchor.remove();
+  console.log("PASS onboarding Escape: hidden composer layers ignored; visible menus/listboxes retain first handling in steps 1 and 5");
 }
 
 async function assertSettingsDeleteFailuresKeepAuthoritativeRows(): Promise<void> {
@@ -5622,21 +5670,46 @@ async function assertOnboardingResumeSettingsRoute(): Promise<void> {
         plugin.getViewService = () => ({ openEchoInkSettings: async (...args: unknown[]) => { calls.push(args); } });
         plugin.saveSettings = () => { throw new Error("resuming settings must not write configuration"); };
         await CodexForObsidianPlugin.prototype.openPendingEchoInkOnboarding.call(plugin);
-        assert.deepEqual(calls, [[tab, desktop && step === "personality" ? "general:personality-template" : undefined]],
-          `resume ${step} keeps ${desktop ? "desktop focus mapping" : "the legacy mobile route"}`);
+        const focus = step === "personality" ? "general:personality-template" : step === "knowledge" ? "knowledge:onboarding" : "providers:add";
+        assert.deepEqual(calls, [[tab, focus]], `resume ${step} routes to its actual editor/initialization target`);
         plugin.onboardingRequested = false;
         await CodexForObsidianPlugin.prototype.openPendingEchoInkOnboarding.call(plugin);
         assert.equal(calls.length, 1, "an inactive tutorial does not open settings");
       }
     }
   } finally { Platform.isDesktopApp = previousDesktop; }
-  console.log("PASS P11 onboarding resume: desktop personality keeps focus; mobile, Provider and Knowledge routes remain unchanged");
+  installProviderModalDomFixture();
+  const plugin: any = Object.create(CodexForObsidianPlugin.prototype);
+  plugin.app = new App(); plugin.settings = structuredClone(DEFAULT_SETTINGS); plugin.onboardingRequested = true;
+  const anchor = providerModalTestDocument.body.createEl("button");
+  const editor = providerModalTestDocument.body.createEl("div");
+  let opened = 0, workspaces = 0;
+  plugin.activateHomeAndSidebar = async () => { workspaces++; };
+  plugin.getCodexView = () => ({ waitForTaskUiReady: async () => true, onboardingAgentAnchor: anchor, openOnboardingAgentEditor: () => { opened++; return editor; }, requestOnboardingEditorLeave: (done: () => void) => done() });
+  plugin.saveSettings = () => { throw new Error("opening an onboarding target must not save configuration"); };
+  const configuration = structuredClone(plugin.settings);
+  await plugin.openPendingEchoInkOnboarding();
+  assert.ok(providerModalTestDocument.body.querySelector(".echoink-onboarding-coachmark.is-sidebar"));
+  assert.equal(plugin.settings.setup.tutorialStep, "sidebar");
+  assert.equal(await plugin.handleEchoInkOnboardingTargetActivated("sidebar"), false, "ordinary ribbon/gear navigation is not Next");
+  assert.equal(await plugin.handleEchoInkOnboardingTargetActivated("settings"), false);
+  assert.deepEqual(plugin.settings, configuration);
+  plugin.clearEchoInkOnboardingWorkspaceCoachmark(false);
+  plugin.settings.setup.tutorialStep = "colleague";
+  await plugin.openPendingEchoInkOnboarding();
+  assert.equal(opened, 1); assert.equal(workspaces, 2);
+  const coachmark = providerModalTestDocument.body.querySelector(".echoink-onboarding-coachmark.is-colleague");
+  assert.ok(coachmark); assert.equal(coachmark.querySelector(".echoink-onboarding-action"), null, "the fifth-step coachmark cannot create a second submit path");
+  assert.equal(plugin.settings.setup.completedAt, 0); assert.equal(plugin.settings.agentRegistry.agents.length, configuration.agentRegistry.agents.length);
+  plugin.clearEchoInkOnboardingWorkspaceCoachmark(false); anchor.remove(); editor.remove();
+  console.log("PASS P15 onboarding resume: actual settings targets and workspace/colleague entry open without saving or executing");
 }
 
 async function assertOnboardingNavigationPersistence(): Promise<void> {
   installProviderModalDomFixture();
   const plugin: any = Object.create(CodexForObsidianPlugin.prototype);
   plugin.conversationCatalogListeners = new Set<() => void>();
+  plugin.agentRegistryListeners = new Set<() => void>();
   plugin.settings = structuredClone(DEFAULT_SETTINGS);
   plugin.onboardingRequested = true;
   let failSave = false;
@@ -5662,6 +5735,14 @@ async function assertOnboardingNavigationPersistence(): Promise<void> {
   assert.equal(plugin.isEchoInkOnboardingRequested(), true);
   failSave = false;
   await plugin.advanceEchoInkOnboarding("personality");
+  assert.equal(plugin.getEchoInkOnboardingStep(), "colleague");
+  assert.equal(plugin.isEchoInkOnboardingRequested(), true);
+  assert.equal(plugin.settings.setup.completedAt, 0);
+  await assert.rejects(plugin.advanceEchoInkOnboarding("colleague"), /请先创建|create/iu, "the guide cannot bypass the colleague form");
+  plugin.settings.agentRegistry.agents.push({ ...structuredClone(DEFAULT_SETTINGS.agentRegistry.agents[0]), id: "tutorial-colleague", name: "整理员" });
+  plugin.settings.setup.onboardingAgentId = "tutorial-colleague";
+  const colleagues = plugin.settings.agentRegistry.agents.length;
+  await plugin.advanceEchoInkOnboarding("colleague");
   assert.equal(plugin.isEchoInkOnboardingRequested(), false);
   assert.equal(plugin.settings.setup.dismissedVersion, ECHOINK_ONBOARDING_VERSION);
   const completed = { ...plugin.settings.setup };
@@ -5673,6 +5754,8 @@ async function assertOnboardingNavigationPersistence(): Promise<void> {
   await plugin.restartEchoInkOnboarding();
   assert.equal(plugin.getEchoInkOnboardingStep(), "sidebar");
   assert.equal(plugin.isEchoInkOnboardingRequested(), true);
+  assert.equal(plugin.settings.setup.onboardingAgentId, "tutorial-colleague");
+  assert.equal(plugin.settings.agentRegistry.agents.length, colleagues, "replay does not create another colleague");
   assert.deepEqual({ providers: plugin.settings.apiProviders, knowledge: plugin.settings.knowledgeBase }, productConfiguration);
 
   // Exercise the settings callbacks, including the real cursor persistence
@@ -5685,6 +5768,7 @@ async function assertOnboardingNavigationPersistence(): Promise<void> {
   plugin.manifest = { id: "codex-echoink" };
   plugin.openPendingEchoInkOnboarding = async () => { routes.push(plugin.getEchoInkOnboardingStep()); };
   plugin.activateHomeAndSidebar = async () => { routes.push("workspace"); };
+  plugin.openPaperGuideAfterOnboarding = async () => { routes.push("paper-guide"); };
   const tab = new CodexSettingTab(plugin);
   const mutable = tab as any;
   mutable.scheduleDisplay = () => undefined;
@@ -5695,24 +5779,24 @@ async function assertOnboardingNavigationPersistence(): Promise<void> {
   mutable.renderOnboardingCoachmark("provider");
   providerModalTestDocument.body.querySelector<ProviderModalTestElement>(".echoink-onboarding-previous")!.click();
   await flushProviderModalTasks();
-  assert.deepEqual(routes, ["close-settings", "settings"]);
-  assert.equal(plugin.getEchoInkOnboardingStep(), "settings");
+  assert.deepEqual(routes, ["sidebar", "close-settings"], "the target must open before the current settings host closes");
+  assert.equal(plugin.getEchoInkOnboardingStep(), "sidebar");
   plugin.settings.setup.tutorialStep = "provider";
   mutable.renderOnboardingCoachmark("provider");
   const progress = providerModalTestDocument.body.querySelector<ProviderModalTestElement>(".echoink-onboarding-progress")!;
   progress.querySelectorAll<ProviderModalTestElement>("button")[4].click();
   await flushProviderModalTasks();
-  assert.equal(plugin.getEchoInkOnboardingStep(), "personality");
-  assert.equal(routes.at(-1), "general");
+  assert.equal(plugin.getEchoInkOnboardingStep(), "colleague");
+  assert.deepEqual(routes.slice(-2), ["colleague", "close-settings"]);
   mutable.showOnboardingCompletion();
   providerModalTestDocument.body.querySelector<ProviderModalTestElement>(".echoink-onboarding-previous")!.click();
   await flushProviderModalTasks();
   assert.equal(plugin.getEchoInkOnboardingStep(), "sidebar");
-  assert.equal(routes.at(-1), "sidebar");
+  assert.deepEqual(routes.slice(-2), ["sidebar", "close-settings"]);
   mutable.showOnboardingCompletion();
   providerModalTestDocument.body.querySelector<ProviderModalTestElement>(".echoink-onboarding-action")!.click();
   await flushProviderModalTasks();
-  assert.deepEqual(routes.slice(-2), ["workspace", "close-settings"]);
+  assert.deepEqual(routes.slice(-3), ["workspace", "close-settings", "paper-guide"]);
 
   // A failed dismissal stays visible, blocks concurrent clicks, and can retry.
   let rejectSave!: (reason: Error) => void;
@@ -5758,6 +5842,96 @@ async function assertOnboardingNavigationPersistence(): Promise<void> {
   host.dispose();
   assert.equal(providerModalTestDocument.body.querySelector(".echoink-onboarding-spotlight"), null);
   console.log("PASS onboarding: persisted back/jump/skip/complete/replay, rollback and retry");
+}
+
+async function assertOnboardingTargetSaveFailure(): Promise<void> {
+  for (const source of ["sidebar", "provider"] as const) {
+    const plugin: any = Object.create(CodexForObsidianPlugin.prototype);
+    plugin.app = new App(); plugin.settings = structuredClone(DEFAULT_SETTINGS); plugin.onboardingRequested = true;
+    plugin.settings.setup.tutorialStep = source;
+    plugin.conversationCatalogListeners = new Set<() => void>(); plugin.agentRegistryListeners = new Set<() => void>();
+    plugin.register = () => undefined; plugin.manifest = { id: "codex-echoink" };
+    const before = structuredClone(plugin.settings.setup);
+    let saves = 0, targetCalls = 0, targetReady = false, persisted = structuredClone(before);
+    const savedSteps: string[] = [];
+    plugin.saveSettings = async () => {
+      saves++; savedSteps.push(plugin.settings.setup.tutorialStep);
+      if (saves === 2) throw new Error("target-save-failed");
+      persisted = structuredClone(plugin.settings.setup);
+    };
+    plugin.getViewService = () => ({ openEchoInkSettings: async () => {
+      targetCalls++;
+      // The target's route save happens after the tutorial cursor's first save.
+      await plugin.saveSettings(true);
+      targetReady = true;
+    } });
+    const anchor = providerModalTestDocument.body.createEl("button");
+    plugin.activateHomeAndSidebar = async () => undefined;
+    plugin.getCodexView = () => ({ waitForTaskUiReady: async () => true, onboardingAgentAnchor: anchor });
+    let tab: CodexSettingTab | null = null;
+    if (source === "sidebar") await plugin.openPendingEchoInkOnboarding();
+    else {
+      tab = new CodexSettingTab(plugin);
+      tab.containerEl.createEl("button", { attr: { "data-echoink-focus-key": "providers:add" } });
+      (tab as any).renderOnboardingCoachmark("provider");
+    }
+    const guide = providerModalTestDocument.body.querySelector<ProviderModalTestElement>(`.echoink-onboarding-coachmark.is-${source}`)!;
+    assert.ok(guide);
+    const next = guide.querySelector<ProviderModalTestElement>(".echoink-onboarding-action")!;
+    next.click(); next.click(); await flushProviderModalTasks();
+    assert.equal(saves, 3, `${source}: cursor save, failed target save, then persisted rollback`);
+    assert.equal(targetCalls, 1); assert.equal(targetReady, false);
+    assert.equal(guide.isConnected, true, `${source}: failed target keeps the same guide available`);
+    assert.equal(next.disabled, false); assert.deepEqual(plugin.settings.setup, before); assert.deepEqual(persisted, before);
+    assert.equal(plugin.isEchoInkOnboardingRequested(), true);
+    assert.deepEqual(savedSteps, [source === "sidebar" ? "provider" : "knowledge", source === "sidebar" ? "provider" : "knowledge", source]);
+    next.click(); await flushProviderModalTasks();
+    assert.equal(saves, 5); assert.equal(targetCalls, 2); assert.equal(targetReady, true);
+    assert.equal(plugin.getEchoInkOnboardingStep(), source === "sidebar" ? "provider" : "knowledge");
+    assert.equal(persisted.tutorialStep, plugin.getEchoInkOnboardingStep());
+    if (source === "sidebar") assert.equal(guide.isConnected, false, "workspace guide closes only after the settings target is ready");
+    else (tab as any).clearOnboardingCoachmark(false);
+    plugin.clearEchoInkOnboardingWorkspaceCoachmark(false); anchor.remove(); tab?.containerEl.remove();
+  }
+  console.log("PASS onboarding navigation: target's second save failure keeps workspace/settings guide, persists cursor rollback and retries");
+}
+
+async function assertOnboardingPersonalityHostRebuild(): Promise<void> {
+  const previousDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
+  const oldPrepend = Object.getOwnPropertyDescriptor(ProviderModalTestElement.prototype, "prepend");
+  Object.defineProperty(ProviderModalTestElement.prototype, "prepend", { configurable: true, value(this: ProviderModalTestElement, ...children: ProviderModalTestElement[]) {
+    for (const child of children.reverse()) this.insertBefore(child, this.firstChild);
+  } });
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const sol = settings.agentRegistry.agents[0]; sol.name = "自己的总助"; sol.styleId = "analysis";
+  const saved = structuredClone(settings);
+  const plugin = withSettingsTabDefaults({ app: new App(), manifest: { id: "codex-echoink" }, settings,
+    saveSettings: async () => { throw new Error("opening Sol editor must not save configuration"); },
+    buildRuntimeEchoInkResourceCatalog: async () => [], getAgentCapabilityAvailability: () => ({ available: true }),
+    isEchoInkOnboardingRequested: () => true, getEchoInkOnboardingStep: () => "personality" as const
+  });
+  const tab = new CodexSettingTab(plugin as never), lifecycle = tab as any;
+  lifecycle.scheduleDisplay = () => undefined;
+  try {
+    tab.openDesktopRoute({ tab: "agent", focus: "general:personality-template" });
+    assert.equal(lifecycle.pendingDesktopAgentEditor, sol.id);
+    assert.equal(lifecycle.desktopAgents, null, "route queues the editor until the host's content is ready");
+    lifecycle.disposeSettingsView();
+    assert.equal(lifecycle.pendingDesktopAgentEditor, sol.id, "the host's initial definition disposal must preserve the queued Sol editor");
+    lifecycle.renderSettingsShell(); lifecycle.beginSettingsDisplay(); lifecycle.renderSettingsContent();
+    await flushProviderModalTasks();
+    assert.equal(lifecycle.pendingDesktopAgentEditor, null);
+    assert.equal(lifecycle.desktopAgents?.isDetail, true);
+    assert.ok(tab.containerEl.querySelector(".echoink-agent-settings-editor")?.querySelector(".echoink-agent-editor-header"), "the real Agent controller renders its detail after the shell rebuild");
+    assert.equal(tab.containerEl.querySelectorAll<ProviderModalTestElement>("input").find(input => input.dataset.field === "name")?.value, "自己的总助");
+    assert.equal(tab.containerEl.querySelector(".echoink-agent-settings-list"), null, "the guide target cannot fall back to the members summary");
+    assert.deepEqual(settings.agentRegistry, saved.agentRegistry, "opening the editor preserves the current Sol identity/style and owners");
+  } finally {
+    lifecycle.disposeSettingsView(); tab.containerEl.remove(); Platform.isDesktopApp = previousDesktop;
+    if (oldPrepend) Object.defineProperty(ProviderModalTestElement.prototype, "prepend", oldPrepend);
+    else Reflect.deleteProperty(ProviderModalTestElement.prototype, "prepend");
+  }
+  console.log("PASS onboarding personality: queued Sol editor survives host dispose/shell rebuild and renders the actual detail");
 }
 
 async function assertOnboardingDoesNotLockSettingsNavigation(): Promise<void> {
@@ -13634,6 +13808,9 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p11-settings") {
   await assertOnboardingCoachmarkAccessibilityContract();
   await assertOnboardingDoesNotLockSettingsNavigation();
   await assertOnboardingNavigationPersistence();
+  await assertOnboardingTargetSaveFailure();
+  await assertOnboardingPersonalityHostRebuild();
+  await assertOnboardingResumeSettingsRoute();
   console.log("PASS affected onboarding navigation, completion, persistence and window lifecycle");
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "inline") {
   await assertInlineEditorAsyncRetirement();

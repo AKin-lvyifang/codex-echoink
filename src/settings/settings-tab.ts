@@ -321,6 +321,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private onboardingCoachmarkHandle: EchoInkOnboardingCoachmarkHandle | null = null;
   private onboardingRestoreFocusEl: HTMLElement | null = null;
   private onboardingRefreshGeneration = 0;
+  private onboardingNavigationPending = false;
   private developerPanel: DeveloperModePanel | null = null;
   private accountPage: { dispose: () => void } | null = null;
   private desktopAccount: DesktopAccountMembershipHandle | null = null;
@@ -337,6 +338,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private desktopModuleCleanup: (() => void) | null = null;
   private desktopKnowledge: DesktopKnowledgeSettings | null = null;
   private desktopAgents: DesktopAgentSettings | null = null;
+  private pendingDesktopAgentEditor: string | null = null;
   private desktopMemory: DesktopMemorySettings | null = null;
   private desktopProfile: UserProfileSettingsController | null = null;
   private desktopProfileOpen = false;
@@ -364,11 +366,13 @@ export class CodexSettingTab extends PluginSettingTab {
     if (this.desktopRoute) this.desktopRouteHistory.set(this.desktopRoute.tab, this.desktopRoute);
     route = normalizeDesktopSettingsRoute(route, this.plugin.settings.resourceManagementTab, this.desktopRouteHistory.get("capabilities")?.capabilityTab);
     this.desktopRoute = route;
+    this.pendingDesktopAgentEditor = null;
     this.desktopRouteHistory.set(route.tab, this.desktopRoute);
     this.suspendedTabEditors.delete(route.tab);
     if (route.capabilityTab && route.capabilityTab !== "tools") this.plugin.settings.resourceManagementTab = route.capabilityTab;
     if (route.tab === "modules") this.plugin.settings.resourceManagementTab = "plugins";
     this.settingsDetail = null;
+    if (route.focus === "providers:add" && this.plugin.isEchoInkOnboardingRequested() && this.plugin.getEchoInkOnboardingStep() === "provider") this.providerPickerOpen = true;
     if (route.focus) this.settingsFocusIntent = `explicit:${route.focus.replace(/^explicit:/u, "")}`;
     if (/journal:templates/u.test(route.focus ?? "")) this.openSettingsDetail("journal-templates");
     else if (/todo:categories/u.test(route.focus ?? "")) this.openSettingsDetail("todo-categories");
@@ -384,7 +388,7 @@ export class CodexSettingTab extends PluginSettingTab {
     else if (/^selection-ask/u.test(route.focus ?? "")) this.openSettingsDetail("selection-ask");
     else if (/review:archives/u.test(route.focus ?? "")) this.openSettingsDetail("review-archives");
     else if (/agent:profile/u.test(route.focus ?? "")) { this.ensureDesktopProfile().refreshWhenOpened(); this.desktopProfileOpen = true; }
-    else if (/general:personality-template/u.test(route.focus ?? "")) this.ensureDesktopAgents().open(GENERAL_ASSISTANT_ID);
+    else if (/general:personality-template/u.test(route.focus ?? "")) this.pendingDesktopAgentEditor = GENERAL_ASSISTANT_ID;
     else if (/review:memory/u.test(route.focus ?? "")) this.openSettingsDetail("review-memory");
     this.scheduleDisplay();
   }
@@ -978,7 +982,7 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     const step = this.plugin.getEchoInkOnboardingStep();
-    if (step === "sidebar" || step === "settings") {
+    if (step === "sidebar" || step === "settings" || step === "colleague") {
       this.clearOnboardingCoachmark(false);
       return;
     }
@@ -1002,7 +1006,7 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderOnboardingCoachmark(step: EchoInkOnboardingStep): void {
-    if (step === "sidebar" || step === "settings") {
+    if (step === "sidebar" || step === "settings" || step === "colleague") {
       this.clearOnboardingCoachmark(false);
       return;
     }
@@ -1011,9 +1015,10 @@ export class CodexSettingTab extends PluginSettingTab {
       : step === "knowledge"
         ? "knowledge:onboarding"
         : "general:personality-template";
-    const anchor = this.containerEl.querySelector<HTMLElement>(
-      `[data-echoink-focus-key="${anchorKey}"]`
-    );
+    const anchor = (step === "personality" ? this.containerEl.querySelector<HTMLElement>(".echoink-agent-editor-header") : null)
+      ?? this.containerEl.querySelector<HTMLElement>(`[data-echoink-focus-key="${anchorKey}"]`)
+      ?? this.settingsBodyEl?.querySelector<HTMLElement>(".settings-page-header, .settings-header, h2")
+      ?? this.settingsBodyEl;
     if (!anchor) {
       this.clearOnboardingCoachmark(false);
       return;
@@ -1050,9 +1055,9 @@ export class CodexSettingTab extends PluginSettingTab {
       previousLabel: copy.previousLabel,
       dismissLabel: copy.dismissLabel,
       restoreFocusEl: this.onboardingRestoreFocusEl,
-      onDismiss: async () => {
-        await this.plugin.dismissEchoInkOnboarding();
-        this.clearOnboardingCoachmark(true);
+      onDismiss: () => {
+        void this.runOnboardingAfterLeave(async () => { await this.plugin.dismissEchoInkOnboarding(); this.clearOnboardingCoachmark(true); });
+        return false;
       },
       onPrevious: async () => {
         await this.selectOnboardingTutorialStep(step, ECHOINK_ONBOARDING_STEPS[ECHOINK_ONBOARDING_STEPS.indexOf(step) - 1]);
@@ -1069,39 +1074,40 @@ export class CodexSettingTab extends PluginSettingTab {
     this.onboardingCoachmarkHandle = handle;
   }
 
+  private async runOnboardingAfterLeave(action: () => Promise<void>): Promise<void> {
+    if (this.onboardingNavigationPending) return;
+    let pending: Promise<void> | undefined;
+    const run = () => {
+      if (this.onboardingNavigationPending) return;
+      this.onboardingNavigationPending = true;
+      const card = this.onboardingCoachmarkHandle?.element;
+      card?.setAttribute("aria-busy", "true"); card?.querySelectorAll("button").forEach(button => { button.disabled = true; });
+      pending = this.plugin.runEchoInkOnboardingNavigation(action).catch(error => { console.warn("EchoInk onboarding navigation failed", error); new Notice(this.plugin.settings.settingsLanguage === "en" ? "Tutorial progress could not be saved. Try again." : "引导进度保存失败，请重试。"); })
+        .finally(() => { this.onboardingNavigationPending = false; card?.setAttribute("aria-busy", "false"); card?.querySelectorAll("button").forEach(button => { button.disabled = false; }); });
+    };
+    if (this.leaveDesktopAgentDetail(run)) { await pending; return; }
+    if (this.desktopKnowledge?.isDetail) { this.desktopKnowledge.requestLeave(run); await pending; return; }
+    this.suspendActiveEditor(); run(); await pending;
+  }
   private async advanceOnboardingTutorial(step: EchoInkOnboardingStep): Promise<void> {
-    const nextStep = await this.plugin.advanceEchoInkOnboarding(step);
-    if (!nextStep) {
-      this.onboardingRestoreFocusEl = this.containerEl.querySelector<HTMLElement>(
-        '[data-echoink-focus-key="general:personality-template"]'
-      ) ?? this.onboardingRestoreFocusEl;
-      this.showOnboardingCompletion();
-      return;
-    }
-    await this.showOnboardingTutorialStep(nextStep);
+    await this.runOnboardingAfterLeave(async () => {
+      const nextStep = await this.plugin.advanceEchoInkOnboarding(step);
+      if (!nextStep) { this.showOnboardingCompletion(); return; }
+      await this.showOnboardingTutorialStep(nextStep);
+    });
   }
-
   private async selectOnboardingTutorialStep(step: EchoInkOnboardingStep, nextStep: EchoInkOnboardingStep): Promise<void> {
-    if (await this.plugin.selectEchoInkOnboardingStep(step, nextStep)) await this.showOnboardingTutorialStep(nextStep);
+    await this.runOnboardingAfterLeave(async () => {
+      if (await this.plugin.selectEchoInkOnboardingStep(step, nextStep)) await this.showOnboardingTutorialStep(nextStep);
+    });
   }
-
   private async showOnboardingTutorialStep(nextStep: EchoInkOnboardingStep): Promise<void> {
-    this.clearOnboardingCoachmark(false);
-    this.onboardingRestoreFocusEl = null;
-    if (nextStep === "sidebar" || nextStep === "settings") {
-      (this.app as unknown as { setting?: { close: () => void } }).setting?.close();
-      await this.plugin.openPendingEchoInkOnboarding();
-      return;
-    }
-    await this.activateSettingsTab(
-      Platform.isDesktopApp && nextStep === "personality" ? "agent" : echoInkOnboardingTab(nextStep),
-      false
-    );
-    if (Platform.isDesktopApp || this.plugin.settings.settingsTab === echoInkOnboardingTab(nextStep)) {
-      this.scheduleDisplay();
+    await this.plugin.openPendingEchoInkOnboarding();
+    if (nextStep === "sidebar" || nextStep === "settings" || nextStep === "colleague") {
+      this.clearOnboardingCoachmark(false); this.onboardingRestoreFocusEl = null;
+      (this.app as unknown as { setting?: { close(): void } }).setting?.close();
     }
   }
-
   private showOnboardingCompletion(): void {
     const anchor = this.onboardingRestoreFocusEl ?? this.containerEl;
     this.clearOnboardingCoachmark(false);
@@ -1479,6 +1485,10 @@ export class CodexSettingTab extends PluginSettingTab {
   }
   private renderDesktopAgentSettings(container: HTMLElement): void {
     const agents = this.ensureDesktopAgents();
+    if (this.pendingDesktopAgentEditor) {
+      const agentId = this.pendingDesktopAgentEditor; this.pendingDesktopAgentEditor = null;
+      agents.open(agentId);
+    }
     if (agents.isDetail) { agents.renderDetail(container); return; }
     if (this.desktopProfileOpen) { this.ensureDesktopProfile().render(container); return; }
     if (this.settingsDetail === "review-archives" || this.settingsDetail === "review-memory"

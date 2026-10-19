@@ -15,6 +15,8 @@ export interface AgentEditorHost {
   /** Settings supplies its own destination; omitted for the existing sidebar. */
   readonly backLabel?: string;
   readonly confirmLeave?: boolean;
+  /** Guided first colleague: the existing footer owns the only completion action. */
+  readonly onboarding?: boolean;
   loadResources(): Promise<readonly EchoInkResource[]>;
   /** Display only: global/module/PRO availability, never an authorization grant. */
   getCapabilityAvailability?(capabilityId: string): { available: boolean; reason?: string };

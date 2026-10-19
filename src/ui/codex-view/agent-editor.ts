@@ -69,6 +69,7 @@ export class AgentEditorController {
 
   constructor(private readonly host: AgentEditorHost) {}
 
+  get element(): HTMLElement | null { return this.root; }
   hasUnsavedChanges(): boolean {
     return !!this.draft && (this.draft.dirty || !this.editingId && !!(this.draft.presetId || this.draft.agent.name.trim() || this.draft.agent.position.trim()));
   }
@@ -94,6 +95,8 @@ export class AgentEditorController {
   }
 
   private t(zh: string, en: string): string { return this.host.settings.settingsLanguage === "en" ? en : zh; }
+  private isOnboardingCreation(): boolean { return this.host.onboarding === true && !this.editingId; }
+  private canUseOnboardingPreset(): boolean { return this.isOnboardingCreation() && !!this.draft && !this.draft.dirty && !this.draft.presetId; }
   private moduleName(id: AgentModuleId): string { return this.t(MODULE_NAMES[id], MODULE_NAMES_EN[id]); }
   private capabilityName(id: string): string {
     const copy = CAPABILITIES.find(([capability]) => capability === id);
@@ -138,7 +141,7 @@ export class AgentEditorController {
     root.replaceChildren(); root.lang = this.host.settings.settingsLanguage === "en" ? "en" : "zh-CN"; root.classList.add("echoink-agent-editor", "echoink-theme-boundary");
     this.ownership.clear(); this.capabilityChecks.clear(); this.mcpChecks = [];
     const header = this.el(root, "header", "echoink-agent-editor-header");
-    const back = this.button(header, "", "tertiary", () => this.host.confirmLeave ? this.requestLeave(() => this.close(false)) : this.close(false));
+    const back = this.button(header, "", "tertiary", () => this.host.confirmLeave || this.isOnboardingCreation() ? this.requestLeave(() => this.close(false)) : this.close(false));
     back.classList.add("echoink-agent-editor-back"); setIcon(back, "arrow-left");
     back.setAttribute("aria-label", this.host.backLabel ?? this.t("返回 Agent 任务", "Back to Agent tasks"));
     const avatar = this.el(header, "img", "echoink-agent-editor-avatar-preview"); avatar.alt = ""; this.setAvatarImage(avatar);
@@ -159,8 +162,8 @@ export class AgentEditorController {
     this.status = this.el(footer, "div", "echoink-agent-editor-status");
     this.status.setAttribute("role", "status"); this.status.setAttribute("aria-live", "polite");
     const actions = this.el(footer, "div", "echoink-agent-editor-actions");
-    this.button(actions, this.t("取消", "Cancel"), "secondary", () => this.close(true));
-    this.saveButton = this.button(actions, this.editingId ? this.t("保存", "Save") : this.t("创建", "Create"), "primary", () => { void this.save(); });
+    this.button(actions, this.t("取消", "Cancel"), "secondary", () => this.isOnboardingCreation() ? this.requestLeave(() => this.close(true)) : this.close(true));
+    this.saveButton = this.button(actions, this.editingId ? this.t("保存", "Save") : this.isOnboardingCreation() ? this.t("创建并完成", "Create and finish") : this.t("创建", "Create"), "primary", () => { void this.save(); });
     this.saveButton.dataset.action = "save-agent";
     this.refresh();
   }
@@ -194,6 +197,9 @@ export class AgentEditorController {
     if (!this.draft) return;
     this.draft.dirty = true; this.draft.revision++; this.error = ""; this.persistDraft(); this.refresh();
   }
+  private onboardingInteraction(): void {
+    if (!this.disposed && !this.busy && this.isOnboardingCreation() && this.draft && !this.draft.dirty) this.changed();
+  }
   private persistDraft(): void {
     if (!this.draft) return;
     let drafts = formDrafts.get(this.host.draftCacheKey);
@@ -209,15 +215,19 @@ export class AgentEditorController {
   }
   private invalidAgent(): boolean { return !!this.editingId && !this.host.settings.agentRegistry.agents.some(agent => agent.id === this.editingId); }
 
+  private applyPreset(presetId: string): void {
+    const preset = AGENT_PRESETS.find(item => item.presetId === presetId);
+    if (!preset || !this.draft) return;
+    const id = this.draft.agent.id;
+    this.draft = { agent: { ...structuredClone(preset.agent), id }, moduleIds: [...preset.moduleIds], presetId, dirty: false, revision: this.draft.revision + 1 };
+    this.persistDraft(); if (this.root) this.render(this.root);
+  }
+
   private renderPresets(parent: HTMLElement): void {
     const section = this.section(parent, this.t("从预设开始", "Start from a preset"));
     const group = createOriginRadioGroup(section, this.draft!.presetId, this.t("从预设开始", "Start from a preset"), value => {
       const preset = AGENT_PRESETS.find(item => item.presetId === value); if (!preset || this.busy) return;
-      const apply = () => {
-        const id = this.draft!.agent.id;
-        this.draft = { agent: { ...structuredClone(preset.agent), id }, moduleIds: [...preset.moduleIds], presetId: value, dirty: false, revision: this.draft!.revision + 1 };
-        this.persistDraft(); if (this.root) this.render(this.root);
-      };
+      const apply = () => this.applyPreset(value);
       const trigger = section.querySelector<HTMLButtonElement>(`[data-preset="${value}"]`)!;
       if (this.draft!.dirty) {
         showSettingsInlineConfirmation(section, trigger, { message: this.t("用预设替换当前未保存的表单？", "Replace the unsaved form with this preset?"), confirmLabel: this.t("使用预设", "Use preset"), cancelLabel: this.t("保留修改", "Keep changes"), onConfirm: async () => { apply(); } });
@@ -259,6 +269,7 @@ export class AgentEditorController {
     for (const choice of choices) {
       const tile = this.el(radios.element, "label", "echoink-agent-editor-avatar-option");
       const radio = radios.addItem(tile, choice.value, false); radio.setAttribute("aria-label", choice.label);
+      radio.addEventListener("click", () => this.onboardingInteraction());
       const picture = this.el(tile, "img"); picture.alt = "";
       const url = resolveAgentAvatarUrl(choice.avatar) ?? resolveAgentAvatarUrl({ kind: "preset", presetId: "sol" }); if (url) picture.src = url;
     }
@@ -267,6 +278,8 @@ export class AgentEditorController {
     const avatarError = this.el(section, "div", "echoink-agent-editor-error"); avatarError.setAttribute("role", "status");
     fileInput.onchange = () => {
       const file = fileInput.files?.[0]; if (!file || this.busy) return;
+      // A rejected custom upload must not turn a later empty-name submit into a preset.
+      this.onboardingInteraction();
       const generation = this.generation; this.busy = "avatar"; this.refresh();
       void processAgentAvatar(file, file.type, file.size, createBrowserAvatarRenderer()).then(value => {
         if (this.disposed || generation !== this.generation) return;
@@ -411,7 +424,8 @@ export class AgentEditorController {
     for (const style of AGENT_STYLES) {
       const row = this.el(group.element, "label", "echoink-agent-editor-style-card");
       const name = this.t(style.name, STYLE_COPY_EN[style.id].name);
-      group.addItem(row, style.id, false).setAttribute("aria-label", name);
+      const radio = group.addItem(row, style.id, false); radio.setAttribute("aria-label", name);
+      radio.addEventListener("click", () => this.onboardingInteraction());
       const copy = this.el(row, "span", "echoink-agent-editor-style-copy"); this.el(copy, "span", "echoink-agent-editor-style-name", name);
       this.el(copy, "span", "echoink-agent-editor-style-summary", this.t(...STYLE_SUMMARIES[style.id]));
     }
@@ -423,11 +437,11 @@ export class AgentEditorController {
     const invalidName = !normalizeAgentDisplayName(this.draft.agent.name);
     if (this.nameError) this.nameError.textContent = invalidName && this.draft.dirty ? this.t("名字需为 1–24 个字符，不能包含换行或制表符。", "Use 1–24 characters without line breaks or tabs.") : "";
     this.nameInput?.setAttribute("aria-invalid", String(invalidName && this.draft.dirty));
-    if (this.status) this.status.textContent = this.invalidAgent() ? this.t("这个 Agent 已不存在，请返回。", "This Agent no longer exists. Go back to the task list.") : this.error || (this.busy === "save" ? this.t("正在保存…", "Saving…") : this.busy === "avatar" ? this.t("正在处理头像…", "Processing avatar…") : this.busy === "delete" ? this.t("正在停止任务并交回总助…", "Stopping tasks and transferring them to the general assistant…") : "");
+    if (this.status) this.status.textContent = this.invalidAgent() ? this.t("这个 Agent 已不存在，请返回。", "This Agent no longer exists. Go back to the task list.") : this.error || (this.busy === "save" ? this.isOnboardingCreation() ? this.t("正在创建…", "Creating…") : this.t("正在保存…", "Saving…") : this.busy === "avatar" ? this.t("正在处理头像…", "Processing avatar…") : this.busy === "delete" ? this.t("正在停止任务并交回总助…", "Stopping tasks and transferring them to the general assistant…") : "");
     const fields = this.root.querySelector("fieldset"); if (fields) fields.disabled = !!this.busy;
     this.root.setAttribute("aria-busy", String(!!this.busy));
     for (const button of Array.from(this.root.querySelectorAll<HTMLButtonElement>(".echoink-agent-editor-header button,.echoink-agent-editor-footer button"))) button.disabled = !!this.busy;
-    if (this.saveButton) { this.saveButton.disabled = !!this.busy || invalidName || this.invalidAgent() || this.loadingResources || !!this.deleteCounts; setAmicroButtonPending(this.saveButton, this.busy === "save"); }
+    if (this.saveButton) { this.saveButton.disabled = !!this.busy || invalidName && !this.canUseOnboardingPreset() || this.invalidAgent() || this.loadingResources || !!this.deleteCounts; setAmicroButtonPending(this.saveButton, this.busy === "save"); }
     for (const [id, element] of this.ownership) {
       const selected = this.draft.moduleIds.includes(id);
       const ownerId = this.host.settings.agentRegistry.moduleOwners[id];
@@ -442,6 +456,7 @@ export class AgentEditorController {
   }
   private async save(): Promise<void> {
     if (!this.draft || this.busy || this.invalidAgent() || this.loadingResources) return;
+    if (this.canUseOnboardingPreset()) this.applyPreset("organizer");
     const name = normalizeAgentDisplayName(this.draft.agent.name);
     if (!name) { this.draft.dirty = true; this.refresh(); this.nameInput?.focus(); return; }
     const generation = this.generation, key = this.cacheKey, revision = this.draft.revision;
@@ -452,7 +467,7 @@ export class AgentEditorController {
       if (formDrafts.get(this.host.draftCacheKey)?.get(key)?.revision === revision) formDrafts.get(this.host.draftCacheKey)?.delete(key);
       if (!this.disposed && generation === this.generation) { this.draft = null; this.dispose(); this.host.onClose(agent.id); }
     } catch (error) {
-      if (!this.disposed && generation === this.generation) this.error = error instanceof Error ? error.message : this.t("保存失败，请重试。", "Could not save. Please retry.");
+      if (!this.disposed && generation === this.generation) this.error = error instanceof Error ? error.message : this.isOnboardingCreation() ? this.t("创建失败，请重试。", "Could not create. Please retry.") : this.t("保存失败，请重试。", "Could not save. Please retry.");
     } finally { if (!this.disposed && generation === this.generation) { this.busy = null; this.refresh(); } }
   }
 

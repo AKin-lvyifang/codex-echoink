@@ -182,6 +182,7 @@ import {
   dismissEchoInkOnboardingTutorial,
   echoInkOnboardingTab,
   onboardingCoachmarkCopy,
+  onboardingCompletionCopy,
   prepareEchoInkOnboardingTutorial,
   shouldAutoStartEchoInkOnboarding,
   selectEchoInkOnboardingStep,
@@ -302,7 +303,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     );
     if (this.onboardingRequested && prepareEchoInkOnboardingTutorial(
       this.settings.setup,
-      { forceRestart: enabledAfterLayoutReady }
+      { forceRestart: false }
     )) {
       await this.saveSettings(true);
     }
@@ -590,42 +591,20 @@ export default class CodexForObsidianPlugin extends Plugin {
   async openPendingEchoInkOnboarding(): Promise<void> {
     if (!this.onboardingRequested) return;
     const step = this.settings.setup.tutorialStep;
-    if (step === "sidebar" || step === "settings") {
+    if (step === "sidebar" || step === "settings" || step === "colleague") {
       await this.showEchoInkOnboardingWorkspaceCoachmark(step);
       return;
     }
     await this.getViewService().openEchoInkSettings(
-      echoInkOnboardingTab(step),
-      Platform.isDesktopApp && step === "personality" ? "general:personality-template" : undefined
+      echoInkOnboardingTab(step), step === "personality" ? "general:personality-template"
+        : step === "knowledge" ? "knowledge:onboarding" : "providers:add"
     );
-  }
-  setEchoInkOnboardingRibbonAnchor(anchor: HTMLElement): void {
-    this.onboardingRibbonAnchor = anchor;
-  }
-  async handleEchoInkOnboardingTargetActivated(
-    expectedStep: "sidebar" | "settings"
-  ): Promise<boolean> {
-    if (
-      !this.onboardingRequested
-      || this.settings.setup.tutorialStep !== expectedStep
-    ) return false;
-    let nextStep: EchoInkOnboardingStep | null;
-    try {
-      nextStep = await this.advanceEchoInkOnboarding(expectedStep);
-    } catch (error) {
-      console.error("EchoInk onboarding advance failed", error);
-      new Notice(this.settings.settingsLanguage === "en"
-        ? "Tutorial progress could not be saved. Try again."
-        : "引导进度保存失败，请重试。");
-      return true;
-    }
     this.clearEchoInkOnboardingWorkspaceCoachmark(false);
-    if (nextStep === "settings") {
-      await this.showEchoInkOnboardingWorkspaceCoachmark("settings");
-    } else if (nextStep === "provider") {
-      await this.getViewService().openEchoInkSettings("providers");
-    }
-    return true;
+  }
+  setEchoInkOnboardingRibbonAnchor(anchor: HTMLElement): void { this.onboardingRibbonAnchor = anchor; }
+  async handleEchoInkOnboardingTargetActivated(_expectedStep: "sidebar" | "settings"): Promise<boolean> {
+    // Ordinary ribbon/gear actions only navigate. Tutorial controls own progress.
+    return false;
   }
   isEchoInkOnboardingRequested(): boolean { return this.onboardingRequested; }
   shouldAutoOpenEchoInkOnboarding(): boolean { return this.onboardingRequested; }
@@ -641,6 +620,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       Object.assign(this.settings.setup, previousSetup);
       throw error;
     }
+    this.clearEchoInkOnboardingWorkspaceCoachmark(true);
   }
   getEchoInkOnboardingStep(): EchoInkOnboardingStep {
     return this.settings.setup.tutorialStep;
@@ -649,6 +629,8 @@ export default class CodexForObsidianPlugin extends Plugin {
     expectedStep: EchoInkOnboardingStep
   ): Promise<EchoInkOnboardingStep | null> {
     if (!this.onboardingRequested) return null;
+    if (expectedStep === "colleague" && !this.settings.agentRegistry.agents.some(agent => agent.id === this.settings.setup.onboardingAgentId))
+      throw new Error(this.settings.settingsLanguage === "en" ? "Create your colleague first." : "请先创建这位同事。");
     const previousRequested = this.onboardingRequested;
     const previousSetup = { ...this.settings.setup };
     const result = advanceEchoInkOnboardingTutorial(
@@ -696,64 +678,73 @@ export default class CodexForObsidianPlugin extends Plugin {
       throw error;
     }
   }
-  private async showEchoInkOnboardingWorkspaceCoachmark(
-    step: "sidebar" | "settings"
-  ): Promise<void> {
-    this.clearEchoInkOnboardingWorkspaceCoachmark(false);
-    if (step === "sidebar" && !this.isEchoInkOnboardingDesktopReady()) {
-      this.waitForEchoInkOnboardingDesktop();
+  private async showEchoInkOnboardingWorkspaceCoachmark(step: "sidebar" | "settings" | "colleague"): Promise<void> {
+    await this.activateHomeAndSidebar();
+    const view = this.getCodexView();
+    if (!view || !await view.waitForTaskUiReady()) throw new Error("Agent page is not ready");
+    if (step === "colleague" && this.settings.agentRegistry.agents.some(agent => agent.id === this.settings.setup.onboardingAgentId)) {
+      await this.advanceEchoInkOnboarding("colleague");
+      this.showEchoInkOnboardingCompletion();
       return;
     }
-    if (step === "settings" && !this.findEchoInkOnboardingSettingsAnchor()) {
-      await this.activateView();
-    }
-    const anchor = step === "sidebar"
-      ? this.onboardingRibbonAnchor
-      : this.findEchoInkOnboardingSettingsAnchor();
-    if (!anchor?.isConnected) return;
-    const zh = this.settings.settingsLanguage !== "en";
-    const copy = onboardingCoachmarkCopy(step, zh);
+    const anchor = step === "colleague" ? view.openOnboardingAgentEditor() : view.onboardingAgentAnchor;
+    if (!anchor?.isConnected) throw new Error("Agent page is not ready");
+    this.clearEchoInkOnboardingWorkspaceCoachmark(false);
+    const copy = onboardingCoachmarkCopy(step, this.settings.settingsLanguage !== "en");
+    let navigating = false;
+    const leave = (action: () => Promise<void>): Promise<void> | undefined => {
+      let pending: Promise<void> | undefined;
+      const run = () => {
+        if (navigating) return;
+        navigating = true;
+        const card = this.onboardingWorkspaceCoachmark?.element;
+        card?.setAttribute("aria-busy", "true"); card?.querySelectorAll("button").forEach(button => { button.disabled = true; });
+        pending = this.runEchoInkOnboardingNavigation(action).catch(error => { console.warn("EchoInk onboarding navigation failed", error); new Notice(this.settings.settingsLanguage === "en" ? "The page did not open. Try again." : "页面没有打开，请重试。"); })
+          .finally(() => { navigating = false; card?.setAttribute("aria-busy", "false"); card?.querySelectorAll("button").forEach(button => { button.disabled = false; }); });
+      };
+      if (step === "colleague") view.requestOnboardingEditorLeave(run); else run();
+      return pending;
+    };
     this.onboardingWorkspaceCoachmark = mountEchoInkOnboardingCoachmark({
-      app: this.app,
-      anchor,
-      stepClass: step,
-      stepLabel: copy.step,
-      title: copy.title,
-      description: copy.description,
-      actionLabel: copy.action,
-      tip: copy.tip,
-      icon: copy.icon,
-      tone: copy.tone,
-      steps: copy.steps,
-      progressLabel: copy.progressLabel,
-      previousLabel: copy.previousLabel,
-      dismissLabel: copy.dismissLabel,
+      app: this.app, anchor, stepClass: step, stepLabel: copy.step, title: copy.title,
+      description: copy.description, actionLabel: step === "colleague" ? null : copy.action,
+      tip: copy.tip || undefined, icon: copy.icon, tone: copy.tone, steps: copy.steps,
+      progressLabel: copy.progressLabel, previousLabel: copy.previousLabel, dismissLabel: copy.dismissLabel,
       restoreFocusEl: anchor,
-      onDismiss: async () => {
-        await this.dismissEchoInkOnboarding();
-        this.clearEchoInkOnboardingWorkspaceCoachmark(true);
-      },
-      onPrevious: step === "sidebar" ? undefined : async () => {
-        const previous = ECHOINK_ONBOARDING_STEPS[ECHOINK_ONBOARDING_STEPS.indexOf(step) - 1];
-        if (await this.selectEchoInkOnboardingStep(step, previous)) await this.openPendingEchoInkOnboarding();
-      },
-      onStep: async (nextStep) => {
-        if (!await this.selectEchoInkOnboardingStep(step, nextStep)) return;
-        this.clearEchoInkOnboardingWorkspaceCoachmark(false);
-        await this.openPendingEchoInkOnboarding();
-      },
-      onAction: async () => {
-        if (step === "sidebar") {
-          await this.activateHomeAndSidebar();
-          await this.handleEchoInkOnboardingTargetActivated("sidebar");
-          return;
-        }
-        await this.handleEchoInkOnboardingTargetActivated("settings");
-      },
-      onActionError: (error) => {
-        console.error("EchoInk onboarding action failed", error);
-        new Notice(zh ? "页面没有打开，请再试一次。" : "The page did not open. Try again.");
+      onDismiss: () => { void leave(() => this.dismissEchoInkOnboarding()); return false; },
+      onPrevious: () => leave(async () => {
+        if (step === "sidebar" || step === "settings") { await this.dismissEchoInkOnboarding(); return; }
+        if (await this.selectEchoInkOnboardingStep(step, "personality")) await this.openPendingEchoInkOnboarding();
+      }),
+      onStep: next => leave(async () => { if (await this.selectEchoInkOnboardingStep(step, next)) await this.openPendingEchoInkOnboarding(); }),
+      onAction: step === "colleague" ? undefined : () => this.runEchoInkOnboardingNavigation(async () => { await this.advanceEchoInkOnboarding(step); await this.openPendingEchoInkOnboarding(); }),
+      onActionError: error => { console.warn("EchoInk onboarding action failed", error); new Notice(this.settings.settingsLanguage === "en" ? "Tutorial progress could not be saved. Try again." : "引导进度保存失败，请重试。"); }
+    });
+  }
+  async runEchoInkOnboardingNavigation(action: () => Promise<void>): Promise<void> {
+    const previousSetup = { ...this.settings.setup }, previousRequested = this.onboardingRequested;
+    try { await action(); }
+    catch (error) {
+      const changed = JSON.stringify(previousSetup) !== JSON.stringify(this.settings.setup);
+      this.settings.setup = previousSetup; this.onboardingRequested = previousRequested;
+      if (changed) {
+        try { await this.saveSettings(true); }
+        catch (saveError) { console.warn("EchoInk onboarding navigation rollback failed", saveError); }
       }
+      throw error;
+    }
+  }
+  hideEchoInkOnboardingWorkspaceCard(): void { this.clearEchoInkOnboardingWorkspaceCoachmark(false); }
+  showEchoInkOnboardingCompletion(): void {
+    this.clearEchoInkOnboardingWorkspaceCoachmark(false);
+    const anchor = this.getCodexView()?.onboardingAgentAnchor ?? this.app.workspace.containerEl;
+    const back = async () => { await this.activateHomeAndSidebar(); this.clearEchoInkOnboardingWorkspaceCoachmark(false); await this.openPaperGuideAfterOnboarding(); };
+    this.onboardingWorkspaceCoachmark = mountEchoInkOnboardingCoachmark({
+      app: this.app, anchor, stepClass: "complete", stepLabel: "", complete: true, tone: "green",
+      ...onboardingCompletionCopy(this.settings.settingsLanguage !== "en"), restoreFocusEl: anchor,
+      onPrevious: async () => { await this.restartEchoInkOnboarding(); await this.openPendingEchoInkOnboarding(); },
+      onAction: back, onDismiss: back,
+      onActionError: error => { console.warn("EchoInk onboarding completion failed", error); new Notice(this.settings.settingsLanguage === "en" ? "The action did not finish. Try again." : "操作未完成，请重试。"); }
     });
   }
   private findEchoInkOnboardingSettingsAnchor(): HTMLElement | null {
@@ -1258,12 +1249,21 @@ export default class CodexForObsidianPlugin extends Plugin {
       catch (error) { this.settings.agentRegistry = previous; throw error; }
     });
   }
-  async saveAgentDefinition(agent: AgentDefinition, moduleIds: readonly AgentModuleId[], baseline?: { agent: AgentDefinition; moduleIds: readonly AgentModuleId[] }): Promise<void> {
+  async saveAgentDefinition(agent: AgentDefinition, moduleIds: readonly AgentModuleId[], baseline?: { agent: AgentDefinition; moduleIds: readonly AgentModuleId[] }, onboarding = false): Promise<void> {
     agent = structuredClone(agent); moduleIds = [...moduleIds];
     baseline = baseline ? structuredClone(baseline) : undefined;
     if (this.conversationRunService?.isAgentBlocked(agent.id)) throw new Error("agent_removal_in_progress");
     await this.writeAgentRegistry(async () => {
       const previous = this.settings.agentRegistry;
+      const previousSetup = { ...this.settings.setup }, previousRequested = this.onboardingRequested;
+      if (onboarding) {
+        const created = previous.agents.find(entry => entry.id === this.settings.setup.onboardingAgentId);
+        if (created) {
+          if (created.id === agent.id) return;
+          throw new Error(this.settings.settingsLanguage === "en" ? "Your colleague was already created." : "这位同事已经创建，请勿重复提交。");
+        }
+        if (!this.onboardingRequested || this.settings.setup.tutorialStep !== "colleague") throw new Error("Onboarding step changed");
+      }
       const current = previous.agents.find(entry => entry.id === agent.id);
       if (!baseline && current) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent was already created. Reopen it to edit." : "这个 Agent 已经创建，请重新打开后编辑。你的输入已保留。");
       if (baseline && (!current || baseline.agent.id !== agent.id)) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent was deleted. Your draft has been kept." : "这个 Agent 已被删除，你的输入已保留。");
@@ -1277,9 +1277,17 @@ export default class CodexForObsidianPlugin extends Plugin {
           : previous.moduleOwners[id] === agent.id ? GENERAL_ASSISTANT_ID : previous.moduleOwners[id];
       }
       this.settings.agentRegistry = candidate;
+      if (onboarding) {
+        this.settings.setup.onboardingAgentId = agent.id;
+        advanceEchoInkOnboardingTutorial(this.settings.setup, "colleague", Date.now());
+        this.onboardingRequested = false;
+      }
       try { await this.saveSettings(true); }
-      catch (error) { this.settings.agentRegistry = previous; throw error; }
+      catch (error) { this.settings.agentRegistry = previous; if (onboarding) { this.settings.setup = previousSetup; this.onboardingRequested = previousRequested; } throw error; }
     });
+  }
+  async saveOnboardingAgentDefinition(agent: AgentDefinition, moduleIds: readonly AgentModuleId[]): Promise<void> {
+    await this.saveAgentDefinition(agent, moduleIds, undefined, true);
   }
   getAgentCapabilityAvailability(id: string, resources: readonly EchoInkResource[] = []): { available: boolean; reason?: string } {
     const settings = this.settings, zh = settings.settingsLanguage !== "en";

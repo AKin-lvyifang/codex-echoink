@@ -273,7 +273,8 @@ export interface SetupSettings {
   lastCheckedAt: number;
   dismissedVersion: string;
   tutorialVersion: string;
-  tutorialStep: "sidebar" | "settings" | "provider" | "knowledge" | "personality";
+  tutorialStep: "sidebar" | "settings" | "provider" | "knowledge" | "personality" | "colleague";
+  onboardingAgentId?: string;
 }
 
 export const DEFAULT_ECHOINK_WELCOME_TITLE = "What's new?";
@@ -604,7 +605,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     lastCheckedAt: 0,
     dismissedVersion: "",
     tutorialVersion: "",
-    tutorialStep: "sidebar"
+    tutorialStep: "sidebar",
+    onboardingAgentId: ""
   },
   memory: {
     useLongTermMemory: true,
@@ -1787,10 +1789,11 @@ function normalizeSetupSettings(input: unknown): SetupSettings {
     lastCheckedAt: normalizeNonNegativeNumber(value?.lastCheckedAt),
     dismissedVersion: normalizeOptionalText(value?.dismissedVersion),
     tutorialVersion: normalizeOptionalText(value?.tutorialVersion),
-    tutorialStep: tutorialStep === "settings"
-      || tutorialStep === "provider"
+    onboardingAgentId: normalizeOptionalText(value?.onboardingAgentId),
+    tutorialStep: tutorialStep === "provider"
       || tutorialStep === "knowledge"
       || tutorialStep === "personality"
+      || tutorialStep === "colleague"
       ? tutorialStep
       : "sidebar"
   };

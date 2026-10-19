@@ -1424,12 +1424,25 @@ button.codex-user-message-copy {
   position: fixed;
   z-index: 1001;
   box-sizing: border-box;
-  border: 2px solid var(--interactive-accent);
+  border: 0;
   border-radius: 9px;
-  box-shadow: 0 0 0 9999px rgb(29 25 42 / 15%), 0 0 0 5px color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+  box-shadow: none;
   pointer-events: none;
   transition: left .22s ease, top .22s ease, width .22s ease, height .22s ease;
 }
+.is-echoink-onboarding-target {
+  background-color: var(--background-modifier-hover) !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.echoink-onboarding-space {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+}
+.echoink-onboarding-coachmark.is-reserved { animation: none; }
 
 .echoink-onboarding-coachmark {
   --echoink-tour-accent: var(--interactive-accent);
@@ -1454,7 +1467,9 @@ button.codex-user-message-copy {
 .echoink-onboarding-coachmark[data-tone="gold"] { --echoink-tour-accent: #a9793d; }
 .theme-dark .echoink-onboarding-coachmark { box-shadow: 0 18px 60px rgb(0 0 0 / 40%); }
 .echoink-onboarding-coachmark:focus-visible,
-.echoink-onboarding-coachmark button:focus-visible { outline: 2px solid var(--echoink-tour-accent); outline-offset: 3px; }
+.echoink-onboarding-coachmark button:focus-visible { outline: none; box-shadow: none; background: var(--background-modifier-hover); }
+.echoink-onboarding-coachmark.is-repaint { animation: none; }
+.echoink-onboarding-coachmark .echoink-onboarding-action:focus-visible { background: var(--background-modifier-hover); border-color: var(--background-modifier-border); color: var(--text-normal); }
 .echoink-onboarding-coachmark button {
   box-sizing: border-box;
   height: auto;
@@ -1496,7 +1511,7 @@ button.codex-user-message-copy {
 .echoink-onboarding-progress-step::before { content: ""; position: absolute; inset: -7px 0; }
 .echoink-onboarding-progress .is-done { background: color-mix(in srgb, var(--echoink-tour-accent) 38%, var(--background-modifier-border)); }
 .echoink-onboarding-progress .is-current { background: var(--echoink-tour-accent); }
-.echoink-onboarding-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.echoink-onboarding-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .echoink-onboarding-coachmark .echoink-onboarding-previous { font-size: 11px; color: var(--text-muted); padding: 7px 0; display: flex; align-items: center; gap: 4px; }
 .echoink-onboarding-previous svg { width: 12px; height: 12px; }
 .echoink-onboarding-coachmark .echoink-onboarding-action {
@@ -1518,7 +1533,7 @@ button.codex-user-message-copy {
 @media (max-width: 650px) {
   .echoink-onboarding-coachmark { width: calc(100vw - 24px); padding: 17px; }
   .echoink-onboarding-coachmark .echoink-onboarding-title { font-size: 18px; }
-  .echoink-onboarding-copy { font-size: 11px; }
+  .echoink-onboarding-copy { font-size: 12px; }
   .echoink-onboarding-tip { margin-top: 10px; }
   .echoink-onboarding-progress { margin: 14px 0; }
   .echoink-onboarding-spotlight { transition: none; }
