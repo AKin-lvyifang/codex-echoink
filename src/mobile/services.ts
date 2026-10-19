@@ -9,6 +9,7 @@ import { HomeActivityCore } from "../home/home-activity-core";
 import { BUILTIN_SKILLS, renderBuiltinSkill } from "../harness/resources/builtin-skills";
 import { resolveKnowledgePathFromRoots } from "../knowledge-base/root-paths-core";
 import type { MobileSettings } from "./settings";
+import type { AgentRegistry } from "../agents/types";
 import type { MobileStore } from "./store";
 import type { MobileRuntime } from "./runtime";
 import type { MobileWorkspace } from "./workspace";
@@ -20,10 +21,11 @@ import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { mobileAtomicFilePort } from "./finance-store";
 import { MobileLifestyleService } from "./finance";
 import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
-import { MobileProfileProtocol, type MobileAgentProfile } from "../harness/memory/mobile-profile-protocol";
+import type { MobileAgentProfile } from "../harness/memory/mobile-profile-protocol";
+import { MobileAgentRegistryService } from "./agent-registry-service";
 import type { AgentTemplateId } from "../harness/memory/agent-templates";
 import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
-import { AGENT_IDENTITY_RELATIVE_PATH, defaultAgentIdentityState, parseAgentIdentityState } from "../harness/memory/agent-identity-model";
+import { defaultAgentIdentityState } from "../harness/memory/agent-identity-model";
 
 export interface MobileServicesHost {
   app: App;
@@ -32,7 +34,7 @@ export interface MobileServicesHost {
   runtime: MobileRuntime;
   navigation: MobileWorkspace;
   accountService?: CapabilityAccess;
-  saveSettings(): Promise<void>;
+  saveSettings(candidateRegistry?: AgentRegistry): Promise<void>;
   registerEvent(event: EventRef): void;
   showPage(page: MobileSettingsRoute): Promise<void>;
 }
@@ -44,7 +46,7 @@ export class MobileServices implements HomeHost {
   private skillStateWrites: Promise<void> = Promise.resolve();
   agentIdentity = defaultAgentIdentityState();
   private readonly identityListeners = new Set<() => void>();
-  private profileProtocol: MobileProfileProtocol;
+  private profileProtocol: MobileAgentRegistryService;
   subscribeIdentity(listener: () => void) { this.identityListeners.add(listener); return () => { this.identityListeners.delete(listener); }; }
   async readAgentProfile(): Promise<MobileAgentProfile> { return this.profileProtocol.profile(); }
   async saveAgentProfile(change: { identity?: { displayName: string; avatar: AgentAvatarState }; templateId?: AgentTemplateId }, version: string) {
@@ -52,17 +54,13 @@ export class MobileServices implements HomeHost {
     this.identityListeners.forEach(listener => listener()); this.host.runtime.onChange(); return profile;
   }
   async refreshAgentIdentity() {
-    try {
-      const path = `.echoink/${AGENT_IDENTITY_RELATIVE_PATH}`, adapter = this.app.vault.adapter;
-      const raw: unknown = await adapter.exists(path) ? JSON.parse(await adapter.read(path)) : null;
-      this.agentIdentity = raw && typeof raw === "object" && !Array.isArray(raw) ? parseAgentIdentityState(raw as Record<string, unknown>) ?? defaultAgentIdentityState() : defaultAgentIdentityState();
-    } catch { this.agentIdentity = defaultAgentIdentityState(); }
+    this.agentIdentity = (await this.profileProtocol.profile()).identity;
     this.identityListeners.forEach(listener => listener()); this.host.runtime.onChange();
   }
   readonly homeUnavailableReason = "移动端尚未接通知识健康扫描；笔记数量来自当前笔记库";
   constructor(private host: MobileServicesHost, readonly directory: string) {
     this.app = host.app; this.preferenceRoot = directory.replace(/\/mobile$/u, "");
-    const adapter = this.app.vault.adapter; this.profileProtocol = new MobileProfileProtocol(adapter);
+    const adapter = this.app.vault.adapter; this.profileProtocol = new MobileAgentRegistryService(adapter, host.settings, registry => host.saveSettings(registry));
     this.homeActivity = new HomeActivityCore({ read: async () => await adapter.exists(`${directory}/home-activity.json`) ? adapter.read(`${directory}/home-activity.json`) : null,
       write: bytes => adapter.write(`${directory}/home-activity.json`, bytes) });
     this.todos = new EchoInkTodoStore(this);
@@ -78,7 +76,7 @@ export class MobileServices implements HomeHost {
     this.homeActivity.restoreOpen(this.app.workspace.getActiveFile()?.path ?? null);
     this.registerEvent(this.app.workspace.on("file-open", file => this.homeActivity.open(file?.path ?? null)));
     this.registerEvent(this.app.vault.on("create", file => { if (file instanceof TFile) this.homeActivity.record(file.path, "created"); }));
-    this.registerEvent(this.app.vault.on("modify", file => { if (file instanceof TFile) { this.homeActivity.record(file.path, "modified"); if (file.path === `.echoink/${AGENT_IDENTITY_RELATIVE_PATH}`) void this.refreshAgentIdentity(); } }));
+    this.registerEvent(this.app.vault.on("modify", file => { if (file instanceof TFile) { this.homeActivity.record(file.path, "modified"); } }));
     this.registerEvent(this.app.vault.on("rename", (file, old) => this.homeActivity.rename(old, file.path)));
     this.registerEvent(this.app.vault.on("delete", file => this.homeActivity.delete(file.path)));
   }
@@ -131,19 +129,18 @@ export class MobileServices implements HomeHost {
     startHomeConversation: async (input: { title: string; message: string; defaultSkillId?: string }) => input.defaultSkillId === "daily-journal" ? this.prepareJournal(input.title, true) : this.start(input.title, input.message, input.defaultSkillId),
     createAndStartGuidedSession: async (input: { title: string; prompt: string; defaultSkillId: string }) => input.defaultSkillId === "daily-journal" ? this.prepareJournal(input.title, true) : this.start(input.title, input.prompt, input.defaultSkillId)
   }; }
-  async prepareJournal(title?: string, newSession = false) {
+  async prepareJournal(title?: string, newSession = false, sessionId = this.host.store.session.id) {
     if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
     await this.requireAvailableEchoInkSkill("daily-journal");
-    const session = newSession ? await this.host.store.createSession() : this.host.store.session;
-    if (title) session.title = title;
-    session.skillId = "daily-journal";
-    await this.host.store.save(); this.host.runtime.onChange();
+    const id = newSession ? (await this.host.store.createSession()).id : sessionId;
+    await this.host.store.patchSession(id, { ...(title ? { title } : {}), skillId: "daily-journal" }); this.host.runtime.onChange();
   }
   private async start(title: string, prompt: string, skill?: string) {
     if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
     if (skill) await this.requireAvailableEchoInkSkill(skill);
-    const session = await this.host.store.createSession(); session.title = title; session.draft = prompt; session.skillId = skill;
-    await this.host.store.save(); this.host.runtime.onChange(); await this.host.runtime.send(prompt);
+    const session = await this.host.store.createSession();
+    await this.host.store.patchSession(session.id, { title, draft: prompt, skillId: skill });
+    this.host.runtime.onChange(); await this.host.runtime.send(prompt, session.id);
   }
   skills() {
     const saved = this.settings.resources.catalog.filter(item => item.kind === "skill");
@@ -239,9 +236,11 @@ export class MobileServices implements HomeHost {
     await this.app.vault.adapter.remove(this.preferencesPath);
   }
   readonly defaultPreferences = ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
-  async context(): Promise<string> {
-    const profile = await this.profileProtocol.context(this.host.store.state.memoryEnabled);
-    const skillId = this.host.store.session.skillId;
+  async context(sessionId = this.host.store.session.id): Promise<string> {
+    const session = this.host.store.getSession(sessionId);
+    if (!session) throw new Error("会话不存在，未读取运行上下文。");
+    const skillId = session.skillId;
+    const profile = await this.profileProtocol.context(this.host.store.state.memoryEnabled, session.agentId);
     const skill = skillId ? await this.requireAvailableEchoInkSkill(skillId) : "";
     const preference = await this.readPreferences() ?? this.defaultPreferences;
     return `${profile}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify(this.settings.knowledgeBase.folderBindings?.roles ?? this.settings.mobileUi.knowledgePaths)}`;

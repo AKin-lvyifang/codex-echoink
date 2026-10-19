@@ -127,20 +127,21 @@ export async function profileScenarios(api, test, settings) {
     await assert.rejects(protocol.save({ templateId: "executor" }, saved.version), /injected/u); assert.deepEqual([...host.files].sort(), [...before].sort());
     assert.equal((await protocol.profile()).version, saved.version);
   });
-  await test("actual mobile send reads current identity/style; memory off excludes habits and long-term profiles", async () => {
-    const host = createHost(seed()), store = new MobileStore(host.adapter, "plugin/mobile"); await store.load();
+  await test("actual mobile send reads Registry identity/four-style mapping; memory gate preserves legacy source", async () => {
+    const original = seed(), host = createHost(original), store = new MobileStore(host.adapter, "plugin/mobile", "fixture-instance"); await store.load();
     const config = settings(); let services, payload;
     const runtime = new MobileRuntime(host.app, store, () => config, async request => { payload = JSON.parse(request.body); return answer("openai-completions", "ok"); }, () => services.context());
     services = new MobileServices({ app: host.app, settings: config, store, runtime, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile");
-    await services.initialize(); store.state.memoryEnabled = false;
+    await services.initialize(); await store.setMemoryEnabled(false);
     const originalRead = host.adapter.read.bind(host.adapter), reads = [];
     host.adapter.read = async path => { reads.push(path); return originalRead(path); };
     await runtime.send("off"); const off = payload.messages.find(item => item.role === "system").content;
-    assert.ok(off.includes("墨墨")); assert.ok(off.includes(getAgentTemplate("advisor").tone)); assert.ok(!off.includes("Nova"));
+    assert.ok(off.includes("墨墨")); assert.ok(off.includes("先核对前提、证据和遗漏")); assert.ok(!off.includes("Nova"));
     for (const text of [habits[0].text, "用户画像独有证据", "旧记忆独有证据"]) assert.ok(!off.includes(text));
     assert.ok(!reads.some(path => /shared-user\/(USER|MEMORY)\.md$/u.test(path)));
-    store.state.memoryEnabled = true; await runtime.send("on"); const on = payload.messages.find(item => item.role === "system").content;
-    for (const text of [habits[0].text, "用户画像独有证据", "旧记忆独有证据"]) assert.ok(on.includes(text));
+    await store.setMemoryEnabled(true); await runtime.send("on"); const on = payload.messages.find(item => item.role === "system").content;
+    for (const text of ["用户画像独有证据", "旧记忆独有证据"]) assert.ok(on.includes(text));
+    assert.ok(!on.includes(habits[0].text)); assert.equal(host.files.get(agentPath), original[agentPath]);
     await services.dispose();
   });
   await test("own interrupted journal recovers; foreign owner and external writes remain untouched", async () => {

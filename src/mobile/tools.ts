@@ -33,7 +33,7 @@ export function searchMemories(records: readonly PersonalMemoryRecord[], query: 
 }
 function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Error("已停止，未开始此操作。"); }
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
-export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort): AgentTool[] {
+export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id): AgentTool[] {
   const bodySearch = sharedBodySearch ?? new VaultBodySearch(app, bindings);
   const tools: AgentTool[] = [
     {
@@ -99,13 +99,17 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
       }),
       async execute(toolCallId, args: { targetId?: string; kind: PersonalMemoryKind; content: string; title: string; recallWhen: string; basis: "explicit" | "observed" }, signal) {
         enabled(signal);
-        const old = args.targetId ? store.state.memories.find(r => r.id === args.targetId) : undefined;
-        if (args.targetId && !old) throw new Error("要修正的记忆不存在。");
-        const duplicate = store.state.memories.find(r => r.content === args.content && r.kind === args.kind && r.status === "current");
-        if (duplicate) return result(duplicate);
-        const record: PersonalMemoryRecord = { schema: PERSONAL_MEMORY_SCHEMA, id: old?.id ?? newId(), kind: args.kind, status: "current", date: new Date().toISOString(), source: `mobile:${store.session.id}:${toolCallId}`, basis: args.basis, contentOrigin: args.basis === "explicit" ? "user_statement" : "current_instruction", title: args.title, content: args.content, recallWhen: args.recallWhen, revision: (old?.revision ?? 0) + 1, file: "mobile/state.json" };
-        store.state.memories = [record, ...store.state.memories.filter(r => r.id !== record.id)];
-        await store.save();
+        let record: PersonalMemoryRecord | undefined;
+        await store.update(latest => {
+          checkStopped(signal);
+          if (!latest.memoryEnabled) throw new Error("长期记忆已关闭。");
+          const old = args.targetId ? latest.memories.find(r => r.id === args.targetId) : undefined;
+          if (args.targetId && !old) throw new Error("要修正的记忆不存在。");
+          const duplicate = latest.memories.find(r => r.content === args.content && r.kind === args.kind && r.status === "current");
+          if (duplicate) { record = duplicate; return; }
+          record = { schema: PERSONAL_MEMORY_SCHEMA, id: old?.id ?? newId(), kind: args.kind, status: "current", date: new Date().toISOString(), source: `mobile:${sessionId}:${toolCallId}`, basis: args.basis, contentOrigin: args.basis === "explicit" ? "user_statement" : "current_instruction", title: args.title, content: args.content, recallWhen: args.recallWhen, revision: (old?.revision ?? 0) + 1, file: store.statePath };
+          latest.memories = [record, ...latest.memories.filter(r => r.id !== record!.id)];
+        });
         return result(record);
       }
     });

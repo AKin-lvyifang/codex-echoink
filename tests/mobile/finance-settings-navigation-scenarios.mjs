@@ -31,7 +31,7 @@ export async function financeSettingsNavigationScenarios(api, test, settings, do
   };
   async function fixture(isTablet = false, width = 390) {
     const host = createHost();
-    const store = new MobileStore(host.adapter, "plugin/mobile"); await store.load();
+    const store = new MobileStore(host.adapter, "plugin/mobile", "fixture-instance"); await store.load();
     const config = settings(); config.lifestyle.finance.enabled = true;
     Object.assign(config.lifestyle.finance, {
       merchants: [{ name: "导航测试商户", aliases: [], iconId: "store", defaultCategory: "导航测试分类", active: true }],

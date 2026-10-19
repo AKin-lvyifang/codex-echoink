@@ -37,7 +37,7 @@ host.app.vault.create = async (path, text) => { const file = await create(path, 
 let slowRead = false;
 const read = host.app.vault.read.bind(host.app.vault);
 host.app.vault.read = async file => { if (slowRead) await new Promise(resolve => setTimeout(resolve, 1600)); return read(file); };
-const store = new MobileStore(host.adapter, "plugin/mobile"); await store.load();
+const store = new MobileStore(host.adapter, "plugin/mobile", "fixture-instance"); await store.load();
 if (params.has("identity")) {
   let avatar: Record<string, unknown> = { kind: "preset", presetId: params.get("identity") };
   if (params.get("identity") === "custom") {
@@ -56,14 +56,15 @@ if (params.has("history")) {
   settings.knowledgeBase.maintenanceHistory = [{ date: "2026-10-05", at: Date.parse("2026-10-05T10:00:00+08:00"), status: "success", summary: "旧维护" }, { date: "2026-10-10", at: Date.parse("2026-10-10T10:00:00+08:00"), status: "failed", summary: "最近维护" }] as typeof settings.knowledgeBase.maintenanceHistory;
 }
 if (params.has("seed") && !persisted) {
-  const first = store.session; first.title = "iPad 上的工作记录"; first.notePath = "笔记/来源.md";
-  first.messages = [{ role: "user", content: "把今天的记录整理成可读的笔记。", timestamp: Date.now() }, {
+  const first = store.session;
+  await store.patchSession(first.id, { title: "iPad 上的工作记录", notePath: "笔记/来源.md", messages: [{ role: "user", content: "把今天的记录整理成可读的笔记。", timestamp: Date.now() }, {
     role: "assistant", content: [{ type: "text", text: "先整理目标，再记录决定和行动。\n\n下面保留完整的表格和代码，长内容在各自区域滚动。\n\n```ts\nconst decisions = [\"保留原生笔记与对话\", \"按内容宽度调整布局\", \"保存尚未提交的编辑内容\"];\n```\n\n| 工作项 | 当前决定 | 下一步 | 验证边界 |\n| --- | --- | --- | --- |\n| 平板布局 | 使用内容容器宽度 | 检查宽窄往返 | 浏览器替身与真实设备分开记录 |" }], api: "openai-completions", provider: "openai", model: "fixture", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now()
-  }];
-  for (let index = 0; index < 25; index++) { await store.createSession(); store.session.title = `历史记录 ${index + 1}`; }
-  store.state.activeSessionId = first.id;
-  for (let index = 0; index < 25; index++) store.state.memories.push({ id: `fixture-memory-${index}`, kind: "view", title: ["解释与沟通偏好", "每周复盘", "工作中的决定", "值得继续探索的问题"][index] ?? `记忆 ${index + 1}`, content: ("先给结论，再给证据。每次记录只保留真正影响下一步的决定。\n\n").repeat(index === 0 ? 25 : 2), recallWhen: "解释问题", basis: "explicit", date: new Date().toISOString(), revision: 1, contentOrigin: "user_edit" });
-  await store.save();
+  }] });
+  for (let index = 0; index < 25; index++) { const session = await store.createSession(); await store.patchSession(session.id, { title: `历史记录 ${index + 1}` }); }
+  await store.selectSession(first.id);
+  await store.update(state => {
+  for (let index = 0; index < 25; index++) state.memories.push({ schema: "echoink.memory.v1", status: "current", source: first.id, file: store.statePath, id: `fixture-memory-${index}`, kind: "view", title: ["解释与沟通偏好", "每周复盘", "工作中的决定", "值得继续探索的问题"][index] ?? `记忆 ${index + 1}`, content: ("先给结论，再给证据。每次记录只保留真正影响下一步的决定。\n\n").repeat(index === 0 ? 25 : 2), recallWhen: "解释问题", basis: "explicit", date: new Date().toISOString(), revision: 1, contentOrigin: "user_edit" });
+  });
 }
 if (params.has("large")) settings.mobileUi.largeText = true;
 const requests: unknown[] = [];
@@ -84,16 +85,16 @@ const runtime = new MobileRuntime(host.app as any, store, () => settings, async 
   ]);
   if (!after.length && prompt.includes("读取")) { slowRead = true; return answer(protocol, "", [["read-" + requests.length, "note_read", { path: "笔记/来源.md" }]]); }
   return answer(protocol, "已完成。这是测试提供商返回的完整回答，正式组件使用真实 Agent 和工具回执。");
-}, () => services.context());
+}, id => services.context(id));
 const accountService = await createMobileAccountService(host.app as any, () => settings);
 const financeAccess = { checkCapability: () => !params.has("expired"), requireCapability: () => { if (params.has("expired")) throw new Error("替身：授权已失效"); }, subscribe: () => () => {} };
 const plugin = new EchoInkMobilePlugin(host.app as any, { id: "codex-echoink", version: "2.6.3-beta.7 fixture" } as any);
-const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) } as any, registerEvent() {}, showPage: page => plugin.showPage(page), saveSettings: () => plugin.saveSettings() }, "plugin/mobile");
+const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) } as any, registerEvent() {}, showPage: page => plugin.showPage(page), saveSettings: registry => plugin.saveSettings(registry) }, "plugin/mobile");
+Object.assign(plugin, { app: host.app, settings, store, runtime, services, accountService });
+plugin.saveData = async data => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(data)); };
 await services.initialize();
 await services.initializeFinance();
 const root = document.querySelector<HTMLElement>("#app")!;
-Object.assign(plugin, { app: host.app, settings, store, runtime, services, accountService });
-plugin.saveData = async data => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(data)); };
 MarkdownRenderer.render = async (_app, text, element) => {
   // A synthetic renderer for layout only; real MarkdownRenderer is host-owned.
   for (const part of text.split(/(```[\s\S]*?```)/u)) {

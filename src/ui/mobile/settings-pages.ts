@@ -185,8 +185,9 @@ export class MobileSettingsPages {
           });
           this.ui.button(part, "查看 Skill", async () => { const content = await this.services.requireAvailableEchoInkSkill(skill.id); const article = node(part, "article", "em-memory-content markdown-rendered"); this.host.renderMarkdown(content, article); }, "file-text", "em-wide-action");
           this.ui.button(part, "在对话中使用", async () => {
+            const sessionId = this.host.store.session.id;
             if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
-            await this.services.requireAvailableEchoInkSkill(skill.id); this.host.store.session.skillId = skill.id; await this.host.store.save(); this.ui.go("chat");
+            await this.services.requireAvailableEchoInkSkill(skill.id); await this.host.store.patchSession(sessionId, { skillId: skill.id }); this.ui.go("chat");
           }, "message-circle", "em-primary em-wide-action");
         }));
       }
@@ -471,8 +472,9 @@ export class MobileSettingsPages {
     this.heading(body, "管理"); const manage = this.group(body);
     this.ui.row(manage, "已归档会话", "", "history", () => this.ui.go("archives")); this.ui.row(manage, "记忆修正", "", "brain", () => this.ui.go("memories"));
     this.ui.button(body, "归档当前会话", async () => {
+      const sessionId = this.host.store.session.id;
       if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
-      this.host.store.session.archivedAt = Date.now(); await this.host.store.createSession(); this.host.runtime.onChange(); this.ui.go("archives");
+      await this.host.store.archiveAndCreateSession(sessionId); this.host.runtime.onChange(); this.ui.go("archives");
     }, "archive", "em-wide-action");
   }
   private reportConfig(kind: "agent" | "knowledge") {
@@ -501,9 +503,9 @@ export class MobileSettingsPages {
           if (!("content" in message) || message.role === "toolResult") continue;
           const content = typeof message.content === "string" ? message.content : message.content.filter(item => item.type === "text").map(item => item.text).join("\n");
           const bubble = node(article, "div", message.role === "user" ? "em-user-message" : "em-answer markdown-rendered");
-          if (message.role === "user") bubble.textContent = content; else this.host.renderMarkdown(content, bubble);
+          if (message.role === "user") bubble.textContent = content; else this.host.renderMarkdown(content, bubble, session.notePath);
         }
-        this.ui.button(article, "恢复会话", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); delete session.archivedAt; this.host.store.state.activeSessionId = session.id; await this.host.store.save(); this.host.runtime.onChange(); this.ui.go("chat"); }, "rotate-ccw", "em-wide-action");
+        this.ui.button(article, "恢复会话", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); await this.host.store.restoreSession(session.id); this.host.runtime.onChange(); this.ui.go("chat"); }, "rotate-ccw", "em-wide-action");
       });
     }
   }
