@@ -560,7 +560,91 @@ export async function runVaultBodySearchOutlineTests(): Promise<void> {
   console.log("Public Vault outlines: preflight/tool/storage parity, excerpt-only read accounting, strict validation, revision changes and 10KB body preservation PASS");
 }
 
+async function runVaultBodySearchMetadataDedupTests(): Promise<void> {
+  const sourcePath = "notes/Orbital Manual.md", companionPath = "notes/Companion.md";
+  const paragraph = "Keep the amber filter in the upper drawer.";
+  const metadata = "---\naliases: [Copper Beacon]\ntags: [reserve-batch]\n---\n";
+  const bodies = new Map([
+    [sourcePath, `${metadata}# Orbital Manual\n${paragraph}\n\n## reserve-batch\nHistorical background only.\n\n## Trial\nDISTINCT_BODY_TOKEN first independent evidence.\n\n## Verification\nDISTINCT_BODY_TOKEN second independent evidence.\n[[notes/Companion#Target]]`],
+    [companionPath, `${metadata}# Target\n${paragraph}\n\n## reserve-batch\nEarlier background only.`]
+  ]);
+  let activePath: string | undefined;
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 20, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: {
+    getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (source: TFile) => bodies.get(source.path)!
+  }, metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["Copper Beacon"], tags: ["reserve-batch"] } }) },
+  workspace: { getActiveFile: () => activePath ? file(activePath) : null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-metadata-dedup", storageRootPath: "/synthetic-metadata-dedup-state", bodySearch: port });
+  try {
+    const metadataPages = await Promise.all(["Orbital Manual", "Copper Beacon", "reserve-batch"].map(query => index.search({ query, limit: 100 })));
+    const mixed = await index.search({ query: "Orbital Manual DISTINCT_BODY_TOKEN", limit: 100 });
+    const fusedRequest = { queries: ["Copper Beacon", "DISTINCT_BODY_TOKEN"], limit: 100 };
+    const fused = await index.search(fusedRequest);
+    const reversed = await index.search({ queries: [...fusedRequest.queries].reverse(), limit: 100 });
+    console.log(JSON.stringify({ kind: "metadata-fallback-dedup", metadata: metadataPages.map(page => ({ total: page.total, scores: page.hits.map(hit => hit.score), paths: page.hits.map(hit => hit.vaultRelativePath) })),
+      mixed: mixed.hits.map(hit => ({ path: hit.vaultRelativePath, line: hit.lineStart, excerpt: hit.excerpt })), fused: fused.hits.map(hit => ({ path: hit.vaultRelativePath, line: hit.lineStart, matchSources: hit.matchSources })), reversedTotal: reversed.total }));
+    for (const [page, expected, source] of [[metadataPages[0], 1, "title"], [metadataPages[1], 2, "alias"], [metadataPages[2], 2, "tag"]] as const) {
+      assert.equal(page.total, expected, `${source}-only fallback occupies one result per note`);
+      assert.equal(page.hits.length, expected);
+      assert.equal(new Set(page.hits.map(hit => hit.vaultRelativePath)).size, expected, "identical paragraphs from different notes remain separate");
+      assert.ok(page.hits.every(hit => hit.excerpt === paragraph && hit.matchSources?.includes(source)));
+    }
+    const top = await index.search({ query: "Orbital Manual", limit: 1 });
+    assert.deepEqual(top.hits, metadataPages[0].hits, "the highest-ranked metadata fallback is retained");
+    assert.equal(mixed.total, 3, "two body chapters survive beside one metadata fallback");
+    assert.equal(mixed.hits.filter(hit => hit.excerpt.includes("DISTINCT_BODY_TOKEN")).length, 2);
+    assert.equal(new Set(mixed.hits.filter(hit => hit.matchSources?.includes("body")).map(hit => hit.lineStart)).size, 2, "independent body chapters are not collapsed by note path");
+    for (const page of [fused, reversed]) {
+      assert.equal(page.total, 4, "body matches from any fused query protect their sections");
+      assert.equal(page.hits.filter(hit => hit.vaultRelativePath === sourcePath).length, 3);
+      assert.equal(page.hits.filter(hit => hit.vaultRelativePath === companionPath).length, 1);
+    }
+    const paged: typeof fused.hits = [];
+    let cursor: string | undefined;
+    do {
+      const page = await index.search({ ...fusedRequest, limit: 1, cursor });
+      paged.push(...page.hits);
+      assert.equal(page.total, fused.total);
+      assert.equal(page.returned, page.hits.length);
+      assert.equal(page.remaining, fused.total - paged.length);
+      assert.equal(page.hasMore, page.remaining > 0);
+      assert.equal(page.exhausted, page.remaining === 0);
+      assert.equal(Boolean(page.continuationCursor), page.hasMore);
+      assert.ok(paged.length <= fused.total, "pagination always advances");
+      cursor = page.continuationCursor;
+    } while (cursor);
+    // Related navigation is attached to the first hit per note on each page.
+    const withoutRelated = (hits: typeof fused.hits) => hits.map(({ related: _related, ...hit }) => hit);
+    assert.deepEqual(withoutRelated(paged), withoutRelated(fused.hits), "cursor pages exactly reproduce the deduplicated body results");
+    activePath = sourcePath;
+    const pointer = await index.search({ query: "这篇提到的 MISSING_ELSEWHERE 在别处还有吗？" });
+    assert.equal(pointer.hits.length, 1);
+    assert.equal(pointer.hits[0].vaultRelativePath, sourcePath);
+    assert.equal(pointer.hits[0].inclusionReason, "按指代带入");
+    const related = await index.search({ mode: "related", vaultRelativePath: sourcePath });
+    assert.equal(related.total, 1, "related navigation is independent of metadata fallback deduplication");
+    assert.equal(related.related?.items[0].target?.vaultRelativePath, companionPath);
+    const protectedPath = "notes/protected.md";
+    const protectedBody = `---\naliases: [POINT_ALIAS]\n---\n# Introduction\nOpening paragraph.\n\n## Evidence\n${"background ".repeat(500)}FUSION_BODY_TOKEN`;
+    const protectedFusion = await searchBodyDocuments({ documents: [{ vaultRelativePath: protectedPath, title: "Protected", aliases: ["POINT_ALIAS"], kind: "notes", recordedAt: 20,
+      read: async () => ({ content: protectedBody, contentRevision: "protected" }) }, ...Array.from({ length: 4 }, (_, index) => ({ vaultRelativePath: `notes/body-${index}.md`, title: `Body ${index}`, kind: "notes" as const, recordedAt: 20,
+      read: async () => ({ content: "FUSION_BODY_TOKEN", contentRevision: `body-${index}` }) }))], request: { queries: ["POINT_ALIAS", "FUSION_BODY_TOKEN"], limit: 100 } });
+    const protectedHits = protectedFusion.hits.filter(hit => hit.vaultRelativePath === protectedPath);
+    assert.equal(protectedFusion.total, 6);
+    assert.equal(protectedHits.length, 2, "a body-matched section survives even when its best fusion rank chose the metadata query");
+    assert.ok(protectedHits.every(hit => hit.matchSources?.includes("alias") && hit.excerpt === "Opening paragraph."), "the fixture really exercises the metadata display query for both protected hits");
+    const headingOnly = await searchBodyDocuments({ documents: [{ vaultRelativePath: "notes/Empty Cabinet.md", title: "Empty Cabinet", kind: "notes", recordedAt: 20,
+      read: async () => ({ content: "# Empty Cabinet\n## Left\n## Right", contentRevision: "heading-only" }) }], request: { query: "Empty Cabinet", limit: 100 } });
+    assert.equal(headingOnly.total, 3, "sections without an actual first-paragraph fallback are retained");
+  } finally { port.dispose(); }
+  console.log("Public Vault metadata fallback dedup: per-note title/alias/tag, independent body chapters, fused queries, cursors and navigation PASS");
+}
+
 export async function runVaultBodySearchMetadataTests(): Promise<void> {
+  await runVaultBodySearchMetadataDedupTests();
   const paragraph = "Keep the amber filter in the upper drawer.\nCheck the spare lens before departure.";
   const bodies = new Map([
     ["notes/Field kit.md", `---\naliases: [Copper Beacon]\ntags: [reserve-batch]\n---\n\n# Field kit\n\n${paragraph}\n\n## Archive\nThe earlier packing list is obsolete.`]
@@ -627,7 +711,7 @@ export async function runVaultBodySearchReferenceTests(): Promise<void> {
     ["notes/target-a.md", "# Target A\nQUARTZ_TARGET first independent evidence."],
     ["notes/target-b.md", "# Target B\nQUARTZ_TARGET second independent evidence."],
     ["notes/other-actions.md", "# Other actions\n这种方法的下一步安排是先检查封套。"],
-    ["wiki/这篇材料.md", "# 这篇材料\n\nCheck the spare paper count.\n\n## Appendix\nReview the packing sheet."],
+    ["wiki/这篇材料.md", "# 这篇材料\n\n这篇材料先核对备用纸张。Check the spare paper count.\n\n## Appendix\n这篇材料还需复核装箱单。Review the packing sheet."],
     ["wiki/guide.md", "# Guide\nThe guide requires an amber label."],
     ["journal/2026-08-01.md", "# Old journal\nThe older entry requires a brown label."],
     ["journal/2026-09-03.md", "# Current journal\nThe newer entry requires a blue label."],
@@ -675,6 +759,8 @@ export async function runVaultBodySearchReferenceTests(): Promise<void> {
     const exact = await index.search({ query: "这篇材料", limit: 1 });
     assert.equal(exact.hits[0].vaultRelativePath, "wiki/这篇材料.md");
     assert.equal(exact.hits[0].inclusionReason, undefined);
+    assert.equal(exact.total, 2, "exact-name pagination uses two genuine body chapters");
+    assert.ok(exact.hits[0].matchSources?.includes("body"));
     assert.ok(exact.continuationCursor);
     activePath = recentPath; recentPaths = [currentPath];
     const exactNext = await index.search({ query: "这篇材料", limit: 1, cursor: exact.continuationCursor });
