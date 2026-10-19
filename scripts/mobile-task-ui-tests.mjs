@@ -29,7 +29,8 @@ try {
   const generated = await fs.readFile("styles.css", "utf8");
   const marker = "/* ECHOINK_MOBILE_TASK_INTERACTIONS_START */";
   assert.equal(generated.split(marker).length, 2, "new CSS must have exactly one scoped generated block");
-  assert.equal(generated.slice(generated.indexOf(marker)), source);
+  const end = "/* ECHOINK_MOBILE_TASK_INTERACTIONS_END */";
+  assert.equal(generated.slice(generated.indexOf(marker), generated.indexOf(end) + end.length).trim(), source.trim());
   await runMobileTaskUIScenarios(module.exports, dom.window);
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(unhandled.length, 0, "accepted completion failures must always be handled");

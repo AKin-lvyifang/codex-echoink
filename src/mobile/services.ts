@@ -49,6 +49,8 @@ export class MobileServices implements HomeHost {
   agentIdentity = defaultAgentIdentityState();
   private readonly identityListeners = new Set<() => void>();
   private profileProtocol: MobileAgentRegistryService;
+  /** The existing serialized Registry writer, shared by both device adapters. */
+  get agents(): MobileAgentRegistryService { return this.profileProtocol; }
   subscribeIdentity(listener: () => void) { this.identityListeners.add(listener); return () => { this.identityListeners.delete(listener); }; }
   async readAgentProfile(): Promise<MobileAgentProfile> { return this.profileProtocol.profile(); }
   async saveAgentProfile(change: { identity?: { displayName: string; avatar: AgentAvatarState }; templateId?: AgentTemplateId }, version: string) {

@@ -1,0 +1,177 @@
+.echoink-iphone {
+  --ip-ui-font: var(--font-text-size, 16px);
+  --ip-bg: var(--background-primary);
+  --ip-ink: var(--text-normal);
+  --ip-secondary: var(--text-muted);
+  --ip-muted: var(--text-faint, var(--text-muted));
+  --ip-line: var(--background-modifier-border);
+  --ip-soft: var(--echoink-theme-hover, var(--background-modifier-hover));
+  --ip-accent: var(--echoink-theme-accent, var(--em-green, var(--interactive-accent)));
+  --ip-on-accent: var(--echoink-theme-on-accent, var(--text-on-accent));
+  --ip-warning: var(--echoink-theme-warn, var(--text-warning, var(--text-error)));
+}
+.echoink-iphone.em-large-text { --ip-ui-font: calc(var(--font-text-size, 16px) * 1.125); }
+.echoink-iphone .ip-workbench,
+.echoink-iphone .ip-agent-page,
+.echoink-iphone .ip-agent-form { min-width: 0; font-size: .9375em; line-height: 1.5; }
+.echoink-iphone .ip-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.echoink-iphone .ip-icon svg { width: 18px; height: 18px; stroke-width: 1.7; }
+.echoink-iphone .ip-grow { display: block; flex: 1 1 auto; min-width: 0; }
+.echoink-iphone .ip-sub { display: block; font-size: calc(var(--ip-ui-font) * 0.8125); color: var(--ip-secondary); }
+.echoink-iphone .ip-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-iphone .ip-empty { padding: 32px 0; text-align: center; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.875); }
+.echoink-iphone .ip-error { margin-top: 12px; color: var(--text-error); white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-iphone .ip-error[hidden],
+.echoink-iphone .ip-agent-form [hidden] { display: none; }
+.echoink-iphone button.ip-button {
+  appearance: none; display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 44px; min-height: 44px;
+  max-width: 100%; height: auto; padding: 6px 0; margin: 0; border: 0; border-radius: 8px;
+  box-shadow: none; background: transparent; color: var(--ip-ink); font: inherit; text-align: left;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.echoink-iphone button.ip-button::before,
+.echoink-iphone button.ip-button::after { content: none; }
+.echoink-iphone .ip-button-visible {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; width: 100%;
+  padding: 4px 12px; border: 1px solid var(--ip-line); border-radius: 8px; font-size: calc(var(--ip-ui-font) * 0.875); line-height: 22px;
+}
+.echoink-iphone .ip-button-visible .ip-icon svg { width: 16px; height: 16px; }
+.echoink-iphone button.ip-button:hover:not(:disabled) .ip-button-visible { background: var(--ip-soft); }
+.echoink-iphone button.ip-button:active:not(:disabled) { opacity: .65; }
+.echoink-iphone button.ip-button:disabled { opacity: .45; cursor: default; }
+.echoink-iphone button.ip-button.is-primary .ip-button-visible { color: var(--ip-on-accent); background: var(--ip-accent); border-color: var(--ip-accent); }
+.echoink-iphone button.ip-button.is-danger .ip-button-visible { color: var(--text-on-accent); background: var(--text-error); border-color: var(--text-error); }
+.echoink-iphone button.ip-button.is-text { color: var(--ip-secondary); }
+.echoink-iphone button.ip-button.is-text .ip-button-visible { border: 0; padding: 0 4px; font-size: calc(var(--ip-ui-font) * 0.8125); }
+.echoink-iphone button.ip-button:focus-visible,
+.echoink-iphone button.ip-agent-avatar:focus-visible,
+.echoink-iphone button.ip-module-button:focus-visible,
+.echoink-iphone button.ip-list-task:focus-visible,
+.echoink-iphone button.ip-completed-row:focus-visible,
+.echoink-iphone button.ip-preset:focus-visible,
+.echoink-iphone button.ip-avatar-option:focus-visible,
+.echoink-iphone .ip-task-card:focus-visible { outline: 2px solid var(--ip-secondary); outline-offset: -2px; background: var(--ip-soft); }
+.echoink-iphone .ip-workbench-heading { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px; padding: 10px 0 2px; }
+.echoink-iphone .ip-workbench-heading > .ip-grow { flex-basis: 100px; }
+.echoink-iphone .ip-workbench-heading h1 { margin: 0; font-size: calc(var(--ip-ui-font) * 1.375); font-weight: 600; line-height: 1.5; }
+.echoink-iphone .ip-home-date { color: var(--ip-muted); font-size: calc(var(--ip-ui-font) * 0.8125); }
+.echoink-iphone .ip-agent-strip { display: flex; align-items: center; gap: 2px; overflow-x: auto; margin: 6px -16px 0; padding: 0 12px; scrollbar-width: none; }
+.echoink-iphone .ip-agent-strip::-webkit-scrollbar,
+.echoink-iphone .ip-module-nav::-webkit-scrollbar,
+.echoink-iphone .ip-presets::-webkit-scrollbar { display: none; }
+.echoink-iphone button.ip-agent-avatar {
+  appearance: none; position: relative; display: grid; place-items: center; width: 48px; height: 48px; min-width: 48px; min-height: 48px;
+  margin: 0; padding: 0; border: 0; border-radius: 12px; box-shadow: none; background: transparent; flex: 0 0 auto; cursor: pointer;
+}
+.echoink-iphone button.ip-agent-avatar::before,
+.echoink-iphone button.ip-agent-avatar::after { content: none; }
+.echoink-iphone button.ip-agent-avatar:hover,
+.echoink-iphone button.ip-agent-avatar.is-selected { background: var(--ip-soft); }
+.echoink-iphone .ip-avatar { display: block; width: 22px; height: 22px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; background: var(--ip-soft); }
+.echoink-iphone .ip-agent-avatar > .ip-avatar { width: 34px; height: 34px; }
+.echoink-iphone .ip-avatar-default { display: grid; place-items: center; color: var(--ip-accent); }
+.echoink-iphone .ip-agent-badge { box-sizing: content-box; position: absolute; right: 3px; bottom: 3px; min-width: 16px; height: 16px; padding: 0 4px; border: 2px solid var(--ip-bg); border-radius: 8px; font-size: calc(var(--ip-ui-font) * 0.625); line-height: 16px; text-align: center; font-weight: 600; }
+.echoink-iphone .ip-agent-badge.is-waiting,
+.echoink-iphone .ip-agent-badge.is-interrupted { background: var(--ip-warning); color: var(--ip-bg); }
+.echoink-iphone .ip-agent-badge.is-running { display: grid; place-items: center; padding: 0; background: var(--ip-bg); color: var(--ip-accent); }
+.echoink-iphone .ip-agent-badge.is-running svg { width: 13px; height: 13px; }
+.echoink-iphone .ip-agent-badge.is-unread { right: 7px; bottom: 7px; min-width: 8px; width: 8px; height: 8px; padding: 0; background: var(--ip-accent); }
+.echoink-iphone .ip-module-nav { display: flex; gap: 2px; overflow-x: auto; margin: 2px -16px 0; padding: 0 10px 8px; border-bottom: 1px solid var(--ip-line); scrollbar-width: none; }
+.echoink-iphone button.ip-module-button { appearance: none; display: flex; align-items: center; gap: 6px; min-width: 44px; min-height: 44px; margin: 0; padding: 0 10px; border: 0; border-radius: 10px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: calc(var(--ip-ui-font) * 0.875); white-space: nowrap; flex: 0 0 auto; cursor: pointer; }
+.echoink-iphone button.ip-module-button:hover,
+.echoink-iphone button.ip-module-button:active { background: var(--ip-soft); color: var(--ip-ink); }
+.echoink-iphone .ip-module-button svg { width: 16px; height: 16px; }
+.echoink-iphone .ip-section { margin: 22px 0 0; }
+.echoink-iphone .ip-section-heading { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }
+.echoink-iphone .ip-section-heading h2 { margin: 0; font-size: calc(var(--ip-ui-font) * 0.8125); font-weight: 600; }
+.echoink-iphone .ip-count { color: var(--ip-muted); font-size: calc(var(--ip-ui-font) * 0.75); font-variant-numeric: tabular-nums; }
+.echoink-iphone .ip-section-more { margin-left: auto !important; }
+.echoink-iphone .ip-cards { display: flex; flex-direction: column; gap: 8px; }
+.echoink-iphone .ip-task-card { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
+.echoink-iphone .ip-task-card:hover,
+.echoink-iphone .ip-task-card:active { background: var(--ip-soft); }
+.echoink-iphone .ip-task-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.echoink-iphone .ip-task-agent { min-width: 0; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.8125); overflow-wrap: anywhere; }
+.echoink-iphone .ip-status { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; color: var(--ip-muted); font-size: calc(var(--ip-ui-font) * 0.75); font-variant-numeric: tabular-nums; white-space: nowrap; flex: 0 0 auto; }
+.echoink-iphone .ip-status svg { width: 14px; height: 14px; }
+.echoink-iphone .ip-status.is-waiting,
+.echoink-iphone .ip-status.is-interrupted { color: var(--ip-warning); }
+.echoink-iphone .ip-status.is-running svg,
+.echoink-iphone .ip-agent-badge.is-running svg { animation: ip-workbench-spin 1.2s linear infinite; }
+@keyframes ip-workbench-spin { to { transform: rotate(360deg); } }
+.echoink-iphone .ip-task-title { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.echoink-iphone .ip-task-step { color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.875); overflow-wrap: anywhere; }
+.echoink-iphone .ip-card-actions { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }
+.echoink-iphone .ip-card-actions > .ip-grow { flex-basis: 120px; }
+.echoink-iphone .ip-task-card > .ip-inline-question { padding-top: 8px; border-top: 1px solid var(--ip-line); }
+.echoink-iphone .ip-rows { overflow: hidden; border: 1px solid var(--ip-line); border-radius: 12px; }
+.echoink-iphone .ip-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 12px 8px 14px; }
+.echoink-iphone .ip-row + .ip-row { border-top: 1px solid var(--ip-line); }
+.echoink-iphone button.ip-completed-row { appearance: none; width: 100%; height: auto; margin: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; color: var(--ip-ink); font: inherit; text-align: left; cursor: pointer; }
+.echoink-iphone button.ip-completed-row + .ip-completed-row { border-top: 1px solid var(--ip-line); }
+.echoink-iphone button.ip-completed-row:hover,
+.echoink-iphone button.ip-completed-row:active { background: var(--ip-soft); }
+.echoink-iphone .ip-row-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-iphone .ip-time { color: var(--ip-muted); font-size: calc(var(--ip-ui-font) * 0.75); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.echoink-iphone .ip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ip-accent); flex: 0 0 auto; }
+.echoink-iphone .ip-signal-row { flex-wrap: wrap; }
+.echoink-iphone .ip-signal-row > .ip-grow { flex-basis: 110px; }
+.echoink-iphone .ip-signal-row > .ip-icon { color: var(--ip-secondary); width: 24px; }
+.echoink-iphone .ip-signal-row > .ip-confirm { flex-basis: 100%; }
+.echoink-iphone .ip-todo-row { flex-wrap: wrap; gap: 0 10px; padding-left: 4px; }
+.echoink-iphone .ip-todo-row > .ip-grow { flex-basis: 100px; }
+.echoink-iphone .ip-todo-check { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 auto; }
+.echoink-iphone .ip-todo-check input[type=checkbox] { appearance: none; display: block; width: 18px; height: 18px; margin: 0; padding: 0; border: 1.5px solid var(--ip-secondary); border-radius: 5px; background: transparent; box-shadow: none; }
+.echoink-iphone .ip-todo-check input:checked { background: var(--ip-accent); border-color: var(--ip-accent); }
+.echoink-iphone .ip-project { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; padding: 1px 7px; border-radius: 5px; background: var(--ip-soft); color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.75); overflow-wrap: anywhere; }
+.echoink-iphone .ip-project svg { width: 12px; height: 12px; }
+.echoink-iphone .ip-due { color: var(--ip-warning); font-size: calc(var(--ip-ui-font) * 0.75); white-space: nowrap; }
+.echoink-iphone .ip-task-group-label { margin: 16px 2px 6px; color: var(--ip-muted); font-size: calc(var(--ip-ui-font) * 0.75); }
+.echoink-iphone button.ip-list-task { appearance: none; display: block; width: 100%; min-width: 0; min-height: 44px; height: auto; padding: 10px 12px; margin: 0 0 8px; border: 1px solid var(--ip-line); border-radius: 12px; box-shadow: none; background: transparent; color: var(--ip-ink); font: inherit; text-align: left; cursor: pointer; }
+.echoink-iphone button.ip-list-task:hover,
+.echoink-iphone button.ip-list-task:active { background: var(--ip-soft); }
+.echoink-iphone .ip-list-task-top { display: flex; align-items: center; gap: 8px; }
+.echoink-iphone .ip-list-task-title { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-iphone .ip-list-task > .ip-sub { margin-top: 2px; }
+.echoink-iphone .ip-form-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.echoink-iphone .eis-page:has(> .eis-scroll > .eis-content > .ip-agent-form) > .eis-header { border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-form-field { display: block; min-width: 0; margin-top: 18px; }
+.echoink-iphone .ip-field-label { display: block; margin: 0 0 8px; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.8125); font-weight: 500; }
+.echoink-iphone input.ip-input { appearance: none; width: 100%; min-height: 44px; padding: 9px 12px; border: 1px solid var(--ip-line); border-radius: 9px; box-shadow: none; background: var(--ip-bg); color: var(--ip-ink); font: inherit; font-size: max(16px, 1em); line-height: 1.5; }
+.echoink-iphone input.ip-input:focus { outline: none; border-color: var(--ip-secondary); box-shadow: none; }
+.echoink-iphone .ip-presets { display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px; padding: 0 16px; scrollbar-width: none; }
+.echoink-iphone button.ip-preset { appearance: none; display: inline-flex; align-items: center; min-height: 44px; margin: 0; padding: 0; border: 0; border-radius: 999px; box-shadow: none; background: transparent; color: var(--ip-ink); font: inherit; flex: 0 0 auto; cursor: pointer; }
+.echoink-iphone .ip-preset-visible { display: flex; align-items: center; gap: 6px; padding: 4px 12px 4px 4px; border: 1px solid var(--ip-line); border-radius: 999px; font-size: calc(var(--ip-ui-font) * 0.875); white-space: nowrap; }
+.echoink-iphone .ip-preset-visible > .ip-avatar { width: 26px; height: 26px; }
+.echoink-iphone button.ip-preset.is-selected .ip-preset-visible,
+.echoink-iphone button.ip-preset:hover .ip-preset-visible { background: var(--ip-soft); }
+.echoink-iphone .ip-avatar-picker { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+.echoink-iphone button.ip-avatar-option { appearance: none; display: grid; place-items: center; min-width: 44px; min-height: 56px; margin: 0; padding: 0; border: 0; border-radius: 12px; box-shadow: none; background: transparent; cursor: pointer; }
+.echoink-iphone .ip-avatar-option > .ip-avatar { width: 42px; height: 42px; }
+.echoink-iphone button.ip-avatar-option.is-selected,
+.echoink-iphone button.ip-avatar-option:hover { background: var(--ip-soft); }
+.echoink-iphone .ip-choices { overflow: hidden; border: 1px solid var(--ip-line); border-radius: 12px; }
+.echoink-iphone .ip-choice { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 8px 12px; cursor: pointer; }
+.echoink-iphone .ip-choice + .ip-choice { border-top: 1px solid var(--ip-line); }
+.echoink-iphone .ip-choice input[type=checkbox] { flex: 0 0 auto; width: 20px; height: 20px; margin: 0; accent-color: var(--ip-accent); }
+.echoink-iphone .ip-choice-name { min-width: 0; overflow-wrap: anywhere; }
+.echoink-iphone .ip-choice-hint { margin-left: auto; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.75); text-align: right; overflow-wrap: anywhere; }
+.echoink-iphone .ip-capability-group-label { margin: 12px 2px 6px; color: var(--ip-muted); font-size: calc(var(--ip-ui-font) * 0.75); }
+.echoink-iphone .ip-form-empty { padding: 10px 2px; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.8125); }
+.echoink-iphone .ip-styles { display: flex; flex-direction: column; gap: 8px; }
+.echoink-iphone .ip-style-choice { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 12px 14px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
+.echoink-iphone .ip-style-choice:hover,
+.echoink-iphone .ip-style-choice:has(input:checked) { background: var(--ip-soft); }
+.echoink-iphone .ip-style-choice input[type=radio] { appearance: none; width: 20px; height: 20px; margin: 1px 0 0; flex: 0 0 auto; border: 1.5px solid var(--ip-muted); border-radius: 50%; background: transparent; }
+.echoink-iphone .ip-style-choice input[type=radio]:checked { border-color: var(--ip-accent); background: radial-gradient(circle, var(--ip-accent) 0 4px, transparent 4.5px); }
+.echoink-iphone .ip-style-copy { min-width: 0; }
+.echoink-iphone .ip-style-name { display: block; font-weight: 500; }
+.echoink-iphone .ip-form-actbar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0 8px; padding: 2px 16px 4px; border-top: 1px solid var(--ip-line); background: var(--ip-bg); }
+.echoink-iphone .ip-danger-zone { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--ip-line); }
+.echoink-iphone .ip-confirm { margin-top: 6px; padding: 12px; border: 1px solid var(--ip-line); border-radius: 10px; font-size: calc(var(--ip-ui-font) * 0.875); line-height: 1.7; }
+.echoink-iphone .ip-confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0 8px; }
+.echoink-iphone .ip-leave-confirm:not(:empty) { padding: 0 16px 8px; }
+@media (prefers-reduced-motion: reduce) {
+  .echoink-iphone .ip-status.is-running svg,
+  .echoink-iphone .ip-agent-badge.is-running svg { animation: none; }
+}

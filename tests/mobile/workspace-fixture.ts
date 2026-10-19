@@ -1,6 +1,7 @@
 import type EchoInkMobilePlugin from "../../src/mobile/plugin";
 import { MobileWorkspace, MOBILE_VIEW, MOBILE_SETTINGS_VIEW } from "../../src/mobile/workspace";
 import { VIEW_TYPE_ECHOINK_HOME } from "../../src/home/view-type";
+import { LIFE_VIEW_TYPES } from "../../src/lifestyle/view";
 
 /** Synthetic leaves exercise the production registration, navigation and ItemViews. */
 export function mobileWorkspaceFixture(plugin: EchoInkMobilePlugin, containers: { chat: HTMLElement; home: HTMLElement; settings: HTMLElement }, tablet: boolean) {
@@ -11,7 +12,7 @@ export function mobileWorkspaceFixture(plugin: EchoInkMobilePlugin, containers: 
     const leaf: any = { app: plugin.app, containerEl: containers.chat, contentEl: containers.chat, view: { getViewType: () => "empty" },
       getRoot: () => root, getViewState: () => ({ type: leaf.view.getViewType(), state: {} }),
       async setViewState(state: { type: string }) {
-        const element = state.type === MOBILE_SETTINGS_VIEW ? containers.settings : state.type === VIEW_TYPE_ECHOINK_HOME ? containers.home : containers.chat;
+        const element = state.type === MOBILE_SETTINGS_VIEW ? containers.settings : state.type === VIEW_TYPE_ECHOINK_HOME || state.type === LIFE_VIEW_TYPES.finance ? containers.home : containers.chat;
         leaf.containerEl = leaf.contentEl = element;
         leaf.view = factories.get(state.type)?.(leaf) ?? { getViewType: () => state.type };
         await leaf.view.onOpen?.();
@@ -25,6 +26,7 @@ export function mobileWorkspaceFixture(plugin: EchoInkMobilePlugin, containers: 
     iterateAllLeaves: (callback: (leaf: any) => void) => leaves.forEach(callback),
     getLeavesOfType: (type: string) => leaves.filter(leaf => leaf.view.getViewType() === type),
     getLeaf: () => makeLeaf(rootSplit), getRightLeaf: () => makeLeaf(rightSplit),
+    setActiveLeaf: (leaf: any) => { void workspace.revealLeaf(leaf); },
     async revealLeaf(leaf: any) {
       if (leaf.deferredType) { const type = leaf.deferredType; delete leaf.deferredType; await Promise.resolve(); await leaf.setViewState({ type }); }
       active = leaf;

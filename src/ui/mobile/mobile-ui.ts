@@ -22,6 +22,8 @@ export interface MobileUIHost {
   app: App;
   isTablet?: boolean;
   settingsOnly?: boolean;
+  settingsRoot?: MobileSettingsRoute;
+  onSettingsRootBack?(): Promise<void>;
   openSettings?(page: MobileSettingsRoute): Promise<void>;
   openChat?(): Promise<void>;
   services?: MobileServices;
@@ -104,7 +106,7 @@ export class MobileUI {
   showChat() { if (this.host.settingsOnly) return; if (this.page !== "chat") this.go("chat"); else this.refreshChat(); }
   mount() {
     this.mounted = true; this.root.classList.add("echoink-mobile"); this.root.classList.toggle("em-tablet", !!this.host.isTablet); this.root.classList.toggle("em-settings-surface", !!this.host.settingsOnly);
-    if (this.host.settingsOnly) this.page = "settings";
+    if (this.host.settingsOnly) this.page = this.host.settingsRoot ?? "settings";
     else { this.unsubscribeRuntime = this.host.runtime.subscribe(this.onRuntimeChange); this.timer = window.setInterval(() => this.updateTimers(), 250); }
     this.unsubscribeIdentity = this.host.services?.subscribeIdentity(() => { this.syncHeader(); this.settingPages.refreshIdentity(); });
     this.render(); this.viewport = new MobileViewport(this.root); this.applyAppearance();
@@ -144,7 +146,7 @@ export class MobileUI {
     }
     this.closeSheet(false); this.render();
   }
-  private back() { if (this.overlay) { this.closeSheet(); return; } this.captureScroll(); if (this.settingPages.back()) return; this.page = this.stack.pop() ?? (this.host.settingsOnly ? "settings" : "chat"); this.error = ""; this.render(); }
+  private back() { if (this.overlay) { this.closeSheet(); return; } this.captureScroll(); if (this.settingPages.back()) return; if (this.host.onSettingsRootBack && this.page === (this.host.settingsRoot ?? "settings") && !this.stack.length) { void this.act(() => this.host.onSettingsRootBack!()); return; } this.page = this.stack.pop() ?? (this.host.settingsOnly ? "settings" : "chat"); this.error = ""; this.render(); }
   private bindFinanceBackGesture(content: HTMLElement) {
     if (!this.settingPages.navigationKey()) return;
     let start: { identifier: number; x: number; y: number } | undefined;
@@ -179,7 +181,7 @@ export class MobileUI {
   private syncHeader() {
     const header = this.root.querySelector<HTMLElement>(".em-header") ?? el(this.root, "header", "em-header");
     header.replaceChildren();
-    if (this.page !== "chat" && !(this.host.settingsOnly && this.page === "settings")) this.iconButton(header, this.settingPages.backLabel() ?? "返回", "chevron-left", () => this.back());
+    if (this.page !== "chat" && (!(this.host.settingsOnly && this.page === "settings") || this.host.onSettingsRootBack)) this.iconButton(header, this.settingPages.backLabel() ?? "返回", "chevron-left", () => this.back());
     else if (this.page === "chat") el(header, "span", "em-agent-avatar"); else icon(header, "settings-2");
     const titles: Record<Page, string> = { ...this.settingPages.titles, "profile-agent": `${(this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName} 档案`, chat: (this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName, settings: "设置", basic: "基础设置", providers: "模型与提供商", provider: "配置提供商", models: "选择模型", permissions: "工作区权限", history: "历史对话", review: "复盘", memories: "记忆", memory: "记忆详情", notes: "引用笔记" };
     el(header, "h2", "em-title", this.settingPages.navigationTitle() ?? (this.host.settingsOnly && this.page === "settings" ? "EchoInk 设置" : titles[this.page]));

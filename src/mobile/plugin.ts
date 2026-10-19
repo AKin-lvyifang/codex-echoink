@@ -15,6 +15,11 @@ import { createMobileAccountService } from "./account";
 import type { AccountService } from "../membership/account-service";
 import { LifestyleView, LIFE_VIEW_TYPES } from "../lifestyle/view";
 import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
+import { IPHONE_SHELL_VIEW, IPhoneShellWorkspace } from "./shell-workspace";
+import { MobileWorkbenchService } from "./workbench";
+import { IPhoneWorkbench } from "../ui/iphone/workbench";
+import { normalizeEchoInkColorTheme } from "../ui/appearance-theme";
+import type { IPhoneRoute } from "../ui/iphone/workbench-contract";
 
 export { MOBILE_VIEW } from "./workspace";
 export default class EchoInkMobilePlugin extends Plugin {
@@ -24,6 +29,8 @@ export default class EchoInkMobilePlugin extends Plugin {
   navigation!: MobileWorkspace;
   services!: MobileServices;
   accountService!: AccountService;
+  iphoneNavigation?: IPhoneShellWorkspace;
+  workbench?: MobileWorkbenchService;
   private settingsWrites: Promise<void> = Promise.resolve();
   private taskLifecycleRegistered = false;
   async onload(): Promise<void> {
@@ -49,7 +56,6 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.registerTaskLifecycle();
       await this.services.initializeFinance();
       this.register(this.accountService.subscribe(() => { this.services.lifestyle.refresh(); this.services.notifyHomeSurfacesChanged(); }));
-      this.registerView(LIFE_VIEW_TYPES.finance, leaf => new EchoInkMobileFinanceView(leaf, this.services.lifestyle, "finance"));
       this.addCommand({ id: "open-lifestyle-finance", name: "打开 财务", callback: () => void this.services.lifestyle.open("finance") });
       this.app.workspace.onLayoutReady(() => {
         if (this.settings.lifestyle.finance.enabled || this.services.lifestyle.store.snapshot().financeEntries.length)
@@ -60,9 +66,17 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.registerWorkspaceViews();
       this.addRibbonIcon("bot", "打开 EchoInk", () => { void this.open().catch(error => new Notice(String(error))); });
       this.addCommand({ id: "open-echoink-mobile", name: "打开移动对话", callback: () => { void this.open().catch(error => new Notice(String(error))); } });
-      this.addCommand({ id: "open-echoink-mobile-home", name: "打开首页", callback: () => { void this.navigation.openHome().catch(error => new Notice(String(error))); } });
+      this.addCommand({ id: "open-echoink-mobile-home", name: "打开首页", callback: () => { void (Platform.isTablet ? this.navigation.openHome() : this.open()).catch(error => new Notice(String(error))); } });
       this.addCommand({ id: "echoink-mobile-current-note", name: "在 EchoInk 中引用当前笔记", callback: () => {
         const file = this.app.workspace.getActiveFile();
+        if (!Platform.isTablet) {
+          void this.store.update(state => {
+            const draft = state.newTaskDrafts.sol ?? { text: "", attachments: [] };
+            if (file?.extension === "md") draft.noteMentions = [{ vaultRelativePath: file.path, fileName: file.basename }];
+            state.newTaskDrafts.sol = draft;
+          }).then(() => this.openIPhoneRoute({ kind: "agent", agentId: "sol" })).catch(error => new Notice(String(error)));
+          return;
+        }
         const id = this.store.session.id;
         const write = file?.extension === "md" ? this.store.patchSession(id, { notePath: file.path }) : this.store.flush();
         void write.then(() => this.navigation.open()).catch(error => new Notice(String(error)));
@@ -77,6 +91,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       void this.runtime.shutdown(reason).catch(error => new Notice(`中断记录未保存，原资料已保留：${String(error)}`));
     };
     const foreground = () => {
+      this.workbench?.invalidate();
       void this.runtime.foreground().catch(error => new Notice(`中断记录尚未保存，请重新打开后再继续：${String(error)}`));
     };
     this.registerDomEvent(document, "visibilitychange", () => {
@@ -99,15 +114,28 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.settingsWrites = write;
     await write;
     for (const leaf of this.app.workspace.getLeavesOfType(MOBILE_VIEW)) if (leaf.view instanceof EchoInkMobileView) leaf.view.refreshSettings();
+    this.workbench?.invalidate();
+    for (const leaf of this.app.workspace.getLeavesOfType(IPHONE_SHELL_VIEW)) if (leaf.view instanceof EchoInkIPhoneView) leaf.view.refreshSettings();
   }
   registerWorkspaceViews(): void {
+    this.registerView(LIFE_VIEW_TYPES.finance, leaf => new EchoInkMobileFinanceView(leaf, this.services.lifestyle, "finance"));
+    if (!Platform.isTablet) {
+      this.iphoneNavigation = new IPhoneShellWorkspace(this.app.workspace);
+      this.workbench = new MobileWorkbenchService(this.app, this.store, () => this.settings, () => this.services, this.runtime);
+      this.registerView(IPHONE_SHELL_VIEW, leaf => new EchoInkIPhoneView(leaf, this));
+    }
     this.registerView(MOBILE_VIEW, leaf => new EchoInkMobileView(leaf, this));
     this.registerView(MOBILE_SETTINGS_VIEW, leaf => new EchoInkMobileView(leaf, this, true));
     this.registerView(VIEW_TYPE_ECHOINK_HOME, leaf => new EchoInkMobileHomeView(leaf, this.services));
   }
   async open(): Promise<void> {
+    if (!Platform.isTablet) { await this.iphoneNavigation!.open(); return; }
     if (Platform.isTablet) await this.navigation.openHome();
     await this.navigation.open();
+  }
+  async openIPhoneRoute(route: IPhoneRoute): Promise<void> {
+    const leaf = await this.iphoneNavigation!.open();
+    if (leaf.view instanceof EchoInkIPhoneView) await leaf.view.navigate(route);
   }
   async showPage(page: MobileSettingsRoute): Promise<void> {
     if (Platform.isTablet) {
@@ -115,17 +143,52 @@ export default class EchoInkMobilePlugin extends Plugin {
       if (leaf.view instanceof EchoInkMobileView) leaf.view.showPage(page);
       return;
     }
-    await this.navigation.open();
-    const view = this.app.workspace.getLeavesOfType(MOBILE_VIEW)[0]?.view;
-    if (view instanceof EchoInkMobileView) view.showPage(page);
+    const leaf = await this.iphoneNavigation!.open();
+    if (leaf.view instanceof EchoInkIPhoneView) await leaf.view.showPage(page);
   }
   onunload(): void {
+    this.workbench?.dispose();
+    this.iphoneNavigation?.dispose();
     this.accountService?.dispose();
     const stopped = this.runtime?.shutdown("plugin_disabled");
     this.runtime?.dispose();
     void stopped?.catch(error => new Notice(`中断记录未保存，原资料已保留：${String(error)}`));
     void this.services?.dispose();
   }
+}
+
+export class EchoInkIPhoneView extends ItemView {
+  private ui?: IPhoneWorkbench;
+  private markdown = new Component();
+  constructor(leaf: WorkspaceLeaf, private readonly plugin: EchoInkMobilePlugin) { super(leaf); }
+  getViewType(): string { return IPHONE_SHELL_VIEW; }
+  getDisplayText(): string { return "EchoInk"; }
+  getIcon(): string { return "bot"; }
+  refreshSettings(): void {
+    this.contentEl.ownerDocument.body.setAttribute("data-echoink-theme", normalizeEchoInkColorTheme(this.plugin.settings.colorTheme));
+    this.contentEl.dataset.appearance = this.plugin.settings.mobileUi.appearance;
+    this.contentEl.classList.toggle("em-large-text", this.plugin.settings.mobileUi.largeText);
+  }
+  async onOpen(): Promise<void> {
+    this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
+    this.ui = new IPhoneWorkbench(this.contentEl, {
+      app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
+      agents: this.plugin.services.agents, workbench: this.plugin.workbench!,
+      accountService: this.plugin.accountService, version: this.plugin.manifest.version,
+      settings: () => this.plugin.settings, saveSettings: () => this.plugin.saveSettings(),
+      openNote: async path => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!file || !("extension" in file)) throw new Error("笔记不存在。");
+        await this.plugin.iphoneNavigation!.openNote(file as TFile);
+      },
+      openLegacy: page => this.showPage(page), openModule: module => this.ui!.openModule(module),
+      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? "", this.markdown); }
+    });
+    await this.ui.mount();
+  }
+  async navigate(route: IPhoneRoute): Promise<void> { await this.ui?.navigate(route); }
+  async showPage(page: MobileSettingsRoute): Promise<void> { await this.ui?.openLegacy(page); }
+  async onClose(): Promise<void> { this.ui?.dispose(); this.ui = undefined; this.removeChild(this.markdown); await this.plugin.store.flush(); }
 }
 
 class EchoInkMobileFinanceView extends LifestyleView {

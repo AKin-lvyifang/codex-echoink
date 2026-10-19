@@ -49,6 +49,7 @@ export function setIcon(element: HTMLElement, name: string) {
 }
 
 export { FixtureTFile as TFile } from "./host.mjs";
+export { parse as parseYaml } from "yaml";
 export class TFolder { path = ""; name = ""; children: unknown[] = []; }
 export class Component { addChild() {} removeChild() {} register() {} load() {} unload() {} }
 export class Plugin extends Component {

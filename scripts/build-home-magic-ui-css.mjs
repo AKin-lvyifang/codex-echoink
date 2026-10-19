@@ -87,7 +87,15 @@ const diaryGenerated = `${diaryStart}\n${diaryCss.map((css) => css.trim()).join(
 const diaryIndex = styles.indexOf(diaryStart);
 const diaryCurrent = diaryIndex < 0 ? "" : styles.slice(diaryIndex, styles.indexOf(diaryEnd, diaryIndex) + diaryEnd.length);
 
+const iphoneStart = "/* ECHOINK_IPHONE_PAGES_START */";
+const iphoneEnd = "/* ECHOINK_IPHONE_PAGES_END */";
+const iphoneCss = await Promise.all(["shell.css", "workbench.css", "task-detail.css", "integration.css"].map(name => readFile(path.join(rootDir, "src/ui/iphone", name), "utf8")));
+const iphoneGenerated = `${iphoneStart}\n${iphoneCss.map(css => css.trim()).join("\n\n")}\n${iphoneEnd}`;
+const iphoneIndex = styles.indexOf(iphoneStart);
+const iphoneCurrent = iphoneIndex < 0 ? "" : styles.slice(iphoneIndex, styles.indexOf(iphoneEnd, iphoneIndex) + iphoneEnd.length);
+
 if (checkOnly) {
+  if (iphoneCurrent !== iphoneGenerated) throw new Error("Generated iPhone pages CSS is stale");
   if (agentCurrent !== agentGenerated) throw new Error("Generated Agent workbench CSS is stale");
   if (diaryCurrent !== diaryGenerated) throw new Error("Generated English Diary CSS is stale. Run node scripts/build-home-magic-ui-css.mjs");
   if (current !== generated) throw new Error("Generated Magic UI CSS is stale. Run node scripts/build-home-magic-ui-css.mjs");
@@ -98,6 +106,7 @@ if (checkOnly) {
   next = diaryCurrent ? next.replace(diaryCurrent, diaryGenerated) : `${next.trimEnd()}\n\n${diaryGenerated}\n`;
   next = settingsCurrent ? next.replace(settingsCurrent, settingsGenerated) : `${next.trimEnd()}\n\n${settingsGenerated}\n`;
   next = agentCurrent ? next.replace(agentCurrent, agentGenerated) : `${next.trimEnd()}\n\n${agentGenerated}\n`;
+  next = iphoneCurrent ? next.replace(iphoneCurrent, iphoneGenerated) : `${next.trimEnd()}\n\n${iphoneGenerated}\n`;
   if (next !== styles) await writeFile(stylesPath, next, "utf8");
   console.log("Home Magic UI CSS: updated");
 }

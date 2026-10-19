@@ -35,6 +35,12 @@ export class IPhoneShell {
   get activePageId(): string | undefined {
     return this.current?.page.id;
   }
+  hasPage(id: string): boolean { return this.entries.some(entry => entry.page.id === id); }
+  async backTo(id: string): Promise<boolean> {
+    if (!this.hasPage(id)) return false;
+    while (this.activePageId !== id) if (!await this.back()) return false;
+    return true;
+  }
 
   mount(initialPage: MobileShellPage): void {
     if (this.disposed) return;

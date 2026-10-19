@@ -48,6 +48,7 @@ if (params.has("identity")) {
   host.files.set(".echoink/agents/echoink/agent-identity.json", JSON.stringify({ schema:"echoink.agent-identity.v1",revision:1,displayName:"墨墨",avatar,updatedAt:42 }));
 }
 const settings = loadMobileSettings(params.has("offline") ? null : JSON.parse(localStorage.getItem(`${fixturePrefix}-settings`) ?? "null"));
+if (params.has("theme")) settings.colorTheme = params.get("theme");
 settings.mobileUi.knowledgePaths = { wiki: "Wiki", raw: "Raw", inbox: "Inbox" };
 if (params.has("history")) {
   settings.knowledgeBase.healthHistory = [
@@ -118,8 +119,8 @@ if (params.has("desktop") && params.has("account")) {
   const element = document.querySelector<HTMLElement>("#home")!; const view = new EchoInkHomeView({ app: host.app, contentEl: element, containerEl: element } as any, services);
   element.hidden = false; root.hidden = true; await view.onOpen(); desktopDispose = () => view.onClose();
 } else {
-  await plugin.navigation.open();
-  if (params.has("home")) await plugin.navigation.openHome();
+  if (params.has("legacy")) await plugin.navigation.open(); else await plugin.open();
+  if (params.has("home") && params.has("tablet")) await plugin.navigation.openHome();
 }
 if (params.get("page") === "account") await plugin.showPage("account");
 if (params.has("long")) {

@@ -30,7 +30,7 @@ export function createHost(seed = { "笔记/来源.md": "项目决定：先完�
       getFiles() { return [...files.keys()].map(file); },
       getAllLoadedFiles() { return this.getFiles(); },
       getAbstractFileByPath(path) { return files.has(path) ? file(path) : folders.has(path) ? { path, name: path.split("/").pop(), children: [] } : null; },
-      async read(f) { return adapter.read(f.path); }, async cachedRead(f) { return adapter.read(f.path); },
+      async read(f) { return adapter.read(f.path); }, async readBinary(f) { return new TextEncoder().encode(await adapter.read(f.path)).buffer; }, async cachedRead(f) { return adapter.read(f.path); },
       async modify(f, text) { await adapter.write(f.path, text); f.stat.mtime = Date.now(); vaultEvents.trigger("modify", f); },
       async process(f, fn) { await this.modify(f, fn(await adapter.read(f.path))); },
       async createFolder(path) { folders.add(path); },

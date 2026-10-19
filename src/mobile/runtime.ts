@@ -8,6 +8,7 @@ import { normalizeEchoInkQuestionAnswers, normalizeEchoInkQuestionPrompts, type 
 import { AGENT_STYLES } from "../agents/styles";
 import { normalizeAgentId } from "../agents/registry";
 import type { TaskDraft } from "../agents/task-workspace";
+import { parseMobileWorkbenchSource } from "../home/workbench-source";
 import { MobileStore, newId, newSession, type MobileSession, type MobilePermission } from "./store";
 import { mobileStream, piModel, type MobileRequest } from "./transport";
 import { selectedModel, validateMobileProvider, type MobileSettings } from "./settings";
@@ -30,6 +31,8 @@ interface ActiveTask extends TurnInput {
   stage: string; interruption?: MobileTaskInterruption; frozenMessages?: AgentMessage[]; prefix: AgentMessage[]; resume?: MobileResumeSnapshot;
   policy: MobileCapabilityPolicy; signature: string; memoryEnabled: boolean;
   agent?: Agent; search?: KnowledgeBodySearchPort;
+  /** SDK message_end has incorporated this run's already-durable user input. */
+  promptRecorded?: boolean;
   waiter?: { questionId: string; resolve: (answers: EchoInkQuestionAnswer[]) => void; reject: (error: unknown) => void };
   persistenceFailed?: boolean;
   persistenceError?: unknown;
@@ -122,7 +125,9 @@ export class MobileRuntime {
   private interruptRun(run: ActiveTask, reason: MobileInterruptionReason): void {
     if (!run.interruption) {
       run.interruption = { at: Date.now(), reason, stage: run.stage };
-      if (run.agent) run.frozenMessages = structuredClone([...run.prefix, ...run.agent.state.messages]);
+      if (run.agent) run.frozenMessages = structuredClone(run.promptRecorded
+        ? [...run.prefix, ...run.agent.state.messages]
+        : this.store.getSession(run.taskId)?.messages ?? []);
     }
     run.controller.abort(); run.agent?.abort(); run.waiter?.reject(new Error("已停止"));
   }
@@ -381,6 +386,8 @@ export class MobileRuntime {
         if (run.candidate) {
           if (task) throw new Error("候选任务已存在，未重复受理。");
           task = structuredClone(run.candidate); task.notePath = turn.notePath;
+          const source = parseMobileWorkbenchSource(run.newTaskDraft?.prefillSource);
+          if (source?.prompt === turn.text) task.businessKey = source.businessKey;
           if (turn.skillId) task.skillId = turn.skillId;
           latest.sessions.unshift(task); latest.activeSessionId = id; latest.page = { kind: "detail", taskId: id };
           if (JSON.stringify(latest.newTaskDrafts[turn.agentSnapshot.agentId]) === JSON.stringify(run.newTaskDraft)) delete latest.newTaskDrafts[turn.agentSnapshot.agentId];
@@ -413,9 +420,12 @@ export class MobileRuntime {
         }, toolExecution: "sequential" });
       run.agent.subscribe((event: AgentEvent) => {
         if (saveFailed || run.interruption || controller.signal.aborted) return;
+        // prompt() emits asynchronous start events before it records the user.
+        // Until that lifecycle boundary, Store owns the complete admitted transcript.
+        if (event.type === "message_end" && event.message.role === "user") run.promptRecorded = true;
         if (event.type === "tool_execution_start") run.stage = "执行工具";
         else if (event.type === "tool_execution_end") run.stage = "保存工具结果";
-        else if (event.type === "message_end") run.stage = "保存回答";
+        else if (event.type === "message_end" && event.message.role !== "user") run.stage = "保存回答";
         if (!["message_end", "agent_end", "tool_execution_start", "tool_execution_end"].includes(event.type)) { this.notify(id); return; }
         const messages = structuredClone([...prefix, ...run.agent!.state.messages]); const at = Date.now();
         const commit = this.store.updateSession(id, task => {
