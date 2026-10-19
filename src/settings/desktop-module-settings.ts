@@ -4,6 +4,7 @@ import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/a
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import { createOriginButton, createOriginSwitch, disposeOriginControls } from "./origin-controls";
 import { createSettingsSection } from "./settings-v2";
+import { createPluginEditionBadge } from "./plugin-edition-badge";
 
 export type DesktopModuleId = "knowledge" | "journal" | "review" | "todo" | "selection" | "finance" | "english" | "pdf";
 export interface DesktopModuleSettingsOptions {
@@ -20,10 +21,10 @@ const modules: readonly { id: DesktopModuleId; zh: string; en: string; icon: str
   { id: "journal", zh: "日记", en: "Journal", icon: "book-open" },
   { id: "review", zh: "复盘", en: "Review", icon: "history" },
   { id: "todo", zh: "待办", en: "To-dos", icon: "list-todo" },
-  { id: "selection", zh: "选文提问", en: "Selection Ask", icon: "pencil" },
+  { id: "selection", zh: "选文提问", en: "Selection Ask", icon: "text-cursor-input" },
   { id: "finance", zh: "财务", en: "Finance", icon: "wallet", pro: true },
   { id: "english", zh: "英文日记", en: "English diary", icon: "languages", pro: true },
-  { id: "pdf", zh: "PDF 精读", en: "PDF reading", icon: "file-text", pro: true }
+  { id: "pdf", zh: "PDF 精读 · 提取", en: "PDF reading and extraction", icon: "file-text", pro: true }
 ];
 
 /** Owns presentation and the original enable paths; the settings tab owns routes and expansion. */
@@ -49,10 +50,12 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
       const trigger = createOriginButton(header, { cls: "echoink-module-drawer-trigger", attr: { "aria-label": title, "data-echoink-focus-key": `module:${module.id}` } });
       setIcon(trigger.createSpan({ cls: "echoink-module-drawer-icon", attr: { "aria-hidden": "true" } }), module.icon);
       const copy = trigger.createSpan({ cls: "echoink-module-drawer-copy" });
-      copy.createSpan({ cls: "echoink-module-drawer-title", text: title });
+      const name = copy.createSpan({ cls: "echoink-module-drawer-name" });
+      name.createSpan({ cls: "echoink-module-drawer-title", text: title });
+      if (module.pro) createPluginEditionBadge(name, "pro", plugin.settings.settingsLanguage);
       const summary = copy.createSpan({ cls: "echoink-module-drawer-summary" });
-      setIcon(trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }), "chevron-right");
       const optional = module.id === "selection" || pro;
+      if (!optional) setIcon(trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }), "chevron-down");
       const toggle = optional ? createOriginSwitch(header, { attr: { "aria-label": english ? `Enable ${title}` : `启用${title}`, "data-echoink-focus-key": `module:${module.id}:enabled` } }) : null;
       const content = card.createDiv({ cls: "echoink-module-drawer-content", attr: { id: `echoink-module-content-${module.id}` } });
       trigger.setAttribute("aria-controls", content.id);
@@ -78,7 +81,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
         card.toggleClass("is-expanded", open);
         card.toggleClass("is-disabled", !active);
         content.hidden = !open;
-        summary.textContent = !active ? (english ? "Disabled" : "已停用") : options.summary?.(module.id) ?? "";
+        summary.textContent = !active ? (english ? "Disabled" : "已停用") : options.summary?.(module.id) || (module.id === "selection" ? (english ? "Ask about selected text" : "选中文字后直接提问") : "");
         summary.hidden = !summary.textContent;
         if (toggle) { toggle.checked = active; toggle.disabled = pending; }
         controls?.refresh();

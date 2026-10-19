@@ -552,7 +552,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   }
   const memberFooter = el(desktop ? profileSection : panel, "div", "membership-footer");
   if (vm.identity) {
-    if (desktop) createSettingsNavigationRow(memberFooter, { title: t("设备管理", "Devices"), value: vm.membership.devices == null ? undefined : `${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`, onActivate: devices });
+    if (desktop) createSettingsNavigationRow(memberFooter, { title: t("设备管理", "Devices"), value: vm.membership.devices == null ? undefined : `${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`, onActivate: devices }).addClass("desktop-account-device-navigation");
     else { const devicesButton = button(memberFooter, "", "quiet", devices); icon(devicesButton, "layers");
       el(devicesButton, "span", "", vm.membership.devices == null ? t("设备管理", "Devices") : `${t("设备管理", "Devices")} · ${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`); icon(devicesButton, "chevron-right"); }
   }
@@ -613,7 +613,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     const scope = el(membership, "details", "plan-scope"); el(scope, "summary", "", t("买断包含什么", "What lifetime access includes"));
     el(scope, "p", "", t("包含购买时的 2.x 版本 PRO 插件，长期可用；不包含 3.x、以后的新插件和模型调用额度。需要定期联网更新授权，不等于永久离线。", "Includes the purchased 2.x PRO plugins. It excludes 3.x, future plugins and model credits. Periodic online verification is required; it is not permanent offline access."));
     const benefits = el(page, "section", "desktop-account-benefits"); benefits.dataset.accountSection = "benefits"; heading(benefits, t("权益对比", "Benefits"));
-    const table = el(benefits, "table", "benefits-table"); const header = el(el(table, "thead"), "tr");
+    const table = el(el(benefits, "div", "desktop-account-benefits-group"), "table", "benefits-table"); const header = el(el(table, "thead"), "tr");
     for (const title of [t("功能", "Feature"), t("免费", "Free"), "PRO"]) el(header, "th", "", title).scope = "col";
     const body = el(table, "tbody");
     const groups: { title: string; pro: boolean; rows: [string, string][] }[] = [
