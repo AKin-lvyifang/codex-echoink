@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import { App } from "obsidian";
+import { App, Platform } from "obsidian";
 import { installProviderModalDomFixture, ProviderModalTestElement } from "echoink:test-settings-dom";
 import Plugin from "../main";
 import { CodexSettingTab } from "../settings/settings-tab";
@@ -19,7 +19,6 @@ import { PersonalMemoryRecallHarness } from "../harness/memory/personal-memory-r
 import { CognitiveSystem } from "../harness/memory/cognitive-system";
 import { DreamScheduler } from "../harness/memory/dream-scheduler";
 import { cognitiveAtomicWrite } from "../harness/memory/cognitive-file-utils";
-import { applyAgentSelfOperations, replaceAgentCurrentSelf } from "../harness/memory/agent-self";
 import { createSecondaryRecord, serializeSecondaryRecord } from "../harness/memory/secondary-memory-store";
 import { applyDreamProfileUpdate, emptyUserProfileState } from "../harness/memory/user-profile-state";
 import { renderUserMarkdown } from "../harness/memory/cognitive-projection";
@@ -97,12 +96,16 @@ async function settingsDomLifecycle(): Promise<void> {
   settings.settingsTab = "general";
   settings.settingsLanguage = "zh-CN";
   const plugin = {
-    register: () => undefined,
+    applyAppearanceTheme: () => undefined,
+    getQuickChatWindowController: () => null,
+    register: () => undefined, onConversationCatalogChanged: () => () => undefined,
     app: new App(), manifest: { id: "codex-echoink", version: "2.1.0" }, settings,
     developerMode: access, getDeveloperModeService: () => service,
     saveSettings: async () => { saves++; }, refreshLanguageSurfaces: async () => {},
     getCodexView: () => null, isEchoInkOnboardingRequested: () => false
   };
+  const previousDesktop = Platform.isDesktopApp;
+  Platform.isDesktopApp = true;
   const tab = new CodexSettingTab(plugin as never);
   // Unrelated profile data is unavailable; About and the developer switch must still render.
   (tab as any).personalMemoryError = "fixture";
@@ -119,7 +122,7 @@ async function settingsDomLifecycle(): Promise<void> {
     .map((item) => [find("dt", item).textContent, find("dd", item).textContent]));
   const toggle = () => find("input", find("[data-developer-toggle]"));
   const setEnabled = (enabled: boolean) => { toggle().checked = enabled; toggle().fireEvent("change"); };
-  const clickLogo = (altKey: boolean) => find(".echoink-about-logo").fireEvent("click", { altKey });
+  const clickLogo = (altKey: boolean) => find(".echoink-about-compact-icon").fireEvent("click", { altKey });
   const confirm = () => {
     const button = panel().querySelectorAll("button").find((item) => /^(确认并执行|Confirm and continue)$/u.test(item.textContent));
     assert.ok(button, "Reset/restore must show a confirmation button");
@@ -143,12 +146,12 @@ async function settingsDomLifecycle(): Promise<void> {
     assert.equal(root.querySelector("[data-developer-toggle]"), null);
     access.setEnabled(true);
     assert.equal(access.enabled, false);
-    const logo = find(".echoink-about-logo");
+    const logo = find(".echoink-about-compact-icon");
     assert.equal(logo.localName, "button", "The entire logo area is a native, keyboard-accessible button");
     assert.equal(logo.getAttribute("type"), "button");
     assert.equal(logo.getAttribute("aria-label"), "EchoInk Agent");
-    assert.equal(find(".echoink-about-name").textContent, "EchoInk Agent");
-    for (let i = 0; i < 7; i++) find(".echoink-about-version").fireEvent("click", { altKey: true });
+    assert.equal(find(".echoink-about-compact-name").textContent, "EchoInk Agent");
+    for (let i = 0; i < 7; i++) find(".echoink-about-compact-version").fireEvent("click", { altKey: true });
     assert.equal(access.revealed, false, "The version number must no longer reveal developer mode");
     for (let i = 0; i < 7; i++) clickLogo(false);
     for (let i = 0; i < 6; i++) clickLogo(true);
@@ -227,7 +230,7 @@ async function settingsDomLifecycle(): Promise<void> {
       const oldPanel = panel();
       assert.equal(buttons(oldPanel).length, 0);
       if (transition === "disable") setEnabled(false);
-      if (transition === "navigate") await navigate("review");
+      if (transition === "navigate") await navigate("models");
       if (transition === "language") await changeLanguage("en");
       if (transition === "hide") tab.hide();
       wait.resolve();
@@ -237,7 +240,7 @@ async function settingsDomLifecycle(): Promise<void> {
       if (transition === "disable") setEnabled(true);
       if (transition === "navigate") await navigate("general");
       if (transition === "language") {
-        assert.equal(find(".echoink-about-name").textContent, "EchoInk Agent");
+        assert.equal(find(".echoink-about-compact-name").textContent, "EchoInk Agent");
         assert.equal(facts().Memories, "7");
         assert.equal(facts()["Pending for Dream"], "1");
         assert.deepEqual(buttons().map((item) => item.textContent), ["Generate", "Run", "Reset", "Restore"]);
@@ -267,7 +270,7 @@ async function settingsDomLifecycle(): Promise<void> {
       assert.ok(oldPanel.style.getPropertyValue("min-height"), "Running content retains the previous panel height");
       if (operation === "reset") setEnabled(false);
       else {
-        await navigate("review");
+        await navigate("models");
         await navigate("general");
         assert.ok(buttons().every((button) => button.disabled), "Reopened panel must reflect the running operation");
       }
@@ -302,6 +305,7 @@ async function settingsDomLifecycle(): Promise<void> {
     console.log("PASS settings DOM: feather gesture, single title and short actions, complete status values and refresh, loading/error/result/confirmation/busy layouts, async lifecycle, navigation, language, reopen, reload");
   } finally {
     tab.hide();
+    Platform.isDesktopApp = previousDesktop;
     root.remove();
     frames.clear();
   }
@@ -396,20 +400,13 @@ async function repositoryAndLifecycle(): Promise<void> {
       await fs.mkdir(path.dirname(target), { recursive: true });
       await fs.writeFile(target, `preserve:${name}`);
     }
-    await system.selectPersonalityTemplate("advisor", { initialIdentity: { displayName: "Fixture Agent", avatar: { kind: "preset", presetId: "bot" } } } as never);
-    await system.applyAgentSelfOperations([{ operation: "replace", field: "tone", value: "A manually chosen fixture tone" }]);
-    const self = await system.readAgentSelfState();
+    const legacyAgent = "# Retired Agent original\nA learned legacy habit remains untouched.\n";
+    const legacyMetadata = "not-json: retired growth metadata";
+    await fs.mkdir(path.dirname(system.repository.layout.agent), { recursive: true });
+    await fs.writeFile(system.repository.layout.agent, legacyAgent);
+    await fs.writeFile(system.repository.layout.agentSelfMetadata, legacyMetadata);
+    await fs.writeFile(system.repository.layout.agentIdentity, "legacy identity original");
     const parent = first.records[0];
-    const learnedTone = "A learned fixture tone";
-    const metadata = { ...self.metadata, revision: self.metadata.revision + 1, derivations: [{
-      target: "tone", operation: "replace", basis: "explicit",
-      sources: [{ kind: "memory", id: parent.id, revision: parent.revision, contextId: "fixture", evidence: parent.content }],
-      previousValue: self.state.tone, currentValue: learnedTone, updatedAt: Date.now()
-    }, {
-      target: "habit:fixture-learned-habit", operation: "habit_add", basis: "explicit",
-      sources: [{ kind: "memory", id: parent.id, revision: parent.revision, contextId: "fixture", evidence: parent.content }],
-      previousValue: null, currentValue: "A sourced fixture habit", updatedAt: Date.now()
-    }] };
     const profile = applyDreamProfileUpdate(emptyUserProfileState(Date.now()), {
       items: [{ section: "preference", profileKey: "preference.workflow", text: "A fixture-derived preference", basis: "explicit_memory", sourceMemoryId: parent.id }],
       processedSources: [{ memoryId: parent.id, memoryRevision: parent.revision }], now: Date.now()
@@ -421,14 +418,9 @@ async function repositoryAndLifecycle(): Promise<void> {
       confidence: 0.8, supportLevel: "direct", evidence: parent.content.slice(0, 80), now: Date.now()
     });
     await system.repository.applyCognitiveUpdate({
-      agentContent: replaceAgentCurrentSelf(self.agent, applyAgentSelfOperations(self.state, [
-        { operation: "replace", field: "tone", value: learnedTone },
-        { operation: "habit_add", key: "fixture-learned-habit", text: "A sourced fixture habit" }
-      ])),
       userContent,
       secondaryRecords: [secondary], detail: "developer-fixture-derived-state",
       extraChanges: [
-        { relativePath: "agents/echoink/agent-self-meta.json", content: JSON.stringify(metadata) },
         { relativePath: "shared-user/user-profile-state.json", content: JSON.stringify({ ...profile, lastProjectedUserHash: createHash("sha256").update(userContent).digest("hex") }) },
         { relativePath: secondary.file, content: serializeSecondaryRecord(secondary) }
       ]
@@ -454,12 +446,10 @@ async function repositoryAndLifecycle(): Promise<void> {
     assert.equal((await system.repository.readUserControlState()).forgottenIds.length, 0);
     assert.equal((await system.listAllSecondary()).length, 0);
     assert.doesNotMatch((await system.repository.readUserControlState()).user, /fixture-derived/u);
-    assert.equal((await system.readAgentSelfState()).metadata.derivations.length, 0);
-    assert.equal((await system.readAgentSelfState()).state.currentLearnedHabits.length, 0);
     assert.equal((await recall(system.repository)).recall!.total, 0);
-    assert.equal((await system.readAgentProfile()).templateId, "advisor");
-    assert.equal((await system.readAgentSelfState()).state.tone, "A manually chosen fixture tone");
     assert.ok(identityBytes.equals(await fs.readFile(system.repository.layout.agentIdentity)));
+    assert.equal(await fs.readFile(system.repository.layout.agent, "utf8"), legacyAgent);
+    assert.equal(await fs.readFile(system.repository.layout.agentSelfMetadata, "utf8"), legacyMetadata);
     await system.dispose();
     const beforeBackup = await fs.readFile(backup);
     const { backup: protectedCurrent } = await backups.change("restore", validateReopen);
@@ -469,8 +459,6 @@ async function repositoryAndLifecycle(): Promise<void> {
     assert.equal((await system.repository.readUserControlState()).records.length, 7);
     assert.equal((await system.repository.readUserControlState()).forgottenIds.length, 1);
     assert.equal((await system.listAllSecondary()).length, 1);
-    assert.equal((await system.readAgentSelfState()).state.tone, learnedTone);
-    assert.equal((await system.readAgentSelfState()).state.currentLearnedHabits[0].key, "fixture-learned-habit");
     assert.match((await system.repository.readUserControlState()).user, /fixture-derived/u);
     assert.ok((await recall(system.repository)).recall!.total > 0);
     assert.ok(beforeAgent.equals(await fs.readFile(system.repository.layout.agent)));
@@ -483,7 +471,7 @@ async function repositoryAndLifecycle(): Promise<void> {
     assert.ok(originalManifest.equals(await fs.readFile(path.join(root, "shared-user/.runtime/manifest.json"))));
     let failOnce = true;
     const partialFailure = new MemoryDeveloperBackups(root, { atomicWrite: async (target, bytes) => {
-      if (target.endsWith("agent-self-meta.json") && failOnce) { failOnce = false; throw new Error("fixture_partial_write_failure"); }
+      if (target.endsWith("active-change.json") && bytes.toString().includes('"committed":true') && failOnce) { failOnce = false; throw new Error("fixture_partial_write_failure"); }
       await cognitiveAtomicWrite(target, bytes);
     } });
     await assert.rejects(partialFailure.change("reset", validateReopen), /rolled_back/u);
@@ -549,19 +537,11 @@ async function pluginResetLifecycle(system: CognitiveSystem, reopen: () => Promi
     assert.equal(host.personalMemoryCorrection, null);
     assert.notEqual(host.piLocalData.personalMemory, system.repository);
     assert.equal((await host.getEchoInkPersonalMemoryState()).records.length, 0);
-    await host.cognitiveSystem.updateAgentIdentity({ displayName: "Renamed fixture", avatar: { kind: "default" } });
-    await host.cognitiveSystem.selectPersonalityTemplate("creative");
-    const manualSelf = await host.cognitiveSystem.readAgentSelfState();
-    await host.cognitiveSystem.repository.updateIdentityFile("agent", `${manualSelf.agent}\nA manually kept identity note.\n`, manualSelf.revision);
+    const agentPath = host.cognitiveSystem.repository.layout.agent;
+    await fs.writeFile(agentPath, "# A manually kept legacy identity note.\n");
     const changed = await host.changeDeveloperMemory("restore");
-    assert.equal(changed.preservedLearningConflicts, 1);
-    assert.equal((await host.cognitiveSystem.readAgentIdentity()).displayName, "Renamed fixture");
-    const restoredSelf = await host.cognitiveSystem.readAgentSelfState();
-    assert.equal(restoredSelf.metadata.templateId, "creative");
-    assert.equal(restoredSelf.state.tone, manualSelf.state.tone);
-    assert.match(restoredSelf.agent, /# Renamed fixture/u);
-    assert.match(restoredSelf.agent, /A manually kept identity note/u);
-    assert.equal(restoredSelf.state.currentLearnedHabits[0].key, "fixture-learned-habit");
+    assert.equal(changed.preservedLearningConflicts, 0);
+    assert.equal(await fs.readFile(agentPath, "utf8"), "# A manually kept legacy identity note.\n");
     assert.equal((await host.getEchoInkPersonalMemoryState()).records.length, 7);
     assert.equal(host.developerMemoryChanging, false);
     assert.equal(host.piRuntimeBundle, null, "local operations never require Provider Runtime");

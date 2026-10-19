@@ -1,5 +1,5 @@
 import { createProductionKnowledgeLinkingService } from "./knowledge-linking-production";
-import { rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
 import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -275,7 +275,8 @@ export class EchoInkKnowledgeSurfaceService {
   }
 
   folderNameScopes(): string[] {
-    return [...new Set(Object.values(this.plugin.settings.knowledgeBase.folderBindings?.roles ?? {}).flatMap(binding => binding.enabled ? binding.readPaths : []))].filter(directory => this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder);
+    const bindings = this.plugin.settings.knowledgeBase.folderBindings;
+    return [...new Set(bindings ? DESKTOP_KNOWLEDGE_ROOT_ROLES.flatMap(role => bindings.roles[role].enabled ? bindings.roles[role].readPaths : []) : [])].filter(directory => this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder);
   }
 
   async previewFolderNames(scopes: readonly string[]): Promise<KnowledgeFolderNamePreview> {
@@ -560,7 +561,7 @@ export class EchoInkKnowledgeSurfaceService {
         if (base && isEchoInkFinanceBase(await vault.cachedRead(base))) protect(file.path.slice(0, -"/ledger.base".length));
       }
     }
-    const plan = await previewKnowledgeDirectoryPlan({ baseRevision: baseline?.revision ?? 0, baseline, baseSettingsSignature, wikiChanged: options.wikiChanged, moduleDirectories: options.moduleDirectories, mode: options.mode, bindings, createPaths, files, protectedPaths: [...protectedPaths],
+    const plan = await previewKnowledgeDirectoryPlan({ roleScope: DESKTOP_KNOWLEDGE_ROOT_ROLES, baseRevision: baseline?.revision ?? 0, baseline, baseSettingsSignature, wikiChanged: options.wikiChanged, moduleDirectories: options.moduleDirectories, mode: options.mode, bindings, createPaths, files, protectedPaths: [...protectedPaths],
       kind: async (relative) => {
         if (await knowledgeInitializationPathHasSymbolicLink(vaultRoot, relative, true)) return "other";
         const file = vault.getAbstractFileByPath(relative);
@@ -597,15 +598,17 @@ export class EchoInkKnowledgeSurfaceService {
     return await this.withStructureMutation(async () => {
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
       if (previous && next.revision !== previous.revision) throw new Error("目录配置已改变，请重新选择。");
+      for (const role of KNOWLEDGE_ROOT_ROLES) if (!DESKTOP_KNOWLEDGE_ROOT_ROLES.includes(role) && previous) next.roles[role] = structuredClone(previous.roles[role]);
       const baseSignature = knowledgeFolderBindingsSignature(previous);
       const exclusions = knowledgeInboxRecallExclusions(previous, next);
       if (exclusions.length || next.inboxRecallExclusions) next.inboxRecallExclusions = exclusions;
-      const oldIssues = new Set(previous ? knowledgeFolderIssues(previous) : []);
-      const issues = knowledgeFolderIssues(next).filter(issue => !oldIssues.has(issue));
+      const oldIssues = new Set(previous ? knowledgeFolderIssues(previous, DESKTOP_KNOWLEDGE_ROOT_ROLES) : []);
+      const issues = knowledgeFolderIssues(next, DESKTOP_KNOWLEDGE_ROOT_ROLES).filter(issue => !oldIssues.has(issue));
       if (options.wikiChanged) issues.push(...knowledgeWikiFolderSelectionIssues(next));
       if (issues.length) throw new Error(issues.join("；"));
       const checkPaths = new Set<string>();
-      for (const [role, binding] of Object.entries(next.roles)) {
+      for (const role of DESKTOP_KNOWLEDGE_ROOT_ROLES) {
+        const binding = next.roles[role];
         if (!binding.enabled || (binding.native && ["journal", "templates"].includes(role))) continue;
         const before = previous?.roles[role as keyof KnowledgeFolderBindings["roles"]];
         const newlyEnabled = !before?.enabled || (binding.searchEnabled !== false && before.searchEnabled === false);
@@ -935,6 +938,8 @@ export function createKnowledgeInitializationHost(
   return {
     vaultRootPath,
     privateRootPath,
+    roleScope: DESKTOP_KNOWLEDGE_ROOT_ROLES,
+    folderBindings: () => plugin.settings.knowledgeBase.folderBindings,
     resolvePath: (relative) => resolveKnowledgePath(vaultRootPath, relative),
     now: Date.now,
     async listVaultFiles(): Promise<readonly KnowledgeInitializationVaultFile[]> {

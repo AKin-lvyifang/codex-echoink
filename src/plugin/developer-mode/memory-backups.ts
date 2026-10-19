@@ -2,8 +2,6 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { cognitiveAtomicWrite } from "../../harness/memory/cognitive-file-utils";
-import { applyAgentSelfOperations, parseAgentCurrentSelf, replaceAgentCurrentSelf, type AgentSelfBaseField, type AgentSelfOperation, type AgentSelfState } from "../../harness/memory/agent-self";
-import { parseAgentSelfMetadata, reconcileAgentSelfDerivationSources } from "../../harness/memory/agent-self-metadata";
 import { parseSecondaryRecord } from "../../harness/memory/secondary-memory-store";
 import { parsePersonalMemoryRecord } from "../../harness/memory/personal-memory-repository";
 
@@ -13,6 +11,7 @@ const FIXED = [
   ...["manifest.json", "search-index.json", "source-map.json", "audit.jsonl", "dream-state.json", "dream-experience-inbox.json"]
     .map((name) => `shared-user/.runtime/${name}`)
 ] as const;
+const LEGACY_AGENT_FILES = new Set<string>(FIXED.slice(0, 2));
 const PRIMARY = /^shared-user\/memory\/(facts|views|decisions|active|episodes)\/[a-zA-Z0-9_-]{3,96}\.md$/u;
 const SECONDARY = /^shared-user\/memory\/secondary\/[a-zA-Z0-9_-]{3,96}\/[a-zA-Z0-9_-]{3,96}\.md$/u;
 const FORGOTTEN = /^shared-user\/\.runtime\/backups\/(forgets|source-deletions)\/[a-zA-Z0-9_-]{3,96}-\d+\.md$/u;
@@ -68,8 +67,18 @@ export class MemoryDeveloperBackups {
     if (action === "restore" && !restorePath) throw new Error("developer_backup_missing");
     const restore = restorePath ? await this.readSnapshot(restorePath) : null;
     const current = await this.capture();
-    const restored = restore ? this.restoreFiles(current, restore.files) : null;
-    const next = restored?.files ?? this.resetFiles(current);
+    const next: Files = restore ? { ...restore.files } : {};
+    if (restore) {
+      // User Memory restore must not restore a stale hash for the legacy Agent
+      // files that remain in place, including edits made from mobile after reset.
+      const manifestPath = "shared-user/.runtime/manifest.json";
+      const live = JSON.parse(Buffer.from(current[manifestPath] ?? "", "base64").toString("utf8"));
+      const saved = JSON.parse(Buffer.from(next[manifestPath] ?? "", "base64").toString("utf8"));
+      if (saved.fixedFileHashes && /^[a-f0-9]{64}$/u.test(live.fixedFileHashes?.agent ?? "")) {
+        saved.fixedFileHashes.agent = live.fixedFileHashes.agent;
+        next[manifestPath] = Buffer.from(`${JSON.stringify(saved)}\n`).toString("base64");
+      }
+    }
     // A complete backup is persisted and read back before any current file changes.
     const beforeName = `${action}-${Date.now()}-${randomUUID()}.json`;
     const beforePath = path.join(this.directory, beforeName);
@@ -78,7 +87,8 @@ export class MemoryDeveloperBackups {
     const serialized = `${JSON.stringify(snapshot)}\n`;
     await this.io.atomicWrite(beforePath, serialized);
     if (await fs.readFile(beforePath, "utf8") !== serialized) throw new Error("developer_backup_readback_failed");
-    const paths = [...new Set([...Object.keys(current), ...Object.keys(next), ...FIXED])];
+    const paths = [...new Set([...Object.keys(current), ...Object.keys(next), ...FIXED])]
+      .filter((name) => !LEGACY_AGENT_FILES.has(name));
     const journal: Journal = { schema: "echoink.developer-memory-change.v1", before: beforeName, paths, committed: false };
     await this.io.atomicWrite(this.journal, JSON.stringify(journal));
     try {
@@ -96,7 +106,7 @@ export class MemoryDeveloperBackups {
     }
     // A committed journal is harmless; next startup removes it if cleanup fails.
     await fs.unlink(this.journal).catch(() => undefined);
-    return { backup: beforePath, preservedLearningConflicts: restored?.conflicts ?? 0 };
+    return { backup: beforePath, preservedLearningConflicts: 0 };
   }
 
   private async capture(): Promise<Files> {
@@ -147,63 +157,6 @@ export class MemoryDeveloperBackups {
     return files;
   }
 
-  private resetFiles(current: Files): Files {
-    const { agent, state, metadata } = this.agentState(current);
-    const clean = reconcileAgentSelfDerivationSources({
-      state, metadata, currentMemoryRevisions: new Map(),
-      invalidatedExperienceContextIds: new Set(metadata.derivations.flatMap((item) => item.sources.map((source) => source.contextId))),
-      now: Date.now()
-    });
-    return {
-      "agents/echoink/AGENT.md": Buffer.from(replaceAgentCurrentSelf(agent, clean.state)).toString("base64"),
-      "agents/echoink/agent-self-meta.json": Buffer.from(`${JSON.stringify(clean.metadata)}\n`).toString("base64")
-    };
-  }
-
-  private agentState(files: Files) {
-    const text = (name: string): string => Buffer.from(files[name] ?? "", "base64").toString("utf8");
-    const agent = text("agents/echoink/AGENT.md");
-    const parsed = parseAgentCurrentSelf(agent);
-    const metadata = parseAgentSelfMetadata(JSON.parse(text("agents/echoink/agent-self-meta.json")) as Record<string, unknown>);
-    if (parsed.kind !== "ok" || !metadata) throw new Error("developer_agent_state_invalid");
-    return { agent, state: parsed.state, metadata };
-  }
-
-  private restoreFiles(current: Files, backup: Files): { files: Files; conflicts: number } {
-    // Withdraw current learned sources that are about to disappear. The remaining
-    // current Self, identity prose, and template are the manual user's baseline.
-    const base = this.agentState(this.resetFiles(current));
-    const saved = this.agentState(backup);
-    let state = base.state;
-    let conflicts = 0;
-    const derivations = [...base.metadata.derivations];
-    const value = (self: AgentSelfState, target: string): string | null => {
-      if (target === "tone") return self.tone;
-      if (target === "complex_problem_method") return self.complexProblemMethod;
-      if (target === "response_structure") return self.responseStructure;
-      return self.currentLearnedHabits.find((habit) => habit.key === target.slice(6))?.text ?? null;
-    };
-    for (const learned of saved.metadata.derivations) {
-      if (value(state, learned.target) === learned.currentValue) continue;
-      if ((learned.operation === "replace" && base.metadata.templateId !== saved.metadata.templateId)
-        || value(state, learned.target) !== learned.previousValue) { conflicts++; continue; }
-      const operation: AgentSelfOperation = learned.operation === "replace"
-        ? { operation: "replace", field: learned.target as AgentSelfBaseField, value: learned.currentValue! }
-        : learned.operation === "habit_retire"
-          ? { operation: "habit_retire", key: learned.target.slice(6) }
-          : { operation: learned.operation, key: learned.target.slice(6), text: learned.currentValue! };
-      state = applyAgentSelfOperations(state, [operation]);
-      derivations.push(learned);
-    }
-    return { conflicts, files: {
-      ...backup,
-      "agents/echoink/AGENT.md": Buffer.from(replaceAgentCurrentSelf(base.agent, state)).toString("base64"),
-      "agents/echoink/agent-self-meta.json": Buffer.from(`${JSON.stringify({
-        ...base.metadata, revision: base.metadata.revision + 1, derivations, updatedAt: Date.now()
-      })}\n`).toString("base64")
-    } };
-  }
-
   private async readSnapshot(file: string): Promise<Snapshot> {
     if (path.dirname(file) !== this.directory || !SNAPSHOT_NAME.test(path.basename(file))) throw new Error("developer_backup_path_invalid");
     await this.safePath(file);
@@ -222,8 +175,11 @@ export class MemoryDeveloperBackups {
 
   private async apply(files: Files, names: readonly string[]): Promise<void> {
     // Preflight the full path set before deleting or replacing anything.
-    for (const name of names) await this.safePath(this.target(name));
     for (const name of names) {
+      if (!LEGACY_AGENT_FILES.has(name)) await this.safePath(this.target(name));
+    }
+    for (const name of names) {
+      if (LEGACY_AGENT_FILES.has(name)) continue;
       const target = this.target(name);
       const previous = await this.readOptional(target);
       const content = files[name] ?? null;

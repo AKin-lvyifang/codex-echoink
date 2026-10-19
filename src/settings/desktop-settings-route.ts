@@ -34,6 +34,7 @@ export function resolveDesktopSettingsRoute(
   options: { focus?: string; resourceTab?: ResourceManagementTab; resourceId?: string } = {}
 ): DesktopSettingsRoute {
   const focus = options.focus ?? "";
+  if (focus.replace(/^explicit:/u, "") === "knowledge:provider") return { tab: "models", focus: "models:default" };
   const extra = { ...(focus ? { focus } : {}), ...(options.resourceId ? { resourceId: options.resourceId } : {}) };
   if (legacyTab === "agents" || legacyTab === "providers") {
     return { tab: /tavily|tools/iu.test(focus) ? "capabilities" : "models", ...(/tavily|tools/iu.test(focus) ? { capabilityTab: "tools" as const } : {}), ...extra };

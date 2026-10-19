@@ -9,8 +9,6 @@ import { nativeJournalFixture } from "./native-journal-fixture";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { readNativeJournalContext, readNativeJournalSettings, QUICK_JOURNAL_TEMPLATE } from "../home/native-journal";
 import { HomeWorkbenchDataService, defaultJournalTemplateChoice } from "../home/home-workbench-data";
-import { KnowledgeInitializationSection } from "../settings/knowledge-initialization-section";
-import { FakeElement } from "./smooth-conversation-ui";
 import { createObsidianNativePort } from "../plugin/obsidian-native-tools";
 import { ObsidianVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
 import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
@@ -51,21 +49,10 @@ export async function runNativeJournalTests(): Promise<void> {
     assert.equal(parseYaml(context.templateContent.split("---")[1]!).date, "2026-09-06");
     assert.doesNotMatch(context.templateContent, /\{\{/u);
 
-    // Exercise the ready panel's actual action, not a console-only repair call.
-    fixture.plugin.restoreEchoInkKnowledgeBaseStructure = (progress: any) => service.restoreKnowledgeBaseStructure(progress);
-    const section: any = new KnowledgeInitializationSection(fixture.plugin, () => {}, () => { throw new Error("Provider UI is not needed"); });
-    section.structure = await service.getKnowledgeBaseStructure();
-    const panel = new FakeElement("div");
-    section.renderDonePanel(panel);
-    const buttons: FakeElement[] = [];
-    const visit = (element: FakeElement) => { if (element.tag === "button") buttons.push(element); element.children.forEach(visit); };
-    visit(panel);
-    const repair = buttons.find((button) => button.textContent === "补齐日记与模板设置");
-    assert.ok(repair);
+    // The retired ready panel used this same production recovery transaction.
+    // Repeating it must preserve the existing native settings and plugin state.
     const savesBefore = fixture.settingsSaves();
-    repair.onclick?.({} as never);
-    for (let i = 0; i < 200 && section.busy; i++) await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.equal(section.busy, false);
+    await service.restoreKnowledgeBaseStructure();
     assert.equal(fixture.settingsSaves(), savesBefore, "repeat repair does not rewrite native settings");
     assert.equal(fixture.enableCalls(), 2);
 
@@ -96,7 +83,6 @@ export async function runNativeJournalTests(): Promise<void> {
     assert.equal(home.journalPathForDate(date), custom.targetPath);
     assert.equal(JSON.parse(await readFile(path.join(root, ".obsidian/daily-notes.json"), "utf8")).format, "YYYY/[month]MM/DD");
     assert.equal(fixture.providerCalls(), 0);
-    section.dispose();
     await assertNativeToolsAndManagedWrites(fixture, root);
     const cliRoot = path.join(root, "cli-fixture");
     await mkdir(cliRoot, { recursive: true });

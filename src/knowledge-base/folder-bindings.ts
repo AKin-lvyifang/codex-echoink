@@ -110,17 +110,19 @@ export function knowledgeInboxRecallExclusions(previous: KnowledgeFolderBindings
 export function pathInKnowledgeDirectory(value: string, directory: string): boolean {
   return value === directory || value.startsWith(`${directory}/`);
 }
-export function classifyKnowledgePath(config: KnowledgeFolderBindings, value: string): KnowledgeRootRole | null {
+export function classifyKnowledgePath(config: KnowledgeFolderBindings, value: string, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): KnowledgeRootRole | null {
   const normalized = value.replace(/\\/gu, "/");
   const matches = KNOWLEDGE_ROOT_ROLES.flatMap((role) => config.roles[role].enabled
     ? config.roles[role].readPaths.filter((directory) => pathInKnowledgeDirectory(normalized, directory)).map((directory) => ({ role, directory })) : []);
   matches.sort((a, b) => b.directory.length - a.directory.length || (a.role === "raw" ? -1 : b.role === "raw" ? 1 : a.role.localeCompare(b.role)));
-  return matches[0]?.role ?? null;
+  const owner = matches[0]?.role;
+  // Retiring a nested purpose must not widen an ancestor Raw/Wiki recall scope.
+  return owner && roleScope.includes(owner) ? owner : null;
 }
-export function knowledgeFolderIssues(config: KnowledgeFolderBindings): string[] {
+export function knowledgeFolderIssues(config: KnowledgeFolderBindings, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): string[] {
   const issues: string[] = [];
   const labels: Record<KnowledgeRootRole, string> = { raw: "资料来源", wiki: "知识成果", projects: "项目", outputs: "输出", inbox: "收件箱", journal: "日记", work: "工作", archive: "归档", templates: "模板", assets: "附件" };
-  for (const role of KNOWLEDGE_ROOT_ROLES) {
+  for (const role of roleScope) {
     const binding = config.roles[role];
     if (!binding.enabled) continue;
     if (binding.native && (role === "journal" || role === "templates")) continue;
@@ -201,8 +203,13 @@ export function knowledgeMaintenanceFolderIssues(config: KnowledgeFolderBindings
   return issues;
 }
 
-export function knowledgeFolderOrganizationPrompt(config: KnowledgeFolderBindings): string {
-  const allowed = KNOWLEDGE_ROOT_ROLES.flatMap(role => {
+/** A consumption view only. Never persist it over the complete shared roles. */
+export function projectedKnowledgeFolderRoles(config: KnowledgeFolderBindings, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): Partial<KnowledgeFolderBindings["roles"]> {
+  return Object.fromEntries(roleScope.map(role => [role, config.roles[role]]));
+}
+
+export function knowledgeFolderOrganizationPrompt(config: KnowledgeFolderBindings, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): string {
+  const allowed = roleScope.flatMap(role => {
     const binding = config.roles[role];
     return binding.enabled ? (binding.autoOrganizePaths ?? []).filter(directory => binding.readPaths.includes(directory)) : [];
   });

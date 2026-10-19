@@ -77,7 +77,6 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async activateJournalView() { calls.push(["journal"]); },
     async activateEnglishDiaryPage() { calls.push(["english"]); },
     async activatePdfReadingPage() { calls.push(["pdf"]); },
-    async activateLegacyHomeView(section: string) { calls.push(["legacy", section]); },
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
     lifestyle: { async open(kind: string) { calls.push(["lifestyle", kind]); } },

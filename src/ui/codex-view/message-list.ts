@@ -7,7 +7,6 @@ import { Notice, normalizePath, setIcon, TFile, type App, type Component, type E
 import type {
   ChatMessage,
   DiffSummary,
-  EchoInkWelcomeCopy,
   PersonalMemorySourceReference,
   SettingsLanguage,
   StoredAttachment
@@ -92,8 +91,6 @@ import {
   markAIElementsAttachmentItem,
   markAIElementsAttachments,
   renderSmoothAILoader,
-  renderSmoothAISuggestions,
-  renderSmoothBlurOutUp,
   type SmoothAIApprovalState
 } from "./smooth-chat-ui";
 
@@ -145,7 +142,6 @@ export interface MessageListRenderInput {
   messagesEl: HTMLElement;
   virtualListEl: HTMLElement;
   sessionId: string;
-  welcomeCopy: Readonly<EchoInkWelcomeCopy>;
   settingsLanguage: SettingsLanguage;
   messages: ChatMessage[];
   /** 当前 Agent 身份展示快照；缺省时回退 EchoInk + bot 图标。 */
@@ -163,7 +159,6 @@ export interface MessageListRenderInput {
   resolveApprovalDecision?: (
     message: Readonly<ChatMessage>
   ) => MessageApprovalDecisionBinding | null;
-  onSuggestionSelect?: (text: string) => void;
   onScheduleMeasure: (forceBottom?: boolean) => void;
   onScheduleRunProgress: () => void;
   shouldFollowBottom?: () => boolean;
@@ -439,22 +434,8 @@ export class CodexMessageListRenderer {
     this.disconnectVisibleRowsObserver();
     virtualListEl.empty();
     if (messages.length === 0) {
-      const copy = conversationCopy(env.settingsLanguage);
+      // Agent task pages own the empty state; an empty transcript adds no greeting.
       virtualListEl.setCssStyles({ height: "100%" });
-      const welcome = virtualListEl.createDiv({ cls: "codex-welcome" });
-      welcome.createDiv({ cls: "codex-welcome-title", text: env.welcomeCopy.title });
-      renderSmoothBlurOutUp(
-        welcome.createDiv({ cls: "codex-resource-note codex-welcome-subtitle" }),
-        env.welcomeCopy.subtitle
-      );
-      const suggestions = renderSmoothAISuggestions(
-        welcome,
-        copy.message.suggestions,
-        (suggestion) => env.onSuggestionSelect?.(suggestion.label),
-        copy.message.suggestionsAria,
-        env.settingsLanguage
-      );
-      suggestions.addClass("codex-welcome-suggestions");
       this.currentRows = [];
       return;
     }

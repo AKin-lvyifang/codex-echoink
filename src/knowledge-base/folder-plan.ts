@@ -46,17 +46,23 @@ export async function previewKnowledgeDirectoryPlan(input: {
   baseSettingsSignature?: string;
   wikiChanged?: boolean;
   moduleDirectories?: KnowledgeModuleDirectories;
+  /** Consumption scope only; all shared roles remain in the saved bindings. */
+  roleScope?: readonly KnowledgeRootRole[];
 }): Promise<KnowledgeDirectoryPlan> {
+  const roleScope = input.roleScope ?? KNOWLEDGE_ROOT_ROLES;
   const bindings = structuredClone(input.bindings);
+  // A desktop draft cannot overwrite roles owned by the mobile compatibility path.
+  for (const role of KNOWLEDGE_ROOT_ROLES) if (!roleScope.includes(role) && input.baseline) bindings.roles[role] = structuredClone(input.baseline.roles[role]);
   const inboxRecallExclusions = knowledgeInboxRecallExclusions(input.baseline, bindings);
   if (inboxRecallExclusions.length || bindings.inboxRecallExclusions) bindings.inboxRecallExclusions = inboxRecallExclusions;
-  bindings.migrationIssues = [];
-  for (const binding of Object.values(bindings.roles)) {
+  bindings.migrationIssues = bindings.migrationIssues.filter(issue => KNOWLEDGE_ROOT_ROLES.some(role => !roleScope.includes(role) && issue.startsWith(`${role}：`)));
+  for (const role of roleScope) {
+    const binding = bindings.roles[role];
     binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(directory => binding.readPaths.includes(directory));
     if (binding.readPaths.length === 1) binding.writePath = binding.readPaths[0];
   }
   const mode = input.mode ?? "existing";
-  const issues = [...knowledgeFolderIssues(bindings), ...knowledgeMaintenanceFolderIssues(bindings, input.baseline, mode === "build")];
+  const issues = [...knowledgeFolderIssues(bindings, roleScope), ...knowledgeMaintenanceFolderIssues(bindings, input.baseline, mode === "build")];
   if (input.wikiChanged) issues.push(...knowledgeWikiFolderSelectionIssues(bindings));
   const approved = new Set(input.createPaths.map(normalizeKnowledgeDirectory));
   const reuse = new Set<string>();
@@ -84,7 +90,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
     else if (kind === "missing" && mode === "build") await addParents(directory);
     else issues.push(`${directory}：原位置已失效或不是目录`);
   }
-  for (const role of KNOWLEDGE_ROOT_ROLES) {
+  for (const role of roleScope) {
     const binding = bindings.roles[role];
     if (!binding.enabled) continue;
     if (binding.native && (role === "journal" || role === "templates")) { for (const directory of binding.readPaths) if (await input.kind(directory) === "folder") reuse.add(directory); continue; }
@@ -135,7 +141,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
   }
   const targetPaths = new Map(moves.map(move => [move.from, move.to]));
   const sources = input.sourcePaths.map(relative => targetPaths.get(relative) ?? relative).filter(relative => classifyKnowledgePath(bindings, relative) === "raw");
-  const changes = KNOWLEDGE_ROOT_ROLES.filter(role => knowledgeFolderBindingsSignature({ ...bindings, roles: { ...bindings.roles, [role]: input.baseline?.roles[role] ?? { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] } } }) !== knowledgeFolderBindingsSignature(bindings))
+  const changes = roleScope.filter(role => knowledgeFolderBindingsSignature({ ...bindings, roles: { ...bindings.roles, [role]: input.baseline?.roles[role] ?? { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] } } }) !== knowledgeFolderBindingsSignature(bindings))
     .map(role => ({ role, before: structuredClone(input.baseline?.roles[role] ?? { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] }), after: structuredClone(bindings.roles[role]) }));
   return { baseRevision: input.baseRevision, baseSignature: knowledgeFolderBindingsSignature(input.baseline), baseSettingsSignature: input.baseSettingsSignature, wikiChanged: input.wikiChanged,
     moduleDirectories: Object.keys(moduleDirectories).length ? moduleDirectories : undefined, mode, bindings, changes, moves, excluded,

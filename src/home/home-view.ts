@@ -1114,9 +1114,4 @@ export class EchoInkHomeView extends ItemView {
 
   }
 
-/** Desktop-only temporary target; mobile continues using EchoInkHomeView. */
-export class EchoInkLegacyHomeView extends EchoInkHomeView {
-  getViewType(): string { return "echoink-legacy-home"; }
-}
-
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

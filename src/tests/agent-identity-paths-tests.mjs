@@ -77,66 +77,120 @@ try {
     stdin: {
       contents: String.raw`
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, mkdir, readdir, stat, rename, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setWindowsPaths } from "echoink-test-repository-path";
-import { CognitiveSystem } from "./src/harness/memory/cognitive-system";
 import { PersonalMemoryRepository } from "./src/harness/memory/personal-memory-repository";
+import { MobileProfileProtocol, renderPersonalMemoryOverview } from "./src/harness/memory/mobile-profile-protocol";
+import { defaultAgentRegistry, normalizeAgentRegistry } from "./src/agents/registry";
+import { migrateLegacyAgentRegistry } from "./src/agents/migration";
+import { sha256Hex } from "./src/utils/sha256";
+
+function adapterFor(root) {
+  const file = relative => path.join(root, relative);
+  return {
+    async exists(relative) { try { await stat(file(relative)); return true; } catch (error) { if (error.code === "ENOENT") return false; throw error; } },
+    read: relative => readFile(file(relative), "utf8"),
+    write: (relative, text) => writeFile(file(relative), text),
+    mkdir: relative => mkdir(file(relative), { recursive: true }),
+    rename: (from, to) => rename(file(from), file(to)),
+    remove: relative => rm(file(relative)),
+    rmdir: relative => rm(file(relative), { recursive: true }),
+    async list(relative) { const entries = await readdir(file(relative), { withFileTypes: true }); return {
+      files: entries.filter(entry => entry.isFile()).map(entry => relative + "/" + entry.name),
+      folders: entries.filter(entry => entry.isDirectory()).map(entry => relative + "/" + entry.name)
+    }; }
+  };
+}
+function mobileFor(root) {
+  return new MobileProfileProtocol(adapterFor(root), () => Date.now(), { read: () => "identity_paths", create: () => "identity_paths" });
+}
 
 for (const windowsPaths of [false, true]) {
-  const vaultPath = await mkdtemp(path.join(os.tmpdir(), "echoink-identity-paths-vault-"));
-  const repository = new PersonalMemoryRepository({
-    vaultPath, vaultId: "identity-path-regression", watchExternalChanges: false
-  });
-  let system;
-  try {
-    system = await CognitiveSystem.create({
-      repository, llm: () => null,
-      getDreamConfig: () => ({ enabled: false, runsPerDay: 3 }),
-      isForegroundBusy: () => false, registerInterval: () => {}
-    });
-    system.scheduler.stop();
-    await system.selectPersonalityTemplate("advisor", {
-      initialIdentity: { displayName: "小墨", avatar: { kind: "preset", presetId: "nova" } }
-    });
-    // Start from an existing user's committed identity. Only this Repository's
-    // relative paths use Windows separators; filesystem I/O remains native.
-    setWindowsPaths(windowsPaths);
-    const initialRevision = (await repository.inspect()).revision;
-    for (const presetId of ["sol", "mica"]) {
-      const saved = await system.updateAgentIdentity({
-        displayName: "小墨", avatar: { kind: "preset", presetId }
-      });
-      const disk = JSON.parse(await readFile(repository.layout.manifest, "utf8"));
-      assert.equal((await repository.inspect()).revision, saved.revision);
-      assert.equal(disk.revision, saved.revision, "cache must advance with each saved avatar");
-      assert.equal(JSON.parse(await readFile(repository.layout.agentIdentity, "utf8")).avatar.presetId, presetId);
+  for (const existingLegacyProfile of [true, false]) {
+    const vaultPath = await mkdtemp(path.join(os.tmpdir(), "echoink-identity-paths-vault-"));
+    const repository = new PersonalMemoryRepository({ vaultPath, vaultId: "identity-path-regression", watchExternalChanges: false });
+    const mobile = mobileFor(vaultPath);
+    try {
+      // An old installed vault has the manifest and profile produced by the
+      // mobile/shared control protocol; desktop must retain its Agent hash.
+      if (existingLegacyProfile) {
+        const initial = await mobile.profile();
+        await mobile.save({ templateId: "advisor", identity: { displayName: "小墨", avatar: { kind: "preset", presetId: "nova" } } }, initial.version);
+        const user = "# User\n\nExisting user profile.\n";
+        await mkdir(path.dirname(repository.layout.manifest), { recursive: true });
+        await writeFile(repository.layout.user, user);
+        const manifest = { schemaVersion: 1, vaultId: "identity-path-regression", revision: 0, records: [], tombstones: [], updatedAt: 1,
+          fixedFileHashes: { agent: sha256Hex(await readFile(repository.layout.agent, "utf8")), user: sha256Hex(user) } };
+        await writeFile(repository.layout.manifest, JSON.stringify(manifest));
+        await writeFile(repository.layout.audit, "");
+        await writeFile(repository.layout.memory, renderPersonalMemoryOverview(manifest, []));
+      }
+      await repository.initialize();
+      if (!existingLegacyProfile) {
+        await assert.rejects(readFile(repository.layout.agent), { code: "ENOENT" }, "desktop does not create a retired Agent file");
+        const initial = await mobile.profile();
+        await mobile.save({ templateId: "advisor", identity: { displayName: "小墨", avatar: { kind: "preset", presetId: "nova" } } }, initial.version);
+      }
+      let profile = await mobile.profile();
+      const beforeAgent = await readFile(repository.layout.agent);
+      const beforeMeta = await readFile(repository.layout.agentSelfMetadata);
+      const registry = await migrateLegacyAgentRegistry(defaultAgentRegistry(), repository.layout.root);
+      assert.equal(registry.agents[0].name, "小墨");
+      assert.equal(registry.agents[0].styleId, "analysis");
+      assert.deepEqual(await readFile(repository.layout.agent), beforeAgent);
+      assert.deepEqual(await readFile(repository.layout.agentSelfMetadata), beforeMeta, "registry migration never rewrites legacy files");
+      const registryFile = path.join(vaultPath, "registry.json");
+      let currentRegistry = registry;
+      for (const presetId of ["sol", "mica"]) {
+        currentRegistry = normalizeAgentRegistry({ ...currentRegistry, agents: currentRegistry.agents.map(agent => ({ ...agent, avatar: { kind: "preset", presetId } })) });
+        await writeFile(registryFile, JSON.stringify(currentRegistry));
+        assert.equal(normalizeAgentRegistry(JSON.parse(await readFile(registryFile, "utf8"))).agents[0].avatar.presetId, presetId);
+        profile = await mobile.save({ identity: { displayName: "小墨", avatar: { kind: "preset", presetId } } }, profile.version);
+        assert.equal(JSON.parse(await readFile(repository.layout.agentIdentity, "utf8")).avatar.presetId, presetId);
+      }
+      const staleMobileVersion = profile.version;
+      profile = await mobile.save({ identity: { displayName: "墨墨", avatar: { kind: "preset", presetId: "mica" } } }, profile.version);
+      assert.match(await readFile(repository.layout.agent, "utf8"), /墨墨/u);
+      await assert.rejects(mobile.save({ identity: { displayName: "过期覆盖", avatar: { kind: "default" } } }, staleMobileVersion), /已变化/u);
+      assert.equal(await migrateLegacyAgentRegistry(currentRegistry, repository.layout.root), currentRegistry, "completed registry migration cannot be overwritten by later mobile identity edits");
+
+      // Preserve the path/watch/cache regression on the active USER transaction.
+      // Only the Repository's relative paths use Windows separators.
+      setWindowsPaths(windowsPaths);
+      await repository.dispose();
+      const desktop = new PersonalMemoryRepository({ vaultPath, vaultId: "identity-path-regression", watchExternalChanges: false });
+      try {
+        await desktop.initialize();
+        const initialRevision = (await desktop.inspect()).revision;
+        const user = "# User\n\nCurrent desktop user profile.\n";
+        const saved = await desktop.updateIdentityFile("user", user, initialRevision);
+        assert.equal((await desktop.inspect()).revision, saved.revision);
+        assert.equal(JSON.parse(await readFile(desktop.layout.manifest, "utf8")).revision, saved.revision);
+        assert.equal((await desktop.readUserControlState()).user, user, "saved user text refreshes the fixed-context cache");
+        assert.ok(desktop.internalWatchExpectations.has("shared-user/USER.md"), "the watcher key is canonical on both path styles");
+        assert.equal(await desktop.isExpectedInternalWatchEcho("shared-user/USER.md"), true);
+        for (const memoryMode of ["normal", "no_memory"]) {
+          const context = await desktop.loadFixedContext({ memoryMode });
+          assert.equal(context.agent, "");
+          assert.equal(context.injectionKeys.includes("echoink.agent"), false);
+        }
+        const mobileAfterUserSave = await mobile.profile();
+        assert.equal(mobileAfterUserSave.identity.displayName, "墨墨");
+        assert.equal(mobileAfterUserSave.templateId, "advisor");
+        assert.match(await mobile.context(true), /Current desktop user profile/u, "mobile still reads desktop user Memory updates");
+        await assert.rejects(desktop.applyCognitiveUpdate({ secondaryRecords: [], extraChanges: [], detail: "stale-revision-test", expectedMemoryRevision: initialRevision }), error => error.code === "revision_conflict");
+      } finally { await desktop.dispose(); }
+      console.log("PASS registry/mobile/user persistence: " + (windowsPaths ? "Windows separator simulation" : "native paths")
+        + "; " + (existingLegacyProfile ? "existing legacy profile" : "fresh desktop vault")
+        + "; one-time migration, avatars, rename, cache, watcher echo, revision conflict");
+    } finally {
+      setWindowsPaths(false); await repository.dispose(); await rm(vaultPath, { recursive: true, force: true });
     }
-    const renamed = await system.updateAgentIdentity({
-      displayName: "墨墨", avatar: { kind: "preset", presetId: "mica" }
-    });
-    assert.equal(renamed.revision, initialRevision + 3);
-    const context = await repository.loadFixedContext({ memoryMode: "normal" });
-    assert.equal(context.revision, renamed.revision);
-    assert.match(context.agent, /墨墨/u, "renaming must refresh the cached AGENT.md projection");
-    assert.ok(repository.internalWatchExpectations.has("agents/echoink/AGENT.md"),
-      "the canonical watcher key must be registered before the write");
-    assert.equal(await repository.isExpectedInternalWatchEcho("agents/echoink/AGENT.md"), true,
-      "the native watcher callback must recognize our own committed rename");
-    await assert.rejects(repository.applyCognitiveUpdate({
-      secondaryRecords: [], extraChanges: [], detail: "stale-revision-test",
-      expectedMemoryRevision: initialRevision
-    }), (error) => error.code === "revision_conflict", "stale writes must remain blocked");
-    console.log("PASS identity persistence: " + (windowsPaths ? "Windows separator simulation" : "native paths")
-      + "; consecutive avatars, rename, cache, watcher echo, revision conflict");
-  } finally {
-    setWindowsPaths(false);
-    if (system) await system.dispose();
-    else await repository.dispose();
-    await rm(vaultPath, { recursive: true, force: true });
   }
 }
+
 `,
       resolveDir: rootDir,
       sourcefile: "agent-identity-paths-test-entry.js",

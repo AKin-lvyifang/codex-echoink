@@ -1,11 +1,9 @@
 import type { App, Component } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import {
-  resolveEchoInkWelcomeCopy,
   type ChatMessage,
   type StoredSession
 } from "../../settings/settings";
-import { swallowError } from "../../core/error-handling";
 import { settleStaleRunningMessages } from "../../core/message-state";
 import { SessionMessageStore, type SessionMessageInput } from "./session-message-store";
 import { CodexMessageListRenderer } from "./message-list";
@@ -94,7 +92,6 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     messagesEl: host.messagesEl,
     virtualListEl: host.virtualListEl,
     sessionId: session.id,
-    welcomeCopy: resolveEchoInkWelcomeCopy(host.plugin.settings),
     settingsLanguage: host.plugin.settings.settingsLanguage,
     agentIdentity: host.plugin.getEchoInkAgentIdentityView(),
     messages,
@@ -117,11 +114,6 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
         productRunId,
         toolCallId
       });
-    },
-    onSuggestionSelect: (text) => {
-      host.inputEl.value = text;
-      host.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
-      host.inputEl.focus();
     },
     ...(session.bodyAuthority === "pi_session_only"
       ? {

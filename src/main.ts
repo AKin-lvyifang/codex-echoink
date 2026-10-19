@@ -1,3 +1,4 @@
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES } from "./knowledge-base/root-paths-core";
 import { assertPdfTaskDelivery, pdfKnowledgeSection } from "./pdf-reading/delivery";
 import type { PdfNavigationStart, PdfNavigationArtifact, PdfOptions, PdfTaskRequest } from "./pdf-reading/types";
 import { checkAgentCapability } from "./agents/capability-policy";
@@ -25,7 +26,7 @@ import { patchConversationTaskMetadata, type ConversationTaskMetadataPatch } fro
 import { assertPiSubmissionActive, waitForPiSubmission } from "./harness/pi-native/pi-submission-lifecycle";
 import { registerKnowledgePrivateRoot } from "./knowledge-base/root-paths";
 import { applyConversationTaskMetadata, normalizeConversationTaskMetadata } from "./agents/task-metadata";
-import { knowledgeFolderOrganizationPrompt } from "./knowledge-base/folder-bindings";
+import { knowledgeFolderOrganizationPrompt, projectedKnowledgeFolderRoles } from "./knowledge-base/folder-bindings";
 import { PdfReadingController } from "./pdf-reading/controller";
 import { createPluginAccountService } from "./membership/plugin-service";
 import type { AccountService } from "./membership/account-service";
@@ -54,21 +55,7 @@ import {
 import type { EchoInkResource } from "./resources/types";
 import { enabledSkillResources } from "./resources/registry";
 import type { ReviewManager } from "./review/manager";
-import {
-  getApiProviderModel,
-  validateApiProvider,
-  newId,
-  apiProviderModelSupportsImage,
-  apiProviderHasUsableCredential,
-  getActiveApiProvider,
-  getActiveApiProviderModel,
-  getEnglishDiaryApiProviderModel,
-  type ChatMessage,
-  type CodexForObsidianSettings,
-  type KnowledgeBaseSettings,
-  type ResourceManagementTab,
-  type StoredSession
-} from "./settings/settings";
+import { getApiProviderModel, validateApiProvider, newId, apiProviderModelSupportsImage, apiProviderHasUsableCredential, getActiveApiProvider, getActiveApiProviderModel, getEnglishDiaryApiProviderModel, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./plugin/bootstrap";
 import { EnglishDiaryController } from "./english-diary/controller";
@@ -164,11 +151,8 @@ import {
   type PersonalMemoryCorrectionRecord
 } from "./plugin/personal-memory-correction-service";
 import { normalizeApiProviderId } from "./settings/provider-presets";
-import { CognitiveSystem, type AgentProfileView } from "./harness/memory/cognitive-system";
-import {
-  DEFAULT_AGENT_DISPLAY_NAME,
-  defaultAgentIdentityState
-} from "./harness/memory/agent-identity-state";
+import { CognitiveSystem } from "./harness/memory/cognitive-system";
+import { DEFAULT_AGENT_DISPLAY_NAME } from "./harness/memory/agent-identity-model";
 import { resolveAgentAvatarUrl } from "./ui/agent-avatar-presets";
 import type { AgentIdentityView } from "./ui/codex-view/message-list";
 import type { DreamLlmPort } from "./harness/memory/dream-engine";
@@ -177,18 +161,7 @@ import {
   type BuiltinSkillRuntimeSnapshot
 } from "./harness/resources/skill-runtime";
 import type { BuiltinSkillId } from "./harness/resources/builtin-skills";
-import {
-  advanceEchoInkOnboardingTutorial,
-  dismissEchoInkOnboardingTutorial,
-  echoInkOnboardingTab,
-  onboardingCoachmarkCopy,
-  onboardingCompletionCopy,
-  prepareEchoInkOnboardingTutorial,
-  shouldAutoStartEchoInkOnboarding,
-  selectEchoInkOnboardingStep,
-  ECHOINK_ONBOARDING_STEPS,
-  type EchoInkOnboardingStep
-} from "./settings/onboarding";
+import { advanceEchoInkOnboardingTutorial, dismissEchoInkOnboardingTutorial, echoInkOnboardingTab, onboardingCoachmarkCopy, onboardingCompletionCopy, prepareEchoInkOnboardingTutorial, shouldAutoStartEchoInkOnboarding, selectEchoInkOnboardingStep, type EchoInkOnboardingStep } from "./settings/onboarding";
 import {
   mountEchoInkOnboardingCoachmark,
   type EchoInkOnboardingCoachmarkHandle
@@ -232,7 +205,6 @@ export default class CodexForObsidianPlugin extends Plugin {
   private readonly agentRegistryListeners = new Set<() => void>();
   private readonly conversationCatalogListeners = new Set<() => void>();
   private pendingSettingsResourceDetailId = "";
-  private pendingKnowledgeDashboardFocus = false;
   private mcpBrokerService: EchoInkMcpBrokerService | null = null;
   private mcpSettingsService: EchoInkMcpSettingsService | null = null;
   private piProviderConfigurationService:
@@ -421,7 +393,6 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.appearance?.refresh();
   }
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
-  async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> { return this.getViewService().activateLegacyHomeView(section); }
   async activateKnowledgeView(page: "overview" | "health" | "history" = "overview"): Promise<void> { return this.getViewService().activateKnowledgeView(page); }
 
   private pdfNavigationFlight: Promise<string> | null = null;
@@ -799,13 +770,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async refreshLanguageSurfaces(): Promise<void> { await this.getViewService().refreshLanguageSurfaces(); }
   async openEchoInkGeneralSettings(): Promise<void> { await this.getViewService().openEchoInkSettings("general"); }
   async openEchoInkKnowledgeSettings(): Promise<void> {
-    this.pendingKnowledgeDashboardFocus = true;
     await this.getViewService().openEchoInkSettings("knowledgeBase");
-  }
-  consumeKnowledgeDashboardFocus(): boolean {
-    const focus = this.pendingKnowledgeDashboardFocus;
-    this.pendingKnowledgeDashboardFocus = false;
-    return focus;
   }
   async openWorkspaceResourceSettings(tab: ResourceManagementTab = "plugins"): Promise<void> { return this.getViewService().openWorkspaceResourceSettings(tab); }
   async openReviewHtmlPreview(relativePath: string): Promise<void> { return this.getViewService().openReviewHtmlPreview(relativePath); }
@@ -1805,83 +1770,18 @@ export default class CodexForObsidianPlugin extends Plugin {
     return result;
   }
   async getEchoInkPersonalMemoryState() {
-    const localData = await this.ensurePiLocalData();
-    let control = await localData.personalMemory.readUserControlState();
-    let agentProfile:
-      | Readonly<{ kind: "ready" } & AgentProfileView>
-      | Readonly<{ kind: "error" }>;
-    let system: CognitiveSystem | null = null;
-    let agentIdentity = defaultAgentIdentityState();
-    try {
-      system = this.cognitiveSystem
-        ?? (typeof this.getCognitiveSystem === "function"
-          ? await this.getCognitiveSystem()
-          : null);
-      agentProfile = Object.freeze({ kind: "error" as const });
-      if (system) {
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          const profile = await system.readAgentProfile();
-          const identity = await system.readAgentIdentity();
-          const nextControl = await localData.personalMemory.readUserControlState();
-          control = nextControl;
-          agentIdentity = identity;
-          if (profile.revision !== nextControl.revision) continue;
-          agentProfile = Object.freeze({ kind: "ready" as const, ...profile });
-          break;
-        }
-      }
-    } catch {
-      agentProfile = Object.freeze({ kind: "error" as const });
-    }
-    return Object.freeze({
-      revision: control.revision,
-      user: control.user,
-      memory: control.memory,
-      records: control.records,
-      forgottenIds: control.forgottenIds,
-      agentIdentity,
-      agentProfile
-    });
+    return await (await this.ensurePiLocalData()).personalMemory.readUserControlState();
   }
 
-  /**
-   * 同步读取当前 Agent 展示快照（消息头名称、头像与等待态人格）。数据
-   * 来自 CognitiveSystem 已预热的缓存；系统未初始化完成时返回默认
-   * EchoInk / bot 图标与无模板状态，绝不在消息渲染时读磁盘。
-   */
+  /** Desktop display identity comes only from the Agent registry. */
   getEchoInkAgentIdentityView(): AgentIdentityView {
-    if (!Platform.isMobile && this.settings.agentRegistry) {
-      const page = this.settings.taskWorkspace.page;
-      const id = page.kind === "list" ? page.agentId : this.settings.sessions.find(session => session.id === page.taskId)?.agentId;
-      const agent = this.settings.agentRegistry.agents.find(agent => agent.id === (id ?? GENERAL_ASSISTANT_ID)) ?? this.settings.agentRegistry.agents[0];
-      return Object.freeze({ displayName: agent.name, avatarUrl: resolveAgentAvatarUrl(agent.avatar), personalityTemplateId: null });
-    }
-    const system = this.cognitiveSystem;
-    if (!system) {
-      return Object.freeze({
-        displayName: DEFAULT_AGENT_DISPLAY_NAME,
-        avatarUrl: null,
-        personalityTemplateId: null
-      });
-    }
-    const identity = system.currentAgentIdentity();
-    return Object.freeze({
-      displayName: identity.displayName,
-      avatarUrl: resolveAgentAvatarUrl(identity.avatar),
-      personalityTemplateId: system.currentPersonalityTemplateId()
-    });
+    const registry = this.settings.agentRegistry;
+    const page = this.settings.taskWorkspace.page;
+    const id = page.kind === "list" ? page.agentId : this.settings.sessions.find(session => session.id === page.taskId)?.agentId;
+    const agent = registry?.agents.find(agent => agent.id === (id ?? GENERAL_ASSISTANT_ID)) ?? registry?.agents[0];
+    return Object.freeze({ displayName: agent?.name ?? DEFAULT_AGENT_DISPLAY_NAME, avatarUrl: agent ? resolveAgentAvatarUrl(agent.avatar) : null, personalityTemplateId: null });
   }
-  async updateEchoInkPersonalMemoryProfile(
-    profile: "agent" | "user",
-    content: string,
-    expectedRevision: number
-  ) {
-    return await (await this.ensurePiLocalData()).personalMemory.updateIdentityFile(
-      profile,
-      content,
-      expectedRevision
-    );
-  }
+
   async generateEchoInkPersonalMemoryCorrection(
     record: PersonalMemoryCorrectionRecord,
     correction: string,
@@ -2205,7 +2105,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       }
   }
   async prepareWikiFolderNamesForMaintenance(input: { initialization: boolean; assertActive(): void }): Promise<string> {
-    if (this.settings.knowledgeBase.folderBindings) { input.assertActive(); return `当前目录用途：${JSON.stringify(this.settings.knowledgeBase.folderBindings.roles)}；维护只提炼本轮已选资料，不改名目录。${knowledgeFolderOrganizationPrompt(this.settings.knowledgeBase.folderBindings)}`; }
+    if (this.settings.knowledgeBase.folderBindings) { input.assertActive(); return `当前目录用途：${JSON.stringify(projectedKnowledgeFolderRoles(this.settings.knowledgeBase.folderBindings, DESKTOP_KNOWLEDGE_ROOT_ROLES))}；维护只提炼本轮已选资料，不改名目录。${knowledgeFolderOrganizationPrompt(this.settings.knowledgeBase.folderBindings, DESKTOP_KNOWLEDGE_ROOT_ROLES)}`; }
     const result = await this.requireKnowledgeSurfaceService().optimizeFolderNames(undefined, input.initialization, { ...input, authorized: true });
     return `${result.message ?? `目录优化：改名 ${result.renamed.length}，跳过 ${result.skipped.length}。`}${JSON.stringify(result.skipped)}`;
   }

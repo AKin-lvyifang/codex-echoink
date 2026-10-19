@@ -11,10 +11,8 @@ import {
 } from "../harness/memory/dream-engine";
 import { defaultDreamState, type DreamState } from "../harness/memory/dream-state";
 import { defaultDreamExperienceInboxState } from "../harness/memory/dream-experience-inbox";
-import { emptyAgentSelfMetadata } from "../harness/memory/agent-self-metadata";
 import { emptyUserProfileState } from "../harness/memory/user-profile-state";
 import { PERSONAL_MEMORY_SCHEMA, type PersonalMemoryRecord, type SecondaryMemoryRecord } from "../harness/memory/personal-memory-contracts";
-import { defaultAgentProfile } from "../harness/memory/personal-memory-repository";
 
 function memory(revision: number): PersonalMemoryRecord {
   return Object.freeze({
@@ -45,7 +43,7 @@ export async function runDreamLedgerScenarios(): Promise<void> {
   const llm: DreamLlmPort = {
     call: async (input) => {
       providerCalls += 1;
-      if (input.systemPrompt.includes("本次只输出 Agent current-self")) return "no_change";
+      if (input.systemPrompt.includes("本次只输出 USER")) return "no_change";
       return providerMode === "valid"
         ? JSON.stringify({ secondaryFacts: [], userProfileItems: [] })
         : "{invalid-json";
@@ -54,9 +52,9 @@ export async function runDreamLedgerScenarios(): Promise<void> {
   assert.equal(DREAM_REFLECTION_PROMPT, [
     "你负责复盘 Harness 提供的一级 Memory、公开交互和真实任务结果。",
     "",
-    "只识别跨任务仍有长期价值的二级关联记忆、用户画像、Agent 习惯、价值观和处事方式。一次性要求、临时例外、隐藏推理和无法核对的推测不得形成长期变化。",
+    "只识别跨任务仍有长期价值的二级关联记忆和用户画像。一次性要求、临时例外、隐藏推理和无法核对的推测不得形成长期变化。",
     "",
-    "只输出新增、替换或删除候选及其来源。不要重写完整 AGENT.md 或 USER.md，不要生成 Skill，不要修改权限、Tool、System 或拒绝边界。没有可靠变化时输出 no_change。"
+    "只输出新增、替换或删除候选及其来源。不要重写完整 USER.md，不要生成 Skill，不要修改权限、Tool、System 或拒绝边界。没有可靠变化时输出 no_change。"
   ].join("\n"));
   const oneMemoryPrompt = buildDreamPrompts(currentMemory, 2_000).systemPrompt;
   assert.ok(oneMemoryPrompt.startsWith(`${DREAM_REFLECTION_PROMPT}\n\n`));
@@ -68,10 +66,7 @@ export async function runDreamLedgerScenarios(): Promise<void> {
     inspect: async () => Object.freeze({ revision: repositoryRevision, records: [currentMemory] }),
     readVaultId: async () => "dream-ledger-vault",
     readFixedFiles: async () => {
-      const agent = defaultAgentProfile();
       return Object.freeze({
-      agent,
-      agentHash: createHash("sha256").update(agent).digest("hex"),
       user: DEFAULT_USER_PROFILE_TEXT,
       userHash: createHash("sha256").update(DEFAULT_USER_PROFILE_TEXT).digest("hex"),
       userBytes: Buffer.byteLength(DEFAULT_USER_PROFILE_TEXT, "utf8")
@@ -104,10 +99,6 @@ export async function runDreamLedgerScenarios(): Promise<void> {
     experienceInboxStore: {
       read: async () => defaultDreamExperienceInboxState(),
       commitEvaluations: async () => { throw new Error("unexpected experience evaluation"); }
-    } as never,
-    agentSelfMetadataStore: {
-      read: async () => emptyAgentSelfMetadata(),
-      updateCache: () => undefined
     } as never,
     llm: () => llm,
     now: (() => {

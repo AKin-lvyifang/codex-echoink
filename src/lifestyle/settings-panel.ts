@@ -85,9 +85,7 @@ export class LifestyleSettingsPanel {
       }
     }
     if (this.embedded) page.append(importAi, analysis);
-    if (!this.embedded) this.toggle(page, "在首页显示", "关闭后首页不留空位；数据和工作区保留。", this.plugin.settings.homeModules.finance !== false, async (value) => {
-      await this.plugin.lifestyle.finance.saveOption("showOnHome", value);
-    });
+
   }
 
   private toggle(page: HTMLElement, title: string, detail: string, checked: boolean, save: (value: boolean) => Promise<void>): HTMLElement {

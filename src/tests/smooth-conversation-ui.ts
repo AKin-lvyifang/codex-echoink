@@ -64,6 +64,12 @@ interface TestActivationEvent {
 export class FakeElement {
   readonly attributes = new Map<string, string>();
   readonly dataset: Record<string, string> = {};
+  readonly classList = {
+    add: (...names: string[]) => names.forEach(name => this.addClass(name)),
+    remove: (...names: string[]) => names.forEach(name => this.removeClass(name)),
+    contains: (name: string) => this.hasClass(name),
+    toggle: (name: string, force?: boolean) => { const active = force ?? !this.hasClass(name); this.toggleClass(name, active); return active; }
+  };
   readonly listeners = new Map<string, TestEventHandler>();
   children: FakeElement[] = [];
   content: Array<string | FakeElement> = [];
@@ -109,6 +115,16 @@ export class FakeElement {
   ontoggle: ((event: { readonly isTrusted: boolean }) => unknown) | null = null;
 
   constructor(readonly tag: string) {}
+
+  get firstChild(): FakeElement | null { return this.children[0] ?? null; }
+
+  insertBefore(child: FakeElement, reference: FakeElement | null): FakeElement {
+    child.remove(); child.parent = this;
+    const index = reference ? this.children.indexOf(reference) : -1;
+    if (index < 0) { this.children.push(child); this.content.push(child); }
+    else { this.children.splice(index, 0, child); this.content.splice(this.content.indexOf(reference!), 0, child); }
+    return child;
+  }
 
   get childElementCount(): number {
     return this.children.length;
@@ -412,7 +428,6 @@ function bindRenderer(
     messagesEl: new FakeElement("div"),
     virtualListEl: new FakeElement("div"),
     sessionId: "smooth-ui-test",
-    welcomeCopy: { title: "EchoInk", subtitle: "从一个问题开始" },
     settingsLanguage,
     messages: [],
     vaultPath: "/test-vault",
@@ -602,7 +617,7 @@ function assertSessionSummaryTooltipLifecycle(): void {
   const testGlobal = globalThis as unknown as Record<string, unknown>;
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const originalHTMLElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-  const testDocument: { activeElement: FakeElement | null } = { activeElement: null };
+  const testDocument = { activeElement: null as FakeElement | null, body: new FakeElement("body"), createElement: (tag: string) => new FakeElement(tag) };
   Object.defineProperty(testGlobal, "document", {
     configurable: true,
     value: testDocument
@@ -746,7 +761,7 @@ function assertSessionPickerArchiveActions(): void {
   const testGlobal = globalThis as unknown as Record<string, unknown>;
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const originalHTMLElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-  const testDocument: { activeElement: FakeElement | null } = { activeElement: null };
+  const testDocument = { activeElement: null as FakeElement | null, body: new FakeElement("body"), createElement: (tag: string) => new FakeElement(tag) };
   Object.defineProperty(testGlobal, "document", {
     configurable: true,
     value: testDocument
@@ -1699,29 +1714,22 @@ export async function runSmoothConversationUiTests(): Promise<void> {
 
   const emptyMessages = new FakeElement("div");
   const emptyVirtualList = new FakeElement("div");
-  const selectedSuggestions: string[] = [];
   new CodexMessageListRenderer().render({
     app: {} as never,
     component: {} as never,
     messagesEl: emptyMessages as unknown as HTMLElement,
     virtualListEl: emptyVirtualList as unknown as HTMLElement,
     sessionId: "empty-conversation",
-    welcomeCopy: { title: "EchoInk", subtitle: "从一个问题开始" },
     settingsLanguage: "zh-CN",
     messages: [],
     vaultPath: "/test-vault",
     readRawMessageText: async () => "",
-    onSuggestionSelect: (text) => selectedSuggestions.push(text),
     onScheduleMeasure: () => undefined,
     onScheduleRunProgress: () => undefined
   });
-  const suggestionButtons = emptyVirtualList.findAllByClass("codex-smooth-ai-suggestion");
-  assert.deepEqual(
-    suggestionButtons.map((button) => button.textContent),
-    ["整理知识库", "总结当前笔记", "从知识库找答案"]
-  );
-  suggestionButtons[1].onclick?.({} as never);
-  assert.deepEqual(selectedSuggestions, ["总结当前笔记"], "suggestion click only selects its exact visible text");
+  assert.equal(emptyVirtualList.findByClass("codex-welcome"), null);
+  assert.equal(emptyVirtualList.findAllByClass("codex-smooth-ai-suggestion").length, 0,
+    "empty task navigation belongs to TaskPages, with no legacy message suggestions");
 
   const englishEmptyMessages = new FakeElement("div");
   const englishEmptyVirtualList = new FakeElement("div");
@@ -1731,7 +1739,6 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     messagesEl: englishEmptyMessages as unknown as HTMLElement,
     virtualListEl: englishEmptyVirtualList as unknown as HTMLElement,
     sessionId: "empty-conversation-en",
-    welcomeCopy: { title: "EchoInk", subtitle: "Start with a question" },
     settingsLanguage: "en",
     messages: [],
     vaultPath: "/test-vault",
@@ -1739,16 +1746,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     onScheduleMeasure: () => undefined,
     onScheduleRunProgress: () => undefined
   });
-  assert.equal(
-    englishEmptyVirtualList.findByClass("codex-smooth-ai-suggestions")?.attributes.get("aria-label"),
-    "Suggested questions"
-  );
-  assert.deepEqual(
-    englishEmptyVirtualList
-      .findAllByClass("codex-smooth-ai-suggestion")
-      .map((button) => button.textContent),
-    ["Organize knowledge", "Summarize current note", "Search knowledge"]
-  );
+  assert.equal(englishEmptyVirtualList.findByClass("codex-welcome"), null);
+  assert.equal(englishEmptyVirtualList.findByClass("codex-smooth-ai-suggestions"), null);
 
   assert.deepEqual(
     extractProcessFileRefs("读取 Foo.md 后继续", "/test-vault").map((file) => file.path),
@@ -2006,6 +2005,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     configurable: true,
     value: {
       body: imageOverlayBody,
+      createElement: (tag: string) => new FakeElement(tag),
       createElementNS: (_namespace: string, tag: string) => new FakeElement(tag)
     }
   });
@@ -2636,7 +2636,6 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       messagesEl: conversationMessages as unknown as HTMLElement,
       virtualListEl: conversationVirtualList as unknown as HTMLElement,
       sessionId: "reasoning-loader-suppression",
-      welcomeCopy: { title: "EchoInk", subtitle: "从一个问题开始" },
       settingsLanguage: "zh",
       messages: [structuredRunning, sameRunEmptyAnswer, otherRunEmptyAnswer],
       vaultPath: "/test-vault",
@@ -2682,7 +2681,6 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       messagesEl: conversationMessages as unknown as HTMLElement,
       virtualListEl: conversationVirtualList as unknown as HTMLElement,
       sessionId: "reasoning-loader-suppression",
-      welcomeCopy: { title: "EchoInk", subtitle: "从一个问题开始" },
       settingsLanguage: "zh",
       messages: [
         structuredRunning,
@@ -2721,7 +2719,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       app: context.app as never, component: context.component as never,
       messagesEl: new FakeElement("div") as unknown as HTMLElement,
       virtualListEl: foldList as unknown as HTMLElement, sessionId: "fold-session",
-      welcomeCopy: { title: "EchoInk", subtitle: "" }, settingsLanguage: "zh-CN" as SettingsLanguage,
+      settingsLanguage: "zh-CN" as SettingsLanguage,
       messages: [foldProcess, foldAnswer], vaultPath: "/test-vault",
       readRawMessageText: async () => "", onScheduleMeasure: () => undefined,
       onScheduleRunProgress: () => undefined, shouldFollowBottom: () => !foldPaused,

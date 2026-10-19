@@ -9,6 +9,7 @@ import { financeToolEffect, isFinanceTool, normalizeFinanceToolRequest } from ".
 import { isPiTodoTool, normalizeTodoToolRequest } from "../harness/pi-native/todo-tool-policy";
 import { AGENT_STYLES } from "./styles";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentRunSnapshot } from "./types";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
 
 export const AGENT_MODULE_CAPABILITIES = ["journal", "todos", "finance", "knowledge", "english-diary", "pdf-reading", "review"] as const;
 export type AgentModuleCapability = typeof AGENT_MODULE_CAPABILITIES[number];
@@ -107,7 +108,7 @@ function relativeTarget(context: AgentCapabilityContext, value: string): string 
 }
 function inside(value: string, root: string): boolean { return value === root || value.startsWith(root + "/"); }
 function moduleForRole(role: string): AgentModuleCapability | null {
-  return role === "journal" ? "journal" : ["raw", "wiki", "projects", "inbox", "outputs", "work", "archive", "templates", "assets"].includes(role) ? "knowledge" : null;
+  return role === "journal" ? "journal" : DESKTOP_KNOWLEDGE_ROOT_ROLES.includes(role as typeof DESKTOP_KNOWLEDGE_ROOT_ROLES[number]) ? "knowledge" : null;
 }
 function checkTarget(context: AgentCapabilityContext, target: string, effect: Effect, broad = false): AgentCapabilityDecision {
   const value = relativeTarget(context, target);
