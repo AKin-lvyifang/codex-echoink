@@ -22250,12 +22250,95 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-desktop .echoink-about-compact-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:none;max-width:100%}
 .echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check){width:30px;height:30px;min-height:30px;padding:0;flex:none}
 .echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check) svg{width:14px;height:14px}
-.echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check):is(:hover,:focus-visible) svg{animation:echoink-about-compact-sway .32s ease-out}
+/* Existing About Amicro btn-2 sparkle and btn-24 icon swap, scoped to the compact row. */
+.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-sparkle-icon-wrap,.echoink-about-morph-icon-wrap){
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:14px;
+  height:14px;
+  flex:0 0 14px;
+}
+.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-sparkle-icon-default,.echoink-sparkle-icon-hover,.echoink-about-morph-icon-default,.echoink-about-morph-icon-hover){
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  pointer-events:none;
+}
+.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-about-morph-icon-default,.echoink-about-morph-icon-hover){
+  transition-property:opacity,transform,filter;
+  transition-duration:180ms;
+  transition-timing-function:cubic-bezier(.2,0,0,1);
+}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-morph-icon-default{
+  opacity:1;
+  transform:scale(1);
+  filter:blur(0);
+}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-morph-icon-hover{
+  opacity:0;
+  transform:scale(.25);
+  filter:blur(4px);
+  color:var(--color-green);
+}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-website .echoink-about-morph-icon-hover{color:var(--color-blue)}
+.echoink-settings-desktop .echoink-about-compact-actions>button:is(:hover,:focus-visible,:active) .echoink-about-morph-icon-default{
+  opacity:0;
+  transform:scale(.25);
+  filter:blur(4px);
+}
+.echoink-settings-desktop .echoink-about-compact-actions>button:is(:hover,:focus-visible,:active) .echoink-about-morph-icon-hover{
+  opacity:1;
+  transform:scale(1);
+  filter:blur(0);
+}
+.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-sparkle-icon-default,.echoink-sparkle-icon-hover){
+  transition:opacity 250ms cubic-bezier(.34,1.56,.64,1),transform 250ms cubic-bezier(.34,1.56,.64,1);
+}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-icon-default{
+  opacity:1;
+  transform:translateY(0);
+}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-icon-hover{
+  opacity:0;
+  transform:translateY(15px);
+  color:var(--color-yellow);
+}
+.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-sparkle-icon-default,.echoink-sparkle-icon-hover,.echoink-sparkle-particle)>svg{fill:currentColor;stroke:none}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star:is(:hover,:focus-visible,:active) .echoink-sparkle-icon-default{
+  opacity:0;
+  transform:translateY(-15px);
+}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star:is(:hover,:focus-visible,:active) .echoink-sparkle-icon-hover{
+  opacity:1;
+  transform:translateY(0);
+}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-particle{
+  position:absolute;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  opacity:0;
+  transform:scale(0) rotate(-45deg);
+  transition:opacity 300ms cubic-bezier(.34,1.56,.64,1),transform 300ms cubic-bezier(.34,1.56,.64,1);
+  color:var(--color-yellow);
+  pointer-events:none;
+}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-p1{top:-8px;right:-6px;transition-delay:50ms}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-p2{top:-4px;right:-10px;transition-delay:100ms}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star .echoink-sparkle-p1>svg{width:8px;height:8px}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star .echoink-sparkle-p2>svg{width:6px;height:6px}
+.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star:is(:hover,:focus-visible,:active) .echoink-sparkle-particle{
+  opacity:1;
+  transform:scale(1) rotate(0);
+}
 .echoink-settings-desktop .echoink-about-compact-check{margin-left:4px}
 .echoink-settings-desktop .echoink-about-compact-status{flex-basis:100%;font-size:calc(var(--font-text-size,16px)*.75);line-height:1.7;color:var(--secondary)}
 .echoink-settings-desktop .echoink-about-compact-status.is-error{color:var(--text-error)}
 .echoink-settings-desktop .echoink-about-compact-status a{margin-left:12px}
-@keyframes echoink-about-compact-sway{0%,100%{transform:rotate(0)}35%{transform:rotate(-8deg)}70%{transform:rotate(6deg)}}
 @container settings (max-width:760px){
  .echoink-settings-desktop .echoink-provider-service-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
  .echoink-settings-desktop .echoink-about-compact-actions{flex-basis:100%;margin-left:auto}
@@ -22273,7 +22356,15 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
  .echoink-settings-desktop .echoink-about-compact-brand{flex-basis:100%}
  .echoink-settings-desktop .echoink-about-compact-actions{flex-wrap:wrap}
 }
-@media (prefers-reduced-motion:reduce){.echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check):is(:hover,:focus-visible) svg{animation:none}}
+@media (prefers-reduced-motion:reduce){
+ .echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check),
+ .echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check) *{
+   animation:none!important;
+   animation-delay:0s!important;
+   transition:none!important;
+   transition-delay:0s!important;
+ }
+}
 
 .echoink-settings-desktop button.codex-provider-saved-identity{justify-content:flex-start;text-align:left;white-space:normal;padding:0;border:0;background:transparent;height:auto;box-shadow:none}
 .echoink-settings-desktop button.codex-provider-saved-identity:is(:hover,:focus-visible){background:var(--hover);outline:none;box-shadow:none}
