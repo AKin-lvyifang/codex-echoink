@@ -166,7 +166,7 @@ export class AgentEditorController {
     if (!this.editingId) this.renderPresets(fields);
     this.renderIdentity(fields);
     this.renderResponsibilities(fields);
-    this.resourceArea = this.el(fields, "section", "echoink-agent-editor-resources");
+    this.resourceArea = this.el(fields, "section", "echoink-agent-editor-resources echoink-agent-editor-major");
     this.renderResources();
     this.renderStyles(fields);
     this.deleteArea = this.el(body, "section", "echoink-agent-editor-delete");
@@ -322,6 +322,7 @@ export class AgentEditorController {
 
   private renderResponsibilities(parent: HTMLElement): void {
     const section = this.section(parent, this.t("负责的模块", "Responsible for"));
+    section.classList.add("echoink-agent-editor-major");
     const options = this.el(section, "div", "echoink-agent-editor-options");
     for (const id of AGENT_MODULE_IDS) {
       const row = this.el(options, "label", "echoink-agent-editor-module");
@@ -357,22 +358,28 @@ export class AgentEditorController {
   private renderResources(): void {
     const area = this.resourceArea; if (!area) return;
     disposeOriginControls(area); area.replaceChildren(); this.capabilityChecks.clear(); this.mcpChecks = [];
-    this.el(area, "h3", "echoink-agent-editor-section-title", this.t("能用的能力", "Capabilities"));
-    this.el(area, "h4", "echoink-agent-editor-resource-heading", this.t("内置技能", "Built-in Skills"));
-    const base = this.el(area, "div", "echoink-agent-editor-capabilities");
+    const title = this.el(area, "h3", "echoink-agent-editor-section-title", this.t("能用的能力", "Capabilities"));
+    title.id = `${this.instanceId}-capabilities`;
+    const group = this.el(area, "div", "echoink-agent-editor-resource-group");
+    group.setAttribute("role", "group"); group.setAttribute("aria-labelledby", title.id);
+    const builtIn = this.el(group, "section", "echoink-agent-editor-resource-section");
+    this.el(builtIn, "h4", "echoink-agent-editor-resource-heading", this.t("内置技能", "Built-in Skills"));
+    const base = this.el(builtIn, "div", "echoink-agent-editor-capabilities");
     for (const [id] of CAPABILITIES) this.capability(base, id, this.capabilityName(id));
-    const bar = this.el(area, "div", "echoink-agent-editor-resource-heading"); this.el(bar, "h4", "", this.t("我的 Skill", "My Skills"));
+    const customGroup = this.el(group, "section", "echoink-agent-editor-resource-section");
+    const bar = this.el(customGroup, "div", "echoink-agent-editor-resource-heading"); this.el(bar, "h4", "", this.t("我的 Skill", "My Skills"));
     const reload = this.button(bar, this.loadingResources ? this.t("正在读取…", "Loading…") : this.t("刷新资源", "Refresh resources"), "tertiary", () => { void this.reloadResources(); }); reload.disabled = this.loadingResources;
-    if (this.resourceError) this.el(area, "div", "echoink-agent-editor-error", this.resourceError).setAttribute("role", "alert");
+    if (this.resourceError) this.el(customGroup, "div", "echoink-agent-editor-error", this.resourceError).setAttribute("role", "alert");
     const custom = this.resources.filter(resource => resource.kind === "skill" && !(BUILTIN_SKILL_IDS as readonly string[]).includes(String(resource.metadata?.resourceId ?? "")));
     if (custom.length) {
-      const skills = this.el(area, "div", "echoink-agent-editor-options");
+      const skills = this.el(customGroup, "div", "echoink-agent-editor-options");
       for (const resource of custom) this.capability(skills, vaultSkillCapabilityId(resource.id), resource.name, resource);
     }
-    if (!custom.length && !this.loadingResources && !this.resourceError) this.el(area, "div", "echoink-agent-editor-empty", this.t("暂无自建 Skill", "No custom Skills"));
-    this.el(area, "h4", "echoink-agent-editor-resource-heading", "MCP");
+    if (!custom.length && !this.loadingResources && !this.resourceError) this.el(customGroup, "div", "echoink-agent-editor-empty", this.t("暂无自建 Skill", "No custom Skills"));
+    const mcpGroup = this.el(group, "section", "echoink-agent-editor-resource-section");
+    this.el(mcpGroup, "h4", "echoink-agent-editor-resource-heading", "MCP");
     const servers = this.resources.filter(resource => resource.kind === "mcp-server");
-    const services = servers.length ? this.el(area, "div", "echoink-agent-editor-services") : null;
+    const services = servers.length ? this.el(mcpGroup, "div", "echoink-agent-editor-services") : null;
     for (const resource of servers) {
       const record = resolveMcpConnectionRecord(resource, this.host.settings.resources);
       const service = this.el(services!, "div", "echoink-agent-editor-service");
@@ -399,7 +406,7 @@ export class AgentEditorController {
         this.refresh();
       };
     }
-    if (!servers.length && !this.loadingResources && !this.resourceError) this.el(area, "div", "echoink-agent-editor-empty", this.t("暂无已连接的 MCP 服务", "No connected MCP services"));
+    if (!servers.length && !this.loadingResources && !this.resourceError) this.el(mcpGroup, "div", "echoink-agent-editor-empty", this.t("暂无已连接的 MCP 服务", "No connected MCP services"));
     this.refresh();
   }
   private async reloadResources(): Promise<void> {
@@ -419,6 +426,7 @@ export class AgentEditorController {
 
   private renderStyles(parent: HTMLElement): void {
     const section = this.section(parent, this.t("风格", "Style"));
+    section.classList.add("echoink-agent-editor-major");
     const description = this.el(section, "div", "echoink-agent-editor-style-description");
     const describe = () => {
       const style = AGENT_STYLES.find(style => style.id === this.draft!.agent.styleId)!;

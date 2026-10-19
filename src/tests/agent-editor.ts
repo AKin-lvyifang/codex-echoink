@@ -9,6 +9,23 @@ import { mcpToolCapabilityId, vaultSkillCapabilityId } from "../agents/capabilit
 const settle = async () => { for (let pass = 0; pass < 3; pass++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 
+function assertCapabilityStructure(root: HTMLElement): string {
+  const major = [...root.querySelectorAll(".echoink-agent-editor-major > h3")];
+  assert.deepEqual(major.map(node => node.textContent), ["负责的模块", "能用的能力", "风格"]);
+  assert.equal(root.querySelectorAll(".echoink-agent-editor-resource-group").length, 1, "all three capability groups share a single container");
+  const group = root.querySelector<HTMLElement>(".echoink-agent-editor-resource-group")!;
+  assert.equal(group.getAttribute("role"), "group");
+  const labelledBy = group.getAttribute("aria-labelledby")!;
+  assert.equal(major[1].id, labelledBy, "the shared group belongs to the capabilities heading");
+  assert.equal(group.parentElement, major[1].parentElement);
+  assert.equal(group.querySelectorAll(":scope > .echoink-agent-editor-resource-section").length, 3);
+  assert.deepEqual([...group.querySelectorAll("h4")].map(node => node.textContent), ["内置技能", "我的 Skill", "MCP"]);
+  const skillsHeading = [...group.querySelectorAll("h4")][1];
+  assert.equal(skillsHeading.parentElement!.lastElementChild?.tagName, "BUTTON", "refresh stays at the end of the My Skills heading row");
+  assert.equal(root.querySelector(".echoink-agent-editor-identity .echoink-agent-editor-major"), null, "identity labels keep their existing hierarchy");
+  return labelledBy;
+}
+
 export async function runAgentEditorTests(win: Window & typeof globalThis): Promise<void> {
   const create = function(this: HTMLElement, tag: string, options: any = {}) {
     const node = this.ownerDocument.createElement(tag); if (options.cls) node.className = options.cls;
@@ -62,6 +79,8 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
 
   {
     const f = fixture(); await f.open();
+    assertCapabilityStructure(f.root);
+    assert.equal(f.root.querySelector('[data-preset]')!.closest(".echoink-agent-editor-major"), null, "preset labels do not become major headings");
     assert.equal(f.root.querySelectorAll("[data-preset]").length, 5); assert.equal(f.saved.length, 0);
     assert.equal(f.root.querySelector('[aria-label="返回 Agent 任务"]')!.textContent, "");
     assert.equal(f.root.querySelector('[data-field="position"]')!.tagName, "INPUT");
@@ -102,9 +121,14 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(check(f.root, "journal").getAttribute("aria-checked"), "true");
     button(f.root, "取消").click(); await f.reopen(); assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "");
     assert.equal(check(f.root, "journal").getAttribute("aria-checked"), "false");
-    f.failResources(true); button(f.root, "刷新资源").click(); await settle(); assert.match(f.root.textContent!, /资源暂时不可读/);
+    const groupLabel = assertCapabilityStructure(f.root);
+    f.failResources(true); button(f.root, "刷新资源").click();
+    assert.equal(assertCapabilityStructure(f.root), groupLabel, "loading keeps one group with the same heading association");
+    await settle(); assert.match(f.root.textContent!, /资源暂时不可读/);
+    assert.equal(assertCapabilityStructure(f.root), groupLabel, "resource failure preserves the three-group hierarchy");
     input(f.root, "读取失败不丢草稿"); f.failResources(false); button(f.root, "刷新资源").click(); await settle();
-    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "读取失败不丢草稿"); f.dispose();
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "读取失败不丢草稿");
+    assert.equal(assertCapabilityStructure(f.root), groupLabel); f.dispose();
     console.log("PASS data-only View draft restoration, explicit cancel discard and resource error/retry preservation");
   }
   {
@@ -118,6 +142,8 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     f.setResources([server, empty, skill]);
     f.settings.agentRegistry.agents.push({ id: "ordinary", name: "普通同事", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: ["unknown-preserved"] });
     await f.open("ordinary");
+    assertCapabilityStructure(f.root);
+    assert.equal(check(f.root, vaultSkillCapabilityId(skill.id)).closest(".echoink-agent-editor-resource-group"), f.root.querySelector(".echoink-agent-editor-resource-group"));
     const serviceCheck = () => f.root.querySelector<HTMLButtonElement>('[aria-label="MCP 服务：Alpha"]')!;
     assert.equal(f.root.querySelector<HTMLButtonElement>('[aria-label="MCP 服务：Empty"]')!.disabled, true); assert.match(f.root.querySelector('[aria-label="MCP 服务：Empty"]')!.getAttribute("aria-description")!, /尚未发现可用工具/);
     const details = f.root.querySelector<HTMLDetailsElement>(`details[data-resource-id="${server.id}"]`)!;
@@ -128,6 +154,7 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.match(check(f.root, vaultSkillCapabilityId(skill.id)).getAttribute("aria-description")!, /资源未启用/); check(f.root, vaultSkillCapabilityId(skill.id)).click();
     f.root.querySelector<HTMLButtonElement>('[data-module-id="journal"]')!.click(); await settle(); assert.match(f.root.textContent!, /缺少「日记」能力/);
     f.settings.resources.mcpConnections[server.id].tools.push(tool("new-tool")); button(f.root, "刷新资源").click(); await settle();
+    assertCapabilityStructure(f.root);
     const again = f.root.querySelector<HTMLDetailsElement>(`details[data-resource-id="${server.id}"]`)!; again.open = true; await settle();
     assert.equal(check(f.root, mcpToolCapabilityId(server.id, "new-tool")).getAttribute("aria-checked"), "false");
     f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); await settle();
@@ -257,8 +284,8 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.saved[0].agent.name, "用户原名"); assert.equal(f.saved[0].agent.position, "用户的原始职位，不翻译"); f.dispose();
     const creation = fixture(); creation.settings.settingsLanguage = "en"; await creation.open();
     assert.equal(creation.root.querySelector("h2")!.textContent, "New Agent"); assert.match(creation.root.textContent!, /Start from a preset/);
-    assert.equal(creation.root.querySelectorAll(".echoink-agent-editor-resources > .echoink-agent-editor-options").length, 0, "no empty custom Skill list is rendered");
-    assert.equal(creation.root.querySelectorAll(".echoink-agent-editor-resources > .echoink-agent-editor-services").length, 0, "no empty MCP service list is rendered");
+    assert.equal(creation.root.querySelectorAll(".echoink-agent-editor-resource-group .echoink-agent-editor-options").length, 0, "no empty custom Skill list is rendered");
+    assert.equal(creation.root.querySelectorAll(".echoink-agent-editor-resource-group .echoink-agent-editor-services").length, 0, "no empty MCP service list is rendered");
     assert.ok(creation.root.querySelector('[data-preset="organizer"][aria-label="Organizer"]'));
     assert.match(creation.root.textContent!, /No custom Skills/); assert.match(creation.root.textContent!, /No connected MCP services/); assert.ok(button(creation.root, "Create"));
     creation.dispose();
