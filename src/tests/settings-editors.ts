@@ -70,6 +70,7 @@ export async function runSettingsEditorTests(): Promise<void> {
   {
     const f = provider({}, false);
     assert.equal(f.modal.titleEl.textContent, "编辑模型", "unscoped/mobile hosts keep their original model editor title");
+    assert.equal(f.root.querySelector('[data-modal-focus-key="provider-delete"]'), null, "mobile keeps deletion on its original list");
     assert.ok(f.root.querySelector(".provider-connection-card > .provider-connection-header"), "the existing independent form keeps its own header");
     input(f.root, "name", "旧容器仍可编辑");
     f.handle.suspend(); f.handle.resume(document.body);
@@ -132,6 +133,39 @@ export async function runSettingsEditorTests(): Promise<void> {
     click(f.root, "cancel"); assert.equal(f.handle.disposed, true); assert.equal(f.closed, 1); assert.equal(saves, 0);
     f.handle.resume(document.body); assert.equal(f.root.isConnected, false);
     console.log("PASS real Provider return preserves Key, partial text, invalid budget, expansion, focus and selection; cancel discards");
+  }
+  {
+    let removals = 0, saves = 0;
+    const gate = deferred<boolean>();
+    const f = provider({ remove: { message: "删除此服务会切换当前模型。", action: async () => { removals++; return removals === 1 ? gate.promise : true; } },
+      save: async () => { saves++; return { saved: true }; } });
+    const remove = () => field<HTMLButtonElement>(f.root, "provider-delete");
+    input(f.root, "name", "保留的删除草稿"); input(f.root, "apiKey", "fixture-delete-draft-key");
+    select(f.root, "protocol", "openai-responses");
+    assert.equal(f.root.querySelectorAll('[data-modal-focus-key="provider-delete"]').length, 1, "full form redraw retains exactly one removal action");
+    assert.equal(remove().classList.contains("echoink-delete-button"), true);
+    remove().click();
+    const canceled = f.root.querySelector<HTMLElement>(".echoink-settings-inline-confirm")!;
+    assert.match(canceled.textContent!, /切换当前模型/);
+    canceled.querySelector<HTMLButtonElement>("button")!.click();
+    assert.equal(removals, 0); assert.equal(saves, 0); assert.equal(f.closed, 0);
+    assert.equal(document.activeElement, remove(), "cancel returns focus to the detail deletion action");
+    remove().click();
+    f.root.querySelector<HTMLButtonElement>(".echoink-settings-inline-confirm .settings-danger")!.click();
+    click(f.root, "save"); remove().click();
+    assert.equal(removals, 1); assert.equal(saves, 0, "pending deletion prevents another deletion or save");
+    f.handle.suspend(); f.handle.resume(document.body);
+    assert.equal(remove().disabled, true, "the redraw keeps deletion pending");
+    gate.resolve(false); await settle();
+    assert.equal(f.closed, 0); assert.equal(f.handle.disposed, false, "a rejected deletion cannot close the retained form");
+    assert.equal(remove().disabled, false); assert.match(f.root.textContent!, /未删除/);
+    assert.equal(field<HTMLInputElement>(f.root, "name").value, "保留的删除草稿");
+    assert.equal(field<HTMLInputElement>(f.root, "apiKey").value, "fixture-delete-draft-key");
+    remove().click(); f.root.querySelector<HTMLButtonElement>(".echoink-settings-inline-confirm .settings-danger")!.click(); await settle();
+    assert.equal(removals, 2); assert.equal(f.closed, 1); assert.equal(f.handle.disposed, true);
+    const fresh = provider({ editing: false, remove: { message: "unused", action: async () => { removals++; return true; } } });
+    assert.equal(fresh.root.querySelector('[data-modal-focus-key="provider-delete"]'), null, "unsaved services have no deletion action"); fresh.handle();
+    console.log("PASS real Provider detail deletion survives redraw; cancel writes nothing, failure keeps draft, pending blocks duplicates and success closes");
   }
   {
     const saved: { draft: ApiProviderConfig; key: string; verified: boolean }[] = [];

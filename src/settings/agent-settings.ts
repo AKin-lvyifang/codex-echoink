@@ -4,7 +4,7 @@ import { AgentEditorController } from "../ui/codex-view/agent-editor";
 import type { AgentEditorHost } from "../ui/codex-view/agent-editor-contract";
 import { resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { createOriginButton, createOriginSelect, disposeOriginControls } from "./origin-controls";
-import { createSettingsGroup, createSettingsNavigationRow, createSettingsSection } from "./settings-v2";
+import { attachSettingsTooltip, createSettingsGroup, createSettingsNavigationRow, createSettingsSection } from "./settings-v2";
 
 export interface DesktopAgentSettingsHost extends Omit<AgentEditorHost, "onClose" | "backLabel" | "confirmLeave"> {
   readonly app?: Pick<App, "scope" | "keymap">;
@@ -59,8 +59,12 @@ export class DesktopAgentSettings {
         focusKey: `agent:${agent.id}:edit`, onActivate: () => this.open(agent.id) });
       row.addClass("echoink-agent-settings-row");
       if (owned.length) {
-        const modules = row.createSpan({ cls: "echoink-agent-settings-modules", text: `${this.text("负责", "Responsible for")} ${owned.map(module => this.moduleName(module)).join(this.text("、", ", "))}` });
+        const fullList = `${this.text("负责", "Responsible for")} ${owned.map(module => this.moduleName(module)).join(this.text("、", ", "))}`;
+        const modules = row.createSpan({ cls: "echoink-agent-settings-modules", text: owned.length > 3 ? this.text(`负责 ${owned.length} 个模块`, `Responsible for ${owned.length} modules`) : fullList });
         row.insertBefore(modules, row.querySelector(".echoink-settings-navigation-trailing"));
+        const activate = row.onclick;
+        attachSettingsTooltip(row, fullList, row, { interactive: false });
+        row.onclick = activate;
       }
       const avatar = row.createSpan({ cls: "echoink-agent-settings-avatar", attr: { "aria-hidden": "true" } }); this.avatar(avatar, agent);
       row.insertBefore(avatar, row.firstChild);

@@ -312,6 +312,7 @@ export async function runProviderSettingsBehaviorTests(): Promise<void> {
   await assertKnowledgeInitializationExperienceContract();
   await assertAnimatedSettingsTabIcons();
   await assertSettingsAccessibleNamesAndOverflow();
+  await assertDesktopModelAndMcpFinish();
   await assertMemoryCorrectionModalContract();
   assertMemoryComposerVisualCssContract();
   await assertMcpPanelUsesTurnResourceTruth();
@@ -5631,7 +5632,7 @@ async function assertDesktopDemoResourceGroupsPreserveSearch(): Promise<void> {
     assert.ok(tab.containerEl.querySelector(".echoink-settings-aligned"));
     assert.equal(tab.containerEl.querySelectorAll("button[data-settings-tab]").length, 6);
     assert.ok(tab.containerEl.querySelector('[data-echoink-focus-key="providers:add"]'));
-    assert.ok(tab.containerEl.querySelector('[data-echoink-focus-key="provider:align-provider:delete"]'));
+    assert.equal(tab.containerEl.querySelector('[data-echoink-focus-key="provider:align-provider:delete"]'), null, "desktop model deletion is available only in details");
     const originalOnOpen = ProviderModelModal.prototype.onOpen;
     let openedDetached = false, inheritedPresentation = false;
     try {
@@ -5674,6 +5675,131 @@ async function assertDesktopDemoResourceGroupsPreserveSearch(): Promise<void> {
     assert.equal(saves, 0, "opening, searching and switching presentation do not persist settings");
   } finally { tab.hide(); Platform.isDesktopApp = previousDesktop; }
   console.log("PASS aligned desktop shell/resource groups: six search rows, retained actions, independent controls, filtering, real MCP status and zero navigation writes");
+}
+
+async function assertDesktopModelAndMcpFinish(): Promise<void> {
+  installProviderModalDomFixture();
+  const previousDesktop = Platform.isDesktopApp;
+  Platform.isDesktopApp = true;
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.settingsTab = "providers";
+  settings.settingsLanguage = "en";
+  const provider = createApiProviderConfig("deepseek", "finish-provider");
+  provider.apiKey = "synthetic-finish-key";
+  const fallback = createApiProviderConfig("ollama", "finish-fallback");
+  settings.apiProviders = [provider, fallback];
+  activateApiProvider(settings, provider);
+  let attempts = 0, saves = 0, refreshes = 0, rejectDelete = true;
+  const plugin = withSettingsTabDefaults({ app: new App(), manifest: { id: "settings-finish" }, settings,
+    saveSettings: async () => { saves++; },
+    activateApiProviderSettings: async (mutate: (candidate: typeof settings) => void) => {
+      attempts++;
+      const candidate = structuredClone(settings);
+      mutate(candidate);
+      if (rejectDelete && candidate.apiProviders.length < settings.apiProviders.length) throw new Error("synthetic finish delete rejected");
+      Object.assign(settings, candidate);
+    }
+  });
+  const tab = new CodexSettingTab(plugin as never), mutable = tab as any;
+  const rowSelector = `[data-echoink-focus-key="provider:${provider.id}:edit"]`;
+  try {
+    tab.display();
+    const oauth = createApiProviderConfig("openai-codex", "finish-oauth");
+    settings.apiProviders.push(oauth);
+    for (const credential of [codexCredentialFixture("finish-valid"), { ...codexCredentialFixture("finish-refreshable"), expires: 1 }, null]) {
+      settings.openAICodexCredential = credential;
+      mutable.renderSettingsContent();
+      const status = tab.containerEl.querySelector(`[data-echoink-focus-key="provider:${oauth.id}:edit"]`)!.querySelector(".codex-provider-connection-badge")!;
+      assert.equal(status.hasClass(credential ? "is-signed-in" : "is-unverified"), true);
+      assert.equal(status.textContent, credential ? "Signed in" : "Not verified");
+      assert.doesNotMatch(status.textContent, /Sign in again|relogin|Connection verified/u,
+        "an absent credential is not known revocation, and expired access remains refreshable without a new sign-in");
+      assert.doesNotMatch(tab.containerEl.querySelector(rowSelector)!.querySelector(".codex-provider-connection-badge")!.textContent, /Sign in again|relogin/u,
+        "a filled API key never implies OAuth revocation");
+    }
+    assert.equal(attempts, 0); assert.equal(saves, 0, "rendering OAuth validity never refreshes authorization or persists settings");
+    settings.apiProviders = [provider, fallback];
+    mutable.renderSettingsContent();
+    const row = tab.containerEl.querySelector<ProviderModalTestElement>(rowSelector)!;
+    assert.equal(row.tagName, "BUTTON", "the whole desktop row is the native keyboard/focus control");
+    assert.equal(row.hasClass("codex-provider-saved-row"), true);
+    assert.equal(row.querySelectorAll("button").length, 0, "the row contains no nested actions");
+    assert.equal(row.querySelector(".codex-provider-model-count"), null);
+    assert.equal(row.querySelector(".codex-provider-active-badge"), null);
+    assert.equal(row.querySelector(".codex-provider-credential-badge"), null);
+    assert.equal(row.querySelector(".codex-provider-saved-details")?.textContent, `${provider.models.length} models`);
+    assert.match(row.querySelector(".codex-provider-connection-badge")!.textContent, /Not verified/u, "a filled key never becomes a verified connection");
+    assert.ok(row.querySelector(".codex-provider-connection-badge")!.querySelector('[aria-hidden="true"]'), "connection text has an icon container");
+    assert.ok(row.querySelector(".codex-provider-saved-arrow"));
+    row.focus(); assert.equal(providerModalTestDocument.activeElement, row);
+    row.click();
+    const remove = () => tab.containerEl.querySelector<ProviderModalTestElement>('[data-modal-focus-key="provider-delete"]')!;
+    assert.ok(remove()?.hasClass("echoink-delete-button"), "details use the common amicro delete button");
+    const name = tab.containerEl.querySelector<ProviderModalTestElement>('[data-modal-focus-key="name"]')!;
+    name.value = "Uncommitted finish draft"; name.fireEvent("input");
+    remove().click();
+    let confirmation = tab.containerEl.querySelector<ProviderModalTestElement>(".echoink-settings-inline-confirm")!;
+    assert.match(confirmation.textContent, /active model.*switch to the next/u);
+    confirmation.querySelectorAll<ProviderModalTestElement>("button")[0].click();
+    assert.equal(attempts, 0); assert.equal(saves, 0, "canceling removal performs no write");
+    const before = JSON.stringify(settings);
+    const noticesBefore = openTestNoticeMessages.length;
+    remove().click();
+    confirmation = tab.containerEl.querySelector<ProviderModalTestElement>(".echoink-settings-inline-confirm")!;
+    confirmation.querySelectorAll<ProviderModalTestElement>("button")[1].click();
+    await flushProviderModalTasks();
+    assert.equal(attempts, 1);
+    assert.equal(JSON.stringify(settings), before, "rejected removal preserves active provider and fallback settings");
+    assert.ok(remove()); assert.equal(remove().disabled, false, "failed removal retains a live retry action after redraw");
+    assert.equal(tab.containerEl.querySelector<ProviderModalTestElement>('[data-modal-focus-key="name"]')!.value, "Uncommitted finish draft");
+    assert.match(tab.containerEl.querySelector(".codex-provider-modal-save-state")!.textContent, /not deleted/u);
+    assert.ok(!openTestNoticeMessages.slice(noticesBefore).some(message => /removed|Now using/u.test(message)), "failure never reports deletion success");
+    tab.containerEl.querySelector<ProviderModalTestElement>('[data-modal-focus-key="cancel"]')!.click();
+    mutable.renderSettingsContent();
+    assert.ok(tab.containerEl.querySelector(rowSelector));
+    assert.equal((await mutable.saveAndActivateProviderModel(provider, "", true, provider)).saved, true);
+    mutable.renderSettingsContent();
+    assert.match(tab.containerEl.querySelector(rowSelector)!.querySelector(".codex-provider-connection-badge")!.textContent, /Connection verified/u);
+    rejectDelete = false;
+    tab.containerEl.querySelector<ProviderModalTestElement>(rowSelector)!.click(); remove().click();
+    tab.containerEl.querySelector<ProviderModalTestElement>(".echoink-settings-inline-confirm")!.querySelectorAll<ProviderModalTestElement>("button")[1].click();
+    await flushProviderModalTasks();
+    assert.equal(tab.containerEl.querySelector('[data-modal-focus-key="provider-delete"]'), null, "successful removal closes the editor");
+    assert.deepEqual(settings.apiProviders.map(item => item.id), [fallback.id]);
+    assert.equal(settings.activeApiProviderId, fallback.id);
+
+    mutable.resourceSnapshot = emptyWorkspaceResourceSnapshot(); mutable.resourceLoaded.mcp = true;
+    mutable.loadWorkspaceResources = async () => { refreshes++; };
+    resetSynchronousSettingsDisplayFrame(tab); tab.openDesktopRoute({ tab: "capabilities", capabilityTab: "mcp" });
+    for (const count of [8, 9]) {
+      const servers = Array.from({ length: count }, (_, index) => ({ ...mcpResourceFixture(`finish-${index}`, index === 0), bridgeMode: "native-mcp" as const }));
+      settings.resources.catalog = servers; mutable.runtimeEchoInkResources = servers;
+      for (const server of servers) settings.resources.mcpConnections[server.id] = { transport: "http", url: "https://mcp-finish.invalid", trusted: false, tools: [], toolPolicies: {} };
+      mutable.resourceSearchQuery.mcp = "finish-0";
+      mutable.renderSettingsContent();
+      assert.equal(Boolean(tab.containerEl.querySelector('[data-echoink-focus-key="resources:search:mcp"]')), count > 8, "search uses all saved servers including disabled entries");
+      if (count === 8) assert.equal(mutable.resourceSearchQuery.mcp, "", "a hidden search cannot silently filter the short list");
+      const refresh = tab.containerEl.querySelector<ProviderModalTestElement>('[data-echoink-focus-key="resources:refresh"]')!;
+      const add = tab.containerEl.querySelector<ProviderModalTestElement>('[data-echoink-focus-key="resources:mcp:add"]')!;
+      assert.equal(refresh.parentElement, add.parentElement);
+      assert.ok(refresh.closest(".codex-resource-list-header"));
+      assert.equal(refresh.getAttribute("aria-label"), "Refresh");
+      assert.equal(refresh.textContent, "", "desktop MCP refresh is an icon action");
+      refresh.click(); assert.equal(refreshes, count === 8 ? 1 : 2);
+      const state = tab.containerEl.querySelector(".codex-resource-connection-state")!;
+      assert.match(state.textContent, /not yet verified/u, "a saved endpoint does not imply verification");
+      assert.ok(state.querySelector('[aria-hidden="true"]'));
+      if (count === 9) {
+        mutable.applyResourceSearchFilter("mcp"); mutable.renderSettingsContent();
+        assert.ok(tab.containerEl.querySelector('[data-echoink-focus-key="resources:search:mcp"]'), "filtered results never alter the search threshold");
+      }
+    }
+    mutable.resourceLoadingTab = "mcp"; mutable.renderSettingsContent();
+    const loading = tab.containerEl.querySelector<ProviderModalTestElement>('[data-echoink-focus-key="resources:refresh"]')!;
+    assert.equal(loading.disabled, true); assert.equal(loading.getAttribute("aria-busy"), "true");
+    assert.equal(saves, 0, "list navigation, search and deletion keep the existing authoritative activation path");
+  } finally { tab.hide(); Platform.isDesktopApp = previousDesktop; }
+  console.log("PASS desktop finish: whole model rows, real status, detail removal cancel/failure/success and MCP 8/9 search/header refresh");
 }
 
 async function assertSettingsRouteTargetsHostCopy(): Promise<void> {
@@ -13858,7 +13984,10 @@ async function writeSettingsVisualFixtures(): Promise<void> {
 }
 
 Platform.isDesktopApp = false;
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "settings-demo-align") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "settings-model-finish") {
+  await assertDesktopModelAndMcpFinish();
+  await assertDesktopDemoResourceGroupsPreserveSearch();
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "settings-demo-align") {
   await assertDesktopDemoResourceGroupsPreserveSearch();
   await assertSettingsRouteTargetsHostCopy();
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p11-settings") {

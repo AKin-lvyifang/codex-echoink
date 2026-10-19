@@ -104,7 +104,7 @@
 .echoink-settings-aligned button.echoink-agent-settings-row + button.echoink-agent-settings-row { border-top: 1px solid var(--line); }
 .echoink-settings-aligned button.echoink-agent-settings-row:is(:hover, :focus-visible) { background: var(--soft); }
 .echoink-settings-aligned .echoink-agent-settings-row .echoink-settings-navigation-trailing { grid-column: 4; grid-row: 1; }
-.echoink-settings-aligned .echoink-agent-settings-modules { grid-column: 3; grid-row: 1; max-width: 230px; margin: 0; text-align: right; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.7; }
+.echoink-settings-aligned .echoink-agent-settings-modules { grid-column: 3; grid-row: 1; min-width: 0; max-width: 230px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.7; }
 .echoink-settings-aligned .echoink-agent-owner-row { grid-template-columns: minmax(0, 1fr) minmax(0, 210px); padding: 13px 18px; min-height: 52px; }
 .echoink-settings-aligned .echoink-agent-owner-row + .echoink-agent-owner-row { border-top: 1px solid var(--line); }
 .echoink-settings-aligned .echoink-agent-owner-control { display: flex; align-items: center; gap: 8px; }
@@ -191,10 +191,8 @@
   .echoink-settings-aligned .codex-mcp-form-card .codex-mcp-server-field { grid-template-columns: minmax(0, 1fr); }
   .echoink-settings-aligned .provider-connection-card .codex-provider-modal-field > :is(.codex-provider-modal-input, .codex-provider-modal-input-control, .codex-provider-combobox, .provider-picker, [data-slot=select]),
   .echoink-settings-aligned .codex-mcp-server-field > :is(input, textarea, .echoink-origin-control) { grid-column: 1; grid-row: auto; }
-  .echoink-settings-aligned.echoink-settings-aligned button.echoink-agent-settings-row.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] { grid-template-columns: 31px minmax(0, 1fr) 16px; gap: 6px 12px; }
-  .echoink-settings-aligned .echoink-agent-settings-row .echoink-settings-navigation-trailing { grid-column: 3; grid-row: 1; }
-  .echoink-settings-aligned .echoink-agent-settings-row:has(.echoink-agent-settings-modules) .echoink-settings-navigation-trailing { grid-row: 1 / span 2; }
-  .echoink-settings-aligned .echoink-agent-settings-modules { grid-column: 2; grid-row: 2; text-align: left; max-width: none; }
+  .echoink-settings-aligned.echoink-settings-aligned button.echoink-agent-settings-row.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] { gap: 8px; }
+  .echoink-settings-aligned .echoink-agent-settings-modules { max-width: min(160px, 40cqw); }
   .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-row > .echoink-profile-actions,
   .echoink-settings-aligned .echoink-user-profile-settings .echoink-profile-edit { grid-column: 1; }

@@ -319,8 +319,13 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     };
   } else {
     const identity = el(profileCopy, "div"); el(identity, "h2", "", t("未登录", "Signed out"));
+    if (desktop) {
+      identityCopy = identity;
+      profileSection.classList.add("is-anonymous");
+      el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
+    }
     button(profileActions, t("登录 / 注册", "Sign in / register"), "primary account-login-action", () => login());
-    el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
+    if (!desktop) el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
   }
   const heading = (parent: HTMLElement, title: string, caption?: string) => {
     const row = el(parent, "div", "section-heading"); el(row, "h2", "", title); if (caption) el(row, "span", "muted", caption); return row;
@@ -436,12 +441,14 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const plansHeading = heading(membership, desktop ? t("购买方案", "Plans") : t("订阅管理", "Subscription"));
   if (desktop) plansHeading.classList.add("desktop-account-plans-heading");
   const panel = desktop ? membership : el(membership, "div", "panel membership-panel");
-  const compactAuthorization = !!desktop && !!identityCopy && (valid || vm.membership.state === "free") && !vm.verificationError;
-  const summary = el(desktop ? compactAuthorization ? identityCopy! : profileSection : panel, "div", desktop ? `desktop-account-authorization${compactAuthorization ? " is-compact" : ""}` : "membership-summary");
+  const compactAuthorization = !!desktop && !!vm.identity && (valid || vm.membership.state === "free") && !vm.verificationError;
+  const anonymousAuthorization = !!desktop && !vm.identity;
+  const inlineAuthorization = compactAuthorization || anonymousAuthorization;
+  const summary = el(desktop ? inlineAuthorization ? identityCopy! : profileSection : panel, "div", desktop ? `desktop-account-authorization${inlineAuthorization ? " is-compact" : ""}` : "membership-summary");
   if (!desktop) icon(summary, "feather", "membership-symbol");
   const memberCopy = el(summary, "div", "membership-copy");
   if (compactAuthorization) el(memberCopy, "div", "desktop-account-membership-line", [valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1], vm.membership.expiresAt && `${t("有效至", "Valid until")} ${vm.membership.expiresAt}`, vm.membership.verifiedAt && `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}`, vm.membership.offlineUntil && `${t("凭证有效至", "Offline until")} ${vm.membership.offlineUntil}`].filter(Boolean).join(" · "));
-  else if (desktop) el(memberCopy, "div", "desktop-account-plan-status", valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1]);
+  else if (desktop) { if (!anonymousAuthorization) el(memberCopy, "div", "desktop-account-plan-status", valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1]); }
   else { const nameLine = el(memberCopy, "div", "name-line"); el(nameLine, "h3", "", retainedMembership ? "EchoInk PRO" : t("EchoInk 基础版", "EchoInk Free")); el(nameLine, "span", `badge${valid ? " pro" : ["expired", "revoked"].includes(vm.membership.state) ? " expired" : ""}`, (stateLabels[vm.membership.state] ?? stateLabels["verification-required"])[zh ? 0 : 1]); }
   const descriptions: Partial<Record<MembershipState, string>> = {
     scheduled: vm.membership.startsAt ? `${t("权益开始于", "Access starts on")} ${vm.membership.startsAt}` : t("权益尚未生效。", "Access has not started yet."),

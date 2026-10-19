@@ -4419,7 +4419,7 @@ export class CodexSettingTab extends PluginSettingTab {
       cls: "codex-provider-add-button",
       attr: { type: "button", "data-echoink-focus-key": "providers:add" }
     });
-    applyAmicroButton(addButton, { variant: Platform.isDesktopApp ? "secondary" : "primary", icon: "plus" });
+    applyAmicroButton(addButton, { variant: Platform.isDesktopApp ? "tertiary" : "primary", icon: "plus" });
     if (Platform.isDesktopApp) { addButton.setAttr("aria-label", label("添加模型服务", "Add model service")); addButton.addClass("icon-button"); }
     else addButton.createSpan({ text: label("添加模型", "Add model") });
     addButton.onclick = () => {
@@ -4444,6 +4444,29 @@ export class CodexSettingTab extends PluginSettingTab {
         saved.name,
         this.plugin.settings.settingsLanguage
       );
+      if (Platform.isDesktopApp) {
+        const verified = this.verifiedProviderConnections.get(saved.id) === providerConfigurationFingerprint(saved);
+        const signedIn = saved.authMode === "oauth" && apiProviderHasUsableCredential(saved, this.plugin.settings.openAICodexCredential);
+        const status = verified ? "connected" : signedIn ? "signed-in" : "unverified";
+        const statusLabel = verified ? label("连接正常", "Connection verified")
+          : signedIn ? label("已登录", "Signed in") : label("未验证", "Not verified");
+        const modelCount = label(`${saved.models.length} 个模型`, `${saved.models.length} models`);
+        const row = createOriginButton(savedList, {
+          cls: `codex-provider-saved-row codex-provider-service-row is-provider-${providerId}`,
+          attr: { type: "button", "data-echoink-focus-key": `provider:${saved.id}:edit`, "aria-label": `${providerDisplayName} · ${modelCount} · ${statusLabel}` }
+        });
+        const identity = row.createSpan({ cls: "codex-provider-saved-identity" });
+        renderProviderBrandIcon(identity.createSpan({ cls: `codex-provider-saved-icon is-${providerId}`, attr: { "aria-hidden": "true" } }), providerId);
+        const copy = identity.createSpan({ cls: "codex-provider-saved-copy" });
+        copy.createSpan({ cls: "codex-provider-saved-model" }).createEl("strong", { text: providerDisplayName });
+        copy.createSpan({ cls: "codex-provider-saved-details", text: modelCount });
+        const connection = row.createSpan({ cls: `codex-provider-connection-badge is-${status}` });
+        setIcon(connection.createSpan({ attr: { "aria-hidden": "true" } }), verified || signedIn ? "check-circle-2" : "circle-help");
+        connection.createSpan({ text: statusLabel });
+        setIcon(row.createSpan({ cls: "codex-provider-saved-arrow", attr: { "aria-hidden": "true" } }), "chevron-right");
+        row.onclick = () => this.openProviderModelModal(saved, true);
+        continue;
+      }
       const defaultModel = getDefaultApiProviderModel(saved);
       const modelDisplayName = defaultModel
         ? defaultModel.displayName
@@ -4572,7 +4595,7 @@ export class CodexSettingTab extends PluginSettingTab {
           ? label("将删除当前使用中的模型。EchoInk 会切换到下一项；若没有其他项，则进入未配置状态。", "The active model will be removed. EchoInk will switch to the next saved model, or become unconfigured if none remains.")
           : label("这会删除已保存的模型配置。", "This removes the saved model configuration.")}`,
         confirmLabel: label("确认删除", "Confirm deletion"), cancelLabel: this.copy.common.cancel,
-        onConfirm: () => this.deleteSavedProviderModel(saved.id)
+        onConfirm: async () => { await this.deleteSavedProviderModel(saved.id); }
       });
     }
 
@@ -4670,6 +4693,12 @@ export class CodexSettingTab extends PluginSettingTab {
         openExternal: async (url) =>
           await openExternalInElectron(url)
       },
+      remove: Platform.isDesktopApp && editing ? {
+        message: `${this.copy.providers.deleteConfirm(apiProviderConfiguredDisplayName(normalizeApiProviderId(source.providerId, source.baseUrl, source.name), source.name, this.plugin.settings.settingsLanguage))} ${source.id === this.plugin.settings.activeApiProviderId
+          ? (this.plugin.settings.settingsLanguage === "en" ? "The active model will be removed. EchoInk will switch to the next saved model, or become unconfigured if none remains." : "将删除当前使用中的模型。EchoInk 会切换到下一项；若没有其他项，则进入未配置状态。")
+          : (this.plugin.settings.settingsLanguage === "en" ? "This removes the saved model configuration." : "这会删除已保存的模型配置。")}`,
+        action: () => this.deleteSavedProviderModel(source.id)
+      } : undefined,
       save: async (draft, apiKey, connectionVerified) =>
         await this.saveAndActivateProviderModel(
           draft,
@@ -4814,11 +4843,11 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
-  private async deleteSavedProviderModel(providerId: string): Promise<void> {
+  private async deleteSavedProviderModel(providerId: string): Promise<boolean> {
     const provider = this.plugin.settings.apiProviders.find(
       (item) => item.id === providerId
     );
-    if (!provider) return;
+    if (!provider) return false;
     const wasActive = this.plugin.settings.activeApiProviderId === providerId;
     const fallback = this.plugin.settings.apiProviders.find(
       (item) => item.id !== providerId && apiProviderHasUsableCredential(
@@ -4860,8 +4889,10 @@ export class CodexSettingTab extends PluginSettingTab {
           ? "Saved model removed."
           : "已删除已保存模型。"));
       this.scheduleDisplay();
+      return true;
     } catch (error) {
       new Notice(error instanceof Error ? error.message : this.copy.providers.saveFailed);
+      return false;
     }
   }
 
@@ -5103,7 +5134,13 @@ export class CodexSettingTab extends PluginSettingTab {
       this.suppressResourceTabFocusRestore = false;
       return;
     }
-    this.renderResourceSearch(toolbar, activeTab);
+    const desktopMcp = Platform.isDesktopApp && activeTab === "mcp";
+    const showSearch = !desktopMcp || this.currentEchoInkResourceCatalog().filter(resource => resource.kind === "mcp-server").length > 8;
+    if (showSearch) this.renderResourceSearch(toolbar, activeTab);
+    else {
+      this.resourceSearchQuery.mcp = "";
+      toolbar.remove();
+    }
     const toolbarActions = toolbar.createDiv({ cls: "codex-resource-toolbar-actions" });
     if (activeTab === "mcp" && !Platform.isDesktopApp) {
       const add = createOriginButton(toolbarActions, {
@@ -5118,14 +5155,22 @@ export class CodexSettingTab extends PluginSettingTab {
       add.createSpan({ text: this.plugin.settings.settingsLanguage === "en" ? "Add server" : "新增 Server" });
       add.onclick = () => this.openMcpServerModal();
     }
-    const refresh = createOriginButton(toolbarActions, {
-      cls: "codex-resource-refresh",
-      attr: { type: "button", "aria-label": copy.resources.refreshTitle, "data-echoink-focus-key": "resources:refresh" }
-    });
-    applyAmicroButton(refresh, { variant: "secondary", motion: "rotate", icon: "refresh-cw" });
-    refresh.createSpan({ text: this.resourceLoadingTab === this.plugin.settings.resourceManagementTab ? copy.common.loading : copy.common.refresh });
-    refresh.disabled = this.resourceLoadingTab === this.plugin.settings.resourceManagementTab;
-    refresh.onclick = () => void this.loadWorkspaceResources(true, this.plugin.settings.resourceManagementTab);
+    const renderRefresh = (parent: HTMLElement, iconOnly = false) => {
+      const refresh = createOriginButton(parent, {
+        cls: `codex-resource-refresh${iconOnly ? " icon-button" : ""}`,
+        attr: { type: "button", "aria-label": iconOnly ? copy.common.refresh : copy.resources.refreshTitle, "data-echoink-focus-key": "resources:refresh" }
+      });
+      applyAmicroButton(refresh, { variant: iconOnly ? "tertiary" : "secondary", motion: "rotate", icon: "refresh-cw" });
+      const loading = this.resourceLoadingTab === activeTab;
+      if (iconOnly) {
+        setTooltip(refresh, copy.common.refresh);
+        setAmicroButtonPending(refresh, loading);
+      } else refresh.createSpan({ text: loading ? copy.common.loading : copy.common.refresh });
+      refresh.disabled = loading;
+      refresh.onclick = () => void this.loadWorkspaceResources(true, activeTab);
+    };
+    if (!desktopMcp) renderRefresh(toolbarActions);
+    else toolbarActions.remove();
 
     const english = this.plugin.settings.settingsLanguage === "en";
     if (!Platform.isDesktopApp) wrapper.createEl("p", {
@@ -5154,7 +5199,9 @@ export class CodexSettingTab extends PluginSettingTab {
       const header = body.createDiv({ cls: "codex-resource-list-header" });
       const heading = new OriginSetting(header).setName(this.plugin.settings.settingsLanguage === "en" ? "Added" : "已添加").setHeading();
       heading.settingEl.addClass("codex-resource-group-title");
-      const add = createOriginButton(header, { cls: "codex-resource-add icon-button", attr: {
+      const actions = header.createDiv({ cls: "codex-resource-header-actions" });
+      renderRefresh(actions, true);
+      const add = createOriginButton(actions, { cls: "codex-resource-add icon-button", attr: {
         type: "button", "aria-label": this.plugin.settings.settingsLanguage === "en" ? "Add MCP server" : "新增 MCP Server",
         "data-echoink-focus-key": "resources:mcp:add"
       } });
@@ -6231,10 +6278,11 @@ export class CodexSettingTab extends PluginSettingTab {
       diarySettings = settings;
       settings.onclick = () => this.openSettingsDetail("english-diary");
     }
-    if (Platform.isDesktopApp && resource.kind === "mcp-server") row.createSpan({
-      cls: `codex-resource-connection-state is-${connectionStatus}`,
-      text: mcpConnectionStatusLabel(connectionStatus, this.plugin.settings.settingsLanguage)
-    });
+    if (Platform.isDesktopApp && resource.kind === "mcp-server") {
+      const status = row.createSpan({ cls: `codex-resource-connection-state is-${connectionStatus}` });
+      setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), connectionStatus === "verified" ? "check-circle-2" : connectionStatus === "failed" ? "circle-alert" : "circle-help");
+      status.createSpan({ text: mcpConnectionStatusLabel(connectionStatus, this.plugin.settings.settingsLanguage) });
+    }
     if (Platform.isDesktopApp && resource.kind !== "tool-bundle") row.createSpan({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(this.resourceAssignedAgentCount(resource)) });
     const toggle = createOriginSwitch(row, {
       cls: "codex-resource-toggle",

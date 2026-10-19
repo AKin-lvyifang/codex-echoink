@@ -47,8 +47,8 @@ import {
   providerPreflightApiKeyReady,
   type ProviderPreflightService
 } from "./provider-preflight";
-import { applyAmicroButton } from "./amicro-buttons";
-import { attachSettingsTooltip } from "./settings-v2";
+import { applyAmicroButton, applyDeleteButton } from "./amicro-buttons";
+import { attachSettingsTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 
 type ProviderFormField =
   | "name"
@@ -77,6 +77,10 @@ export interface ProviderModelModalOptions {
     logout(): Promise<void>;
     openExternal(url: string): Promise<boolean>;
   };
+  readonly remove?: {
+    readonly message: string;
+    readonly action: () => Promise<boolean>;
+  };
   readonly save: (
     draft: ApiProviderConfig,
     apiKey: string,
@@ -93,6 +97,7 @@ export class ProviderModelModal extends Modal {
   private authGeneration = 0;
   private suppressModalClose = false;
   private saving = false;
+  private removing = false;
   private saveError = "";
   private invalidatingPreflightInPlace = false;
   private formErrors: Partial<Record<ProviderFormField, string>> = {};
@@ -368,10 +373,52 @@ export class ProviderModelModal extends Modal {
     const footer = this.contentEl.createDiv({ cls: "codex-provider-modal-footer" });
     const saveState = footer.createDiv({
       cls: `codex-provider-modal-save-state${this.saveError ? " is-error" : ""}`,
-      text: this.saving ? this.options.copy.providers.saving : this.saveError,
+      text: this.removing ? this.label("删除中…", "Deleting…") : this.saving ? this.options.copy.providers.saving : this.saveError,
       attr: { "aria-live": "off" }
     });
     const actions = footer.createDiv({ cls: "codex-provider-modal-actions" });
+    if (this.options.editing && this.options.remove) {
+      const remove = createOriginButton(actions, {
+        cls: "codex-provider-detail-delete",
+        text: this.label("删除服务", "Delete service"),
+        attr: { type: "button", "data-modal-focus-key": "provider-delete" }
+      });
+      applyDeleteButton(remove);
+      remove.disabled = this.saving;
+      remove.onclick = () => showSettingsInlineConfirmation(footer, remove, {
+        message: this.options.remove!.message,
+        confirmLabel: this.label("确认删除", "Confirm deletion"),
+        cancelLabel: this.options.copy.common.cancel,
+        deleteAction: true,
+        onConfirm: async () => {
+          if (this.saving || this.closed) return;
+          this.saving = true;
+          this.removing = true;
+          this.saveError = "";
+          this.focusIntent = "provider-delete";
+          for (const button of Array.from(actions.querySelectorAll<HTMLButtonElement>("button"))) button.disabled = true;
+          form.setAttr("aria-busy", "true");
+          saveState.removeClass("is-error");
+          saveState.textContent = this.label("删除中…", "Deleting…");
+          try {
+            const removed = await this.options.remove!.action();
+            if (this.closed) return;
+            if (removed) { this.close(); return; }
+            this.saveError = this.label("模型服务未删除，请重试。", "The model service was not deleted. Please retry.");
+          } catch {
+            if (this.closed) return;
+            this.saveError = this.label("模型服务未删除，请重试。", "The model service was not deleted. Please retry.");
+          } finally {
+            this.saving = false;
+            this.removing = false;
+            if (!this.closed && !this.inlineSuspended) {
+              if (this.saveError) this.announce(this.saveError);
+              this.render();
+            }
+          }
+        }
+      });
+    }
     if (providerId !== "openai-codex") {
       const test = createOriginButton(actions, {
         text: this.options.copy.providers.testConnection,
@@ -386,6 +433,7 @@ export class ProviderModelModal extends Modal {
       attr: { type: "button", "data-modal-focus-key": "cancel" }
     });
     applyAmicroButton(cancel, { variant: "secondary" });
+    cancel.disabled = this.removing;
     cancel.onclick = () => this.close();
     const save = createOriginButton(actions, {
       cls: "mod-cta",

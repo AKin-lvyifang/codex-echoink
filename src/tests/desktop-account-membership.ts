@@ -25,8 +25,29 @@ function fixture(value = initial(), actions: AccountActions = {}) {
 
 export async function runDesktopAccountMembershipTests() {
   installProviderBrowserHost(); HTMLElement.prototype.scrollIntoView = () => {};
-  await structure(); await sourceFocus(); await forms(); await accountSwitch(); await redemption(); await confirmations(); await mobileDefault();
+  await structure(); await anonymousOverview(); await sourceFocus(); await forms(); await accountSwitch(); await redemption(); await confirmations(); await mobileDefault();
   console.log("P14 desktop account real controls: structure, states, drafts, suspend, identity, redemption and confirmation PASS");
+}
+
+async function anonymousOverview() {
+  const f = fixture({ ...initial("anonymous"), identity: null }, { requestCode: async () => {}, signIn: async () => {} });
+  try {
+    const header = f.host.querySelector<HTMLElement>(".desktop-account-header")!;
+    assert.equal((header.textContent!.match(/未登录/g) ?? []).length, 1);
+    assert.equal(header.querySelector(".profile-copy h2")?.textContent, "未登录");
+    assert.match(header.querySelector(".profile-copy .membership-copy p")!.textContent!, /财务和英文日记需要 PRO/);
+    assert.equal(header.querySelector(".desktop-account-plan-status"), null);
+    assert.equal(header.querySelectorAll(".profile-actions button").length, 1);
+    const login = button(header, "登录 / 注册");
+    assert.equal(login.parentElement?.lastElementChild, login, "the only primary action stays last in reading order");
+    assert.equal(login.previousElementSibling?.textContent, "注册送激活码");
+    assert.equal(f.host.querySelector("input, form"), null, "the overview does not contain a login form");
+    login.click();
+    assert.equal(openTestModals.length, 0);
+    assert.equal(f.detail().querySelectorAll('input[type="email"]').length, 1);
+    assert.equal(button(f.detail(), "登录").disabled, false);
+    assert.equal(f.detail().querySelector(".desktop-account-header"), null, "the login subpage remains the real form");
+  } finally { f.dispose(); }
 }
 
 async function sourceFocus() {
