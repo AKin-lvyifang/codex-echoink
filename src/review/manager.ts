@@ -16,6 +16,7 @@ import {
   type KnowledgeBaseMaintenanceReportEvidence
 } from "./report";
 import { latestScheduledReviewRange, reviewRangeForMode, reviewRangeKey, shouldRunScheduledReview, type ReviewRange } from "./schedule";
+import { recordWorkbenchReviewSaved } from "../home/workbench-records";
 
 export interface ReviewRunResult {
   status: "success" | "failed";
@@ -84,6 +85,7 @@ export class ReviewManager {
       const htmlPath = normalizePath(`${outputPath}/${documents.htmlFileName}`);
       await fsp.writeFile(path.join(this.plugin.getVaultPath(), markdownPath), documents.markdown, "utf8");
       await fsp.writeFile(path.join(this.plugin.getVaultPath(), htmlPath), documents.html, "utf8");
+      await recordWorkbenchReviewSaved(this.plugin.app, targetRange, markdownPath);
       state.lastRangeKey = reviewRangeKey(targetRange);
       await this.plugin.saveSettings(true);
       new Notice(`已生成${kindLabel(kind)}周报：${markdownPath}`);

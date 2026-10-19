@@ -23,6 +23,7 @@ import { ConversationAutoArchive } from "./plugin/conversation-auto-archive";
 import { EchoInkAppearance } from "./ui/appearance-theme";
 import { knowledgePathRole } from "./knowledge-base/root-paths";
 import { HomeActivityService } from "./home/home-activity-service";
+import { EchoInkWorkbenchView } from "./home/workbench-view";
 import { LifestyleService } from "./lifestyle/service";
 import type { LifestyleKind } from "./lifestyle/settings";
 import type { CodexSettingTab } from "./settings/settings-tab";
@@ -393,7 +394,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   async openPaperGuideAfterOnboarding(): Promise<void> {
     if (!this.paperGuide) {
       this.paperGuide = new PaperGuideController(this, () =>
-        this.app.workspace.getActiveViewOfType(EchoInkHomeView)?.contentEl ?? null);
+        this.app.workspace.getActiveViewOfType(EchoInkWorkbenchView)?.contentEl
+          ?? this.app.workspace.getActiveViewOfType(EchoInkHomeView)?.contentEl ?? null);
       this.register(() => { this.paperGuide?.dispose(); this.paperGuide = null; });
     }
     await this.paperGuide.showAfterOnboarding();
@@ -404,6 +406,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.appearance?.refresh();
   }
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
+  async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> { return this.getViewService().activateLegacyHomeView(section); }
   setSettingsTabInstance(tab: CodexSettingTab): void { this.settingsTabInstance = tab; }
   async openLifestyleSettings(kind: LifestyleKind): Promise<void> {
     this.settings.settingsTab = "resources";
@@ -417,8 +420,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   /** Push settings-driven home changes (module visibility, todos) to open home views. */
   notifyHomeSurfacesChanged(): void {
-    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) {
+    for (const leaf of [...this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.app.workspace.getLeavesOfType("echoink-legacy-home")]) {
       if (leaf.view instanceof EchoInkHomeView) leaf.view.refreshHomeSurfaces();
+      else if (leaf.view instanceof EchoInkWorkbenchView) leaf.view.refreshIfSettingsChanged();
     }
   }
   getTodoStore(): EchoInkTodoStore {
@@ -936,6 +940,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   async readPiConversationCatalogEntry(conversationId: string): Promise<Readonly<PiConversationCatalogEntry> | null> {
     return await (await this.ensurePiLocalData()).catalog.get(conversationId);
   }
+  async readWorkbenchTaskReceipts(taskId: string): Promise<readonly Readonly<import("./harness/pi-native/domain-receipt-store").DomainReceipt>[]> {
+    return (await this.ensurePiLocalData()).receipts.listReceipts({ conversationId: taskId, statuses: ["completed"] });
+  }
   getConversationRunService(): ConversationRunService {
     if (!this.conversationRunService) {
       this.conversationRunService = new ConversationRunService(this);
@@ -1156,10 +1163,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     const view = this.getCodexView();
     if (view && await view.waitForTaskUiReady()) await view.openTaskDetail(taskId);
   }
-  async openAgentTaskList(agentId: string, prefill?: string): Promise<boolean> {
+  async openAgentTaskList(agentId: string, prefill?: string, prefillSource?: string): Promise<boolean> {
     await this.activateView();
     const view = this.getCodexView();
-    return view && await view.waitForTaskUiReady() ? await view.openAgentTaskList(agentId, prefill) : false;
+    return view && await view.waitForTaskUiReady() ? await view.openAgentTaskList(agentId, prefill, prefillSource) : false;
   }
   async deleteAgent(agentId: string): Promise<void> {
     if (agentId === GENERAL_ASSISTANT_ID) throw new Error("general_assistant_cannot_be_deleted");

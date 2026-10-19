@@ -28,6 +28,7 @@ import { renderTodoTable, todoTableCopy } from "./todo-table";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { confirmModal } from "../ui/modals";
 import { ForegroundView } from "../ui/foreground-view";
+import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 
 import { VIEW_TYPE_ECHOINK_HOME } from "./view-type";
 export { VIEW_TYPE_ECHOINK_HOME } from "./view-type";
@@ -88,6 +89,7 @@ export class EchoInkHomeView extends ItemView {
   private activeShortNavigationId: string | null = null;
   private shortNavigationFrame: number | null = null;
   private shortNavigationObserver: ResizeObserver | null = null;
+  private workbenchSection: "calendar" | "todos" | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: FinanceHomeHost) {
     super(leaf);
@@ -162,6 +164,7 @@ export class EchoInkHomeView extends ItemView {
     if (this.refreshTimer !== null) win?.clearTimeout(this.refreshTimer);
     if (this.searchTimer !== null) win?.clearTimeout(this.searchTimer);
     this.searchAbort?.abort(); this.activityUnsubscribe?.(); this.todoUnsubscribe?.(); this.activityModal?.close();
+    disposeOriginControls(this.contentEl);
     this.contentEl.empty(); this.contentEl.removeClass("echoink-home-workspace");
   }
   private scheduleRefresh(delay = 220): void {
@@ -275,7 +278,7 @@ export class EchoInkHomeView extends ItemView {
     for (const module of ECHOINK_HOME_MODULES) {
       const root = this.contentEl.querySelector<HTMLElement>(module.selector);
       if (!root) continue;
-      const hidden = visibility[module.id] === false
+      const hidden = (visibility[module.id] === false && module.id !== this.workbenchSection)
         || (module.id === "finance" && !this.plugin.settings.lifestyle.finance.enabled);
       root.toggleClass("echoink-module-hidden", hidden);
       root.toggleAttribute("aria-hidden", hidden);
@@ -296,7 +299,9 @@ export class EchoInkHomeView extends ItemView {
   private renderShell(): void {
     this.disposeBentoMagnet?.();
     this.disposeShortNavigation();
+    disposeOriginControls(this.contentEl);
     markup(this.contentEl, homeWorkspaceMarkup(this.language));
+    this.renderWorkbenchReturn();
     this.renderCaptureShortcut();
     this.renderFinanceCard();
     this.renderDailyExpression();
@@ -315,6 +320,34 @@ export class EchoInkHomeView extends ItemView {
       this.shortNavigationObserver.observe(this.contentEl);
       this.shortNavigationObserver.observe(this.el(".home-content"));
     }
+  }
+  /** Temporary P5 navigation keeps the original calendar and complete to-do UI. */
+  public revealWorkbenchSection(section: "calendar" | "todos"): void {
+    this.workbenchSection = section;
+    this.applyModuleVisibility();
+    const target = this.contentEl.querySelector<HTMLElement>(section === "calendar" ? ".calendar" : ".todo-section");
+    if (!target) return;
+    const nav = this.contentEl.querySelector<HTMLElement>(".echoink-home-shortnav");
+    const back = this.contentEl.querySelector<HTMLElement>(".echoink-workbench-return");
+    const top = this.contentEl.scrollTop + target.getBoundingClientRect().top - this.contentEl.getBoundingClientRect().top - (nav?.getBoundingClientRect().height ?? 0) - (back?.getBoundingClientRect().height ?? 0) - 16;
+    const reduced = this.contentEl.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    this.contentEl.scrollTo({ top: Math.max(0, top), behavior: reduced ? "auto" : "smooth" });
+    target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+  }
+  private renderWorkbenchReturn(): void {
+    if (this.getViewType() !== "echoink-legacy-home") return;
+    const heading = this.contentEl.querySelector<HTMLElement>(".page-heading");
+    if (!heading) return;
+    const row = this.contentEl.ownerDocument.createElement("div");
+    row.className = "echoink-workbench-return";
+    heading.before(row);
+    const button = createOriginButton(row, { cls: "echoink-workbench-back is-tertiary", text: this.t("返回工作台", "Back to workbench") });
+    const icon = button.createSpan({ attr: { "aria-hidden": "true" } }); setIcon(icon, "arrow-left"); button.prepend(icon);
+    button.onclick = () => {
+      const plugin = this.plugin as FinanceHomeHost & { activateHomeView(): Promise<void> };
+      void plugin.activateHomeView().catch(error => new Notice(errorMessage(error)));
+    };
   }
   private renderLoadingState(): void {
     this.field("recent-subtitle").setText(this.t("正在加载笔记…", "Loading notes…"));
@@ -459,7 +492,8 @@ export class EchoInkHomeView extends ItemView {
           if (!target || target.classList.contains("echoink-module-hidden")) return;
           this.activeShortNavigationId = module.id;
           this.setShortNavigationActive(nav);
-          const top = this.contentEl.scrollTop + target.getBoundingClientRect().top - this.contentEl.getBoundingClientRect().top - nav.getBoundingClientRect().height - 16;
+          const back = this.contentEl.querySelector<HTMLElement>(".echoink-workbench-return");
+          const top = this.contentEl.scrollTop + target.getBoundingClientRect().top - this.contentEl.getBoundingClientRect().top - nav.getBoundingClientRect().height - (back?.getBoundingClientRect().height ?? 0) - 16;
           const reduce = this.contentEl.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
           this.contentEl.scrollTo({ top: Math.max(0, top), behavior: reduce ? "auto" : "smooth" });
         };
@@ -1105,5 +1139,10 @@ export class EchoInkHomeView extends ItemView {
   }
 
   }
+
+/** Desktop-only temporary target; mobile continues using EchoInkHomeView. */
+export class EchoInkLegacyHomeView extends EchoInkHomeView {
+  getViewType(): string { return "echoink-legacy-home"; }
+}
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

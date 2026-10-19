@@ -82,6 +82,8 @@ import {
   buildPiNoteMentionContextMessage,
   PI_NOTE_MENTIONS_CONTEXT_DETAILS_KEY
 } from "../harness/pi-native/pi-note-mentions";
+import { buildWorkbenchContextMessage, WORKBENCH_CONTEXT_DETAILS_KEY, WORKBENCH_CONTEXT_TYPE } from "../home/workbench-context";
+import type { WorkbenchTaskSource } from "../home/workbench-types";
 import {
   buildPiDocumentContextMessage,
   PI_ANTHROPIC_PDF_DOCUMENT_ADAPTER,
@@ -1062,6 +1064,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   vaultSecurity: InlineExtension;
   currentAgentSnapshot?(): AgentRunSnapshot | Promise<AgentRunSnapshot>;
   currentTaskResumeContext?(): TaskResumeContext | undefined;
+  currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
   assertCurrentSkillsAllowed?(): Promise<void>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
@@ -1160,6 +1163,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           ? `${event.systemPrompt}\n\n${piWorkspaceAccessPrompt(access)}`
           : event.systemPrompt;
         const selectionMessage = buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
+        const workbenchMessage = buildWorkbenchContextMessage(input.currentWorkbenchSource?.());
         const noteMentionTurn = input.currentNoteMentionTurn?.() ?? null;
         const noteMentionMessage = noteMentionTurn
           ? buildPiNoteMentionContextMessage(noteMentionTurn.noteMentions)
@@ -1346,7 +1350,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             details: knowledgeReferenceEntryDetails(
               turn.references.map((reference) => ({ ...reference }))
             )
-          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage);
+          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage, workbenchMessage);
           transientResourceContextSignature = piResourceContextSignature(message);
           return {
             ...systemPromptResult,
@@ -1381,7 +1385,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
               preferenceState: command.preference.state,
               preferenceRevision: command.preference.revision
             })
-          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage);
+          }, skillMessage, noteMentionMessage, documentMessage, selectionMessage, workbenchMessage);
           transientResourceContextSignature = piResourceContextSignature(message);
           return {
             ...systemPromptResult,
@@ -1393,7 +1397,8 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           skillMessage,
           noteMentionMessage,
           documentMessage,
-          selectionMessage
+          selectionMessage,
+          workbenchMessage
         );
         if (attachmentContextMessage) {
           transientResourceContextSignature = piResourceContextSignature(
@@ -1483,27 +1488,28 @@ function mergePiBeforeAgentStartContextMessages(
   skillMessage: Extract<AgentMessage, { role: "custom" }> | null,
   noteMentionMessage: Extract<AgentMessage, { role: "custom" }> | null,
   documentMessage: Extract<AgentMessage, { role: "custom" }> | null,
-  selectionMessage: Extract<AgentMessage, { role: "custom" }> | null
+  selectionMessage: Extract<AgentMessage, { role: "custom" }> | null,
+  workbenchMessage: Extract<AgentMessage, { role: "custom" }> | null = null
 ): Readonly<{
   customType: string;
   content: string;
   display: false;
   details: unknown;
 }> | null {
-  const primary = message ?? skillMessage ?? noteMentionMessage ?? documentMessage ?? selectionMessage;
+  const primary = message ?? skillMessage ?? noteMentionMessage ?? documentMessage ?? selectionMessage ?? workbenchMessage;
   if (!primary) return null;
   const details = primary.details
     && typeof primary.details === "object"
     && !Array.isArray(primary.details)
     ? primary.details as Readonly<Record<string, unknown>>
     : Object.freeze({});
-  const materials = [message, skillMessage, noteMentionMessage, documentMessage, selectionMessage]
+  const materials = [message, skillMessage, noteMentionMessage, documentMessage, selectionMessage, workbenchMessage]
     .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
   // Pi persists one before_agent_start message. With selected passages, keep
   // distinct typed sections in that entry, then deliver distinct bounded
   // background messages to the Provider. A trailing Knowledge "原文:" cannot
   // consume a selected passage or the actual user question.
-  const content = selectionMessage ? JSON.stringify({
+  const content = selectionMessage || workbenchMessage ? JSON.stringify({
     type: "echoink.turn-material-partitions.v1",
     sections: materials.map((candidate) => ({ customType: candidate.customType, content: candidate.content }))
   }) : materials.map((candidate) => candidate.content as string).join("\n\n");
@@ -1524,6 +1530,9 @@ function mergePiBeforeAgentStartContextMessages(
         : {}),
       ...(documentMessage && documentMessage !== primary
         ? { [PI_DOCUMENT_CONTEXT_DETAILS_KEY]: documentMessage.details }
+        : {}),
+      ...(workbenchMessage && workbenchMessage !== primary
+        ? { [WORKBENCH_CONTEXT_DETAILS_KEY]: workbenchMessage.details }
         : {})
     })
   });
@@ -1540,7 +1549,8 @@ function piProviderMaterialPartitions(message: AgentMessage): AgentMessage[] {
     "echoink-selection-annotations-v1": PI_SELECTION_CONTEXT_KEY,
     "echoink-note-mentions-context-v1": PI_NOTE_MENTIONS_CONTEXT_DETAILS_KEY,
     "echoink-document-context-v1": PI_DOCUMENT_CONTEXT_DETAILS_KEY,
-    "echoink-skill-turn-context-v1": "echoinkSkillTurnContext"
+    "echoink-skill-turn-context-v1": "echoinkSkillTurnContext",
+    [WORKBENCH_CONTEXT_TYPE]: WORKBENCH_CONTEXT_DETAILS_KEY
   };
   return envelope.sections.map((section) => ({
     role: "custom" as const,
@@ -2243,6 +2253,7 @@ async function createProductionAgentSession(input: {
     vaultSecurity: security.inlineExtension,
     currentAgentSnapshot: async () => { const context = await liveCapabilityContext(); return resolveAgentRunSnapshot(context.settings, context.agentId); },
     currentTaskResumeContext: () => input.input.currentTaskResumeContext?.(),
+    currentWorkbenchSource: () => input.input.currentWorkbenchSource?.() ?? null,
     assertCurrentSkillsAllowed: async () => {
       const context = await liveCapabilityContext();
       const paths = input.input.skillPath ? [input.input.skillPath] : [...(input.input.skillPaths ?? [])];

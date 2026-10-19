@@ -70,21 +70,23 @@ function parseFinanceDocument(markdown: string): ParsedNote {
     status: status as FinanceEntry["status"], account: stringField(fields, "account"),
     description: stringField(fields, "description"), currency: stringField(fields, "currency") || "CNY",
     note: stringField(fields, "note"), icon: stringField(fields, "icon") || undefined,
-    billPlanId: stringField(fields, "bill_plan_id").trim() || undefined
+    billPlanId: stringField(fields, "bill_plan_id").trim() || undefined,
+    ...(fields.classification_pending === true ? { classificationPending: true } : {})
   };
   return { entry, identity, issue: null };
 }
 
 export function parseFinanceNote(markdown: string): FinanceEntry | null { return parseFinanceDocument(markdown).entry; }
 
-function financeFields(entry: FinanceEntry, sourceFields?: FinanceImportRow["sourceFields"]): Record<string, string> {
+function financeFields(entry: FinanceEntry, sourceFields?: FinanceImportRow["sourceFields"]): Record<string, string | boolean> {
   if (!Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) throw new Error("账目金额无效");
   const fields = {
     echoink_type: "finance_entry", echoink_id: entry.id, source: entry.source, source_id: entry.sourceId,
     date: entry.date, amount: (entry.amountCents / 100).toFixed(2), type: entry.kind,
     category: entry.category, account: entry.account, merchant: entry.merchant,
     description: entry.description, currency: entry.currency, status: entry.status,
-    note: entry.note, icon: entry.icon || "auto", ...(entry.billPlanId ? { bill_plan_id: entry.billPlanId } : {})
+    note: entry.note, icon: entry.icon || "auto", ...(entry.billPlanId ? { bill_plan_id: entry.billPlanId } : {}),
+    ...(entry.classificationPending === true ? { classification_pending: true } : {})
   };
   if (!sourceFields) return fields;
   return { ...fields,
@@ -369,12 +371,14 @@ export class FinanceLedger {
           if (value === null) delete fields[field];
           else fields[field] = key === "amountCents" ? (Number(value) / 100).toFixed(2) : value;
         }
+        if (changes.category !== undefined) delete fields.classification_pending;
         return `---\n${stringify(fields)}---\n${markdown.slice(match[0].length)}`;
       });
       const markdown = await this.app.vault.read(file);
       const entry = parseFinanceNote(markdown);
       if (!entry || entry.id !== id) throw new Error("finance_readback_failed");
       for (const [key, value] of Object.entries(changes)) if ((entry as unknown as Record<string, unknown>)[key] !== (value === null ? undefined : value)) throw new Error("finance_readback_failed");
+      if (changes.category !== undefined && entry.classificationPending) throw new Error("finance_readback_failed");
       await this.readDirect();
       return { entry, path: file.path, version: sha256Hex(markdown) };
     });
@@ -486,7 +490,8 @@ export class FinanceLedger {
       if (!previous) throw new Error("这笔账目已被删除或移出账目目录");
       const next = { ...previous, merchant: merchant.trim(), description: description.trim(), icon, category: category?.trim() || previous.category, account: account === undefined ? previous.account : account.trim() };
       if (next.merchant.length > 60 || next.description.length > 200 || !next.category) throw new Error("请检查商户、分类、账户和消费说明");
-      await this.patchDirect(id, { merchant: next.merchant, description: next.description, icon: next.icon || "auto", category: next.category, account: next.account, ...(billPlanId === undefined ? {} : { bill_plan_id: billPlanId }) });
+      await this.patchDirect(id, { merchant: next.merchant, description: next.description, icon: next.icon || "auto", category: next.category, account: next.account,
+        ...(category?.trim() ? { classification_pending: null } : {}), ...(billPlanId === undefined ? {} : { bill_plan_id: billPlanId }) });
       await this.readDirect();
       return this.records.find((entry) => entry.id === id)!;
     });
@@ -550,7 +555,7 @@ export class FinanceLedger {
         const current = parseFinanceNote(markdown);
         const original = snapshot.entry;
         const facts: (keyof FinanceEntry)[] = ["id", "source", "sourceId", "date", "amountCents", "kind", "status", "currency", "note"];
-        const semantic: (keyof FinanceEntry)[] = ["merchant", "account", "category", "description", "icon"];
+        const semantic: (keyof FinanceEntry)[] = ["merchant", "account", "category", "description", "icon", "classificationPending"];
         const sourceValues = snapshot.sourceFields ? financeFields(original, snapshot.sourceFields) : {};
         const sourceChanged = (fields: Record<string, unknown>): boolean => Object.entries(sourceValues)
           .some(([key, value]) => {
@@ -575,7 +580,11 @@ export class FinanceLedger {
           frontmatter.category = next.category;
           frontmatter.description = next.description;
           frontmatter.icon = next.icon || "auto";
+          if (next.classificationPending === true) frontmatter.classification_pending = true;
+          else delete frontmatter.classification_pending;
           saved = { ...still, merchant: next.merchant, account: next.account, category: next.category, description: next.description, icon: next.icon || "auto" };
+          if (next.classificationPending === true) saved.classificationPending = true;
+          else delete saved.classificationPending;
           applied++;
         });
         if (applied > before && saved) onApplied?.(saved);

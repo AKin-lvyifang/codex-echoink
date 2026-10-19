@@ -33,7 +33,7 @@ export interface FinanceOrganizationOptions {
   signal: AbortSignal;
   onProgress?: (done: number, total: number, rows: readonly FinanceImportRow[]) => void;
 }
-export interface FinanceOrganizationResult { rows: FinanceImportRow[]; warnings: string[]; aiCandidates: number }
+export interface FinanceOrganizationResult { rows: FinanceImportRow[]; warnings: string[]; aiCandidates: number; incomplete?: boolean }
 
 interface Candidate {
   ref: number; rowIndexes: number[]; fixed: { merchant: boolean; category: boolean; account: boolean; icon: boolean };
@@ -70,8 +70,14 @@ export function applyFinanceSuggestion(candidate: Candidate, suggestion: unknown
   const iconId = candidate.choices?.icon.get(String(value.iconChoice)) || text(value.iconId, 100);
   if (!candidate.fixed.merchant && merchant) entry.merchant = merchant;
   if (description) entry.description = description;
-  if (!candidate.fixed.category && category && categories.includes(category)) entry.category = category;
-  if (!candidate.fixed.merchant && merchantChoice?.defaultCategory) entry.category = merchantChoice.defaultCategory;
+  if (!candidate.fixed.category && category && categories.includes(category)) {
+    entry.category = category;
+    delete entry.classificationPending;
+  }
+  if (!candidate.fixed.merchant && merchantChoice?.defaultCategory) {
+    entry.category = merchantChoice.defaultCategory;
+    delete entry.classificationPending;
+  }
   if (!candidate.fixed.account && account) entry.account = account;
   if (!candidate.fixed.icon && iconId && iconIds.has(iconId)) entry.icon = iconId;
   if (!candidate.fixed.merchant && !candidate.fixed.icon && merchantChoice?.iconId && merchantChoice.iconId !== "auto") entry.icon = merchantChoice.iconId;
@@ -85,10 +91,12 @@ export function applyFinanceImportSettings(sourceRows: readonly FinanceImportRow
     const source = row.sourceFields;
     const merchant = resolveFinanceMerchant(source.counterparty, settings);
     const account = matchConfigured(source.paymentMethod, settings.accounts);
-    return { ...row, entry: { ...row.entry, merchant: merchant.name,
+    const entry = { ...row.entry, merchant: merchant.name,
       category: merchant.defaultCategory || row.entry.category,
       account: account?.name || (source.paymentMethod !== "/" ? source.paymentMethod : "") || row.entry.account,
-      icon: merchant.iconId || "auto" } };
+      icon: merchant.iconId || "auto" };
+    if (merchant.defaultCategory) delete entry.classificationPending;
+    return { ...row, entry };
   });
 }
 
@@ -109,6 +117,7 @@ export async function organizeFinanceRows(
     entry.merchant = resolvedMerchant.name;
     entry.account = accountRule?.name || (source.paymentMethod !== "/" ? source.paymentMethod : "") || entry.account;
     entry.category = resolvedMerchant.defaultCategory || entry.category;
+    if (resolvedMerchant.defaultCategory) delete entry.classificationPending;
     entry.icon = resolvedMerchant.iconId || "auto";
     const identity = `${entry.source}:${entry.sourceId}`;
     if (known.has(identity)) continue;
@@ -123,6 +132,7 @@ export async function organizeFinanceRows(
     else { byKey.set(key, candidate); candidates.push(candidate); }
   }
   const warnings: string[] = [];
+  let incomplete = false;
   if (!options.generate || !options.skillContent) {
     warnings.push("智能整理未运行，已保留原字段及你设置的资料匹配，可核对后基础导入");
     return { rows, warnings, aiCandidates: 0 };
@@ -181,6 +191,8 @@ export async function organizeFinanceRows(
         for (const index of candidate.rowIndexes) {
           rows[index].entry = { ...rows[index].entry!, merchant: applied.merchant, description: applied.description,
             category: applied.category, account: applied.account, icon: applied.icon };
+          if (applied.classificationPending === true) rows[index].entry!.classificationPending = true;
+          else delete rows[index].entry!.classificationPending;
           if (review) rows[index].review = [rows[index].review, review].filter(Boolean).join("；");
           if (reason) rows[index].reason = reason;
           if (typeof proposedCategory !== "string")
@@ -194,9 +206,15 @@ export async function organizeFinanceRows(
           if ((typeof proposed.iconChoice === "string" && !candidate.choices?.icon.has(proposed.iconChoice))
             || (typeof proposed.iconId === "string" && !iconOptions.has(proposed.iconId)))
             rows[index].review = [rows[index].review, "未能匹配图标，已保留原图标"].filter(Boolean).join("；");
+          if (typeof proposedCategory !== "string" || !categories.includes(proposedCategory)
+            || typeof proposed.merchantChoice === "string" && !candidate.choices?.merchant.has(proposed.merchantChoice)
+            || typeof proposed.accountChoice === "string" && !candidate.choices?.account.has(proposed.accountChoice)
+            || typeof proposed.iconChoice === "string" && !candidate.choices?.icon.has(proposed.iconChoice)
+            || typeof proposed.iconId === "string" && !iconOptions.has(proposed.iconId)) incomplete = true;
         }
       }
       for (const candidate of batch) if (!handled.has(candidate.ref)) for (const index of candidate.rowIndexes) {
+        incomplete = true;
         rows[index].review = [rows[index].review, "智能整理未返回有效建议，按基础字段待核对"].filter(Boolean).join("；");
       }
     } catch (error) {
@@ -207,5 +225,5 @@ export async function organizeFinanceRows(
     options.onProgress?.(Math.min(candidates.length, offset + batch.length), candidates.length,
       batch.flatMap((candidate) => candidate.rowIndexes.map((index) => rows[index])));
   }
-  return { rows, warnings, aiCandidates: candidates.length };
+  return { rows, warnings, aiCandidates: candidates.length, ...(incomplete ? { incomplete: true } : {}) };
 }

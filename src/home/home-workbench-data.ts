@@ -4,7 +4,7 @@ import type { SettingsLanguage } from "../settings/settings";
 import type { HomeActivityCore } from "./home-activity-core";
 import { homeCopy } from "./home-i18n";
 import { isHomeNotePath, type HomeNoteVisibility } from "./home-note-visibility";
-import { nativeJournalPathForDate, readNativeJournalContext, readNativeJournalSettings } from "./native-journal";
+import { nativeJournalPathForDate, prepareNativeJournalTemplate, readNativeJournalContext, readNativeJournalSettings } from "./native-journal";
 import {
   DEFAULT_JOURNAL_DIRECTORY,
 } from "./journal-directory";
@@ -164,6 +164,7 @@ export class HomeWorkbenchDataService {
     const slash = path.lastIndexOf("/");
     if (slash > 0) await this.ensureFolder(path.slice(0, slash), language);
     try {
+      prepareNativeJournalTemplate(this.app, path, content);
       const file = await this.app.vault.create(path, content);
       return { file, created: true };
     } catch (error) {

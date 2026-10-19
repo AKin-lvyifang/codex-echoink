@@ -2,7 +2,8 @@ import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ResourceManagementTab } from "../settings/settings";
 import type { SettingsTab } from "../settings/settings";
-import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { EchoInkHomeView, EchoInkLegacyHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { EchoInkWorkbenchView } from "../home/workbench-view";
 import { openObsidianGraphLeaf } from "../home/open-native-graph";
 import { isReviewHtmlPath } from "../review/schedule";
 import { ReviewPreviewView, VIEW_TYPE_REVIEW_PREVIEW } from "../review/preview-view";
@@ -28,7 +29,17 @@ export class EchoInkViewService {
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
     // onOpen and Vault events own data loading. Native journal settings can
     // change while away, but merely revealing an unchanged home is free.
-    if (leaf.view instanceof EchoInkHomeView) leaf.view.refreshIfSettingsChanged();
+    if (leaf.view instanceof EchoInkHomeView || leaf.view instanceof EchoInkWorkbenchView) leaf.view.refreshIfSettingsChanged();
+  }
+
+  async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> {
+    let leaf = this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home")[0];
+    if (!leaf) {
+      leaf = this.plugin.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: "echoink-legacy-home", active: true });
+    }
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (leaf.view instanceof EchoInkLegacyHomeView) await leaf.view.revealWorkbenchSection(section);
   }
 
   async activateView(options: { focusInput?: boolean } = {}): Promise<void> {
@@ -69,8 +80,8 @@ export class EchoInkViewService {
 
   refreshKnowledgeBaseSurfaces(): void {
     this.getCodexView()?.refreshKnowledgeBaseDashboard();
-    for (const leaf of this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) {
-      if (leaf.view instanceof EchoInkHomeView) {
+    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home")]) {
+      if (leaf.view instanceof EchoInkHomeView || leaf.view instanceof EchoInkWorkbenchView) {
         void leaf.view.refresh().catch((error) => console.warn("EchoInk 首页刷新失败", error));
       }
     }
@@ -81,8 +92,8 @@ export class EchoInkViewService {
     for (const leaf of this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX)) {
       if (leaf.view instanceof CodexView) leaf.view.refreshLanguage();
     }
-    for (const leaf of this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) {
-      if (!(leaf.view instanceof EchoInkHomeView)) continue;
+    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home")]) {
+      if (!(leaf.view instanceof EchoInkHomeView) && !(leaf.view instanceof EchoInkWorkbenchView)) continue;
       refreshes.push(leaf.view.refreshLanguage().catch((error) => {
         console.warn("EchoInk 首页语言刷新失败", error);
       }));

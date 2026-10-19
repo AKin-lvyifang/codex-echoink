@@ -23172,7 +23172,7 @@ body:not(.is-mobile) .echoink-settings-demo .codex-settings-tabs .codex-settings
 
 /* ECHOINK_COLOR_THEMES_START */
 /* Only EchoInk surfaces receive these tokens; Obsidian owns appearance. */
-body[data-echoink-theme="green"] :is(.echoink-home-workspace, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks) {
+body[data-echoink-theme="green"] :is(.echoink-home-workspace, .echoink-workbench, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks) {
   --echoink-theme-scheme: light;
   --echoink-theme-bg: #ffffff;
   --echoink-theme-card: #ffffff;
@@ -23188,7 +23188,7 @@ body[data-echoink-theme="green"] :is(.echoink-home-workspace, .echoink-settings-
   --echoink-theme-active: #eaf3ed;
   --echoink-theme-on-accent: #ffffff;
 }
-body.theme-dark[data-echoink-theme="green"] :is(.echoink-home-workspace, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks) {
+body.theme-dark[data-echoink-theme="green"] :is(.echoink-home-workspace, .echoink-workbench, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks) {
   --echoink-theme-scheme: dark;
   --echoink-theme-bg: #191919;
   --echoink-theme-card: #242424;
@@ -23204,7 +23204,7 @@ body.theme-dark[data-echoink-theme="green"] :is(.echoink-home-workspace, .echoin
   --echoink-theme-active: #343436;
   --echoink-theme-on-accent: #212123;
 }
-body[data-echoink-theme="violet"] :is(.echoink-home-workspace, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks) {
+body[data-echoink-theme="violet"] :is(.echoink-home-workspace, .echoink-workbench, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks) {
   --echoink-theme-scheme: light;
   --echoink-theme-bg: #f7f7fa;
   --echoink-theme-card: #ffffff;
@@ -23220,7 +23220,7 @@ body[data-echoink-theme="violet"] :is(.echoink-home-workspace, .echoink-settings
   --echoink-theme-active: #eeeaf7;
   --echoink-theme-on-accent: #ffffff;
 }
-body.theme-dark[data-echoink-theme="violet"] :is(.echoink-home-workspace, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks) {
+body.theme-dark[data-echoink-theme="violet"] :is(.echoink-home-workspace, .echoink-workbench, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks) {
   --echoink-theme-scheme: dark;
   --echoink-theme-bg: #17171b;
   --echoink-theme-card: #202025;
@@ -25348,4 +25348,144 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
   box-shadow: none;
   background: var(--background-modifier-hover);
 }
+
+/* Desktop P5 workbench. All layout breakpoints use the actual pane width. */
+.echoink-workbench {
+  container: echoink-workbench / inline-size;
+  --wb-bg: var(--echoink-theme-bg, var(--background-primary));
+  --wb-text: var(--echoink-theme-text, var(--text-normal));
+  --wb-secondary: var(--echoink-theme-secondary, var(--text-muted));
+  --wb-muted: var(--echoink-theme-muted, var(--text-faint));
+  --wb-line: var(--echoink-theme-line, var(--background-modifier-border));
+  --wb-hover: var(--echoink-theme-hover, var(--background-modifier-hover));
+  --wb-warn: var(--echoink-theme-warn, var(--text-warning));
+  --wb-accent: var(--echoink-theme-accent, var(--interactive-accent));
+  --wb-on-accent: var(--echoink-theme-on-accent, var(--text-on-accent));
+  padding: 0;
+  overflow: auto;
+  background: var(--wb-bg);
+  color: var(--wb-text);
+  font-family: var(--font-interface);
+  font-size: calc(var(--font-text-size, 16px) * .8125);
+  line-height: 1.55;
+}
+.echoink-workbench *, .echoink-workbench *::before, .echoink-workbench *::after { box-sizing: border-box; }
+.echoink-workbench [hidden] { display: none !important; }
+.echoink-workbench .wb-page { width: 100%; max-width: 920px; margin: 0 auto; padding: 28px 32px 40px; }
+.echoink-workbench .wb-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 20px; }
+.echoink-workbench h1 { margin: 0; color: var(--wb-text); font-size: calc(var(--font-text-size, 16px) * 1.375); font-weight: 600; line-height: 1.4; }
+.echoink-workbench .wb-date { display: block; margin-top: 4px; color: var(--wb-muted); font-size: inherit; }
+.echoink-workbench .wb-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.echoink-workbench button.wb-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  width: auto; height: auto; min-height: 30px; max-width: 100%; margin: 0; padding: 0 12px;
+  border: 1px solid var(--wb-line); border-radius: 8px; background: var(--wb-bg); color: var(--wb-text);
+  font: inherit; font-weight: 400; line-height: 1.55; white-space: normal; overflow-wrap: anywhere;
+  box-shadow: none; outline: none; cursor: pointer;
+}
+.echoink-workbench button.wb-button.is-primary { background: var(--wb-accent); border-color: transparent; color: var(--wb-on-accent); }
+.echoink-workbench button.wb-button.is-tertiary, .echoink-workbench button.wb-button.is-icon { border-color: transparent; background: transparent; color: var(--wb-secondary); }
+.echoink-workbench button.wb-button.is-tertiary { min-height: 0; padding: 3px 6px; font-size: calc(var(--font-text-size, 16px) * .75); border-radius: 6px; }
+.echoink-workbench button.wb-button.is-icon { flex: 0 0 auto; width: 30px; min-height: 30px; padding: 0; }
+.echoink-workbench button.wb-button.is-small { min-height: 26px; padding: 0 10px; font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-workbench .wb-button-icon { display: inline-flex; flex: 0 0 auto; }
+.echoink-workbench .wb-button-icon svg { width: 14px; height: 14px; }
+.echoink-workbench button.wb-button.echoink-amicro-button:not(:disabled):is(:hover, :active) { background: var(--wb-hover); color: var(--wb-text); border-color: var(--wb-line); outline: none; box-shadow: none; }
+.echoink-workbench button.wb-button.echoink-amicro-button:not(:disabled):active { transform: translateY(1px); }
+.echoink-workbench button.wb-button.echoink-amicro-button:where(.is-primary):not(:disabled):is(:hover, :active) { background: color-mix(in srgb, var(--wb-accent) 90%, var(--wb-text)); color: var(--wb-on-accent); }
+/* Match global Amicro state specificity; :where keeps focus last and neutral. */
+.echoink-workbench button.wb-button.echoink-amicro-button:not(:disabled):focus-visible, .echoink-workbench .wb-search-input:focus,
+.echoink-workbench .wb-search-input:focus-visible, .echoink-workbench .wb-todo-check:focus-visible,
+.echoink-workbench summary:focus-visible {
+  background: var(--wb-hover); color: var(--wb-text); outline: none !important; box-shadow: none !important; border-color: var(--wb-line);
+}
+.echoink-workbench button.wb-button.echoink-amicro-button:where(.is-icon, .is-tertiary, .is-primary):not(:disabled):is(:hover, :active, :focus-visible) { border-color: transparent; }
+.echoink-workbench button.wb-button:disabled, .echoink-workbench .wb-todo-check:disabled { opacity: .45; cursor: default; transform: none; }
+.echoink-workbench .wb-modules { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding-bottom: 16px; border-bottom: 1px solid var(--wb-line); margin-bottom: 24px; }
+.echoink-workbench .wb-modules button.wb-button { padding: 5px 10px; border-radius: 8px; font-size: inherit; }
+.echoink-workbench .wb-modules .wb-button-icon svg { width: 15px; height: 15px; }
+.echoink-workbench .wb-groups { display: flex; flex-direction: column; gap: 26px; }
+.echoink-workbench .wb-section { min-width: 0; margin: 0; }
+.echoink-workbench .wb-section-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.echoink-workbench .wb-section-heading h2 { margin: 0; font-size: inherit; font-weight: 600; line-height: 1.55; outline: none; }
+.echoink-workbench .wb-section-heading h2:focus { background: var(--wb-hover); border-radius: 4px; }
+.echoink-workbench .wb-section-heading > button { margin-left: auto; }
+.echoink-workbench .wb-count { color: var(--wb-muted); font-size: calc(var(--font-text-size, 16px) * .6875); font-variant-numeric: tabular-nums; }
+.echoink-workbench .wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(270px, 100%), 1fr)); align-items: start; gap: 10px; }
+.echoink-workbench .wb-task { min-width: 0; padding: 12px 14px; border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); display: flex; flex-direction: column; gap: 10px; }
+.echoink-workbench .wb-task:has(.wb-task-body:hover), .echoink-workbench .wb-task:has(.wb-task-body:focus-visible),
+.echoink-workbench .wb-task.is-current { background: var(--wb-hover); }
+.echoink-workbench button.wb-task-body { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 10px; width: calc(100% + 28px); max-width: none; margin: -12px -14px 0; padding: 12px 14px 0; border: 0; border-radius: 11px 11px 0 0; color: var(--wb-text); text-align: left; font-size: inherit; }
+.echoink-workbench button.wb-task-body:hover, .echoink-workbench button.wb-task-body:focus-visible { background: transparent; }
+.echoink-workbench .wb-task-header { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.echoink-workbench .wb-agent-name { color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-workbench .wb-task-status { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-left: auto; color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .6875); font-variant-numeric: tabular-nums; }
+.echoink-workbench .wb-task-status.is-interrupted, .echoink-workbench .wb-task-status.is-waiting { color: var(--wb-warn); }
+.echoink-workbench .wb-task-status > span:has(svg) { display: inline-flex; }
+.echoink-workbench .wb-task-status svg { width: 12px; height: 12px; }
+.echoink-workbench .wb-spinner { animation: echoink-workbench-spin 1.2s linear infinite; }
+@keyframes echoink-workbench-spin { to { transform: rotate(360deg); } }
+.echoink-workbench .wb-task-title { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.echoink-workbench .wb-task-step, .echoink-workbench .wb-interruption, .echoink-workbench .wb-secondary { display: block; color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); overflow-wrap: anywhere; }
+.echoink-workbench .wb-task-footer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.echoink-workbench .wb-question { padding-top: 10px; border-top: 1px solid var(--wb-line); overflow-wrap: anywhere; }
+.echoink-workbench .wb-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.echoink-workbench .wb-options > button { text-align: left; }
+.echoink-workbench .wb-rows { border: 1px solid var(--wb-line); border-radius: 12px; overflow: clip; }
+.echoink-workbench .wb-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 14px; }
+.echoink-workbench .wb-row + .wb-row, .echoink-workbench .wb-completed + .wb-completed { border-top: 1px solid var(--wb-line); }
+.echoink-workbench .wb-grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.echoink-workbench .wb-row > button.wb-button { flex-shrink: 0; }
+.echoink-workbench .wb-lead { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 26px; width: 26px; height: 26px; color: var(--wb-secondary); }
+.echoink-workbench .wb-lead svg { width: 16px; height: 16px; }
+.echoink-workbench .wb-completed { min-width: 0; }
+.echoink-workbench button.wb-completed-body { display: flex; width: 100%; justify-content: flex-start; gap: 10px; padding: 9px 14px; border: 0; border-radius: 0; text-align: left; font-size: inherit; color: var(--wb-text); }
+.echoink-workbench .wb-completed.is-current { background: var(--wb-hover); }
+.echoink-workbench .wb-completed-body .wb-secondary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-workbench .wb-row-title { display: block; }
+.echoink-workbench .wb-time { flex-shrink: 0; color: var(--wb-muted); font-size: calc(var(--font-text-size, 16px) * .75); font-variant-numeric: tabular-nums; }
+.echoink-workbench .wb-unread { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--wb-accent); }
+.echoink-workbench .wb-todo-check { flex: 0 0 16px; width: 16px; height: 16px; min-height: 16px; padding: 0; border: 1px solid var(--wb-line); border-radius: 4px; box-shadow: none; }
+.echoink-workbench .wb-status:not(:empty) { margin-bottom: 24px; color: var(--wb-secondary); }
+.echoink-workbench .wb-error { display: flex; align-items: flex-start; gap: 10px; color: var(--text-error); }
+.echoink-workbench .wb-error details { color: var(--wb-secondary); margin-top: 6px; overflow-wrap: anywhere; }
+.echoink-workbench .wb-error summary { cursor: pointer; border-radius: 6px; }
+.echoink-workbench .wb-empty { color: var(--wb-secondary); padding: 24px 0; }
+.echoink-workbench .wb-search { position: relative; width: 100%; margin-bottom: 16px; }
+.echoink-workbench .wb-search-line { display: flex; align-items: center; gap: 8px; position: relative; }
+.echoink-workbench .wb-search-icon { position: absolute; left: 10px; top: 8px; display: flex; pointer-events: none; color: var(--wb-secondary); }
+.echoink-workbench .wb-search-icon svg { width: 16px; height: 16px; }
+.echoink-workbench input.wb-search-input { flex: 1; width: 100%; min-width: 0; height: auto; min-height: 34px; padding: 7px 10px 7px 32px; border: 1px solid var(--wb-line); border-radius: 8px; background: var(--wb-bg); color: var(--wb-text); font: inherit; box-shadow: none; outline: none; }
+.echoink-workbench .wb-search-panel { position: absolute; top: 100%; left: 0; right: 0; z-index: 10; max-height: min(480px, 60vh); overflow: auto; padding: 8px; border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); }
+.echoink-workbench .wb-search-heading, .echoink-workbench .wb-search-hint, .echoink-workbench .wb-search-empty { padding: 6px; color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-workbench button.wb-search-result { display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; width: 100%; padding: 8px; text-align: left; color: var(--wb-text); }
+.echoink-workbench .wb-search-result > span:has(svg) { display: inline-flex; flex-shrink: 0; }
+.echoink-workbench .wb-search-result svg { width: 16px; height: 16px; }
+.echoink-workbench .wb-search-result .wb-grow > * { display: block; overflow-wrap: anywhere; }
+.echoink-workbench .wb-search-result[aria-selected="true"] { background: var(--wb-hover); }
+@container echoink-workbench (max-width: 760px) {
+  .echoink-workbench .wb-page { padding: 24px; }
+}
+@container echoink-workbench (max-width: 520px) {
+  .echoink-workbench .wb-page { padding: 20px 16px 28px; }
+  .echoink-workbench .wb-header { align-items: flex-start; }
+  .echoink-workbench .wb-header-actions { width: 100%; }
+  .echoink-workbench .wb-grid { grid-template-columns: minmax(0, 1fr); }
+  .echoink-workbench .wb-row { display: grid; grid-template-columns: 26px minmax(0, 1fr); }
+  .echoink-workbench .wb-row > button.wb-button { grid-column: 2; justify-self: end; }
+  .echoink-workbench .wb-todo { grid-template-columns: 16px minmax(0, 1fr); }
+  .echoink-workbench .wb-todo .wb-time { grid-column: 2; }
+  .echoink-workbench button.wb-completed-body { flex-wrap: wrap; }
+  .echoink-workbench .wb-completed-body > .wb-grow { flex-basis: calc(100% - 36px); }
+  .echoink-workbench .wb-completed-body > .wb-time { margin-left: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .echoink-workbench *, .echoink-workbench *::before, .echoink-workbench *::after { animation: none !important; transition: none !important; }
+  .echoink-workbench button.wb-button.echoink-amicro-button:not(:disabled):active { transform: none; }
+}
+.echoink-home-workspace .echoink-workbench-return { display: flex; position: sticky; top: 0; z-index: 8; min-height: 30px; margin-bottom: 16px; background: var(--echoink-theme-bg, var(--background-primary)); }
+.echoink-home-workspace:has(.echoink-workbench-return) .echoink-home-shortnav { top: 30px; }
+.echoink-home-workspace button.echoink-workbench-back { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px; min-height: 30px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: calc(var(--font-text-size, 16px) * .75); box-shadow: none; }
+.echoink-home-workspace button.echoink-workbench-back:hover, .echoink-home-workspace button.echoink-workbench-back:focus-visible { background: var(--echoink-theme-hover, var(--background-modifier-hover)); color: var(--text-normal); outline: none; box-shadow: none; }
+.echoink-home-workspace .echoink-workbench-back svg { width: 14px; height: 14px; }
 /* ECHOINK_AGENT_WORKBENCH_CSS_END */

@@ -1,6 +1,8 @@
-import { Notice, type WorkspaceLeaf } from "obsidian";
+import { Notice, Platform, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { EchoInkHomeView, EchoInkLegacyHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { EchoInkWorkbenchView } from "../home/workbench-view";
+import { getWorkbenchDataService } from "../home/workbench-data";
 import { EchoInkKnowledgeSurfaceService } from "./knowledge-surface-service";
 import { ReviewManager } from "../review/manager";
 import { ReviewPreviewView, VIEW_TYPE_REVIEW_PREVIEW } from "../review/preview-view";
@@ -21,10 +23,16 @@ export interface EchoInkPluginControllers {
 
 export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): EchoInkPluginControllers {
   plugin.registerView(VIEW_TYPE_CODEX, (leaf: WorkspaceLeaf) => new CodexView(leaf, plugin));
-  plugin.registerView(VIEW_TYPE_ECHOINK_HOME, (leaf: WorkspaceLeaf) => new EchoInkHomeView(leaf, plugin));
+  plugin.registerView(VIEW_TYPE_ECHOINK_HOME, (leaf: WorkspaceLeaf) => Platform.isDesktopApp
+    ? new EchoInkWorkbenchView(leaf, plugin) : new EchoInkHomeView(leaf, plugin));
+  if (Platform.isDesktopApp) {
+    plugin.registerView("echoink-legacy-home", (leaf: WorkspaceLeaf) => new EchoInkLegacyHomeView(leaf, plugin));
+    const workbench = getWorkbenchDataService(plugin);
+    plugin.register(() => workbench.dispose());
+  }
   plugin.registerView(VIEW_TYPE_REVIEW_PREVIEW, (leaf: WorkspaceLeaf) => new ReviewPreviewView(leaf, plugin));
 
-  const ribbonAnchor = plugin.addRibbonIcon("feather", "打开 EchoInk 首页和 Agent 侧栏", () => {
+  const ribbonAnchor = plugin.addRibbonIcon("feather", Platform.isDesktopApp ? "打开 EchoInk 工作台和 Agent 侧栏" : "打开 EchoInk 首页和 Agent 侧栏", () => {
     void (async () => {
       await plugin.activateHomeAndSidebar();
       await plugin.handleEchoInkOnboardingTargetActivated("sidebar");
@@ -34,7 +42,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
 
   plugin.addCommand({
     id: "open-echoink-home",
-    name: "打开 EchoInk 首页",
+    name: Platform.isDesktopApp ? "打开 EchoInk 工作台" : "打开 EchoInk 首页",
     callback: () => void plugin.activateHomeView()
   });
   plugin.addCommand({

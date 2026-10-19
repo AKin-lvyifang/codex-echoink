@@ -22,8 +22,8 @@ export class TaskNavigationState {
     else this.workspace().replyDrafts[page.taskId] = normalized;
   }
   navigate(page: TaskPage): number { this.workspace().page = page; return ++this.generation; }
-  prefill(agentId: string, text: string): boolean {
-    const result = prefillNewTask(this.workspace(), agentId, { text, attachments: [] });
+  prefill(agentId: string, text: string, prefillSource?: string): boolean {
+    const result = prefillNewTask(this.workspace(), agentId, { text, attachments: [], ...(prefillSource ? { prefillSource } : {}) });
     this.workspace().newTaskDrafts = result.workspace.newTaskDrafts;
     return result.accepted;
   }

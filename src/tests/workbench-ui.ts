@@ -1,0 +1,216 @@
+import assert from "node:assert/strict";
+import { WorkspaceLeaf, TFile } from "obsidian";
+import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, groupWorkbenchTasks, workbenchInlineQuestion } from "../home/workbench-view";
+import { openWorkbenchModule } from "../home/module-navigation";
+import type { TaskEntry } from "../agents/task-presentation";
+import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchSnapshot } from "../home/workbench-types";
+import type { EchoInkQuestionInteraction } from "../types/conversation-turn";
+import { GENERAL_ASSISTANT_ID, type AgentModuleId } from "../agents/types";
+import type CodexForObsidianPlugin from "../main";
+import type { ConversationRunSubscriber } from "../plugin/conversation-run-service";
+import type { ParsedTodoRecord } from "../home/todo-markdown";
+import { DEFAULT_ENGLISH_DIARY_SETTINGS } from "../english-diary/types";
+import type { ChatMessage } from "../settings/settings";
+
+const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
+const entry = (id: string, state: TaskEntry["taskStatus"], at = Date.now()): TaskEntry => ({ conversationId: id, piSessionId: `session-${id}`, vaultId: "fixture", title: `任务 ${id}`, status: "active", defaultMemoryMode: "normal", createdAt: at, updatedAt: at, agentId: "sol", taskStatus: state, taskStartedAt: at, taskCompletedAt: at, taskInterruptedAt: at });
+const questionFor = (task: TaskEntry): EchoInkQuestionInteraction => ({ interactionId: "interaction", conversationId: task.conversationId, piSessionId: task.piSessionId, turnId: "run", createdAt: Date.now(), updatedAt: Date.now(), kind: "question", status: "pending", questions: [{ questionId: "question", prompt: "选哪一项？", selection: "single", allowSupplement: false, options: [{ optionId: "a", label: "选项 A" }, { optionId: "b", label: "其他" }] }] });
+
+export async function runWorkbenchUiTests(): Promise<void> {
+  const now = new Date(2026, 9, 18, 9).getTime();
+  const stopped = entry("stop", "interrupted", now), waiting = { ...entry("wait", "waiting", now), pendingResponse: { kind: "question" as const, runId: "run", questionId: "question" } };
+  const frozen = [stopped, waiting, entry("run", "running", now), entry("done", "completed", now), entry("yesterday", "completed", now - 86_400_000), { ...entry("archive", "running", now), status: "archived" as const }, { ...entry("delete", "interrupted", now), status: "deleted" as const }, entry("knowledge-linking-internal", "running", now)].map(value => Object.freeze(value));
+  const before = JSON.stringify(frozen);
+  const groups = groupWorkbenchTasks(frozen, now);
+  assert.deepEqual(Object.values(groups).map(values => values.map(value => value.conversationId)), [["stop"], ["wait"], ["run"], ["done"]]);
+  assert.equal(JSON.stringify(frozen), before, "overview must not write task metadata");
+  assert.equal(groupWorkbenchTasks([entry("midnight", "completed", new Date(2026, 9, 17, 23, 59).getTime())], now).completed.length, 0);
+  const question = questionFor(waiting);
+  assert.equal(workbenchInlineQuestion(waiting, question)?.questionId, "question");
+  assert.equal(workbenchInlineQuestion(waiting, { ...question, questions: [{ ...question.questions[0], allowSupplement: true }] })?.questionId, "question", "optional supplement does not block valid single-choice answers");
+  for (const invalid of [{ ...question, piSessionId: "old" }, { ...question, turnId: "old" }, { ...question, status: "answered" as const }, { ...question, questions: [...question.questions, question.questions[0]] }, { ...question, questions: [{ ...question.questions[0], selection: "multiple" as const }] }]) assert.equal(workbenchInlineQuestion(waiting, invalid), undefined);
+
+  const calls: unknown[][] = [], subscribers = new Set<ConversationRunSubscriber>(), dataSubscribers = new Set<() => void>();
+  let tasks: readonly TaskEntry[] = [], failTasks = false, failData = false, hasFocus = true, todoFailure = false;
+  let taskReads = 0, dataReads = 0;
+  let projectionsInFlight = 0, maxProjectionConcurrency = 0;
+  const projectionReads = new Map<string, number>(), projectionText = new Map<string, string>(), failedProjections = new Set<string>();
+  let releaseResume: (() => void) | undefined;
+  const pending = new Map([[waiting.conversationId, question]]);
+  let snapshot: WorkbenchSnapshot = { generatedAt: Date.now(), signals: [], todayTodos: [], modules: ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading"], issues: [] };
+  const port: WorkbenchDataPort = {
+    async load() { dataReads++; if (failData) throw new Error("本地事项读取失败"); return snapshot; },
+    subscribe(listener) { dataSubscribers.add(listener); return () => { dataSubscribers.delete(listener); }; },
+    async recordTaskAccepted() {}, async recordTaskCompleted() {}, dispose() { throw new Error("view must not dispose plugin-owned service"); }
+  };
+  (globalThis as unknown as { __p5WorkbenchPort: WorkbenchDataPort }).__p5WorkbenchPort = port;
+  const files = Array.from({ length: 8 }, (_, index) => Object.assign(new TFile(), { path: `wiki/note-${index}.md`, basename: `笔记 ${index}`, stat: { mtime: now + index, size: 30 } }));
+  const host = {
+    app: {
+      vault: { getMarkdownFiles: () => files, cachedRead: async () => "正文检索测试", getAbstractFileByPath: (path: string) => files.find(file => file.path === path) },
+      metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["别名"] }, tags: [{ tag: "#fixture" }] }) },
+      workspace: { on() { return {}; }, getLeaf() { return { async openFile(file: TFile) { calls.push(["note", file.path]); } }; } }
+    },
+    settings: { settingsLanguage: "zh-CN", englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
+    getConversationRunService: () => ({ pendingInteractions: pending, runs: new Map(), subscribe(listener: ConversationRunSubscriber) { subscribers.add(listener); return () => { subscribers.delete(listener); }; } }),
+    async listAgentTaskEntries() { taskReads++; if (failTasks) throw new Error("任务读取失败"); return tasks; },
+    async readPiConversationProjection(taskId: string) {
+      projectionReads.set(taskId, (projectionReads.get(taskId) ?? 0) + 1);
+      maxProjectionConcurrency = Math.max(maxProjectionConcurrency, ++projectionsInFlight);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (failedProjections.has(taskId)) throw new Error("结果文件读取失败");
+        const text = projectionText.get(taskId) ?? "## 真正结果\n已整理 **3** 篇笔记。";
+        return { catalog: tasks.find(task => task.conversationId === taskId)!, activeLeafId: null, diagnostics: [], drafts: [], messages: text ? [{ id: "answer", role: "assistant", text }] : [] };
+      } finally { projectionsInFlight--; }
+    },
+    async setPiConversationTaskMetadata() { calls.push(["metadata-write"]); throw new Error("overview must not mark results read"); },
+    async ensurePiRuntimeBundle() { calls.push(["provider"]); throw new Error("overview must not initialize Provider"); },
+    async readTaskInterruption(taskId: string) { return { taskId, reason: "user_stopped", at: now, stage: "真实步骤", uncertainOperations: [] }; },
+    async openTaskDetail(id: string) { calls.push(["detail", id]); },
+    async resumeTaskAndOpenDetail(id: string) { calls.push(["resume", id]); await new Promise<void>(resolve => { releaseResume = resolve; }); },
+    async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
+    async readPiConversationCatalogEntry(id: string) { return tasks.find(task => task.conversationId === id); },
+    piTurnInteractionBinding(identity: unknown) { return { submit(answers: unknown) { calls.push(["answer", identity, answers]); return true; } }; },
+    async activateLegacyHomeView(section: string) { calls.push(["legacy", section]); },
+    async openEchoInkGeneralSettings() { calls.push(["settings"]); },
+    async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
+    lifestyle: { async open(kind: string) { calls.push(["lifestyle", kind]); } },
+    englishDiary: { async openToday() { calls.push(["english"]); } },
+    getTodoStore: () => ({ async toggleDone(todo: ParsedTodoRecord, done: boolean) { calls.push(["todo", todo.id, done]); if (todoFailure) throw new Error("保存失败"); snapshot = { ...snapshot, todayTodos: [] }; } })
+  };
+  const plugin = host as unknown as CodexForObsidianPlugin;
+  const content = document.body.createDiv();
+  const container = document.body.createDiv(); container.appendChild(content);
+  Object.defineProperty(container, "getClientRects", { value: () => [{ width: 900, height: 800 }] });
+  Object.defineProperty(document, "hasFocus", { configurable: true, value: () => hasFocus });
+  const view = new EchoInkWorkbenchView(new WorkspaceLeaf(), plugin);
+  const cleanups: (() => void)[] = [];
+  Object.assign(view, { contentEl: content, containerEl: container, app: host.app,
+    register: (dispose: () => void) => cleanups.push(dispose), registerEvent() {},
+    registerDomEvent(element: EventTarget, type: string, callback: EventListener, options?: AddEventListenerOptions) { element.addEventListener(type, callback, options); cleanups.push(() => element.removeEventListener(type, callback, options)); }
+  });
+  const button = (key: string) => Array.from(content.querySelectorAll<HTMLButtonElement>("[data-wb-focus]")).find(node => node.dataset.wbFocus === key)!;
+  const click = async (key: string) => { button(key).click(); await tick(); };
+  try {
+    assert.equal(view.getViewType(), VIEW_TYPE_ECHOINK_WORKBENCH);
+    await view.onOpen();
+    assert.match(content.textContent ?? "", /正在读取任务/);
+    await tick();
+    assert.match(content.textContent ?? "", /暂时没有待处理的事/);
+    assert.equal(content.querySelectorAll("[data-wb-group]").length, 0);
+    assert.equal(content.querySelector("time")?.getAttribute("datetime"), localDate(new Date()));
+    await click("new-task"); assert.deepEqual(calls.at(-1), ["list", GENERAL_ASSISTANT_ID]);
+    await click("settings"); assert.deepEqual(calls.at(-1), ["settings"]);
+    for (const module of snapshot.modules) await openWorkbenchModule(plugin, module);
+    assert.ok(calls.some(call => JSON.stringify(call) === '["legacy","calendar"]'));
+    assert.ok(calls.some(call => JSON.stringify(call) === '["legacy","todos"]'));
+    assert.ok(calls.some(call => JSON.stringify(call) === '["lifestyle","finance"]'));
+    assert.ok(calls.some(call => call[0] === "knowledge")); assert.ok(calls.some(call => call[0] === "english"));
+
+    const completed = Object.freeze({ ...entry("done", "completed"), unreadAnswerAt: Date.now() });
+    tasks = [stopped, waiting, entry("run", "running"), completed];
+    host.settings.sessions.push({ id: completed.conversationId, messages: [] });
+    snapshot = { ...snapshot, signals: Array.from({ length: 7 }, (_, index) => signal(index)) };
+    await view.refresh();
+    assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /总助 · 真正结果 已整理 3 篇笔记。/);
+    assert.equal(projectionReads.get("done"), 1, "cold settings shells read the real stored projection");
+    assert.equal(host.settings.sessions[0].messages.length, 0, "preview does not hydrate or mutate the resident shell");
+    assert.equal(calls.some(call => call[0] === "detail"), false, "completed preview is available before opening the sidebar task");
+    assert.ok(completed.unreadAnswerAt); assert.equal(calls.some(call => call[0] === "metadata-write" || call[0] === "provider"), false);
+    const completedSummary = content.querySelector('[data-task="done"] .wb-secondary');
+    await view.refresh();
+    assert.equal(projectionReads.get("done"), 1, "streaming or surface refreshes reuse the same completed revision");
+    assert.equal(content.querySelectorAll('[data-task="done"] .wb-secondary').length, 1, "redraw does not duplicate the result summary");
+    assert.equal(content.querySelector('[data-task="done"] .wb-secondary'), completedSummary, "unchanged result keeps its existing summary node");
+    projectionText.set("done", "更新后的**真实结果**");
+    tasks = tasks.map(task => task.conversationId === "done" ? { ...task, updatedAt: task.updatedAt + 1 } : task);
+    await view.refresh();
+    assert.equal(projectionReads.get("done"), 2, "a changed Catalog revision reloads the result");
+    assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /更新后的真实结果/);
+    assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>("[data-wb-group]")).map(node => node.dataset.wbGroup), ["interrupted", "waiting", "running", "signals", "completed"]);
+    assert.match(content.textContent ?? "", /被你停止/);
+    assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 5);
+    const retained = button("signal-signal-0");
+    button("signal-toggle").focus(); await click("signal-toggle");
+    assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 7);
+    assert.equal(button("signal-signal-0"), retained, "expansion preserves existing controls");
+    assert.equal(document.activeElement, button("signal-toggle"));
+    await click("signal-toggle"); assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 5);
+    await click("task-stop"); assert.deepEqual(calls.at(-1), ["detail", "stop"]);
+    const resume = button("resume-stop"); resume.focus(); resume.click(); resume.click(); await tick();
+    assert.equal(calls.filter(call => call[0] === "resume").length, 1, "double click only resumes once");
+    assert.equal(button("resume-stop"), resume, "pending state preserves the control being used");
+    assert.equal(resume.disabled, true); assert.equal(document.activeElement, resume);
+    releaseResume!(); await tick(); assert.equal(button("resume-stop"), resume); assert.equal(resume.disabled, false);
+    await click("answer-wait-a"); assert.ok(calls.some(call => call[0] === "answer"));
+    const answers = calls.filter(call => call[0] === "answer").length;
+    await click("answer-wait-b"); assert.equal(calls.filter(call => call[0] === "answer").length, answers + 1, "option meaning follows the schema rather than guessing from its label");
+    pending.set(waiting.conversationId, { ...question, questions: [{ ...question.questions[0], allowSupplement: true }] }); await view.refresh();
+    await click("answer-wait-a"); assert.equal(calls.filter(call => call[0] === "answer").length, answers + 2, "optional supplement still allows direct submission");
+    await click("detail-wait"); assert.deepEqual(calls.at(-1), ["detail", "wait"]);
+    await click("signal-signal-0"); assert.equal(calls.at(-1)?.[0], "list"); assert.equal(snapshot.signals.length, 7, "prefill does not consume a signal");
+    assert.ok([...subscribers].every(listener => listener.isTaskVisible("done") === false), "overview never marks all tasks read");
+    assert.equal(content.querySelectorAll("button button").length, 0);
+
+    failTasks = true; failData = true; await view.refresh();
+    assert.match(content.textContent ?? "", /尚未更新/);
+    assert.equal(button("resume-stop").disabled, true); assert.equal(button("signal-signal-0").disabled, true);
+    assert.equal(content.querySelector('[data-wb="empty"]')?.hasAttribute("hidden"), true);
+    failTasks = failData = false; await click("retry");
+    assert.equal(button("resume-stop").disabled, false);
+    snapshot = { ...snapshot, issues: ["请先选择收件箱位置"] }; await view.refresh();
+    assert.match(content.textContent ?? "", /部分事项暂时无法确认/);
+
+    const todo: ParsedTodoRecord = { id: "today", title: "真实待办", people: "", dueDate: localDate(new Date()), dueTime: "14:30", categoryName: "工作", done: false, lineStart: 0, lineEnd: 0, extraMetaLines: [] };
+    snapshot = { ...snapshot, issues: [], todayTodos: [todo] }; await view.refresh();
+    todoFailure = true; await click("todo-today"); assert.equal(snapshot.todayTodos.length, 1);
+    assert.ok(button("todo-today")); todoFailure = false; await click("todo-today"); await view.refresh();
+    assert.equal(content.querySelector('[data-wb-group="todos"]'), null);
+
+    await click("search-trigger"); await new Promise(resolve => setTimeout(resolve, 120)); await tick();
+    assert.equal(content.querySelectorAll('[role="option"]').length, 6);
+    const input = content.querySelector<HTMLInputElement>('[data-wb="search-input"]')!;
+    input.value = "别名"; input.dispatchEvent(new Event("input", { bubbles: true })); await new Promise(resolve => setTimeout(resolve, 120)); await tick();
+    assert.equal(content.querySelectorAll('[role="option"]').length, 6, "original metadata search is used");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    assert.ok(input.getAttribute("aria-activedescendant"));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await tick();
+    assert.equal(calls.at(-1)?.[0], "note"); assert.equal(document.activeElement, button("search-trigger"));
+    await click("search-trigger"); input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); assert.equal(document.activeElement, button("search-trigger"));
+
+    hasFocus = false; window.dispatchEvent(new Event("blur"));
+    const reads = [taskReads, dataReads];
+    for (const listener of subscribers) listener.refresh("run"); for (const listener of dataSubscribers) listener();
+    await new Promise(resolve => setTimeout(resolve, 130));
+    assert.deepEqual([taskReads, dataReads], reads, "background updates only set a pending flag");
+    assert.equal((view as unknown as { refreshTimer: number | null }).refreshTimer, null);
+    assert.equal((view as unknown as { clockTimer: number | null }).clockTimer, null);
+    hasFocus = true; window.dispatchEvent(new Event("focus")); await tick();
+    assert.ok(taskReads > reads[0] && dataReads > reads[1]);
+    tasks = Array.from({ length: 5 }, (_, index) => entry(`cold-${index}`, "completed"));
+    projectionText.set("cold-0", ""); failedProjections.add("cold-1");
+    await view.refresh();
+    assert.equal(maxProjectionConcurrency, 3, "stored result reads have bounded concurrency");
+    assert.match(content.querySelector('[data-task="cold-0"] .wb-secondary')?.textContent ?? "", /未记录结果摘要/);
+    assert.match(content.querySelector('[data-task="cold-1"] .wb-secondary')?.textContent ?? "", /结果暂时读不到/);
+    const failedReads = projectionReads.get("cold-1");
+    await view.refresh(); assert.equal(projectionReads.get("cold-1"), failedReads, "failed revisions are not repeatedly read during streaming refreshes");
+    failedProjections.delete("cold-1"); await click("retry");
+    assert.equal(projectionReads.get("cold-1"), failedReads! + 1);
+    assert.match(content.querySelector('[data-task="cold-1"] .wb-secondary')?.textContent ?? "", /真正结果/);
+    assert.equal(calls.some(call => call[0] === "metadata-write" || call[0] === "provider"), false);
+    tasks = []; snapshot = { ...snapshot, signals: [], todayTodos: [] }; await view.refresh();
+    assert.equal(content.querySelectorAll('[data-wb-group]').length, 0);
+    assert.equal(content.querySelector('[data-wb="empty"]')?.hasAttribute("hidden"), false);
+    console.log("Workbench UI passed: task groups, cold-shell result projections and revision cache, no duplicate summaries after redraw, bounded read concurrency and retry, local date, real routes, valid question binding, prefill, collapse and focus, stale errors, to-do success/failure, search keyboard, foreground lifecycle.");
+  } finally {
+    await view.onClose(); for (const cleanup of cleanups.reverse()) cleanup(); container.remove();
+    assert.equal(subscribers.size, 0); assert.equal(dataSubscribers.size, 0);
+  }
+}
+function signal(index: number): WorkbenchSignal {
+  const moduleId: AgentModuleId = "todos";
+  return { id: 1, key: `signal-${index}`, moduleId, icon: "list-todo", description: `真实事项 ${index}`, prompt: `处理事项 ${index}`, source: { version: 1, signalId: 1, businessKey: `signal-${index}`, moduleId, objects: [], prompt: `处理事项 ${index}`, capturedAt: Date.now() } };
+}
+function localDate(date: Date): string { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }

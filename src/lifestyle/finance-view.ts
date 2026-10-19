@@ -15,7 +15,8 @@ import {
 import { FINANCE_CATEGORY_ICONS, financeBrandDataUri, financeBrandLightBackdrop, financeCategoryNames, financeCategoryVisual, financeSelectableCategoryNames, resolveFinanceAccount, resolveFinanceMerchant } from "./finance-catalog";
 import type { FinanceSettings } from "./settings";
 import { financeIconOptions, openFinanceIconPicker, renderFinanceIcon } from "./finance-icon-picker";
-import { FINANCE_ANALYSIS_PROMPT_VERSION } from "./finance-service";
+import { FINANCE_ANALYSIS_PROMPT_VERSION, type FinanceImportCompletionOptions } from "./finance-service";
+import type { FinanceImportResult } from "./finance-ledger";
 import { financeDailyWeeks, type FinanceReportSnapshot, type FinanceChartSnapshot, type FinanceReportBlock, type FinanceTableSnapshot } from "./finance-analysis";
 import { applyAmicroButton } from "../settings/amicro-buttons";
 import { renderAnimateIcon } from "../ui/animate-icon";
@@ -1188,7 +1189,9 @@ export class FinanceWorkspace {
       descriptionRow.createEl("span", { text: "消费说明" });
       const description = descriptionRow.createEl("textarea");
       description.value = entry.description; description.maxLength = 200;
-      const category = select(form, "分类", this.categories(entry.date.slice(0, 7)).map((item): [string, string] => [item, item]), entry.category, () => undefined);
+      const categoryChoices = this.categories(entry.date.slice(0, 7)).map((item): [string, string] => [item, item]);
+      if (entry.classificationPending) categoryChoices.unshift(["", "待分类"]);
+      const category = select(form, "分类", categoryChoices, entry.classificationPending ? "" : entry.category, () => undefined);
       const accountNames = [...new Set([
         ...this.catalog().accounts.filter((item) => item.active).map((item) => item.name),
         ...this.entries().map((item) => item.account), entry.account
@@ -1225,7 +1228,7 @@ export class FinanceWorkspace {
       dialog.bindWrite(save, () => saving);
       form.onsubmit = (event) => {
         event.preventDefault(); if (saving) return; saving = true; dialog.refreshAccess();
-        void this.service.finance.updateDetails(entry.id, merchant.value, description.value, iconValue, category.value, account.value, billPlan.value === (entry.billPlanId || "") ? undefined : billPlan.value || null)
+        void this.service.finance.updateDetails(entry.id, merchant.value, description.value, iconValue, category.value || undefined, account.value, billPlan.value === (entry.billPlanId || "") ? undefined : billPlan.value || null)
           .then(() => { dialog.close(); this.redraw(); new Notice("已保存当前账目的修改"); })
           .catch((cause) => { error.setText(errorText(cause)); saving = false; dialog.refreshAccess(); });
       };
@@ -1269,6 +1272,7 @@ export class FinanceWorkspace {
       let saved = 0;
       let updated = 0;
       let noRows = true;
+      let reconciliationOnly = false;
       dialog.bindWrite(confirm, () => phase === "reading" || phase === "stopping" || phase === "ready" && noRows, () => phase === "ready");
       const stop = (): void => {
         controller?.abort();
@@ -1292,9 +1296,10 @@ export class FinanceWorkspace {
           confirm.createSpan({ text: "完成" }); confirm.setAttr("aria-label", "完成并关闭"); confirm.title = "完成并关闭";
           confirm.onclick = () => dialog.close();
         } else {
-          confirm.setText(state === "ready" ? "开始导入" : "关闭");
-          confirm.setAttr("aria-label", state === "ready" ? "开始导入" : "关闭导入窗口");
-          confirm.title = state === "ready" ? "开始导入" : "关闭导入窗口";
+          const readyLabel = reconciliationOnly ? "完成核对" : "开始导入";
+          confirm.setText(state === "ready" ? readyLabel : "关闭");
+          confirm.setAttr("aria-label", state === "ready" ? readyLabel : "关闭导入窗口");
+          confirm.title = state === "ready" ? readyLabel : "关闭导入窗口";
           confirm.onclick = state === "ready" ? () => void run() : () => dialog.close();
         }
         cancel.hidden = state !== "ready";
@@ -1324,8 +1329,9 @@ export class FinanceWorkspace {
         details.empty(); issues.hidden = true;
         const result = this.service.finance.previewImport(rows);
         const writable = result.added.length + result.updated.length;
+        reconciliationOnly = rows.length > 0 && !writable && !result.invalid && result.duplicates === rows.length;
         status.setText(writable ? `已读取 ${rows.length} 行记录，点击开始导入` : !rows.length ? "没有可导入的记录" : result.invalid ? `已读取 ${rows.length} 行记录，部分记录无法导入` : "这些记录已导入");
-        noRows = !result.added.length && !result.updated.length; dialog.refreshAccess();
+        noRows = !writable && !reconciliationOnly; action("ready"); dialog.refreshAccess();
         if (result.duplicates) details.createEl("p", { text: `${result.duplicates} 笔已存在，将跳过` });
         showIssues(baseIssues());
       };
@@ -1339,8 +1345,10 @@ export class FinanceWorkspace {
         let warnings: string[] = [];
         let writeError = "";
         let failure = "";
+        let importResult: FinanceImportResult | undefined;
+        const completion: FinanceImportCompletionOptions = { signal };
         source.disabled = true; file.disabled = true; details.empty(); issues.hidden = true;
-        action("running"); status.setText("正在保存账目…");
+        action("running"); status.setText(reconciliationOnly ? "正在核对账目…" : "正在保存账目…");
         try {
           const result = await this.service.finance.confirmImport(rows, { signal, onSaved: (entry, kind) => {
             savedIds.add(entry.id);
@@ -1348,6 +1356,7 @@ export class FinanceWorkspace {
             append(entry, kind === "added" ? "已保存" : "已更新");
             if (!closed && !signal.aborted) status.setText(`已保存 ${saved} 笔账目${updated ? `，更新 ${updated} 笔` : ""}`);
           } });
+          importResult = result;
           if (closed || current !== revision) return;
           if (result.added || result.updated) {
             this.state.filters = emptyFilters(); this.state.groupIntent = null; this.state.page = "ledger";
@@ -1365,6 +1374,7 @@ export class FinanceWorkspace {
               for (const row of batchRows) append(row.entry, row.review ? "需确认" : "已识别");
               status.setText(`已保存 ${saved} 笔账目，已处理 ${processed}/${result.created.length} 笔`);
             });
+            completion.organization = organized;
             if (closed || current !== revision) return;
             warnings = [...new Set(organized.warnings.map((warning) => warning.includes("未启用") ? "" : "部分账目整理未完成；基础账目已保存，可在账目详情检查").filter(Boolean))];
             for (const row of organized.rows) if (row.entry && row.review) {
@@ -1373,7 +1383,7 @@ export class FinanceWorkspace {
             }
             if (!signal.aborted) {
               status.setText(`已保存 ${saved} 笔账目，正在保存整理结果…`);
-              await this.service.finance.applyImportSuggestions(result.created, organized.rows, signal,
+              completion.suggestions = await this.service.finance.applyImportSuggestions(result.created, organized.rows, signal,
                 (entry) => append(entry, "已整理"),
                 (entry, reason) => problems.set(`${entry.source}:${entry.sourceId}`, `${entry.merchant}：${reason}`));
               if (closed || current !== revision) return;
@@ -1388,6 +1398,14 @@ export class FinanceWorkspace {
             try { await this.service.finance.finalizeImportedAccounts(savedIds); }
             catch { warnings.push("账户目录未补全；已保存账目保留，可在财务设置中补充"); }
           }
+          if (importResult && !closed && current === revision) {
+            completion.failed = !!writeError || !!failure || warnings.length > 0;
+            try {
+              const completed = await this.service.finance.completeImport(importResult, completion);
+              if (!completed && !signal.aborted && !completion.failed) warnings.push("部分账目尚未核对完成，已保存内容保留");
+            }
+            catch (error) { if (!signal.aborted) failure = errorText(error); }
+          }
           if (closed || current !== revision) {
             if (warnings.some((item) => item.includes("账户目录"))) new Notice("账户目录未补全；已保存账目保留");
           } else {
@@ -1397,14 +1415,18 @@ export class FinanceWorkspace {
             } else if (writeError || failure || warnings.length) {
               phase = "error"; status.setText(`已导入 ${saved} 笔账目；${writeError ? "保存中断" : failure || "部分后续整理未完成"}，请展开问题查看。`); action("error");
             } else {
-              phase = "done"; status.setText(`已导入 ${saved} 笔账目${updated ? `，更新 ${updated} 笔` : ""}${problems.size ? `；有 ${problems.size} 笔需要确认` : ""}。`); action("done");
+              phase = "done";
+              status.setText(importResult && !importResult.added && !importResult.updated
+                ? `已核对 ${importResult.duplicates} 笔账目，均已存在。`
+                : `已导入 ${saved} 笔账目${updated ? `，更新 ${updated} 笔` : ""}${problems.size ? `；有 ${problems.size} 笔需要确认` : ""}。`);
+              action("done");
             }
           }
         }
       };
       const load = (): void => {
         stop(); const current = ++revision;
-        controller = null; reader = null; phase = "ready"; rows = []; details.empty(); issues.hidden = true; progress.hidden = true; noRows = true; action("ready"); dialog.refreshAccess();
+        controller = null; reader = null; phase = "ready"; rows = []; details.empty(); issues.hidden = true; progress.hidden = true; noRows = true; reconciliationOnly = false; action("ready"); dialog.refreshAccess();
         const chosen = file.files?.[0];
         if (!chosen) { status.setText("请选择账单文件"); return; }
         phase = "reading"; progress.hidden = false; progress.removeAttribute("value");

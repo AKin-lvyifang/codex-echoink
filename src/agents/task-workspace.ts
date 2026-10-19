@@ -119,6 +119,7 @@ export function consumeAcceptedTaskDraft(workspace: TaskWorkspace, key: string, 
   const id = key.startsWith("agent:") ? key.slice(6) : key;
   const draft = drafts[id];
   if (!draft || (item.composerTextSnapshot === undefined ? draft.text.trim() !== item.text : draft.text !== item.composerTextSnapshot)
+    || draft.prefillSource !== item.prefillSource
     || !selectionAnnotationsMatch(draft.annotations ?? [], item.selectionAnnotations ?? [])
     || (draft.selectedSkill?.id ?? null) !== (item.skill?.id ?? null)
     || (draft.noteMentions?.length ?? 0) !== (item.noteMentions?.length ?? 0)

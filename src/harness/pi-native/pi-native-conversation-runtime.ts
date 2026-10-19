@@ -92,6 +92,8 @@ import type {
 import { PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE } from "./contracts";
 import { normalizePiChatNoteMentions } from "./pi-note-mentions";
 import { normalizeSelectionAnnotations } from "./pi-selection-annotations";
+import { freezeWorkbenchTaskSource, workbenchTaskSourceFromEntries } from "../../home/workbench-context";
+import type { WorkbenchTaskSource } from "../../home/workbench-types";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 import {
   normalizePiChatPreparedDocuments,
@@ -219,6 +221,7 @@ export interface PiNativeAgentSessionFactoryInput {
   }>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTaskResumeContext?(): Readonly<TaskResumeContext> | undefined;
+  currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
   currentMaintenanceCommand?(): Promise<Readonly<PiKnowledgeMaintenanceCommandContext>>;
   currentSkillTurnContext?(): Readonly<PiNativeSkillTurnContext> | null;
@@ -684,6 +687,7 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  workbenchSource?: Readonly<WorkbenchTaskSource>;
   resumeContext?: TaskResumeContext;
   interruption?: TaskInterruptionRecord;
   productRunId: string;
@@ -1359,7 +1363,8 @@ export class PiNativeConversationRuntime {
     }
     this.submitting.add(request.conversationId);
     try {
-      return await this.submitPrepared(Object.freeze({ ...request, permission: normalizePiWorkspacePermission(request.permission) }));
+      const workbenchSource = freezeWorkbenchTaskSource(request.workbenchSource);
+      return await this.submitPrepared(Object.freeze({ ...request, workbenchSource: workbenchSource ?? undefined, permission: normalizePiWorkspacePermission(request.permission) }));
     } finally {
       this.submitting.delete(request.conversationId);
     }
@@ -1506,6 +1511,7 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
+      ...(request.workbenchSource ? { workbenchSource: request.workbenchSource } : {}),
       ...(request.resumeContext ? { resumeContext: structuredClone(request.resumeContext) } : {}),
       productRunId,
       submittedAt: request.submittedAt,
@@ -2706,6 +2712,8 @@ export class PiNativeConversationRuntime {
         return run ? Object.freeze({ permission: run.permission, mode: run.mode, memoryMode: run.memoryMode }) : null;
       },
       currentTaskResumeContext: () => holder.active?.currentRun?.resumeContext,
+      currentWorkbenchSource: () => holder.active?.currentRun?.workbenchSource
+        ?? workbenchTaskSourceFromEntries(holder.active?.sessionManager.getBranch() ?? []),
       currentKnowledgeTurnContext: () =>
         holder.active?.knowledgeTurnContext ?? null,
       currentSkillTurnContext: () =>

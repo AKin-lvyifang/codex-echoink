@@ -1,6 +1,8 @@
 import type { TaskInterruptionReason, TaskResumeContext } from "../agents/task-resume";
 import type CodexForObsidianPlugin from "../main";
-import { Notice } from "obsidian";
+import { Notice, Platform } from "obsidian";
+import { getWorkbenchDataService } from "../home/workbench-data";
+import { parseWorkbenchTaskSource } from "../home/task-launcher";
 import { diagnoseProviderError } from "../core/provider-diagnostics";
 import { RuntimeTurnQueue, cloneQueuedTurnItem, type QueuedTurnItem } from "../ui/turn-queue";
 import type { CodexViewTurnContext, QueuedTurnOutcome, QueuedTurnSource } from "../ui/codex-view/runner-context";
@@ -161,6 +163,12 @@ export class ConversationRunService {
             ? { taskStatus: "completed", taskCompletedAt: Date.now(), taskInterruptedAt: undefined, pendingResponse: undefined, taskStage: undefined }
             : waiting ? { taskStatus: "waiting" }
               : { taskStatus: "interrupted", taskInterruptedAt: Date.now(), taskCompletedAt: undefined });
+          if (Platform.isDesktopApp && outcome === "completed" && !waiting && session.businessKey) {
+            await getWorkbenchDataService(this.plugin).recordTaskCompleted(session.id).catch(error => {
+              console.warn("EchoInk workbench could not record the task result.", error);
+              new Notice("任务已完成，但工作台事项尚未更新，请稍后重试。");
+            });
+          }
         }
         return outcome;
       } finally {
@@ -257,7 +265,23 @@ export class ConversationRunService {
       renderMessagesIfActive: (_session, message) => refresh(message), scheduleSessionSave: () => service.scheduleSave()
     });
     const context: CodexViewTurnContext = {
-      onPiRunAccepted: () => onAccepted?.(),
+      onPiRunAccepted: async () => {
+        const origin = Platform.isDesktopApp ? parseWorkbenchTaskSource(item.prefillSource) : null;
+        if (origin) {
+          try {
+            const results = await Promise.allSettled([
+              getWorkbenchDataService(plugin).recordTaskAccepted(id, origin),
+              plugin.setPiConversationTaskMetadata(id, { businessKey: origin.businessKey })
+            ]);
+            const failures = results.filter(result => result.status === "rejected");
+            if (failures.length) throw new AggregateError(failures.map(result => result.reason), "workbench_task_source_save_failed");
+          } catch (error) {
+            console.warn("EchoInk accepted task could not save its workbench source.", error);
+            new Notice("任务已开始，但提醒来源记录未保存；请勿重复发送。");
+          }
+        }
+        onAccepted?.();
+      },
       onPiRunFailure: message => { if (item.resumeContext) service.resumeErrors.set(id, message); },
       get lifecycleSignal() { return state.controller.signal; }, get app() { return plugin.app; }, plugin,
       get running() { return state.running; }, set running(value) { state.running = value; },

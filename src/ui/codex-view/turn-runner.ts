@@ -1,4 +1,5 @@
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
+import { freezeWorkbenchTaskSource } from "../../home/workbench-context";
 import { isPdfReadingIntent } from "../../pdf-reading/intent";
 import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
 import { composerSelectionAnnotations } from "../../selection-ask/draft";
@@ -942,7 +943,9 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   view.applyStatus();
   try {
     const submittedAt = Date.now();
+    const workbenchSource = freezeWorkbenchTaskSource(item.prefillSource);
     handle = await view.plugin.submitPiChat({
+      ...(workbenchSource ? { workbenchSource } : {}),
       ...(item.resumeContext ? { resumeContext: item.resumeContext } : {}),
       signal: submissionSignal,
       conversationId: session.id,
@@ -1020,7 +1023,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     view.activeRunKind = "chat";
     view.activeRunSessionId = session.id;
     view.activeTurnId = handle.productRunId;
-    view.onPiRunAccepted?.(item);
+    await view.onPiRunAccepted?.(item);
     liveProjection = piChatLiveProjectionFromSession(
       session,
       handle,
