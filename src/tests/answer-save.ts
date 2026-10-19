@@ -20,6 +20,12 @@ function answerInput(overrides: Partial<AnswerSaveInput> = {}): AnswerSaveInput 
   };
 }
 
+function expectedLocalTime(date: Date): string {
+  return new Intl.DateTimeFormat("sv-SE", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  }).format(date);
+}
+
 async function diskVault(root: string) {
   await fs.mkdir(root, { recursive: true });
   const entries = new Map<string, TFile | TFolder>();
@@ -116,8 +122,8 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
       const frontmatterEnd = content.indexOf("\n---\n", 4);
       const properties = parse(content.slice(4, frontmatterEnd));
       assert.deepEqual(properties, { 类型: "摘录", 提问: question, 来源对话: "知识整理 (conversation-123)",
-        来源: ["[[资料/原文.md]]", "[[资料/第二篇.md]]"], 保存时间: "2026-10-19T08:09:10.000Z" });
-      assert.equal(content.slice(frontmatterEnd + 5), `\n${answerMarkdown}\n\n## 来源\n- [[资料/原文.md]]\n- [[资料/第二篇.md]]\n`);
+        来源: ["[[资料/原文]]", "[[资料/第二篇]]"], 保存时间: expectedLocalTime(input.savedAt!) });
+      assert.equal(content.slice(frontmatterEnd + 5), `\n${answerMarkdown}\n\n## 来源\n- [[资料/原文]]\n- [[资料/第二篇]]\n`);
       assert.equal(plugin.settings.defaultPermission, "read-only");
       assert.deepEqual(writes, { folders: 1, files: 1 });
       assert.equal(networkCalls, 0);
@@ -185,13 +191,51 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
           const match = /^\[\[([^\r\n]+)\]\]$/u.exec(link);
           assert(match, "each saved source must be a complete wikilink");
           // Obsidian resolves the literal link path, with # and | reserved for subpath/alias.
-          const target = vault.getAbstractFileByPath(match[1].split("|")[0].split("#")[0]);
+          const linkPath = match[1].split("|")[0].split("#")[0];
+          const target = vault.getAbstractFileByPath(linkPath) ?? vault.getAbstractFileByPath(`${linkPath}.md`);
           assert(target instanceof TFile, "the saved link must resolve to a real source file");
           return target;
         });
         assert.deepEqual(targets.map(target => target.path), sourcePaths);
         assert.deepEqual(await Promise.all(targets.map(target => read(target.path))),
           ["LITERAL PERCENT SOURCE", "LITERAL PERCENT ESCAPE SOURCE"]);
+      }
+    });
+
+    await test("Markdown links omit .md while Canvas and other file extensions resolve unchanged", async ({ vault, seedFolder, seedFile, read }) => {
+      await seedFolder("成果/输出");
+      const sourcePaths = ["资料/原文.md", "资料/图谱.md.canvas", "资料/附件.pdf"];
+      for (const source of sourcePaths) await seedFile(source, `SOURCE ${source}`);
+      const saved = await saveAnswerAsNote(vault, answerInput({ sourcePaths }));
+      const content = await read(saved);
+      const properties = parse(content.slice(4, content.indexOf("\n---\n", 4)));
+      const bodyLinks = content.slice(content.indexOf("\n## 来源\n")).split("\n")
+        .filter(line => line.startsWith("- ")).map(line => line.slice(2));
+      for (const links of [properties.来源 as string[], bodyLinks]) {
+        assert.deepEqual(links, ["[[资料/原文]]", "[[资料/图谱.md.canvas]]", "[[资料/附件.pdf]]"]);
+        const targets = links.map(link => {
+          const linkPath = link.slice(2, -2);
+          const target = vault.getAbstractFileByPath(linkPath) ?? vault.getAbstractFileByPath(`${linkPath}.md`);
+          assert(target instanceof TFile);
+          return target;
+        });
+        assert.deepEqual(targets.map(target => target.path), sourcePaths);
+        assert.deepEqual(await Promise.all(targets.map(target => read(target.path))), sourcePaths.map(source => `SOURCE ${source}`));
+      }
+    });
+
+    const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    await test(`saved time follows local ${timeZone} across midnight and daylight saving changes`, async ({ vault, seedFolder, read }) => {
+      await seedFolder("成果/输出");
+      for (const sample of [
+        { instant: "2026-10-19T06:09:59.000Z", local: { "America/Los_Angeles": "2026-10-18 23:09", "Asia/Shanghai": "2026-10-19 14:09" } },
+        { instant: "2026-12-31T20:04:59.000Z", local: { "America/Los_Angeles": "2026-12-31 12:04", "Asia/Shanghai": "2027-01-01 04:04" } }
+      ]) {
+        const savedAt = new Date(sample.instant);
+        const content = await read(await saveAnswerAsNote(vault, answerInput({ savedAt })));
+        const properties = parse(content.slice(4, content.indexOf("\n---\n", 4)));
+        const expected = (sample.local as Record<string, string>)[timeZone] ?? expectedLocalTime(savedAt);
+        assert.equal(properties.保存时间, expected);
       }
     });
 

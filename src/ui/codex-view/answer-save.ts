@@ -61,8 +61,14 @@ function sourceLinks(paths: readonly string[]): string[] {
       throw new Error(`来源路径含有无法用于 Obsidian 双链的字符，请先重命名来源笔记或文件夹：${path}`);
     }
     // Wikilinks resolve literal Vault paths; URI encoding would point at a different file.
-    return `[[${path}]]`;
+    return `[[${path.replace(/\.md$/iu, "")}]]`;
   });
+}
+
+function localSaveTime(date: Date): string {
+  if (!Number.isFinite(date.getTime())) throw new RangeError("Invalid time value");
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${String(date.getFullYear()).padStart(4, "0")}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function noteMarkdown(input: AnswerSaveInput): string {
@@ -75,7 +81,7 @@ function noteMarkdown(input: AnswerSaveInput): string {
     `提问: ${JSON.stringify(input.question)}`,
     `来源对话: ${JSON.stringify(conversation)}`,
     links.length ? `来源:\n${links.map(link => `  - ${JSON.stringify(link)}`).join("\n")}` : "来源: []",
-    `保存时间: ${JSON.stringify((input.savedAt ?? new Date()).toISOString())}`,
+    `保存时间: ${JSON.stringify(localSaveTime(input.savedAt ?? new Date()))}`,
     "---"
   ].join("\n");
   return `${properties}\n\n${input.answerMarkdown}\n\n## 来源\n${links.map(link => `- ${link}\n`).join("")}`;
