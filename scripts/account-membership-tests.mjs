@@ -1,23 +1,32 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, realpath, mkdtemp } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
+import os from "node:os";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
 // Reuse an existing DOM runtime; this test adds no production dependency.
 const { JSDOM } = require(process.env.ECHOINK_JSDOM_PATH || "jsdom");
-const directory = path.join(root, ".tmp/account-membership");
-await mkdir(directory, { recursive: true });
+if (!process.env.ECHOINK_ACCOUNT_TEST_ROOT) throw new Error("Explicit ECHOINK_ACCOUNT_TEST_ROOT is required");
+const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
+const requested = path.resolve(process.env.ECHOINK_ACCOUNT_TEST_ROOT);
+if (!requested.startsWith(allowed + path.sep)) throw new Error("Use disposable test Vaults");
+await mkdir(requested, { recursive: true });
+const fixture = await realpath(requested);
+if (!fixture.startsWith(allowed + path.sep)) throw new Error("Fixture symlink leaves disposable test Vaults");
+const directory = await mkdtemp(path.join(fixture, "account-membership-"));
 try {
   const entry = path.join(directory, "test.mjs");
   await esbuild.build({
     entryPoints: ["src/tests/account-membership.ts"], absWorkingDir: root,
     bundle: true, platform: "node", target: "node22", format: "esm", outfile: entry, sourcemap: "inline",
-    banner: { js: 'import {createRequire} from "node:module"; const require = createRequire(import.meta.url);' },
+    banner: { js: `import {createRequire} from "node:module"; const require = createRequire(${JSON.stringify(path.join(root, 'package.json'))});` },
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
-    external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml"],
+    plugins: [{ name: "package-location", setup(build) {
+      build.onResolve({ filter: /^(@earendil-works\/pi-(agent-core|ai|coding-agent)(\/|$)|yaml$)/ }, args => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true }));
+    } }],
     alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") },
     logLevel: "silent"
   });

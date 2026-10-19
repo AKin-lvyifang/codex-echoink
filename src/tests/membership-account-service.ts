@@ -33,7 +33,7 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
       calls.push(path);
       if (offline) throw new Error("OFFLINE");
       if (path === "/api/auth/logout") return {};
-      if (path === "/api/auth/login") return { token: body.email.startsWith("B") ? "B" : "A" };
+      if (path === "/api/auth/login" || path === "/api/auth/password") return { token: body.email.startsWith("B") ? "B" : "A" };
       if (path === "/api/account") return account(token);
       if (path === "/api/products") return { products: [] };
       if (path === "/api/membership") {
@@ -191,6 +191,25 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     assert.ok(!unreadable.calls.includes("/api/devices/activate"));
     assert.deepEqual(unreadable.bindings(), ["A"]);
   } finally { unreadable.service.dispose(); }
+
+  const passwordRotation = await fixture({ active: true, bound: true });
+  try {
+    const observed: { email: string | null; authorized: boolean }[] = [];
+    const unsubscribe = passwordRotation.service.subscribe(() => observed.push({
+      email: passwordRotation.service.read().identity?.email ?? null,
+      authorized: passwordRotation.service.checkCapability("finance.export")
+    }));
+    await passwordRotation.service.actions.setPassword!({ email: "A@example.test", code: "123456", next: "synthetic-password-only" });
+    assert.ok(observed.length > 0);
+    assert.ok(observed.every(value => value.email === "A@example.test"), "same-account password rotation never emits a fake sign-out that would destroy profile drafts");
+    assert.ok(observed.some(value => !value.authorized), "identity continuity does not retain stale authorization");
+    observed.length = 0;
+    await passwordRotation.service.actions.resetPassword!({ email: "B@example.test", code: "123456", next: "synthetic-password-only" });
+    assert.ok(observed.some(value => value.email === null), "a different-account reset clears the previous identity immediately");
+    assert.ok(observed.every(value => value.email !== "A@example.test"));
+    assert.equal(passwordRotation.service.read().identity?.email, "B@example.test");
+    unsubscribe();
+  } finally { passwordRotation.service.dispose(); }
 
   const switched = await fixture();
   try {

@@ -14,6 +14,7 @@ import { BUILT_IN_JOURNAL_TEMPLATES } from "../home/home-workbench-model";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import { mountAccountMembership } from "./account-membership";
+import { mountDesktopAccountMembership, type DesktopAccountMembershipHandle } from "./desktop-account-membership";
 import { createUnavailableAccountAdapter } from "./account-membership-model";
 import { renderTavilySettings, renderProviderTabs } from "./tavily-settings";
 import { renderTodoStatistics } from "./todo-statistics";
@@ -322,6 +323,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private onboardingRefreshGeneration = 0;
   private developerPanel: DeveloperModePanel | null = null;
   private accountPage: { dispose: () => void } | null = null;
+  private desktopAccount: DesktopAccountMembershipHandle | null = null;
   private disposeTodoStatistics: (() => void) | null = null;
   private disposeTodoReminders: (() => void) | null = null;
   private disposeDiaryActivity: (() => void) | null = null;
@@ -353,6 +355,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
   openDesktopRoute(route: DesktopSettingsRoute): void {
     if (!Platform.isDesktopApp) return;
+    if (this.leaveDesktopAccount(() => this.openDesktopRoute(route))) return;
     if (this.leaveDesktopAgentDetail(() => this.openDesktopRoute(route))) return;
     if (this.desktopSelection?.controller?.hasUnsavedChanges()) { this.desktopSelection.controller.requestBack(() => { this.clearDesktopSelection(); this.openDesktopRoute(route); }); return; }
     if (this.desktopKnowledge?.isDetail) { this.desktopKnowledge.requestLeave(() => this.openDesktopRoute(route)); return; }
@@ -553,7 +556,8 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private hasDesktopCloseDraft(): boolean {
     return !this.settingsViewUnloaded && Platform.isDesktopApp && Boolean(
-      this.desktopSelection?.controller?.hasUnsavedChanges() || this.desktopKnowledge?.hasDraft
+      this.desktopAccount?.hasDraft || this.desktopAccount?.submitting
+      || this.desktopSelection?.controller?.hasUnsavedChanges() || this.desktopKnowledge?.hasDraft
       || this.desktopAgents?.hasDraft || this.desktopAgents?.submitting || this.desktopProfile?.hasDraft || this.desktopProfile?.submitting
       || this.desktopCorrection?.controller.hasDraft || this.desktopCorrection?.controller.submitting || this.desktopMemory?.submitting
       || this.settingsDetail === "knowledge-preferences" && knowledgeMaintenancePreferenceIsDirty(this.knowledgePreferenceEditor)
@@ -583,9 +587,10 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private disposeSettingsView(): void {
     this.desktopModuleCleanup?.(); this.desktopModuleCleanup = null;
-    this.desktopMemory?.suspend();
+    this.desktopMemory?.suspend(); this.desktopAccount?.suspend();
     this.desktopAgents?.suspend(); this.desktopProfile?.suspend(); this.desktopCorrection?.controller.suspend();
     if (!this.preserveDesktopCloseDraft) {
+      this.desktopAccount?.dispose(); this.desktopAccount = null;
       this.desktopAgents?.dispose(); this.desktopAgents = null;
       this.desktopProfile?.dispose(); this.desktopProfile = null; this.desktopProfileOpen = false;
       this.desktopCorrection?.controller.close(); this.desktopCorrection = null;
@@ -689,7 +694,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.captureModuleInputs();
     this.knowledgeLinkingCleanup?.(); this.knowledgeLinkingCleanup = null;
     this.desktopModuleCleanup?.(); this.desktopModuleCleanup = null;
-    this.desktopKnowledge?.suspend();
+    this.desktopKnowledge?.suspend(); this.desktopAccount?.suspend();
     this.desktopAgents?.suspend(); this.desktopMemory?.suspend(); this.desktopProfile?.suspend(); this.desktopCorrection?.controller.suspend();
     this.membershipRowsDisposers.splice(0).forEach(dispose => dispose());
     this.disposeDiaryActivity?.();
@@ -777,12 +782,16 @@ export class CodexSettingTab extends PluginSettingTab {
           provider && apiProviderHasUsableCredential(provider, this.plugin.settings.openAICodexCredential)
             ? "configured" : "missing"
         );
-        this.accountPage = mountAccountMembership(bodyEl, {
+        const options = {
           app: this.app, viewModel: adapter.read(), actions: adapter.actions,
-          subscribe: adapter.subscribe ? listener => adapter.subscribe!(listener) : undefined, read: () => adapter.read(),
+          subscribe: adapter.subscribe ? (listener: () => void) => adapter.subscribe!(listener) : undefined, read: () => adapter.read(),
           language: this.plugin.settings.settingsLanguage,
-          openProviders: () => { void this.activateSettingsTab("providers", true); }
-        });
+          openProviders: () => { void this.activateSettingsTab(Platform.isDesktopApp ? "models" : "providers", true); }
+        };
+        if (Platform.isDesktopApp) {
+          if (this.desktopAccount) this.desktopAccount.mount(bodyEl);
+          else this.desktopAccount = mountDesktopAccountMembership(bodyEl, options);
+        } else this.accountPage = mountAccountMembership(bodyEl, options);
       } else if (activeTab === "todos") {
         this.renderTodosSettings(bodyEl);
       } else {
@@ -791,7 +800,8 @@ export class CodexSettingTab extends PluginSettingTab {
       if (this.pendingDesktopClosePrompt) {
         this.pendingDesktopClosePrompt = false; this.preserveDesktopCloseDraft = false;
         const leave = () => (this.app as unknown as { setting?: { close?(): void } }).setting?.close?.();
-        if (this.leaveDesktopAgentDetail(leave)) { /* The active form owns its leave prompt. */ }
+        if (this.leaveDesktopAccount(leave)) { /* Account forms preserve their own drafts. */ }
+        else if (this.leaveDesktopAgentDetail(leave)) { /* The active form owns its leave prompt. */ }
         else if (this.desktopSelection?.controller?.hasUnsavedChanges()) this.desktopSelection.controller.requestBack(leave);
         else if (this.desktopKnowledge?.hasDraft) this.desktopKnowledge.requestLeave(leave);
         else if (this.settingsDetail === "knowledge-preferences") void this.confirmKnowledgePreferenceDiscard().then(discard => { if (discard) { this.resetKnowledgePreferenceDraft(); leave(); } });
@@ -1486,6 +1496,14 @@ export class CodexSettingTab extends PluginSettingTab {
     this.renderReviewManagement(page);
     if (!this.archivedConversations && !this.archivedConversationsLoading && !this.archivedConversationsError) void this.loadArchivedConversations();
   }
+  private leaveDesktopAccount(done: () => void): boolean {
+    if (!Platform.isDesktopApp || !this.desktopAccount) return false;
+    this.desktopAccount.requestLeave(() => {
+      this.desktopAccount?.dispose(); this.desktopAccount = null; done();
+    });
+    return true;
+  }
+
   private leaveDesktopAgentDetail(done: () => void): boolean {
     if (!Platform.isDesktopApp) return false;
     if (this.desktopAgents?.isDetail) { this.desktopAgents.requestLeave(done); return true; }
@@ -4007,6 +4025,7 @@ export class CodexSettingTab extends PluginSettingTab {
     focus: boolean
   ): Promise<void> {
     if (this.activeSettingsTab() === tabId && !this.desktopRoute?.section && !this.settingsDetail && !this.desktopKnowledge?.isDetail && !this.desktopAgents?.isDetail && !this.desktopProfileOpen) return;
+    if (this.leaveDesktopAccount(() => { void this.activateSettingsTab(tabId, focus); })) return;
     if (this.leaveDesktopAgentDetail(() => { void this.activateSettingsTab(tabId, focus); })) return;
     if (Platform.isDesktopApp && this.desktopSelection?.controller?.hasUnsavedChanges()) {
       this.desktopSelection.controller.requestBack(() => { this.clearDesktopSelection(); void this.activateSettingsTab(tabId, focus); }); return;

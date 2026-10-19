@@ -3,6 +3,12 @@
 export type MembershipCurrency = "CNY" | "USD";
 export type MembershipPlanId = "early" | "month" | "quarter" | "year";
 
+export interface MembershipProductPricing {
+  readonly id: MembershipPlanId;
+  readonly prices: Readonly<Record<MembershipCurrency, number>>;
+  readonly days: number | null;
+}
+
 export interface MembershipPlanPricing {
   readonly id: MembershipPlanId;
   readonly amountMinor: number;
@@ -34,10 +40,15 @@ const periods: readonly { readonly id: MembershipPlanId; readonly days: number |
   { id: "year", days: 365 }
 ];
 
-export function getMembershipPlanPricing(currency: MembershipCurrency): readonly MembershipPlanPricing[] {
-  const amounts = prices[currency];
-  return periods.map(({ id, days }) => {
-    const amountMinor = amounts[id];
+export function getMembershipPlanPricing(currency: MembershipCurrency, products?: readonly MembershipProductPricing[] | null): readonly MembershipPlanPricing[] {
+  const resolved = periods.map(period => {
+    const product = products?.find(product => product?.id === period.id
+      && Number.isSafeInteger(product.prices?.[currency]) && product.prices[currency] >= 0
+      && (period.days === null ? product.days === null : Number.isSafeInteger(product.days) && product.days! > 0));
+    return { id: period.id, amountMinor: product?.prices[currency] ?? prices[currency][period.id], days: product ? product.days : period.days };
+  });
+  const amounts = Object.fromEntries(resolved.map(plan => [plan.id, plan.amountMinor])) as Record<MembershipPlanId, number>;
+  return resolved.map(({ id, days, amountMinor }) => {
     const comparisonAmountMinor = id === "early" ? amounts.year
       : id === "quarter" ? amounts.month * 3
       : id === "year" ? amounts.month * 12 : null;
@@ -47,7 +58,7 @@ export function getMembershipPlanPricing(currency: MembershipCurrency): readonly
       dailyAmountMinor: days == null ? null : amountMinor / days,
       comparisonAmountMinor,
       savingsAmountMinor,
-      savingsPercent: comparisonAmountMinor == null ? null : Math.round(savingsAmountMinor! / comparisonAmountMinor * 100)
+      savingsPercent: comparisonAmountMinor == null || comparisonAmountMinor <= 0 ? null : Math.round(savingsAmountMinor! / comparisonAmountMinor * 100)
     };
   });
 }

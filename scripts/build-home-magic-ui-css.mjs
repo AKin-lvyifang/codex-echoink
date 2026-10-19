@@ -70,7 +70,8 @@ const boundarySource = await readFile(path.join(rootDir, "src/styles/theme-bound
 const selectionAskSource = await readFile(path.join(rootDir, "src/styles/selection-ask.css"), "utf8");
 const moduleSettingsSource = await readFile(path.join(rootDir, "src/styles/desktop-module-settings.css"), "utf8");
 const knowledgeSettingsSource = await readFile(path.join(rootDir, "src/styles/desktop-knowledge-settings.css"), "utf8");
-const settingsGenerated = [settingsStart, selectionAskSource.trim(), settingsSource.trim(), originSource.trim(), boundarySource.trim(), paperGuideSource.trim(), pdfReadingSource.trim(), moduleSettingsSource.trim(), knowledgeSettingsSource.trim(), settingsEnd].join("\n");
+const accountSettingsSource = await readFile(path.join(rootDir, "src/styles/desktop-account-settings.css"), "utf8");
+const settingsGenerated = [settingsStart, selectionAskSource.trim(), settingsSource.trim(), originSource.trim(), boundarySource.trim(), paperGuideSource.trim(), pdfReadingSource.trim(), moduleSettingsSource.trim(), knowledgeSettingsSource.trim(), accountSettingsSource.trim(), settingsEnd].join("\n");
 const agentStart = "/* ECHOINK_AGENT_WORKBENCH_CSS_START */";
 const agentEnd = "/* ECHOINK_AGENT_WORKBENCH_CSS_END */";
 const agentCss = await Promise.all(["agent-tasks.css", "agent-editor.css", "agent-approval.css", "workbench.css", "journal-page.css", "todo-page.css", "knowledge-page.css", "english-diary-page.css", "pdf-reading-page.css", "module-navigation.css", "agent-settings.css", "user-profile-settings.css"].map(name => readFile(path.join(rootDir, "src/styles", name), "utf8")));

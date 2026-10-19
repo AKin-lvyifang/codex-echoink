@@ -5,8 +5,12 @@ import { createOriginButton, createOriginInput, disposeOriginControls } from "./
 import type { AccountActions, AccountAvatar, AccountMembershipViewModel, AccountRank, MembershipState } from "./account-membership-model";
 import { getMembershipPlanPricing, resolveMembershipCurrency } from "./account-membership-pricing";
 import { MobileViewport } from "../ui/mobile/viewport";
+import { createSettingsNavigationRow, showSettingsInlineConfirmation } from "./settings-v2";
+import { createPluginEditionBadge } from "./plugin-edition-badge";
+import type { DesktopAccountHooks, AccountFormHandle } from "./desktop-account-membership";
 
-type PageOptions = { app: App; viewModel: AccountMembershipViewModel; actions?: AccountActions; language: string; openProviders: () => void; subscribe?: (listener:()=>void)=>()=>void; read?:()=>AccountMembershipViewModel; beginAction?:()=>()=>void; activationNotice?: string; };
+export type AccountMembershipPageOptions = { app: App; viewModel: AccountMembershipViewModel; actions?: AccountActions; language: string; openProviders: () => void; subscribe?: (listener:()=>void)=>()=>void; read?:()=>AccountMembershipViewModel; beginAction?:()=>()=>void; activationNotice?: string; desktopHooks?: DesktopAccountHooks };
+type PageOptions = AccountMembershipPageOptions;
 type Tag = keyof HTMLElementTagNameMap;
 function el<K extends Tag>(parent: HTMLElement, tag: K, cls = "", text = ""): HTMLElementTagNameMap[K] {
   const node = parent.ownerDocument.createElement(tag);
@@ -42,7 +46,7 @@ const stateLabels: Record<MembershipState, [string, string]> = {
 };
 
 /** Same production component is used by the private preview. Samples never enter this module. */
-export function mountAccountMembership(parent: HTMLElement, options: PageOptions): { dispose: () => void } {
+export function mountAccountMembership(parent: HTMLElement, options: PageOptions): { dispose(): void } {
   if (options.subscribe && options.read) {
     let previous = JSON.stringify(options.read()), closed = false;
     let identityKey = options.read().identity?.email ?? null;
@@ -70,6 +74,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     return { dispose: () => { closed = true; unsubscribe(); mounted.dispose(); } };
   }
   const { app, viewModel: vm, openProviders } = options;
+  const desktop = options.desktopHooks;
   const actions = options.actions ?? {};
   const zh = options.language !== "en";
   const t = (cn: string, en: string) => zh ? cn : en;
@@ -93,6 +98,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const modals = new Set<AccountModal>();
   let disposed = false;
   let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+  const codeTimers = new Set<ReturnType<typeof setTimeout>>();
   let finishFeedback: (() => void) | null = null;
   const shortFeedback = () => new Promise<void>(resolve => {
     finishFeedback = resolve;
@@ -110,13 +116,23 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     node.setAttribute("role", state === "error" ? "alert" : "status");
     node.textContent = message;
   };
+  const confirmInline = (host: HTMLElement, trigger: HTMLButtonElement, message: string, label: string, action: () => Promise<void>, saved?: () => void) => {
+    showSettingsInlineConfirmation(host, trigger, { message, confirmLabel: label, cancelLabel: t("取消", "Cancel"), onConfirm: async () => {
+      const release = beginAction();
+      try { await action(); if (!disposed) saved?.(); }
+      catch (error) { if (!disposed) { const status = el(host, "p", "activation-feedback"); feedbackState(status, "error", error instanceof Error ? error.message : t("操作失败，请重试", "Unable to complete the action")); } }
+      finally { release(); }
+    } });
+    host.querySelector(".echoink-settings-inline-confirm")?.scrollIntoView?.({ block: "nearest" });
+  };
   let heatFrame: number | null = null;
+  const view = page.ownerDocument.defaultView;
   const number = (n: number | null | undefined) => n == null ? "—" : n.toLocaleString(zh ? "zh-CN" : "en-US");
   const wireCode=(send:HTMLButtonElement,address:()=>string,purpose:"login"|"password-set"|"password-reset",parent:HTMLElement)=>{
     const feedback=el(parent,"div","activation-feedback");feedbackState(feedback,"status","");
-    send.onclick=async()=>{if(send.disabled||!actions.requestCode)return;send.disabled=true;feedbackState(feedback,"loading","");try{await actions.requestCode({email:address().trim(),purpose});feedbackState(feedback,"success",t("验证码已发送，请查收邮箱。","Code sent. Check your email."));setTimeout(()=>{if(send.isConnected&&!disposed)send.disabled=false;},60000);}catch(error){feedbackState(feedback,"error",error instanceof Error?error.message:t("发送失败，请重试。","Could not send. Try again."));send.disabled=false;}};
+    send.onclick=async()=>{if(send.disabled||!actions.requestCode)return;send.disabled=true;feedbackState(feedback,"loading","");try{await actions.requestCode({email:address().trim(),purpose});feedbackState(feedback,"success",t("验证码已发送，请查收邮箱。","Code sent. Check your email."));const timer=setTimeout(()=>{codeTimers.delete(timer);if((desktop||send.isConnected)&&!disposed)send.disabled=false;},60000);if(desktop)codeTimers.add(timer);}catch(error){feedbackState(feedback,"error",error instanceof Error?error.message:t("发送失败，请重试。","Could not send. Try again."));send.disabled=false;}};
   };
-  const unavailable = t("即将开放", "Coming soon");
+  const unavailable = desktop && !vm.serviceAvailable ? t("服务暂不可用", "Service unavailable") : t("即将开放", "Coming soon");
   const missing = t("暂无统计", "No statistics");
   const valid = ["active", "lifetime", "offline-valid"].includes(vm.membership.state);
   const currentPlanId = vm.membership.planId ?? (vm.membership.state === "lifetime" ? "early" : null);
@@ -129,9 +145,14 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     draft.ownedUrl = null;
   };
   const clearDraft = () => { if (profileDraft) revokeImage(profileDraft); profileDraft = undefined; };
-  const show = (title: string, render: (body: HTMLElement, modal: AccountModal) => void, keepDraft = false) => {
+  const show = (title: string, render: (body: HTMLElement, modal: AccountFormHandle) => void, keepDraft = false) => {
     if (disposed) return;
     hideTip();
+    if (desktop) {
+      if (!keepDraft) clearDraft();
+      desktop.openForm(title, render, keepDraft, preserve => { if (!preserve) clearDraft(); });
+      return;
+    }
     replacingModal = keepDraft;
     for (const previous of [...modals]) previous.close();
     replacingModal = false;
@@ -145,10 +166,11 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     const inputLabel = el(row, "label", "", label);
     const inputHost = inputGroup ? el(row, "div", "input-action") : row;
     const input = createOriginInput(inputHost, { cls: "form-input", attr: { type, autocomplete: type === "password" ? "off" : type === "email" ? "email" : "off" }, value });
+    if (desktop) input.addEventListener("input", () => desktop.draftChanged());
     input.id = `echoink-account-field-${++fieldSequence}`; inputLabel.htmlFor = input.id;
     return input;
   };
-  const submit = (form: HTMLFormElement, label: string, callback: (() => Promise<void>) | undefined, modal: AccountModal) => {
+  const submit = (form: HTMLFormElement, label: string, callback: (() => Promise<void>) | undefined, modal: AccountFormHandle) => {
     const status = el(form, "p", "dialog-footnote");
     status.setAttribute("role", "status");
     const controls = el(form, "div", "dialog-actions");
@@ -161,9 +183,10 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       if (!form.reportValidity()) return;
       save.disabled = true;
       const release = beginAction();
-      try { await callback(); if (!disposed && form.isConnected) modal.close(); }
-      catch (error) { if (form.isConnected) { status.classList.add("form-error"); status.textContent = error instanceof Error ? error.message : t("操作失败，请重试", "Unable to complete the action"); save.disabled = false; } }
-      finally { form.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach(input => input.value = ""); release(); }
+      let succeeded = false;
+      try { await callback(); succeeded = true; if (!disposed && (desktop || form.isConnected)) { desktop?.committed(); modal.close(); } }
+      catch (error) { if (!disposed && (desktop || form.isConnected)) { status.classList.add("form-error"); status.textContent = error instanceof Error ? error.message : t("操作失败，请重试", "Unable to complete the action"); save.disabled = false; } }
+      finally { if (!desktop || succeeded) form.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach(input => input.value = ""); release(); }
     };
   };
   const password = (reset: boolean, draft?: ProfileDraft, emailValue = vm.identity?.email ?? "") => show(
@@ -207,7 +230,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
         };
       };
       button(controls, t("选择图片", "Choose image"), "secondary", () => file.click());
-      button(controls, t("恢复默认", "Reset avatar"), "quiet", () => { revokeImage(selected); selected.imageUrl = null; selected.avatar = null; file.value = ""; error.textContent = ""; paint(); });
+      button(controls, t("恢复默认", "Reset avatar"), "quiet", () => { revokeImage(selected); selected.imageUrl = null; selected.avatar = null; file.value = ""; error.textContent = ""; desktop?.draftChanged(); paint(); });
       el(controls, "small", "muted", t("PNG、JPEG 或 WebP，最大 5MB", "PNG, JPEG or WebP, up to 5MB"));
       file.onchange = () => {
         const image = file.files?.[0]; file.value = "";
@@ -216,13 +239,15 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
           error.textContent = t("请选择不超过 5MB 的 PNG、JPEG 或 WebP 图片", "Choose a PNG, JPEG or WebP image up to 5MB"); return;
         }
         const url = page.ownerDocument.defaultView!.URL.createObjectURL(image);
-        revokeImage(selected); selected.avatar = image; selected.imageUrl = selected.ownedUrl = url; error.textContent = ""; paint();
+        revokeImage(selected); selected.avatar = image; selected.imageUrl = selected.ownedUrl = url; error.textContent = ""; desktop?.draftChanged(); paint();
       };
       const name = field(form, t("昵称", "Nickname"), "text", selected.name); name.required = true; name.maxLength = 80;
       name.oninput = () => { selected.name = name.value; paint(); };
+      if (desktop && vm.identity!.joinedAt) copy(form, `${t("注册时间", "Joined")}：${vm.identity!.joinedAt}`);
       const row = el(form, "div", "password-setting"); const label = el(row, "div");
-      el(label, "strong", "", t("登录密码", "Login password")); el(label, "p", "", vm.identity!.passwordSet ? t("已设置", "Set") : t("尚未设置", "Not set"));
-      button(row, vm.identity!.passwordSet ? t("修改密码", "Change password") : t("设置密码", "Set password"), "secondary", () => password(false, selected));
+      el(label, "strong", "", t("登录密码", "Login password")); const passwordState = el(label, "p", "", vm.identity!.passwordSet ? t("已设置", "Set") : t("尚未设置", "Not set"));
+      const passwordAction = button(row, vm.identity!.passwordSet ? t("修改密码", "Change password") : t("设置密码", "Set password"), "secondary", () => password(false, selected));
+      if (desktop) { passwordState.dataset.accountPasswordState = ""; passwordAction.dataset.accountPasswordAction = ""; }
       paint();
       submit(form, t("保存资料", "Save profile"), actions.saveProfile && (() => actions.saveProfile!({ name: name.value.trim(), avatar: selected.avatar })), modal);
     }, !!draft);
@@ -252,28 +277,44 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     else if (!vm.membership.devices.length) copy(body, t("暂无已激活设备", "No activated devices"));
     for (const device of vm.membership.devices ?? []) {
       const row = el(body, "div", "device-row"); const info = el(row, "div"); el(info, "strong", "", device.name); el(info, "small", "", device.description);
-      if(actions.renameDevice) button(row,t("改名","Rename"),"quiet",()=>{const form=el(body,"form");const name=field(form,t("设备名称","Device name"),"text",device.name);name.maxLength=80;submit(form,t("保存名称","Save name"),()=>actions.renameDevice!(device.id,name.value),modal);});
+      if(actions.renameDevice) button(row,t("改名","Rename"),"quiet",()=>{const form=el(desktop ? row : body,"form");const name=field(form,t("设备名称","Device name"),"text",device.name);name.maxLength=80;submit(form,t("保存名称","Save name"),()=>actions.renameDevice!(device.id,name.value),modal);});
       const remove = button(row, device.current ? t("解绑本机", "Remove this device") : t("解绑", "Remove"), "secondary");
       remove.disabled = !vm.serviceAvailable || !actions.removeDevice;
-      remove.onclick = () => { if (!remove.disabled) { const form = el(body, "form"); submit(form, t("确认解绑", "Confirm removal"), () => actions.removeDevice!(device.id), modal); } };
+      remove.onclick = () => { if (!remove.disabled) {
+        if (desktop) confirmInline(row, remove, device.current ? t("解绑本机后需要重新激活，当前库内容会保留。", "This device will need activation again. Vault content remains.") : t("解绑此设备，当前库内容会保留。", "Remove this device. Vault content remains."), t("确认解绑", "Confirm removal"), () => actions.removeDevice!(device.id), () => { desktop.committed(); modal.close(); });
+        else { const form = el(body, "form"); submit(form, t("确认解绑", "Confirm removal"), () => actions.removeDevice!(device.id), modal); }
+      } };
     }
   });
 
   if(vm.storageNotice) copy(page,vm.storageNotice);
   const profileSection = el(page, "section", "profile-section"); profileSection.setAttribute("aria-label", t("个人资料", "Profile"));
+  if (desktop) { profileSection.classList.add("desktop-account-header"); profileSection.dataset.accountSection = "identity"; }
+  if (desktop && !vm.serviceAvailable) {
+    const status = el(profileSection, "p", "activation-feedback");
+    feedbackState(status, "error", t("账号服务暂时不可用，请稍后重试。", "Account service is unavailable. Try again later."));
+  }
   const profileCopy = el(profileSection, "div", "profile-copy");
   const profileActions = el(profileSection, "div", "profile-actions");
+  let identityCopy: HTMLElement | null = null;
   if (vm.identity) {
     renderAvatar(profileCopy, vm.identity.avatar, vm.identity.name);
-    const identity = el(profileCopy, "div"); const line = el(identity, "div", "name-line");
+    const identity = el(profileCopy, "div"); identityCopy = identity; const line = el(identity, "div", "name-line");
     el(line, "h2", "", vm.identity.name);
-    const hasPro = retainedMembership || vm.membership.state === "scheduled";
+    const hasPro = desktop ? valid : retainedMembership || vm.membership.state === "scheduled";
     const expired = ["expired", "revoked"].includes(vm.membership.state);
-    el(line, "span", `badge${expired ? " expired" : hasPro ? " pro" : ""}`, expired ? stateLabels[vm.membership.state][zh ? 0 : 1] : hasPro ? "✧ PRO" : t("基础版", "Free"));
+    if (desktop && valid) createPluginEditionBadge(line, "pro", zh ? "zh-CN" : "en");
+    else el(line, "span", `badge${expired ? " expired" : hasPro ? " pro" : ""}`, expired ? stateLabels[vm.membership.state][zh ? 0 : 1] : hasPro ? "✧ PRO" : desktop && !["free", "anonymous"].includes(vm.membership.state) ? stateLabels[vm.membership.state][zh ? 0 : 1] : t("基础版", "Free"));
     el(identity, "p", "", vm.identity.email);
-    if (vm.identity.joinedAt) el(identity, "span", "muted", vm.identity.joinedAt);
+    if (vm.identity.joinedAt && !desktop) el(identity, "span", "muted", vm.identity.joinedAt);
     button(profileActions, t("编辑资料", "Edit profile"), "secondary", () => profile());
-    button(profileActions, t("退出登录", "Sign out"), "quiet", () => show(t("退出登录", "Sign out"), (body, modal) => { const form = el(body, "form"); submit(form, t("退出登录", "Sign out"), actions.signOut, modal); }));
+    const signOut = button(profileActions, t("退出登录", "Sign out"), "quiet");
+    signOut.disabled = !actions.signOut || !vm.serviceAvailable;
+    signOut.onclick = () => {
+      if (signOut.disabled) return;
+      if (desktop) confirmInline(profileSection, signOut, t("退出登录不会删除当前库内容。", "Signing out will not delete vault content."), t("退出登录", "Sign out"), actions.signOut!);
+      else show(t("退出登录", "Sign out"), (body, modal) => { const form = el(body, "form"); submit(form, t("退出登录", "Sign out"), actions.signOut, modal); });
+    };
   } else {
     const identity = el(profileCopy, "div"); el(identity, "h2", "", t("未登录", "Signed out"));
     button(profileActions, t("登录 / 注册", "Sign in / register"), "primary account-login-action", () => login());
@@ -282,16 +323,25 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const heading = (parent: HTMLElement, title: string, caption?: string) => {
     const row = el(parent, "div", "section-heading"); el(row, "h2", "", title); if (caption) el(row, "span", "muted", caption); return row;
   };
-  const overview = heading(page, t("我的使用概览", "My usage"));
+  const usage = desktop ? el(page, "section", "desktop-account-usage") : page;
+  if (desktop) usage.dataset.accountSection = "usage";
+  const overview = heading(usage, desktop ? t("我的使用", "My usage") : t("我的使用概览", "My usage"));
   overview.classList.add("account-overview-heading");
-  const scope = el(overview, "div", "scope", t("当前 Vault · 本地", "This vault · local"));
-  const statsInfo = button(scope, "", "icon-button", () => show(t("统计口径", "About statistics"), body => {
+  const scope = el(overview, "div", "scope", desktop ? t("当前 Vault · 本地统计", "This vault · local statistics") : t("当前 Vault · 本地", "This vault · local"));
+  const renderStatistics = (body: HTMLElement) => {
     copy(body, t("统计保存在当前知识库，不依赖登录或会员。从启用统计之日起记录，此前历史不补算。", "Statistics stay in this vault and work without an account or membership. Recording starts when statistics are enabled; earlier activity is not reconstructed."));
     copy(body, t("所有模型调用统一按 EchoInk 的 o200k 标准估算实际输入与可见输出。工具往返产生的每次追加调用分别累加。", "EchoInk uses the same o200k standard to estimate the actual input and visible output of every model call. Each additional call in a tool exchange is counted separately."));
     copy(body, t("图片和文档按可见内容近似估算，不含厂商未返回的隐藏思考；这里的数字不代表厂商计费账单。", "Images and documents are approximated from available content. Hidden reasoning that the provider does not return is excluded. These estimates are not a provider billing statement."));
     copy(body, t("完成的对话轮次按已完成的用户对话统计，一轮中的多次模型调用仍只算一轮。连续使用按完成对话的日期统计。", "Completed turns count finished user turns. Multiple model calls within one turn still count as one turn. Streaks are based on days with completed conversations."));
-  })); icon(statsInfo, "circle-help"); statsInfo.setAttribute("aria-label", t("查看统计口径", "About statistics"));
-  const metrics = el(page, "section", "metrics");
+  };
+  const statisticsNotes = desktop ? el(usage, "div", "desktop-account-statistics-notes") : null;
+  if (statisticsNotes) { statisticsNotes.hidden = true; renderStatistics(statisticsNotes); }
+  const statsInfo = button(scope, desktop ? t("查看统计口径", "About statistics") : "", desktop ? "quiet" : "icon-button", () => {
+    if (statisticsNotes) { statisticsNotes.hidden = !statisticsNotes.hidden; statsInfo.setAttribute("aria-expanded", String(!statisticsNotes.hidden)); }
+    else show(t("统计口径", "About statistics"), renderStatistics);
+  }); if (!desktop) icon(statsInfo, "circle-help"); statsInfo.setAttribute("aria-label", t("查看统计口径", "About statistics")); statsInfo.dataset.accountStatistics = "";
+  if (desktop) statsInfo.setAttribute("aria-expanded", "false");
+  const metrics = el(usage, "section", "metrics");
   const stats = vm.statistics;
   const metricRows = [
     [t("累计估算 Token", "Total estimated tokens"), stats.totalTokens, ""],
@@ -307,6 +357,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     if (value == null) el(card, "small", "", t("暂无统计", "No statistics"));
   }
 
+  if (!desktop) {
   const activity = el(page, "section", "panel activity-panel");
   const activityHead = el(activity, "div", "section-heading compact account-activity-heading"); const activityTitle = el(activityHead, "div", "heading-inline"); el(activityTitle, "h3", "", t("使用足迹", "Activity")); el(activityTitle, "span", "muted", stats.coverage ?? missing);
   const segments = el(activityHead, "div", "segments"); let heatMode: "tokens" | "turns" = "tokens";
@@ -350,28 +401,46 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     scroll.scrollLeft = previousScroll;
   };
   changeHeat("tokens");
-  const view = page.ownerDocument.defaultView; if (view) heatFrame = view.requestAnimationFrame(() => { heatFrame = null; if (!disposed) scroll.scrollLeft = scroll.scrollWidth; });
+  if (view) heatFrame = view.requestAnimationFrame(() => { heatFrame = null; if (!disposed) scroll.scrollLeft = scroll.scrollWidth; });
+  }
 
-  const preferencesHead = heading(page, t("使用偏好", "Usage preferences")); const ranges = el(preferencesHead, "div", "segments");
-  const preferences = el(page, "div", "two-columns preferences");
-  const modelCard = el(preferences, "section", "panel"), skillCard = el(preferences, "section", "panel");
+  const hasModels = [30, 90, "all"].some(range => stats.rankings[range as 30 | 90 | "all"]?.models.length);
+  if (!desktop || hasModels) {
+  const more = desktop ? el(usage, "details", "desktop-account-more-usage") : page;
+  if (desktop) el(more, "summary", "", t("更多使用数据", "More usage data"));
+  const preferencesHead = heading(more, desktop ? t("常用模型", "Models") : t("使用偏好", "Usage preferences")); const ranges = el(preferencesHead, "div", "segments");
+  const preferences = el(more, "div", desktop ? "preferences" : "two-columns preferences");
+  const modelCard = el(preferences, "section", "panel model-rank-card"), skillCard = desktop ? null : el(preferences, "section", "panel");
   const rank = (card: HTMLElement, title: string, rows?: readonly AccountRank[]) => {
-    card.replaceChildren(); const titleRow = el(card, "div", "section-heading compact"); el(titleRow, "h3", "", title); el(titleRow, "span", "muted", t("按使用次数", "By usage count"));
+    card.replaceChildren(); const titleRow = el(card, "div", "section-heading compact"); if (!desktop) el(titleRow, "h3", "", title); el(titleRow, "span", "muted", t("按使用次数", "By usage count"));
     const list = el(card, "div", "rank-list"); if (!rows?.length) { el(list, "p", "muted", missing); return; }
     const total = rows.reduce((sum, row) => sum + row.count, 0); const max = Math.max(1, ...rows.map(row => row.count));
     for (const item of rows) { const row = el(list, "div", "rank-row"); el(row, "div", "rank-icon", item.name.slice(0, 1)); el(row, "span", "rank-title", item.name); el(row, "span", "rank-count", `${number(item.count)} ${t("次", "uses")} · ${Math.round(item.count / Math.max(1, total) * 100)}%`); el(el(row, "div", "rank-bar"), "i").style.width = `${item.count / max * 100}%`; }
   };
   const rangeButtons: HTMLButtonElement[] = [];
-  const changeRange = (range: 30 | 90 | "all") => { rangeButtons.forEach((node, index) => node.setAttribute("aria-pressed", String([30, 90, "all"][index] === range))); rank(modelCard, t("常用模型", "Models"), stats.rankings[range]?.models); rank(skillCard, t("常用 Skill", "Skills"), stats.rankings[range]?.skills); };
-  for (const range of [30, 90, "all"] as const) rangeButtons.push(button(ranges, range === "all" ? t("全部", "All") : t(`近 ${range} 天`, `${range} days`), "quiet", () => changeRange(range)));
+  const changeRange = (range: 30 | 90 | "all") => { rangeButtons.forEach((node, index) => node.setAttribute("aria-pressed", String([30, 90, "all"][index] === range))); rank(modelCard, t("常用模型", "Models"), stats.rankings[range]?.models); if (skillCard) rank(skillCard, t("常用 Skill", "Skills"), stats.rankings[range]?.skills); };
+  for (const range of [30, 90, "all"] as const) { const rangeButton = button(ranges, range === "all" ? t("全部", "All") : t(`近 ${range} 天`, `${range} days`), "quiet", () => changeRange(range)); rangeButton.dataset.usageRange = String(range); rangeButtons.push(rangeButton); }
   changeRange(30);
+  }
+  if (!desktop) {
   const assets = el(page, "section", "panel assets-panel"); const assetTitle = el(assets, "div", "section-heading compact"); el(assetTitle, "h3", "", t("我的知识资产", "Knowledge assets")); el(assetTitle, "span", "muted", t("当前 Vault", "This vault"));
   const assetGrid = el(assets, "div", "assets-grid");
   for (const [key, name, nameEn, symbol] of [["notes", "笔记", "Notes", "file-text"], ["knowledge", "知识条目", "Knowledge", "book-text"], ["memory", "个人记忆", "Memories", "layers"], ["expressions", "表达收藏", "Expressions", "feather"]] as const) {
     const asset = button(assetGrid, "", "asset", () => show(t(name, nameEn), body => copy(body, t("请从对应功能入口查看已有内容。", "View your content through its feature entry.")))); icon(asset, symbol); const label = el(asset, "span"); el(label, "strong", "", number(stats.assets[key])); el(label, "small", "", t(name, nameEn)); icon(asset, "chevron-right", "chevron"); asset.setAttribute("aria-label", `${t(name, nameEn)} · ${stats.assets[key] == null ? t("暂无统计", "No statistics") : number(stats.assets[key])}`);
   }
-  const membership = el(page, "section", "membership-section"); heading(membership, t("订阅管理", "Subscription"));
-  const panel = el(membership, "div", "panel membership-panel"); const summary = el(panel, "div", "membership-summary"); icon(summary, "feather", "membership-symbol"); const memberCopy = el(summary, "div", "membership-copy"); const nameLine = el(memberCopy, "div", "name-line"); el(nameLine, "h3", "", retainedMembership ? "EchoInk PRO" : t("EchoInk 基础版", "EchoInk Free")); el(nameLine, "span", `badge${valid ? " pro" : ["expired", "revoked"].includes(vm.membership.state) ? " expired" : ""}`, (stateLabels[vm.membership.state] ?? stateLabels["verification-required"])[zh ? 0 : 1]);
+  }
+  const membership = el(page, "section", desktop ? "desktop-account-plans" : "membership-section");
+  if (desktop) membership.dataset.accountSection = "plans";
+  const plansHeading = heading(membership, desktop ? t("购买方案", "Plans") : t("订阅管理", "Subscription"));
+  if (desktop) plansHeading.classList.add("desktop-account-plans-heading");
+  const panel = desktop ? membership : el(membership, "div", "panel membership-panel");
+  const compactAuthorization = !!desktop && !!identityCopy && (valid || vm.membership.state === "free") && !vm.verificationError;
+  const summary = el(desktop ? compactAuthorization ? identityCopy! : profileSection : panel, "div", desktop ? `desktop-account-authorization${compactAuthorization ? " is-compact" : ""}` : "membership-summary");
+  if (!desktop) icon(summary, "feather", "membership-symbol");
+  const memberCopy = el(summary, "div", "membership-copy");
+  if (compactAuthorization) el(memberCopy, "div", "desktop-account-membership-line", [valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1], vm.membership.expiresAt && `${t("有效至", "Valid until")} ${vm.membership.expiresAt}`, vm.membership.verifiedAt && `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}`, vm.membership.offlineUntil && `${t("凭证有效至", "Offline until")} ${vm.membership.offlineUntil}`].filter(Boolean).join(" · "));
+  else if (desktop) el(memberCopy, "div", "desktop-account-plan-status", valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1]);
+  else { const nameLine = el(memberCopy, "div", "name-line"); el(nameLine, "h3", "", retainedMembership ? "EchoInk PRO" : t("EchoInk 基础版", "EchoInk Free")); el(nameLine, "span", `badge${valid ? " pro" : ["expired", "revoked"].includes(vm.membership.state) ? " expired" : ""}`, (stateLabels[vm.membership.state] ?? stateLabels["verification-required"])[zh ? 0 : 1]); }
   const descriptions: Partial<Record<MembershipState, string>> = {
     scheduled: vm.membership.startsAt ? `${t("权益开始于", "Access starts on")} ${vm.membership.startsAt}` : t("权益尚未生效。", "Access has not started yet."),
     "verification-required": t("账号权益仍保留，请联网刷新验证。", "Your account access is retained. Refresh verification online."),
@@ -379,13 +448,13 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     revoked: t("授权已撤销，请联系支持核实；已有资料保留。", "Authorization was revoked. Contact support; saved content is retained."),
     expired: t("订阅已到期，已有资料仍可查看。", "Subscription expired. Saved content remains accessible.")
   };
-  el(memberCopy, "p", "", descriptions[vm.membership.state] ?? (vm.membership.expiresAt ? `${t("有效至", "Valid until")} ${vm.membership.expiresAt}` : valid && currentPlanId === "early" ? t("财务 + 英语日记 2.x 不限时使用。", "Finance + English Diary 2.x lifetime access.") : valid ? t("已解锁 PRO 功能。", "PRO features unlocked.") : t("财务和英文日记需要 PRO，AI 需配置自己的模型服务。", "Finance and English Diary require PRO. Bring your own model provider.")));
+  if (!compactAuthorization) el(memberCopy, "p", "", descriptions[vm.membership.state] ?? (vm.membership.expiresAt ? `${t("有效至", "Valid until")} ${vm.membership.expiresAt}` : valid && currentPlanId === "early" ? desktop ? t("当前 2.x PRO 插件长期可用，模型调用费另计。", "Lifetime access to the current 2.x PRO plugins. Model costs are separate.") : t("财务 + 英语日记 2.x 不限时使用。", "Finance + English Diary 2.x lifetime access.") : valid ? t("已解锁 PRO 功能。", "PRO features unlocked.") : t("财务和英文日记需要 PRO，AI 需配置自己的模型服务。", "Finance and English Diary require PRO. Bring your own model provider.")));
   const verificationNote = [vm.membership.verifiedAt && `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}`, vm.membership.offlineUntil && `${t("凭证有效至", "Offline until")} ${vm.membership.offlineUntil}`].filter(Boolean).join(" · ");
-  if (verificationNote) el(memberCopy, "div", "verification-note", verificationNote);
+  if (verificationNote && !compactAuthorization) el(memberCopy, "div", "verification-note", verificationNote);
   const memberActions = el(summary, "div", "membership-actions");
   if(vm.identity&&["device-required","device-limit"].includes(vm.membership.state)&&actions.activateDevice) button(memberActions,t("在此设备启用","Activate this device"),"primary",()=>show(t("启用本机","Activate device"),(body,modal)=>{const form=el(body,"form");if(options.activationNotice)copy(form,options.activationNotice);const name=field(form,t("设备名称","Device name"),"text",t("我的 Obsidian","My Obsidian"));name.maxLength=80;submit(form,t("启用","Activate"),()=>actions.activateDevice!(name.value),modal);}));
   const details = el(membership, "details", "plans-details"); const planSummary = el(details, "summary", "", t("查看订阅计划", "View subscription plans")); icon(planSummary, "chevron-right");
-  details.open = valid;
+  details.open = desktop ? true : valid; if (desktop) planSummary.hidden = true;
   const openPlans = () => { details.open = true; details.scrollIntoView?.({ block: "nearest" }); };
   const needsVerification = !!vm.identity && (!!vm.verificationError || ["offline-valid", "verification-required", "revoked", "device-required", "device-limit", "scheduled"].includes(vm.membership.state));
   const refreshStatus = el(memberActions, "div", "activation-feedback");
@@ -417,14 +486,15 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     ? { label: t("管理设备", "Manage devices"), action: devices }
     : vm.identity && vm.membership.state === "revoked" ? { label: t("联系支持", "Contact support"), action: () => show(t("联系支持", "Contact support"), body => copy(body, t("请提供账号邮箱，联系支持核实授权状态。", "Contact support with your account email to check your access."))) }
     : { label: vm.membership.state === "expired" ? t("查看权益", "View benefits") : valid ? t("查看权益", "View benefits") : t("查看订阅计划", "View subscription plans"), action: openPlans };
-  button(memberActions, valid ? currentPlanLabel : recovery.label, "primary", valid ? openPlans : recovery.action);
+  if (!desktop || vm.identity && ["revoked", "device-limit"].includes(vm.membership.state)) button(memberActions, valid ? currentPlanLabel : recovery.label, "primary", valid ? openPlans : recovery.action);
   if (needsVerification) {
     verifyButton = button(memberActions, t("刷新验证", "Refresh verification"), "quiet", () => void verify());
     verifyButton.disabled = !vm.serviceAvailable || !actions.verify;
   }
   if (vm.identity && ["free", "expired"].includes(vm.membership.state)) {
-    const redeemEntry = button(memberActions, t("使用兑换码", "Use a redemption code"), "secondary", () => show(t("使用兑换码", "Use a redemption code"), (body, modal) => {
-      const releaseModal = beginAction();
+    let inlineRedemption: HTMLElement | null = null;
+    const renderRedemption = (body: HTMLElement, modal: AccountFormHandle) => {
+      const releaseModal = desktop ? () => {} : beginAction();
       modal.afterClose = releaseModal;
       const form = el(body, "form", "activation-form");
       if (options.activationNotice) copy(form, options.activationNotice);
@@ -433,7 +503,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       const feedback = el(form, "p", "activation-feedback"); feedbackState(feedback, "status", "");
       feedback.id = `echoink-redemption-feedback-${++fieldSequence}`; code.setAttribute("aria-describedby", feedback.id);
       const controls = el(form, "div", "dialog-actions");
-      button(controls, t("取消", "Cancel"), "quiet", () => modal.close());
+      const cancel = button(controls, t("取消", "Cancel"), "quiet", () => { if (!desktop || !submitting) modal.close(); });
       const redeem = button(controls, t("兑换", "Redeem"), "primary"); redeem.type = "submit";
       let submitting = false;
       form.onsubmit = async event => {
@@ -441,7 +511,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
         if (submitting || disposed || !actions.redeem || !vm.serviceAvailable) return;
         if (options.read && options.read().identity?.email !== vm.identity?.email) { modal.close(); return; }
         if (!code.value.trim()) { feedbackState(feedback, "error", t("请输入兑换码", "Enter a redemption code")); return; }
-        submitting = true; redeem.disabled = true; code.readOnly = true;
+        submitting = true; redeem.disabled = true; code.readOnly = true; if (desktop) cancel.disabled = true;
         feedbackState(feedback, "loading", t("正在兑换并验证本机授权…", "Redeeming and verifying device access…"));
         buttonState(redeem, "loading", t("兑换中", "Redeeming"));
         const release = beginAction();
@@ -450,31 +520,46 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
           const latest = options.read?.() ?? vm;
           if (!["active", "lifetime", "offline-valid"].includes(latest.membership.state))
             throw new Error(t("兑换后本机授权尚未生效，请在账号与会员中恢复授权。", "Device access is not active yet. Restore authorization in Account."));
-          if (!disposed && form.isConnected) {
+          if (!disposed && (desktop || form.isConnected)) {
             feedbackState(feedback, "success", t("兑换码使用成功", "Redemption successful"));
             buttonState(redeem, "success", t("兑换成功", "Redeemed"));
             await shortFeedback();
-            if (!disposed && form.isConnected) { modal.close(); new Notice(t("兑换码使用成功", "Redemption successful")); }
+            if (!disposed && (desktop || form.isConnected)) { modal.close(); new Notice(t("兑换码使用成功", "Redemption successful")); }
           }
         } catch (error) {
-          if (!disposed && form.isConnected) {
+          if (!disposed && (desktop || form.isConnected)) {
             feedbackState(feedback, "error", error instanceof Error ? error.message : t("兑换失败，请重试。", "Redemption failed. Try again."));
-            buttonState(redeem, "idle", t("兑换", "Redeem")); redeem.disabled = false; code.readOnly = false;
+            buttonState(redeem, "idle", t("兑换", "Redeem")); redeem.disabled = false; code.readOnly = false; cancel.disabled = false;
           }
         } finally { submitting = false; release(); }
       };
-    }));
+    };
+    const redeemEntry = button(desktop ? plansHeading : memberActions, t("使用兑换码", "Use a redemption code"), desktop ? "quiet" : "secondary", () => {
+      if (!desktop) { show(t("使用兑换码", "Use a redemption code"), renderRedemption); return; }
+      if (inlineRedemption) { inlineRedemption.querySelector("input")?.focus(); return; }
+      inlineRedemption = el(membership, "div", "desktop-account-redemption");
+      plansHeading.after(inlineRedemption);
+      const modal: AccountFormHandle = { close: () => {
+        if (!inlineRedemption) return;
+        inlineRedemption.querySelectorAll<HTMLInputElement>("input").forEach(input => { input.value = ""; });
+        disposeOriginControls(inlineRedemption); inlineRedemption.remove(); inlineRedemption = null; modal.afterClose?.(); desktop.redemptionClosed();
+      } };
+      renderRedemption(inlineRedemption, modal); inlineRedemption.querySelector("input")?.focus();
+    });
     redeemEntry.disabled = !vm.serviceAvailable || !actions.redeem;
   }
-  const memberFooter = el(panel, "div", "membership-footer");
+  const memberFooter = el(desktop ? profileSection : panel, "div", "membership-footer");
   if (vm.identity) {
-    const devicesButton = button(memberFooter, "", "quiet", devices); icon(devicesButton, "layers");
-    el(devicesButton, "span", "", vm.membership.devices == null ? t("设备管理", "Devices") : `${t("设备管理", "Devices")} · ${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`); icon(devicesButton, "chevron-right");
+    if (desktop) createSettingsNavigationRow(memberFooter, { title: t("设备管理", "Devices"), value: vm.membership.devices == null ? undefined : `${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`, onActivate: devices });
+    else { const devicesButton = button(memberFooter, "", "quiet", devices); icon(devicesButton, "layers");
+      el(devicesButton, "span", "", vm.membership.devices == null ? t("设备管理", "Devices") : `${t("设备管理", "Devices")} · ${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`); icon(devicesButton, "chevron-right"); }
   }
-  el(memberFooter, "span", "", t("AI 需自备 API Key，模型调用费另计", "Bring your own API key; model costs are separate"));
+  if (!desktop) el(memberFooter, "span", "", t("AI 需自备 API Key，模型调用费另计", "Bring your own API key; model costs are separate"));
   const intro = el(details, "div", "plans-intro");
-  if (!valid) el(intro, "p", "", t("升级 PRO，解锁更多插件的进阶功能。", "Upgrade to PRO for advanced features across more plugins."));
-  el(intro, "p", "", t("详细功能见下方 PRO 版本功能权益介绍。", "Explore PRO features in the benefits section below."));
+  if (!desktop) {
+    if (!valid) el(intro, "p", "", t("升级 PRO，解锁更多插件的进阶功能。", "Upgrade to PRO for advanced features across more plugins."));
+    el(intro, "p", "", t("详细功能见下方 PRO 版本功能权益介绍。", "Explore PRO features in the benefits section below."));
+  }
   const planGrid = el(details, "div", "plan-grid");
   let timeZone: string | undefined;
   try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* Unknown zones use the international price list. */ }
@@ -485,28 +570,28 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     maximumFractionDigits: 2
   });
   const serverPrices=vm.products?.length?vm.products:null;
-  const pricingRows=getMembershipPlanPricing(currency).map(row=>{const p=serverPrices?.find(p=>p.id===row.id);if(!p)return row;const amountMinor=p.prices[currency],comparisonAmountMinor=row.id==="early"?serverPrices!.find(p=>p.id==="year")!.prices[currency]:row.id==="quarter"?serverPrices!.find(p=>p.id==="month")!.prices[currency]*3:row.id==="year"?serverPrices!.find(p=>p.id==="month")!.prices[currency]*12:null;const savingsAmountMinor=comparisonAmountMinor===null?null:comparisonAmountMinor-amountMinor;return {...row,amountMinor,days:p.days,dailyAmountMinor:p.days===null?null:amountMinor/p.days,comparisonAmountMinor,savingsAmountMinor,savingsPercent:comparisonAmountMinor?Math.round(savingsAmountMinor!/comparisonAmountMinor*100):null};});
+  const pricingRows=desktop ? getMembershipPlanPricing(currency, vm.products) : getMembershipPlanPricing(currency).map(row=>{const p=serverPrices?.find(p=>p.id===row.id);if(!p)return row;const amountMinor=p.prices[currency],comparisonAmountMinor=row.id==="early"?serverPrices!.find(p=>p.id==="year")!.prices[currency]:row.id==="quarter"?serverPrices!.find(p=>p.id==="month")!.prices[currency]*3:row.id==="year"?serverPrices!.find(p=>p.id==="month")!.prices[currency]*12:null;const savingsAmountMinor=comparisonAmountMinor===null?null:comparisonAmountMinor-amountMinor;return {...row,amountMinor,days:p.days,dailyAmountMinor:p.days===null?null:amountMinor/p.days,comparisonAmountMinor,savingsAmountMinor,savingsPercent:comparisonAmountMinor?Math.round(savingsAmountMinor!/comparisonAmountMinor*100):null};});
   for (const pricing of pricingRows) {
     const plan = plans.find(item => item.id === pricing.id)!;
     const card = el(planGrid, "article", `plan${plan.id === "early" ? " is-early" : ""}`);
     card.dataset.planId = plan.id;
     el(card, "strong", "plan-title", zh ? plan.zh : plan.en);
-    const badge = plan.months > 1
+    const badge = desktop ? plan.id === "early" ? t("限量早鸟", "Early bird") : pricing.savingsPercent && pricing.savingsPercent > 0 && plan.months > 1 ? t(`省 ${pricing.savingsPercent}%`, `Save ${pricing.savingsPercent}%`) : "" : plan.months > 1
       ? t(`约 ${(pricing.amountMinor / pricing.comparisonAmountMinor! * 10).toFixed(1).replace(/\.0$/, "")} 折`, `Save ${pricing.savingsPercent}%`)
       : plan.id === "early" ? t("早鸟专享", "Early bird") : t("灵活体验", "Flexible access");
-    el(card, "span", "plan-offer", badge);
+    if (badge) el(card, "span", "plan-offer", badge);
     const price = el(card, "div", "price");
     const amount = el(price, "span", "price-amount");
     el(amount, "span", currency === "USD" ? "price-currency" : "", currencySymbol);
     el(amount, "span", "", money(pricing.amountMinor));
-    el(price, "small", "price-term", zh ? plan.zhTerm : plan.enTerm);
+    el(price, "small", "price-term", desktop ? pricing.days === null ? t("一次购买", "one payment") : t(`${pricing.days} 天`, `${pricing.days} days`) : zh ? plan.zhTerm : plan.enTerm);
     el(card, "p", "plan-daily", pricing.dailyAmountMinor != null
       ? currency === "USD"
         ? t(`约 ${pricing.dailyAmountMinor.toFixed(1).replace(/\.0$/, "")} 美分 / 天`, `≈ ${pricing.dailyAmountMinor.toFixed(1).replace(/\.0$/, "")}¢ / day`)
         : t(`约 ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / 天`, `≈ ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / day`)
       : t("2.x 不限时使用", "Lifetime access to 2.x"));
     const comparison = el(card, "p", "plan-comparison");
-    if (pricing.savingsAmountMinor != null) {
+    if (pricing.savingsAmountMinor != null && (!desktop || pricing.savingsAmountMinor > 0)) {
       el(comparison, "span", "", plan.id === "early"
         ? t("比年卡少付", "vs. an annual pass")
         : t(`比连续买 ${plan.months} 个月月卡`, `vs. ${plan.months} monthly passes`));
@@ -521,7 +606,29 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     purchase.disabled = true;
     if (current) purchase.setAttribute("aria-current", "true");
   }
-  el(details, "p", "plan-note", t("日均价格按月卡 30 天、季卡 90 天、年卡 365 天估算。", "Daily estimates use 30, 90 and 365 days for monthly, quarterly and annual passes."));
+  if (!desktop) el(details, "p", "plan-note", t("日均价格按月卡 30 天、季卡 90 天、年卡 365 天估算。", "Daily estimates use 30, 90 and 365 days for monthly, quarterly and annual passes."));
+  if (desktop) {
+    const scope = el(membership, "details", "plan-scope"); el(scope, "summary", "", t("买断包含什么", "What lifetime access includes"));
+    el(scope, "p", "", t("包含购买时的 2.x 版本 PRO 插件，长期可用；不包含 3.x、以后的新插件和模型调用额度。需要定期联网更新授权，不等于永久离线。", "Includes the purchased 2.x PRO plugins. It excludes 3.x, future plugins and model credits. Periodic online verification is required; it is not permanent offline access."));
+    const benefits = el(page, "section", "desktop-account-benefits"); benefits.dataset.accountSection = "benefits"; heading(benefits, t("权益对比", "Benefits"));
+    const table = el(benefits, "table", "benefits-table"); const header = el(el(table, "thead"), "tr");
+    for (const title of [t("功能", "Feature"), t("免费", "Free"), "PRO"]) el(header, "th", "", title).scope = "col";
+    const body = el(table, "tbody");
+    const groups: { title: string; pro: boolean; rows: [string, string][] }[] = [
+      { title: t("基础能力", "Core features"), pro: false, rows: [[t("Agent 对话", "Agent conversations"), t("多会话与任务继续", "Conversations and task continuation")], [t("知识库", "Knowledge"), t("整理、检索与补链", "Organization, retrieval and linking")], [t("长期记忆", "Long-term memory"), ""], [t("日记、复盘、待办", "Journal, reviews and to-dos"), ""], [t("选文提问", "Selection Ask"), ""], [t("Skills 与 MCP", "Skills and MCP"), ""]] },
+      { title: t("PRO 插件", "PRO plugins"), pro: true, rows: [[t("财务", "Finance"), t("记账、导入账单、预算与分析", "Records, import, budgets and analysis")], [t("英文日记", "English Diary"), t("英文稿与表达库", "English drafts and expressions")], [t("PDF 精读 · 提取", "PDF reading and extraction"), t("原文、译文、精读、摘要", "Originals, translation, reading and summaries")]] }
+    ];
+    for (const group of groups) {
+      const title = el(el(body, "tr", "benefits-group"), "td", "", group.title); title.colSpan = 3;
+      if (group.pro) createPluginEditionBadge(title, "pro", zh ? "zh-CN" : "en");
+      for (const [name, description] of group.rows) {
+        const row = el(body, "tr"), feature = el(row, "td", "", name);
+        if (description) el(feature, "span", "benefit-description", description);
+        for (const included of [!group.pro, true]) { const cell = el(row, "td"); icon(cell, included ? "check" : "minus"); el(cell, "span", "account-visually-hidden", included ? t("包含", "Included") : t("不含", "Not included")); }
+      }
+    }
+    page.insertBefore(benefits, membership);
+  } else {
   const features = el(page, "section", "features-section"); heading(features, t("功能权益", "Benefits"));
   const featureGrid = el(features, "div", "two-columns");
   const groups = [
@@ -546,9 +653,11 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   }
   appendAccountComingSoon(featureGrid, groups.length, zh);
   if (vm.provider !== "configured") { const provider = el(page, "div", "provider-note"); el(provider, "span", "muted", vm.provider === "missing" ? t("AI 功能需配置自己的模型服务", "AI requires your own model provider") : t("模型配置状态未知", "Model provider status unknown")); button(provider, t("配置模型", "Configure provider"), "quiet", openProviders); }
+  }
   return { dispose: () => {
     if (disposed) return; disposed = true;
     if (feedbackTimer !== null) clearTimeout(feedbackTimer);
+    for (const timer of codeTimers) clearTimeout(timer); codeTimers.clear();
     finishFeedback?.(); finishFeedback = null;
     if (heatFrame != null) view?.cancelAnimationFrame(heatFrame);
     page.ownerDocument.removeEventListener("scroll", hideTip, true);
