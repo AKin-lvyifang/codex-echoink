@@ -499,6 +499,10 @@ export class CodexView extends ItemView {
     this.openAgentEditor(undefined, true);
     return this.taskEditorEl?.querySelector<HTMLElement>(".echoink-agent-editor-header") ?? this.taskEditorEl ?? null;
   }
+  async submitOnboardingAgentEditor(): Promise<void> {
+    if (!this.taskEditorOnboarding || !this.taskEditor) throw new Error(this.taskText("新建表单还没准备好，请重试。", "The new Agent form is not ready. Try again."));
+    await this.taskEditor.submitOnboarding();
+  }
   requestOnboardingEditorLeave(done: () => void): void {
     if (!this.taskEditorOnboarding || !this.taskEditor) { done(); return; }
     this.taskEditor.requestLeave(() => { this.taskEditor?.dispose(); this.taskEditor = undefined; this.taskEditorOnboarding = false; this.renderTaskPages(); done(); });

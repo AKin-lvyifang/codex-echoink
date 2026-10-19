@@ -4,7 +4,7 @@
   --paper-guide-secondary: var(--echoink-theme-secondary, var(--text-muted));
   --paper-guide-line: var(--echoink-theme-line, var(--background-modifier-border));
   --paper-guide-soft: var(--echoink-theme-raised, var(--background-secondary));
-  --paper-guide-accent: var(--echoink-theme-accent, var(--text-accent));
+  --paper-guide-accent: var(--echoink-onboarding-accent, var(--echoink-theme-accent, var(--text-accent)));
   --paper-guide-active: var(--echoink-theme-active, var(--background-secondary));
   width: 440px;
   max-width: calc(100vw - 32px);
@@ -70,6 +70,13 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* Leave room for the desktop onboarding focus outline inside scroll clips. */
+body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-content,
+body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
+  padding: 5px;
+  margin: -5px;
 }
 
 .echoink-paper-guide-modal button.echoink-paper-guide-choice {

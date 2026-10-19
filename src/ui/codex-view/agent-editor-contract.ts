@@ -15,7 +15,7 @@ export interface AgentEditorHost {
   /** Settings supplies its own destination; omitted for the existing sidebar. */
   readonly backLabel?: string;
   readonly confirmLeave?: boolean;
-  /** Guided first colleague: the existing footer owns the only completion action. */
+  /** Guided first colleague: the guide owns submission via submitOnboarding(); the form has no create action. */
   readonly onboarding?: boolean;
   loadResources(): Promise<readonly EchoInkResource[]>;
   /** Display only: global/module/PRO availability, never an authorization grant. */
@@ -26,4 +26,4 @@ export interface AgentEditorHost {
   onClose(agentId?: string): void;
 }
 
-/** AgentEditorController(host): open(agentId?: string), render(root), dispose(). */
+/** AgentEditorController(host): open(agentId?: string), render(root), submitOnboarding(), dispose(). */

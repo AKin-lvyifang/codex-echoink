@@ -91,7 +91,8 @@ function copy() {
     const cn = onboardingCoachmarkCopy(step, true), en = onboardingCoachmarkCopy(step, false);
     assert.equal(cn.title, titles[index]); assert.equal(cn.step, `认识 EchoInk · 0${index + 1} / 05`);
     assert.equal(cn.steps.length, 5); assert.equal(cn.steps.some(row => row.key === "settings"), false);
-    assert.equal(cn.action, index === 4 ? "" : "下一步"); assert.equal(en.action, index === 4 ? "" : "Next");
+    assert.equal(cn.action, index === 4 ? "创建并完成" : "下一步"); assert.equal(en.action, index === 4 ? "Create and finish" : "Next");
+    assert.equal(cn.tone, "purple"); assert.equal(en.tone, "purple", "all steps use the same theme-driven tone hook");
     assert.equal(cn.previousLabel, index ? "上一步" : "稍后再说"); assert.equal(cn.dismissLabel, "跳过引导");
     assert.ok(en.title); assert.ok(en.description); assert.equal(en.steps.length, 5);
   }

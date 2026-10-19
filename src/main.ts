@@ -707,7 +707,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     };
     this.onboardingWorkspaceCoachmark = mountEchoInkOnboardingCoachmark({
       app: this.app, anchor, stepClass: step, stepLabel: copy.step, title: copy.title,
-      description: copy.description, actionLabel: step === "colleague" ? null : copy.action,
+      description: copy.description, actionLabel: copy.action,
       tip: copy.tip || undefined, icon: copy.icon, tone: copy.tone, steps: copy.steps,
       progressLabel: copy.progressLabel, previousLabel: copy.previousLabel, dismissLabel: copy.dismissLabel,
       restoreFocusEl: anchor,
@@ -717,7 +717,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         if (await this.selectEchoInkOnboardingStep(step, "personality")) await this.openPendingEchoInkOnboarding();
       }),
       onStep: next => leave(async () => { if (await this.selectEchoInkOnboardingStep(step, next)) await this.openPendingEchoInkOnboarding(); }),
-      onAction: step === "colleague" ? undefined : () => this.runEchoInkOnboardingNavigation(async () => { await this.advanceEchoInkOnboarding(step); await this.openPendingEchoInkOnboarding(); }),
+      onAction: step === "colleague" ? () => view.submitOnboardingAgentEditor() : () => this.runEchoInkOnboardingNavigation(async () => { await this.advanceEchoInkOnboarding(step); await this.openPendingEchoInkOnboarding(); }),
       onActionError: error => { console.warn("EchoInk onboarding action failed", error); new Notice(this.settings.settingsLanguage === "en" ? "Tutorial progress could not be saved. Try again." : "引导进度保存失败，请重试。"); }
     });
   }
@@ -740,7 +740,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const anchor = this.getCodexView()?.onboardingAgentAnchor ?? this.app.workspace.containerEl;
     const back = async () => { await this.activateHomeAndSidebar(); this.clearEchoInkOnboardingWorkspaceCoachmark(false); await this.openPaperGuideAfterOnboarding(); };
     this.onboardingWorkspaceCoachmark = mountEchoInkOnboardingCoachmark({
-      app: this.app, anchor, stepClass: "complete", stepLabel: "", complete: true, tone: "green",
+      app: this.app, anchor, stepClass: "complete", stepLabel: "", complete: true,
       ...onboardingCompletionCopy(this.settings.settingsLanguage !== "en"), restoreFocusEl: anchor,
       onPrevious: async () => { await this.restartEchoInkOnboarding(); await this.openPendingEchoInkOnboarding(); },
       onAction: back, onDismiss: back,

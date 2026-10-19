@@ -5206,7 +5206,9 @@ function assertFiveStepOnboardingEntrypoints(): void {
   assert.equal(onboardingCoachmarkCopy("provider", true).action, "下一步");
   assert.equal(onboardingCoachmarkCopy("knowledge", true).action, "下一步");
   assert.equal(onboardingCoachmarkCopy("personality", true).action, "下一步");
-  assert.equal(onboardingCoachmarkCopy("colleague", true).action, "", "creation only belongs to the sidebar form");
+  assert.equal(onboardingCoachmarkCopy("colleague", true).action, "创建并完成", "the guide delegates creation to the current editor");
+  assert.equal(onboardingCoachmarkCopy("colleague", false).action, "Create and finish");
+  assert.deepEqual(expected.map(([step]) => onboardingCoachmarkCopy(step, true).tone), Array(5).fill("purple"));
 
   const root = providerModalTestDocument.createElement("div");
   let settingsCalls = 0;
@@ -5699,10 +5701,65 @@ async function assertOnboardingResumeSettingsRoute(): Promise<void> {
   await plugin.openPendingEchoInkOnboarding();
   assert.equal(opened, 1); assert.equal(workspaces, 2);
   const coachmark = providerModalTestDocument.body.querySelector(".echoink-onboarding-coachmark.is-colleague");
-  assert.ok(coachmark); assert.equal(coachmark.querySelector(".echoink-onboarding-action"), null, "the fifth-step coachmark cannot create a second submit path");
+  assert.ok(coachmark); assert.equal(coachmark.querySelector(".echoink-onboarding-action")?.textContent, "创建并完成");
   assert.equal(plugin.settings.setup.completedAt, 0); assert.equal(plugin.settings.agentRegistry.agents.length, configuration.agentRegistry.agents.length);
   plugin.clearEchoInkOnboardingWorkspaceCoachmark(false); anchor.remove(); editor.remove();
   console.log("PASS P15 onboarding resume: actual settings targets and workspace/colleague entry open without saving or executing");
+}
+
+async function assertOnboardingColleagueSubmitDelegation(): Promise<void> {
+  const { AgentEditorController } = await import("../ui/codex-view/agent-editor");
+  const oldPrepend = Object.getOwnPropertyDescriptor(ProviderModalTestElement.prototype, "prepend");
+  Object.defineProperty(ProviderModalTestElement.prototype, "prepend", { configurable: true, value(this: ProviderModalTestElement, ...children: ProviderModalTestElement[]) {
+    for (const child of children.reverse()) this.insertBefore(child, this.firstChild);
+  } });
+  const plugin: any = Object.create(CodexForObsidianPlugin.prototype);
+  plugin.app = new App(); plugin.settings = structuredClone(DEFAULT_SETTINGS); plugin.onboardingRequested = true;
+  plugin.settings.setup.tutorialStep = "colleague";
+  let saveCalls = 0, delegations = 0, closes = 0, advances = 0;
+  let finishSave!: () => void;
+  const pendingSave = new Promise<void>(resolve => { finishSave = resolve; });
+  const host = providerModalTestDocument.body.createDiv();
+  const editor = new AgentEditorController({ settings: plugin.settings, draftCacheKey: plugin, onboarding: true,
+    loadResources: async () => [], saveAgent: async agent => { saveCalls++; assert.equal(agent.name, "自定义同事"); await pendingSave; },
+    deleteAgent: async () => { throw new Error("guided submit must not delete an Agent"); }, getDeleteCounts: async () => ({ total: 0, running: 0 }),
+    onClose: () => { closes++; }
+  });
+  const view: any = Object.create(CodexView.prototype);
+  view.taskEditor = editor; view.taskEditorOnboarding = true; view.rootEl = host; view.taskEditorEl = host;
+  view.waitForTaskUiReady = async () => true;
+  view.openOnboardingAgentEditor = () => host.querySelector(".echoink-agent-editor-header");
+  view.submitOnboardingAgentEditor = () => { delegations++; return CodexView.prototype.submitOnboardingAgentEditor.call(view); };
+  plugin.getCodexView = () => view; plugin.activateHomeAndSidebar = async () => undefined;
+  plugin.saveSettings = async () => { throw new Error("the coachmark must delegate editor validation, not save tutorial progress"); };
+  plugin.advanceEchoInkOnboarding = async (step: "colleague") => { advances++; return CodexForObsidianPlugin.prototype.advanceEchoInkOnboarding.call(plugin, step); };
+  try {
+    editor.open(); editor.render(host as never); await flushProviderModalTasks();
+    assert.equal(host.querySelectorAll("button").filter(button => button.dataset.action === "save-agent").length, 0, "the guided form has no duplicate create action");
+    const name = host.querySelectorAll<ProviderModalTestElement>("input").find(input => input.dataset.field === "name")!;
+    name.value = ""; name.fireEvent("input");
+    await plugin.openPendingEchoInkOnboarding();
+    const card = providerModalTestDocument.body.querySelector<ProviderModalTestElement>(".echoink-onboarding-coachmark.is-colleague")!;
+    assert.ok(card); assert.equal(card.querySelectorAll(".echoink-onboarding-action").length, 1);
+    const create = card.querySelector<ProviderModalTestElement>(".echoink-onboarding-action")!;
+    assert.equal(create.textContent, "创建并完成");
+    create.click(); await flushProviderModalTasks();
+    assert.equal(delegations, 1); assert.equal(saveCalls, 0); assert.equal(advances, 0); assert.equal(closes, 0);
+    assert.equal(name.getAttribute("aria-invalid"), "true"); assert.equal(name.value, ""); assert.equal(card.isConnected, true);
+    assert.equal(plugin.settings.setup.tutorialStep, "colleague"); assert.equal(plugin.settings.setup.completedAt, 0);
+    name.value = "自定义同事"; name.fireEvent("input");
+    create.click(); create.click(); await flushProviderModalTasks();
+    assert.equal(delegations, 2, "one accepted valid attempt delegates through the real CodexView method once");
+    assert.equal(saveCalls, 1); assert.equal(editor.isPending(), true); assert.equal(create.disabled, true);
+    assert.equal(advances, 0, "the coachmark never calls ordinary advance to bypass the current editor");
+    finishSave(); await flushProviderModalTasks();
+    assert.equal(closes, 1); assert.equal(saveCalls, 1); assert.equal(plugin.settings.setup.completedAt, 0, "only the editor's durable host transaction may complete setup");
+  } finally {
+    finishSave(); editor.dispose(); plugin.clearEchoInkOnboardingWorkspaceCoachmark(false); host.remove();
+    if (oldPrepend) Object.defineProperty(ProviderModalTestElement.prototype, "prepend", oldPrepend);
+    else Reflect.deleteProperty(ProviderModalTestElement.prototype, "prepend");
+  }
+  console.log("PASS onboarding colleague: unique coachmark create delegates through real CodexView/editor, keeps validation and blocks repeated submit");
 }
 
 async function assertOnboardingNavigationPersistence(): Promise<void> {
@@ -13811,6 +13868,7 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p11-settings") {
   await assertOnboardingTargetSaveFailure();
   await assertOnboardingPersonalityHostRebuild();
   await assertOnboardingResumeSettingsRoute();
+  await assertOnboardingColleagueSubmitDelegation();
   console.log("PASS affected onboarding navigation, completion, persistence and window lifecycle");
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "inline") {
   await assertInlineEditorAsyncRetirement();

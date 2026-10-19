@@ -48,12 +48,14 @@ export class AgentEditorController {
   private cacheKey = "new";
   private resources: readonly EchoInkResource[] = [];
   private loadingResources = false;
+  private submittedWhileLoading = false;
   private resourceError = "";
   private error = "";
   private avatarError = "";
   private disposed = false;
   private generation = 0;
   private busy: "save" | "delete" | "avatar" | null = null;
+  private onboardingSubmission: Promise<void> | null = null;
   private saveButton: HTMLButtonElement | null = null;
   private status: HTMLElement | null = null;
   private nameError: HTMLElement | null = null;
@@ -74,6 +76,15 @@ export class AgentEditorController {
     return !!this.draft && (this.draft.dirty || !this.editingId && !!(this.draft.presetId || this.draft.agent.name.trim() || this.draft.agent.position.trim()));
   }
   isPending(): boolean { return this.busy !== null; }
+  public submitOnboarding(): Promise<void> {
+    if (!this.isOnboardingCreation() || this.disposed || !this.draft) return Promise.resolve();
+    if (this.onboardingSubmission) return this.onboardingSubmission;
+    const submission = this.save();
+    this.onboardingSubmission = submission;
+    const release = () => { if (this.onboardingSubmission === submission) this.onboardingSubmission = null; };
+    void submission.then(release, release);
+    return submission;
+  }
   requestLeave(done: () => void): void {
     if (this.busy) return;
     if (!this.hasUnsavedChanges()) { formDrafts.get(this.host.draftCacheKey)?.delete(this.cacheKey); this.draft = null; done(); return; }
@@ -121,7 +132,7 @@ export class AgentEditorController {
     this.editingId = agentId;
     this.cacheKey = agentId ?? "new";
     this.disposed = false;
-    this.busy = null; this.error = ""; this.avatarError = ""; this.deleteError = "";
+    this.busy = null; this.onboardingSubmission = null; this.submittedWhileLoading = false; this.error = ""; this.avatarError = ""; this.deleteError = "";
     this.deleteCounts = null; this.deleteLoading = false;
     const current = this.host.settings.agentRegistry.agents.find(agent => agent.id === agentId);
     const saved = formDrafts.get(this.host.draftCacheKey)?.get(this.cacheKey);
@@ -139,6 +150,8 @@ export class AgentEditorController {
     if (this.root) disposeOriginControls(this.root);
     this.root = root;
     root.replaceChildren(); root.lang = this.host.settings.settingsLanguage === "en" ? "en" : "zh-CN"; root.classList.add("echoink-agent-editor", "echoink-theme-boundary");
+    root.classList.toggle("is-onboarding", this.host.onboarding === true);
+    this.saveButton = null;
     this.ownership.clear(); this.capabilityChecks.clear(); this.mcpChecks = [];
     const header = this.el(root, "header", "echoink-agent-editor-header");
     const back = this.button(header, "", "tertiary", () => this.host.confirmLeave || this.isOnboardingCreation() ? this.requestLeave(() => this.close(false)) : this.close(false));
@@ -163,8 +176,10 @@ export class AgentEditorController {
     this.status.setAttribute("role", "status"); this.status.setAttribute("aria-live", "polite");
     const actions = this.el(footer, "div", "echoink-agent-editor-actions");
     this.button(actions, this.t("取消", "Cancel"), "secondary", () => this.isOnboardingCreation() ? this.requestLeave(() => this.close(true)) : this.close(true));
-    this.saveButton = this.button(actions, this.editingId ? this.t("保存", "Save") : this.isOnboardingCreation() ? this.t("创建并完成", "Create and finish") : this.t("创建", "Create"), "primary", () => { void this.save(); });
-    this.saveButton.dataset.action = "save-agent";
+    if (!this.isOnboardingCreation()) {
+      this.saveButton = this.button(actions, this.editingId ? this.t("保存", "Save") : this.t("创建", "Create"), "primary", () => { void this.save(); });
+      this.saveButton.dataset.action = "save-agent";
+    }
     this.refresh();
   }
 
@@ -172,7 +187,7 @@ export class AgentEditorController {
     this.persistDraft(); this.disposed = true; this.generation++;
     if (this.root) {
       disposeOriginControls(this.root); this.root.replaceChildren();
-      this.root.classList.remove("echoink-agent-editor", "echoink-theme-boundary"); this.root.removeAttribute("lang");
+      this.root.classList.remove("echoink-agent-editor", "echoink-theme-boundary", "is-onboarding"); this.root.removeAttribute("lang");
     }
     this.root = null; this.status = null; this.saveButton = null; this.nameInput = null; this.nameError = null;
     this.resourceArea = null; this.deleteArea = null; this.ownership.clear(); this.capabilityChecks.clear(); this.mcpChecks = [];
@@ -398,7 +413,7 @@ export class AgentEditorController {
       if (this.disposed || generation !== this.generation) return;
       this.resourceError = error instanceof Error ? error.message : this.t("资源读取失败，请重试。", "Could not load resources. Please retry.");
     } finally {
-      if (!this.disposed && generation === this.generation) { this.loadingResources = false; this.renderResources(); }
+      if (!this.disposed && generation === this.generation) { this.loadingResources = false; this.submittedWhileLoading = false; this.renderResources(); }
     }
   }
 
@@ -437,7 +452,7 @@ export class AgentEditorController {
     const invalidName = !normalizeAgentDisplayName(this.draft.agent.name);
     if (this.nameError) this.nameError.textContent = invalidName && this.draft.dirty ? this.t("名字需为 1–24 个字符，不能包含换行或制表符。", "Use 1–24 characters without line breaks or tabs.") : "";
     this.nameInput?.setAttribute("aria-invalid", String(invalidName && this.draft.dirty));
-    if (this.status) this.status.textContent = this.invalidAgent() ? this.t("这个 Agent 已不存在，请返回。", "This Agent no longer exists. Go back to the task list.") : this.error || (this.busy === "save" ? this.isOnboardingCreation() ? this.t("正在创建…", "Creating…") : this.t("正在保存…", "Saving…") : this.busy === "avatar" ? this.t("正在处理头像…", "Processing avatar…") : this.busy === "delete" ? this.t("正在停止任务并交回总助…", "Stopping tasks and transferring them to the general assistant…") : "");
+    if (this.status) this.status.textContent = this.invalidAgent() ? this.t("这个 Agent 已不存在，请返回。", "This Agent no longer exists. Go back to the task list.") : this.error || (this.submittedWhileLoading && this.loadingResources ? this.t("资源正在读取，请稍后再试。", "Resources are loading. Please try again shortly.") : this.busy === "save" ? this.isOnboardingCreation() ? this.t("正在创建…", "Creating…") : this.t("正在保存…", "Saving…") : this.busy === "avatar" ? this.t("正在处理头像…", "Processing avatar…") : this.busy === "delete" ? this.t("正在停止任务并交回总助…", "Stopping tasks and transferring them to the general assistant…") : "");
     const fields = this.root.querySelector("fieldset"); if (fields) fields.disabled = !!this.busy;
     this.root.setAttribute("aria-busy", String(!!this.busy));
     for (const button of Array.from(this.root.querySelectorAll<HTMLButtonElement>(".echoink-agent-editor-header button,.echoink-agent-editor-footer button"))) button.disabled = !!this.busy;
@@ -455,7 +470,8 @@ export class AgentEditorController {
     for (const { check, ids } of this.mcpChecks) { const count = ids.filter(id => this.selected(id)).length; check.checked = !!ids.length && count === ids.length; check.indeterminate = count > 0 && count < ids.length; }
   }
   private async save(): Promise<void> {
-    if (!this.draft || this.busy || this.invalidAgent() || this.loadingResources) return;
+    if (!this.draft || this.busy || this.invalidAgent()) return;
+    if (this.loadingResources) { this.submittedWhileLoading = true; this.error = ""; this.refresh(); return; }
     if (this.canUseOnboardingPreset()) this.applyPreset("organizer");
     const name = normalizeAgentDisplayName(this.draft.agent.name);
     if (!name) { this.draft.dirty = true; this.refresh(); this.nameInput?.focus(); return; }

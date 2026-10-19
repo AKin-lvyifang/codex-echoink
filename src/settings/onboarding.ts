@@ -146,7 +146,7 @@ export function selectEchoInkOnboardingStep(
 }
 
 const ONBOARDING_COPY = {
-  "colleague": { icon: "sparkles", tone: "green", title: ["再请一位同事", "Invite a colleague"], description: ["从预设开始，也可以自己填写。什么都不填时，会按整理员创建。", "Start with a preset or fill in your own details. An untouched form creates an Organizer."], tip: ["", ""], action: ["", ""] },
+  "colleague": { icon: "sparkles", tone: "purple", title: ["再请一位同事", "Invite a colleague"], description: ["从预设开始，也可以自己填写。什么都不填时，会按整理员创建。", "Start with a preset or fill in your own details. An untouched form creates an Organizer."], tip: ["", ""], action: ["创建并完成", "Create and finish"] },
   "sidebar": {
     "icon": "sparkles",
     "tone": "purple",
@@ -209,7 +209,7 @@ const ONBOARDING_COPY = {
   },
   "knowledge": {
     "icon": "book-open-check",
-    "tone": "green",
+    "tone": "purple",
     "title": [
       "给知识库安个家",
       "Give your notes a home"
@@ -229,7 +229,7 @@ const ONBOARDING_COPY = {
   },
   "personality": {
     "icon": "sparkles",
-    "tone": "gold",
+    "tone": "purple",
     "title": [
       "认识总助",
       "Meet your general assistant"

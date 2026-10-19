@@ -1420,18 +1420,22 @@ button.codex-user-message-copy {
 }
 
 /* EchoInk onboarding: approved five-step Demo on real product anchors. */
+/* The onboarding-only focus exception follows the selected brand in both modes. */
+body:not(.is-mobile)[data-echoink-theme="green"] { --echoink-onboarding-accent: #2e7569; --echoink-onboarding-on-accent: #fff; }
+body.theme-dark:not(.is-mobile)[data-echoink-theme="green"] { --echoink-onboarding-accent: color-mix(in srgb, #2e7569 65%, white); --echoink-onboarding-on-accent: #191919; }
+body:not(.is-mobile)[data-echoink-theme="violet"] { --echoink-onboarding-accent: #725aa8; --echoink-onboarding-on-accent: #fff; }
+body.theme-dark:not(.is-mobile)[data-echoink-theme="violet"] { --echoink-onboarding-accent: #b5a8ec; --echoink-onboarding-on-accent: #211c30; }
 .echoink-onboarding-spotlight {
   position: fixed;
   z-index: 1001;
   box-sizing: border-box;
-  border: 0;
+  border: 2px solid var(--echoink-onboarding-accent, var(--interactive-accent));
   border-radius: 9px;
   box-shadow: none;
   pointer-events: none;
   transition: left .22s ease, top .22s ease, width .22s ease, height .22s ease;
 }
 .is-echoink-onboarding-target {
-  background-color: var(--background-modifier-hover) !important;
   outline: none !important;
   box-shadow: none !important;
 }
@@ -1445,7 +1449,7 @@ button.codex-user-message-copy {
 .echoink-onboarding-coachmark.is-reserved { animation: none; }
 
 .echoink-onboarding-coachmark {
-  --echoink-tour-accent: var(--interactive-accent);
+  --echoink-tour-accent: var(--echoink-onboarding-accent, var(--interactive-accent));
   --echoink-tour-tint: color-mix(in srgb, var(--echoink-tour-accent) 10%, var(--background-primary));
   position: fixed;
   z-index: 1002;
@@ -1463,13 +1467,17 @@ button.codex-user-message-copy {
   box-shadow: 0 18px 60px rgb(41 32 62 / 13%), 0 2px 8px rgb(41 32 62 / 4%);
   animation: echoink-onboarding-enter .2s ease-out;
 }
-.echoink-onboarding-coachmark[data-tone="green"] { --echoink-tour-accent: #3f8578; }
-.echoink-onboarding-coachmark[data-tone="gold"] { --echoink-tour-accent: #a9793d; }
 .theme-dark .echoink-onboarding-coachmark { box-shadow: 0 18px 60px rgb(0 0 0 / 40%); }
-.echoink-onboarding-coachmark:focus-visible,
-.echoink-onboarding-coachmark button:focus-visible { outline: none; box-shadow: none; background: var(--background-modifier-hover); }
+body:not(.is-mobile) .echoink-onboarding-coachmark:focus-visible,
+body:not(.is-mobile) .echoink-onboarding-coachmark button:focus-visible,
+body:not(.is-mobile) .modal.echoink-paper-guide-modal:focus-visible,
+body:not(.is-mobile) .modal.echoink-paper-guide-modal :is(button, [tabindex]):focus-visible,
+body:not(.is-mobile) .echoink-agent-editor.is-onboarding.echoink-theme-boundary :is(input, textarea, button, [role="checkbox"], [role="radio"], [role="combobox"], [tabindex]):focus-visible {
+  outline: 2px solid var(--echoink-onboarding-accent, var(--interactive-accent)) !important;
+  outline-offset: 3px !important;
+  box-shadow: none !important;
+}
 .echoink-onboarding-coachmark.is-repaint { animation: none; }
-.echoink-onboarding-coachmark .echoink-onboarding-action:focus-visible { background: var(--background-modifier-hover); border-color: var(--background-modifier-border); color: var(--text-normal); }
 .echoink-onboarding-coachmark button {
   box-sizing: border-box;
   height: auto;
@@ -1516,7 +1524,7 @@ button.codex-user-message-copy {
 .echoink-onboarding-previous svg { width: 12px; height: 12px; }
 .echoink-onboarding-coachmark .echoink-onboarding-action {
   display: flex; align-items: center; justify-content: center; gap: 7px; margin-left: auto; flex-shrink: 0;
-  font-size: 11px; line-height: 1.5; background: var(--echoink-tour-accent); color: white;
+  font-size: 11px; line-height: 1.5; background: var(--echoink-tour-accent); color: var(--echoink-onboarding-on-accent, var(--text-on-accent));
   border: 1px solid var(--echoink-tour-accent); border-radius: 7px; padding: 8px 12px;
   transition: filter .15s, transform .15s;
 }
@@ -22551,7 +22559,7 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
   --paper-guide-secondary: var(--echoink-theme-secondary, var(--text-muted));
   --paper-guide-line: var(--echoink-theme-line, var(--background-modifier-border));
   --paper-guide-soft: var(--echoink-theme-raised, var(--background-secondary));
-  --paper-guide-accent: var(--echoink-theme-accent, var(--text-accent));
+  --paper-guide-accent: var(--echoink-onboarding-accent, var(--echoink-theme-accent, var(--text-accent)));
   --paper-guide-active: var(--echoink-theme-active, var(--background-secondary));
   width: 440px;
   max-width: calc(100vw - 32px);
@@ -22617,6 +22625,13 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* Leave room for the desktop onboarding focus outline inside scroll clips. */
+body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-content,
+body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
+  padding: 5px;
+  margin: -5px;
 }
 
 .echoink-paper-guide-modal button.echoink-paper-guide-choice {
