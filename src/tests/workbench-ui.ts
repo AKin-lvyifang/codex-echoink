@@ -76,6 +76,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async activateTodoView() { calls.push(["todos"]); },
     async activateJournalView() { calls.push(["journal"]); },
     async activateEnglishDiaryPage() { calls.push(["english"]); },
+    async activatePdfReadingPage() { calls.push(["pdf"]); },
     async activateLegacyHomeView(section: string) { calls.push(["legacy", section]); },
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
@@ -113,10 +114,17 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.ok(calls.some(call => call[0] === "knowledge")); assert.ok(calls.some(call => call[0] === "english"));
 
     const completed = Object.freeze({ ...entry("done", "completed"), unreadAnswerAt: Date.now() });
-    tasks = [stopped, waiting, entry("run", "running"), completed];
+    const runningTitle = `完整工作台标题 ${"长".repeat(110)}`, runningStage = "😀".repeat(110);
+    tasks = [stopped, waiting, { ...entry("run", "running"), title: runningTitle, taskStage: runningStage }, completed];
     host.settings.sessions.push({ id: completed.conversationId, messages: [] });
     snapshot = { ...snapshot, signals: Array.from({ length: 7 }, (_, index) => signal(index)) };
     await view.refresh();
+    assert.equal(button("task-run").getAttribute("aria-label"), `${runningTitle}\n${"😀".repeat(99)}…`);
+    assert.equal(button("task-run").getAttribute("data-tooltip-class"), "echoink-task-card-tooltip");
+    assert.equal(button("task-run").hasAttribute("title"), false, "use the existing host tooltip rather than a browser title");
+    assert.equal(button("task-run").querySelector(".wb-task-step")?.textContent, runningStage, "visible stage remains intact");
+    await click("task-run"); assert.deepEqual(calls.at(-1), ["detail", "run"]);
+    calls.pop();
     assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /总助 · 真正结果 已整理 3 篇笔记。/);
     assert.equal(projectionReads.get("done"), 1, "cold settings shells read the real stored projection");
     assert.equal(host.settings.sessions[0].messages.length, 0, "preview does not hydrate or mutate the resident shell");

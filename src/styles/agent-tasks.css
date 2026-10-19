@@ -36,6 +36,7 @@
 .echoink-task-card-status, .echoink-task-card-summary { font-size: 12px; font-weight: 400; color: var(--text-muted); }
 .echoink-task-card-status { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .echoink-task-card-status.is-waiting, .echoink-task-card-status.is-interrupted { color: var(--echoink-theme-warn, var(--text-warning)); }
+body:not(.is-mobile) .tooltip.echoink-task-card-tooltip { max-width: min(480px, calc(100vw - 24px)); white-space: pre-line; text-align: left; }
 .echoink-task-empty { color: var(--text-muted); font-size: 13px; padding: 18px 0; }
 .echoink-task-detail-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 8px; border-bottom: 1px solid var(--background-modifier-border); flex: 0 0 auto; }
 .echoink-task-detail-titles { flex: 1; min-width: 0; }

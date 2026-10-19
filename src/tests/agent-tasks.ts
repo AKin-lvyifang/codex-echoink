@@ -9,7 +9,7 @@ import { defaultTaskWorkspace, normalizeTaskWorkspace } from "../agents/task-wor
 import { normalizeAgentRegistry, defaultAgentRegistry } from "../agents/registry";
 import { synchronizeLegacyAgentIdentity } from "../agents/migration";
 import { TaskNavigationState, consumeAcceptedTaskDraft } from "../ui/codex-view/task-navigation-state";
-import { agentTaskCounts, groupAgentTasks, localDateLabel, taskActivityAt, taskSummary, taskStateLabel } from "../agents/task-presentation";
+import { agentTaskCounts, groupAgentTasks, localDateLabel, taskActivityAt, taskCardHintSummary, taskSummary, taskStateLabel } from "../agents/task-presentation";
 import { animateTaskDetailEntry, renderTaskDetailHeader } from "../ui/codex-view/task-detail";
 import { renderAgentTaskList } from "../ui/codex-view/task-list";
 import { disposeOriginControls } from "../settings/origin-controls";
@@ -117,6 +117,13 @@ function draftsAndDates(): void {
   const markdown = { messages: [{ role: "assistant", text: "# **结论**\n已写入 `my_note.md`，见[结果](outputs/result.md)。\n- ~~旧项~~和*重点*" } as any] };
   assert.equal(taskSummary(task("markdown", { taskStatus: "completed" }), markdown), "结论 已写入 my_note.md，见结果。 旧项和重点");
   assert.ok(markdown.messages[0].text.includes("**结论**"), "summary formatting never changes the full record");
+  assert.equal(taskCardHintSummary("短摘要 **重点**"), "短摘要 重点");
+  assert.equal(taskCardHintSummary("字".repeat(100)), "字".repeat(100), "exactly 100 characters need no ellipsis");
+  assert.equal(taskCardHintSummary("字".repeat(101)), `${"字".repeat(99)}…`);
+  assert.equal(taskCardHintSummary("😀".repeat(101)), `${"😀".repeat(99)}…`, "Unicode code points must not be cut between surrogate pairs");
+  const multilineHint = taskCardHintSummary("# 第一行\r\n\r\n- 第二行\n> 第三行\n第四行");
+  assert.equal(multilineHint, "第一行 第二行 第三行 第四行");
+  assert.ok(multilineHint.split(/\r?\n/u).length <= 3, "existing text-only projection keeps multiline hints compact");
 }
 async function ignoredLegacyTransferMetadata(root: string): Promise<void> {
   const options = { storageRootPath: path.join(root, "legacy-transfer"), vaultId: "legacy-transfer" };
@@ -602,8 +609,20 @@ async function handoffBoundary(f: any, doc: Document): Promise<void> {
   animateTaskDetailEntry(mount, 1); animateTaskDetailEntry(mount, 1); assert.equal(animations, 1);
   const match = doc.defaultView!.matchMedia; doc.defaultView!.matchMedia = (() => ({ matches: true })) as any;
   animateTaskDetailEntry(mount, 2); assert.equal(animations, 1); doc.defaultView!.matchMedia = match;
-  renderAgentTaskList(mount, f.settings.agentRegistry.agents[0], [entry], [], { onTask() {}, onEdit() {} });
+  const title = `完整标题 ${"长".repeat(110)}`, summary = `${"😀".repeat(110)} 结尾全文`;
+  const hintedEntry = { ...entry, title, unreadAnswerAt: 1 };
+  let opened = "";
+  renderAgentTaskList(mount, f.settings.agentRegistry.agents[0], [hintedEntry], [], { onTask(id) { opened = id; }, onEdit() {}, summary: () => summary });
   assert.equal(mount.querySelectorAll("[data-task-id]").length, 1);
+  const card = mount.querySelector<HTMLButtonElement>("[data-task-id]")!;
+  const hint = `${"😀".repeat(99)}…`;
+  assert.equal(card.getAttribute("aria-label"), `${title}\n${hint}`, "host tooltip keeps the full title and only the short summary");
+  assert.equal(card.getAttribute("data-tooltip-class"), "echoink-task-card-tooltip");
+  assert.equal(card.hasAttribute("title"), false, "native browser title must not duplicate the host tooltip");
+  assert.ok(card.getAttribute("aria-description")!.endsWith("，有新结果"));
+  assert.equal(card.querySelector(".echoink-task-card-title")?.textContent, title);
+  assert.equal(card.querySelector(".echoink-task-card-summary")?.textContent, summary, "only hints are truncated");
+  card.click(); assert.equal(opened, entry.conversationId, "click still opens the original task detail");
   assert.ok(!JSON.stringify(before).includes("taskTransfers"));
   disposeOriginControls(mount); mount.remove();
 }

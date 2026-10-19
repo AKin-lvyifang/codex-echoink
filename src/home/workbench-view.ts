@@ -1,8 +1,8 @@
 import { getTodoProjects, resolveTodoProject } from "./todo-projects";
-import { ItemView, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
-import { isUserTask, localDateLabel, localTaskTime, taskState, taskSummary, type TaskEntry } from "../agents/task-presentation";
+import { isUserTask, localDateLabel, localTaskTime, taskCardHintSummary, taskState, taskSummary, type TaskEntry } from "../agents/task-presentation";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import type { EchoInkQuestionPrompt, EchoInkTurnInteraction } from "../types/conversation-turn";
 import { createOriginButton, createOriginCheck, createOriginInput, disposeOriginControls } from "../settings/origin-controls";
@@ -393,7 +393,8 @@ export class EchoInkWorkbenchView extends ItemView {
     const card = this.contentEl.ownerDocument.createElement("article"); card.className = "wb-task"; card.dataset.task = entry.conversationId;
     const state = taskState(entry), agent = this.agent(entry);
     const body = this.button(card, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary");
-    body.classList.add("wb-task-body"); body.setAttribute("aria-label", `${entry.title}，${this.summary(entry)}`);
+    body.classList.add("wb-task-body");
+    setTooltip(body, `${entry.title}\n${taskCardHintSummary(this.summary(entry))}`, { classes: ["echoink-task-card-tooltip"] });
     const header = body.createSpan({ cls: "wb-task-header" }); renderTaskAvatar(header, agent);
     header.createSpan({ cls: "wb-agent-name", text: agent.name });
     const status = header.createSpan({ cls: `wb-task-status is-${state}` });

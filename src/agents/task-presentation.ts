@@ -42,6 +42,11 @@ export function plainTaskSummary(text: string): string {
     .replace(/(^|[^\w])_([^_\n]+)_(?!\w)/gu, "$1$2")
     .replace(/`/gu, "").replace(/\s+/gu, " ").trim();
 }
+/** Compact text for card hints only; visible summaries and stored answers stay intact. */
+export function taskCardHintSummary(text: string): string {
+  const characters = Array.from(plainTaskSummary(text));
+  return characters.length > 100 ? `${characters.slice(0, 99).join("")}…` : characters.join("");
+}
 export function taskSummary(entry: TaskEntry, session?: Pick<StoredSession, "messages">, language: SettingsLanguage = "zh-CN", pending?: Readonly<EchoInkTurnInteraction>): string {
   return plainTaskSummary(taskSummaryContent(entry, session, language, pending));
 }
