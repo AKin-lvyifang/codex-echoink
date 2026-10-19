@@ -75,7 +75,8 @@ export function resolveDesktopSettingsSearchRoute(tab: DesktopSettingsTab, query
     if (/auto.*archive|自动归档/iu.test(term)) return { tab, focus: "review:auto-archive" };
     if (/archive|归档/iu.test(term)) return { tab, focus: "review:archives" };
     if (/correction|记忆修正|记忆管理/iu.test(term)) return { tab, focus: "review:memory" };
-    if (/identity|personality|avatar|profile|身份|画像|人格|头像/iu.test(term)) return { tab, focus: "general:personality-template" };
+    if (/profile|画像/iu.test(term)) return { tab, focus: "agent:profile" };
+    if (/identity|personality|avatar|身份|人格|头像/iu.test(term)) return { tab, focus: "general:personality-template" };
   }
   return null;
 }

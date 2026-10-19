@@ -102,7 +102,6 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
       if (pro) disposers.push(access.subscribe(() => refresh()));
       trigger.onclick = () => { if (trigger.disabled) return; setExpanded(!options.expanded.has(module.id)); refresh(true); };
       if (toggle) {
-        toggle.onclick = event => event.stopPropagation();
         toggle.onchange = () => {
           if (pending || disposed) return;
           const value = toggle.checked;

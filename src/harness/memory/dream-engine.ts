@@ -257,6 +257,11 @@ export class DreamEngine {
       experienceInboxStore,
       agentSelfMetadataStore
     } = this.deps;
+    // Capture CAS before reading derived state. A user edit/deletion between
+    // these reads must reject the whole round, including profile JSON, even
+    // when no USER.md projection is produced by this round.
+    const inspected = await repository.inspect();
+    let expectedMemoryRevision = inspected.revision;
     const dreamState = await dreamStateStore.read();
     const experienceInbox = await experienceInboxStore.read();
     const pendingExperiences = experienceInbox.entries
@@ -271,8 +276,6 @@ export class DreamEngine {
     const agentIdentity = this.deps.agentIdentityStore
       ? await this.deps.agentIdentityStore.read()
       : defaultAgentIdentityState();
-    const inspected = await repository.inspect();
-    let expectedMemoryRevision = inspected.revision;
     const currentRecords = inspected.records.filter((record) => record.status === "current");
     const validMemoryIds = new Set(currentRecords.map((record) => record.id));
     const invalidatedProductRunIds = invalidatedMemoryProductRunIds(inspected.records);
@@ -424,7 +427,8 @@ export class DreamEngine {
             profileItems.push({
               ...item,
               basis: record.basis === "explicit" ? "explicit_memory" : "observed_memory",
-              sourceMemoryId: record.id
+              sourceMemoryId: record.id,
+              sourceEvidence: { kind: "memory", revision: record.revision }
             });
           }
         }
@@ -487,14 +491,20 @@ export class DreamEngine {
         );
         if (!parsed) throw new Error("dream_self_output_invalid");
         parsedSelfCandidates = parsed.agentSelfOperations;
+        const profileSourceById = new Map(selfSources.map((source) => [source.profileSourceId, source]));
         for (const candidate of parsed.userProfileItems) {
           for (const sourceId of candidate.sourceIds) {
+            const source = profileSourceById.get(sourceId);
+            if (!source) continue;
             profileItems.push({
               section: candidate.section,
               profileKey: candidate.profileKey,
               text: candidate.text,
               basis: candidate.basis === "explicit" ? "explicit_memory" : "observed_memory",
-              sourceMemoryId: sourceId
+              sourceMemoryId: sourceId,
+              sourceEvidence: source.kind === "memory"
+                ? { kind: "memory", revision: source.revision! }
+                : { kind: "experience", occurredAt: source.occurredAt! }
             });
           }
         }
@@ -959,6 +969,7 @@ export interface DreamSelfSource {
   readonly kind: "memory" | "experience";
   readonly id: string;
   readonly revision?: number;
+  readonly occurredAt?: number;
   readonly contextId: string;
   readonly independentContext: boolean;
   readonly explicitText: string;
@@ -1020,6 +1031,7 @@ export function buildDreamSelfSources(
       profileSourceId,
       kind: "experience" as const,
       id: experience.fingerprint,
+      occurredAt: experience.occurredAt,
       contextId: experienceSourceGroup(experience.productRunId),
       independentContext: true,
       explicitText: userText,

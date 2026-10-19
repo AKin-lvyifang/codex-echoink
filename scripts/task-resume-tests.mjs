@@ -16,7 +16,7 @@ const restartOnly = process.argv.includes("--restart-only");
 try {
   const source = ts.createSourceFile("main.ts", await readFile(path.join(root, "src/main.ts"), "utf8"), ts.ScriptTarget.Latest, true);
   const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CodexForObsidianPlugin");
-  const names = ["conversationRunService", "piTaskMetadataWriteTails", "piTaskMetadataSyncTail", "getConversationRunService", "consumeAcceptedTaskComposerDraft", "setPiConversationTaskMetadata", "resumeTask", "isTaskResuming", "getTaskResumeError", "activeTaskResumeSafety", "resumeTaskAndOpenDetail", "readTaskInterruption", "recordTaskInterruption", "prepareTaskResume", "deleteAgent"];
+  const names = ["conversationRunService", "piTaskMetadataWriteTails", "piTaskMetadataSyncTail", "getConversationRunService", "consumeAcceptedTaskComposerDraft", "setPiConversationTaskMetadata", "resumeTask", "isTaskResuming", "getTaskResumeError", "activeTaskResumeSafety", "resumeTaskAndOpenDetail", "readTaskInterruption", "recordTaskInterruption", "prepareTaskResume", "deleteAgent", "agentRegistryWriteTail", "agentRegistryListeners", "writeAgentRegistry"];
   const members = names.map(name => {
     const member = declaration.members.find(member => member.name?.getText(source) === name);
     if (!member) throw new Error(`Missing production member ${name}`);
@@ -63,6 +63,7 @@ try {
     'class ProductionHost {',
     'constructor(local,settings,runtime,root){Object.assign(this,{piLocalData:local,settings,piRuntimeBundle:{runtime},app:{vault:{getAbstractFileByPath(){return null;}},internalPlugins:{getPluginById(){return null;}}},root});}',
     'async ensurePiLocalData(){return this.piLocalData;} getVaultPath(){return this.root;} async saveSettings(){} async buildRuntimeEchoInkResourceCatalog(){return [];} async externalizeMessageText(){} async abortPiConversation(id){await this.piRuntimeBundle.runtime.abort(id);} async readPiConversationProjection(id){return await this.piRuntimeBundle.runtime.readProjection(id);} async openTaskDetail(id){this.opened=id;}',
+    'getCodexView(){return null;}',
     ...members,
     '}',
     'const PiLocalDataService={create:async host=>host.startupLocal};',

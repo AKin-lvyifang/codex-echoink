@@ -73,7 +73,7 @@ const knowledgeSettingsSource = await readFile(path.join(rootDir, "src/styles/de
 const settingsGenerated = [settingsStart, selectionAskSource.trim(), settingsSource.trim(), originSource.trim(), boundarySource.trim(), paperGuideSource.trim(), pdfReadingSource.trim(), moduleSettingsSource.trim(), knowledgeSettingsSource.trim(), settingsEnd].join("\n");
 const agentStart = "/* ECHOINK_AGENT_WORKBENCH_CSS_START */";
 const agentEnd = "/* ECHOINK_AGENT_WORKBENCH_CSS_END */";
-const agentCss = await Promise.all(["agent-tasks.css", "agent-editor.css", "agent-approval.css", "workbench.css", "journal-page.css", "todo-page.css", "knowledge-page.css", "english-diary-page.css", "pdf-reading-page.css", "module-navigation.css"].map(name => readFile(path.join(rootDir, "src/styles", name), "utf8")));
+const agentCss = await Promise.all(["agent-tasks.css", "agent-editor.css", "agent-approval.css", "workbench.css", "journal-page.css", "todo-page.css", "knowledge-page.css", "english-diary-page.css", "pdf-reading-page.css", "module-navigation.css", "agent-settings.css", "user-profile-settings.css"].map(name => readFile(path.join(rootDir, "src/styles", name), "utf8")));
 const agentGenerated = `${agentStart}\n${agentCss.map(css => css.trim()).join("\n\n")}\n${agentEnd}`;
 const agentIndex = styles.indexOf(agentStart);
 const agentCurrent = agentIndex < 0 ? "" : styles.slice(agentIndex, styles.indexOf(agentEnd, agentIndex) + agentEnd.length);

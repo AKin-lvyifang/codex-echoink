@@ -123,6 +123,19 @@ export interface UserProfileItem {
   readonly updatedAt?: number;
 }
 
+/** One committed control-plane revision, before USER.md's text budget. */
+export interface UserProfileControlSnapshot {
+  readonly revision: number;
+  readonly items: readonly UserProfileItem[];
+}
+
+/** A bounded per-slot barrier against replaying evidence that predates deletion. */
+export interface UserProfileDeletionBarrier {
+  readonly profileKey: string;
+  readonly memoryRevisionCutoff: number;
+  readonly experienceOccurredAtCutoff: number;
+}
+
 export interface ProcessedProfileSource {
   readonly memoryId: string;
   readonly memoryRevision: number;
@@ -134,6 +147,8 @@ export interface UserProfileState {
   readonly revision: number;
   readonly items: readonly UserProfileItem[];
   readonly processedSources: readonly ProcessedProfileSource[];
+  /** Absent in older v2 files. At most one entry for each closed profile slot. */
+  readonly deletionBarriers?: readonly UserProfileDeletionBarrier[];
   /**
    * Legacy USER.md migration marker (草案 §12.3): "pending" → custom USER.md
    * still needs to be converted into an explicit primary Memory before the
@@ -314,6 +329,7 @@ export function emptyUserProfileState(now: number): UserProfileState {
     revision: 0,
     items: Object.freeze([]),
     processedSources: Object.freeze([]),
+    deletionBarriers: Object.freeze([]),
     legacyUserMigration: null,
     lastProjectedUserHash: "",
     updatedAt: now
@@ -332,6 +348,11 @@ export interface DreamProfileInput {
     profileKey?: string;
     basis: UserProfileItemBasis;
     sourceMemoryId: string;
+    /** Host-owned evidence version, never taken from Provider output. */
+    sourceEvidence?: Readonly<
+      { kind: "memory"; revision: number }
+      | { kind: "experience"; occurredAt: number }
+    >;
   }>[];
   readonly processedSources: readonly Readonly<{
     memoryId: string;
@@ -356,6 +377,13 @@ export function applyDreamProfileUpdate(
     const key = incoming.profileKey?.trim() ?? "";
     const slot = profileSlotDefinition(key);
     if (!slot || slot.section !== incoming.section) continue;
+    const barrier = previous.deletionBarriers?.find((entry) => entry.profileKey === key);
+    if (barrier) {
+      const evidence = incoming.sourceEvidence;
+      if (!evidence || (evidence.kind === "memory"
+        ? !(evidence.revision > barrier.memoryRevisionCutoff)
+        : !(evidence.occurredAt > barrier.experienceOccurredAtCutoff))) continue;
+    }
     const basisSlot = incoming.basis === "observed_memory" ? "observed" : "explicit";
     const claimValue = normalizedProfileClaimValue(text);
     const existingIndex = items.findIndex((item) =>
@@ -430,6 +458,7 @@ export function applyDreamProfileUpdate(
     revision,
     items: Object.freeze(items),
     processedSources: Object.freeze(boundedProcessedSources),
+    deletionBarriers: previous.deletionBarriers ?? Object.freeze([]),
     legacyUserMigration: input.legacyUserMigration !== undefined
       ? input.legacyUserMigration
       : previous.legacyUserMigration,
@@ -487,6 +516,7 @@ export function reconcileProfileSources(
     revision,
     items: Object.freeze(items),
     processedSources: Object.freeze(processedSources),
+    deletionBarriers: previous.deletionBarriers ?? Object.freeze([]),
     legacyUserMigration: previous.legacyUserMigration,
     lastProjectedUserHash: previous.lastProjectedUserHash,
     updatedAt: now
@@ -554,6 +584,7 @@ export function rebindProfileSource(
     revision,
     items: Object.freeze(items),
     processedSources: Object.freeze(boundProcessedSources([...processedById.values()], items)),
+    deletionBarriers: previous.deletionBarriers ?? Object.freeze([]),
     legacyUserMigration: previous.legacyUserMigration,
     lastProjectedUserHash: previous.lastProjectedUserHash,
     updatedAt: input.now
@@ -624,6 +655,7 @@ export function revokeReprocessedProfileSources(
     revision,
     items: Object.freeze(items),
     processedSources: Object.freeze(processedSources),
+    deletionBarriers: previous.deletionBarriers ?? Object.freeze([]),
     legacyUserMigration: previous.legacyUserMigration,
     lastProjectedUserHash: previous.lastProjectedUserHash,
     updatedAt: now
@@ -644,6 +676,25 @@ export function isProfileItemRenderable(item: UserProfileItem): boolean {
 export function parseUserProfileState(raw: Record<string, unknown>): UserProfileState | null {
   if (raw.schema !== USER_PROFILE_STATE_SCHEMA) return null;
   if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision)) return null;
+  const deletionBarriers: UserProfileDeletionBarrier[] = [];
+  if (raw.deletionBarriers !== undefined) {
+    if (!Array.isArray(raw.deletionBarriers) || raw.deletionBarriers.length > USER_PROFILE_SLOTS.length) return null;
+    for (const value of raw.deletionBarriers) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+      const entry = value as Record<string, unknown>;
+      if (!isUserProfileKey(entry.profileKey)
+        || deletionBarriers.some((barrier) => barrier.profileKey === entry.profileKey)
+        || typeof entry.memoryRevisionCutoff !== "number"
+        || !Number.isSafeInteger(entry.memoryRevisionCutoff) || entry.memoryRevisionCutoff < 0
+        || typeof entry.experienceOccurredAtCutoff !== "number"
+        || !Number.isSafeInteger(entry.experienceOccurredAtCutoff) || entry.experienceOccurredAtCutoff < 0) return null;
+      deletionBarriers.push(Object.freeze({
+        profileKey: entry.profileKey,
+        memoryRevisionCutoff: entry.memoryRevisionCutoff,
+        experienceOccurredAtCutoff: entry.experienceOccurredAtCutoff
+      }));
+    }
+  }
   const parsedItems = Array.isArray(raw.items)
     ? raw.items
         .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
@@ -701,6 +752,7 @@ export function parseUserProfileState(raw: Record<string, unknown>): UserProfile
     revision: raw.revision,
     items: Object.freeze(items),
     processedSources: Object.freeze(processedSources),
+    deletionBarriers: Object.freeze(deletionBarriers),
     legacyUserMigration: migration,
     lastProjectedUserHash: typeof raw.lastProjectedUserHash === "string" ? raw.lastProjectedUserHash : "",
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : 0

@@ -13,7 +13,7 @@ import { AgentEditorController } from "./codex-view/agent-editor";
 import { renderTaskInterruption } from "./codex-view/task-interruption";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
-import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
+import { unavailableCapabilityAccess } from "../membership/access";
 import { copyPiImageAttachmentsForProjection, piComposerImageAttachmentsForEntry, piConversationSupport, rememberPiConversationProjection } from "./codex-view/pi-conversation-support";
 import { validateTaskTurnBeforeCreation } from "./codex-view/turn-runner";
 import type { ConversationRunState } from "../plugin/conversation-run-service";
@@ -499,7 +499,7 @@ export class CodexView extends ItemView {
     this.taskEditor = new AgentEditorController({
       get settings() { return view.plugin.settings; }, draftCacheKey: this.plugin,
       loadResources: () => this.plugin.buildRuntimeEchoInkResourceCatalog(),
-      saveAgent: (agent, moduleIds) => this.plugin.saveAgentDefinition(agent, moduleIds),
+      saveAgent: (agent, moduleIds, baseline) => this.plugin.saveAgentDefinition(agent, moduleIds, baseline),
       deleteAgent: async id => { await this.plugin.deleteAgent(id); this.taskEditorReturnPage = { kind: "list", agentId: GENERAL_ASSISTANT_ID }; await this.reloadTaskCatalog(); },
       getDeleteCounts: id => this.plugin.getAgentDeleteCounts(id),
       getCapabilityAvailability: id => this.taskCapabilityAvailability(id),
@@ -513,20 +513,9 @@ export class CodexView extends ItemView {
     this.taskEditor.open(agentId); this.taskEditor.render(this.taskEditorEl!); this.renderTaskPages();
   }
   private taskCapabilityAvailability(id: string): { available: boolean; reason?: string } {
-    const settings = this.plugin.settings;
-    const enabled = id === "finance" ? settings.lifestyle.finance.enabled : id === "pdf-reading" ? settings.pdfReading.enabled
-      : id === "english-diary" ? settings.englishDiary.enabled : id === "web-search" ? settings.tavily.enabled && !!settings.tavily.apiKey.trim()
-        : id === "journal" ? settings.knowledgeBase.folderBindings?.roles.journal.enabled !== false
-          : id === "knowledge" ? !settings.knowledgeBase.folderBindings || ["raw", "wiki", "projects", "inbox"].some(role => settings.knowledgeBase.folderBindings!.roles[role as "raw"].enabled) : true;
-    if (!enabled) return { available: false, reason: this.taskText("对应功能尚未启用", "This feature is disabled") };
-    if (["finance", "pdf-reading", "english-diary"].includes(id) && !hasProPluginAccess(this.plugin.accountService ?? unavailableCapabilityAccess)) return { available: false, reason: this.taskText("需要有效 PRO，已有资料仍可查看", "Requires an active PRO membership; existing data remains readable") };
-    if (id.startsWith("mcp:") || id.startsWith("vault-skill:")) {
-      let resourceId: string; try { resourceId = decodeURIComponent(id.split(":")[1]); } catch { return { available: false, reason: this.taskText("资源不可用", "Resource unavailable") }; }
-      const resource = this.currentEchoInkResourceCatalog().find(resource => resource.id === resourceId || resource.metadata?.resourceId === resourceId);
-      if (!resource?.enabled) return { available: false, reason: this.taskText("资源已禁用或不可用", "Resource disabled or unavailable") };
-    }
-    return { available: true };
+    return this.plugin.getAgentCapabilityAvailability(id, this.currentEchoInkResourceCatalog());
   }
+
   async startPdfNavigationTask(input: PdfNavigationStart): Promise<string> {
     await this.plugin.validatePdfNavigationStart(input);
     this.saveTaskComposerDraft();

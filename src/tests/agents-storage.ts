@@ -191,6 +191,8 @@ function draftCanonicalOrder(): void {
     settings.agentRegistry.legacyMigrationVersion = 1;
     settings.taskWorkspace = prefillNewTask(defaultTaskWorkspace(), "sol", draft).workspace;
     assert.equal(normalizeSettingsData(settingsForDataSave(settings)).changed, false, "Key order must already be canonical before saving the prefill");
+    settings.knowledgeBase.journalSearchDisclosureSeen = true;
+    assert.equal(normalizeSettingsData(settingsForDataSave(settings)).changed, false, "Current Knowledge settings remain canonical after showing the journal search disclosure");
   }
 }
 

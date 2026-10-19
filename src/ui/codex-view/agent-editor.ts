@@ -1,4 +1,4 @@
-import type { AgentEditorHost } from "./agent-editor-contract";
+import type { AgentEditorHost, AgentEditorSaveBaseline } from "./agent-editor-contract";
 import { setIcon, setTooltip } from "obsidian";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "../../agents/types";
 import { AGENT_PRESETS } from "../../agents/presets";
@@ -35,7 +35,7 @@ const STYLE_SUMMARIES: Record<AgentDefinition["styleId"], [string, string]> = {
   companion: ["先听你说，再一起理清", "Listen first, then work through it together"],
   creative: ["多给几个方向，再挑最好的", "Explore several directions, then choose the best"]
 };
-interface EditorDraft { agent: AgentDefinition; moduleIds: AgentModuleId[]; presetId: string; dirty: boolean; revision: number }
+interface EditorDraft { agent: AgentDefinition; moduleIds: AgentModuleId[]; baseline?: AgentEditorSaveBaseline; presetId: string; dirty: boolean; revision: number }
 // No DOM, View, host callback, promise or runtime is retained across View instances.
 const formDrafts = new WeakMap<object, Map<string, EditorDraft>>();
 let editorSequence = 0;
@@ -69,6 +69,30 @@ export class AgentEditorController {
 
   constructor(private readonly host: AgentEditorHost) {}
 
+  hasUnsavedChanges(): boolean {
+    return !!this.draft && (this.draft.dirty || !this.editingId && !!(this.draft.presetId || this.draft.agent.name.trim() || this.draft.agent.position.trim()));
+  }
+  isPending(): boolean { return this.busy !== null; }
+  requestLeave(done: () => void): void {
+    if (this.busy) return;
+    if (!this.hasUnsavedChanges()) { formDrafts.get(this.host.draftCacheKey)?.delete(this.cacheKey); this.draft = null; done(); return; }
+    const root = this.root;
+    const trigger = root?.querySelector<HTMLButtonElement>(".echoink-agent-editor-back");
+    if (!root || !trigger || !root.isConnected) return;
+    showSettingsInlineConfirmation(root, trigger, {
+      message: this.t("Agent 还有未保存的修改。", "This Agent has unsaved changes."),
+      confirmLabel: this.t("放弃修改", "Discard changes"), cancelLabel: this.t("继续编辑", "Keep editing"),
+      onConfirm: async () => {
+        if (this.busy) return;
+        formDrafts.get(this.host.draftCacheKey)?.delete(this.cacheKey);
+        this.draft = null;
+        done();
+      }
+    });
+    const panel = root.querySelector<HTMLElement>(".echoink-settings-inline-confirm");
+    root.ownerDocument.defaultView?.requestAnimationFrame(() => { if (panel?.isConnected) panel.scrollIntoView?.({ block: "nearest" }); });
+  }
+
   private t(zh: string, en: string): string { return this.host.settings.settingsLanguage === "en" ? en : zh; }
   private moduleName(id: AgentModuleId): string { return this.t(MODULE_NAMES[id], MODULE_NAMES_EN[id]); }
   private capabilityName(id: string): string {
@@ -100,7 +124,9 @@ export class AgentEditorController {
     const saved = formDrafts.get(this.host.draftCacheKey)?.get(this.cacheKey);
     this.draft = saved ? structuredClone(saved) : { agent: current ? structuredClone(current) : {
       id: `agent-${globalThis.crypto.randomUUID()}`, name: "", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: []
-    }, moduleIds: current ? AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) : [], presetId: "", dirty: false, revision: 0 };
+    }, moduleIds: current ? AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) : [],
+    baseline: current ? { agent: structuredClone(current), moduleIds: AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) } : undefined,
+    presetId: "", dirty: false, revision: 0 };
     this.persistDraft();
     void this.reloadResources();
   }
@@ -112,9 +138,9 @@ export class AgentEditorController {
     root.replaceChildren(); root.lang = this.host.settings.settingsLanguage === "en" ? "en" : "zh-CN"; root.classList.add("echoink-agent-editor", "echoink-theme-boundary");
     this.ownership.clear(); this.capabilityChecks.clear(); this.mcpChecks = [];
     const header = this.el(root, "header", "echoink-agent-editor-header");
-    const back = this.button(header, "", "tertiary", () => this.close(false));
+    const back = this.button(header, "", "tertiary", () => this.host.confirmLeave ? this.requestLeave(() => this.close(false)) : this.close(false));
     back.classList.add("echoink-agent-editor-back"); setIcon(back, "arrow-left");
-    back.setAttribute("aria-label", this.t("返回 Agent 任务", "Back to Agent tasks"));
+    back.setAttribute("aria-label", this.host.backLabel ?? this.t("返回 Agent 任务", "Back to Agent tasks"));
     const avatar = this.el(header, "img", "echoink-agent-editor-avatar-preview"); avatar.alt = ""; this.setAvatarImage(avatar);
     const heading = this.el(header, "div", "echoink-agent-editor-heading");
     this.el(heading, "h2", "echoink-agent-editor-title", this.editingId ? this.t("编辑 Agent", "Edit Agent") : this.t("新建 Agent", "New Agent"));
@@ -422,7 +448,7 @@ export class AgentEditorController {
     const agent = { ...structuredClone(this.draft.agent), name, position: this.draft.agent.position.trim() };
     this.busy = "save"; this.error = ""; this.refresh();
     try {
-      await this.host.saveAgent(agent, [...this.draft.moduleIds]);
+      await this.host.saveAgent(agent, [...this.draft.moduleIds], this.draft.baseline ? structuredClone(this.draft.baseline) : undefined);
       if (formDrafts.get(this.host.draftCacheKey)?.get(key)?.revision === revision) formDrafts.get(this.host.draftCacheKey)?.delete(key);
       if (!this.disposed && generation === this.generation) { this.draft = null; this.dispose(); this.host.onClose(agent.id); }
     } catch (error) {

@@ -898,6 +898,8 @@ function hasLegacyTokenPlanCustomProvider(value: unknown): boolean {
 }
 
 const KNOWLEDGE_BASE_SETTINGS_KEYS = new Set<string>([
+  "autoLinkEnabled",
+  "journalSearchDisclosureSeen",
   "folderBindings",
   "lastRunAt",
   "lastRunStatus",

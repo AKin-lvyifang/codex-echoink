@@ -15,7 +15,7 @@ const runRoot = await mkdtemp(path.join(fixture, "run-agent-runs-"));
 try {
   const source = ts.createSourceFile("main.ts", await readFile(path.join(root, "src/main.ts"), "utf8"), ts.ScriptTarget.Latest, true);
   const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CodexForObsidianPlugin");
-  const members = ["piTaskMetadataWriteTails", "piTaskMetadataSyncTail", "conversationRunService", "setPiConversationTaskMetadata", "syncPiConversationTaskMetadata", "getConversationRunService", "consumeAcceptedTaskComposerDraft", "deleteAgent"].map(name => {
+  const members = ["piTaskMetadataWriteTails", "piTaskMetadataSyncTail", "conversationRunService", "setPiConversationTaskMetadata", "syncPiConversationTaskMetadata", "getConversationRunService", "consumeAcceptedTaskComposerDraft", "deleteAgent", "agentRegistryWriteTail", "agentRegistryListeners", "writeAgentRegistry"].map(name => {
     const member = declaration.members.find(member => member.name?.getText(source) === name);
     if (!member) throw new Error(`Missing production member ${name}`);
     return member.getText(source);
@@ -37,6 +37,7 @@ try {
     'app={}; settings; piRuntimeBundle; piLocalData;',
     'constructor(catalog,runtime,settings){this.settings=settings;this.piRuntimeBundle={runtime};this.piLocalData={catalog};}',
     'async ensurePiLocalData(){return this.piLocalData;}',
+    'getCodexView(){return null;}',
     ...members,
     '}',
     'class ProductionViewLifecycle {',

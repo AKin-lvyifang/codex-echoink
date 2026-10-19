@@ -125,6 +125,21 @@ export interface PersonalMemoryWriteResult {
   readonly profile?: "user";
 }
 
+export interface UserProfileControlSaveRequest {
+  readonly profileKey: string;
+  readonly text: string;
+  readonly expectedRevision: number;
+}
+
+export interface UserProfileControlDeleteRequest {
+  readonly profileKey: string;
+  readonly expectedRevision: number;
+}
+
+export interface UserProfileControlMutationResult {
+  readonly revision: number;
+}
+
 export interface PersonalMemorySearchRequest {
   readonly query: string;
   readonly kinds?: readonly PersonalMemoryKind[];

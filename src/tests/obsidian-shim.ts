@@ -329,6 +329,11 @@ export const Platform = {
   isDesktopApp: false
 };
 
+export function getIcon(name: string): SVGSVGElement | null {
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("class", `lucide lucide-${name}`);
+  return icon;
+}
 export function setIcon(_element: Element, _icon: string): void {}
 
 export function setTooltip(

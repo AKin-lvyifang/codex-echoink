@@ -28,6 +28,9 @@ import {
   type PersonalMemoryStatus,
   type PersonalMemoryWriteRequest,
   type PersonalMemoryWriteResult,
+  type UserProfileControlSaveRequest,
+  type UserProfileControlDeleteRequest,
+  type UserProfileControlMutationResult,
   type SecondaryMatchView,
   type SecondaryMemoryRecord
 } from "./personal-memory-contracts";
@@ -55,11 +58,14 @@ import {
   reconcileProfileSources,
   USER_PROFILE_ITEM_HARD_MAX_CHARS,
   userProfileStateJson,
-  UserProfileStateStore
+  UserProfileStateStore,
+  type UserProfileControlSnapshot,
+  type UserProfileState
 } from "./user-profile-state";
 import { AgentIdentityStateStore, type AgentIdentityState } from "./agent-identity-state";
 import {
-  renderUserMarkdown
+  renderUserMarkdown,
+  projectedProfileItems
 } from "./cognitive-projection";
 import {
   AGENT_MD_HARD_MAX_BYTES,
@@ -1924,6 +1930,111 @@ export class PersonalMemoryRepository {
     });
   }
 
+  async readUserProfileControlSnapshot(): Promise<UserProfileControlSnapshot> {
+    await this.initialize();
+    return await this.withMutation(async () => {
+      await this.assertManagedPathsSafe([
+        this.layout.manifest, this.layout.user, this.layout.userProfileState
+      ]);
+      const manifest = await this.readManifestFromDisk();
+      const diskUser = await readUtf8Bounded(this.layout.user, USER_MD_HARD_MAX_BYTES, "USER.md");
+      if (!validFixedFileHashes(manifest.fixedFileHashes)
+        || contentHash(diskUser) !== manifest.fixedFileHashes.user) {
+        throw new PersonalMemoryAccessError("revision_conflict", "USER control snapshot does not match the committed manifest");
+      }
+      const profile = await this.readManagedUserProfile(this.now(), diskUser);
+      const records = await this.readAllRecordsFromDisk(manifest);
+      const validSources = new Set(records.filter((record) => record.status === "current").map((record) => record.id));
+      const invalidatedRuns = invalidatedMemoryProductRunIds(records);
+      for (const item of profile.items) {
+        for (const sourceId of item.sourceMemoryIds) {
+          const runId = productRunIdFromExperienceProfileSourceId(sourceId);
+          if (runId && !invalidatedRuns.has(runId)) validSources.add(sourceId);
+        }
+      }
+      const reconciled = reconcileProfileSources(profile, validSources, this.now());
+      return Object.freeze({
+        revision: manifest.revision,
+        items: Object.freeze(projectedProfileItems(reconciled).map((item) => Object.freeze({
+          ...item, sourceMemoryIds: Object.freeze([...item.sourceMemoryIds])
+        })))
+      });
+    });
+  }
+
+  /** Local user management deliberately has no runtime/Provider prerequisite. */
+  async saveUserProfileFromUserControl(
+    input: UserProfileControlSaveRequest
+  ): Promise<UserProfileControlMutationResult> {
+    assertUserProfileControlRevision(input.expectedRevision);
+    await this.initialize();
+    return await this.withMutation(async () => {
+      await this.assertManagedTreeSafe();
+      await this.refreshPrimaryCachesBeforeWrite();
+      const manifest = await this.readManifest();
+      assertExpectedRevision(manifest, input.expectedRevision);
+      await this.assertFixedFilesMatchManifest(manifest);
+      const result = await this.updateUserProfileWithSource(
+        manifest,
+        await this.readAllRecords(manifest),
+        { ...input, operation: "profile_update", basis: "explicit", contentOrigin: "user_edit" },
+        "ui://user-profile-control",
+        Object.freeze({}),
+        true
+      );
+      return Object.freeze({ revision: result.revision });
+    });
+  }
+
+  async deleteUserProfileFromUserControl(
+    input: UserProfileControlDeleteRequest
+  ): Promise<UserProfileControlMutationResult> {
+    assertUserProfileControlRevision(input.expectedRevision);
+    if (!profileSlotDefinition(input.profileKey)) {
+      throw new PersonalMemoryAccessError("invalid_request", "profileKey must use the closed user profile taxonomy");
+    }
+    await this.initialize();
+    return await this.withMutation(async () => {
+      await this.assertManagedTreeSafe();
+      await this.refreshPrimaryCachesBeforeWrite();
+      const manifest = await this.readManifest();
+      assertExpectedRevision(manifest, input.expectedRevision);
+      await this.assertFixedFilesMatchManifest(manifest);
+      const now = this.now();
+      const previous = await this.readManagedUserProfile(now);
+      let profile: UserProfileState = Object.freeze({
+        ...previous,
+        revision: previous.revision + 1,
+        items: Object.freeze(previous.items.filter((item) => item.profileKey !== input.profileKey)),
+        deletionBarriers: Object.freeze([
+          ...(previous.deletionBarriers ?? []).filter((entry) => entry.profileKey !== input.profileKey),
+          Object.freeze({
+            profileKey: input.profileKey,
+            memoryRevisionCutoff: manifest.revision,
+            experienceOccurredAtCutoff: now
+          })
+        ]),
+        updatedAt: now
+      });
+      const user = normalizeUserProfileWrite(renderUserMarkdown(profile), "USER.md projection");
+      profile = Object.freeze({ ...profile, lastProjectedUserHash: contentHash(user) });
+      const next = cloneManifest(manifest);
+      next.revision = manifest.revision + 1;
+      next.updatedAt = now;
+      next.fixedFileHashes = { ...manifest.fixedFileHashes!, user: contentHash(user) };
+      const changes = await this.stateChanges(next, await this.readAllRecords(manifest), [
+        { relativePath: path.relative(this.layout.root, this.layout.userProfileState), content: userProfileStateJson(profile) },
+        { relativePath: path.relative(this.layout.root, this.layout.user), content: user }
+      ], {
+        type: "profile_updated", revision: next.revision, at: now,
+        profile: "user", profileKey: input.profileKey, operation: "delete",
+        source: "ui://user-profile-control"
+      });
+      await this.runTransaction("profile-delete", manifest.revision, next.revision, changes);
+      return Object.freeze({ revision: next.revision });
+    });
+  }
+
   async updateIdentityFile(
     profile: "agent" | "user",
     contentValue: string,
@@ -2316,41 +2427,50 @@ export class PersonalMemoryRepository {
     request: Extract<PersonalMemoryWriteRequest, { operation: "profile_update" }>,
     runtime: Readonly<PersonalMemoryRuntimeContext>
   ): Promise<Readonly<PersonalMemoryWriteResult>> {
+    return await this.updateUserProfileWithSource(
+      manifest, records, request, runtimeSource(runtime), runtimeAuditLink(runtime),
+      runtime.explicitlyAuthorized === true
+    );
+  }
+
+  private async readManagedUserProfile(now: number, userContent?: string): Promise<UserProfileState> {
+    const diskUser = userContent ?? await readUtf8Bounded(this.layout.user, USER_MD_HARD_MAX_BYTES, "USER.md");
+    const diskUserHash = contentHash(diskUser);
+    let profile = (await new UserProfileStateStore(this.layout.root).read()) ?? emptyUserProfileState(now);
+    if (profile.revision === 0 && profile.legacyUserMigration === null) {
+      if (diskUserHash !== contentHash(defaultUserProfile())) {
+        throw new PersonalMemoryAccessError("revision_conflict", "USER.md projection conflict: custom content has no managed projection baseline");
+      }
+      profile = Object.freeze({
+        ...profile, revision: 1, legacyUserMigration: "done" as const,
+        lastProjectedUserHash: diskUserHash, updatedAt: now
+      });
+    } else if (profile.lastProjectedUserHash !== diskUserHash) {
+      throw new PersonalMemoryAccessError("revision_conflict", "USER.md projection conflict: disk content differs from the last managed projection");
+    }
+    return profile;
+  }
+
+  private async updateUserProfileWithSource(
+    manifest: PersonalMemoryManifest,
+    records: PersonalMemoryRecord[],
+    request: Extract<PersonalMemoryWriteRequest, { operation: "profile_update" }>,
+    source: string,
+    auditLink: Readonly<{ toolCallId?: string }>,
+    explicitlyAuthorized: boolean
+  ): Promise<Readonly<PersonalMemoryWriteResult>> {
     const origin = request.contentOrigin ?? "confirmed_change";
     if (!["user_edit", "user_statement", "confirmed_change"].includes(origin)) {
       throw new PersonalMemoryAccessError("invalid_request", "USER.md requires an explicit stable user update");
     }
-    validateWriteContent("fact", "explicit", origin, runtime.explicitlyAuthorized === true);
+    validateWriteContent("fact", "explicit", origin, explicitlyAuthorized);
     const slot = profileSlotDefinition(request.profileKey);
     if (!slot) {
       throw new PersonalMemoryAccessError("invalid_request", "profileKey must use the closed user profile taxonomy");
     }
     const text = cleanRequired(request.text, "profile text", USER_PROFILE_ITEM_HARD_MAX_CHARS);
     const now = this.now();
-    const diskUser = await readUtf8Bounded(this.layout.user, USER_MD_HARD_MAX_BYTES, "USER.md");
-    const diskUserHash = contentHash(diskUser);
-    const profileStore = new UserProfileStateStore(this.layout.root);
-    let previousProfile = (await profileStore.read()) ?? emptyUserProfileState(now);
-    if (previousProfile.revision === 0 && previousProfile.legacyUserMigration === null) {
-      if (diskUserHash !== contentHash(defaultUserProfile())) {
-        throw new PersonalMemoryAccessError(
-          "revision_conflict",
-          "USER.md projection conflict: custom content has no managed projection baseline"
-        );
-      }
-      previousProfile = Object.freeze({
-        ...previousProfile,
-        revision: 1,
-        legacyUserMigration: "done" as const,
-        lastProjectedUserHash: diskUserHash,
-        updatedAt: now
-      });
-    } else if (previousProfile.lastProjectedUserHash !== diskUserHash) {
-      throw new PersonalMemoryAccessError(
-        "revision_conflict",
-        "USER.md projection conflict: disk content differs from the last managed projection"
-      );
-    }
+    const previousProfile = await this.readManagedUserProfile(now);
     const currentExplicit = previousProfile.items.find((item) =>
       item.profileKey === slot.profileKey
       && item.basis === "explicit_memory"
@@ -2381,6 +2501,7 @@ export class PersonalMemoryRepository {
     if (
       currentExplicit
       && previousSource
+      && !previousProfile.deletionBarriers?.some((entry) => entry.profileKey === slot.profileKey)
       && normalizeTextForDedupe(currentExplicit.text) === normalizeTextForDedupe(text)
       && normalizeTextForDedupe(previousSource.content) === normalizeTextForDedupe(text)
     ) {
@@ -2411,7 +2532,7 @@ export class PersonalMemoryRepository {
           basis: "explicit",
           contentOrigin: origin,
           targetRevision,
-          source: runtimeSource(runtime),
+          source,
           reason: "profile_update",
           ...(target ? { supersedes: target.id } : {})
         });
@@ -2435,13 +2556,19 @@ export class PersonalMemoryRepository {
           now
         })
       : previousProfile;
-    let nextProfile = applyDreamProfileUpdate(profileBase, {
+    const explicitProfileBase = Object.freeze({
+      ...profileBase,
+      deletionBarriers: Object.freeze((profileBase.deletionBarriers ?? [])
+        .filter((entry) => entry.profileKey !== slot.profileKey))
+    });
+    let nextProfile = applyDreamProfileUpdate(explicitProfileBase, {
       items: [{
         section: slot.section,
         profileKey: slot.profileKey,
         text,
         basis: "explicit_memory",
-        sourceMemoryId: record.id
+        sourceMemoryId: record.id,
+        sourceEvidence: { kind: "memory", revision: record.revision }
       }],
       processedSources: [{ memoryId: record.id, memoryRevision: record.revision }],
       now,
@@ -2517,8 +2644,8 @@ export class PersonalMemoryRepository {
       profile: "user",
       recordId: record.id,
       ...(target ? { targetId: target.id } : {}),
-      source: runtimeSource(runtime),
-      ...runtimeAuditLink(runtime)
+      source,
+      ...auditLink
     }, lifecycle.records);
     await this.runTransaction("profile-update", manifest.revision, targetRevision, changes);
     this.commitSecondaryCache(lifecycle.records);
@@ -4116,6 +4243,12 @@ function validateWriteContent(
   }
   if (["knowledge", "tool_output"].includes(effectiveOrigin) && ["fact", "view", "decision"].includes(kind)) {
     throw new PersonalMemoryAccessError("invalid_request", `${effectiveOrigin} cannot become a user ${kind}`);
+  }
+}
+
+function assertUserProfileControlRevision(expected: number): void {
+  if (!Number.isSafeInteger(expected) || expected < 0) {
+    throw new PersonalMemoryAccessError("invalid_request", "User profile control requires a committed revision");
   }
 }
 

@@ -24,7 +24,7 @@ export function renderUserMarkdown(state: UserProfileState): string {
   return renderUserProjection(selected);
 }
 
-function projectedProfileItems(state: UserProfileState): UserProfileItem[] {
+export function projectedProfileItems(state: UserProfileState): UserProfileItem[] {
   const current = state.items.filter((item) => isProfileItemRenderable(item));
   const explicitKeys = new Set(current
     .filter((item) => item.basis !== "observed_memory")
@@ -49,7 +49,7 @@ function renderUserProjection(items: readonly UserProfileItem[]): string {
     "# USER",
     "",
     "本文件是系统生成的当前用户画像速查表。用户明确确认的内容优先；",
-    "系统观察仅来自至少三条独立有效的一级 Memory，供参考，不等于用户亲口确认。",
+    "系统观察仅来自多个独立有效的一级 Memory 或公开经历，供参考，不等于用户亲口确认。",
     "",
     "## 用户明确确认",
     ""

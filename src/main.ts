@@ -20,7 +20,7 @@ import { readDurableTaskInterruptionStage } from "./harness/pi-native/pi-native-
 import { consumeAcceptedTaskDraft } from "./agents/task-workspace";
 import { ConversationRunService } from "./plugin/conversation-run-service";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "./agents/types";
-import { normalizeAgentRegistry, removeAgentDefinition } from "./agents/registry";
+import { normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "./agents/registry";
 import { patchConversationTaskMetadata, type ConversationTaskMetadataPatch } from "./agents/task-metadata";
 import { assertPiSubmissionActive, waitForPiSubmission } from "./harness/pi-native/pi-submission-lifecycle";
 import { registerKnowledgePrivateRoot } from "./knowledge-base/root-paths";
@@ -30,7 +30,7 @@ import { PdfReadingController } from "./pdf-reading/controller";
 import { createPluginAccountService } from "./membership/plugin-service";
 import type { AccountService } from "./membership/account-service";
 import { UsageStore, type UsageRequestEvent } from "./harness/usage/usage-store";
-import { requireProPlugin, unavailableCapabilityAccess } from "./membership/access";
+import { hasProPluginAccess, requireProPlugin, unavailableCapabilityAccess } from "./membership/access";
 import { ConversationAutoArchive } from "./plugin/conversation-auto-archive";
 import { EchoInkAppearance } from "./ui/appearance-theme";
 import { knowledgePathRole } from "./knowledge-base/root-paths";
@@ -227,6 +227,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   private resourceCatalogService: EchoInkResourceCatalogService | null = null;
   private skillRuntimeCoordinator: SkillRuntimeCoordinator | null = null;
   private autoArchive: ConversationAutoArchive | null = null;
+  private agentRegistryWriteTail: Promise<void> = Promise.resolve();
+  private readonly agentRegistryListeners = new Set<() => void>();
   private readonly conversationCatalogListeners = new Set<() => void>();
   private pendingSettingsResourceDetailId = "";
   private pendingKnowledgeDashboardFocus = false;
@@ -1237,16 +1239,62 @@ export default class CodexForObsidianPlugin extends Plugin {
     try { return await write; }
     finally { if (this.piTaskMetadataWriteTails.get(conversationId) === write) this.piTaskMetadataWriteTails.delete(conversationId); }
   }
-  async saveAgentDefinition(agent: AgentDefinition, moduleIds: readonly AgentModuleId[]): Promise<void> {
-    const previous = this.settings.agentRegistry;
-    const candidate = normalizeAgentRegistry({ ...previous, agents: previous.agents.some(entry => entry.id === agent.id) ? previous.agents.map(entry => entry.id === agent.id ? { ...agent, identityEdited: true } : entry) : [...previous.agents, { ...agent, identityEdited: true }] });
-    if (!candidate.agents.some(entry => entry.id === agent.id)) throw new Error("agent_definition_invalid");
-    for (const id of AGENT_MODULE_IDS) candidate.moduleOwners[id] = moduleIds.includes(id)
-      ? agent.id : previous.moduleOwners[id] === agent.id ? GENERAL_ASSISTANT_ID : previous.moduleOwners[id];
-    this.settings.agentRegistry = candidate;
-    try { await this.saveSettings(true); }
-    catch (error) { this.settings.agentRegistry = previous; throw error; }
+  private async writeAgentRegistry(action: () => Promise<void>): Promise<void> {
+    const write = (this.agentRegistryWriteTail ?? Promise.resolve()).catch(() => undefined).then(action);
+    this.agentRegistryWriteTail = write.catch(() => undefined);
+    await write;
     this.getCodexView()?.refreshAgentTasks();
+    for (const listener of this.agentRegistryListeners ?? []) listener();
+  }
+  onAgentRegistryChanged(listener: () => void): () => void {
+    this.agentRegistryListeners.add(listener);
+    return () => { this.agentRegistryListeners.delete(listener); };
+  }
+  async setAgentModuleOwner(moduleId: AgentModuleId, agentId: string): Promise<void> {
+    await this.writeAgentRegistry(async () => {
+      const previous = this.settings.agentRegistry;
+      this.settings.agentRegistry = setModuleOwner(previous, moduleId, agentId);
+      try { await this.saveSettings(true); }
+      catch (error) { this.settings.agentRegistry = previous; throw error; }
+    });
+  }
+  async saveAgentDefinition(agent: AgentDefinition, moduleIds: readonly AgentModuleId[], baseline?: { agent: AgentDefinition; moduleIds: readonly AgentModuleId[] }): Promise<void> {
+    agent = structuredClone(agent); moduleIds = [...moduleIds];
+    baseline = baseline ? structuredClone(baseline) : undefined;
+    if (this.conversationRunService?.isAgentBlocked(agent.id)) throw new Error("agent_removal_in_progress");
+    await this.writeAgentRegistry(async () => {
+      const previous = this.settings.agentRegistry;
+      const current = previous.agents.find(entry => entry.id === agent.id);
+      if (!baseline && current) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent was already created. Reopen it to edit." : "这个 Agent 已经创建，请重新打开后编辑。你的输入已保留。");
+      if (baseline && (!current || baseline.agent.id !== agent.id)) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent was deleted. Your draft has been kept." : "这个 Agent 已被删除，你的输入已保留。");
+      if (baseline && JSON.stringify(current) !== JSON.stringify(baseline.agent)) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent changed elsewhere. Reopen it before saving." : "这个 Agent 已在别处修改，请重新打开后核对。你的输入已保留。");
+      const candidate = normalizeAgentRegistry({ ...previous, agents: current ? previous.agents.map(entry => entry.id === agent.id ? { ...agent, identityEdited: true } : entry) : [...previous.agents, { ...agent, identityEdited: true }] });
+      if (!candidate.agents.some(entry => entry.id === agent.id)) throw new Error("agent_definition_invalid");
+      for (const id of AGENT_MODULE_IDS) {
+        // Unchanged assignments belong to the current registry, not an old editor.
+        if (baseline && baseline.moduleIds.includes(id) === moduleIds.includes(id)) continue;
+        candidate.moduleOwners[id] = moduleIds.includes(id) ? agent.id
+          : previous.moduleOwners[id] === agent.id ? GENERAL_ASSISTANT_ID : previous.moduleOwners[id];
+      }
+      this.settings.agentRegistry = candidate;
+      try { await this.saveSettings(true); }
+      catch (error) { this.settings.agentRegistry = previous; throw error; }
+    });
+  }
+  getAgentCapabilityAvailability(id: string, resources: readonly EchoInkResource[] = []): { available: boolean; reason?: string } {
+    const settings = this.settings, zh = settings.settingsLanguage !== "en";
+    const enabled = id === "finance" ? settings.lifestyle.finance.enabled : id === "pdf-reading" ? settings.pdfReading.enabled
+      : id === "english-diary" ? settings.englishDiary.enabled : id === "web-search" ? settings.tavily.enabled && !!settings.tavily.apiKey.trim()
+        : id === "journal" ? settings.knowledgeBase.folderBindings?.roles.journal.enabled !== false
+          : id === "knowledge" ? !settings.knowledgeBase.folderBindings || ["raw", "wiki", "projects", "inbox"].some(role => settings.knowledgeBase.folderBindings!.roles[role as "raw"].enabled) : true;
+    if (!enabled) return { available: false, reason: zh ? "对应功能尚未启用" : "This feature is disabled" };
+    if (["finance", "pdf-reading", "english-diary"].includes(id) && !hasProPluginAccess(this.accountService ?? unavailableCapabilityAccess)) return { available: false, reason: zh ? "需要有效 PRO，已有资料仍可查看" : "Requires an active PRO membership; existing data remains readable" };
+    if (id.startsWith("mcp:") || id.startsWith("vault-skill:")) {
+      let resourceId: string; try { resourceId = decodeURIComponent(id.split(":")[1]); } catch { return { available: false, reason: zh ? "资源不可用" : "Resource unavailable" }; }
+      const resource = resources.find(resource => resource.id === resourceId || resource.metadata?.resourceId === resourceId);
+      if (!resource?.enabled) return { available: false, reason: zh ? "资源已禁用或不可用" : "Resource disabled or unavailable" };
+    }
+    return { available: true };
   }
   async listAgentTaskEntries(): Promise<Readonly<PiConversationCatalogEntry>[]> {
     const entries = (await this.listPiConversations()).filter(entry => entry.status !== "deleted");
@@ -1302,6 +1350,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (service.isAgentBlocked(agentId)) throw new Error("agent_removal_in_progress");
     service.blockAgent(agentId);
     try {
+      await this.writeAgentRegistry(async () => {
       const localData = await this.ensurePiLocalData();
       const tasks = (await localData.catalog.list()).filter(entry => entry.agentId === agentId && entry.status !== "deleted");
       const stopForHandoff = async (entries: readonly Readonly<PiConversationCatalogEntry>[]) => {
@@ -1321,6 +1370,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       this.settings.agentRegistry = removeAgentDefinition(previous, agentId);
       try { await this.saveSettings(true); }
       catch (error) { this.settings.agentRegistry = previous; throw error; }
+      });
     } finally { service.unblockAgent(agentId); }
   }
   async createPiConversation(
@@ -1420,7 +1470,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       );
     }
     try {
-      return runtime
+      const entry = runtime
         ? await runtime.runtime.setConversationStatus(
             conversationId,
             status
@@ -1429,6 +1479,8 @@ export default class CodexForObsidianPlugin extends Plugin {
             conversationId,
             status
           );
+      for (const listener of this.conversationCatalogListeners ?? []) listener();
+      return entry;
     } finally {
       if (
         status !== "active"
@@ -1730,6 +1782,19 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.piActivatedConversationId = null;
     this.piRunConversations.clear();
     await current?.runtime.shutdown();
+  }
+  async readEchoInkUserProfile() {
+    return (await this.ensurePiLocalData()).personalMemory.readUserProfileControlSnapshot();
+  }
+  async saveEchoInkUserProfile(input: { profileKey: string; text: string; expectedRevision: number }) {
+    const result = await (await this.ensurePiLocalData()).personalMemory.saveUserProfileFromUserControl(input);
+    this.getCodexView()?.refreshPersonalizationUi();
+    return result;
+  }
+  async deleteEchoInkUserProfile(input: { profileKey: string; expectedRevision: number }) {
+    const result = await (await this.ensurePiLocalData()).personalMemory.deleteUserProfileFromUserControl(input);
+    this.getCodexView()?.refreshPersonalizationUi();
+    return result;
   }
   async getEchoInkPersonalMemoryState() {
     const localData = await this.ensurePiLocalData();

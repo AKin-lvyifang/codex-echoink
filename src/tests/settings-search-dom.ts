@@ -11,6 +11,9 @@ import { attachSettingsTooltip } from "../settings/settings-v2";
 import { paidTestAccess } from "./membership-access";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, resolveDesktopSettingsRoute, type DesktopSettingsTab } from "../settings/desktop-settings-route";
+import { normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "../agents/registry";
+import type { AgentDefinition, AgentModuleId } from "../agents/types";
+import { profileSlotDefinition, type UserProfileControlSnapshot } from "../harness/memory/user-profile-state";
 
 const categories: SettingsTab[] = ["general", "layout", "providers", "resources", "knowledgeBase", "review", "todos", "account"];
 
@@ -80,6 +83,9 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
   const registrations: (() => void)[] = [];
   const daily = { folder: "journal", format: "YYYY-MM/YYYY-MM-DD" };
   const nativeSaves: unknown[] = [];
+  const registryListeners = new Set<() => void>();
+  let profile: UserProfileControlSnapshot = { revision: 0, items: [] };
+  const profileSaves: UserProfileControlSnapshot[] = [];
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.settingsLanguage = language;
   settings.settingsTab = "providers";
@@ -91,10 +97,32 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
     manifest: { id: "echoink-search-fixture", version: "2.2.0" }, settings,
     register: (cleanup: () => void) => registrations.push(cleanup),
     onConversationCatalogChanged: (_listener: () => void) => () => undefined,
+    onAgentRegistryChanged: (listener: () => void) => { registryListeners.add(listener); return () => registryListeners.delete(listener); },
     applyAppearanceTheme: () => undefined,
     saveSettings: async () => { saved.push(structuredClone(settings)); },
     refreshLanguageSurfaces: async () => undefined,
     getCodexView: () => null,
+    buildRuntimeEchoInkResourceCatalog: async () => [],
+    getAgentCapabilityAvailability: () => ({available:true}),
+    saveAgentDefinition: async (agent: AgentDefinition, modules: readonly AgentModuleId[]) => {
+      const current = settings.agentRegistry;
+      const next = normalizeAgentRegistry({ ...current, agents: current.agents.some(value => value.id === agent.id) ? current.agents.map(value => value.id === agent.id ? { ...agent, identityEdited: true } : value) : [...current.agents, { ...agent, identityEdited: true }] });
+      for (const module of Object.keys(current.moduleOwners) as AgentModuleId[]) next.moduleOwners[module] = modules.includes(module) ? agent.id : current.moduleOwners[module] === agent.id ? "sol" : current.moduleOwners[module];
+      settings.agentRegistry = next; await plugin.saveSettings(); registryListeners.forEach(listener => listener());
+    },
+    setAgentModuleOwner: async (module: AgentModuleId, agentId: string) => { settings.agentRegistry = setModuleOwner(settings.agentRegistry, module, agentId); await plugin.saveSettings(); registryListeners.forEach(listener => listener()); },
+    getAgentDeleteCounts: async () => ({ total: 0, running: 0 }),
+    deleteAgent: async (agentId: string) => { settings.agentRegistry = removeAgentDefinition(settings.agentRegistry, agentId); await plugin.saveSettings(); registryListeners.forEach(listener => listener()); },
+    readEchoInkUserProfile: async () => structuredClone(profile),
+    saveEchoInkUserProfile: async (input: { profileKey: string; text: string; expectedRevision: number }) => {
+      assert.equal(input.expectedRevision, profile.revision); const slot = profileSlotDefinition(input.profileKey); assert.ok(slot);
+      const revision = profile.revision + 1;
+      profile = { revision, items: [...profile.items.filter(item => item.profileKey !== input.profileKey), { id: `fixture-profile-${revision}`, profileKey: input.profileKey, section: slot.section, text: input.text, basis: "explicit_memory", status: "current", sourceMemoryIds: [`fixture-source-${revision}`], revision }] };
+      profileSaves.push(structuredClone(profile)); return { revision };
+    },
+    deleteEchoInkUserProfile: async (input: { profileKey: string; expectedRevision: number }) => { assert.equal(input.expectedRevision, profile.revision); profile = { revision: profile.revision + 1, items: profile.items.filter(item => item.profileKey !== input.profileKey) }; return { revision: profile.revision }; },
+    listPiConversations: async () => [],
+    getKnowledgeSurfaceService: () => null,
     lifestyle: { label: () => "财务" },
     getQuickChatWindowController: () => null,
     getTodoReminderService: () => ({
@@ -111,6 +139,7 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
     getEchoInkKnowledgeBaseStructure: async () => ({ state: "uninitialized", roots: [] }),
     getEchoInkKnowledgeBaseDashboard: async () => null
   };
+  Object.assign(plugin.app.vault, { getMarkdownFiles: () => [], getAllFolders: () => [], getAbstractFileByPath: () => null, on: () => ({}), offref: () => undefined });
   const tab = new CodexSettingTab(plugin as never);
   // Independent settings windows have their own document and container.
   (tab as any).containerEl = win.document.createElement("div");
@@ -119,7 +148,7 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
   state.personalMemoryError = "No profile in this disposable fixture";
   state.knowledgePreferenceLoadError = "No saved preferences in this disposable fixture";
   state.resourceLoaded = { plugins: true, skills: true, mcp: true };
-  return { tab, plugin, state, saved, registrations, daily, nativeSaves };
+  return { tab, plugin, state, saved, registrations, daily, nativeSaves, profileSaves };
 }
 
 /** Model only documented host calls; this does not simulate global search UI. */
@@ -530,6 +559,8 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
   Platform.isDesktopApp = true;
   try {
     await checkDesktopSettings(primary, scheduler, secondDocument);
+    await checkDesktopMemoryConflict(primary);
+    await checkDesktopEnableSwitches(primary, scheduler);
   } finally { Platform.isDesktopApp = false; }
 }
 
@@ -545,7 +576,7 @@ async function checkCapabilitiesFromPlugins(win: Window & typeof globalThis, sch
     f.tab.openDesktopRoute({ tab: "modules" });
     await scheduler.flush();
     assert.equal(f.plugin.settings.resourceManagementTab, "plugins");
-    assert.ok(f.tab.containerEl.querySelector('[data-resource-key="builtin-plugin:finance"]'));
+    assert.ok(f.tab.containerEl.querySelector('[data-module="finance"]'));
     if (entry === "route") f.tab.openDesktopRoute({ tab: "capabilities" });
     else {
       const search = win.document.createElement("input");
@@ -562,7 +593,7 @@ async function checkCapabilitiesFromPlugins(win: Window & typeof globalThis, sch
     assert.match(skills.textContent ?? "", /Skills/u);
     const list = f.tab.containerEl.querySelector('.codex-resource-body')!;
     assert.equal(list.getAttribute("aria-labelledby"), "echoink-resource-tab-skills");
-    assert.equal(list.querySelector('[data-resource-key="builtin-plugin:finance"]'), null);
+    assert.equal(list.querySelector('[data-module="finance"]'), null);
     assert.equal(list.querySelector('[data-resource-key="builtin-plugin:pdf"]'), null);
     assert.match(list.textContent ?? "", /Skill/iu, "the actual list renders the Skills empty state and summary");
     assert.ok(f.tab.containerEl.querySelector('.codex-resource-search-input'));
@@ -699,7 +730,7 @@ async function checkDesktopSettings(
       ["Tavily", "capabilities", ".echoink-tavily-card", "tools"],
       ["MCP", "capabilities", '[data-resource-tab="mcp"][aria-selected="true"]', "mcp"],
       ["Skills", "capabilities", '[data-resource-tab="skills"][aria-selected="true"]', "skills"],
-      ["知识库", "modules", ".codex-knowledge-settings", "knowledgeBase"]
+      ["知识库", "modules", '[data-module="knowledge"].is-expanded [data-echoink-focus-key="knowledge:directory:raw"]', "knowledgeBase"]
     ] as const) {
       await navigate("general");
       searchInput.value = query;
@@ -713,7 +744,8 @@ async function checkDesktopSettings(
       await scheduler.flush();
       assert.equal(active(), `echoink-settings-tab-${category}`, `host result row focus routes ${query}`);
       assert.ok(f.tab.containerEl.querySelector(selector), `${query} renders its actual target controls`);
-      assert.equal(f.state.desktopRoute[category === "modules" ? "section" : "capabilityTab"], child);
+      if (category === "modules") assert.equal(f.state.desktopModuleExpanded.has("knowledge"), true, "Knowledge search expands its live settings drawer");
+      else assert.equal(f.state.desktopRoute.capabilityTab, child);
     }
     searchInput.value = "Tavily";
     const capabilityRow = mount.rows[DESKTOP_SETTINGS_TABS.indexOf("capabilities")].setting.settingEl;
@@ -782,6 +814,56 @@ async function checkDesktopSettings(
     f.tab.openDesktopRoute(resolveDesktopSettingsRoute("knowledgeBase"));
     await scheduler.flush();
     assert.equal(f.tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:provider"]'), null, "Knowledge no longer duplicates the global model selector");
+
+    const openAgentSearchResult = async (query: string) => {
+      await navigate("general");
+      searchInput.value = query;
+      const row = mount.rows[DESKTOP_SETTINGS_TABS.indexOf("agent")].setting.settingEl;
+      row.tabIndex = -1; row.focus();
+      await scheduler.flush();
+      assert.equal(active(), "echoink-settings-tab-agent", `host result row focus routes ${query}`);
+    };
+    await openAgentSearchResult(currentLanguage === "en" ? "Agent identity" : "编辑身份");
+    const agentName = f.tab.containerEl.querySelector<HTMLInputElement>('input[data-field="name"]')!;
+    assert.ok(agentName, "identity search opens the shared live Agent editor");
+    const editedName = currentLanguage === "en" ? "Search assistant" : "搜索里的总助";
+    agentName.value = editedName; agentName.dispatchEvent(new primary.Event("input", { bubbles: true }));
+    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click();
+    await scheduler.flush();
+    assert.equal(f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "sol")?.name, editedName);
+    assert.equal(f.tab.containerEl.querySelector('input[data-field="name"]'), null, "saved Agent returns to the settings summary");
+    assert.ok(f.tab.containerEl.querySelector('[data-echoink-focus-key="agent:sol:edit"]')?.textContent?.includes(editedName), "the summary reads the saved registry name");
+
+    const profileQuery = currentLanguage === "en" ? "Your profile" : "你的画像";
+    await openAgentSearchResult(profileQuery);
+    assert.equal(f.tab.containerEl.querySelectorAll("[data-profile-section]").length, 3);
+    assert.equal(f.tab.containerEl.querySelectorAll("[data-profile-key]").length, 24);
+    assert.equal(f.tab.containerEl.querySelector("textarea[data-profile-focus]"), null, "empty profile slots do not render 24 editors");
+    const identityEmpty = f.tab.containerEl.querySelector<HTMLDetailsElement>('[data-profile-section="identity"] details')!;
+    identityEmpty.open = true;
+    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-profile-focus="identity.name:edit"]')!.click();
+    const profileName = f.tab.containerEl.querySelector<HTMLTextAreaElement>('[data-profile-focus="identity.name:input"]')!;
+    assert.ok(profileName, "profile search reaches a real inline slot editor");
+    profileName.value = "Disposable profile name"; profileName.dispatchEvent(new primary.Event("input", { bubbles: true }));
+    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-profile-focus="identity.name:save"]')!.click();
+    await scheduler.flush();
+    assert.equal(f.profileSaves.length, 1);
+    assert.deepEqual(f.profileSaves[0].items.map(item => ({ key: item.profileKey, text: item.text, basis: item.basis })), [{ key: "identity.name", text: "Disposable profile name", basis: "explicit_memory" }]);
+    const savedProfileRow = () => f.tab.containerEl.querySelector('[data-profile-key="identity.name"]')!;
+    assert.equal(savedProfileRow().querySelector(".echoink-profile-value")?.textContent, "Disposable profile name");
+    assert.equal(savedProfileRow().querySelector(".echoink-profile-source")?.textContent, currentLanguage === "en" ? "Confirmed by you" : "你确认的");
+    assert.equal(f.tab.containerEl.querySelector('[data-profile-section="identity"] .echoink-profile-count')?.textContent, "1/6");
+    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-profile-focus="back"]')!.click();
+    await scheduler.flush();
+    assert.equal(f.tab.containerEl.querySelector(".echoink-user-profile-settings"), null);
+    await openAgentSearchResult(profileQuery);
+    assert.equal(savedProfileRow().querySelector(".echoink-profile-value")?.textContent, "Disposable profile name", "reopening the profile reads the saved snapshot");
+    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-profile-focus="back"]')!.click();
+    await scheduler.flush();
+    searchInput.value = "";
+    await navigate("modules");
+    console.log(`PASS P13 settings search (${language}): host row opens live Agent/profile editors, saves and reads back registry/profile snapshots`);
+
     f.state.settingsDetail = "knowledge-preferences";
     f.state.knowledgePreferenceEditor = { savedContent: "saved", draftContent: "edited" };
     let confirmations = 0;
@@ -822,4 +904,55 @@ async function checkDesktopSettings(
     assert.ok(secondScheduler.observers.every(observer => observer.disconnected));
   } finally { secondary.window.close(); }
   console.log("PASS P11 desktop: independent settings document owns controls, listeners and teardown");
+}
+
+async function checkDesktopMemoryConflict(win: Window & typeof globalThis) {
+  const f = fixture(win, "zh-CN"), state = f.state, plugin = f.plugin as any;
+  state.scheduleDisplay = () => {};
+  const old = { id: "memory-old", kind: "fact", status: "current", title: "Old", content: "Old content", recallWhen: "When asked", revision: 1 };
+  let disk: any = { revision: 1, records: [old], forgottenIds: [] };
+  state.personalMemoryState = disk;
+  const generated: any[] = [], saves: any[] = [];
+  plugin.getEchoInkPersonalMemoryState = async () => disk;
+  plugin.generateEchoInkPersonalMemoryCorrection = async (target: any) => { generated.push(target); return { title: "Corrected", content: "New correction", recallWhen: "When asked" }; };
+  plugin.applyEchoInkPersonalMemoryCorrection = async (input: any) => { saves.push(input); if (input.expectedRevision !== disk.revision) throw new Error("revision_conflict"); };
+  state.openDesktopMemoryCorrection(old);
+  const controller = state.desktopCorrection.controller as any;
+  let preview = await controller.actions.generate("Keep this draft");
+  const newer = { ...old, id: "memory-new", title: "Latest", content: "Updated elsewhere", revision: 2, supersedes: old.id };
+  disk = { revision: 2, records: [{ ...old, status: "superseded" }, newer], forgottenIds: [] };
+  await assert.rejects(controller.actions.save(preview, "Keep this draft"), /revision_conflict/);
+  assert.equal(state.desktopCorrection.id, newer.id);
+  assert.equal(state.personalMemoryState.records.find((r: any) => r.status === "current").id, newer.id);
+  preview = await controller.actions.generate("Keep this draft");
+  assert.equal(generated.at(-1).content, newer.content);
+  await controller.actions.save(preview, "Keep this draft");
+  assert.equal(saves.at(-1).targetId, newer.id); assert.equal(saves.at(-1).expectedRevision, 2);
+  disk = { revision: 3, records: [], forgottenIds: [newer.id] };
+  await assert.rejects(controller.actions.generate("Retained after forgetting"), /已失效/);
+  const host = win.document.createElement("div"); win.document.body.appendChild(host);
+  state.renderPersonalMemoryCorrectionRecords(host, "facts");
+  assert.ok(host.querySelector('.echoink-memory-correction-inline'), "invalidated target retains mounted correction card so navigation can leave");
+  assert.match(host.textContent ?? "", /这条记忆已失效/);
+  state.desktopCorrection = null; controller.close(); host.remove(); f.tab.containerEl.remove();
+  console.log("PASS P13 correction conflict: superseded target refreshes, explicit regeneration freezes new ID/revision, forgotten target keeps accessible draft card");
+}
+
+async function checkDesktopEnableSwitches(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {
+  const f = fixture(win, "zh-CN"), mount = mountDefinitions(f.tab);
+  f.tab.openDesktopRoute({tab:"agent"}); await scheduler.flush();
+  const initial = f.plugin.settings.memory.useLongTermMemory;
+  f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="general:memory:enabled"]')!.click();
+  await scheduler.flush();
+  assert.equal(f.plugin.settings.memory.useLongTermMemory, !initial, "real click must reach the Radix switch handler");
+  assert.equal((f.saved.at(-1) as any).memory.useLongTermMemory, !initial);
+  assert.ok(f.tab.containerEl.querySelector('[data-echoink-focus-key="agent:profile"]'), "disabled memory keeps local profile management");
+  f.tab.openDesktopRoute({tab:"modules"}); await scheduler.flush();
+  const selection = f.plugin.settings.selectionAsk.enabled;
+  f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="module:selection:enabled"]')!.click();
+  await scheduler.flush();
+  assert.equal(f.plugin.settings.selectionAsk.enabled, !selection, "module enable click must reach its original save path");
+  assert.equal((f.saved.at(-1) as any).selectionAsk.enabled, !selection);
+  f.registrations.forEach(cleanup=>cleanup()); mount.cleanup(); f.tab.containerEl.remove();
+  console.log("PASS real Origin switch clicks: memory enable and module enable save; no sibling drawer activation");
 }
