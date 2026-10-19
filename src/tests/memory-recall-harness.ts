@@ -62,6 +62,7 @@ export async function runMemoryRecallHarnessContractScenarios(): Promise<void> {
   await scenarioSearchToolResultAlwaysContainsCompleteJson();
   await scenarioRecallContextUsesTokenBudgetAndNoMemorySkips();
   await scenarioRecallIdentityAndExplicitBoundaries();
+  await scenarioRecallNamedProjectBoundaries();
   await scenarioRecallIdentityAndSecondaryShareRealBudget();
   await scenarioSupersededRecallHintAndBudget();
   await scenarioSupersededRecallHintVisibility();
@@ -623,6 +624,98 @@ async function scenarioRecallIdentityAndExplicitBoundaries(): Promise<void> {
       "显式 memory_search 的 global 仍是精确 scope，不扩大到无 scope 项");
   });
   console.log("PASS Memory Recall identity, project/global and explicit history/date boundaries");
+}
+
+async function scenarioRecallNamedProjectBoundaries(): Promise<void> {
+  await withPersonalMemoryFixture(async (fixture) => {
+    const definitions: Array<{ label: string; scope?: string }> = [
+      { label: "无范围全局" },
+      { label: "明确全局", scope: "global" },
+      { label: "EchoInk", scope: "project:EchoInk" },
+      { label: "EchoInk 旧范围", scope: "EchoInk" },
+      { label: "潮汐", scope: "project:潮汐" },
+      { label: "海港", scope: "project:海港" },
+      { label: "团队范围", scope: "team:design" },
+      { label: "历史裸范围", scope: "legacy-workspace" }
+    ];
+    const ids = new Map<string, string>();
+    for (const [index, definition] of definitions.entries()) {
+      const result = await fixture.repository.write({
+        operation: "create", kind: "fact", title: `${definition.label}截止时间`,
+        content: `${definition.label}的截止时间需要提前核对。`,
+        recallWhen: "核对截止时间时", basis: "explicit", scope: definition.scope
+      }, fixture.runtime({ userEntryId: `named-project-${index}` }));
+      assert.ok(result.record);
+      ids.set(definition.label, result.record!.id);
+    }
+    const globalLabels = ["无范围全局", "明确全局"];
+    const retainedLabels = [...globalLabels, "团队范围", "历史裸范围", "EchoInk 旧范围"];
+    const echoInkLabels = [...retainedLabels, "EchoInk"];
+    const explicitEchoInkLabels = [...globalLabels, "EchoInk", "EchoInk 旧范围"];
+    const allLabels = definitions.map(({ label }) => label);
+    const runtime = fixture.runtime();
+    const harness = new PersonalMemoryRecallHarness(fixture.repository);
+    const input = {
+      memoryMode: "normal" as const, tokenBudget: 5_000,
+      vaultId: runtime.vaultId, conversationId: runtime.conversationId,
+      piSessionId: runtime.piSessionId, productRunId: runtime.productRunId
+    };
+    const cases: Array<{
+      name: string; query: string; expected: string[]; scope?: string;
+      recentConversation?: string[];
+    }> = [
+      { name: "点名一个项目且不区分大小写", query: "ECHOINK 的截止时间是什么？", expected: echoInkLabels },
+      { name: "点名两个项目", query: "EchoInk 和潮汐的截止时间是什么？", expected: [...echoInkLabels, "潮汐"] },
+      { name: "未点名项目", query: "截止时间是什么？", expected: allLabels },
+      // 按范围名直接匹配；常见词的日常用法也命中，不做语义推断。
+      { name: "项目名为常见词", query: "潮汐变化与截止时间有什么关系？", expected: [...retainedLabels, "潮汐"] },
+      { name: "显式裸项目范围优先于问句点名", query: "潮汐的截止时间是什么？", scope: " echoink ", expected: explicitEchoInkLabels },
+      { name: "显式规范项目范围优先于问句点名", query: "潮汐的截止时间是什么？", scope: "project:EchoInk", expected: explicitEchoInkLabels },
+      { name: "显式全局范围保留", query: "EchoInk 的截止时间是什么？", scope: "global", expected: globalLabels },
+      {
+        name: "代词追问复用既有前文构造", query: "它的截止时间是什么？",
+        recentConversation: ["潮汐之前的安排是什么？", "EchoInk 候选版现在是什么状态？"],
+        expected: echoInkLabels
+      },
+      {
+        name: "非代词问句不从历史点名", query: "截止时间是什么？",
+        recentConversation: ["EchoInk 候选版现在是什么状态？"], expected: allLabels
+      }
+    ];
+    for (const { name, expected, ...scenario } of cases) {
+      const prepared = await harness.prepareTurnContext({ ...input, ...scenario });
+      assert.deepEqual(new Set(prepared.recall!.candidates.map((item) => item.id)),
+        new Set(expected.map((label) => ids.get(label)!)), name);
+      assert.equal(prepared.recall!.total, expected.length, name);
+      console.log(`PASS Memory named-project recall: ${name}`);
+    }
+
+    const security = new PiPersonalMemoryToolSecurity({
+      currentRuntime: () => runtime,
+      currentUserEntry: { current: () => ({ entryId: runtime.userEntryId, text: "EchoInk 的截止时间是什么？" }) }
+    });
+    const tool = createPiPersonalMemoryToolDefinitions({ repository: fixture.repository, security })
+      .find((candidate) => candidate.name === "memory_search")!;
+    const toolInput = { query: "EchoInk 的截止时间是什么？", limit: 12 };
+    const toolCallId = "memory-search-named-project-boundary";
+    assert.equal(await security.handleToolCall({
+      toolName: "memory_search", toolCallId, input: toolInput
+    } as never, undefined), undefined);
+    const pending = await tool.execute(toolCallId, toolInput, new AbortController().signal, undefined, {} as never);
+    const corrected = await security.handleToolResult({
+      toolName: "memory_search", toolCallId, content: pending.content,
+      details: pending.details, isError: false
+    } as never);
+    const match = /<echoink_memory_result[^>]*>\n([\s\S]*)\n<\/echoink_memory_result>/u.exec(
+      corrected.content[0]?.text ?? ""
+    );
+    assert.ok(match);
+    const result = JSON.parse(match[1]!) as { items: Array<{ id: string }> };
+    assert.deepEqual(new Set(result.items.map((item) => item.id)),
+      new Set(allLabels.map((label) => ids.get(label)!)),
+      "memory_search 工具继续跨项目搜索，不继承自动召回的点名过滤");
+    console.log("PASS memory_search keeps all matching projects after named-project recall");
+  });
 }
 
 async function scenarioRecallIdentityAndSecondaryShareRealBudget(): Promise<void> {

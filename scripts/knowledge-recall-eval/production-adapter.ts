@@ -129,6 +129,8 @@ export async function evaluateProduction(input) {
       });
       const hitWrites = [], hitWriteErrors = [];
       const snapshotTrace = [];
+      const pages = [];
+      let scopedCandidates, candidateQuery, candidateCollectionFailure, captureRecallQuery = false;
       {
         const prepareSnapshot = repository.prepareTurnSnapshot.bind(repository);
         repository.prepareTurnSnapshot = async (...args) => {
@@ -136,6 +138,14 @@ export async function evaluateProduction(input) {
           // from the expected policy. The selector callback is not JSON data.
           const { selectCandidateIds, ...request } = args[0];
           return await observe('PersonalMemoryRepository.prepareTurnSnapshot', request, async () => {
+            if (captureRecallQuery) {
+              captureRecallQuery = false;
+              // Query construction belongs to this checkout's real Harness.
+              // Search before the snapshot can record secondary recall hits,
+              // retaining the candidate pages' original observation point.
+              try { await collectCandidates(request.query); }
+              catch (error) { candidateCollectionFailure = { error }; throw error; }
+            }
             const snapshot = await prepareSnapshot(...args);
             if (setup.repeat_query_count !== undefined) snapshotTrace.push({ query: args[0].query, productRunId: args[1]?.productRunId ?? null,
               candidates: snapshot.search?.items ?? [], pendingSecondaryHits: snapshot.search?.pendingSecondaryHits ?? [] });
@@ -155,23 +165,25 @@ export async function evaluateProduction(input) {
       for (const seed of seeds) {
         seedResults.push(await writeMemorySeed(repository, seed, runtime, operation => { nextId = operation.id; }, observe));
       }
-      const searchRequest = { query: item.query, limit: 50, ...(setup.memory_search ?? {}) };
-      const pages = [];
-      let page;
-      do {
-        const request = { ...searchRequest, ...(page?.nextCursor ? { cursor: page.nextCursor } : {}) };
-        page = await observe('PersonalMemoryRepository.search', request, () => repository.search(request, runtime));
-        pages.push(page);
-        if (pages.length > 1000) throw new Error('Memory pagination did not terminate');
-      } while (page.nextCursor);
-      let scopedCandidates;
-      if (projectId) {
-        await observe('PersonalMemoryRepository.prepareTurnSnapshot.projectCandidates', { query: item.query, scope: projectId }, () => repository.prepareTurnSnapshot({
-          memoryMode: 'normal', query: item.query, scope: projectId,
-          selectCandidateIds(candidates) { scopedCandidates = [...candidates]; return []; }
-        }, runtime));
+      async function collectCandidates(query) {
+        if (typeof query !== 'string') throw new Error('Production Recall did not supply a candidate query');
+        candidateQuery = query;
+        const searchRequest = { limit: 50, ...(setup.memory_search ?? {}), query };
+        let page;
+        do {
+          const request = { ...searchRequest, ...(page?.nextCursor ? { cursor: page.nextCursor } : {}) };
+          page = await observe('PersonalMemoryRepository.search', request, () => repository.search(request, runtime));
+          pages.push(page);
+          if (pages.length > 1000) throw new Error('Memory pagination did not terminate');
+        } while (page.nextCursor);
+        if (projectId) {
+          await observe('PersonalMemoryRepository.prepareTurnSnapshot.projectCandidates', { query, scope: projectId }, () => repository.prepareTurnSnapshot({
+            memoryMode: 'normal', query, scope: projectId,
+            selectCandidateIds(candidates) { scopedCandidates = [...candidates]; return []; }
+          }, runtime));
+        }
+        candidateEvidence = { candidate_items: pages.flatMap(value => value.items), raw_candidate_pages: pages };
       }
-      candidateEvidence = { candidate_items: pages.flatMap(value => value.items), raw_candidate_pages: pages };
       const harness = new productionMemoryRecall.PersonalMemoryRecallHarness(repository);
       let prepared, preparedInput;
       const handlers = new Map();
@@ -181,7 +193,12 @@ export async function evaluateProduction(input) {
         currentMemoryTurn: () => ({ ...runtime, ...(projectId ? { projectId } : {}), query: item.query, recentConversation }),
         personalMemory: {
           loadFixedContext: request => repository.loadFixedContext(request),
-          prepareTurnContext: async request => { preparedInput = request; return (prepared = await observe('PersonalMemoryRecallHarness.prepareTurnContext', request, () => harness.prepareTurnContext(request))); }
+          prepareTurnContext: async request => {
+            preparedInput = request;
+            captureRecallQuery = true;
+            try { return (prepared = await observe('PersonalMemoryRecallHarness.prepareTurnContext', request, () => harness.prepareTurnContext(request))); }
+            finally { captureRecallQuery = false; }
+          }
         },
         personalMemoryRecallTokenBudget: setup.memory_token_budget ?? 1200,
         personalMemoryAvailable: true
@@ -189,6 +206,10 @@ export async function evaluateProduction(input) {
       await extension.factory({ on: (name, handler) => handlers.set(name, handler) });
       const before = await observe('createPiKnowledgeInlineExtension.before_agent_start', { prompt: item.query }, () => handlers.get('before_agent_start')({ systemPrompt: 'EchoInk offline evaluation', prompt: item.query }));
       const context = await observe('createPiKnowledgeInlineExtension.context', { query: item.query }, () => handlers.get('context')({ messages: [{ role: 'user', content: item.query, timestamp }] }));
+      // Production may gracefully skip failed Recall; evaluator candidate
+      // collection errors must still reach the CLI's original error verdict.
+      if (candidateCollectionFailure) throw candidateCollectionFailure.error;
+      if (candidateQuery === undefined) throw new Error('Production Recall candidate query was not observed');
       const repeatEvidence = [];
       if (setup.repeat_query_count !== undefined) {
         if (!Number.isSafeInteger(setup.repeat_query_count) || setup.repeat_query_count < 1 || setup.repeat_query_count > 20) throw new Error('Invalid repeat_query_count');
@@ -224,7 +245,7 @@ export async function evaluateProduction(input) {
         candidate_items: scopedCandidates ?? pages.flatMap(value => value.items), delivery_items: delivered,
         provider_text: text, calls, raw: { fixture_validation: { status: 'valid', secondary_ids: validatedSecondaryIds, method: 'serializeSecondaryRecord (calls normalizeAssociationClueFields); provider fields unchanged' }, seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context, repeat_recall: repeatEvidence, repeat_observations: repeatObservations, secondary_hit_write_errors: hitWriteErrors },
         host_adapters: ['synthetic Vault and runtime IDs', 'deterministic Repository idFactory/now', 'Repository secondaryRecordsProvider from frozen synthetic SecondaryMemoryRecord records', 'Pi event registration host only; production handler and serialization unchanged'],
-        effective_configuration: { declared_project: setup.project ?? null, projectId: projectId ?? null, frozen_history: frozenHistory, recent_conversation: recentConversation, ...historyAudit, history_applied_to_memory_preflight: true, history_roles_preserved_in_audit: true, current_query: item.query },
+        effective_configuration: { declared_project: setup.project ?? null, projectId: projectId ?? null, frozen_history: frozenHistory, recent_conversation: recentConversation, ...historyAudit, history_applied_to_memory_preflight: true, history_roles_preserved_in_audit: true, current_query: item.query, candidate_query: candidateQuery, candidate_query_source: 'observed_production_prepareTurnSnapshot' },
         unsupported_setup: unsupportedSetup(setup).filter(issue => issue.key !== 'history')
       };
     }

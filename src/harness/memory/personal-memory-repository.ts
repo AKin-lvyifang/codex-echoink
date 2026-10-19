@@ -994,10 +994,27 @@ export class PersonalMemoryRepository {
     const secondaryById = new Map(this.secondaryCache.map((record) => [record.id, record]));
     const forgottenIds = new Set(manifest.tombstones.map((entry) => entry.recordId));
     const scope = cleanOptional(request.scope, "scope", 240)?.toLocaleLowerCase();
-    const withinBoundary = (record: Pick<PersonalMemoryRecord, "scope" | "date">) =>
-      matchesRecallScope(record.scope, scope)
-      && (!request.from || record.date >= request.from)
-      && (!request.to || record.date <= request.to);
+    const namedProjects = new Set<string>();
+    // Explicit scope takes precedence. Otherwise only project: scopes supply
+    // names, matched literally against the query already built by the Harness.
+    if (!scope) {
+      const normalizedQuery = query.toLocaleLowerCase();
+      for (const record of index.catalog) {
+        const recordScope = record.scope?.trim().toLocaleLowerCase();
+        if (!recordScope?.startsWith("project:")) continue;
+        const project = recordScope.slice("project:".length).trim();
+        if (project && normalizedQuery.includes(project)) namedProjects.add(project);
+      }
+    }
+    const withinBoundary = (record: Pick<PersonalMemoryRecord, "scope" | "date">) => {
+      const recordScope = record.scope?.trim().toLocaleLowerCase();
+      return matchesRecallScope(record.scope, scope)
+        && (namedProjects.size === 0
+          || !recordScope?.startsWith("project:")
+          || namedProjects.has(recordScope.slice("project:".length).trim()))
+        && (!request.from || record.date >= request.from)
+        && (!request.to || record.date <= request.to);
+    };
     const identityFor = (id: string) => {
       const record = cachedRecordsById.get(id) ?? metadataById.get(id);
       if (!record) {

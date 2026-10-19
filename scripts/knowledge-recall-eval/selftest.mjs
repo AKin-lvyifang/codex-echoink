@@ -98,6 +98,8 @@ async function testCurrentProjectScope() {
         assert.equal(audit.declared_project, scenario.declared ?? null);
         assert.equal(audit.projectId, scenario.projectId);
         assert.equal(audit.current_query, scenario.query);
+        assert.equal(audit.candidate_query, actual.calls.find(call => call.function === 'PersonalMemoryRepository.search').request.query);
+        assert.equal(audit.candidate_query_source, 'observed_production_prepareTurnSnapshot');
         assert.deepEqual(audit.frozen_history, scenario.history ?? []);
         assert.deepEqual(audit.recent_conversation, scenario.history ? [scenario.history[0].content] : []);
       });
@@ -144,24 +146,28 @@ async function testMemoryRecallHistory() {
   await mkdir(path.join(historyDataset, '记忆'), { recursive: true });
   await writeFile(path.join(historyDataset, 'manifest.json'), JSON.stringify({ dataset_version: 'selftest-memory-history', fixed_date: '2026-10-16T12:00:00+08:00', settings: {} }));
   await writeFile(path.join(historyDataset, '记忆/seed.json'), JSON.stringify({ operations: [
-    { id: 'mem_context', request: { operation: 'create', kind: 'fact', title: '合成负责人', recallWhen: '询问负责人时', content: '合成负责人是林晓。', basis: 'explicit' } }
+    { id: 'mem_context', request: { operation: 'create', kind: 'fact', title: '合成负责人', recallWhen: '询问负责人时', content: '合成负责人是林晓。', basis: 'explicit' } },
+    { id: 'mem_context_cedar', request: { operation: 'create', kind: 'fact', title: 'Cedar 负责人', recallWhen: '询问负责人时', content: '雪松迁移的负责人是林晓。', scope: 'project:cedar', basis: 'explicit' } },
+    { id: 'mem_context_harbor', request: { operation: 'create', kind: 'fact', title: 'Harbor 负责人', recallWhen: '询问负责人时', content: '海港工程的负责人是周航。', scope: 'project:harbor', basis: 'explicit' } }
   ] }));
   const previous = history[2].content;
   const repeated = '它的负责人是谁？';
   const scenarios = [
     { id: 'TOPIC_SWITCH', query: '换个话题，海港工程的负责人是谁？', history, previous, expected: '换个话题，海港工程的负责人是谁？' },
     { id: 'NAMED_SUBJECT', query: '那海港工程呢？', history, previous, expected: '那海港工程呢？' },
-    { id: 'PRONOUN', query: repeated, history, previous, expected: `${repeated}\n${previous}` },
+    { id: 'PRONOUN', query: repeated, history, previous, expected: `${repeated}\n${previous}`, deliveryIds: ['mem_context', 'mem_context_cedar'] },
+    { id: 'NAMED_PROJECT', query: 'harbor 项目的负责人是谁？', history, previous, expected: 'harbor 项目的负责人是谁？', deliveryIds: ['mem_context', 'mem_context_harbor'] },
     { id: 'SAME_TEXT_PREVIOUS_USER', query: repeated, history: [{ role: 'user', content: repeated }, history[3]], previous: repeated, expected: `${repeated}\n${repeated}` },
     { id: 'ASSISTANT_ONLY', query: repeated, history: [history[3]], previous: null, expected: repeated },
     { id: 'OPAQUE_STRINGS', query: repeated, history, opaque, previous: null, expected: `${repeated}\n${opaque[1]}` },
     { id: 'CURRENT_PROJECT', query: 'Project: harbor\n它的负责人是谁？', history, previous, scope: 'harbor', expected: 'Project: harbor\n它的负责人是谁？' },
+    { id: 'HISTORICAL_STATUSES', query: '合成负责人的历史', history, previous, expected: '合成负责人的历史', statuses: ['current', 'superseded'] },
     { id: 'HISTORY_BUDGET', query: repeated, history: [{ role: 'user', content: `最近用户前文-${'丙'.repeat(2500)}` }, history[3]], previous: `最近用户前文-${'丙'.repeat(2500)}`, budget: 80 }
   ];
   const cases = scenarios.map(scenario => ({
     case_id: `CONTEXT_${scenario.id}`, domain: 'memory', starter: false, query: scenario.query,
     ...(scenario.opaque ? { recent_conversation: scenario.opaque } : {}),
-    setup: { history: scenario.history, memory_seed: '记忆/seed.json', ...(scenario.budget ? { memory_token_budget: scenario.budget } : {}) },
+    setup: { history: scenario.history, memory_seed: '记忆/seed.json', ...(scenario.budget ? { memory_token_budget: scenario.budget } : {}), ...(scenario.statuses ? { memory_search: { statuses: scenario.statuses, limit: 1 } } : {}) },
     expected: { candidate: { applicable: false }, delivery: { applicable: false } }
   }));
   await writeFile(path.join(historyDataset, 'cases.jsonl'), `${cases.map(item => JSON.stringify(item)).join('\n')}\n`);
@@ -172,12 +178,20 @@ async function testMemoryRecallHistory() {
     const output = path.join(fixture, 'history-run');
     await runEvaluation({ dataset: historyDataset, 'source-root': root, 'output-run': output, 'run-id': `${runId}-history`, phase: 'selftest', cases: cases.map(item => item.case_id).join(',') });
     const results = (await readFile(path.join(output, 'results.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    const queryEvidence = [];
     for (const scenario of scenarios) {
       const { actual } = results.find(result => result.case_id === `CONTEXT_${scenario.id}`);
       const recall = actual.calls.find(call => call.function === 'PersonalMemoryRecallHarness.prepareTurnContext');
       const snapshots = actual.calls.filter(call => call.function === 'PersonalMemoryRepository.prepareTurnSnapshot');
       const snapshot = snapshots.at(-1);
+      const searches = actual.calls.filter(call => call.function === 'PersonalMemoryRepository.search');
       assert.ok(recall && snapshot, `${scenario.id} must observe actual production inputs`);
+      assert.ok(searches.length > 0, `${scenario.id} must execute the real candidate search`);
+      for (const search of searches) {
+        assert.equal(search.request.query, snapshot.request.query, `${scenario.id} candidate search must use the exact actual Harness snapshot query`);
+        assert.deepEqual(search.request.statuses, scenario.statuses, 'Candidate-only historical statuses must remain unchanged');
+      }
+      if (scenario.statuses) assert.ok(searches.length > 1, 'Every page must retain the observed query and historical statuses');
       assert.equal(recall.request.query, scenario.query);
       assert.deepEqual(recall.request.recentConversation, scenario.opaque ?? (scenario.previous ? [scenario.previous] : []));
       assert.equal(recall.request.scope, scenario.scope);
@@ -190,19 +204,55 @@ async function testMemoryRecallHistory() {
       const audit = actual.effective_configuration;
       assert.deepEqual(audit.frozen_history, scenario.history, 'Full role-bearing input remains available for audit');
       assert.equal(audit.current_query, scenario.query);
+      assert.equal(audit.candidate_query, snapshot.request.query);
+      assert.equal(audit.candidate_query_source, 'observed_production_prepareTurnSnapshot');
       assert.deepEqual(audit.recent_conversation, recall.request.recentConversation);
       assert.equal(audit.history_policy, 'current_query_with_unresolved_reference_previous_user_v1');
       assert.equal(audit.history_context_selection, scenario.opaque ? 'strings_passed_without_role_inference' : 'tested_product_selectMemoryRecallPreviousUserContext');
       assert.ok(!snapshot.request.query.includes('ASSISTANT_ENTITY_CANARY'));
+      if (scenario.deliveryIds) {
+        const allIds = ['mem_context', 'mem_context_cedar', 'mem_context_harbor'];
+        assert.deepEqual(actual.candidate_items.map(item => item.id).sort(), [...allIds].sort(), 'Candidate source remains the tool search even when automatic Recall filters another project');
+        assert.deepEqual(actual.raw.repository_search.flatMap(page => page.items).map(item => item.id).sort(), [...allIds].sort());
+        assert.deepEqual(actual.delivery_items.map(item => item.id).sort(), [...scenario.deliveryIds].sort(), 'Automatic Recall delivery applies the production project filter');
+      }
+      queryEvidence.push({ scenario: scenario.id, current_query: scenario.query, candidate_query: audit.candidate_query, production_snapshot_query: snapshot.request.query, candidate_ids: actual.candidate_items.map(item => item.id), delivery_ids: actual.delivery_items.map(item => item.id) });
     }
+    console.log(JSON.stringify({ diagnostic: 'actual candidate query equals production Recall snapshot query; tool candidates and automatic delivery remain distinct', queries: queryEvidence }));
     console.log(`PASS: ${scenarios.length} actual Memory snapshot/context audits; legacy capability absence and explicit string[] compatibility controls.`);
   } finally { await retireRoot(historyWork); }
+}
+
+async function testMemoryCandidateError() {
+  const errorDataset = path.join(fixture, 'candidate-error-dataset');
+  await mkdir(errorDataset);
+  await writeFile(path.join(errorDataset, 'manifest.json'), JSON.stringify({ dataset_version: 'selftest-memory-candidate-error', fixed_date: '2026-10-16T12:00:00+08:00', settings: {} }));
+  const item = {
+    case_id: 'CANDIDATE_SEARCH_ERROR', domain: 'memory', starter: false, query: '合成负责人',
+    setup: { memory_search: { cursor: 'invalid' } },
+    expected: { candidate: { forbidden_ids: ['mem_synthetic_forbidden'] }, delivery: { forbidden_ids: ['mem_synthetic_forbidden'], forbidden_excerpts: ['SYNTHETIC_FORBIDDEN_EXCERPT'] } }
+  };
+  await writeFile(path.join(errorDataset, 'cases.jsonl'), `${JSON.stringify(item)}\n`);
+  await freezeDataset(errorDataset);
+  const errorWork = `${work}-candidate-error`;
+  await registerRoot(errorWork, '候选搜索异常不得被生产 Recall 降级吞掉的合成反例');
+  try {
+    const output = path.join(fixture, 'candidate-error-run');
+    await runEvaluation({ dataset: errorDataset, 'source-root': root, 'output-run': output, 'run-id': `${runId}-candidate-error`, phase: 'selftest', cases: item.case_id });
+    const result = JSON.parse((await readFile(path.join(output, 'results.jsonl'), 'utf8')).trim());
+    console.log(JSON.stringify({ diagnostic: 'candidate search error must reach evaluator CLI despite production Recall fallback', result }));
+    assert.match(result.actual_error ?? '', /memory_search cursor is invalid/u, 'CLI must retain the actual candidate-search error');
+    assert.equal(result.candidate.status, 'fail', 'A failed search must not pass forbidden-only candidate assertions with an empty result');
+    assert.equal(result.delivery.status, 'fail', 'A failed search must not pass forbidden-only delivery assertions with an empty result');
+    assert.ok(result.actual.calls.some(call => call.function === 'PersonalMemoryRepository.search' && call.outcome === 'threw' && /memory_search cursor is invalid/u.test(call.error)), 'Actual Repository failure remains in the call audit');
+    console.log('PASS: candidate-search cursor error reaches CLI; forbidden-only candidate and delivery remain failed.');
+  } finally { await retireRoot(errorWork); }
 }
 
 try {
   await registerRoot(fixture, '独立合成 fixture、冻结数据与自测输出');
   await mkdir(fixture);
-  if (!process.argv.includes('--scope-only') && !process.argv.includes('--history-only')) {
+  if (!process.argv.includes('--scope-only') && !process.argv.includes('--history-only') && !process.argv.includes('--candidate-error-only')) {
   await mkdir(path.join(dataset, '笔记/wiki'), { recursive: true });
   await mkdir(path.join(dataset, '笔记/journal'), { recursive: true });
   await mkdir(path.join(dataset, '记忆'), { recursive: true });
@@ -431,8 +481,9 @@ try {
   assert.ok(run.adapter.imported_files.some(item => item.path === 'src/plugin/pi-production-runtime-composition.ts'));
   console.log('PASS: v1/v2 freeze and run metadata, digest rejection, real production retrieval/Recall, inapplicable candidate and revision assertions, output/14-column CSV with unmeasured blanks.');
   }
-  if (!process.argv.includes('--history-only')) await testCurrentProjectScope();
-  if (!process.argv.includes('--scope-only')) await testMemoryRecallHistory();
+  if (!process.argv.includes('--history-only') && !process.argv.includes('--candidate-error-only')) await testCurrentProjectScope();
+  if (!process.argv.includes('--scope-only') && !process.argv.includes('--candidate-error-only')) await testMemoryRecallHistory();
+  if (!process.argv.includes('--scope-only') && !process.argv.includes('--history-only')) await testMemoryCandidateError();
 } finally {
   for (const directory of [...registeredRoots].reverse()) await retireRoot(directory);
 }

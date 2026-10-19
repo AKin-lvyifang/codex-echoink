@@ -261,6 +261,10 @@ function sectionEvidence(section: IndexedSection, query: ReadonlySet<string>, bo
   return evidenceFor(section.text, best, section.sectionStart, section.sectionEnd);
 }
 
+function hasBodyMatch(section: IndexedSection, query: ReadonlySet<string>): boolean {
+  return section.fragments.some(fragment => [...query].some(token => fragment.bodyTerms.has(token)));
+}
+
 function searchEvidence(section: Section, query: ReadonlySet<string>, bodyQuery: ReadonlySet<string>, dictionary: readonly string[]): Evidence & { sectionTitle: string; matchSources?: readonly BodySearchMatchSource[] } {
   const matches = (text: string) => tokenizeSearchText(text, dictionary).some(token => query.has(token));
   const matchSources: BodySearchMatchSource[] = [];
@@ -268,9 +272,9 @@ function searchEvidence(section: Section, query: ReadonlySet<string>, bodyQuery:
   if ((section.document.aliases ?? []).some(matches)) matchSources.push("alias");
   if ([...query].some(token => section.tagTerms.has(token))) matchSources.push("tag");
   const metadataMatch = matchSources.length > 0;
-  const bodyMatch = section.fragments.some(fragment => [...query].some(token => fragment.bodyTerms.has(token)));
+  const bodyMatch = hasBodyMatch(section, query);
   if (bodyMatch) matchSources.push("body");
-  const bodyEvidenceMatch = section.fragments.some(fragment => [...bodyQuery].some(token => fragment.bodyTerms.has(token)));
+  const bodyEvidenceMatch = hasBodyMatch(section, bodyQuery);
   const evidence = metadataMatch && !bodyEvidenceMatch && section.firstBodyParagraph
     ? section.firstBodyParagraph
     : { ...sectionEvidence(section, query, metadataMatch && bodyEvidenceMatch ? bodyQuery : undefined), sectionTitle: section.sectionTitle };
@@ -556,6 +560,18 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
   }
   let ordered: { section: Section; score: number; query?: number; bestRank: number; inclusionReason?: BodySearchInclusionReason }[] = [...fused.values()].sort((left, right) => right.score - left.score || left.bestRank - right.bestRank
     || left.section.document.vaultRelativePath.localeCompare(right.section.document.vaultRelativePath) || left.section.sectionStart - right.section.sectionStart);
+  const allBodyTerms = new Set(bodyQueries.flatMap(query => [...query]));
+  const fallbackPaths = new Set<string>();
+  ordered = ordered.filter(({ section, query }) => {
+    // Every metadata-only section would deliver the same document-wide paragraph.
+    // Keep the highest-ranked one, but protect body evidence from every fused query.
+    if (query === undefined || !section.firstBodyParagraph || hasBodyMatch(section, allBodyTerms)
+      || ![...queries[query]].some(token => section.titleTerms.has(token) || section.tagTerms.has(token))) return true;
+    const path = section.document.vaultRelativePath;
+    if (fallbackPaths.has(path)) return false;
+    fallbackPaths.add(path);
+    return true;
+  });
   const matchedPaths = new Set(ordered.map(result => result.section.document.vaultRelativePath));
   const candidates = [...matchedPaths].slice(0, KNOWLEDGE_LINK_LIMITS.candidates).map(vaultRelativePath => ({ vaultRelativePath,
     contentRevision: linkStatistics.get(vaultRelativePath)!.contentRevision, targets: linkStatistics.get(vaultRelativePath)!.linkTargets }));
