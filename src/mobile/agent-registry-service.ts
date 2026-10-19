@@ -1,7 +1,7 @@
 import type { DataAdapter } from "obsidian";
 import { normalizeAgentId, normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "../agents/registry";
 import { AGENT_STYLES, styleFromLegacyTemplate } from "../agents/styles";
-import { GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId, type AgentRegistry, type AgentStyleId } from "../agents/types";
+import { GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId, type AgentRegistry, type AgentStyleId, type AgentRunSnapshot } from "../agents/types";
 import { AGENT_IDENTITY_STATE_SCHEMA, DEFAULT_AGENT_DISPLAY_NAME, normalizeAgentAvatar, normalizeAgentDisplayName, parseAgentIdentityState, type AgentAvatarState } from "../harness/memory/agent-identity-model";
 import { parseAgentCurrentSelf, stableSelfKey, type PublicAgentSelfProfile } from "../harness/memory/agent-self-model";
 import { AGENT_TEMPLATES, isAgentTemplateId, type AgentTemplateId } from "../harness/memory/agent-templates";
@@ -157,13 +157,13 @@ export class MobileAgentRegistryService {
       Object.assign(draft, removeAgentDefinition(draft, agentId));
     }, version);
   }
-  context(memoryEnabled: boolean, agentId = GENERAL_ASSISTANT_ID): Promise<string> {
+  context(memoryEnabled: boolean, agentId = GENERAL_ASSISTANT_ID, snapshot?: AgentRunSnapshot): Promise<string> {
     return this.enqueue(async () => {
       await this.initializeInLane();
       const agent = this.settings.agentRegistry.agents.find(item => item.id === agentId);
       if (!agent) throw new Error("agent_not_found");
-      const style = styleProfile(agent.styleId);
-      let content = `\n当前 Agent 身份：${JSON.stringify({ displayName: agent.name, avatar: agent.avatar.kind, ...(agent.avatar.kind === "preset" ? { presetId: agent.avatar.presetId } : {}) })}。以这个名称自称。`;
+      const style = styleProfile(snapshot?.styleId ?? agent.styleId);
+      let content = `\n当前 Agent 身份：${JSON.stringify(snapshot ? { displayName: snapshot.name, position: snapshot.position } : { displayName: agent.name, avatar: agent.avatar.kind, ...(agent.avatar.kind === "preset" ? { presetId: agent.avatar.presetId } : {}) })}。以这个名称自称。`;
       content += `\n当前基础风格：\n处理问题：${style.thinkingMethod}\n表达语气：${style.answerTone}\n回答结构：${style.answerStructure}`;
       if (memoryEnabled) for (const name of ["USER", "MEMORY"] as const) {
         const text = await this.read(`shared-user/${name}.md`);

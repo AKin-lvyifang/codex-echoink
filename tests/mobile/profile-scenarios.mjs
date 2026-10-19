@@ -130,7 +130,7 @@ export async function profileScenarios(api, test, settings) {
   await test("actual mobile send reads Registry identity/four-style mapping; memory gate preserves legacy source", async () => {
     const original = seed(), host = createHost(original), store = new MobileStore(host.adapter, "plugin/mobile", "fixture-instance"); await store.load();
     const config = settings(); let services, payload;
-    const runtime = new MobileRuntime(host.app, store, () => config, async request => { payload = JSON.parse(request.body); return answer("openai-completions", "ok"); }, () => services.context());
+    const runtime = new MobileRuntime(host.app, store, () => config, async request => { payload = JSON.parse(request.body); return answer("openai-completions", "ok"); }, (id, turn) => services.context(id, turn));
     services = new MobileServices({ app: host.app, settings: config, store, runtime, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile");
     await services.initialize(); await store.setMemoryEnabled(false);
     const originalRead = host.adapter.read.bind(host.adapter), reads = [];

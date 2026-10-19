@@ -1,0 +1,32 @@
+/* ECHOINK_MOBILE_TASK_INTERACTIONS_START */
+.echoink-mobile .em-task-stop[hidden] { display:none; }
+.echoink-mobile .em-task-stop { position:relative; background:transparent; color:var(--text-normal); isolation:isolate; }
+.echoink-mobile .em-task-stop::before { content:""; position:absolute; inset:6px; border-radius:6px; background:var(--em-surface); z-index:-1; }
+.echoink-mobile.em-tablet .em-task-stop::before { inset:8px; }
+.echoink-mobile .em-task-stop:hover { background:transparent; }
+.echoink-mobile .em-task-stop:hover::before { background:var(--background-modifier-hover); }
+.echoink-mobile .em-task-stop:disabled { opacity:.45; }
+.echoink-mobile .em-task-status { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; }
+.echoink-mobile .em-task-status:empty { display:none; }
+.echoink-mobile .em-task-question-entry { font-size:calc(var(--font-text-size,16px) * .8); padding-inline:10px; }
+.echoink-mobile .em-task-compact { position:relative; min-height:44px; border:0; background:transparent; box-shadow:none; isolation:isolate; }
+.echoink-mobile .em-task-compact::before { content:""; position:absolute; inset:6px 0; border-radius:6px; background:var(--em-surface); z-index:-1; }
+.echoink-mobile.em-tablet .em-task-compact::before { inset-block:8px; }
+.echoink-mobile .em-task-compact:hover { background:transparent; box-shadow:none; }
+.echoink-mobile .em-task-compact:hover::before { background:var(--background-modifier-hover); }
+.echoink-mobile .em-task-compact:focus-visible { outline:none; box-shadow:none; }
+.echoink-mobile .em-task-compact:focus-visible::before { background:var(--background-modifier-hover); }
+.echoink-mobile .em-task-compact:disabled { opacity:.45; }
+.echoink-mobile .em-task-questions { padding-bottom:0; }
+.echoink-mobile .em-task-question { margin:0 0 18px; }
+.echoink-mobile .em-task-prompt { margin:0 0 8px; font-size:1em; font-weight:500; line-height:1.6; overflow-wrap:anywhere; }
+.echoink-mobile .em-task-option { white-space:normal; }
+.echoink-mobile .em-task-option .em-row-label { min-width:0; overflow-wrap:anywhere; }
+.echoink-mobile .em-task-option[aria-pressed=true],
+.echoink-mobile .em-task-option[aria-checked=true] { background:var(--background-modifier-hover); }
+.echoink-mobile .em-task-supplement { width:100%; resize:vertical; }
+.echoink-mobile .em-task-question-actions { flex:none; display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding:8px 0 0; background:var(--background-primary); }
+.echoink-mobile .em-task-question-submit { color:var(--text-on-accent); }
+.echoink-mobile .em-task-question-submit::before,
+.echoink-mobile .em-task-question-submit:hover::before { background:var(--em-green); }
+/* ECHOINK_MOBILE_TASK_INTERACTIONS_END */

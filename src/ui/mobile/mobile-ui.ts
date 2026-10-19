@@ -15,6 +15,8 @@ import { defaultAgentIdentityState } from "../../harness/memory/agent-identity-m
 import { resolveAgentAvatarUrl } from "../agent-avatar-presets";
 import { renderSettingsGearIcon } from "../codex-icon";
 import type { AccountService } from "../../membership/account-service";
+import type { MobileTaskInteraction } from "../../mobile/task-contracts";
+import type { EchoInkQuestionAnswer } from "../../types/conversation-turn";
 
 export interface MobileUIHost {
   app: App;
@@ -80,23 +82,32 @@ export class MobileUI {
   private content!: HTMLElement;
   private timer?: number;
   private unsubscribeIdentity?: () => void;
+  private unsubscribeRuntime?: () => void;
   private chatSessionId?: string;
   private chatBinding?: { sessionId: string };
   private draftEdits = new Map<string, { text: string }>();
-  private sending = false;
-  private onRuntimeChange = () => { if (this.page === "chat" || (this.host.isTablet && this.page === "history")) this.refreshChat(); };
+  private sendingTasks = new Set<string>();
+  private stoppingTasks = new Set<string>();
+  private taskErrors = new Map<string, string>();
+  private questionDrafts = new Map<string, Map<string, { selected: Set<string>; supplement: string }>>();
+  private answeringQuestions = new Set<string>();
+  private questionSheet?: { taskId: string; key: string; overlay: HTMLElement; updatePending: () => void };
+  private onRuntimeChange = (taskId: string) => {
+    if (taskId !== this.chatSessionId && this.chatSessionId === this.host.store.session.id) return;
+    if (this.page === "chat" || (this.host.isTablet && this.page === "history")) this.refreshChat();
+  };
   constructor(private root: HTMLElement, private host: MobileUIHost) { this.host.applyAppearance = () => this.applyAppearance(); this.settingPages = new MobileSettingsPages(host, { go: page => this.go(page), back: () => this.back(), captureScroll: key => this.captureScroll(key), restoreScroll: key => this.restoreScroll(key), updateHeader: () => this.syncHeader(), sheet: (title, render) => this.openSheet(title, render), closeSheet: () => this.closeSheet(), row: (parent, title, desc, name, action) => this.row(parent, title, desc, name, action), button: (parent, title, action, name, cls) => this.button(parent, title, action, name, cls), field: (parent, title, value, update, type) => this.field(parent, title, value, update, type), act: action => this.act(action) }); }
   showPage(page: MobileSettingsRoute) { this.go(page, page === "settings"); }
   showChat() { if (this.host.settingsOnly) return; if (this.page !== "chat") this.go("chat"); else this.refreshChat(); }
   mount() {
     this.mounted = true; this.root.classList.add("echoink-mobile"); this.root.classList.toggle("em-tablet", !!this.host.isTablet); this.root.classList.toggle("em-settings-surface", !!this.host.settingsOnly);
     if (this.host.settingsOnly) this.page = "settings";
-    else { this.host.runtime.onChange = this.onRuntimeChange; this.timer = window.setInterval(() => this.updateTimers(), 250); }
+    else { this.unsubscribeRuntime = this.host.runtime.subscribe(this.onRuntimeChange); this.timer = window.setInterval(() => this.updateTimers(), 250); }
     this.unsubscribeIdentity = this.host.services?.subscribeIdentity(() => { this.syncHeader(); this.settingPages.refreshIdentity(); });
     this.render(); this.viewport = new MobileViewport(this.root); this.applyAppearance();
   }
   refreshSettings() { this.applyAppearance(); this.updateComposerLabels(); if (!this.host.settingsOnly) this.refreshChat(); }
-  destroy() { this.unsubscribeIdentity?.(); this.unsubscribeIdentity = undefined; this.viewport?.dispose(); this.settingPages.dispose(); this.closeSheet(false); this.mounted = false; window.clearInterval(this.timer); if (this.host.runtime.onChange === this.onRuntimeChange) this.host.runtime.onChange = () => {}; this.root.replaceChildren(); }
+  destroy() { this.unsubscribeRuntime?.(); this.unsubscribeRuntime = undefined; this.unsubscribeIdentity?.(); this.unsubscribeIdentity = undefined; this.viewport?.dispose(); this.settingPages.dispose(); this.closeSheet(false); this.mounted = false; window.clearInterval(this.timer); this.root.replaceChildren(); }
   private async act(action: () => void | Promise<void>) {
     try { this.error = ""; this.showError(); await action(); }
     catch (error) { this.error = error instanceof Error ? error.message : String(error); if (this.mounted) this.showError(); }
@@ -280,58 +291,198 @@ export class MobileUI {
     body.classList.add("em-messages"); this.messages(body, chatSessionId);
     const compose = el(this.content, "footer", "em-compose");
     const quick = el(compose, "div", "em-quick");
-    const newButton = this.button(quick, "新对话", async () => { if (this.host.runtime.busy) return; await this.host.store.createSession(); this.scroll.delete("chat"); this.render(); }, "square-pen"); newButton.disabled = this.host.runtime.busy;
+    this.button(quick, "新对话", async () => { const agentId = this.host.store.getSession(binding.sessionId)?.agentId; await this.host.store.createSession(agentId); this.scroll.delete("chat"); this.render(); }, "square-pen");
     this.button(quick, "引用笔记", () => { const sessionId = binding.sessionId; this.openSheet("引用笔记", body => this.notes(body, sessionId)); }, "file-text");
     const journal = async (sessionId: string) => { if (!this.host.services) throw new Error("日记服务尚未就绪。"); await this.host.services.prepareJournal(undefined, false, sessionId); this.closeSheet(); this.root.querySelector<HTMLTextAreaElement>(".em-input")?.focus(); };
     this.button(quick, "写日记", () => journal(binding.sessionId), "notebook-pen");
     const context = el(compose, "div", "em-context");
     this.refreshContext(context, chatSessionId);
     const composer = el(compose, "div", "em-composer");
-    const input = el(composer, "textarea", "em-input"); input.placeholder = `和 ${(this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName} 说说你的想法…`; input.setAttribute("aria-label", "消息草稿"); input.rows = 2; input.value = this.draftEdits.get(chatSessionId)?.text ?? session.draft;
-    input.addEventListener("input", () => { const sessionId = binding.sessionId; const text = input.value; void this.act(() => this.updateDraft(sessionId, text)); });
+    const input = el(composer, "textarea", "em-input"); input.placeholder = `和 ${this.sessionIdentity(chatSessionId).displayName} 说说你的想法…`; input.setAttribute("aria-label", "消息草稿"); input.rows = 2; input.value = this.draftEdits.get(chatSessionId)?.text ?? session.draft;
+    input.addEventListener("input", () => { const sessionId = binding.sessionId; const text = input.value; void this.updateDraft(sessionId, text).catch(error => this.taskFailure(sessionId, error)); });
     const controls = el(composer, "div", "em-composer-tools");
     this.iconButton(controls, "添加到对话", "plus", () => { const sessionId = binding.sessionId; this.openSheet("添加到对话", body => { this.row(body, "引用笔记", "", "file-text", () => this.openSheet("引用笔记", part => this.notes(part, sessionId))); this.row(body, "写日记", "", "notebook-pen", () => journal(sessionId)); this.row(body, "选择 Skill", "", "sparkles", () => this.go("resources")); }); });
-    this.iconButton(controls, `工作区权限：${permissions.find(p => p[0] === this.host.store.state.permission)?.[1]}`, "shield-check", () => this.openSheet("工作区权限", body => this.permissionPage(body)));
-    const model = selectedModel(this.host.settings());
-    const picker = this.button(controls, "", () => this.openSheet("选择模型", body => this.models(body)), undefined, "em-model"); picker.setAttribute("aria-label", "选择模型");
+    this.iconButton(controls, `工作区权限：${permissions.find(p => p[0] === this.taskPermission(chatSessionId))?.[1]}`, "shield-check", () => { const sessionId = binding.sessionId; this.openSheet("工作区权限", body => this.permissionPage(body, sessionId)); });
+    const model = this.taskModel(chatSessionId);
+    const picker = this.button(controls, "", () => { const sessionId = binding.sessionId; this.openSheet("选择模型", body => this.models(body, sessionId)); }, undefined, "em-model"); picker.setAttribute("aria-label", "选择模型");
     if (model) renderProviderBrandIcon(el(picker, "span", "em-brand"), model.provider.providerId === "openai" ? "openai-codex" : model.provider.providerId ?? "custom");
     el(picker, "span", "em-model-label", model?.model.displayName || "配置模型"); icon(picker, "chevron-down");
-    const send = this.iconButton(controls, this.host.runtime.busy ? "停止回答" : "发送消息", this.host.runtime.busy ? "square" : "arrow-up", async () => {
+    const stop = this.iconButton(controls, "停止回答", "square", async () => {
+      const taskId = binding.sessionId;
+      if (this.stoppingTasks.has(taskId)) return;
+      this.stoppingTasks.add(taskId); this.updateTaskStatus();
+      try { await this.host.runtime.stopTask(taskId); }
+      catch (error) { this.taskFailure(taskId, error); }
+      finally { this.stoppingTasks.delete(taskId); this.updateTaskStatus(); }
+    }); stop.classList.add("em-task-stop");
+    const send = this.iconButton(controls, "发送消息", "arrow-up", async () => {
       const chatSessionId = binding.sessionId;
-      if (this.host.runtime.busy) { this.host.runtime.stop(); return; }
-      if (this.sending) return;
+      if (this.sendingTasks.has(chatSessionId)) return;
       const draft = input.value;
       if (!draft.trim()) return;
       const previousMessageCount = this.host.store.getSession(chatSessionId)?.messages.length ?? 0;
-      this.sending = true;
+      this.sendingTasks.add(chatSessionId); this.taskErrors.delete(chatSessionId); this.updateTaskStatus();
       try {
         await this.updateDraft(chatSessionId, draft);
-        await this.host.runtime.send(draft, chatSessionId);
+        const submission = await this.host.runtime.submit(draft, chatSessionId);
+        if (this.chatSessionId === chatSessionId && input.value === draft) input.value = this.draftEdits.get(chatSessionId)?.text ?? this.host.store.getSession(chatSessionId)?.draft ?? "";
+        void submission.completion.catch(error => this.taskFailure(chatSessionId, error));
       } catch (error) {
         const latest = this.host.store.getSession(chatSessionId);
         const accepted = latest?.messages.slice(previousMessageCount).some(message => message.role === "user") ?? false;
         if (!accepted && !this.draftEdits.has(chatSessionId) && !latest?.draft) this.draftEdits.set(chatSessionId, { text: draft });
         if (this.chatSessionId === chatSessionId) input.value = this.draftEdits.get(chatSessionId)?.text ?? latest?.draft ?? (accepted ? "" : draft);
-        throw error;
-      } finally { this.sending = false; }
+        this.taskFailure(chatSessionId, error);
+      } finally { this.sendingTasks.delete(chatSessionId); this.updateTaskStatus(); }
     }); send.classList.add("em-send");
-    const status = el(compose, "div", "em-status", this.host.runtime.busy ? "正在等待模型或执行工具…" : ""); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
+    const status = el(compose, "div", "em-status em-task-status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
+    this.updateTaskStatus();
   }
   private refreshContext(container = this.root.querySelector<HTMLElement>(".em-context"), sessionId = this.chatSessionId ?? this.host.store.session.id) {
     if (!container) return;
-    container.replaceChildren(); const session = this.host.store.getSession(sessionId); container.hidden = !session?.notePath;
-    if (!session?.notePath) return;
-    this.button(container, session.notePath, () => this.host.openNote(session.notePath), "file-text");
-    this.iconButton(container, "移除笔记引用", "x", async () => { await this.host.store.patchSession(sessionId, { notePath: "" }); if (this.chatSessionId === sessionId) this.refreshContext(container, sessionId); });
+    const session = this.host.store.getSession(sessionId);
+    const notePath = session?.draftContext?.noteMentions !== undefined ? session.draftContext.noteMentions[0]?.vaultRelativePath ?? "" : session?.notePath ?? "";
+    if (container.dataset.sessionId === sessionId && container.dataset.notePath === notePath) return;
+    container.dataset.sessionId = sessionId; container.dataset.notePath = notePath; container.replaceChildren();
+    container.hidden = !notePath;
+    if (!notePath) return;
+    this.button(container, notePath, () => this.host.openNote(notePath), "file-text");
+    this.iconButton(container, "移除笔记引用", "x", async () => { await this.updateNoteReference(sessionId, ""); if (this.chatSessionId === sessionId) this.refreshContext(container, sessionId); });
+  }
+  private updateNoteReference(sessionId: string, path: string) {
+    return this.host.store.updateSession(sessionId, session => {
+      session.notePath = path;
+      if (session.draftContext) delete session.draftContext.noteMentions;
+    });
   }
   private async updateDraft(sessionId: string, text: string) {
     const edit = { text }; this.draftEdits.set(sessionId, edit);
     await this.host.store.patchSession(sessionId, { draft: text });
     if (this.draftEdits.get(sessionId) === edit) this.draftEdits.delete(sessionId);
   }
+  private sessionIdentity(sessionId = this.host.store.session.id) {
+    const agentId = this.host.store.getSession(sessionId)?.agentId ?? "sol";
+    const agent = this.host.settings().agentRegistry.agents.find(agent => agent.id === agentId);
+    const fallback = this.host.services?.agentIdentity ?? defaultAgentIdentityState();
+    return { displayName: agent?.name ?? (agentId === "sol" ? fallback.displayName : "Agent"), avatar: agent?.avatar ?? fallback.avatar };
+  }
+  private taskModel(sessionId = this.chatSessionId ?? this.host.store.session.id) {
+    const settings = this.host.settings();
+    const draft = this.host.store.getSession(sessionId)?.draftContext;
+    if (draft?.selectedProviderSettingsId === undefined && draft?.selectedModel === undefined) return selectedModel(settings);
+    const provider = settings.apiProviders.find(provider => provider.id === (draft.selectedProviderSettingsId ?? settings.activeApiProviderId));
+    if (!provider || !supportedProvider(provider)) return null;
+    const model = provider.models.find(model => model.id === (draft.selectedModel ?? provider.defaultModelId));
+    return model ? { provider, model } : null;
+  }
+  private taskPermission(sessionId = this.chatSessionId ?? this.host.store.session.id): MobilePermission {
+    const draft = this.host.store.getSession(sessionId)?.draftContext;
+    const workspacePermission = this.host.store.state.permission;
+    const requested = draft?.selectedMode === "plan" ? "read-only" : draft?.selectedPermission === "danger-full-access" ? "full-access" : draft?.selectedPermission ?? workspacePermission;
+    return requested === "read-only" || workspacePermission === "read-only" ? "read-only" : requested === "workspace-write" || workspacePermission === "workspace-write" ? "workspace-write" : "full-access";
+  }
+  private taskFailure(taskId: string, error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    this.taskErrors.set(taskId, message);
+    if (this.mounted && this.chatSessionId === taskId) { this.error = message; this.showError(); }
+  }
+  private updateTaskStatus() {
+    const taskId = this.chatSessionId;
+    if (!taskId) return;
+    const state = this.host.runtime.stateFor(taskId);
+    const stop = this.root.querySelector<HTMLButtonElement>(".em-task-stop");
+    if (stop) { stop.hidden = !state.busy; stop.disabled = this.stoppingTasks.has(taskId); stop.setAttribute("aria-busy", String(stop.disabled)); }
+    const send = this.root.querySelector<HTMLButtonElement>(".em-send");
+    if (send) { send.disabled = this.sendingTasks.has(taskId); send.setAttribute("aria-busy", String(send.disabled)); }
+    const status = this.root.querySelector<HTMLElement>(".em-task-status");
+    if (!status) return;
+    status.replaceChildren();
+    if (state.interaction?.status === "pending") {
+      const interaction = structuredClone(state.interaction);
+      this.button(status, "等你回应", () => this.openTaskQuestion(interaction), "message-circle", "em-task-question-entry em-task-compact");
+    } else if (state.busy) el(status, "span", "", "进行中");
+    else if (this.host.store.getSession(taskId)?.taskStatus === "interrupted") el(status, "span", "", "已中断");
+    if (state.queuedCount) el(status, "span", "", state.paused ? `已暂停${state.queuedCount}条` : `排队${state.queuedCount}条`);
+  }
+  private openTaskQuestion(interaction: MobileTaskInteraction) {
+    const key = `${interaction.taskId}:${interaction.runId}:${interaction.questionId}`;
+    let drafts = this.questionDrafts.get(key);
+    if (!drafts) { drafts = new Map(); this.questionDrafts.set(key, drafts); }
+    const answers = drafts;
+    this.openSheet("等你回应", body => {
+      const overlay = this.overlay!;
+      body.classList.add("em-task-questions");
+      const fields: (HTMLButtonElement | HTMLTextAreaElement)[] = [];
+      for (const question of interaction.questions) {
+        let answer = answers.get(question.questionId);
+        if (!answer) { answer = { selected: new Set(), supplement: "" }; answers.set(question.questionId, answer); }
+        const draft = answer;
+        const group = el(body, "section", "em-task-question");
+        const prompt = el(group, "h3", "em-task-prompt", question.prompt);
+        const choices = el(group, "div", "em-task-options");
+        choices.setAttribute("role", "group"); choices.setAttribute("aria-label", prompt.textContent ?? "问题选项");
+        const sync = () => {
+          choices.querySelectorAll<HTMLButtonElement>(".em-task-option").forEach(option => {
+            const selected = draft.selected.has(option.dataset.optionId!);
+            option.setAttribute(question.selection === "multiple" ? "aria-checked" : "aria-pressed", String(selected));
+            const mark = option.querySelector<HTMLElement>(".em-icon")!;
+            mark.replaceChildren(); setIcon(mark, selected ? question.selection === "multiple" ? "square-check" : "circle-check" : question.selection === "multiple" ? "square" : "circle");
+          });
+        };
+        for (const option of question.options) {
+          const row = this.button(choices, "", () => {
+            if (this.answeringQuestions.has(key)) return;
+            if (question.selection === "single") draft.selected = new Set([option.optionId]);
+            else if (draft.selected.has(option.optionId)) draft.selected.delete(option.optionId); else draft.selected.add(option.optionId);
+            sync();
+          }, undefined, "em-row em-task-option");
+          row.dataset.optionId = option.optionId;
+          if (question.selection === "multiple") row.setAttribute("role", "checkbox");
+          icon(row, "circle"); const label = el(row, "span", "em-row-label"); el(label, "strong", "", option.label);
+          if (option.description) el(label, "small", "", option.description);
+          fields.push(row);
+        }
+        sync();
+        if (question.allowSupplement) {
+          const label = el(group, "label", "em-field"); el(label, "span", "", "补充");
+          const input = el(label, "textarea", "em-task-supplement"); input.rows = 2; input.value = draft.supplement;
+          input.addEventListener("input", () => { draft.supplement = input.value; }); fields.push(input);
+        }
+      }
+      const actions = el(overlay.querySelector<HTMLElement>(".em-sheet")!, "div", "em-task-question-actions");
+      this.button(actions, "取消", () => this.closeSheet(), undefined, "em-task-compact");
+      const submit = this.button(actions, "提交回答", async () => {
+        if (this.answeringQuestions.has(key)) return;
+        this.answeringQuestions.add(key); updatePending();
+        const submitted: EchoInkQuestionAnswer[] = interaction.questions.map(question => {
+          const draft = answers.get(question.questionId)!;
+          return { questionId: question.questionId, selectedOptionIds: [...draft.selected], ...(question.allowSupplement && draft.supplement ? { supplement: draft.supplement } : {}) };
+        });
+        try {
+          await this.host.runtime.answerQuestion(interaction.taskId, interaction.runId, interaction.questionId, submitted);
+          this.questionDrafts.delete(key);
+          if (this.questionSheet?.key === key) this.closeSheet();
+        } catch (error) {
+          if (this.questionSheet?.key === key) {
+            const errorBox = this.questionSheet.overlay.querySelector<HTMLElement>(".em-sheet-error")!;
+            errorBox.textContent = error instanceof Error ? error.message : String(error); errorBox.hidden = false;
+          }
+        } finally {
+          this.answeringQuestions.delete(key); updatePending();
+          if (this.questionSheet?.key === key) this.questionSheet.updatePending();
+        }
+      }, undefined, "em-primary em-task-question-submit em-task-compact");
+      const updatePending = () => {
+        const pending = this.answeringQuestions.has(key);
+        fields.forEach(field => { field.disabled = pending; }); submit.disabled = pending;
+        submit.setAttribute("aria-busy", String(pending)); submit.querySelector("span")!.textContent = pending ? "提交中…" : "提交回答";
+      };
+      this.questionSheet = { taskId: interaction.taskId, key, overlay, updatePending }; updatePending();
+    });
+  }
   private updateIdentity() {
     const avatar = this.root.querySelector<HTMLElement>(".em-agent-avatar"); if (!avatar) return;
-    const identity = this.host.services?.agentIdentity ?? defaultAgentIdentityState();
+    const identity = this.sessionIdentity();
     const title = this.root.querySelector<HTMLElement>(".em-header .em-title"); if (title) title.textContent = identity.displayName;
     const input = this.root.querySelector<HTMLTextAreaElement>(".em-input"); if (input) input.placeholder = `和 ${identity.displayName} 说说你的想法…`;
     const url = resolveAgentAvatarUrl(identity.avatar);
@@ -348,6 +499,7 @@ export class MobileUI {
     if (!body) return;
     const changedSession = this.chatSessionId !== this.host.store.session.id;
     if (changedSession) {
+      if (this.questionSheet && this.questionSheet.taskId !== this.host.store.session.id) this.closeSheet(false);
       this.chatSessionId = this.host.store.session.id;
       if (this.chatBinding) this.chatBinding.sessionId = this.chatSessionId;
       this.scroll.delete("chat"); this.refreshContext();
@@ -359,20 +511,18 @@ export class MobileUI {
     const input = this.root.querySelector<HTMLTextAreaElement>(".em-input");
     const draft = this.draftEdits.get(this.chatSessionId!)?.text ?? this.host.store.getSession(this.chatSessionId!)?.draft ?? "";
     if (input && input.value !== draft) input.value = draft;
-    const send = this.root.querySelector<HTMLButtonElement>(".em-send");
-    if (send) { send.replaceChildren(); icon(send, this.host.runtime.busy ? "square" : "arrow-up"); send.setAttribute("aria-label", this.host.runtime.busy ? "停止回答" : "发送消息"); }
-    const newButton = this.root.querySelector<HTMLButtonElement>(".em-quick button"); if (newButton) newButton.disabled = this.host.runtime.busy;
+    this.refreshContext();
+    this.updateComposerLabels();
+    this.updateTaskStatus();
     this.root.querySelectorAll<HTMLButtonElement>(".em-session-row").forEach(row => {
-      row.disabled = this.host.runtime.busy;
       row.setAttribute("aria-current", row.dataset.sessionId === this.host.store.state.activeSessionId ? "page" : "false");
       const session = this.host.store.state.sessions.find(item => item.id === row.dataset.sessionId);
       if (session) { const title = row.querySelector("strong"); const time = row.querySelector("small"); if (title) title.textContent = session.title; if (time) time.textContent = new Date(session.updatedAt).toLocaleString(); }
     });
-    const status = this.root.querySelector<HTMLElement>(".em-status"); if (status) status.textContent = this.host.runtime.busy ? "正在等待模型或执行工具…" : "";
-    this.error = this.host.runtime.error; this.showError();
+    this.error = this.host.runtime.stateFor(this.chatSessionId!).error || this.taskErrors.get(this.chatSessionId!) || ""; this.showError();
   }
   private updateTimers() {
-    if (!this.host.runtime.busy || (this.page !== "chat" && !(this.host.isTablet && this.page === "history"))) return;
+    if (!this.chatSessionId || !this.host.runtime.isBusy(this.chatSessionId) || (this.page !== "chat" && !(this.host.isTablet && this.page === "history"))) return;
     const session = this.chatSessionId ? this.host.store.getSession(this.chatSessionId) : undefined;
     if (!session) return;
     for (const element of Array.from(this.root.querySelectorAll<HTMLElement>(".em-tool-timer"))) {
@@ -390,7 +540,7 @@ export class MobileUI {
       const subtitle = settings.customWelcomeEnabled ? settings.customWelcomeSubtitle.trim() : "";
       el(welcome, "h1", "", title || MOBILE_DEFAULT_WELCOME.title);
       el(welcome, "p", "", subtitle || MOBILE_DEFAULT_WELCOME.subtitle);
-      if (!selectedModel(this.host.settings())) this.button(welcome, "添加模型与提供商", () => this.go("providers"), "plus", "em-text-action");
+      if (!this.taskModel(sessionId)) this.button(welcome, "添加模型与提供商", () => this.go("providers"), "plus", "em-text-action");
       return;
     }
     for (const message of session.messages) {
@@ -411,7 +561,7 @@ export class MobileUI {
         details.addEventListener("toggle", () => { if (details.open) this.expandedTools.add(call.id); else this.expandedTools.delete(call.id); });
         const summary = el(details, "summary"); icon(summary, receipt?.isError ? "circle-alert" : receipt ? "check" : "ellipsis");
         el(summary, "span", "", toolNames[call.name] ?? "工具操作");
-        const timer = el(summary, "small", "em-tool-timer", timing?.elapsedMs !== undefined ? `${(timing.elapsedMs / 1000).toFixed(1)} 秒` : this.host.runtime.busy ? timing ? `${((Date.now() - timing.startedAt) / 1000).toFixed(1)} 秒 · 进行中` : "等待执行" : "未完成");
+        const timer = el(summary, "small", "em-tool-timer", timing?.elapsedMs !== undefined ? `${(timing.elapsedMs / 1000).toFixed(1)} 秒` : this.host.runtime.isBusy(sessionId) ? timing ? `${((Date.now() - timing.startedAt) / 1000).toFixed(1)} 秒 · 进行中` : "等待执行" : "未完成");
         timer.dataset.callId = call.id; timer.dataset.sessionId = sessionId;
         const content = el(details, "div", "em-tool-content"); this.toolContent(content, call.name, call.arguments, receipt, session.notePath);
         const record = receipt?.details as { saved?: boolean; path?: string } | undefined;
@@ -457,7 +607,7 @@ export class MobileUI {
     const memory = this.settingPages.group(body);
     const label = el(memory, "label", "em-row"); const text = el(label, "span", "em-row-label"); el(text, "strong", "", "使用长期记忆"); el(text, "small", "", "保存值得保留的信息，在后续对话中召回");
     const toggle = el(label, "input"); toggle.type = "checkbox"; toggle.checked = this.host.store.state.memoryEnabled; toggle.setAttribute("role", "switch"); toggle.setAttribute("aria-label", "长期记忆");
-    toggle.addEventListener("change", () => { const enabled = toggle.checked; void this.act(async () => { this.host.runtime.stop(); await this.host.store.setMemoryEnabled(enabled); }); });
+    toggle.addEventListener("change", () => { const enabled = toggle.checked; void this.act(() => this.host.store.setMemoryEnabled(enabled)); });
     el(memory, "p", "em-help", "关闭后保留已有记忆，停止自动召回和写入。记忆查看与忘记仍可使用。");
 
     this.settingPages.basicEntries(body, memory);
@@ -492,9 +642,18 @@ export class MobileUI {
     });
     this.settingPages.basicGeneral(body);
   }
-  private permissionPage(body: HTMLElement) {
+  private permissionPage(body: HTMLElement, sessionId = this.chatSessionId ?? this.host.store.session.id) {
     for (const [id, title, description] of permissions) {
-      const row = this.row(body, title, description, this.host.store.state.permission === id ? "circle-check" : "circle", async () => { await this.host.store.setPermission(id); this.closeSheet(); this.updateComposerLabels(); }); row.setAttribute("aria-pressed", String(this.host.store.state.permission === id));
+      const active = this.taskPermission(sessionId) === id;
+      const row = this.row(body, title, description, active ? "circle-check" : "circle", async () => {
+        await this.host.store.update(state => {
+          const session = state.sessions.find(session => session.id === sessionId);
+          if (!session) throw new Error("会话不存在，未修改权限。");
+          state.permission = id;
+          (session.draftContext ??= { attachments: [] }).selectedPermission = id === "full-access" ? "danger-full-access" : id;
+        });
+        this.closeSheet(); this.updateComposerLabels();
+      }); row.setAttribute("aria-pressed", String(active));
     }
     el(body, "p", "em-help", "三种权限均限定于当前笔记库。长期记忆由基础设置中的开关独立控制。");
   }
@@ -585,11 +744,18 @@ export class MobileUI {
       }), "trash-2", "em-danger em-wide-action");
     }
   }
-  private models(body: HTMLElement) {
+  private models(body: HTMLElement, sessionId = this.chatSessionId ?? this.host.store.session.id) {
     const settings = this.host.settings();
+    const selected = this.taskModel(sessionId);
     for (const provider of settings.apiProviders.filter(supportedProvider)) for (const model of provider.models) {
-      const active = provider.id === settings.activeApiProviderId && model.id === settings.defaultModel;
-      const row = this.row(body, model.displayName || model.id, provider.name, active ? "check" : "cpu", async () => { settings.activeApiProviderId = provider.id; settings.defaultModel = model.id; settings.providerMode = "api"; await this.host.saveSettings(); this.closeSheet(); this.updateComposerLabels(); }); row.setAttribute("aria-pressed", String(active));
+      const active = provider.id === selected?.provider.id && model.id === selected?.model.id;
+      const row = this.row(body, model.displayName || model.id, provider.name, active ? "check" : "cpu", async () => {
+        await this.host.store.updateSession(sessionId, session => {
+          const draft = session.draftContext ??= { attachments: [] };
+          draft.selectedProviderSettingsId = provider.id; draft.selectedModel = model.id;
+        });
+        this.closeSheet(); this.updateComposerLabels();
+      }); row.setAttribute("aria-pressed", String(active));
       const mark = row.querySelector<HTMLElement>(".em-icon")!; mark.replaceChildren(); renderProviderBrandIcon(mark, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom");
       if (active) { const check = row.querySelector<HTMLElement>(".em-icon:last-child")!; check.replaceChildren(); setIcon(check, "check"); }
     }
@@ -599,7 +765,7 @@ export class MobileUI {
     body.classList.add("em-session-list");
     if (!this.host.store.state.sessions.length) el(body, "p", "em-empty", "还没有历史对话");
     for (const session of this.host.store.state.sessions.filter(item => !item.archivedAt)) {
-      const row = this.row(body, session.title, new Date(session.updatedAt).toLocaleString(), "message-square", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); this.captureScroll(); await this.host.store.selectSession(session.id); this.stack = []; this.page = "chat"; this.scroll.delete("chat"); this.closeSheet(false); this.render(); }); row.disabled = this.host.runtime.busy;
+      const row = this.row(body, session.title, new Date(session.updatedAt).toLocaleString(), "message-square", async () => { this.captureScroll(); await this.host.store.selectSession(session.id); this.stack = []; this.page = "chat"; this.scroll.delete("chat"); this.closeSheet(false); this.render(); });
       row.classList.add("em-session-row"); row.dataset.sessionId = session.id; row.setAttribute("aria-current", session.id === this.host.store.state.activeSessionId ? "page" : "false");
     }
   }
@@ -669,24 +835,24 @@ export class MobileUI {
   }
   private notes(body: HTMLElement, sessionId = this.chatSessionId ?? this.host.store.session.id) {
     const active = this.host.app.workspace.getActiveFile();
-    if (active?.extension === "md") this.row(body, "当前笔记", active.path, "file-text", async () => { await this.host.store.patchSession(sessionId, { notePath: active.path }); this.closeSheet(); this.refreshContext(); });
+    if (active?.extension === "md") this.row(body, "当前笔记", active.path, "file-text", async () => { await this.updateNoteReference(sessionId, active.path); this.closeSheet(); this.refreshContext(); });
     this.search(body, "按标题或路径查找笔记", this.noteQuery, value => { this.noteQuery = value; renderRows(); });
     const rows = el(body, "div");
     const renderRows = () => {
       rows.replaceChildren();
       const files = this.host.app.vault.getMarkdownFiles().filter(f => !f.path.split("/").some(p => p.startsWith(".")) && f.path.toLocaleLowerCase().includes(this.noteQuery.toLocaleLowerCase())).slice(0, 60);
       if (!files.length) el(rows, "p", "em-empty", "没有找到笔记");
-      for (const file of files) this.row(rows, file.basename, file.path, "file-text", async () => { await this.host.store.patchSession(sessionId, { notePath: file.path }); this.closeSheet(); this.refreshContext(); });
+      for (const file of files) this.row(rows, file.basename, file.path, "file-text", async () => { await this.updateNoteReference(sessionId, file.path); this.closeSheet(); this.refreshContext(); });
     }; renderRows();
   }
 
   private updateComposerLabels() {
-    const model = selectedModel(this.host.settings());
+    const model = this.taskModel();
     const label = this.root.querySelector(".em-model-label"); if (label) label.textContent = model?.model.displayName || "配置模型";
     const picker = this.root.querySelector<HTMLElement>(".em-model"); let brand = picker?.querySelector<HTMLElement>(".em-brand");
     if (!model) brand?.remove();
     else if (picker) { if (!brand) { brand = el(picker, "span", "em-brand"); picker.prepend(brand); } renderProviderBrandIcon(brand, model.provider.providerId === "openai" ? "openai-codex" : model.provider.providerId ?? "custom"); }
-    const permission = this.root.querySelector<HTMLButtonElement>('button[aria-label^="工作区权限："]'); if (permission) permission.setAttribute("aria-label", `工作区权限：${permissions.find(item => item[0] === this.host.store.state.permission)?.[1]}`);
+    const permission = this.root.querySelector<HTMLButtonElement>('button[aria-label^="工作区权限："]'); if (permission) permission.setAttribute("aria-label", `工作区权限：${permissions.find(item => item[0] === this.taskPermission())?.[1]}`);
   }
   private applyAppearance() {
     this.root.dataset.appearance = this.host.settings().mobileUi.appearance;
@@ -720,6 +886,7 @@ export class MobileUI {
     if (restore && this.providerPickerBack) { this.providerPickerBack(); return; }
     this.providerPickerBack = undefined;
     this.overlay?.remove(); this.overlay = undefined;
+    this.questionSheet = undefined;
     for (const child of Array.from(this.root.children)) (child as HTMLElement).inert = false;
     if (restore && this.sheetRestore?.isConnected) this.sheetRestore.focus({ preventScroll: true });
     this.sheetRestore = undefined; this.applyAppearance();

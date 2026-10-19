@@ -10,6 +10,8 @@ import { BUILTIN_SKILLS, renderBuiltinSkill } from "../harness/resources/builtin
 import { resolveKnowledgePathFromRoots } from "../knowledge-base/root-paths-core";
 import type { MobileSettings } from "./settings";
 import type { AgentRegistry } from "../agents/types";
+import type { MobileQueuedTurn } from "./task-contracts";
+import { MobileCapabilityPolicy } from "./capability-policy";
 import type { MobileStore } from "./store";
 import type { MobileRuntime } from "./runtime";
 import type { MobileWorkspace } from "./workspace";
@@ -52,6 +54,18 @@ export class MobileServices implements HomeHost {
   async saveAgentProfile(change: { identity?: { displayName: string; avatar: AgentAvatarState }; templateId?: AgentTemplateId }, version: string) {
     const profile = await this.profileProtocol.save(change, version); this.agentIdentity = profile.identity;
     this.identityListeners.forEach(listener => listener()); this.host.runtime.onChange(); return profile;
+  }
+  async removeAgent(agentId: string, version: string): Promise<void> {
+    if (agentId === "sol") throw new Error("总助不能删除。");
+    const before = await this.profileProtocol.snapshot();
+    if (before.version !== version) throw new Error("Agent 配置已变化，请重新读取后再编辑。");
+    try {
+      await this.host.runtime.stopAgent(agentId);
+      if ((await this.profileProtocol.snapshot()).version !== version) throw new Error("Agent 配置已变化，请重新读取后再编辑。");
+      await this.host.store.handoffAgentTasks(agentId);
+      await this.profileProtocol.removeAgent(agentId, version);
+      await this.refreshAgentIdentity();
+    } finally { this.host.runtime.unblockAgent(agentId); }
   }
   async refreshAgentIdentity() {
     this.agentIdentity = (await this.profileProtocol.profile()).identity;
@@ -130,17 +144,21 @@ export class MobileServices implements HomeHost {
     createAndStartGuidedSession: async (input: { title: string; prompt: string; defaultSkillId: string }) => input.defaultSkillId === "daily-journal" ? this.prepareJournal(input.title, true) : this.start(input.title, input.prompt, input.defaultSkillId)
   }; }
   async prepareJournal(title?: string, newSession = false, sessionId = this.host.store.session.id) {
-    if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
     await this.requireAvailableEchoInkSkill("daily-journal");
     const id = newSession ? (await this.host.store.createSession()).id : sessionId;
-    await this.host.store.patchSession(id, { ...(title ? { title } : {}), skillId: "daily-journal" }); this.host.runtime.onChange();
+    await this.host.store.updateSession(id, session => {
+      if (title) session.title = title;
+      session.skillId = "daily-journal";
+      if (session.draftContext) delete session.draftContext.selectedSkill;
+    }); this.host.runtime.onChange();
   }
   private async start(title: string, prompt: string, skill?: string) {
-    if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
     if (skill) await this.requireAvailableEchoInkSkill(skill);
     const session = await this.host.store.createSession();
     await this.host.store.patchSession(session.id, { title, draft: prompt, skillId: skill });
-    this.host.runtime.onChange(); await this.host.runtime.send(prompt, session.id);
+    this.host.runtime.onChange();
+    const accepted = await this.host.runtime.submit(prompt, session.id);
+    void accepted.completion.catch(() => { /* The task owns and displays its run error. */ });
   }
   skills() {
     const saved = this.settings.resources.catalog.filter(item => item.kind === "skill");
@@ -236,11 +254,18 @@ export class MobileServices implements HomeHost {
     await this.app.vault.adapter.remove(this.preferencesPath);
   }
   readonly defaultPreferences = ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
-  async context(sessionId = this.host.store.session.id): Promise<string> {
+  async context(sessionId = this.host.store.session.id, turn?: MobileQueuedTurn): Promise<string> {
     const session = this.host.store.getSession(sessionId);
-    if (!session) throw new Error("会话不存在，未读取运行上下文。");
-    const skillId = session.skillId;
-    const profile = await this.profileProtocol.context(this.host.store.state.memoryEnabled, session.agentId);
+    if (!session && !turn) throw new Error("会话不存在，未读取运行上下文。");
+    const agentId = turn?.agentSnapshot.agentId ?? session!.agentId;
+    const policy = new MobileCapabilityPolicy({ store: this.host.store, settings: () => this.settings,
+      agentId, permission: turn?.permission, proAccess: () => this.host.accountService });
+    policy.assertTool("task_update");
+    let memoryAllowed = this.host.store.state.memoryEnabled;
+    if (memoryAllowed) { try { policy.assertTool("memory_search"); } catch { memoryAllowed = false; } }
+    const skillId = turn ? turn.skillId : session?.skillId;
+    if (skillId) policy.assertSkill(skillId);
+    const profile = await this.profileProtocol.context(memoryAllowed, agentId, turn?.agentSnapshot);
     const skill = skillId ? await this.requireAvailableEchoInkSkill(skillId) : "";
     const preference = await this.readPreferences() ?? this.defaultPreferences;
     return `${profile}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify(this.settings.knowledgeBase.folderBindings?.roles ?? this.settings.mobileUi.knowledgePaths)}`;

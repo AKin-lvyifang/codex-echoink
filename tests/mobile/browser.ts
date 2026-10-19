@@ -85,7 +85,7 @@ const runtime = new MobileRuntime(host.app as any, store, () => settings, async 
   ]);
   if (!after.length && prompt.includes("读取")) { slowRead = true; return answer(protocol, "", [["read-" + requests.length, "note_read", { path: "笔记/来源.md" }]]); }
   return answer(protocol, "已完成。这是测试提供商返回的完整回答，正式组件使用真实 Agent 和工具回执。");
-}, id => services.context(id));
+}, (id, turn) => services.context(id, turn));
 const accountService = await createMobileAccountService(host.app as any, () => settings);
 const financeAccess = { checkCapability: () => !params.has("expired"), requireCapability: () => { if (params.has("expired")) throw new Error("替身：授权已失效"); }, subscribe: () => () => {} };
 const plugin = new EchoInkMobilePlugin(host.app as any, { id: "codex-echoink", version: "2.6.3-beta.7 fixture" } as any);

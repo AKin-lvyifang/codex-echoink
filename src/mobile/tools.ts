@@ -1,12 +1,13 @@
 import { boundKnowledgeSourceSpan, sliceKnowledgeSourceSpan, sourceSpanHasMore } from "../knowledge-base/source-span";
-import { VaultBodySearch, type KnowledgeBodySearchPort } from "../knowledge-base/vault-body-search";
+import type { KnowledgeBodySearchPort } from "../knowledge-base/vault-body-search";
 import { tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 import { Type } from "typebox";
 import { PERSONAL_MEMORY_SCHEMA, type PersonalMemoryKind, type PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
 import { MobileStore, newId } from "./store";
+import { createScopedMobileBodySearch, defaultMobileCapabilityPolicy, isScopedMobileBodySearch, requireMobileAgentCapability, type MobileCapabilityPolicy } from "./capability-policy";
 
 export const memoryCategories = [
   { id: "all", label: "全部", kinds: [] },
@@ -33,17 +34,22 @@ export function searchMemories(records: readonly PersonalMemoryRecord[], query: 
 }
 function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Error("已停止，未开始此操作。"); }
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
-export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id): AgentTool[] {
-  const bodySearch = sharedBodySearch ?? new VaultBodySearch(app, bindings);
+export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id, suppliedPolicy?: MobileCapabilityPolicy): AgentTool[] {
+  const policy = suppliedPolicy ?? defaultMobileCapabilityPolicy(store, bindings, sessionId);
+  const shared = sharedBodySearch && isScopedMobileBodySearch(sharedBodySearch, policy);
+  const bodySearch = shared ? sharedBodySearch : createScopedMobileBodySearch(app, bindings, policy);
   const tools: AgentTool[] = [
     {
       name: "vault_search", label: "查找笔记", description: "搜索允许用途和普通笔记的真实正文。query或queries(1-5问法)二选一；可用dateFrom/dateTo筛选日记日期。结果含命中章节、原文片段、版本和行号；可直接使用已交付原文，需要更多时note_read续读。", parameters: Type.Object({ query: Type.Optional(Type.String()), queries: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 5 })), dateFrom: Type.Optional(Type.String()), dateTo: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), cursor: Type.Optional(Type.String()) }),
       async execute(_id, args: { query?: string; queries?: string[]; dateFrom?: string; dateTo?: string; limit?: number; cursor?: string }, signal) {
         checkStopped(signal);
+        policy.assertTool("vault_search", args);
         if ((args.query === undefined) === (args.queries === undefined)) throw new Error("请传入query或queries之一。");
         // Standalone callers have no owning runtime to release host listeners.
-        if (!sharedBodySearch) bodySearch.invalidate();
-        return result(await bodySearch.search({ ...args, signal }));
+        if (!shared) bodySearch.invalidate();
+        const found = await bodySearch.search({ ...args, signal });
+        checkStopped(signal); policy.assertTool("vault_search", args);
+        return result(found);
       }
     },
     {
@@ -51,8 +57,10 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
       async execute(_id, args: { path?: string; expectedContentRevision?: string; lineStart?: number; columnStart?: number; columnEnd?: number; lineCount?: number }, signal) {
         checkStopped(signal);
         const path = checkedNotePath(args.path || selectedNote());
+        policy.assertTool("note_read", args, path);
         const source = await bodySearch.read({ vaultRelativePath: path, expectedContentRevision: args.expectedContentRevision });
         checkStopped(signal);
+        policy.assertTool("note_read", args, path);
         const lines = source.content.split(/\r\n|\n|\r/u);
         const lineStart = args.lineStart ?? 1;
         const count = args.lineCount ?? 40;
@@ -69,10 +77,11 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
     {
       name: "note_create", label: "保存文档", description: "在当前笔记库新建 Markdown。不能覆盖已有文件。只读权限禁止写入。", parameters: Type.Object({ path: Type.String(), content: Type.String() }),
       async execute(_id, args: { path: string; content: string }, signal) {
-        const writable = () => { checkStopped(signal); if (store.state.permission === "read-only") throw new Error("当前为只读权限，未写入笔记。"); };
-        writable();
+        const writable = () => { checkStopped(signal); policy.assertTool("note_create", args, path); };
         const path = checkedNotePath(args.path);
+        writable();
         if (app.vault.getAbstractFileByPath(path) || await app.vault.adapter.exists(path)) throw new Error("同名文件已存在，请改用新文件名；原文件未被覆盖。");
+        writable();
         const parts = path.split("/").slice(0, -1);
         let directory = "";
         for (const part of parts) {
@@ -86,23 +95,25 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
     }
   ];
   if (store.state.memoryEnabled) {
-    const enabled = (signal?: AbortSignal) => { checkStopped(signal); if (!store.state.memoryEnabled) throw new Error("长期记忆已关闭。"); };
+    const enabled = (name: string, signal?: AbortSignal) => { checkStopped(signal); policy.assertTool(name); };
     tools.push({
       name: "memory_search", label: "查找记忆", description: "检索用户记忆；query 为空时列出最近记忆。涉及用户经历、观点、决定或目标时先检索。", parameters: Type.Object({ query: Type.String() }),
-      async execute(_id, args: { query: string }, signal) { enabled(signal); return result(searchMemories(store.state.memories, args.query).map(r => ({ id: r.id, kind: r.kind, title: r.title, content: r.content, basis: r.basis, recallWhen: r.recallWhen }))); }
+      async execute(_id, args: { query: string }, signal) { enabled("memory_search", signal); return result(searchMemories(store.state.memories, args.query).map(r => ({ id: r.id, kind: r.kind, title: r.title, content: r.content, basis: r.basis, recallWhen: r.recallWhen }))); }
     }, {
       name: "memory_read", label: "读取记忆", description: "读取指定记忆的完整内容和来源。", parameters: Type.Object({ id: Type.String() }),
-      async execute(_id, args: { id: string }, signal) { enabled(signal); const record = store.state.memories.find(r => r.id === args.id); if (!record) throw new Error("记忆不存在。"); return result(record); }
+      async execute(_id, args: { id: string }, signal) { enabled("memory_read", signal); const record = store.state.memories.find(r => r.id === args.id); if (!record) throw new Error("记忆不存在。"); return result(record); }
     }, {
       name: "memory_write", label: "保存记忆", description: "忠实保存用户明确陈述或当前对话中可观察的长期信息。禁止把引用、文档知识、假设、工具输出或模型猜测写成用户事实。先搜索避免重复；修正旧记忆时提供 targetId。不能删除记忆。", parameters: Type.Object({
         kind: Type.Union(["fact", "view", "decision", "goal", "task", "open_loop", "episode"].map(k => Type.Literal(k))), title: Type.String({ minLength: 1 }), content: Type.String({ minLength: 1 }), recallWhen: Type.String(), basis: Type.Union([Type.Literal("explicit"), Type.Literal("observed")]), targetId: Type.Optional(Type.String())
       }),
       async execute(toolCallId, args: { targetId?: string; kind: PersonalMemoryKind; content: string; title: string; recallWhen: string; basis: "explicit" | "observed" }, signal) {
-        enabled(signal);
+        enabled("memory_write", signal);
         let record: PersonalMemoryRecord | undefined;
         await store.update(latest => {
           checkStopped(signal);
-          if (!latest.memoryEnabled) throw new Error("长期记忆已关闭。");
+          policy.assertTool("memory_write", args);
+          if (!latest.memoryEnabled) requireMobileAgentCapability({ allowed: false, capabilityId: "memory", reason: "memory_disabled" });
+          if (latest.permission === "read-only") requireMobileAgentCapability({ allowed: false, capabilityId: "memory", reason: "read_only" });
           const old = args.targetId ? latest.memories.find(r => r.id === args.targetId) : undefined;
           if (args.targetId && !old) throw new Error("要修正的记忆不存在。");
           const duplicate = latest.memories.find(r => r.content === args.content && r.kind === args.kind && r.status === "current");
@@ -114,5 +125,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
       }
     });
   }
-  return tools;
+  return tools.filter(tool => {
+    try { policy.assertTool(tool.name); return true; } catch { return false; }
+  });
 }

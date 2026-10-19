@@ -176,7 +176,9 @@ export class MobileSettingsPages {
         }
       } else {
         const skills = this.services.skills(); const group = skills.length ? this.group(panel) : panel;
-        for (const skill of skills) this.ui.row(group, skill.name, skill.enabled ? skill.description : "已停用", "sparkles", () => this.ui.sheet(skill.name, part => {
+        for (const skill of skills) this.ui.row(group, skill.name, skill.enabled ? skill.description : "已停用", "sparkles", () => {
+          const sessionId = this.host.store.session.id;
+          this.ui.sheet(skill.name, part => {
           this.help(part, skill.description);
           this.toggle(this.group(part), "启用 Skill", skill.enabled, async enabled => {
             const settings = this.host.settings(); const saved = settings.resources.catalog.find(item => item.id === skill.id);
@@ -185,11 +187,15 @@ export class MobileSettingsPages {
           });
           this.ui.button(part, "查看 Skill", async () => { const content = await this.services.requireAvailableEchoInkSkill(skill.id); const article = node(part, "article", "em-memory-content markdown-rendered"); this.host.renderMarkdown(content, article); }, "file-text", "em-wide-action");
           this.ui.button(part, "在对话中使用", async () => {
-            const sessionId = this.host.store.session.id;
-            if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
-            await this.services.requireAvailableEchoInkSkill(skill.id); await this.host.store.patchSession(sessionId, { skillId: skill.id }); this.ui.go("chat");
+            await this.services.requireAvailableEchoInkSkill(skill.id);
+            await this.host.store.updateSession(sessionId, session => {
+              session.skillId = skill.id;
+              if (session.draftContext) delete session.draftContext.selectedSkill;
+            });
+            this.ui.go("chat");
           }, "message-circle", "em-primary em-wide-action");
-        }));
+          });
+        });
       }
     };
     for (const [id, title] of [["plugins", "插件"], ["mcp", "MCP"], ["skills", "Skills"]]) {
@@ -473,7 +479,7 @@ export class MobileSettingsPages {
     this.ui.row(manage, "已归档会话", "", "history", () => this.ui.go("archives")); this.ui.row(manage, "记忆修正", "", "brain", () => this.ui.go("memories"));
     this.ui.button(body, "归档当前会话", async () => {
       const sessionId = this.host.store.session.id;
-      if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
+      await this.host.runtime.stopTask(sessionId);
       await this.host.store.archiveAndCreateSession(sessionId); this.host.runtime.onChange(); this.ui.go("archives");
     }, "archive", "em-wide-action");
   }
@@ -505,7 +511,7 @@ export class MobileSettingsPages {
           const bubble = node(article, "div", message.role === "user" ? "em-user-message" : "em-answer markdown-rendered");
           if (message.role === "user") bubble.textContent = content; else this.host.renderMarkdown(content, bubble, session.notePath);
         }
-        this.ui.button(article, "恢复会话", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); await this.host.store.restoreSession(session.id); this.host.runtime.onChange(); this.ui.go("chat"); }, "rotate-ccw", "em-wide-action");
+        this.ui.button(article, "恢复会话", async () => { const sessionId = session.id; await this.host.store.restoreSession(sessionId); this.host.runtime.onChange(); this.ui.go("chat"); }, "rotate-ccw", "em-wide-action");
       });
     }
   }

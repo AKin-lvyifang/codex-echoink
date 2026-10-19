@@ -6,9 +6,10 @@ import type { AgentRunSnapshot } from "../agents/types";
 import type { PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
 import { readMobileFile, replaceMobileFile } from "./replace-file";
 import { assertMobileTaskInstanceId } from "./task-identity";
+import type { MobileContextSummary, MobileQueuedTurn, MobileTaskInteraction } from "./task-contracts";
 
 export type MobilePermission = "read-only" | "workspace-write" | "full-access";
-/** Stored attribution only. M2 never starts or resumes a run. */
+/** Historical attribution and lifecycle; opening stored runs never starts execution. */
 export interface MobileTaskRun {
   id: string;
   startedAt: number;
@@ -16,6 +17,12 @@ export interface MobileTaskRun {
   status?: ConversationTaskStatus;
   completedAt?: number;
   interruptedAt?: number;
+  queuedTurnId?: string;
+  providerId?: string;
+  modelId?: string;
+  permission?: MobilePermission;
+  notePath?: string;
+  skillId?: string;
 }
 export interface MobileSession extends ConversationTaskMetadata {
   id: string;
@@ -31,11 +38,16 @@ export interface MobileSession extends ConversationTaskMetadata {
   skillId?: string;
   archivedAt?: number;
   tools: Record<string, { startedAt: number; elapsedMs?: number }>;
+  queue?: MobileQueuedTurn[];
+  queuePaused?: boolean;
+  interaction?: MobileTaskInteraction;
+  contextSummary?: MobileContextSummary;
 }
 export interface MobileState {
   version: 2;
   instanceId: string;
   revision: number;
+  taskRuntimeVersion?: 1;
   activeSessionId: string;
   sessions: MobileSession[];
   memoryEnabled: boolean;
@@ -80,11 +92,51 @@ function validMetadata(value: Record<string, unknown>): boolean {
 }
 function validRun(value: Record<string, unknown>): boolean {
   const snapshot = value.agentSnapshot;
-  return time(value.startedAt) && (value.status === undefined || ["running", "waiting", "completed", "interrupted"].includes(value.status as string))
+  return time(value.startedAt) && ["queuedTurnId", "providerId", "modelId", "notePath", "skillId"].every(key => value[key] === undefined || typeof value[key] === "string")
+    && (value.permission === undefined || permission(value.permission)) && (value.status === undefined || ["running", "waiting", "completed", "interrupted"].includes(value.status as string))
     && ["completedAt", "interruptedAt"].every(key => value[key] === undefined || time(value[key]))
     && (snapshot === undefined || (object(snapshot) && nonempty(snapshot.agentId) && typeof snapshot.name === "string" && typeof snapshot.position === "string"
       && ["execution", "analysis", "companion", "creative"].includes(snapshot.styleId as string)
       && ["capabilityIds", "disabledCapabilityIds"].every(key => snapshot[key] === undefined || (Array.isArray(snapshot[key]) && snapshot[key].every(value => typeof value === "string")))));
+}
+function validQueue(value: unknown): boolean {
+  return uniqueRecords(value) && value.every(turn => Object.keys(turn).every(key => ["id", "text", "createdAt", "agentSnapshot", "providerId", "modelId", "permission", "notePath", "skillId"].includes(key))
+    && nonempty(turn.text) && time(turn.createdAt) && nonempty(turn.providerId) && nonempty(turn.modelId) && permission(turn.permission)
+    && typeof turn.notePath === "string" && (turn.skillId === undefined || typeof turn.skillId === "string")
+    && object(turn.agentSnapshot) && Object.keys(turn.agentSnapshot).every(key => ["agentId", "name", "position", "styleId", "capabilityIds", "disabledCapabilityIds"].includes(key))
+    && validRun({ startedAt: turn.createdAt, agentSnapshot: turn.agentSnapshot }));
+}
+function validInteraction(value: unknown, session: Record<string, unknown>): boolean {
+  if (!object(value) || value.taskId !== session.id || !nonempty(value.runId) || !nonempty(value.questionId)
+    || !["question", "confirmation"].includes(value.kind as string) || !["pending", "answered", "cancelled"].includes(value.status as string)
+    || !time(value.createdAt) || !Array.isArray(value.questions) || !value.questions.length || value.questions.length > 3) return false;
+  const questionIds = new Set<string>();
+  for (const question of value.questions) {
+    if (!object(question) || !nonempty(question.questionId) || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(question.questionId) || questionIds.has(question.questionId) || !nonempty(question.prompt) || question.prompt.length > 1_000
+      || !["single", "multiple"].includes(question.selection as string) || typeof question.allowSupplement !== "boolean" || !Array.isArray(question.options) || question.options.length < 2 || question.options.length > 8) return false;
+    questionIds.add(question.questionId);
+    const optionIds = new Set<string>();
+    for (const option of question.options) {
+      if (!object(option) || !nonempty(option.optionId) || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(option.optionId) || optionIds.has(option.optionId) || !nonempty(option.label) || option.label.length > 200
+        || (option.description !== undefined && (typeof option.description !== "string" || option.description.length > 500))) return false;
+      optionIds.add(option.optionId);
+    }
+  }
+  if (value.answers !== undefined) {
+    if (!Array.isArray(value.answers) || value.answers.length !== value.questions.length) return false;
+    const answered = new Set<string>();
+    for (const answer of value.answers) {
+      if (!object(answer) || !nonempty(answer.questionId) || answered.has(answer.questionId)) return false;
+      const question = value.questions.find(question => object(question) && question.questionId === answer.questionId) as Record<string, unknown> | undefined;
+      if (!question || !Array.isArray(answer.selectedOptionIds) || new Set(answer.selectedOptionIds).size !== answer.selectedOptionIds.length
+        || (question.selection === "single" && answer.selectedOptionIds.length > 1)
+        || answer.selectedOptionIds.some(id => !(question.options as Record<string, unknown>[]).some(option => option.optionId === id))
+        || (answer.supplement !== undefined && (typeof answer.supplement !== "string" || answer.supplement.length > 1_000 || !question.allowSupplement))
+        || (!answer.selectedOptionIds.length && !nonempty(answer.supplement))) return false;
+      answered.add(answer.questionId);
+    }
+  }
+  return value.status !== "answered" || value.answers !== undefined;
 }
 function validateBase(value: unknown): asserts value is Record<string, unknown> & { sessions: Record<string, unknown>[] } {
   if (!object(value) || !uniqueRecords(value.sessions) || !uniqueRecords(value.memories)
@@ -106,6 +158,7 @@ function parseV2(content: string, instanceId: string): MobileState {
   const value: unknown = JSON.parse(content);
   validateBase(value);
   if (value.version !== 2 || value.instanceId !== instanceId || !Number.isSafeInteger(value.revision) || (value.revision as number) < 0
+    || (value.taskRuntimeVersion !== undefined && value.taskRuntimeVersion !== 1)
     || !value.sessions.length || !value.sessions.some(session => session.id === value.activeSessionId)
     || !object(value.page) || !object(value.newTaskDrafts) || !Object.values(value.newTaskDrafts).every(draft => validDraft(draft))) throw dataError();
   const page = value.page;
@@ -114,12 +167,27 @@ function parseV2(content: string, instanceId: string): MobileState {
   const runIds = new Set<string>();
   for (const session of value.sessions) {
     if (!nonempty(session.agentId) || !validMetadata(session) || (session.draftContext !== undefined && !validDraft(session.draftContext, true))) throw dataError();
+    if ((session.queue !== undefined && !validQueue(session.queue)) || (session.queuePaused !== undefined && typeof session.queuePaused !== "boolean")
+      || (session.interaction !== undefined && !validInteraction(session.interaction, session))) throw dataError();
+    if (value.taskRuntimeVersion !== 1 && ["queue", "queuePaused", "interaction", "contextSummary"].some(key => session[key] !== undefined)) throw dataError();
+    const summary = session.contextSummary;
+    if (summary !== undefined && (!object(summary) || !nonempty(summary.text) || !Number.isSafeInteger(summary.throughMessageCount)
+      || (summary.throughMessageCount as number) < 1 || (summary.throughMessageCount as number) > (session.messages as unknown[]).length
+      || typeof summary.sourceDigest !== "string" || !/^[a-f0-9]{64}$/u.test(summary.sourceDigest) || !time(summary.createdAt))) throw dataError();
     if (session.runs !== undefined) {
       if (!uniqueRecords(session.runs)) throw dataError();
       for (const run of session.runs) {
         if (!validRun(run) || runIds.has(run.id as string)) throw dataError();
         runIds.add(run.id as string);
       }
+    }
+    const runs = session.runs ?? [];
+    if (session.queue !== undefined && (session.queue as Record<string, unknown>[]).some(turn => !runs.some(run => run.id === turn.id))) throw dataError();
+    if (object(session.interaction)) {
+      const interaction = session.interaction;
+      if (!runs.some(run => run.id === interaction.runId)) throw dataError();
+      if (interaction.status === "pending" && (!object(session.pendingResponse) || session.pendingResponse.runId !== interaction.runId
+        || session.pendingResponse.questionId !== interaction.questionId || session.pendingResponse.kind !== interaction.kind)) throw dataError();
     }
   }
   return value as unknown as MobileState;
@@ -144,6 +212,7 @@ export class MobileStore {
   private blocked = false;
   private expected: string | null = null;
   readonly statePath: string;
+  get m2BackupPath(): string { return `${this.statePath}.m2-backup.json`; }
   constructor(private adapter: MobileStorageAdapter, private directory: string, readonly instanceId: string) {
     assertMobileTaskInstanceId(instanceId);
     this.statePath = `${directory}/devices/${instanceId}/state.json`;
@@ -153,6 +222,8 @@ export class MobileStore {
   }
   private get recoveryPath(): string { return `${this.statePath}.task-replace-backup.json`; }
   get state(): MobileState { return structuredClone(this.committed); }
+  get permission(): MobilePermission { return this.committed.permission; }
+  get memoryEnabled(): boolean { return this.committed.memoryEnabled; }
   get session(): MobileSession { return structuredClone(this.committed.sessions.find(session => session.id === this.committed.activeSessionId)!); }
   getSession(id: string): MobileSession | undefined { return structuredClone(this.committed.sessions.find(session => session.id === id)); }
   private enqueue(work: () => Promise<void>): Promise<void> {
@@ -241,6 +312,15 @@ export class MobileStore {
         throw new Error("移动端资料更新必须同步完成。");
       }
       draft.version = 2; draft.instanceId = this.instanceId; draft.revision = this.committed.revision + 1;
+      if (draft.sessions.some(task => task.queue !== undefined || task.queuePaused !== undefined || task.interaction !== undefined || task.contextSummary !== undefined)) draft.taskRuntimeVersion = 1;
+      if (draft.taskRuntimeVersion === 1 && this.committed.taskRuntimeVersion === undefined && this.expected !== null) {
+        const created = !await this.adapter.exists(this.m2BackupPath);
+        if (created) await this.adapter.write(this.m2BackupPath, this.expected);
+        const backup = await this.adapter.read(this.m2BackupPath);
+        if (created && backup !== this.expected) throw new Error("移动端升级前备份回读不一致，原资料已保留。");
+        const baseline = parseV2(backup, this.instanceId);
+        if (baseline.taskRuntimeVersion !== undefined) throw new Error("移动端升级前备份无效，原资料已保留。");
+      }
       await this.commit(draft);
     });
   }
