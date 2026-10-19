@@ -1,3 +1,5 @@
+import { PiTodoToolSecurity, createPiTodoToolDefinitions, PI_TODO_TOOL_IDS } from "../harness/pi-native/pi-todo-tools";
+import { getTodoProjects } from "../home/todo-projects";
 import { agentTaskSystemPrompt, checkAgentCapability, checkAgentSkill, checkAgentSkillPath, checkAgentTool, isAgentCapabilityPathField, requireAgentCapability, resolveAgentRunSnapshot, type AgentCapabilityContext } from "../agents/capability-policy";
 import { FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT } from "../lifestyle/finance-paths";
 import type { AgentRunSnapshot } from "../agents/types";
@@ -265,6 +267,7 @@ import {
 } from "../resources/mcp-connections";
 
 export interface PiProductionPluginHost {
+  getTodoStore(options?: { initialize?: boolean }): import("../home/todo-store").EchoInkTodoStore;
   readonly activeTaskResumeSafety?: ReadonlyMap<string, Readonly<TaskResumeContext>>;
   readonly app: App;
   readonly lifestyle?: { readonly finance: LifestyleFinanceService };
@@ -2065,6 +2068,22 @@ async function createProductionAgentSession(input: {
       return await input.approvalBroker.waitForDecision({ requestId: request.requestId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: request.toolCallId, target: canonicalJsonStringify(request.target), preview: canonicalJsonStringify(request.preview), signal: request.signal });
     } }
   });
+  const todoSecurity = new PiTodoToolSecurity({
+    assertToolAllowed,
+    currentUserEntry: () => { const context = input.input.currentToolExecutionContext(); return { entryId: context.userEntryId, text: context.userEntryText }; },
+    currentAccess: () => input.input.currentWorkspaceAccess?.(),
+    currentRunIdentity: () => {
+      const context = input.input.currentToolExecutionContext();
+      return { vaultId: context.vaultId, conversationId: context.conversationId, piSessionId: context.piSessionId, productRunId: context.productRunId };
+    },
+    approvals: input.approvals, receipts: input.receipts,
+    userId: localPiVaultUserId(input.deviceScope.deviceIdDigest), deviceId: input.deviceScope.deviceIdDigest,
+    confirmation: { async confirm(request) {
+      if (input.input.currentTaskPlanTurnContext()?.mode !== "agent") return await vaultModalConfirmation.confirm(request);
+      return await input.approvalBroker.waitForDecision({ requestId: request.requestId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: request.toolCallId, target: canonicalJsonStringify(request.target), preview: canonicalJsonStringify(request.preview), signal: request.signal });
+    } }
+  });
+  const todoTools = createPiTodoToolDefinitions({ store: input.plugin.getTodoStore({ initialize: false }), projects: () => getTodoProjects(input.plugin) }, todoSecurity);
   const personalMemorySecurity = new PiPersonalMemoryToolSecurity({
     currentRuntime: () => {
       const execution = input.input.currentToolExecutionContext();
@@ -2159,6 +2178,7 @@ async function createProductionAgentSession(input: {
       personalMemorySecurity,
       knowledgeReadSecurity,
       obsidianSecurity,
+      todoSecurity,
       pdfSecurity
     ],
     resultCorrection: createSecurePiVaultToolResultCorrectionPort(
@@ -2331,6 +2351,7 @@ async function createProductionAgentSession(input: {
     createWebSearchTool(webSearchSecurity),
     ...vaultTools,
     ...obsidianTools,
+    ...todoTools,
     ...pdfTools,
     maintenanceTool,
     taskPlanTool,
@@ -2392,6 +2413,7 @@ async function createProductionAgentSession(input: {
     WEB_SEARCH_TOOL_NAME,
     ...PI_VAULT_TOOL_IDS,
     ...PI_OBSIDIAN_TOOL_IDS,
+    ...PI_TODO_TOOL_IDS,
     ...PDF_TOOL_NAMES,
     maintenanceTool.name,
     taskPlanTool.name,
@@ -2401,6 +2423,7 @@ async function createProductionAgentSession(input: {
     ...mcpSnapshot.toolNames
   ]);
   const planToolNames = [
+    "todo_query",
     "pdf_reading_query",
     WEB_SEARCH_TOOL_NAME,
     "vault_search",

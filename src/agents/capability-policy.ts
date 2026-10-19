@@ -6,6 +6,7 @@ import type { CapabilityAccess } from "../membership/types";
 import type { PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
 import { normalizeObsidianCliRequest, obsidianCliCapabilityScope } from "../harness/pi-native/obsidian-cli-policy";
 import { financeToolEffect, isFinanceTool, normalizeFinanceToolRequest } from "../harness/pi-native/finance-tool-policy";
+import { isPiTodoTool, normalizeTodoToolRequest } from "../harness/pi-native/todo-tool-policy";
 import { AGENT_STYLES } from "./styles";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentRunSnapshot } from "./types";
 
@@ -33,7 +34,7 @@ const BASE_SKILLS = new Set(["clarify-real-question", "two-layer-explanation", "
 const MODULE_SKILLS: Readonly<Record<string, AgentModuleCapability>> = {
   "daily-journal": "journal", "english-diary": "english-diary", "knowledge-review": "review",
   "obsidian-markdown": "knowledge", "obsidian-bases": "knowledge", "json-canvas": "knowledge",
-  "finance-bill-import": "finance", "finance-analysis": "finance", "finance-operations": "finance"
+  "finance-bill-import": "finance", "finance-analysis": "finance", "finance-operations": "finance", "todo-operations": "todos"
 };
 const BASE_TOOLS = new Set(["task_update", "user_question"]);
 const MEMORY_TOOLS = new Set(["memory_search", "memory_read", "memory_write"]);
@@ -173,6 +174,10 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     return targets.length ? checkTargets(context, targets, mcp.readOnly ? "read" : "write", true) : result;
   }
   if (toolName === "web_search") return checkAgentCapability(context, "web-search");
+  if (isPiTodoTool(toolName)) {
+    if (args) normalizeTodoToolRequest(toolName, args);
+    return checkAgentCapability(context, "todos", toolName === "todo_query" ? "read" : "write");
+  }
   if (isFinanceTool(toolName)) {
     const effect = args && financeToolEffect(toolName, normalizeFinanceToolRequest(toolName, args)) !== "read" ? "write" : "read";
     return checkAgentCapability(context, "finance", effect);

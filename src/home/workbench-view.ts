@@ -1,3 +1,4 @@
+import { getTodoProjects, resolveTodoProject } from "./todo-projects";
 import { ItemView, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
@@ -494,11 +495,12 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private renderTodos(): void {
     const todos = this.snapshot?.todayTodos ?? [];
+    const projects = getTodoProjects(this.plugin);
     const section = this.group("todos", this.t("今日待办", "Today's to-dos"), todos.length, true);
     if (!section) return;
     const heading = section.firstElementChild as HTMLElement;
     if (!heading.querySelector("button")) this.button(heading, this.t("全部待办", "All to-dos"), "all-todos", () => openWorkbenchModule(this.plugin, "todos"), "tertiary", "chevron-right");
-    this.syncRows(section.lastElementChild as HTMLElement, todos, todo => this.todoKey(todo), todo => JSON.stringify([this.language, todo, !!this.dataError]), todo => {
+    this.syncRows(section.lastElementChild as HTMLElement, todos, todo => this.todoKey(todo), todo => JSON.stringify([this.language, todo, resolveTodoProject(todo.project, projects), !!this.dataError]), todo => {
       const row = this.contentEl.ownerDocument.createElement("div"); row.className = "wb-row wb-todo";
       const key = this.todoKey(todo);
       const check = createOriginCheck(row, { cls: "wb-todo-check", attr: { "aria-label": this.t(`完成：${todo.title}`, `Complete: ${todo.title}`), "data-wb-focus": key } });
@@ -508,7 +510,15 @@ export class EchoInkWorkbenchView extends ItemView {
         check.checked = todo.done;
         void this.runAction(key, () => this.plugin.getTodoStore().toggleDone(todo, true)).catch(error => new Notice(message(error)));
       });
-      row.createSpan({ cls: "wb-grow", text: todo.title });
+      const copy = row.createSpan({ cls: "wb-grow" });
+      copy.createSpan({ text: todo.title });
+      if (todo.project) {
+        const project = resolveTodoProject(todo.project, projects);
+        const label = project.status === "missing" ? this.t("项目已不存在", "Project no longer exists")
+          : project.status === "ambiguous" ? this.t("有同名项目，请重新选择", "Choose between projects with the same name") : project.label;
+        const tag = copy.createSpan({ cls: "wb-todo-project", text: label });
+        setIcon(tag.createSpan({ attr: { "aria-hidden": "true" } }), "folder");
+      }
       row.createSpan({ cls: "wb-time", text: todo.dueTime || this.t("今天", "Today") });
       return row;
     });

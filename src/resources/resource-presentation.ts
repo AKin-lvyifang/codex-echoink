@@ -73,6 +73,7 @@ const ENGLISH_SKILLS: Record<BuiltinSkillId, { name: string; description: string
     name: "Financial Review and Analysis",
     description: "When you request a new or refreshed analysis, review the month's recorded transactions and statistics to explain spending impacts and offer evidence-based suggestions."
   },
+  "todo-operations": { name: "To-do operations", description: "Read, add, reschedule and complete Markdown to-dos using the approved tools." },
   "finance-operations": {
     name: "Financial Conversation Operations",
     description: "Query, record, edit or delete transactions, adjust monthly or default budgets, and create or link bills in natural language."

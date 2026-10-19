@@ -137,3 +137,7 @@
 .echoink-home-workspace button.echoink-workbench-back { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px; min-height: 30px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: calc(var(--font-text-size, 16px) * .75); box-shadow: none; }
 .echoink-home-workspace button.echoink-workbench-back:hover, .echoink-home-workspace button.echoink-workbench-back:focus-visible { background: var(--echoink-theme-hover, var(--background-modifier-hover)); color: var(--text-normal); outline: none; box-shadow: none; }
 .echoink-home-workspace .echoink-workbench-back svg { width: 14px; height: 14px; }
+
+.echoink-workbench .wb-todo-project { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 8px; font-size: calc(var(--font-text-size,16px)*.75); color: var(--secondary); overflow-wrap: anywhere; }
+.echoink-workbench .wb-todo-project svg { width: 12px; height: 12px; }
+.echoink-workbench .wb-todo-project > span { order: -1; }

@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const fixtureRoot = path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台改版-20261017/.p6-nav-tests");
+const fixtureRoot = process.env.ECHOINK_TODO_TEST_ROOT ? path.join(process.env.ECHOINK_TODO_TEST_ROOT, "navigation") : path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台改版-20261017/.p6-nav-tests");
 const require = createRequire(import.meta.url);
 const { JSDOM } = require("jsdom");
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://module-navigation.invalid" });

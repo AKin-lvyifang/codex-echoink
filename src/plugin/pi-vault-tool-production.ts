@@ -77,7 +77,7 @@ export interface PiVaultApprovalConfirmationInput {
   readonly piSessionId: string;
   readonly productRunId: string;
   readonly toolCallId: string;
-  readonly toolId: PiVaultToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill";
+  readonly toolId: PiVaultToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill" | "todo_add" | "todo_update" | "todo_complete";
   readonly target: JsonValue;
   readonly preview: JsonValue;
   readonly signal: AbortSignal | undefined;

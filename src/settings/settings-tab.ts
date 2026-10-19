@@ -1225,12 +1225,15 @@ export class CodexSettingTab extends PluginSettingTab {
     const store = this.plugin.getTodoStore();
     this.disposeTodoStatistics?.();
     this.disposeTodoReminders?.();
-    const statistics = page.createDiv();
-    const renderStats = () => renderTodoStatistics(statistics, store, this.plugin.settings.settingsLanguage, this.app);
-    renderStats();
-    this.disposeTodoStatistics = store.subscribe(() => {
-      if (statistics.isConnected) renderStats();
-    });
+    this.disposeTodoStatistics = null;
+    if (!Platform.isDesktopApp) {
+      const statistics = page.createDiv();
+      const renderStats = () => renderTodoStatistics(statistics, store, this.plugin.settings.settingsLanguage, this.app);
+      renderStats();
+      this.disposeTodoStatistics = store.subscribe(() => {
+        if (statistics.isConnected) renderStats();
+      });
+    }
     const sourceSection = createSettingsSection(page, {
       title: zh ? "数据文件" : "Data file",
       surface: "group"

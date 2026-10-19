@@ -25,6 +25,7 @@ export async function runTaskResumeSafetyTests(testRoot: string): Promise<void> 
   const root = await mkdtemp(path.join(testRoot, "p4-resume-safety-"));
   try {
     await fileVersionsAndFinalEffectGate(path.join(root, "files"));
+    await todoReceiptsShareTheFileGuard(path.join(root, "todos"));
     await cliReceiptsShareTheFileGuard(path.join(root, "cli"));
     await financeRealPipelineSurvivesChangedRunAndVersion(path.join(root, "finance"));
     await uncertainMcpIsNeverDispatchedAgain(path.join(root, "mcp"));
@@ -363,4 +364,31 @@ async function pdfSessionEvidenceIsReadonly(root: string): Promise<void> {
     jobId: sha(`task:user-old-run\n${JSON.stringify({ path: "source.pdf", reading: false })}`) }]);
   assert.deepEqual(await treeContents(root), before);
   console.log("PASS original Pi JSONL provides scoped PDF operation evidence without writes");
+}
+
+async function todoReceiptsShareTheFileGuard(root: string): Promise<void> {
+  const f = await fixture(root);
+  await mkdir(path.join(f.vaultRootPath, "EchoInk"));
+  const content = "- [ ] Book train tickets <!-- echoink-todo-id: train -->\n";
+  const args = { title: "Book train tickets" };
+  const target = { relativePath: "EchoInk/待办.md", todoId: "train" };
+  const authorization = await authorized(f, "todo_add", "add", args, target, { beforeVersion: null });
+  await f.receipts.beginAuthorizedOperation(authorization);
+  await f.receipts.markEffectStarted(authorization.operationIdentity);
+  await writeFile(path.join(f.vaultRootPath, "EchoInk/待办.md"), content);
+  await f.receipts.markEffectCompleted(authorization.operationIdentity);
+  await f.receipts.persistReceipt({ operationIdentity: authorization.operationIdentity, status: "completed", safeSummary: { action: "todo_add" }, readback: { checkedAt: f.now(), readbackVerified: true, observedTargetVersion: sha(content), safeSummary: "read back" } });
+  const snapshot = await prepareTaskResumeSafety(f);
+  assert.deepEqual(snapshot.fileConflicts, []);
+  assert.equal(snapshot.fileVersions[0]?.expectedVersion, sha(content));
+  await assert.rejects(guard(f, snapshot, "todo_add", args, target), /already_completed/u);
+  await assert.rejects(guard(f, snapshot, "todo_add", { ...args, people: "", dueDate: "", dueTime: "", categoryName: "", project: "" }, target), /already_completed/u);
+  await writeFile(path.join(f.vaultRootPath, "EchoInk/待办.md"), content + "- [ ] User edit\n");
+  await assert.rejects(guard(f, snapshot, "todo_complete", { id: "train", done: true }, target), /file_version_conflict/u);
+  const second = await authorized(f, "todo_update", "uncertain", { id: "train", patch: { dueDate: "2026-10-20" } }, target, { beforeVersion: sha(content) });
+  await f.receipts.beginAuthorizedOperation(second); await f.receipts.markEffectStarted(second.operationIdentity);
+  const recovered = await prepareTaskResumeSafety(f);
+  assert.equal(recovered.operations.find(item => item.toolCallId === "uncertain")?.status, "uncertain");
+  await assert.rejects(guard(f, recovered, "todo_update", { id: "train", patch: { dueDate: "2026-10-20" } }, target), /uncertain_no_replay/u);
+  console.log("PASS todo durable receipts: resumed dedupe, written file version, external edit rejection, unknown effect retained");
 }

@@ -42,7 +42,21 @@ export function formatApprovalPresentation(input: Readonly<{
   const targetPaths = pathFields(targetObject);
   const previewPaths = pathFields(previewObject);
 
-  if (mcp) {
+  if (previewObject?.domain === "todos" && ["todo_add", "todo_update", "todo_complete"].includes(String(previewObject.action))) {
+    action = previewObject.action === "todo_add" ? text("新增待办", "Add a to-do")
+      : previewObject.action === "todo_complete" ? text("更改待办完成状态", "Change to-do completion") : text("修改待办", "Update a to-do");
+    for (const field of targetPaths) { add(destination, pathLabel(field.label, english), field.value); consumedTarget.add(field.label); }
+    consumedTarget.add("todoId");
+    for (const key of ["domain", "action", "relativePath", "before", "after"]) consumedPreview.add(key);
+    const before = objectValue(previewObject.before), after = objectValue(previewObject.after);
+    const labels: Record<string, string> = { title: text("事项", "Title"), people: text("相关人员", "People"), dueDate: text("截止日期", "Due date"), dueTime: text("截止时间", "Due time"), categoryName: text("分类", "Category"), project: text("项目", "Project"), done: text("状态", "Status") };
+    const value = (key: string, item: unknown) => key === "done" ? item === true ? text("已完成", "Completed") : text("未完成", "Open") : item === "" || item == null ? text("未设置", "Not set") : String(item);
+    for (const [key, label] of Object.entries(labels)) {
+      if (!after || !(key in after) || before && before[key] === after[key] && key !== "title") continue;
+      if (!before && (after[key] === "" || after[key] == null)) continue;
+      add(changes, label, before && before[key] !== after[key] ? `${value(key, before[key])} → ${value(key, after[key])}` : value(key, after[key]));
+    }
+  } else if (mcp) {
     action = text("调用服务操作", "Call a service operation");
     const server = previewObject?.server ?? targetObject?.resourceName;
     const tool = previewObject?.tool ?? targetObject?.toolName;

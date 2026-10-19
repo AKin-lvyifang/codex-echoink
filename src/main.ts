@@ -408,6 +408,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
   async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> { return this.getViewService().activateLegacyHomeView(section); }
+  async activateTodoView(): Promise<void> { return this.getViewService().activateTodoView(); }
+
   async activateJournalView(): Promise<void> { return this.getViewService().activateJournalView(); }
   getWorkbenchModuleOwner(moduleId: AgentModuleId): AgentDefinition { return workbenchModuleOwner(this, moduleId); }
   async prefillWorkbenchModule(moduleId: AgentModuleId, text: string): Promise<boolean> { return prefillWorkbenchModule(this, moduleId, text); }
@@ -429,9 +431,9 @@ export default class CodexForObsidianPlugin extends Plugin {
       else if (leaf.view instanceof EchoInkWorkbenchView) leaf.view.refreshIfSettingsChanged();
     }
   }
-  getTodoStore(): EchoInkTodoStore {
-    if (!this.todoStore) {
-      this.todoStore = new EchoInkTodoStore(this);
+  getTodoStore(options: { initialize?: boolean } = {}): EchoInkTodoStore {
+    if (!this.todoStore) this.todoStore = new EchoInkTodoStore(this);
+    if (options.initialize !== false) {
       void this.todoStore.initialize().catch((error) => {
         console.error("EchoInk todo store initialization failed", error);
       });

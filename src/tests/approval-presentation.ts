@@ -13,6 +13,10 @@ const values = (presentation: ReturnType<typeof formatApprovalPresentation>) =>
 
 export async function runApprovalPresentationTests(): Promise<void> {
   assertVaultPresentation();
+  const todo = formatApprovalPresentation({ target: json({ relativePath: "EchoInk/待办.md", todoId: "internal" }), preview: json({ domain: "todos", action: "todo_update", relativePath: "EchoInk/待办.md", before: { title: "给花浇水", dueDate: "2026-10-18", done: false }, after: { title: "给花浇水", dueDate: "2026-10-20", done: false } }) });
+  assert.equal(todo.action, "修改待办");
+  assert.ok(values(todo).includes("截止日期: 2026-10-18 → 2026-10-20"));
+  assert.ok(!values(todo).includes("internal") && !values(todo).includes("dueDate"));
   assertMcpAndFallbacks();
   await assertRealDomAndBindings();
   console.log("PASS approval presentation: actual Vault/MCP contracts, unknown/bad JSON, long/hostile text, persistent truncation/destructive warnings, original states and live/stale bindings");

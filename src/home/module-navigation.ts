@@ -27,7 +27,7 @@ export async function prefillWorkbenchModule(plugin: CodexForObsidianPlugin, mod
 export async function openWorkbenchModule(plugin: CodexForObsidianPlugin, moduleId: AgentModuleId): Promise<void> {
   switch (moduleId) {
     case "journal": await plugin.activateJournalView(); break;
-    case "todos": await plugin.activateLegacyHomeView("todos"); break;
+    case "todos": await plugin.activateTodoView(); break;
     case "finance": await plugin.lifestyle.open("finance"); break;
     case "knowledge-base": await plugin.openEchoInkKnowledgeSettings(); break;
     case "english-diary": await plugin.englishDiary?.openToday(); break;

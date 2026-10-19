@@ -1,3 +1,4 @@
+import { isPiTodoTool, normalizeTodoToolRequest } from "../harness/pi-native/todo-tool-policy";
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import * as path from "node:path";
@@ -224,7 +225,7 @@ function effectTime(journal: Readonly<DomainOperationJournal>): number {
 function semanticOperation(toolName: string, args: unknown, target?: unknown): string {
   const value = record(args);
   if (!value) return `${toolName}:missing_arguments`;
-  const normalized = { ...value };
+  const normalized = isPiTodoTool(toolName) ? normalizeTodoToolRequest(toolName, value) : { ...value };
   if (isFileTool(toolName)) {
     delete normalized.expectedVersion;
     for (const key of ["relativePath", "sourcePath", "targetPath"]) if (typeof normalized[key] === "string") normalized[key] = normalizeVaultRelativePath(normalized[key]);
@@ -236,7 +237,7 @@ function semanticOperation(toolName: string, args: unknown, target?: unknown): s
     delete normalized.file;
     if (typeof targetPath === "string") normalized.path = normalizeVaultRelativePath(targetPath);
   }
-  if (["finance_record", "finance_budget", "finance_bill"].includes(toolName)) {
+  if (isTodoWrite(toolName) || ["finance_record", "finance_budget", "finance_bill"].includes(toolName)) {
     // A fresh optimistic-lock version authorizes a current target; it does not
     // make the same financial mutation a new intent during task recovery.
     delete normalized.expectedVersion;
@@ -254,7 +255,11 @@ function semanticOperation(toolName: string, args: unknown, target?: unknown): s
 function isFileTool(name: string): boolean {
   return ["note_create", "note_update", "metadata_update", "note_move", "note_delete"].includes(name);
 }
+function isTodoWrite(name: string): boolean {
+  return ["todo_add", "todo_update", "todo_complete"].includes(name);
+}
 function affectedFilePaths(toolName: string, args: unknown, target?: unknown): string[] {
+  if (isTodoWrite(toolName)) return ["EchoInk/待办.md"];
   if (toolName === "obsidian_cli") {
     const input = record(args), resolved = record(target);
     if (!isCliFileWrite(input?.command)) return [];
@@ -265,6 +270,10 @@ function affectedFilePaths(toolName: string, args: unknown, target?: unknown): s
   return [value?.relativePath, value?.sourcePath, value?.targetPath].flatMap(raw => typeof raw === "string" ? [normalizeVaultRelativePath(raw)] : []);
 }
 function beforeFileVersions(tool: string, target: unknown, version: unknown, recordedAt: number): TaskResumeFileVersion[] {
+  if (isTodoWrite(tool)) {
+    const item = fileVersion("EchoInk/待办.md", record(version)?.beforeVersion, recordedAt);
+    return item ? [item] : [];
+  }
   if (tool === "obsidian_cli") {
     const t = record(target), v = record(version);
     if (!isCliFileWrite(t?.command)) return [];
@@ -278,6 +287,11 @@ function beforeFileVersions(tool: string, target: unknown, version: unknown, rec
   return item ? [item] : [];
 }
 function afterFileVersions(tool: string, target: unknown, version: unknown, recordedAt: number, observedVersion?: JsonValue): TaskResumeFileVersion[] {
+  if (isTodoWrite(tool)) {
+    // No receipt means no known after-version: recovery must not guess success.
+    const item = typeof observedVersion === "string" ? fileVersion("EchoInk/待办.md", observedVersion, recordedAt) : null;
+    return item ? [item] : [];
+  }
   if (tool === "obsidian_cli") {
     const t = record(target), observed = record(observedVersion);
     if (!isCliFileWrite(t?.command) || observedVersion === undefined) return [];

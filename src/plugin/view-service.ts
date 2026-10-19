@@ -1,3 +1,4 @@
+import { TodoPageView, TODO_PAGE_VIEW_TYPE } from "../home/todo-page";
 import { EchoInkJournalView, VIEW_TYPE_ECHOINK_JOURNAL } from "../home/journal-page";
 import { Notice, Platform } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -42,6 +43,17 @@ export class EchoInkViewService {
     }
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
     if (leaf.view instanceof EchoInkJournalView) leaf.view.refreshIfSettingsChanged();
+  }
+
+  async activateTodoView(): Promise<void> {
+    if (!Platform.isDesktopApp) return this.activateHomeView();
+    let leaf = this.plugin.app.workspace.getLeavesOfType(TODO_PAGE_VIEW_TYPE)[0];
+    if (!leaf) {
+      leaf = this.plugin.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: TODO_PAGE_VIEW_TYPE, active: true });
+    }
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (leaf.view instanceof TodoPageView) leaf.view.refreshIfSettingsChanged();
   }
 
   async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> {
@@ -92,8 +104,8 @@ export class EchoInkViewService {
 
   refreshKnowledgeBaseSurfaces(): void {
     this.getCodexView()?.refreshKnowledgeBaseDashboard();
-    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home"), ...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL)]) {
-      if (leaf.view instanceof EchoInkHomeView || leaf.view instanceof EchoInkWorkbenchView || leaf.view instanceof EchoInkJournalView) {
+    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home"), ...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL), ...this.plugin.app.workspace.getLeavesOfType(TODO_PAGE_VIEW_TYPE)]) {
+      if (leaf.view instanceof EchoInkHomeView || leaf.view instanceof EchoInkWorkbenchView || leaf.view instanceof EchoInkJournalView || leaf.view instanceof TodoPageView) {
         void leaf.view.refresh().catch((error) => console.warn("EchoInk 首页刷新失败", error));
       }
     }
@@ -104,8 +116,8 @@ export class EchoInkViewService {
     for (const leaf of this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX)) {
       if (leaf.view instanceof CodexView) leaf.view.refreshLanguage();
     }
-    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home"), ...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL)]) {
-      if (!(leaf.view instanceof EchoInkHomeView) && !(leaf.view instanceof EchoInkWorkbenchView) && !(leaf.view instanceof EchoInkJournalView)) continue;
+    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home"), ...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL), ...this.plugin.app.workspace.getLeavesOfType(TODO_PAGE_VIEW_TYPE)]) {
+      if (!(leaf.view instanceof EchoInkHomeView) && !(leaf.view instanceof EchoInkWorkbenchView) && !(leaf.view instanceof EchoInkJournalView) && !(leaf.view instanceof TodoPageView)) continue;
       refreshes.push(Promise.resolve(leaf.view.refreshLanguage()).catch((error) => {
         console.warn("EchoInk 首页语言刷新失败", error);
       }));
