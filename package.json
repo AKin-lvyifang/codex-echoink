@@ -11,6 +11,8 @@
     "test:mobile-storage": "node scripts/mobile-storage-tests.mjs",
     "test:mobile-agents": "node scripts/mobile-agent-tests.mjs",
     "test:mobile-tasks": "node scripts/mobile-task-tests.mjs",
+    "test:mobile-resume": "node scripts/mobile-resume-tests.mjs",
+    "test:mobile-recovery": "node scripts/mobile-recovery-tests.mjs",
     "test:mobile-task-ui": "node scripts/mobile-task-ui-tests.mjs",
     "test:mobile-capabilities": "node scripts/mobile-capability-tests.mjs",
     "test:mobile-shells": "npm run build && node scripts/mobile-shell-tests.mjs",

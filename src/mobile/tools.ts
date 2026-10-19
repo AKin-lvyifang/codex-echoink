@@ -8,6 +8,10 @@ import { Type } from "typebox";
 import { PERSONAL_MEMORY_SCHEMA, type PersonalMemoryKind, type PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
 import { MobileStore, newId } from "./store";
 import { createScopedMobileBodySearch, defaultMobileCapabilityPolicy, isScopedMobileBodySearch, requireMobileAgentCapability, type MobileCapabilityPolicy } from "./capability-policy";
+import { sha256Hex } from "../utils/sha256";
+import type { MobileToolExecutionContext, MobileWriteOperation } from "./task-contracts";
+import { assertMobileResumeMemoryObservations, assertMobileResumeObservations, assertMobileWriteNotReplayed, assertMobileWriteRun,
+  mobileMemoryWriteHash, mobileMemoryWriteKey, mobileNoteWriteKey, normalizeMobileNoteTarget } from "./task-recovery";
 
 export const memoryCategories = [
   { id: "all", label: "全部", kinds: [] },
@@ -18,11 +22,7 @@ export const memoryCategories = [
   { id: "episodes", label: "经历", kinds: ["episode"] }
 ] as const;
 export function checkedNotePath(value: string): string {
-  const path = value.trim();
-  if (!path || path.startsWith("/") || /[\\:]/u.test(path) || Array.from(path).some(character => character.charCodeAt(0) < 32) || path.split("/").some(p => !p || p.startsWith(".")) || !path.toLowerCase().endsWith(".md")) {
-    throw new Error("请使用当前笔记库内的 Markdown 相对路径，例如：笔记/想法.md。");
-  }
-  return path;
+  return normalizeMobileNoteTarget(value);
 }
 export function searchMemories(records: readonly PersonalMemoryRecord[], query: string, limit = 20): PersonalMemoryRecord[] {
   const text = query.trim().toLocaleLowerCase();
@@ -34,7 +34,8 @@ export function searchMemories(records: readonly PersonalMemoryRecord[], query: 
 }
 function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Error("已停止，未开始此操作。"); }
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
-export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id, suppliedPolicy?: MobileCapabilityPolicy): AgentTool[] {
+/** Product runtime must pass its durable run. Legacy standalone fixtures have no journal/resume guarantee. */
+export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id, suppliedPolicy?: MobileCapabilityPolicy, execution?: MobileToolExecutionContext): AgentTool[] {
   const policy = suppliedPolicy ?? defaultMobileCapabilityPolicy(store, bindings, sessionId);
   const shared = sharedBodySearch && isScopedMobileBodySearch(sharedBodySearch, policy);
   const bodySearch = shared ? sharedBodySearch : createScopedMobileBodySearch(app, bindings, policy);
@@ -76,20 +77,66 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
     },
     {
       name: "note_create", label: "保存文档", description: "在当前笔记库新建 Markdown。不能覆盖已有文件。只读权限禁止写入。", parameters: Type.Object({ path: Type.String(), content: Type.String() }),
-      async execute(_id, args: { path: string; content: string }, signal) {
-        const writable = () => { checkStopped(signal); policy.assertTool("note_create", args, path); };
+      async execute(toolCallId, args: { path: string; content: string }, signal) {
         const path = checkedNotePath(args.path);
+        const writable = () => {
+          checkStopped(signal); policy.assertTool("note_create", args, path);
+          if (execution) {
+            const task = store.getSession(sessionId);
+            if (!task) throw new Error("任务不存在，未写入笔记。");
+            assertMobileWriteRun(task, execution);
+          }
+        };
+        writable();
+        const semanticKey = mobileNoteWriteKey(path);
+        if (execution) assertMobileWriteNotReplayed(store.getSession(sessionId)!, execution, "note_create", toolCallId, semanticKey, path);
+        await assertMobileResumeObservations(app, store, execution?.resume, signal);
         writable();
         if (app.vault.getAbstractFileByPath(path) || await app.vault.adapter.exists(path)) throw new Error("同名文件已存在，请改用新文件名；原文件未被覆盖。");
         writable();
+        const now = Date.now();
+        const operation: MobileWriteOperation = { id: newId(), taskId: sessionId, runId: execution?.runId ?? "", toolCallId,
+          toolName: "note_create", semanticKey, status: "prepared", createdAt: now, updatedAt: now,
+          target: path, expectedHash: sha256Hex(args.content), targetWasMissing: true };
+        if (execution) {
+          await store.updateSession(sessionId, task => {
+            writable(); assertMobileWriteNotReplayed(task, execution, "note_create", toolCallId, semanticKey, path);
+            task.operations = [...(task.operations ?? []), operation];
+          });
+          await assertMobileResumeObservations(app, store, execution.resume, signal);
+          writable();
+          if (await app.vault.adapter.exists(path)) throw new Error("目标在准备期间已变化，原文件未被覆盖。");
+          writable();
+          await store.updateSession(sessionId, task => {
+            writable(); assertMobileWriteRun(task, execution);
+            const prepared = task.operations?.find(item => item.id === operation.id);
+            if (!prepared || prepared.status !== "prepared") throw new Error("写入意图已变化，未开始写入。");
+            prepared.status = "started"; prepared.updatedAt = Date.now();
+          });
+        }
         const parts = path.split("/").slice(0, -1);
         let directory = "";
         for (const part of parts) {
+          await assertMobileResumeObservations(app, store, execution?.resume, signal);
           writable(); directory = directory ? `${directory}/${part}` : part;
           if (!app.vault.getAbstractFileByPath(directory)) await app.vault.createFolder(directory);
         }
+        await assertMobileResumeObservations(app, store, execution?.resume, signal);
+        writable();
+        if (execution && await app.vault.adapter.exists(path)) throw new Error("目标在写入前已变化，原文件未被覆盖。");
         writable();
         const file = await app.vault.create(path, args.content);
+        if (execution) {
+          // Readback/completion records facts only, even if the owning run was interrupted meanwhile.
+          const content = await app.vault.adapter.read(path);
+          if (content !== args.content) throw new Error("笔记已创建但回读内容不一致，原文件及写入记录已保留。");
+          await store.updateSession(sessionId, task => {
+            const written = task.operations?.find(item => item.id === operation.id);
+            if (!written || written.expectedHash !== operation.expectedHash || written.target !== path) throw new Error("写入记录已变化，请重新核对。");
+            written.status = "completed"; written.updatedAt = Date.now();
+          });
+          checkStopped(signal);
+        }
         return result({ path: file.path, saved: true });
       }
     }
@@ -108,18 +155,36 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
       }),
       async execute(toolCallId, args: { targetId?: string; kind: PersonalMemoryKind; content: string; title: string; recallWhen: string; basis: "explicit" | "observed" }, signal) {
         enabled("memory_write", signal);
+        await assertMobileResumeObservations(app, store, execution?.resume, signal);
+        enabled("memory_write", signal);
+        const before = args.targetId ? store.state.memories.find(item => item.id === args.targetId) : undefined;
+        const expectedBefore = before ? { revision: before.revision, hash: mobileMemoryWriteHash(before) } : undefined;
+        const semanticKey = mobileMemoryWriteKey(mobileMemoryWriteHash(args), args.targetId);
+        const recordId = args.targetId ?? newId();
         let record: PersonalMemoryRecord | undefined;
         await store.update(latest => {
           checkStopped(signal);
           policy.assertTool("memory_write", args);
           if (!latest.memoryEnabled) requireMobileAgentCapability({ allowed: false, capabilityId: "memory", reason: "memory_disabled" });
           if (latest.permission === "read-only") requireMobileAgentCapability({ allowed: false, capabilityId: "memory", reason: "read_only" });
+          assertMobileResumeMemoryObservations(execution?.resume, latest.memories);
+          const task = latest.sessions.find(item => item.id === sessionId);
+          if (!task) throw new Error("任务不存在，未写入记忆。");
           const old = args.targetId ? latest.memories.find(r => r.id === args.targetId) : undefined;
           if (args.targetId && !old) throw new Error("要修正的记忆不存在。");
+          if (execution && old && (!expectedBefore || old.revision !== expectedBefore.revision || mobileMemoryWriteHash(old) !== expectedBefore.hash)) throw new Error("记忆版本已变化，请重新读取后再修改。");
           const duplicate = latest.memories.find(r => r.content === args.content && r.kind === args.kind && r.status === "current");
-          if (duplicate) { record = duplicate; return; }
-          record = { schema: PERSONAL_MEMORY_SCHEMA, id: old?.id ?? newId(), kind: args.kind, status: "current", date: new Date().toISOString(), source: `mobile:${sessionId}:${toolCallId}`, basis: args.basis, contentOrigin: args.basis === "explicit" ? "user_statement" : "current_instruction", title: args.title, content: args.content, recallWhen: args.recallWhen, revision: (old?.revision ?? 0) + 1, file: store.statePath };
-          latest.memories = [record, ...latest.memories.filter(r => r.id !== record!.id)];
+          const target = duplicate?.id ?? old?.id ?? recordId;
+          if (execution) assertMobileWriteNotReplayed(task, execution, "memory_write", toolCallId, semanticKey, target);
+          record = duplicate ?? { schema: PERSONAL_MEMORY_SCHEMA, id: old?.id ?? recordId, kind: args.kind, status: "current", date: new Date().toISOString(), source: `mobile:${sessionId}:${toolCallId}`, basis: args.basis, contentOrigin: args.basis === "explicit" ? "user_statement" : "current_instruction", title: args.title, content: args.content, recallWhen: args.recallWhen, revision: (old?.revision ?? 0) + 1, file: store.statePath };
+          if (!duplicate) latest.memories = [record, ...latest.memories.filter(r => r.id !== record!.id)];
+          if (execution) {
+            const previous = duplicate ?? old, now = Date.now();
+            task.operations = [...(task.operations ?? []), { id: newId(), taskId: sessionId, runId: execution.runId, toolCallId,
+              toolName: "memory_write", semanticKey, status: "completed", createdAt: now, updatedAt: now, target: record.id,
+              expectedHash: mobileMemoryWriteHash(record), targetWasMissing: !previous,
+              ...(previous ? { beforeRevision: previous.revision } : {}), completedRevision: record.revision }];
+          }
         });
         return result(record);
       }

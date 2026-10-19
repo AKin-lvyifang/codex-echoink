@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHost, answer } from "../mobile/host.mjs";
+import { runMobileTaskResumeUIScenarios } from "./resume-scenarios.mjs";
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(condition, label) {
@@ -296,5 +297,64 @@ export async function runMobileTaskUIScenarios(api, win) {
     } finally { await f.close(); }
   });
 
-  console.log(`Mobile task UI: ${passed} real-Runtime/synthetic-Provider DOM scenarios passed; browser and native visuals remain separate.`);
+  for (const tablet of [false, true]) await test(`${tablet ? "iPad" : "iPhone"} actual Runtime continues the original interrupted task once and clears only accepted input`, async () => {
+    let requests = 0; const f = await fixture(async () => { requests++; return answer("openai-completions", "原任务继续完成"); }, tablet);
+    try {
+      await f.runtime.initialize(); const id = f.store.session.id;
+      const interruption = { at: 1792454400123, reason: "app_backgrounded", stage: "等待模型" };
+      await f.store.patchSession(id, { messages: [{ role: "user", content: "原任务正文", timestamp: 1 }], taskStatus: "interrupted", interruption, taskInterruptedAt: interruption.at, draft: "用户保留的补充" }); f.runtime.onChange();
+      const input = f.root.querySelector(".em-input"); const continueButton = f.click("从这里继续"); continueButton.click();
+      await until(() => requests === 1 && !f.runtime.isBusy(id) && !f.runtime.stateFor(id).resuming, "one resumed run completes");
+      assert.equal(f.store.session.id, id); assert.equal(f.store.getSession(id).runs.length, 1); assert.equal(f.store.getSession(id).taskStatus, "completed");
+      assert.equal(f.root.querySelector(".em-input"), input); assert.equal(input.value, ""); assert.equal(f.store.getSession(id).draft, "");
+      assert.ok(f.store.getSession(id).messages.some(message => message.role === "user" && text(message) === "用户保留的补充"));
+    } finally { await f.close(); }
+  });
+
+  for (const tablet of [false, true]) await test(`${tablet ? "iPad" : "iPhone"} actual Runtime requires S5 facts, rejects a changed target fingerprint and keeps the original input`, async () => {
+    let requests = 0; const f = await fixture(async () => { requests++; return answer("openai-completions", "基于现状完成"); }, tablet);
+    try {
+      await f.runtime.initialize(); const id = f.store.session.id; const target = "测试/核对原目标.md"; await f.adapter.write(target, "首次核对的既有内容");
+      const interruption = { at: 1792454400123, reason: "process_unknown", stage: "执行工具" };
+      const oldAssistant = { role: "assistant", content: [{ type: "toolCall", id: "old-private-tool-id", name: "note_create", arguments: { path: target, content: "旧拟写入正文" } }],
+        api: "openai-completions", provider: "synthetic", model: "synthetic-model", stopReason: "toolUse", timestamp: 2,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+      await f.store.patchSession(id, { messages: [{ role: "user", content: "旧任务原文", timestamp: 1 }, oldAssistant], taskStatus: "interrupted", interruption, taskInterruptedAt: interruption.at, draft: "核对前保留的输入" }); f.runtime.onChange();
+      const input = f.root.querySelector(".em-input");
+      if (tablet) await f.send("核对前保留的输入"); else f.click("从这里继续");
+      await until(() => !!f.root.querySelector(".em-task-resume-review"), "actual S5 review from continue or interrupted submit");
+      assert.equal(requests, 0); assert.ok(f.root.querySelector(".em-task-resume-review").textContent.includes(target)); assert.equal(f.root.querySelector('[role="dialog"]').textContent.includes("old-private-tool-id"), false);
+      f.click("关闭弹层"); await until(() => !f.runtime.stateFor(id).resumeReview, "close clears pending review without a request"); assert.equal(requests, 0);
+      f.click("从这里继续"); await until(() => !!f.runtime.stateFor(id).resumeReview && !!f.root.querySelector(".em-task-resume-review"), "review can be reopened after cancel");
+      const firstFingerprint = f.runtime.stateFor(id).resumeReview.fingerprint; f.files.set(target, "核对期间外部变更后的内容");
+      f.click("我已核对，请基于现状继续"); await until(() => f.runtime.stateFor(id).resumeReview?.fingerprint !== firstFingerprint && !!f.root.querySelector(".em-task-resume-review"), "changed target requires a fresh fingerprint");
+      assert.equal(requests, 0); assert.equal(input.value, "核对前保留的输入"); assert.equal(f.store.getSession(id).draft, "核对前保留的输入");
+      f.click("我已核对，请基于现状继续"); await until(() => requests === 1 && !f.runtime.isBusy(id) && !f.runtime.stateFor(id).resuming, "matching rechecked facts admit once");
+      assert.equal(f.files.get(target), "核对期间外部变更后的内容"); assert.equal(f.root.querySelector('[role="dialog"]'), null); assert.equal(f.store.getSession(id).runs.length, 1); assert.equal(input.value, "");
+    } finally { await f.close(); }
+  });
+
+  await test("actual Runtime cancellation during resume target read preserves A draft and never stops the running B task", async () => {
+    const provider = providerQueue(); const f = await fixture(provider.request, true);
+    const read = f.adapter.read.bind(f.adapter); let releaseRead;
+    const blocked = new Promise(resolve => { releaseRead = resolve; }); let held = false;
+    try {
+      await f.runtime.initialize(); const a = f.store.session.id; const target = "测试/准备期间核对.md"; await f.adapter.write(target, "现有目标");
+      const interruption = { at: 1792454400123, reason: "app_backgrounded", stage: "执行工具" };
+      await f.store.patchSession(a, { messages: [{ role: "user", content: "原任务", timestamp: 1 }, { role: "assistant", content: [{ type: "toolCall", id: "old-create", name: "note_create", arguments: { path: target, content: "原写入" } }], timestamp: 2 }],
+        taskStatus: "interrupted", interruption, taskInterruptedAt: interruption.at, draft: "A准备取消仍保留" }); f.runtime.onChange();
+      f.adapter.read = async path => { if (path === target && !held) { held = true; await blocked; } return read(path); };
+      f.click("从这里继续"); await until(() => held, "A reads its target during preparation");
+      assert.equal(f.runtime.stateFor(a).resuming, true);
+      const b = await f.store.createSession("agent-b"); f.runtime.onChange(); await f.send("B独立保持运行"); await until(() => provider.calls.length === 1, "B starts while A prepares");
+      assert.equal(f.runtime.stateFor(a).resuming, true); assert.equal(f.root.querySelector(".em-task-interruption"), null);
+      await f.select(a); f.click("取消继续"); releaseRead();
+      await until(() => !f.runtime.stateFor(a).resuming && !f.root.querySelector(".em-task-resume-button").disabled, "A cancellation finishes after its read settles");
+      assert.equal(f.store.getSession(a).draft, "A准备取消仍保留"); assert.equal(f.store.getSession(a).taskStatus, "interrupted"); assert.equal(f.runtime.isBusy(b.id), true); assert.equal(provider.calls.length, 1); assert.equal(f.root.querySelector('[role="dialog"]'), null);
+    } finally { releaseRead(); f.adapter.read = read; await f.close(); }
+  });
+
+  const realRuntimeScenarios = passed;
+  await runMobileTaskResumeUIScenarios(test, fixture, until);
+  console.log(`Mobile task UI: ${realRuntimeScenarios} real-Runtime/synthetic-Provider and ${passed - realRuntimeScenarios} isolated resume-UI contract scenarios passed; browser and native visuals remain separate.`);
 }

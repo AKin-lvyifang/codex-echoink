@@ -15,7 +15,7 @@ import { defaultAgentIdentityState } from "../../harness/memory/agent-identity-m
 import { resolveAgentAvatarUrl } from "../agent-avatar-presets";
 import { renderSettingsGearIcon } from "../codex-icon";
 import type { AccountService } from "../../membership/account-service";
-import type { MobileTaskInteraction } from "../../mobile/task-contracts";
+import type { MobileResumeSnapshot, MobileTaskInteraction } from "../../mobile/task-contracts";
 import type { EchoInkQuestionAnswer } from "../../types/conversation-turn";
 
 export interface MobileUIHost {
@@ -92,6 +92,9 @@ export class MobileUI {
   private questionDrafts = new Map<string, Map<string, { selected: Set<string>; supplement: string }>>();
   private answeringQuestions = new Set<string>();
   private questionSheet?: { taskId: string; key: string; overlay: HTMLElement; updatePending: () => void };
+  private resumingTasks = new Set<string>();
+  private cancelledResumes = new Set<string>();
+  private resumeSheet?: { taskId: string; fingerprint: string; overlay: HTMLElement };
   private onRuntimeChange = (taskId: string) => {
     if (taskId !== this.chatSessionId && this.chatSessionId === this.host.store.session.id) return;
     if (this.page === "chat" || (this.host.isTablet && this.page === "history")) this.refreshChat();
@@ -311,7 +314,7 @@ export class MobileUI {
       const taskId = binding.sessionId;
       if (this.stoppingTasks.has(taskId)) return;
       this.stoppingTasks.add(taskId); this.updateTaskStatus();
-      try { await this.host.runtime.stopTask(taskId); }
+      try { if (this.host.runtime.stateFor(taskId).resuming || this.resumingTasks.has(taskId)) await this.cancelTaskResume(taskId); else await this.host.runtime.stopTask(taskId); }
       catch (error) { this.taskFailure(taskId, error); }
       finally { this.stoppingTasks.delete(taskId); this.updateTaskStatus(); }
     }); stop.classList.add("em-task-stop");
@@ -321,7 +324,7 @@ export class MobileUI {
       const draft = input.value;
       if (!draft.trim()) return;
       const previousMessageCount = this.host.store.getSession(chatSessionId)?.messages.length ?? 0;
-      this.sendingTasks.add(chatSessionId); this.taskErrors.delete(chatSessionId); this.updateTaskStatus();
+      this.sendingTasks.add(chatSessionId); this.cancelledResumes.delete(chatSessionId); this.taskErrors.delete(chatSessionId); this.updateTaskStatus();
       try {
         await this.updateDraft(chatSessionId, draft);
         const submission = await this.host.runtime.submit(draft, chatSessionId);
@@ -333,6 +336,7 @@ export class MobileUI {
         if (!accepted && !this.draftEdits.has(chatSessionId) && !latest?.draft) this.draftEdits.set(chatSessionId, { text: draft });
         if (this.chatSessionId === chatSessionId) input.value = this.draftEdits.get(chatSessionId)?.text ?? latest?.draft ?? (accepted ? "" : draft);
         this.taskFailure(chatSessionId, error);
+        if (!this.cancelledResumes.has(chatSessionId)) this.showResumeReview(chatSessionId, draft);
       } finally { this.sendingTasks.delete(chatSessionId); this.updateTaskStatus(); }
     }); send.classList.add("em-send");
     const status = el(compose, "div", "em-status em-task-status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
@@ -391,20 +395,89 @@ export class MobileUI {
     if (!taskId) return;
     const state = this.host.runtime.stateFor(taskId);
     const stop = this.root.querySelector<HTMLButtonElement>(".em-task-stop");
-    if (stop) { stop.hidden = !state.busy; stop.disabled = this.stoppingTasks.has(taskId); stop.setAttribute("aria-busy", String(stop.disabled)); }
+    const resuming = state.resuming || this.resumingTasks.has(taskId);
+    if (stop) { stop.hidden = !state.busy && !resuming; stop.disabled = this.stoppingTasks.has(taskId); stop.setAttribute("aria-busy", String(stop.disabled)); stop.setAttribute("aria-label", resuming ? "取消继续" : "停止回答"); }
     const send = this.root.querySelector<HTMLButtonElement>(".em-send");
-    if (send) { send.disabled = this.sendingTasks.has(taskId); send.setAttribute("aria-busy", String(send.disabled)); }
+    if (send) { send.disabled = this.sendingTasks.has(taskId) || resuming; send.setAttribute("aria-busy", String(send.disabled)); }
+    this.root.querySelectorAll<HTMLButtonElement>(".em-task-resume-button").forEach(button => { button.disabled = state.busy || resuming; button.setAttribute("aria-busy", String(!!resuming)); button.querySelector("span")!.textContent = resuming ? "准备中…" : "从这里继续"; });
     const status = this.root.querySelector<HTMLElement>(".em-task-status");
     if (!status) return;
     status.replaceChildren();
-    if (state.interaction?.status === "pending") {
+    if (resuming) el(status, "span", "", "准备中…");
+    else if (state.busy && state.interaction?.status === "pending") {
       const interaction = structuredClone(state.interaction);
       this.button(status, "等你回应", () => this.openTaskQuestion(interaction), "message-circle", "em-task-question-entry em-task-compact");
     } else if (state.busy) el(status, "span", "", "进行中");
-    else if (this.host.store.getSession(taskId)?.taskStatus === "interrupted") el(status, "span", "", "已中断");
+    else if (!state.interruption && this.host.store.getSession(taskId)?.taskStatus === "interrupted") el(status, "span", "", "已中断");
     if (state.queuedCount) el(status, "span", "", state.paused ? `已暂停${state.queuedCount}条` : `排队${state.queuedCount}条`);
   }
+  private async resumeTask(taskId: string, text?: string, fingerprint?: string) {
+    if (this.resumingTasks.has(taskId) || this.host.runtime.stateFor(taskId).resuming) return;
+    this.resumingTasks.add(taskId); this.cancelledResumes.delete(taskId); this.taskErrors.delete(taskId); this.updateTaskStatus();
+    try {
+      if (!fingerprint && text !== undefined) await this.updateDraft(taskId, text);
+      if (this.cancelledResumes.has(taskId)) return;
+      const submission = await this.host.runtime.resumeTask(taskId, text?.trim() ? text : undefined, fingerprint);
+      void submission.completion.catch(error => this.taskFailure(taskId, error));
+      if (this.resumeSheet?.taskId === taskId) { this.resumeSheet = undefined; this.closeSheet(); }
+      const input = this.root.querySelector<HTMLTextAreaElement>(".em-input");
+      if (this.chatSessionId === taskId && input && (text === undefined || input.value === text)) input.value = this.draftEdits.get(taskId)?.text ?? this.host.store.getSession(taskId)?.draft ?? "";
+    } catch (error) {
+      this.taskFailure(taskId, error);
+      if (!this.cancelledResumes.has(taskId)) this.showResumeReview(taskId, text);
+    } finally { this.resumingTasks.delete(taskId); this.updateTaskStatus(); }
+  }
+  private async cancelTaskResume(taskId: string) { this.cancelledResumes.add(taskId); await this.host.runtime.cancelResume(taskId); }
+  private showResumeReview(taskId: string, text?: string) {
+    const snapshot = this.host.runtime.stateFor(taskId).resumeReview;
+    if (!snapshot || !snapshot.issues.length || !this.mounted || this.chatSessionId !== taskId || this.host.store.session.id !== taskId) return;
+    this.openResumeReview(structuredClone(snapshot), text);
+  }
+  private openResumeReview(snapshot: MobileResumeSnapshot, text?: string) {
+    this.openSheet("继续前核对", body => {
+      const overlay = this.overlay!; this.resumeSheet = { taskId: snapshot.taskId, fingerprint: snapshot.fingerprint, overlay };
+      body.classList.add("em-task-resume-review");
+      for (const issue of snapshot.issues) {
+        const row = el(body, "section", "em-task-resume-issue");
+        const memory = this.host.store.state.memories.find(memory => issue.target === memory.id || issue.target === `memory:${memory.id}`);
+        const memoryTarget = snapshot.operations.some(operation => operation.id === issue.operationId && operation.toolName === "memory_write") || /(?:原|旧)记忆/u.test(issue.label) || /^memory:/u.test(issue.target);
+        const target = memory ? `记忆：${memory.title}` : memoryTarget || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(issue.target) ? "长期记忆" : issue.target;
+        el(row, "strong", "em-task-resume-target", target);
+        el(row, "span", "em-task-resume-result", issue.status === "conflict" ? "内容有冲突" : "结果未确认");
+        const explanation = issue.operationId.startsWith("legacy-") ? "上次保存记录不完整，无法确认是否已完成。" : issue.label;
+        if (explanation && explanation !== target) el(row, "p", "em-task-resume-label", explanation);
+      }
+      const actions = el(overlay.querySelector<HTMLElement>(".em-sheet")!, "div", "em-task-question-actions");
+      this.button(actions, "暂不继续", async () => { await this.cancelTaskResume(snapshot.taskId); if (this.overlay === overlay) { this.resumeSheet = undefined; this.closeSheet(); } }, undefined, "em-task-compact");
+      const confirm = this.button(actions, "我已核对，请基于现状继续", async () => {
+        if (confirm.disabled) return;
+        confirm.disabled = true; confirm.setAttribute("aria-busy", "true");
+        try { await this.resumeTask(snapshot.taskId, text, snapshot.fingerprint); }
+        finally { confirm.disabled = false; confirm.setAttribute("aria-busy", "false"); }
+      }, undefined, "em-primary em-task-resume-confirm em-task-compact");
+    });
+  }
+  private taskInterruption(body: HTMLElement, taskId: string) {
+    const state = this.host.runtime.stateFor(taskId);
+    if (!state.interruption || (state.busy && !state.resuming)) return;
+    const interruption = state.interruption;
+    const reasons = { app_backgrounded: "应用进入后台时中断", app_closed: "关闭 Obsidian 时中断", user_stopped: "已手动停止", plugin_disabled: "插件停用时中断", run_failed: "执行失败后中断", process_unknown: "中断原因未确认", watchdog: "等待超时后中断" };
+    const stages: Record<string, string> = { preparing: "准备上下文", context: "准备上下文", search: "检索资料", searching: "检索资料", summary: "整理历史", summarizing: "整理历史", model: "等待模型", tool: "执行工具", saving: "保存结果", question: "等待回应" };
+    const group = el(body, "section", "em-task-interruption"); group.setAttribute("aria-label", "任务中断记录");
+    el(group, "strong", "", "已中断"); el(group, "p", "em-task-interruption-reason", reasons[interruption.reason]);
+    const at = el(group, "time", "em-task-interruption-time", new Date(interruption.at).toLocaleString()); at.dateTime = new Date(interruption.at).toISOString();
+    el(group, "p", "em-task-interruption-stage", `停在：${stages[interruption.stage] ?? (/[\u4e00-\u9fff]/u.test(interruption.stage) ? interruption.stage : "阶段未确认")}`);
+    this.button(group, "从这里继续", () => {
+      const input = this.root.querySelector<HTMLTextAreaElement>(".em-input");
+      const text = this.chatSessionId === taskId ? input?.value : this.host.store.getSession(taskId)?.draft;
+      return this.resumeTask(taskId, text);
+    }, undefined, "em-primary em-task-resume-button em-task-compact");
+  }
   private openTaskQuestion(interaction: MobileTaskInteraction) {
+    const current = this.host.runtime.stateFor(interaction.taskId);
+    if (!current.busy || current.interaction?.status !== "pending" || current.interaction.runId !== interaction.runId || current.interaction.questionId !== interaction.questionId) {
+      this.taskFailure(interaction.taskId, new Error("问题已过期，请先从这里继续。")); return;
+    }
     const key = `${interaction.taskId}:${interaction.runId}:${interaction.questionId}`;
     let drafts = this.questionDrafts.get(key);
     if (!drafts) { drafts = new Map(); this.questionDrafts.set(key, drafts); }
@@ -474,7 +547,9 @@ export class MobileUI {
       }, undefined, "em-primary em-task-question-submit em-task-compact");
       const updatePending = () => {
         const pending = this.answeringQuestions.has(key);
-        fields.forEach(field => { field.disabled = pending; }); submit.disabled = pending;
+        const current = this.host.runtime.stateFor(interaction.taskId);
+        const expired = !current.busy || current.interaction?.status !== "pending" || current.interaction.runId !== interaction.runId || current.interaction.questionId !== interaction.questionId;
+        fields.forEach(field => { field.disabled = pending || expired; }); submit.disabled = pending || expired;
         submit.setAttribute("aria-busy", String(pending)); submit.querySelector("span")!.textContent = pending ? "提交中…" : "提交回答";
       };
       this.questionSheet = { taskId: interaction.taskId, key, overlay, updatePending }; updatePending();
@@ -500,6 +575,7 @@ export class MobileUI {
     const changedSession = this.chatSessionId !== this.host.store.session.id;
     if (changedSession) {
       if (this.questionSheet && this.questionSheet.taskId !== this.host.store.session.id) this.closeSheet(false);
+      if (this.resumeSheet && this.resumeSheet.taskId !== this.host.store.session.id) this.closeSheet(false);
       this.chatSessionId = this.host.store.session.id;
       if (this.chatBinding) this.chatBinding.sessionId = this.chatSessionId;
       this.scroll.delete("chat"); this.refreshContext();
@@ -520,6 +596,16 @@ export class MobileUI {
       if (session) { const title = row.querySelector("strong"); const time = row.querySelector("small"); if (title) title.textContent = session.title; if (time) time.textContent = new Date(session.updatedAt).toLocaleString(); }
     });
     this.error = this.host.runtime.stateFor(this.chatSessionId!).error || this.taskErrors.get(this.chatSessionId!) || ""; this.showError();
+    if (this.questionSheet) {
+      const state = this.host.runtime.stateFor(this.questionSheet.taskId);
+      const interaction = state.interaction;
+      const key = interaction ? `${interaction.taskId}:${interaction.runId}:${interaction.questionId}` : "";
+      if (!state.busy || interaction?.status !== "pending" || key !== this.questionSheet.key) {
+        this.questionSheet.overlay.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>(".em-task-option,.em-task-supplement,.em-task-question-submit").forEach(field => { field.disabled = true; });
+        const error = this.questionSheet.overlay.querySelector<HTMLElement>(".em-sheet-error")!;
+        error.textContent = "问题已过期，请先从这里继续。"; error.hidden = false;
+      }
+    }
   }
   private updateTimers() {
     if (!this.chatSessionId || !this.host.runtime.isBusy(this.chatSessionId) || (this.page !== "chat" && !(this.host.isTablet && this.page === "history"))) return;
@@ -568,6 +654,7 @@ export class MobileUI {
         if (record?.saved && record.path) this.button(body, `打开 ${record.path}`, () => this.host.openNote(record.path!), "file-text", "em-note-link");
       }
     }
+    this.taskInterruption(body, sessionId);
   }
   private toolContent(parent: HTMLElement, name: string, args: Record<string, unknown>, receipt?: ToolResultMessage, sourcePath?: string) {
     if (receipt?.isError) { el(parent, "p", "", contentText(receipt)); return; }
@@ -887,6 +974,11 @@ export class MobileUI {
     this.providerPickerBack = undefined;
     this.overlay?.remove(); this.overlay = undefined;
     this.questionSheet = undefined;
+    if (restore && this.resumeSheet) {
+      const taskId = this.resumeSheet.taskId;
+      void this.cancelTaskResume(taskId).catch(error => this.taskFailure(taskId, error));
+    }
+    this.resumeSheet = undefined;
     for (const child of Array.from(this.root.children)) (child as HTMLElement).inert = false;
     if (restore && this.sheetRestore?.isConnected) this.sheetRestore.focus({ preventScroll: true });
     this.sheetRestore = undefined; this.applyAppearance();

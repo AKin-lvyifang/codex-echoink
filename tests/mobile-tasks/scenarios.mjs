@@ -13,9 +13,9 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     const provider = mobileProvider("custom"); Object.assign(provider, { apiKey: "fake-key", baseUrl: "https://fixture.example/v1", models: [mobileModel("fixture-model", options)], defaultModelId: "fixture-model" });
     return loadMobileSettings({ apiProviders: [provider], activeApiProviderId: provider.id, defaultModel: "fixture-model" });
   };
-  const fixture = async (request = async () => answer("openai-completions", "ok"), settings = config(), context) => {
+  const fixture = async (request = async () => answer("openai-completions", "ok"), settings = config(), context, initialize = true) => {
     const host = createHost(); const store = new MobileStore(host.adapter, "plugin/mobile", "task-fixture"); await store.load();
-    const runtime = new MobileRuntime(host.app, store, () => settings, request, context);
+    const runtime = new MobileRuntime(host.app, store, () => settings, request, context); if (initialize) await runtime.initialize();
     return { ...host, store, runtime, settings };
   };
 
@@ -185,9 +185,9 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
       await state.runtime.stopTask(id); await Promise.all([active.completion, rejection]);
       assert.equal(state.runtime.stateFor(id).paused, true); assert.equal(state.runtime.stateFor(id).queuedCount, 1);
       await state.runtime.send("new explicit", id); assert.equal(calls, 2); assert.equal(state.store.getSession(id).queue[0].text, "old queued");
-      const reopened = new MobileStore(state.adapter, "plugin/mobile", "task-fixture"); await reopened.load();
-      const fresh = new MobileRuntime(state.app, reopened, () => state.settings, async () => { throw new Error("must not replay"); });
-      assert.equal(fresh.stateFor(id).busy, false); assert.equal(fresh.stateFor(id).queuedCount, 1); fresh.dispose();
+      const coldHost = createHost(Object.fromEntries(state.files)); const reopened = new MobileStore(coldHost.adapter, "plugin/mobile", "task-fixture"); await reopened.load();
+      const fresh = new MobileRuntime(coldHost.app, reopened, () => state.settings, async () => { throw new Error("must not replay"); }); await fresh.initialize();
+      assert.equal(fresh.stateFor(id).busy, false); assert.equal(fresh.stateFor(id).queuedCount, 1); await fresh.shutdown("plugin_disabled"); fresh.dispose();
       pending.resolve(answer("openai-completions", "late"));
     } finally { state.runtime.dispose(); }
   });
@@ -245,8 +245,8 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     assert.equal(state.store.session.id, b.id); assert.equal(state.store.session.draft, "B draft"); assert.equal(state.store.getSession(a).runs[0].agentSnapshot.name, "总助"); assert.equal(calls, 1);
     state.runtime.dispose();
     const never = gate(); const second = await fixture(async () => { throw new Error("must not request"); }, config(), () => never.promise);
-    await second.store.patchSession(second.store.session.id, { draft: "stop me" }); const pending = second.runtime.send("stop me");
-    await tick(); await second.runtime.stopTask(second.store.session.id); await pending;
+    await second.store.patchSession(second.store.session.id, { draft: "stop me" }); const pending = second.runtime.send("stop me"); const stopped = assert.rejects(pending, /已停止/u);
+    await tick(); await second.runtime.stopTask(second.store.session.id); await stopped;
     assert.equal(second.store.session.draft, "stop me"); assert.equal(second.store.session.messages.length, 0); never.resolve(""); second.runtime.dispose();
   });
 
@@ -275,11 +275,11 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     const id = state.store.session.id, accepted = await state.runtime.submit("confirm", id);
     await waitFor(() => state.runtime.stateFor(id).interaction?.status === "pending");
     const interaction = state.runtime.stateFor(id).interaction; assert.equal(interaction.kind, "confirmation");
-    const reopened = new MobileStore(state.adapter, "plugin/mobile", "task-fixture"); await reopened.load();
-    const cold = new MobileRuntime(state.app, reopened, () => state.settings, async () => { throw new Error("must not resume"); });
-    assert.equal(cold.stateFor(id).busy, false); assert.deepEqual(cold.stateFor(id).interaction.questions, questions);
+    const coldHost = createHost(Object.fromEntries(state.files)); const reopened = new MobileStore(coldHost.adapter, "plugin/mobile", "task-fixture"); await reopened.load();
+    const cold = new MobileRuntime(coldHost.app, reopened, () => state.settings, async () => { throw new Error("must not resume"); }); await cold.initialize();
+    assert.equal(cold.stateFor(id).busy, false); assert.deepEqual(cold.stateFor(id).interaction.questions, questions); assert.equal(cold.stateFor(id).interaction.status, "cancelled");
     await assert.rejects(cold.answerQuestion(id, interaction.runId, interaction.questionId, [{ questionId: "choice", selectedOptionIds: ["yes"] }]), /过期/u);
-    cold.dispose(); await state.runtime.stopTask(id); await accepted.completion;
+    await cold.shutdown("plugin_disabled"); cold.dispose(); await state.runtime.stopTask(id); await accepted.completion;
     assert.equal(requests, 1); assert.equal(state.store.getSession(id).interaction.status, "cancelled"); assert.equal(state.store.getSession(id).pendingResponse, undefined); state.runtime.dispose();
   });
 
@@ -331,7 +331,7 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     const blocked = gate(); let requested = false;
     const cancel = await fixture(async () => { requested = true; return blocked.promise; }, settings);
     await cancel.store.patchSession(cancel.store.session.id, { messages: history, contextSummary: old, draft: "cancel" });
-    const pending = cancel.runtime.send("cancel"); await waitFor(() => requested); await cancel.runtime.stopTask(cancel.store.session.id); await pending;
+    const pending = cancel.runtime.send("cancel"); const stopped = assert.rejects(pending, /已停止/u); await waitFor(() => requested); await cancel.runtime.stopTask(cancel.store.session.id); await stopped;
     assert.deepEqual(cancel.store.session.contextSummary, old); assert.deepEqual(cancel.store.session.messages, history); blocked.resolve(answer("openai-completions", "late summary")); cancel.runtime.dispose();
   });
 
@@ -364,8 +364,8 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
   });
 
   await test("v2 validates new queue/summary/question fields, backs up original M2 bytes and offline history remains readable", async () => {
-    const state = await fixture(); const original = state.files.get(state.store.statePath), id = state.store.session.id;
-    await state.runtime.send("upgrade", id); assert.equal(state.files.get(state.store.m2BackupPath), original); assert.equal(state.store.state.taskRuntimeVersion, 1);
+    const state = await fixture(undefined, config(), undefined, false); const original = state.files.get(state.store.statePath), id = state.store.session.id;
+    await state.runtime.send("upgrade", id); assert.equal(state.files.get(state.store.m2BackupPath), original); assert.equal(state.store.state.taskRuntimeVersion, 2);
     const before = state.files.get(state.store.statePath);
     for (const patch of [{ queue: [{ id: "bad", text: "bad", apiKey: "never persist" }] }, { queuePaused: "yes" }, { contextSummary: { text: "bad", throughMessageCount: 99, sourceDigest: "0".repeat(64), createdAt: 1 } }, { interaction: { taskId: "wrong" } }]) {
       await assert.rejects(state.store.patchSession(id, patch)); assert.equal(state.files.get(state.store.statePath), before);

@@ -25,6 +25,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   services!: MobileServices;
   accountService!: AccountService;
   private settingsWrites: Promise<void> = Promise.resolve();
+  private taskLifecycleRegistered = false;
   async onload(): Promise<void> {
     try {
       this.settings = loadMobileSettings(await this.loadData());
@@ -44,6 +45,8 @@ export default class EchoInkMobilePlugin extends Plugin {
       await this.services.initialize();
       if (migratedBindings) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
+      await this.runtime.initialize();
+      this.registerTaskLifecycle();
       await this.services.initializeFinance();
       this.register(this.accountService.subscribe(() => { this.services.lifestyle.refresh(); this.services.notifyHomeSurfacesChanged(); }));
       this.registerView(LIFE_VIEW_TYPES.finance, leaf => new EchoInkMobileFinanceView(leaf, this.services.lifestyle, "finance"));
@@ -52,7 +55,6 @@ export default class EchoInkMobilePlugin extends Plugin {
         if (this.settings.lifestyle.finance.enabled || this.services.lifestyle.store.snapshot().financeEntries.length)
           void this.services.lifestyle.finance.initialize().catch(error => new Notice(`财务账本初始化未完成，原数据已保留：${String(error)}`));
       });
-      this.registerDomEvent(document, "visibilitychange", () => { if (document.visibilityState === "visible") void this.accountService.refresh(); });
       this.registerDomEvent(window, "focus", () => { void this.accountService.refresh(); });
       this.registerInterval(window.setInterval(() => { void this.accountService.refresh(); }, 300000));
       this.registerWorkspaceViews();
@@ -66,6 +68,24 @@ export default class EchoInkMobilePlugin extends Plugin {
         void write.then(() => this.navigation.open()).catch(error => new Notice(String(error)));
       } });
     } catch (error) { new Notice(`EchoInk 无法加载：${error instanceof Error ? error.message : String(error)}`, 10000); throw error; }
+  }
+  /** Visibility belongs to the app document, never to a particular workspace tab. */
+  registerTaskLifecycle(): void {
+    if (this.taskLifecycleRegistered) return;
+    this.taskLifecycleRegistered = true;
+    const suspend = (reason: "app_backgrounded" | "app_closed") => {
+      void this.runtime.shutdown(reason).catch(error => new Notice(`中断记录未保存，原资料已保留：${String(error)}`));
+    };
+    const foreground = () => {
+      void this.runtime.foreground().catch(error => new Notice(`中断记录尚未保存，请重新打开后再继续：${String(error)}`));
+    };
+    this.registerDomEvent(document, "visibilitychange", () => {
+      if (document.visibilityState === "hidden") suspend("app_backgrounded");
+      else { foreground(); void this.accountService.refresh(); }
+    });
+    this.registerDomEvent(window, "pagehide", () => suspend("app_closed"));
+    this.registerDomEvent(window, "pageshow", () => { if (document.visibilityState === "visible") foreground(); });
+    if (document.visibilityState === "hidden") suspend("app_backgrounded");
   }
   async saveSettings(candidateRegistry?: AgentRegistry): Promise<void> {
     const registry = candidateRegistry ? structuredClone(candidateRegistry) : undefined;
@@ -99,7 +119,13 @@ export default class EchoInkMobilePlugin extends Plugin {
     const view = this.app.workspace.getLeavesOfType(MOBILE_VIEW)[0]?.view;
     if (view instanceof EchoInkMobileView) view.showPage(page);
   }
-  onunload(): void { this.accountService?.dispose(); this.runtime?.dispose(); void this.services?.dispose(); }
+  onunload(): void {
+    this.accountService?.dispose();
+    const stopped = this.runtime?.shutdown("plugin_disabled");
+    this.runtime?.dispose();
+    void stopped?.catch(error => new Notice(`中断记录未保存，原资料已保留：${String(error)}`));
+    void this.services?.dispose();
+  }
 }
 
 class EchoInkMobileFinanceView extends LifestyleView {

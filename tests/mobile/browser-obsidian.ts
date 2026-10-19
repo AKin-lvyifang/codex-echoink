@@ -52,9 +52,14 @@ export { FixtureTFile as TFile } from "./host.mjs";
 export class TFolder { path = ""; name = ""; children: unknown[] = []; }
 export class Component { addChild() {} removeChild() {} register() {} load() {} unload() {} }
 export class Plugin extends Component {
+  private domEvents: (() => void)[] = [];
   constructor(public app: any, public manifest: any) { super(); }
   registerView(type: string, factory: unknown) { this.app.workspace.registerView(type, factory); }
   async saveData(_data: unknown) {}
+  registerDomEvent(target: Document | Window, name: string, listener: EventListener) {
+    target.addEventListener(name, listener); this.domEvents.push(() => target.removeEventListener(name, listener));
+  }
+  unload() { this.domEvents.forEach(remove => remove()); this.domEvents = []; }
 }
 export class ItemView {
   app: any; containerEl: HTMLElement; contentEl: HTMLElement;

@@ -12,6 +12,7 @@ import { profileScenarios } from "../tests/mobile/profile-scenarios.mjs";
 import { financeSettingsNavigationScenarios } from "../tests/mobile/finance-settings-navigation-scenarios.mjs";
 import { originControlScenarios } from "../tests/mobile/origin-controls-scenarios.mjs";
 import { createHost, answer, FixtureTFile } from "../tests/mobile/host.mjs";
+import { mobileLifecycleScenarios } from "../tests/mobile/lifecycle-scenarios.mjs";
 
 const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile/entry.ts"), metafile: true });
 const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVisual: true, url: "https://fixture.example" });
@@ -35,9 +36,11 @@ function settings(protocol = "openai-completions") {
 }
 async function setup(protocol, request) {
   const host = createHost(); const store = new MobileStore(host.adapter, "plugin/mobile", "fixture-instance"); await store.load(); await store.patchSession(store.session.id, { notePath: "笔记/来源.md" });
-  const config = settings(protocol); const runtime = new MobileRuntime(host.app, store, () => config, request);
+  const config = settings(protocol); const runtime = new MobileRuntime(host.app, store, () => config, request); await runtime.initialize();
   return { ...host, store, config, runtime };
 }
+
+await mobileLifecycleScenarios(module.exports, dom.window, test, setup);
 
 await test("failed Agent stop during deletion releases admission block and preserves configuration", async () => {
   const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
@@ -204,7 +207,9 @@ await test("stop settles immediately; late response cannot write or request agai
   resolve(answer("openai-completions", "", [["late", "note_create", { path: "迟到.md", content: "must not write" }]]));
   await new Promise(done => setTimeout(done, 20));
   assert.equal(calls, 1); assert.ok(!state.files.has("迟到.md")); assert.equal(state.runtime.busy, false);
-  assert.equal(state.store.session.messages.at(-1).stopReason, "aborted");
+  assert.equal(state.store.session.taskStatus, "interrupted");
+  assert.equal(state.store.session.interruption.reason, "user_stopped");
+  assert.ok(!JSON.stringify(state.store.session.messages).includes('"id":"late"'));
   assert.equal(state.runtime.error, "");
 });
 
@@ -416,7 +421,7 @@ await test("concurrent context preparation issues one provider request", async (
 await test("stop during context preparation preserves draft and never reaches provider", async () => {
   const state = await setup("openai-completions", async () => answer("openai-completions", "ok")); await state.store.patchSession(state.store.session.id, { draft: "pending draft" }); let release; let requests = 0; let contextStarted;
   const started = new Promise(resolve => { contextStarted = resolve; });
-  const runtime = new MobileRuntime(state.app, state.store, () => state.config, async () => { requests++; return answer("openai-completions", "ok"); }, () => new Promise(resolve => { release = resolve; contextStarted(); })); const pending = runtime.send("pending draft"); await started; runtime.stop(); release("context"); await pending; assert.equal(requests, 0); assert.equal(state.store.session.draft, "pending draft"); assert.equal(runtime.busy, false);
+  const runtime = new MobileRuntime(state.app, state.store, () => state.config, async () => { requests++; return answer("openai-completions", "ok"); }, () => new Promise(resolve => { release = resolve; contextStarted(); })); const pending = runtime.send("pending draft"); await started; runtime.stop(); release("context"); await assert.rejects(pending, /已停止/u); assert.equal(requests, 0); assert.equal(state.store.session.draft, "pending draft"); assert.equal(runtime.busy, false);
 });
 await test("context preparation and final messages stay with the captured task after active selection changes", async () => {
   const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
@@ -507,7 +512,8 @@ await test("formal DOM: sheet preserves draft node and focus, eight settings and
   assert.equal(root.querySelector(".em-header .em-title").textContent, "总助"); assert.ok(root.querySelector('.em-agent-avatar img')); assert.ok(!root.querySelector(".em-identity")); assert.ok(root.querySelector(".codex-settings-gear-svg"));
   const initialIdentity = await services.readAgentProfile(); await services.saveAgentProfile({ identity: { displayName: "墨墨", avatar: { kind: "preset", presetId: "sol" } } }, initialIdentity.version);
   assert.equal(root.querySelector(".em-header .em-title").textContent, "墨墨"); assert.equal(root.querySelector(".em-input"), input); assert.ok(input.placeholder.includes("墨墨")); assert.equal(root.querySelector(".em-agent-avatar img").src, resolveAgentAvatarUrl(services.agentIdentity.avatar));
-  const statusRun = runtime.send("状态显示验证"); assert.ok(root.querySelector(".em-status").textContent); await statusRun; assert.equal(root.querySelector(".em-status").textContent, "");
+  let observedRunningStatus = false; const statusListener = runtime.subscribe(() => { if (runtime.busy && root.querySelector(".em-status").textContent) observedRunningStatus = true; });
+  await runtime.send("状态显示验证"); statusListener(); assert.equal(observedRunningStatus, true); assert.equal(root.querySelector(".em-status").textContent, "");
   input.value = "保留中文草稿"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true })); input.focus();
   button("引用笔记").click(); const dialog = root.querySelector('[role="dialog"]'); assert.ok(dialog); assert.ok(root.querySelector(".em-header").inert); dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true })); assert.equal(dom.window.document.activeElement, dialog.querySelector("button"));
   button("当前笔记笔记/来源.md").click(); await settle(); assert.equal(root.querySelector(".em-input"), input); assert.equal(input.value, "保留中文草稿"); assert.equal(dom.window.document.activeElement, input); assert.equal(store.session.notePath, "笔记/来源.md");

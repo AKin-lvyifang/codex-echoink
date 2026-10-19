@@ -93,6 +93,8 @@ const services = new MobileServices({ accountService: financeAccess, app: host.a
 Object.assign(plugin, { app: host.app, settings, store, runtime, services, accountService });
 plugin.saveData = async data => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(data)); };
 await services.initialize();
+await runtime.initialize();
+plugin.registerTaskLifecycle();
 await services.initializeFinance();
 const root = document.querySelector<HTMLElement>("#app")!;
 MarkdownRenderer.render = async (_app, text, element) => {

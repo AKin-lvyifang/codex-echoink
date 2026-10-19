@@ -6,7 +6,7 @@ import type { AgentRunSnapshot } from "../agents/types";
 import type { PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
 import { readMobileFile, replaceMobileFile } from "./replace-file";
 import { assertMobileTaskInstanceId } from "./task-identity";
-import type { MobileContextSummary, MobileQueuedTurn, MobileTaskInteraction } from "./task-contracts";
+import type { MobileContextSummary, MobileQueuedTurn, MobileTaskInteraction, MobileTaskInterruption, MobileWriteOperation } from "./task-contracts";
 
 export type MobilePermission = "read-only" | "workspace-write" | "full-access";
 /** Historical attribution and lifecycle; opening stored runs never starts execution. */
@@ -23,6 +23,7 @@ export interface MobileTaskRun {
   permission?: MobilePermission;
   notePath?: string;
   skillId?: string;
+  interruption?: MobileTaskInterruption;
 }
 export interface MobileSession extends ConversationTaskMetadata {
   id: string;
@@ -42,12 +43,14 @@ export interface MobileSession extends ConversationTaskMetadata {
   queuePaused?: boolean;
   interaction?: MobileTaskInteraction;
   contextSummary?: MobileContextSummary;
+  interruption?: MobileTaskInterruption;
+  operations?: MobileWriteOperation[];
 }
 export interface MobileState {
   version: 2;
   instanceId: string;
   revision: number;
-  taskRuntimeVersion?: 1;
+  taskRuntimeVersion?: 1 | 2;
   activeSessionId: string;
   sessions: MobileSession[];
   memoryEnabled: boolean;
@@ -67,6 +70,36 @@ const object = (value: unknown): value is Record<string, unknown> => !!value && 
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 const time = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 const permission = (value: unknown): value is MobilePermission => ["read-only", "workspace-write", "full-access"].includes(value as string);
+function validInterruption(value: unknown): boolean {
+  return object(value) && Object.keys(value).every(key => ["at", "reason", "stage"].includes(key)) && time(value.at) && nonempty(value.stage)
+    && ["app_closed", "user_stopped", "plugin_disabled", "run_failed", "process_unknown", "watchdog", "app_backgrounded"].includes(value.reason as string);
+}
+function validOperations(value: unknown, session: Record<string, unknown>, ids: Set<string>): boolean {
+  if (!uniqueRecords(value)) return false;
+  const calls = new Set<string>();
+  const runs = Array.isArray(session.runs) ? session.runs as Record<string, unknown>[] : [];
+  return value.every(operation => {
+    const call = `${String(operation.runId)}\0${String(operation.toolCallId)}`;
+    if (ids.has(operation.id as string) || calls.has(call) || operation.taskId !== session.id || !nonempty(operation.runId)
+      || !runs.some(run => run.id === operation.runId) || !nonempty(operation.toolCallId) || !nonempty(operation.semanticKey) || !nonempty(operation.target)
+      || !["note_create", "memory_write"].includes(operation.toolName as string) || !["prepared", "started", "completed", "uncertain"].includes(operation.status as string)
+      || !time(operation.createdAt) || !time(operation.updatedAt) || operation.updatedAt < operation.createdAt
+      || typeof operation.expectedHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.expectedHash)
+      || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "targetWasMissing", "beforeRevision", "completedRevision"].includes(key))) return false;
+    if (operation.toolName === "note_create") {
+      const path = operation.target;
+      if (path.trim() !== path || path.startsWith("/") || /[\\:]/u.test(path) || [...path].some(char => char.charCodeAt(0) < 32) || path.split("/").some(part => !part || part.startsWith(".")) || !/\.md$/iu.test(path)
+        || operation.semanticKey !== `note_create:${path}` || operation.targetWasMissing !== true || operation.beforeRevision !== undefined || operation.completedRevision !== undefined) return false;
+    } else {
+      if (operation.status !== "completed" || typeof operation.targetWasMissing !== "boolean" || !Number.isSafeInteger(operation.completedRevision) || (operation.completedRevision as number) < 1
+        || !/^memory_write:.+:[a-f0-9]{64}$/u.test(operation.semanticKey)) return false;
+      if (operation.beforeRevision !== undefined && (!Number.isSafeInteger(operation.beforeRevision) || (operation.beforeRevision as number) < 1
+        || operation.targetWasMissing || (operation.completedRevision as number) < (operation.beforeRevision as number) || (operation.completedRevision as number) > (operation.beforeRevision as number) + 1)) return false;
+      if (operation.beforeRevision === undefined && (!operation.targetWasMissing || operation.completedRevision !== 1)) return false;
+    }
+    calls.add(call); ids.add(operation.id as string); return true;
+  });
+}
 function uniqueRecords(value: unknown): value is Record<string, unknown>[] {
   if (!Array.isArray(value)) return false;
   const ids = new Set<string>();
@@ -95,6 +128,7 @@ function validRun(value: Record<string, unknown>): boolean {
   return time(value.startedAt) && ["queuedTurnId", "providerId", "modelId", "notePath", "skillId"].every(key => value[key] === undefined || typeof value[key] === "string")
     && (value.permission === undefined || permission(value.permission)) && (value.status === undefined || ["running", "waiting", "completed", "interrupted"].includes(value.status as string))
     && ["completedAt", "interruptedAt"].every(key => value[key] === undefined || time(value[key]))
+    && (value.interruption === undefined || (value.status === "interrupted" && validInterruption(value.interruption) && value.interruptedAt === (value.interruption as Record<string, unknown>).at))
     && (snapshot === undefined || (object(snapshot) && nonempty(snapshot.agentId) && typeof snapshot.name === "string" && typeof snapshot.position === "string"
       && ["execution", "analysis", "companion", "creative"].includes(snapshot.styleId as string)
       && ["capabilityIds", "disabledCapabilityIds"].every(key => snapshot[key] === undefined || (Array.isArray(snapshot[key]) && snapshot[key].every(value => typeof value === "string")))));
@@ -158,18 +192,22 @@ function parseV2(content: string, instanceId: string): MobileState {
   const value: unknown = JSON.parse(content);
   validateBase(value);
   if (value.version !== 2 || value.instanceId !== instanceId || !Number.isSafeInteger(value.revision) || (value.revision as number) < 0
-    || (value.taskRuntimeVersion !== undefined && value.taskRuntimeVersion !== 1)
+    || (value.taskRuntimeVersion !== undefined && value.taskRuntimeVersion !== 1 && value.taskRuntimeVersion !== 2)
     || !value.sessions.length || !value.sessions.some(session => session.id === value.activeSessionId)
     || !object(value.page) || !object(value.newTaskDrafts) || !Object.values(value.newTaskDrafts).every(draft => validDraft(draft))) throw dataError();
   const page = value.page;
   if (!(page.kind === "list" && nonempty(page.agentId)) && !(page.kind === "detail" && nonempty(page.taskId)
     && value.sessions.some(session => session.id === page.taskId))) throw dataError();
   const runIds = new Set<string>();
+  const operationIds = new Set<string>();
   for (const session of value.sessions) {
     if (!nonempty(session.agentId) || !validMetadata(session) || (session.draftContext !== undefined && !validDraft(session.draftContext, true))) throw dataError();
     if ((session.queue !== undefined && !validQueue(session.queue)) || (session.queuePaused !== undefined && typeof session.queuePaused !== "boolean")
       || (session.interaction !== undefined && !validInteraction(session.interaction, session))) throw dataError();
-    if (value.taskRuntimeVersion !== 1 && ["queue", "queuePaused", "interaction", "contextSummary"].some(key => session[key] !== undefined)) throw dataError();
+    if (value.taskRuntimeVersion === undefined && ["queue", "queuePaused", "interaction", "contextSummary"].some(key => session[key] !== undefined)) throw dataError();
+    if ((session.interruption !== undefined && (session.taskStatus !== "interrupted" || !validInterruption(session.interruption) || session.taskInterruptedAt !== (session.interruption as Record<string, unknown>).at))
+      || (session.operations !== undefined && !validOperations(session.operations, session, operationIds))) throw dataError();
+    if (value.taskRuntimeVersion !== 2 && (session.operations !== undefined || session.interruption !== undefined || (Array.isArray(session.runs) && session.runs.some(run => object(run) && run.interruption !== undefined)))) throw dataError();
     const summary = session.contextSummary;
     if (summary !== undefined && (!object(summary) || !nonempty(summary.text) || !Number.isSafeInteger(summary.throughMessageCount)
       || (summary.throughMessageCount as number) < 1 || (summary.throughMessageCount as number) > (session.messages as unknown[]).length
@@ -213,6 +251,7 @@ export class MobileStore {
   private expected: string | null = null;
   readonly statePath: string;
   get m2BackupPath(): string { return `${this.statePath}.m2-backup.json`; }
+  get m3BackupPath(): string { return `${this.statePath}.m3-backup.json`; }
   constructor(private adapter: MobileStorageAdapter, private directory: string, readonly instanceId: string) {
     assertMobileTaskInstanceId(instanceId);
     this.statePath = `${directory}/devices/${instanceId}/state.json`;
@@ -312,14 +351,24 @@ export class MobileStore {
         throw new Error("移动端资料更新必须同步完成。");
       }
       draft.version = 2; draft.instanceId = this.instanceId; draft.revision = this.committed.revision + 1;
-      if (draft.sessions.some(task => task.queue !== undefined || task.queuePaused !== undefined || task.interaction !== undefined || task.contextSummary !== undefined)) draft.taskRuntimeVersion = 1;
-      if (draft.taskRuntimeVersion === 1 && this.committed.taskRuntimeVersion === undefined && this.expected !== null) {
+      if (draft.taskRuntimeVersion !== undefined && draft.taskRuntimeVersion !== 1 && draft.taskRuntimeVersion !== 2) throw dataError();
+      const m4Fields = draft.sessions.some(task => task.operations !== undefined || task.interruption !== undefined || task.runs?.some(run => run.interruption !== undefined));
+      if (m4Fields || (this.committed.taskRuntimeVersion === 2 && (draft.taskRuntimeVersion === undefined || draft.taskRuntimeVersion === 1))) draft.taskRuntimeVersion = 2;
+      else if (draft.taskRuntimeVersion !== 2 && draft.sessions.some(task => task.queue !== undefined || task.queuePaused !== undefined || task.interaction !== undefined || task.contextSummary !== undefined)) draft.taskRuntimeVersion = 1;
+      if (draft.taskRuntimeVersion !== undefined && this.committed.taskRuntimeVersion === undefined && this.expected !== null) {
         const created = !await this.adapter.exists(this.m2BackupPath);
         if (created) await this.adapter.write(this.m2BackupPath, this.expected);
         const backup = await this.adapter.read(this.m2BackupPath);
         if (created && backup !== this.expected) throw new Error("移动端升级前备份回读不一致，原资料已保留。");
         const baseline = parseV2(backup, this.instanceId);
         if (baseline.taskRuntimeVersion !== undefined) throw new Error("移动端升级前备份无效，原资料已保留。");
+      }
+      if (draft.taskRuntimeVersion === 2 && this.committed.taskRuntimeVersion !== 2 && this.expected !== null) {
+        const created = !await this.adapter.exists(this.m3BackupPath);
+        if (created) await this.adapter.write(this.m3BackupPath, this.expected);
+        const backup = await this.adapter.read(this.m3BackupPath);
+        if (created && backup !== this.expected) throw new Error("移动端M3备份回读不一致，原资料已保留。");
+        if (parseV2(backup, this.instanceId).taskRuntimeVersion === 2) throw new Error("移动端M3备份版本无效，原资料已保留。");
       }
       await this.commit(draft);
     });

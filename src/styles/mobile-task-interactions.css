@@ -29,4 +29,18 @@
 .echoink-mobile .em-task-question-submit { color:var(--text-on-accent); }
 .echoink-mobile .em-task-question-submit::before,
 .echoink-mobile .em-task-question-submit:hover::before { background:var(--em-green); }
+.echoink-mobile .em-task-interruption { display:grid; gap:6px; margin-block:16px 0; padding-top:12px; border-top:1px solid var(--em-line); }
+.echoink-mobile .em-task-interruption :is(p,time) { margin:0; line-height:1.6; overflow-wrap:anywhere; }
+.echoink-mobile .em-task-interruption-time { color:var(--em-muted); font-size:.8em; }
+.echoink-mobile .em-task-interruption-stage { font-size:.9em; }
+.echoink-mobile .em-task-resume-button { justify-self:end; padding-inline:12px; }
+.echoink-mobile .em-task-resume-issue { display:flex; flex-direction:column; gap:6px; padding-block:12px; border-bottom:1px solid var(--em-line); }
+.echoink-mobile .em-task-resume-issue:last-child { border-bottom:0; }
+.echoink-mobile .em-task-resume-target { font-weight:500; line-height:1.6; overflow-wrap:anywhere; }
+.echoink-mobile .em-task-resume-result { font-size:.9em; }
+.echoink-mobile .em-task-resume-label { margin:0; line-height:1.6; }
+.echoink-mobile :is(.em-task-resume-button,.em-task-resume-confirm) { color:var(--text-on-accent); }
+.echoink-mobile :is(.em-task-resume-button,.em-task-resume-confirm)::before,
+.echoink-mobile :is(.em-task-resume-button,.em-task-resume-confirm):hover::before { background:var(--em-green); }
+.echoink-mobile .em-task-resume-confirm { white-space:normal; line-height:1.5; }
 /* ECHOINK_MOBILE_TASK_INTERACTIONS_END */
