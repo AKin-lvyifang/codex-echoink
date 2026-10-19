@@ -54,10 +54,13 @@ export async function runTodoPageModelTests(): Promise<void> {
   view.renderShell(); view.renderData();
   assert.equal(view.field("list").querySelectorAll("thead th").length, 7);
   assert.equal(view.field("list").querySelectorAll("tbody tr").length, 20);
-  const statistics = view.field("statistics"), input = statistics.querySelector(".activity-range-start") as HTMLInputElement;
-  statistics.querySelector<HTMLButtonElement>(".activity-range-trigger")!.click(); input.value = "2020"; input.focus();
+  const completionHistory = JSON.stringify(store.completionStatistics());
+  assert.equal(view.contentEl.querySelector(".todo-history-panel, .activity-heatmap, [data-todo-page=statistics]"), null);
+  assert.match(view.field("count").textContent, /累计完成 5 · 今日完成 2/);
   view.changeFilter({ project: "path:Projects/EchoInk", category: "工作" });
-  assert.equal(statistics.querySelector(".activity-range-start"), input); assert.equal(input.value, "2020"); assert.equal(win.document.activeElement, input);
+  assert.match(view.field("count").textContent, /累计完成 5 · 今日完成 2/, "Filters do not narrow lifetime completion counts");
+  assert.equal(JSON.stringify(store.completionStatistics()), completionHistory, "Removing the visualization keeps historical completion data");
+  assert.ok(!view.contentEl.textContent.includes("完成日期未知"));
   assert.ok(view.field("count").textContent.includes("23")); assert.equal(handoffs, 0);
   await view.handoff(); assert.equal(handoffs, 1); assert.match(handoffText, /EchoInk/); assert.match(handoffText, /工作/);
   const wrap = view.field("list").querySelector(".echoink-todo-table-wrap"); wrap.scrollTop = 75; wrap.scrollLeft = 30; wrap.onscroll(); view.renderList();
@@ -111,5 +114,5 @@ export async function runTodoPageModelTests(): Promise<void> {
   assert.equal(renameView.field("toolbar").querySelector<HTMLSelectElement>('[aria-label="项目"]')!.value, "path:Work/Beta");
   await renameView.onClose();
   assert.equal(storeListeners.size, 0); assert.equal([...vaultListeners.values()].reduce((count, listeners) => count + listeners.size, 0), 0);
-  console.log("To-do page model: pagination/filtering, seven/six columns, heatmap draft, handoff scope, scroll, invalid association and save failures passed");
+  console.log("To-do page model: pagination/filtering, seven/six columns, inline completion counts and retained history, handoff scope, scroll, invalid association and save failures passed");
 }

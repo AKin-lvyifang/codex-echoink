@@ -2,7 +2,6 @@ import { ItemView, Notice, TFolder, type TAbstractFile, type EventRef, type Work
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginPagination, createOriginSelect, disposeOriginControls } from "../settings/origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
-import { renderTodoStatistics } from "../settings/todo-statistics";
 import { ForegroundView } from "../ui/foreground-view";
 import { confirmModal } from "../ui/modals";
 import { sortOpenTodos } from "./home-todos";
@@ -22,7 +21,6 @@ interface TodoPageState {
   scrollTop: number;
   scrollLeft: number;
   pageScroll: number;
-  heatmap: Record<string, string>;
 }
 const savedStates = new WeakMap<CodexForObsidianPlugin, TodoPageState>();
 const projectKey = (record: ParsedTodoRecord, projects: readonly TodoProject[]): string => {
@@ -53,13 +51,11 @@ export class TodoPageView extends ItemView {
   private closed = true;
   private generation = 0;
   private initialized = false;
-  private heatmapSignature = "";
-  private heatmapPending = false;
   private settingsSignature = "";
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
-    this.state = savedStates.get(plugin) ?? { status: "all", category: null, project: null, page: 1, scrollTop: 0, scrollLeft: 0, pageScroll: 0, heatmap: {} };
+    this.state = savedStates.get(plugin) ?? { status: "all", category: null, project: null, page: 1, scrollTop: 0, scrollLeft: 0, pageScroll: 0 };
     savedStates.set(plugin, this.state);
   }
   getViewType(): string { return TODO_PAGE_VIEW_TYPE; }
@@ -88,12 +84,10 @@ export class TodoPageView extends ItemView {
   }
   async onClose(): Promise<void> {
     this.rememberScroll();
-    this.state.heatmap = { ...this.field("statistics").dataset } as Record<string, string>;
     this.closed = true; this.generation++;
     this.detachListeners();
     this.foreground?.dispose(); this.foreground = null;
     disposeOriginControls(this.contentEl);
-    this.heatmapSignature = "";
   }
   private attachListeners(): void {
     if (this.unsubscribe) return;
@@ -166,11 +160,6 @@ export class TodoPageView extends ItemView {
     data.createDiv({ cls: "todo-page-count", attr: { "data-todo-page": "count", role: "status", "aria-live": "polite" } });
     data.createDiv({ cls: "todo-page-list", attr: { "data-todo-page": "list" } });
     data.createDiv({ cls: "todo-page-pagination", attr: { "data-todo-page": "pagination" } });
-    const statistics = data.createEl("section", { cls: "todo-page-statistics", attr: { "data-todo-page": "statistics" } });
-    Object.assign(statistics.dataset, this.state.heatmap);
-    statistics.addEventListener("focusout", () => queueMicrotask(() => {
-      if (this.heatmapPending && !this.closed) this.renderStatistics();
-    }));
     this.renderHeader();
   }
   private button(parent: HTMLElement, text: string, action: () => unknown, cls = ""): HTMLButtonElement {
@@ -224,7 +213,7 @@ export class TodoPageView extends ItemView {
       }
       this.projects = projects;
       this.settingsSignature = this.signature();
-      this.renderHeader(); this.renderToolbar(); this.renderList(); this.renderStatistics();
+      this.renderHeader(); this.renderToolbar(); this.renderList();
     } catch (error) { this.showError(error); }
   }
   private changeFilter(update: Partial<Pick<TodoPageState, "status" | "category" | "project">>): void {
@@ -300,7 +289,10 @@ export class TodoPageView extends ItemView {
     wrap.scrollTop = scrollTop; wrap.scrollLeft = scrollLeft;
     wrap.onscroll = () => { this.state.scrollTop = wrap.scrollTop; this.state.scrollLeft = wrap.scrollLeft; };
     const count = this.field("count"); disposeOriginControls(count); count.empty();
-    count.createSpan({ text: this.t(`符合条件 ${result.total} 项 · 全部 ${all.length} 项`, `${result.total} matching · ${all.length} total`) });
+    const values = count.createDiv({ cls: "todo-page-count-values" });
+    values.createSpan({ text: this.t(`符合条件 ${result.total} 项 · 全部 ${all.length} 项`, `${result.total} matching · ${all.length} total`) });
+    const stats = this.plugin.getTodoStore().completionStatistics();
+    values.createSpan({ cls: "todo-history-summary", text: this.t(`累计完成 ${stats.total} · 今日完成 ${stats.today}`, `Total completed: ${stats.total} · Today: ${stats.today}`) });
     if (this.state.status !== "all" || this.state.category !== null || this.state.project !== null) this.button(count, this.t("清除筛选", "Clear filters"), () => this.changeFilter({ status: "all", category: null, project: null }), "is-tertiary");
     createOriginPagination(pagination, result.page, result.pages, page => {
       this.state.page = page; this.state.scrollTop = 0; this.renderList();
@@ -319,15 +311,5 @@ export class TodoPageView extends ItemView {
     const accepted = await confirmModal(this.app, this.t("删除待办", "Delete to-do"),
       this.t(`确定删除「${record.title}」吗？删除后无法恢复。`, `Delete "${record.title}"? This cannot be undone.`), this.t("删除", "Delete"), this.t("取消", "Cancel"));
     if (accepted) await this.plugin.getTodoStore().removeTodo(record);
-  }
-  private renderStatistics(): void {
-    const host = this.field("statistics");
-    const signature = JSON.stringify([this.plugin.getTodoStore().completionStatistics(), this.plugin.settings.settingsLanguage]);
-    if (signature === this.heatmapSignature) { this.heatmapPending = false; return; }
-    const editor = host.querySelector<HTMLElement>(".activity-range-editor");
-    if ((editor && !editor.hidden) || host.contains(host.ownerDocument.activeElement)) { this.heatmapPending = true; return; }
-    this.heatmapPending = false; this.heatmapSignature = signature;
-    renderTodoStatistics(host, this.plugin.getTodoStore(), this.plugin.settings.settingsLanguage, this.app);
-    host.querySelector("h3 span:last-child")?.setText(this.t("全部待办完成记录", "Completion history for all to-dos"));
   }
 }
