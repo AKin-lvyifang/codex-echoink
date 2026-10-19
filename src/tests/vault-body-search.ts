@@ -13,6 +13,89 @@ import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-re
 import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { searchBodyDocuments } from "../knowledge-base/search/body-search";
+import { sha256Hex } from "../utils/sha256";
+
+export async function runVaultBodySearchPrivateBoundaryTests(): Promise<void> {
+  const privatePaths = ["私有记忆/偏好草稿.md", ".obsidian/plugins/echoink/偏好缓存.md"];
+  const publicPaths = ["私有记忆备份/公开.md", "笔记/私有记忆/公开.md", "普通/公开.md"];
+  const bodies = new Map([...privatePaths, ...publicPaths].map(name => [name, `---\naliases: [BOUNDARY_ALIAS_TOKEN]\ntags: [boundary-tag]\n---\n# Boundary\nBOUNDARY_SHARED_TOKEN ${name}\n`]));
+  const reads: string[] = [], metadata: string[] = [];
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : name === "alias.md" ? file(privatePaths[0]) : null,
+    read: async (entry: TFile) => { reads.push(entry.path); return bodies.get(entry.path)!; } },
+    metadataCache: { getFileCache: (entry: TFile) => { metadata.push(entry.path); return { frontmatter: { aliases: ["BOUNDARY_ALIAS_TOKEN"], tags: ["boundary-tag"] } }; } },
+    workspace: { getActiveFile: () => file(privatePaths[0]), getLastOpenFiles: () => privatePaths } } as unknown as App;
+  // No fixture-specific excludedRoots: this must exercise the product default.
+  const port = new VaultBodySearch(app, () => null);
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-private-boundary", storageRootPath: "/synthetic-private-boundary-state", bodySearch: port });
+  const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  const blocked: Record<string, boolean> = {};
+  try {
+    const pages = [];
+    for (const request of [{ query: "BOUNDARY_SHARED_TOKEN" }, { query: "BOUNDARY_ALIAS_TOKEN" }, { query: "boundary-tag" }, { mode: "recent" as const }, { queries: ["BOUNDARY_SHARED_TOKEN", "BOUNDARY_ALIAS_TOKEN"] }, { query: "私有记忆/偏好草稿.md" }, { query: "这篇笔记讲什么" }]) pages.push(await port.search(request));
+    const contexts = [];
+    contexts.push(await runtime.retrieveChat!({ question: "BOUNDARY_SHARED_TOKEN", explicitPaths: [], includeUnrefined: false } as never));
+    try { const context = await runtime.retrieveChat!({ question: "BOUNDARY_SHARED_TOKEN", explicitPaths: [privatePaths[0]], includeUnrefined: false } as never); contexts.push(context); blocked.explicitPreflight = !context.references.some(reference => privatePaths.includes(reference.vaultRelativePath)); } catch { blocked.explicitPreflight = true; }
+    await assert.rejects(runtime.retrieveChat!({ question: "BOUNDARY_SHARED_TOKEN", explicitPaths: [privatePaths[1]], includeUnrefined: false } as never), { code: "forbidden-path" });
+    for (const name of [...privatePaths, "alias.md"]) {
+      const before = reads.length;
+      try { await port.read({ vaultRelativePath: name }); blocked[name] = false; } catch (error) { blocked[name] = (error as { code?: string }).code === "invalid_path"; }
+      blocked[`${name}:beforeIO`] = before === reads.length;
+    }
+    const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "private-v", conversationId: "private-c", piSessionId: "private-s", productRunId: "private-r" }), currentWorkflow: () => "chat", egress: new EchoInkVaultToolEgressPolicy() });
+    const tools = createPiKnowledgeReadToolDefinitions({ retriever: new KnowledgeRetriever(index.vaultPath, { agentIndex: index }), security });
+    const toolResults = [];
+    for (const input of [{ toolName: "knowledge_search", args: { query: "BOUNDARY_SHARED_TOKEN" } }, { toolName: "knowledge_search", args: { mode: "recent" } }, { toolName: "knowledge_search", args: { queries: ["BOUNDARY_SHARED_TOKEN", "BOUNDARY_ALIAS_TOKEN"] } }, ...privatePaths.map(name => ({ toolName: "knowledge_read", args: { vaultRelativePath: name, expectedContentRevision: `sha256:${sha256Hex(bodies.get(name)!)}` } }))]) {
+      const id = `private-tool-${toolResults.length}`, before = reads.length;
+      const denied = await security.handleToolCall({ toolName: input.toolName, toolCallId: id, input: input.args } as never, undefined);
+      if (denied) { toolResults.push({ isError: true, denied }); continue; }
+      try { await tools.find(tool => tool.name === input.toolName)!.execute(id, input.args as never, undefined, undefined); } catch { /* Security returns the safe tool error below. */ }
+      const result = await security.handleToolResult({ toolName: input.toolName, toolCallId: id, isError: false } as never);
+      toolResults.push(result);
+      if (input.toolName === "knowledge_read") { assert.equal(result.isError, true); assert.equal(reads.length, before, "knowledge_read rejects private sources before body I/O"); }
+      else { assert.equal(result.isError, false); assert.ok(!privatePaths.some(name => JSON.stringify(result).includes(name))); }
+    }
+    console.log(JSON.stringify({ kind: "private-boundary-knowledge", candidates: pages.map(page => page.hits.map(hit => hit.vaultRelativePath)), delivered: contexts.map(context => context.references.map(reference => reference.vaultRelativePath)), toolResults, blocked, reads, metadata }));
+    assert.ok(pages.every(page => page.hits.every(hit => !privatePaths.includes(hit.vaultRelativePath))));
+    assert.ok(contexts.every(context => !privatePaths.some(name => context.providerResourceText.includes(name) || context.references.some(reference => reference.vaultRelativePath === name))));
+    assert.ok(Object.values(blocked).every(Boolean), "direct and canonical-host paths must reject before content I/O");
+    assert.ok(reads.every(name => !privatePaths.includes(name)));
+    assert.ok(metadata.every(name => !privatePaths.includes(name)), "exclude private candidates before asking metadata cache");
+    assert.deepEqual(pages[0].hits.map(hit => hit.vaultRelativePath).sort(), [...publicPaths].sort());
+    assert.ok(pages[1].hits.length && pages[2].hits.length, "metadata-only alias and tag queries actually match public sources");
+  } finally { port.dispose(); }
+  const sourceErrorObservations = [];
+  for (const code of ["EACCES", "ELOOP"]) {
+    let failed = true;
+    const sourceReads: string[] = [], sourceMetadata: string[] = [];
+    const files = ["notes/broken.md", "notes/public.md"].map(name => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, size: 20 } }));
+    const sourceApp = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (name: string) => files.find(file => file.path === name), read: async (file: { path: string }) => { sourceReads.push(file.path); return "SOURCE_ERROR_PUBLIC_TOKEN"; } },
+      metadataCache: { getFileCache: (file: { path: string }) => { sourceMetadata.push(file.path); return null; } } } as unknown as App;
+    const resolveSourcePath = async (name: string) => { if (failed && name.endsWith("/broken.md")) throw Object.assign(new Error(code), { code }); return name; };
+    const guarded = new VaultBodySearch(sourceApp, () => null, { resolveSourcePath });
+    try {
+      for (const request of [{ query: "SOURCE_ERROR_PUBLIC_TOKEN" }, { query: "SOURCE_ERROR_PUBLIC_TOKEN" }, { mode: "recent" as const }]) {
+        const result = await guarded.search(request);
+        assert.deepEqual(result.hits.map(hit => hit.vaultRelativePath), ["notes/public.md"]);
+        assert.equal(result.coverage?.totalFiles, 2); assert.equal(result.coverage?.failedFiles, 1); assert.equal(result.coverage?.indexedFiles, 1); assert.equal(result.coverage?.complete, false); assert.equal(result.exhausted, false);
+        sourceErrorObservations.push({ code, request, coverage: result.coverage });
+      }
+      assert.ok(sourceReads.every(name => name !== "notes/broken.md")); assert.ok(sourceMetadata.every(name => name !== "notes/broken.md"));
+      const scoped = await guarded.search({ query: "SOURCE_ERROR_PUBLIC_TOKEN", excludePaths: ["notes/broken.md"] });
+      assert.equal(scoped.coverage?.complete, true); assert.equal(scoped.coverage?.failedFiles, 0);
+      failed = false;
+      const recovered = await guarded.search({ query: "SOURCE_ERROR_PUBLIC_TOKEN" });
+      assert.equal(recovered.hits.length, 2); assert.equal(recovered.coverage?.failedFiles, 0); assert.equal(recovered.coverage?.complete, true);
+    } finally { guarded.dispose(); }
+    for (const fatal of [Object.assign(new Error("aborted"), { name: "AbortError" }), ...["disposed", "source_changed", "search_index_stale", "search_index_disposed"].map(code => Object.assign(new Error(code), { code }))]) {
+      const fatalPort = new VaultBodySearch(sourceApp, () => null, { resolveSourcePath: async () => { throw fatal; } });
+      try { await assert.rejects(fatalPort.search({ query: "SOURCE_ERROR_PUBLIC_TOKEN" }), error => error === fatal); } finally { fatalPort.dispose(); }
+    }
+  }
+  console.log(JSON.stringify({ kind: "canonical-single-source-error-regression", sourceErrorObservations }));
+  console.log("Private Knowledge boundary: default search/body/metadata/recent/supplemental/explicit/preflight/direct reads PASS");
+}
 
 export async function runVaultBodySearchLinkCueTests(): Promise<void> {
   const targetPath = "support/Guide.md";

@@ -130,6 +130,7 @@ import {
   FileApprovalTicketStore
 } from "../harness/pi-native/tool-authorization";
 import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
+import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
 import { createPiObsidianToolDefinitions, PiObsidianToolSecurity, PI_OBSIDIAN_TOOL_IDS } from "../harness/pi-native/pi-obsidian-tools";
 import { createObsidianNativePort } from "./obsidian-native-tools";
 import type { LifestyleFinanceService } from "../lifestyle/finance-service";
@@ -415,6 +416,17 @@ export function bindKnowledgeIndexToVault(
   };
 }
 
+/** Desktop-only identity port; shared search remains browser-safe. No body I/O. */
+export function createDesktopKnowledgeSourcePathResolver(adapter: Pick<ObsidianVaultDomainAdapter, "vaultRootPath" | "realpath">): (relativePath: string) => Promise<string> {
+  let canonicalRoot: Promise<string> | undefined;
+  return async relativePath => {
+    const requested = normalizeVaultRelativePath(relativePath);
+    canonicalRoot ??= adapter.realpath(adapter.vaultRootPath);
+    const [root, target] = await Promise.all([canonicalRoot, adapter.realpath(path.join(adapter.vaultRootPath, requested))]);
+    return normalizeVaultRelativePath(path.relative(root, target).replaceAll("\\", "/"));
+  };
+}
+
 export async function createPiProductionRuntimeBundle(
   plugin: PiProductionPluginHost,
   localDataInput?: PiLocalDataService
@@ -444,11 +456,17 @@ export async function createPiProductionRuntimeBundle(
   const knowledgePreferences = new KnowledgeMaintenancePreferenceRepository(
     privateKnowledgeRootPath
   );
+  const vaultAdapter = new ObsidianVaultDomainAdapter(
+    plugin.app,
+    deviceScope.vaultIdDigest,
+    vaultRootPath
+  );
   const knowledgeAgentIndex = new KnowledgeAgentIndex({
     vaultPath: vaultRootPath,
     storageRootPath: privateKnowledgeRootPath,
     bodySearch: new VaultBodySearch(plugin.app, () => getKnowledgeFolderBindings(vaultRootPath), {
       excludedRoots: () => [path.relative(vaultRootPath, personalMemory.layout.root).replaceAll("\\", "/")],
+      resolveSourcePath: createDesktopKnowledgeSourcePathResolver(vaultAdapter),
       onJournalSearch: async () => {
         if (plugin.settings.knowledgeBase.journalSearchDisclosureSeen) return;
         new Notice(plugin.settings.settingsLanguage === "en" ? "Journal search is on. Matching excerpts are sent with your question to the current model provider. You can turn it off in Knowledge folder settings." : "日记搜索默认开启，命中的片段会随问题发送给当前模型服务商。可在知识库目录设置中关闭日记搜索。", 10_000);
@@ -466,11 +484,6 @@ export async function createPiProductionRuntimeBundle(
     usage: new KnowledgeUsageBridge(knowledgeUsageStore),
     onNaturalMaintenance: (request) => knowledgeMaintenance.finalizeNatural(request)
   });
-  const vaultAdapter = new ObsidianVaultDomainAdapter(
-    plugin.app,
-    deviceScope.vaultIdDigest,
-    vaultRootPath
-  );
   const vaultDomainService = new VaultDomainService(vaultAdapter, { allowMissingParentDirectories: true });
   const maintenanceVaultDomainService = new VaultDomainService(
     createPhase3MaintenanceVaultDomainAdapter({
