@@ -1,4 +1,5 @@
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
+import { PiAgentApprovalBroker } from "../plugin/pi-agent-approval-broker";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -12,6 +13,8 @@ import { TaskNavigationState, consumeAcceptedTaskDraft } from "../ui/codex-view/
 import { agentTaskCounts, groupAgentTasks, localDateLabel, taskActivityAt, taskCardHintSummary, taskSummary, taskStateLabel } from "../agents/task-presentation";
 import { animateTaskDetailEntry, renderTaskDetailHeader } from "../ui/codex-view/task-detail";
 import { renderAgentTaskList } from "../ui/codex-view/task-list";
+import { InteractionDockController } from "../ui/codex-view/interaction-dock";
+import { CodexMessageListRenderer } from "../ui/codex-view/message-list";
 import { disposeOriginControls } from "../settings/origin-controls";
 import { prepareDocument } from "./settings-search-dom";
 import { createAgentRunFixture } from "./agent-runs";
@@ -22,6 +25,7 @@ import type { PiConversationCatalogEntry } from "../harness/pi-native/contracts"
 import { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
 import { FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
 import { FileApprovalTicketStore } from "../harness/pi-native/tool-authorization";
+import { PiObsidianToolSecurity } from "../harness/pi-native/pi-obsidian-tools";
 
 function createHost(catalog: any, runtime: any, settings: any): any {
   const local = { catalog, productRuns: runtime.productRuns,
@@ -51,6 +55,8 @@ export async function runAgentTaskTests(root: string): Promise<void> {
   const f = await createAgentRunFixture(path.join(root, "runtime"), createHost);
   f.plugin.app.vault = { getRoot: () => ({ children: [] }), getAbstractFileByPath: () => null };
   try {
+    await pluginRemovalApprovalPresentation(path.join(root, "delete-approval-source"));
+    await deleteApprovalPresentation(dom.window.document);
     await coldNavigationReadiness(f, dom.window.document);
     await navigationAndSubmission(f, dom.window.document);
     await legacyAndUnread(f);
@@ -62,6 +68,77 @@ export async function runAgentTaskTests(root: string): Promise<void> {
     disposeOriginControls(dom.window.document.body); dom.window.close();
     for (const [key, descriptor] of descriptors) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
   }
+}
+
+async function pluginRemovalApprovalPresentation(root: string): Promise<void> {
+  const identity = { vaultId: "delete-approval-source", conversationId: "delete-source", piSessionId: "delete-source-session", productRunId: "delete-source-run" };
+  const approvals = new FileApprovalTicketStore({ storageRootPath: root, vaultId: identity.vaultId });
+  const receipts = new FileDomainReceiptStore({ storageRootPath: root, vaultId: identity.vaultId });
+  await Promise.all([approvals.initialize(), receipts.initialize()]);
+  const confirmed: string[] = [];
+  let executions = 0;
+  const security = new PiObsidianToolSecurity({ currentRunIdentity: () => identity,
+    currentAccess: () => ({ permission: "workspace-write", mode: "agent", memoryMode: "normal" }),
+    approvals, receipts, userId: "fixture", deviceId: "fixture", confirmation: { async confirm(input) {
+      const command = (input.target as { command: string }).command;
+      confirmed.push(command);
+      assert.equal(input.toolId, "obsidian_cli");
+      assert.equal(Object.hasOwn(input, "deleteAction"), command === "plugin:uninstall", "only explicit plugin removal carries delete presentation");
+      if (command === "plugin:uninstall") assert.equal(input.deleteAction, true);
+      return false;
+    } } });
+  security.bindPort({ context: async () => ({}), cli: async () => { throw new Error("no real CLI in this fixture"); }, pluginSearch: async () => [],
+    prepare: async request => ({ effect: "plugin_write", target: { command: request.command }, targetVersion: null, preview: { command: request.command },
+      execute: async () => { executions++; throw new Error("confirmation was denied; no operation may execute"); } }) });
+  const commands = ["plugin:install", "plugin:enable", "plugin:disable", "plugin:reload", "plugin:uninstall"] as const;
+  for (const command of commands) {
+    const toolCallId = `source-${command}`;
+    const result = await security.handleToolCall({ toolName: "obsidian_cli", toolCallId, input: { command, id: "synthetic-plugin" } } as any);
+    assert.equal(result?.reason, "approval_denied", `${command} retains the existing confirmation decision`);
+    const state = await approvals.get(identity.productRunId, toolCallId);
+    assert.equal(state?.status, "denied"); assert.equal(Object.hasOwn(state!.ticket, "deleteAction"), false, "presentation stays outside durable Tickets");
+  }
+  assert.deepEqual(confirmed, commands); assert.equal(executions, 0);
+  console.log("Delete source presentation: actual PiObsidian security confirmation marks only plugin:uninstall; install/enable/disable/reload remain generic; no execution PASS");
+}
+
+async function deleteApprovalPresentation(doc: Document): Promise<void> {
+  const broker = new PiAgentApprovalBroker();
+  try {
+    for (const [operation, deleteAction] of [["note_delete", true], ["finance_record.delete", true], ["note_update", false], ["mcp.destructive", false]] as const) {
+      for (const surface of ["dock", "message"] as const) for (const decision of ["approve", "reject"] as const) {
+        const toolCallId = `${operation}-${surface}-${decision}`;
+        const identity = { conversationId: "delete-presentation", piSessionId: "delete-session", productRunId: "delete-run", toolCallId };
+        const waiting = broker.waitForDecision({ ...identity, requestId: toolCallId,
+          target: "Delete-target.md", preview: '{"action":"delete","destructive":true}',
+          ...(deleteAction ? { deleteAction: true } : {}) });
+        const binding = broker.bindingFor(identity)!;
+        assert.equal(binding.deleteAction === true, deleteAction);
+        assert.equal(Object.hasOwn(binding, "deleteAction"), deleteAction, "ordinary and destructive MCP approvals have no delete marker");
+        const mount = doc.body.createDiv();
+        let resolved = 0;
+        const renderer: any = surface === "message" ? new CodexMessageListRenderer() : null;
+        if (renderer) {
+          renderer.env = { settingsLanguage: "zh-CN", resolveApprovalDecision: () => binding, onScheduleMeasure: () => { resolved++; } };
+          renderer.renderApprovalCard(mount, { id: toolCallId, role: "tool", text: "", createdAt: Date.now(), approval: { status: "pending" } });
+        } else {
+          new InteractionDockController().render(mount, { sessionId: identity.conversationId,
+            confirmation: { binding, onResolved: () => { resolved++; } }, onStale: () => assert.fail("live broker decision became stale"), onScheduleMeasure() {} });
+        }
+        const approve = mount.querySelector<HTMLButtonElement>(".is-approve")!;
+        const reject = mount.querySelector<HTMLButtonElement>(".is-reject")!;
+        assert.equal(approve.classList.contains("echoink-delete-button"), deleteAction, `${operation}: ${surface} approval follows only the explicit marker`);
+        assert.equal(reject.classList.contains("echoink-delete-button"), false, "Reject keeps its original presentation");
+        assert.equal(approve.textContent, "批准"); assert.equal(reject.textContent, "拒绝");
+        (decision === "approve" ? approve : reject).click();
+        assert.equal(await waiting, decision === "approve", "the existing button still resolves the real broker decision");
+        assert.equal(resolved, 1); assert.equal(broker.bindingFor(identity), null);
+        assert.equal(binding.decide(decision), false, "presentation does not bypass one-shot approval identity");
+        renderer?.dispose(); mount.remove();
+      }
+    }
+    console.log("Delete approval presentation: real broker + dock/message approve/reject; ordinary/destructive MCP remain generic PASS");
+  } finally { broker.dispose(); }
 }
 async function identityCutover(root: string): Promise<void> {
   const storage = path.join(root, "identity"), file = path.join(storage, AGENT_IDENTITY_RELATIVE_PATH);
@@ -668,6 +745,7 @@ async function approvalStateTracksBroker(f: any): Promise<void> {
       assert.equal(pending.preview, "是否批准本次操作？");
       assert.equal(pending.target, undefined); assert.equal(pending.preview.includes("RAW-APPROVAL-ARGUMENTS"), false);
       assert.equal(f.approvalBroker.bindingFor(request).preview, JSON.stringify({ content: "RAW-APPROVAL-ARGUMENTS" }), "the real approval binding remains unchanged");
+      assert.equal(Object.hasOwn(f.approvalBroker.bindingFor(request), "deleteAction"), false, "generic Pi tool approvals remain unmarked");
     }
     assert.equal(agentTaskCounts(await f.plugin.listAgentTaskEntries(), "sol").waiting, 2, "the Agent badge counts actual waiting tasks");
     await view.onClose(); const closedRefreshes = refreshes;

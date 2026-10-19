@@ -1,4 +1,5 @@
 import { setIcon } from "obsidian";
+import { applyDeleteButton } from "../../settings/amicro-buttons";
 import type { SettingsLanguage, StoredSession } from "../../settings/settings";
 import {
   conversationUiText,
@@ -1075,6 +1076,7 @@ function renderSessionPicker(
         });
         deleteButton.disabled = running;
         setIcon(deleteButton, "trash-2");
+        applyDeleteButton(deleteButton, { iconOnly: true });
         deleteButton.onclick = (event) => {
           event.stopPropagation();
           if (!running) callbacks.onDeleteSessions([session.id]);
@@ -1150,7 +1152,8 @@ function renderSessionPicker(
             : conversationUiText(language, "删除会话", "Delete conversations")
         }
       });
-      const deleteIcon = deleteSelected.createSpan();
+      applyDeleteButton(deleteSelected);
+      const deleteIcon = deleteSelected.querySelector<HTMLElement>(".echoink-delete-button-icon") ?? deleteSelected.createSpan();
       setIcon(deleteIcon, "trash-2");
       deleteSelected.createSpan({
         text: state.selectedIds.size

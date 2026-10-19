@@ -3,6 +3,7 @@ import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginInput, createOriginSwitch, disposeOriginControls } from "./origin-controls";
 import { createSettingsPage, createSettingsSection, showSettingsInlineConfirmation } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
+import { applyDeleteButton } from "./amicro-buttons";
 import { normalizeSelectionAskSettings, selectionActionNameError, type SelectionAskAction } from "../selection-ask/settings";
 import { conversationUiText } from "../ui/codex-view/ui-i18n";
 
@@ -175,10 +176,11 @@ function renderDesktopSelectionActions(container: HTMLElement, plugin: CodexForO
       const actionsRow = editor.createDiv({ cls: "echoink-selection-inline-actions" });
       if (action.id !== "default") {
         const remove = createOriginButton(actionsRow, { text: text("删除", "Delete"), cls: "is-danger" });
+        applyDeleteButton(remove);
         remove.onclick = () => {
           if (pending) return;
           if (draft.fresh) { drafts.delete(action.id); render(); return; }
-          showSettingsInlineConfirmation(row, remove, { message: text(`删除“${title}”？`, `Delete “${title}”?`), confirmLabel: text("删除选项", "Delete action"), cancelLabel: text("取消", "Cancel"), onConfirm: async () => { await saveActions(persisted().filter(value => value.id !== action.id), () => drafts.delete(action.id), draft); } });
+          showSettingsInlineConfirmation(row, remove, { deleteAction: true, message: text(`删除“${title}”？`, `Delete “${title}”?`), confirmLabel: text("删除选项", "Delete action"), cancelLabel: text("取消", "Cancel"), onConfirm: async () => { await saveActions(persisted().filter(value => value.id !== action.id), () => drafts.delete(action.id), draft); } });
         };
       }
       const cancel = createOriginButton(actionsRow, { text: text("取消", "Cancel") });

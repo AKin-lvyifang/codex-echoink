@@ -8,6 +8,7 @@ import { OriginSetting } from "./origin-setting";
 import { createOriginButton, createOriginInput, createOriginCheck, createOriginSelect, disposeOriginControls } from "./origin-controls";
 import { createSettingsPage, createSettingsNavigationRow, createSettingsSection, attachSettingsTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
+import { applyDeleteButton } from "./amicro-buttons";
 
 type Role = "raw" | "wiki" | "projects" | "inbox";
 const titles: Record<Role, string> = { raw: "资料来源", wiki: "知识成果", projects: "项目", inbox: "收件箱" };
@@ -129,7 +130,7 @@ export class DesktopKnowledgeSettings {
       });
     }
     this.renderSearchPermission(page, role);
-    const unbind = createOriginButton(page, { text: "解绑文件夹", cls: "settings-danger" }); unbind.onclick = () => this.confirmUnbind(page, unbind, role);
+    const unbind = createOriginButton(page, { text: "解绑文件夹", cls: "settings-danger" }); applyDeleteButton(unbind); unbind.onclick = () => this.confirmUnbind(page, unbind, role);
   }
   private renderSearchPermission(page: HTMLElement, role: Role): void {
     this.checkbox(page, "允许搜索正文", this.bindings().roles[role].searchEnabled !== false, "沿用当前用途的正文搜索权限。关闭后保留目录绑定。", async enabled => { const next = this.bindings(); next.roles[role].searchEnabled = enabled; await this.save(next); });
@@ -155,11 +156,12 @@ export class DesktopKnowledgeSettings {
     const role = picker.role;
     if (role && this.bindings().roles[role].enabled && role !== "raw") {
       const unbind = createOriginButton(page, { text: "解绑文件夹", cls: "mod-warning" });
+      applyDeleteButton(unbind);
       unbind.onclick = () => this.confirmUnbind(page, unbind, role);
     }
   }
   private confirmUnbind(page: HTMLElement, trigger: HTMLButtonElement, role: Role, path?: string): void {
-    showSettingsInlineConfirmation(page, trigger, { message: "解绑只解除用途绑定，不会删除目录或笔记。", confirmLabel: "确认解绑", cancelLabel: "取消", onConfirm: async () => {
+    showSettingsInlineConfirmation(page, trigger, { deleteAction: true, message: "解绑只解除用途绑定，不会删除目录或笔记。", confirmLabel: "确认解绑", cancelLabel: "取消", onConfirm: async () => {
       const next = this.bindings(), binding = next.roles[role]; binding.readPaths = path ? binding.readPaths.filter(item => item !== path) : [];
       binding.enabled = binding.readPaths.length > 0; binding.writePath = binding.readPaths.includes(binding.writePath ?? "") ? binding.writePath : binding.readPaths[0] ?? null;
       binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(item => binding.readPaths.includes(item));
@@ -174,7 +176,7 @@ export class DesktopKnowledgeSettings {
     for (const path of bindings.roles.raw.readPaths) {
       const row = page.createDiv({ cls: "echoink-knowledge-source" });
       row.createDiv({ cls: "echoink-knowledge-source-path", text: path });
-      const unbind = createOriginButton(row, { cls: "is-icon", attr: { "aria-label": `解绑 ${path}` } }); setIcon(unbind, "trash-2"); unbind.onclick = () => this.confirmUnbind(page, unbind, "raw", path);
+      const unbind = createOriginButton(row, { cls: "is-icon", attr: { "aria-label": `解绑 ${path}` } }); applyDeleteButton(unbind, { iconOnly: true }); unbind.onclick = () => this.confirmUnbind(page, unbind, "raw", path);
       if (!(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder)) row.createDiv({ cls: "settings-error", text: "原目录已失效" });
       this.checkbox(row, "允许 Agent 自动整理", bindings.roles.raw.autoOrganizePaths?.includes(path) ?? false, "仅对这个已绑定目录生效，执行时仍核对权限并确认写入。", async enabled => {
         const next = this.bindings(), binding = next.roles.raw; binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(item => item !== path); if (enabled) binding.autoOrganizePaths.push(path); await this.save(next);

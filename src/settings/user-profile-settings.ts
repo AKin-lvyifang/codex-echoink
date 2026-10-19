@@ -1,4 +1,5 @@
-import { setIcon } from "obsidian";
+import { Platform, setIcon } from "obsidian";
+import { applyDeleteButton } from "./amicro-buttons";
 import { USER_PROFILE_SLOTS, USER_PROFILE_ITEM_HARD_MAX_CHARS, type UserProfileItem, type UserProfileControlSnapshot } from "../harness/memory/user-profile-state";
 import { createOriginButton, disposeOriginControls } from "./origin-controls";
 import { createSettingsPage, createSettingsSection, createSettingsState, showSettingsInlineConfirmation } from "./settings-v2";
@@ -155,8 +156,9 @@ export class UserProfileSettingsController {
       }, `${key}:edit`);
       if (item?.basis === "observed_memory") this.button(actions, this.zh ? "确认" : "Confirm", () => void this.mutate("confirm", key), `${key}:confirm`);
       if (item) {
-        const remove = this.button(actions, "", () => showSettingsInlineConfirmation(row, remove, { message: this.zh ? "只删除这项画像，原记忆会保留。" : "Only this profile item will be removed. The original memories remain.", confirmLabel: this.zh ? "删除" : "Delete", cancelLabel: this.zh ? "取消" : "Cancel", onConfirm: () => this.mutate("remove", key) }), `${key}:remove`, "is-icon is-danger");
-        remove.setAttribute("aria-label", this.zh ? `删除${label}` : `Delete ${label}`); setIcon(remove, "trash-2");
+        const remove = this.button(actions, "", () => showSettingsInlineConfirmation(row, remove, { deleteAction: Platform.isDesktopApp, message: this.zh ? "只删除这项画像，原记忆会保留。" : "Only this profile item will be removed. The original memories remain.", confirmLabel: this.zh ? "删除" : "Delete", cancelLabel: this.zh ? "取消" : "Cancel", onConfirm: () => this.mutate("remove", key) }), `${key}:remove`, "is-icon is-danger");
+        remove.setAttribute("aria-label", this.zh ? `删除${label}` : `Delete ${label}`);
+        if (Platform.isDesktopApp) applyDeleteButton(remove, { iconOnly: true }); else setIcon(remove, "trash-2");
       }
       return;
     }

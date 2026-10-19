@@ -9,7 +9,7 @@ import { normalizeAgentDisplayName } from "../../harness/memory/agent-identity-m
 import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../agent-avatar-presets";
 import { AvatarProcessingError, createBrowserAvatarRenderer, processAgentAvatar } from "../agent-avatar-processor";
 import { createOriginButton, createOriginCheck, createOriginInput, createOriginRadioGroup, disposeOriginControls, type OriginCheckElement } from "../../settings/origin-controls";
-import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
+import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
 import { showSettingsInlineConfirmation } from "../../settings/settings-v2";
 import { resolveMcpConnectionRecord } from "../../resources/mcp-connections";
 import type { EchoInkResource } from "../../resources/types";
@@ -492,6 +492,7 @@ export class AgentEditorController {
     disposeOriginControls(area); area.replaceChildren();
     if (!this.editingId || this.editingId === GENERAL_ASSISTANT_ID) return;
     const trigger = this.button(area, this.deleteLoading ? this.t("正在读取任务数量…", "Loading task counts…") : this.t("删除 Agent", "Delete Agent"), "danger", () => { void this.requestDelete(); });
+    applyDeleteButton(trigger);
     trigger.dataset.action = "delete-agent"; trigger.disabled = this.deleteLoading || !!this.busy;
     trigger.setAttribute("aria-expanded", String(!!this.deleteCounts));
     if (this.deleteError) this.el(area, "p", "echoink-agent-editor-error", this.deleteError).setAttribute("role", "alert");
@@ -505,6 +506,7 @@ export class AgentEditorController {
     const actions = this.el(panel, "div", "echoink-agent-editor-actions");
     const cancel = this.button(actions, this.t("取消删除", "Cancel deletion"), "secondary", () => { this.deleteCounts = null; this.deleteError = ""; this.renderDelete(); this.refresh(); this.deleteArea?.querySelector<HTMLButtonElement>("button")?.focus(); });
     const confirm = this.button(actions, this.busy === "delete" ? this.t("正在停止任务并交回总助…", "Stopping tasks and transferring them to the general assistant…") : this.t("删除并交回总助", "Delete and transfer to the general assistant"), "danger", () => { void this.delete(); });
+    applyDeleteButton(confirm);
     confirm.dataset.action = "confirm-delete"; confirm.disabled = cancel.disabled = !!this.busy;
     panel.onkeydown = event => {
       if (event.key !== "Escape" || this.busy) return;

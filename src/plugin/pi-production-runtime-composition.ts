@@ -2019,6 +2019,7 @@ async function createProductionAgentSession(input: {
           toolCallId: request.toolCallId,
           target: canonicalJsonStringify(request.target),
           preview: canonicalJsonStringify(request.preview),
+          ...(request.deleteAction === true ? { deleteAction: true } : {}),
           signal: request.signal
         });
       }
@@ -2100,7 +2101,8 @@ async function createProductionAgentSession(input: {
     userId: localPiVaultUserId(input.deviceScope.deviceIdDigest), deviceId: input.deviceScope.deviceIdDigest,
     confirmation: { async confirm(request) {
       if (input.input.currentTaskPlanTurnContext()?.mode !== "agent") return await vaultModalConfirmation.confirm(request);
-      return await input.approvalBroker.waitForDecision({ requestId: request.requestId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: request.toolCallId, target: canonicalJsonStringify(request.target), preview: canonicalJsonStringify(request.preview), signal: request.signal });
+      return await input.approvalBroker.waitForDecision({ requestId: request.requestId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: request.toolCallId, target: canonicalJsonStringify(request.target), preview: canonicalJsonStringify(request.preview),
+        ...(request.deleteAction === true ? { deleteAction: true } : {}), signal: request.signal });
     } }
   });
   const todoSecurity = new PiTodoToolSecurity({

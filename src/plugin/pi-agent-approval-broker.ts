@@ -17,12 +17,14 @@ export interface PiAgentApprovalWaitInput extends PiAgentApprovalIdentity {
   readonly requestId: string;
   readonly target: string;
   readonly preview: string;
+  readonly deleteAction?: boolean;
   readonly signal?: AbortSignal;
 }
 
 export interface PiAgentApprovalDecisionBinding {
   readonly target: string;
   readonly preview: string;
+  readonly deleteAction?: boolean;
   decide(decision: PiAgentApprovalDecision): boolean;
 }
 
@@ -35,6 +37,7 @@ interface ApprovalWaiter extends PiAgentApprovalIdentity {
   readonly key: string;
   readonly target: string;
   readonly preview: string;
+  readonly deleteAction?: boolean;
   readonly resolve: (accepted: boolean) => void;
   readonly reject: (error: Error) => void;
   readonly signal?: AbortSignal;
@@ -84,6 +87,7 @@ export class PiAgentApprovalBroker {
         key,
         target: input.target.trim(),
         preview: input.preview.trim(),
+        ...(input.deleteAction === true ? { deleteAction: true } : {}),
         resolve,
         reject,
         ...(input.signal ? { signal: input.signal } : {}),
@@ -108,6 +112,7 @@ export class PiAgentApprovalBroker {
     return Object.freeze({
       target: waiter.target,
       preview: waiter.preview,
+      ...(waiter.deleteAction === true ? { deleteAction: true } : {}),
       decide: (decision: PiAgentApprovalDecision) =>
         this.decide(waiter, decision)
     });

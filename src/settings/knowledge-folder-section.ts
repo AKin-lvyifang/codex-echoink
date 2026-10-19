@@ -1,7 +1,7 @@
 import { openObsidianFolderGraphLeaf } from "../home/open-native-graph";
 import { knowledgeRoleRoots } from "../knowledge-base/root-paths";
 import type { KnowledgeInitializationJob } from "../knowledge-base/initializer";
-import { Modal, Notice, TFolder, setIcon } from "obsidian";
+import { Modal, Notice, Platform, TFolder, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { KNOWLEDGE_ROOT_NAMES, KNOWLEDGE_ROOT_ROLES, type KnowledgeRootRole } from "../knowledge-base/root-paths-core";
 import { emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeMaintenanceFolderIssues, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -9,7 +9,7 @@ import type { KnowledgeDirectoryMode, KnowledgeDirectoryPlan } from "../knowledg
 import { OriginSetting } from "./origin-setting";
 import { createOriginButton, createOriginCheck, createOriginSwitch, disposeOriginControls } from "./origin-controls";
 import { attachSettingsTooltip, createSettingsGroup, createSettingsNavigationRow, createSettingsPage, createSettingsSection } from "./settings-v2";
-import { applyAmicroButton, setAmicroButtonPending } from "./amicro-buttons";
+import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "./amicro-buttons";
 
 const LABELS: Record<KnowledgeRootRole, [string, string]> = {
   raw: ["资料来源", "Sources"], wiki: ["知识成果", "Knowledge"], projects: ["项目", "Projects"], outputs: ["输出", "Outputs"], inbox: ["收件箱", "Inbox"], journal: ["日记", "Journal"], work: ["工作", "Work"], archive: ["归档", "Archive"], templates: ["模板", "Templates"], assets: ["附件", "Attachments"]
@@ -418,7 +418,8 @@ export class KnowledgeFolderSection {
         line.createSpan({ cls: "echoink-folder-path-state", text: zh ? "原目录已失效" : "Unavailable" });
       }
       const remove = createOriginButton(line, { cls: "is-icon icon-button", attr: { "aria-label": `${zh ? "解绑文件夹" : "Unbind folder"} · ${path}` } });
-      setIcon(remove, "trash-2"); remove.disabled = locked;
+      if (Platform.isDesktopApp) applyDeleteButton(remove, { iconOnly: true }); else setIcon(remove, "trash-2");
+      remove.disabled = locked;
       remove.onclick = () => { this.draft.unbind(role, path); this.error = ""; this.redraw(); };
       this.renderOrganize(item, role, path, zh, locked);
     }

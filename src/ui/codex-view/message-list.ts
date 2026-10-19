@@ -135,6 +135,7 @@ export interface AgentIdentityView {
 export interface MessageApprovalDecisionBinding {
   readonly target: string;
   readonly preview: string;
+  readonly deleteAction?: boolean;
   decide(decision: "approve" | "reject"): boolean;
 }
 
@@ -3047,6 +3048,7 @@ export class CodexMessageListRenderer {
       state,
       target: message.approval?.target || binding?.target,
       preview: message.approval?.preview || binding?.preview,
+      ...(binding?.deleteAction === true ? { deleteAction: true } : {}),
       controlled: state === "waiting_approval" && Boolean(binding),
       language: env.settingsLanguage
     });

@@ -129,6 +129,7 @@ import {
 import { KnowledgeFolderSection } from "./knowledge-folder-section";
 import {
   applyAmicroButton,
+  applyDeleteButton,
   confirmAmicroButton,
   setAmicroButtonPending
 } from "./amicro-buttons";
@@ -1754,8 +1755,9 @@ export class CodexSettingTab extends PluginSettingTab {
         cls: "icon-button settings-danger",
         attr: { type: "button", "aria-label": zh ? `删除分类 ${category.name}` : `Delete category ${category.name}`, "aria-expanded": "false" }
       });
-      setIcon(deleteButton, "trash-2");
+      if (Platform.isDesktopApp) applyDeleteButton(deleteButton, { iconOnly: true }); else setIcon(deleteButton, "trash-2");
       deleteButton.onclick = () => showSettingsInlineConfirmation(row, deleteButton, {
+        deleteAction: Platform.isDesktopApp,
         message: zh
           ? `删除「${category.name}」后，${store.snapshot().filter((record) => record.categoryName === category.name).length} 条相关待办将转为「未分类」；待办本身不会被删除。`
           : `Deleting "${category.name}" moves ${store.snapshot().filter((record) => record.categoryName === category.name).length} to-do(s) to Uncategorized. The to-dos themselves are kept.`,
@@ -3357,7 +3359,9 @@ export class CodexSettingTab extends PluginSettingTab {
         attr: { type: "button", "aria-label": `${zh ? "删除" : "Delete"} ${entry.title}` }
       });
       remove.disabled = Boolean(this.archivedConversationBusyId);
+      if (Platform.isDesktopApp) applyDeleteButton(remove);
       remove.onclick = () => showSettingsInlineConfirmation(row, remove, {
+        deleteAction: Platform.isDesktopApp,
         message: zh ? `删除“${entry.title}”后无法在设置中恢复。确认删除这条会话？` : `Delete “${entry.title}”? It cannot be restored in Settings afterward.`,
         confirmLabel: zh ? "确认删除" : "Confirm deletion", cancelLabel: zh ? "取消" : "Cancel",
         onConfirm: () => this.softDeleteArchivedConversation(entry)
@@ -3540,7 +3544,9 @@ export class CodexSettingTab extends PluginSettingTab {
         }
       });
       forget.disabled = this.memoryActionRunning;
+      if (Platform.isDesktopApp) applyDeleteButton(forget);
       forget.onclick = () => showSettingsInlineConfirmation(row, forget, {
+        deleteAction: Platform.isDesktopApp,
         message: zh ? `忘掉“${record.title}”后，它不会再被召回；相关用户画像与 Agent 长期学习内容会同步更新。` : `After “${record.title}” is forgotten, it will no longer be recalled. Related user-profile and Agent learning projections will be updated too.`,
         confirmLabel: zh ? "确认忘掉" : "Confirm forgetting", cancelLabel: this.copy.common.cancel,
         onConfirm: () => this.forgetPersonalMemoryRecord(record)
@@ -4540,8 +4546,9 @@ export class CodexSettingTab extends PluginSettingTab {
           "data-echoink-focus-key": `provider:${saved.id}:delete`
         }
       });
-      setIcon(remove, "trash-2");
+      if (Platform.isDesktopApp) applyDeleteButton(remove, { iconOnly: true }); else setIcon(remove, "trash-2");
       remove.onclick = () => showSettingsInlineConfirmation(row, remove, {
+        deleteAction: Platform.isDesktopApp,
         message: `${this.copy.providers.deleteConfirm(providerDisplayName)} ${saved.id === active?.id
           ? label("将删除当前使用中的模型。EchoInk 会切换到下一项；若没有其他项，则进入未配置状态。", "The active model will be removed. EchoInk will switch to the next saved model, or become unconfigured if none remains.")
           : label("这会删除已保存的模型配置。", "This removes the saved model configuration.")}`,
@@ -6279,7 +6286,9 @@ export class CodexSettingTab extends PluginSettingTab {
         text: this.plugin.settings.settingsLanguage === "en" ? "Delete server" : "删除 Server",
         attr: { type: "button", "data-echoink-focus-key": `resource:${resource.id}:delete` }
       });
+      if (Platform.isDesktopApp) applyDeleteButton(remove);
       remove.onclick = () => showSettingsInlineConfirmation(row, remove, {
+        deleteAction: Platform.isDesktopApp,
         message: this.plugin.settings.settingsLanguage === "en" ? `Delete ${resource.name} and its local connection settings? This does not execute any MCP tool.` : `删除 ${resource.name} 及其本地连接设置？此操作不会执行任何 MCP Tool。`,
         confirmLabel: this.plugin.settings.settingsLanguage === "en" ? "Confirm deletion" : "确认删除", cancelLabel: this.copy.common.cancel,
         onConfirm: () => this.deleteMcpServer(resource, remove)

@@ -1,4 +1,5 @@
 import { setIcon } from "obsidian";
+import { applyDeleteButton } from "../settings/amicro-buttons";
 import type { SettingsLanguage } from "../settings/settings";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { parsePeopleNames, personColorIndex, personInitial, TODO_AVATAR_PALETTE_SIZE } from "./todo-people";
@@ -85,7 +86,12 @@ export function renderTodoTable(
     cell.setText(copy.empty);
     return;
   }
-  for (const record of records) tbody.appendChild(renderRow(record, copy, callbacks, host.ownerDocument, projects));
+  for (const record of records) {
+    const row = renderRow(record, copy, callbacks, host.ownerDocument, projects);
+    tbody.appendChild(row);
+    const deleteButton = row.querySelector<HTMLButtonElement>(".echoink-todo-action-delete");
+    if (deleteButton) applyDeleteButton(deleteButton, { iconOnly: true });
+  }
 }
 
 function renderRow(

@@ -309,7 +309,7 @@ export class TodoPageView extends ItemView {
   }
   private async remove(record: ParsedTodoRecord): Promise<void> {
     const accepted = await confirmModal(this.app, this.t("删除待办", "Delete to-do"),
-      this.t(`确定删除「${record.title}」吗？删除后无法恢复。`, `Delete "${record.title}"? This cannot be undone.`), this.t("删除", "Delete"), this.t("取消", "Cancel"));
+      this.t(`确定删除「${record.title}」吗？删除后无法恢复。`, `Delete "${record.title}"? This cannot be undone.`), this.t("删除", "Delete"), this.t("取消", "Cancel"), { deleteAction: true });
     if (accepted) await this.plugin.getTodoStore().removeTodo(record);
   }
 }

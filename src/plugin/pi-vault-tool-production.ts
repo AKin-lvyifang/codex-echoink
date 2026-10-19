@@ -80,6 +80,8 @@ export interface PiVaultApprovalConfirmationInput {
   readonly toolId: PiVaultToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill" | "todo_add" | "todo_update" | "todo_complete";
   readonly target: JsonValue;
   readonly preview: JsonValue;
+  /** Live presentation only; never part of the authorization Ticket. */
+  readonly deleteAction?: boolean;
   readonly signal: AbortSignal | undefined;
 }
 
@@ -123,7 +125,7 @@ export function createObsidianPiVaultApprovalConfirmation(
         formatApprovalBody(input.target, input.preview),
         "确认执行",
         "拒绝",
-        { signal: input.signal, preformatted: true }
+        { signal: input.signal, preformatted: true, ...(input.deleteAction === true ? { deleteAction: true } : {}) }
       );
     }
   });
@@ -225,6 +227,7 @@ export function createPiVaultProductionAuthorizationPort(
           toolId: input.toolId,
           target: target.resolvedTarget,
           preview: target.preview,
+          ...(input.toolId === "note_delete" ? { deleteAction: true } : {}),
           signal: input.signal
         });
       } catch {

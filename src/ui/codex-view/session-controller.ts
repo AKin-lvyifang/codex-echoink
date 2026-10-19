@@ -687,7 +687,8 @@ function defaultRecordMutationConfirm(
       title,
       body,
       acceptText,
-      declineText
+      declineText,
+      { deleteAction: true }
     );
 }
 

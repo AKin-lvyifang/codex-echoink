@@ -98,11 +98,11 @@
   white-space: normal;
 }
 
-.echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve {
+.echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button) {
   background: var(--echoink-theme-accent, var(--interactive-accent)) !important;
   color: var(--echoink-theme-on-accent, var(--text-on-accent)) !important;
 }
-.echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:is(:hover, :focus-visible) {
+.echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button):is(:hover, :focus-visible) {
   background: var(--background-modifier-hover) !important;
   color: var(--text-normal) !important;
 }

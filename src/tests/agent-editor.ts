@@ -148,7 +148,12 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
   {
     const f = fixture(); f.settings.agentRegistry.agents.push({ id: "colleague", name: "同事", avatar: { kind: "default" }, position: "", styleId: "companion", capabilityIds: [] });
     await f.open("colleague"); input(f.root, "未保存的新名字");
+    const deleteTrigger = f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!;
+    assert.equal(deleteTrigger.classList.contains("echoink-delete-button"), true);
+    assert.equal(deleteTrigger.querySelectorAll(".echoink-delete-button-icon").length, 1);
     f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle();
+    assert.equal(f.root.querySelector('[data-action="confirm-delete"]')!.classList.contains("echoink-delete-button"), true);
+    assert.equal(button(f.root, "取消删除").classList.contains("echoink-delete-button"), false, "cancel keeps its existing presentation");
     assert.equal(f.countCalls, 1); assert.match(f.root.textContent!, /3 件事（1 件正在进行）会交给总助/);
     assert.match(f.root.textContent!, /不会自动重新执行/); button(f.root, "取消删除").click(); await settle(); assert.equal(f.deletes, 0);
     f.setCounts({ total: 3, running: 0 }); f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle();
@@ -165,6 +170,20 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.countCalls, 4); f.root.querySelector<HTMLButtonElement>('[data-action="confirm-delete"]')!.click(); await settle();
     assert.equal(f.closed[0], "sol"); assert.equal(f.settings.agentRegistry.agents.some(agent => agent.id === "colleague"), false); f.dispose();
     console.log("PASS latest deletion totals/running counts, inline cancel, in-flight duplicate guard and failure preservation");
+  }
+  {
+    const f = fixture(); f.settings.agentRegistry.agents.push({ id: "mobile-colleague", name: "同事", avatar: { kind: "default" }, position: "", styleId: "companion", capabilityIds: [] });
+    win.document.body.classList.add("is-mobile");
+    try {
+      await f.open("mobile-colleague");
+      const trigger = f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!;
+      assert.equal(trigger.classList.contains("echoink-delete-button"), false);
+      assert.equal(trigger.querySelector(".echoink-delete-button-icon"), null);
+      trigger.click(); await settle();
+      assert.equal(f.root.querySelector('[data-action="confirm-delete"]')!.classList.contains("echoink-delete-button"), false);
+      button(f.root, "取消删除").click(); await settle(); assert.equal(f.deletes, 0);
+    } finally { f.dispose(); win.document.body.classList.remove("is-mobile"); }
+    console.log("PASS desktop delete presentation is absent from the shared editor's mobile host");
   }
   {
     const f = fixture(); await f.open(); input(f.root, "头像测试");

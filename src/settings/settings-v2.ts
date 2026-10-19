@@ -1,6 +1,6 @@
 import { createOriginButton, disposeOriginControls } from "./origin-controls";
 import { Setting, setIcon } from "obsidian";
-import { applyAmicroButton } from "./amicro-buttons";
+import { applyAmicroButton, applyDeleteButton } from "./amicro-buttons";
 
 export type SettingsStateTone = "neutral" | "error" | "success";
 
@@ -184,7 +184,7 @@ export function attachSettingsTooltip(
 const inlineConfirmations = new WeakMap<HTMLElement, () => void>();
 
 export function showSettingsInlineConfirmation(container: HTMLElement, trigger: HTMLButtonElement, options: {
-  message: string; confirmLabel: string; cancelLabel: string; onConfirm: () => Promise<void>;
+  message: string; confirmLabel: string; cancelLabel: string; onConfirm: () => Promise<void>; deleteAction?: boolean;
 }): void {
   const root = container.closest<HTMLElement>(".echoink-settings-demo") ?? container;
   inlineConfirmations.get(root)?.();
@@ -193,6 +193,7 @@ export function showSettingsInlineConfirmation(container: HTMLElement, trigger: 
   const actions = panel.createDiv({ cls: "settings-inline" });
   const cancel = createOriginButton(actions, { cls: "button", text: options.cancelLabel, attr: { type: "button" } });
   const confirm = createOriginButton(actions, { cls: "button settings-danger", text: options.confirmLabel, attr: { type: "button" } });
+  if (options.deleteAction) applyDeleteButton(confirm);
   const close = () => { disposeOriginControls(panel); panel.remove(); if (inlineConfirmations.get(root) === close) inlineConfirmations.delete(root); trigger.setAttr("aria-expanded", "false"); };
   inlineConfirmations.set(root, close);
   trigger.setAttr("aria-expanded", "true");

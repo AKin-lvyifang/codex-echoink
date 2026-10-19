@@ -1,6 +1,7 @@
 import type { SettingsLanguage } from "../../settings/settings";
 import { Platform } from "obsidian";
 import { conversationCopy } from "../../settings/i18n";
+import { applyDeleteButton } from "../../settings/amicro-buttons";
 import { formatApprovalPresentation, renderApprovalPresentation } from "./approval-presentation";
 
 export const SMOOTH_BLUR_OUT_UP_DURATION_MS = 560;
@@ -275,6 +276,7 @@ export function createSmoothAIApprovalCard(
     target?: string;
     preview?: string;
     controlled?: boolean;
+    deleteAction?: boolean;
     language?: SettingsLanguage;
   }>
 ): SmoothAIApprovalCardElements {
@@ -323,6 +325,7 @@ export function createSmoothAIApprovalCard(
     text: copy.approval.approve,
     attr: { type: "button" }
   });
+  if (options.deleteAction === true) applyDeleteButton(approveButton);
   return { root, approveButton, rejectButton };
 }
 
@@ -334,6 +337,7 @@ export function createAIElementsConfirmation(
     target?: string;
     preview?: string;
     controlled?: boolean;
+    deleteAction?: boolean;
     language?: SettingsLanguage;
   }>
 ): SmoothAIApprovalCardElements {

@@ -54,6 +54,8 @@ export async function runTodoPageModelTests(): Promise<void> {
   view.renderShell(); view.renderData();
   assert.equal(view.field("list").querySelectorAll("thead th").length, 7);
   assert.equal(view.field("list").querySelectorAll("tbody tr").length, 20);
+  assert.equal(view.field("list").querySelector(".echoink-todo-action-delete").classList.contains("echoink-delete-button"), true);
+  assert.equal(view.field("list").querySelector(".echoink-todo-action-edit").classList.contains("echoink-delete-button"), false);
   const completionHistory = JSON.stringify(store.completionStatistics());
   assert.equal(view.contentEl.querySelector(".todo-history-panel, .activity-heatmap, [data-todo-page=statistics]"), null);
   assert.match(view.field("count").textContent, /累计完成 5 · 今日完成 2/);
@@ -66,8 +68,12 @@ export async function runTodoPageModelTests(): Promise<void> {
   const wrap = view.field("list").querySelector(".echoink-todo-table-wrap"); wrap.scrollTop = 75; wrap.scrollLeft = 30; wrap.onscroll(); view.renderList();
   assert.equal(view.field("list").querySelector(".echoink-todo-table-wrap").scrollTop, 75);
   view.changeFilter({ status: "open" }); assert.equal(view.state.page, 1); assert.equal(view.state.scrollTop, 0);
-  const mobile = win.document.createElement("div"); renderTodoTable(mobile, [orphan], todoTableCopy("zh-CN"), { onToggle() {}, onEdit() {}, onDelete() {} });
+  const mobile = win.document.createElement("div"); mobile.classList.add("echoink-mobile");
+  let mobileDeletes = 0; renderTodoTable(mobile, [orphan], todoTableCopy("zh-CN"), { onToggle() {}, onEdit() {}, onDelete() { mobileDeletes++; } });
   assert.equal(mobile.querySelectorAll("th").length, 6, "Legacy/mobile callers retain six columns");
+  const mobileDelete = mobile.querySelector<HTMLButtonElement>(".echoink-todo-action-delete")!;
+  assert.equal(mobileDelete.classList.contains("echoink-delete-button"), false, "the shared mobile table retains its existing delete icon");
+  mobileDelete.click(); assert.equal(mobileDeletes, 1, "presentation does not change the original callback");
   const modal: any = new EchoInkTodoFormModal(app, plugin, orphan); modal.open();
   const projectSelect = modal.contentEl.querySelector('[aria-label="项目"]') as HTMLSelectElement;
   assert.match(projectSelect.selectedOptions[0].textContent!, /Deleted/);

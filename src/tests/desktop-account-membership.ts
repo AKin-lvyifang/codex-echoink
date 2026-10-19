@@ -179,9 +179,17 @@ async function redemption() {
 async function confirmations() {
   let signouts = 0, removals = 0, renames = 0;
   const f = fixture(initial(), { signOut: async () => { signouts++; throw new Error("退出失败"); }, removeDevice: async id => { assert.equal(id, "device-a"); removals++; throw new Error("解绑失败"); }, renameDevice: async (id, name) => { assert.equal(id, "device-a"); assert.equal(name, "改名设备"); renames++; throw new Error("改名失败"); } });
-  button(f.host, "退出登录").click(); button(f.host.querySelector(".echoink-settings-inline-confirm")!, "取消").click(); assert.equal(signouts, 0);
+  assert(!button(f.host, "退出登录").classList.contains("echoink-delete-button"));
+  button(f.host, "退出登录").click();
+  assert(!button(f.host.querySelector(".echoink-settings-inline-confirm")!, "退出登录").classList.contains("echoink-delete-button"));
+  button(f.host.querySelector(".echoink-settings-inline-confirm")!, "取消").click(); assert.equal(signouts, 0);
   button(f.host, "退出登录").click(); button(f.host.querySelector(".echoink-settings-inline-confirm")!, "退出登录").click(); await tick(); assert.equal(signouts, 1); assert.match(f.host.textContent!, /退出失败/);
-  f.host.querySelector<HTMLButtonElement>('.membership-footer [aria-label^="设备管理"]')!.click(); const detail = f.detail(); button(detail, "解绑本机").click(); button(detail.querySelector(".echoink-settings-inline-confirm")!, "取消").click(); assert.equal(removals, 0);
+  f.host.querySelector<HTMLButtonElement>('.membership-footer [aria-label^="设备管理"]')!.click(); const detail = f.detail();
+  assert(button(detail, "解绑本机").classList.contains("echoink-delete-button"));
+  button(detail, "解绑本机").click();
+  assert(button(detail, "确认解绑").classList.contains("echoink-delete-button"));
+  assert(!button(detail.querySelector(".echoink-settings-inline-confirm")!, "取消").classList.contains("echoink-delete-button"));
+  button(detail.querySelector(".echoink-settings-inline-confirm")!, "取消").click(); assert.equal(removals, 0);
   button(detail, "解绑本机").click(); button(detail, "确认解绑").click(); await tick(); assert.equal(removals, 1); assert.match(detail.textContent!, /解绑失败/);
   button(detail, "改名").click(); fill(detail.querySelector<HTMLInputElement>('input[type="text"]')!, "改名设备"); button(detail, "保存名称").click(); await tick(); assert.equal(renames, 1); assert.match(detail.textContent!, /改名失败/); assert.equal(f.controller.hasDraft, true); f.dispose();
 }

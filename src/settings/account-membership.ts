@@ -8,6 +8,7 @@ import { MobileViewport } from "../ui/mobile/viewport";
 import { createSettingsNavigationRow, showSettingsInlineConfirmation } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 import type { DesktopAccountHooks, AccountFormHandle } from "./desktop-account-membership";
+import { applyDeleteButton } from "./amicro-buttons";
 
 export type AccountMembershipPageOptions = { app: App; viewModel: AccountMembershipViewModel; actions?: AccountActions; language: string; openProviders: () => void; subscribe?: (listener:()=>void)=>()=>void; read?:()=>AccountMembershipViewModel; beginAction?:()=>()=>void; activationNotice?: string; desktopHooks?: DesktopAccountHooks };
 type PageOptions = AccountMembershipPageOptions;
@@ -116,8 +117,8 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     node.setAttribute("role", state === "error" ? "alert" : "status");
     node.textContent = message;
   };
-  const confirmInline = (host: HTMLElement, trigger: HTMLButtonElement, message: string, label: string, action: () => Promise<void>, saved?: () => void) => {
-    showSettingsInlineConfirmation(host, trigger, { message, confirmLabel: label, cancelLabel: t("取消", "Cancel"), onConfirm: async () => {
+  const confirmInline = (host: HTMLElement, trigger: HTMLButtonElement, message: string, label: string, action: () => Promise<void>, saved?: () => void, deleteAction = false) => {
+    showSettingsInlineConfirmation(host, trigger, { message, deleteAction, confirmLabel: label, cancelLabel: t("取消", "Cancel"), onConfirm: async () => {
       const release = beginAction();
       try { await action(); if (!disposed) saved?.(); }
       catch (error) { if (!disposed) { const status = el(host, "p", "activation-feedback"); feedbackState(status, "error", error instanceof Error ? error.message : t("操作失败，请重试", "Unable to complete the action")); } }
@@ -279,9 +280,10 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       const row = el(body, "div", "device-row"); const info = el(row, "div"); el(info, "strong", "", device.name); el(info, "small", "", device.description);
       if(actions.renameDevice) button(row,t("改名","Rename"),"quiet",()=>{const form=el(desktop ? row : body,"form");const name=field(form,t("设备名称","Device name"),"text",device.name);name.maxLength=80;submit(form,t("保存名称","Save name"),()=>actions.renameDevice!(device.id,name.value),modal);});
       const remove = button(row, device.current ? t("解绑本机", "Remove this device") : t("解绑", "Remove"), "secondary");
+      if (desktop) applyDeleteButton(remove);
       remove.disabled = !vm.serviceAvailable || !actions.removeDevice;
       remove.onclick = () => { if (!remove.disabled) {
-        if (desktop) confirmInline(row, remove, device.current ? t("解绑本机后需要重新激活，当前库内容会保留。", "This device will need activation again. Vault content remains.") : t("解绑此设备，当前库内容会保留。", "Remove this device. Vault content remains."), t("确认解绑", "Confirm removal"), () => actions.removeDevice!(device.id), () => { desktop.committed(); modal.close(); });
+        if (desktop) confirmInline(row, remove, device.current ? t("解绑本机后需要重新激活，当前库内容会保留。", "This device will need activation again. Vault content remains.") : t("解绑此设备，当前库内容会保留。", "Remove this device. Vault content remains."), t("确认解绑", "Confirm removal"), () => actions.removeDevice!(device.id), () => { desktop.committed(); modal.close(); }, true);
         else { const form = el(body, "form"); submit(form, t("确认解绑", "Confirm removal"), () => actions.removeDevice!(device.id), modal); }
       } };
     }
