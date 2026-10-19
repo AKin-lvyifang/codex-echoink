@@ -12,6 +12,7 @@ import { readNativeJournalSettings } from "./native-journal";
 import { dateKey, isHomeRecentNotePath, journalDateFromPath, type HomeVaultFileRecord } from "./home-workbench-model";
 import { homeConversationMessage, homeReviewPrompt, type HomeConversationAction } from "./home-conversation-actions";
 import { JournalTemplateModal } from "./journal-template-modal";
+import { renderPhotoCalendar } from "./photo-calendar";
 import { chooseEnglishDiaryHomeShortcut } from "./english-diary-shortcut-modal";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { formatHomeFullDate, formatHomeRelativeTime, homeCopy, type HomeCopy } from "./home-i18n";
@@ -595,42 +596,14 @@ export class EchoInkHomeView extends ItemView {
   }
   private renderCalendar(): void {
     this.field("month-label").setText(new Intl.DateTimeFormat(this.language, { year: "numeric", month: "long" }).format(this.month));
-    const weekdays = this.el(".calendar-weekdays");
-    markup(weekdays, Array.from({ length: 7 }, (_, i) => `<span>${esc(new Intl.DateTimeFormat(this.language, { weekday: "narrow" }).format(new Date(2024, 0, i + 1)))}</span>`).join(""));
-    const first = new Date(this.month.getFullYear(), this.month.getMonth(), 1); const offset = (first.getDay() + 6) % 7;
-    const cells = Math.ceil((new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate() + offset) / 7) * 7;
     const counts = new Map<string, number>();
     for (const event of this.events) counts.set(event.date, (counts.get(event.date) ?? 0) + 1);
-    // Reuse the current journal binding and cached image metadata. The old
-    // lifestyle branch scanned the vault using a separate map setting.
-    const journalSettings = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings);
-    const photos = new Map<string, string>();
-    const journalDates = new Set<string>();
-    for (const record of journalSettings.available ? this.data?.records ?? [] : []) {
-      const date = journalDateFromPath(record.path, journalSettings.folder, journalSettings.format);
-      if (!date) continue;
-      journalDates.add(date);
-      if (record.firstImageUrl && !photos.has(date)) photos.set(date, record.firstImageUrl);
-    }
-    markup(this.field("calendar-days"), Array.from({ length: cells }, (_, i) => {
-      const date = new Date(first.getFullYear(), first.getMonth(), i - offset + 1); const key = dateKey(date); const count = counts.get(key) ?? 0;
-      const photo = date.getMonth() === first.getMonth() && photos.has(key);
-      return `<button data-date="${key}" class="${date.getMonth() !== first.getMonth() ? "outside" : ""} ${key === dateKey(new Date()) ? "today" : ""} ${key === this.selectedDate ? "selected" : ""} ${count || journalDates.has(key) ? "has-record" : ""} ${photo ? "has-photo" : ""}" aria-pressed="${key === this.selectedDate}" aria-label="${esc(formatHomeFullDate(date, this.language))} · ${count}${photo ? this.t(" · 含照片", " · With photo") : ""}" ${key === dateKey(new Date()) ? 'aria-current="date"' : ""}><span class="calendar-day-number">${date.getDate()}</span></button>`;
-    }).join(""));
-    for (const day of Array.from(this.field("calendar-days").querySelectorAll<HTMLElement>(".has-photo"))) {
-      const photo = day.ownerDocument.createElement("img");
-      photo.className = "echoink-calendar-photo";
-      photo.alt = "";
-      photo.loading = "lazy";
-      photo.addEventListener("error", () => {
-        photo.remove();
-        day.classList.remove("has-photo");
-      }, { once: true });
-      photo.src = photos.get(day.dataset.date!)!;
-      day.prepend(photo);
-    }
-    const prefix = dateKey(first).slice(0, 7); const count = [...new Set([...counts.keys(), ...journalDates])].filter((date) => date.startsWith(prefix)).length;
-    const photoDays = [...photos.keys()].filter((date) => date.startsWith(prefix)).length;
+    const settings = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings);
+    const { recordDays: count, photoDays } = renderPhotoCalendar({
+      days: this.field("calendar-days"), weekdays: this.el(".calendar-weekdays"), month: this.month,
+      selected: this.selectedDate, records: settings.available ? this.data?.records ?? [] : [],
+      folder: settings.folder, format: settings.format, language: this.language, activity: counts
+    });
     this.field("month-record-count").setText(this.t(`本月 ${count} 天 · ${photoDays} 天有图`, `${count} days this month · ${photoDays} with photos`));
     const key = this.selectedDate ?? dateKey(new Date());
     this.field("journal-label").setText(this.t(`${this.shortDate(key)}的日记`, `Journal · ${this.shortDate(key)}`));

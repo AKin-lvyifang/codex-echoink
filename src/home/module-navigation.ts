@@ -1,5 +1,5 @@
 import type CodexForObsidianPlugin from "../main";
-import type { AgentModuleId } from "../agents/types";
+import type { AgentDefinition, AgentModuleId } from "../agents/types";
 import { GENERAL_ASSISTANT_ID } from "../agents/types";
 
 export const WORKBENCH_MODULES: readonly { id: AgentModuleId; icon: string; zh: string; en: string }[] = [
@@ -11,10 +11,22 @@ export const WORKBENCH_MODULES: readonly { id: AgentModuleId; icon: string; zh: 
   { id: "pdf-reading", icon: "file-text", zh: "PDF 精读", en: "PDF reading" }
 ];
 
-/** P5 routes to the existing working surfaces until the module pages ship. */
+/** Read the current registry at the action boundary; deleted owners fall back to Sol. */
+export function workbenchModuleOwner(plugin: CodexForObsidianPlugin, moduleId: AgentModuleId): AgentDefinition {
+  const registry = plugin.settings.agentRegistry;
+  return registry.agents.find(agent => agent.id === registry.moduleOwners[moduleId])
+    ?? registry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)!;
+}
+
+/** Opening a module handoff never sends, creates a task or replaces an existing draft. */
+export async function prefillWorkbenchModule(plugin: CodexForObsidianPlugin, moduleId: AgentModuleId, text: string): Promise<boolean> {
+  return plugin.openAgentTaskList(workbenchModuleOwner(plugin, moduleId).id, text);
+}
+
+/** New module pages replace only their own legacy navigation targets. */
 export async function openWorkbenchModule(plugin: CodexForObsidianPlugin, moduleId: AgentModuleId): Promise<void> {
   switch (moduleId) {
-    case "journal": await plugin.activateLegacyHomeView("calendar"); break;
+    case "journal": await plugin.activateJournalView(); break;
     case "todos": await plugin.activateLegacyHomeView("todos"); break;
     case "finance": await plugin.lifestyle.open("finance"); break;
     case "knowledge-base": await plugin.openEchoInkKnowledgeSettings(); break;

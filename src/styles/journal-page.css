@@ -1,0 +1,141 @@
+/* P6 desktop journal: container widths follow the actual Obsidian pane. */
+.echoink-journal-page {
+  container: echoink-journal / inline-size;
+  --bg: var(--echoink-theme-bg, var(--background-primary));
+  --text: var(--echoink-theme-text, var(--text-normal));
+  --secondary: var(--echoink-theme-secondary, var(--text-muted));
+  --muted: var(--echoink-theme-muted, var(--text-faint));
+  --line: var(--echoink-theme-line, var(--background-modifier-border));
+  --soft: var(--echoink-theme-hover, var(--background-modifier-hover));
+  --accent: var(--echoink-theme-accent, var(--interactive-accent));
+  padding: 0; overflow: auto; background: var(--bg); color: var(--text);
+  font-family: var(--font-interface); font-size: calc(var(--font-text-size, 16px) * .8125); line-height: 1.55;
+}
+.echoink-journal-page *, .echoink-journal-page *::before, .echoink-journal-page *::after { box-sizing: border-box; }
+.echoink-journal-page [hidden] { display: none !important; }
+.echoink-journal-page .journal-inner { width: 100%; max-width: 920px; margin: 0 auto; padding: 28px 32px 40px; }
+.echoink-journal-page .journal-header, .echoink-journal-page .journal-title, .echoink-journal-page .journal-month-navigation,
+.echoink-journal-page .journal-selected, .echoink-journal-page .journal-list-toolbar, .echoink-journal-page .journal-heatmap-heading {
+  display: flex; align-items: center; gap: 10px;
+}
+.echoink-journal-page .journal-header { flex-wrap: wrap; justify-content: space-between; margin-bottom: 22px; gap: 14px; }
+.echoink-journal-page .journal-header > .journal-button { margin-left: auto; }
+.echoink-journal-page h1 { margin: 0; font-size: calc(var(--font-text-size, 16px) * 1.375); font-weight: 600; line-height: 1.4; }
+.echoink-journal-page h2 { margin: 0; font-size: inherit; font-weight: 600; }
+.echoink-journal-page .journal-status:empty { display: none; }
+.echoink-journal-page .journal-status { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 18px; color: var(--secondary); overflow-wrap: anywhere; }
+.echoink-journal-page button.journal-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; height: auto; min-height: 30px;
+  max-width: 100%; margin: 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--text); font: inherit; line-height: 1.55; white-space: normal; overflow-wrap: anywhere;
+  box-shadow: none; outline: none; cursor: pointer;
+}
+.echoink-journal-page button.journal-button.is-primary { background: var(--accent); border-color: transparent; color: var(--echoink-theme-on-accent, var(--text-on-accent)); }
+.echoink-journal-page button.journal-button:hover, .echoink-journal-page button.journal-button:active,
+.echoink-journal-page button.journal-button:focus-visible, .echoink-journal-page button.journal-button.is-selected { background: var(--soft); color: var(--text); box-shadow: none; outline: none; }
+.echoink-journal-page button.journal-button.is-icon { width: 30px; min-width: 30px; padding: 0; border-color: transparent; background: transparent; }
+.echoink-journal-page button.journal-button.is-icon:hover, .echoink-journal-page button.journal-button.is-icon:focus-visible { background: var(--soft); }
+.echoink-journal-page .journal-button svg { width: 16px; height: 16px; }
+.echoink-journal-page button:disabled { opacity: .45; cursor: default; }
+.echoink-journal-page .journal-overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.echoink-journal-page .journal-calendar, .echoink-journal-page .journal-summary { min-width: 0; }
+.echoink-journal-page .journal-calendar { padding: 0; }
+.echoink-journal-page .journal-month-navigation { justify-content: space-between; margin-bottom: 12px; }
+.echoink-journal-page .journal-month-actions { display: flex; gap: 4px; }
+.echoink-journal-page .calendar-weekdays, .echoink-journal-page .calendar-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.echoink-journal-page .calendar-weekdays { margin-bottom: 6px; text-align: center; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .6875); }
+.echoink-journal-page .calendar-days > button {
+  position: relative; display: flex; justify-content: center; align-items: center; aspect-ratio: 1; min-width: 0; width: 100%; height: auto;
+  padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: transparent; color: var(--secondary); font: inherit; box-shadow: none; outline: none;
+}
+.echoink-journal-page .calendar-days > button.has-record { color: var(--text); font-weight: 600; background: var(--soft); }
+.echoink-journal-page .calendar-days > button.outside { opacity: .45; }
+.echoink-journal-page .calendar-days > button.today .calendar-day-number { text-decoration: underline; text-underline-offset: 3px; }
+.echoink-journal-page .calendar-days > button:hover, .echoink-journal-page .calendar-days > button:focus-visible,
+.echoink-journal-page .calendar-days > button.selected { background: var(--soft); box-shadow: none; outline: none; }
+.echoink-journal-page .calendar-days .echoink-calendar-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.echoink-journal-page .calendar-days .calendar-day-number { position: relative; z-index: 1; }
+.echoink-journal-page .calendar-days .has-photo .calendar-day-number { align-self: flex-end; margin: 2px; padding: 0 4px; border-radius: 4px; background: var(--bg); color: var(--text); }
+.echoink-journal-page .calendar-days .has-photo.selected::after, .echoink-journal-page .calendar-days .has-photo:focus-visible::after { content: ""; position: absolute; inset: 0; background: var(--soft); opacity: .5; pointer-events: none; }
+.echoink-journal-page .journal-selected { justify-content: space-between; flex-wrap: wrap; margin-top: 14px; }
+.echoink-journal-page .journal-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.echoink-journal-page .journal-stats > div { display: flex; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.echoink-journal-page .journal-stats > div > span { color: var(--secondary); }
+.echoink-journal-page .journal-stats strong { font-size: calc(var(--font-text-size, 16px) * 1.875); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.echoink-journal-page .journal-stats small { margin-left: 6px; font-size: calc(var(--font-text-size, 16px) * .75); font-weight: 400; color: var(--secondary); }
+.echoink-journal-page .journal-heatmap-heading { justify-content: space-between; flex-wrap: wrap; }
+.echoink-journal-page .journal-heatmap { min-width: 0; }
+.echoink-journal-page .journal-all { margin-top: 26px; }
+.echoink-journal-page .journal-list-toolbar { justify-content: flex-end; flex-wrap: wrap; margin: 14px 0; gap: 12px; }
+.echoink-journal-page .journal-segments { display: inline-flex; gap: 0; padding: 3px; border-radius: 8px; background: var(--soft); margin-right: auto; }
+.echoink-journal-page .journal-segments .journal-button { border-color: transparent; background: transparent; min-height: 26px; padding: 0 10px; }
+.echoink-journal-page .journal-segments .journal-button.is-selected { background: var(--bg); font-weight: 600; }
+.echoink-journal-page .journal-segments .journal-button:focus-visible { background: var(--soft); }
+.echoink-journal-page .journal-list-period { color: var(--secondary); }
+.echoink-journal-page .journal-list { overflow: auto; max-height: min(560px, 65vh); min-height: 40px; border: 1px solid var(--line); border-radius: 10px; }
+.echoink-journal-page button.journal-entry-row, .echoink-journal-page button.journal-month-row { width: 100%; justify-content: flex-start; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 12px 14px; gap: 12px; background: transparent; }
+.echoink-journal-page button.journal-entry-row:last-child, .echoink-journal-page button.journal-month-row:last-child { border-bottom: 0; }
+.echoink-journal-page .journal-entry-copy { display: flex; flex: 1; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+.echoink-journal-page .journal-entry-date { color: var(--secondary); font-variant-numeric: tabular-nums; }
+.echoink-journal-page .journal-entry-copy strong { font-weight: 500; overflow-wrap: anywhere; }
+.echoink-journal-page .journal-entry-summary, .echoink-journal-page .journal-entry-path { width: 100%; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); overflow-wrap: anywhere; }
+.echoink-journal-page .journal-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; flex: 0 0 auto; }
+.echoink-journal-page .journal-entry-lead { display: flex; align-items: center; justify-content: center; width: 36px; flex: 0 0 auto; color: var(--secondary); }
+.echoink-journal-page .journal-month-label { flex: 1; }
+.echoink-journal-page .journal-month-count { color: var(--secondary); font-variant-numeric: tabular-nums; }
+.echoink-journal-page .journal-empty { padding-inline: 14px; }
+.echoink-journal-page .journal-pagination { display: flex; justify-content: flex-end; margin-top: 14px; }
+.echoink-journal-page .journal-pagination ul { flex-wrap: wrap; }
+.echoink-journal-page .journal-empty { padding: 20px 0; color: var(--secondary); }
+@container echoink-journal (max-width: 760px) {
+  .echoink-journal-page .journal-overview { grid-template-columns: minmax(0, 1fr); }
+}
+@container echoink-journal (max-width: 520px) {
+  .echoink-journal-page .journal-inner { padding: 20px 16px 28px; }
+  .echoink-journal-page .journal-header > .journal-button { margin-left: auto; }
+  .echoink-journal-page .journal-header .journal-title { width: 100%; }
+  .echoink-journal-page .journal-thumb { width: 36px; height: 36px; }
+}
+
+/* Reuse the existing activity-heatmap component geometry in this independent page. */
+.echoink-journal-page .activity-range-trigger.echoink-origin-control { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; max-width: 100%; min-height: 32px; width: auto; margin-inline-start: auto; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: calc(var(--font-text-size,16px)*.75); line-height: 1.55; white-space: normal; overflow-wrap: anywhere; }
+.echoink-journal-page .activity-range-trigger > span:first-child { display: inline-flex; flex: none; }
+.echoink-journal-page .activity-range-trigger svg { width: 13px; height: 13px; }
+.echoink-journal-page .activity-range-editor { container: echoink-activity-range / inline-size; min-width: 0; max-width: 100%; margin: 0 0 14px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.echoink-journal-page .activity-range-editor[hidden] { display: none !important; }
+.echoink-journal-page .activity-range-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-items: end; gap: 12px; min-width: 0; }
+.echoink-journal-page .activity-range-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--secondary); font-size: calc(var(--font-text-size,16px)*.75); line-height: 1.55; }
+.echoink-journal-page .activity-range-field:first-child { grid-column: 1 / -1; width: min(180px,100%); }
+@container echoink-activity-range (max-width:280px) { .echoink-journal-page .activity-range-fields { grid-template-columns: minmax(0,1fr); } }
+.echoink-journal-page .activity-range-editor :is(.activity-range-mode,.activity-range-start,.activity-range-end) { width: 100%; min-width: 0; max-width: 100%; font-size: calc(var(--font-text-size,16px)*.6875); }
+.echoink-journal-page .activity-range-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; min-width: 0; margin-top: 12px; }
+.echoink-journal-page .activity-range-actions button { width: auto; min-height: 32px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: calc(var(--font-text-size,16px)*.75); line-height: 1.55; }
+.echoink-journal-page .activity-range-error { margin: 8px 0 0; color: var(--text-error,var(--danger)); font-size: calc(var(--font-text-size,16px)*.6875); line-height: 1.85; }
+.echoink-journal-page :is(.activity-range-trigger.echoink-origin-control,.activity-range-editor .echoink-origin-control[data-slot]):is(:focus,:focus-visible,[data-state=open]) { outline: none; box-shadow: none; border-color: var(--line); background: var(--background-modifier-hover,var(--soft)); }
+.echoink-journal-page .history-period.activity-heatmap-period { min-width: 0; width: auto; margin: 0; order: initial; font-size: calc(var(--font-text-size,16px)*.6875); line-height: 1.85; overflow-wrap: anywhere; }
+.echoink-journal-page .echoink-activity-heatmap { --activity-cell: var(--font-text-size,16px); --activity-gap: calc(var(--font-text-size,16px)*.25); min-width: 0; max-width: 100%; }
+.echoink-journal-page .echoink-activity-heatmap > .settings-note { margin: 0 0 12px; }
+.echoink-journal-page .echoink-activity-heatmap .activity-heatmap-calendar { display: grid; grid-template-columns: calc(var(--font-text-size,16px)*1.75) minmax(0,1fr); gap: var(--activity-gap); align-items: start; min-width: 0; }
+.echoink-journal-page .echoink-activity-heatmap :is(.activity-heatmap-weekdays,.todo-heatmap-grid) { display: grid; grid-template-rows: calc(var(--font-text-size,16px)*1.125) repeat(7,var(--activity-cell)); gap: var(--activity-gap); align-items: center; }
+.echoink-journal-page .echoink-activity-heatmap .activity-heatmap-weekdays { grid-template-columns: minmax(0,1fr); min-width: 0; }
+.echoink-journal-page .echoink-activity-heatmap .todo-heatmap-scroll { overflow-x: auto; max-width: 100%; min-width: 0; padding: 0 0 8px; scrollbar-width: thin; }
+.echoink-journal-page .echoink-activity-heatmap .todo-heatmap-grid { width: max-content; min-width: 0; grid-template-columns: repeat(var(--todo-heatmap-weeks,53),var(--activity-cell)); padding-inline-end: calc(var(--font-text-size,16px)*1.5); box-sizing: border-box; }
+.echoink-journal-page .echoink-activity-heatmap :is(.todo-heatmap-month,.todo-heatmap-weekday,.todo-heatmap-legend) { color: var(--muted); font-size: calc(var(--font-text-size,16px)*.6875); line-height: 1.4; }
+.echoink-journal-page .echoink-activity-heatmap .todo-heatmap-month { grid-row: 1; white-space: nowrap; align-self: start; }
+.echoink-journal-page .echoink-activity-heatmap .todo-heatmap-weekday { grid-column: 1; }
+.echoink-journal-page .echoink-activity-heatmap button.todo-heatmap-cell { display: block; appearance: none; box-sizing: border-box; width: var(--activity-cell); height: var(--activity-cell); min-height: 0; min-width: 0; padding: 0; line-height: 1; outline: none; box-shadow: none; border: 1px solid var(--line); border-radius: 2px; background: var(--soft); }
+.echoink-journal-page .echoink-activity-heatmap .todo-heatmap-legend { display: flex; flex-wrap: wrap; gap: 10px; }
+.echoink-journal-page .echoink-activity-heatmap .todo-heatmap-swatch { display: block; box-sizing: border-box; width: 8px; height: 8px; border: 1px solid var(--line); border-radius: 2px; background: var(--soft); }
+.echoink-journal-page .echoink-activity-heatmap :is(.todo-heatmap-cell,.todo-heatmap-swatch).todo-level-1 { background: color-mix(in srgb,var(--accent) 25%,var(--soft)); }
+.echoink-journal-page .echoink-activity-heatmap :is(.todo-heatmap-cell,.todo-heatmap-swatch).todo-level-2 { background: color-mix(in srgb,var(--accent) 55%,var(--soft)); }
+.echoink-journal-page .echoink-activity-heatmap :is(.todo-heatmap-cell,.todo-heatmap-swatch).todo-level-3 { background: var(--accent); }
+.echoink-journal-page .echoink-activity-heatmap :is(.todo-heatmap-cell,.todo-heatmap-swatch).todo-level-success { background: var(--green,var(--text-success)); }
+.echoink-journal-page .echoink-activity-heatmap :is(.todo-heatmap-cell,.todo-heatmap-swatch).todo-level-failed { background: var(--text-error,var(--danger)); }
+.echoink-journal-page .echoink-activity-heatmap button.todo-heatmap-cell:is(:hover,:focus,:focus-visible) { outline: none; box-shadow: none; filter: brightness(.85); }
+.echoink-journal-page .echoink-activity-heatmap .todo-history-footer { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 12px 0 0; }
+.echoink-journal-page .echoink-activity-heatmap .todo-history-footer > * { margin: 0; }
+.echoink-journal-page .echoink-activity-heatmap .todo-history-day-detail { font-size: calc(var(--font-text-size,16px)*.75); line-height: 1.85; }
+/* Keep the module palette when Obsidian colors the root leaf content. */
+.workspace-split.mod-root .view-content.echoink-journal-page { background: var(--bg); }
+.echoink-journal-page button.journal-button.echoink-amicro-button:not(:disabled):is(:hover,:active,:focus-visible) { background: var(--soft); color: var(--text); border-color: var(--line); outline: none; box-shadow: none; }
+.echoink-journal-page button.journal-button.echoink-amicro-button:is(.is-primary,.is-icon):not(:disabled):is(:hover,:active,:focus-visible) { border-color: transparent; }

@@ -130,6 +130,8 @@ export class FinanceWorkspace {
     });
   }
   private catalog(): FinanceSettings { return this.service.plugin.settings.lifestyle.finance; }
+  getSelectedMonth(): string { return this.state.month; }
+
   private categories(month = this.state.month): string[] { const data = this.data(); return [...new Set([...financeCategoryNames(this.catalog(), this.entries(), data.budgets, month), ...Object.keys(effectiveFinanceBudget(data, month)?.allocations ?? {})])]; }
   close(scroll: number): void { this.detach(); this.state.scroll = scroll; lastClosedState = structuredClone(this.state); }
   detach(): void { this.inlineControls?.dispose(); this.inlineControls = null; if (this.host) disposeOriginControls(this.host); this.numbers.release(); this.renderedPage = null; this.tabsObserver?.disconnect(); this.tabsObserver = null; this.billPlanView.dispose(true); this.unsubscribeAnalysis?.(); this.unsubscribeAnalysis = null; this.unsubscribeMembership?.(); this.unsubscribeMembership = null; this.disposeRecentSizer(); this.releaseMarkdown(); this.host = null; }

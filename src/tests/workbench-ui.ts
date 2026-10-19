@@ -72,6 +72,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
     async readPiConversationCatalogEntry(id: string) { return tasks.find(task => task.conversationId === id); },
     piTurnInteractionBinding(identity: unknown) { return { submit(answers: unknown) { calls.push(["answer", identity, answers]); return true; } }; },
+    async activateJournalView() { calls.push(["journal"]); },
     async activateLegacyHomeView(section: string) { calls.push(["legacy", section]); },
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
@@ -103,7 +104,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     await click("new-task"); assert.deepEqual(calls.at(-1), ["list", GENERAL_ASSISTANT_ID]);
     await click("settings"); assert.deepEqual(calls.at(-1), ["settings"]);
     for (const module of snapshot.modules) await openWorkbenchModule(plugin, module);
-    assert.ok(calls.some(call => JSON.stringify(call) === '["legacy","calendar"]'));
+    assert.ok(calls.some(call => JSON.stringify(call) === '["journal"]'));
     assert.ok(calls.some(call => JSON.stringify(call) === '["legacy","todos"]'));
     assert.ok(calls.some(call => JSON.stringify(call) === '["lifestyle","finance"]'));
     assert.ok(calls.some(call => call[0] === "knowledge")); assert.ok(calls.some(call => call[0] === "english"));

@@ -1,3 +1,4 @@
+import { workbenchModuleOwner, prefillWorkbenchModule } from "./home/module-navigation";
 import { latestTaskRun, type TaskInterruptionInfo, type TaskInterruptionReason, type TaskResumeContext } from "./agents/task-resume";
 import { prepareTaskResumeSafety, readTaskResumeSafety } from "./plugin/task-resume-safety";
 import { assertTaskResumeCapabilities } from "./plugin/pi-production-runtime-composition";
@@ -407,6 +408,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
   async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> { return this.getViewService().activateLegacyHomeView(section); }
+  async activateJournalView(): Promise<void> { return this.getViewService().activateJournalView(); }
+  getWorkbenchModuleOwner(moduleId: AgentModuleId): AgentDefinition { return workbenchModuleOwner(this, moduleId); }
+  async prefillWorkbenchModule(moduleId: AgentModuleId, text: string): Promise<boolean> { return prefillWorkbenchModule(this, moduleId, text); }
   setSettingsTabInstance(tab: CodexSettingTab): void { this.settingsTabInstance = tab; }
   async openLifestyleSettings(kind: LifestyleKind): Promise<void> {
     this.settings.settingsTab = "resources";

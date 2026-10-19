@@ -1,3 +1,4 @@
+import { EchoInkJournalView, VIEW_TYPE_ECHOINK_JOURNAL } from "../home/journal-page";
 import { Notice, Platform, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { EchoInkHomeView, EchoInkLegacyHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
@@ -26,6 +27,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
   plugin.registerView(VIEW_TYPE_ECHOINK_HOME, (leaf: WorkspaceLeaf) => Platform.isDesktopApp
     ? new EchoInkWorkbenchView(leaf, plugin) : new EchoInkHomeView(leaf, plugin));
   if (Platform.isDesktopApp) {
+    plugin.registerView(VIEW_TYPE_ECHOINK_JOURNAL, (leaf: WorkspaceLeaf) => new EchoInkJournalView(leaf, plugin));
     plugin.registerView("echoink-legacy-home", (leaf: WorkspaceLeaf) => new EchoInkLegacyHomeView(leaf, plugin));
     const workbench = getWorkbenchDataService(plugin);
     plugin.register(() => workbench.dispose());
