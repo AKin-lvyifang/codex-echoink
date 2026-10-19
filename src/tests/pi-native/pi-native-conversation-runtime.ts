@@ -15,6 +15,7 @@ import {
   rm
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { mock } from "node:test";
 import * as path from "node:path";
 import {
   CURRENT_SESSION_VERSION,
@@ -128,6 +129,86 @@ const QUERY_MAINTENANCE_SCOPE = Object.freeze({
   mode: "query" as const,
   candidatePaths: Object.freeze(["raw/a.md"])
 });
+
+export async function runPiWorkRecordProjectionTests(): Promise<void> {
+  await assertKnowledgeObservationAndProgressArePrivacySafe();
+  await assertWorkRecordMetadataSurvivesRuntimePrivacyFiltering();
+  await assertSlowProviderWaitRefreshesAndStops();
+}
+
+async function assertSlowProviderWaitRefreshesAndStops(): Promise<void> {
+  let observedAt = 100_000;
+  mock.timers.enable({ apis: ["setInterval"] });
+  try {
+    await withFixture(["work-record-wait"], async (fixture) => {
+      await createAndActivateMaintenanceConversation(fixture, "work-record-wait");
+      const handle = await fixture.submit({ conversationId: "work-record-wait", text: "普通问题", submittedAt: observedAt });
+      const events: PiChatRuntimeEvent[] = [];
+      fixture.runtime.subscribeProductRun(handle.productRunId, (event) => events.push(structuredClone(event)));
+      const session = fixture.latestSession();
+      session.beginProviderRequest();
+      const provider = () => events.filter((event): event is Extract<PiChatRuntimeEvent, { type: "reasoning_summary" }> =>
+        event.type === "reasoning_summary").at(-1)?.summary.activities.find((activity) => activity.kind === "provider");
+      await waitForTestCondition(() => Boolean(provider()));
+      observedAt += 5_000;
+      mock.timers.tick(5_000);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(provider()!.updatedAt, provider()!.startedAt, "five seconds does not expose waiting yet");
+      observedAt += 1_000;
+      mock.timers.tick(1_000);
+      await waitForTestCondition(() => provider()?.updatedAt === observedAt);
+      assert.equal(provider()!.updatedAt - provider()!.startedAt, 6_000);
+      session.emitAssistantText("模型已有响应。");
+      await waitForTestCondition(() => provider()?.status === "completed");
+      const eventCount = events.length;
+      observedAt += 10_000;
+      mock.timers.tick(10_000);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(events.length, eventCount, "answer text clears the display-only waiting timer");
+      session.finishSuccessful("模型已有响应。");
+      await handle.result;
+    }, { now: () => observedAt });
+  } finally {
+    mock.timers.reset();
+  }
+}
+
+async function assertWorkRecordMetadataSurvivesRuntimePrivacyFiltering(): Promise<void> {
+  await withFixture(["work-record-metadata"], async (fixture) => {
+    fixture.configureFactoryTools({ registered: ["knowledge_search", "knowledge_read"], defaults: [], planAllowed: [] });
+    await createAndActivateMaintenanceConversation(fixture, "work-record-metadata");
+    const handle = await fixture.submit({ conversationId: "work-record-metadata", text: "/ask 查找依据", submittedAt: 3 });
+    const events: PiChatRuntimeEvent[] = [];
+    fixture.runtime.subscribeProductRun(handle.productRunId, (event) => events.push(structuredClone(event)));
+    const session = fixture.latestSession();
+    for (const [index, total, returned] of [[1, 26, 6], [2, 9, 3]]) {
+      session.emitToolStart(`search-${index}`, "knowledge_search", { query: "PRIVATE_QUERY_CANARY" });
+      session.emitToolEnd(`search-${index}`, "knowledge_search", {
+        content: [{ type: "text", text: "PRIVATE_BODY_CANARY" }],
+        details: { source: "echoink-knowledge", status: "completed", total, returned,
+          remaining: total - returned, elapsedMs: 1,
+          references: [{ vaultRelativePath: "wiki/实际笔记.md", lineStart: 7, lineEnd: 15,
+            excerpt: "PRIVATE_EXCERPT_CANARY", contentRevision: `sha256:${"a".repeat(64)}` }] }
+      }, false);
+    }
+    session.emitToolStart("read-failure", "knowledge_read", { prompt: "PRIVATE_PROMPT_CANARY" });
+    session.emitToolEnd("read-failure", "knowledge_read", { details: { errorCode: "knowledge_source_changed" },
+      content: [{ type: "text", text: "PRIVATE_FAILURE_CANARY" }] }, true);
+    session.finishSuccessful("本轮没有可引用依据。");
+    await handle.result;
+    const tools = events.filter((event): event is Extract<PiChatRuntimeEvent, { type: "tool_execution_end" }> => event.type === "tool_execution_end");
+    assert.deepEqual(tools.slice(0, 2).map((event) => event.result), [26, 9].map((total, index) => ({
+      status: "completed", details: { source: "echoink-knowledge", status: "completed", total, returned: index ? 3 : 6,
+        continuation: false, references: [{ vaultRelativePath: "wiki/实际笔记.md", lineStart: 7, lineEnd: 15 }] }
+    })));
+    assert.deepEqual(tools[2]?.result, { status: "failed", details: { errorCode: "knowledge_source_changed" } });
+    assert.doesNotMatch(JSON.stringify(events), /PRIVATE_|sha256/u);
+  }, { knowledge: {
+    async retrieveAsk() { return { status: "no_evidence", references: [], providerResourceText: "",
+      retrieval: { elapsedMs: 1, total: 0, returned: 0, remaining: 0, hasMore: false, exhausted: true } }; },
+    async verifyAskReferences(input) { return { status: "valid", references: input.references }; }
+  } });
+}
 
 export async function runKnowledgeMaintenanceRuntimeTests(): Promise<void> {
   assertPersistedMaintenanceSourceVersions();
@@ -473,7 +554,7 @@ export async function runPiNativeConversationRuntimeTests(): Promise<void> {
   await assertFailedAssistantHistoryIsDurableButExcludedFromMemory();
   await assertKnowledgeAskUsesAgentAndReadOnlyTools();
   await assertAskSourceAttributionCapturesOnlyInjectedPrimaryMemory();
-  await assertKnowledgeObservationAndProgressArePrivacySafe();
+  await runPiWorkRecordProjectionTests();
   await assertKnowledgeMaintenancePreferenceSnapshotIsTurnBound();
   await assertKnowledgeMaintenanceSettlementRequiresUniqueDurableResult();
   await assertTrustedKnowledgeMaintenanceResultsSurviveSettlementAndReopen();
@@ -2382,7 +2463,7 @@ Promise<void> {
     assert.equal(durableFailedAnswer?.status, "failed");
     assert.equal(
       durableFailedAnswer?.details,
-      "Provider 返回的流数据格式损坏，回答未完成。"
+      "模型服务返回的流数据格式损坏，回答未完成。"
     );
 
     await fixture.runtime.releaseConversation(conversationId);
@@ -3483,6 +3564,13 @@ async function assertKnowledgeObservationAndProgressArePrivacySafe(): Promise<vo
       )?.total,
       4
     );
+    assert.equal(terminalReasoning!.activities.filter((activity) => activity.kind === "memory").length, 1,
+      "all recall stages update one memory row");
+    assert.equal(terminalReasoning!.activities.find((activity) => activity.kind === "memory")?.completed, 2);
+    const retrievals = terminalReasoning!.activities.filter((activity) => activity.kind === "knowledge");
+    assert.equal(retrievals.length, 1, "initial retrieval phases share one row; real tools have their own rows");
+    assert.equal(retrievals[0]?.total, 120);
+    assert.equal(retrievals[0]?.completed, 8, "continuation tools cannot inflate the initial retrieval count");
     assert.doesNotMatch(JSON.stringify(settled.knowledge), /sha256|PRIVATE_/u);
   }, { knowledge });
 }

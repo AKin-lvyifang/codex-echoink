@@ -38,6 +38,7 @@ import { buildPiNoteMentionContextMessage } from "../../harness/pi-native/pi-not
 import { buildPiDocumentContextMessage } from "../../harness/pi-native/pi-document-context";
 
 export async function runPiChatUiProjectorTests(): Promise<void> {
+  assertWorkRecordToolMetadataIsAccurateAndPrivate();
   assertToolExecutionTimesExcludeModelWaiting();
   assertReasoningSummariesProjectStableAndPrivate();
   assertTaskPlansProjectOneStableDurableMessage();
@@ -62,6 +63,48 @@ export async function runPiChatUiProjectorTests(): Promise<void> {
   assertPhaseTwoWriteTerminalStatesRemainDistinct();
   assertSessionRunAndBranchScopesDoNotCross();
   assertInterruptedReadbackNeverPretendsTheRunCompleted();
+}
+
+function assertWorkRecordToolMetadataIsAccurateAndPrivate(): void {
+  const projector = new PiChatUiProjector();
+  let view = projector.createEmpty({ piSessionId: "work-records", now: 1 });
+  const result = {
+    content: [{ type: "text", text: "PRIVATE_BODY_AND_PROMPT_CANARY" }],
+    details: {
+      source: "echoink-knowledge", status: "completed", total: 26, returned: 6,
+      query: "PRIVATE_QUERY_CANARY", apiKey: "PRIVATE_KEY_CANARY",
+      references: [{ vaultRelativePath: "wiki/三个世界模型.md", lineStart: 7, lineEnd: 15,
+        excerpt: "PRIVATE_EXCERPT_CANARY", contentRevision: "PRIVATE_REVISION_CANARY" }]
+    }
+  };
+  for (const [toolCallId, toolName] of [["search-one", "knowledge_search"], ["search-two", "knowledge_search"], ["read-one", "knowledge_read"]]) {
+    view = project(projector, view, runtimeEvent("tool_execution_start", 2, {
+      toolCallId, toolName, privacySafe: true, args: { prompt: "PRIVATE_ARGUMENT_CANARY" }
+    }, "work-records", "work-records-run"));
+    view = project(projector, view, runtimeEvent("tool_execution_end", 3, {
+      toolCallId, toolName, privacySafe: true, result, isError: false
+    }, "work-records", "work-records-run"));
+  }
+  assert.equal(view.messages.filter((message) => message.title === "检索知识库").length, 2,
+    "separate actual retrievals keep their own rows");
+  assert.equal(toolByCall(view, "search-one").text, "26 篇相关，读了前 6 篇");
+  const read = toolByCall(view, "read-one");
+  assert.equal(read.title, "读取笔记");
+  assert.equal(read.text, "三个世界模型");
+  assert.equal(read.files?.[0]?.path, "wiki/三个世界模型.md");
+  assert.match(read.processOutput!, /第 7–15 行/u);
+  assert.doesNotMatch(JSON.stringify(view), /PRIVATE_/u);
+  for (const toolName of ["knowledge_maintain", "third_party_tool"]) {
+    view = project(projector, view, runtimeEvent("tool_execution_end", 4, {
+      toolCallId: toolName, toolName, privacySafe: toolName === "knowledge_maintain", isError: true,
+      result: { content: [{ type: "text", text: "PRIVATE_FAILURE_BODY_CANARY" }],
+        details: { errorCode: "knowledge_source_changed", rawPrompt: "PRIVATE_PROMPT_CANARY" } }
+    }, "work-records", "work-records-run"));
+    const failure = toolByCall(view, toolName);
+    assert.equal(failure.title, toolName === "knowledge_maintain" ? "整理知识关联" : toolName);
+    assert.match(failure.text, /来源内容已变化.*回答没用上这一步/u);
+  }
+  assert.doesNotMatch(JSON.stringify(view), /PRIVATE_|Knowledge Agent|WAL|CAS|隐私安全进度/u);
 }
 
 function assertProviderReasoningSegmentsStayDistinctAndReopen(): void {
@@ -275,27 +318,27 @@ function assertPersonalMemoryToolCardsStayUserFacing(): void {
       toolName: "memory_search",
       toolCallId: "safe-live-search",
       processKind: "search",
-      runningTitle: "正在检查已有记忆",
+      runningTitle: "查看个人记忆",
       runningText: "正在检查是否已有相关记忆。",
-      completedTitle: "已完成已有记忆检查",
+      completedTitle: "查看个人记忆",
       completedText: "已有记忆检查完成。"
     },
     {
       toolName: "memory_read",
       toolCallId: "safe-live-read",
       processKind: "view",
-      runningTitle: "正在读取相关记忆",
+      runningTitle: "读取个人记忆",
       runningText: "正在读取与当前对话相关的记忆。",
-      completedTitle: "已读取相关记忆",
+      completedTitle: "读取个人记忆",
       completedText: "相关记忆读取完成。"
     },
     {
       toolName: "memory_write",
       toolCallId: "safe-live-write",
       processKind: "tool",
-      runningTitle: "正在整理个人记忆",
+      runningTitle: "写入个人记忆",
       runningText: "正在整理值得长期保留的信息。",
-      completedTitle: "已完成个人记忆处理",
+      completedTitle: "写入个人记忆",
       completedText: "个人记忆处理完成。"
     }
   ] as const;
@@ -827,7 +870,7 @@ function assertReasoningSummariesProjectStableAndPrivate(): void {
     summary: withProvider
   }, piSessionId, productRunId, "reasoning-terminal"));
   const liveId = live.messages.find((message) => message.reasoningSummary)?.id;
-  assert.equal(live.messages.find((message) => message.reasoningSummary)?.text.includes("请求模型"), true);
+  assert.equal(live.messages.find((message) => message.reasoningSummary)?.text.includes("请求模型"), false);
   live = project(projector, live, runtimeEvent("reasoning_summary", 4_000, {
     summary: terminal
   }, piSessionId, productRunId, "reasoning-terminal"));
@@ -1213,6 +1256,7 @@ function assertKnowledgeMaintenanceResultCardIsLiveDurableAndStrict(): void {
     isError: false
   }, "session-maintain-live", "run-maintain-live", "tool-maintain-live"));
   const liveCard = onlyTool(live);
+  assert.equal(liveCard.status, "completed", "a verified maintenance result is not waiting for a separate receipt");
   assert.equal(liveCard.itemType, "knowledgeBase");
   assert.equal(liveCard.knowledgeBaseUi?.title, "知识维护完成");
   assert.equal(
@@ -1498,7 +1542,7 @@ function assertKnowledgeProgressAndToolPayloadsStayPrivate(): void {
     stage: "searching"
   }, "session-knowledge-private", "run-knowledge-private"));
   assert.ok(view.messages.some((message) =>
-    message.title === "正在检索知识库" && message.itemType === "thinking"
+    message.title === "检索知识库" && message.itemType === "thinking"
   ));
   assert.doesNotMatch(JSON.stringify(view), /冲突与时效/u);
 
@@ -1527,7 +1571,7 @@ function assertKnowledgeProgressAndToolPayloadsStayPrivate(): void {
     /PRIVATE_(?:QUERY|CURSOR|RESULT|PATH)_CANARY/u
   );
   const tool = toolByCall(view, "knowledge-search-private");
-  assert.equal(tool.title, "知识库检索完成");
+  assert.equal(tool.title, "检索知识库");
   assert.equal(tool.processInputAvailability, "empty");
   assert.equal(tool.processOutputAvailability, "empty");
 
@@ -1536,7 +1580,7 @@ function assertKnowledgeProgressAndToolPayloadsStayPrivate(): void {
     stage: "checking_conflicts_freshness"
   }, "session-knowledge-private", "run-knowledge-private"));
   assert.ok(view.messages.some((message) =>
-    message.title === "正在检查冲突与时效"
+    message.title === "检查来源与时效"
   ));
   view = project(projector, view, runtimeEvent("message_update", 6, {
     messageKey: "assistant-knowledge-private",
@@ -1718,7 +1762,7 @@ function assertDurableBranchRebuildsExistingUiCardsAndHidesReasoning(): void {
   assert.equal(view.messages.filter((message) => message.itemType === "contextCompaction").length, 2);
   assert.ok(view.messages.some((message) => message.title === "上下文已压缩"));
   assert.ok(view.messages.some((message) => message.title === "已切换对话分支"));
-  assert.ok(view.messages.some((message) => message.text === "Provider fixture failure" && message.status === "failed"));
+  assert.ok(view.messages.some((message) => message.text === "模型服务请求失败，回答未完成。" && message.status === "failed"));
   assert.deepEqual(view.provisionalMessageIds, []);
   assert.deepEqual(view.pendingToolCallIds, []);
 

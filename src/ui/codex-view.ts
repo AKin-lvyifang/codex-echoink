@@ -1453,7 +1453,16 @@ export class CodexView extends ItemView {
         productRunId,
         toolCallId
       });
-      if (binding) return binding;
+      if (binding) {
+        const inline = Array.from(this.messagesEl?.querySelectorAll<HTMLElement>(".codex-smooth-ai-approval-card") ?? [])
+          .find((card) => card.dataset.approvalMessageId === message.id
+            && !card.hidden
+            && !card.closest<HTMLElement>(".codex-ai-elements-chain-of-thought")?.hidden
+            && card.querySelector<HTMLButtonElement>(".is-approve")?.disabled === false);
+        // The inline record owns this exact live approval; virtualized-away
+        // records still use the Composer dock as their reachable fallback.
+        return inline ? null : binding;
+      }
     }
     return null;
   }

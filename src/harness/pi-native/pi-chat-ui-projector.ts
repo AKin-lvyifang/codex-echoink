@@ -1198,7 +1198,7 @@ export class PiChatUiProjector {
       id,
       role: "assistant",
       itemType: "thinking",
-      title: "正在回忆相关 Memory",
+      title: "查看个人记忆",
       text: memoryRecallStageText(event.stage),
       status: "running",
       runId: event.productRunId,
@@ -1802,23 +1802,38 @@ function toolMessage(input: {
       completedAt: input.completedAt
     };
   }
-  const privateCopy = input.privacySafe
+  const privateCopy = input.privacySafe || input.status === "failed"
     ? privacySafeKnowledgeToolCopy(input.toolName, input.status, input.result, input.resultText)
     : null;
   if (privateCopy) {
+    const metadata = piKnowledgeToolDisplayMetadata(input.toolName, input.result);
+    const references = input.status === "completed" ? metadata.references ?? [] : [];
+    const files = references.map((reference) => ({
+      name: reference.vaultRelativePath.split("/").at(-1)!,
+      path: reference.vaultRelativePath,
+      displayPath: reference.vaultRelativePath,
+      kind: "vault" as const,
+      openable: true
+    }));
+    const fileDetails = references.map((reference) =>
+      `${reference.vaultRelativePath} · 第 ${reference.lineStart}–${reference.lineEnd} 行`
+    ).join("\n");
+    const output = fileDetails || (input.status === "failed" ? privateCopy.text : "");
     return {
       id: toolMessageId(input.scope, input.toolCallId),
       role: "tool",
       itemType: "dynamicToolCall",
       processKind: privateCopy.processKind,
       title: privateCopy.title,
-      details: privateCopy.details,
+      details: undefined,
       text: privateCopy.text,
-      processContentAvailability: input.status === "running"
+      processOutput: output || undefined,
+      files: files.length ? files : undefined,
+      processContentAvailability: output ? "provided" : input.status === "running"
         ? "unavailable"
         : "empty",
       processInputAvailability: "empty",
-      processOutputAvailability: input.status === "running"
+      processOutputAvailability: output ? "provided" : input.status === "running"
         ? "unavailable"
         : "empty",
       status: input.status,
@@ -1849,7 +1864,7 @@ function toolMessage(input: {
     role: "tool",
     itemType,
     processKind: summary.kind === "other" ? processKind : summary.kind,
-    title: exactTitle ?? summary.title ?? input.toolName ?? "工具",
+    title: exactTitle ?? input.toolName ?? "工具",
     details: summary.detail || input.toolName || undefined,
     text: processOutput || processInput,
     processInput: processInput || undefined,
@@ -2074,6 +2089,9 @@ function toolProductIdentityKey(toolCallId: string, productRunId: string): strin
 
 function projectedToolId(message: ChatMessage): string {
   const title = visibleText(message.title);
+  for (const toolId of [...PHASE_TWO_READ_TOOL_IDS, ...PHASE_TWO_WRITE_TOOL_IDS]) {
+    if (exactPiToolDisplayTitle(toolId) === title) return toolId;
+  }
   const prefix = "使用工具：";
   if (title.startsWith(prefix)) return normalizedToolName(title.slice(prefix.length));
   return normalizedToolName(title);
@@ -2209,7 +2227,9 @@ function assistantFailure(message: PiSessionMessageView): {
       itemType: "error",
       status: "failed",
       title: "回答失败",
-      text: message.echoInkProviderFailure ? assistantProviderFailureText(message) : assistantFailureText(message.errorMessage)
+      text: message.echoInkProviderFailure
+        ? assistantProviderFailureText(message).replace(/Provider[ \t]*/gu, "模型服务")
+        : assistantFailureText(message.errorMessage)
     };
   }
   if (stopReason === "aborted" || stopReason === "cancelled" || stopReason === "canceled") {
@@ -2227,9 +2247,12 @@ function assistantFailure(message: PiSessionMessageView): {
 function assistantFailureText(errorMessage: unknown): string {
   const safe = visibleText(errorMessage);
   if (safe === PI_DOCUMENT_FALLBACK_INPUT_BUDGET_EXCEEDED) {
-    return "Provider 不支持该原生文档输入，且冻结文本超过当前模型的输入容量；未发起第二次请求。请减少文档、新开会话或切换容量更大的模型。";
+    return "模型服务不支持该原生文档输入，且冻结文本超过当前模型的输入容量；未发起第二次请求。请减少文档、新开会话或切换容量更大的模型。";
   }
-  return (providerFailureText(safe) ?? safe) || "Agent 执行失败";
+  if (safe === "provider_auth_failed" || safe === "provider_api_key_missing") {
+    return "API Key 无效或未填写，请到设置 › 模型服务检查。";
+  }
+  return (providerFailureText(safe) ?? "模型服务请求失败，回答未完成。").replace(/Provider[ \t]*/gu, "模型服务");
 }
 
 function toolCallsFromContent(
@@ -2493,10 +2516,15 @@ function toolItemType(toolName: string, args: unknown, result: unknown): string 
 }
 
 function exactPiToolDisplayTitle(toolName: string): string | undefined {
-  if (normalizedToolName(toolName) === "web_search") return "网页搜索 · Tavily";
-  return normalizedToolName(toolName) === "memory_write"
-    ? "写入个人记忆"
-    : undefined;
+  const titles: Readonly<Record<string, string>> = {
+    web_search: "网页搜索 · Tavily", knowledge_search: "检索知识库",
+    vault_search: "检索笔记", knowledge_read: "读取笔记", note_read: "读取笔记",
+    knowledge_maintain: "整理知识关联", memory_search: "查看个人记忆",
+    memory_read: "读取个人记忆", memory_write: "写入个人记忆",
+    note_create: "创建笔记", note_update: "修改笔记", metadata_update: "修改笔记属性",
+    note_move: "移动笔记", note_delete: "删除笔记"
+  };
+  return titles[normalizedToolName(toolName)];
 }
 
 function personalMemoryToolCopy(
@@ -2557,11 +2585,7 @@ function personalMemoryToolCopy(
       : terminalText;
   return {
     processKind: copy.processKind,
-    title: inProgress
-      ? copy.runningTitle
-      : status === "completed"
-        ? copy.completedTitle
-        : copy.terminalTitle,
+    title: exactPiToolDisplayTitle(toolName) ?? copy.terminalTitle,
     text,
     ...(inProgress ? {} : { processOutput: text })
   };
@@ -2571,10 +2595,10 @@ function personalMemoryToolNameFromCard(
   message: Readonly<ChatMessage>
 ): "memory_search" | "memory_read" | "memory_write" | null {
   const title = message.title ?? "";
-  if (["正在检查已有记忆", "已完成已有记忆检查", "检查已有记忆"].includes(title)) {
+  if (["查看个人记忆", "正在检查已有记忆", "已完成已有记忆检查", "检查已有记忆"].includes(title)) {
     return "memory_search";
   }
-  if (["正在读取相关记忆", "已读取相关记忆", "读取相关记忆"].includes(title)) {
+  if (["读取个人记忆", "正在读取相关记忆", "已读取相关记忆", "读取相关记忆"].includes(title)) {
     return "memory_read";
   }
   if (["正在整理个人记忆", "已完成个人记忆处理", "写入个人记忆"].includes(title)) {
@@ -2890,7 +2914,7 @@ function reasoningSummaryText(
   summary: Readonly<EchoInkReasoningSummarySnapshot>
 ): string {
   if (summary.activities.length === 0) return "";
-  return summary.activities.map(reasoningActivityText).join("\n");
+  return summary.activities.map(reasoningActivityText).filter(Boolean).join("\n");
 }
 
 function reopenedReasoningTerminalStatus(
@@ -2906,24 +2930,34 @@ function reopenedReasoningTerminalStatus(
 function reasoningActivityText(
   activity: Readonly<EchoInkReasoningActivity>
 ): string {
-  const progress = activity.total === undefined
-    ? ""
-    : ` · ${activity.current ?? activity.completed ?? 0}/${activity.total}`;
   if (activity.kind === "provider") {
-    return `${reasoningActivityStatusCopy(activity.status, "请求模型")}${progress}`;
+    if (activity.status === "completed") return "";
+    if (activity.status === "active") {
+      const elapsed = activity.updatedAt - activity.startedAt;
+      return elapsed > 5_000 ? `等待模型响应 · ${Math.floor(elapsed / 1_000)} 秒` : "";
+    }
+    return reasoningActivityStatusCopy(activity.status, "等待模型响应");
   }
   if (activity.kind === "knowledge") {
-    return `${reasoningStageCopy(activity.stage, "处理 Knowledge")}${progress}`;
+    if (activity.stage === "searching" || activity.stage === "continuing_search"
+      || activity.stage === "reading_knowledge") {
+      if (activity.status === "active") return "检索知识库 · 查找中…";
+      return activity.total === undefined ? "检索知识库"
+        : `检索知识库 · ${activity.total} 篇相关，读了前 ${activity.current ?? activity.completed ?? 0} 篇`;
+    }
+    return reasoningStageCopy(activity.stage, "处理知识库");
   }
   if (activity.kind === "memory") {
-    return `${reasoningStageCopy(activity.stage, "处理 Memory")}${progress}`;
+    if (activity.status === "active") return "查看个人记忆 · 查看中…";
+    const count = activity.completed ?? activity.current ?? 0;
+    return count ? `查看个人记忆 · 用上 ${count} 条` : "";
   }
   if (activity.kind === "task") {
-    return `${reasoningActivityStatusCopy(activity.status, "更新任务计划")}${progress}`;
+    return reasoningActivityStatusCopy(activity.status, "更新任务计划");
   }
   return reasoningActivityStatusCopy(
     activity.status,
-    `执行 ${activity.name ?? "工具"}`
+    exactPiToolDisplayTitle(activity.name ?? "") ?? activity.name ?? "执行工具"
   );
 }
 
@@ -2943,19 +2977,19 @@ function reasoningStageCopy(
   fallback: string
 ): string {
   switch (stage) {
-    case "requesting": return "请求模型";
-    case "searching": return "检索 Knowledge";
-    case "continuing_search": return "继续检索 Knowledge";
-    case "reading_knowledge": return "读取 Knowledge";
-    case "comparing_memory": return "比对 Memory";
+    case "requesting": return "等待模型响应";
+    case "searching": return "检索知识库";
+    case "continuing_search": return "检索知识库";
+    case "reading_knowledge": return "读取笔记";
+    case "comparing_memory": return "查看个人记忆";
     case "checking_conflicts_freshness": return "检查冲突与时效";
-    case "refining_knowledge": return "提炼 Knowledge";
-    case "writing_and_readback": return "写入并回读 Knowledge";
-    case "loading": return "加载 Memory";
-    case "catalog": return "检查 Memory 目录";
-    case "matching": return "匹配 Memory";
-    case "budgeting": return "分配 Memory 上下文";
-    case "assembling": return "组装 Memory 上下文";
+    case "refining_knowledge": return "整理知识";
+    case "writing_and_readback": return "写入并核对";
+    case "loading":
+    case "catalog":
+    case "matching":
+    case "budgeting":
+    case "assembling": return "查看中…";
     case "pending": return "等待任务计划";
     case "in_progress": return "执行任务计划";
     case "paused": return "任务计划已中断";
@@ -3271,15 +3305,9 @@ function runtimeEmptyMessageText(role: "user" | "assistant", status: string): st
 }
 
 function memoryRecallStageText(
-  stage: Extract<PiChatRuntimeEvent, { type: "memory_recall_progress" }>["stage"]
+  _stage: Extract<PiChatRuntimeEvent, { type: "memory_recall_progress" }>["stage"]
 ): string {
-  switch (stage) {
-    case "loading": return "正在读取 Memory 真源";
-    case "catalog": return "正在核对完整 Memory 索引";
-    case "matching": return "正在寻找相关历史";
-    case "budgeting": return "正在按上下文预算筛选";
-    case "assembling": return "正在组装本轮 Recall 上下文";
-  }
+  return "查看中…";
 }
 
 function knowledgeProgressCopy(
@@ -3290,20 +3318,77 @@ function knowledgeProgressCopy(
 ): Readonly<{ title: string; text: string }> {
   switch (stage) {
     case "searching":
-      return { title: "正在检索知识库", text: "正在查找相关本地知识" };
+      return { title: "检索知识库", text: "查找中…" };
     case "continuing_search":
-      return { title: "正在继续查找", text: "当前证据不足，继续读取后续结果" };
+      return { title: "检索知识库", text: "查找中…" };
     case "reading_knowledge":
-      return { title: "正在读取相关笔记", text: "正在核对可引用的真实内容" };
+      return { title: "读取笔记", text: "读取中…" };
     case "comparing_memory":
-      return { title: "正在比对历史偏好", text: "正在核对相关 Personal Memory" };
+      return { title: "查看个人记忆", text: "查看中…" };
     case "checking_conflicts_freshness":
-      return { title: "正在检查冲突与时效", text: "已发现来源变化或时效冲突信号" };
+      return { title: "检查来源与时效", text: "核对中…" };
     case "refining_knowledge":
-      return { title: "正在提炼知识", text: "正在锁定来源、核对冲突并生成知识候选" };
+      return { title: "整理知识", text: "整理中…" };
     case "writing_and_readback":
-      return { title: "正在写入并回读", text: "正在通过 WAL 与 CAS 安全写入并核对最终文件" };
+      return { title: "写入并核对", text: "核对中…" };
   }
+}
+
+/** Only verified note locations and bounded counts cross the private Tool boundary. */
+export function piKnowledgeToolDisplayMetadata(toolName: string, result: unknown): Readonly<{
+  source?: "echoink-knowledge" | "echoink-vault";
+  status?: "completed";
+  total?: number;
+  returned?: number;
+  continuation?: boolean;
+  references?: readonly Readonly<{ vaultRelativePath: string; lineStart: number; lineEnd: number }>[];
+  errorCode?: string;
+}> {
+  const outer = plainObject(result);
+  const details = plainObject(outer?.details) ?? outer;
+  const metadata: {
+    source?: "echoink-knowledge" | "echoink-vault";
+    status?: "completed";
+    total?: number; returned?: number; continuation?: boolean;
+    references?: { vaultRelativePath: string; lineStart: number; lineEnd: number }[];
+    errorCode?: string;
+  } = {};
+  const errorCode = privacySafeToolFailureCode(result);
+  if (errorCode) metadata.errorCode = errorCode;
+  else if (personalMemoryToolFailureText(toolName, result)) {
+    const code = visibleText(details?.errorCode);
+    if (code) metadata.errorCode = code;
+  }
+  if (details?.status !== "completed"
+    || (details.source !== "echoink-knowledge" && details.source !== "echoink-vault")) return metadata;
+  metadata.source = details.source;
+  metadata.status = "completed";
+  if (toolName === "knowledge_search" && details.source === "echoink-knowledge") {
+    const total = nonNegativeInteger(details.total);
+    const returned = nonNegativeInteger(details.returned);
+    if (total !== undefined && returned !== undefined && returned <= total) {
+      metadata.total = total;
+      metadata.returned = returned;
+      metadata.continuation = details.continuation === true;
+    }
+  }
+  if (["knowledge_search", "knowledge_read", "note_read"].includes(toolName)
+    && Array.isArray(details.references)) {
+    const references = details.references.slice(0, 100).flatMap((value) => {
+      const reference = plainObject(value);
+      const path = typeof reference?.vaultRelativePath === "string"
+        ? reference.vaultRelativePath.trim().replace(/\\/gu, "/") : "";
+      const lineStart = nonNegativeInteger(reference?.lineStart);
+      const lineEnd = nonNegativeInteger(reference?.lineEnd);
+      if (!path || path.length > 1_024 || path.startsWith("/")
+        || /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(path) || /[\u0000-\u001f\u007f]/u.test(path)
+        || path.split("/").some((part) => !part || part === "." || part === "..")
+        || !lineStart || lineEnd === undefined || lineEnd < lineStart) return [];
+      return [{ vaultRelativePath: path, lineStart, lineEnd }];
+    });
+    if (references.length) metadata.references = references;
+  }
+  return metadata;
 }
 
 function privacySafeKnowledgeToolCopy(
@@ -3316,60 +3401,33 @@ function privacySafeKnowledgeToolCopy(
   title: string;
   details: string;
   text: string;
-}> | null {
+}> {
   const inProgress = runtimeMessageStillActive(status);
-  const completed = status === "completed";
-  const title = (running: string, success: string, stopped: string) =>
-    inProgress ? running : completed ? success : stopped;
-  const text = (running: string, success: string) =>
-    inProgress ? running : completed ? success
-      : status === "interrupted" || status === "cancelled"
-        ? "本次操作已停止，未确认完成。"
-        : privacySafeToolFailureText(result, resultText);
-  switch (toolName) {
-    case "knowledge_search":
-    case "vault_search":
-      return {
-        processKind: "search",
-        title: title("正在检索知识库", "知识库检索完成", "检索知识库"),
-        details: "Knowledge 索引",
-        text: text("正在查找相关本地知识", "已完成本次知识库检索")
-      };
-    case "knowledge_read":
-    case "note_read":
-      return {
-        processKind: "view",
-        title: title("正在读取相关笔记", "相关笔记读取完成", "读取相关笔记"),
-        details: "只读笔记",
-        text: text("正在核对可引用的真实内容", "已完成本次只读核对")
-      };
-    case "memory_search":
-    case "memory_read":
-      return {
-        processKind: toolName === "memory_search" ? "search" : "view",
-        title: title("正在比对历史偏好", "历史偏好比对完成", "比对历史偏好"),
-        details: "只读 Personal Memory",
-        text: text("正在核对相关 Personal Memory", "已完成本次历史偏好核对")
-      };
-    case "knowledge_maintain":
-      return {
-        processKind: "other",
-        title: title("正在处理知识维护", "知识维护处理完成", "处理知识维护"),
-        details: "固定六步协议",
-        text: text("正在提炼、写入并回读验证", "已完成本次维护 Tool")
-      };
-    default:
-      return {
-        processKind: "other",
-        title: title("Knowledge Agent 正在处理", "Knowledge Agent 工具完成", "Knowledge Agent 工具"),
-        details: "隐私安全进度",
-        text: text("正在执行受控本地步骤", "已完成本次受控处理")
-      };
+  const metadata = piKnowledgeToolDisplayMetadata(toolName, result);
+  const search = toolName === "knowledge_search" || toolName === "vault_search";
+  const read = toolName === "knowledge_read" || toolName === "note_read";
+  const title = exactPiToolDisplayTitle(toolName) ?? toolName;
+  let text = inProgress ? (search ? "查找中…" : read ? "读取中…" : "处理中…") : "";
+  if (status === "completed") {
+    if (search) {
+      text = metadata.total === undefined ? "已完成本次检索"
+        : `${metadata.total} 篇相关，读了${metadata.continuation ? "" : "前 "}${metadata.returned} 篇`;
+    } else if (read && metadata.references?.length) {
+      const paths = [...new Set(metadata.references.map((reference) => reference.vaultRelativePath))];
+      const name = paths[0].split("/").at(-1)!.replace(/\.md$/iu, "");
+      text = paths.length > 1 ? `${name} 等 ${paths.length} 篇` : name;
+    } else {
+      text = read ? "已完成本次读取" : toolName === "knowledge_maintain" ? "写入并核对" : "已完成本次操作";
+    }
+  } else if (!inProgress) {
+    text = status === "interrupted" || status === "cancelled"
+      ? "已中断，未完成。"
+      : `${privacySafeToolFailureText(result, resultText)} 回答没用上这一步。`;
   }
+  return { processKind: search ? "search" : read ? "view" : "tool", title, details: "", text };
 }
 
-function privacySafeToolFailureText(result: unknown, resultText: string | undefined): string {
-  const copy: Readonly<Record<string, string>> = {
+const KNOWLEDGE_TOOL_FAILURE_COPY: Readonly<Record<string, string>> = {
     target_not_found: "未找到目标文件，文件可能尚未创建或路径已变化。",
     target_kind_invalid: "目标类型不符合本次操作要求，文件与文件夹不能互换。",
     knowledge_not_found: "未找到目标资料，资料可能已移除或尚未进入索引。",
@@ -3384,7 +3442,10 @@ function privacySafeToolFailureText(result: unknown, resultText: string | undefi
     approval_denied: "此次操作未获批准，没有执行。",
     approval_cancelled: "此次操作已取消。",
     operation_cancelled: "此次操作已取消。"
-  };
+};
+
+function privacySafeToolFailureCode(result: unknown, resultText?: string): string | undefined {
+  const copy = KNOWLEDGE_TOOL_FAILURE_COPY;
   // Live events wrap content/details; durable blocked calls can contain only a code.
   // Match known codes exactly, never render raw result bodies or exception messages.
   const outer = plainObject(result);
@@ -3393,17 +3454,22 @@ function privacySafeToolFailureText(result: unknown, resultText: string | undefi
   for (let value of candidates) {
     if (typeof value === "string") {
       const code = value.trim();
-      if (Object.hasOwn(copy, code)) return copy[code];
+      if (Object.hasOwn(copy, code)) return code;
       try { value = JSON.parse(code); } catch { continue; }
     }
     const record = plainObject(value);
     const details = plainObject(record?.details);
     const error = plainObject(record?.error);
     for (const code of [details?.errorCode, record?.errorCode, error?.code, record?.error, record?.code]) {
-      if (typeof code === "string" && Object.hasOwn(copy, code)) return copy[code];
+      if (typeof code === "string" && Object.hasOwn(copy, code)) return code;
     }
   }
-  return "本次操作未完成，记录未保留可展示的具体原因。";
+  return undefined;
+}
+
+function privacySafeToolFailureText(result: unknown, resultText: string | undefined): string {
+  const code = privacySafeToolFailureCode(result, resultText);
+  return code ? KNOWLEDGE_TOOL_FAILURE_COPY[code] : "本次操作未完成，记录未保留可展示的具体原因。";
 }
 
 function removeRuntimeProgressMessages(

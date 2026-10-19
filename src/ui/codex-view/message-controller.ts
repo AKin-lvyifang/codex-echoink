@@ -92,6 +92,8 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     messagesEl: host.messagesEl,
     virtualListEl: host.virtualListEl,
     sessionId: session.id,
+    conversationTitle: session.title,
+    getKnowledgeFolderBindings: () => host.plugin.settings.knowledgeBase.folderBindings,
     settingsLanguage: host.plugin.settings.settingsLanguage,
     agentIdentity: host.plugin.getEchoInkAgentIdentityView(),
     messages,

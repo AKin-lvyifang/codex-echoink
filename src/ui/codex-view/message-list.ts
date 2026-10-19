@@ -41,7 +41,9 @@ import {
   type AgentTurnView,
   type CompletedAgentTurn
 } from "./agent-turn-process";
-import { copyAnswerMarkdown } from "./answer-copy";
+import { copyAnswerMarkdown, resolveAnswerMarkdown } from "./answer-copy";
+import { saveAnswerAsNote } from "./answer-save";
+import type { KnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
 import {
   piApprovalPreviewChangeProjection,
   piEntryIdFromProjectedMessageId,
@@ -142,6 +144,9 @@ export interface MessageListRenderInput {
   messagesEl: HTMLElement;
   virtualListEl: HTMLElement;
   sessionId: string;
+  conversationTitle?: string;
+  knowledgeFolderBindings?: KnowledgeFolderBindings | null;
+  getKnowledgeFolderBindings?: () => KnowledgeFolderBindings | null | undefined;
   settingsLanguage: SettingsLanguage;
   messages: ChatMessage[];
   /** 当前 Agent 身份展示快照；缺省时回退 EchoInk + bot 图标。 */
@@ -400,6 +405,7 @@ export class CodexMessageListRenderer {
   private openKnowledgeBaseReportSections = new Map<string, boolean>();
   private openTaskPlans = new Map<string, boolean>();
   private openTurnProcesses = new Map<string, boolean>();
+  private answerSaveStates = new Map<string, { status: "pending" | "saved" | "failed"; path?: string; error?: string }>();
   private answerReadingTail: { rowId: string; height: number } | null = null;
   private virtualLayoutHeight = 0;
   private reasoningDisclosureStates = new Map<string, ReasoningDisclosureState>();
@@ -908,14 +914,24 @@ export class CodexMessageListRenderer {
       ...Array.from(turnRoot.querySelectorAll<HTMLElement>(".codex-assistant-turn-reasoning-node")),
       ...Array.from(turnRoot.querySelectorAll<HTMLElement>(".codex-assistant-turn-action-node"))
     ];
+    if (knownNodes.length !== turn.processNodes.length
+      || knownNodes.some((element) => !turn.processNodes.some((node) => node.nodeId === element.dataset.nodeId))) return false;
     for (const node of turn.processNodes) {
       const renderedNode = knownNodes.find((candidate) => candidate.dataset.nodeId === node.nodeId);
       if (!renderedNode) return false;
+      // Waiting owns live controls. Rebuild that boundary so settled approvals
+      // cannot leave their old sibling buttons in the work record.
+      if ((renderedNode.dataset.nodeStatus === "waiting") !== (node.status === "waiting")) return false;
       for (const status of ["waiting", "running", "completed", "failed", "cancelled", "skipped"] as const) {
         renderedNode.toggleClass(`is-${status}`, status === node.status);
       }
       renderedNode.toggleClass("is-current", node.nodeId === turn.currentNodeId);
       renderedNode.dataset.nodeStatus = node.status;
+      const icon = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-icon");
+      const nodeSource = turn.messages.find((candidate) => candidate.id === node.sourceMessageId);
+      const produced = nodeSource ? knowledgeUsageMessageData(nodeSource).producedPaths : [];
+      if (icon) setSemanticIcon(icon, node.kind === "artifact" && node.status === "completed"
+        && produced.length && produced.every((path) => path.endsWith(".canvas")) ? "layout-dashboard" : assistantTurnNodeIcon(node));
       const title = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-title");
       if (title && title.textContent !== node.title) title.setText(node.title);
       const summary = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-summary");
@@ -942,6 +958,8 @@ export class CodexMessageListRenderer {
       this.patchProviderReasoning(matchingRoot, turn, reasoning);
     }
 
+    const currentAnswerSection = turnRoot.querySelector<HTMLElement>(".codex-assistant-turn-final");
+    if (currentAnswerSection) this.renderAnswerSources(currentAnswerSection, turn);
     if (turn.finalAnswer?.id === message.id) {
       const answerSection = turnRoot.querySelector<HTMLElement>(".codex-assistant-turn-final");
       const answerContent = answerSection?.querySelector<HTMLElement>(".codex-message-content");
@@ -1685,6 +1703,7 @@ export class CodexMessageListRenderer {
     const footer = container.createDiv({ cls: "codex-agent-footer" });
     const actions = footer.createDiv({ cls: "codex-agent-footer-actions" });
     this.renderMessageCopyAction(actions, message, false);
+    this.renderAnswerSaveAction(actions, message);
     const runtime = footer.createSpan({
       cls: "codex-agent-footer-runtime",
       attr: {
@@ -1707,6 +1726,90 @@ export class CodexMessageListRenderer {
     const time = formatAnswerFooterTime(message.completedAt ?? message.createdAt, language);
     if (time) footer.createSpan({ cls: "codex-agent-footer-time", text: time });
     return actions;
+  }
+
+  private renderAnswerSaveAction(container: HTMLElement, message: ChatMessage): void {
+    const env = this.requireEnv();
+    const key = `${env.sessionId}\0${message.id}`;
+    const button = container.createEl("button", {
+      cls: "codex-message-action codex-answer-save",
+      attr: { type: "button" }
+    });
+    const icon = button.createSpan({ cls: "codex-message-action-icon", attr: { "aria-hidden": "true" } });
+    const refresh = () => {
+      const state = this.answerSaveStates.get(key);
+      const label = conversationUiText(env.settingsLanguage,
+        state?.status === "pending" ? "正在存为笔记" : state?.status === "saved" ? "已存为笔记，点击打开" : state?.status === "failed" ? `保存失败：${state.error}` : "存为笔记",
+        state?.status === "pending" ? "Saving note" : state?.status === "saved" ? "Saved as note, open" : state?.status === "failed" ? `Save failed: ${state.error}` : "Save as note");
+      button.disabled = state?.status === "pending";
+      button.setAttribute("aria-busy", String(state?.status === "pending"));
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+      button.toggleClass("is-pending", state?.status === "pending");
+      button.toggleClass("is-failed", state?.status === "failed");
+      icon.empty();
+      setSemanticIcon(icon, state?.status === "pending" ? "loader-circle" : state?.status === "saved" ? "file-check" : state?.status === "failed" ? "triangle-alert" : "file-plus");
+    };
+    refresh();
+    button.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const state = this.answerSaveStates.get(key);
+      if (state?.status === "pending") return;
+      if (state?.path) {
+        await this.openSavedAnswerNote(env, state.path);
+        return;
+      }
+      this.answerSaveStates.set(key, { status: "pending" });
+      refresh();
+      try {
+        const index = env.messages.findIndex((candidate) => candidate.id === message.id);
+        const question = env.messages.slice(0, index < 0 ? env.messages.length : index)
+          .reverse().find((candidate) => candidate.role === "user");
+        const turnMessages = env.messages.filter((candidate) => message.runId
+          ? candidate.runId === message.runId
+          : message.turnId ? candidate.turnId === message.turnId : candidate.id === message.id);
+        const sourcePaths = new Set(turnMessages.flatMap((candidate) => [
+          ...(candidate.citations?.citations.map((citation) => citation.path) ?? []),
+          ...knowledgeUsageMessageData(candidate).references.map((reference) => reference.vaultRelativePath)
+        ]));
+        const questionMarkdown = question ? await resolveAnswerMarkdown(question, env.readRawMessageText) : "";
+        const answerMarkdown = await resolveAnswerMarkdown(message, env.readRawMessageText);
+        const path = await saveAnswerAsNote(env.app.vault, {
+          folderBindings: env.getKnowledgeFolderBindings ? env.getKnowledgeFolderBindings() : env.knowledgeFolderBindings,
+          question: questionMarkdown,
+          answerMarkdown,
+          conversationId: env.sessionId,
+          conversationTitle: env.conversationTitle,
+          sourcePaths: [...sourcePaths]
+        });
+        this.answerSaveStates.set(key, { status: "saved", path });
+        const notice = env.messagesEl.ownerDocument.createDocumentFragment();
+        notice.append(conversationUiText(env.settingsLanguage, `已存为 ${path}　`, `Saved as ${path} `));
+        const open = env.messagesEl.ownerDocument.createElement("button");
+        open.textContent = conversationUiText(env.settingsLanguage, "打开", "Open");
+        open.onclick = () => { void this.openSavedAnswerNote(env, path); };
+        notice.append(open);
+        new Notice(notice);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.answerSaveStates.set(key, { status: "failed", error: reason });
+        new Notice(conversationUiText(env.settingsLanguage, `存为笔记失败：${reason}`, `Could not save note: ${reason}`));
+      }
+      refresh();
+      // A streaming delta may have replaced the button while the write was pending.
+      if (this.env?.sessionId === env.sessionId) this.render(this.env);
+    };
+  }
+
+  private async openSavedAnswerNote(env: MessageListEnvironment, path: string): Promise<void> {
+    const file = env.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      new Notice(conversationUiText(env.settingsLanguage,
+        `已保存的笔记不存在或已移动：${path}`, `The saved note is missing or has moved: ${path}`));
+      return;
+    }
+    await env.app.workspace.getLeaf("tab").openFile(file, { active: true });
   }
 
   private renderKnowledgeBaseResultContent(container: HTMLElement, message: ChatMessage, text: string): boolean {
@@ -1929,7 +2032,8 @@ export class CodexMessageListRenderer {
     container: HTMLElement,
     messageId: string,
     usage: KnowledgeUsageMessageData,
-    citations?: KnowledgeBaseCitationSummary
+    citations?: KnowledgeBaseCitationSummary,
+    missingMemoryCount = 0
   ): void {
     const env = this.requireEnv();
     const copy = this.copy();
@@ -1937,21 +2041,17 @@ export class CodexMessageListRenderer {
     if (usage.askSourceAttribution && !documents.some((document) => document.kind === "vault")) {
       container.createDiv({ cls: "codex-kb-no-evidence codex-ai-elements-sources-empty", text: copy.sources.noEvidence });
     }
-    if (documents.length) {
-      const stateKey = `knowledge-documents:${messageId}`;
-      const sources = createAIElementsDocumentSources(
-        container,
-        documents.length,
-        this.openKnowledgeBaseCitations.get(stateKey) ?? false,
-        env.settingsLanguage
-      );
-      sources.root.ontoggle = () => {
-        this.openKnowledgeBaseCitations.set(stateKey, sources.root.open);
-        sources.summary.setAttribute("aria-expanded", String(sources.root.open));
-        this.requireEnv().onScheduleMeasure();
-      };
+    if (documents.length || missingMemoryCount > 0) {
+      const sources = container.createDiv({ cls: "codex-ai-elements-sources codex-answer-source-list" });
+      const untitledMemories = documents.filter((document) => document.kind === "memory" && !document.source.title.trim());
       for (const document of documents) {
-        this.renderLocalDocumentSource(sources.body, document, citations?.status);
+        if (document.kind === "memory" && !document.source.title.trim()) continue;
+        this.renderLocalDocumentSource(sources, document, citations?.status);
+      }
+      if (untitledMemories.length + missingMemoryCount > 0) {
+        const row = sources.createDiv({ cls: "codex-ai-elements-source-header codex-answer-memory-count" });
+        setSemanticIcon(row.createSpan({ cls: "codex-ai-elements-source-icon", attr: { "aria-hidden": "true" } }), "user-round");
+        row.createSpan({ text: `${conversationUiText(env.settingsLanguage, "个人记忆", "Personal memory")}：${copy.process.memoryUsed(untitledMemories.length + missingMemoryCount)}` });
       }
     } else if (citations && !usage.askSourceAttribution) {
       container.createDiv({
@@ -1969,6 +2069,33 @@ export class CodexMessageListRenderer {
     }
   }
 
+  private renderAnswerSources(container: HTMLElement, turn: AgentTurnView): void {
+    const usage = mergeKnowledgeUsageMessageData(turn.messages);
+    // Memory snapshots repeat the same recall across phases. Only current /
+    // completed describe actual injection; total is a candidate count.
+    const usedMemoryCount = Math.max(0, ...turn.messages.flatMap((message) =>
+      (message.reasoningSummary?.activities ?? []).filter((activity) => activity.kind === "memory")
+        .map((activity) => activity.completed ?? activity.current)
+        .filter((count): count is number => typeof count === "number" && Number.isFinite(count) && count >= 0)));
+    const referencedMemoryCount = new Set(usage.personalMemorySources.map((source) => source.id.trim()).filter(Boolean)).size;
+    const missingMemoryCount = Math.max(0, usedMemoryCount - referencedMemoryCount);
+    const citations = turn.messages.flatMap((message) => message.citations?.citations ?? []);
+    const summary = citations.length ? {
+      status: turn.messages.find((message) => message.citations)?.citations?.status ?? "strong",
+      counts: { wiki: 0, journal: 0, outputs: 0 },
+      citations
+    } : undefined;
+    const signature = JSON.stringify([usage.references, usage.personalMemorySources, usage.askSourceAttribution, summary, usedMemoryCount, missingMemoryCount]);
+    const previous = container.querySelector<HTMLElement>(".codex-answer-sources");
+    if (previous?.dataset.signature === signature) return;
+    previous?.remove();
+    const host = container.createDiv({ cls: "codex-answer-sources" });
+    host.dataset.signature = signature;
+    this.renderKnowledgeUsageCards(host, turn.finalAnswer?.id ?? turn.key, { ...usage, producedPaths: [] }, summary, missingMemoryCount);
+    const footer = container.querySelector<HTMLElement>(".codex-agent-footer");
+    if (footer) container.insertBefore(host, footer);
+  }
+
   private renderLocalDocumentSource(
     container: HTMLElement,
     document: LocalDocumentSource,
@@ -1984,12 +2111,11 @@ export class CodexMessageListRenderer {
       cls: "codex-ai-elements-source-icon",
       attr: { "aria-hidden": "true" }
     });
-    setIcon(icon, "book-open");
+    setSemanticIcon(icon, document.kind === "memory" ? "user-round" : "file-text");
     if (document.kind === "memory") {
       header.createSpan({
         cls: "codex-ai-elements-source-title codex-message-note-link is-disabled",
-        text: document.source.title,
-        attr: { title: copy.sources.noVaultPath }
+        text: `${conversationUiText(this.requireEnv().settingsLanguage, "记忆", "Memory")}：${document.source.title}`
       });
       return;
     }
@@ -2011,7 +2137,13 @@ export class CodexMessageListRenderer {
       title.onclick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        void this.openLocalDocumentSource(document);
+        void this.openKnowledgeBasePath(document.path);
+      };
+      title.onmouseover = (event) => {
+        env.app.workspace.trigger("hover-link", {
+          event, source: "preview", hoverParent: title, targetEl: title,
+          linktext: document.path, sourcePath: ""
+        });
       };
     } else {
       header.createSpan({
@@ -2021,19 +2153,21 @@ export class CodexMessageListRenderer {
       });
     }
 
-    const metadata = localDocumentMetadata(
-      document,
-      evidenceStatus,
-      this.requireEnv().settingsLanguage
-    );
-    if (metadata.length) {
-      const meta = item.createDiv({ cls: "codex-ai-elements-source-meta" });
-      for (const label of metadata) meta.createSpan({ text: label });
-    }
-    for (const excerpt of localDocumentExcerpts(document)) {
-      const quote = item.createDiv({ cls: "codex-kb-citation-quote" });
-      for (const line of excerpt.split(/\r\n|\n|\r/u)) {
-        quote.createDiv({ cls: "codex-kb-citation-line", text: line });
+    const ranges = new Map(document.references.map((reference) => [`${reference.lineStart}:${reference.lineEnd}`, reference]));
+    if (ranges.size) {
+      const meta = header.createSpan({ cls: "codex-ai-elements-source-meta" });
+      for (const reference of ranges.values()) {
+        const label = copy.sources.lineRange(reference.lineStart, reference.lineEnd);
+        if (!(file instanceof TFile)) { meta.createSpan({ text: label }); continue; }
+        const range = meta.createEl("button", {
+          cls: "codex-message-note-link codex-source-line-link",
+          text: label,
+          attr: { type: "button", "aria-label": `${noteName} · ${label}` }
+        });
+        range.onclick = (event) => {
+          event.preventDefault(); event.stopPropagation();
+          void this.openKnowledgeReference(reference);
+        };
       }
     }
   }
@@ -2067,6 +2201,8 @@ export class CodexMessageListRenderer {
         title: copy.details.open(producedPath)
       }
     });
+    const icon = title.createSpan({ cls: "codex-artifact-file-icon", attr: { "aria-hidden": "true" } });
+    setIcon(icon, producedPath.endsWith(".canvas") ? "layout-dashboard" : "file-text");
     title.onclick = (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -2182,16 +2318,13 @@ export class CodexMessageListRenderer {
     if (answer && hasDisplayableAnswer) {
       const answerSection = bodyHost.createDiv({ cls: "codex-assistant-turn-final" });
       answerSection.dataset.messageId = answer.id;
-      this.renderAssistantTurnSectionLabel(
-        answerSection,
-        copy.sections.answer
-      );
       const answerContent = answerSection.createDiv({
         cls: "codex-message-content codex-assistant-turn-answer",
         attr: { "data-message-content": "true" }
       });
       this.renderAgentAnswerContent(answerContent, answer);
       this.renderAssistantFailureReason(answerSection, answer);
+      this.renderAnswerSources(answerSection, turn);
       if (isTerminalTurnStatus(turn.status)) {
         const footerActions = this.renderAgentFooter(answerSection, answer);
         this.renderPiConversationDeriveAction(footerActions, answer, true);
@@ -2318,7 +2451,7 @@ export class CodexMessageListRenderer {
     }
     const row = this.renderActionItem(container, item, {
       standalone: false,
-      showApprovalCard: false
+      showApprovalCard: node.status === "waiting"
     });
     row.addClass("codex-assistant-turn-action-node");
     this.applyAssistantTurnActionSemantics(row, item);
@@ -2336,11 +2469,45 @@ export class CodexMessageListRenderer {
     if (!row.hasClass("codex-assistant-turn-action-node")) return;
     row.querySelector<HTMLElement>(".codex-action-item-prefix")?.remove();
     row.querySelector<HTMLElement>(".codex-action-item-state")?.remove();
-    if (item.status !== "failed") return;
-    row.querySelector<HTMLElement>(".codex-action-item-main")?.createSpan({
-      cls: "codex-action-item-state",
-      text: labelForStatus(item.status, this.requireEnv().settingsLanguage)
-    });
+    const language = this.requireEnv().settingsLanguage;
+    const failed = item.status === "failed";
+    const interrupted = ["cancelled", "canceled", "interrupted", "denied", "unconfirmed", "uncertain"].includes(item.status);
+    const waiting = ["approval", "waiting_approval", "blocked"].includes(item.status);
+    const icon = row.querySelector<HTMLElement>(".codex-action-item-icon");
+    if (icon) setSemanticIcon(icon, failed ? "triangle-alert" : interrupted ? "circle-pause" : waiting ? "hand"
+      : isActiveActionStatus(item.status) ? "loader-circle" : item.source.processKind === "view" ? "file-text"
+        : /(?:web|联网|网络|网页)/iu.test(item.source.title ?? "") ? "globe" : iconForActionKind(item.kind));
+    const main = row.querySelector<HTMLElement>(".codex-action-item-main");
+    if (main && isKnowledgeWorkRecordMessage(item.source)) {
+      main.empty();
+      main.createSpan({ cls: "codex-action-item-title", text: firstPartyMessageTitle(item.source, language) });
+      if (!failed && !interrupted && item.source.text.trim()) main.createSpan({
+        cls: "codex-work-record-summary", text: item.source.text.trim()
+      });
+      if (typeof item.durationMs === "number" && item.durationMs >= 1_000) main.createSpan({
+        cls: "codex-action-item-duration", text: formatActionDuration(item.durationMs)
+      });
+    }
+    if (main && !isKnowledgeWorkRecordMessage(item.source) && (item.source.processKind === "view" || item.kind === "edit")) {
+      main.insertBefore(main.createSpan({
+        cls: "codex-action-item-verb",
+        text: conversationUiText(language, item.kind === "edit" ? "修改笔记" : "读取笔记", item.kind === "edit" ? "Edit note" : "Read note")
+      }), main.firstChild);
+    }
+    if (typeof item.durationMs === "number" && item.durationMs < 1_000) {
+      row.querySelector<HTMLElement>(".codex-action-item-duration")?.remove();
+    }
+    row.querySelector<HTMLElement>(".codex-work-record-failure")?.remove();
+    if (failed || interrupted) {
+      const reason = failed ? (item.userDetails?.error || item.source.processOutput || item.source.text).trim() : "";
+      const cause = reason && !/(?:回答|answer)/iu.test(reason)
+        ? `${reason} ${conversationUiText(language, "回答没用上这一步。", "This step was not used in the answer.")}` : reason;
+      (main ?? row).createDiv({
+        cls: "codex-work-record-failure",
+        text: failed ? cause || conversationUiText(language, "这一步未能完成，回答没用上这一步。", "This step failed and was not used in the answer.")
+          : conversationUiText(language, "未完成", "Incomplete")
+      });
+    }
   }
 
   private renderAssistantTurnProcessNode(
@@ -2363,7 +2530,10 @@ export class CodexMessageListRenderer {
       cls: "codex-assistant-turn-node-icon",
       attr: { "aria-hidden": "true" }
     });
-    setSemanticIcon(icon, assistantTurnNodeIcon(node));
+    const source = node.sourceMessageId ? turn.messages.find((message) => message.id === node.sourceMessageId) : undefined;
+    const paths = source ? knowledgeUsageMessageData(source).producedPaths : [];
+    setSemanticIcon(icon, node.kind === "artifact" && node.status === "completed" && paths.length && paths.every((path) => path.endsWith(".canvas"))
+      ? "layout-dashboard" : assistantTurnNodeIcon(node));
 
     const content = row.createDiv({ cls: "codex-assistant-turn-node-content" });
     const heading = content.createDiv({ cls: "codex-assistant-turn-node-heading" });
@@ -2376,12 +2546,13 @@ export class CodexMessageListRenderer {
       title.setAttribute("aria-label", `${node.title}, ${this.copy().process.nodeStatus(node.status)}`);
     }
     if (node.summary) {
-      heading.createSpan({
-        cls: "codex-assistant-turn-node-summary",
+      (node.status === "failed" ? content : heading).createSpan({
+        cls: node.status === "failed" ? "codex-work-record-failure" : "codex-assistant-turn-node-summary",
         text: node.summary,
         attr: { title: node.summary }
       });
     }
+    if (node.status === "cancelled") content.createDiv({ cls: "codex-work-record-failure", text: conversationUiText(this.requireEnv().settingsLanguage, "未完成", "Incomplete") });
 
     this.renderAssistantTurnNodeDetail(content, turn, node);
   }
@@ -2395,7 +2566,17 @@ export class CodexMessageListRenderer {
       ? turn.messages.find((message) => message.id === node.sourceMessageId)
       : undefined;
     if (!source) return;
-    if (node.nodeId.startsWith("process-activity:")) return;
+    if (node.nodeId.startsWith("process-activity:")) {
+      const usage = mergeKnowledgeUsageMessageData(turn.messages);
+      const documents = localDocumentSources(undefined, usage).filter((document) =>
+        node.nodeId.endsWith(":memory:recall") ? document.kind === "memory" && document.source.title.trim() : document.kind === "vault");
+      if (documents.length && node.kind === "retrieval") {
+        const disclosure = this.createAssistantTurnResourceDisclosure(container, `${turn.key}:${node.nodeId}`,
+          conversationUiText(this.requireEnv().settingsLanguage, node.nodeId.endsWith(":memory:recall") ? "用上的记忆" : "本轮读到的笔记", node.nodeId.endsWith(":memory:recall") ? "Memories used" : "Notes read this turn"));
+        for (const document of documents) this.renderLocalDocumentSource(disclosure.body, document);
+      }
+      return;
+    }
     if (node.kind === "interaction") return;
     if (node.kind === "task" && source.taskPlan) {
       this.renderCompactTaskPlanNode(container, source);
@@ -2809,6 +2990,15 @@ export class CodexMessageListRenderer {
   }
 
   private renderActionItemDetails(container: HTMLElement, item: ActionItemViewModel): void {
+    if (isKnowledgeWorkRecordMessage(item.source) && (item.source.processKind === "view" || item.source.processKind === "search")) {
+      for (const document of localDocumentSources(undefined, knowledgeUsageMessageData(item.source))) {
+        this.renderLocalDocumentSource(container.createDiv({ cls: "codex-answer-source-list" }), document);
+      }
+      if (item.source.processOutput?.trim() && !knowledgeUsageMessageData(item.source).references.length) {
+        container.createDiv({ cls: "codex-work-record-files", text: item.source.processOutput });
+      }
+      return;
+    }
     const details = item.userDetails;
     if (!details) return;
     if (details.action === "create" || details.action === "edit") {
@@ -3033,6 +3223,7 @@ export class CodexMessageListRenderer {
       controlled: state === "waiting_approval" && Boolean(binding),
       language: env.settingsLanguage
     });
+    elements.root.dataset.approvalMessageId = message.id;
     if (!binding || !elements.approveButton || !elements.rejectButton) return;
     const buttons = [elements.approveButton, elements.rejectButton];
     let deciding = false;
@@ -4073,11 +4264,18 @@ function actionMessageForProcessNode(
 function assistantTurnNodeIcon(
   node: Readonly<EchoInkTurnProcessNode>
 ): string {
+  if (node.status === "failed") return "triangle-alert";
+  if (node.status === "cancelled") return "circle-pause";
+  if (node.status === "waiting") return "hand";
+  if (node.status === "running") return "loader-circle";
   if (node.kind === "reasoning") return "brain";
+  if (node.nodeId.endsWith(":memory:recall")) return "user-round";
   if (node.kind === "retrieval") return "search";
   if (node.kind === "tool") return "wrench";
-  if (node.kind === "artifact") return "image";
+  if (node.kind === "artifact") return "file-text";
   if (node.kind === "diff") return "file-diff";
+  if (node.kind === "task") return "list-checks";
+  if (node.kind === "interaction") return "hand";
   return "dot";
 }
 
@@ -4132,6 +4330,8 @@ function actionItemTarget(
 }
 
 function hasActionItemDetails(item: ActionItemViewModel): boolean {
+  if (isKnowledgeWorkRecordMessage(item.source) && (item.source.processKind === "view" || item.source.processKind === "search")
+    && (knowledgeUsageMessageData(item.source).references.length || item.source.processOutput?.trim())) return true;
   const details = item.userDetails;
   if (!details) return false;
   if (details.error) return true;
@@ -4167,6 +4367,11 @@ function hasActionItemDetails(item: ActionItemViewModel): boolean {
     );
   }
   return Boolean(details.parameters?.length || details.result);
+}
+
+function isKnowledgeWorkRecordMessage(message: ChatMessage): boolean {
+  return ["检索知识库", "检索笔记", "读取笔记", "查看个人记忆", "读取个人记忆", "写入个人记忆", "整理知识关联"]
+    .includes(message.title ?? "");
 }
 
 function hasExplicitProcessChannels(message: ChatMessage): boolean {
@@ -4247,9 +4452,13 @@ function shellTranscript(text: string): string {
 }
 
 function iconForProcessMessage(message: ChatMessage): string {
+  if (message.status === "failed" || message.status === "error") return "triangle-alert";
+  if (["interrupted", "cancelled", "canceled", "denied"].includes(message.status ?? "")) return "circle-pause";
+  if (["approval", "waiting_approval", "blocked"].includes(message.status ?? "")) return "hand";
+  if (message.status === "running") return "loader-circle";
   const processIcons: Record<string, string> = {
     search: "search",
-    view: "dot",
+    view: "file-text",
     edit: "file-diff",
     run: "wrench",
     command: "wrench",
@@ -4262,7 +4471,7 @@ function iconForProcessMessage(message: ChatMessage): string {
 
 function iconForItemType(itemType?: string): string {
   const icons: Record<string, string> = {
-    plan: "dot",
+    plan: "list-checks",
     commandExecution: "wrench",
     fileChange: "file-diff",
     mcpToolCall: "wrench",

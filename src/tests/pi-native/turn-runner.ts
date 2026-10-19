@@ -1374,10 +1374,10 @@ async function imageCapabilityPreflightPreservesCompletedTurn(): Promise<void> {
 }
 
 function emptyPersonalMemorySourceDisplayDoesNotClaimInjection(): void {
-  assert.equal(personalMemorySourceCountLabel(0), "Personal Memory 来源");
+  assert.equal(personalMemorySourceCountLabel(0), "个人记忆");
   assert.equal(
     personalMemorySourceEmptyStateLabel(),
-    "未记录可展示的 Personal Memory 来源。"
+    "未记录可展示的个人记忆。"
   );
   assert.doesNotMatch(
     `${personalMemorySourceCountLabel(0)} ${personalMemorySourceEmptyStateLabel()}`,
@@ -1505,7 +1505,7 @@ function composerModelLabelsOnlyRemoveKnownBrandPrefixes(): void {
 
 async function messageActionContractsStayTruthful(): Promise<void> {
   assert.equal(piConversationDeriveActionLabel({ role: "user" }), null);
-  assert.equal(piConversationDeriveActionLabel({ role: "assistant" }), "从这条回复新建会话");
+  assert.equal(piConversationDeriveActionLabel({ role: "assistant" }), "从这里另开对话");
 
   let copiedText = "";
   const success = await copyAnswerMarkdown(
@@ -2156,23 +2156,23 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
     messageKey: "assistant-reasoning-1",
     reasoningId: "reasoning-turn-runner-1"
   }));
-  const fullRenderCountAfterReasoningTopology = virtualListEl.emptyCallCount;
-  const reasoningRoot = virtualListEl.findByClass("codex-ai-elements-reasoning");
-  assert.ok(reasoningRoot, "the first real Reasoning event creates the required topology");
+  assert.equal(virtualListEl.findByClass("codex-ai-elements-reasoning"), null,
+    "empty Reasoning under two seconds stays hidden until it has public content");
   await emit(listener, runtimeEvent({
     type: "provider_reasoning_delta",
     messageKey: "assistant-reasoning-1",
     reasoningId: "reasoning-turn-runner-1",
     textDelta: "真实公开推理增量"
   }));
+  const fullRenderCountAfterReasoningTopology = virtualListEl.emptyCallCount;
+  const reasoningRoot = virtualListEl.findByClass("codex-ai-elements-reasoning");
+  assert.ok(reasoningRoot, "the first public Reasoning text creates the required topology");
   assert.equal(
     renderedIncrementalMessages.at(-1)?.assistantTurn
       ?.providerReasoningSegments?.[0]?.text,
     "真实公开推理增量",
     "production reasoning delta passes its changed Assistant Turn carrier to the local updater"
   );
-  assert.equal(virtualListEl.emptyCallCount, fullRenderCountAfterReasoningTopology,
-    "a reasoning delta reaches message-controller and tryUpdateMessage without clearing the virtual list");
   assert.equal(virtualListEl.findByClass("codex-ai-elements-reasoning"), reasoningRoot,
     "the Reasoning DOM keeps identity after its first production delta");
   const reasoningBody = reasoningRoot!.findByClass("codex-ai-elements-reasoning-content");
