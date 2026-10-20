@@ -3,7 +3,7 @@ import { BUILT_IN_JOURNAL_TEMPLATES } from "../../home/home-workbench-model";
 import type { HomeJournalTemplateChoice } from "../../home/home-workbench-data";
 import { journalMonthSelection, journalPageEntries } from "../../home/journal-stats";
 import { renderPhotoCalendar } from "../../home/photo-calendar";
-import { formatMobileDateGroup } from "../../mobile/date-display";
+import { formatMobileDiaryHeading } from "../../mobile/date-display";
 import { createOriginPagination } from "../mobile/origin-controls";
 import { iphoneButton, iphoneElement as el, iphoneIcon } from "./workbench-elements";
 import type { IPhonePageContext } from "./workbench-contract";
@@ -21,17 +21,16 @@ export async function openIPhoneJournal(ctx: IPhonePageContext): Promise<void> {
     const calendar = el(ctx.document, "section", "ip-journal-calendar"), head = el(ctx.document, "div", "ip-module-section-head"); head.append(el(ctx.document, "h2", "", ctx.host.settings().settingsLanguage === "en" ? new Intl.DateTimeFormat("en", { year: "numeric", month: "long" }).format(month) : `${month.getFullYear()} 年 ${month.getMonth() + 1} 月`)); calendar.append(head);
     const controls = el(ctx.document, "div", "ip-module-inline-actions"); moduleIconButton(view, controls, "上个月", "chevron-left", () => shift(-1)); moduleIconButton(view, controls, "下个月", "chevron-right", () => shift(1)); head.append(controls);
     const weekdays = el(ctx.document, "div", "ip-journal-weekdays"), days = el(ctx.document, "div", "ip-journal-days"); calendar.append(weekdays, days); view.body.append(calendar);
-    renderPhotoCalendar({ weekdays, days, month, selected, records: snapshot.records, folder: snapshot.settings.folder, format: snapshot.settings.format, language: ctx.host.settings().settingsLanguage,
+    renderPhotoCalendar({ weekdays, days, month, selected, records: snapshot.records, folder: snapshot.settings.folder, format: snapshot.settings.format, language: ctx.host.settings().settingsLanguage, showOutsideDays: false,
       onSelect: key => { selected = key; if (!key.startsWith(moduleDate(month).slice(0, 7))) month = new Date(moduleParseDate(key).getFullYear(), moduleParseDate(key).getMonth(), 1); mode = "month"; const index = snapshot!.stats.entries.filter(entry => entry.date.startsWith(key.slice(0, 7))).findIndex(entry => entry.date === key); page = index < 0 ? 1 : Math.floor(index / 20) + 1; render(); view.body.querySelector(`[data-journal-date="${key}"]`)?.scrollIntoView({ block: "nearest" }); } });
     const matches = snapshot.stats.entries.filter(entry => entry.date === selected);
     if (!matches.length) view.button(view.body, "写这天日记", () => createJournal(ctx, snapshot!, selected, async () => { await refresh(); }));
     const heading = view.heading(view.body, "全部日记"); moduleSegments(view, heading, "日记范围", [["month", "按月"], ["year", "按年"]], mode, value => { mode = value; page = 1; render(); });
     const list = el(ctx.document, "div", "ip-module-rows ip-journal-list"); view.body.append(list);
     if (mode === "year") {
-      const years = view.select(view.body, "年份", snapshot.stats.years.map(year => [String(year), String(year)]), String(month.getFullYear()), value => { month = new Date(Number(value), month.getMonth(), 1); render(); }); list.before(years.parentElement!);
-      const months = new Map<string, number>(); for (const entry of snapshot.stats.entries) if (entry.date.startsWith(`${month.getFullYear()}-`)) months.set(entry.date.slice(0, 7), (months.get(entry.date.slice(0, 7)) ?? 0) + 1);
+      const months = new Map<string, number>(); for (const entry of snapshot.stats.entries) months.set(entry.date.slice(0, 7), (months.get(entry.date.slice(0, 7)) ?? 0) + 1);
       for (const [key, count] of [...months].sort(([a], [b]) => b.localeCompare(a))) {
-        const row = iphoneButton(ctx.document, `${key} · ${moduleText(ctx, `${count} 篇`, `${count} entries`)}`, () => { month = moduleParseDate(`${key}-01`); mode = "month"; page = 1; selected = moduleDate(month); render(); }); row.classList.add("ip-module-navigation-row"); list.append(row);
+        const row = iphoneButton(ctx.document, `${key} · ${moduleText(ctx, `${count} 篇`, `${count} entries`)}`, () => { month = moduleParseDate(`${key}-01`); mode = "month"; page = 1; selected = moduleDate(month); render(); }); row.classList.add("ip-module-navigation-row"); const [year, number] = key.split("-").map(Number); row.querySelector(".ip-button-visible")!.replaceChildren(iphoneIcon(ctx.document, "calendar"), el(ctx.document, "span", "ip-grow", moduleText(ctx, `${year} 年 ${number} 月`, `${year}-${number}`)), el(ctx.document, "span", "ip-sub", moduleText(ctx, `${count} 篇`, `${count} entries`)), iphoneIcon(ctx.document, "chevron-right")); list.append(row);
       }
       if (!months.size) view.empty(list, "还没有日记"); return;
     }
@@ -40,7 +39,7 @@ export async function openIPhoneJournal(ctx: IPhonePageContext): Promise<void> {
       const row = el(ctx.document, "button", "ip-journal-entry"); row.type = "button"; row.dataset.journalDate = entry.date;
       const fallback = iphoneIcon(ctx.document, "book-open"); row.append(fallback);
       if (entry.firstImageUrl) { const image = el(ctx.document, "img", "ip-journal-thumbnail"); image.alt = ""; image.loading = "lazy"; image.addEventListener("error", () => { image.remove(); fallback.hidden = false; }, { once: true }); image.src = entry.firstImageUrl; fallback.hidden = true; row.append(image); }
-      const text = el(ctx.document, "span", "ip-grow"), summary = el(ctx.document, "span", "ip-sub"); text.append(el(ctx.document, "span", "ip-module-row-title", formatMobileDateGroup(entry.date, Date.now(), ctx.host.settings().settingsLanguage)), summary); row.append(text); list.append(row);
+      const text = el(ctx.document, "span", "ip-grow"), summary = el(ctx.document, "span", "ip-sub"); text.append(el(ctx.document, "span", "ip-module-row-title", formatMobileDiaryHeading(entry.date, ctx.host.settings().settingsLanguage)), summary); row.append(text); list.append(row);
       const cached = summaries.get(entry.path); if (cached?.mtime === entry.mtime) summary.textContent = cached.text;
       else void api.readSummary(entry.path).then(value => { if (!view.alive || !row.isConnected) return; summaries.set(entry.path, { mtime: entry.mtime, text: value }); summary.textContent = value; }).catch(error => { if (view.alive) view.error.show(error); });
       row.addEventListener("click", () => { void ctx.host.openNote(entry.path).catch(error => ctx.error(error)); });

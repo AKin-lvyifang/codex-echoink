@@ -5,9 +5,10 @@ import { todoPageRecords } from "../../home/todo-page-model";
 import { resolveTodoProject } from "../../home/todo-projects";
 import { parsePeopleNames, joinPeopleNames } from "../../home/todo-people";
 import { createOriginCheck, createOriginPagination } from "../mobile/origin-controls";
-import { iphoneButton, iphoneElement as el } from "./workbench-elements";
+import { iphoneButton, iphoneElement as el, iphoneIcon } from "./workbench-elements";
 import type { IPhonePageContext } from "./workbench-contract";
 import { IPhoneModulePage, moduleDate, moduleSegments, moduleText } from "./module-elements";
+import { formatMobileDueDate } from "../../mobile/date-display";
 import { settingsMessage } from "./settings-language";
 
 export async function openIPhoneTodos(ctx: IPhonePageContext): Promise<void> {
@@ -16,7 +17,7 @@ export async function openIPhoneTodos(ctx: IPhonePageContext): Promise<void> {
   let snapshot: MobileTodoSnapshot | undefined, status: "open" | "done" | "all" = "open", category: string | null = null, project: string | null = null, date = "all", page = 1, revision = 0, filtersOpen = false;
   const render = () => {
     if (!view.alive || !snapshot) return; view.body.replaceChildren(); const toolbar = el(ctx.document, "div", "ip-todo-toolbar"), advanced = el(ctx.document, "details", "ip-todo-more-filters"), filters = el(ctx.document, "div", "ip-module-filters");
-    advanced.open = filtersOpen; advanced.addEventListener("toggle", () => { filtersOpen = advanced.open; }); advanced.append(el(ctx.document, "summary", "", moduleText(ctx, "更多筛选", "More filters")), filters); view.body.append(toolbar, advanced);
+    advanced.open = filtersOpen; advanced.addEventListener("toggle", () => { filtersOpen = advanced.open; }); const filterSummary = el(ctx.document, "summary", ""); filterSummary.append(el(ctx.document, "span", "", moduleText(ctx, "更多筛选", "More filters")), iphoneIcon(ctx.document, "chevron-down")); advanced.append(filterSummary, filters); view.body.append(toolbar);
     moduleSegments(view, toolbar, "待办状态", [["open", "未完成"], ["done", "已完成"], ["all", "全部"]], status, value => { status = value as typeof status; page = 1; render(); });
     const projectSelect = view.select(toolbar, "按项目筛选", [["all", moduleText(ctx, "全部项目")], ["none", moduleText(ctx, "不属于项目")], ...snapshot.projects.map(item => [`path:${item.path}`, item.label] as const)], project ?? "all", value => { project = value === "all" ? null : value; page = 1; render(); }); projectSelect.parentElement!.classList.add("ip-todo-project");
     view.select(filters, "待办分类", [["all", moduleText(ctx, "全部分类")], ...[...new Set([...snapshot.categories.map(item => item.name), ...snapshot.records.map(item => item.categoryName).filter(Boolean)])].map(name => [name, name] as const)], category ?? "all", value => { category = value === "all" ? null : value; page = 1; render(); });
@@ -32,12 +33,12 @@ export async function openIPhoneTodos(ctx: IPhonePageContext): Promise<void> {
       check.addEventListener("change", () => { const value = check.checked; check.disabled = true; void view.run(async () => { await api.toggle(record, value, snapshot!.contentVersion); await refresh(); }).finally(() => { if (view.alive && check.isConnected) { check.checked = snapshot?.records.find(item => item.id === record.id)?.done ?? record.done; check.disabled = false; } }); });
       const title = iphoneButton(ctx.document, record.title, () => { void openTodoForm(ctx, snapshot!, record, refresh).catch(error => ctx.error(error)); }, "is-text"); title.classList.add("ip-todo-main");
       const label = title.querySelector(".ip-button-visible")!; const projectName = resolveTodoProject(record.project, snapshot.projects).label;
-      label.append(el(ctx.document, "span", "ip-sub", [record.categoryName, projectName === "—" ? "" : projectName, record.people].filter(Boolean).join(" · "))); row.append(title);
-      if (record.dueDate) { const time = el(ctx.document, "time", `ip-todo-date${!record.done && record.dueDate < today ? " is-overdue" : ""}`, [record.dueDate === today ? moduleText(ctx, "今天") : record.dueDate, record.dueTime].filter(Boolean).join(" ")); time.dateTime = record.dueDate + (record.dueTime ? `T${record.dueTime}` : ""); row.append(time); } list.append(row);
+      label.append(el(ctx.document, "span", "ip-sub", [record.categoryName, projectName === "—" ? "" : projectName].filter(Boolean).join(" · "))); row.append(title);
+      if (record.dueDate) { const time = el(ctx.document, "time", `ip-todo-date${!record.done && record.dueDate < today ? " is-overdue" : !record.done && record.dueDate === today ? " is-today" : ""}`, formatMobileDueDate(record.dueDate, Date.now(), ctx.host.settings().settingsLanguage)); time.dateTime = record.dueDate + (record.dueTime ? `T${record.dueTime}` : ""); row.append(time); } list.append(row);
     }
     if (!result.records.length) view.empty(list, "没有符合条件的待办");
-    const actions = el(ctx.document, "div", "ip-settings-actions"); view.button(actions, "新增待办", () => openTodoForm(ctx, snapshot!, null, refresh)); view.button(actions, "待办设置", () => openIPhoneTodoSettings(ctx)); view.body.append(actions);
     if (result.pages > 1) createOriginPagination(view.body, result.page, result.pages, value => { page = value; render(); });
+    const actions = el(ctx.document, "div", "ip-settings-actions"), add = view.button(actions, "新增待办", () => openTodoForm(ctx, snapshot!, null, refresh)); add.querySelector(".ip-button-visible")?.prepend(iphoneIcon(ctx.document, "plus")); view.body.append(advanced, actions);
   };
   const refresh = async () => { const ticket = ++revision; try { const next = await api.read(); if (!view.alive || ticket !== revision) return; snapshot = next; view.error.show(); render(); } catch (error) { if (view.alive && ticket === revision) view.error.show(error); } };
   view.cleanup(api.subscribe(() => { if (!view.busy) void refresh(); })); view.empty(view.body, "正在加载…"); await view.push(); if (view.alive) await refresh();

@@ -32,7 +32,7 @@ export class IPhoneModulePage {
     this.page = { id, title, content: this.content, footer: this.footer, canLeave: () => this.canLeave(), dispose: () => this.dispose() };
     if (module) {
       const actions = el(ctx.document, "div", "ip-module-header-actions"), owner = ctx.host.services.modules.owner(module);
-      const label = module === "journal" ? moduleText(ctx, `和 ${owner.name} 聊今天`, `Talk with ${owner.name}`) : moduleText(ctx, `交给 ${owner.name}`, `Ask ${owner.name}`);
+      const label = module === "journal" ? moduleText(ctx, `和${owner.name.trim()}聊今天`, `Talk with ${owner.name}`) : moduleText(ctx, `交给${owner.name.trim()}`, `Ask ${owner.name}`);
       const button = iphoneButton(ctx.document, label, () => { void handoff(false); }, "is-primary"); button.querySelector(".ip-button-visible")?.prepend(iphoneAvatar(ctx.document, owner)); actions.append(button); this.page.actions = actions;
       const handoff = async (replaceDraft: boolean) => {
         await this.run(async () => {

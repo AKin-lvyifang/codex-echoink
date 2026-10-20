@@ -2,7 +2,7 @@ import type { MobileJournalSnapshot } from "../../mobile/module-contracts";
 import { dateKey, BUILT_IN_JOURNAL_TEMPLATES, homeContributionLevel, decodeImportedMarkdown } from "../../home/home-workbench-model";
 import { journalMonthSelection, journalPageEntries } from "../../home/journal-stats";
 import { renderPhotoCalendar } from "../../home/photo-calendar";
-import { formatMobileDateGroup } from "../../mobile/date-display";
+import { formatMobileDiaryHeading } from "../../mobile/date-display";
 import type { HomeJournalTemplateChoice } from "../../home/home-workbench-data";
 import type { MobileShellPage } from "../mobile/shell-types";
 import type { IPadPageContext } from "./workbench-contract";
@@ -26,13 +26,20 @@ export function createJournalPage(ctx: IPadPageContext): MobileShellPage {
     if (!snapshot || !v.alive) return;
     const available = snapshot.settings.available; create.disabled = !available;
     monthLabel.textContent = ctx.host.settings().settingsLanguage === "en" ? month.toLocaleDateString("en", { year: "numeric", month: "long" }) : `${month.getFullYear()} 年 ${month.getMonth() + 1} 月`;
-    renderPhotoCalendar({ days, weekdays, month, selected, records: snapshot.records, folder: snapshot.settings.folder, format: snapshot.settings.format, language: ctx.host.settings().settingsLanguage,
+    renderPhotoCalendar({ days, weekdays, month, selected, records: snapshot.records, folder: snapshot.settings.folder, format: snapshot.settings.format, language: ctx.host.settings().settingsLanguage, showOutsideDays: false,
       activity: new Map(snapshot.stats.days.map(day => [day.date, day.count])), onSelect: date => { selected = date; mode = "month"; selectModuleSegment(modeControl, mode); const chosen = new Date(`${date}T12:00:00`); month = new Date(chosen.getFullYear(), chosen.getMonth(), 1, 12); const index = snapshot!.stats.entries.filter(entry => entry.date.startsWith(selected.slice(0, 7))).findIndex(entry => entry.date === selected); page = index < 0 ? 1 : Math.floor(index / 20) + 1; render(); list.querySelector<HTMLElement>(".is-selected")?.scrollIntoView?.({ block: "nearest" }); } });
     statistics.replaceChildren(); const facts = el(ctx.document, "div", "pd-journal-facts");
-    for (const [value, label] of [[snapshot.stats.streak, t(ctx, "连续记录", "Current streak")], [snapshot.stats.currentYearCount, t(ctx, "今年", "This year")]] as const) { const item = el(ctx.document, "div", "pd-journal-stat"); item.append(el(ctx.document, "strong", "", available ? String(value) : "—"), el(ctx.document, "span", "", label)); facts.append(item); } statistics.append(facts);
+    for (const [value, label] of [[t(ctx, `${snapshot.stats.streak} 天`, `${snapshot.stats.streak} days`), t(ctx, "连续记录", "Current streak")], [t(ctx, `${snapshot.stats.currentYearCount} 篇`, `${snapshot.stats.currentYearCount} entries`), t(ctx, "今年", "This year")]] as const) { const item = el(ctx.document, "div", "pd-journal-stat"); item.append(el(ctx.document, "strong", "", available ? String(value) : "—"), el(ctx.document, "span", "", label)); facts.append(item); } statistics.append(facts);
     const graph = el(ctx.document, "div", "pd-journal-heatmap"), grid = el(ctx.document, "div", "pd-journal-heat-grid"), activity = new Map(snapshot.stats.days.map(day => [day.date, day.count])), today = new Date();
-    graph.append(el(ctx.document, "h2", "", t(ctx, "最近一年", "Past year")), grid); grid.setAttribute("aria-label", t(ctx, "最近一年日记记录", "Journal activity over the past year"));
-    for (let offset = 364; offset >= 0; offset--) { const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset, 12), key = dateKey(date), count = activity.get(key) ?? 0, cell = el(ctx.document, "span", `pd-journal-heat-cell level-${homeContributionLevel(count)}`); cell.dataset.date = key; cell.setAttribute("aria-label", `${key} · ${count}`); cell.title = `${key} · ${count}`; grid.append(cell); } if (available) statistics.append(graph);
+    graph.append(el(ctx.document, "h2", "", t(ctx, "最近一年", "Past year")), grid); grid.setAttribute("role", "img"); grid.setAttribute("aria-label", t(ctx, "最近一年日记记录", "Journal activity over the past year"));
+    const weekday = (today.getDay() + 6) % 7, weeks = Math.ceil((365 + 6 - weekday) / 7);
+    for (let week = 0; week < weeks; week++) for (let row = 0; row < 7; row++) {
+      const offset = week * 7 + weekday - row, date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset, 12), key = dateKey(date), outside = offset < 0 || offset >= 365, count = activity.get(key) ?? 0;
+      const cell = el(ctx.document, "span", `pd-journal-heat-cell ${outside ? "is-outside" : `level-${homeContributionLevel(count)}`}`); cell.dataset.date = key;
+      if (outside) cell.setAttribute("aria-hidden", "true");
+      else { cell.setAttribute("aria-label", `${key} · ${count}`); cell.title = `${key} · ${count}`; }
+      grid.append(cell);
+    } if (available) statistics.append(graph);
     if (!available) { v.status(t(ctx, "日记目录尚未配置。", "The journal location is not configured.")); list.replaceChildren(moduleButton(ctx, t(ctx, "配置日记", "Configure journals"), () => api.openSettings())); }
     else renderList();
   }
@@ -40,7 +47,7 @@ export function createJournalPage(ctx: IPadPageContext): MobileShellPage {
     if (!snapshot || !snapshot.settings.available || !v.alive) return; const ticket = ++summaryGeneration; list.replaceChildren();
     if (mode === "year") {
       const months = new Map<string, number>(); for (const entry of snapshot.stats.entries) { const key = entry.date.slice(0, 7); months.set(key, (months.get(key) ?? 0) + 1); }
-      for (const [key, count] of [...months].sort(([a], [b]) => b.localeCompare(a))) list.append(moduleButton(ctx, `${key} · ${count}`, () => { month = new Date(`${key}-01T12:00:00`); selected = journalMonthSelection(month, selected); mode = "month"; selectModuleSegment(modeControl, mode); render(); }));
+      for (const [key, count] of [...months].sort(([a], [b]) => b.localeCompare(a))) { const row = moduleButton(ctx, "", () => { month = new Date(`${key}-01T12:00:00`); selected = journalMonthSelection(month, selected); mode = "month"; selectModuleSegment(modeControl, mode); render(); }), [year, number] = key.split("-").map(Number); row.classList.add("pd-journal-month"); row.querySelector(".pd-module-button-visible")!.replaceChildren(ipadIcon(ctx.document, "calendar"), el(ctx.document, "span", "pd-grow", t(ctx, `${year} 年 ${number} 月`, `${year}-${number}`)), el(ctx.document, "span", "pd-module-secondary", t(ctx, `${count} 篇`, `${count} entries`)), ipadIcon(ctx.document, "chevron-right")); list.append(row); }
       if (!months.size) moduleEmpty(ctx, list, t(ctx, "还没有日记", "No journals yet")); return;
     }
     const result = journalPageEntries(snapshot.stats.entries, month.getFullYear(), month.getMonth(), page); page = result.page;
@@ -48,7 +55,7 @@ export function createJournalPage(ctx: IPadPageContext): MobileShellPage {
       const row = el(ctx.document, "button", "pd-journal-entry"); row.type = "button"; row.dataset.path = entry.path;
       const fallback = ipadIcon(ctx.document, "book-open"); fallback.classList.add("pd-journal-placeholder"); row.append(fallback);
       if (entry.firstImageUrl) { const image = el(ctx.document, "img", "pd-journal-thumbnail"); image.src = entry.firstImageUrl; image.alt = ""; image.loading = "lazy"; image.addEventListener("error", () => { image.remove(); fallback.hidden = false; }, { once: true }); fallback.hidden = true; row.append(image); }
-      const copy = el(ctx.document, "span", "pd-journal-entry-copy"), summary = el(ctx.document, "span", "pd-module-secondary"); copy.append(el(ctx.document, "span", "", formatMobileDateGroup(entry.date, Date.now(), ctx.host.settings().settingsLanguage)), summary); row.append(copy); row.classList.toggle("is-selected", entry.date === selected);
+      const copy = el(ctx.document, "span", "pd-journal-entry-copy"), summary = el(ctx.document, "span", "pd-module-secondary"); copy.append(el(ctx.document, "span", "", formatMobileDiaryHeading(entry.date, ctx.host.settings().settingsLanguage)), summary); row.append(copy); row.classList.toggle("is-selected", entry.date === selected);
       row.addEventListener("click", () => { void ctx.host.openNote(entry.path).catch(error => v.report(error)); }); list.append(row);
       void api.readSummary(entry.path).then(text => { if (v.alive && ticket === summaryGeneration && row.isConnected) summary.textContent = text; }).catch(error => { if (v.alive && ticket === summaryGeneration) v.report(error); });
     }

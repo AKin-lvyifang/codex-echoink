@@ -78,7 +78,7 @@ export function moduleView(ctx: IPadPageContext, id: string, title: string, modu
         handoffArea.replaceChildren(); await ctx.host.openAgent({ kind: "agent", agentId: result.agentId }); };
       await view.run(() => send());
     }, true); header.append(handoff);
-    const refreshOwner = () => { if (!view.alive) return; const owner = ctx.host.services.modules.owner(module), visible = handoff.firstElementChild!; visible.replaceChildren(ipadAvatar(ctx.document, owner), el(ctx.document, "span", "", module === "journal" ? moduleText(ctx, `和${owner.name}聊今天`, `Talk with ${owner.name}`) : module === "todos" ? moduleText(ctx, `交给${owner.name}排一排`, `Plan with ${owner.name}`) : moduleText(ctx, `交给${owner.name}`, `Ask ${owner.name}`))); };
+    const refreshOwner = () => { if (!view.alive) return; const owner = ctx.host.services.modules.owner(module), visible = handoff.firstElementChild!; visible.replaceChildren(ipadAvatar(ctx.document, owner), el(ctx.document, "span", "", module === "journal" ? moduleText(ctx, `和${owner.name.trim()}聊今天`, `Talk with ${owner.name}`) : module === "todos" ? moduleText(ctx, `交给${owner.name.trim()}排一排`, `Plan with ${owner.name}`) : moduleText(ctx, `交给${owner.name.trim()}`, `Ask ${owner.name}`))); };
     refreshOwner(); cleanup.push(ctx.host.workbench.subscribe(refreshOwner));
   }
   return view;

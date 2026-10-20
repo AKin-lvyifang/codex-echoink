@@ -1,4 +1,6 @@
-.echoink-iphone .ip-module-page { padding-top: 12px; }
+.echoink-iphone .ip-module-page { padding-top: 0; }
+.echoink-iphone .ip-todo-toolbar { margin-top: 4px; }
+.echoink-iphone .ip-module-page.ip-finance-page { padding-top: 8px; }
 .echoink-iphone .ip-module-body { display: block; min-width: 0; width: 100%; margin: 0; padding: 0; border: 0; }
 .echoink-iphone .ip-module-body:disabled { opacity: .65; }
 .echoink-iphone .ip-module-page [hidden], .echoink-iphone .ip-module-footer [hidden] { display: none; }
@@ -11,6 +13,10 @@
 .echoink-iphone .ip-module-stat { display: flex; flex-direction: column; min-width: 0; gap: 5px; padding: 12px; border: 1px solid var(--ip-line); border-radius: 12px; }
 .echoink-iphone .ip-module-stat strong { font-size: 1.5em; font-weight: 600; line-height: 1.4; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .echoink-iphone .ip-module-stat > span { color: var(--ip-secondary); font-size: .76em; }
+.echoink-iphone .ip-journal-stats { gap: 8px; margin-top: 8px; }
+.echoink-iphone .ip-journal-stats .ip-module-stat { padding: 10px 12px; }
+.echoink-iphone .ip-journal-stats .ip-module-stat strong { font-size: 1.25em; }
+.echoink-iphone .ip-journal-stats .ip-module-stat > span { font-size: .75em; }
 .echoink-iphone .ip-module-section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 18px 0 9px; }
 .echoink-iphone .ip-module-section-head h2 { margin: 0; font-size: .92em; font-weight: 600; }
 .echoink-iphone .ip-module-toolbar, .echoink-iphone .ip-module-inline-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -42,9 +48,9 @@
 .echoink-iphone button.ip-module-navigation-row:last-child { border-bottom: 0; }
 .echoink-iphone .ip-module-rows { min-width: 0; }
 .echoink-iphone .ip-journal-list, .echoink-iphone .ip-todo-rows { overflow: hidden; border: 1px solid var(--ip-line); border-radius: 12px; }
-.echoink-iphone .ip-journal-list > button.ip-journal-entry { padding-right: 12px; padding-left: 12px; }
+.echoink-iphone .ip-journal-list > button.ip-journal-entry { padding-right: 12px; padding-left: 14px; }
 .echoink-iphone .ip-journal-list > button.ip-journal-entry:last-child, .echoink-iphone .ip-todo-rows > .ip-todo-row:last-child { border-bottom: 0; }
-.echoink-iphone .ip-todo-rows > .ip-todo-row { padding: 4px 10px; }
+.echoink-iphone .ip-todo-rows > .ip-todo-row { padding: 4px 12px 4px 14px; }
 .echoink-iphone .ip-todo-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; }
 .echoink-iphone .ip-todo-toolbar > .ip-module-segments { flex: none; width: auto; max-width: 100%; }
 .echoink-iphone .ip-todo-toolbar .ip-module-segment { min-width: 56px; }
@@ -52,7 +58,10 @@
 .echoink-iphone .ip-todo-project { position: relative; flex: 0 1 140px; min-width: 0; max-width: 100%; margin: 0 0 0 auto; }
 .echoink-iphone .ip-todo-project > .ip-settings-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .echoink-iphone .ip-todo-project > select { width: 100%; }
-.echoink-iphone .ip-todo-more-filters > summary { box-sizing: border-box; width: max-content; min-height: 44px; padding: 10px 0; color: var(--ip-secondary); font-size: .8em; cursor: pointer; }
+.echoink-iphone .ip-todo-more-filters > summary { box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: max-content; min-height: 44px; padding: 10px 0; color: var(--ip-secondary); font-size: .8em; list-style: none; cursor: pointer; }
+.echoink-iphone .ip-todo-more-filters > summary::-webkit-details-marker { display: none; }
+.echoink-iphone .ip-todo-more-filters > summary .ip-icon svg { width: 16px; height: 16px; }
+.echoink-iphone .ip-todo-more-filters[open] > summary .ip-icon { transform: rotate(180deg); }
 
 .echoink-iphone .ip-module-row-title { display: block; color: var(--ip-ink); font-size: .92em; font-weight: 500; overflow-wrap: anywhere; }
 .echoink-iphone .ip-module-inline-editor { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
@@ -68,19 +77,22 @@
 .echoink-iphone .ip-module-page .echoink-origin-pagination button[aria-current="page"] { background: var(--ip-soft); font-weight: 600; }
 .echoink-iphone .ip-journal-calendar { margin-bottom: 18px; }
 .echoink-iphone .ip-journal-calendar .ip-module-section-head { margin-top: 0; }
-.echoink-iphone .ip-journal-weekdays, .echoink-iphone .ip-journal-days { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 5px; }
+.echoink-iphone .ip-journal-weekdays, .echoink-iphone .ip-journal-days { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 4px; }
 .echoink-iphone .ip-journal-weekdays { margin-bottom: 6px; color: var(--ip-secondary); text-align: center; font-size: .76em; }
-.echoink-iphone .ip-journal-days button { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; width: 100%; height: auto; aspect-ratio: 1; margin: 0; padding: 0; overflow: hidden; border: 0; border-radius: 6px; background: transparent; color: var(--ip-ink); box-shadow: none; font: inherit; font-size: .8em; }
-.echoink-iphone .ip-journal-days button.outside { color: var(--ip-secondary); opacity: .45; }
-.echoink-iphone .ip-journal-days button.has-record { background: var(--ip-soft); font-weight: 600; }
+.echoink-iphone .ip-journal-days button { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; width: 100%; height: auto; aspect-ratio: 1; margin: 0; padding: 0; overflow: hidden; border: 0; border-radius: 9px; background: transparent; color: var(--ip-ink); box-shadow: none; font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; }
+.echoink-iphone .ip-journal-days button.outside { visibility: hidden; pointer-events: none; }
+.echoink-iphone .ip-journal-days button.has-record { background: var(--background-secondary); font-weight: 600; }
+.echoink-iphone .ip-journal-days button.has-record:not(.has-photo)::before { content: ""; position: absolute; left: calc(50% - 2px); bottom: 4px; width: 4px; height: 4px; border-radius: 50%; background: var(--text-success); }
 .echoink-iphone .ip-journal-days button.selected, .echoink-iphone .ip-journal-days button:focus-visible { background: var(--background-modifier-hover); }
-.echoink-iphone .ip-journal-days button.today .calendar-day-number { text-decoration: underline; text-underline-offset: 3px; }
+.echoink-iphone .ip-journal-days button.today { background: color-mix(in srgb, var(--ip-accent) 12%, var(--ip-bg)); font-weight: 600; }
+.echoink-iphone .ip-journal-days .calendar-day-number { position: relative; z-index: 1; text-decoration: none; }
 .echoink-iphone .ip-journal-days .echoink-calendar-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.echoink-iphone .ip-journal-days .has-photo .calendar-day-number { position: absolute; right: 2px; bottom: 2px; min-width: 18px; border-radius: 4px; background: var(--ip-bg); color: var(--ip-ink); }
+.echoink-iphone .ip-journal-days .has-photo .calendar-day-number { color: #fff; font-weight: 600; text-shadow: 0 1px 3px #0009; }
 .echoink-iphone button.ip-journal-entry, .echoink-iphone button.ip-finance-entry-row { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 62px; margin: 0; padding: 10px 0; border: 0; border-bottom: 1px solid var(--ip-line); border-radius: 0; background: transparent; color: var(--ip-ink); box-shadow: none; font: inherit; text-align: left; }
 .echoink-iphone button.ip-journal-entry:hover, .echoink-iphone button.ip-finance-entry-row:hover, .echoink-iphone button.ip-journal-entry:focus-visible, .echoink-iphone button.ip-finance-entry-row:focus-visible { background: var(--ip-soft); }
-.echoink-iphone .ip-journal-entry > .ip-icon, .echoink-iphone .ip-journal-thumbnail { flex: 0 0 42px; width: 42px; height: 42px; object-fit: cover; border-radius: 6px; }
-.echoink-iphone .ip-journal-entry > .ip-icon { display: grid; place-items: center; color: var(--ip-secondary); }
+.echoink-iphone button.ip-journal-entry { gap: 10px; min-height: 52px; padding-top: 8px; padding-bottom: 8px; }
+.echoink-iphone .ip-journal-thumbnail { flex: 0 0 40px; width: 40px; height: 40px; object-fit: cover; border-radius: 8px; }
+.echoink-iphone .ip-journal-entry > .ip-icon { display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; color: var(--ip-secondary); }
 .echoink-iphone .ip-journal-entry > .ip-icon[hidden] { display: none; }
 .echoink-iphone .ip-journal-entry > .ip-icon svg { width: 20px; height: 20px; }
 
@@ -91,12 +103,18 @@
 .echoink-iphone .ip-journal-template-preview pre { max-height: 360px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.8; }
 .echoink-iphone .ip-todo-count { display: flex; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 5px 12px; padding: 8px 0; color: var(--ip-secondary); font-size: .8em; font-variant-numeric: tabular-nums; }
 .echoink-iphone .ip-todo-count > span:last-child { white-space: nowrap; }
-.echoink-iphone .ip-todo-row { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; gap: 0 8px; min-height: 58px; border-bottom: 1px solid var(--ip-line); }
-.echoink-iphone .ip-todo-main { flex: 1 1 120px; min-width: 0; text-align: left; }
-.echoink-iphone .ip-todo-main .ip-button-visible { flex-direction: column; align-items: flex-start; width: 100%; gap: 5px; padding: 8px 0; white-space: normal; overflow-wrap: anywhere; }
+.echoink-iphone .ip-todo-row { display: flex; align-items: center; flex-wrap: nowrap; min-width: 0; gap: 0 10px; min-height: 52px; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-module-page button.ip-todo-check[data-slot="checkbox"] { position: relative; isolation: isolate; display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; min-width: 44px; min-height: 44px; margin: 0 -10px 0 -13px; padding: 0; color: var(--ip-on-accent); font-size: 14px; font-weight: 600; line-height: 1; }
+.echoink-iphone .ip-module-page button.ip-todo-check[data-slot="checkbox"]::before { content: ""; position: absolute; z-index: -1; top: 50%; left: 50%; box-sizing: border-box; width: 18px; height: 18px; transform: translate(-50%, -50%); border: 1.5px solid var(--ip-secondary); border-radius: 5px; background: transparent; }
+.echoink-iphone .ip-module-page button.ip-todo-check[data-slot="checkbox"]::after { content: none; }
+.echoink-iphone .ip-module-page button.ip-todo-check[aria-checked="true"]::before { border-color: var(--ip-accent); background: var(--ip-accent); }
+.echoink-iphone .ip-module-page button.ip-todo-check:focus-visible::before { outline: 2px solid var(--ip-accent); outline-offset: 3px; }
+.echoink-iphone button.ip-button.ip-todo-main { flex: 1 1 0; min-width: 0; padding: 0; color: var(--ip-ink); text-align: left; }
+.echoink-iphone button.ip-button.ip-todo-main .ip-button-visible { flex-direction: column; align-items: flex-start; justify-content: center; width: 100%; gap: 2px; padding: 4px 0; border: 0; color: var(--ip-ink); font-size: calc(var(--ip-ui-font) * .875); white-space: normal; overflow-wrap: anywhere; }
 .echoink-iphone .ip-todo-row.is-done .ip-todo-main .ip-button-visible > span:first-child { text-decoration: line-through; }
-.echoink-iphone .ip-todo-date { margin-left: auto; color: var(--ip-secondary); font-size: .76em; font-variant-numeric: tabular-nums; }
-.echoink-iphone .ip-todo-date.is-overdue { color: var(--text-error); }
+.echoink-iphone .ip-todo-date { flex: 0 0 auto; margin-left: auto; color: var(--ip-secondary); font-size: .76em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.echoink-iphone .ip-todo-date.is-today { color: var(--ip-warning); font-weight: 500; }
+.echoink-iphone .ip-todo-date.is-overdue { color: var(--ip-warning); }
 .echoink-iphone .ip-todo-people-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .echoink-iphone .ip-module-catalog-row { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; border-bottom: 1px solid var(--ip-line); }
 .echoink-iphone .ip-module-catalog-row:last-child { border-bottom: 0; }
@@ -145,6 +163,23 @@
 @media (max-width: 359px) {
   .echoink-iphone .ip-module-stats:not(.is-two) { grid-template-columns: minmax(0,1fr); }
   .echoink-iphone .ip-module-filters { grid-template-columns: minmax(0,1fr); }
-  .echoink-iphone .ip-todo-date { flex-basis: 100%; margin: 0 0 8px 52px; }
 }
 @media (prefers-reduced-motion: reduce) { .echoink-iphone .ip-module-segment-slider { transition: none; } }
+
+/* Approved mobile finance overview and secondary navigation. */
+.echoink-iphone .ip-finance-page .ip-finance-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.echoink-iphone .ip-finance-page .ip-finance-summary .ip-module-stat { padding: 10px 12px; }
+.echoink-iphone .ip-finance-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; min-width: 0; margin-bottom: 4px; }
+.echoink-iphone .ip-finance-navigation > .ip-module-segments { flex: none; width: auto; max-width: 100%; }
+.echoink-iphone .ip-finance-month { display: flex; align-items: center; min-width: 0; gap: 0; margin-left: auto; }
+.echoink-iphone .ip-finance-month-label { font-size: .875em; font-weight: 500; white-space: nowrap; }
+.echoink-iphone .ip-finance-recent { min-width: 0; border: 1px solid var(--ip-line); border-radius: 12px; overflow: hidden; }
+.echoink-iphone .ip-finance-recent > .ip-finance-entry-row { box-sizing: border-box; padding: 8px 12px 8px 14px; white-space: normal; }
+.echoink-iphone .ip-finance-recent > .ip-finance-entry-row:last-child { border-bottom: 0; }
+.echoink-iphone .ip-finance-recent .ip-grow { min-width: 0; }
+.echoink-iphone .ip-finance-recent .ip-module-row-title { overflow-wrap: anywhere; }
+.echoink-iphone .ip-finance-recent .ip-finance-entry-amount { flex: 0 1 auto; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.echoink-iphone .ip-finance-recent > .ip-module-empty { margin: 0; padding: 18px 14px; }
+.echoink-iphone .ip-finance-ledger-actions { justify-content: flex-end; }
+
+.echoink-iphone .ip-finance-summary .ip-module-stat strong { max-width: 100%; white-space: nowrap; overflow-x: auto; }

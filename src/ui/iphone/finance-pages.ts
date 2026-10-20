@@ -9,34 +9,35 @@ import { financePage } from "../../lifestyle/finance-pagination";
 import { createOriginCheck, createOriginPagination } from "../mobile/origin-controls";
 import type { IPhonePageContext } from "./workbench-contract";
 import { iphoneButton, iphoneElement as el } from "./workbench-elements";
-import { IPhoneModulePage, moduleMonth, moduleSegments, moduleStat, moduleText } from "./module-elements";
+import { IPhoneModulePage, moduleMonth, moduleSegments, moduleStat, moduleText, moduleIconButton } from "./module-elements";
 import { FINANCE_KIND_LABELS, openFinanceEntry, openFinanceImport, openFinanceBudget, openFinanceBillPlan, openFinanceGoal, openFinanceDailyLimit, renderFinanceReport } from "./finance-forms";
-import { openIPhoneFinanceSettings } from "./finance-settings-pages";
-import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
+import { formatMobileDateGroup, formatMobileDateTime } from "../../mobile/date-display";
 
 const emptyFilters = (): FinanceFilters => ({ search: "", merchant: "", category: "", kind: "all", account: "", excludedCategories: [], excludedIds: [], date: undefined, minCents: undefined, maxCents: undefined, validExpenseOnly: undefined, exactAccount: undefined, exactCategory: undefined, exactMerchant: undefined });
 export async function openIPhoneFinance(ctx: IPhonePageContext): Promise<void> {
   const id = "iphone-module-finance"; if (ctx.shell.hasPage(id)) { await ctx.shell.backTo(id); return; }
   const port = ctx.host.services.modules.finance, service = port.service, view = new IPhoneModulePage(ctx, id, "财务", "finance", "看看这个月的收支和预算");
   let data: Readonly<LifestyleData> | undefined, month = moduleMonth(new Date()), tab = "overview", page = 1, generation = 0;
-  const filters = emptyFilters();
+  const filters = emptyFilters(); view.content.classList.add("ip-finance-page");
   const render = () => {
     if (!view.alive || !data) return; view.body.replaceChildren(); const policy = service.accessState();
     if (!policy.canEnter) { view.error.show(policy.reason); view.button(view.body, "账号与会员", () => ctx.host.openLegacy("account")); return; }
     if (policy.reason) view.error.show(policy.reason);
     const entries = service.entries(), summary = financeSummary(entries, month), budget = effectiveFinanceBudget(data, month), pending = entries.filter(entry => entry.date.startsWith(month) && entry.classificationPending).length;
-    const stats = el(ctx.document, "div", "ip-module-stats"); moduleStat(view, stats, "本月支出", `¥${money(summary.netExpenseCents)}`); moduleStat(view, stats, "预算使用", budget?.totalCents ? `${Math.round(summary.netExpenseCents / budget.totalCents * 100)}%` : "—"); moduleStat(view, stats, "待分类", String(pending)); view.body.append(stats);
-    const toolbar = el(ctx.document, "div", "ip-module-toolbar"); view.field(toolbar, "月份", month, value => { if (/^\d{4}-\d{2}$/u.test(value)) { month = value; page = 1; render(); } }, "month");
-    view.button(toolbar, "导入账单", () => openFinanceImport(ctx, refresh)).disabled = !policy.canWrite; view.button(toolbar, "记一笔", () => openFinanceEntry(ctx, refresh)).disabled = !policy.canWrite; view.button(toolbar, "财务设置", () => openIPhoneFinanceSettings(ctx)); view.body.append(toolbar);
-    moduleSegments(view, view.body, "财务页面", [["overview", "总览"], ["ledger", "明细"], ["budget", "预算"], ["billPlans", "账单计划"]], tab, value => { tab = value; page = 1; render(); });
+    const allocation = budget && Object.entries(budget.allocations).find(([, amount]) => amount > 0), budgetAmount = allocation ? allocation[1] : budget?.totalCents, spent = allocation ? summary.categoryExpenseCents[allocation[0]] ?? 0 : summary.netExpenseCents;
+    const selectedDate = new Date(`${month}-01T12:00:00`), monthNumber = selectedDate.getMonth() + 1;
+    const stats = el(ctx.document, "div", "ip-module-stats ip-finance-summary"); moduleStat(view, stats, moduleText(ctx, `${monthNumber} 月支出`, `${selectedDate.toLocaleDateString("en", { month: "short" })} spending`), `¥${money(summary.netExpenseCents)}`); moduleStat(view, stats, allocation ? moduleText(ctx, `${allocation[0]}预算`, `${allocation[0]} budget`) : moduleText(ctx, budgetAmount ? "总预算" : "未设预算", budgetAmount ? "Total budget" : "No budget set"), budgetAmount ? `${Math.round(spent / budgetAmount * 100)}%` : "—"); moduleStat(view, stats, moduleText(ctx, "笔待分类", "To categorize"), String(pending)); view.body.append(stats);
+    const navigation = el(ctx.document, "div", "ip-finance-navigation"), monthControl = el(ctx.document, "div", "ip-finance-month");
+    moduleSegments(view, navigation, "财务页面", [["overview", "总览"], ["ledger", "明细"], ["budget", "预算"]], tab, value => { tab = value; page = 1; render(); });
+    monthControl.append(el(ctx.document, "span", "ip-finance-month-label", moduleText(ctx, `${selectedDate.getFullYear()} 年 ${monthNumber} 月`, selectedDate.toLocaleDateString("en", { year: "numeric", month: "long" }))));
+    const moveMonth = (offset: number) => { selectedDate.setMonth(selectedDate.getMonth() + offset); month = moduleMonth(selectedDate); page = 1; render(); };
+    moduleIconButton(view, monthControl, "上个月", "chevron-left", () => moveMonth(-1)); moduleIconButton(view, monthControl, "下个月", "chevron-right", () => moveMonth(1)); navigation.append(monthControl); view.body.append(navigation);
     if (tab === "overview") {
-      const totals = view.group("本月收支"); for (const [label, value] of [["收入", summary.incomeCents], ["退款", summary.refundCents], ["收支结余", summary.balanceCents]] as const) { const row = el(ctx.document, "div", "ip-module-fact"); row.append(el(ctx.document, "span", "", moduleText(ctx, label)), el(ctx.document, "span", "", `¥${money(value)}`)); totals.append(row); }
-      const rate = el(ctx.document, "div", "ip-module-fact"); rate.append(el(ctx.document, "span", "", moduleText(ctx, "本月结余率")), el(ctx.document, "span", "", summary.savingsRate === null ? "—" : `${(summary.savingsRate * 100).toFixed(1)}%`)); totals.append(rate);
-      renderFinanceBreakdown(view, view.body, entries, month, next => { Object.assign(filters, emptyFilters(), next); tab = "ledger"; page = 1; render(); });
-      renderSpendingCalendar(view, view.body, entries, month, service.monthlyPlan(month).dailyLimitCents, date => { Object.assign(filters, emptyFilters(), { date, kind: "expense", validExpenseOnly: true }); tab = "ledger"; page = 1; render(); });
-      const recent = view.heading(view.body, "最近账目"); view.button(recent, "全部明细", () => { tab = "ledger"; render(); }); renderEntries(view, view.body, filterFinanceEntries(entries, month, emptyFilters()).slice(0, 8), refresh);
-      view.heading(view.body, "财务分析"); const actions = el(ctx.document, "div", "ip-module-inline-actions"); view.button(actions, "查看分析", () => openFinanceAnalysis(ctx, month, refresh)); view.button(actions, "分析记录", () => openAnalysisHistory(ctx, data!)); view.body.append(actions);
+      const recent = el(ctx.document, "div", "ip-finance-recent"); view.body.append(recent); renderEntries(view, recent, filterFinanceEntries(entries, month, emptyFilters()).slice(0, 8), refresh);
     } else if (tab === "ledger") {
+      const toolbar = el(ctx.document, "div", "ip-module-inline-actions ip-finance-ledger-actions"); view.body.append(toolbar);
+      view.button(toolbar, moduleText(ctx, "消费统计", "Spending statistics"), () => openFinanceStatistics(ctx, month, refresh, async next => { Object.assign(filters, emptyFilters(), next); tab = "ledger"; page = 1; await ctx.shell.back(); render(); }));
+      view.button(toolbar, "导入账单", () => openFinanceImport(ctx, refresh)).disabled = !policy.canWrite; view.button(toolbar, "记一笔", () => openFinanceEntry(ctx, refresh), true).disabled = !policy.canWrite;
       const controls = el(ctx.document, "div", "ip-module-filters"); view.body.append(controls); view.field(controls, "搜索账目", filters.search, value => { filters.search = value; page = 1; drawLedger(); }, "search");
       view.select(controls, "交易类型", [["all", moduleText(ctx, "全部类型")], ["spending", moduleText(ctx, "消费与退款")], ...Object.entries(FINANCE_KIND_LABELS).map(([key, label]) => [key, moduleText(ctx, label)] as const)], filters.kind, value => { filters.kind = value as FinanceFilters["kind"]; page = 1; drawLedger(); });
       for (const [key, label] of [["category", "分类"], ["account", "账户"], ["merchant", "商户"]] as const) view.select(controls, label, [["", moduleText(ctx, "全部")], ...[...new Set(entries.filter(entry => entry.date.startsWith(month)).map(entry => entry[key]).filter(Boolean))].map(name => [name, name] as const)], filters[key], value => { filters[key] = value; page = 1; drawLedger(); });
@@ -47,6 +48,7 @@ export async function openIPhoneFinance(ctx: IPhonePageContext): Promise<void> {
       view.button(controls, "打开账本", () => service.openBase());
       function drawLedger() { list.replaceChildren(); navigation.replaceChildren(); const result = financePage(filterFinanceEntries(service.entries(), month, filters), page); page = result.page; list.append(el(ctx.document, "div", "ip-module-status", moduleText(ctx, `符合条件 ${result.total} 笔`, `${result.total} matching entries`))); renderEntries(view, list, result.items, refresh); if (result.pages > 1) createOriginPagination(navigation, result.page, result.pages, next => { page = next; drawLedger(); }); } drawLedger();
     } else if (tab === "budget") {
+      const plans = view.group(); view.button(plans, "账单计划", () => openFinanceBills(ctx, refresh));
       const group = view.group("月度预算"); if (budget) {
         const total = el(ctx.document, "div", "ip-module-fact"); total.append(el(ctx.document, "span", "", moduleText(ctx, "总预算")), el(ctx.document, "strong", "", `¥${money(budget.totalCents)}`)); group.append(total);
         for (const [category, amount] of Object.entries(budget.allocations)) { const row = el(ctx.document, "div", "ip-module-fact"); row.append(el(ctx.document, "span", "", category), el(ctx.document, "span", "", `¥${money(summary.categoryExpenseCents[category] ?? 0)} / ¥${money(amount)}`)); group.append(row); }
@@ -54,17 +56,38 @@ export async function openIPhoneFinance(ctx: IPhonePageContext): Promise<void> {
       const plan = service.monthlyPlan(month); const daily = view.group("每日额度"); daily.append(el(ctx.document, "div", "ip-module-copy", plan.dailyLimitCents === null ? "—" : `¥${money(plan.dailyLimitCents)}`)); view.button(daily, "设置每日额度", () => openFinanceDailyLimit(ctx, month, plan.dailyLimitCents, refresh)).disabled = !policy.canWrite;
       const goals = view.group("持续目标"); for (const goal of service.goals()) { const progress = financeGoalProgress(goal, entries), unit = goal.metric === "savings-rate" || goal.metric === "category-share" ? "%" : moduleText(ctx, "元"), actual = progress.actual === null ? "—" : (progress.actual / 100).toFixed(2), button = iphoneButton(ctx.document, `${goal.name} · ${actual} / ${(goal.target / 100).toFixed(2)} ${unit}`, () => { void openFinanceGoal(ctx, refresh, goal).catch(error => ctx.error(error)); }); button.classList.add("ip-module-navigation-row"); goals.append(button); } if (!service.goals().length) view.empty(goals, "还没有目标"); view.button(goals, "新增目标", () => openFinanceGoal(ctx, refresh)).disabled = !policy.canWrite;
       const oldGoals = data.financePlans.flatMap(item => item.goals.map(goal => ({ month: item.month, goal }))); if (oldGoals.length) { const old = el(ctx.document, "details", "ip-finance-old-goals"); old.append(el(ctx.document, "summary", "", moduleText(ctx, `旧目标待重新设置 · ${oldGoals.length} 项`, `Reset previous goals · ${oldGoals.length}`))); for (const legacy of oldGoals) { const row = iphoneButton(ctx.document, `${legacy.month} · ${legacy.goal.name} · ${legacy.goal.target} ${legacy.goal.unit}`, () => { void openFinanceGoal(ctx, refresh, undefined, legacy).catch(ctx.error); }); row.classList.add("ip-module-navigation-row"); old.append(row); } goals.append(old); }
-    } else {
-      const plans = service.billPlans(); for (const plan of plans) { const facts = financeBillPlanStats(plan, entries), card = view.group(); const button = iphoneButton(ctx.document, plan.name, () => { void openBillDetails(ctx, plan, refresh).catch(error => ctx.error(error)); }); button.classList.add("ip-module-navigation-row"); card.append(button, el(ctx.document, "div", "ip-module-copy", `¥${money(facts.netCents)} / ¥${money(plan.budgetCents)}`)); }
-      if (!plans.length) view.empty(view.body, "还没有账单计划"); view.button(view.body, "新建账单", () => openFinanceBillPlan(ctx, refresh)).disabled = !policy.canWrite;
     }
   };
   const refresh = async () => { const current = ++generation; try { const next = await port.readData(); if (!view.alive || current !== generation) return; data = next; view.error.show(); render(); } catch (error) { if (view.alive && current === generation) view.error.show(error); } };
   view.cleanup(service.subscribeEntries(() => { if (!view.busy) void refresh(); })); view.cleanup(service.subscribe(() => { if (!view.busy) void refresh(); })); if (ctx.host.accountService) view.cleanup(ctx.host.accountService.subscribe(() => render())); view.empty(view.body, "正在加载…"); await view.push(); if (view.alive) await refresh();
 }
 
+
+async function openFinanceBills(ctx: IPhonePageContext, saved: () => Promise<void>): Promise<void> {
+  const view = new IPhoneModulePage(ctx, "iphone-finance-bills", "账单计划"), service = ctx.host.services.modules.finance.service;
+  const render = () => {
+    if (!view.alive) return; view.body.replaceChildren(); const policy = service.accessState(); if (!policy.canEnter) { view.error.show(policy.reason); return; } const entries = service.entries(), refresh = async () => { await saved(); render(); };
+      const plans = service.billPlans(); for (const plan of plans) { const facts = financeBillPlanStats(plan, entries), card = view.group(); const button = iphoneButton(ctx.document, plan.name, () => { void openBillDetails(ctx, plan, refresh).catch(error => ctx.error(error)); }); button.classList.add("ip-module-navigation-row"); card.append(button, el(ctx.document, "div", "ip-module-copy", `¥${money(facts.netCents)} / ¥${money(plan.budgetCents)}`)); }
+      if (!plans.length) view.empty(view.body, "还没有账单计划"); view.button(view.body, "新建账单", () => openFinanceBillPlan(ctx, refresh)).disabled = !policy.canWrite;
+  };
+  view.cleanup(service.subscribe(render)); view.cleanup(service.subscribeEntries(render)); if (ctx.host.accountService) view.cleanup(ctx.host.accountService.subscribe(render)); render(); await view.push();
+}
+async function openFinanceStatistics(ctx: IPhonePageContext, month: string, saved: () => Promise<void>, open: (filters: Partial<FinanceFilters>) => Promise<void>): Promise<void> {
+  const view = new IPhoneModulePage(ctx, `iphone-finance-statistics-${month}`, moduleText(ctx, "消费统计", "Spending statistics")), service = ctx.host.services.modules.finance.service;
+  const render = () => {
+    if (!view.alive) return; view.body.replaceChildren(); const policy = service.accessState(); if (!policy.canEnter) { view.error.show(policy.reason); return; }
+    const entries = service.entries(), summary = financeSummary(entries, month), totals = view.group("本月收支");
+    for (const [label, value] of [["收入", summary.incomeCents], ["退款", summary.refundCents], ["收支结余", summary.balanceCents]] as const) { const row = el(ctx.document, "div", "ip-module-fact"); row.append(el(ctx.document, "span", "", moduleText(ctx, label)), el(ctx.document, "span", "", `¥${money(value)}`)); totals.append(row); }
+    const rate = el(ctx.document, "div", "ip-module-fact"); rate.append(el(ctx.document, "span", "", moduleText(ctx, "本月结余率")), el(ctx.document, "span", "", summary.savingsRate === null ? "—" : `${(summary.savingsRate * 100).toFixed(1)}%`)); totals.append(rate);
+    renderFinanceBreakdown(view, view.body, entries, month, next => { void open(next).catch(ctx.error); });
+    renderSpendingCalendar(view, view.body, entries, month, service.monthlyPlan(month).dailyLimitCents, date => { void open({ date, kind: "expense", validExpenseOnly: true }).catch(ctx.error); });
+    const actions = el(ctx.document, "div", "ip-module-inline-actions"); view.button(actions, "查看分析", () => openFinanceAnalysis(ctx, month, saved)); view.button(actions, "分析记录", async () => { const data = await ctx.host.services.modules.finance.readData(); if (view.alive) await openAnalysisHistory(ctx, data); }); view.body.append(actions);
+  };
+  view.cleanup(service.subscribe(render)); view.cleanup(service.subscribeEntries(render)); if (ctx.host.accountService) view.cleanup(ctx.host.accountService.subscribe(render)); render(); await view.push();
+}
+
 function renderEntries(view: IPhoneModulePage, parent: HTMLElement, entries: readonly FinanceEntry[], saved: () => Promise<void>): void {
-  for (const entry of entries) { const row = el(view.ctx.document, "button", "ip-finance-entry-row"); row.type = "button"; row.dataset.entryId = entry.id; const text = el(view.ctx.document, "span", "ip-grow"); text.append(el(view.ctx.document, "span", "ip-module-row-title", entry.merchant), el(view.ctx.document, "span", "ip-sub", entry.classificationPending ? moduleText(view.ctx, "待分类") : entry.category)); const right = el(view.ctx.document, "span", "ip-finance-entry-amount"); right.append(el(view.ctx.document, "span", "", `${entry.kind === "expense" ? "−" : entry.kind === "income" || entry.kind === "refund" ? "+" : ""}${money(entry.amountCents)}`), el(view.ctx.document, "time", "ip-sub", formatMobileDate(entry.date))); row.append(text, right); row.addEventListener("click", () => { void openFinanceEntry(view.ctx, saved, entry).catch(error => view.ctx.error(error)); }); parent.append(row); }
+  for (const entry of entries) { const row = el(view.ctx.document, "button", "ip-finance-entry-row"); row.type = "button"; row.dataset.entryId = entry.id; const text = el(view.ctx.document, "span", "ip-grow"); text.append(el(view.ctx.document, "span", "ip-module-row-title", entry.merchant), el(view.ctx.document, "span", "ip-sub", entry.classificationPending ? moduleText(view.ctx, "待分类") : entry.category)); const right = el(view.ctx.document, "span", "ip-finance-entry-amount"); right.append(el(view.ctx.document, "span", "", `${entry.kind === "expense" ? "−" : entry.kind === "income" || entry.kind === "refund" ? "+" : ""}${money(entry.amountCents)}`), el(view.ctx.document, "time", "ip-sub", formatMobileDateGroup(entry.date, Date.now(), view.ctx.host.settings().settingsLanguage))); row.append(text, right); row.addEventListener("click", () => { void openFinanceEntry(view.ctx, saved, entry).catch(error => view.ctx.error(error)); }); parent.append(row); }
   if (!entries.length) view.empty(parent, "还没有账目");
 }
 

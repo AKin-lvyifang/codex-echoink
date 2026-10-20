@@ -28,3 +28,23 @@ export function formatMobileDateTime(value: MobileDate, now = Date.now(), langua
   const group = formatMobileDateGroup(value, now, language);
   return ["今天", "昨天", "Today", "Yesterday"].includes(group) ? `${group} ${formatMobileClock(value)}` : group;
 }
+
+/** Journal list headings keep their calendar date, including today and yesterday. */
+export function formatMobileDiaryHeading(value: MobileDate, language = "zh-CN"): string {
+  const date = dateOf(value);
+  if (!date) return "—";
+  if (language === "en") return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", weekday: "short" }).format(date);
+  return `${date.getMonth() + 1}月${date.getDate()}日 周${"日一二三四五六"[date.getDay()]}`;
+}
+
+/** Display only: the saved due time remains intact for editing and reminders. */
+export function formatMobileDueDate(value: MobileDate, now = Date.now(), language = "zh-CN"): string {
+  const date = dateOf(value), today = dateOf(new Date(now));
+  if (!date || !today) return "—";
+  const day = (d: Date): number => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;
+  const delta = day(date) - day(today);
+  if (delta === 0) return language === "en" ? "Today" : "今天";
+  const offset = (today.getDay() + 6) % 7, week = Math.floor((delta + offset) / 7);
+  if (delta > 0 && week <= 1) return language === "en" ? `${week === 1 ? "Next " : ""}${new Intl.DateTimeFormat("en", { weekday: "short" }).format(date)}` : `${week === 1 ? "下周" : "周"}${"日一二三四五六"[date.getDay()]}`;
+  return language === "en" ? `${date.getMonth() + 1}/${date.getDate()}` : `${date.getMonth() + 1}月${date.getDate()}日`;
+}

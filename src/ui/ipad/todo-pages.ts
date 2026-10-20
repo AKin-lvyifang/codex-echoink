@@ -1,10 +1,11 @@
 import type { MobileTodoSnapshot } from "../../mobile/module-contracts";
 import type { ParsedTodoRecord } from "../../home/todo-markdown";
 import { resolveTodoProject } from "../../home/todo-projects";
-import { formatMobileDate } from "../../mobile/date-display";
+import { formatMobileDate, formatMobileDueDate } from "../../mobile/date-display";
 import { todoPageRecords } from "../../home/todo-page-model";
 import type { MobileShellPage } from "../mobile/shell-types";
 import type { IPadPageContext } from "./workbench-contract";
+import { ipadIcon } from "./workbench-elements";
 import { createModuleForm, el, moduleButton, moduleEmpty, moduleSegments, moduleSelect, moduleView, moduleText as t } from "./module-elements";
 
 export function createTodoPage(ctx: IPadPageContext): MobileShellPage {
@@ -14,9 +15,9 @@ export function createTodoPage(ctx: IPadPageContext): MobileShellPage {
   toolbar.append(moduleSegments(ctx, [["open", t(ctx, "未完成", "Open")], ["done", t(ctx, "已完成", "Done")], ["all", t(ctx, "全部", "All")]], status, value => { status = value as typeof status; page = 1; renderRows(); }));
   const projectSelect = moduleSelect(ctx, toolbar, t(ctx, "项目", "Project"), [["", t(ctx, "全部项目", "All projects")]], "", value => { project = value || null; page = 1; renderRows(); });
   projectSelect.parentElement!.classList.add("pd-todo-project");
-  const actions = el(ctx.document, "div", "pd-module-actions"); actions.append(moduleButton(ctx, t(ctx, "新增待办", "Add to-do"), () => { if (snapshot) return v.push(createTodoForm(ctx, snapshot, null)); }), moduleButton(ctx, t(ctx, "设置", "Settings"), () => v.push(createTodoSettings(ctx)), false, "settings"));
+  toolbar.append(moduleButton(ctx, t(ctx, "新增待办", "Add to-do"), () => { if (snapshot) return v.push(createTodoForm(ctx, snapshot, null)); }, false, "plus"));
   const categorySelect = moduleSelect(ctx, filters, t(ctx, "分类", "Category"), [["", t(ctx, "全部分类", "All categories")]], "", value => { category = value || null; page = 1; renderRows(); });
-  moduleSelect(ctx, filters, t(ctx, "日期", "Date"), [["all", t(ctx, "全部日期", "All dates")], ["today", t(ctx, "今天", "Today")], ["overdue", t(ctx, "已逾期", "Overdue")], ["none", t(ctx, "无日期", "No date")]], date, value => { date = value; page = 1; renderRows(); }); advanced.append(el(ctx.document, "summary", "", t(ctx, "更多筛选", "More filters")), filters); v.body.append(toolbar, advanced, range, table, pager, actions);
+  moduleSelect(ctx, filters, t(ctx, "日期", "Date"), [["all", t(ctx, "全部日期", "All dates")], ["today", t(ctx, "今天", "Today")], ["overdue", t(ctx, "已逾期", "Overdue")], ["none", t(ctx, "无日期", "No date")]], date, value => { date = value; page = 1; renderRows(); }); const filterSummary = el(ctx.document, "summary", ""); filterSummary.append(el(ctx.document, "span", "", t(ctx, "更多筛选", "More filters")), ipadIcon(ctx.document, "chevron-down")); advanced.append(filterSummary, filters); v.body.append(toolbar, range, table, pager, advanced);
   function renderRows(): void {
     if (!snapshot || !v.alive) return; table.replaceChildren(); pager.replaceChildren(); const today = formatMobileDate(new Date());
     const records = snapshot.records.filter(item => date === "all" || date === "today" && item.dueDate === today || date === "overdue" && !item.done && !!item.dueDate && item.dueDate < today || date === "none" && !item.dueDate);
@@ -28,7 +29,7 @@ export function createTodoPage(ctx: IPadPageContext): MobileShellPage {
       const row = el(ctx.document, "tr", item.done ? "is-done" : ""), doneCell = el(ctx.document, "td", ""), hit = el(ctx.document, "label", "pd-todo-checkbox-hit"), input = el(ctx.document, "input", ""); input.type = "checkbox"; input.checked = item.done; input.setAttribute("aria-label", `${item.done ? t(ctx, "取消完成", "Reopen") : t(ctx, "完成", "Complete")} ${item.title}`);
       input.addEventListener("change", () => { const requested = input.checked; void v.run(() => api.toggle(item, requested, snapshot!.contentVersion)).then(success => { if (success) reload(); else input.checked = item.done; }); }); hit.append(input); doneCell.append(hit);
       const title = el(ctx.document, "td", ""); title.append(moduleButton(ctx, item.title, () => v.push(createTodoForm(ctx, snapshot!, item))));
-      const projectLabel = resolveTodoProject(item.project, snapshot.projects); row.append(doneCell, title, el(ctx.document, "td", "", projectLabel.label), el(ctx.document, "td", "", item.categoryName || "—"), el(ctx.document, "td", "", [item.dueDate ? formatMobileDate(item.dueDate) : "", item.dueTime].filter(Boolean).join(" ") || "—")); body.append(row);
+      const projectLabel = resolveTodoProject(item.project, snapshot.projects), projectCell = el(ctx.document, "td", ""); if (item.project) { const tag = el(ctx.document, "span", "pd-todo-project-tag"); tag.append(ipadIcon(ctx.document, "folder"), el(ctx.document, "span", "", projectLabel.label)); projectCell.append(tag); } else projectCell.textContent = projectLabel.label; row.append(doneCell, title, projectCell, el(ctx.document, "td", "", item.categoryName || "—"), el(ctx.document, "td", `pd-todo-date${item.dueDate && !item.done && item.dueDate < today ? " is-overdue" : item.dueDate === today && !item.done ? " is-today" : ""}`, item.dueDate ? formatMobileDueDate(item.dueDate, Date.now(), ctx.host.settings().settingsLanguage) : "—")); body.append(row);
     }
     grid.append(body); table.append(grid); if (!result.records.length) moduleEmpty(ctx, table, t(ctx, "没有符合条件的待办", "No matching to-dos"));
     if (result.pages > 1) { const previous = moduleButton(ctx, t(ctx, "上一页", "Previous"), () => { page--; renderRows(); }), next = moduleButton(ctx, t(ctx, "下一页", "Next"), () => { page++; renderRows(); }); previous.disabled = page === 1; next.disabled = page === result.pages; pager.append(previous, el(ctx.document, "span", "", `${page}/${result.pages}`), next); }
