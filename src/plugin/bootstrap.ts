@@ -3,7 +3,8 @@ import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/engl
 import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
 import { TodoPageView, TODO_PAGE_VIEW_TYPE } from "../home/todo-page";
 import { EchoInkJournalView, VIEW_TYPE_ECHOINK_JOURNAL } from "../home/journal-page";
-import { Notice, Platform, type WorkspaceLeaf } from "obsidian";
+import { Notice, Platform, TFile, TFolder, type WorkspaceLeaf } from "obsidian";
+import { getGenerationService } from "../generation/service";
 import type CodexForObsidianPlugin from "../main";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { EchoInkWorkbenchView } from "../home/workbench-view";
@@ -78,6 +79,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
   const settingTab = new CodexSettingTab(plugin);
   plugin.setSettingsTabInstance(settingTab);
   plugin.addSettingTab(settingTab);
+  registerGenerationFileMenu(plugin);
   plugin.registerEvent(plugin.app.workspace.on(
     "editor-menu",
     (menu, editor) => {
@@ -116,6 +118,25 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
   const selectionAsk = new SelectionAskController(plugin);
   selectionAsk.register();
   return { knowledgeBase, review, selectionAsk };
+}
+
+/** Desktop-only file entry. Collection and capacity checks remain in the service/modal. */
+export function registerGenerationFileMenu(plugin: CodexForObsidianPlugin): void {
+  if (!Platform.isDesktopApp) return;
+  plugin.registerEvent(plugin.app.workspace.on("file-menu", (menu, file) => {
+    if (!(file instanceof TFolder) && (!(file instanceof TFile) || file.extension.toLocaleLowerCase() !== "md")) return;
+    const outputs = plugin.settings.knowledgeBase.folderBindings?.roles.outputs.readPaths ?? [];
+    if (outputs.some(root => file.path === root || file.path.startsWith(`${root}/`)) || file.path.split("/").some(part => part.startsWith("."))) return;
+    // Empty folders deliberately keep the entry so the modal can offer Add note.
+    if (file instanceof TFile && !getGenerationService(plugin).sourcesFromPath(file.path).length) return;
+    menu.addItem(item => item.setTitle("用 EchoInk 生成…").setIcon("sparkles").onClick(() => {
+      void (async () => { try {
+        await plugin.activateView(); const view = plugin.getCodexView();
+        if (!view || !await view.waitForTaskUiReady()) throw new Error("EchoInk 尚未就绪，请稍后重试。");
+        view.openGenerationForPath(file.path);
+      } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); } })();
+    }));
+  }));
 }
 
 export function registerEchoInkStartupTasks(plugin: CodexForObsidianPlugin): void {

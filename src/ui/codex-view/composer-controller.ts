@@ -1,5 +1,6 @@
 import { composerSelectionAnnotations, clearSelectionDraft } from "../../selection-ask/draft";
-import { Notice, type App } from "obsidian";
+import { Notice, Platform, type App } from "obsidian";
+import { normalizeGenerationTemplates } from "../../settings/generation-templates";
 import type CodexForObsidianPlugin from "../../main";
 import { enabledSkillResources } from "../../resources/registry";
 import type { EchoInkResource } from "../../resources/types";
@@ -140,6 +141,8 @@ export interface CodexComposerHost {
   toggleMcpPanel(): Promise<void>;
   fillKnowledgeBaseCommand(command: string): void;
   renderKnowledgeCommandMatches(query: string): void;
+  generationEntryReason(): string | null;
+  openGenerationModal(templateId?: string): void;
 }
 
 export function renderToolbar(host: CodexComposerHost): void {
@@ -259,10 +262,12 @@ export function renderToolbar(host: CodexComposerHost): void {
       resourceSettings: host.plugin.settings.resources,
       language: host.plugin.settings.settingsLanguage,
       canAttachActiveFile: currentDisplayedMarkdownFile(host.app) !== null,
-      pdfPlugin: { enabled: host.plugin.settings.pdfReading?.enabled === true, canWrite: host.plugin.pdfReading?.policy().canWrite === true }
+      pdfPlugin: { enabled: host.plugin.settings.pdfReading?.enabled === true, canWrite: host.plugin.pdfReading?.policy().canWrite === true },
+      generationEntryReason: Platform.isDesktopApp ? host.generationEntryReason() : null
     },
     {
       onDismiss: (restoreFocus) => closeResourcePanel(host, restoreFocus),
+      onGenerateFromSources: () => { closeResourcePanel(host, false); host.openGenerationModal(); },
       onPickFiles: (imagesOnly) => {
         closeResourcePanel(host, false);
         host.pickFiles(imagesOnly);
@@ -1027,10 +1032,18 @@ export function renderKnowledgeCommandMatches(
       skills: enabledSkillsForComposerMenu(
         loadedSkills ?? host.currentEchoInkResourceCatalog()
       ),
-      selectedSkill: host.selectedSkill
+      selectedSkill: host.selectedSkill,
+      generationTemplates: Platform.isDesktopApp ? normalizeGenerationTemplates(host.plugin.settings.generationTemplates) : [],
+      generationEntryReason: Platform.isDesktopApp ? host.generationEntryReason() : null
     },
     {
       onFillCommand: (command) => fillKnowledgeBaseCommand(host, command),
+      onSelectGenerationTemplate: template => {
+        if (host.generationEntryReason()) return;
+        host.inputEl.value = removeTrailingSlashQuery(host.inputEl.value);
+        clearPromptEnhanceReview(host.promptEnhanceReviewEl); setKnowledgeCommandMenuOpen(host.inputEl, host.knowledgeCommandMenuEl, false);
+        host.openGenerationModal(template.id);
+      },
       onSelectSkill: (skill) => {
         host.selectedSkill = skill;
         host.inputEl.value = removeTrailingSlashQuery(host.inputEl.value);

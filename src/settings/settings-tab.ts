@@ -7,6 +7,7 @@ import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
 import { renderSelectionAskPluginRow, renderSelectionAnnotationSettings, type SelectionAnnotationSettingsController } from "./selection-annotation-settings";
 import { renderDesktopModuleSettings as mountDesktopModuleSettings, type DesktopModuleId } from "./desktop-module-settings";
 import { DesktopKnowledgeSettings } from "./desktop-knowledge-settings";
+import { GenerationTemplatesSection } from "./generation-templates-section";
 import { HomeWorkbenchDataService } from "../home/home-workbench-data";
 import { JournalTemplateModal } from "../home/journal-template-modal";
 import { BUILT_IN_JOURNAL_TEMPLATES } from "../home/home-workbench-model";
@@ -307,6 +308,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private desktopCorrection: { id: string; record: Readonly<PersonalMemoryRecord>; invalidated: boolean; controller: MemoryCorrectionModal } | null = null;
   private desktopSelection: { host: HTMLElement; controller: SelectionAnnotationSettingsController | undefined } | null = null;
   private desktopTemplate: { host: HTMLElement; dispose: () => void } | null = null;
+  private desktopGenerationTemplates: GenerationTemplatesSection | null = null;
   private preserveDesktopCloseDraft = false;
   private pendingDesktopClosePrompt = false;
   private settingsViewUnloaded = false;
@@ -336,7 +338,9 @@ export class CodexSettingTab extends PluginSettingTab {
     this.settingsDetail = null;
     if (route.focus === "providers:add" && this.plugin.isEchoInkOnboardingRequested() && this.plugin.getEchoInkOnboardingStep() === "provider") this.providerPickerOpen = true;
     if (route.focus) this.settingsFocusIntent = `explicit:${route.focus.replace(/^explicit:/u, "")}`;
-    if (/journal:templates/u.test(route.focus ?? "")) this.openSettingsDetail("journal-templates");
+    if (/^knowledge:generation-template:/u.test(route.focus ?? "")) this.openGenerationTemplateEditor(route.focus!.slice("knowledge:generation-template:".length));
+    else if (route.focus === "knowledge:generation-templates") { this.desktopModuleExpanded.add("knowledge"); this.ensureGenerationTemplates().openList(); }
+    else if (/journal:templates/u.test(route.focus ?? "")) this.openSettingsDetail("journal-templates");
     else if (/todo:categories/u.test(route.focus ?? "")) this.openSettingsDetail("todo-categories");
     else if (/knowledge:sources/u.test(route.focus ?? "")) { this.desktopModuleExpanded.add("knowledge"); this.ensureDesktopKnowledge().open("sources"); }
     else if (route.resourceId) this.openSettingsDetail({ kind: "resource", resourceId: route.resourceId });
@@ -1424,6 +1428,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderDesktopModuleSettings(container: HTMLElement): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const knowledge = this.ensureDesktopKnowledge();
+    if (this.settingsDetail === "generation-template") { this.ensureGenerationTemplates().renderEditor(container); return; }
     if (this.plugin.consumeKnowledgeLinkingFocus()) { this.knowledgeLinkingTaskId = this.plugin.consumeKnowledgeLinkingTaskId(); this.settingsDetail = "knowledge-linking"; }
     if (knowledge.isDetail) { knowledge.renderDetail(container); return; }
     if (this.settingsDetail === "knowledge-preferences") { this.desktopModuleExpanded.add("knowledge"); this.renderKnowledgeMaintenancePreferences(container); return; }
@@ -1475,7 +1480,7 @@ export class CodexSettingTab extends PluginSettingTab {
       onProBenefits: () => { this.openDesktopRoute({ tab: "account", focus: "account:benefits" }); },
       renderContent: (module, parent) => {
         try {
-        if (module === "knowledge") knowledge.renderSummary(parent);
+        if (module === "knowledge") { knowledge.renderSummary(parent); this.ensureGenerationTemplates().renderDrawer(parent); }
         else if (module === "journal") {
           this.renderJournalSettings(parent, true);
           const count = BUILT_IN_JOURNAL_TEMPLATES.length + this.journalTemplateService().listCustomTemplates().length;
@@ -1501,6 +1506,18 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private ensureDesktopKnowledge(): DesktopKnowledgeSettings {
     return this.desktopKnowledge ??= new DesktopKnowledgeSettings(this.plugin, { redraw: () => this.scheduleDisplay(), openPreferences: () => this.openSettingsDetail("knowledge-preferences"), openLinking: () => this.openSettingsDetail("knowledge-linking"), openEditor: editor => this.openInlineEditor(editor, "modules") });
+  }
+
+  private ensureGenerationTemplates(): GenerationTemplatesSection {
+    return this.desktopGenerationTemplates ??= new GenerationTemplatesSection(this.plugin, {
+      openEditor: id => this.openGenerationTemplateEditor(id), closeEditor: () => { void this.closeSettingsDetail(); }, redraw: () => this.scheduleDisplay()
+    });
+  }
+
+  private openGenerationTemplateEditor(id: string | null): void {
+    this.desktopModuleExpanded.add("knowledge");
+    this.ensureGenerationTemplates().open(id);
+    this.openSettingsDetail("generation-template");
   }
 
   private moduleInputFields(parent: HTMLElement): Array<[string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement]> {
@@ -3117,6 +3134,8 @@ export class CodexSettingTab extends PluginSettingTab {
     } else if (detail === "selection-ask") {
       this.desktopModuleExpanded.add("selection");
       this.settingsFocusIntent = "explicit:selection-ask:settings";
+    } else if (detail === "generation-template") {
+      this.desktopModuleExpanded.add("knowledge"); this.settingsFocusIntent = "explicit:knowledge:generation-templates";
     } else if (detail === "journal-templates") {
       this.desktopModuleExpanded.add("journal"); this.settingsFocusIntent = "explicit:journal:templates";
     } else if (detail === "todo-categories") {
@@ -5530,6 +5549,7 @@ type VisibleSettingsTab = SettingsTab | DesktopSettingsTab;
 type SettingsActionContext = "knowledge" | "review" | "resources" | "providers";
 
 type SettingsDetail =
+  | "generation-template"
   | "journal-templates"
   | "todo-categories"
   | "pdf-reading"

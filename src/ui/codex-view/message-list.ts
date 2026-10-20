@@ -1,3 +1,4 @@
+import { renderGenerationRequestSummary, renderGenerationResultCard } from "../../generation/message-ui";
 import type CodexForObsidianPlugin from "../../main";
 import { knowledgeLinkingProgressText } from "./knowledge-linking-progress";
 import type { KnowledgeLinkingTask } from "../../knowledge-base/knowledge-linking-types";
@@ -407,6 +408,7 @@ export class CodexMessageListRenderer {
   private openKnowledgeBaseReportSections = new Map<string, boolean>();
   private openTaskPlans = new Map<string, boolean>();
   private openTurnProcesses = new Map<string, boolean>();
+  private readonly openGenerationRequests = new Map<string, boolean>();
   private answerSaveStates = new Map<string, { status: "pending" | "saved" | "failed"; path?: string; error?: string }>();
   private answerReadingTail: { rowId: string; height: number } | null = null;
   private virtualLayoutHeight = 0;
@@ -668,6 +670,7 @@ export class CodexMessageListRenderer {
   }
 
   dispose(): void {
+    this.openGenerationRequests.clear();
     this.cancelAllDisclosureAutoFolds();
     this.disconnectVisibleRowsObserver();
     this.disconnectViewportObserver();
@@ -1415,10 +1418,14 @@ export class CodexMessageListRenderer {
       return;
     }
     const displayText = firstPartyMessageText(message, env.settingsLanguage);
-    if (!this.renderKnowledgeBaseResultContent(content, message, displayText)) {
+    if (message.role === "user" && message.generationRequest) {
+      renderGenerationRequestSummary(content, { app: env.app, request: message.generationRequest, language: env.settingsLanguage,
+        open: this.openGenerationRequests.get(message.generationRequest.id), onToggle: open => { this.openGenerationRequests.set(message.generationRequest!.id, open); env.onScheduleMeasure(); } });
+    } else if (!this.renderKnowledgeBaseResultContent(content, message, displayText)) {
       if (isAgentAnswerMessage(message)) this.renderAgentAnswerContent(content, message);
       else renderRichText(env.app, env.component, content, displayText);
     }
+    if (message.generationResult) renderGenerationResultCard(bodyHost, { app: env.app, result: message.generationResult, language: env.settingsLanguage, onMeasure: () => env.onScheduleMeasure() });
     if (message.rawRef) this.renderRawMessageExpander(content, message);
     if (message.itemType === "knowledgeBase" && message.details) this.renderKnowledgeBaseContextNote(wrapper, message.details);
     this.renderKnowledgeUsageCards(wrapper, message.id, knowledgeUsageMessageData(message), message.citations);
@@ -1732,6 +1739,7 @@ export class CodexMessageListRenderer {
   }
 
   private renderAnswerSaveAction(container: HTMLElement, message: ChatMessage): void {
+    if (message.generationRequest || message.generationResult) return;
     const env = this.requireEnv();
     const key = `${env.sessionId}\0${message.id}`;
     const button = container.createEl("button", {
@@ -2329,6 +2337,7 @@ export class CodexMessageListRenderer {
       });
       this.renderAgentAnswerContent(answerContent, answer);
       this.renderAssistantFailureReason(answerSection, answer);
+      if (answer.generationResult) renderGenerationResultCard(answerSection, { app: env.app, result: answer.generationResult, language: env.settingsLanguage, onMeasure: () => env.onScheduleMeasure() });
       this.renderAnswerSources(answerSection, turn);
       if (isTerminalTurnStatus(turn.status)) {
         const footerActions = this.renderAgentFooter(answerSection, answer);

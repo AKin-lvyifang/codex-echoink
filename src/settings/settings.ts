@@ -1,3 +1,5 @@
+import { defaultGenerationTemplates, normalizeGenerationTemplates } from "./generation-templates";
+import type { GenerationTemplate } from "../generation/types";
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { defaultAgentRegistry, normalizeAgentRegistry } from "../agents/registry";
 import type { AgentRegistry } from "../agents/types";
@@ -505,6 +507,7 @@ export interface EchoInkTodoItem {
 }
 
 export interface CodexForObsidianSettings {
+  generationTemplates: GenerationTemplate[];
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
   selectionAsk: import("../selection-ask/settings").SelectionAskSettings;
   englishDiary: import("../english-diary/types").EnglishDiarySettings;
@@ -556,6 +559,7 @@ export interface CodexForObsidianSettings {
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
+  generationTemplates: defaultGenerationTemplates(),
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
   selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }] },
   englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS },
@@ -730,6 +734,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     ...DEFAULT_SETTINGS,
     ...currentData,
     productGeneration: DEFAULT_SETTINGS.productGeneration,
+    generationTemplates: normalizeGenerationTemplates(data.generationTemplates),
     settingsLanguage: normalizedLanguage,
     colorTheme: normalizeEchoInkColorTheme(data.colorTheme),
     settingsTab: normalizeSettingsTab(data?.settingsTab),
