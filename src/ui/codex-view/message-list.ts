@@ -1,3 +1,5 @@
+import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
+import { renderGenerationRequestSummary, renderGenerationResultCard } from "../../generation/message-ui";
 import type CodexForObsidianPlugin from "../../main";
 import { knowledgeLinkingProgressText } from "./knowledge-linking-progress";
 import type { KnowledgeLinkingTask } from "../../knowledge-base/knowledge-linking-types";
@@ -156,6 +158,11 @@ export interface MessageListRenderInput {
   tokenUsage?: TokenUsage;
   vaultPath: string;
   readRawMessageText: (rawRef: string) => Promise<string>;
+  readPersonalMemorySource?: (id: string, revision?: number) => Promise<Readonly<{
+    status: "available" | "changed" | "missing";
+    content?: string;
+  }>>;
+  onAnswerSaved?: (messageId: string, path: string) => Promise<void>;
   onDerivePiConversation?: (entryId: string) => Promise<void>;
   piConversationDeriveDisabled?: boolean;
   onTaskPlanAction?: (
@@ -407,6 +414,7 @@ export class CodexMessageListRenderer {
   private openKnowledgeBaseReportSections = new Map<string, boolean>();
   private openTaskPlans = new Map<string, boolean>();
   private openTurnProcesses = new Map<string, boolean>();
+  private readonly openGenerationRequests = new Map<string, boolean>();
   private answerSaveStates = new Map<string, { status: "pending" | "saved" | "failed"; path?: string; error?: string }>();
   private answerReadingTail: { rowId: string; height: number } | null = null;
   private virtualLayoutHeight = 0;
@@ -668,6 +676,7 @@ export class CodexMessageListRenderer {
   }
 
   dispose(): void {
+    this.openGenerationRequests.clear();
     this.cancelAllDisclosureAutoFolds();
     this.disconnectVisibleRowsObserver();
     this.disconnectViewportObserver();
@@ -935,7 +944,8 @@ export class CodexMessageListRenderer {
       if (icon) setSemanticIcon(icon, node.kind === "artifact" && node.status === "completed"
         && produced.length && produced.every((path) => path.endsWith(".canvas")) ? "layout-dashboard" : assistantTurnNodeIcon(node));
       const title = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-title");
-      if (title && title.textContent !== node.title) title.setText(node.title);
+      const displayedTitle = nodeSource && isGenerationProgressMessage(nodeSource) ? generationProgressTitle(nodeSource) : node.title;
+      if (title && title.textContent !== displayedTitle) title.setText(displayedTitle);
       const summary = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-summary");
       if (summary && node.summary !== undefined && summary.textContent !== node.summary) {
         summary.setText(node.summary);
@@ -1415,10 +1425,14 @@ export class CodexMessageListRenderer {
       return;
     }
     const displayText = firstPartyMessageText(message, env.settingsLanguage);
-    if (!this.renderKnowledgeBaseResultContent(content, message, displayText)) {
+    if (message.role === "user" && message.generationRequest) {
+      renderGenerationRequestSummary(content, { app: env.app, request: message.generationRequest, language: env.settingsLanguage,
+        open: this.openGenerationRequests.get(message.generationRequest.id), onToggle: open => { this.openGenerationRequests.set(message.generationRequest!.id, open); env.onScheduleMeasure(); } });
+    } else if (!this.renderKnowledgeBaseResultContent(content, message, displayText)) {
       if (isAgentAnswerMessage(message)) this.renderAgentAnswerContent(content, message);
       else renderRichText(env.app, env.component, content, displayText);
     }
+    if (message.generationResult) renderGenerationResultCard(bodyHost, { app: env.app, result: message.generationResult, language: env.settingsLanguage, onMeasure: () => env.onScheduleMeasure() });
     if (message.rawRef) this.renderRawMessageExpander(content, message);
     if (message.itemType === "knowledgeBase" && message.details) this.renderKnowledgeBaseContextNote(wrapper, message.details);
     this.renderKnowledgeUsageCards(wrapper, message.id, knowledgeUsageMessageData(message), message.citations);
@@ -1732,8 +1746,12 @@ export class CodexMessageListRenderer {
   }
 
   private renderAnswerSaveAction(container: HTMLElement, message: ChatMessage): void {
+    if (message.generationRequest || message.generationResult) return;
     const env = this.requireEnv();
-    const key = `${env.sessionId}\0${message.id}`;
+    const key = `${env.sessionId}\0${piEntryIdFromProjectedMessageId(message.id) ?? message.id}`;
+    if (message.savedNotePath && !this.answerSaveStates.has(key)) {
+      this.answerSaveStates.set(key, { status: "saved", path: message.savedNotePath });
+    }
     const button = container.createEl("button", {
       cls: "codex-message-action codex-answer-save",
       attr: { type: "button" }
@@ -1787,8 +1805,18 @@ export class CodexMessageListRenderer {
           sourcePaths: [...sourcePaths]
         });
         this.answerSaveStates.set(key, { status: "saved", path });
+        let receiptError = "";
+        try {
+          await env.onAnswerSaved?.(message.id, path);
+        } catch (error) {
+          receiptError = error instanceof Error ? error.message : String(error);
+        }
         const notice = env.messagesEl.ownerDocument.createDocumentFragment();
-        notice.append(conversationUiText(env.settingsLanguage, `已存为 ${path}\u3000`, `Saved as ${path} `));
+        notice.append(receiptError
+          ? conversationUiText(env.settingsLanguage,
+            `已存为 ${path}，但保存状态未能写入对话，重开后可能无法识别：${receiptError}\u3000`,
+            `Saved as ${path}, but the conversation could not remember it after reopening: ${receiptError} `)
+          : conversationUiText(env.settingsLanguage, `已存为 ${path}\u3000`, `Saved as ${path} `));
         const open = env.messagesEl.ownerDocument.createElement("button");
         open.textContent = conversationUiText(env.settingsLanguage, "打开", "Open");
         open.onclick = () => { void this.openSavedAnswerNote(env, path); };
@@ -2055,7 +2083,7 @@ export class CodexMessageListRenderer {
       if (untitledMemories.length + missingMemoryCount > 0) {
         const row = sources.createDiv({ cls: "codex-ai-elements-source-header codex-answer-memory-count" });
         setSemanticIcon(row.createSpan({ cls: "codex-ai-elements-source-icon", attr: { "aria-hidden": "true" } }), "user-round");
-        row.createSpan({ text: `${conversationUiText(env.settingsLanguage, "个人记忆", "Personal memory")}：${copy.process.memoryUsed(untitledMemories.length + missingMemoryCount)}` });
+        row.createSpan({ text: `${conversationUiText(env.settingsLanguage, "记忆", "Memory")}：${copy.process.memoryUsed(untitledMemories.length + missingMemoryCount)}` });
       }
     } else if (citations && !usage.askSourceAttribution) {
       container.createDiv({
@@ -2329,6 +2357,7 @@ export class CodexMessageListRenderer {
       });
       this.renderAgentAnswerContent(answerContent, answer);
       this.renderAssistantFailureReason(answerSection, answer);
+      if (answer.generationResult) renderGenerationResultCard(answerSection, { app: env.app, result: answer.generationResult, language: env.settingsLanguage, onMeasure: () => env.onScheduleMeasure() });
       this.renderAnswerSources(answerSection, turn);
       if (isTerminalTurnStatus(turn.status)) {
         const footerActions = this.renderAgentFooter(answerSection, answer);
@@ -2444,7 +2473,7 @@ export class CodexMessageListRenderer {
     node: Readonly<EchoInkTurnProcessNode>
   ): void {
     const message = actionMessageForProcessNode(turn, node);
-    if (!message) {
+    if (!message || isGenerationProgressMessage(message)) {
       this.renderAssistantTurnProcessNode(container, turn, node);
       return;
     }
@@ -2478,9 +2507,10 @@ export class CodexMessageListRenderer {
     const failed = item.status === "failed";
     const interrupted = ["cancelled", "canceled", "interrupted", "denied", "unconfirmed", "uncertain"].includes(item.status);
     const waiting = ["approval", "waiting_approval", "blocked"].includes(item.status);
+    const noteUpdate = item.toolId === "note_update" || item.source.title === "修改笔记";
     const icon = row.querySelector<HTMLElement>(".codex-action-item-icon");
     if (icon) setSemanticIcon(icon, failed ? "triangle-alert" : interrupted ? "circle-pause" : waiting ? "hand"
-      : isActiveActionStatus(item.status) ? "loader-circle" : item.source.processKind === "view" ? "file-text"
+      : isActiveActionStatus(item.status) ? "loader-circle" : noteUpdate ? "file-diff" : item.source.processKind === "view" ? "file-text"
         : /(?:web|联网|网络|网页)/iu.test(item.source.title ?? "") ? "globe" : iconForActionKind(item.kind));
     const main = row.querySelector<HTMLElement>(".codex-action-item-main");
     if (main && isKnowledgeWorkRecordMessage(item.source)) {
@@ -2493,11 +2523,18 @@ export class CodexMessageListRenderer {
         cls: "codex-action-item-duration", text: formatActionDuration(item.durationMs)
       });
     }
-    if (main && !isKnowledgeWorkRecordMessage(item.source) && (item.source.processKind === "view" || item.kind === "edit")) {
+    if (main && !isKnowledgeWorkRecordMessage(item.source) && (item.source.processKind === "view" || item.kind === "edit" || noteUpdate)) {
+      main.querySelector<HTMLElement>(".codex-action-item-verb")?.remove();
       main.insertBefore(main.createSpan({
         cls: "codex-action-item-verb",
-        text: conversationUiText(language, item.kind === "edit" ? "修改笔记" : "读取笔记", item.kind === "edit" ? "Edit note" : "Read note")
+        text: noteUpdate
+          ? conversationUiText(language, waiting ? "等你确认 · 修改笔记 ·" : "修改笔记 ·", waiting ? "Awaiting approval · Edit note ·" : "Edit note ·")
+          : conversationUiText(language, item.kind === "edit" ? "修改笔记" : "读取笔记", item.kind === "edit" ? "Edit note" : "Read note")
       }), main.firstChild);
+    }
+    const stats = noteUpdate ? row.querySelector<HTMLElement>(".codex-action-diff-stats") : null;
+    if (stats && !stats.querySelector(".codex-work-record-diff-separator")) {
+      stats.insertBefore(stats.createSpan({ cls: "codex-work-record-diff-separator", text: "·" }), stats.firstChild);
     }
     if (typeof item.durationMs === "number" && item.durationMs < 1_000) {
       row.querySelector<HTMLElement>(".codex-action-item-duration")?.remove();
@@ -2537,21 +2574,25 @@ export class CodexMessageListRenderer {
       attr: { "aria-hidden": "true" }
     });
     const source = node.sourceMessageId ? turn.messages.find((message) => message.id === node.sourceMessageId) : undefined;
+    const generationStage = source ? generationProgressStage(source) : undefined;
+    if (generationStage) row.dataset.nodeStatus = node.status;
     const paths = source ? knowledgeUsageMessageData(source).producedPaths : [];
-    setSemanticIcon(icon, node.kind === "artifact" && node.status === "completed" && paths.length && paths.every((path) => path.endsWith(".canvas"))
-      ? "layout-dashboard" : assistantTurnNodeIcon(node));
+    const generationIcon = generationStage && node.status === "completed"
+      ? ({ reading: "file-text", writing: "file-text", layout: "layout-dashboard", approval: "hand", saving: "file-plus" } as const)[generationStage] : undefined;
+    setSemanticIcon(icon, generationIcon ?? (node.kind === "artifact" && node.status === "completed" && paths.length && paths.every((path) => path.endsWith(".canvas"))
+      ? "layout-dashboard" : assistantTurnNodeIcon(node)));
 
     const content = row.createDiv({ cls: "codex-assistant-turn-node-content" });
     const heading = content.createDiv({ cls: "codex-assistant-turn-node-heading" });
     const title = heading.createSpan({
       cls: "codex-assistant-turn-node-title",
-      text: node.title,
-      attr: { title: node.title }
+      text: source && generationStage ? generationProgressTitle(source) : node.title,
+      attr: { title: source && generationStage ? generationProgressTitle(source) : node.title }
     });
     if (node.status === "running") {
       title.setAttribute("aria-label", `${node.title}, ${this.copy().process.nodeStatus(node.status)}`);
     }
-    if (node.summary) {
+    if (node.summary && !generationStage) {
       (node.status === "failed" ? content : heading).createSpan({
         cls: node.status === "failed" ? "codex-work-record-failure" : "codex-assistant-turn-node-summary",
         text: node.summary,
@@ -2572,6 +2613,10 @@ export class CodexMessageListRenderer {
       ? turn.messages.find((message) => message.id === node.sourceMessageId)
       : undefined;
     if (!source) return;
+    if (isGenerationProgressMessage(source)) {
+      if (node.status === "waiting") this.renderApprovalCard(container, source);
+      return;
+    }
     if (node.nodeId.startsWith("process-activity:")) {
       const usage = mergeKnowledgeUsageMessageData(turn.messages);
       const documents = localDocumentSources(undefined, usage).filter((document) =>
@@ -2581,7 +2626,35 @@ export class CodexMessageListRenderer {
           conversationUiText(this.requireEnv().settingsLanguage, node.nodeId.endsWith(":memory:recall") ? "用上的记忆" : "本轮读到的笔记", node.nodeId.endsWith(":memory:recall") ? "Memories used" : "Notes read this turn"), true);
         disclosure.root.addClass("codex-work-record-sources");
         disclosure.body.addClass("codex-answer-source-list");
-        for (const document of documents) this.renderLocalDocumentSource(disclosure.body, document);
+        if (node.nodeId.endsWith(":memory:recall")) {
+          const sources = new Map(turn.messages.flatMap(message => message.injectedMemorySources ?? [])
+            .map(source => [source.id, source]));
+          let loading: Promise<void> | undefined;
+          const load = () => {
+            if (!disclosure.root.open || loading) return loading;
+            const env = this.requireEnv();
+            loading = Promise.all(documents.map(async document => {
+              this.renderLocalDocumentSource(disclosure.body, document);
+              if (document.kind !== "memory") return;
+              const source = sources.get(document.source.id);
+              if (!source || !env.readPersonalMemorySource) return;
+              const original = disclosure.body.createDiv({ cls: "codex-process-detail codex-memory-source-original",
+                text: conversationUiText(env.settingsLanguage, "读取中…", "Loading…") });
+              try {
+                const result = await env.readPersonalMemorySource(source.id, source.revision);
+                original.setText(result.status === "available" ? result.content ?? ""
+                  : result.status === "changed" ? conversationUiText(env.settingsLanguage, "这条记忆已修订，无法显示当时原文。", "This memory changed; its original text is unavailable.")
+                    : conversationUiText(env.settingsLanguage, "这条记忆已不存在或已被忘记。", "This memory is missing or has been forgotten."));
+              } catch {
+                original.setText(conversationUiText(env.settingsLanguage, "暂时无法读取这条记忆。", "This memory could not be read."));
+              }
+            })).then(() => { env.onScheduleMeasure(); });
+            return loading;
+          };
+          const onToggle = disclosure.root.ontoggle;
+          disclosure.root.ontoggle = event => { onToggle?.call(disclosure.root, event); return load(); };
+          void load();
+        } else for (const document of documents) this.renderLocalDocumentSource(disclosure.body, document);
       }
       return;
     }
@@ -3227,10 +3300,11 @@ export class CodexMessageListRenderer {
     const state = approvalStateForMessage(message)
       ?? (binding ? "waiting_approval" : null);
     if (!state) return;
+    const rawPresentation = { target: message.approval?.target || binding?.target, preview: message.approval?.preview || binding?.preview };
+    const presentation = isGenerationProgressMessage(message) ? generationApprovalPresentation(rawPresentation.target, rawPresentation.preview) : rawPresentation;
     const elements = createSmoothAIApprovalCard(container, {
       state,
-      target: message.approval?.target || binding?.target,
-      preview: message.approval?.preview || binding?.preview,
+      ...presentation,
       ...(binding?.deleteAction === true ? { deleteAction: true } : {}),
       controlled: state === "waiting_approval" && Boolean(binding),
       language: env.settingsLanguage

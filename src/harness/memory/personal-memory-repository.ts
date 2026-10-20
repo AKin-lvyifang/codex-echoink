@@ -1728,6 +1728,24 @@ export class PersonalMemoryRepository {
     });
   }
 
+  /** A user expanding an injected source reads only that record, without Agent/Provider admission. */
+  async readUserControlSource(id: string, expectedRevision?: number): Promise<Readonly<{
+    status: "available" | "changed" | "missing";
+    content?: string;
+  }>> {
+    const safeId = assertSafeId(id);
+    await this.initialize();
+    const manifest = await this.readManifest();
+    const metadata = manifest.records.find(record => record.id === safeId);
+    if (!metadata) return { status: "missing" };
+    if (metadata.status === "superseded") return { status: "changed" };
+    if (metadata.status !== "current") return { status: "missing" };
+    if (expectedRevision !== undefined && metadata.revision !== expectedRevision) return { status: "changed" };
+    const record = await this.readRecord(metadata);
+    if (expectedRevision !== undefined && record.revision !== expectedRevision) return { status: "changed" };
+    return { status: "available", content: record.content };
+  }
+
   async readUserControlState(): Promise<Readonly<{
     revision: number;
     agent: string;

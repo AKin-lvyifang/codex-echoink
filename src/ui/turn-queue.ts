@@ -10,6 +10,7 @@ export type QueueSettlement = "continue" | "paused" | "idle";
 import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
 
 export interface QueuedTurnItem {
+  generationRequest?: import("../generation/types").GenerationRequest;
   resumeContext?: import("../agents/task-resume").TaskResumeContext;
   id: string;
   sessionId: string;
@@ -214,6 +215,7 @@ export function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
           }))
         }
       : {}),
+    ...(item.generationRequest ? { generationRequest: structuredClone(item.generationRequest) } : {}),
     ...(item.selectionAnnotations ? { selectionAnnotations: cloneSelectionAnnotations(item.selectionAnnotations) } : {}),
     ...(item.noteMentions
       ? { noteMentions: item.noteMentions.map((mention) => ({ ...mention })) }

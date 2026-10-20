@@ -1,4 +1,6 @@
 import type { PdfNavigationStart } from "../pdf-reading/types";
+import { GenerationModal } from "../generation/modal";
+import { getGenerationService } from "../generation/service";
 import { freezePdfTaskRequest } from "../pdf-reading/task-context";
 import { workbenchModuleOwner } from "../home/module-navigation";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
@@ -592,6 +594,52 @@ export class CodexView extends ItemView {
       }
       throw error;
     }
+  }
+
+  generationEntryReason(): string | null {
+    if (this.taskUiMounted && (this.taskNavigation.page.kind !== "detail" || !this.taskDetailLoaded || this.taskEditor)) return "请先打开一个任务。";
+    const session = this.ensureSession();
+    const run = this.plugin.getConversationRunService().runs.get(session.id);
+    return run?.running || run?.flight ? "等这一轮结束。" : null;
+  }
+
+  openGenerationModal(templateId?: string): void {
+    if (!Platform.isDesktopApp) return;
+    const reason = this.generationEntryReason(); if (reason) { new Notice(reason); return; }
+    const session = this.ensureSession(), service = getGenerationService(this.plugin);
+    new GenerationModal(this.plugin, { sourcePaths: service.sourcesFromSession(session), sessionId: session.id, templateId, service,
+      turnOptions: () => this.currentTurnOptions(session), onSubmit: async (request, options) => {
+        const outcome = await service.submit(session.id, request, options);
+        if (outcome !== "running" && outcome !== "completed") throw new Error("生成尚未提交，请检查模型和当前任务状态后重试。");
+        this.renderMessages({ forceBottom: true }); this.renderToolbar();
+      } }).open();
+  }
+
+  openGenerationForPath(path: string): void {
+    if (!Platform.isDesktopApp) return;
+    const service = getGenerationService(this.plugin);
+    const owner = this.plugin.getWorkbenchModuleOwner("knowledge-base");
+    const draft: StoredSession = { id: "generation-draft", title: "", agentId: owner.id, cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
+    new GenerationModal(this.plugin, { sourcePaths: service.sourcesFromPath(path), service, turnOptions: () => this.currentTurnOptions(draft),
+      onSubmit: async (request, options) => {
+        const reason = service.disabledReason(options); if (reason) throw new Error(reason);
+        this.saveTaskComposerDraft();
+        const owner = this.plugin.getWorkbenchModuleOwner("knowledge-base");
+        const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: `用「${request.template.name}」生成`, agentId: owner.id,
+          cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
+        const session = createPiConversationShell(this.sessionHost(), entry); this.plugin.settings.sessions.push(session);
+        let accepted = false;
+        try {
+          const outcome = await service.submit(session.id, request, options);
+          accepted = outcome === "running" || outcome === "completed";
+          if (!accepted) throw new Error("生成尚未提交，请检查模型和工作区权限后重试。");
+          try { await this.reloadTaskCatalog(); await this.openTaskDetail(session.id); }
+          catch (error) { new Notice(`生成已开始，暂时无法打开任务：${error instanceof Error ? error.message : String(error)}`); }
+        } catch (error) {
+          if (!accepted) { await this.plugin.setPiConversationStatus(session.id, "deleted"); this.plugin.settings.sessions = this.plugin.settings.sessions.filter(item => item.id !== session.id); }
+          throw error;
+        }
+      } }).open();
   }
 
   private async sendNewAgentTask(): Promise<void> {
