@@ -89,8 +89,9 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
   };
   input.value = readDraft().text;
   const showFailure = (failure: unknown) => { if (!disposed) { error.textContent = failureText(failure); error.hidden = false; } };
-  const update = (change: (draft: TaskDraft) => void): Promise<void> => {
+  const update = (change: (draft: TaskDraft) => void, workspacePermission?: MobilePermission): Promise<void> => {
     const command = saves.catch(() => {}).then(() => host.store.update(latest => {
+      if (workspacePermission) latest.permission = workspacePermission;
       if (agentId) { const draft = latest.newTaskDrafts[agentId] ??= { text: "", attachments: [] }; change(draft); }
       else {
         const task = latest.sessions.find(task => task.id === taskId); if (!task) throw new Error("任务不存在，输入已保留。");
@@ -129,7 +130,7 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
     const button = iPadAction(ctx, "", action, icon); button.classList.add("pd-composer-icon"); button.setAttribute("aria-label", label); return button;
   };
   const open = (title: string, body: HTMLElement) => ctx.shell.openSheet({ title, content: body });
-  const choose = async (change: (draft: TaskDraft) => void) => { await update(change); if (!disposed) { ctx.shell.closeSheet(); refresh(); } };
+  const choose = async (change: (draft: TaskDraft) => void, workspacePermission?: MobilePermission) => { await update(change, workspacePermission); if (!disposed) { ctx.shell.closeSheet(); refresh(); } };
   const row = (body: HTMLElement, label: string, action: () => void | Promise<void>, selected = false) => {
     const button = iPadAction(ctx, label, action, selected ? "check" : undefined); button.classList.add("pd-picker-row"); button.setAttribute("aria-pressed", String(selected)); body.append(button); return button;
   };
@@ -172,11 +173,9 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
     row(body, host.settings().settingsLanguage === "en" ? "Manage model services" : "管理模型服务", () => { ctx.shell.closeSheet(); return host.openSettings ? host.openSettings("model") : host.openLegacy("providers"); }); open(host.settings().settingsLanguage === "en" ? "Choose model" : "选择模型", body);
   }); model.classList.add("pd-composer-model"); bar.append(model);
   const permission = iconButton("工作区权限", "shield-check", () => {
-    const body = shellElement(document, "div", "pd-permission-picker"), workspace = host.store.permission;
-    const rank = permissions.findIndex(item => item[0] === workspace);
-    for (const [index, [value, label]] of permissions.entries()) {
-      const button = row(body, label, () => choose(draft => { draft.selectedPermission = value === "full-access" ? "danger-full-access" : value; }), effectivePermission() === value);
-      button.disabled = index > rank;
+    const body = shellElement(document, "div", "pd-permission-picker");
+    for (const [value, label] of permissions) {
+      row(body, label, () => choose(draft => { draft.selectedPermission = value === "full-access" ? "danger-full-access" : value; }, value), effectivePermission() === value);
     } open("工作区权限", body);
   }); bar.append(permission);
   const stop = iconButton("停止当前任务", "square", async () => {

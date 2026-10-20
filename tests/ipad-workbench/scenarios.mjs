@@ -83,7 +83,7 @@ export async function runIPadWorkbenchScenarios(api, win) {
   await test("unavailable task storage leaves the iPad pane readable and disables all task input", async () => {
     const f = await fixture();
     try {
-      f.store.unavailableReason = "本机任务标识无法保存，任务暂不可用";
+      f.store.disableWrites("本机任务标识无法保存，任务暂不可用");
       const pane = new api.IPadAgentPane(f.right, f.host);
       await pane.mount();
       assert.match(f.right.textContent, /本机任务标识无法保存/u);
@@ -91,6 +91,21 @@ export async function runIPadWorkbenchScenarios(api, win) {
       await pane.navigate({ kind: "task", taskId: "untrusted-old-task" });
       assert.match(f.right.textContent, /本机任务标识无法保存/u);
       assert.equal(f.errors.length, 0); pane.dispose();
+    } finally { await f.close(); }
+  });
+
+  await test("permission picker explicitly raises the workspace mode and preserves the draft", async () => {
+    const f = await fixture();
+    try {
+      const surface = f.compose({ agentId: "sol" });
+      input(win, f.auxiliary.querySelector("textarea"), "保留输入"); await surface.flush();
+      [...surface.element.querySelectorAll("button")].find(b => b.getAttribute("aria-label")?.startsWith("工作区权限"))?.click();
+      await until(() => !!f.auxiliary.querySelector(".pd-permission-picker"), "permission panel opened");
+      const full = button(f.auxiliary, "完全访问权限"); assert.equal(full.disabled, false); full.click();
+      await until(() => f.store.permission === "full-access", "explicit permission saved");
+      assert.equal(f.store.state.newTaskDrafts.sol.selectedPermission, "danger-full-access");
+      assert.equal(f.store.state.newTaskDrafts.sol.text, "保留输入");
+      assert.equal(f.auxiliary.querySelectorAll("[role=dialog]").length, 0);
     } finally { await f.close(); }
   });
 

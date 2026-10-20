@@ -211,6 +211,7 @@
 }
 .echoink-iphone .echoink-shell-sheet {
   position: relative;
+  flex: 0 1 auto;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -243,7 +244,7 @@
   margin-bottom: 10px;
 }
 .echoink-iphone .echoink-shell-sheet-title { flex: 1 1 auto; min-width: 0; font-size: 1.1em; font-weight: 600; }
-.echoink-iphone .echoink-shell-sheet-content { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.echoink-iphone .echoink-shell-sheet-content { flex: 0 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .echoink-iphone .echoink-shell-sheet-footer { flex: 0 0 auto; min-width: 0; }
 
 .echoink-iphone .echoink-mobile-bottom-probe {

@@ -28245,6 +28245,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 }
 .echoink-iphone .echoink-shell-sheet {
   position: relative;
+  flex: 0 1 auto;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -28277,7 +28278,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
   margin-bottom: 10px;
 }
 .echoink-iphone .echoink-shell-sheet-title { flex: 1 1 auto; min-width: 0; font-size: 1.1em; font-weight: 600; }
-.echoink-iphone .echoink-shell-sheet-content { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.echoink-iphone .echoink-shell-sheet-content { flex: 0 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .echoink-iphone .echoink-shell-sheet-footer { flex: 0 0 auto; min-width: 0; }
 
 .echoink-iphone .echoink-mobile-bottom-probe {
@@ -29219,6 +29220,8 @@ body[data-echoink-theme] .echoink-iphone {
   pointer-events: none;
   visibility: hidden;
 }
+.echoink-ipad.echoink-ipad-shell { display: flex; flex-direction: column; }
+.echoink-ipad .echoink-ipad-pages { flex: 1 1 auto; overflow: hidden; }
 .echoink-ipad .echoink-ipad-pages, .echoink-ipad .echoink-ipad-page {
   display: flex;
   flex-direction: column;
@@ -29268,6 +29271,7 @@ body[data-echoink-theme] .echoink-iphone {
 }
 .echoink-ipad .echoink-shell-icon::before { position: absolute; z-index: -1; inset: 8px; border-radius: 7px; content: ""; }
 .echoink-ipad .echoink-shell-icon:hover::before, .echoink-ipad .echoink-shell-icon:focus-visible::before { background: var(--echoink-ipad-soft); }
+.echoink-ipad .echoink-ipad-back:hover::before { background: transparent; }
 .echoink-ipad .echoink-shell-icon svg { width: 18px; height: 18px; stroke-width: 1.7; }
 .echoink-ipad button.echoink-shell-button {
   display: inline-flex;
@@ -29285,16 +29289,18 @@ body[data-echoink-theme] .echoink-iphone {
 .echoink-ipad .echoink-ipad-page-push { animation: echoink-ipad-push 160ms ease-out; }
 @keyframes echoink-ipad-push { from { transform: translateX(16px); opacity: .4; } to { transform: none; opacity: 1; } }
 
-.echoink-ipad .echoink-shell-sheet-layer { position: absolute; z-index: 10; inset: 0 0 var(--em-bottom-compensation, 0px); display: flex; align-items: flex-end; }
+.echoink-ipad .echoink-shell-sheet-layer { position: absolute; z-index: 10; inset: 0 0 var(--em-bottom-compensation, 0px); display: flex; align-items: flex-end; min-height: 0; overflow: hidden; }
 .echoink-ipad .echoink-shell-sheet-backdrop { position: absolute; inset: 0; background: var(--background-modifier-cover); }
 .echoink-ipad .echoink-shell-sheet {
   position: relative;
+  flex: 0 1 auto;
   display: flex;
   flex-direction: column;
   width: 100%;
   min-width: 0;
   min-height: 0;
   max-height: 90%;
+  overflow: hidden;
   padding: 8px 18px 18px;
   border-top: 1px solid var(--echoink-ipad-line);
   border-radius: 23px 23px 0 0;
@@ -29303,7 +29309,7 @@ body[data-echoink-theme] .echoink-iphone {
 .echoink-ipad .echoink-shell-sheet-handle { flex: none; width: 37px; height: 4px; margin: 0 auto; border-radius: 4px; background: var(--text-faint); }
 .echoink-ipad .echoink-shell-sheet-header { display: flex; align-items: center; flex: none; gap: 8px; margin-bottom: 10px; }
 .echoink-ipad .echoink-shell-sheet-title { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
-.echoink-ipad .echoink-shell-sheet-content { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.echoink-ipad .echoink-shell-sheet-content { flex: 0 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .echoink-ipad .echoink-shell-sheet-footer { display: flex; flex: none; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 
 .echoink-ipad.echoink-ipad-settings { display: flex; flex-direction: column; }
