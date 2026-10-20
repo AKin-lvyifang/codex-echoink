@@ -2,7 +2,9 @@
 
 ## 2.8.1 - 2026-10-20
 <!-- release-type: improve -->
-### 2.8.1 · 桌面资料生成与移动工作台改版
+### 2.8.1 · 从资料生成与手机平板新工作台
+
+![EchoInk 2.8.1：从资料生成与手机平板新工作台](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.8.1/assets/releases/echoink-agent-2.8.1-release.png)
 
 ### 中文
 
@@ -18,7 +20,7 @@
 #### 手机与平板更新
 
 - **iPhone、iPad 分开设计工作台。** iPhone 用两层页面查看工作台和任务；iPad 在中央看工作台，右栏查看 Agent 与任务。日常模块、任务状态和最近结果都有自己的位置。
-- **多个 Agent，各自处理任务。** 可以创建和编辑 Agent，为它选择模型、能力和记忆范围。不同任务可以分别推进，等你回应的问题直接显示在任务里；“交给”只准备内容，由你决定何时发送。
+- **多个 Agent，各自处理任务。** 可以创建和编辑 Agent，设置名字、头像、职位、负责的模块、可用能力和风格；所有 Agent 共用你的画像和记忆。不同任务可以分别推进，等你回应的问题直接显示在任务里；“交给”只准备内容，由你决定何时发送。
 - **中断后接着做。** 切到后台、锁屏或关闭应用后，任务会标出中断，不会自己继续。重新打开后，可核对已经完成的操作，再从当前状态继续，避免重复写入。
 - **设置分成六组。** 通用、模型、Agent、能力、模块、账号与会员分别管理；登录、添加模型服务、Skill 详情和编辑 Agent 都进入下一层，再点返回。
 - **从工作台进入日常页面。** 日记、待办、财务、知识库和英文日记有各自的页面。日记可看照片日历，待办集中处理事项，知识库可浏览目录和待整理内容；财务保留完整图表、金额动画、预算和账单计划，详细设置从财务页进入。
@@ -27,7 +29,7 @@
 
 生成会写入文件，需要在对话底部选择可写的工作区权限，并在 **设置 → 模块** 里绑定“输出”目录。生成只读取你选中的笔记，不会自动检索其他资料或使用个人记忆。生成结果是 AI 整理的内容，请按来源核对重要信息。
 
-移动端本次仍为 **Mobile Beta**，已包含上述新工作台和日常页面。资料生成、生成模板设置和桌面对话工作记录改进仅在桌面端提供。iPhone 真机与部分 iPad 原生流程仍待验证；任务不会跨设备同步，PDF 精读只在电脑上使用。
+移动端本次仍为 **Mobile Beta**，已包含上述新工作台和日常页面。资料生成、生成模板设置和桌面对话工作记录改进仅在桌面端提供。任务不会跨设备同步，PDF 精读只在电脑上使用。
 
 #### 下载与升级
 
@@ -35,7 +37,7 @@
 
 ### English
 
-**2.8.1 · Generate from notes and a new mobile workbench**
+**2.8.1 · Generate from notes and new workbenches for phones and tablets**
 
 Type: Improved
 
@@ -49,7 +51,7 @@ Type: Improved
 #### What's new on iPhone and iPad
 
 - **A workbench designed separately for iPhone and iPad.** iPhone uses separate workbench and task pages. On iPad, the workbench stays in the center while Agents and tasks live in the right pane, with clear places for everyday modules, task status, and recent results.
-- **Multiple Agents with separate tasks.** Create or edit Agents and choose their models, capabilities, and memory scope. Tasks can progress independently, and questions appear inside the task. Handing something to an Agent only prepares the text; you decide when to send it.
+- **Multiple Agents with separate tasks.** Create or edit Agents and set their names, avatars, roles, assigned modules, available capabilities, and styles. All Agents share your profile and personal memory. Tasks can progress independently, and questions appear inside the task. Handing something to an Agent only prepares the text; you decide when to send it.
 - **Continue after an interruption.** Backgrounding, locking, or closing the app marks a task as interrupted; it will not restart on its own. Review completed actions before continuing from the current state, helping avoid repeated writes.
 - **Six settings groups.** General, Models, Agents, Capabilities, Modules, and Account & Membership have separate sections. Sign-in, adding a model service, Skill details, and Agent editing open as child pages with a Back action.
 - **Everyday pages from the workbench.** Journals, to-dos, finance, knowledge, and English diaries have their own pages. Browse a photo calendar, manage tasks and knowledge folders, or use finance charts, animated amounts, budgets, and bill plans. Detailed finance settings open from the finance page.
@@ -58,7 +60,7 @@ Type: Improved
 
 Generation writes files, so choose a writable workspace permission at the bottom of the conversation and bind an Output folder in **Settings → Modules**. Generation reads only the notes you select and does not run extra retrieval or use personal memory. Generated content is AI-organized; check sources for important decisions.
 
-Mobile remains in **Mobile Beta**, now with the workbench and everyday pages described above. Note generation, generation-template settings, and desktop conversation-record improvements are desktop-only. iPhone device testing and some native iPad flows remain pending. Tasks do not sync across devices, and PDF close reading is desktop-only.
+Mobile remains in **Mobile Beta**, now with the workbench and everyday pages described above. Note generation, generation-template settings, and desktop conversation-record improvements are desktop-only. Tasks do not sync across devices, and PDF close reading is desktop-only.
 
 #### Download and upgrade
 
