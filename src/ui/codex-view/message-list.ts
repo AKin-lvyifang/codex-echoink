@@ -2507,9 +2507,10 @@ export class CodexMessageListRenderer {
     const failed = item.status === "failed";
     const interrupted = ["cancelled", "canceled", "interrupted", "denied", "unconfirmed", "uncertain"].includes(item.status);
     const waiting = ["approval", "waiting_approval", "blocked"].includes(item.status);
+    const noteUpdate = item.toolId === "note_update" || item.source.title === "修改笔记";
     const icon = row.querySelector<HTMLElement>(".codex-action-item-icon");
     if (icon) setSemanticIcon(icon, failed ? "triangle-alert" : interrupted ? "circle-pause" : waiting ? "hand"
-      : isActiveActionStatus(item.status) ? "loader-circle" : item.source.processKind === "view" ? "file-text"
+      : isActiveActionStatus(item.status) ? "loader-circle" : noteUpdate ? "file-diff" : item.source.processKind === "view" ? "file-text"
         : /(?:web|联网|网络|网页)/iu.test(item.source.title ?? "") ? "globe" : iconForActionKind(item.kind));
     const main = row.querySelector<HTMLElement>(".codex-action-item-main");
     if (main && isKnowledgeWorkRecordMessage(item.source)) {
@@ -2522,11 +2523,18 @@ export class CodexMessageListRenderer {
         cls: "codex-action-item-duration", text: formatActionDuration(item.durationMs)
       });
     }
-    if (main && !isKnowledgeWorkRecordMessage(item.source) && (item.source.processKind === "view" || item.kind === "edit")) {
+    if (main && !isKnowledgeWorkRecordMessage(item.source) && (item.source.processKind === "view" || item.kind === "edit" || noteUpdate)) {
+      main.querySelector<HTMLElement>(".codex-action-item-verb")?.remove();
       main.insertBefore(main.createSpan({
         cls: "codex-action-item-verb",
-        text: conversationUiText(language, item.kind === "edit" ? "修改笔记" : "读取笔记", item.kind === "edit" ? "Edit note" : "Read note")
+        text: noteUpdate
+          ? conversationUiText(language, waiting ? "等你确认 · 修改笔记 ·" : "修改笔记 ·", waiting ? "Awaiting approval · Edit note ·" : "Edit note ·")
+          : conversationUiText(language, item.kind === "edit" ? "修改笔记" : "读取笔记", item.kind === "edit" ? "Edit note" : "Read note")
       }), main.firstChild);
+    }
+    const stats = noteUpdate ? row.querySelector<HTMLElement>(".codex-action-diff-stats") : null;
+    if (stats && !stats.querySelector(".codex-work-record-diff-separator")) {
+      stats.insertBefore(stats.createSpan({ cls: "codex-work-record-diff-separator", text: "·" }), stats.firstChild);
     }
     if (typeof item.durationMs === "number" && item.durationMs < 1_000) {
       row.querySelector<HTMLElement>(".codex-action-item-duration")?.remove();

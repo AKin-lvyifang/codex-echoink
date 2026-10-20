@@ -21,7 +21,7 @@ import {
   REASONING_SCROLL_BOTTOM_EPSILON_PX,
   userVisibleProviderReasoningText
 } from "../ui/codex-view/message-list";
-import { buildAgentTurnProjection, type AgentTurnView } from "../ui/codex-view/agent-turn-process";
+import { buildAgentTurnProjection, buildAgentTurns, type AgentTurnView } from "../ui/codex-view/agent-turn-process";
 import { buildActionTimeline } from "../ui/codex-view/action-timeline";
 import {
   createAIElementsDocumentSources,
@@ -4620,6 +4620,38 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       "the expanded Approval Tool exposes the structured preview Diff");
     assert.match(renderedText(approvalAction), /Foo\.md/u);
     assert.match(renderedText(approvalAction), /new/u);
+
+    const nativeUpdate = projector.projectSessionBranch({
+      piSessionId: "session-ledger", activeLeafId: "native-update-call", productRunId: "run-approval-ledger",
+      entries: [{ type: "message", id: "native-update-call", parentId: null, timestamp: "2026-10-20T00:00:00Z",
+        message: { role: "assistant", content: [{ type: "toolCall", id: approvalToolCallId, name: "note_update",
+          arguments: { relativePath: "Foo.md", content: "new", expectedVersion: "before" } }] } }]
+    }).messages.find(message => message.role === "tool")!;
+    assert.equal(nativeUpdate.title, "修改笔记", "use the formal localized Pi tool projection");
+    const renderNativeUpdate = (status: string) => {
+      const message = { ...nativeUpdate, status, diffSummary: approvalProjectionMessage.diffSummary,
+        files: approvalProjectionMessage.files, approval: approvalProjectionMessage.approval };
+      const turn = buildAgentTurns([{ id: "native-update-user", role: "user", text: "修改Foo", createdAt: 1,
+        runId: "run-approval-ledger" }, message])[0];
+      const host = new FakeElement("div");
+      (renderer as any).renderAssistantTurnActionNode(host, turn, turn.processNodes.find(node => node.sourceMessageId === message.id)!);
+      return host;
+    };
+    const nativePending = renderNativeUpdate("waiting_approval");
+    assert.equal(nativePending.findByClass("codex-action-item-verb")?.textContent, "等你确认 · 修改笔记 ·");
+    assert.equal(nativePending.findByClass("codex-action-item-icon")?.dataset.icon, "hand");
+    assert.match(renderedText(nativePending.findByClass("codex-action-item-main")!), /Foo/u);
+    assert.equal(nativePending.findAllByClass("codex-smooth-ai-approval-card").length, 1);
+    const nativeApprovalCard = nativePending.findByClass("codex-smooth-ai-approval-card")!;
+    const nativeActionHead = nativePending.findByClass("codex-action-item-head")!;
+    assert.ok(nativeApprovalCard.parent === nativeActionHead.parent
+      && nativeApprovalCard.parent!.children.indexOf(nativeApprovalCard) > nativeApprovalCard.parent!.children.indexOf(nativeActionHead),
+      "approval actions remain below the existing node heading");
+    const nativeCompleted = renderNativeUpdate("completed");
+    assert.equal(nativeCompleted.findByClass("codex-action-item-verb")?.textContent, "修改笔记 ·");
+    assert.equal(nativeCompleted.findByClass("codex-action-item-icon")?.dataset.icon, "file-diff");
+    assert.deepEqual(nativeCompleted.findAllByClass("codex-diff-stat").map(stat => stat.textContent), ["+1", "-1"]);
+    assert.equal(nativeCompleted.findByClass("codex-work-record-diff-separator")?.textContent, "·");
 
     const reopenedRenderer = new CodexMessageListRenderer();
     bindRenderer(reopenedRenderer, context);
