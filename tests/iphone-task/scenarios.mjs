@@ -139,7 +139,7 @@ export async function runIPhoneTaskScenarios(api, win) {
       f.calls[1].resolve(answer("openai-completions", "B完成")); await until(() => !f.runtime.isBusy(second.id), "B finishes");
     } finally { await f.close(); }
   });
-  await test("brand model, permission ceiling and note reference select actual new-run context without replacing input DOM", async () => {
+  await test("brand model, permission choice and note reference select actual new-run context without replacing input DOM", async () => {
     const f = await fixture();
     try {
       f.settings.apiProviders[0].models.push(api.mobileModel("selected-model")); f.settings.defaultModel = "selected-model";
@@ -153,9 +153,13 @@ export async function runIPhoneTaskScenarios(api, win) {
       assert.equal(surface.element.querySelector("textarea"), input);
       click(surface.element, "工作区权限：工作区可写");
       await until(() => !!f.root.querySelector(".ip-permission-picker"), "permission sheet opens");
-      const full = [...f.root.querySelectorAll(".ip-permission-picker button")].find(button => button.textContent === "完全访问权限"); assert.equal(full.disabled, true);
+      const full = [...f.root.querySelectorAll(".ip-permission-picker button")].find(button => button.textContent === "完全访问权限"); assert.equal(full.disabled, false);
+      full.click(); await until(() => f.store.permission === "full-access" && f.store.state.newTaskDrafts.sol?.selectedPermission === "danger-full-access", "full access and draft persisted atomically");
+      assert.equal(surface.element.querySelector("textarea"), input);
+      click(surface.element, "工作区权限：完全访问权限");
+      await until(() => !!f.root.querySelector(".ip-permission-picker"), "permission picker reopens after full access");
       click(f.root, "只读"); await until(() => f.store.state.newTaskDrafts.sol?.selectedPermission === "read-only", "permission draft persisted");
-      assert.equal(f.store.permission, "workspace-write");
+      assert.equal(f.store.permission, "read-only");
       click(surface.element, "引用笔记"); await until(() => !!f.root.querySelector(".ip-note-picker"), "note sheet opens");
       click(f.root, "source.md"); await until(() => f.store.state.newTaskDrafts.sol?.noteMentions?.[0]?.vaultRelativePath === "source.md", "note reference persisted");
       assert.equal(surface.element.querySelector("textarea"), input); assert.equal(input.value, "带选择的新任务");
