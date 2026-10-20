@@ -7,6 +7,7 @@ import { IPadShell } from "./shell";
 import { createHomePage } from "./workbench-pages";
 import type { IPadPageContext, IPadRoute, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadElement as el } from "./workbench-elements";
+import { mobileModuleEnabled } from "../../mobile/module-settings";
 
 /** Central iPad pages. Agent routes belong to the host's separate right pane. */
 export class IPadWorkbench {
@@ -38,6 +39,7 @@ export class IPadWorkbench {
 
   openModule(module: AgentModuleId): Promise<void> {
     return this.enqueue(async () => {
+      if (!mobileModuleEnabled(this.host.settings(), module)) throw new Error("此模块已停用。");
       if (module === "todos") { await this.host.openLegacy("todos"); return; }
       if (module === "knowledge-base") { await this.host.openLegacy("knowledge"); return; }
       if (module === "finance") { await this.host.services.lifestyle.open("finance"); return; }

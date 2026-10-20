@@ -112,6 +112,18 @@ MarkdownRenderer.render = async (_app, text, element) => {
     } else { const paragraph = document.createElement("p"); paragraph.textContent = part; paragraph.style.whiteSpace = "pre-wrap"; element.append(paragraph); }
   }
 };
+const modelRequests: { method: string; purpose: string }[] = [];
+plugin.modelRequest = async request => {
+  const discovery = request.method === "GET";
+  modelRequests.push({ method: request.method ?? "GET", purpose: discovery ? "models" : "connection" });
+  await new Promise(resolve => setTimeout(resolve, 180));
+  if (params.has("model-error")) return { status: 401, json: { error: { message: "测试凭据被拒绝" } } };
+  if (discovery) return { status: 200, json: { data: [
+    { id: "deepseek-chat", name: "DeepSeek V3.2", supports_tool_calling: true, context_window: 128000, max_output_tokens: 8192 },
+    { id: "deepseek-reasoner", name: "DeepSeek V3.2 思考", supports_tool_calling: true, supports_reasoning: true, context_window: 128000, max_output_tokens: 8192 }
+  ] } };
+  return answer(JSON.parse(request.body as string).input ? "openai-responses" : "openai-completions", "OK");
+};
 const workspaceFixture = mobileWorkspaceFixture(plugin, { chat: root, home: document.querySelector<HTMLElement>("#home")!, settings: document.querySelector<HTMLElement>("#settings")! }, params.has("tablet"), params.has("legacy"));
 if (params.has("tablet")) {
   const buttons = document.querySelectorAll<HTMLButtonElement>("[data-host-view]");
@@ -141,6 +153,7 @@ if (params.has("desktop") && params.has("account")) {
   if (params.has("home") && params.has("tablet")) await plugin.navigation.openHome();
 }
 if (params.get("page") === "account") await plugin.showPage("account");
+if (params.has("settings")) await plugin.showPage(params.get("settings") === "model" ? "providers" : "settings");
 if (params.has("long")) {
   const action = document.querySelector<HTMLElement>(".start-actions button.quiet");
   if (action) action.append("：记录今天的重要决定与下一步行动");
@@ -148,7 +161,7 @@ if (params.has("long")) {
 document.querySelector("#fixture-home-tab")!.addEventListener("click", () => { void plugin.navigation.openHome(); });
 document.querySelector("#fixture-close-settings")!.addEventListener("click", () => { void workspaceFixture.closeSettings(); });
 window.addEventListener("pagehide", () => { void desktopDispose?.(); void workspaceFixture.dispose(); }, { once: true });
-Object.assign(window, { mobileFixture: workbenchFixture });
+Object.assign(window, { mobileFixture: { ...workbenchFixture, modelRequests } });
 if (params.has("desktop") && params.has("identity-modal")) {
   new AgentIdentityModal(host.app as any, { initialName: "桌面墨墨", initialAvatar: { kind: "preset", presetId: "lin" }, language: "zh", mode: "edit", onConfirm: async () => {} }).open();
 }

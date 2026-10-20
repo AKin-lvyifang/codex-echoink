@@ -154,7 +154,7 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
   bar.append(iconButton("引用笔记", "at-sign", notes));
   const model = iPhoneAction(ctx, "", () => {
     const body = shellElement(document, "div", "ip-model-picker"), draft = readDraft();
-    for (const provider of host.settings().apiProviders.filter(supportedProvider)) {
+    for (const provider of host.settings().apiProviders.filter(provider => supportedProvider(provider) && provider.providerId !== "ollama")) {
       const group = shellElement(document, "section", "ip-model-group"), heading = shellElement(document, "h3", "ip-model-heading");
       const brand = shellElement(document, "span", "ip-brand"); renderProviderBrandIcon(brand, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom");
       heading.append(brand, shellElement(document, "span", "", provider.name)); group.append(heading); body.append(group);
@@ -162,10 +162,11 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
         const selected = (draft.selectedProviderSettingsId ?? host.settings().activeApiProviderId) === provider.id
           && (draft.selectedModel ?? (draft.selectedProviderSettingsId === undefined ? host.settings().defaultModel : provider.defaultModelId)) === item.id;
         const button = row(group, item.displayName || item.id, () => choose(value => { value.selectedProviderSettingsId = provider.id; value.selectedModel = item.id; }), selected);
-        const brand = shellElement(document, "span", "ip-brand"); renderProviderBrandIcon(brand, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom"); button.querySelector(".ip-action-visible")!.prepend(brand);
+        const brand = shellElement(document, "span", "ip-brand"); renderProviderBrandIcon(brand, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom");
+        const visible = button.querySelector(".ip-action-visible")!, mark = visible.querySelector(".ip-icon"); visible.prepend(brand); if (mark) visible.append(mark);
       }
     }
-    row(body, "模型与提供商设置", () => { ctx.shell.closeSheet(); return host.openLegacy("providers"); }); open("选择模型", body);
+    row(body, host.settings().settingsLanguage === "en" ? "Manage model services" : "管理模型服务", async () => { await flush(); ctx.shell.closeSheet(); return host.openLegacy("providers"); }); open(host.settings().settingsLanguage === "en" ? "Choose model" : "选择模型", body);
   }); model.classList.add("ip-composer-model"); bar.append(model);
   const permission = iconButton("工作区权限", "shield-check", () => {
     const body = shellElement(document, "div", "ip-permission-picker"), workspace = host.store.permission;
@@ -237,9 +238,12 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
     })).catch(showFailure);
   };
   element.addEventListener("ip-resume-task", resume);
+  // Settings retain this Composer node; refresh its model label when focus returns.
+  const refreshOnReturn = (event: FocusEvent) => { if (event.target === model || event.target === input) refresh(); };
+  element.addEventListener("focusin", refreshOnReturn);
   refresh();
   return { element, flush, async canLeave() {
     try { await flush(); return true; }
     catch (failure) { showFailure(failure); return false; }
-  }, dispose() { if (disposed) return; disposed = true; unsubscribe(); unsubscribeWorkbench(); element.removeEventListener("ip-resume-task", resume); } };
+  }, dispose() { if (disposed) return; disposed = true; unsubscribe(); unsubscribeWorkbench(); element.removeEventListener("ip-resume-task", resume); element.removeEventListener("focusin", refreshOnReturn); } };
 }

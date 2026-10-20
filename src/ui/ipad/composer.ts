@@ -158,7 +158,7 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
   bar.append(iconButton("引用笔记", "at-sign", notes));
   const model = iPadAction(ctx, "", () => {
     const body = shellElement(document, "div", "pd-model-picker"), draft = readDraft();
-    for (const provider of host.settings().apiProviders.filter(supportedProvider)) {
+    for (const provider of host.settings().apiProviders.filter(provider => supportedProvider(provider) && provider.providerId !== "ollama")) {
       const group = shellElement(document, "section", "pd-model-group"), heading = shellElement(document, "h3", "pd-model-heading");
       const brand = shellElement(document, "span", "pd-brand"); renderProviderBrandIcon(brand, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom");
       heading.append(brand, shellElement(document, "span", "", provider.name)); group.append(heading); body.append(group);
@@ -169,7 +169,7 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
         const brand = shellElement(document, "span", "pd-brand"); renderProviderBrandIcon(brand, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom"); button.querySelector(".pd-action-visible")!.prepend(brand);
       }
     }
-    row(body, "模型与提供商设置", () => { ctx.shell.closeSheet(); return host.openLegacy("providers"); }); open("选择模型", body);
+    row(body, host.settings().settingsLanguage === "en" ? "Manage model services" : "管理模型服务", () => { ctx.shell.closeSheet(); return host.openSettings ? host.openSettings("model") : host.openLegacy("providers"); }); open(host.settings().settingsLanguage === "en" ? "Choose model" : "选择模型", body);
   }); model.classList.add("pd-composer-model"); bar.append(model);
   const permission = iconButton("工作区权限", "shield-check", () => {
     const body = shellElement(document, "div", "pd-permission-picker"), workspace = host.store.permission;

@@ -18,6 +18,7 @@ import type { MobileSettings } from "./settings";
 import type { MobileServices } from "./services";
 import type { MobileRuntime } from "./runtime";
 import { readMobileFile, replaceMobileFile } from "./replace-file";
+import { mobileModuleEnabled } from "./module-settings";
 
 /** Null is deliberately preserved at the acquisition boundary; it never becomes a count of zero. */
 export interface MobileWorkbenchFacts extends Omit<WorkbenchFacts, "todos" | "inbox" | "raw" | "finance"> {
@@ -309,7 +310,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
     const settings = this.settings(), service = this.services();
     const pro = !!service.accountService && hasProPluginAccess(service.accountService);
     const signature = JSON.stringify([settings.journalDirectory, settings.englishDiary.enabled, settings.lifestyle.finance.enabled,
-      settings.knowledgeBase, settings.review, settings.mobileUi.knowledgePaths, settings.settingsLanguage, pro]);
+      settings.knowledgeBase, settings.review, settings.mobileUi.knowledgePaths, settings.mobileUi.moduleEnabled, settings.settingsLanguage, pro]);
     if (!force && this.cached?.signature === signature && now < this.cached.until) return { ...this.cached.facts, now, tasks: this.store.state.sessions };
     if (this.flight) { await this.flight; return this.readFacts(now, force); }
     const generation = this.generation;
@@ -329,7 +330,8 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
       journals: [], englishMissing: null, inbox: null, inboxScope: scopeKey(this.roots("inbox")), raw: null,
       rawScope: scopeKey(this.roots("raw")), pdfJobs: [], reviewComplete: null, isolated: null,
       knowledgeScope: scopeKey([...this.roots("wiki"), ...this.roots("projects")]), language: settings.settingsLanguage, issues, versions: {} };
-    if (!this.app.workspace.layoutReady) return facts;
+    const finish = () => { facts.modules = modules.filter(module => mobileModuleEnabled(settings, module)); return facts; };
+    if (!this.app.workspace.layoutReady) return finish();
     const records = await attempt("工作台记录读取失败", null, () => this.readRecords());
     facts.todos = await attempt("待办读取失败", null, async () => {
       const snapshot = await this.services().getTodoStore().readOnlySnapshot();
@@ -377,7 +379,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
       }
     }
     facts.reviewComplete = await attempt("复盘状态读取失败", null, () => this.reviewComplete(records, now));
-    return facts;
+    return finish();
   }
   private signals(facts: MobileWorkbenchFacts, now: number): WorkbenchSignal[] {
     return calculateWorkbenchSignals(this.signalFacts(facts, now)).map(signal => {
@@ -395,7 +397,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
   async load(now = Date.now()): Promise<WorkbenchSnapshot> {
     const facts = await this.readFacts(now), input = this.signalFacts(facts, now), today = localWorkbenchDate(now);
     return { generatedAt: now, modules: [...facts.modules], signals: this.signals(facts, now),
-      todayTodos: facts.todos?.filter(todo => !todo.done && todo.dueDate === today) ?? [], issues: [...facts.issues], nextRefreshAt: nextWorkbenchRefreshAt(input) };
+      todayTodos: facts.modules.includes("todos") ? facts.todos?.filter(todo => !todo.done && todo.dueDate === today) ?? [] : [], issues: [...facts.issues], nextRefreshAt: nextWorkbenchRefreshAt(input) };
   }
   async handoff(signal: WorkbenchSignal, replaceDraft = false): Promise<{ agentId: string; conflict: boolean }> {
     // Force current versions even when a file event hasn't arrived yet.

@@ -1,7 +1,7 @@
 import type EchoInkMobilePlugin from "../../src/mobile/plugin";
 import { MobileWorkspace, MOBILE_VIEW, MOBILE_SETTINGS_VIEW } from "../../src/mobile/workspace";
 import { VIEW_TYPE_ECHOINK_HOME } from "../../src/home/view-type";
-import { IPAD_SHELL_HOME_VIEW, IPAD_SHELL_AGENT_VIEW } from "../../src/mobile/shell-workspace";
+import { IPAD_SHELL_HOME_VIEW, IPAD_SHELL_AGENT_VIEW, IPAD_SHELL_SETTINGS_VIEW } from "../../src/mobile/shell-workspace";
 import { LIFE_VIEW_TYPES } from "../../src/lifestyle/view";
 
 /** Synthetic leaves exercise the production registration, navigation and ItemViews. */
@@ -13,7 +13,7 @@ export function mobileWorkspaceFixture(plugin: EchoInkMobilePlugin, containers: 
     const leaf: any = { app: plugin.app, containerEl: containers.chat, contentEl: containers.chat, view: { getViewType: () => "empty" },
       getRoot: () => root, getViewState: () => ({ type: leaf.view.getViewType(), state: leaf.file ? { file: leaf.file.path } : {} }),
       async setViewState(state: { type: string }) {
-        const element = state.type === MOBILE_SETTINGS_VIEW ? containers.settings : state.type === VIEW_TYPE_ECHOINK_HOME || state.type === IPAD_SHELL_HOME_VIEW || state.type === LIFE_VIEW_TYPES.finance ? containers.home : containers.chat;
+        const element = state.type === MOBILE_SETTINGS_VIEW || state.type === IPAD_SHELL_SETTINGS_VIEW ? containers.settings : state.type === VIEW_TYPE_ECHOINK_HOME || state.type === IPAD_SHELL_HOME_VIEW || state.type === LIFE_VIEW_TYPES.finance ? containers.home : containers.chat;
         leaf.containerEl = leaf.contentEl = element;
         leaf.view = factories.get(state.type)?.(leaf) ?? { getViewType: () => state.type };
         await leaf.view.onOpen?.();
@@ -48,7 +48,15 @@ export function mobileWorkspaceFixture(plugin: EchoInkMobilePlugin, containers: 
     }
   });
   plugin.navigation = new MobileWorkspace(workspace, tablet); plugin.registerWorkspaceViews();
-  if (legacy) plugin.navigation = new MobileWorkspace(workspace, tablet);
-  return { leaves, get active() { return active; }, restoreDeferredSettings() { const leaf = makeLeaf(rootSplit); leaf.restoreDeferred(MOBILE_SETTINGS_VIEW); return leaf; }, async closeSettings() { for (const leaf of workspace.getLeavesOfType(MOBILE_SETTINGS_VIEW)) await leaf.detach(); await plugin.navigation.openHome(); },
+  if (legacy) {
+    plugin.navigation = new MobileWorkspace(workspace, tablet);
+    const current = plugin.showPage.bind(plugin);
+    plugin.showPage = async page => {
+      if (!tablet) return current(page);
+      const leaf = await plugin.navigation.openSettings();
+      (leaf.view as { showPage(page: string): void }).showPage(page);
+    };
+  }
+  return { leaves, get active() { return active; }, restoreDeferredSettings() { const leaf = makeLeaf(rootSplit); leaf.restoreDeferred(MOBILE_SETTINGS_VIEW); return leaf; }, async closeSettings() { for (const type of [MOBILE_SETTINGS_VIEW, IPAD_SHELL_SETTINGS_VIEW]) for (const leaf of workspace.getLeavesOfType(type)) await leaf.detach(); await plugin.navigation.openHome(); },
     async dispose() { for (const leaf of [...leaves]) await leaf.detach(); plugin.workbench?.dispose(); plugin.ipadNavigation?.dispose(); plugin.iphoneNavigation?.dispose(); }, chatType: tablet ? IPAD_SHELL_AGENT_VIEW : MOBILE_VIEW };
 }

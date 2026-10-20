@@ -9,6 +9,8 @@ import type { AgentModuleId } from "../../agents/types";
 import { MobileUI } from "../mobile/mobile-ui";
 import { shellElement } from "../mobile/shell-controls";
 import { readNativeJournalSettings } from "../../home/native-journal";
+import { IPhoneSettingsPages } from "./settings-pages";
+import { mobileModuleEnabled } from "../../mobile/module-settings";
 
 /** iPhone page composition. iPad never instantiates this controller. */
 export class IPhoneWorkbench {
@@ -16,10 +18,12 @@ export class IPhoneWorkbench {
   private readonly context: IPhonePageContext;
   private serial = Promise.resolve();
   private closed = false;
+  private readonly settingsPages: IPhoneSettingsPages;
   constructor(private readonly root: HTMLElement, private readonly host: IPhoneWorkbenchHost) {
     this.shell = new IPhoneShell(root, { onError: error => this.error(error) });
-    this.context = { host, document: root.ownerDocument, shell: this.shell,
+    this.context = { host: { ...host, openLegacy: page => this.openLegacy(page) }, document: root.ownerDocument, shell: this.shell,
       navigate: (route, replace) => this.navigate(route, replace), error: error => this.error(error) };
+    this.settingsPages = new IPhoneSettingsPages(this.context, page => this.openLegacy(page));
   }
   async mount(): Promise<void> {
     this.shell.mount(createHomePage(this.context));
@@ -67,6 +71,8 @@ export class IPhoneWorkbench {
     return next;
   }
   async openLegacy(page: MobileSettingsRoute): Promise<void> {
+    if (page === "settings") return this.settingsPages.open();
+    if (page === "providers") return this.settingsPages.open("model");
     const content = shellElement(this.root.ownerDocument, "div", "ip-legacy");
     const ui = new MobileUI(content, {
       app: this.host.app, store: this.host.store, runtime: this.host.runtime, services: this.host.services,
@@ -77,10 +83,11 @@ export class IPhoneWorkbench {
       beginRender: () => {}, renderMarkdown: this.host.renderMarkdown
     });
     ui.mount();
-    const accepted = await this.shell.push({ id: `legacy:${page}`, title: "设置", header: "content", content, dispose: () => ui.destroy() });
+    const accepted = await this.shell.push({ id: `legacy:${page}`, title: "设置", header: "content", content, dispose: () => { ui.destroy(); this.settingsPages.refresh(); } });
     if (!accepted) ui.destroy();
   }
   async openModule(module: AgentModuleId): Promise<void> {
+    if (!mobileModuleEnabled(this.host.settings(), module)) throw new Error("此模块已停用。");
     if (module === "todos") return this.openLegacy("todos");
     if (module === "knowledge-base") return this.openLegacy("knowledge");
     if (module === "finance") { await this.host.services.lifestyle.open("finance"); return; }

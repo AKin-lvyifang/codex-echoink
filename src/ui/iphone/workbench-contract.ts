@@ -11,6 +11,7 @@ import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import type { IPhoneShell } from "./shell";
 import type { AccountService } from "../../membership/account-service";
+import type { MobileRequest } from "../../mobile/transport";
 
 export interface IPhoneWorkbenchHost {
   app: App;
@@ -21,6 +22,7 @@ export interface IPhoneWorkbenchHost {
   workbench: MobileWorkbenchPort;
   accountService?: AccountService;
   version?: string;
+  modelRequest?: MobileRequest;
   settings: () => MobileSettings;
   saveSettings: () => Promise<void>;
   openNote: (path: string) => Promise<void>;

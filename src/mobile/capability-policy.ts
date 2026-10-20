@@ -10,6 +10,7 @@ import { sha256Hex } from "../utils/sha256";
 import { BUILTIN_SKILLS } from "../harness/resources/builtin-skills";
 import type { EchoInkResource } from "../resources/types";
 import { loadMobileSettings, type MobileSettings } from "./settings";
+import { mobileModuleEnabled } from "./module-settings";
 import type { MobilePermission, MobileStore } from "./store";
 
 const MOBILE_TOOLS = new Set(["task_update", "user_question", "vault_search", "note_read", "note_create", "memory_search", "memory_read", "memory_write"]);
@@ -87,9 +88,11 @@ export class MobileCapabilityPolicy {
     }, agentId: this.options.agentId, resources: currentResources(s), proAccess: this.options.proAccess?.(),
     access: { permission: this.permission === "read-only" || this.options.store.permission === "read-only" ? "read-only" : "workspace-write",
       mode: "agent", memoryMode: this.options.store.memoryEnabled ? "default" : "no_memory" },
-    moduleEnabled: { review: s.review.enabled },
+    moduleEnabled: { knowledge: mobileModuleEnabled(s, "knowledge-base"), journal: mobileModuleEnabled(s, "journal"),
+      todos: mobileModuleEnabled(s, "todos"), review: s.review.enabled && mobileModuleEnabled(s, "review") },
     modulePaths: {
       journal: [s.journalDirectory].filter(Boolean),
+      todos: ["EchoInk/待办.md"],
       finance: [FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT, s.lifestyle.finance.analysisDirectory].filter((path): path is string => !!path),
       "english-diary": [s.englishDiary.englishDirectory, s.englishDiary.expressionDirectory, ...(s.englishDiary.legacyEnglishDirectories ?? []),
         ...(s.englishDiary.legacyExpressionDirectories ?? []), "outputs/.english-diary", ".echoink/english-diary"],

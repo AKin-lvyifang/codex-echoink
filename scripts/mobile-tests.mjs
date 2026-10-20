@@ -653,7 +653,7 @@ await test("iPad retained legacy settings: central leaf reuse, isolated listener
   } finally { await fixture.dispose(); home.remove(); central.remove(); platform.isTablet = previousTablet; dom.window.setInterval = interval; }
 });
 
-await test("M6 formal iPad entry keeps central/settings/note independent from the Agent draft", async () => {
+await test("M7 formal iPad entry keeps central/settings/note independent from the Agent draft", async () => {
   const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
   const platform = obsidian.exports.Platform, previousTablet = platform.isTablet; platform.isTablet = true;
   const root = dom.window.document.querySelector("#app"), home = dom.window.document.body.appendChild(dom.window.document.createElement("div")), central = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
@@ -671,7 +671,7 @@ await test("M6 formal iPad entry keeps central/settings/note independent from th
     assert.ok(home.querySelector(".pd-workbench")); assert.ok(root.querySelector(".pd-agent-page"));
     const input = root.querySelector("textarea"); input.value = "M6 正式入口草稿"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     await plugin.showPage("settings"); assert.equal(root.querySelector("textarea"), input); assert.equal(input.value, "M6 正式入口草稿");
-    assert.equal(fixture.leaves.filter(leaf => leaf.view.getViewType() === "echoink-mobile-settings").length, 1);
+    assert.equal(fixture.leaves.filter(leaf => leaf.view.getViewType() === "echoink-ipad-settings-shell").length, 1);
     const file = state.app.vault.getAbstractFileByPath("笔记/来源.md"); assert.ok(file); await plugin.ipadNavigation.openNote(file);
     assert.equal(fixture.active.view.getViewType(), "markdown"); assert.equal(root.querySelector("textarea"), input);
     await plugin.navigation.openHome(); assert.equal(fixture.active.view.getViewType(), "echoink-ipad-workbench-shell");

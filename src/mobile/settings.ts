@@ -19,6 +19,8 @@ export function mobileAgentRegistrySource(settings: MobileSettings): "missing" |
 export interface MobileAppearance {
   appearance: "system" | "light" | "dark";
   largeText: boolean;
+  /** Mobile-only opt-outs; absence preserves the existing enabled behavior. */
+  moduleEnabled?: Partial<Record<"knowledge-base" | "journal" | "review" | "todos", boolean>>;
   knowledgePaths: Record<"wiki" | "raw" | "inbox", string>;
   reports: Record<"agent" | "knowledge", { period: "7d" | "last-week" | "30d"; schedule: "manual" | "weekly" | "monthly" }>;
 }
@@ -28,6 +30,7 @@ export interface MobileSettings extends Record<string, unknown>, MobileHomeSetti
   apiProviders: ApiProviderConfig[];
   activeApiProviderId: string;
   defaultModel: string;
+  autoOpenHome: boolean;
   mobileUi: MobileAppearance;
   agentRegistry: AgentRegistry;
 }
@@ -35,9 +38,10 @@ export const MOBILE_DEFAULT_WELCOME = {
   title: "让想法，慢慢清晰。",
   subtitle: "聊聊此刻的思考，读一篇笔记，或把今天写下来。"
 } as const;
-export const mobilePresets = API_PROVIDER_PRESETS.filter(p => p.authMode === "api-key" && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses"));
+export const mobilePresets = API_PROVIDER_PRESETS.filter(p => ["glm", "kimi", "deepseek", "qwen", "qwen-token-plan", "custom"].includes(p.id));
 export function supportedProvider(p: ApiProviderConfig): boolean {
-  return p.authMode !== "oauth" && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses");
+  return p.authMode === "api-key" && !["openai-codex", "anthropic", "minimax", "ollama"].includes(p.providerId ?? "")
+    && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses");
 }
 export function loadMobileSettings(value: unknown): MobileSettings {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -48,6 +52,7 @@ export function loadMobileSettings(value: unknown): MobileSettings {
     apiProviders: Array.isArray(raw?.apiProviders) ? raw.apiProviders as ApiProviderConfig[] : [],
     activeApiProviderId: typeof raw?.activeApiProviderId === "string" ? raw.activeApiProviderId : "",
     defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "",
+    autoOpenHome: raw?.autoOpenHome === true,
     agentRegistry: normalizeAgentRegistry(raw?.agentRegistry),
     customWelcomeEnabled: raw?.customWelcomeEnabled === true,
     customWelcomeTitle: typeof raw?.customWelcomeTitle === "string" ? raw.customWelcomeTitle : "",

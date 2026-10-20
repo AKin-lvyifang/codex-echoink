@@ -1,6 +1,8 @@
+import { mobileModel } from "../../src/mobile/settings";
+
 /** Browser-only synthetic Provider. Tasks are admitted through the production runtime. */
 export async function seedWorkbenchFixture(f: any): Promise<void> {
-  f.settings.apiProviders = [{ id: "fixture", providerId: "deepseek", runtimeProviderId: "deepseek", apiProtocol: "openai-completions", authMode: "api-key", name: "DeepSeek（测试）", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-only", defaultModelId: "fixture-model", models: [{ id: "fixture-model", displayName: "DeepSeek 测试模型", input: ["text"], toolCalling: true, reasoning: false, contextWindow: 128000, maxOutputTokens: 4096 }] }];
+  f.settings.apiProviders = [{ id: "fixture", providerId: "deepseek", runtimeProviderId: "deepseek", apiProtocol: "openai-completions", authMode: "api-key", name: "DeepSeek（测试）", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-only", defaultModelId: "fixture-model", models: [{ ...mobileModel("fixture-model"), displayName: "DeepSeek 测试模型" }] }];
   f.settings.activeApiProviderId = "fixture"; f.settings.defaultModel = "fixture-model";
   await f.plugin.saveSettings();
   const snapshot = await f.services.agents.snapshot();

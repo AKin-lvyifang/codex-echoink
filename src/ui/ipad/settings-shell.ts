@@ -69,6 +69,7 @@ export class IPadSettingsShell {
   }
 
   get activeCategoryId(): string | undefined { return this.currentCategory; }
+  get activePageShell(): IPadShell | undefined { return this.activePane?.shell; }
   get activePageId(): string | undefined {
     return this.wide || this.detailShown ? this.activePane?.shell.activePageId : "ipad-settings-categories";
   }

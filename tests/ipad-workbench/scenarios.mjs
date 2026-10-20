@@ -90,9 +90,13 @@ export async function runIPadWorkbenchScenarios(api, win) {
       const { pane, center } = await f.panes(); await pane.navigate({ kind: "agent", agentId: "sol" });
       const original = input(win, composerInput(f.right), "甲的未发送中文草稿"); original.focus(); original.setSelectionRange(2, 5);
       await until(() => f.store.state.newTaskDrafts.sol?.text === original.value, "Agent draft durable");
+      f.settings.englishDiary.enabled = true;
       const rightRoute = pageId(f.right); await center.openModule("english-diary");
       assert.equal(pageId(f.right), rightRoute); assert.equal(composerInput(f.right), original); assert.equal(original.value, "甲的未发送中文草稿");
       const centralRoute = pageId(f.central);
+      f.settings.englishDiary.enabled = false;
+      await assert.rejects(center.openModule("english-diary"), /此模块已停用/u);
+      assert.equal(pageId(f.central), centralRoute); assert.equal(composerInput(f.right), original);
       await f.store.patchSession(f.store.session.id, { title: "右栏任务", taskStatus: "completed", messages: [{ role: "user", content: "真实任务", timestamp: 1 }] });
       await pane.navigate({ kind: "task", taskId: f.store.session.id });
       input(win, composerInput(f.right), "原任务的回复草稿");

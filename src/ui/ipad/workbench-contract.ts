@@ -11,6 +11,7 @@ import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import type { IPadShell } from "./shell";
 import type { AccountService } from "../../membership/account-service";
+import type { MobileRequest } from "../../mobile/transport";
 
 export interface IPadWorkbenchHost {
   app: App;
@@ -23,6 +24,8 @@ export interface IPadWorkbenchHost {
   version?: string;
   settings: () => MobileSettings;
   saveSettings: () => Promise<void>;
+  modelRequest?: MobileRequest;
+  openSettings?: (category?: string) => Promise<void>;
   openNote: (path: string) => Promise<void>;
   openLegacy: (page: MobileSettingsRoute) => Promise<void>;
   openModule: (module: AgentModuleId) => Promise<void>;
