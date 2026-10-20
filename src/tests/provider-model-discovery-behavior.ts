@@ -177,6 +177,25 @@ export async function runProviderModelDiscoveryRegression(installDom: () => void
     assert.equal(captured.at(-1)!.messages.find((message: any) => message.role === "assistant").reasoning_content, "fixture reasoning");
     await dispatcher.stream({ model: syntheticRuntime, context, apiKey: key, options: { reasoning: "high", maxTokens: 16000, maxRetries: 0 } }).result();
     assert.equal(captured.at(-1)!.max_tokens, 16000);
+    let authRequests = 0;
+    globalThis.fetch = async () => {
+      authRequests++;
+      return new Response(JSON.stringify({ error: { code: "invalid_request_error", type: "invalid_request_error",
+        message: `Authentication Fails. The API key ${key} is invalid.` } }),
+      { status: 401, headers: { "content-type": "application/json" } });
+    };
+    const authTransport = new PiProviderProtocolTransport({ authorityId: "auth-fixture", storeSetId: "auth-fixture", resolveAuthToken: () => key });
+    const authResult = await (await authTransport.stream({ runId: "auth-fixture", turnId: "auth-fixture", conversationId: "auth-fixture", correlationId: "auth-fixture",
+      provider: { providerId: production.provider, modelRef: production.id, baseUrl: production.baseUrl, apiProtocol: "openai-completions", authMode: "api-key" },
+      model: production, context: { messages: [{ role: "user", content: "fixture", timestamp: 1 }] },
+      options: { maxRetries: 0, timeoutMs: 1000, cacheRetention: "none", temperature: 0 } })).result() as AssistantProviderFailure;
+    assert.equal(authResult.errorMessage, "provider_auth_failed", "HTTP 401 overrides the generic invalid_request_error body");
+    assert.equal(authResult.echoInkProviderFailure?.status, 401);
+    assert.equal(authResult.echoInkProviderFailure?.code, "invalid_request_error");
+    assert.equal(authRequests, 1);
+    assert.match(assistantProviderFailureText(authResult), /凭证不可用/u);
+    assert.doesNotMatch(assistantProviderFailureText(authResult), /参数无效|模型或参数设置/u);
+    assert.doesNotMatch(JSON.stringify(authResult), /FAKE_DISCOVERY_KEY|Authentication Fails/u);
   } finally { globalThis.fetch = originalFetch; }
   console.log("PASS wire: actual Pi SDK payloads for old/new DeepSeek off/on, tools and reasoning tool-result continuation; generic output unchanged");
 

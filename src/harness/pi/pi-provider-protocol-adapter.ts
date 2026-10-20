@@ -332,6 +332,9 @@ export function classifyPiProviderConnectionFailure(
   message: string
 ): PiProviderConnectionFailureKind {
   const normalized = message.toLowerCase();
+  // Pi SDK errors may carry the HTTP status only in the error prefix.
+  const authenticationStatus = status ?? Number(message.match(/^(?:HTTP\s+)?(401|403)(?:[:\s]|$)/u)?.[1]);
+  if (authenticationStatus === 401 || authenticationStatus === 403) return "auth";
   // OAuth and local adapters provide content-free codes. Keep those categories
   // instead of treating their human-readable messages as upstream response bodies.
   switch (safeProviderFailureCode(message)) {
@@ -352,7 +355,6 @@ export function classifyPiProviderConnectionFailure(
     case "provider_service_unavailable":
     case "provider_service_failed": return "provider";
   }
-  if (status === 401 || status === 403) return "auth";
   if (status === 429 || /rate[ _-]?limit|usage[ _-]?limit|quota|too many requests/u.test(normalized)) {
     return "rate_limit";
   }
