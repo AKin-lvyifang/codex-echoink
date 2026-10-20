@@ -10,7 +10,7 @@ import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obs
 import { attachSettingsTooltip } from "../settings/settings-v2";
 import { paidTestAccess } from "./membership-access";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
-import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, resolveDesktopSettingsRoute, type DesktopSettingsTab } from "../settings/desktop-settings-route";
+import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsTab } from "../settings/desktop-settings-route";
 import { normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "../agents/registry";
 import type { AgentDefinition, AgentModuleId } from "../agents/types";
 import { profileSlotDefinition, type UserProfileControlSnapshot } from "../harness/memory/user-profile-state";
@@ -561,6 +561,7 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
     await checkDesktopSettings(primary, scheduler, secondDocument);
     await checkDesktopMemoryConflict(primary);
     await checkDesktopEnableSwitches(primary, scheduler);
+    await checkDesktopSettingPolish(primary, scheduler);
   } finally { Platform.isDesktopApp = false; }
 }
 
@@ -955,4 +956,114 @@ async function checkDesktopEnableSwitches(win: Window & typeof globalThis, sched
   assert.equal((f.saved.at(-1) as any).selectionAsk.enabled, !selection);
   f.registrations.forEach(cleanup=>cleanup()); mount.cleanup(); f.tab.containerEl.remove();
   console.log("PASS real Origin switch clicks: memory enable and module enable save; no sibling drawer activation");
+}
+
+async function checkDesktopSettingPolish(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {
+  for (const language of ["zh-CN", "en"] as const) {
+    const en = language === "en", f = fixture(win, language);
+    const plugin = f.plugin as any;
+    plugin.accountService = paidTestAccess;
+    plugin.settings.englishDiary.enabled = true;
+    plugin.settings.englishDiary.homeShortcut = "quick-record";
+    plugin.englishDiaryProviderLabel = () => "Fixture model";
+    let failSave = false;
+    const selections: string[] = [];
+    plugin.englishDiary = { setHomeShortcut: async (value: string) => {
+      selections.push(value);
+      if (failSave) throw new Error("Synthetic shortcut save failure");
+      plugin.settings.englishDiary.homeShortcut = value;
+      await plugin.saveSettings();
+    } };
+    const mount = mountDefinitions(f.tab);
+    try {
+      await scheduler.flush();
+      const moduleAliases = mount.definition.items[DESKTOP_SETTINGS_TABS.indexOf("modules")].aliases!;
+      for (const term of ["移动端英文日记快捷入口", "English diary shortcut on mobile", "首页快捷入口", "Home shortcut"]) {
+        assert.ok(moduleAliases.includes(term), `the host indexes the current and legacy shortcut term: ${term}`);
+        const route = resolveDesktopSettingsSearchRoute("modules", term)!;
+        assert.equal(route.focus, "english-diary:home-shortcut");
+        f.tab.openDesktopRoute(route);
+        await scheduler.flush();
+        const check = f.tab.containerEl.querySelector<OriginCheckElement>('[data-echoink-focus-key="english-diary:home-shortcut"]')!;
+        assert.ok(check, "search opens the actual English diary option");
+        assert.equal(check.getAttribute("aria-label"), en ? "English diary shortcut on mobile" : "移动端英文日记快捷入口");
+        assert.equal(win.document.activeElement, check, "new and legacy aliases focus the saved option");
+      }
+      const check = f.tab.containerEl.querySelector<OriginCheckElement>('[data-echoink-focus-key="english-diary:home-shortcut"]')!;
+      const row = check.closest(".setting-item")!;
+      const help = row.querySelector<HTMLButtonElement>('.echoink-settings-help button')!;
+      help.focus();
+      const panel = win.document.getElementById(help.getAttribute("aria-describedby")!)!;
+      assert.equal(panel.hidden, false);
+      assert.equal(panel.textContent, en ? "Replace Quick note on mobile with Write English diary" : "将移动端的快速记录入口改为写英文日记");
+      assert.equal(selections.length, 0, "reading the hint never saves a setting");
+      help.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      assert.equal(panel.hidden, true);
+      check.click(); await scheduler.flush();
+      assert.equal(plugin.settings.englishDiary.homeShortcut, "english-diary");
+      assert.equal((f.saved.at(-1) as any).englishDiary.homeShortcut, "english-diary");
+      assert.equal(check.checked, true);
+      failSave = true;
+      check.click(); await scheduler.flush();
+      assert.equal(plugin.settings.englishDiary.homeShortcut, "english-diary");
+      assert.equal(check.checked, true, "a failed save restores the persisted checkbox value");
+      assert.equal(check.disabled, false);
+      assert.deepEqual(selections, ["english-diary", "quick-record"]);
+
+      f.tab.openDesktopRoute({ tab: "agent" }); await scheduler.flush();
+      const auto = f.tab.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="review:auto-archive"]')!.closest(".setting-item")!;
+      assert.equal(auto.querySelector(".setting-item-description")!.textContent, en ? "How long conversations stay inactive before archiving" : "多久没更新的对话自动归档");
+      const autoHelp = auto.querySelector<HTMLButtonElement>('.echoink-settings-help button')!;
+      autoHelp.focus();
+      const autoPanel = win.document.getElementById(autoHelp.getAttribute("aria-describedby")!)!;
+      assert.equal(autoPanel.hidden, false);
+      assert.equal(autoPanel.textContent, en ? "Conversations in use or with pending drafts are skipped." : "跳过使用中或有待发送内容的对话");
+      const archive = f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="review:archives"]')!;
+      assert.equal(archive.querySelector(".echoink-settings-navigation-description")!.textContent, en ? "View, restore, or delete archived conversations" : "查看、恢复或删除已归档的对话");
+      archive.focus();
+      const archivePanel = win.document.getElementById(archive.getAttribute("aria-describedby")!)!;
+      assert.equal(archivePanel.hidden, false);
+      assert.equal(archivePanel.textContent, en ? "Deleted conversations cannot be restored in Settings." : "删除后无法在设置中恢复");
+      assert.equal(archive.querySelector("button"), null, "navigation help does not nest a button inside its navigation button");
+      assert.equal(archive.tagName, "BUTTON"); assert.equal(archive.disabled, false);
+      const openedDetails: string[] = [];
+      const openDetail = f.state.openSettingsDetail;
+      f.state.openSettingsDetail = (detail: string) => { openedDetails.push(detail); };
+      try {
+        archive.click();
+        archive.dispatchEvent(new win.MouseEvent("click", { bubbles: true, detail: 0 }));
+        assert.deepEqual(openedDetails, ["review-archives", "review-archives"], "pointer and keyboard-style button activation preserve the archive navigation callback");
+      } finally { f.state.openSettingsDetail = openDetail; }
+
+      // A full fail-closed adapter is supplied by production when the account service is absent.
+      plugin.accountService = undefined;
+      for (const focus of ["account:login", "account:benefits"]) {
+        f.tab.openDesktopRoute({ tab: "account", focus }); await scheduler.flush();
+        assert.equal(win.document.activeElement?.getAttribute("data-echoink-focus-key"), focus);
+        assert.equal(f.tab.containerEl.querySelector(".desktop-account-form"), null, "navigating to an account anchor does not automatically open a sign-in form");
+      }
+      f.tab.openDesktopRoute({ tab: "modules" }); await scheduler.flush();
+      const locked = f.tab.containerEl.querySelector<HTMLButtonElement>('.echoink-module-drawer.is-pro-locked [data-echoink-focus-key="module:english"]')!;
+      assert.ok(locked, "missing account service exposes the fail-closed PRO entry");
+      locked.click(); await scheduler.flush();
+      assert.equal(win.document.activeElement?.getAttribute("data-echoink-focus-key"), "account:benefits", "the locked module reaches the actual account benefits section");
+      assert.equal(f.tab.containerEl.querySelector(".desktop-account-form"), null);
+    } finally {
+      mount.cleanup(); f.registrations.forEach(cleanup => cleanup()); f.tab.containerEl.remove();
+      await scheduler.flush();
+    }
+  }
+  console.log("PASS settings polish: current/legacy shortcut search, saved readback/rollback, archive tooltips/navigation, and precise account entry focus");
+}
+
+/** This small desktop regression suite can run independently of older mobile fixtures. */
+export async function runSettingsPolishDomTests(win: Window & typeof globalThis): Promise<void> {
+  const scheduler = prepareDocument(win);
+  globalThis.ResizeObserver = win.ResizeObserver;
+  globalThis.requestAnimationFrame = win.requestAnimationFrame;
+  globalThis.cancelAnimationFrame = win.cancelAnimationFrame;
+  const desktop = Platform.isDesktopApp;
+  Platform.isDesktopApp = true;
+  try { await checkDesktopSettingPolish(win, scheduler); }
+  finally { Platform.isDesktopApp = desktop; }
 }

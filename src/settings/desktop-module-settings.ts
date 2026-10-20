@@ -1,8 +1,7 @@
 import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
-import { ProPluginControls } from "../ui/pro-plugin-controls";
-import { createOriginButton, createOriginSwitch, disposeOriginControls } from "./origin-controls";
+import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
+import { createOriginButton, createOriginSwitch, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
 import { createSettingsSection } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 
@@ -56,7 +55,10 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
       const summary = copy.createSpan({ cls: "echoink-module-drawer-summary" });
       const optional = module.id === "selection" || pro;
       if (!optional) setIcon(trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }), "chevron-down");
-      const toggle = optional ? createOriginSwitch(header, { attr: { "aria-label": english ? `Enable ${title}` : `启用${title}`, "data-echoink-focus-key": `module:${module.id}:enabled` } }) : null;
+      let toggle: OriginCheckElement | null = null;
+      const required = pro ? trigger.createSpan({ cls: "echoink-module-pro-required", text: english ? "Requires PRO" : "需要 PRO" }) : null;
+      const lockedChevron = pro ? trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }) : null;
+      if (lockedChevron) setIcon(lockedChevron, "chevron-right");
       const content = card.createDiv({ cls: "echoink-module-drawer-content", attr: { id: `echoink-module-content-${module.id}` } });
       trigger.setAttribute("aria-controls", content.id);
       let rendered = false, pending = false;
@@ -68,23 +70,48 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
         if (value) options.expanded.add(module.id); else options.expanded.delete(module.id);
         options.onExpandedChange?.(module.id, value);
       };
-      const controls = pro ? new ProPluginControls(access, () => getProPluginAccess(access, enabled())) : null;
+      const changeEnabled = () => {
+        if (pending || disposed || !toggle || pro && !hasProPluginAccess(access)) { refresh(); return; }
+        const value = toggle.checked;
+        pending = true; refresh();
+        void (async () => {
+          if (module.id === "finance") await plugin.lifestyle.setEnabled("finance", value);
+          else if (module.id === "pdf") { if (!plugin.pdfReading) throw new Error("PDF 精读尚未就绪"); await plugin.pdfReading.setEnabled(value); }
+          else if (module.id === "english") { if (!plugin.englishDiary) throw new Error("英文日记尚未就绪"); await plugin.englishDiary.setEnabled(value); }
+          else {
+            const previous = plugin.settings.selectionAsk.enabled;
+            plugin.settings.selectionAsk.enabled = value;
+            try { await plugin.saveSettings(true); } catch (error) { plugin.settings.selectionAsk.enabled = previous; throw error; }
+          }
+          setExpanded(value);
+        })().catch(error => { if (!disposed) new Notice(error instanceof Error ? error.message : String(error)); })
+          .finally(() => { pending = false; refresh(true); });
+      };
       const refresh = (animate = false) => {
         if (disposed) return;
         animation?.cancel(); animation = null;
         content.removeClass("is-animating");
         const previousHeight = content.hidden ? 0 : content.getBoundingClientRect().height;
         const active = enabled();
-        const open = options.expanded.has(module.id) && active;
-        trigger.disabled = pending || !active || (pro && !getProPluginAccess(access, active).canEnter);
-        trigger.setAttribute("aria-expanded", String(open));
+        const locked = pro && !hasProPluginAccess(access);
+        const open = !locked && options.expanded.has(module.id) && active;
+        trigger.disabled = pending || !locked && !active;
+        if (locked) { trigger.removeAttribute("aria-expanded"); trigger.removeAttribute("aria-controls"); }
+        else { trigger.setAttribute("aria-expanded", String(open)); trigger.setAttribute("aria-controls", content.id); }
         card.toggleClass("is-expanded", open);
-        card.toggleClass("is-disabled", !active);
+        card.toggleClass("is-disabled", !locked && !active);
+        card.toggleClass("is-pro-locked", locked);
         content.hidden = !open;
-        summary.textContent = !active ? (english ? "Disabled" : "已停用") : options.summary?.(module.id) || (module.id === "selection" ? (english ? "Ask about selected text" : "选中文字后直接提问") : "");
+        summary.textContent = locked ? "" : !active ? (english ? "Disabled" : "已停用") : options.summary?.(module.id) || (module.id === "selection" ? (english ? "Ask about selected text" : "选中文字后直接提问") : "");
         summary.hidden = !summary.textContent;
+        if (required) required.hidden = !locked;
+        if (lockedChevron) lockedChevron.hidden = !locked;
+        if (locked && toggle) { disposeOriginControls(toggle); toggle = null; }
+        if (optional && !locked && !toggle) {
+          toggle = createOriginSwitch(header, { attr: { "aria-label": english ? `Enable ${title}` : `启用${title}`, "data-echoink-focus-key": `module:${module.id}:enabled` } });
+          toggle.onchange = changeEnabled;
+        }
         if (toggle) { toggle.checked = active; toggle.disabled = pending; }
-        controls?.refresh();
         if (open && !rendered) {
           rendered = true;
           const dispose = options.renderContent(module.id, content);
@@ -101,28 +128,12 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
         }
         wasOpen = open;
       };
-      if (controls && toggle) { controls.bind(toggle, { businessDisabled: () => pending }); disposers.push(() => controls.dispose()); }
       if (pro) disposers.push(access.subscribe(() => refresh()));
-      trigger.onclick = () => { if (trigger.disabled) return; setExpanded(!options.expanded.has(module.id)); refresh(true); };
-      if (toggle) {
-        toggle.onchange = () => {
-          if (pending || disposed) return;
-          const value = toggle.checked;
-          pending = true; refresh();
-          void (async () => {
-            if (module.id === "finance") await plugin.lifestyle.setEnabled("finance", value);
-            else if (module.id === "pdf") { if (!plugin.pdfReading) throw new Error("PDF 精读尚未就绪"); await plugin.pdfReading.setEnabled(value); }
-            else if (module.id === "english") { if (!plugin.englishDiary) throw new Error("英文日记尚未就绪"); await plugin.englishDiary.setEnabled(value); }
-            else {
-              const previous = plugin.settings.selectionAsk.enabled;
-              plugin.settings.selectionAsk.enabled = value;
-              try { await plugin.saveSettings(true); } catch (error) { plugin.settings.selectionAsk.enabled = previous; throw error; }
-            }
-            setExpanded(value);
-          })().catch(error => { if (!disposed) new Notice(error instanceof Error ? error.message : String(error)); })
-            .finally(() => { pending = false; refresh(true); });
-        };
-      }
+      trigger.onclick = () => {
+        if (trigger.disabled) return;
+        if (pro && !hasProPluginAccess(access)) { options.onProBenefits(); return; }
+        setExpanded(!options.expanded.has(module.id)); refresh(true);
+      };
       refresh();
     }
   }

@@ -30,6 +30,8 @@ export interface WorkbenchSnapshot {
   signals: WorkbenchSignal[];
   todayTodos: readonly ParsedTodoRecord[];
   modules: AgentModuleId[];
+  /** Visible enabled modules whose data and actions still require PRO. */
+  lockedModules?: AgentModuleId[];
   issues: string[];
   nextRefreshAt?: number;
 }

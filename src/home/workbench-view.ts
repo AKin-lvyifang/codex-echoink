@@ -17,6 +17,8 @@ import type { WorkbenchDataPort, WorkbenchSnapshot } from "./workbench-types";
 import { answerWorkbenchQuestion, launchWorkbenchSignal } from "./task-launcher";
 import { openWorkbenchModule, WORKBENCH_MODULES } from "./module-navigation";
 import type { ParsedTodoRecord } from "./todo-markdown";
+import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
+import { isProWorkbenchModule, renderWorkbenchModuleLock, workbenchHasPro, workbenchProModuleEnabled, type ProWorkbenchModuleId } from "./workbench-module-lock";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
 export const VIEW_TYPE_ECHOINK_WORKBENCH = "codex-echoink-home";
@@ -77,6 +79,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private searchResolvedQuery: string | null = null;
   private searchMatches: HomeSearchMatch[] = [];
   private searchIndex = -1;
+  private lockedModule: ProWorkbenchModuleId | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
@@ -231,7 +234,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private renderShell(): void {
     disposeOriginControls(this.contentEl); this.contentEl.empty(); this.searchOpen = false;
-    const page = this.contentEl.createDiv({ cls: "wb-page" });
+    const page = this.contentEl.createDiv({ cls: "wb-page", attr: { "data-wb": "page" } });
     const header = page.createEl("header", { cls: "wb-header" });
     const titles = header.createDiv({ cls: "wb-heading" });
     titles.createEl("h1", { text: this.t("工作台", "Workbench") });
@@ -243,13 +246,41 @@ export class EchoInkWorkbenchView extends ItemView {
     this.renderSearchShell(page);
     const nav = page.createEl("nav", { cls: "wb-modules", attr: { "data-wb": "modules", "aria-label": this.t("插件导航", "Modules") } });
     for (const module of WORKBENCH_MODULES) {
-      const button = this.button(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, () => openWorkbenchModule(this.plugin, module.id), "tertiary", module.icon);
+      const button = this.button(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, () => this.openModule(module.id), "tertiary", module.icon);
       button.dataset.module = module.id; button.hidden = !this.snapshot?.modules.includes(module.id);
     }
     page.createDiv({ cls: "wb-status", attr: { "data-wb": "status", "aria-live": "polite" } });
     page.createDiv({ cls: "wb-groups", attr: { "data-wb": "groups" } });
     page.createDiv({ cls: "wb-empty", text: this.t("暂时没有待处理的事", "Nothing to handle right now"), attr: { "data-wb": "empty" } }).hidden = true;
+    if (this.lockedModule) this.showModuleLock(this.lockedModule);
     this.render();
+  }
+
+  private async openModule(id: typeof WORKBENCH_MODULES[number]["id"]): Promise<void> {
+    if (isProWorkbenchModule(id)) {
+      if (!workbenchProModuleEnabled(this.plugin, id)) return;
+      if (!workbenchHasPro(this.plugin)) { this.showModuleLock(id); return; }
+    }
+    await openWorkbenchModule(this.plugin, id);
+  }
+  private showModuleLock(id: ProWorkbenchModuleId): void {
+    this.closeSearch(false);
+    const previous = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"]');
+    if (previous) { disposeOriginControls(previous); previous.remove(); }
+    this.lockedModule = id;
+    this.field("page").hidden = true;
+    this.field("page").inert = true;
+    const page = renderWorkbenchModuleLock(this.contentEl, this.plugin, id, () => this.closeModuleLock());
+    page.querySelector<HTMLButtonElement>("button")?.focus();
+  }
+  private closeModuleLock(): void {
+    const id = this.lockedModule;
+    const page = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"]');
+    if (page) { disposeOriginControls(page); page.remove(); }
+    this.lockedModule = null;
+    this.field("page").hidden = false;
+    this.field("page").inert = false;
+    this.field("modules").querySelector<HTMLButtonElement>(`[data-module="${id}"]`)?.focus();
   }
 
   private render(now = Date.now()): void {
@@ -263,8 +294,15 @@ export class EchoInkWorkbenchView extends ItemView {
     date.textContent = new Intl.DateTimeFormat(this.language, { month: "long", day: "numeric", weekday: "long" }).format(new Date(now));
     date.setAttribute("datetime", dayKey(now));
     this.field("modules").querySelectorAll<HTMLButtonElement>("[data-module]").forEach(button => {
-      button.hidden = !this.snapshot?.modules.some(id => id === button.dataset.module);
+      const id = button.dataset.module as typeof WORKBENCH_MODULES[number]["id"];
+      const proModule = isProWorkbenchModule(id);
+      button.hidden = proModule ? !workbenchProModuleEnabled(this.plugin, id) : !this.snapshot?.modules.includes(id);
+      const badge = button.querySelector<HTMLElement>('[data-plugin-edition="pro"]');
+      const locked = proModule && !workbenchHasPro(this.plugin);
+      if (locked && !badge) createPluginEditionBadge(button, "pro", this.language);
+      else if (!locked) badge?.remove();
     });
+    if (this.lockedModule && (workbenchHasPro(this.plugin) || !workbenchProModuleEnabled(this.plugin, this.lockedModule))) this.closeModuleLock();
     this.renderStatus();
     const groups = groupWorkbenchTasks(this.entries ?? [], now);
     const pending = this.plugin.getConversationRunService().pendingInteractions;
@@ -603,6 +641,10 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private handleKeys(event: KeyboardEvent): void {
     if (event.isComposing || event.keyCode === 229) return;
+    if (this.lockedModule) {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.closeModuleLock(); }
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); event.stopPropagation(); this.openSearch(); return; }
     if (!this.searchOpen) return;
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.closeSearch(true); return; }

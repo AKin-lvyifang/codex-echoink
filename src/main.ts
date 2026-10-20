@@ -387,7 +387,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     await this.paperGuide.showAfterOnboarding();
   }
-  async openEchoInkAccountSettings(): Promise<void> { await this.getViewService().openEchoInkSettings("account"); }
+  async openEchoInkAccountSettings(target?: "login" | "benefits"): Promise<void> {
+    await this.getViewService().openEchoInkSettings("account", target ? `account:${target}` : undefined);
+  }
   applyAppearanceTheme(ownerDocument?: Document): void {
     if (ownerDocument) this.appearance?.applyToDocument(ownerDocument);
     this.appearance?.refresh();

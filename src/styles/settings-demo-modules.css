@@ -28,6 +28,9 @@
 .echoink-settings-aligned .echoink-module-drawer-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-title { font-size: 13px; font-weight: 500; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-summary { font-size: 12px; line-height: 1.6; }
+body:not(.is-mobile) .echoink-settings-aligned .echoink-module-drawer.is-pro-locked .echoink-module-drawer-header { padding-right: 0; }
+body:not(.is-mobile) .echoink-settings-aligned .echoink-module-drawer.is-pro-locked button.echoink-module-drawer-trigger { width: 100%; padding-right: 18px; }
+body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { flex: none; margin-left: auto; color: var(--secondary); font-size: 12px; line-height: 1.55; white-space: nowrap; }
 .echoink-settings-aligned.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content { padding: 0; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content :is(.echoink-settings-section, .echoink-settings-group, .echoink-life-settings-page) {
   margin: 0;
@@ -310,7 +313,7 @@
 /* Boolean controls lead their copy. Switches keep their original trailing slot. */
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {
   flex-direction: row;
-  align-items: flex-start;
+  align-items: center;
   justify-content: flex-start;
 }
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-control {
@@ -318,9 +321,9 @@
   flex: none;
   width: auto;
   max-width: none;
-  align-self: flex-start;
-  padding-top: 2px;
+  align-self: center;
+  padding-top: 0;
 }
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-info { flex: 1; min-width: 0; }
-.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row:has(> [role=checkbox]) { justify-content: flex-start; align-items: flex-start; }
-.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row > [role=checkbox] { order: -1; flex: none; margin-top: 2px; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row:has(> [role=checkbox]) { justify-content: flex-start; align-items: center; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row > [role=checkbox] { order: -1; flex: none; margin-top: 0; }

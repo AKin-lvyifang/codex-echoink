@@ -19912,7 +19912,7 @@ body .echoink-home-workspace .calendar-days>button.has-photo:is(.today,.selected
 .echoink-settings-demo .settings-stack{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--bg)}
 .echoink-settings-demo .settings-stack>.setting-row{border:0;border-radius:0;margin:0;padding:17px 18px}
 .echoink-settings-demo .settings-stack>.setting-row+.setting-row{border-top:1px solid var(--line)}
-.echoink-settings-demo .settings-card>.settings-stack{border:0;border-radius:0}.echoink-settings-demo .settings-card>.settings-stack>.setting-row{padding-left:0;padding-right:0}.echoink-settings-demo .settings-card>.settings-stack>.setting-row:first-child{padding-top:0}.echoink-settings-demo .settings-card>.settings-stack>.setting-row:last-child{padding-bottom:0}
+.echoink-settings-demo .settings-card>.settings-stack{border:0;border-radius:0}.echoink-settings-demo:not(.echoink-settings-aligned) .settings-card>.settings-stack>.setting-row{padding-left:0;padding-right:0}.echoink-settings-demo:not(.echoink-settings-aligned) .settings-card>.settings-stack>.setting-row:first-child{padding-top:0}.echoink-settings-demo:not(.echoink-settings-aligned) .settings-card>.settings-stack>.setting-row:last-child{padding-bottom:0}
 .echoink-settings-demo .settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
 .echoink-settings-demo .settings-grid>.settings-card{margin:0}
 .echoink-settings-demo .settings-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px 0 14px;min-width:0}
@@ -20743,8 +20743,8 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 .echoink-settings-demo .echoink-settings-section.is-group > .echoink-settings-group{border:0;border-radius:0;margin:0;background:transparent;overflow:visible}
 .echoink-settings-demo .setting-item{margin:0;padding:17px 0;gap:22px;min-width:0;border:0;border-radius:0;background:transparent;align-items:center}
 .echoink-settings-demo .setting-item+.setting-item{border-top:1px solid var(--line)}
-.echoink-settings-demo .setting-item:first-child{padding-top:0}
-.echoink-settings-demo .setting-item:last-child{padding-bottom:0}
+.echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:first-child{padding-top:0}
+.echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:last-child{padding-bottom:0}
 .echoink-settings-demo .setting-item-info{min-width:0;margin:0;flex:1}
 .echoink-settings-demo .setting-item-name{font-size:calc(var(--font-text-size,16px)*.75);font-weight:500;line-height:1.6;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .echoink-settings-demo .setting-item-description{font-size:calc(var(--font-text-size,16px)*.6875);color:var(--secondary);margin-top:4px;line-height:1.85}
@@ -22268,6 +22268,14 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 @container echoink-linking (max-width: 520px) { .echoink-knowledge-linking-progress-button { grid-template-columns: minmax(0, 1fr); } .echoink-knowledge-linking-progress-title, .echoink-knowledge-linking-progress-status { grid-column: 1; } }
 
 
+/* Desktop PRO module entry uses the workbench's existing theme and button states. */
+body:not(.is-mobile) .echoink-workbench .wb-module-lock-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+body:not(.is-mobile) .echoink-workbench .wb-module-lock-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+body:not(.is-mobile) .echoink-workbench .wb-module-lock-header > .wb-button > svg { width: 16px; height: 16px; }
+body:not(.is-mobile) .echoink-workbench .wb-module-lock > .wb-secondary { margin: 0 0 20px; color: var(--wb-secondary); line-height: 1.7; }
+body:not(.is-mobile) .echoink-workbench .wb-module-lock-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plugin-edition-badge { flex: none; }
+
 /* P11 desktop settings shell: retained forms, compact connections and service choices. */
 .echoink-settings-desktop .echoink-settings-inline-editor>.settings-back:is(:hover,:focus,:focus-visible){background:var(--hover);border-color:transparent;outline:none;box-shadow:none}
 .echoink-settings-desktop .echoink-quick-chat-drawer>summary{list-style:none;cursor:pointer;margin:-16px -18px;padding:16px 18px;border-radius:10px}
@@ -23790,7 +23798,8 @@ body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned {
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-section-header h3,
 .echoink-settings-demo.echoink-settings-aligned .codex-resource-list-header h3 { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.55; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-group { display: block; gap: 0; }
-.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section > .echoink-settings-group {
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-section > .echoink-settings-group,
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page > .echoink-settings-group {
   border: 1px solid var(--line); border-radius: 10px; padding: 0; margin: 0; background: var(--bg); overflow: hidden;
 }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-group > .setting-item,
@@ -23809,6 +23818,8 @@ body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned {
 .echoink-settings-demo.echoink-settings-aligned .setting-item-info { flex: 1 1 0; width: auto; min-width: 0; margin: 0; text-align: left; }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-name,
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-title { font-size: 13px; font-weight: 500; line-height: 1.55; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title:has(> .echoink-settings-help) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title > .echoink-settings-help > svg { width: 13px; height: 13px; }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-description,
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-description { font-size: 12px; line-height: 1.55; margin-top: 1px; color: var(--secondary); }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-control { flex: 0 1 auto; width: auto; max-width: 55%; gap: 8px; }
@@ -23816,6 +23827,11 @@ body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned {
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-editor > .settings-back,
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-page > .settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-surface { margin: 0; padding: 0; border: 0; background: transparent; }
+
+/* Maintenance data uses the same quiet toolbar and continuous rows as settings details. */
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .history-filter { padding: 0; border: 0; border-radius: 0; gap: 12px; margin-bottom: 16px; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .history-filter .text-button { margin-left: 0; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-maintenance-pagination { margin-top: 16px; font-size: 12px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-title { margin-bottom: 16px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-quick-chat-drawer > summary { margin: 0; padding: 0; border-radius: 0; }
@@ -24139,6 +24155,9 @@ body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned {
 .echoink-settings-aligned .echoink-module-drawer-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-title { font-size: 13px; font-weight: 500; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-summary { font-size: 12px; line-height: 1.6; }
+body:not(.is-mobile) .echoink-settings-aligned .echoink-module-drawer.is-pro-locked .echoink-module-drawer-header { padding-right: 0; }
+body:not(.is-mobile) .echoink-settings-aligned .echoink-module-drawer.is-pro-locked button.echoink-module-drawer-trigger { width: 100%; padding-right: 18px; }
+body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { flex: none; margin-left: auto; color: var(--secondary); font-size: 12px; line-height: 1.55; white-space: nowrap; }
 .echoink-settings-aligned.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content { padding: 0; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content :is(.echoink-settings-section, .echoink-settings-group, .echoink-life-settings-page) {
   margin: 0;
@@ -24421,7 +24440,7 @@ body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned {
 /* Boolean controls lead their copy. Switches keep their original trailing slot. */
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {
   flex-direction: row;
-  align-items: flex-start;
+  align-items: center;
   justify-content: flex-start;
 }
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-control {
@@ -24429,12 +24448,12 @@ body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned {
   flex: none;
   width: auto;
   max-width: none;
-  align-self: flex-start;
-  padding-top: 2px;
+  align-self: center;
+  padding-top: 0;
 }
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-info { flex: 1; min-width: 0; }
-.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row:has(> [role=checkbox]) { justify-content: flex-start; align-items: flex-start; }
-.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row > [role=checkbox] { order: -1; flex: none; margin-top: 2px; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row:has(> [role=checkbox]) { justify-content: flex-start; align-items: center; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row > [role=checkbox] { order: -1; flex: none; margin-top: 0; }
 /* ECHOINK_WORKSPACE_SETTINGS_END */
 
 /* ===== EchoInk 快捷 AI 小窗（quick chat popout）===== */

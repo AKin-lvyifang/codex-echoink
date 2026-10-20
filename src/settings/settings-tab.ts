@@ -346,7 +346,10 @@ export class CodexSettingTab extends PluginSettingTab {
     else if (/knowledge:restore/u.test(route.focus ?? "")) { this.desktopModuleExpanded.add("knowledge"); this.settingsFocusIntent = "explicit:module:knowledge"; }
     else if (/^pdf-reading/u.test(route.focus ?? "")) this.openPdfReadingDetail();
     else if (/^finance/u.test(route.focus ?? "")) this.openLifestyleDetail("finance");
-    else if (/^english-diary/u.test(route.focus ?? "")) this.openSettingsDetail("english-diary");
+    else if (/^english-diary/u.test(route.focus ?? "")) {
+      this.openSettingsDetail("english-diary");
+      if (route.focus === "english-diary:home-shortcut") this.settingsFocusIntent = "explicit:english-diary:home-shortcut";
+    }
     else if (/^selection-ask/u.test(route.focus ?? "")) this.openSettingsDetail("selection-ask");
     else if (/review:archives/u.test(route.focus ?? "")) this.openSettingsDetail("review-archives");
     else if (/agent:profile/u.test(route.focus ?? "")) { this.ensureDesktopProfile().refreshWhenOpened(); this.desktopProfileOpen = true; }
@@ -859,9 +862,10 @@ export class CodexSettingTab extends PluginSettingTab {
     if (sharedKey) {
       (this.containerEl.ownerDocument.defaultView ?? window).requestAnimationFrame(() => {
         const focusable = Array.from(this.containerEl.querySelectorAll<HTMLElement>(
-          "button, input, select, textarea, a[href]"
+          "button, input, select, textarea, a[href], [tabindex]"
         )).find((element) => this.settingsFocusKey(element) === sharedKey);
         if (!focusable?.isConnected) return;
+        if (sharedKey === "explicit:account:login" || sharedKey === "explicit:account:benefits") focusable.scrollIntoView({ block: "center" });
         focusable.focus({ preventScroll: true });
         if (this.containerEl.ownerDocument.activeElement !== focusable) return;
         settingsContainerFocusIntents.delete(this.containerEl);
@@ -870,11 +874,13 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     const focusable = Array.from(this.containerEl.querySelectorAll<HTMLElement>(
-      "button, input, select, textarea, a[href]"
+      "button, input, select, textarea, a[href], [tabindex]"
     )).find((element) => this.settingsFocusKey(element) === key);
     if (!focusable) return;
     const focusTarget = () => {
-      if (focusable.isConnected) focusable.focus({ preventScroll: true });
+      if (!focusable.isConnected || focusable.closest("[hidden], [inert]")) return;
+      if (key === "explicit:account:login" || key === "explicit:account:benefits") focusable.scrollIntoView({ block: "center" });
+      focusable.focus({ preventScroll: true });
     };
     focusTarget();
     (this.containerEl.ownerDocument.defaultView ?? window).requestAnimationFrame(focusTarget);
@@ -1456,14 +1462,17 @@ export class CodexSettingTab extends PluginSettingTab {
       this.desktopRoute = { ...this.desktopRoute!, section: undefined };
     }
     if (this.settingsDetail === "pdf-reading") { this.desktopModuleExpanded.add("pdf"); this.settingsDetail = null; }
-    if (this.settingsDetail === "english-diary") { this.desktopModuleExpanded.add("english"); this.settingsDetail = null; this.settingsFocusIntent = "explicit:module:english"; }
+    if (this.settingsDetail === "english-diary") {
+      this.desktopModuleExpanded.add("english"); this.settingsDetail = null;
+      if (this.settingsFocusIntent !== "explicit:english-diary:home-shortcut") this.settingsFocusIntent = "explicit:module:english";
+    }
     if (typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "lifestyle") { this.desktopModuleExpanded.add("finance"); this.settingsDetail = null; }
     this.plugin.settings.resourceManagementTab = "plugins";
     const page = createSettingsPage(container, { title: zh ? "模块" : "Modules", titleVisibility: "screen-reader" });
     this.desktopModuleCleanup = mountDesktopModuleSettings(page, {
       plugin: this.plugin, expanded: this.desktopModuleExpanded,
       summary: module => module === "knowledge" ? zh ? `${this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0} 个资料来源` : `${this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0} source folders` : module === "journal" ? readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder : module === "review" ? this.plugin.settings.review.outputDir : module === "todo" ? TODO_SOURCE_PATH : module === "finance" ? this.plugin.lifestyle.finance.ledger.paths().root : module === "english" ? this.plugin.settings.englishDiary.englishDirectory : module === "pdf" ? this.plugin.settings.pdfReading.engine === "mineru" ? "MinerU" : zh ? "本地文字提取" : "Local text extraction" : "",
-      onProBenefits: () => { void this.activateSettingsTab("account", false); },
+      onProBenefits: () => { this.openDesktopRoute({ tab: "account", focus: "account:benefits" }); },
       renderContent: (module, parent) => {
         try {
         if (module === "knowledge") knowledge.renderSummary(parent);
@@ -2126,9 +2135,11 @@ export class CodexSettingTab extends PluginSettingTab {
       surface: "group"
     });
     const managementGroup = createSettingsGroup(management);
-    applySettingsRow(new OriginSetting(managementGroup)
+    const autoArchive = applySettingsRow(new OriginSetting(managementGroup)
       .setName(zh ? "自动归档" : "Automatically archive")
-      .setDesc(zh ? "归档超过指定天数未更新的对话；跳过使用中或有待发送内容的对话，可在下方恢复。" : "Archive conversations with no updates for the selected period. Conversations in use or with pending drafts are skipped. Restore them below.")
+      .setDesc(Platform.isDesktopApp
+        ? (zh ? "多久没更新的对话自动归档" : "How long conversations stay inactive before archiving")
+        : (zh ? "归档超过指定天数未更新的对话；跳过使用中或有待发送内容的对话，可在下方恢复。" : "Archive conversations with no updates for the selected period. Conversations in use or with pending drafts are skipped. Restore them below."))
       .addOriginDropdown(this.app, dropdown => {
         dropdown.selectEl.setAttr("aria-label", zh ? "自动归档" : "Automatically archive");
         dropdown.selectEl.setAttr("data-echoink-focus-key", "review:auto-archive");
@@ -2142,11 +2153,17 @@ export class CodexSettingTab extends PluginSettingTab {
           catch { this.plugin.settings.autoArchiveDays = previous; dropdown.setValue(String(previous)); new Notice(zh ? "自动归档设置未保存" : "Archive setting was not saved"); }
         });
       }));
-    createSettingsNavigationRow(managementGroup, {
+    if (Platform.isDesktopApp) {
+      const wrapper = autoArchive.nameEl.createSpan({ cls: "echoink-settings-help" });
+      const help = createOriginButton(wrapper, { cls: "echoink-settings-help-trigger is-icon", attr: { "aria-label": zh ? "自动归档说明" : "Automatic archive information" } });
+      setIcon(help, "circle-alert");
+      attachSettingsTooltip(help, zh ? "跳过使用中或有待发送内容的对话" : "Conversations in use or with pending drafts are skipped.", wrapper);
+    }
+    const archives = createSettingsNavigationRow(managementGroup, {
       title: zh ? "已归档会话" : "Archived conversations",
-      description: zh
-        ? "搜索、恢复或删除已归档会话；删除后无法在设置中恢复。"
-        : "Search, restore, or delete archived conversations. Deleted conversations cannot be restored in Settings.",
+      description: Platform.isDesktopApp
+        ? (zh ? "查看、恢复或删除已归档的对话" : "View, restore, or delete archived conversations")
+        : (zh ? "搜索、恢复或删除已归档会话；删除后无法在设置中恢复。" : "Search, restore, or delete archived conversations. Deleted conversations cannot be restored in Settings."),
       value: this.archivedConversations
         ? String(this.archivedConversations.length)
         : (zh ? "查看" : "View"),
@@ -2154,6 +2171,13 @@ export class CodexSettingTab extends PluginSettingTab {
       focusKey: "review:archives",
       onActivate: () => this.openSettingsDetail("review-archives")
     });
+    if (Platform.isDesktopApp) {
+      const help = archives.querySelector<HTMLElement>(".echoink-settings-navigation-title")!.createSpan({ cls: "echoink-settings-help", attr: { "aria-hidden": "true" } });
+      setIcon(help, "circle-alert");
+      const activate = archives.onclick;
+      attachSettingsTooltip(archives, zh ? "删除后无法在设置中恢复" : "Deleted conversations cannot be restored in Settings.", help);
+      archives.onclick = activate;
+    }
     if (!Platform.isDesktopApp) createSettingsNavigationRow(managementGroup, {
       title: zh ? "记忆修正" : "Memory correction",
       description: zh
@@ -4847,9 +4871,14 @@ export class CodexSettingTab extends PluginSettingTab {
     };
     if (!embedded) createSettingsNavigationRow(files, { title: "表达库", description: "搜索已收录的表达，查看出处、修改分类与备注。", actionLabel: "打开", onActivate: () => { void openLibrary(); } });
     const zh = this.plugin.settings.settingsLanguage !== "en";
-    const shortcutLabel = zh ? "首页快捷入口" : "Home shortcut";
+    const shortcutLabel = Platform.isDesktopApp
+      ? (zh ? "移动端英文日记快捷入口" : "English diary shortcut on mobile")
+      : (zh ? "首页快捷入口" : "Home shortcut");
+    const shortcutHint = Platform.isDesktopApp
+      ? (zh ? "将移动端的快速记录入口改为写英文日记" : "Replace Quick note on mobile with Write English diary")
+      : (zh ? "将首页“快速记录”替换为“写英文日记”。" : "Replace Quick note on Home with Write English diary.");
     if (embedded) {
-      this.renderModuleCheckbox(files, shortcutLabel, current.homeShortcut === "english-diary", zh ? "将首页“快速记录”替换为“写英文日记”。" : "Replace Quick note on Home with Write English diary.", async enabled => {
+      this.renderModuleCheckbox(files, shortcutLabel, current.homeShortcut === "english-diary", shortcutHint, async enabled => {
         if (!this.plugin.englishDiary) throw new Error(zh ? "英文日记尚未就绪" : "English Diary is not ready");
         await this.plugin.englishDiary.setHomeShortcut(enabled ? "english-diary" : "quick-record");
       }, true, "english-diary:home-shortcut");

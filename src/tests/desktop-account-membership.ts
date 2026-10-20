@@ -39,6 +39,7 @@ async function anonymousOverview() {
     assert.equal(header.querySelector(".desktop-account-plan-status"), null);
     assert.equal(header.querySelectorAll(".profile-actions button").length, 1);
     const login = button(header, "登录 / 注册");
+    assert.equal(login.dataset.echoinkFocusKey, "account:login");
     assert.equal(login.parentElement?.lastElementChild, login, "the only primary action stays last in reading order");
     assert.equal(login.previousElementSibling?.textContent, "注册送激活码");
     assert.equal(f.host.querySelector("input, form"), null, "the overview does not contain a login form");
@@ -79,6 +80,9 @@ async function structure() {
   assert.equal(f.host.querySelector(".heat-cell, .assets-panel, .plugin-feature-card, .desktop-account-more-usage"), null);
   assert.equal(f.host.querySelector(".desktop-account-header")?.textContent?.includes("2026-10-01"), false);
   assert.equal(f.host.querySelectorAll(".benefits-table button").length, 0);
+  const benefits = f.host.querySelector<HTMLElement>('[data-echoink-focus-key="account:benefits"]')!;
+  assert.equal(benefits.dataset.accountSection, "benefits"); assert.equal(benefits.tabIndex, -1);
+  benefits.focus(); assert.equal(document.activeElement, benefits, "benefits can receive route focus without opening a form");
   assert.equal(f.host.querySelectorAll(".plan").length, 4);
   assert(f.host.querySelector<HTMLDetailsElement>(".plan-scope") && !f.host.querySelector<HTMLDetailsElement>(".plan-scope")!.open);
   assert(Array.from(f.host.querySelectorAll<HTMLButtonElement>(".plan button")).every(node => node.disabled));
@@ -217,5 +221,6 @@ async function confirmations() {
 
 async function mobileDefault() {
   const host = document.body.createDiv(); const handle = mountAccountMembership(host, { app: new App(), viewModel: { ...initial("anonymous"), identity: null }, language: "zh-CN", openProviders() {} });
+  assert.equal(host.querySelector('[data-echoink-focus-key="account:login"], [data-echoink-focus-key="account:benefits"]'), null, "desktop route anchors do not change mobile DOM");
   assert.equal(host.querySelectorAll(".heat-cell").length, 365); assert.equal(host.querySelector(".echoink-desktop-account-settings"), null); button(host, "登录 / 注册").click(); assert.equal(openTestModals.length, 1); handle.dispose(); assert.equal(openTestModals.length, 0); host.remove();
 }

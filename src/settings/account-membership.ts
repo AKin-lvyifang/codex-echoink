@@ -324,7 +324,8 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       profileSection.classList.add("is-anonymous");
       el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
     }
-    button(profileActions, t("登录 / 注册", "Sign in / register"), "primary account-login-action", () => login());
+    const signIn = button(profileActions, t("登录 / 注册", "Sign in / register"), "primary account-login-action", () => login());
+    if (desktop) signIn.dataset.echoinkFocusKey = "account:login";
     if (!desktop) el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
   }
   const heading = (parent: HTMLElement, title: string, caption?: string) => {
@@ -619,7 +620,9 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   if (desktop) {
     const scope = el(membership, "details", "plan-scope"); el(scope, "summary", "", t("买断包含什么", "What lifetime access includes"));
     el(scope, "p", "", t("包含购买时的 2.x 版本 PRO 插件，长期可用；不包含 3.x、以后的新插件和模型调用额度。需要定期联网更新授权，不等于永久离线。", "Includes the purchased 2.x PRO plugins. It excludes 3.x, future plugins and model credits. Periodic online verification is required; it is not permanent offline access."));
-    const benefits = el(page, "section", "desktop-account-benefits"); benefits.dataset.accountSection = "benefits"; heading(benefits, t("权益对比", "Benefits"));
+    const benefits = el(page, "section", "desktop-account-benefits"); benefits.dataset.accountSection = "benefits";
+    benefits.dataset.echoinkFocusKey = "account:benefits"; benefits.tabIndex = -1;
+    heading(benefits, t("权益对比", "Benefits"));
     const table = el(el(benefits, "div", "desktop-account-benefits-group"), "table", "benefits-table"); const header = el(el(table, "thead"), "tr");
     for (const title of [t("功能", "Feature"), t("免费", "Free"), "PRO"]) el(header, "th", "", title).scope = "col";
     const body = el(table, "tbody");

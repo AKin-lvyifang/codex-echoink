@@ -21,7 +21,7 @@
 .echoink-settings-demo .settings-stack{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--bg)}
 .echoink-settings-demo .settings-stack>.setting-row{border:0;border-radius:0;margin:0;padding:17px 18px}
 .echoink-settings-demo .settings-stack>.setting-row+.setting-row{border-top:1px solid var(--line)}
-.echoink-settings-demo .settings-card>.settings-stack{border:0;border-radius:0}.echoink-settings-demo .settings-card>.settings-stack>.setting-row{padding-left:0;padding-right:0}.echoink-settings-demo .settings-card>.settings-stack>.setting-row:first-child{padding-top:0}.echoink-settings-demo .settings-card>.settings-stack>.setting-row:last-child{padding-bottom:0}
+.echoink-settings-demo .settings-card>.settings-stack{border:0;border-radius:0}.echoink-settings-demo:not(.echoink-settings-aligned) .settings-card>.settings-stack>.setting-row{padding-left:0;padding-right:0}.echoink-settings-demo:not(.echoink-settings-aligned) .settings-card>.settings-stack>.setting-row:first-child{padding-top:0}.echoink-settings-demo:not(.echoink-settings-aligned) .settings-card>.settings-stack>.setting-row:last-child{padding-bottom:0}
 .echoink-settings-demo .settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
 .echoink-settings-demo .settings-grid>.settings-card{margin:0}
 .echoink-settings-demo .settings-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px 0 14px;min-width:0}
@@ -852,8 +852,8 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 .echoink-settings-demo .echoink-settings-section.is-group > .echoink-settings-group{border:0;border-radius:0;margin:0;background:transparent;overflow:visible}
 .echoink-settings-demo .setting-item{margin:0;padding:17px 0;gap:22px;min-width:0;border:0;border-radius:0;background:transparent;align-items:center}
 .echoink-settings-demo .setting-item+.setting-item{border-top:1px solid var(--line)}
-.echoink-settings-demo .setting-item:first-child{padding-top:0}
-.echoink-settings-demo .setting-item:last-child{padding-bottom:0}
+.echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:first-child{padding-top:0}
+.echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:last-child{padding-bottom:0}
 .echoink-settings-demo .setting-item-info{min-width:0;margin:0;flex:1}
 .echoink-settings-demo .setting-item-name{font-size:calc(var(--font-text-size,16px)*.75);font-weight:500;line-height:1.6;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .echoink-settings-demo .setting-item-description{font-size:calc(var(--font-text-size,16px)*.6875);color:var(--secondary);margin-top:4px;line-height:1.85}
@@ -2376,6 +2376,14 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 @container echoink-linking (max-width: 760px) { .echoink-knowledge-linking-progress-status { white-space: nowrap; } }
 @container echoink-linking (max-width: 520px) { .echoink-knowledge-linking-progress-button { grid-template-columns: minmax(0, 1fr); } .echoink-knowledge-linking-progress-title, .echoink-knowledge-linking-progress-status { grid-column: 1; } }
 
+
+/* Desktop PRO module entry uses the workbench's existing theme and button states. */
+body:not(.is-mobile) .echoink-workbench .wb-module-lock-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+body:not(.is-mobile) .echoink-workbench .wb-module-lock-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+body:not(.is-mobile) .echoink-workbench .wb-module-lock-header > .wb-button > svg { width: 16px; height: 16px; }
+body:not(.is-mobile) .echoink-workbench .wb-module-lock > .wb-secondary { margin: 0 0 20px; color: var(--wb-secondary); line-height: 1.7; }
+body:not(.is-mobile) .echoink-workbench .wb-module-lock-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plugin-edition-badge { flex: none; }
 
 /* P11 desktop settings shell: retained forms, compact connections and service choices. */
 .echoink-settings-desktop .echoink-settings-inline-editor>.settings-back:is(:hover,:focus,:focus-visible){background:var(--hover);border-color:transparent;outline:none;box-shadow:none}
