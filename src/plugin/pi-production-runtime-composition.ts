@@ -565,7 +565,7 @@ export async function createPiProductionRuntimeBundle(
       assertToolAllowed: async (toolName, args, resolvedTarget, authorization) => {
         const snapshot = authorization && plugin.activeTaskResumeSafety?.get(authorization.conversationId)?.safety;
         if (snapshot) await assertTaskResumeToolAllowed({ snapshot, receipts, approvals, vaultRootPath, toolName, arguments: args, resolvedTarget,
-          currentOperation: { productRunId: authorization!.productRunId, toolCallId: authorization!.toolCallId } });
+          currentOperation: { productRunId: authorization.productRunId, toolCallId: authorization.toolCallId } });
       }
     });
   const settingsBeforeCutover = snapshotPiConversationShellSettings(
@@ -587,7 +587,9 @@ export async function createPiProductionRuntimeBundle(
       catalog,
       productRuns,
       sessionApi,
-      verifyPdfTaskDelivery: plugin.verifyPdfTaskDelivery?.bind(plugin),
+      verifyPdfTaskDelivery: plugin.verifyPdfTaskDelivery
+        ? (request, noNewSourcePaths) => plugin.verifyPdfTaskDelivery!(request, noNewSourcePaths)
+        : undefined,
       resolveAgentRunSnapshot: entry => resolveAgentRunSnapshot(plugin.settings, entry.agentId),
       assertAgentActionAllowed: async ({ catalog: entry, action, access }) => {
         const context = await currentAgentCapabilityContext(plugin, catalog, entry.conversationId, access);
@@ -704,7 +706,7 @@ export async function createPiProductionRuntimeBundle(
       knowledgeAgentIndex,
       knowledgePreferences,
       knowledgeMaintenance,
-      resolveMaintenanceScope: knowledgeRuntime.resolveMaintenanceScope!
+      resolveMaintenanceScope: (request: string) => knowledgeRuntime.resolveMaintenanceScope!(request)
     });
   } catch (error) {
     restorePiConversationShellSettings(
@@ -1586,10 +1588,14 @@ function mergePiBeforeAgentStartContextMessages(
 
 function piProviderMaterialPartitions(message: AgentMessage): AgentMessage[] {
   if (message.role !== "custom" || typeof message.content !== "string") return [message];
-  let envelope: { type?: string; sections?: Array<{ customType: string; content: string }> };
-  try { envelope = JSON.parse(message.content); } catch { return [message]; }
-  if (envelope.type !== "echoink.turn-material-partitions.v1" || !Array.isArray(envelope.sections)
-    || envelope.sections.some((section) => typeof section.customType !== "string" || typeof section.content !== "string")) return [message];
+  let parsed: unknown;
+  try { parsed = JSON.parse(message.content); } catch { return [message]; }
+  if (!parsed || typeof parsed !== "object") return [message];
+  const envelope = parsed as Record<string, unknown>;
+  if (envelope.type !== "echoink.turn-material-partitions.v1" || !Array.isArray(envelope.sections)) return [message];
+  const sections: unknown[] = envelope.sections;
+  if (!sections.every((section): section is { customType: string; content: string } => !!section && typeof section === "object"
+    && "customType" in section && typeof section.customType === "string" && "content" in section && typeof section.content === "string")) return [message];
   const root = message.details && typeof message.details === "object" ? message.details as Record<string, unknown> : {};
   const detailsKeys: Record<string, string> = {
     "echoink-selection-annotations-v1": PI_SELECTION_CONTEXT_KEY,
@@ -1599,7 +1605,7 @@ function piProviderMaterialPartitions(message: AgentMessage): AgentMessage[] {
     [PDF_TASK_CONTEXT_TYPE]: PDF_TASK_CONTEXT_KEY,
     [WORKBENCH_CONTEXT_TYPE]: WORKBENCH_CONTEXT_DETAILS_KEY
   };
-  return envelope.sections.map((section) => ({
+  return sections.map((section) => ({
     role: "custom" as const,
     customType: section.customType,
     // Serialize each body as a string value: raw Markdown and arbitrary user
@@ -2129,7 +2135,9 @@ async function createProductionAgentSession(input: {
   });
   const englishDiaryApi = input.plugin.englishDiary?.api;
   const englishDiaryGenerator = input.plugin.createEnglishDiaryTaskGenerator?.();
-  const validateEnglishDiarySource = input.plugin.validateEnglishDiaryTaskSource?.bind(input.plugin);
+  const validateEnglishDiarySource = input.plugin.validateEnglishDiaryTaskSource
+    ? (sourcePath: string) => input.plugin.validateEnglishDiaryTaskSource!(sourcePath)
+    : undefined;
   const englishDiaryTools = englishDiaryApi && englishDiaryGenerator && validateEnglishDiarySource ? createPiEnglishDiaryToolDefinitions({ api: englishDiaryApi,
     inspect: async sourcePath => { if (!englishDiaryApi.repository.inspect) throw new Error("英文日记尚未就绪。"); return englishDiaryApi.repository.inspect(await englishDiaryApi.readSource(sourcePath)); },
     generator: englishDiaryGenerator, validateSource: validateEnglishDiarySource
@@ -2256,7 +2264,7 @@ async function createProductionAgentSession(input: {
   );
   const maintenanceTool = createPiKnowledgeMaintenanceToolDefinition({
     port: { execute: async (request) => {
-      await assertToolAllowed("knowledge_maintain", request as unknown as Record<string, unknown>);
+      await assertToolAllowed("knowledge_maintain", request);
       const turn = input.input.currentKnowledgeTurnContext();
       const result = await input.knowledgeMaintenance.execute({ ...request, folderBindingsRevision: turn?.kind === "maintain" ? turn.command.folderBindingsRevision : undefined, globalSourcePaths: turn?.kind === "maintain" && turn.command.scope.mode === "global" ? turn.command.scope.sourcePaths : undefined, sourceBodyFingerprints: { ...sourceBodyFingerprints } });
       Object.assign(sourceBodyFingerprints, result.refreshedSources ?? {});

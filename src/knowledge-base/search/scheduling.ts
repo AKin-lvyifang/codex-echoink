@@ -37,7 +37,7 @@ function waitForTask(signal: AbortSignal | undefined, start: (done: () => void, 
       settled = true;
       signal?.removeEventListener("abort", onAbort);
       cleanup?.();
-      if (failed) reject(error);
+      if (failed) reject(error instanceof Error ? error : new Error("Knowledge search task failed", { cause: error }));
       else resolve();
     };
     const onAbort = () => finish(true, abortError());
@@ -60,7 +60,8 @@ export async function yieldSearchTask(signal?: AbortSignal): Promise<void> {
     const yieldMethod = scheduler?.yield;
     if (typeof yieldMethod === "function") {
       await waitForTask(signal, (done, fail) => {
-        yieldMethod.call(scheduler).then(done, fail);
+        const task = yieldMethod.call(scheduler) as Promise<void>;
+        void task.then(done, fail);
       });
       checkAbort(signal);
       return;

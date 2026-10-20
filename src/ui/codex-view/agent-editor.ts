@@ -379,7 +379,7 @@ export class AgentEditorController {
     const bar = this.el(customGroup, "div", "echoink-agent-editor-resource-heading"); this.el(bar, "h4", "", this.t("我的 Skill", "My Skills"));
     const reload = this.button(bar, this.loadingResources ? this.t("正在读取…", "Loading…") : this.t("刷新资源", "Refresh resources"), "tertiary", () => { void this.reloadResources(); }); reload.disabled = this.loadingResources;
     if (this.resourceError) this.el(customGroup, "div", "echoink-agent-editor-error", this.resourceError).setAttribute("role", "alert");
-    const custom = this.resources.filter(resource => resource.kind === "skill" && !(BUILTIN_SKILL_IDS as readonly string[]).includes(String(resource.metadata?.resourceId ?? "")));
+    const custom = this.resources.filter(resource => resource.kind === "skill" && !(BUILTIN_SKILL_IDS as readonly string[]).includes(typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : ""));
     if (custom.length) {
       const skills = this.el(customGroup, "div", "echoink-agent-editor-options");
       for (const resource of custom) this.capability(skills, vaultSkillCapabilityId(resource.id), resource.name, resource);

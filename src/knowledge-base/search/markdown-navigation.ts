@@ -6,6 +6,14 @@ export interface MarkdownHeading { heading: string; line: number; level: number 
 export const KNOWLEDGE_BODY_FRAGMENT_LIMITS = Object.freeze({ lines: 24, characters: 2400 });
 export const KNOWLEDGE_LINK_LIMITS = Object.freeze({ targetsPerSource: 16, candidates: 20, boost: 0.03, cues: 3, supporters: 3, cueBytes: 2400 });
 
+function hasNavigationControlCharacters(value: string, allowLineWhitespace = false): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if ((code <= 31 && !(allowLineWhitespace && (code === 9 || code === 10 || code === 13))) || code === 127) return true;
+  }
+  return false;
+}
+
 export const KNOWLEDGE_OUTLINE_LIMITS = Object.freeze({
   longDocumentLines: 120,
   longDocumentCharacters: 8000,
@@ -127,7 +135,7 @@ export function extractMarkdownLinkTargets(content: string): readonly string[] {
     let target = raw.trim();
     try { target = decodeURIComponent(target); } catch { /* Literal malformed escapes cannot widen resolution. */ }
     target = target.split("#")[0].replace(/\\([\\ ()])/gu, "$1").replace(/\\/gu, "/");
-    if (target && !target.startsWith("//") && target.length <= 1024 && !/[:\x00-\x1f\x7f]/u.test(target)) targets.add(target);
+    if (target && !target.startsWith("//") && target.length <= 1024 && !target.includes(":") && !hasNavigationControlCharacters(target)) targets.add(target);
   };
   const visible = anchorVisibleLines(content.split(/\r\n|\n|\r/u)).map(line => line ?? "").join("\n");
   const escaped = (index: number) => { let count = 0; while (index > 0 && visible[--index] === "\\") count++; return (count & 1) !== 0; };
@@ -158,12 +166,12 @@ export function knowledgeLinkNeighborhood(candidates: readonly LinkCandidate[], 
   const byPath = new Map(documents.map(document => [document.vaultRelativePath, document]));
   const byName = new Map<string, Set<string>>();
   const name = (value: string) => value.normalize("NFKC").trim().toLowerCase();
-  const safePath = (value: string) => value.length <= 1024 && !value.startsWith("/") && !/[\\:\x00-\x1f\x7f]/u.test(value) && value.split("/").every(part => part && !part.startsWith("."));
+  const safePath = (value: string) => value.length <= 1024 && !value.startsWith("/") && !/[\\:]/u.test(value) && !hasNavigationControlCharacters(value) && value.split("/").every(part => part && !part.startsWith("."));
   for (const document of documents) for (const title of [document.title, ...(document.aliases ?? [])]) {
     const key = name(title); if (!byName.has(key)) byName.set(key, new Set()); byName.get(key)!.add(document.vaultRelativePath);
   }
   const resolve = (target: string, source: string): string | undefined => {
-    if (target.startsWith("//") || /[:\x00-\x1f\x7f]/u.test(target)) return undefined;
+    if (target.startsWith("//") || target.includes(":") || hasNavigationControlCharacters(target)) return undefined;
     const directory = source.slice(0, Math.max(0, source.lastIndexOf("/")));
     const paths = target.startsWith(".") ? [`${directory}/${target}`] : target.includes("/") ? [target, `${directory}/${target}`] : [];
     for (const candidate of paths) {
@@ -197,7 +205,7 @@ export function knowledgeLinkNeighborhood(candidates: readonly LinkCandidate[], 
     if (matchedPaths.has(target) || allCues.length >= KNOWLEDGE_LINK_LIMITS.cues) continue;
     const document = byPath.get(target)!;
     const via = supporters.slice(0, KNOWLEDGE_LINK_LIMITS.supporters).map(({ vaultRelativePath, contentRevision }) => Object.freeze({ vaultRelativePath, contentRevision }));
-    if (!document.title || document.title.length > 200 || /[\x00-\x1f\x7f]/u.test(document.title) || !via.every(item => safePath(item.vaultRelativePath) && /^sha256:[a-f0-9]{64}$/u.test(item.contentRevision))) continue;
+    if (!document.title || document.title.length > 200 || hasNavigationControlCharacters(document.title) || !via.every(item => safePath(item.vaultRelativePath) && /^sha256:[a-f0-9]{64}$/u.test(item.contentRevision))) continue;
     const cue: KnowledgeLinkCue = Object.freeze({ schemaVersion: 1, readStatus: "unread", label: "可能相关", vaultRelativePath: target, title: document.title, via: Object.freeze(via) });
     const owner = via[0].vaultRelativePath;
     const ownerCues = Object.freeze([...(cues.get(owner) ?? []), cue]);
@@ -213,13 +221,13 @@ export function normalizeKnowledgeLinkCues(value: unknown, sourcePath: string, s
   const invalid = (): never => { throw new TypeError("knowledge_link_cues_invalid"); };
   const object = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : invalid();
   const exact = (value: Record<string, unknown>, keys: readonly string[]) => { if (Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) invalid(); };
-  const path = (value: unknown): string => typeof value === "string" && value.length > 0 && value.length <= 1024 && !value.startsWith("/") && !/[\\:\x00-\x1f\x7f]/u.test(value) && value.split("/").every(part => part && !part.startsWith(".")) ? value : invalid();
+  const path = (value: unknown): string => typeof value === "string" && value.length > 0 && value.length <= 1024 && !value.startsWith("/") && !/[\\:]/u.test(value) && !hasNavigationControlCharacters(value) && value.split("/").every(part => part && !part.startsWith(".")) ? value : invalid();
   if (!Array.isArray(value) || !value.length || value.length > KNOWLEDGE_LINK_LIMITS.cues) return invalid();
   const targets = new Set<string>();
   const cues = value.map(raw => {
     const cue = object(raw); exact(cue, ["schemaVersion", "readStatus", "label", "vaultRelativePath", "title", "via"]);
     const target = path(cue.vaultRelativePath);
-    if (cue.schemaVersion !== 1 || cue.readStatus !== "unread" || cue.label !== "可能相关" || typeof cue.title !== "string" || !cue.title || cue.title.length > 200 || /[\x00-\x1f\x7f]/u.test(cue.title)
+    if (cue.schemaVersion !== 1 || cue.readStatus !== "unread" || cue.label !== "可能相关" || typeof cue.title !== "string" || !cue.title || cue.title.length > 200 || hasNavigationControlCharacters(cue.title)
       || targets.has(target) || !Array.isArray(cue.via) || cue.via.length < 2 || cue.via.length > KNOWLEDGE_LINK_LIMITS.supporters) return invalid();
     targets.add(target);
     const sources = new Set<string>();
@@ -259,7 +267,7 @@ export function normalizeKnowledgeDocumentOutline(value: unknown, contentRevisio
     previousLine = entry.lineStart as number;
     return Object.freeze({ heading: entry.heading, level: entry.level as number, lineStart: entry.lineStart as number, lineEnd: entry.lineEnd as number });
   });
-  const result: KnowledgeDocumentOutline = { schemaVersion: 1, readStatus: "unread", contentRevision, entries: Object.freeze(entries), totalHeadings: outline.totalHeadings as number, truncated: outline.truncated as boolean };
+  const result: KnowledgeDocumentOutline = { schemaVersion: 1, readStatus: "unread", contentRevision, entries: Object.freeze(entries), totalHeadings: outline.totalHeadings as number, truncated: outline.truncated };
   if (knowledgeOutlineCharacters(result) > KNOWLEDGE_OUTLINE_LIMITS.totalCharacters) return invalid();
   return Object.freeze(result);
 }
@@ -382,10 +390,10 @@ function blockRange(lines: readonly string[], visible: readonly (string | undefi
 /** Resolve exactly one real heading or block against this snapshot, never cached lines. */
 export function locateKnowledgeAnchor(vaultRelativePath: string, contentRevision: string, lines: readonly string[], requestedAnchor: string): KnowledgeAnchorLocation {
   const anchor = requestedAnchor.trim();
-  const kind = anchor.startsWith("^") ? "block" : "heading";
-  const base = { schemaVersion: 1 as const, readStatus: "unread" as const, vaultRelativePath, contentRevision, anchor, kind: kind as "heading" | "block" };
+  const kind: KnowledgeAnchorLocation["kind"] = anchor.startsWith("^") ? "block" : "heading";
+  const base = { schemaVersion: 1 as const, readStatus: "unread" as const, vaultRelativePath, contentRevision, anchor, kind: kind };
   const missing = (reason: "missing" | "ambiguous" | "invalid"): KnowledgeAnchorLocation => Object.freeze({ ...base, status: "not_located", reason });
-  if (!anchor || anchor.length > 1024 || /[\x00-\x1f\x7f]/u.test(anchor) || (kind === "block" && !/^\^[A-Za-z0-9-]+$/u.test(anchor))) return missing("invalid");
+  if (!anchor || anchor.length > 1024 || hasNavigationControlCharacters(anchor) || (kind === "block" && !/^\^[A-Za-z0-9-]+$/u.test(anchor))) return missing("invalid");
   const visible = anchorVisibleLines(lines);
   if (kind === "heading") {
     const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase();
@@ -414,7 +422,7 @@ export function normalizeKnowledgeAnchorLocation(value: unknown, vaultRelativePa
   const keys = ["schemaVersion", "readStatus", "vaultRelativePath", "anchor", "kind", "status", ...(located ? ["contentRevision", "lineStart", "lineEnd"] : ["reason", ...(Object.hasOwn(location, "contentRevision") ? ["contentRevision"] : [])])];
   if (Object.keys(location).length !== keys.length || keys.some(key => !Object.hasOwn(location, key)) || location.schemaVersion !== 1 || location.readStatus !== "unread"
     || location.vaultRelativePath !== vaultRelativePath || typeof location.anchor !== "string" || location.anchor.length > 1024
-    || location.kind !== ((location.anchor as string).startsWith("^") ? "block" : "heading") || (located ? typeof location.contentRevision !== "string" : location.status !== "not_located")
+    || location.kind !== (location.anchor.startsWith("^") ? "block" : "heading") || (located ? typeof location.contentRevision !== "string" : location.status !== "not_located")
     || (Object.hasOwn(location, "contentRevision") && (typeof location.contentRevision !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(location.contentRevision) || (contentRevision !== undefined && location.contentRevision !== contentRevision)))) return invalid();
   if (located) {
     if (!Number.isSafeInteger(location.lineStart) || !Number.isSafeInteger(location.lineEnd) || (location.lineStart as number) < 1
@@ -430,7 +438,7 @@ export function normalizeKnowledgeRelationPage(value: unknown, vaultRelativePath
   const keys = (value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []) => {
     if (required.some(key => !Object.hasOwn(value, key)) || Object.keys(value).some(key => !required.includes(key) && !optional.includes(key))) invalid();
   };
-  const string = (value: unknown, max: number): string => typeof value === "string" && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/u.test(value) ? value : invalid();
+  const string = (value: unknown, max: number): string => typeof value === "string" && value.length > 0 && value.length <= max && !hasNavigationControlCharacters(value) ? value : invalid();
   const path = (value: unknown): string => {
     const result = string(value, 1024);
     if (result.startsWith("/") || result.includes("\\") || result.includes(":") || result.split("/").some(part => !part || part === "." || part === "..")) invalid();
@@ -455,7 +463,7 @@ export function normalizeKnowledgeRelationPage(value: unknown, vaultRelativePath
     if (!["outgoing", "incoming"].includes(item.direction as string) || !["available", "ambiguous", "unresolved"].includes(item.status as string) || item.relation !== "link") return invalid();
     const sourceObject = object(item.source); keys(sourceObject, ["vaultRelativePath", "title", "contentRevision", "line", "context"]);
     const source = Object.freeze({ vaultRelativePath: path(sourceObject.vaultRelativePath), title: string(sourceObject.title, 1024), contentRevision: revision(sourceObject.contentRevision),
-      line: integer(sourceObject.line, 1), context: typeof sourceObject.context === "string" && sourceObject.context.length <= 2048 && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(sourceObject.context) ? sourceObject.context : invalid() });
+      line: integer(sourceObject.line, 1), context: typeof sourceObject.context === "string" && sourceObject.context.length <= 2048 && !hasNavigationControlCharacters(sourceObject.context, true) ? sourceObject.context : invalid() });
     const destination = Object.hasOwn(item, "target") ? target(item.target) : undefined;
     if (item.status === "available" ? !destination : destination !== undefined) return invalid();
     if (item.direction === "outgoing" ? source.vaultRelativePath !== vaultRelativePath || source.contentRevision !== contentRevision

@@ -13,7 +13,7 @@ export function journalContentLines(content: string, keepHeadings = false): stri
     .replace(/<!--[\s\S]*?-->/gu, "")
     .split("\n").map(line => line.trim())
     .filter(line => line && (keepHeadings ? !/^#{1,6}\s*\d{4}[-/]\d{2}[-/]\d{2}\s*$/u.test(line) : !/^#{1,6}(?:\s|$)/u.test(line)) && !/^(?:[-*_]\s*){3,}$/u.test(line)
-      && !/^[-+*]\s*(?:\[[ xX]\])?\s*$/u.test(line) && !/^\|[\s:|\-]*\|$/u.test(line));
+      && !/^[-+*]\s*(?:\[[ xX]\])?\s*$/u.test(line) && !/^\|[\s:|-]*\|$/u.test(line));
 }
 export function journalTemplateBaseline(content: string): JournalTemplateBaseline {
   const lines = journalContentLines(content, true).map(workbenchFingerprint);

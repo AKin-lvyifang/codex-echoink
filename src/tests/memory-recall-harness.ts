@@ -487,12 +487,14 @@ function scenarioRecallProgressReusesAndDismissesOneTemporaryMessage(): void {
   view = projector.projectRuntimeEvent({ current: view, event: event("active", "loading", 301) });
   const first = view.messages.find((message) => message.itemType === "thinking");
   assert.ok(first);
-  assert.match(first.text, /读取 Memory 真源/u);
+  assert.equal(first.text, "查看中…");
+  assert.equal(first.createdAt, 301);
   view = projector.projectRuntimeEvent({ current: view, event: event("active", "matching", 350) });
   const progressMessages = view.messages.filter((message) => message.itemType === "thinking");
   assert.equal(progressMessages.length, 1);
   assert.equal(progressMessages[0]!.id, first.id);
-  assert.match(progressMessages[0]!.text, /寻找相关历史/u);
+  assert.equal(progressMessages[0]!.text, "查看中…");
+  assert.equal(progressMessages[0]!.createdAt, 350, "the next recall stage refreshes the same temporary message");
   view = projector.projectRuntimeEvent({ current: view, event: event("completed", "assembling", 380) });
   assert.equal(view.messages.some((message) => message.itemType === "thinking"), false);
 

@@ -168,7 +168,7 @@ export function* iterateSearchTokens(text: string, dictionary: readonly string[]
       }
     }
   } catch (error) {
-    if (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError") throw error;
+    if (typeof error === "object" && error !== null && "name" in error && (error as { name: unknown }).name === "AbortError") throw error;
     // Old mobile engines may expose Intl without a usable word segmenter.
   }
   // Always include partial Chinese matches, including inside recognized dictionary words.

@@ -1,6 +1,6 @@
 export function pdfLanguage(value: string): string {
   const label = value.trim();
-  if (!label || label.length > 40 || /[\x00-\x1f\\/:*?"<>|#\[\]]/u.test(label)) throw new Error("请填写明确的翻译目标语言。");
+  if (!label || label.length > 40 || [...label].some(char => char.charCodeAt(0) < 32) || /[\\/:*?"<>|#[\]]/u.test(label)) throw new Error("请填写明确的翻译目标语言。");
   if (/^(en|english|英语|英文)$/iu.test(label)) return "英文";
   if (/^(zh|zh-cn|chinese|中文|汉语|简体中文)$/iu.test(label)) return "中文";
   return label;

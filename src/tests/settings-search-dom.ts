@@ -461,12 +461,14 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
     assert.equal(primary.document.activeElement, buttons[0]);
     assert.equal(f.tab.containerEl.querySelector('button[data-settings-tab="general"]'), buttons[0]);
 
-    const memory = f.tab.containerEl.querySelector<HTMLButtonElement>(`button[aria-label="${language === "en" ? "Use long-term memory" : "使用长期记忆"}"]`)!;
-    const beforeMemory = f.plugin.settings.memory.useLongTermMemory;
-    assert.ok(memory);
-    memory.click();
+    // This legacy General page owns startup settings; memory now lives on desktop Agent.
+    const startup = f.tab.containerEl.querySelector<HTMLButtonElement>(`button[aria-label="${settingsCopy(language).general.autoOpen}"]`)!;
+    const beforeStartup = f.plugin.settings.autoOpen;
+    assert.ok(startup);
+    startup.click();
     await scheduler.flush();
-    assert.equal(f.plugin.settings.memory.useLongTermMemory, !beforeMemory);
+    assert.equal(f.plugin.settings.autoOpen, !beforeStartup);
+    assert.equal((f.saved.at(-1) as typeof f.plugin.settings).autoOpen, !beforeStartup);
     assert.equal(f.saved.length, 2, "real Origin toggle persists through existing callback");
     const journal = f.tab.containerEl.querySelector<HTMLInputElement>(`input[aria-label="${language === "en" ? "Journal folder" : "日记保存文件夹"}"]`)!;
     assert.ok(journal);
@@ -781,7 +783,7 @@ async function checkDesktopSettings(
     assert.equal(f.plugin.app.internalPlugins.plugins["daily-notes"].instance.options.folder, "Notes/DesktopDaily");
     assert.equal(f.nativeSaves.length, 1);
     await navigate("models");
-    const modelRow = f.tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:provider"]')!;
+    const modelRow = f.tab.containerEl.querySelector('[data-echoink-focus-key="models:default"]')!;
     assert.ok(modelRow);
     const modelSelect = modelRow.querySelector<HTMLButtonElement & { value: string }>('button[role="combobox"]')!;
     assert.ok(modelSelect.querySelector('[data-provider-brand="deepseek"]'), "selected brand is inside the default model control");
@@ -800,7 +802,7 @@ async function checkDesktopSettings(
     await scheduler.flush();
     assert.equal(f.plugin.settings.activeApiProviderId, secondProvider.id);
     assert.equal(f.plugin.settings.defaultModel, secondProvider.defaultModelId);
-    const changedSelect = f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:provider"] button[role="combobox"]')!;
+    const changedSelect = f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="models:default"] button[role="combobox"]')!;
     assert.ok(changedSelect.querySelector('[data-provider-brand="ollama"]'), "the saved selection updates its in-control brand");
     changedSelect.focus();
     changedSelect.dispatchEvent(new primary.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
@@ -814,7 +816,7 @@ async function checkDesktopSettings(
     await navigate("modules");
     f.tab.openDesktopRoute(resolveDesktopSettingsRoute("knowledgeBase"));
     await scheduler.flush();
-    assert.equal(f.tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:provider"]'), null, "Knowledge no longer duplicates the global model selector");
+    assert.equal(f.tab.containerEl.querySelector('[data-echoink-focus-key="models:default"], [data-echoink-focus-key="knowledge:provider"]'), null, "Knowledge no longer duplicates the global model selector");
 
     const openAgentSearchResult = async (query: string) => {
       await navigate("general");
@@ -940,22 +942,29 @@ async function checkDesktopMemoryConflict(win: Window & typeof globalThis) {
 }
 
 async function checkDesktopEnableSwitches(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {
-  const f = fixture(win, "zh-CN"), mount = mountDefinitions(f.tab);
-  f.tab.openDesktopRoute({tab:"agent"}); await scheduler.flush();
-  const initial = f.plugin.settings.memory.useLongTermMemory;
-  f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="general:memory:enabled"]')!.click();
-  await scheduler.flush();
-  assert.equal(f.plugin.settings.memory.useLongTermMemory, !initial, "real click must reach the Radix switch handler");
-  assert.equal((f.saved.at(-1) as any).memory.useLongTermMemory, !initial);
-  assert.ok(f.tab.containerEl.querySelector('[data-echoink-focus-key="agent:profile"]'), "disabled memory keeps local profile management");
-  f.tab.openDesktopRoute({tab:"modules"}); await scheduler.flush();
-  const selection = f.plugin.settings.selectionAsk.enabled;
-  f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="module:selection:enabled"]')!.click();
-  await scheduler.flush();
-  assert.equal(f.plugin.settings.selectionAsk.enabled, !selection, "module enable click must reach its original save path");
-  assert.equal((f.saved.at(-1) as any).selectionAsk.enabled, !selection);
-  f.registrations.forEach(cleanup=>cleanup()); mount.cleanup(); f.tab.containerEl.remove();
-  console.log("PASS real Origin switch clicks: memory enable and module enable save; no sibling drawer activation");
+  for (const language of ["zh-CN", "en"] as const) {
+    const f = fixture(win, language), mount = mountDefinitions(f.tab);
+    f.tab.openDesktopRoute({tab:"agent"}); await scheduler.flush();
+    const initial = f.plugin.settings.memory.useLongTermMemory;
+    const memory = f.tab.containerEl.querySelector<HTMLButtonElement>(`button[role="switch"][aria-label="${language === "en" ? "Use long-term memory" : "使用长期记忆"}"]`)!;
+    assert.ok(memory, "Agent owns the actual localized memory switch");
+    assert.equal(memory.getAttribute("data-echoink-focus-key"), "general:memory:enabled");
+    memory.click();
+    await scheduler.flush();
+    assert.equal(f.plugin.settings.memory.useLongTermMemory, !initial, "real click must reach the Radix switch handler");
+    assert.equal((f.saved.at(-1) as typeof f.plugin.settings).memory.useLongTermMemory, !initial);
+    assert.equal(f.saved.length, 1, "memory switch persists once through its original callback");
+    assert.ok(f.tab.containerEl.querySelector('[data-echoink-focus-key="agent:profile"]'), "disabled memory keeps local profile management");
+    f.tab.openDesktopRoute({tab:"modules"}); await scheduler.flush();
+    const selection = f.plugin.settings.selectionAsk.enabled;
+    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="module:selection:enabled"]')!.click();
+    await scheduler.flush();
+    assert.equal(f.plugin.settings.selectionAsk.enabled, !selection, "module enable click must reach its original save path");
+    assert.equal((f.saved.at(-1) as typeof f.plugin.settings).selectionAsk.enabled, !selection);
+    assert.equal(f.saved.length, 2, "module switch persists once without activating a sibling drawer");
+    f.registrations.forEach(cleanup=>cleanup()); mount.cleanup(); f.tab.containerEl.remove();
+    console.log(`PASS real Origin switch clicks (${language}): memory enable and module enable save; no sibling drawer activation`);
+  }
 }
 
 async function checkDesktopSettingPolish(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {

@@ -555,12 +555,13 @@ export class KnowledgeRetriever {
     const searchPage = (cursor?: string) => this.agentIndex!.search({
       query: searchQuestion,
       signal: request.signal,
-      limit: Math.max(1, limit - references.length),
+      limit: Math.max(0, limit - references.length),
       ...(policy.kinds ? { kinds: [...policy.kinds] } : {}),
       ...(indexedExplicitPaths.length ? { excludePaths: indexedExplicitPaths } : {}),
       ...(cursor ? { cursor } : {})
     });
-    let search = searchQuestion && references.length < limit
+    // A full explicit page still needs totals and an unconsumed continuation.
+    let search = searchQuestion
       ? await searchPage(request.cursor)
       : emptyAgentIndexSearchResult();
     let excludedCandidates = 0;

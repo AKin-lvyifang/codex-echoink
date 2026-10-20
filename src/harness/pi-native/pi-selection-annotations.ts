@@ -4,15 +4,20 @@ export const PI_SELECTION_CONTEXT_TYPE = "echoink-selection-annotations-v1";
 export const PI_SELECTION_CONTEXT_KEY = "selectionAnnotationsContext";
 export function normalizeSelectionAnnotations(values: unknown): SelectionAnnotation[] {
   if (!Array.isArray(values)) return [];
+  const entries: unknown[] = values;
   const seen = new Set<string>();
-  return values.filter((value): value is SelectionAnnotation => {
-    if (!value || typeof value !== "object" || typeof value.id !== "string" || seen.has(value.id)
-      || !Number.isSafeInteger(value.number) || value.number < 1 || typeof value.selectedText !== "string" || !value.selectedText.trim()
+  return entries.filter((entry): entry is SelectionAnnotation => {
+    if (!entry || typeof entry !== "object") return false;
+    const value = entry as Record<string, unknown>;
+    if (!value.anchor || typeof value.anchor !== "object") return false;
+    const anchor = value.anchor as Record<string, unknown>;
+    if (typeof value.id !== "string" || seen.has(value.id)
+      || typeof value.number !== "number" || !Number.isSafeInteger(value.number) || value.number < 1 || typeof value.selectedText !== "string" || !value.selectedText.trim()
       || typeof value.vaultRelativePath !== "string" || !/\.md$/iu.test(value.vaultRelativePath) || typeof value.fileName !== "string"
-      || !value.anchor || !["editor", "reading"].includes(value.anchor.mode)
-      || !Number.isSafeInteger(value.anchor.from) || !Number.isSafeInteger(value.anchor.to)
-      || value.anchor.from < 0 || value.anchor.to <= value.anchor.from
-      || typeof value.anchor.before !== "string" || typeof value.anchor.after !== "string"
+      || (anchor.mode !== "editor" && anchor.mode !== "reading")
+      || typeof anchor.from !== "number" || !Number.isSafeInteger(anchor.from) || typeof anchor.to !== "number" || !Number.isSafeInteger(anchor.to)
+      || anchor.from < 0 || anchor.to <= anchor.from
+      || typeof anchor.before !== "string" || typeof anchor.after !== "string"
       || !Array.isArray(value.appliedActions) || value.appliedActions.some((action: unknown) => typeof action !== "string")) return false;
     seen.add(value.id); return true;
   }).map((value) => ({ id: value.id, number: value.number, selectedText: value.selectedText, vaultRelativePath: value.vaultRelativePath,

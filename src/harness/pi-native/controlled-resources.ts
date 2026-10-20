@@ -228,6 +228,8 @@ export class ControlledVaultResourceLoader implements ResourceLoader {
     this.extensions = this.options.inlineExtension
       ? [await materializeControlledInlineExtension(
         this.options.inlineExtension, this.options.assertBeforeAgentStart
+          ? async () => { await this.options.assertBeforeAgentStart?.(); }
+          : undefined
       )]
       : [];
   }

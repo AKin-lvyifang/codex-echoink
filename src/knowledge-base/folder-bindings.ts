@@ -34,7 +34,7 @@ export type KnowledgeFolderStatus = "ready" | "disabled" | "unbound" | "invalid"
 export function normalizeKnowledgeDirectory(value: string): string {
   const normalized = value.trim().replace(/\\/gu, "/").replace(/\/$/u, "");
   if (!normalized || normalized.startsWith("/") || /^[a-z]:/iu.test(normalized)
-    || normalized.split("/").some((part) => !part || part === "." || part === ".." || part.startsWith(".") || /[\0-\x1f]/u.test(part))) {
+    || normalized.split("/").some((part) => !part || part === "." || part === ".." || part.startsWith(".") || Array.from(part).some(character => character.charCodeAt(0) <= 31))) {
     throw new Error("请选择合法的 Vault 相对目录。");
   }
   return normalized;
@@ -168,7 +168,7 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
     if (binding.writePath) binding.writePath = rebaseKnowledgePath(binding.writePath, from, to);
   }
   if (next.collectionTargets) for (const kind of ["web", "wechat"] as const) {
-    if (next.collectionTargets[kind]) next.collectionTargets[kind] = rebaseKnowledgePath(next.collectionTargets[kind]!, from, to);
+    if (next.collectionTargets[kind]) next.collectionTargets[kind] = rebaseKnowledgePath(next.collectionTargets[kind], from, to);
   }
   if (next.inboxRecallExclusions) next.inboxRecallExclusions = [...new Set(next.inboxRecallExclusions.map(item => rebaseKnowledgePath(item, from, to)))];
   if (knowledgeFolderBindingsSignature(next) !== knowledgeFolderBindingsSignature(config)) next.revision += 1;

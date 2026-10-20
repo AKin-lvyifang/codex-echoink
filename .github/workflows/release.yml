@@ -83,6 +83,9 @@ jobs:
           node-version: "24"
           cache: npm
 
+      - name: Prepare isolated test Vault
+        run: node scripts/prepare-ci-test-vault.mjs
+
       - name: Install dependencies
         run: npm ci
 
@@ -95,9 +98,8 @@ jobs:
           fi
 
       - name: Check version and release notes
-        env:
-          ALLOW_MISSING_RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
+          set -euo pipefail
           if [ "$EVENT_NAME" = "push" ] && [[ "$RELEASE_TAG" == v* ]]; then
             echo "New Obsidian release tags must not use a v prefix: $RELEASE_TAG"
             exit 1
@@ -111,49 +113,11 @@ jobs:
           fi
 
           notes=".tmp/release-notes-$manifest_version.md"
-          if ! node - "$manifest_version" "$notes" <<'NODE'
-          const fs = require("fs");
-          const version = process.argv[2];
-          const output = process.argv[3];
-          const source = fs.readFileSync("CHANGELOG.md", "utf8");
-          const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const heading = new RegExp(`^## v?${escaped}(?: - .*)?$`, "m");
-          const match = heading.exec(source);
-          if (!match) process.exit(2);
-          const start = match.index;
-          const rest = source.slice(start + match[0].length);
-          const next = /^## /m.exec(rest);
-          const end = next ? start + match[0].length + next.index : source.length;
-          fs.mkdirSync(require("path").dirname(output), { recursive: true });
-          fs.writeFileSync(output, source.slice(start, end).trimEnd() + "\n");
-          NODE
-          then
-            if [ "$ALLOW_MISSING_RELEASE_NOTES" = "true" ]; then
-              echo "RELEASE_NOTES_FILE=" >> "$GITHUB_ENV"
-              echo "Historical rebuild: no matching CHANGELOG section found for $manifest_version."
-              exit 0
-            fi
-            echo "CHANGELOG.md must contain a section for $manifest_version with bilingual notes and a hero image."
-            exit 1
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            node scripts/release-notes.mjs --version "$manifest_version" --output "$notes" --github-env "$GITHUB_ENV" --historical
+          else
+            node scripts/release-notes.mjs --version "$manifest_version" --output "$notes" --github-env "$GITHUB_ENV"
           fi
-
-          grep -Eq "^## v?$manifest_version( - .*)?$" "$notes" || {
-            echo "$notes must start with the version heading for $manifest_version."
-            exit 1
-          }
-          zh_line="$(grep -n -m1 '^### 中文$' "$notes" | cut -d: -f1)"
-          en_line="$(grep -n -m1 '^### English$' "$notes" | cut -d: -f1)"
-          if [ -z "$zh_line" ] || [ -z "$en_line" ] || [ "$zh_line" -ge "$en_line" ]; then
-            echo "$notes must contain the Chinese section before English."
-            exit 1
-          fi
-
-          hero_path="$(sed -n 's#.*raw.githubusercontent.com/AKin-lvyifang/codex-echoink/[^/]*/\(assets/releases/[^)]*\)).*#\1#p' "$notes" | head -n 1)"
-          if [ -z "$hero_path" ] || [ ! -f "$hero_path" ]; then
-            echo "$notes must reference a tracked Release hero under assets/releases/."
-            exit 1
-          fi
-          echo "RELEASE_NOTES_FILE=$notes" >> "$GITHUB_ENV"
 
       - name: Check public repository files
         run: npm run check:public
@@ -271,6 +235,8 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TITLE }}
+          body_path: ${{ env.RELEASE_NOTES_FILE }}
           draft: true
           make_latest: false
           fail_on_unmatched_files: true
@@ -279,12 +245,6 @@ jobs:
             release-assets/main.js
             release-assets/manifest.json
             release-assets/styles.css
-
-      - name: Add structured release notes
-        if: ${{ github.event_name != 'workflow_dispatch' && env.RELEASE_NOTES_FILE != '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RELEASE_NOTES_FILE"
 
       - name: Verify published assets and attestations
         env:

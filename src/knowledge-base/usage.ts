@@ -649,7 +649,7 @@ function normalizeKnowledgeReference(
     throw new PiNativeFileStoreError(errorCode, "KnowledgeReference inclusionReason 无效");
   }
   if (hasMatchSources && (!Array.isArray(object.matchSources)
-    || Array.from(object.matchSources).some(source => !["title", "alias", "tag", "body"].includes(source)))) {
+    || Array.from(object.matchSources).some((source: unknown) => typeof source !== "string" || !["title", "alias", "tag", "body"].includes(source)))) {
     throw new PiNativeFileStoreError(errorCode, "KnowledgeReference matchSources 无效");
   }
   if ((Object.hasOwn(object, "columnStart") || Object.hasOwn(object, "columnEnd"))

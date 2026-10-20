@@ -74,7 +74,7 @@ export class EchoInkViewService {
     }
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
     if (leaf.view instanceof KnowledgePageView) {
-      await leaf.view.openPage(page);
+      leaf.view.openPage(page);
       leaf.view.refreshIfSettingsChanged();
     }
   }

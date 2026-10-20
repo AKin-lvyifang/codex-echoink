@@ -299,6 +299,7 @@ export async function runKnowledgeLinkingProductionTests(): Promise<void> {
     } finally { releaseBindings(); }
     {
       const vault = path.join(root, "maintenance"); const fixture = await nativeJournalFixture(vault);
+      await fixture.app.vault.createFolder("wiki"); // The selected binding root exists before maintenance; only Agent.md creation is injected to fail.
       const config = emptyKnowledgeFolderBindings();
       Object.assign(config.roles.raw, { enabled: true, readPaths: ["raw"], writePath: "raw" });
       Object.assign(config.roles.wiki, { enabled: true, readPaths: ["wiki"], writePath: "wiki" });

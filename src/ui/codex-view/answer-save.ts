@@ -57,7 +57,7 @@ function sourceLinks(paths: readonly string[]): string[] {
     } catch {
       throw new Error("来源笔记路径无效，未保存笔记。");
     }
-    if (/[#^|\[\]]/u.test(path)) {
+    if (/[#^|[\]]/u.test(path)) {
       throw new Error(`来源路径含有无法用于 Obsidian 双链的字符，请先重命名来源笔记或文件夹：${path}`);
     }
     // Wikilinks resolve literal Vault paths; URI encoding would point at a different file.

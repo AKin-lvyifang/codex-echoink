@@ -98,12 +98,12 @@ export class DesktopKnowledgeSettings {
       const previous = this.plugin.settings.knowledgeBase.autoLinkEnabled; this.plugin.settings.knowledgeBase.autoLinkEnabled = value;
       try { await this.plugin.saveSettings(true); } catch (error) { this.plugin.settings.knowledgeBase.autoLinkEnabled = previous; throw error; }
     }, "新知识写入后，给本批笔记和相关老笔记补双链。");
-    createSettingsNavigationRow(permissions, { title: "知识提炼偏好", focusKey: "knowledge:preferences", onActivate: this.navigation.openPreferences });
-    createSettingsNavigationRow(permissions, { title: "知识关联", onActivate: this.navigation.openLinking });
+    createSettingsNavigationRow(permissions, { title: "知识提炼偏好", focusKey: "knowledge:preferences", onActivate: () => this.navigation.openPreferences() });
+    createSettingsNavigationRow(permissions, { title: "知识关联", onActivate: () => this.navigation.openLinking() });
     const service = this.plugin.getKnowledgeSurfaceService();
     if (service) renderKnowledgeFolderActions(parent, service, this.plugin.settings.settingsLanguage, async () => this.navigation.redraw(), group => {
       createSettingsNavigationRow(group, { title: bindings.configured ? "重新初始化" : "初始化文件夹", focusKey: "knowledge:onboarding", onActivate: () => { this.reset(); this.change("initialize"); } });
-    }, this.navigation.openEditor);
+    }, editor => this.navigation.openEditor(editor));
     if (this.error) parent.createDiv({ cls: "settings-error", text: this.error, attr: { role: "alert" } });
   }
   renderDetail(container: HTMLElement): void {

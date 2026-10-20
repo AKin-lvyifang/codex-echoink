@@ -732,7 +732,7 @@ export class FileConversationCatalog {
       if (original !== null) {
         const raw = requirePlainObject(original, "Pi Conversation Catalog");
         if (!Array.isArray(raw.entries)) throw new Error("Catalog entries invalid");
-        const alreadyUpgraded = raw.entries.some(entry => entry && typeof entry === "object"
+        const alreadyUpgraded = raw.entries.some((entry: unknown) => entry && typeof entry === "object"
           && CONVERSATION_TASK_METADATA_KEYS.some(key => Object.hasOwn(entry, key)));
         if (!alreadyUpgraded) {
           const backupPath = this.filePath.replace(/\.json$/u, ".pre-agent-metadata-v1.json");

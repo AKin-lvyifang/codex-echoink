@@ -65,12 +65,12 @@ export class DesktopMemorySettings {
         } });
         row.controlEl.insertBefore(slider, output);
         if (this.pending) row.controlEl.inert = true;
-        renderManualDreamAction(options, p, p.settings.settingsLanguage, this.actions.redraw);
+        renderManualDreamAction(options, p, p.settings.settingsLanguage, () => this.actions.redraw());
       }
     }
     const links = open ? content : createSettingsGroup(section);
-    createSettingsNavigationRow(links, { title: zh ? "记忆修正" : "Memory correction", focusKey: "review:memory", onActivate: this.actions.openCorrection });
-    createSettingsNavigationRow(links, { title: zh ? "你的画像" : "Your profile", focusKey: "agent:profile", onActivate: this.actions.openProfile });
+    createSettingsNavigationRow(links, { title: zh ? "记忆修正" : "Memory correction", focusKey: "review:memory", onActivate: () => this.actions.openCorrection() });
+    createSettingsNavigationRow(links, { title: zh ? "你的画像" : "Your profile", focusKey: "agent:profile", onActivate: () => this.actions.openProfile() });
   }
   private async save(change: () => void, rollback: () => void, success?: () => void): Promise<void> {
     if (this.pending) return;

@@ -157,10 +157,12 @@ export class PiTodoToolSecurity implements PiVaultAdditionalToolSecurityPort {
     }
   }
   private async query(input: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const query = input.query, requestedProject = input.project;
+    if ((query !== undefined && typeof query !== "string") || (requestedProject !== undefined && typeof requestedProject !== "string")) throw new Error("todo_invalid_request");
     const snapshot = await this.port!.store.readOnlySnapshot();
     const projects = this.port!.projects();
-    const needle = String(input.query ?? "").toLocaleLowerCase();
-    const project = input.project === undefined ? undefined : resolveTodoProject(String(input.project), projects);
+    const needle = (query ?? "").toLocaleLowerCase();
+    const project = requestedProject === undefined ? undefined : resolveTodoProject(requestedProject, projects);
     const records = snapshot.records.filter(record => (!input.id || record.id === input.id)
       && (input.status === "all" || record.done === (input.status === "completed"))
       && (!needle || record.title.toLocaleLowerCase().includes(needle))

@@ -36,8 +36,7 @@ export class SelectionAskController {
   register(): void {
     if (Platform.isMobile) return;
     this.redrawEffect = StateEffect.define<number>();
-    const controller = this;
-    this.plugin.registerEditorExtension(ViewPlugin.fromClass(class {
+    const createEditorPlugin = (controller: SelectionAskController) => ViewPlugin.fromClass(class {
       decorations: DecorationSet = Decoration.none;
       constructor(readonly view: EditorView) { controller.editors.add(view); this.build(); }
       update(update: ViewUpdate) {
@@ -68,7 +67,8 @@ export class SelectionAskController {
         this.decorations = Decoration.set(marks, true);
       }
       destroy() { controller.editors.delete(this.view); }
-    }, { decorations: (instance) => instance.decorations }));
+    }, { decorations: (instance) => instance.decorations });
+    this.plugin.registerEditorExtension(createEditorPlugin(this));
     this.plugin.registerMarkdownPostProcessor((element, context) => {
       const section = context.getSectionInfo(element);
       if (section) { element.dataset.echoinkSectionStart = String(section.lineStart); element.dataset.echoinkSectionEnd = String(section.lineEnd); }
@@ -194,7 +194,7 @@ export class SelectionAskController {
       const root = leaf.view.containerEl.querySelector<HTMLElement>(".markdown-preview-section"), doc = leaf.view.containerEl.ownerDocument;
       if (!root || !root.isConnected || !root.getBoundingClientRect().height) continue;
       let overlay = this.overlays.get(doc);
-      if (!overlay) { overlay = doc.createElement("div"); overlay.className = "echoink-selection-overlay"; overlay.style.inset = "0"; doc.body.append(overlay); this.overlays.set(doc, overlay); }
+      if (!overlay) { overlay = doc.createElement("div"); overlay.className = "echoink-selection-overlay"; doc.body.append(overlay); this.overlays.set(doc, overlay); }
       const filePath = leaf.view.file.path;
       const markdown = leaf.view.editor?.getValue();
       for (const annotation of this.records().filter((value) => value.vaultRelativePath === filePath)) {

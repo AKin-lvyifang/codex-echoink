@@ -2153,11 +2153,28 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
 
   await emit(listener, runtimeEvent({
     type: "provider_reasoning_start",
+    messageKey: "assistant-reasoning-empty",
+    reasoningId: "reasoning-turn-runner-empty"
+  }));
+  assert.ok(virtualListEl.findByClass("codex-ai-elements-reasoning"),
+    "running empty Reasoning keeps its progress disclosure visible");
+  await emit(listener, runtimeEvent({
+    type: "provider_reasoning_end",
+    messageKey: "assistant-reasoning-empty",
+    reasoningId: "reasoning-turn-runner-empty",
+    text: "",
+    status: "completed"
+  }));
+  assert.equal(virtualListEl.findByClass("codex-ai-elements-reasoning"), null,
+    "empty completed Reasoning under two seconds stays hidden without public content");
+
+  await emit(listener, runtimeEvent({
+    type: "provider_reasoning_start",
     messageKey: "assistant-reasoning-1",
     reasoningId: "reasoning-turn-runner-1"
   }));
-  assert.equal(virtualListEl.findByClass("codex-ai-elements-reasoning"), null,
-    "empty Reasoning under two seconds stays hidden until it has public content");
+  const reasoningRoot = virtualListEl.findByClass("codex-ai-elements-reasoning");
+  assert.ok(reasoningRoot, "Reasoning start creates its running progress disclosure");
   await emit(listener, runtimeEvent({
     type: "provider_reasoning_delta",
     messageKey: "assistant-reasoning-1",
@@ -2165,11 +2182,11 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
     textDelta: "真实公开推理增量"
   }));
   const fullRenderCountAfterReasoningTopology = virtualListEl.emptyCallCount;
-  const reasoningRoot = virtualListEl.findByClass("codex-ai-elements-reasoning");
-  assert.ok(reasoningRoot, "the first public Reasoning text creates the required topology");
+  assert.equal(virtualListEl.findByClass("codex-ai-elements-reasoning"), reasoningRoot,
+    "the first public Reasoning text updates the existing running disclosure");
   assert.equal(
     renderedIncrementalMessages.at(-1)?.assistantTurn
-      ?.providerReasoningSegments?.[0]?.text,
+      ?.providerReasoningSegments?.find((segment) => segment.reasoningId === "reasoning-turn-runner-1")?.text,
     "真实公开推理增量",
     "production reasoning delta passes its changed Assistant Turn carrier to the local updater"
   );

@@ -263,11 +263,11 @@ export function createPiVaultProductionWriteExecutionPort(
       await options.receipts.beginAuthorizedOperation(input.authorization);
       let result: Readonly<VaultOperationResult>;
       try {
-        await options.assertToolAllowed?.(input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>, input.authorization.resolvedTarget, input.authorization);
-        if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>);
+        await options.assertToolAllowed?.(input.toolId, input.arguments, input.authorization.resolvedTarget, input.authorization);
+        if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments);
         result = await invokeDomainOnce(async () => {
-          await options.assertToolAllowed?.(input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>, input.authorization.resolvedTarget, input.authorization);
-          if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>);
+          await options.assertToolAllowed?.(input.toolId, input.arguments, input.authorization.resolvedTarget, input.authorization);
+          if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments);
           await options.receipts.markEffectStarted(
             input.authorization.operationIdentity
           );

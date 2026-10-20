@@ -781,7 +781,9 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
     this.remove(path);
     if (!this.maxDocuments || characters > this.maxCharacters || tokenEntries > this.maxTokenEntries) return;
     while (this.records.size && (this.records.size >= this.maxDocuments || this.characters + characters > this.maxCharacters || this.tokenEntries + tokenEntries > this.maxTokenEntries)) {
-      this.remove(this.records.keys().next().value!);
+      const oldest = this.records.keys().next();
+      if (oldest.done) break;
+      this.remove(oldest.value);
     }
     this.records.set(path, record);
     this.characters += characters;

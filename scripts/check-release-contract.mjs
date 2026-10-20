@@ -7,6 +7,8 @@ import { transformSync } from "esbuild";
 import { parseDocument } from "yaml";
 import { validateManifestSource } from "./manifest-contract.mjs";
 import { runManifestContractTests } from "./manifest-contract-tests.mjs";
+import { compileReleaseNotes, isTrackedReleaseHero } from "./release-notes.mjs";
+import { runReleaseNotesTests } from "./release-notes-tests.mjs";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const args = parseArgs(process.argv.slice(2));
@@ -22,6 +24,8 @@ const workflow = workflowDocument?.toJS() ?? {};
 
 try { runManifestContractTests(); }
 catch (error) { failures.push(`Manifest contract probes failed: ${error.message}`); }
+try { runReleaseNotesTests(); }
+catch (error) { failures.push(`Release notes probes failed: ${error.message}`); }
 check(packageJson.version === manifest.version, "package.json version must match manifest.json.");
 check(packageLock.version === manifest.version, "package-lock.json version must match manifest.json.");
 check(packageLock.packages?.[""]?.version === manifest.version, "package-lock.json root package version must match manifest.json.");
@@ -30,6 +34,13 @@ if (args.tag) {
   const tag = args.allowVTag ? args.tag.replace(/^v/, "") : args.tag;
   check(args.allowVTag || !args.tag.startsWith("v"), "New Obsidian release tags must not use a v prefix.");
   check(tag === manifest.version, "Release tag must match manifest.json version.");
+  if (!args.allowVTag) {
+    try {
+      compileReleaseNotes(fs.readFileSync(path.join(rootDir, "CHANGELOG.md"), "utf8"), {
+        version: manifest.version, repository: "AKin-lvyifang/codex-echoink", isTrackedFile: isTrackedReleaseHero
+      });
+    } catch (error) { failures.push(`Release notes contract failed: ${error.message}`); }
+  }
 }
 
 checkPinnedWorkflowActions();
@@ -107,6 +118,7 @@ function validateReleaseWorkflow(config) {
   const buildIndex = steps.findIndex(step => step.run === "npm run build");
   const desktopCheckIndex = steps.findIndex(step => step.run === "npm run check:bundle");
   const mobileCheckIndex = steps.findIndex(step => step.run === "npm run test:mobile");
+  const notesIndex = steps.findIndex(step => typeof step.run === "string" && step.run.includes("node scripts/release-notes.mjs"));
 
   check(buildIndex >= 0 && desktopCheckIndex > buildIndex && mobileCheckIndex > buildIndex
     && mobileCheckIndex < attestIndex && desktopCheckIndex < attestIndex
@@ -118,6 +130,8 @@ function validateReleaseWorkflow(config) {
   check(guardIndex >= 0, "release workflow must reject mutation of an existing public release.");
   check(verificationIndex >= 0, "release workflow must download and verify the draft assets before publishing.");
   check(publishIndex >= 0, "release workflow must publish only after verification.");
+  check(notesIndex >= 0 && notesIndex < draftIndex,
+    "release workflow must extract and validate structured notes before creating a draft.");
   check(
     attestIndex >= 0 && guardIndex > attestIndex && draftIndex > guardIndex
       && verificationIndex > draftIndex && publishIndex > verificationIndex,
@@ -127,12 +141,22 @@ function validateReleaseWorkflow(config) {
   const draft = steps[draftIndex];
   const attestation = steps[attestIndex];
   if (draft) {
+    check(draft.with?.name === "${{ env.RELEASE_TITLE }}", "draft release must explicitly use the validated release title.");
+    check(draft.with?.body_path === "${{ env.RELEASE_NOTES_FILE }}", "draft release must use the validated bilingual notes and release-type marker.");
     check(draft.with?.draft === true, "the uploaded release must remain a draft until verification completes.");
     check(draft.with?.overwrite_files === false, "release assets must never overwrite existing assets.");
     check(draft.with?.make_latest === false, "an unverified draft must not become latest.");
     checkSameAssetSet(blockValues(draft.with?.files), "draft release assets");
   }
   if (attestation) checkSameAssetSet(blockValues(attestation.with?.["subject-path"]), "attested release assets");
+  if (notesIndex >= 0) {
+    const notesCommand = steps[notesIndex].run;
+    check(notesCommand.includes('--version "$manifest_version"') && notesCommand.includes('--output "$notes"')
+      && notesCommand.includes('--github-env "$GITHUB_ENV"'),
+    "release notes extraction must use the checked manifest version and export its validated outputs.");
+    check(notesCommand.includes('if [ "$EVENT_NAME" = "workflow_dispatch" ]; then') && notesCommand.includes("--historical"),
+      "historical dispatch must retain compatibility with legacy release notes.");
+  }
 
   const commands = steps.map((step) => typeof step?.run === "string" ? step.run : "").join("\n");
   for (const forbidden of ["gh release delete", "gh release delete-asset", "gh release upload", "--clobber"]) {

@@ -3381,7 +3381,7 @@ export function piKnowledgeToolDisplayMetadata(toolName: string, result: unknown
       const lineStart = nonNegativeInteger(reference?.lineStart);
       const lineEnd = nonNegativeInteger(reference?.lineEnd);
       if (!path || path.length > 1_024 || path.startsWith("/")
-        || /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(path) || /[\u0000-\u001f\u007f]/u.test(path)
+        || /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(path) || Array.from(path).some(character => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127)
         || path.split("/").some((part) => !part || part === "." || part === "..")
         || !lineStart || lineEnd === undefined || lineEnd < lineStart) return [];
       return [{ vaultRelativePath: path, lineStart, lineEnd }];

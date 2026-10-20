@@ -20,7 +20,7 @@ export interface KnowledgeBodySearchPort {
 
 export function knowledgeSearchPathKind(relativePath: string, bindings?: KnowledgeFolderBindings | null, excludedRoots: readonly string[] = []): KnowledgeSearchKind | null {
   const parts = relativePath.split("/");
-  if (!relativePath || relativePath.startsWith("/") || /[\\:\x00-\x1f]/u.test(relativePath)
+  if (!relativePath || relativePath.startsWith("/") || /[\\:]/u.test(relativePath) || Array.from(relativePath).some(character => character.charCodeAt(0) <= 31)
     || parts.some(part => !part || part.startsWith(".")) || !/\.(?:md|markdown)$/iu.test(relativePath)
     || isPrivateNoteSourcePath(relativePath, excludedRoots)) return null;
   // Disabled bindings still own their paths. Never reclassify them as notes.
@@ -195,12 +195,16 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       ...(explicitNoteReferenceScope(request, documents) ? { referenceContext: [activePath ?? null, recentPaths] } : {}),
       excludedRoots, files: documents.map(d => [d.vaultRelativePath, d.revisionKey]) }));
     let offset = 0;
+    let cursorSourceRevision: unknown;
     if (request.cursor) {
       try {
-        const cursor = JSON.parse(request.cursor);
+        const parsed: unknown = JSON.parse(request.cursor);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("cursor");
+        const cursor = parsed as Record<string, unknown>;
         if (cursor.key !== queryKey || cursor.generation !== generation) throw Object.assign(new Error("Search cursor is stale"), { code: "cursor_stale" });
-        if (!Number.isSafeInteger(cursor.offset) || cursor.offset < 0) throw new Error("offset");
+        if (typeof cursor.offset !== "number" || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0) throw new Error("offset");
         offset = cursor.offset;
+        cursorSourceRevision = cursor.sourceRevision;
       } catch (error) {
         if ((error as { code?: string }).code === "cursor_stale") throw error;
         throw Object.assign(new Error("Invalid search cursor"), { code: "cursor_invalid" });
@@ -210,7 +214,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     if (request.mode === "related") {
       if (!request.vaultRelativePath || !documents.some(document => document.vaultRelativePath === request.vaultRelativePath)) throw Object.assign(new Error("Knowledge relation source is outside the search scope"), { code: "invalid_path" });
       const source = await this.read({ vaultRelativePath: request.vaultRelativePath });
-      if (request.cursor && JSON.parse(request.cursor).sourceRevision !== source.contentRevision) throw this.changedSearch(true);
+      if (request.cursor && cursorSourceRevision !== source.contentRevision) throw this.changedSearch(true);
       const links = extractMarkdownAnchorLinks(source.content, Number.POSITIVE_INFINITY);
       if (offset > links.total) throw Object.assign(new Error("Relation cursor is out of range"), { code: "cursor_invalid" });
       const snapshots = new Map([[source.vaultRelativePath, Promise.resolve(source)]]);
@@ -342,7 +346,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     }
     let host: TFile | null | undefined;
     try { host = this.app.metadataCache?.getFirstLinkpathDest?.(target, sourcePath); } catch { /* A host hint cannot widen the allowed document list. */ }
-    return host ? documents.filter(document => document.vaultRelativePath === host!.path) : [];
+    return host ? documents.filter(document => document.vaultRelativePath === host.path) : [];
   }
 
   private async anchorPage(source: KnowledgeAgentReadResult, links: ReturnType<typeof extractMarkdownAnchorLinks>, documents: readonly BodySearchDocument[], offset: number, limit: number,

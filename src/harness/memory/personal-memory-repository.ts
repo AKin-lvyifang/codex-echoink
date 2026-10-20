@@ -2835,7 +2835,7 @@ export class PersonalMemoryRepository {
     const fixedFileHashes: PersonalMemoryFixedFileHashes = Object.freeze({
       // Retain the last mobile-owned hash without opening legacy Agent files.
       // Empty is the explicit desktop-retired placeholder for a new manifest.
-      agent: validFixedFileHashes(current?.fixedFileHashes) ? current!.fixedFileHashes!.agent : contentHash(""),
+      agent: validFixedFileHashes(current?.fixedFileHashes) ? current.fixedFileHashes.agent : contentHash(""),
       user: contentHash(user)
     });
 

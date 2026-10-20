@@ -114,9 +114,9 @@ export class EchoInkKnowledgeSurfaceService {
           const originalPaths = originalBindings?.roles[role].readPaths ?? (knowledgeRootRole(to) === role ? [to] : []);
           const eligible = (directory: string) => (directory === from || directory.startsWith(`${from}/`)) && originalPaths.includes(rebaseKnowledgePath(directory, from, to));
           restored.roles[role].readPaths = [...new Set(bindings.roles[role].readPaths.flatMap((directory) => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
-          if (bindings.roles[role].writePath && eligible(bindings.roles[role].writePath!)) restored.roles[role].writePath = rebaseKnowledgePath(bindings.roles[role].writePath!, from, to);
-          if (bindings.roles[role].autoOrganizePaths) restored.roles[role].autoOrganizePaths = [...new Set(bindings.roles[role].autoOrganizePaths!.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
-          if (bindings.roles[role].allowedSubdirectoryRoots) restored.roles[role].allowedSubdirectoryRoots = [...new Set(bindings.roles[role].allowedSubdirectoryRoots!.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
+          if (bindings.roles[role].writePath && eligible(bindings.roles[role].writePath)) restored.roles[role].writePath = rebaseKnowledgePath(bindings.roles[role].writePath, from, to);
+          if (bindings.roles[role].autoOrganizePaths) restored.roles[role].autoOrganizePaths = [...new Set(bindings.roles[role].autoOrganizePaths.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
+          if (bindings.roles[role].allowedSubdirectoryRoots) restored.roles[role].allowedSubdirectoryRoots = [...new Set(bindings.roles[role].allowedSubdirectoryRoots.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
           if (keepCurrent && restored.roles[role].readPaths.length > 1) restored.roles[role].compatibilityReadScopes = true;
         }
         if (restored.collectionTargets) for (const kind of ["web", "wechat"] as const) {
@@ -538,8 +538,8 @@ export class EchoInkKnowledgeSurfaceService {
     this.plugin.settings.englishDiary?.legacyEnglishDirectories?.forEach(protect);
     this.plugin.settings.englishDiary?.legacyExpressionDirectories?.forEach(protect);
     protect(this.plugin.settings.pdfReading?.originalDirectory);
-    for (const directory of Object.values(options.moduleDirectories ?? {})) {
-      if (!directory.trim()) continue;
+    for (const directory of Object.values<unknown>({ ...options.moduleDirectories })) {
+      if (typeof directory !== "string" || !directory.trim()) continue;
       try { protect(normalizeKnowledgeDirectory(directory)); } catch { /* The plan reports invalid selections. */ }
     }
     protect(this.plugin.settings.journalDirectory);
@@ -610,7 +610,7 @@ export class EchoInkKnowledgeSurfaceService {
       for (const role of DESKTOP_KNOWLEDGE_ROOT_ROLES) {
         const binding = next.roles[role];
         if (!binding.enabled || (binding.native && ["journal", "templates"].includes(role))) continue;
-        const before = previous?.roles[role as keyof KnowledgeFolderBindings["roles"]];
+        const before = previous?.roles[role];
         const newlyEnabled = !before?.enabled || (binding.searchEnabled !== false && before.searchEnabled === false);
         const newChildApproval = binding.allowedSubdirectories.some(child => !before?.allowedSubdirectories.includes(child));
         const newAgentApproval = next.allowAgentSubfolders === true && previous?.allowAgentSubfolders !== true && ["wiki", "projects"].includes(role);

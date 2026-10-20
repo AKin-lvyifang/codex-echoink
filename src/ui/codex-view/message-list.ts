@@ -1788,7 +1788,7 @@ export class CodexMessageListRenderer {
         });
         this.answerSaveStates.set(key, { status: "saved", path });
         const notice = env.messagesEl.ownerDocument.createDocumentFragment();
-        notice.append(conversationUiText(env.settingsLanguage, `已存为 ${path}　`, `Saved as ${path} `));
+        notice.append(conversationUiText(env.settingsLanguage, `已存为 ${path}\u3000`, `Saved as ${path} `));
         const open = env.messagesEl.ownerDocument.createElement("button");
         open.textContent = conversationUiText(env.settingsLanguage, "打开", "Open");
         open.onclick = () => { void this.openSavedAnswerNote(env, path); };

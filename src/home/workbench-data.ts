@@ -398,7 +398,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     this.disposed = true;
     this.links.dispose();
     this.releases.splice(0).forEach(release => release());
-    this.eventRefs.splice(0).forEach(({ offref, ref }) => offref(ref));
+    this.eventRefs.splice(0).forEach(entry => entry.offref(entry.ref));
     this.listeners.clear(); instances.delete(this.plugin);
     this.sourceContent.clear();
   }

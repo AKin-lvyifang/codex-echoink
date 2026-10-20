@@ -27,6 +27,9 @@ jobs:
           node-version: "24"
           cache: npm
 
+      - name: Prepare isolated test Vault
+        run: node scripts/prepare-ci-test-vault.mjs
+
       - name: Install dependencies
         run: npm ci
 
@@ -62,6 +65,9 @@ jobs:
         with:
           name: obsidian-review-bundle
           path: dist
+
+      - name: Prepare isolated test Vault
+        run: node scripts/prepare-ci-test-vault.mjs
 
       - name: Check native bundle loading
         run: node scripts/check-bundle-load.mjs --native-only dist/main.js

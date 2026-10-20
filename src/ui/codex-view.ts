@@ -515,14 +515,14 @@ export class CodexView extends ItemView {
       this.requestOnboardingEditorLeave(() => { this.plugin.hideEchoInkOnboardingWorkspaceCard(); this.openAgentEditor(agentId, onboarding); });
       return;
     }
-    const view = this;
+    const plugin = this.plugin;
     this.saveTaskComposerDraft(); this.rememberTaskListPosition(); this.closeComposerMenus();
     this.taskEditorReturnPage = this.taskNavigation.page;
     this.taskEditor?.dispose();
     this.taskEditorOnboarding = onboarding;
     this.taskEditor = new AgentEditorController({
       onboarding, confirmLeave: onboarding,
-      get settings() { return view.plugin.settings; }, draftCacheKey: this.plugin,
+      get settings() { return plugin.settings; }, draftCacheKey: this.plugin,
       loadResources: () => this.plugin.buildRuntimeEchoInkResourceCatalog(),
       saveAgent: (agent, moduleIds, baseline) => onboarding ? this.plugin.saveOnboardingAgentDefinition(agent, moduleIds) : this.plugin.saveAgentDefinition(agent, moduleIds, baseline),
       deleteAgent: async id => { await this.plugin.deleteAgent(id); this.taskEditorReturnPage = { kind: "list", agentId: GENERAL_ASSISTANT_ID }; await this.reloadTaskCatalog(); },

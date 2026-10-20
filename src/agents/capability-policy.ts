@@ -99,7 +99,9 @@ export function checkAgentSkill(context: AgentCapabilityContext, skillId: string
 export function checkAgentSkillPath(context: AgentCapabilityContext, value: string): AgentCapabilityDecision {
   const full = path.resolve(context.vaultRoot, value);
   const resource = context.resources.find(item => item.kind === "skill" && item.contentPath && path.resolve(context.vaultRoot, item.contentPath) === full);
-  return resource ? checkAgentSkill(context, String(resource.metadata?.resourceId ?? resource.id)) : decision(value, "unknown_resource");
+  if (!resource) return decision(value, "unknown_resource");
+  const resourceId = resource.metadata?.resourceId;
+  return checkAgentSkill(context, typeof resourceId === "string" ? resourceId : resource.id);
 }
 function relativeTarget(context: AgentCapabilityContext, value: string): string | null {
   const clean = value.replaceAll("\\", "/");
@@ -194,7 +196,7 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     }
     // PDF extraction is allowed in the bound source area without granting general Knowledge writes.
     // The controller validates live bound directories again at every publication boundary.
-    for (const key of ["originalPath", "rawDirectory"] as const) if (typeof target?.[key] === "string" && !relativeTarget(context, target[key] as string)) return decision("pdf-reading", "invalid_target");
+    for (const key of ["originalPath", "rawDirectory"] as const) if (typeof target?.[key] === "string" && !relativeTarget(context, target[key])) return decision("pdf-reading", "invalid_target");
     return capability;
   }
   if (toolName === "english_diary_generate") {

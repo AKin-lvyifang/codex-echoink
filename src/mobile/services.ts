@@ -202,7 +202,8 @@ export class MobileServices implements HomeHost {
     const adapter = this.app.vault.adapter;
     const target = `${this.preferenceRoot}/pi-agent-product-v1/knowledge/records/${recordId}.json`;
     if (!await adapter.exists(target)) throw new Error("维护记录不存在或尚未同步。");
-    const envelope = JSON.parse(await adapter.read(target));
+    const raw: unknown = JSON.parse(await adapter.read(target));
+    const envelope = raw && typeof raw === "object" ? raw as Record<string, unknown> : null;
     const stable = (value: unknown): string => value === null || typeof value !== "object" ? JSON.stringify(value) : Array.isArray(value) ? `[${value.map(stable).join(",")}]` : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable((value as Record<string, unknown>)[key])}`).join(",")}}`;
     const record = envelope?.payload as KnowledgeMaintenanceRecord;
     if (envelope?.schemaVersion !== 1 || envelope.kind !== "record" || typeof envelope.vaultId !== "string" || envelope.payloadDigest !== sha256Hex(stable(record)) || record?.schemaVersion !== 1 || record.recordId !== recordId || !Array.isArray(record.sources) || !Array.isArray(record.result?.notes)) throw new Error("维护记录损坏，请重新同步。");

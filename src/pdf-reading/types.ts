@@ -53,5 +53,5 @@ export interface PdfFiles {
 }
 export const pdfAbort = (signal: AbortSignal): void => { if (signal.aborted) throw new Error("处理已取消，已保存的成果保留。"); };
 export function pdfStem(name: string): string {
-  return name.replace(/\.pdf$/iu, "").replace(/[\\/:*?"<>|#\[\]\x00-\x1f]/gu, " ").trim().slice(0, 90) || "PDF";
+  return Array.from(name.replace(/\.pdf$/iu, ""), char => char.charCodeAt(0) < 32 || /[\\/:*?"<>|#[\]]/u.test(char) ? " " : char).join("").trim().slice(0, 90) || "PDF";
 }

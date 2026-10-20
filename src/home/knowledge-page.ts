@@ -124,7 +124,7 @@ export class KnowledgePageView extends ItemView {
         if (result && typeof (result as Promise<unknown>).then === "function") {
           applyAmicroButton(button, { variant: cls.includes("is-primary") ? "primary" : "secondary" });
           button.disabled = true; setAmicroButtonPending(button, true);
-          try { await result; } finally { button.disabled = false; setAmicroButtonPending(button, false); }
+          try { await Promise.resolve(result); } finally { button.disabled = false; setAmicroButtonPending(button, false); }
         }
       } catch (error) { new Notice(this.error(error)); }
     };

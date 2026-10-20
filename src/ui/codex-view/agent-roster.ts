@@ -35,7 +35,7 @@ export function renderAgentRoster(root: HTMLElement, agents: readonly AgentDefin
     else if (counts.unread) button.createSpan({ cls: "echoink-agent-badge is-unread" });
     button.onclick = () => actions.onSelect(agent.id);
   }
-  const add = taskIconButton(root, language === "en" ? "Create Agent" : "新建 Agent", "plus", actions.onCreate); add.classList.add("echoink-agent-add");
+  const add = taskIconButton(root, language === "en" ? "Create Agent" : "新建 Agent", "plus", () => actions.onCreate()); add.classList.add("echoink-agent-add");
   root.scrollLeft = scrollLeft; root.dataset.selectedAgent = selected;
   if (previousSelection !== selected) Array.from(root.querySelectorAll<HTMLButtonElement>("[data-agent-id]")).find(button => button.dataset.agentId === selected)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   if (focused) Array.from(root.querySelectorAll<HTMLButtonElement>("[data-agent-id]")).find(button => button.dataset.agentId === focused)?.focus({ preventScroll: true });

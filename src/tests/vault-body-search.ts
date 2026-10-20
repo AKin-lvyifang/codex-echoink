@@ -301,7 +301,11 @@ export async function runVaultBodySearchLinkCueTests(): Promise<void> {
     assert.deepEqual((result.details.references as typeof captured).map(item => item.linkCues), captured.map(item => item.linkCues));
     assert.equal(captured.length, cold.hits.length); assert.ok(captured.every(item => item.vaultRelativePath !== targetPath));
     const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
-    const contexts = [await runtime.retrieveChat!({ question: "COHORT_LINK_TOKEN", explicitPaths: [], includeUnrefined: false } as never), await runtime.retrieveAsk({ question: "COHORT_LINK_TOKEN", explicitPaths: [], includeUnrefined: false } as never)];
+    const contexts = [await runtime.retrieveChat!({ question: "COHORT_LINK_TOKEN", explicitPaths: [], includeUnrefined: false } as never)];
+    const ask = await runtime.retrieveAsk({ question: "COHORT_LINK_TOKEN", explicitPaths: [], includeUnrefined: false } as never);
+    assert.equal(ask.status, "no_evidence", "/ask excludes this fixture's ordinary-note candidates");
+    assert.deepEqual(ask.references, []);
+    assert.doesNotMatch(ask.providerResourceText, /notes\/[ABC]\.md|support\/Guide\.md|UNREAD_CUE_TARGET_BODY/u, "/ask cannot expose ordinary-note navigation through a no-evidence response");
     for (const context of contexts) {
       assert.deepEqual(JSON.parse(context.providerResourceText).sources.map((source: { linkCues: unknown }) => source.linkCues), context.references.map(item => item.linkCues));
       assert.doesNotMatch(context.providerResourceText, /UNREAD_CUE_TARGET_BODY|PRIVATE_CUE_BODY|DISABLED_CUE_BODY/u);

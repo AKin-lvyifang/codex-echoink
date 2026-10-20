@@ -96,7 +96,7 @@ export async function renderDiaryReading(
   blocks.forEach((block, index) => {
     const signature = candidateShapes[index];
     const unique = signature !== null && candidateShapes.filter((value) => value === signature).length === 1 && shapes.filter((value) => value === signature).length === 1;
-    const element = ordered ? rendered[index] : unique ? rendered[shapes.indexOf(signature!)] : null;
+    const element = ordered ? rendered[index] : unique ? rendered[shapes.indexOf(signature)] : null;
     block.element = element ?? null;
   });
   // Fences and loose lists may contain blank lines. Re-render adjacent source

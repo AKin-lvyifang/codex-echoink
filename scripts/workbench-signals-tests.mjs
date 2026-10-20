@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, rmdir } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,9 +6,13 @@ import { spawnSync } from "node:child_process";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const fixtureRoot = path.join(homedir(), "EchoInk-TestVaults/90-任务临时/工作台改版-20261017/.p5-signal-tests");
-await mkdir(fixtureRoot, { recursive: true });
-const directory = await mkdtemp(path.join(fixtureRoot, "run-"));
+const temporaryVaults = await realpath(path.join(homedir(), "EchoInk-TestVaults/90-任务临时"));
+const fixture = await realpath(process.env.ECHOINK_WORKBENCH_TEST_ROOT?.trim() || path.join(temporaryVaults, "工作台改版-20261017"));
+const relativeFixture = path.relative(temporaryVaults, fixture);
+if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture) || !(await stat(fixture)).isDirectory()) {
+  throw new Error("Workbench signals fixtures must use an existing directory inside EchoInk-TestVaults/90-任务临时");
+}
+const directory = await mkdtemp(path.join(fixture, ".p5-signal-tests-"));
 try {
   const target = path.join(directory, "tests.mjs");
   await esbuild.build({
@@ -21,5 +25,4 @@ try {
   if (run.status !== 0) process.exitCode = run.status ?? 1;
 } finally {
   await rm(directory, { recursive: true, force: true });
-  await rmdir(fixtureRoot).catch(error => { if (error.code !== "ENOTEMPTY" && error.code !== "ENOENT") throw error; });
 }

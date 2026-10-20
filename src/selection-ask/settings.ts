@@ -10,7 +10,8 @@ export function selectionActionNameError(name: string, others: readonly Selectio
 }
 export function normalizeSelectionAskSettings(input: unknown): SelectionAskSettings {
   const root = input && typeof input === "object" ? input as Record<string, unknown> : {};
-  const raw = Array.isArray(root.actions) ? root.actions : [];
+  const candidates: unknown[] = Array.isArray(root.actions) ? root.actions : [];
+  const raw = candidates.filter((value): value is Record<string, unknown> => value !== null && typeof value === "object");
   const defaultItem = raw.find((value) => value && value.id === "default");
   const actions: SelectionAskAction[] = [{ id: "default", name: "提问", template: typeof defaultItem?.template === "string" ? defaultItem.template : "" }];
   for (const value of raw) {

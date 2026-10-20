@@ -72,10 +72,14 @@ export class MemoryDeveloperBackups {
       // User Memory restore must not restore a stale hash for the legacy Agent
       // files that remain in place, including edits made from mobile after reset.
       const manifestPath = "shared-user/.runtime/manifest.json";
-      const live = JSON.parse(Buffer.from(current[manifestPath] ?? "", "base64").toString("utf8"));
-      const saved = JSON.parse(Buffer.from(next[manifestPath] ?? "", "base64").toString("utf8"));
-      if (saved.fixedFileHashes && /^[a-f0-9]{64}$/u.test(live.fixedFileHashes?.agent ?? "")) {
-        saved.fixedFileHashes.agent = live.fixedFileHashes.agent;
+      const live: unknown = JSON.parse(Buffer.from(current[manifestPath] ?? "", "base64").toString("utf8"));
+      const saved: unknown = JSON.parse(Buffer.from(next[manifestPath] ?? "", "base64").toString("utf8"));
+      if (!live || typeof live !== "object" || !saved || typeof saved !== "object") throw new Error("developer_memory_manifest_invalid");
+      const liveHashes = "fixedFileHashes" in live ? live.fixedFileHashes : undefined;
+      const savedHashes = "fixedFileHashes" in saved ? saved.fixedFileHashes : undefined;
+      const agentHash = liveHashes && typeof liveHashes === "object" && "agent" in liveHashes ? liveHashes.agent : undefined;
+      if (savedHashes && typeof savedHashes === "object" && typeof agentHash === "string" && /^[a-f0-9]{64}$/u.test(agentHash)) {
+        (savedHashes as Record<string, unknown>).agent = agentHash;
         next[manifestPath] = Buffer.from(`${JSON.stringify(saved)}\n`).toString("base64");
       }
     }

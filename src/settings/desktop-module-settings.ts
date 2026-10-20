@@ -39,7 +39,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
     group.addClass("echoink-module-group");
     if (pro) {
       const benefits = createOriginButton(group.querySelector<HTMLElement>(".echoink-settings-section-header")!, { text: english ? "View PRO benefits" : "查看 PRO 权益", cls: "text-button is-tertiary" });
-      benefits.onclick = options.onProBenefits;
+      benefits.onclick = () => options.onProBenefits();
     }
     for (const module of modules.filter(item => Boolean(item.pro) === pro)) {
       const card = createSettingsSection(group, { surface: "group" });
