@@ -217,7 +217,11 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.registerView(VIEW_TYPE_ECHOINK_HOME, leaf => new EchoInkMobileHomeView(leaf, this.services));
   }
   async open(): Promise<void> {
-    if (!Platform.isTablet) { await this.iphoneNavigation!.open(); return; }
+    if (!Platform.isTablet) {
+      const leaf = await this.iphoneNavigation!.open();
+      if (leaf.view instanceof EchoInkIPhoneView) await leaf.view.whenReady();
+      return;
+    }
     if (Platform.isTablet) await this.navigation.openHome();
     await this.navigation.open();
   }
@@ -279,6 +283,7 @@ export default class EchoInkMobilePlugin extends Plugin {
 
 export class EchoInkIPhoneView extends ItemView {
   private ui?: IPhoneWorkbench;
+  private mounting?: Promise<void>;
   private markdown = new Component();
   constructor(leaf: WorkspaceLeaf, private readonly plugin: EchoInkMobilePlugin) { super(leaf); }
   getViewType(): string { return IPHONE_SHELL_VIEW; }
@@ -289,7 +294,8 @@ export class EchoInkIPhoneView extends ItemView {
     this.contentEl.dataset.appearance = this.plugin.settings.mobileUi.appearance;
     this.contentEl.classList.toggle("em-large-text", this.plugin.settings.mobileUi.largeText);
   }
-  async onOpen(): Promise<void> {
+  onOpen(): Promise<void> {
+    if (this.mounting) return this.mounting;
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     this.ui = new IPhoneWorkbench(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
@@ -302,20 +308,28 @@ export class EchoInkIPhoneView extends ItemView {
         if (!(file instanceof TFile)) throw new Error("笔记不存在。");
         await this.plugin.iphoneNavigation!.openNote(file);
       },
-      openLegacy: page => this.showPage(page), openModule: module => this.ui!.openModule(module),
+      openLegacy: page => this.showPage(page), openModule: module => this.openModule(module),
       renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? "", this.markdown); }
     });
-    await this.ui.mount();
+    return this.mounting = this.ui.mount();
   }
-  async openModule(module: AgentModuleId): Promise<void> { await this.ui?.openModule(module); }
-  async navigate(route: IPhoneRoute): Promise<void> { await this.ui?.navigate(route); }
-  async showPage(page: MobileSettingsRoute): Promise<void> { await this.ui?.openLegacy(page); }
-  async onClose(): Promise<void> { this.ui?.dispose(); this.ui = undefined; this.removeChild(this.markdown); await this.plugin.store.flush(); }
+  async whenReady(): Promise<void> { await this.mounting; }
+  private async ready(): Promise<IPhoneWorkbench | undefined> {
+    const ui = this.ui; await this.whenReady(); return this.ui === ui ? ui : undefined;
+  }
+  async openModule(module: AgentModuleId): Promise<void> { await (await this.ready())?.openModule(module); }
+  async navigate(route: IPhoneRoute): Promise<void> { await (await this.ready())?.navigate(route); }
+  async showPage(page: MobileSettingsRoute): Promise<void> { await (await this.ready())?.openLegacy(page); }
+  async onClose(): Promise<void> {
+    const ui = this.ui; this.ui = undefined; this.mounting = undefined; ui?.dispose();
+    this.removeChild(this.markdown); await this.plugin.store.flush();
+  }
 }
 
 /** A native central tab or native right leaf; only data and services are shared. */
 export class EchoInkIPadView extends ItemView {
   private ui?: IPadWorkbench | IPadAgentPane;
+  private mounting?: Promise<void>;
   private markdown = new Component();
   constructor(leaf: WorkspaceLeaf, private readonly plugin: EchoInkMobilePlugin, private readonly area: "home" | "agent") { super(leaf); }
   getViewType(): string { return this.area === "home" ? IPAD_SHELL_HOME_VIEW : IPAD_SHELL_AGENT_VIEW; }
@@ -328,7 +342,8 @@ export class EchoInkIPadView extends ItemView {
       root.classList.toggle("em-large-text", this.plugin.settings.mobileUi.largeText);
     }
   }
-  async onOpen(): Promise<void> {
+  onOpen(): Promise<void> {
+    if (this.mounting) return this.mounting;
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     const host: IPadWorkbenchHost = {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
@@ -350,17 +365,25 @@ export class EchoInkIPadView extends ItemView {
       renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? "", this.markdown); }
     };
     this.ui = this.area === "home" ? new IPadWorkbench(this.contentEl, host) : new IPadAgentPane(this.contentEl, host);
-    await this.ui.mount(); this.refreshSettings();
+    const ui = this.ui;
+    return this.mounting = ui.mount().then(() => { if (this.ui === ui) this.refreshSettings(); });
   }
-  async navigate(route: IPadAgentRoute): Promise<void> { if (this.ui instanceof IPadAgentPane) await this.ui.navigate(route); }
-  async resumeTask(taskId: string): Promise<void> { if (this.ui instanceof IPadAgentPane) await this.ui.resumeTask(taskId); }
-  async openModule(module: AgentModuleId): Promise<void> { if (this.ui instanceof IPadWorkbench) await this.ui.openModule(module); }
-  async openSearch(): Promise<void> { if (this.ui instanceof IPadWorkbench) await this.ui.openSearch(); }
-  async onClose(): Promise<void> { this.ui?.dispose(); this.ui = undefined; this.removeChild(this.markdown); await this.plugin.store.flush(); }
+  private async ready(): Promise<IPadWorkbench | IPadAgentPane | undefined> {
+    const ui = this.ui; await this.mounting; return this.ui === ui ? ui : undefined;
+  }
+  async navigate(route: IPadAgentRoute): Promise<void> { const ui = await this.ready(); if (ui instanceof IPadAgentPane) await ui.navigate(route); }
+  async resumeTask(taskId: string): Promise<void> { const ui = await this.ready(); if (ui instanceof IPadAgentPane) await ui.resumeTask(taskId); }
+  async openModule(module: AgentModuleId): Promise<void> { const ui = await this.ready(); if (ui instanceof IPadWorkbench) await ui.openModule(module); }
+  async openSearch(): Promise<void> { const ui = await this.ready(); if (ui instanceof IPadWorkbench) await ui.openSearch(); }
+  async onClose(): Promise<void> {
+    const ui = this.ui; this.ui = undefined; this.mounting = undefined; ui?.dispose();
+    this.removeChild(this.markdown); await this.plugin.store.flush();
+  }
 }
 
 export class EchoInkIPadSettingsView extends ItemView {
   private ui?: IPadSettings;
+  private mounting?: Promise<void>;
   private markdown = new Component();
   constructor(leaf: WorkspaceLeaf, private readonly plugin: EchoInkMobilePlugin) { super(leaf); }
   getViewType(): string { return IPAD_SHELL_SETTINGS_VIEW; }
@@ -373,7 +396,8 @@ export class EchoInkIPadSettingsView extends ItemView {
       root.classList.toggle("em-large-text", this.plugin.settings.mobileUi.largeText);
     }
   }
-  async onOpen(): Promise<void> {
+  onOpen(): Promise<void> {
+    if (this.mounting) return this.mounting;
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     this.ui = new IPadSettings(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
@@ -392,10 +416,16 @@ export class EchoInkIPadSettingsView extends ItemView {
       },
       renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? "", this.markdown); }
     });
-    await this.ui.mount(); this.refreshSettings();
+    const ui = this.ui;
+    return this.mounting = ui.mount().then(() => { if (this.ui === ui) this.refreshSettings(); });
   }
-  async openCategory(category?: string): Promise<void> { await this.ui?.open(category); }
-  async onClose(): Promise<void> { this.ui?.dispose(); this.ui = undefined; this.removeChild(this.markdown); await this.plugin.store.flush(); }
+  async openCategory(category?: string): Promise<void> {
+    const ui = this.ui; await this.mounting; if (this.ui === ui) await ui?.open(category);
+  }
+  async onClose(): Promise<void> {
+    const ui = this.ui; this.ui = undefined; this.mounting = undefined; ui?.dispose();
+    this.removeChild(this.markdown); await this.plugin.store.flush();
+  }
 }
 
 class EchoInkMobileFinanceView extends LifestyleView {

@@ -725,6 +725,115 @@ await test("M7 formal iPad entry keeps central/settings/note independent from th
   } finally { await fixture.dispose(); await services.dispose(); home.remove(); central.remove(); platform.isTablet = previousTablet; }
 });
 
+async function nativeMountFixture(tablet) {
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+  const platform = obsidian.exports.Platform, previousTablet = platform.isTablet; platform.isTablet = tablet;
+  const containers = Object.fromEntries(["chat", "home", "settings"].map(id => [id, dom.window.document.body.appendChild(dom.window.document.createElement("div"))]));
+  for (const element of Object.values(containers)) Object.defineProperty(element, "clientWidth", { value: tablet ? 900 : 390, configurable: true });
+  const plugin = new EchoInkMobilePlugin(state.app, { id: "codex-echoink", version: "initial-mount fixture" });
+  Object.assign(plugin, { store: state.store, runtime: state.runtime, settings: state.config }); plugin.saveData = async () => {};
+  const services = new MobileServices({ ...plugin, app: state.app, settings: state.config, store: state.store, runtime: state.runtime,
+    navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) },
+    registerEvent() {}, saveSettings: () => plugin.saveSettings(), showPage: page => plugin.showPage(page) }, "plugin/mobile"); plugin.services = services;
+  await services.initialize();
+  const fixture = mobileWorkspaceFixture(plugin, containers, tablet);
+  return { ...state, ...containers, plugin, services, fixture, async close() {
+    await fixture.dispose(); await services.dispose(); state.runtime.dispose();
+    for (const element of Object.values(containers)) element.remove(); platform.isTablet = previousTablet;
+  } };
+}
+function mountGate() { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; }
+
+await test("native iPad first category waits for one initial mount and preserves the independent Agent pane", async () => {
+  const f = await nativeMountFixture(true), gate = mountGate();
+  await f.plugin.openIPadAgent({ kind: "agent", agentId: "sol" });
+  const input = f.chat.querySelector("textarea"); input.value = "右栏草稿保持原节点";
+  const snapshot = f.services.agents.snapshot.bind(f.services.agents); let mounts = 0;
+  f.services.agents.snapshot = async () => { mounts++; await gate.promise; return snapshot(); };
+  const leaf = f.app.workspace.getLeaf("tab"); await leaf.setViewState({ type: "echoink-ipad-settings-shell" });
+  const ui = leaf.view.ui, open = ui.open.bind(ui), categories = [];
+  ui.open = async category => { categories.push(category); return open(category); };
+  const attempted = mountGate(), openCategory = leaf.view.openCategory.bind(leaf.view);
+  leaf.view.openCategory = category => { attempted.release(); return openCategory(category); };
+  try {
+    const repeated = leaf.view.onOpen(), requested = f.plugin.openIPadSettings("mods");
+    await attempted.promise;
+    assert.equal(mounts, 1); assert.deepEqual(categories, [], "the category cannot enter IPadSettings.open before mount completes");
+    gate.release(); await Promise.all([leaf.opening, repeated, requested]);
+    assert.equal(mounts, 1); assert.deepEqual(categories, ["mods"]); assert.equal(ui.shell.activeCategoryId, "mods");
+    assert.equal(f.chat.querySelector("textarea"), input); assert.equal(input.value, "右栏草稿保持原节点");
+    assert.equal(leaf.loads, 1, "the actual plugin category entry also loads the native leaf before navigating");
+  } finally { gate.release(); f.services.agents.snapshot = snapshot; await f.close(); }
+});
+
+await test("native iPad close invalidates a pending initial category instead of reviving its settings view", async () => {
+  const f = await nativeMountFixture(true), gate = mountGate(), snapshot = f.services.agents.snapshot.bind(f.services.agents);
+  f.services.agents.snapshot = async () => { await gate.promise; return snapshot(); };
+  const leaf = f.app.workspace.getLeaf("tab"); await leaf.setViewState({ type: "echoink-ipad-settings-shell" });
+  const ui = leaf.view.ui; let opens = 0; ui.open = async () => { opens++; };
+  try {
+    const requested = leaf.view.openCategory("mods"); await leaf.detach(); gate.release();
+    await Promise.all([leaf.opening, requested]);
+    assert.equal(opens, 0); assert.equal(leaf.view.ui, undefined); assert.equal(f.settings.childElementCount, 0);
+  } finally { gate.release(); f.services.agents.snapshot = snapshot; await f.close(); }
+});
+
+await test("native iPhone first explicit route waits for saved-task restoration and its first model click remains open", async () => {
+  const f = await nativeMountFixture(false), gate = mountGate(), entered = mountGate();
+  await f.store.patchSession(f.store.session.id, { draft: "冷恢复中的已有任务草稿" });
+  const update = f.store.update.bind(f.store); let held = false;
+  f.store.update = async change => { if (!held) { held = true; entered.release(); await gate.promise; } return update(change); };
+  const leaf = f.app.workspace.getLeaf("tab"); await leaf.setViewState({ type: "echoink-iphone-shell" });
+  try {
+    await entered.promise;
+    const ui = leaf.view.ui, navigate = ui.navigate.bind(ui), routes = [];
+    ui.navigate = async (...args) => { routes.push(args[0]); return navigate(...args); };
+    const attempted = mountGate(), viewNavigate = leaf.view.navigate.bind(leaf.view);
+    leaf.view.navigate = route => { attempted.release(); return viewNavigate(route); };
+    const requested = f.plugin.openIPhoneRoute({ kind: "agent", agentId: "sol" });
+    await attempted.promise;
+    assert.deepEqual(routes, [], "explicit navigation waits outside the initial restoration sequence");
+    gate.release(); await Promise.all([leaf.opening, requested]);
+    assert.equal(ui.shell.activePageId, "iphone-agent-sol");
+    f.chat.querySelector(".ip-composer-model").click(); await Promise.resolve();
+    assert.ok(f.chat.querySelector('[role="dialog"]'), "the first model panel survives completed initial navigation");
+    await Promise.resolve(); assert.ok(f.chat.querySelector('[role="dialog"]'));
+  } finally { gate.release(); f.store.update = update; await f.close(); }
+});
+
+await test("native iPad Agent navigation and resume wait for initial mount while the central workbench stays intact", async () => {
+  const f = await nativeMountFixture(true), gate = mountGate();
+  const home = await f.plugin.ipadNavigation.openHome(); await home.opening; const content = f.home.firstElementChild;
+  const snapshot = f.services.agents.snapshot.bind(f.services.agents); let mounts = 0;
+  f.services.agents.snapshot = async () => { mounts++; await gate.promise; return snapshot(); };
+  const leaf = f.app.workspace.getRightLeaf(false); await leaf.setViewState({ type: "echoink-ipad-agent-shell" });
+  const ui = leaf.view.ui, navigate = ui.navigate.bind(ui), calls = [];
+  ui.navigate = async route => { calls.push("navigate"); return navigate(route); };
+  ui.resumeTask = async () => { calls.push("resume"); };
+  try {
+    const repeated = leaf.view.onOpen(), requested = leaf.view.navigate({ kind: "agent", agentId: "sol" }), resumed = leaf.view.resumeTask("fixture-task");
+    assert.equal(mounts, 1); assert.deepEqual(calls, []);
+    gate.release(); await Promise.all([leaf.opening, repeated, requested, resumed]);
+    assert.deepEqual(calls, ["navigate", "resume"]); assert.equal(mounts, 1);
+    assert.equal(f.home.firstElementChild, content); assert.equal(ui.shell.activePageId, "ipad-agent-sol");
+  } finally { gate.release(); f.services.agents.snapshot = snapshot; await f.close(); }
+});
+
+await test("native iPad workbench module and search requests wait for its initial mount", async () => {
+  const f = await nativeMountFixture(true), gate = mountGate();
+  const first = await f.plugin.ipadNavigation.openHome(); await first.opening;
+  const prototype = Object.getPrototypeOf(first.view.ui), mount = prototype.mount; await first.detach();
+  let mounts = 0; prototype.mount = async function () { mounts++; await gate.promise; return mount.call(this); };
+  const leaf = f.app.workspace.getLeaf("tab"); await leaf.setViewState({ type: "echoink-ipad-workbench-shell" });
+  const ui = leaf.view.ui, calls = []; ui.openModule = async module => { calls.push(module); }; ui.openSearch = async () => { calls.push("search"); };
+  try {
+    const repeated = leaf.view.onOpen(), module = leaf.view.openModule("todos"), search = leaf.view.openSearch();
+    assert.equal(mounts, 1); assert.deepEqual(calls, []);
+    gate.release(); await Promise.all([leaf.opening, repeated, module, search]);
+    assert.deepEqual(calls, ["todos", "search"]); assert.equal(mounts, 1); assert.equal(ui.shell.activePageId, "ipad-home");
+  } finally { gate.release(); prototype.mount = mount; await f.close(); }
+});
+
 await test("iPad retained default detail synchronizes Header without replacing focus or body", async () => {
   const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
   const root = dom.window.document.querySelector("#app"); let width = 800;

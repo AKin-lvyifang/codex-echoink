@@ -16,9 +16,15 @@ export function mobileWorkspaceFixture(plugin: EchoInkMobilePlugin, containers: 
         const element = state.type === MOBILE_SETTINGS_VIEW || state.type === IPAD_SHELL_SETTINGS_VIEW ? containers.settings : state.type === VIEW_TYPE_ECHOINK_HOME || state.type === IPAD_SHELL_HOME_VIEW || state.type === LIFE_VIEW_TYPES.finance ? containers.home : containers.chat;
         leaf.containerEl = leaf.contentEl = element;
         leaf.view = factories.get(state.type)?.(leaf) ?? { getViewType: () => state.type };
-        await leaf.view.onOpen?.();
+        // Native setViewState can finish before the async ItemView.onOpen body.
+        leaf.opening = Promise.resolve(leaf.view.onOpen?.());
+        void leaf.opening.catch(() => {});
       },
       restoreDeferred(type: string) { leaf.deferredType = type; leaf.view = { getViewType: () => type }; },
+      async loadIfDeferred() {
+        leaf.loads = (leaf.loads ?? 0) + 1;
+        if (leaf.deferredType) { const type = leaf.deferredType; delete leaf.deferredType; await leaf.setViewState({ type }); }
+      },
       async openFile(file: { path: string }) {
         leaf.file = file; leaf.view = { getViewType: () => "markdown" };
         const element = containers.home.ownerDocument.createElement("article");
@@ -35,7 +41,7 @@ export function mobileWorkspaceFixture(plugin: EchoInkMobilePlugin, containers: 
     getLeaf: () => makeLeaf(rootSplit), getRightLeaf: () => makeLeaf(rightSplit),
     setActiveLeaf: (leaf: any) => { void workspace.revealLeaf(leaf); },
     async revealLeaf(leaf: any) {
-      if (leaf.deferredType) { const type = leaf.deferredType; delete leaf.deferredType; await Promise.resolve(); await leaf.setViewState({ type }); }
+      if (leaf.deferredType) await leaf.loadIfDeferred();
       active = leaf;
       if (leaf.getRoot() === rootSplit) {
         for (const other of leaves) if (other.getRoot() === rootSplit && other.containerEl !== leaf.containerEl) other.containerEl.hidden = true;

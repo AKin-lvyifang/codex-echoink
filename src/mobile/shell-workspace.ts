@@ -22,7 +22,11 @@ class ShellLeafQueue {
   }
 
   protected async reveal(leaf: WorkspaceLeaf): Promise<WorkspaceLeaf> {
-    if (!this.disposed) await this.workspace.revealLeaf(leaf);
+    if (this.disposed) throw new Error("页面已经关闭。");
+    await leaf.loadIfDeferred();
+    if (this.disposed) throw new Error("页面已经关闭。");
+    await this.workspace.revealLeaf(leaf);
+    if (this.disposed) throw new Error("页面已经关闭。");
     return leaf;
   }
 

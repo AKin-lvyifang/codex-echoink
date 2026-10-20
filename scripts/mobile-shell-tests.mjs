@@ -197,6 +197,7 @@ function workspace() {
   const create = root => {
     let state = { type: "empty" }; const leaf = { getRoot: () => root, view: { getViewType: () => state.type },
       getViewState: () => state, async setViewState(value) { await Promise.resolve(); state = value; },
+      async loadIfDeferred() { leaf.loads = (leaf.loads ?? 0) + 1; await leaf.loading?.(); leaf.loaded = true; },
       async openFile(file) { state = { type: "markdown", state: { file: file.path } }; } };
     leaves.push(leaf); return leaf;
   };
@@ -220,6 +221,40 @@ await test("iPad missing native sidebar fails explicitly; phone opening stays ce
   await assert.rejects(new api.IPadShellWorkspace(host).openAgent(), /原生右侧栏/); assert.equal(host.leaves.length, 0);
   const phone = new api.IPhoneShellWorkspace(host); const [a, b] = await Promise.all([phone.open(), phone.open()]);
   assert.equal(a, b); assert.equal(a.getRoot(), host.rootSplit);
+});
+for (const target of ["phone", "settings", "agent"]) {
+  for (const restored of [false, true]) await test(`${target} workspace awaits deferred leaf loading before returning or revealing: ${restored ? "restored" : "new"}`, async () => {
+    const host = workspace(), navigation = target === "phone" ? new api.IPhoneShellWorkspace(host) : new api.IPadShellWorkspace(host);
+    let release, entered;
+    const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+    const create = host.create;
+    let pending;
+    const prepare = root => {
+      const leaf = create(root); leaf.loading = () => { entered(leaf); return gate; }; return leaf;
+    };
+    if (restored) {
+      const leaf = prepare(target === "agent" ? host.rightSplit : host.rootSplit);
+      await leaf.setViewState({ type: target === "phone" ? api.IPHONE_SHELL_VIEW : target === "settings" ? api.IPAD_SHELL_SETTINGS_VIEW : api.IPAD_SHELL_AGENT_VIEW });
+    } else {
+      host.getLeaf = () => prepare(host.rootSplit); host.getRightLeaf = () => prepare(host.rightSplit);
+    }
+    try {
+      pending = target === "phone" ? navigation.open() : target === "settings" ? navigation.openSettings() : navigation.openAgent();
+      const first = await Promise.race([started.then(leaf => ({ leaf })), pending.then(() => ({ returned: true }))]);
+      assert.ok(first.leaf, "opening must await the supported host loading API");
+      assert.equal(first.leaf.reveals, undefined); assert.equal(first.leaf.loaded, undefined);
+      release(); const leaf = await pending; assert.equal(leaf, first.leaf); assert.equal(leaf.loaded, true); assert.equal(leaf.loads, 1); assert.equal(leaf.reveals, 1);
+    } finally { release(); await pending?.catch(() => {}); navigation.dispose(); }
+  });
+}
+await test("disposing workspace during deferred loading never reveals its late leaf", async () => {
+  const host = workspace(), navigation = new api.IPadShellWorkspace(host), leaf = host.create(host.rootSplit);
+  await leaf.setViewState({ type: api.IPAD_SHELL_SETTINGS_VIEW });
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  leaf.loading = () => { entered(); return gate; };
+  const opening = navigation.openSettings(); await started; navigation.dispose(); release();
+  await assert.rejects(opening, /页面已经关闭/u); assert.equal(leaf.reveals, undefined);
 });
 
 await test("shells stay isolated and M6 production includes independent iPhone and iPad pages", async () => {
