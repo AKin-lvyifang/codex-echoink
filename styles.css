@@ -29784,6 +29784,7 @@ body[data-echoink-theme] .echoink-ipad {
 .echoink-ipad.pd-settings .pd-settings-field-label { font-size: .88em; font-weight: 500; }
 .echoink-ipad.pd-settings .pd-settings-input { width: 100%; min-width: 0; min-height: 44px; height: auto; padding: 10px; border: 1px solid var(--pd-settings-line); border-radius: 9px; background: var(--background-primary); color: var(--text-normal); font: inherit; font-size: max(16px, 1em); box-shadow: none; }
 .echoink-ipad.pd-settings .pd-settings-input:focus { outline: none; border-color: var(--pd-settings-line); box-shadow: none; }
+.echoink-ipad.pd-settings .pd-settings-report .pd-settings-row > select { width: 55%; flex: 0 1 55%; }
 .echoink-ipad.pd-settings input.pd-settings-switch { appearance: none; flex: 0 0 45px; position: relative; width: 45px; height: 27px; min-height: 27px; margin: 8.5px 0; border: 0; border-radius: 16px; background: var(--background-modifier-border-hover); cursor: pointer; box-shadow: none; outline: none; }
 .echoink-ipad.pd-settings input.pd-settings-switch::before { content: ""; position: absolute; top: 3px; left: 3px; width: 21px; height: 21px; border-radius: 50%; background: var(--text-on-accent); transition: transform .15s; }
 .echoink-ipad.pd-settings input.pd-settings-switch::after { content: none; }

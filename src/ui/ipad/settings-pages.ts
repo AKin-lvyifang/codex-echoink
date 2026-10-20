@@ -211,6 +211,7 @@ export class IPadSettings {
   }
   private reportConfiguration(kind: "agent" | "knowledge"): MobileShellPage {
     const ctx = this.context, english = this.host.settings().settingsLanguage === "en", content = settingsContent(ctx);
+    content.classList.add("pd-settings-report");
     const original = this.host.settings().mobileUi.reports[kind], draft = { period: original.period, schedule: original.schedule }, baseline = JSON.stringify(draft);
     const group = settingsGroup(ctx, content, english ? "Report configuration" : "周报配置"), error = settingsError(ctx), leaveArea = el(ctx.document, "div", ""), footer = el(ctx.document, "div", "pd-settings-actions");
     const periods = [["7d", english ? "Last 7 days" : "最近 7 天"], ["last-week", english ? "Previous week" : "上一周"], ["30d", english ? "Last 30 days" : "最近 30 天"]] as const;
