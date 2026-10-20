@@ -1,3 +1,4 @@
+import { projectGenerationEntries, generationStageMessage } from "../../generation/projection";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { selectionAnnotationsFromPiContext } from "./pi-selection-annotations";
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
@@ -433,7 +434,7 @@ export class PiChatUiProjector {
       activeLeafId: input.activeLeafId,
       productRunId: input.productRunId,
       runState,
-      messages: positionReasoningMessages(dedupeMessages(messages)),
+      messages: positionReasoningMessages(dedupeMessages(projectGenerationEntries(messages, input.entries))),
       diagnostics,
       queuedSteering: [...(input.queuedSteering ?? [])],
       queuedFollowUp: [...(input.queuedFollowUp ?? [])],
@@ -502,6 +503,12 @@ export class PiChatUiProjector {
       case "memory_recall_progress":
         this.projectMemoryRecallProgress(view, scope, event);
         break;
+      case "generation_progress": {
+        const message = generationStageMessage({ productRunId: event.productRunId, requestId: event.requestId, stage: event.stage, status: event.status, at: event.occurredAt });
+        const index = view.messages.findIndex(item => item.id === message.id);
+        if (index < 0) view.messages.push(message); else view.messages[index] = { ...message, createdAt: view.messages[index]!.createdAt };
+        break;
+      }
       case "message_start":
         if (!runtimeEventIsPrivate(event) && event.role !== "tool") {
           this.projectRuntimeMessageStart(view, scope, event);

@@ -392,6 +392,7 @@ export interface PiKnowledgeMaintenanceToolPort {
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface PiChatSubmitRequest {
+  generationRequest?: Readonly<import("../../generation/types").GenerationRequest>;
   /** Locally selected English generation source; never contains source body. */
   englishDiarySourcePath?: string;
   pdfTaskRequest?: Readonly<import("../../pdf-reading/types").PdfTaskRequest>;
@@ -556,6 +557,12 @@ export type PiChatRuntimeEvent =
       stage: "loading" | "catalog" | "matching" | "budgeting" | "assembling";
       elapsedMs: number;
       recall?: PiMemoryRecallObservation;
+    })
+  | (PiChatRuntimeEventBase & {
+      type: "generation_progress";
+      requestId?: string;
+      stage: import("../../generation/runtime").GenerationStage;
+      status: "running" | "completed" | "failed" | "cancelled";
     })
   | (PiChatRuntimeEventBase & {
       type: "message_start";

@@ -98,7 +98,8 @@ export type AgentTurnProjectionItem =
   | { kind: "completedProcess"; index: number; turn: CompletedAgentTurn };
 
 export function isAgentProcessItemType(itemType?: string): boolean {
-  return itemType === "thinking" ||
+  return itemType === "generationProgress" ||
+    itemType === "thinking" ||
     itemType === "reasoning" ||
     itemType === "commandExecution" ||
     itemType === "fileChange" ||
@@ -542,6 +543,7 @@ function nodeForReasoningActivity(
 }
 
 function nodeKindForMessage(message: ChatMessage): EchoInkTurnProcessNodeKind | null {
+  if (message.itemType === "generationProgress") return message.processKind === "view" ? "retrieval" : "process";
   if (message.interactionRecord || message.itemType === "interactionRecord") return "interaction";
   if (message.taskPlan || message.itemType === "taskPlan" || message.itemType === "plan") return "task";
   if (message.itemType === "fileChange") return "diff";

@@ -187,6 +187,8 @@ export interface ChatMessageApprovalSnapshot {
 import type { SelectionAnnotation } from "../types/selection-annotations";
 
 export interface ChatMessage {
+  generationRequest?: import("../generation/types").GenerationRequest;
+  generationResult?: import("../generation/types").GenerationResult;
   id: string;
   role: "user" | "assistant" | "system" | "tool";
   text: string;

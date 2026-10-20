@@ -1,3 +1,8 @@
+import { TFolder } from "obsidian";
+import { createGenerationRuntimePort } from "../../plugin/generation-production";
+import type { GenerationRuntimePort } from "../../generation/runtime";
+import type { GenerationProductionOptions } from "../../plugin/generation-production";
+import { createGenerationRequest, generationRequestSummary } from "../../generation/request";
 import { annotationFixture } from "../selection-annotations";
 import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
@@ -9,6 +14,9 @@ import {
   appendFile,
   copyFile,
   mkdtemp,
+  mkdir,
+  writeFile,
+  unlink,
   readFile,
   readdir,
   realpath,
@@ -50,6 +58,7 @@ import {
 } from "../../harness/pi-native/file-store-utils";
 import {
   PiNativeConversationRuntime,
+  readDurablePiConversationProjection,
   PiNativeConversationRuntimeError,
   type PiNativeAgentSessionFactoryInput,
   type PiNativeConversationRuntimeOptions,
@@ -5613,7 +5622,7 @@ async function withFixture(
   assertion: (fixture: RuntimeFixture) => Promise<void>,
   runtimeOptions: Pick<
     PiNativeConversationRuntimeOptions,
-    "hasPendingProductWork" | "knowledge" | "now" | "recordDreamExperience" | "skills"
+    "hasPendingProductWork" | "knowledge" | "now" | "recordDreamExperience" | "skills" | "generation"
   > = {}
 ): Promise<void> {
   const root = await realpath(await mkdtemp(
@@ -6405,4 +6414,78 @@ export async function runWikiStructurePreflightTests(): Promise<void> {
     await rejection;
   }, { knowledge });
   console.log("Production runtime structural preflight order, read-only, advice and cancellation: PASS");
+}
+
+/** Focused generation test using the same durable runtime fixture as ordinary chat. */
+export async function runGenerationRuntimeTests(): Promise<void> {
+  for (const writeState of ["verified", "unconfirmed"] as const) {
+    let retrieved = 0, selectedSkill = 0, wrote = 0;
+    await withFixture([`generation-${writeState}`], async fixture => {
+      fixture.configureFactoryTools({ registered: ["note_read", "note_create", "memory_read"], defaults: ["note_read", "note_create", "memory_read"], planAllowed: ["note_read"], externalReadAllowed: [] });
+      const request = createGenerationRequest({ id: "brief", name: "简报", description: "重点", instructions: "生成简报", outputKind: "markdown" }, ["资料/原文.md"], "输出");
+      await fixture.runtime.createConversation({ conversationId: `generation-${writeState}`, title: "生成", cwd: fixture.root });
+      await fixture.runtime.activateConversation(`generation-${writeState}`);
+      const compactionChoices: boolean[] = [];
+      Object.assign(fixture.latestSession(), { autoCompactionEnabled: true, setAutoCompactionEnabled: (enabled: boolean) => { compactionChoices.push(enabled); } });
+      fixture.latestSession().enableRuntimeMessageTimestampDrift();
+      const handle = await fixture.submit({ conversationId: `generation-${writeState}`, text: generationRequestSummary(request), generationRequest: request, memoryMode: "normal", submittedAt: 1 });
+      const session = fixture.latestSession(); assert.deepEqual(session.activeToolSelections.at(-1), []); assert.deepEqual(compactionChoices, [false]);
+      const initialProjection = await fixture.runtime.readProjection(handle.conversationId);
+      assert.equal(initialProjection.messages.find(message => message.role === "user")?.generationRequest?.id, request.id, JSON.stringify(initialProjection.messages.map(message => ({ id: message.id, role: message.role, runId: message.runId, generation: message.generationRequest?.id }))));
+      const events: PiChatRuntimeEvent[] = [];
+      const subscription = fixture.runtime.subscribeProductRun(handle.productRunId, event => { events.push(event); });
+      session.finishSuccessful('{"title":"MODEL_JSON_MUST_STAY_PRIVATE","markdown":"正文"}');
+      const settled = await handle.result;
+      assert.equal(settled.terminalState, writeState === "verified" ? "completed" : "failed"); assert.equal(settled.memoryMode, "no_memory"); assert.deepEqual(compactionChoices, [false, true]);
+      assert.equal(retrieved, 0); assert.equal(selectedSkill, 0); assert.equal(wrote, 1);
+      assert.equal(events.some(event => (event.type === "message_update" && event.textDelta.includes("MODEL_JSON")) || (event.type === "message_end" && event.text.includes("MODEL_JSON"))), false);
+      let projection = await fixture.runtime.readProjection(handle.conversationId);
+      assert.equal(projection.messages.some(message => message.text.includes("MODEL_JSON_MUST_STAY_PRIVATE")), false);
+      assert.equal(projection.messages.find(message => message.generationResult)?.generationResult?.writeState, writeState);
+      await fixture.runtime.shutdown();
+      projection = await readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId: handle.conversationId, resolveConversationCwd: () => fixture.root });
+      assert.equal(projection.messages.find(message => message.generationResult)?.generationResult?.writeState, writeState);
+      assert.equal(projection.messages.some(message => message.generationRequest?.template.instructions === "生成简报"), true);
+      subscription.unsubscribe();
+    }, {
+      knowledge: { retrieveChat: async () => { retrieved++; throw new Error("generation must skip retrieval"); } } as never,
+      skills: { selectForTask: async () => { selectedSkill++; return null; }, resolveById: async () => { throw new Error("generation must skip skills"); }, recordUse: async () => undefined, reviewCompletedTask: async () => undefined },
+      generation: {
+        prepare: async () => ({ sources: [{ path: "资料/原文.md", content: "全文", bytes: 6 }], totalBytes: 6, readFailures: [] }),
+        finish: async (request, _assessment, text, _identity, stage) => { if (text === null) return { requestId: request.id, outputKind: "markdown", writeState: "not_written", readFailures: [] }; assert.match(text, /MODEL_JSON/u); await stage("saving"); wrote++; return { requestId: request.id, outputKind: "markdown", writeState, path: "输出/报告/主题 · 简报.md", readFailures: [] }; }
+      }
+    });
+  }
+  for (const failure of ["source_deleted", "read_denied", "outputs_rebound", "model_budget"] as const) {
+    let port: GenerationRuntimePort, promptCalls = 0, providerCalls = 0;
+    await withFixture([`preflight-${failure}`], async fixture => {
+      await mkdir(path.join(fixture.root, "资料")); await mkdir(path.join(fixture.root, "输出"));
+      await writeFile(path.join(fixture.root, "资料/原文.md"), "本轮正文".repeat(100));
+      if (failure === "source_deleted") await unlink(path.join(fixture.root, "资料/原文.md"));
+      const options: GenerationProductionOptions = { app: { vault: { getAbstractFileByPath: () => new TFolder() } } as never,
+        vaultRoot: fixture.root, bindings: () => ({ roles: { outputs: { enabled: true, writePath: failure === "outputs_rebound" ? "别处" : "输出", readPaths: [failure === "outputs_rebound" ? "别处" : "输出"] } } }) as never,
+        assertRead: async () => { if (failure === "read_denied") throw new Error("读取准入拒绝"); }, assertWrite: async () => undefined,
+        authorization: () => { throw new Error("no approval before preflight"); }, domain: {} as never, writeExecution: {} as never };
+      port = createGenerationRuntimePort(options);
+      const id = `preflight-${failure}`;
+      await fixture.runtime.createConversation({ conversationId: id, title: "生成", cwd: fixture.root });
+      await fixture.runtime.activateConversation(id);
+      const session = fixture.latestSession(), originalPrompt = session.prompt.bind(session);
+      if (failure === "model_budget") { session.model.contextWindow = 512; session.model.maxTokens = 128; }
+      // Model a host that swallows before_agent_start errors and proceeds to
+      // Provider. A hard runtime preflight must never enter this prompt path.
+      session.prompt = async (...args) => { promptCalls++; try { throw new Error("extension budget error swallowed by runner"); } catch { /* real runner behavior */ } providerCalls++; return originalPrompt(...args); };
+      const request = createGenerationRequest({ id: "brief", name: "简报", description: "重点", instructions: "生成简报", outputKind: "markdown" }, ["资料/原文.md"], "输出");
+      await assert.rejects(fixture.submit({ conversationId: id, text: generationRequestSummary(request), generationRequest: request, submittedAt: 1 }), failure === "source_deleted" ? /均未读到正文/u : failure === "read_denied" ? /读取准入拒绝/u : failure === "outputs_rebound" ? /换绑/u : /本轮预算/u);
+      assert.equal(promptCalls, 0); assert.equal(providerCalls, 0);
+      const live = await fixture.runtime.readProjection(id);
+      assert.equal(live.messages.some(message => message.itemType === "generationProgress" || message.generationResult || message.status === "running"), false);
+      await fixture.runtime.shutdown();
+      const cold = await readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId: id, resolveConversationCwd: () => fixture.root });
+      assert.equal(cold.messages.some(message => message.itemType === "generationProgress" || message.generationResult || message.status === "running"), false, `${failure}: offline reopen must not resurrect a pre-acceptance spinner or success`);
+      assert.equal((await fixture.productRuns.list(id)).length, 0);
+    }, { generation: { prepare: (...args) => port.prepare(...args), finish: (...args) => port.finish(...args) } });
+  }
+  console.log("PASS generation: actual deleted-source/read-denied/rebound/budget preflight failures call neither prompt nor Provider and reopen with no running generation");
+  console.log("PASS generation: formal durable runtime disables retrieval/memory/skills/tools, hides model JSON, and reopens verified/uncertain results");
 }
