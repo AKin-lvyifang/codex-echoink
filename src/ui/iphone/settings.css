@@ -2,12 +2,12 @@
   width: 100%; max-width: 720px; min-width: 0; margin: 0 auto; color: var(--ip-ink); font-size: var(--ip-ui-font); line-height: 1.5;
 }
 .echoink-iphone .ip-settings-heading { margin: 24px 12px 9px; color: var(--ip-secondary); font-size: .72em; font-weight: 500; line-height: 1.5; }
-.echoink-iphone .ip-settings-heading:first-child { margin-top: 16px; }
+.echoink-iphone .ip-settings-heading:first-child { margin-top: 22px; }
 .echoink-iphone .ip-settings-group { min-width: 0; margin: 0 0 18px; border: 1px solid var(--ip-line); border-radius: 12px; overflow: hidden; }
 .echoink-iphone .ip-settings > .ip-settings-group:first-child { margin-top: 16px; }
 .echoink-iphone .ip-settings .ip-settings-row {
-  display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 44px; height: auto; margin: 0;
-  padding: 14px 12px; border: 0; border-bottom: 1px solid var(--ip-line); border-radius: 0; box-shadow: none;
+  display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 52px; height: auto; margin: 0;
+  padding: 8px 12px; border: 0; border-bottom: 1px solid var(--ip-line); border-radius: 0; box-shadow: none;
   color: var(--ip-ink); background: transparent; font: inherit; text-align: left; white-space: normal;
 }
 .echoink-iphone .ip-settings .ip-settings-row:last-child { border-bottom: 0; }
@@ -47,7 +47,7 @@
 .echoink-iphone .ip-settings input.ip-settings-check { appearance: auto; flex: 0 0 20px; width: 20px; height: 20px; margin: 0; accent-color: var(--ip-accent); }
 .echoink-iphone .ip-settings-choice { cursor: pointer; }
 .echoink-iphone .ip-settings .ip-settings-module-row { padding-top: 0; padding-bottom: 0; }
-.echoink-iphone .ip-settings .ip-settings-module-link { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; min-height: 44px; height: auto; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; color: var(--ip-ink); background: transparent; font: inherit; text-align: left; white-space: normal; }
+.echoink-iphone .ip-settings .ip-settings-module-link { display: flex; justify-content: flex-start; align-items: center; flex: 1 1 auto; min-width: 0; min-height: 44px; height: auto; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; color: var(--ip-ink); background: transparent; font: inherit; text-align: left; white-space: normal; }
 .echoink-iphone .ip-settings .ip-settings-module-rights { flex: 0 0 auto; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 0 4px; border: 0; border-radius: 0; box-shadow: none; color: var(--ip-secondary); background: transparent; font: inherit; font-size: .88em; }
 .echoink-iphone .ip-settings-module-link:focus-visible,
 .echoink-iphone .ip-settings-module-rights:focus-visible { background: var(--background-modifier-hover); }
@@ -61,11 +61,13 @@
 .echoink-iphone .ip-settings input.ip-settings-switch:checked { background: var(--ip-accent); }
 .echoink-iphone .ip-settings input.ip-settings-switch:disabled { opacity: .45; cursor: default; }
 .echoink-iphone .ip-settings input.ip-settings-switch:checked::before { transform: translateX(18px); }
-.echoink-iphone .ip-settings-segments { position: relative; display: flex; flex: 0 1 310px; align-items: stretch; min-width: 0; padding: 0 4px; border-radius: 10px; background: var(--background-modifier-hover); isolation: isolate; }
-.echoink-iphone .ip-settings-segment-slider { position: absolute; z-index: -1; inset: 6px auto 6px 4px; width: calc(50% - 4px); border-radius: 7px; background: var(--background-primary); transition: transform 180ms ease; }
+.echoink-iphone .ip-settings-segments { position: relative; display: inline-flex; flex: 0 0 auto; align-items: stretch; min-width: 0; padding: 0 2px; isolation: isolate; }
+.echoink-iphone .ip-settings-segments::before { content: ""; position: absolute; z-index: -2; inset: 6px 0; border-radius: 8px; background: var(--background-modifier-hover); }
+.echoink-iphone .ip-settings-segment-slider { position: absolute; z-index: -1; inset: 8px auto 8px 2px; width: calc(50% - 2px); border-radius: 6px; background: var(--background-primary); transition: transform 180ms ease; }
 .echoink-iphone .ip-settings-segments[data-selected="violet"] .ip-settings-segment-slider { transform: translateX(100%); }
-.echoink-iphone .ip-settings button.ip-settings-segment { flex: 1 1 0; min-width: 0; min-height: 44px; height: auto; margin: 0; padding: 6px 8px; border: 0; border-radius: 7px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: .8em; white-space: normal; }
+.echoink-iphone .ip-settings button.ip-settings-segment { flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 6px 12px; border: 0; border-radius: 7px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: .8em; white-space: nowrap; }
 .echoink-iphone .ip-settings button.ip-settings-segment[aria-pressed="true"] { color: var(--ip-ink); font-weight: 600; }
+.echoink-iphone .ip-settings .ip-settings-row:has(> .ip-settings-segments) { padding-top: 0; padding-bottom: 0; }
 .echoink-iphone .ip-settings-model-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0 6px; }
 .echoink-iphone .ip-settings-model-head h2 { margin: 0; font-size: .92em; font-weight: 600; }
 .echoink-iphone .ip-settings-model-choices .ip-settings-row { padding-left: 0; padding-right: 0; }
@@ -93,10 +95,6 @@
 .echoink-iphone .ip-model-picker button.ip-picker-row:focus-visible { outline: none; box-shadow: none; }
 .echoink-iphone .ip-model-picker button.ip-picker-row:focus-visible .ip-action-visible { background: var(--background-modifier-hover); }
 @media (max-width: 520px) {
-  .echoink-iphone .ip-settings-segments { flex-basis: 240px; }
-  .echoink-iphone .ip-settings-row:has(.ip-settings-segments) { flex-wrap: wrap; }
-  .echoink-iphone .ip-settings-row:has(.ip-settings-segments) > .ip-settings-label { flex-basis: 100%; }
-  .echoink-iphone .ip-settings-segments { flex-grow: 1; }
   .echoink-iphone .ip-settings-actions .ip-button.is-danger { flex-basis: 100%; margin-right: 0; }
 }
 @media (prefers-reduced-motion: reduce) {

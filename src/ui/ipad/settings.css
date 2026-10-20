@@ -3,8 +3,7 @@
 .echoink-ipad.pd-settings .echoink-ipad-settings-categories { background: var(--background-primary); }
 .echoink-ipad.pd-settings .echoink-ipad-settings-category { outline: none; box-shadow: none; }
 .echoink-ipad.pd-settings .echoink-ipad-settings-detail .echoink-ipad-header:has(> .echoink-ipad-back[hidden]) .echoink-ipad-back { display: none; }
-.echoink-ipad.pd-settings .pd-settings-label { margin: 22px 0 8px; color: var(--text-muted); font-size: .8em; font-weight: 500; }
-.echoink-ipad.pd-settings .pd-settings-label:first-child { margin-top: 0; }
+.echoink-ipad.pd-settings .pd-settings-label { margin: 22px 12px 8px; color: var(--text-muted); font-size: .8em; font-weight: 500; }
 .echoink-ipad.pd-settings .pd-settings-group { overflow: hidden; border: 1px solid var(--pd-settings-line); border-radius: 12px; }
 .echoink-ipad.pd-settings .pd-settings-row { appearance: none; display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 48px; height: auto; margin: 0; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--pd-settings-line); border-radius: 0; background: transparent; color: var(--text-normal); font: inherit; text-align: left; line-height: 1.5; box-shadow: none; }
 .echoink-ipad.pd-settings .pd-settings-row:last-child { border-bottom: 0; }
@@ -46,14 +45,14 @@
 .echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-switch:focus-visible) { background: var(--pd-settings-soft); }
 .echoink-ipad.pd-settings .pd-settings-switch-hit { display: grid; place-items: center; flex: 0 0 45px; min-height: 44px; cursor: pointer; }
 .echoink-ipad.pd-settings .pd-settings-switch-hit input.pd-settings-switch { margin: 0; }
-.echoink-ipad.pd-settings .pd-settings-module-title { appearance: none; display: flex; align-items: center; min-height: 44px; min-width: 0; width: 100%; padding: 0; margin: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; box-shadow: none; cursor: pointer; }
+.echoink-ipad.pd-settings .pd-settings-module-title { appearance: none; display: flex; justify-content: flex-start; align-items: center; min-height: 44px; min-width: 0; width: 100%; padding: 0; margin: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; box-shadow: none; cursor: pointer; }
 .echoink-ipad.pd-settings .pd-settings-module-title:focus-visible { background: var(--pd-settings-soft); outline: none; }
 .echoink-ipad.pd-settings .pd-settings-module-title::after { content: none; }
-.echoink-ipad.pd-settings .pd-settings-segments { isolation: isolate; position: relative; display: flex; flex: 0 1 260px; min-width: 0; min-height: 44px; padding: 8px 3px; border-radius: 10px; }
+.echoink-ipad.pd-settings .pd-settings-segments { isolation: isolate; position: relative; display: inline-flex; flex: 0 0 auto; min-width: 0; min-height: 44px; padding: 8px 2px; border-radius: 10px; }
 .echoink-ipad.pd-settings .pd-settings-segments::before { content: ""; position: absolute; z-index: -2; inset: 8px 0; border-radius: 8px; background: var(--background-secondary); }
-.echoink-ipad.pd-settings .pd-settings-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 3px; width: calc(50% - 3px); border-radius: 6px; background: var(--pd-settings-soft); transition: transform .16s; }
+.echoink-ipad.pd-settings .pd-settings-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 3px; width: calc(50% - 3px); border-radius: 6px; background: var(--background-primary); transition: transform .16s; }
 .echoink-ipad.pd-settings .pd-settings-segments[data-value="violet"] .pd-settings-segment-thumb { transform: translateX(100%); }
-.echoink-ipad.pd-settings button.pd-settings-segment { appearance: none; flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: -8px 0; padding: 8px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: .8em; box-shadow: none; cursor: pointer; }
+.echoink-ipad.pd-settings button.pd-settings-segment { appearance: none; flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: -8px 0; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: .8em; white-space: nowrap; box-shadow: none; cursor: pointer; }
 .echoink-ipad.pd-settings button.pd-settings-segment[aria-pressed="true"] { color: var(--text-normal); font-weight: 600; }
 .echoink-ipad.pd-settings button.pd-settings-segment::after { content: none; }
 .echoink-ipad.pd-settings .pd-settings-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0 8px; }
