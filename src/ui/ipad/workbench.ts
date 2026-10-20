@@ -1,6 +1,5 @@
 import { Notice } from "obsidian";
 import type { AgentModuleId } from "../../agents/types";
-import { readNativeJournalSettings } from "../../home/native-journal";
 import { HomeSearchService } from "../../home/home-search";
 import { isHomeNotePath } from "../../home/home-note-visibility";
 import { IPadShell } from "./shell";
@@ -8,6 +7,9 @@ import { createHomePage } from "./workbench-pages";
 import type { IPadPageContext, IPadRoute, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadElement as el } from "./workbench-elements";
 import { mobileModuleEnabled } from "../../mobile/module-settings";
+import { createJournalPage } from "./journal-page";
+import { createTodoPage } from "./todo-pages";
+import { createFinancePage } from "./finance-pages";
 
 /** Central iPad pages. Agent routes belong to the host's separate right pane. */
 export class IPadWorkbench {
@@ -40,17 +42,18 @@ export class IPadWorkbench {
   openModule(module: AgentModuleId): Promise<void> {
     return this.enqueue(async () => {
       if (!mobileModuleEnabled(this.host.settings(), module)) throw new Error("此模块已停用。");
-      if (module === "todos") { await this.host.openLegacy("todos"); return; }
+      if (module === "journal" || module === "todos" || module === "finance") {
+        const id = `module:${module}`;
+        if (this.shell.hasPage(id)) { await this.shell.backTo(id); return; }
+        const page = module === "journal" ? createJournalPage(this.context) : module === "todos" ? createTodoPage(this.context) : createFinancePage(this.context);
+        if (!await this.shell.push(page)) page.dispose?.(); return;
+      }
       if (module === "knowledge-base") { await this.host.openLegacy("knowledge"); return; }
-      if (module === "finance") { await this.host.services.lifestyle.open("finance"); return; }
-      if (module !== "journal" && module !== "english-diary") return;
+      if (module !== "english-diary") return;
       const id = `module:${module}`;
       if (this.shell.hasPage(id)) { await this.shell.backTo(id); return; }
       const settings = this.host.settings();
-      const journal = module === "journal"
-        ? readNativeJournalSettings(this.host.app, settings.journalDirectory, settings.knowledgeBase.folderBindings) : undefined;
-      if (journal && !journal.available) throw new Error("日记目录尚未配置。");
-      const directory = journal ? journal.folder : this.host.services.safePath(settings.englishDiary.englishDirectory);
+      const directory = this.host.services.safePath(settings.englishDiary.englishDirectory);
       const content = el(this.root.ownerDocument, "div", "pd-module-files");
       const render = () => {
         const files = this.host.app.vault.getMarkdownFiles()
@@ -68,7 +71,7 @@ export class IPadWorkbench {
       render();
       const vault = this.host.app.vault;
       const refs = [vault.on("create", render), vault.on("delete", render), vault.on("rename", render)];
-      const page = { id, title: module === "journal" ? "日记" : "英文日记", content,
+      const page = { id, title: "英文日记", content,
         dispose: () => { for (const ref of refs) vault.offref(ref); } };
       if (!await this.shell.push(page)) page.dispose();
     });

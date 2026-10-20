@@ -82,11 +82,12 @@ function validOperations(value: unknown, session: Record<string, unknown>, ids: 
     const call = `${String(operation.runId)}\0${String(operation.toolCallId)}`;
     if (ids.has(operation.id as string) || calls.has(call) || operation.taskId !== session.id || !nonempty(operation.runId)
       || !runs.some(run => run.id === operation.runId) || !nonempty(operation.toolCallId) || !nonempty(operation.semanticKey) || !nonempty(operation.target)
-      || !["note_create", "memory_write", "mcp_write"].includes(operation.toolName as string) || !["prepared", "started", "completed", "uncertain"].includes(operation.status as string)
+      || !["note_create", "memory_write", "mcp_write", "finance_write"].includes(operation.toolName as string) || !["prepared", "started", "completed", "uncertain"].includes(operation.status as string)
       || !time(operation.createdAt) || !time(operation.updatedAt) || operation.updatedAt < operation.createdAt
       || typeof operation.expectedHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.expectedHash)
-      || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "targetWasMissing", "beforeRevision", "completedRevision", "mcp", "memoryRepository"].includes(key))) return false;
+      || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "targetWasMissing", "beforeRevision", "completedRevision", "mcp", "memoryRepository", "finance"].includes(key))) return false;
     if (operation.toolName !== "mcp_write" && operation.mcp !== undefined) return false;
+    if (operation.toolName !== "finance_write" && operation.finance !== undefined) return false;
     if (operation.memoryRepository !== undefined && (operation.toolName !== "memory_write" || operation.memoryRepository !== "canonical")) return false;
     if (operation.toolName === "note_create") {
       const path = operation.target;
@@ -103,6 +104,10 @@ function validOperations(value: unknown, session: Record<string, unknown>, ids: 
       if (operation.beforeRevision !== undefined && (!Number.isSafeInteger(operation.beforeRevision) || (operation.beforeRevision as number) < 1
         || operation.targetWasMissing || (operation.completedRevision as number) < (operation.beforeRevision as number) || (operation.completedRevision as number) > (operation.beforeRevision as number) + 1)) return false;
       if (operation.beforeRevision === undefined && (!operation.targetWasMissing || operation.completedRevision !== 1)) return false;
+    } else if (operation.toolName === "finance_write") {
+      if (!/^finance:[a-f0-9]{64}$/u.test(String(operation.target)) || !/^finance_write:[a-f0-9]{64}$/u.test(String(operation.semanticKey))
+        || !validMobileFinanceEvidence(operation.finance, operation.status, operation.expectedHash)
+        || operation.targetWasMissing !== undefined || operation.beforeRevision !== undefined || operation.completedRevision !== undefined) return false;
     } else {
       const mcp = operation.mcp;
       const identity = (value: unknown, maximum: number): value is string => nonempty(value) && value === value.trim() && value.length <= maximum && ![...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
@@ -443,3 +448,4 @@ export class MobileStore {
   /** Compatibility barrier only; external snapshots are never written. */
   save(): Promise<void> { return this.flush(); }
 }
+import { validMobileFinanceEvidence } from "./finance-journal";

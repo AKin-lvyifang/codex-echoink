@@ -11,6 +11,8 @@ import { createScopedMobileBodySearch, defaultMobileCapabilityPolicy, isScopedMo
 import { sha256Hex } from "../utils/sha256";
 import type { MobileToolExecutionContext, MobileWriteOperation } from "./task-contracts";
 import type { MobileMemoryService } from "./memory-service";
+import type { LifestyleFinanceService } from "../lifestyle/finance-service";
+import { mobileFinanceTools } from "./finance-tools";
 import { assertMobileResumeMemoryObservations, assertMobileResumeObservations, assertMobileWriteNotReplayed, assertMobileWriteRun,
   mobileMemoryWriteHash, mobileMemoryWriteKey, mobileNoteWriteKey, normalizeMobileNoteTarget } from "./task-recovery";
 
@@ -36,7 +38,7 @@ export function searchMemories(records: readonly PersonalMemoryRecord[], query: 
 function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Error("已停止，未开始此操作。"); }
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
 /** Product runtime must pass its durable run. Legacy standalone fixtures have no journal/resume guarantee. */
-export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id, suppliedPolicy?: MobileCapabilityPolicy, execution?: MobileToolExecutionContext, memory?: MobileMemoryService): AgentTool[] {
+export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id, suppliedPolicy?: MobileCapabilityPolicy, execution?: MobileToolExecutionContext, memory?: MobileMemoryService, finance?: LifestyleFinanceService): AgentTool[] {
   const policy = suppliedPolicy ?? defaultMobileCapabilityPolicy(store, bindings, sessionId);
   const shared = sharedBodySearch && isScopedMobileBodySearch(sharedBodySearch, policy);
   const bodySearch = shared ? sharedBodySearch : createScopedMobileBodySearch(app, bindings, policy);
@@ -104,7 +106,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
             writable(); assertMobileWriteNotReplayed(task, execution, "note_create", toolCallId, semanticKey, path);
             task.operations = [...(task.operations ?? []), operation];
           });
-          await assertMobileResumeObservations(app, store, execution.resume, signal);
+          await assertMobileResumeObservations(app, store, execution.resume, signal, finance);
           writable();
           if (await app.vault.adapter.exists(path)) throw new Error("目标在准备期间已变化，原文件未被覆盖。");
           writable();
@@ -168,7 +170,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
           writable();
           if (execution) {
             await store.updateSession(sessionId, task => { writable(); assertMobileWriteNotReplayed(task, execution, "memory_write", toolCallId, semanticKey, plan.record.id); task.operations = [...(task.operations ?? []), operation]; });
-            await assertMobileResumeObservations(app, store, execution.resume, signal); writable();
+            await assertMobileResumeObservations(app, store, execution.resume, signal, finance); writable();
             await store.updateSession(sessionId, task => { writable(); const saved = task.operations?.find(item => item.id === operation.id); if (!saved || saved.status !== "prepared") throw new Error("记忆写入意图已变化。"); saved.status = "started"; saved.updatedAt = Date.now(); });
           }
           try {
@@ -214,6 +216,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
       }
     });
   }
+  if (finance) tools.push(...mobileFinanceTools(app, finance, store, sessionId, policy, execution));
   return tools.filter(tool => {
     try { policy.assertTool(tool.name); return true; } catch { return false; }
   });

@@ -13,6 +13,8 @@ import { createAccountPage } from "./account-pages";
 import { createAgentSettingsPage } from "./agent-settings-pages";
 import { createCapabilityPage } from "./capability-pages";
 import { createModelPage } from "./model-pages";
+import { createTodoSettings } from "./todo-pages";
+import { createFinanceSettingsPage } from "./finance-forms";
 import { settingsText as t } from "./settings-i18n";
 import type { IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadIcon } from "./workbench-elements";
@@ -89,7 +91,7 @@ export class IPadSettings {
         button.setAttribute("aria-pressed", String(track.dataset.value === value));
         button.addEventListener("click", () => { if (busy || this.host.settings().colorTheme === value) return; busy = true;
           track.querySelectorAll("button").forEach(control => { control.disabled = true; });
-          void this.save(current => { const old = current.colorTheme; current.colorTheme = value; return () => { current.colorTheme = old; }; }).catch(ctx.error).finally(() => { busy = false; signature = ""; render(); }); }); track.append(button);
+          void this.save(current => { const old = current.colorTheme; current.colorTheme = value; return () => { current.colorTheme = old; }; }).catch(error => ctx.error(error)).finally(() => { busy = false; signature = ""; render(); }); }); track.append(button);
       }
       row.append(track);
       settingsRow(ctx, appearance, t(ctx, "界面语言"), settings.settingsLanguage === "en" ? "English" : "简体中文", () => ctx.push(this.language()));
@@ -127,9 +129,9 @@ export class IPadSettings {
     });
   }
   private agentContext(): IPadPageContext {
-    const controller = this;
+    const activeShell = () => this.shell.activePageShell;
     return { root: this.root, host: this.host, document: this.root.ownerDocument,
-      get shell() { const shell = controller.shell.activePageShell; if (!shell) throw new Error("设置页面尚未打开。"); return shell; },
+      get shell() { const shell = activeShell(); if (!shell) throw new Error("设置页面尚未打开。"); return shell; },
       error: error => this.error(error), navigate: async route => {
         if (route.kind === "agent-form") await this.context.push(createAgentFormPage(this.agentContext(), route.agentId));
         else if (route.kind === "agent") { await this.shell.activePageShell?.backTo("ipad-settings-agent"); this.refresh(); }
@@ -137,6 +139,11 @@ export class IPadSettings {
   }
   private agent(): MobileShellPage {
     return createAgentSettingsPage(this.context, id => this.context.push(createAgentFormPage(this.agentContext(), id)));
+  }
+  private moduleContext(): IPadPageContext {
+    const shell = this.shell.activePageShell; if (!shell) throw new Error("设置页面尚未打开。");
+    return { root: this.root, document: this.root.ownerDocument, host: this.host, shell,
+      error: error => this.error(error), navigate: async route => { if (route.kind === "home") await shell.backTo("ipad-settings-mods"); else await this.host.openAgent(route); } };
   }
   private capabilities(): MobileShellPage {
     return createCapabilityPage(this.context, id => this.context.push(createAgentFormPage(this.agentContext(), id)));
@@ -155,13 +162,13 @@ export class IPadSettings {
         const copy = row.querySelector<HTMLElement>(".pd-settings-copy")!;
         if (route) {
           const title = el(ctx.document, "button", "pd-settings-module-title"); title.type = "button"; title.append(...Array.from(copy.childNodes)); copy.append(title);
-          title.addEventListener("click", event => { event.stopPropagation(); void ctx.push(this.legacy(route, label)).catch(ctx.error); });
+          title.addEventListener("click", event => { event.stopPropagation(); void Promise.resolve().then(() => ctx.push(route === "todos-settings" ? createTodoSettings(this.moduleContext()) : route === "finance-settings" ? createFinanceSettingsPage(this.moduleContext()) : this.legacy(route, label))).catch(error => ctx.error(error)); });
         }
         if (!paid || qualified) {
           const control = settingsToggle(ctx, `${t(ctx, "启用")}${t(ctx, label)}`, mobileModuleEnabled(settings, id), async enabled => { await setMobileModuleEnabled(this.host, id, enabled); this.refresh(); });
           const hit = el(ctx.document, "label", "pd-settings-switch-hit"); hit.append(control); hit.addEventListener("click", event => event.stopPropagation()); row.append(hit);
         } else {
-          const membership = settingsAction(ctx, "需要 PRO", () => ctx.push(this.legacy("account", "账号与会员"))); row.append(membership);
+          const membership = settingsAction(ctx, "需要 PRO", () => this.open("account")); row.append(membership);
         }
       }
     });

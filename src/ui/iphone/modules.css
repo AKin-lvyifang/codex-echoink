@@ -1,0 +1,133 @@
+.echoink-iphone .ip-module-page { padding-top: 12px; }
+.echoink-iphone .ip-module-body { display: block; min-width: 0; width: 100%; margin: 0; padding: 0; border: 0; }
+.echoink-iphone .ip-module-body:disabled { opacity: .65; }
+.echoink-iphone .ip-module-page [hidden], .echoink-iphone .ip-module-footer [hidden] { display: none; }
+.echoink-iphone .ip-module-header-actions { display: flex; align-items: center; min-width: 0; }
+.echoink-iphone .ip-module-header-actions .ip-button-visible { gap: 6px; font-size: .8em; }
+.echoink-iphone .ip-module-header-actions .ip-avatar { flex: 0 0 20px; width: 20px; height: 20px; }
+.echoink-iphone .ip-module-header-actions .ip-avatar .ip-icon svg { width: 18px; height: 18px; }
+.echoink-iphone .ip-module-stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-bottom: 18px; }
+.echoink-iphone .ip-module-stats.is-two { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.echoink-iphone .ip-module-stat { display: flex; flex-direction: column; min-width: 0; gap: 5px; }
+.echoink-iphone .ip-module-stat strong { font-size: 1.5em; font-weight: 600; line-height: 1.4; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.echoink-iphone .ip-module-stat > span { color: var(--ip-secondary); font-size: .76em; }
+.echoink-iphone .ip-module-section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 18px 0 9px; }
+.echoink-iphone .ip-module-section-head h2 { margin: 0; font-size: .92em; font-weight: 600; }
+.echoink-iphone .ip-module-toolbar, .echoink-iphone .ip-module-inline-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.echoink-iphone .ip-module-toolbar { margin-bottom: 12px; }
+.echoink-iphone .ip-module-toolbar > .ip-settings-field { flex: 1 1 160px; margin: 0; }
+.echoink-iphone .ip-module-filters { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-bottom: 12px; }
+.echoink-iphone .ip-module-filters .ip-settings-field { margin: 0; }
+.echoink-iphone .ip-module-filters .ip-settings-field-label { font-size: .8em; }
+.echoink-iphone .ip-module-filters > .ip-module-segments { grid-column: 1 / -1; }
+.echoink-iphone .ip-module-filters input[type="search"] { font-size: max(16px,1em); }
+.echoink-iphone .ip-module-segments { position: relative; isolation: isolate; display: flex; align-items: stretch; min-width: 0; min-height: 44px; width: 100%; padding: 0; }
+.echoink-iphone .ip-module-section-head > .ip-module-segments { flex: 0 0 auto; width: auto; margin-left: auto; }
+.echoink-iphone .ip-module-segments::before { position: absolute; z-index: -2; inset: 6px 0; border-radius: 6px; background: var(--background-modifier-hover); content: ""; }
+.echoink-iphone .ip-module-segment-slider { position: absolute; z-index: -1; inset: 8px auto 8px 0; border-radius: 4px; background: var(--ip-bg); transition: transform 180ms ease; }
+.echoink-iphone button.ip-module-segment { flex: 1 1 0; min-width: 44px; min-height: 44px; padding: 0; }
+.echoink-iphone button.ip-module-segment .ip-button-visible { width: 100%; min-width: 0; min-height: 32px; padding: 3px 6px; border: 0; border-radius: 4px; background: transparent; font-size: .8em; line-height: 1.5; white-space: normal; }
+.echoink-iphone button.ip-module-segment[aria-pressed="true"] { color: var(--ip-ink); font-weight: 600; }
+.echoink-iphone button.ip-module-segment:hover:not(:disabled) .ip-button-visible { background: transparent; }
+.echoink-iphone button.ip-module-segment:focus-visible .ip-button-visible { background: var(--ip-soft); }
+.echoink-iphone .ip-module-empty { padding: 24px 0; color: var(--ip-secondary); text-align: center; font-size: .88em; }
+.echoink-iphone .ip-module-status, .echoink-iphone .ip-module-path, .echoink-iphone .ip-module-copy { margin: 8px 0; color: var(--ip-secondary); font-size: .8em; line-height: 1.6; overflow-wrap: anywhere; }
+.echoink-iphone .ip-module-path { padding: 0 12px; }
+.echoink-iphone .ip-module-status:empty { display: none; }
+.echoink-iphone .ip-module-fact { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-height: 44px; padding: 8px 12px; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-module-fact:last-child { border-bottom: 0; }
+.echoink-iphone .ip-module-fact > :last-child { margin-left: auto; font-variant-numeric: tabular-nums; text-align: right; }
+.echoink-iphone button.ip-module-navigation-row { justify-content: flex-start; width: 100%; border-bottom: 1px solid var(--ip-line); border-radius: 0; text-align: left; }
+.echoink-iphone button.ip-module-navigation-row .ip-button-visible { justify-content: flex-start; width: 100%; min-height: 44px; height: auto; padding: 8px 12px; border: 0; border-radius: 0; background: transparent; white-space: normal; overflow-wrap: anywhere; }
+.echoink-iphone button.ip-module-navigation-row:last-child { border-bottom: 0; }
+.echoink-iphone .ip-module-rows { min-width: 0; }
+.echoink-iphone .ip-module-row-title { display: block; color: var(--ip-ink); font-size: .92em; font-weight: 500; overflow-wrap: anywhere; }
+.echoink-iphone .ip-module-inline-editor { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.echoink-iphone .ip-module-inline-editor > .ip-settings-field { flex: 1 1 140px; margin: 0; }
+.echoink-iphone .ip-module-editor { width: 100%; max-width: 100%; min-width: 0; min-height: 260px; padding: 10px; border: 1px solid var(--ip-line); border-radius: 9px; background: var(--ip-bg); color: var(--ip-ink); font: inherit; font-size: max(16px,1em); line-height: 1.8; resize: vertical; }
+.echoink-iphone .ip-module-choice { display: flex; align-items: center; gap: 8px; min-height: 44px; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-module-choice > span { min-width: 0; overflow-wrap: anywhere; }
+.echoink-iphone .ip-module-page button[data-slot="checkbox"] { flex: 0 0 44px; width: 44px; min-width: 44px; min-height: 44px; margin: 0; padding: 0; border: 0; border-radius: 8px; color: var(--ip-accent); background: transparent; font-size: 1em; }
+.echoink-iphone .ip-module-page button[data-slot="checkbox"][aria-checked="false"]::after { display: inline-block; width: 18px; height: 18px; border: 1px solid var(--ip-line); border-radius: 4px; content: ""; }
+.echoink-iphone .ip-module-page .echoink-origin-pagination { margin-top: 12px; }
+.echoink-iphone .ip-module-page .echoink-origin-pagination ul { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.echoink-iphone .ip-module-page .echoink-origin-pagination button { min-width: 44px; min-height: 44px; padding: 6px; border: 0; border-radius: 6px; background: transparent; color: var(--ip-ink); font: inherit; }
+.echoink-iphone .ip-module-page .echoink-origin-pagination button[aria-current="page"] { background: var(--ip-soft); font-weight: 600; }
+.echoink-iphone .ip-journal-calendar { margin-bottom: 18px; }
+.echoink-iphone .ip-journal-calendar .ip-module-section-head { margin-top: 0; }
+.echoink-iphone .ip-journal-weekdays, .echoink-iphone .ip-journal-days { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 5px; }
+.echoink-iphone .ip-journal-weekdays { margin-bottom: 6px; color: var(--ip-secondary); text-align: center; font-size: .76em; }
+.echoink-iphone .ip-journal-days button { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; width: 100%; height: auto; aspect-ratio: 1; margin: 0; padding: 0; overflow: hidden; border: 0; border-radius: 6px; background: transparent; color: var(--ip-ink); box-shadow: none; font: inherit; font-size: .8em; }
+.echoink-iphone .ip-journal-days button.outside { color: var(--ip-secondary); opacity: .45; }
+.echoink-iphone .ip-journal-days button.has-record { background: var(--ip-soft); font-weight: 600; }
+.echoink-iphone .ip-journal-days button.selected, .echoink-iphone .ip-journal-days button:focus-visible { background: var(--background-modifier-hover); }
+.echoink-iphone .ip-journal-days button.today .calendar-day-number { text-decoration: underline; text-underline-offset: 3px; }
+.echoink-iphone .ip-journal-days .echoink-calendar-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.echoink-iphone .ip-journal-days .has-photo .calendar-day-number { position: absolute; right: 2px; bottom: 2px; min-width: 18px; border-radius: 4px; background: var(--ip-bg); color: var(--ip-ink); }
+.echoink-iphone button.ip-journal-entry, .echoink-iphone button.ip-finance-entry-row { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 62px; margin: 0; padding: 10px 0; border: 0; border-bottom: 1px solid var(--ip-line); border-radius: 0; background: transparent; color: var(--ip-ink); box-shadow: none; font: inherit; text-align: left; }
+.echoink-iphone button.ip-journal-entry:hover, .echoink-iphone button.ip-finance-entry-row:hover, .echoink-iphone button.ip-journal-entry:focus-visible, .echoink-iphone button.ip-finance-entry-row:focus-visible { background: var(--ip-soft); }
+.echoink-iphone .ip-journal-entry > .ip-icon, .echoink-iphone .ip-journal-thumbnail { flex: 0 0 42px; width: 42px; height: 42px; object-fit: cover; border-radius: 6px; }
+.echoink-iphone .ip-journal-entry .ip-sub { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.echoink-iphone .ip-journal-selected-date { font-variant-numeric: tabular-nums; }
+.echoink-iphone .ip-journal-template-preview { min-width: 0; margin: 12px 0; }
+.echoink-iphone .ip-journal-template-preview summary, .echoink-iphone .ip-finance-old-goals summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
+.echoink-iphone .ip-journal-template-preview pre { max-height: 360px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.8; }
+.echoink-iphone .ip-todo-count { display: flex; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 5px 12px; padding: 8px 0; color: var(--ip-secondary); font-size: .8em; font-variant-numeric: tabular-nums; }
+.echoink-iphone .ip-todo-count > span:last-child { white-space: nowrap; }
+.echoink-iphone .ip-todo-row { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; gap: 0 8px; min-height: 58px; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-todo-main { flex: 1 1 120px; min-width: 0; text-align: left; }
+.echoink-iphone .ip-todo-main .ip-button-visible { flex-direction: column; align-items: flex-start; width: 100%; gap: 5px; padding: 8px 0; white-space: normal; overflow-wrap: anywhere; }
+.echoink-iphone .ip-todo-row.is-done .ip-todo-main .ip-button-visible > span:first-child { text-decoration: line-through; }
+.echoink-iphone .ip-todo-date { margin-left: auto; color: var(--ip-secondary); font-size: .76em; font-variant-numeric: tabular-nums; }
+.echoink-iphone .ip-todo-date.is-overdue { color: var(--text-error); }
+.echoink-iphone .ip-todo-people-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.echoink-iphone .ip-module-catalog-row { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-module-catalog-row:last-child { border-bottom: 0; }
+.echoink-iphone .ip-module-catalog-main { flex: 1 1 120px; min-width: 0; text-align: left; }
+.echoink-iphone .ip-module-catalog-row .ip-settings-row { width: auto; min-height: 44px; padding: 0 8px; border: 0; }
+.echoink-iphone .ip-finance-entry-amount { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.echoink-iphone .ip-finance-icon-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(90px,1fr)); gap: 8px; }
+.echoink-iphone .ip-finance-icon-choice .ip-button-visible { flex-direction: column; width: 100%; min-height: 70px; padding: 8px; white-space: normal; }
+.echoink-iphone .ip-finance-brand { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 24px; }
+.echoink-iphone .ip-finance-brand svg { width: 100%; height: 100%; }
+.echoink-iphone .ip-finance-brand img { width: 100%; height: 100%; object-fit: contain; }
+.echoink-iphone .ip-finance-brand.has-light-backdrop { background: var(--background-secondary); border-radius: 4px; }
+.echoink-iphone .ip-finance-category-chart { min-width: 0; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-wrap { position: relative; width: min(100%,260px); aspect-ratio: 1; margin: 0 auto; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-sector { fill: none; stroke-width: 32px; cursor: pointer; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-sector.is-selected { stroke-width: 38px; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-sector:focus-visible { outline: none; stroke-width: 38px; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-center { position: absolute; inset: 25%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 5px; pointer-events: none; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-center small { color: var(--ip-secondary); font-size: .76em; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-center strong { font-size: 1.1em; font-variant-numeric: tabular-nums; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-tooltip { position: absolute; inset: auto 0 0; padding: 6px; border: 1px solid var(--ip-line); border-radius: 6px; background: var(--ip-bg); color: var(--ip-ink); font-size: .8em; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-chart-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 8px; align-items: center; width: 100%; min-height: 44px; padding: 6px 0; border: 0; border-bottom: 1px solid var(--ip-line); border-radius: 0; background: transparent; color: var(--ip-ink); text-align: left; font: inherit; font-size: .88em; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-chart-row.is-selected, .echoink-iphone .ip-finance-breakdown .echoink-finance-chart-row:focus-visible { background: var(--ip-soft); }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-chart-name { overflow-wrap: anywhere; }
+.echoink-iphone .ip-finance-breakdown .echoink-finance-chart-name::before { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--finance-chart-color); content: ""; }
+.echoink-iphone .ip-finance-breakdown :is(.echoink-finance-chart-amount,.echoink-finance-chart-percent) { font-variant-numeric: tabular-nums; text-align: right; }
+.echoink-iphone .ip-finance-calendar { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 5px; }
+.echoink-iphone .ip-finance-weekday { color: var(--ip-secondary); text-align: center; font-size: .76em; }
+.echoink-iphone button.ip-finance-day { display: flex; flex-direction: column; justify-content: center; align-items: center; min-width: 0; min-height: 0; width: 100%; height: auto; aspect-ratio: 1; margin: 0; padding: 0; border: 2px solid var(--ip-line); border-radius: 50%; background: transparent; color: var(--ip-ink); box-shadow: none; font: inherit; font-size: .8em; }
+.echoink-iphone button.ip-finance-day.is-within { border-color: var(--ip-accent); }
+.echoink-iphone button.ip-finance-day.is-over { border-color: var(--text-error); }
+.echoink-iphone button.ip-finance-day > span { font-size: .72em; line-height: 1; }
+.echoink-iphone button.ip-finance-day:focus-visible { background: var(--ip-soft); }
+.echoink-iphone .ip-module-error { color: var(--text-error); }
+.echoink-iphone .ip-finance-table-scroll { max-width: 100%; overflow-x: auto; }
+.echoink-iphone .ip-finance-table { border-collapse: collapse; min-width: 100%; font-size: .88em; }
+.echoink-iphone .ip-finance-table :is(th,td) { padding: 8px; border-bottom: 1px solid var(--ip-line); text-align: left; }
+.echoink-iphone .ip-finance-table th { background: var(--ip-soft); }
+.echoink-iphone .ip-finance-report-section { margin-top: 18px; }
+.echoink-iphone .ip-finance-report-section h3 { margin: 12px 0 8px; font-size: 1em; }
+.echoink-iphone .ip-finance-report { line-height: 1.8; overflow-wrap: anywhere; }
+.echoink-iphone .ip-finance-chart-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(50px,2fr) auto; align-items: center; gap: 8px; padding: 8px 0; font-size: .88em; font-variant-numeric: tabular-nums; }
+.echoink-iphone .ip-finance-chart-track { display: block; height: 8px; overflow: hidden; border-radius: 4px; background: var(--ip-soft); }
+.echoink-iphone .ip-finance-chart-track i { display: block; height: 100%; background: var(--ip-accent); }
+@media (max-width: 359px) {
+  .echoink-iphone .ip-module-stats:not(.is-two) { grid-template-columns: minmax(0,1fr); }
+  .echoink-iphone .ip-module-filters { grid-template-columns: minmax(0,1fr); }
+  .echoink-iphone .ip-todo-date { flex-basis: 100%; margin: 0 0 8px 52px; }
+}
+@media (prefers-reduced-motion: reduce) { .echoink-iphone .ip-module-segment-slider { transition: none; } }

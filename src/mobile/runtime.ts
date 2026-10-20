@@ -21,6 +21,8 @@ import type { MobileCapabilitiesService, MobileRemoteToolInvocation } from "./ca
 import { sha256Hex } from "../utils/sha256";
 import type { MobileMemoryService } from "./memory-service";
 import type { MobileUsageStore } from "./usage-store";
+import type { MobileModulePort } from "./module-contracts";
+import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 
 function deferred() {
   let resolve!: () => void, reject!: (error: unknown) => void;
@@ -77,6 +79,9 @@ export class MobileRuntime {
   private disposed = false;
   private capabilities?: () => MobileCapabilitiesService;
   private memory?: () => MobileMemoryService;
+  private modules?: () => MobileModulePort;
+  setModules(service: () => MobileModulePort): void { this.modules = service; }
+  private financeService(): LifestyleFinanceService | undefined { try { return this.modules?.().finance.service; } catch { return undefined; } }
   private usage?: MobileUsageStore;
   private usageWarningShown = false;
   setUsage(usage: MobileUsageStore): void { this.usage = usage; }
@@ -210,7 +215,7 @@ export class MobileRuntime {
     check(); if (!prepared) throw failure;
     const { input, policy } = prepared;
     const signature = policy.signature();
-    const snapshot = await abortable(inspectMobileTaskResume(this.app, this.store, id, controller.signal), controller.signal); check();
+    const snapshot = await abortable(inspectMobileTaskResume(this.app, this.store, id, controller.signal, this.financeService()), controller.signal); check();
     if (snapshot.issues.length && snapshot.fingerprint !== confirmationFingerprint) {
       this.reviews.set(id, snapshot); this.notify(id);
       throw Object.assign(new Error("请先核对上次写入的当前结果。"), { code: "mobile_resume_review_required" });
@@ -397,7 +402,7 @@ export class MobileRuntime {
       const prepared = await prepareMobileTaskContext({ store: this.store, taskId: id, messages: session.messages, text: turn.text, systemPrompt: system,
         tools, provider: run.provider, model: run.model, request: this.request, signal: controller.signal, assertAllowed: () => this.assertRun(run), repairInterruptedTools: !!run.resume, usage: this.usageObserver() });
       this.assertRun(run);
-      if (run.resume) await abortable(assertMobileResumeObservations(this.app, this.store, run.resume, controller.signal), controller.signal);
+      if (run.resume) await abortable(assertMobileResumeObservations(this.app, this.store, run.resume, controller.signal, this.financeService()), controller.signal);
       this.assertRun(run); prefix = prepared.prefix; run.prefix = prefix; run.stage = "保存用户输入";
       const user: AgentMessage = { role: "user", content: [{ type: "text", text: turn.text }], timestamp: Date.now() };
       await this.store.update(latest => {
@@ -433,7 +438,7 @@ export class MobileRuntime {
           const budgeted = await prepareMobileTaskContext({ store: this.store, taskId: id, messages: [...prefix, ...context.messages], text: "", systemPrompt: system,
             tools, provider: run.provider, model: run.model, request: this.request, signal: controller.signal, assertAllowed: () => this.assertRun(run), repairInterruptedTools: !!run.resume, usage: this.usageObserver() });
           this.assertRun(run);
-          if (run.resume) await abortable(assertMobileResumeObservations(this.app, this.store, run.resume, controller.signal), controller.signal);
+          if (run.resume) await abortable(assertMobileResumeObservations(this.app, this.store, run.resume, controller.signal, this.financeService()), controller.signal);
           this.assertRun(run); run.stage = "等待模型";
           const messages = run.resume ? interruptedMobileRequestMessages(budgeted.messages) : budgeted.messages;
           return stream(model, { ...context, messages: messages as typeof context.messages, systemPrompt: budgeted.systemPrompt }, options);
@@ -514,7 +519,7 @@ export class MobileRuntime {
     if (input) this.launch(id, input, undefined, true);
   }
   private toolsFor(run: ActiveTask): AgentTool[] {
-    const registered = mobileTools(this.app, this.store, () => run.turn.notePath, () => this.settings().knowledgeBase.folderBindings, run.search, run.taskId, run.policy, { runId: run.turn.id, ...(run.resume ? { resume: run.resume } : {}) }, this.memory?.());
+    const registered = mobileTools(this.app, this.store, () => run.turn.notePath, () => this.settings().knowledgeBase.folderBindings, run.search, run.taskId, run.policy, { runId: run.turn.id, userText: run.turn.text, ...(run.resume ? { resume: run.resume } : {}) }, this.memory?.(), this.financeService());
     registered.push({ name: "user_question", label: "询问用户", description: "向当前任务的用户提出结构化问题，等待真实回答；确认操作可使用kind=confirmation。", parameters: Type.Object({ kind: Type.Optional(Type.Union([Type.Literal("question"), Type.Literal("confirmation")])), questions: Type.Array(Type.Object({ questionId: Type.String(), prompt: Type.String(), selection: Type.Union([Type.Literal("single"), Type.Literal("multiple")]), options: Type.Array(Type.Object({ optionId: Type.String(), label: Type.String(), description: Type.Optional(Type.String()) })), allowSupplement: Type.Boolean() })) }),
       execute: async (callId, args: { kind?: "question" | "confirmation"; questions: unknown }) => {
         this.assertRun(run); run.policy.assertTool("user_question"); run.stage = "等待你的回答";
@@ -560,7 +565,7 @@ export class MobileRuntime {
     const operationId = newId(); let started = false;
     try {
       const response = await input.call(async () => {
-        allowed(); await assertMobileResumeObservations(this.app, this.store, run.resume, input.signal); allowed();
+        allowed(); await assertMobileResumeObservations(this.app, this.store, run.resume, input.signal, this.financeService()); allowed();
         await this.store.updateSession(run.taskId, current => {
           allowed(); assertMobileWriteNotReplayed(current, execution, "mcp_write", input.callId, semanticKey, target);
           const now = Date.now(); current.operations = [...(current.operations ?? []), { id: operationId, taskId: run.taskId, runId: run.turn.id,

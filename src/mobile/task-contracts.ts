@@ -2,6 +2,7 @@ import type { AgentRunSnapshot } from "../agents/types";
 import type { EchoInkQuestionAnswer, EchoInkQuestionPrompt } from "../types/conversation-turn";
 import type { MobilePermission } from "./store";
 import type { TaskInterruptionReason } from "../agents/task-resume";
+import type { MobileFinanceEvidence } from "./finance-journal";
 
 export type MobileInterruptionReason = TaskInterruptionReason | "app_backgrounded";
 export interface MobileTaskInterruption {
@@ -15,7 +16,8 @@ export interface MobileWriteOperation {
   taskId: string;
   runId: string;
   toolCallId: string;
-  toolName: "note_create" | "memory_write" | "mcp_write";
+  toolName: "note_create" | "memory_write" | "mcp_write" | "finance_write";
+  finance?: MobileFinanceEvidence;
   /** External effect identity only; never authentication headers or arguments. */
   mcp?: { resourceId: string; toolName: string };
   /** Canonical Memory is a separate recoverable transaction, never the legacy task-state array. */
@@ -46,6 +48,8 @@ export interface MobileResumeSnapshot {
 }
 export interface MobileToolExecutionContext {
   runId: string;
+  /** Frozen human input, never supplied by model tool arguments. */
+  userText?: string;
   resume?: MobileResumeSnapshot;
 }
 

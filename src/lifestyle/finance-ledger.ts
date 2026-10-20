@@ -351,12 +351,13 @@ export class FinanceLedger {
     });
   }
 
-  patchRecord(id: string, expectedVersion: string, changes: FinanceRecordPatch): Promise<FinanceRecordSnapshot> {
+  patchRecord(id: string, expectedVersion: string, changes: FinanceRecordPatch, guard: () => void = () => {}): Promise<FinanceRecordSnapshot> {
     return this.enqueue(async () => {
       await this.resolveLocation(true); await this.readDirect();
       const file = this.files.get(id);
       if (!file) throw new Error("finance_record_not_found");
       await this.app.vault.process(file, markdown => {
+        guard();
         if (sha256Hex(markdown) !== expectedVersion) throw new Error("finance_version_conflict");
         const current = parseFinanceNote(markdown);
         if (!current || current.id !== id) throw new Error("finance_record_not_found");
@@ -384,12 +385,13 @@ export class FinanceLedger {
     });
   }
 
-  deleteRecord(id: string, expectedVersion: string): Promise<{ id: string; path: string; recoverable: true }> {
+  deleteRecord(id: string, expectedVersion: string, guard: () => void = () => {}): Promise<{ id: string; path: string; recoverable: true }> {
     return this.enqueue(async () => {
       await this.resolveLocation(true); await this.readDirect();
       const file = this.files.get(id);
       if (!file) throw new Error("finance_record_not_found");
       if (sha256Hex(await this.app.vault.read(file)) !== expectedVersion) throw new Error("finance_version_conflict");
+      guard();
       await this.app.fileManager.trashFile(file);
       if (this.app.vault.getAbstractFileByPath(file.path)) throw new Error("finance_readback_failed");
       await this.readDirect(); return { id, path: file.path, recoverable: true };
@@ -448,17 +450,18 @@ export class FinanceLedger {
     for (const listener of this.listeners) listener();
   }
 
-  private async ensureFolder(): Promise<void> {
+  private async ensureFolder(guard: () => void = () => {}): Promise<void> {
     for (const folder of [this.root, this.directory]) {
-      if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+      if (!this.app.vault.getAbstractFileByPath(folder)) { guard(); await this.app.vault.createFolder(folder); }
     }
   }
 
-  private async createDirect(entry: FinanceEntry, sourceFields?: FinanceImportRow["sourceFields"]): Promise<void> {
+  private async createDirect(entry: FinanceEntry, sourceFields?: FinanceImportRow["sourceFields"], guard: () => void = () => {}): Promise<void> {
     if (this.allIds.has(entry.id)) throw new Error(`账目已存在：${entry.id}`);
-    await this.ensureFolder();
+    await this.ensureFolder(guard);
     const path = `${this.directory}/${fileName(entry.id)}`;
     if (this.app.vault.getAbstractFileByPath(path)) throw new Error(`账目目标文件已被占用：${path}`);
+    guard();
     const file = await this.app.vault.create(path, `---\n${stringify(financeFields(entry, sourceFields))}---\n\n${this.paths().embed}\n`);
     this.files.set(entry.id, file);
     this.allIds.add(entry.id);
@@ -475,10 +478,10 @@ export class FinanceLedger {
     });
   }
 
-  async add(entry: FinanceEntry): Promise<void> {
+  async add(entry: FinanceEntry, guard: () => void = () => {}): Promise<void> {
     await this.enqueue(async () => {
       await this.readDirect();
-      await this.createDirect(entry);
+      await this.createDirect(entry, undefined, guard);
       await this.readDirect();
     });
   }

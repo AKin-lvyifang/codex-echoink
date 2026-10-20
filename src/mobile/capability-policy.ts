@@ -1,5 +1,5 @@
 import type { App } from "obsidian";
-import { checkAgentSkill, checkAgentTarget, checkAgentTool, resolveAgentRunSnapshot,
+import { checkAgentSkill, checkAgentTarget, checkAgentTool, checkAgentCapability, resolveAgentRunSnapshot,
   type AgentCapabilityContext, type AgentCapabilityDecision, type AgentCapabilityToolAdapters } from "../agents/capability-core";
 import { GENERAL_ASSISTANT_ID, type AgentRunSnapshot } from "../agents/types";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -13,13 +13,14 @@ import { loadMobileSettings, type MobileSettings } from "./settings";
 import { mobileModuleEnabled } from "./module-settings";
 import { mobileMcpAdmitted, mobileMcpToolName } from "./remote-tools";
 import type { MobilePermission, MobileStore } from "./store";
+import { PI_FINANCE_TOOL_IDS, isFinanceTool, normalizeFinanceToolRequest, financeToolEffect, type PiFinanceToolId } from "../harness/pi-native/finance-tool-policy";
 
-const MOBILE_TOOLS = new Set(["task_update", "user_question", "vault_search", "note_read", "note_create", "memory_search", "memory_read", "memory_write", "web_search"]);
+const MOBILE_TOOLS = new Set(["task_update", "user_question", "vault_search", "note_read", "note_create", "memory_search", "memory_read", "memory_write", "web_search", ...PI_FINANCE_TOOL_IDS]);
 const scopedPolicies = new WeakMap<KnowledgeBodySearchPort, MobileCapabilityPolicy>();
 export function isScopedMobileBodySearch(port: KnowledgeBodySearchPort, policy: MobileCapabilityPolicy): boolean { return scopedPolicies.get(port) === policy; }
 const toolAdapters: AgentCapabilityToolAdapters = {
   isTodoTool: () => false, normalizeTodoToolRequest: () => { throw new Error("mobile_tool_unavailable"); },
-  isFinanceTool: () => false, financeEffect: () => { throw new Error("mobile_tool_unavailable"); },
+  isFinanceTool, financeEffect: (name, args) => financeToolEffect(name as PiFinanceToolId, normalizeFinanceToolRequest(name as PiFinanceToolId, args)),
   obsidianCli: () => { throw new Error("mobile_tool_unavailable"); }
 };
 function relativePath(value: string): string | null {
@@ -129,6 +130,7 @@ export class MobileCapabilityPolicy {
       return;
     }
     const context = this.inputs();
+    if (name === "finance_record" && !args) { requireMobileAgentCapability(checkAgentCapability(context, "finance", "write")); return; }
     if (name === "vault_search") {
       // The scoped search port checks every candidate before any content is read.
       requireMobileAgentCapability(checkAgentTool(context, name));

@@ -1,3 +1,4 @@
+import { seedMobileModuleFixture } from "./module-fixture";
 import type { DataAdapter } from "obsidian";
 import { MarkdownRenderer, Platform, setIcon } from "./browser-obsidian";
 import { LifestyleView } from "../../src/lifestyle/view";
@@ -148,6 +149,7 @@ if (params.has("tablet")) {
 }
 const workbenchFixture = { store, settings, runtime, host, requests, plugin, services, workspaceFixture };
 if (params.has("workbench")) await seedWorkbenchFixture(workbenchFixture);
+if (params.has("modulefixture")) await seedMobileModuleFixture(host, settings, services);
 let desktopDispose: (() => void | Promise<void>) | undefined;
 if (params.has("desktop") && params.has("account")) {
   const account = mountAccountMembership(root, { app: host.app as any, viewModel: accountService.read(), actions: accountService.actions, read: () => accountService.read(), language: "zh-CN", openProviders() {} });

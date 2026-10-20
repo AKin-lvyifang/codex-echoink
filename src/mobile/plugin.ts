@@ -211,8 +211,8 @@ export default class EchoInkMobilePlugin extends Plugin {
   }
   async showPage(page: MobileSettingsRoute): Promise<void> {
     if (Platform.isTablet) {
-      if (page === "settings" || page === "providers") {
-        await this.openIPadSettings(page === "providers" ? "model" : undefined);
+      if (page === "settings" || page === "providers" || page === "account") {
+        await this.openIPadSettings(page === "providers" ? "model" : page === "account" ? "account" : undefined);
         return;
       }
       const leaf = await this.navigation.openSettings();

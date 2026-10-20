@@ -1,3 +1,5 @@
+import type { MobileModulePort } from "./module-contracts";
+import { MobileModuleService } from "./module-service";
 import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderIssues, normalizeKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import { sha256Hex } from "../utils/sha256";
@@ -45,6 +47,7 @@ export interface MobileServicesHost {
   showPage(page: MobileSettingsRoute): Promise<void>;
 }
 export class MobileServices implements HomeHost {
+  readonly modules: MobileModulePort;
   readonly app: App;
   readonly homeActivity: HomeActivityCore;
   private preferenceRoot: string;
@@ -99,10 +102,12 @@ export class MobileServices implements HomeHost {
     this.app = host.app; this.preferenceRoot = directory.replace(/\/mobile$/u, "");
     host.runtime.setCapabilities(() => this.capabilities);
     host.runtime.setMemory?.(() => this.memory);
+    host.runtime.setModules?.(() => this.modules);
     const adapter = this.app.vault.adapter; this.profileProtocol = new MobileAgentRegistryService(adapter, host.settings, registry => host.saveSettings(registry));
     this.homeActivity = new HomeActivityCore({ read: async () => await adapter.exists(`${directory}/home-activity.json`) ? adapter.read(`${directory}/home-activity.json`) : null,
       write: bytes => adapter.write(`${directory}/home-activity.json`, bytes) });
     this.todos = new EchoInkTodoStore(this);
+    this.modules = new MobileModuleService(this, host.store);
   }
   get settings() { return this.host.settings; }
   registerEvent(event: EventRef) { this.host.registerEvent(event); }
@@ -121,7 +126,7 @@ export class MobileServices implements HomeHost {
     this.registerEvent(this.app.vault.on("rename", (file, old) => this.homeActivity.rename(old, file.path)));
     this.registerEvent(this.app.vault.on("delete", file => this.homeActivity.delete(file.path)));
   }
-  async dispose() { this.lifestyle?.dispose(); await this.memoryService?.suspend(); await this.homeActivity.dispose(); }
+  async dispose() { (this.modules as MobileModuleService).dispose(); this.lifestyle?.dispose(); await this.memoryService?.suspend(); await this.homeActivity.dispose(); }
   lifestyle!: MobileLifestyleService;
   get accountService() { return this.host.accountService; }
   async initializeFinance() { this.lifestyle = new MobileLifestyleService(this, this.preferenceRoot); await this.lifestyle.initialize(); }
@@ -136,12 +141,13 @@ export class MobileServices implements HomeHost {
     if (!selected) throw new Error("尚未配置当前 EchoInk Provider");
     return mobileGenerateText(selected.provider, selected.model, this.host.capabilityRequest ?? requestUrl, system, user, maxTokens, signal, this.usage);
   }
-  async saveFinanceCsv(name: string, content: string) {
+  async saveFinanceCsv(name: string, content: string, guard: () => void = () => {}) {
+    guard();
     const directory = "EchoInk/财务导出";
-    for (const path of ["EchoInk", directory]) if (!await this.app.vault.adapter.exists(path)) await this.app.vault.createFolder(path);
+    for (const path of ["EchoInk", directory]) if (!await this.app.vault.adapter.exists(path)) { guard(); await this.app.vault.createFolder(path); }
     const stem = name.replace(/\.csv$/u, ""); let path = `${directory}/${name}`, index = 1;
     while (await this.app.vault.adapter.exists(path)) path = `${directory}/${stem}-${index++}.csv`;
-    await this.app.vault.create(path, content); return path;
+    guard(); await this.app.vault.create(path, content); return path;
   }
   readonly englishDiary = {
     enabled: () => this.settings.englishDiary.enabled,

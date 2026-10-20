@@ -50,7 +50,14 @@ export function setIcon(element: HTMLElement, name: string) {
 
 export { FixtureTFile as TFile } from "./host.mjs";
 export { parse as parseYaml } from "yaml";
-export class TFolder { path = ""; name = ""; children: unknown[] = []; }
+export class TFolder {
+  path = ""; name = ""; children: unknown[] = [];
+  static [Symbol.hasInstance](value: unknown): boolean {
+    if (!value || typeof value !== "object") return false;
+    const folder = value as { path?: unknown; children?: unknown; extension?: unknown };
+    return typeof folder.path === "string" && Array.isArray(folder.children) && folder.extension === undefined;
+  }
+}
 export class Component { addChild() {} removeChild() {} register() {} load() {} unload() {} }
 export class Plugin extends Component {
   private domEvents: (() => void)[] = [];

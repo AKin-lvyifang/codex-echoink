@@ -8,9 +8,12 @@ import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { AgentModuleId } from "../../agents/types";
 import { MobileUI } from "../mobile/mobile-ui";
 import { shellElement } from "../mobile/shell-controls";
-import { readNativeJournalSettings } from "../../home/native-journal";
 import { IPhoneSettingsPages } from "./settings-pages";
 import { mobileModuleEnabled } from "../../mobile/module-settings";
+import { openIPhoneJournal } from "./journal-pages";
+import { openIPhoneTodos, openIPhoneTodoSettings } from "./todo-pages";
+import { openIPhoneFinance } from "./finance-pages";
+import { openIPhoneFinanceSettings } from "./finance-settings-pages";
 
 /** iPhone page composition. iPad never instantiates this controller. */
 export class IPhoneWorkbench {
@@ -73,6 +76,12 @@ export class IPhoneWorkbench {
   async openLegacy(page: MobileSettingsRoute): Promise<void> {
     if (page === "settings") return this.settingsPages.open();
     if (page === "providers") return this.settingsPages.open("model");
+    if (page === "account") return this.settingsPages.open("account");
+    if (page === "todos" || page === "todos-settings") return openIPhoneTodoSettings(this.context);
+    if (page === "finance-settings") return openIPhoneFinanceSettings(this.context);
+    if (page === "finance-merchants") return openIPhoneFinanceSettings(this.context, "merchants");
+    if (page === "finance-accounts") return openIPhoneFinanceSettings(this.context, "accounts");
+    if (page === "finance-categories") return openIPhoneFinanceSettings(this.context, "categories");
     const content = shellElement(this.root.ownerDocument, "div", "ip-legacy");
     const ui = new MobileUI(content, {
       app: this.host.app, store: this.host.store, runtime: this.host.runtime, services: this.host.services,
@@ -88,17 +97,14 @@ export class IPhoneWorkbench {
   }
   async openModule(module: AgentModuleId): Promise<void> {
     if (!mobileModuleEnabled(this.host.settings(), module)) throw new Error("此模块已停用。");
-    if (module === "todos") return this.openLegacy("todos");
+    if (module === "journal") return openIPhoneJournal(this.context);
+    if (module === "todos") return openIPhoneTodos(this.context);
     if (module === "knowledge-base") return this.openLegacy("knowledge");
-    if (module === "finance") { await this.host.services.lifestyle.open("finance"); return; }
-    if (module !== "journal" && module !== "english-diary") return;
-    const title = module === "journal" ? "日记" : "英文日记";
+    if (module === "finance") return openIPhoneFinance(this.context);
+    if (module !== "english-diary") return;
+    const title = "英文日记";
     const settings = this.host.settings();
-    const journal = module === "journal" ? readNativeJournalSettings(this.host.app, settings.journalDirectory, settings.knowledgeBase.folderBindings) : undefined;
-    if (journal && !journal.available) throw new Error("日记目录尚未配置。");
-    const directory = module === "journal"
-      ? journal!.folder
-      : this.host.services.safePath(settings.englishDiary.englishDirectory);
+    const directory = this.host.services.safePath(settings.englishDiary.englishDirectory);
     const files = this.host.app.vault.getMarkdownFiles().filter(file => directory ? file.path.startsWith(`${directory}/`) : !file.path.includes("/")).sort((a, b) => b.stat.mtime - a.stat.mtime);
     const content = shellElement(this.root.ownerDocument, "div", "ip-module-files");
     if (!files.length) content.append(shellElement(this.root.ownerDocument, "p", "ip-empty", "还没有记录。"));

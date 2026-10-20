@@ -441,14 +441,14 @@ export class EchoInkTodoStore {
   }
 
   /** Rename writes every matching category meta line in the source file. */
-  async renameCategoryInSource(oldName: string, newName: string): Promise<void> {
+  async renameCategoryInSource(oldName: string, newName: string, expectedVersion?: string | null): Promise<void> {
     await this.enqueueWrite((content) => ({
       content: content.split("\n").map((line) => {
         const meta = /^(\s+[-*]\s+分类[：:])\s*(.*)$/u.exec(line);
         if (meta && meta[2].trim() === oldName) return `${meta[1]}${newName}`;
         return line;
       }).join("\n")
-    }));
+    }), expectedVersion);
   }
 
   /** Deleting a category clears its meta lines; todos themselves stay. */
