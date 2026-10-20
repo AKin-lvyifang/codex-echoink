@@ -285,6 +285,7 @@ async function assertFinanceAdapter(fixture: Fixture, root: string, adapter: Obs
   const access: CapabilityAccess = { checkCapability: () => paid, requireCapability: () => { if (!paid) throw new Error("PRO_REQUIRED"); }, subscribe: () => () => {} };
   const store = new LifestyleStore(path.join(root, ".finance-store.json")); await store.initialize();
   const plugin = fixture.plugin as any;
+  plugin.settings.lifestyle.finance.enabled = true;
   plugin.registerEvent = () => {};
   (fixture.app.vault as any).on = () => ({});
   const finance = new LifestyleFinanceService({ plugin, store, refresh() {} } as unknown as LifestyleService, access);
