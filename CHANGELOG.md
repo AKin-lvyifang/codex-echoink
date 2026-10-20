@@ -1,5 +1,69 @@
 # Changelog
 
+## 2.8.1 - 2026-10-20
+<!-- release-type: improve -->
+### 2.8.1 · 桌面资料生成与移动工作台改版
+
+### 中文
+
+类型：体验改进
+
+#### 桌面端更新内容
+
+- **从资料生成报告与思维导图。** 选好笔记和模板，就能生成简报、学习指南、博文，或一张 Canvas 思维导图，存进输出目录。报告里的每条观点都带来源双链，导图要点也能点回原笔记。入口在对话框的“+”菜单、输入 `/` 选模板，或在文件树里右键笔记或文件夹。
+- **模板可自己改。** 在 **设置 → 模块 → 知识库 → 生成模板** 里修改内置模板、恢复默认，或新建自己的模板；也可以点“让 AI 推荐模板”，按当前资料临时推荐几种写法。
+- **存为笔记更可靠。** 回答下方的“存为笔记”原样保存回答、提问和来源双链，时间按本地时区记录；重新打开对话后仍显示已保存，再点直接打开那篇笔记，不会重复保存。
+- **对话工作记录更好读。** 检索、读取、记忆、工具失败等步骤改用直白的说法和图标，失败时写明原因；来源移到回答下方，只显示笔记名和行号，点行号可跳到原文位置；本轮用到的个人记忆也会列出。
+
+#### 手机与平板更新
+
+- **iPhone、iPad 分开设计工作台。** iPhone 用两层页面查看工作台和任务；iPad 在中央看工作台，右栏查看 Agent 与任务。日常模块、任务状态和最近结果都有自己的位置。
+- **多个 Agent，各自处理任务。** 可以创建和编辑 Agent，为它选择模型、能力和记忆范围。不同任务可以分别推进，等你回应的问题直接显示在任务里；“交给”只准备内容，由你决定何时发送。
+- **中断后接着做。** 切到后台、锁屏或关闭应用后，任务会标出中断，不会自己继续。重新打开后，可核对已经完成的操作，再从当前状态继续，避免重复写入。
+- **设置分成六组。** 通用、模型、Agent、能力、模块、账号与会员分别管理；登录、添加模型服务、Skill 详情和编辑 Agent 都进入下一层，再点返回。
+- **从工作台进入日常页面。** 日记、待办、财务、知识库和英文日记有各自的页面。日记可看照片日历，待办集中处理事项，知识库可浏览目录和待整理内容；财务保留完整图表、金额动画、预算和账单计划，详细设置从财务页进入。
+
+#### 如何使用
+
+生成会写入文件，需要在对话底部选择可写的工作区权限，并在 **设置 → 模块** 里绑定“输出”目录。生成只读取你选中的笔记，不会自动检索其他资料或使用个人记忆。生成结果是 AI 整理的内容，请按来源核对重要信息。
+
+移动端本次仍为 **Mobile Beta**，已包含上述新工作台和日常页面。资料生成、生成模板设置和桌面对话工作记录改进仅在桌面端提供。iPhone 真机与部分 iPad 原生流程仍待验证；任务不会跨设备同步，PDF 精读只在电脑上使用。
+
+#### 下载与升级
+
+需要 **Obsidian 1.11.4 及以上**。升级前请备份 Vault 与插件数据。前往[官网下载安装](https://echoink.cn/install)，或从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.1) 下载 **main.js、manifest.json、styles.css**，放入 `.obsidian/plugins/codex-echoink/` 后重新启用插件。
+
+### English
+
+**2.8.1 · Generate from notes and a new mobile workbench**
+
+Type: Improved
+
+#### What's new on desktop
+
+- **Generate reports and mind maps from notes.** Choose notes and a template to create a brief, study guide, or blog post, or a Canvas mind map, saved to your output folder. Each point in a report links back to its source note, and mind map items open the original note. Start from the **+** menu in the composer, type `/` to pick a template, or right-click a note or folder in the file explorer.
+- **Editable templates.** In **Settings → Modules → Knowledge → Generation templates**, edit built-in templates, restore defaults, or create your own. Select **Suggest templates** to get a few temporary formats based on the selected notes.
+- **More reliable Save as note.** Save as note keeps the answer, your question, and source links as they are, with times in your local time zone. After reopening a conversation, the answer still shows as saved, and selecting it opens the same note instead of saving again.
+- **Clearer work records.** Search, reading, memory, and failed tool steps use plain wording and icons, and failures explain why. Sources now appear below the answer with note names and line ranges; select a line range to jump to that place. Personal memories used in the turn are listed too.
+
+#### What's new on iPhone and iPad
+
+- **A workbench designed separately for iPhone and iPad.** iPhone uses separate workbench and task pages. On iPad, the workbench stays in the center while Agents and tasks live in the right pane, with clear places for everyday modules, task status, and recent results.
+- **Multiple Agents with separate tasks.** Create or edit Agents and choose their models, capabilities, and memory scope. Tasks can progress independently, and questions appear inside the task. Handing something to an Agent only prepares the text; you decide when to send it.
+- **Continue after an interruption.** Backgrounding, locking, or closing the app marks a task as interrupted; it will not restart on its own. Review completed actions before continuing from the current state, helping avoid repeated writes.
+- **Six settings groups.** General, Models, Agents, Capabilities, Modules, and Account & Membership have separate sections. Sign-in, adding a model service, Skill details, and Agent editing open as child pages with a Back action.
+- **Everyday pages from the workbench.** Journals, to-dos, finance, knowledge, and English diaries have their own pages. Browse a photo calendar, manage tasks and knowledge folders, or use finance charts, animated amounts, budgets, and bill plans. Detailed finance settings open from the finance page.
+
+#### How to use
+
+Generation writes files, so choose a writable workspace permission at the bottom of the conversation and bind an Output folder in **Settings → Modules**. Generation reads only the notes you select and does not run extra retrieval or use personal memory. Generated content is AI-organized; check sources for important decisions.
+
+Mobile remains in **Mobile Beta**, now with the workbench and everyday pages described above. Note generation, generation-template settings, and desktop conversation-record improvements are desktop-only. iPhone device testing and some native iPad flows remain pending. Tasks do not sync across devices, and PDF close reading is desktop-only.
+
+#### Download and upgrade
+
+Requires **Obsidian 1.11.4 or later**. Back up your vault and plugin data before upgrading. Install from the [website](https://echoink.cn/install), or download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.1) into `.obsidian/plugins/codex-echoink/`, then re-enable the plugin.
+
 ## 2.8.0 - 2026-10-19
 <!-- release-type: feat -->
 ### 2.8.0 · 全新工作台与多 Agent 任务
