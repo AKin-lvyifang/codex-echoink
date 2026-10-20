@@ -1,3 +1,4 @@
+import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
 import { createUnavailableAccountAdapter, type AccountIdentity, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
 import { getMembershipPlanPricing, resolveMembershipCurrency, type MembershipPlanId } from "../../settings/account-membership-pricing";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
@@ -68,7 +69,7 @@ export class IPhoneAccountPages {
         const metadata = vm.membership.state === "free" ? vm.identity.email : this.membershipLine(vm); copy.append(el(ctx.document, "div", "ip-account-sub", metadata));
         const links = settingsGroup(ctx, accountLinks); settingsRow(ctx, links, "编辑资料", { action: () => this.profile() });
         settingsRow(ctx, links, "设备管理", { literalValue: true, value: `${vm.membership.devices?.length ?? "—"} / ${vm.membership.deviceLimit ?? "—"}`, action: () => this.devices() });
-        const signOut = settingsRow(ctx, links, "退出登录", { action: () => {
+        const signOut = settingsRow(ctx, links, "退出登录", { navigation: false, action: () => {
           if (busy || !this.adapter.actions.signOut) return;
           this.confirm(links, "退出后这台设备不再使用 PRO 功能，已保存的内容不受影响。", "退出登录", () => runAccountAction(() => this.adapter.actions.signOut!()));
         } }); (signOut as HTMLButtonElement).disabled = !this.adapter.actions.signOut;
@@ -218,7 +219,7 @@ export class IPhoneAccountPages {
   }
   private membershipLine(vm: AccountMembershipViewModel): string {
     const member = vm.membership, planName = member.planName || (member.planId && PLAN_NAMES[member.planId as MembershipPlanId] ? settingsText(this.ctx, PLAN_NAMES[member.planId as MembershipPlanId]) : "");
-    return [planName, settingsText(this.ctx, STATE_NAMES[member.state]), member.state === "scheduled" && member.startsAt ? this.text(`${member.startsAt} 生效`, `Starts ${member.startsAt}`) : "", member.expiresAt && member.state !== "lifetime" ? this.text(`${member.expiresAt} 到期`, `Expires ${member.expiresAt}`) : "", member.verifiedAt ? this.text(`${member.verifiedAt} 已验证`, `Verified ${member.verifiedAt}`) : "", member.state === "offline-valid" && member.offlineUntil ? this.text(`离线可用至 ${member.offlineUntil}`, `Offline until ${member.offlineUntil}`) : ""].filter(Boolean).join(" · ");
+    return [planName, settingsText(this.ctx, STATE_NAMES[member.state]), member.state === "scheduled" && member.startsAt ? this.text(`${formatMobileDate(member.startsAt)} 生效`, `Starts ${formatMobileDate(member.startsAt)}`) : "", member.expiresAt && member.state !== "lifetime" ? this.text(`${formatMobileDate(member.expiresAt)} 到期`, `Expires ${formatMobileDate(member.expiresAt)}`) : "", member.verifiedAt ? this.text(`${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")} 已验证`, `Verified ${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")}`) : "", member.state === "offline-valid" && member.offlineUntil ? this.text(`离线可用至 ${formatMobileDate(member.offlineUntil)}`, `Offline until ${formatMobileDate(member.offlineUntil)}`) : ""].filter(Boolean).join(" · ");
   }
   private valid(vm: AccountMembershipViewModel): boolean { return ["active", "lifetime", "offline-valid"].includes(vm.membership.state); }
   private avatar(identity: AccountIdentity | null): HTMLElement { const { ctx } = this; if (identity && identity.avatar !== "initial") { const image = el(ctx.document, "img", "ip-account-avatar"); image.src = identity.avatar.url; image.alt = ""; return image; } const avatar = el(ctx.document, "span", `ip-account-avatar${identity ? "" : " is-anonymous"}`); avatar.setAttribute("aria-hidden", "true"); if (identity) avatar.textContent = Array.from(identity.name)[0]?.toUpperCase() || "?"; else avatar.append(iphoneIcon(ctx.document, "user")); return avatar; }

@@ -22,7 +22,7 @@ export function settingsBrand(ctx: Pick<IPadSettingsContext, "document">, provid
   const brand = el(ctx.document, "span", "pd-settings-brand");
   renderProviderBrandIcon(brand, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom"); return brand;
 }
-export function settingsRow(ctx: IPadSettingsContext, parent: HTMLElement, title: string, value = "", action?: () => void | Promise<unknown>, lead?: HTMLElement, description?: string): HTMLElement {
+export function settingsRow(ctx: IPadSettingsContext, parent: HTMLElement, title: string, value = "", action?: () => void | Promise<unknown>, lead?: HTMLElement, description?: string, navigation = true): HTMLElement {
   const row = action ? el(ctx.document, "button", "pd-settings-row") : el(ctx.document, "div", "pd-settings-row");
   if (row instanceof ctx.document.defaultView!.HTMLButtonElement) {
     row.type = "button"; row.addEventListener("click", () => { void Promise.resolve().then(action).catch(ctx.error); });
@@ -31,7 +31,7 @@ export function settingsRow(ctx: IPadSettingsContext, parent: HTMLElement, title
   const copy = el(ctx.document, "span", "pd-settings-copy"); copy.append(el(ctx.document, "span", "pd-settings-name", title));
   if (description) copy.append(el(ctx.document, "span", "pd-settings-description", description)); row.append(copy);
   if (value) row.append(el(ctx.document, "span", "pd-settings-value", value));
-  if (action) row.append(ipadIcon(ctx.document, "chevron-right")); parent.append(row); return row;
+  if (action && navigation) row.append(ipadIcon(ctx.document, "chevron-right")); parent.append(row); return row;
 }
 export function settingsAction(ctx: IPadSettingsContext, label: string, action: () => void | Promise<unknown>, primary = false): HTMLButtonElement {
   const button = el(ctx.document, "button", `pd-settings-action${primary ? " is-primary" : ""}`); button.type = "button";

@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import vm from "node:vm";
+import { build } from "esbuild";
+
+const built = await build({ entryPoints: ["src/mobile/date-display.ts"], bundle: true, format: "cjs", write: false, logLevel: "silent" });
+const module = { exports: {} };
+vm.runInNewContext(built.outputFiles[0].text, { module, exports: module.exports, Date });
+const { formatMobileDate, formatMobileClock, formatMobileDateTime, formatMobileDateGroup } = module.exports;
+const now = new Date(2026, 9, 20, 1, 5).getTime();
+assert.equal(formatMobileDateTime("2026/10/20 00:04:59", now), "今天 00:04");
+assert.equal(formatMobileDateTime("2026/10/19 23:59:58", now), "昨天 23:59");
+assert.equal(formatMobileDateTime("2026-10-17T12:00:00", now), "10月17日");
+assert.equal(formatMobileDateTime("2025-10-17", now), "2025-10-17");
+assert.equal(formatMobileDateTime("2025-12-31T23:59:59", new Date(2026, 0, 1, 0, 1).getTime()), "昨天 23:59");
+assert.equal(formatMobileDateGroup("2026-10-19", now, "en"), "Yesterday");
+assert.equal(formatMobileDate("2027/10/19 22:25:08"), "2027-10-19");
+assert.equal(formatMobileClock("2026/10/20 00:04:59"), "00:04");
+assert.equal(formatMobileDateTime("invalid", now), "—");
+assert.equal(formatMobileDate(null), "—");
+console.log("PASS shared mobile date display: calendar boundaries, relative times, short dates, no seconds and invalid values");

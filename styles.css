@@ -27485,7 +27485,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-iphone .ip-model-label { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .echoink-iphone .ip-brand { display: inline-flex; flex: 0 0 18px; align-items: center; width: 18px; height: 18px; }
 .echoink-iphone .ip-brand svg { width: 100%; height: 100%; }
-.echoink-iphone .ip-composer-send .ip-action-visible, .echoink-iphone .ip-composer-stop .ip-action-visible { width: 32px; height: 32px; border-radius: 50%; background: var(--em-green, var(--interactive-accent)); color: var(--text-on-accent); }
+.echoink-iphone .ip-composer-send .ip-action-visible { width: 32px; height: 32px; border-radius: 50%; background: var(--em-green, var(--interactive-accent)); color: var(--text-on-accent); }
 .echoink-iphone .ip-composer-send .ip-icon svg { width: 17px; height: 17px; }
 .echoink-iphone .ip-composer-references { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; }
 .echoink-iphone .ip-composer-references > .ip-action:first-child { min-width: 0; max-width: calc(100% - 44px); }
@@ -27503,6 +27503,8 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-iphone .ip-task-empty, .echoink-iphone .ip-picker-empty { padding: 36px 0; text-align: center; color: var(--text-muted); font-size: .88em; }
 .echoink-iphone .ip-composer-wrap [hidden], .echoink-iphone .ip-task-detail [hidden] { display: none; }
 @media (hover: hover) { .echoink-iphone button.ip-action:hover:not(:disabled) .ip-action-visible { background: var(--background-modifier-hover); } }
+
+.echoink-iphone .ip-composer-stop .ip-action-visible { width: 32px; height: 32px; background: var(--background-modifier-hover); color: var(--text-normal); border-radius: 50%; }
 
 body[data-echoink-theme] .echoink-iphone {
   --background-primary: var(--echoink-theme-bg);
@@ -28199,7 +28201,7 @@ body[data-echoink-theme] .echoink-iphone {
 .echoink-ipad .pd-model-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .echoink-ipad .pd-brand { display: inline-flex; flex: 0 0 18px; align-items: center; width: 18px; height: 18px; }
 .echoink-ipad .pd-brand svg { width: 100%; height: 100%; }
-.echoink-ipad .pd-composer-send .pd-action-visible, .echoink-ipad .pd-composer-stop .pd-action-visible { width: 28px; height: 28px; border-radius: 50%; background: var(--em-green, var(--interactive-accent)); color: var(--text-on-accent); }
+.echoink-ipad .pd-composer-send .pd-action-visible { width: 28px; height: 28px; border-radius: 50%; background: var(--em-green, var(--interactive-accent)); color: var(--text-on-accent); }
 .echoink-ipad .pd-composer-send .pd-icon svg { width: 17px; height: 17px; }
 .echoink-ipad .pd-composer-references { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; }
 .echoink-ipad .pd-composer-references > .pd-action:first-child { min-width: 0; max-width: calc(100% - 44px); }
@@ -28229,6 +28231,8 @@ body[data-echoink-theme] .echoink-iphone {
   overflow-wrap: normal;
   word-break: normal;
 }
+
+.echoink-ipad .pd-composer-stop .pd-action-visible { width: 28px; height: 28px; background: var(--background-modifier-hover); color: var(--text-normal); border-radius: 50%; }
 
 .echoink-ipad.pd-agent-pane { display: flex; flex-direction: column; padding: 0; }
 .echoink-ipad .pd-agent-shell { flex: 1 1 auto; min-height: 0; height: auto; }

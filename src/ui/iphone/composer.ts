@@ -215,6 +215,7 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
     visible.append(shellElement(document, "span", "ip-model-label", selected?.displayName || selected?.id || "配置模型")); model.setAttribute("aria-label", `选择模型：${selected?.displayName || selected?.id || "未配置"}`);
     permission.setAttribute("aria-label", `工作区权限：${permissions.find(item => item[0] === effectivePermission())?.[1]}`);
     send.disabled = sending || !!state?.resuming || !input.value.trim(); send.setAttribute("aria-busy", String(sending));
+    send.hidden = !!state?.busy && !input.value.trim() && state?.interaction?.status !== "pending";
     stop.hidden = (!state?.busy && !state?.resuming) || state?.interaction?.status === "pending"; stop.disabled = stopping; stop.setAttribute("aria-label", state?.resuming ? "取消继续" : "停止当前任务");
     status.textContent = state?.queuedCount ? state.paused ? `已暂停 ${state.queuedCount} 条` : `排队 ${state.queuedCount} 条` : ""; status.hidden = !status.textContent;
     references.replaceChildren();

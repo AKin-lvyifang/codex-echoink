@@ -1,3 +1,4 @@
+import { formatMobileDateGroup, formatMobileClock } from "../../mobile/date-display";
 import { setIcon } from "obsidian";
 import type { AgentDefinition, AgentModuleId } from "../../agents/types";
 import type { MobileSession } from "../../mobile/store";
@@ -38,13 +39,8 @@ export function iphoneTaskStatus(task: MobileSession): NonNullable<MobileSession
 export function iphoneTaskUnread(task: MobileSession): boolean { return (task.unreadAnswerAt ?? 0) > (task.lastReadAt ?? 0); }
 export function iphoneTaskTime(task: MobileSession): number { return task.taskCompletedAt ?? task.updatedAt; }
 
-export function iphoneDateGroup(at: number, now = Date.now()): string {
-  const date = new Date(at), today = new Date(now), yesterday = new Date(now); yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === today.toDateString()) return "今天";
-  if (date.toDateString() === yesterday.toDateString()) return "昨天";
-  return `${date.getFullYear() === today.getFullYear() ? "" : `${date.getFullYear()}年`}${date.getMonth() + 1}月${date.getDate()}日`;
-}
-export function iphoneClock(at: number): string { return new Date(at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }); }
+export const iphoneDateGroup = formatMobileDateGroup;
+export const iphoneClock = formatMobileClock;
 
 export function iphoneTaskSummary(task: MobileSession): string {
   const status = iphoneTaskStatus(task);

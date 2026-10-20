@@ -15,7 +15,7 @@ export function settingsBrand(ctx: IPhonePageContext, id?: ApiProviderId): HTMLE
   renderProviderBrandIcon(brand, id === "openai" ? "openai-codex" : id ?? "custom"); return brand;
 }
 export function settingsRow(ctx: IPhonePageContext, parent: HTMLElement, name: string, options: {
-  value?: string; detail?: string; icon?: string; leading?: HTMLElement; valueLeading?: HTMLElement; action?: () => void | Promise<void>; selected?: boolean; literal?: boolean; literalValue?: boolean; literalDetail?: boolean;
+  value?: string; detail?: string; icon?: string; leading?: HTMLElement; valueLeading?: HTMLElement; action?: () => void | Promise<void>; selected?: boolean; literal?: boolean; literalValue?: boolean; literalDetail?: boolean; navigation?: boolean;
 } = {}): HTMLElement {
   const row = options.action ? el(ctx.document, "button", "ip-settings-row") : el(ctx.document, "div", "ip-settings-row");
   if (options.action) (row as HTMLButtonElement).type = "button";
@@ -29,7 +29,7 @@ export function settingsRow(ctx: IPhonePageContext, parent: HTMLElement, name: s
   if (options.selected !== undefined) {
     row.classList.toggle("is-selected", options.selected); row.setAttribute("aria-pressed", String(options.selected));
     if (options.selected) row.append(iphoneIcon(ctx.document, "check"));
-  } else if (options.action) row.append(iphoneIcon(ctx.document, "chevron-right"));
+  } else if (options.action && options.navigation !== false) row.append(iphoneIcon(ctx.document, "chevron-right"));
   if (options.action) row.addEventListener("click", () => {
     if (row.matches(":disabled")) return;
     void Promise.resolve().then(options.action).catch(ctx.error);

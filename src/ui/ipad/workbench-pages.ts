@@ -1,3 +1,4 @@
+import { formatMobileDateTime } from "../../mobile/date-display";
 import { GENERAL_ASSISTANT_ID } from "../../agents/types";
 import type { WorkbenchSignal, WorkbenchSnapshot } from "../../home/workbench-types";
 import type { ParsedTodoRecord } from "../../home/todo-markdown";
@@ -38,7 +39,7 @@ function interruptedAt(task: MobileSession): string {
   const reasons = { app_closed: "应用关闭时中断", user_stopped: "已停止", plugin_disabled: "插件关闭时中断", run_failed: "执行失败时中断",
     process_unknown: "发现上次未正常结束", watchdog: "运行超时中断", app_backgrounded: "切到后台时中断" };
   const reason = task.interruption ? reasons[task.interruption.reason] : "已中断";
-  return at === undefined ? "未记录中断时间" : `${ipadDateGroup(at)} ${ipadClock(at)} ${reason}`;
+  return at === undefined ? "未记录中断时间" : `${formatMobileDateTime(at)} ${reason}`;
 }
 
 export function createHomePage(ctx: IPadPageContext): MobileShellPage {

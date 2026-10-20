@@ -1,3 +1,4 @@
+import { formatMobileDateTime } from "../../mobile/date-display";
 import { setIcon } from "obsidian";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { MobileShellPage } from "../mobile/shell-types";
@@ -68,7 +69,7 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
     const task = host.store.getSession(taskId), state = host.runtime.stateFor(taskId);
     if (!task) { stream.replaceChildren(shellElement(document, "p", "ip-task-empty", "任务已不存在。")); tail.replaceChildren(); composer.element.hidden = true; return; }
     const name = host.settings().agentRegistry.agents.find(agent => agent.id === task.agentId)?.name ?? "Agent";
-    const status = task.taskStatus === "completed" ? `已完成${task.taskCompletedAt ? ` · ${new Date(task.taskCompletedAt).toLocaleString()}` : ""}` : task.taskStatus === "interrupted" ? "已中断" : state.interaction?.status === "pending" ? "等你回应" : state.busy ? "进行中" : task.taskStatus === "waiting" ? "等你回应" : "";
+    const status = task.taskStatus === "completed" ? `已完成${task.taskCompletedAt ? ` · ${formatMobileDateTime(task.taskCompletedAt)}` : ""}` : task.taskStatus === "interrupted" ? "已中断" : state.interaction?.status === "pending" ? "等你回应" : state.busy ? "进行中" : task.taskStatus === "waiting" ? "等你回应" : "";
     page.title = task.title; page.subtitle = [name, status].filter(Boolean).join(" · ");
     const panel = content.closest(".eis-page");
     const heading = panel?.querySelector<HTMLElement>(".eis-title"); if (heading) heading.textContent = page.title;
@@ -78,7 +79,7 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
       const box = shellElement(document, "section", "ip-task-stopbox"); box.setAttribute("aria-label", "任务中断记录");
       const line = shellElement(document, "div", "ip-task-interrupted"); const mark = shellElement(document, "span", "ip-icon"); setIcon(mark, "circle-pause"); mark.setAttribute("aria-hidden", "true"); line.append(mark);
       const at = state.interruption?.at ?? task.taskInterruptedAt;
-      if (at !== undefined) { const time = shellElement(document, "time", "", `${new Date(at).toLocaleString()} ${state.interruption ? interruptionReasons[state.interruption.reason] : "中断原因未确认"}`); time.dateTime = new Date(at).toISOString(); line.append(time); }
+      if (at !== undefined) { const time = shellElement(document, "time", "", `${formatMobileDateTime(at)} ${state.interruption ? interruptionReasons[state.interruption.reason] : "中断原因未确认"}`); time.dateTime = new Date(at).toISOString(); line.append(time); }
       else line.append(shellElement(document, "span", "", "已中断 · 时间未记录"));
       box.append(line, shellElement(document, "div", "ip-task-stage", `停在：${stageLabel(state.interruption?.stage ?? task.taskStage)}`));
       const actions = shellElement(document, "div", "ip-task-actions");

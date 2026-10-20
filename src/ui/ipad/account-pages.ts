@@ -1,3 +1,4 @@
+import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
 import { Notice } from "obsidian";
 import { createUnavailableAccountAdapter, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
 import { getMembershipPlanPricing, resolveMembershipCurrency, type MembershipCurrency, type MembershipPlanId } from "../../settings/account-membership-pricing";
@@ -108,7 +109,7 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
         if (validPro(vm)) edition(ctx, name); else name.append(el(ctx.document, "span", "pd-account-free", t(ctx, stateNames[vm.membership.state])));
         const membership = vm.membership, planId = membership.planId ?? (membership.state === "lifetime" ? "early" : null), plan = membership.planName || (planId && planId in planNames ? t(ctx, planNames[planId as MembershipPlanId]) : "");
         const lifetime = membership.state === "lifetime" || planId === "early";
-        const details = validPro(vm) || plan ? [plan, !lifetime && membership.expiresAt ? `${membership.expiresAt} ${t(ctx, "到期")}` : "", membership.verifiedAt ? `${membership.verifiedAt} ${t(ctx, "已验证")}` : "", !["active", "lifetime", "free"].includes(membership.state) ? t(ctx, stateNames[membership.state]) : ""].filter(Boolean).join(" · ") : vm.identity.email;
+        const details = validPro(vm) || plan ? [plan, !lifetime && membership.expiresAt ? `${formatMobileDate(membership.expiresAt)} ${t(ctx, "到期")}` : "", membership.verifiedAt ? `${formatMobileDateTime(membership.verifiedAt, Date.now(), english(ctx) ? "en" : "zh-CN")} ${t(ctx, "已验证")}` : "", !["active", "lifetime", "free"].includes(membership.state) ? t(ctx, stateNames[membership.state]) : ""].filter(Boolean).join(" · ") : vm.identity.email;
         copy.append(name, el(ctx.document, "div", "pd-account-sub", details));
       } else {
         copy.append(name); const login = el(ctx.document, "div", "pd-account-login-actions"), button = settingsAction(ctx, "登录 / 注册", () => v.child(createLoginPage(ctx, api)), true); button.disabled = !vm.serviceAvailable || !api.actions.signIn;
@@ -122,7 +123,7 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
         settingsRow(ctx, group, t(ctx, "退出登录"), "", () => inlineConfirm(ctx, outArea, "退出后这台设备不再使用 PRO 功能，已保存的内容不受影响。", "退出登录", async () => {
           const saved = await v.run(async () => { if (!api.actions.signOut) throw new Error(t(ctx, "账号服务暂不可用。")); await api.actions.signOut(); }, [], { identity: null });
           if (saved) { redeemCode = ""; code.value = ""; ctx.refresh(); render(); }
-        })); group.append(outArea);
+        }), undefined, undefined, false); group.append(outArea);
       }
     }
     notices.replaceChildren(); for (const message of [!vm.serviceAvailable ? t(ctx, "账号服务暂不可用。") : "", vm.storageNotice, vm.verificationError]) if (message) { const node = el(ctx.document, "div", "pd-settings-error", t(ctx, message)); node.setAttribute("role", "status"); notices.append(node); }

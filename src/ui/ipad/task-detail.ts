@@ -1,10 +1,10 @@
+import { formatMobileDateTime } from "../../mobile/date-display";
 import { setIcon } from "obsidian";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { shellElement } from "../mobile/shell-controls";
 import type { IPadPageContext } from "./workbench-contract";
 import { createIPadComposer, createInlineQuestion, iPadAction } from "./composer";
-import { ipadClock, ipadDateGroup } from "./workbench-elements";
 
 const toolNames: Record<string, string> = { vault_search: "查找笔记", note_read: "读取笔记", note_create: "保存文档", memory_search: "查找记忆", memory_read: "读取记忆", memory_write: "保存记忆", user_question: "询问", task_update: "更新任务" };
 const stages: Record<string, string> = { preparing: "准备上下文", context: "准备上下文", search: "检索资料", searching: "检索资料", summary: "整理历史", summarizing: "整理历史", model: "等待模型", tool: "执行工具", saving: "保存结果", question: "等待回应" };
@@ -81,7 +81,7 @@ export function createTaskPage(ctx: IPadPageContext, taskId: string): MobileShel
     const task = host.store.getSession(taskId), state = host.runtime.stateFor(taskId);
     if (!task) { stream.replaceChildren(shellElement(document, "p", "pd-task-empty", "任务已不存在。")); tail.replaceChildren(); composer.element.hidden = true; return; }
     const name = host.settings().agentRegistry.agents.find(agent => agent.id === task.agentId)?.name ?? "Agent";
-    const status = task.taskStatus === "completed" ? `已完成 · ${ipadDateGroup(task.taskCompletedAt ?? task.updatedAt)} ${ipadClock(task.taskCompletedAt ?? task.updatedAt)}` : task.taskStatus === "interrupted" ? "已中断" : state.interaction?.status === "pending" ? "等你回应" : state.busy ? "进行中" : task.taskStatus === "waiting" ? "等你回应" : "";
+    const status = task.taskStatus === "completed" ? `已完成 · ${formatMobileDateTime(task.taskCompletedAt ?? task.updatedAt)}` : task.taskStatus === "interrupted" ? "已中断" : state.interaction?.status === "pending" ? "等你回应" : state.busy ? "进行中" : task.taskStatus === "waiting" ? "等你回应" : "";
     page.title = task.title; page.subtitle = [name, status].filter(Boolean).join(" · ");
     const panel = content.closest(".echoink-ipad-page");
     const heading = panel?.querySelector<HTMLElement>(".echoink-ipad-title"); if (heading) heading.textContent = page.title;
@@ -91,7 +91,7 @@ export function createTaskPage(ctx: IPadPageContext, taskId: string): MobileShel
       const box = shellElement(document, "section", "pd-task-stopbox"); box.setAttribute("aria-label", "任务中断记录");
       const line = shellElement(document, "div", "pd-task-interrupted"); const mark = shellElement(document, "span", "pd-icon"); setIcon(mark, "circle-pause"); mark.setAttribute("aria-hidden", "true"); line.append(mark);
       const at = state.interruption?.at ?? task.taskInterruptedAt;
-      if (at !== undefined) { const time = shellElement(document, "time", "", `${new Date(at).toLocaleString()} ${state.interruption ? interruptionReasons[state.interruption.reason] : "中断原因未确认"}`); time.dateTime = new Date(at).toISOString(); line.append(time); }
+      if (at !== undefined) { const time = shellElement(document, "time", "", `${formatMobileDateTime(at)} ${state.interruption ? interruptionReasons[state.interruption.reason] : "中断原因未确认"}`); time.dateTime = new Date(at).toISOString(); line.append(time); }
       else line.append(shellElement(document, "span", "", "已中断 · 时间未记录"));
       box.append(line, shellElement(document, "div", "pd-task-stage", `停在：${stageLabel(state.interruption?.stage ?? task.taskStage)}`));
       const actions = shellElement(document, "div", "pd-task-actions");

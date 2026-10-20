@@ -1,3 +1,4 @@
+import { formatMobileDateTime } from "../../mobile/date-display";
 import { Notice } from "obsidian";
 import type { AgentModuleId } from "../../agents/types";
 import type { MobileMemoryCorrection, MobileMemoryCorrectionPreview, MobileMemorySettingsPort, MobileMemorySnapshot, MobileUserProfileSnapshot } from "../../mobile/memory-contracts";
@@ -293,7 +294,7 @@ export class IPhoneAgentSettingsPages {
   private body(): HTMLElement { const body = settingsBody(this.ctx); body.classList.add("ip-agent-settings"); return body; }
   private text(zh: string, en: string): string { return this.ctx.host.settings().settingsLanguage === "en" ? en : zh; }
   private notice(message: string): void { new Notice(settingsText(this.ctx, message)); }
-  private date(at: number): string { return new Date(at).toLocaleString(this.ctx.host.settings().settingsLanguage === "en" ? "en-US" : "zh-CN"); }
+  private date(at: number): string { return formatMobileDateTime(at, Date.now(), this.ctx.host.settings().settingsLanguage === "en" ? "en" : "zh-CN"); }
   private dailyLimit(limit: number): string { return this.text(`每天最多 ${limit} 次`, `At most ${limit} per day`); }
   private dreamPhase(phase: ReturnType<MobileMemorySettingsPort["dreamStatus"]>["phase"]): string { return settingsText(this.ctx, { idle: "尚未整理", running: "正在整理…", completed: "已完成", interrupted: "已中断", failed: "整理失败" }[phase]); }
   private profileBasis(basis: string): string { return settingsText(this.ctx, basis === "explicit_memory" ? "你确认的" : basis === "observed_memory" ? "系统观察 · 仅供参考" : "旧资料 · 待确认"); }
