@@ -1,3 +1,4 @@
+import { formatMobileDateTime } from "../../mobile/date-display";
 import { setIcon, type App } from "obsidian";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
@@ -467,7 +468,7 @@ export class MobileUI {
     const stages: Record<string, string> = { preparing: "准备上下文", context: "准备上下文", search: "检索资料", searching: "检索资料", summary: "整理历史", summarizing: "整理历史", model: "等待模型", tool: "执行工具", saving: "保存结果", question: "等待回应" };
     const group = el(body, "section", "em-task-interruption"); group.setAttribute("aria-label", "任务中断记录");
     el(group, "strong", "", "已中断"); el(group, "p", "em-task-interruption-reason", reasons[interruption.reason]);
-    const at = el(group, "time", "em-task-interruption-time", new Date(interruption.at).toLocaleString()); at.dateTime = new Date(interruption.at).toISOString();
+    const at = el(group, "time", "em-task-interruption-time", formatMobileDateTime(interruption.at)); at.dateTime = new Date(interruption.at).toISOString();
     el(group, "p", "em-task-interruption-stage", `停在：${stages[interruption.stage] ?? (/[\u4e00-\u9fff]/u.test(interruption.stage) ? interruption.stage : "阶段未确认")}`);
     this.button(group, "从这里继续", () => {
       const input = this.root.querySelector<HTMLTextAreaElement>(".em-input");
@@ -595,7 +596,7 @@ export class MobileUI {
     this.root.querySelectorAll<HTMLButtonElement>(".em-session-row").forEach(row => {
       row.setAttribute("aria-current", row.dataset.sessionId === this.host.store.state.activeSessionId ? "page" : "false");
       const session = this.host.store.state.sessions.find(item => item.id === row.dataset.sessionId);
-      if (session) { const title = row.querySelector("strong"); const time = row.querySelector("small"); if (title) title.textContent = session.title; if (time) time.textContent = new Date(session.updatedAt).toLocaleString(); }
+      if (session) { const title = row.querySelector("strong"); const time = row.querySelector("small"); if (title) title.textContent = session.title; if (time) time.textContent = formatMobileDateTime(session.updatedAt); }
     });
     this.error = this.host.runtime.stateFor(this.chatSessionId!).error || this.taskErrors.get(this.chatSessionId!) || ""; this.showError();
     if (this.questionSheet) {
@@ -854,7 +855,7 @@ export class MobileUI {
     body.classList.add("em-session-list");
     if (!this.host.store.state.sessions.length) el(body, "p", "em-empty", "还没有历史对话");
     for (const session of this.host.store.state.sessions.filter(item => !item.archivedAt)) {
-      const row = this.row(body, session.title, new Date(session.updatedAt).toLocaleString(), "message-square", async () => { this.captureScroll(); await this.host.store.selectSession(session.id); this.stack = []; this.page = "chat"; this.scroll.delete("chat"); this.closeSheet(false); this.render(); });
+      const row = this.row(body, session.title, formatMobileDateTime(session.updatedAt), "message-square", async () => { this.captureScroll(); await this.host.store.selectSession(session.id); this.stack = []; this.page = "chat"; this.scroll.delete("chat"); this.closeSheet(false); this.render(); });
       row.classList.add("em-session-row"); row.dataset.sessionId = session.id; row.setAttribute("aria-current", session.id === this.host.store.state.activeSessionId ? "page" : "false");
     }
   }
@@ -911,7 +912,7 @@ export class MobileUI {
       }, "check", "em-primary em-wide-action");
     } else {
       el(body, "h1", "em-memory-title", record.title); const article = el(body, "article", "em-memory-content markdown-rendered"); this.host.renderMarkdown(record.content, article);
-      el(body, "p", "em-help", `${new Date(record.date).toLocaleString()} · ${record.basis === "explicit" ? "明确陈述" : record.basis === "observed" ? "对话观察" : "推测"}`);
+      el(body, "p", "em-help", `${formatMobileDateTime(record.date)} · ${record.basis === "explicit" ? "明确陈述" : record.basis === "observed" ? "对话观察" : "推测"}`);
     }
     this.button(body, "忘记这条记忆", () => this.confirmAction(body, `忘记「${record.title}」？此操作会删除这条本地记忆。`, "确认忘记", async () => {
       await this.host.store.update(latest => {

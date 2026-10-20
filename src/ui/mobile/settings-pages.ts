@@ -1,3 +1,4 @@
+import { formatMobileDateTime } from "../../mobile/date-display";
 import { defaultAgentIdentityState } from "../../harness/memory/agent-identity-model";
 import { AgentIdentityModal } from "../agent-identity-modal";
 import { resolveAgentAvatarUrl } from "../agent-avatar-presets";
@@ -276,7 +277,7 @@ export class MobileSettingsPages {
       if (!files[kind].length) node(part, "p", "em-empty", "没有笔记");
       for (const file of files[kind]) this.ui.row(part, file.basename, file.path, "file-text", () => this.host.openNote(file.path));
     });
-    const title = node(body, "div", "kb-title-row"); node(title, "span", "em-help", `更新于 ${today.toLocaleTimeString()}`); this.ui.button(title, "", () => this.ui.go("knowledge"), "refresh-cw", "kb-icon-button").setAttribute("aria-label", "刷新状态");
+    const title = node(body, "div", "kb-title-row"); node(title, "span", "em-help", `更新于 ${formatMobileDateTime(today)}`); this.ui.button(title, "", () => this.ui.go("knowledge"), "refresh-cw", "kb-icon-button").setAttribute("aria-label", "刷新状态");
     const latestCheck = checks.filter(check => check.status === "success" && Number.isFinite(check.at)).sort((a, b) => b.at - a.at)[0];
     const latestMaintenance = logs.filter(log => Number.isFinite(log.at)).sort((a, b) => b.at - a.at)[0];
     const health = node(body, "section", "kb-health");
@@ -311,7 +312,7 @@ export class MobileSettingsPages {
       const nav = node(calendar, "div", "kb-month-nav"); this.ui.button(nav, "", () => { this.knowledgeMonth = new Date(year, month - 1, 1); drawCalendar(); }, "chevron-left", "kb-icon-button").setAttribute("aria-label", "上个月"); node(nav, "strong", "", `${year} 年 ${month + 1} 月`).setAttribute("aria-live", "polite"); const next = this.ui.button(nav, "", () => { this.knowledgeMonth = new Date(year, month + 1, 1); drawCalendar(); }, "chevron-right", "kb-icon-button"); next.setAttribute("aria-label", "下个月"); next.disabled = year === today.getFullYear() && month === today.getMonth();
       const week = node(calendar, "div", "kb-weekdays"); for (const label of ["一", "二", "三", "四", "五", "六", "日"]) node(week, "span", "", label);
       const grid = node(calendar, "div", "kb-calendar-grid"); for (let i = 0; i < (new Date(year, month, 1).getDay() + 6) % 7; i++) node(grid, "span", "kb-day kb-day-empty");
-      for (let day = 1; day <= new Date(year, month + 1, 0).getDate(); day++) { const key = dayKey(new Date(year, month, day)); const record = records.find(check => check.date === key); const cell = record ? this.ui.button(grid, "", () => this.ui.sheet("体检记录", part => { this.help(part, `${record.date} · ${record.status}`); this.help(part, new Date(record.at).toLocaleString()); }), undefined, `kb-day kb-day-${record.status === "success" ? "success" : "failed"}`) : node(grid, "span", `kb-day ${key === dayKey(today) ? "kb-day-today" : ""}`); node(cell, "span", "", String(day)); cell.setAttribute("aria-label", `${month + 1} 月 ${day} 日，${record ? record.status : "无体检记录"}`); if (record) node(cell, "b"); if (key === dayKey(today)) cell.setAttribute("aria-current", "date"); }
+      for (let day = 1; day <= new Date(year, month + 1, 0).getDate(); day++) { const key = dayKey(new Date(year, month, day)); const record = records.find(check => check.date === key); const cell = record ? this.ui.button(grid, "", () => this.ui.sheet("体检记录", part => { this.help(part, `${record.date} · ${record.status}`); this.help(part, formatMobileDateTime(record.at)); }), undefined, `kb-day kb-day-${record.status === "success" ? "success" : "failed"}`) : node(grid, "span", `kb-day ${key === dayKey(today) ? "kb-day-today" : ""}`); node(cell, "span", "", String(day)); cell.setAttribute("aria-label", `${month + 1} 月 ${day} 日，${record ? record.status : "无体检记录"}`); if (record) node(cell, "b"); if (key === dayKey(today)) cell.setAttribute("aria-current", "date"); }
       const legend = node(calendar, "div", "kb-calendar-legend"); node(legend, "span", "", `成功 ${records.filter(record => record.status === "success").length}`); node(legend, "span", "", `失败 ${records.filter(record => record.status !== "success").length}`); this.ui.button(legend, "本月", () => { this.knowledgeMonth = new Date(today.getFullYear(), today.getMonth(), 1); drawCalendar(); });
     }; drawCalendar();
     const model = this.group(section("模型")); this.ui.row(model, "EchoInk 当前模型", "选择模型", "server", () => this.ui.go("providers"));
