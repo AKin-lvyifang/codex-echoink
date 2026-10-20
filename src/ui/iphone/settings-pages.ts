@@ -126,7 +126,7 @@ export class IPhoneSettingsPages {
       { id: "journal", name: "日记", icon: "book-open", value: settings.journalDirectory },
       { id: "review", name: "复盘", icon: "history", route: "review" },
       { id: "todos", name: "待办", icon: "list-todo", route: "todos-settings" },
-      { id: "finance", name: "财务", icon: "wallet", route: "finance-settings", pro: true },
+      { id: "finance", name: "启用财务", icon: "wallet", pro: true },
       { id: "english-diary", name: "英文日记", icon: "languages", pro: true, route: "english-diary-settings", value: settings.englishDiary.englishDirectory }
     ];
     for (const entry of entries) {
@@ -139,7 +139,7 @@ export class IPhoneSettingsPages {
       }
       if (policy && !policy.canToggle) {
         const rights = el(ctx.document, "button", "ip-settings-module-rights"); rights.type = "button"; settingsMessage(ctx, rights, "需要 PRO"); rights.addEventListener("click", () => { void this.legacy("account").catch(ctx.error); }); row.append(rights);
-      } else settingsSwitch(ctx, group, entry.name, enabled, value => setMobileModuleEnabled(ctx.host, entry.id, value), undefined, row);
+      } else settingsSwitch(ctx, group, entry.id === "finance" ? "财务" : entry.name, enabled, value => setMobileModuleEnabled(ctx.host, entry.id, value), undefined, row);
     }
   }
 }

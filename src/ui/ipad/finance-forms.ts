@@ -116,8 +116,8 @@ export function createFinanceBillForm(ctx: IPadPageContext, plan?: FinanceBillPl
 export function createFinanceSettingsPage(ctx: IPadPageContext): MobileShellPage {
   const service = port(ctx).service, v = moduleView(ctx, "ipad-finance-settings", t(ctx, "财务设置", "Finance settings"));
   const settings = ctx.host.settings().lifestyle.finance;
-  for (const [key, label] of [["aiEnabled", t(ctx, "AI 分析", "AI analysis")], ["importAiEnabled", t(ctx, "账单智能整理", "Organize imported bills")]] as const) {
-    const row = el(ctx.document, "label", "pd-module-check-row"), input = el(ctx.document, "input", ""); input.type = "checkbox"; input.checked = settings[key]; input.setAttribute("aria-label", label); row.append(el(ctx.document, "span", "", label), input); v.body.append(row);
+  for (const [key, label] of [["aiEnabled", t(ctx, "AI 分析", "AI analysis")], ["importAiEnabled", t(ctx, "账单智能整理", "Organize imported bills")], ["showOnHome", t(ctx, "在首页显示", "Show on home")]] as const) {
+    const row = el(ctx.document, "label", "pd-module-check-row"), input = el(ctx.document, "input", ""); input.type = "checkbox"; input.checked = key === "showOnHome" ? ctx.host.settings().homeModules.finance !== false : settings[key]; input.setAttribute("aria-label", label); row.append(el(ctx.document, "span", "", label), input); v.body.append(row);
     input.addEventListener("change", () => { const requested = input.checked; void v.run(() => service.saveOption(key, requested)).then(saved => { if (!saved) input.checked = !requested; }); });
   }
   v.body.append(moduleButton(ctx, t(ctx, "分析保存位置", "Analysis location"), () => v.push(createModuleForm(ctx, "ipad-finance-analysis-location", t(ctx, "分析保存位置", "Analysis location"), [{ key: "directory", label: t(ctx, "文件夹", "Folder"), value: settings.analysisDirectory ?? "" }], values => service.saveAnalysisDirectory(values.directory)))));

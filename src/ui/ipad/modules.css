@@ -154,38 +154,13 @@
 @container (max-width: 520px) { .echoink-ipad .pd-module-page .pd-module-header > .is-primary { margin-left: auto; } .echoink-ipad .pd-finance-summary, .echoink-ipad .pd-finance-distributions { grid-template-columns: minmax(0, 1fr); } .echoink-ipad .pd-finance-bar-row { grid-template-columns: minmax(0, 1fr) auto; } .echoink-ipad .pd-finance-meter { grid-row: 2; grid-column: 1 / -1; } }
 @media (prefers-reduced-motion: reduce) { .echoink-ipad .pd-module-segment-thumb { transition: none; } }
 
-/* Approved mobile finance overview and secondary navigation. */
-.echoink-ipad .pd-finance-page > .pd-module-fields > .pd-module-body > .pd-finance-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.echoink-ipad .pd-finance-page .pd-finance-summary > .pd-finance-stat { padding: 12px 14px; }
-.echoink-ipad .pd-finance-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; min-width: 0; margin-bottom: 4px; }
-.echoink-ipad .pd-finance-navigation > .pd-module-segments { flex: 0 1 auto; max-width: 100%; }
-.echoink-ipad .pd-finance-month { display: flex; align-items: center; flex-wrap: nowrap; min-width: 0; gap: 0; margin-left: auto; }
-.echoink-ipad .pd-finance-month-label { font-size: .875em; font-weight: 500; white-space: nowrap; }
-.echoink-ipad .pd-finance-recent { min-width: 0; border: 1px solid var(--pd-line); border-radius: 12px; overflow: hidden; }
-.echoink-ipad button.pd-module-button.pd-finance-recent-row { appearance: none; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 60px) minmax(0, 70px) minmax(0, 100px); align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 50px; margin: 0; padding: 6px 12px 6px 14px; border: 0; border-bottom: 1px solid var(--pd-line); border-radius: 0; background: transparent; color: var(--pd-ink); box-shadow: none; font: inherit; text-align: left; white-space: normal; }
-.echoink-ipad .pd-finance-recent > .pd-finance-recent-row:last-child { border-bottom: 0; }
-.echoink-ipad .pd-finance-recent-copy, .echoink-ipad .pd-finance-recent-amount { display: contents; }
-.echoink-ipad .pd-finance-recent-merchant { grid-column: 1; grid-row: 1; min-width: 0; overflow-wrap: anywhere; }
-.echoink-ipad .pd-finance-recent-category { grid-column: 2; grid-row: 1; min-width: 0; color: var(--pd-secondary); font-size: .8125em; overflow-wrap: anywhere; }
-.echoink-ipad .pd-finance-recent-date { grid-column: 3; grid-row: 1; min-width: 0; color: var(--pd-secondary); font-size: .8125em; overflow-wrap: anywhere; }
-.echoink-ipad .pd-finance-recent-amount > span { grid-column: 4; grid-row: 1; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.echoink-ipad button.pd-module-button.pd-finance-recent-row:hover, .echoink-ipad button.pd-module-button.pd-finance-recent-row:focus-visible { background: var(--pd-soft); outline: none; box-shadow: none; }
-.echoink-ipad button.pd-module-button.pd-finance-recent-row:active { opacity: .65; }
-.echoink-ipad .pd-finance-recent > .pd-module-empty { margin: 0; padding: 18px 14px; }
-.echoink-ipad .pd-finance-ledger-actions { justify-content: flex-end; }
-.echoink-ipad .pd-finance-navigation > .pd-module-segments { flex: none; }
-.echoink-ipad .pd-finance-navigation .pd-module-button { min-width: 80px; }
-.echoink-ipad .pd-finance-navigation .pd-module-button-visible { white-space: nowrap; }
-.echoink-ipad .pd-finance-stat strong { font-size: calc(var(--pd-ui-font) * 1.25); font-weight: 600; white-space: nowrap; max-width: 100%; overflow-x: auto; }
-@container (max-width: 420px) {
-  .echoink-ipad button.pd-module-button.pd-finance-recent-row { grid-template-columns: minmax(0, 1fr) minmax(0, 100px); gap: 5px 10px; }
-  .echoink-ipad .pd-finance-recent-category { grid-column: 1; grid-row: 2; }
-  .echoink-ipad .pd-finance-recent-amount > span { grid-column: 2; grid-row: 1; }
-  .echoink-ipad .pd-finance-recent-date { grid-column: 2; grid-row: 2; text-align: right; }
-}
+/* iPad owns only the pane/header; the formal workspace adapts to this pane. */
+.echoink-ipad .pd-module-page.pd-finance-page { max-width: none; min-width: 0; }
+.echoink-ipad .pd-finance-workspace-shell { max-width: none; margin: 0; padding: 0; }
+.echoink-ipad .pd-finance-workspace-shell > .echoink-life-body { padding-top: 8px; }
+.echoink-ipad .pd-finance-viewport { container: life-workspace / inline-size; }
 
 .echoink-ipad .pd-todo-toolbar .pd-module-button-visible { white-space: nowrap; }
-
 .echoink-ipad .pd-journal-month { display: flex; width: 100%; padding: 0; border-radius: 0; }
 .echoink-ipad .pd-journal-month .pd-module-button-visible { display: flex; width: 100%; min-height: 50px; gap: 10px; padding: 6px 12px 6px 14px; border: 0; border-bottom: 1px solid var(--pd-line); border-radius: 0; }
 .echoink-ipad .pd-journal-month .pd-grow { flex: 1; text-align: left; }

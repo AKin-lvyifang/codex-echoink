@@ -8,3 +8,7 @@ export { IPadShell } from "../../src/ui/ipad/shell";
 export { loadMobileSettings } from "../../src/mobile/settings";
 export { journalStats } from "../../src/home/journal-stats";
 export { financeValueVersion } from "../../src/lifestyle/finance-operation-types";
+
+export { DEFAULT_LIFESTYLE_SETTINGS } from "../../src/lifestyle/settings";
+export { EMPTY_LIFESTYLE_DATA } from "../../src/lifestyle/store-core";
+export { financeBillPlanStats } from "../../src/lifestyle/finance-bill-plan";

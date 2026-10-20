@@ -166,20 +166,9 @@
 }
 @media (prefers-reduced-motion: reduce) { .echoink-iphone .ip-module-segment-slider { transition: none; } }
 
-/* Approved mobile finance overview and secondary navigation. */
-.echoink-iphone .ip-finance-page .ip-finance-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.echoink-iphone .ip-finance-page .ip-finance-summary .ip-module-stat { padding: 10px 12px; }
-.echoink-iphone .ip-finance-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; min-width: 0; margin-bottom: 4px; }
-.echoink-iphone .ip-finance-navigation > .ip-module-segments { flex: none; width: auto; max-width: 100%; }
-.echoink-iphone .ip-finance-month { display: flex; align-items: center; min-width: 0; gap: 0; margin-left: auto; }
-.echoink-iphone .ip-finance-month-label { font-size: .875em; font-weight: 500; white-space: nowrap; }
-.echoink-iphone .ip-finance-recent { min-width: 0; border: 1px solid var(--ip-line); border-radius: 12px; overflow: hidden; }
-.echoink-iphone .ip-finance-recent > .ip-finance-entry-row { box-sizing: border-box; padding: 8px 12px 8px 14px; white-space: normal; }
-.echoink-iphone .ip-finance-recent > .ip-finance-entry-row:last-child { border-bottom: 0; }
-.echoink-iphone .ip-finance-recent .ip-grow { min-width: 0; }
-.echoink-iphone .ip-finance-recent .ip-module-row-title { overflow-wrap: anywhere; }
-.echoink-iphone .ip-finance-recent .ip-finance-entry-amount { flex: 0 1 auto; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
-.echoink-iphone .ip-finance-recent > .ip-module-empty { margin: 0; padding: 18px 14px; }
-.echoink-iphone .ip-finance-ledger-actions { justify-content: flex-end; }
-
-.echoink-iphone .ip-finance-summary .ip-module-stat strong { max-width: 100%; white-space: nowrap; overflow-x: auto; }
+/* iPhone owns only the retained finance shell; the body uses the formal workspace. */
+.echoink-iphone .ip-finance-page { min-width: 0; max-width: 100%; }
+.echoink-iphone .ip-finance-workspace-shell { max-width: none; margin: 0; padding: 0; }
+.echoink-iphone .ip-finance-workspace-shell > .echoink-life-body { padding-top: 8px; }
+.echoink-iphone .ip-finance-viewport { container: life-workspace / inline-size; }
+.echoink-iphone .ip-finance-header-actions { gap: 4px; }

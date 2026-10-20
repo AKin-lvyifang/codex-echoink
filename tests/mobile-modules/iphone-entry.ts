@@ -10,3 +10,5 @@ export { DEFAULT_LIFESTYLE_SETTINGS } from "../../src/lifestyle/settings";
 export { EMPTY_LIFESTYLE_DATA } from "../../src/lifestyle/store-core";
 export { applyFinanceBudgetChanges } from "../../src/lifestyle/finance-budget";
 export { financeBillPlanStats } from "../../src/lifestyle/finance-bill-plan";
+
+export { IPhoneShell } from "../../src/ui/iphone/shell";

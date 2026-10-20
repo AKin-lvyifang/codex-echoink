@@ -3,9 +3,11 @@ import { seedEnglishFixture, syntheticEnglishRequest } from "./english-fixture";
 import { seedKnowledgePageFixture } from "./knowledge-page-fixture";
 import { prepareFolderFixture } from "./folder-fixture";
 import { seedMobileModuleFixture } from "./module-fixture";
+import { seedFinancePreview } from "./finance-preview-fixture";
 import type { DataAdapter } from "obsidian";
 import { MarkdownRenderer, Platform, setIcon } from "./browser-obsidian";
 import { LifestyleView } from "../../src/lifestyle/view";
+import { MobileUI } from "../../src/ui/mobile/mobile-ui";
 import { MobileViewport } from "../../src/ui/mobile/viewport";
 import { createMobileAccountFixture } from "./account-fixture";
 import { MobileUsageStore } from "../../src/mobile/usage-store";
@@ -108,7 +110,11 @@ const runtime = new MobileRuntime(host.app as any, store, () => settings, async 
   if (!after.length && prompt.includes("读取")) { slowRead = true; return answer(protocol, "", [["read-" + requests.length, "note_read", { path: "笔记/来源.md" }]]); }
   return answer(protocol, "已完成。这是测试提供商返回的完整回答，正式组件使用真实 Agent 和工具回执。");
 }, (id, turn) => services.context(id, turn));
-const accountFixture = params.has("accountfixture") ? await createMobileAccountFixture() : undefined;
+const accountFixture = params.has("accountfixture") || params.has("financepreview") ? await createMobileAccountFixture() : undefined;
+if (params.has("financepreview") && accountFixture) {
+  await accountFixture.service.actions.signIn({ email: "mobile-visual@example.invalid", method: "code", credential: "000000" });
+  await accountFixture.service.actions.redeem("TEST-PRO");
+}
 const accountService = accountFixture?.service ?? await createMobileAccountService(host.app as any, () => settings);
 const usageStore = new MobileUsageStore(host.adapter as unknown as DataAdapter, "plugin/mobile", store.instanceId); await usageStore.initialize();
 runtime.setUsage(usageStore); accountService.setStatisticsSource({ read: () => usageStore.readStatistics(), subscribe: listener => usageStore.subscribe(listener) });
@@ -165,6 +171,11 @@ if (params.has("tablet")) {
 const workbenchFixture = { store, settings, runtime, host, requests, plugin, services, workspaceFixture };
 if (params.has("workbench")) await seedWorkbenchFixture(workbenchFixture);
 if (params.has("modulefixture")) await seedMobileModuleFixture(host, settings, services);
+if (params.has("financepreview")) {
+  settings.lifestyle.finance.enabled = true;
+  await seedFinancePreview(services);
+  document.querySelector<HTMLElement>(".fixture-top")!.prepend(Object.assign(document.createElement("span"), { textContent: "财务预览 · 合成测试数据 · 会员替身" }));
+}
 if (params.has("folderfixture") || params.has("knowledgefixture")) await prepareFolderFixture(host, services);
 if (params.has("knowledgefixture")) await seedKnowledgePageFixture(host, services);
 if (params.has("englishfixture")) await seedEnglishFixture(host, services);
@@ -176,7 +187,10 @@ if (params.has("desktop") && params.has("account")) {
   const element = document.querySelector<HTMLElement>("#home")!; const view = new EchoInkHomeView({ app: host.app, contentEl: element, containerEl: element } as any, services);
   element.hidden = false; root.hidden = true; await view.onOpen(); desktopDispose = () => view.onClose();
 } else {
-  if (params.has("legacy")) await plugin.navigation.open(); else await plugin.open();
+  if (params.has("financepreview") && !params.has("finance")) {
+    if (Platform.isTablet) { await plugin.ipadNavigation!.openHome(); await plugin.openIPadAgent({ kind: "agent", agentId: "finance" }); await plugin.ipadNavigation!.openHome(); if (innerWidth <= 960) document.body.classList.remove("fixture-sidebar-open"); }
+    else await plugin.openIPhoneRoute({ kind: "home" });
+  } else if (params.has("legacy")) await plugin.navigation.open(); else await plugin.open();
   if (params.has("home") && params.has("tablet")) await plugin.navigation.openHome();
 }
 if (params.get("page") === "account") await plugin.showPage("account");
@@ -185,7 +199,10 @@ if (params.has("long")) {
   const action = document.querySelector<HTMLElement>(".start-actions button.quiet");
   if (action) action.append("：记录今天的重要决定与下一步行动");
 }
-document.querySelector("#fixture-home-tab")!.addEventListener("click", () => { void plugin.navigation.openHome(); });
+document.querySelector("#fixture-home-tab")!.addEventListener("click", () => {
+  if (params.has("financepreview")) void (Platform.isTablet ? plugin.ipadNavigation!.openHome() : plugin.openIPhoneRoute({ kind: "home" }));
+  else void plugin.navigation.openHome();
+});
 document.querySelector("#fixture-close-settings")!.addEventListener("click", () => { void workspaceFixture.closeSettings(); });
 window.addEventListener("pagehide", () => { void desktopDispose?.(); void workspaceFixture.dispose(); }, { once: true });
 Object.assign(window, { mobileFixture: { ...workbenchFixture, modelRequests, accountFixture, accountService, usageStore } });
@@ -209,5 +226,14 @@ if (params.has("finance")) {
   element.style.setProperty("--view-bottom-spacing", params.has("host") ? "var(--fixture-required)" : params.has("tablet") ? "0px" : "68px");
   const viewport = new MobileViewport(element);
   const view = new LifestyleView({ app: host.app, containerEl: element, contentEl: element } as any, services.lifestyle, "finance");
+  // The legacy reference uses its original settings renderer, not the new page shell.
+  let legacySettings: MobileUI | undefined;
+  services.openLifestyleSettings = async () => {
+    await view.onClose(); element.classList.remove("echoink-lifestyle-view");
+    legacySettings = new MobileUI(element, { app: host.app as any, isTablet: params.has("tablet"), settingsOnly: true, settingsRoot: "finance-settings", services, accountService, store, runtime,
+      settings: () => settings, saveSettings: () => plugin.saveSettings(), openNote: async path => { await plugin.navigation.openNote(host.app.vault.getAbstractFileByPath(path) as any); }, beginRender() {}, renderMarkdown: (text, target) => { target.textContent = text; },
+      onSettingsRootBack: async () => { legacySettings?.destroy(); legacySettings = undefined; element.classList.remove("echoink-mobile", "em-tablet", "em-settings-surface"); await view.onOpen(); }
+    }); legacySettings.mount();
+  };
   await view.onOpen(); Object.assign(window, { financeView: view, financeViewport: viewport });
 }

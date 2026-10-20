@@ -42,6 +42,9 @@ body.fixture-host.fixture-tablet #fixture-workspace{height:calc(100dvh - 48px - 
 const server = http.createServer(async (request, response) => {
   const { pathname, searchParams: params } = new URL(request.url ?? "/", "http://localhost");
   try {
+    if (pathname === "/" && port === 5185 && !params.toString()) {
+      response.writeHead(302, { location: "/?host&workbench&modulefixture&financepreview&theme=green&tablet" }); response.end(); return;
+    }
     if (pathname === "/app.js") { response.setHeader("content-type", "text/javascript"); response.end(build.outputFiles[0].text); }
     else if (pathname === "/styles.css") { response.setHeader("content-type", "text/css"); response.end(await fs.readFile(params.has("baseline") && baselineCssPath ? baselineCssPath : "styles.css")); }
     else if (pathname === "/host.css" && hostCssPath) { response.setHeader("content-type", "text/css"); response.end(await fs.readFile(hostCssPath)); }
