@@ -260,7 +260,8 @@ export async function runStorageScenarios({ MobileStore, getMobileTaskInstanceId
     const { adapter, store } = await create(); const external = { ...store.state, revision: 10 }; external.sessions[0].draft = "外部保存";
     const externalBytes = JSON.stringify(external); adapter.files.set(statePath, externalBytes);
     await assert.rejects(store.patchSession(store.session.id, { draft: "旧进程" }), /资料已变化/);
-    await assert.rejects(store.patchSession(store.session.id, { draft: "再试" }), /尚未成功加载或恢复/); assert.equal(adapter.files.get(statePath), externalBytes);
+    assert.match(store.unavailableReason, /资料已变化.*任务暂不可用/u);
+    await assert.rejects(store.patchSession(store.session.id, { draft: "再试" }), /资料已变化.*任务暂不可用/u); assert.equal(adapter.files.get(statePath), externalBytes);
   });
 
   await test("instance A/B and Vault 甲/乙 stay isolated, including copied foreign partitions", async () => {

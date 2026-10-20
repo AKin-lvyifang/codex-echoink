@@ -20,7 +20,7 @@ import type { MobileSettings } from "./settings";
 import type { AgentModuleId, AgentRegistry } from "../agents/types";
 import type { MobileQueuedTurn } from "./task-contracts";
 import { MobileCapabilityPolicy } from "./capability-policy";
-import type { MobileStore } from "./store";
+import { isMobileDataConflict, MobileDataConflictError, type MobileStore } from "./store";
 import type { MobileRuntime } from "./runtime";
 import type { MobileWorkspace } from "./workspace";
 import type { CapabilityAccess } from "../membership/types";
@@ -129,10 +129,23 @@ export class MobileServices implements HomeHost {
   suspendEnglishDiary(): void { (this.englishPage as MobileEnglishDiaryService).cancelWorkspace(); }
   getTodoStore() { return this.todos; }
   getKnowledgeSurfaceService() { return null; }
+  private async initializeTaskData(initialize: () => Promise<void>): Promise<void> {
+    try { await initialize(); }
+    catch (error) {
+      // The legacy Registry reader predates the typed storage boundary. Match
+      // only its explicit format/version refusal, never arbitrary I/O failures.
+      if (error instanceof Error && error.message === "旧 Agent 资料损坏或版本不支持，无法切换身份；原资料已保留。")
+        error = new MobileDataConflictError(error.message);
+      if (!isMobileDataConflict(error)) throw error;
+      this.host.store.disableWrites(error.message);
+    }
+  }
   async initialize() {
-    await this.refreshAgentIdentity();
-    await this.memory.initialize();
-    await this.memory.archiveCompleted();
+    await this.initializeTaskData(() => this.refreshAgentIdentity());
+    if (!this.host.store.unavailableReason) await this.initializeTaskData(async () => {
+      await this.memory.initialize();
+      await this.memory.archiveCompleted();
+    });
     await this.homeActivity.initialize(); await this.todos.initialize();
     this.homeActivity.restoreOpen(this.app.workspace.getActiveFile()?.path ?? null);
     this.registerEvent(this.app.workspace.on("file-open", file => this.homeActivity.open(file?.path ?? null)));

@@ -65,7 +65,14 @@ export function newSession(agentId = "sol"): MobileSession {
   return { id: newId(), agentId, title: "新对话", updatedAt: Date.now(), messages: [], draft: "", notePath: "", tools: {} };
 }
 
-const dataError = () => new Error("移动端本地数据格式无法读取，已保留原文件。");
+/** Expected data/version conflicts are recoverable at the plugin bootstrap boundary. */
+export class MobileDataConflictError extends Error {}
+export function isMobileDataConflict(error: unknown): error is Error {
+  return error instanceof MobileDataConflictError || error instanceof AggregateError
+    && error.errors.length > 0 && error.errors.every(isMobileDataConflict);
+}
+const dataError = () => new MobileDataConflictError("移动端本地数据格式或版本无法读取，已保留原文件。");
+function parseData(content: string): unknown { try { return JSON.parse(content); } catch { throw dataError(); } }
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 const time = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
@@ -209,7 +216,7 @@ function validateBase(value: unknown): asserts value is Record<string, unknown> 
   }
 }
 function parseV2(content: string, instanceId: string): MobileState {
-  const value: unknown = JSON.parse(content);
+  const value = parseData(content);
   validateBase(value);
   if (value.version !== 2 || value.instanceId !== instanceId || !Number.isSafeInteger(value.revision) || (value.revision as number) < 0
     || (value.taskRuntimeVersion !== undefined && value.taskRuntimeVersion !== 1 && value.taskRuntimeVersion !== 2)
@@ -251,7 +258,7 @@ function parseV2(content: string, instanceId: string): MobileState {
   return value as unknown as MobileState;
 }
 function migrateV1(content: string, instanceId: string): MobileState {
-  const value: unknown = JSON.parse(content);
+  const value = parseData(content);
   validateBase(value);
   if (value.version !== 1) throw dataError();
   // Retain references, extension fields and tool payloads without inferring run outcomes.
@@ -275,7 +282,12 @@ export class MobileStore {
   readonly statePath: string;
   get m2BackupPath(): string { return `${this.statePath}.m2-backup.json`; }
   get m3BackupPath(): string { return `${this.statePath}.m3-backup.json`; }
-  constructor(private adapter: MobileStorageAdapter, private directory: string, readonly instanceId: string, readonly unavailableReason?: string) {
+  get unavailableReason(): string | undefined { return this.storageIssue; }
+  disableWrites(reason: string): void {
+    this.storageIssue ??= `${reason} 任务暂不可用，请核对原资料并关闭旧实例后重新打开插件。`;
+    this.blocked = true;
+  }
+  constructor(private adapter: MobileStorageAdapter, private directory: string, readonly instanceId: string, private storageIssue?: string) {
     assertMobileTaskInstanceId(instanceId);
     this.statePath = `${directory}/devices/${instanceId}/state.json`;
     const session = newSession();
@@ -297,7 +309,7 @@ export class MobileStore {
     if (this.unavailableReason) return Promise.resolve();
     return this.enqueue(async () => {
       if (this.loaded) return;
-      if (this.blocked) throw new Error("移动端资料恢复尚未完成，请恢复备份后重新打开。");
+      if (this.blocked) throw new MobileDataConflictError("移动端资料恢复尚未完成，请恢复备份后重新打开。");
       if (!await this.adapter.exists(this.statePath) && await this.adapter.exists(this.recoveryPath)) {
         parseV2(await this.adapter.read(this.recoveryPath), this.instanceId);
         await this.adapter.rename(this.recoveryPath, this.statePath);
@@ -313,7 +325,7 @@ export class MobileStore {
         await this.mkdir();
         const backup = `${this.directory}/devices/${this.instanceId}/legacy-v1-backup.json`;
         if (!await this.adapter.exists(backup)) await this.adapter.write(backup, legacy);
-        if (await this.adapter.read(backup) !== legacy) throw new Error("移动端旧资料备份回读不一致，已保留原文件。");
+        if (await this.adapter.read(backup) !== legacy) throw new MobileDataConflictError("移动端旧资料备份回读不一致，已保留原文件。");
       }
       await this.commit(next); this.loaded = true;
     });
@@ -330,9 +342,9 @@ export class MobileStore {
     const snapshot = JSON.stringify(next);
     const validated = parseV2(snapshot, this.instanceId);
     await this.mkdir();
-    const conflict = () => new Error("移动端资料已变化，请重新打开后再编辑；原资料已保留。");
+    const conflict = () => new MobileDataConflictError("移动端资料已变化，请重新打开后再编辑；原资料已保留。");
     const current = await readMobileFile(this.adapter as DataAdapter, this.statePath);
-    if (current !== this.expected) { this.blocked = true; throw conflict(); }
+    if (current !== this.expected) { const error = conflict(); this.disableWrites(error.message); throw error; }
     if (current !== null && await this.adapter.exists(this.recoveryPath)) await this.adapter.remove(this.recoveryPath);
     const verifiedAdapter = {
       exists: (path: string) => this.adapter.exists(path), read: (path: string) => this.adapter.read(path),
@@ -342,7 +354,7 @@ export class MobileStore {
         if (to !== this.statePath || from === this.recoveryPath) return;
         try {
           const installed = await this.adapter.read(to);
-          if (installed !== snapshot) throw new Error("移动端保存回读不一致，已保留原资料。");
+          if (installed !== snapshot) throw new MobileDataConflictError("移动端保存回读不一致，已保留原资料。");
           parseV2(installed, this.instanceId);
         } catch (error) {
           try {
@@ -359,7 +371,12 @@ export class MobileStore {
     try {
       await replaceMobileFile(verifiedAdapter as DataAdapter, this.statePath, snapshot, this.expected, this.recoveryPath, conflict);
     } catch (error) {
-      try { if (await readMobileFile(this.adapter as DataAdapter, this.statePath) !== this.expected) this.blocked = true; }
+      try {
+        if (await readMobileFile(this.adapter as DataAdapter, this.statePath) !== this.expected) {
+          this.blocked = true;
+          if (isMobileDataConflict(error)) this.disableWrites(error.message);
+        }
+      }
       catch { this.blocked = true; }
       throw error;
     }
@@ -386,16 +403,16 @@ export class MobileStore {
         const created = !await this.adapter.exists(this.m2BackupPath);
         if (created) await this.adapter.write(this.m2BackupPath, this.expected);
         const backup = await this.adapter.read(this.m2BackupPath);
-        if (created && backup !== this.expected) throw new Error("移动端升级前备份回读不一致，原资料已保留。");
+        if (created && backup !== this.expected) throw new MobileDataConflictError("移动端升级前备份回读不一致，原资料已保留。");
         const baseline = parseV2(backup, this.instanceId);
-        if (baseline.taskRuntimeVersion !== undefined) throw new Error("移动端升级前备份无效，原资料已保留。");
+        if (baseline.taskRuntimeVersion !== undefined) throw new MobileDataConflictError("移动端升级前备份无效，原资料已保留。");
       }
       if (draft.taskRuntimeVersion === 2 && this.committed.taskRuntimeVersion !== 2 && this.expected !== null) {
         const created = !await this.adapter.exists(this.m3BackupPath);
         if (created) await this.adapter.write(this.m3BackupPath, this.expected);
         const backup = await this.adapter.read(this.m3BackupPath);
-        if (created && backup !== this.expected) throw new Error("移动端M3备份回读不一致，原资料已保留。");
-        if (parseV2(backup, this.instanceId).taskRuntimeVersion === 2) throw new Error("移动端M3备份版本无效，原资料已保留。");
+        if (created && backup !== this.expected) throw new MobileDataConflictError("移动端M3备份回读不一致，原资料已保留。");
+        if (parseV2(backup, this.instanceId).taskRuntimeVersion === 2) throw new MobileDataConflictError("移动端M3备份版本无效，原资料已保留。");
       }
       await this.commit(draft);
     });

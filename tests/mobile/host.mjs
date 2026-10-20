@@ -3,7 +3,7 @@ export class FixtureTFile {
   constructor(path) { this.path = path; this.name = path.split("/").pop(); this.basename = this.name.replace(/\.[^.]+$/u, ""); this.extension = this.name.split(".").pop(); this.stat = { ctime: Date.now(), mtime: Date.now(), size: 1 }; const parent = path.split("/").slice(0, -1).join("/"); this.parent = { path: parent, name: parent.split("/").pop() ?? "", children: [] }; }
 }
 export function createHost(seed = { "笔记/来源.md": "项目决定：先完成手机本地问答。" }) {
-  const files = new Map(Object.entries(seed)); const folders = new Set(["plugin", "plugin/mobile", "笔记"]); const writes = []; const opened = []; const fileObjects = new Map();
+  const files = new Map(Object.entries(seed)); const folders = new Set(["plugin", "plugin/mobile", "笔记"]); const writes = []; const mutations = []; const opened = []; const fileObjects = new Map();
   const file = path => { if (!fileObjects.has(path)) fileObjects.set(path, new FixtureTFile(path)); return fileObjects.get(path); };
   const events = () => { const subscriptions = new Map(); return { on(name, cb) { const list = subscriptions.get(name) ?? []; list.push(cb); subscriptions.set(name, list); return { name, cb }; }, offref(ref) { subscriptions.set(ref.name, (subscriptions.get(ref.name) ?? []).filter(cb => cb !== ref.cb)); }, trigger(name, ...args) { for (const cb of subscriptions.get(name) ?? []) cb(...args); } }; };
   const vaultEvents = events(), workspaceEvents = events();
@@ -11,10 +11,10 @@ export function createHost(seed = { "笔记/来源.md": "项目决定：先完�
   const adapter = {
     async exists(path) { return files.has(path) || folders.has(path) || [...files.keys()].some(key => key.startsWith(path + "/")); },
     async read(path) { if (!files.has(path)) throw new Error(`Missing ${path}`); return files.get(path); },
-    async write(path, content) { writes.push(path); files.set(path, content); },
-    async rename(from, to) { if (!files.has(from)) throw new Error("Missing temporary file"); files.set(to, files.get(from)); files.delete(from); },
-    async rmdir(path) { for (const key of [...files.keys()]) if (key.startsWith(path + "/")) files.delete(key); for (const key of [...folders]) if (key === path || key.startsWith(path + "/")) folders.delete(key); },
-    async mkdir(path) { folders.add(path); }, async remove(path) { files.delete(path); },
+    async write(path, content) { writes.push(path); mutations.push({ kind: "write", path }); files.set(path, content); },
+    async rename(from, to) { if (!files.has(from)) throw new Error("Missing temporary file"); mutations.push({ kind: "rename", path: from, to }); files.set(to, files.get(from)); files.delete(from); },
+    async rmdir(path) { mutations.push({ kind: "rmdir", path }); for (const key of [...files.keys()]) if (key.startsWith(path + "/")) files.delete(key); for (const key of [...folders]) if (key === path || key.startsWith(path + "/")) folders.delete(key); },
+    async mkdir(path) { folders.add(path); }, async remove(path) { mutations.push({ kind: "remove", path }); files.delete(path); },
     async stat(path) { return files.has(path) ? { type: "file", size: files.get(path).length } : await this.exists(path) ? { type: "folder", size: 0 } : null; },
     async list(path) { const prefix = path + "/"; const childFolders = new Set(); const childFiles = []; for (const key of files.keys()) { if (!key.startsWith(prefix)) continue; const rest = key.slice(prefix.length); if (rest.includes("/")) childFolders.add(prefix + rest.split("/")[0]); else childFiles.push(key); } return { files: childFiles, folders: [...childFolders] }; }
   };
@@ -44,7 +44,7 @@ export function createHost(seed = { "笔记/来源.md": "项目决定：先完�
       getActiveFile() { return file("笔记/来源.md"); },
       getLeaf() { return { async openFile(f) { opened.push(f.path); workspaceEvents.trigger("file-open", f); } }; }, setActiveLeaf() {}
     }
-  }; return { files, folders, adapter, writes, opened, app };
+  }; return { files, folders, adapter, writes, mutations, opened, app };
 }
 export function answer(protocol, content, calls = [], extra = {}) {
   if (protocol === "openai-responses") return {

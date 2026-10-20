@@ -1,7 +1,7 @@
 import type { DataAdapter } from "obsidian";
 import type { PersonalMemoryKind, PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
 import { PERSONAL_MEMORY_SCHEMA } from "../harness/memory/personal-memory-contracts";
-import { canonicalMemoryMetadata, canonicalMemoryPath, canonicalSourceMap, parseCanonicalMemoryRecord, serializeCanonicalMemoryRecord,
+import { CanonicalMemoryFormatError, canonicalMemoryMetadata, canonicalMemoryPath, canonicalSourceMap, parseCanonicalMemoryRecord, serializeCanonicalMemoryRecord,
   type CanonicalMemoryManifest } from "../harness/memory/personal-memory-core";
 import { buildSearchIndexV3, indexChecksum, type SearchIndexV3 } from "../harness/memory/search-index-core";
 import { renderPersonalMemoryOverview } from "../harness/memory/personal-memory-core";
@@ -10,14 +10,14 @@ import { renderUserMarkdown } from "../harness/memory/cognitive-projection";
 import { invalidatedMemoryProductRunIds, productRunIdFromExperienceProfileSourceId } from "../harness/memory/dream-source-group";
 import { sha256Hex } from "../utils/sha256";
 import { mobileAtomicFilePort } from "./finance-store";
-import type { MobileStore } from "./store";
+import { MobileDataConflictError, type MobileStore } from "./store";
 
 const ROOT = ".echoink/", BASE = "shared-user/", MANIFEST = `${BASE}.runtime/manifest.json`, PROFILE = `${BASE}user-profile-state.json`;
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const lanes = new WeakMap<DataAdapter, Promise<unknown>>();
-export const memoryConflict = () => new Error("记忆内容已变化，请重新读取后再保存；编辑草稿已保留。");
-const invalid = () => new Error("记忆资料损坏或版本不支持，原文件已保留，未用空库覆盖。");
+export const memoryConflict = () => new MobileDataConflictError("记忆内容已变化，请重新读取后再保存；编辑草稿已保留。");
+const invalid = () => new MobileDataConflictError("记忆资料损坏或版本不支持，原文件已保留，未用空库覆盖。");
 const safe = (path: string) => {
   if (!path.startsWith(BASE) || path.split("/").some(part => !part || part === "." || part === "..") || path.includes("\\") || [...path].some(char => char.charCodeAt(0) < 32)) throw invalid(); return path;
 };
@@ -28,21 +28,35 @@ interface JournalEntry { relativePath: string; existed: boolean; backupFile?: st
 interface Journal { schemaVersion: 1; transactionId: string; owner: string; operation: string; baseRevision: number; targetRevision: number; entries: JournalEntry[] }
 /** Desktop files and global revision, with a Vault DataAdapter instead of Node/fs/watchers. */
 export class MobileMemoryRepository {
-  constructor(readonly adapter: DataAdapter, readonly owner: string, private now = Date.now, private mutationIssue?: string) {}
-  private enqueue<T>(run: () => Promise<T>): Promise<T> { const pending = (lanes.get(this.adapter) ?? Promise.resolve()).catch(() => {}).then(run); lanes.set(this.adapter, pending); return pending; }
+  constructor(readonly adapter: DataAdapter, readonly owner: string, private now = Date.now, private mutationIssue?: string | (() => string | undefined)) {}
+  private issue(): string | undefined { return typeof this.mutationIssue === "function" ? this.mutationIssue() : this.mutationIssue; }
+  private assertWritable(): void { const issue = this.issue(); if (issue) throw new MobileDataConflictError(issue); }
+  private enqueue<T>(run: () => Promise<T>): Promise<T> {
+    const pending = (lanes.get(this.adapter) ?? Promise.resolve()).catch(() => {}).then(run).catch(error => {
+      if (error instanceof CanonicalMemoryFormatError) throw invalid();
+      throw error;
+    });
+    lanes.set(this.adapter, pending); return pending;
+  }
   private read(path: string): Promise<string | null> { return mobileAtomicFilePort(this.adapter, `${ROOT}${safe(path)}`).read(true); }
   private async mkdir(path: string) { let parent = ""; for (const part of `${ROOT}${path}`.split("/")) { parent = parent ? `${parent}/${part}` : part; if (!await this.adapter.exists(parent)) await this.adapter.mkdir(parent); } }
   private async replace(path: string, content: string | null, expected: string | null) {
+    this.assertWritable();
     if (content === null) { if (await this.read(path) !== expected) throw memoryConflict(); if (expected !== null) await this.adapter.remove(`${ROOT}${safe(path)}`); }
-    else await mobileAtomicFilePort(this.adapter, `${ROOT}${safe(path)}`).write(content, expected);
+    else try { await mobileAtomicFilePort(this.adapter, `${ROOT}${safe(path)}`).write(content, expected); }
+    catch (error) {
+      // The shared atomic file port uses its finance conflict text for Memory too.
+      if (error instanceof Error && error.message === "财务资料已变化，请重新打开账本后再编辑；原资料已保留。") throw memoryConflict();
+      throw error;
+    }
   }
-  private async cleanup(directory: string) { await this.adapter.rmdir(`${ROOT}${directory}`, true); }
+  private async cleanup(directory: string) { this.assertWritable(); await this.adapter.rmdir(`${ROOT}${directory}`, true); }
   private async assertNoDesktopTransaction(): Promise<void> {
     const directory = `${BASE}.runtime/transactions`;
     if (!await this.adapter.exists(`${ROOT}${directory}`)) return;
     for (const folder of (await this.adapter.list(`${ROOT}${directory}`)).folders) {
       const relative = folder.slice(ROOT.length), state = (await this.read(`${relative}/state`))?.trim();
-      if (relative.split("/").at(-1)?.startsWith("txn_mobile_") || state !== "committed") throw new Error("桌面或旧版移动记忆事务尚未完成，未读取、恢复或覆盖其中资料。");
+      if (relative.split("/").at(-1)?.startsWith("txn_mobile_") || state !== "committed") throw new MobileDataConflictError("桌面或旧版移动记忆事务尚未完成，未读取、恢复或覆盖其中资料。");
     }
   }
   private async recover(): Promise<void> {
@@ -50,35 +64,48 @@ export class MobileMemoryRepository {
     const directory = `${BASE}.runtime/mobile-transactions`;
     if (!await this.adapter.exists(`${ROOT}${directory}`)) return;
     const listed = await this.adapter.list(`${ROOT}${directory}`);
+    const recoveries: { relative: string; entries: { path: string; before: string | null; current: string | null }[] }[] = [];
     for (const folder of listed.folders) {
       const relative = folder.slice(ROOT.length), raw = await this.read(`${relative}/plan.json`);
       if (!raw) {
-        if (relative.split("/").at(-1)?.startsWith(`txn_mobile_${sha256Hex(this.owner).slice(0, 12)}_`)) { await this.cleanup(relative); continue; }
-        throw new Error("记忆事务尚未准备完成，请稍后重新读取。");
+        if (relative.split("/").at(-1)?.startsWith(`txn_mobile_${sha256Hex(this.owner).slice(0, 12)}_`)) { recoveries.push({ relative, entries: [] }); continue; }
+        throw new MobileDataConflictError("记忆事务尚未准备完成，请稍后重新读取。");
       }
       let value: unknown; try { value = JSON.parse(raw); } catch { throw invalid(); }
-      if (!object(value) || value.schemaVersion !== 1 || value.owner !== this.owner || !Array.isArray(value.entries)) throw new Error("另一个记忆事务尚未完成，请先完成或恢复原事务。");
+      if (!object(value) || value.schemaVersion !== 1 || value.owner !== this.owner || !Array.isArray(value.entries)) throw new MobileDataConflictError("另一个记忆事务尚未完成，请先完成或恢复原事务。");
       for (const entry of value.entries as unknown[]) if (!object(entry) || typeof entry.relativePath !== "string" || typeof entry.existed !== "boolean"
         || (entry.installedHash !== null && (typeof entry.installedHash !== "string" || !/^[a-f0-9]{64}$/u.test(entry.installedHash)))
         || entry.existed && (typeof entry.backupFile !== "string" || !/^backup\/[0-9]+\.bak$/u.test(entry.backupFile))) throw invalid();
       const plan = value as unknown as Journal;
       const state = (await this.read(`${relative}/state`))?.trim();
+      const entries: (typeof recoveries)[number]["entries"] = [];
       if (state !== "committed") {
         for (const entry of [...plan.entries].reverse()) {
           safe(entry.relativePath);
           const before = entry.existed && entry.backupFile ? await this.read(`${relative}/${entry.backupFile}`) : null;
           if (entry.existed && before === null) throw invalid();
           const current = await this.read(entry.relativePath);
-          if (current !== before && (current === null ? null : sha256Hex(current)) !== entry.installedHash) throw new Error("记忆恢复时发现其他修改，原资料与事务备份均已保留。");
-          if (current !== before) await this.replace(entry.relativePath, before, current);
-          else if (before !== null && !await this.adapter.exists(`${ROOT}${entry.relativePath}`)) await mobileAtomicFilePort(this.adapter, `${ROOT}${entry.relativePath}`).read();
+          if (current !== before && (current === null ? null : sha256Hex(current)) !== entry.installedHash) throw new MobileDataConflictError("记忆恢复时发现其他修改，原资料与事务备份均已保留。");
+          entries.push({ path: entry.relativePath, before, current });
         }
       }
-      await this.cleanup(relative);
+      recoveries.push({ relative, entries });
+    }
+    // Inspect every pending transaction before restoring or deleting anything.
+    // A conflict in a later entry/folder must preserve all original evidence.
+    for (const recovery of recoveries) {
+      this.assertWritable();
+      for (const entry of recovery.entries) {
+        if (entry.current !== entry.before) await this.replace(entry.path, entry.before, entry.current);
+        else if (entry.before !== null && !await this.adapter.exists(`${ROOT}${entry.path}`)) {
+          this.assertWritable(); await mobileAtomicFilePort(this.adapter, `${ROOT}${entry.path}`).read();
+        }
+      }
+      await this.cleanup(recovery.relative);
     }
   }
   private async transaction(baseRevision: number, targetRevision: number, changes: Map<string, string | null>, expected: Map<string, string | null>, operation: string, guard: () => void = () => {}) {
-    if (this.mutationIssue) throw new Error(this.mutationIssue);
+    this.assertWritable();
     guard();
     for (const [path, bytes] of expected) if (await this.read(path) !== bytes) throw memoryConflict();
     await this.assertNoDesktopTransaction();
@@ -96,7 +123,7 @@ export class MobileMemoryRepository {
     await this.adapter.write(`${ROOT}${directory}/plan.json`, json(plan)); await this.adapter.write(`${ROOT}${directory}/state`, "applying\n");
     } catch (error) { try { await this.cleanup(directory); } catch { /* An owned preparation is safe to finish on reopening. */ } throw error; }
     try {
-      for (const [path, content] of changes) { guard(); await this.replace(path, content, expected.get(path)!); guard(); if (await this.read(path) !== content) throw new Error("记忆保存回读不一致，原稿已保留。"); }
+      for (const [path, content] of changes) { guard(); await this.replace(path, content, expected.get(path)!); guard(); if (await this.read(path) !== content) throw new MobileDataConflictError("记忆保存回读不一致，原稿已保留。"); }
       guard();
       await this.adapter.write(`${ROOT}${directory}/state`, "committed\n");
     } catch (error) { try { await this.recover(); } catch (recovery) { throw new AggregateError([error, recovery], "记忆保存失败，原资料与恢复事务已保留。"); } throw error; }
@@ -199,7 +226,7 @@ export class MobileMemoryRepository {
   snapshot(): Promise<MobileCanonicalSnapshot> { return this.enqueue(() => this.fresh()); }
   readAuxiliary(path: string): Promise<string | null> { return this.enqueue(async () => { await this.recover(); return this.read(path); }); }
   updateAuxiliary<T>(path: string, update: (before: string | null) => { content: string; value: T }): Promise<T> {
-    if (this.mutationIssue) return Promise.reject(new Error(this.mutationIssue));
+    const issue = this.issue(); if (issue) return Promise.reject(new MobileDataConflictError(issue));
     return this.enqueue(async () => { await this.recover(); const before = await this.read(path), next = update(before); await this.replace(path, next.content, before); return next.value; });
   }
   /** Mutation plans run synchronously against one revision and commit as one recoverable journal. */
@@ -245,21 +272,21 @@ export class MobileMemoryRepository {
     });
   }
   async importLegacy(store: MobileStore): Promise<void> {
-    if (store.unavailableReason || this.mutationIssue) return;
+    if (store.unavailableReason || this.issue()) return;
     await store.flush(); const source = await this.adapter.read(store.statePath); let oldState: unknown; try { oldState = JSON.parse(source); } catch { throw invalid(); }
     if (!object(oldState) || oldState.version !== 2 || oldState.instanceId !== store.instanceId || !Array.isArray(oldState.memories)) throw invalid();
     const memories = oldState.memories as PersonalMemoryRecord[];
     if (!memories.length) { await this.snapshot(); return; }
     const marker = `${BASE}.runtime/mobile-memory-import-${store.instanceId}.json`;
     await this.enqueue(async () => { await this.fresh(); const backup = `${BASE}.runtime/backups/mobile-v2-${store.instanceId}.json`;
-      if (await this.read(backup) === null) { await this.mkdir(`${BASE}.runtime/backups`); await this.adapter.write(`${ROOT}${backup}`, source); if (await this.read(backup) !== source) throw new Error("旧移动记忆备份回读失败，未导入。"); } });
+      if (await this.read(backup) === null) { await this.mkdir(`${BASE}.runtime/backups`); await this.adapter.write(`${ROOT}${backup}`, source); if (await this.read(backup) !== source) throw new MobileDataConflictError("旧移动记忆备份回读失败，未导入。"); } });
     const existing = await this.read(marker);
     let mapping: Record<string, string> = {};
     if (existing !== null) { let parsed: unknown; try { parsed = JSON.parse(existing); } catch { throw invalid(); }
       if (!object(parsed) || parsed.schema !== "echoink.mobile-memory-import.v1" || !object(parsed.mapping)) throw invalid(); mapping = parsed.mapping as Record<string, string>; }
     const pending = memories.filter(record => !mapping[record.id]); if (!pending.length) return;
     await this.mutate(undefined, "mobile-memory-import", (draft, files) => {
-      const latestMarker = draft.originals.get(marker); if (latestMarker) { const latest: unknown = JSON.parse(latestMarker); if (!object(latest) || !object(latest.mapping)) throw invalid(); mapping = latest.mapping as Record<string, string>; }
+      const latestMarker = draft.originals.get(marker); if (latestMarker) { let latest: unknown; try { latest = JSON.parse(latestMarker); } catch { throw invalid(); } if (!object(latest) || !object(latest.mapping)) throw invalid(); mapping = latest.mapping as Record<string, string>; }
       if (memories.every(record => !!mapping[record.id])) return false;
       for (const old of memories.filter(record => !mapping[record.id])) {
         const prior = draft.records.find(record => record.id === old.id && record.content === old.content && record.kind === old.kind && record.source === old.source);

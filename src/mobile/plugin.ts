@@ -1,9 +1,9 @@
 import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
-import { MobileStore } from "./store";
+import { isMobileDataConflict, MobileDataConflictError, MobileStore } from "./store";
 import type { AgentRegistry } from "../agents/types";
 import { getMobileTaskInstanceId } from "./task-identity";
-import { loadMobileSettings, type MobileSettings } from "./settings";
+import { loadMobileSettings, mobileAgentRegistrySource, type MobileSettings } from "./settings";
 import { MobileRuntime } from "./runtime";
 import { MobileUsageStore } from "./usage-store";
 import { MobileUI } from "../ui/mobile/mobile-ui";
@@ -42,11 +42,17 @@ export default class EchoInkMobilePlugin extends Plugin {
   workbench?: MobileWorkbenchService;
   modelRequest?: MobileRequest;
   private settingsWrites: Promise<void> = Promise.resolve();
+  private retainedRegistry?: { present: boolean; value: unknown };
   private taskLifecycleRegistered = false;
   private unloaded = false;
   async onload(): Promise<void> {
     try {
-      this.settings = loadMobileSettings(await this.loadData());
+      const saved: unknown = await this.loadData();
+      this.settings = loadMobileSettings(saved);
+      if (mobileAgentRegistrySource(this.settings) !== "existing") {
+        const raw = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
+        this.retainedRegistry = { present: Object.hasOwn(raw, "agentRegistry"), value: raw.agentRegistry };
+      }
       const migratedBindings = !this.settings.knowledgeBase.folderBindings;
       if (migratedBindings) {
         this.settings.knowledgeBase.folderBindings = migrateKnowledgeFolderBindings(this.app.vault.getRoot().children.filter((file) => "children" in file).map((file) => file.path), this.settings.mobileUi.knowledgePaths);
@@ -66,23 +72,23 @@ export default class EchoInkMobilePlugin extends Plugin {
         instanceId = crypto.randomUUID();
       }
       this.store = new MobileStore(this.app.vault.adapter, mobileDirectory, instanceId, taskStorageIssue);
-      await this.store.load();
+      await this.initializeTaskData(() => this.store.load());
       this.usage = new MobileUsageStore(this.app.vault.adapter, mobileDirectory, instanceId);
       let usageWarningShown = false;
       const usageWarning = () => { if (!usageWarningShown) { usageWarningShown = true; new Notice("使用统计未能完整保存，本次统计可能有缺口；任务记录不受影响。"); } };
-      if (!taskStorageIssue) await this.usage.initialize().catch(usageWarning);
+      if (!this.store.unavailableReason) await this.usage.initialize().catch(usageWarning);
       this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl,
         (id, turn) => this.services.context(id, turn), () => this.saveSettings(), () => this.accountService);
-      if (!taskStorageIssue) this.runtime.setUsage(this.usage);
+      if (!this.store.unavailableReason) this.runtime.setUsage(this.usage);
       this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
       this.services = new MobileServices(this, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.manifest.dir));
       await this.services.initialize();
-      if (!taskStorageIssue) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
+      if (!this.store.unavailableReason) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
       if (migratedBindings) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
       this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
-      if (!taskStorageIssue) await this.runtime.initialize();
+      if (!this.store.unavailableReason) await this.initializeTaskData(() => this.runtime.initialize());
       this.registerTaskLifecycle();
       await this.services.initializeFinance();
       this.register(this.accountService.subscribe(() => { this.services.lifestyle.refresh(); this.services.notifyHomeSurfacesChanged(); }));
@@ -117,6 +123,14 @@ export default class EchoInkMobilePlugin extends Plugin {
         }).then(() => this.openIPadAgent({ kind: "agent", agentId })).catch(error => new Notice(String(error)));
       } });
     } catch (error) { new Notice(`EchoInk 无法加载：${error instanceof Error ? error.message : String(error)}`, 10000); throw error; }
+  }
+  private async initializeTaskData(initialize: () => Promise<void>): Promise<void> {
+    try { await initialize(); }
+    catch (error) {
+      if (!isMobileDataConflict(error)) throw error;
+      this.store.disableWrites(error.message);
+      new Notice(this.store.unavailableReason!, 10000);
+    }
   }
   registerStartupWorkbench(): void {
     this.app.workspace.onLayoutReady(() => {
@@ -153,11 +167,19 @@ export default class EchoInkMobilePlugin extends Plugin {
   async saveSettings(candidateRegistry?: AgentRegistry): Promise<void> {
     const registry = candidateRegistry ? structuredClone(candidateRegistry) : undefined;
     const write = this.settingsWrites.catch(() => {}).then(async () => {
-      const snapshot: unknown = JSON.parse(JSON.stringify({ ...this.settings, ...(registry ? { agentRegistry: registry } : {}) }));
+      if (registry && mobileAgentRegistrySource(this.settings) === "invalid") throw new MobileDataConflictError("Agent 配置版本无法读取，原资料已保留。");
+      const candidate: Record<string, unknown> = { ...this.settings, ...(registry ? { agentRegistry: registry } : {}) };
+      // Independent settings saves must not publish normalized fallback Agents
+      // over an unreadable Registry or an unfinished legacy identity migration.
+      if (!registry && this.retainedRegistry) {
+        if (this.retainedRegistry.present) candidate.agentRegistry = this.retainedRegistry.value;
+        else delete candidate.agentRegistry;
+      }
+      const snapshot: unknown = JSON.parse(JSON.stringify(candidate));
       await this.saveData(snapshot);
       // Publish in the same queue slot: the next ordinary settings save must see
       // either this verified Registry or the previous one after a failed write.
-      if (registry) this.settings.agentRegistry = registry;
+      if (registry) { this.settings.agentRegistry = registry; this.retainedRegistry = undefined; }
     });
     this.settingsWrites = write;
     await write;

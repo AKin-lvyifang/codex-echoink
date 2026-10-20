@@ -100,7 +100,7 @@ export class MobileRuntime {
   get onChange(): () => void { return this.dispatchActive; }
   set onChange(callback: () => void) { this.legacyChange = callback; }
   get busy(): boolean { return this.isBusy(this.store.session.id); }
-  get error(): string { return this.errors.get(this.store.session.id) ?? ""; }
+  get error(): string { return this.store.unavailableReason ?? this.errors.get(this.store.session.id) ?? ""; }
   constructor(private app: App, readonly store: MobileStore, private settings: () => MobileSettings, private request: MobileRequest,
     private context: (sessionId: string, turn?: MobileQueuedTurn) => Promise<string> = async () => "",
     private persistSettings: () => Promise<void> = async () => {}, private proAccess?: () => CapabilityAccess | undefined) {}
@@ -113,7 +113,7 @@ export class MobileRuntime {
   isBusy(id: string): boolean { return this.runs.has(id); }
   stateFor(id: string): MobileTaskViewState {
     const session = this.store.getSession(id);
-    return { taskId: id, busy: this.isBusy(id), error: this.errors.get(id) ?? "", queuedCount: session?.queue?.length ?? 0,
+    return { taskId: id, busy: this.isBusy(id), error: this.store.unavailableReason ?? this.errors.get(id) ?? "", queuedCount: session?.queue?.length ?? 0,
       ...(session?.interruption ? { interruption: session.interruption } : {}), resuming: this.resumes.has(id), ...(this.reviews.has(id) ? { resumeReview: this.reviews.get(id)! } : {}),
       paused: session?.queuePaused === true || this.pausedTasks.has(id), ...(session?.interaction ? { interaction: session.interaction } : {}) };
   }
@@ -158,15 +158,18 @@ export class MobileRuntime {
     run.controller.abort(); run.agent?.abort(); run.waiter?.reject(new Error("已停止"));
   }
   shutdown(reason: MobileInterruptionReason): Promise<void> {
-    if (this.store.unavailableReason) return this.memory?.().suspend() ?? Promise.resolve();
     this.lifecycleGeneration++; this.suspended = true; this.foregroundRequested = false;
     if (this.shutdownFlight) return this.shutdownFlight;
     const active = [...this.runs.values()];
     for (const run of active) { this.interruptRun(run, reason); this.pauseQueue(run.taskId); }
     const preparing = [...this.resumes.keys()].map(id => this.cancelResume(id));
     const pending = (async () => {
-      await Promise.all(preparing); await this.memory?.().suspend(); await this.initialize();
+      await Promise.all(preparing); await this.memory?.().suspend();
+      if (!this.store.unavailableReason) await this.initialize();
       await Promise.all(active.map(run => run.finished.promise));
+      // A conflict may disable persistence while a Provider is still pending.
+      // Abort those runs above, but never save through the disabled partition.
+      if (this.store.unavailableReason) return;
       await this.store.update(latest => {
         for (const task of latest.sessions) {
           if (active.some(run => run.taskId === task.id) || task.queue?.length) task.queuePaused = true;

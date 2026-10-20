@@ -13,8 +13,11 @@ import { financeSettingsNavigationScenarios } from "../tests/mobile/finance-sett
 import { originControlScenarios } from "../tests/mobile/origin-controls-scenarios.mjs";
 import { createHost, answer, FixtureTFile } from "../tests/mobile/host.mjs";
 import { mobileLifecycleScenarios } from "../tests/mobile/lifecycle-scenarios.mjs";
+import { mobileStartupConflictScenarios } from "../tests/mobile/startup-conflict-scenarios.mjs";
 
 const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile/entry.ts"), metafile: true });
+// Bootstrap checks must cover this checkout, independent of shared dist artifacts.
+const productionCode = (await esbuild.build(mobileBuildOptions())).outputFiles[0].text;
 const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVisual: true, url: "https://fixture.example" });
 dom.window.SVGElement.prototype.addClass = function (...names) { this.classList.add(...names); };
 dom.window.HTMLElement.prototype.setAttr = function (name, value) { this.setAttribute(name, String(value)); };
@@ -449,7 +452,8 @@ await test("mobile identity migrates once: canonical defaults, every preset/cust
   assert.equal(missingPreset.services.agentIdentity.avatar.presetId, "missing"); assert.equal(resolveAgentAvatarUrl(missingPreset.services.agentIdentity.avatar), null); await missingPreset.services.dispose(); missingPreset.runtime.dispose();
   for (const invalid of ["{broken", "[]", JSON.stringify({ ...state(custom), schema: "future" }), JSON.stringify({ ...state(custom), revision: -1 }), JSON.stringify({ ...state({ kind: "broken" }), displayName: "bad\nname" })]) {
     const host = await fixture(invalid), registry = JSON.stringify(host.config.agentRegistry);
-    await assert.rejects(host.services.initialize(), /损坏|版本/u);
+    await host.services.initialize();
+    assert.match(host.runtime.store.unavailableReason, /损坏|版本/u);
     assert.equal(host.files.get(path), invalid); assert.equal(JSON.stringify(host.config.agentRegistry), registry); assert.ok(!host.writes.includes(path));
     host.runtime.dispose();
   }
@@ -924,7 +928,7 @@ await test("mobile identity persists the same temporary key when SecretStorage r
 });
 
 for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, { isMobileApp: true, isMobile: false, isTablet: true }]) await test(`production mobile bundle initializes without Node: ${platform.isTablet ? "tablet desktop UI" : "phone"}`, async () => {
-  const code = await fs.readFile("dist/main.js", "utf8"); const host = createHost(); const imported = []; const commands = [];
+  const code = productionCode; const host = createHost(); const imported = []; const commands = [];
   class Plugin {
     constructor() { this.app = host.app; this.manifest = { id: "codex-echoink", dir: "plugin" }; }
     async loadData() { return { desktopUnknown: { keep: true } }; }
@@ -960,7 +964,7 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
 // Exercise the production bootstrap with the same SecretStorage key contract as iPad.
 for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, { isMobileApp: true, isMobile: false, isTablet: true }]) {
   for (const mode of ["native-key-limit", "secret-unavailable", "secret-property-unavailable", "both-unavailable"]) await test(`production mobile task identity ${mode}: ${platform.isTablet ? "iPad" : "iPhone"}`, async () => {
-    const code = await fs.readFile("dist/main.js", "utf8"), host = createHost(), views = [], commands = [], notices = [], reads = [], factories = new Map();
+    const code = productionCode, host = createHost(), views = [], commands = [], notices = [], reads = [], factories = new Map();
     const read = host.adapter.read.bind(host.adapter); host.adapter.read = async path => { reads.push(path); return read(path); };
     if (mode !== "native-key-limit") host.app.secretStorage = { getSecret() { throw new Error("SECURE_UNAVAILABLE"); }, setSecret() { throw new Error("SECURE_UNAVAILABLE"); } };
     if (mode === "secret-property-unavailable") Object.defineProperty(host.app, "secretStorage", { get() { throw new Error("SECRET_PORT_UNAVAILABLE"); } });
@@ -1027,5 +1031,7 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
     } finally { plugin.onunload(); dom.window.clearInterval(plugin.interval); }
   });
 }
+
+await mobileStartupConflictScenarios({ code: productionCode, dom, test });
 
 console.log(`${passed} mobile integration checks passed (real Pi Agent; Provider and Obsidian API fixtures).`);

@@ -8,7 +8,7 @@ import { buildUserProfileDreamPrompt, parseUserProfileDreamCandidates, userProfi
 import { memorySourceGroup } from "../harness/memory/dream-source-group";
 import { mobileGenerateText, type MobileRequest, type MobileUsageObserver } from "./transport";
 import { selectedModel, type MobileSettings } from "./settings";
-import type { MobileStore } from "./store";
+import { MobileDataConflictError, type MobileStore } from "./store";
 import { sha256Hex } from "../utils/sha256";
 import { MobileMemoryRepository, memoryConflict, type MobileCanonicalSnapshot } from "./memory-repository";
 import type { MobileMemorySettingsPort, MobileMemorySettingsSnapshot, MobileMemoryCorrection, MobileMemoryCorrectionPreview, MobileUserProfileSnapshot, MobileDreamStatus, MobileForgottenMemory } from "./memory-contracts";
@@ -34,7 +34,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
   private usage?: MobileUsageObserver;
   setUsage(observer: MobileUsageObserver): void { this.usage = observer; }
   constructor(private options: MobileMemoryServiceOptions) {
-    this.now = options.now ?? Date.now; this.repository = new MobileMemoryRepository(options.adapter, options.store.instanceId, this.now, options.store.unavailableReason);
+    this.now = options.now ?? Date.now; this.repository = new MobileMemoryRepository(options.adapter, options.store.instanceId, this.now, () => options.store.unavailableReason);
     this.status = { phase: "idle", dayKey: this.day(), attemptsToday: 0, dailyLimit: this.readSettings().dreamRunsPerDay, startedAt: null, finishedAt: null, error: "" };
   }
   private day() { const date = new Date(this.now()); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
@@ -49,7 +49,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       if (raw !== null) {
         const ledger = this.parseLedger(raw); this.status = ledger.status;
         if (ledger.status.phase === "running" && ledger.owner === this.options.store.instanceId && !activeDreams.has(this.options.adapter)) {
-          await this.finishDream("interrupted", "上次整理已中断，请主动重新开始。", ledger.status.startedAt);
+          await this.finishDream("interrupted", "上次整理已中断，请主动重新开始。", ledger.status.startedAt, raw);
         }
       }
     })().catch(error => { this.initialization = undefined; throw error; });
@@ -200,7 +200,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
   }
   dreamStatus(): MobileDreamStatus { return { ...clone(this.status), ...(this.status.dayKey !== this.day() ? { dayKey: this.day(), attemptsToday: 0 } : {}), dailyLimit: this.readSettings().dreamRunsPerDay }; }
   private parseLedger(raw: string): DreamLedger {
-    const invalid = () => new Error("整理次数账本损坏，原文件已保留。"); let value: unknown; try { value = JSON.parse(raw); } catch { throw invalid(); }
+    const invalid = () => new MobileDataConflictError("整理次数账本损坏或版本不支持，原文件已保留。"); let value: unknown; try { value = JSON.parse(raw); } catch { throw invalid(); }
     if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid(); const record = value as Record<string, unknown>, status = record.status as Record<string, unknown> | undefined;
     if (record.schema !== "echoink.mobile-dream.v1" || !Number.isSafeInteger(record.attempts) || Number(record.attempts) < 0 || typeof record.dayKey !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(record.dayKey) || typeof record.owner !== "string" || !record.owner
       || !status || !["idle", "running", "completed", "interrupted", "failed"].includes(String(status.phase)) || typeof status.error !== "string"
@@ -208,8 +208,9 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       || status.dayKey !== record.dayKey || status.attemptsToday !== record.attempts || [status.startedAt, status.finishedAt].some(at => at !== null && (typeof at !== "number" || !Number.isFinite(at) || at < 0))) throw invalid();
     return record as unknown as DreamLedger;
   }
-  private async finishDream(phase: MobileDreamStatus["phase"], error: string, startedAt: number | null) {
+  private async finishDream(phase: MobileDreamStatus["phase"], error: string, startedAt: number | null, expectedLedger?: string) {
     this.status = await this.repository.updateAuxiliary(DREAM_LEDGER, raw => {
+      if (expectedLedger !== undefined && raw !== expectedLedger) throw memoryConflict();
       const previous = raw ? this.parseLedger(raw) : null;
       const status: MobileDreamStatus = { ...this.dreamStatus(), phase, error, startedAt, finishedAt: this.now(), dayKey: previous?.dayKey ?? this.day(), attemptsToday: previous?.attempts ?? 0 };
       return { content: json({ schema: "echoink.mobile-dream.v1", dayKey: previous?.dayKey ?? this.day(), attempts: previous?.attempts ?? 0, status, owner: this.options.store.instanceId }), value: status };
@@ -268,6 +269,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
   async cancelDream(): Promise<void> { const run = this.dreamRun; if (!run) return; run.controller.abort(); await run.completion.catch(() => {}); }
   async suspend(reason = "应用进入后台，整理已中断。") { const run = this.dreamRun; if (run) { run.controller.abort(); await run.completion.catch(() => {}); } }
   async archiveCompleted(): Promise<void> {
+    if (this.options.store.unavailableReason) return;
     if (!this.readSettings().autoArchive) return; const at = this.now();
     const eligible = (task: import("./store").MobileSession) => task.archivedAt === undefined && task.taskStatus === "completed" && !!task.taskCompletedAt
       && at - Math.max(task.taskCompletedAt, task.updatedAt) >= 7 * 86_400_000 && !task.draft.trim() && !task.draftContext?.attachments.length && !task.draftContext?.annotations?.length
