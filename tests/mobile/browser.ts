@@ -1,4 +1,4 @@
-import { MarkdownRenderer, Platform } from "./browser-obsidian";
+import { MarkdownRenderer, Platform, setIcon } from "./browser-obsidian";
 import { LifestyleView } from "../../src/lifestyle/view";
 import { MobileViewport } from "../../src/ui/mobile/viewport";
 import { createMobileAccountService } from "../../src/mobile/account";
@@ -11,6 +11,7 @@ import { MobileStore } from "../../src/mobile/store";
 import { MobileRuntime } from "../../src/mobile/runtime";
 import { loadMobileSettings } from "../../src/mobile/settings";
 import { AgentIdentityModal } from "../../src/ui/agent-identity-modal";
+import { seedWorkbenchFixture } from "./workbench-fixture";
 import { createHost, answer } from "./host.mjs";
 
 const host = createHost({ "笔记/来源.md": "项目决定：先完成手机本地问答。", "Wiki/项目/产品草稿.md": "# 产品草稿\n\n本周聚焦真实场景。", "Wiki/项目/工作复盘.md": "# 工作复盘\n\n记录决定、证据与行动。", "Wiki/项目/手机验收.md": "# 知识", "Raw/资料.md": "# 原始资料", "Inbox/记录.md": "# Inbox" });
@@ -25,7 +26,8 @@ if (keyboard > 0) {
 }
 Platform.isMobileApp = Platform.isMobile = !params.has("desktop"); Platform.isTablet = params.has("tablet") && Platform.isMobile;
 const fixturePrefix = params.has("review") ? `echoink-pre-main-profile-${params.get("review") || "initial"}-v1` : params.has("host") ? "echoink-ipad-beta7-host-fixture" : params.has("finance") ? "echoink-mobile-account-finance-beta4-fixture" : params.has("seed") ? "echoink-ipad-workspace-v1-fixture" : "echoink-mobile-ui-rework-v2-fixture";
-const persisted = localStorage.getItem(`${fixturePrefix}-files`);
+// Visual matrix pages use a fresh explicitly synthetic run per load; persistence cases use the normal fixture.
+const persisted = params.has("workbench") ? null : localStorage.getItem(`${fixturePrefix}-files`);
 if (persisted) { host.files.clear(); for (const [key, value] of JSON.parse(persisted)) host.files.set(key, value); }
 if (params.has("profile-error")) host.files.set(".echoink/agents/echoink/AGENT.md", "用户既有资料，缺少有效控制区域。\n");
 const persist = () => localStorage.setItem(`${fixturePrefix}-files`, JSON.stringify([...host.files]));
@@ -110,7 +112,23 @@ MarkdownRenderer.render = async (_app, text, element) => {
     } else { const paragraph = document.createElement("p"); paragraph.textContent = part; paragraph.style.whiteSpace = "pre-wrap"; element.append(paragraph); }
   }
 };
-const workspaceFixture = mobileWorkspaceFixture(plugin, { chat: root, home: document.querySelector<HTMLElement>("#home")!, settings: document.querySelector<HTMLElement>("#settings")! }, params.has("tablet"));
+const workspaceFixture = mobileWorkspaceFixture(plugin, { chat: root, home: document.querySelector<HTMLElement>("#home")!, settings: document.querySelector<HTMLElement>("#settings")! }, params.has("tablet"), params.has("legacy"));
+if (params.has("tablet")) {
+  const buttons = document.querySelectorAll<HTMLButtonElement>("[data-host-view]");
+  const native = document.querySelector<HTMLElement>(".fixture-native-view")!;
+  for (const button of buttons) {
+    const kind = button.dataset.hostView!; setIcon(button, kind === "agent" ? "bot" : kind === "outline" ? "list" : "link");
+    button.addEventListener("click", () => {
+      buttons.forEach(item => item.classList.toggle("is-active", item === button));
+      root.hidden = kind !== "agent"; native.hidden = kind === "agent";
+      native.textContent = kind === "outline" ? "宿主大纲替身：当前笔记标题" : kind === "backlink" ? "宿主反向链接替身：当前笔记的链接" : "";
+    });
+  }
+  document.querySelector("#fixture-sidebar-toggle")!.addEventListener("click", () => { document.body.classList.toggle("fixture-sidebar-open"); });
+  document.querySelector(".fixture-backdrop")!.addEventListener("click", () => { document.body.classList.remove("fixture-sidebar-open"); });
+}
+const workbenchFixture = { store, settings, runtime, host, requests, plugin, services, workspaceFixture };
+if (params.has("workbench")) await seedWorkbenchFixture(workbenchFixture);
 let desktopDispose: (() => void | Promise<void>) | undefined;
 if (params.has("desktop") && params.has("account")) {
   const account = mountAccountMembership(root, { app: host.app as any, viewModel: accountService.read(), actions: accountService.actions, read: () => accountService.read(), language: "zh-CN", openProviders() {} });
@@ -130,7 +148,7 @@ if (params.has("long")) {
 document.querySelector("#fixture-home-tab")!.addEventListener("click", () => { void plugin.navigation.openHome(); });
 document.querySelector("#fixture-close-settings")!.addEventListener("click", () => { void workspaceFixture.closeSettings(); });
 window.addEventListener("pagehide", () => { void desktopDispose?.(); void workspaceFixture.dispose(); }, { once: true });
-Object.assign(window, { mobileFixture: { store, settings, runtime, host, requests, plugin, services, workspaceFixture } });
+Object.assign(window, { mobileFixture: workbenchFixture });
 if (params.has("desktop") && params.has("identity-modal")) {
   new AgentIdentityModal(host.app as any, { initialName: "桌面墨墨", initialAvatar: { kind: "preset", presetId: "lin" }, language: "zh", mode: "edit", onConfirm: async () => {} }).open();
 }

@@ -1,0 +1,11 @@
+export { IPadWorkbench } from "../../src/ui/ipad/workbench";
+export { IPadAgentPane } from "../../src/ui/ipad/agent-pane";
+export { IPadShell } from "../../src/ui/ipad/shell";
+export { createTaskPage } from "../../src/ui/ipad/task-detail";
+export { createAgentFormPage } from "../../src/ui/ipad/agent-form";
+export { createIPadComposer, createInlineQuestion, requestIPadTaskResume } from "../../src/ui/ipad/composer";
+export { MobileStore } from "../../src/mobile/store";
+export { MobileRuntime } from "../../src/mobile/runtime";
+export { MobileAgentRegistryService } from "../../src/mobile/agent-registry-service";
+export { loadMobileSettings, mobileProvider, mobileModel } from "../../src/mobile/settings";
+export { formatMobileWorkbenchDate } from "../../src/mobile/workbench-format";

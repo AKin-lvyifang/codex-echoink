@@ -1,0 +1,54 @@
+body[data-echoink-theme] .echoink-ipad {
+  --background-primary: var(--echoink-theme-bg);
+  --background-secondary: var(--echoink-theme-raised);
+  --text-normal: var(--echoink-theme-text);
+  --text-muted: var(--echoink-theme-secondary);
+  --text-faint: var(--echoink-theme-muted);
+  --text-warning: var(--echoink-theme-warn);
+  --background-modifier-border: var(--echoink-theme-line);
+  --em-green: var(--echoink-theme-accent);
+  --em-on-accent: var(--echoink-theme-on-accent);
+  --interactive-accent: var(--echoink-theme-accent);
+  --text-on-accent: var(--echoink-theme-on-accent);
+  --checkbox-color: var(--echoink-theme-accent);
+  --checkbox-color-hover: var(--echoink-theme-accent);
+  --checkbox-marker-color: var(--echoink-theme-on-accent);
+  --checkbox-border-color: var(--echoink-theme-muted);
+}
+.echoink-ipad {
+  font-size: var(--pd-ui-font, var(--font-text-size, 16px));
+  -webkit-font-smoothing: antialiased;
+}
+.echoink-ipad .pd-module-files { min-width: 0; }
+.echoink-ipad button.pd-file-row {
+  appearance: none; display: block; width: 100%; min-width: 44px; min-height: 44px; height: auto;
+  margin: 0; padding: 12px 4px; border: 0; border-bottom: 1px solid var(--pd-line);
+  border-radius: 0; box-shadow: none; background: transparent; color: var(--pd-ink);
+  font: inherit; text-align: left; white-space: normal; overflow-wrap: anywhere; cursor: pointer;
+}
+.echoink-ipad button.pd-file-row::before,
+.echoink-ipad button.pd-file-row::after { content: none; }
+.echoink-ipad button.pd-file-row:hover,
+.echoink-ipad button.pd-file-row:focus-visible { background: var(--pd-soft); }
+.echoink-ipad button.pd-file-row:active { opacity: .65; }
+.echoink-ipad .pd-search-page { min-width: 0; max-width: 720px; margin: 0 auto; }
+.echoink-ipad .pd-search-field { display: flex; flex-direction: column; gap: 8px; }
+.echoink-ipad .pd-search-label { color: var(--pd-secondary); font-size: .88em; font-weight: 500; }
+.echoink-ipad input.pd-search-input {
+  appearance: none; width: 100%; min-height: 44px; padding: 10px; border: 1px solid var(--pd-line);
+  border-radius: 9px; background: var(--pd-bg); color: var(--pd-ink); font: inherit; font-size: max(16px, 1em); box-shadow: none;
+}
+.echoink-ipad input.pd-search-input:focus { border-color: var(--pd-secondary); box-shadow: none; }
+.echoink-ipad .pd-search-status:not(:empty) { padding: 12px 0; color: var(--pd-secondary); font-size: .875em; }
+.echoink-ipad button.pd-search-result {
+  appearance: none; display: flex; flex-direction: column; gap: 5px; width: 100%; min-height: 44px; height: auto;
+  margin: 0; padding: 14px 4px; border: 0; border-bottom: 1px solid var(--pd-line); border-radius: 0;
+  background: transparent; color: var(--pd-ink); box-shadow: none; font: inherit; text-align: left; white-space: normal;
+  overflow-wrap: anywhere; cursor: pointer;
+}
+.echoink-ipad button.pd-search-result::before,
+.echoink-ipad button.pd-search-result::after { content: none; }
+.echoink-ipad button.pd-search-result:hover,
+.echoink-ipad button.pd-search-result:focus-visible { background: var(--pd-soft); }
+.echoink-ipad button.pd-search-result:active { opacity: .65; }
+.echoink-ipad .pd-search-result-title { font-weight: 500; }

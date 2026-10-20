@@ -222,12 +222,14 @@ await test("iPad missing native sidebar fails explicitly; phone opening stays ce
   assert.equal(a, b); assert.equal(a.getRoot(), host.rootSplit);
 });
 
-await test("shells stay isolated and M5 production includes only the shipped iPhone pages", async () => {
+await test("shells stay isolated and M6 production includes independent iPhone and iPad pages", async () => {
   const inputs = Object.keys(bundle.metafile.inputs);
   assert.ok(!inputs.some(input => /node_modules|mobile-ui\.ts|src\/main\.ts|pi-native/.test(input)));
   const production = JSON.parse(await fs.readFile(".tmp/mobile-production-metafile.json", "utf8"));
   assert.ok(Object.keys(production.inputs).some(input => /ui\/iphone\/workbench\.ts$/.test(input)));
-  assert.ok(!Object.keys(production.inputs).some(input => /ui\/ipad\/|tests\/mobile-shell/.test(input)));
+  assert.ok(Object.keys(production.inputs).some(input => /ui\/ipad\/workbench\.ts$/.test(input)));
+  assert.ok(Object.keys(production.inputs).some(input => /ui\/ipad\/agent-pane\.ts$/.test(input)));
+  assert.ok(!Object.keys(production.inputs).some(input => /tests\//.test(input)));
   for (const device of ["iphone", "ipad"]) {
     const files = await fs.readdir(`src/ui/${device}`);
     for (const file of files.filter(file => file.endsWith(".ts"))) {

@@ -1,3 +1,4 @@
+import { formatMobileWorkbenchDate } from "../../mobile/workbench-format";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../../agents/types";
 import type { WorkbenchSignal, WorkbenchSnapshot } from "../../home/workbench-types";
 import type { MobileSession } from "../../mobile/store";
@@ -121,7 +122,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
       if (!tasks.some(task => task.id === id && iphoneTaskStatus(task) === "waiting")) { question.dispose(); questions.delete(id); }
     }
     strip.replaceChildren(agentStrip(ctx)); topTasks.replaceChildren(); bottomTasks.replaceChildren();
-    date.textContent = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
+    date.textContent = formatMobileWorkbenchDate();
     for (const [status, label] of [["interrupted", "上次中断"], ["waiting", "等你回应"], ["running", "正在进行"]] as const) {
       const group = tasks.filter(task => iphoneTaskStatus(task) === status).sort((a, b) => b.updatedAt - a.updatedAt);
       if (!group.length) continue;
@@ -207,7 +208,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
       ctx.host.workbench.refreshTasks?.();
     }
     if (snapshot?.nextRefreshAt !== undefined && now >= snapshot.nextRefreshAt) void loadFacts();
-    date.textContent = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
+    date.textContent = formatMobileWorkbenchDate();
     // Updating elapsed time must not discard a partially answered inline question.
     for (const card of Array.from(topTasks.querySelectorAll<HTMLElement>(".ip-task-card"))) {
       const task = ctx.host.store.getSession(card.dataset.taskId!);

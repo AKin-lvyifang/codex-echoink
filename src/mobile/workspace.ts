@@ -8,6 +8,8 @@ export const MOBILE_SETTINGS_VIEW = "echoink-mobile-settings";
 export class MobileWorkspace {
   private reader?: { leaf: WorkspaceLeaf; path: string };
   private pending: Promise<void> = Promise.resolve();
+  private workbenchRoutes?: { open: () => Promise<void>; home: () => Promise<void> };
+  useWorkbenchRoutes(routes: { open: () => Promise<void>; home: () => Promise<void> }): void { this.workbenchRoutes = routes; }
   constructor(private workspace: Workspace, private isTablet: boolean) {}
   private serial(action: () => Promise<void>): Promise<void> {
     const next = this.pending.catch(() => {}).then(action); this.pending = next; return next;
@@ -21,6 +23,7 @@ export class MobileWorkspace {
     return leaf.view.getViewType() === "markdown" ? leaf.getViewState().state?.file as string | undefined : undefined;
   }
   open(): Promise<void> {
+    if (this.workbenchRoutes) return this.workbenchRoutes.open();
     return this.serial(async () => {
       const existing = this.workspace.getLeavesOfType(MOBILE_VIEW);
       let leaf = existing.find(item => !this.isTablet || item.getRoot() === this.workspace.rightSplit);
@@ -35,6 +38,7 @@ export class MobileWorkspace {
     });
   }
   openHome(): Promise<void> {
+    if (this.workbenchRoutes) return this.workbenchRoutes.home();
     return this.serial(async () => {
       let leaf = this.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME).find(item => item.getRoot() === this.workspace.rootSplit);
       if (!leaf) { leaf = this.workspace.getLeaf("tab"); await leaf.setViewState({ type: VIEW_TYPE_ECHOINK_HOME, active: true }); }

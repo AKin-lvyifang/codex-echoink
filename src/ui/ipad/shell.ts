@@ -37,6 +37,12 @@ export class IPadShell {
 
   get activePageId(): string | undefined { return this.stack.at(-1)?.page.id; }
   get hasBack(): boolean { return this.stack.length > 1; }
+  hasPage(id: string): boolean { return this.stack.some(state => state.page.id === id); }
+  async backTo(id: string): Promise<boolean> {
+    if (!this.hasPage(id)) return false;
+    while (this.activePageId !== id) if (!await this.back()) return false;
+    return true;
+  }
 
   /** Wide settings keeps its category list visible, so only deeper pages need back. */
   setRootBackVisible(visible: boolean): void {

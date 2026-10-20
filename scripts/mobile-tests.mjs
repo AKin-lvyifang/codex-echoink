@@ -625,15 +625,17 @@ await test("journal entries wait for input and retain old, quick and plus-menu d
   ui.destroy(); await services.dispose();
 });
 
-await test("iPad settings: formal central leaf reuse, isolated listener, local sync and close/reopen", async () => {
+await test("iPad retained legacy settings: central leaf reuse, isolated listener, local sync and close/reopen", async () => {
   const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
   const platform = obsidian.exports.Platform; const previousTablet = platform.isTablet; platform.isTablet = true;
   const root = dom.window.document.querySelector("#app"), home = dom.window.document.body.appendChild(dom.window.document.createElement("div")), central = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
   Object.defineProperty(central, "clientWidth", { value: 800, configurable: true });
   const plugin = new EchoInkMobilePlugin(state.app, { id: "codex-echoink", version: "2.6.3-beta.6" });
   Object.assign(plugin, { store: state.store, runtime: state.runtime, settings: state.config }); plugin.saveData = async () => {};
-  const fixture = mobileWorkspaceFixture(plugin, { chat: root, home, settings: central }, true);
-  const services = new MobileServices({ ...plugin, app: state.app, settings: state.config, store: state.store, runtime: state.runtime, navigation: plugin.navigation, registerEvent() {}, saveSettings: () => plugin.saveSettings(), showPage: page => plugin.showPage(page) }, "plugin/mobile"); plugin.services = services;
+  const services = new MobileServices({ ...plugin, app: state.app, settings: state.config, store: state.store, runtime: state.runtime,
+    navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) },
+    registerEvent() {}, saveSettings: () => plugin.saveSettings(), showPage: page => plugin.showPage(page) }, "plugin/mobile"); plugin.services = services;
+  const fixture = mobileWorkspaceFixture(plugin, { chat: root, home, settings: central }, true, true);
   let intervals = 0; const interval = dom.window.setInterval; dom.window.setInterval = (...args) => { intervals++; return interval(...args); };
   try {
     await plugin.navigation.open(); const input = root.querySelector(".em-input"); input.value = "保持输入和焦点"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true })); input.focus(); const listener = state.runtime.onChange;
@@ -649,6 +651,32 @@ await test("iPad settings: formal central leaf reuse, isolated listener, local s
     central.querySelector(".em-archive summary").click(); await settle(); click(central, "恢复会话"); await settle(); await settle(); assert.equal(state.store.session.id, oldSession.id); assert.equal(input.value, oldSession.draft); assert.equal(root.querySelector(".em-input"), input); assert.ok(root.textContent.includes("设置关闭后仍更新")); assert.ok(root.querySelector(".em-context").textContent.includes("笔记/来源.md")); click(root, "历史对话"); assert.equal(root.querySelector('.em-session-row[aria-current="page"]').dataset.sessionId, oldSession.id); click(root, "关闭弹层");
     await fixture.leaves.find(leaf => leaf.view.getViewType() === "echoink-mobile-settings").detach(); const deferred = fixture.restoreDeferredSettings(); await plugin.showPage("account"); assert.equal(fixture.active, deferred); assert.equal(central.dataset.page, "account"); assert.equal(state.runtime.onChange, listener); assert.equal(intervals, 1);
   } finally { await fixture.dispose(); home.remove(); central.remove(); platform.isTablet = previousTablet; dom.window.setInterval = interval; }
+});
+
+await test("M6 formal iPad entry keeps central/settings/note independent from the Agent draft", async () => {
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+  const platform = obsidian.exports.Platform, previousTablet = platform.isTablet; platform.isTablet = true;
+  const root = dom.window.document.querySelector("#app"), home = dom.window.document.body.appendChild(dom.window.document.createElement("div")), central = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const plugin = new EchoInkMobilePlugin(state.app, { id: "codex-echoink", version: "M6 fixture" });
+  Object.assign(plugin, { store: state.store, runtime: state.runtime, settings: state.config }); plugin.saveData = async () => {};
+  const services = new MobileServices({ ...plugin, app: state.app, settings: state.config, store: state.store, runtime: state.runtime,
+    navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) },
+    registerEvent() {}, saveSettings: () => plugin.saveSettings(), showPage: page => plugin.showPage(page) }, "plugin/mobile"); plugin.services = services;
+  await services.initialize();
+  const fixture = mobileWorkspaceFixture(plugin, { chat: root, home, settings: central }, true);
+  try {
+    await Promise.all([plugin.open(), plugin.open(), plugin.open()]);
+    assert.equal(fixture.leaves.filter(leaf => leaf.view.getViewType() === "echoink-ipad-workbench-shell").length, 1);
+    assert.equal(fixture.leaves.filter(leaf => leaf.view.getViewType() === "echoink-ipad-agent-shell").length, 1);
+    assert.ok(home.querySelector(".pd-workbench")); assert.ok(root.querySelector(".pd-agent-page"));
+    const input = root.querySelector("textarea"); input.value = "M6 正式入口草稿"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    await plugin.showPage("settings"); assert.equal(root.querySelector("textarea"), input); assert.equal(input.value, "M6 正式入口草稿");
+    assert.equal(fixture.leaves.filter(leaf => leaf.view.getViewType() === "echoink-mobile-settings").length, 1);
+    const file = state.app.vault.getAbstractFileByPath("笔记/来源.md"); assert.ok(file); await plugin.ipadNavigation.openNote(file);
+    assert.equal(fixture.active.view.getViewType(), "markdown"); assert.equal(root.querySelector("textarea"), input);
+    await plugin.navigation.openHome(); assert.equal(fixture.active.view.getViewType(), "echoink-ipad-workbench-shell");
+    assert.equal(input.value, "M6 正式入口草稿"); assert.ok(!root.querySelector(".echoink-iphone"));
+  } finally { await fixture.dispose(); await services.dispose(); home.remove(); central.remove(); platform.isTablet = previousTablet; }
 });
 
 await test("iPad retained default detail synchronizes Header without replacing focus or body", async () => {

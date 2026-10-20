@@ -1,5 +1,5 @@
 import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
-import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, type TFile, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, TFile, type WorkspaceLeaf } from "obsidian";
 import { MobileStore } from "./store";
 import type { AgentRegistry } from "../agents/types";
 import { getMobileTaskInstanceId } from "./task-identity";
@@ -15,11 +15,15 @@ import { createMobileAccountService } from "./account";
 import type { AccountService } from "../membership/account-service";
 import { LifestyleView, LIFE_VIEW_TYPES } from "../lifestyle/view";
 import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
-import { IPHONE_SHELL_VIEW, IPhoneShellWorkspace } from "./shell-workspace";
+import { IPHONE_SHELL_VIEW, IPhoneShellWorkspace, IPAD_SHELL_HOME_VIEW, IPAD_SHELL_AGENT_VIEW, IPadShellWorkspace } from "./shell-workspace";
 import { MobileWorkbenchService } from "./workbench";
 import { IPhoneWorkbench } from "../ui/iphone/workbench";
 import { normalizeEchoInkColorTheme } from "../ui/appearance-theme";
 import type { IPhoneRoute } from "../ui/iphone/workbench-contract";
+import { IPadWorkbench } from "../ui/ipad/workbench";
+import { IPadAgentPane } from "../ui/ipad/agent-pane";
+import type { IPadAgentRoute, IPadWorkbenchHost } from "../ui/ipad/workbench-contract";
+import type { AgentModuleId } from "../agents/types";
 
 export { MOBILE_VIEW } from "./workspace";
 export default class EchoInkMobilePlugin extends Plugin {
@@ -30,6 +34,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   services!: MobileServices;
   accountService!: AccountService;
   iphoneNavigation?: IPhoneShellWorkspace;
+  ipadNavigation?: IPadShellWorkspace;
   workbench?: MobileWorkbenchService;
   private settingsWrites: Promise<void> = Promise.resolve();
   private taskLifecycleRegistered = false;
@@ -77,9 +82,13 @@ export default class EchoInkMobilePlugin extends Plugin {
           }).then(() => this.openIPhoneRoute({ kind: "agent", agentId: "sol" })).catch(error => new Notice(String(error)));
           return;
         }
-        const id = this.store.session.id;
-        const write = file?.extension === "md" ? this.store.patchSession(id, { notePath: file.path }) : this.store.flush();
-        void write.then(() => this.navigation.open()).catch(error => new Notice(String(error)));
+        const page = this.store.state.page;
+        const agentId = page.kind === "list" ? page.agentId : this.store.session.agentId;
+        void this.store.update(state => {
+          const draft = state.newTaskDrafts[agentId] ?? { text: "", attachments: [] };
+          if (file?.extension === "md") draft.noteMentions = [{ vaultRelativePath: file.path, fileName: file.basename }];
+          state.newTaskDrafts[agentId] = draft;
+        }).then(() => this.openIPadAgent({ kind: "agent", agentId })).catch(error => new Notice(String(error)));
       } });
     } catch (error) { new Notice(`EchoInk 无法加载：${error instanceof Error ? error.message : String(error)}`, 10000); throw error; }
   }
@@ -115,14 +124,29 @@ export default class EchoInkMobilePlugin extends Plugin {
     await write;
     for (const leaf of this.app.workspace.getLeavesOfType(MOBILE_VIEW)) if (leaf.view instanceof EchoInkMobileView) leaf.view.refreshSettings();
     this.workbench?.invalidate();
+    for (const type of [IPAD_SHELL_HOME_VIEW, IPAD_SHELL_AGENT_VIEW]) for (const leaf of this.app.workspace.getLeavesOfType(type)) if (leaf.view instanceof EchoInkIPadView) leaf.view.refreshSettings();
     for (const leaf of this.app.workspace.getLeavesOfType(IPHONE_SHELL_VIEW)) if (leaf.view instanceof EchoInkIPhoneView) leaf.view.refreshSettings();
   }
   registerWorkspaceViews(): void {
     this.registerView(LIFE_VIEW_TYPES.finance, leaf => new EchoInkMobileFinanceView(leaf, this.services.lifestyle, "finance"));
+    this.workbench = new MobileWorkbenchService(this.app, this.store, () => this.settings, () => this.services, this.runtime);
     if (!Platform.isTablet) {
       this.iphoneNavigation = new IPhoneShellWorkspace(this.app.workspace);
-      this.workbench = new MobileWorkbenchService(this.app, this.store, () => this.settings, () => this.services, this.runtime);
       this.registerView(IPHONE_SHELL_VIEW, leaf => new EchoInkIPhoneView(leaf, this));
+    } else {
+      this.ipadNavigation = new IPadShellWorkspace(this.app.workspace);
+      this.registerView(IPAD_SHELL_HOME_VIEW, leaf => new EchoInkIPadView(leaf, this, "home"));
+      this.registerView(IPAD_SHELL_AGENT_VIEW, leaf => new EchoInkIPadView(leaf, this, "agent"));
+      this.navigation.useWorkbenchRoutes({
+        home: async () => { await this.ipadNavigation!.openHome(); },
+        open: async () => {
+          const page = this.store.state.page;
+          const task = page.kind === "detail" ? this.store.getSession(page.taskId) : undefined;
+          await this.openIPadAgent(task && (task.taskStatus || task.messages.length || task.draft)
+            ? { kind: "task", taskId: task.id }
+            : { kind: "agent", agentId: page.kind === "list" ? page.agentId : task?.agentId ?? "sol" });
+        }
+      });
     }
     this.registerView(MOBILE_VIEW, leaf => new EchoInkMobileView(leaf, this));
     this.registerView(MOBILE_SETTINGS_VIEW, leaf => new EchoInkMobileView(leaf, this, true));
@@ -137,6 +161,22 @@ export default class EchoInkMobilePlugin extends Plugin {
     const leaf = await this.iphoneNavigation!.open();
     if (leaf.view instanceof EchoInkIPhoneView) await leaf.view.navigate(route);
   }
+  async openIPadAgent(route: IPadAgentRoute): Promise<void> {
+    const leaf = await this.ipadNavigation!.openAgent();
+    if (leaf.view instanceof EchoInkIPadView) await leaf.view.navigate(route);
+  }
+  async resumeIPadTask(taskId: string): Promise<void> {
+    const leaf = await this.ipadNavigation!.openAgent();
+    if (leaf.view instanceof EchoInkIPadView) await leaf.view.resumeTask(taskId);
+  }
+  async openIPadModule(module: AgentModuleId): Promise<void> {
+    const leaf = await this.ipadNavigation!.openHome();
+    if (leaf.view instanceof EchoInkIPadView) await leaf.view.openModule(module);
+  }
+  async openIPadSearch(): Promise<void> {
+    const leaf = await this.ipadNavigation!.openHome();
+    if (leaf.view instanceof EchoInkIPadView) await leaf.view.openSearch();
+  }
   async showPage(page: MobileSettingsRoute): Promise<void> {
     if (Platform.isTablet) {
       const leaf = await this.navigation.openSettings();
@@ -149,6 +189,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   onunload(): void {
     this.workbench?.dispose();
     this.iphoneNavigation?.dispose();
+    this.ipadNavigation?.dispose();
     this.accountService?.dispose();
     const stopped = this.runtime?.shutdown("plugin_disabled");
     this.runtime?.dispose();
@@ -178,8 +219,8 @@ export class EchoInkIPhoneView extends ItemView {
       settings: () => this.plugin.settings, saveSettings: () => this.plugin.saveSettings(),
       openNote: async path => {
         const file = this.app.vault.getAbstractFileByPath(path);
-        if (!file || !("extension" in file)) throw new Error("笔记不存在。");
-        await this.plugin.iphoneNavigation!.openNote(file as TFile);
+        if (!(file instanceof TFile)) throw new Error("笔记不存在。");
+        await this.plugin.iphoneNavigation!.openNote(file);
       },
       openLegacy: page => this.showPage(page), openModule: module => this.ui!.openModule(module),
       renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? "", this.markdown); }
@@ -188,6 +229,50 @@ export class EchoInkIPhoneView extends ItemView {
   }
   async navigate(route: IPhoneRoute): Promise<void> { await this.ui?.navigate(route); }
   async showPage(page: MobileSettingsRoute): Promise<void> { await this.ui?.openLegacy(page); }
+  async onClose(): Promise<void> { this.ui?.dispose(); this.ui = undefined; this.removeChild(this.markdown); await this.plugin.store.flush(); }
+}
+
+/** A native central tab or native right leaf; only data and services are shared. */
+export class EchoInkIPadView extends ItemView {
+  private ui?: IPadWorkbench | IPadAgentPane;
+  private markdown = new Component();
+  constructor(leaf: WorkspaceLeaf, private readonly plugin: EchoInkMobilePlugin, private readonly area: "home" | "agent") { super(leaf); }
+  getViewType(): string { return this.area === "home" ? IPAD_SHELL_HOME_VIEW : IPAD_SHELL_AGENT_VIEW; }
+  getDisplayText(): string { return this.area === "home" ? "工作台" : "EchoInk"; }
+  getIcon(): string { return this.area === "home" ? "layout-dashboard" : "bot"; }
+  refreshSettings(): void {
+    this.contentEl.ownerDocument.body.setAttribute("data-echoink-theme", normalizeEchoInkColorTheme(this.plugin.settings.colorTheme));
+    for (const root of [this.contentEl, ...Array.from(this.contentEl.querySelectorAll<HTMLElement>(".echoink-ipad"))]) {
+      root.dataset.appearance = this.plugin.settings.mobileUi.appearance;
+      root.classList.toggle("em-large-text", this.plugin.settings.mobileUi.largeText);
+    }
+  }
+  async onOpen(): Promise<void> {
+    this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
+    const host: IPadWorkbenchHost = {
+      app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
+      agents: this.plugin.services.agents, workbench: this.plugin.workbench!,
+      accountService: this.plugin.accountService, version: this.plugin.manifest.version,
+      settings: () => this.plugin.settings, saveSettings: () => this.plugin.saveSettings(),
+      openHome: async () => { await this.plugin.ipadNavigation!.openHome(); },
+      openAgent: route => this.plugin.openIPadAgent(route),
+      openLegacy: page => this.plugin.showPage(page), openModule: module => this.plugin.openIPadModule(module),
+      openSearch: () => this.plugin.openIPadSearch(),
+      resumeTask: taskId => this.plugin.resumeIPadTask(taskId),
+      openNote: async path => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) throw new Error("笔记不存在。");
+        await this.plugin.ipadNavigation!.openNote(file);
+      },
+      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? "", this.markdown); }
+    };
+    this.ui = this.area === "home" ? new IPadWorkbench(this.contentEl, host) : new IPadAgentPane(this.contentEl, host);
+    await this.ui.mount(); this.refreshSettings();
+  }
+  async navigate(route: IPadAgentRoute): Promise<void> { if (this.ui instanceof IPadAgentPane) await this.ui.navigate(route); }
+  async resumeTask(taskId: string): Promise<void> { if (this.ui instanceof IPadAgentPane) await this.ui.resumeTask(taskId); }
+  async openModule(module: AgentModuleId): Promise<void> { if (this.ui instanceof IPadWorkbench) await this.ui.openModule(module); }
+  async openSearch(): Promise<void> { if (this.ui instanceof IPadWorkbench) await this.ui.openSearch(); }
   async onClose(): Promise<void> { this.ui?.dispose(); this.ui = undefined; this.removeChild(this.markdown); await this.plugin.store.flush(); }
 }
 
@@ -225,8 +310,8 @@ export class EchoInkMobileView extends ItemView {
       saveSettings: () => this.plugin.saveSettings(),
       openNote: async path => {
         const file = this.app.vault.getAbstractFileByPath(path);
-        if (!file || !("extension" in file)) throw new Error("笔记不存在。");
-        await this.plugin.navigation.openNote(file as TFile, this.leaf);
+        if (!(file instanceof TFile)) throw new Error("笔记不存在。");
+        await this.plugin.navigation.openNote(file, this.leaf);
       },
       beginRender: () => { this.removeChild(this.markdown); this.markdown = new Component(); this.addChild(this.markdown); },
       renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? this.plugin.store.session.notePath, this.markdown); }
