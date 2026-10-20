@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { TFolder } from "obsidian";
 import { assertGenerationInputBudget, createGenerationRequest, freezeGenerationRequest, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../generation/request";
 import { readGenerationSources, isGenerationSourcePath } from "../generation/sources";
-import { generationReportMarkdown } from "../generation/output";
+import { generationFileStem, generationReportMarkdown } from "../generation/output";
 import { buildAgentTurns, isAgentProcessItemType } from "../ui/codex-view/agent-turn-process";
 import { piToolCallIdFromProjectedMessageId } from "../harness/pi-native/pi-chat-ui-projector";
 import { generationStageMessage, projectGenerationEntries } from "../generation/projection";
@@ -25,6 +25,13 @@ export async function runGenerationTests(testRoot: string): Promise<void> {
     template.instructions = "之后修改"; assert.equal(request.template.instructions, "基于资料生成简报"); template.instructions = "基于资料生成简报";
     assert.throws(() => freezeGenerationRequest({ ...request, outputDirectory: "其他/报告" }));
     for (const excluded of [".hidden/note.md", "资料/.hidden.md", "输出/报告.md", "../秘密.md", "图片.png", "图.canvas"]) assert.equal(isGenerationSourcePath(excluded, ["输出"]), false);
+    for (const code of [0, 0x1f, 0x7f, 0x80, 0x85, 0x9f, 0x200b, 0x200d]) {
+      assert.equal(isGenerationSourcePath(`资料/a${String.fromCodePoint(code)}b.md`), false, "source selection retains its broader Unicode category-C exclusion");
+    }
+    for (const excluded of ["资料/[原文].md", "资料/原文].md", "资料/原文#标题.md", "资料/../原文.md", "/资料/原文.md"]) {
+      assert.equal(isGenerationSourcePath(excluded), false);
+    }
+    assert.equal(generationFileStem("[主题]#^|?\\\u0080\u200d", "[模板]"), "主题 · 模板");
     let assessment = await readGenerationSources(root, ["资料/原文.md", "资料/原文.md", "资料/已删除.md"], ["输出"]);
     assert.equal(assessment.sources.length, 1); assert.equal(assessment.readFailures[0]?.path, "资料/已删除.md"); assert.equal(assessment.error, undefined);
     await writeFile(path.join(root, "资料/原文.md"), "修改后的完整正文");

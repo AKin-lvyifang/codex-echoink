@@ -5,13 +5,17 @@ export const PI_MEMORY_SOURCES_ENTRY_TYPE = "echoink.memory-sources.v1";
 
 export function normalizeInjectedMemorySources(value: unknown): InjectedPersonalMemorySourceReference[] {
   if (!Array.isArray(value)) return [];
+  const items: readonly unknown[] = value;
   const sources = new Map<string, InjectedPersonalMemorySourceReference>();
-  for (const item of value) {
-    if (!item || typeof item !== "object" || typeof item.id !== "string" || typeof item.title !== "string") continue;
+  for (const candidate of items) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const item = candidate as Record<string, unknown>;
+    if (typeof item.id !== "string" || typeof item.title !== "string") continue;
     const id = item.id.trim(), title = item.title.trim();
     if (!id || !title || sources.has(id)) continue;
+    const revision = item.revision;
     sources.set(id, { id, title,
-      ...(Number.isSafeInteger(item.revision) && item.revision > 0 ? { revision: item.revision } : {}) });
+      ...(typeof revision === "number" && Number.isSafeInteger(revision) && revision > 0 ? { revision } : {}) });
   }
   return [...sources.values()];
 }

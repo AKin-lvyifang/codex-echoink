@@ -510,7 +510,7 @@ export class PiChatUiProjector {
       case "generation_progress": {
         const message = generationStageMessage({ productRunId: event.productRunId, requestId: event.requestId, stage: event.stage, status: event.status, at: event.occurredAt });
         const index = view.messages.findIndex(item => item.id === message.id);
-        if (index < 0) view.messages.push(message); else view.messages[index] = { ...message, createdAt: view.messages[index]!.createdAt };
+        if (index < 0) view.messages.push(message); else view.messages[index] = { ...message, createdAt: view.messages[index].createdAt };
         break;
       }
       case "message_start":

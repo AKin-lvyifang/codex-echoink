@@ -1557,7 +1557,7 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
-      ...(request.generationRequest ? { generation: { request: freezeGenerationRequest(request.generationRequest as GenerationRequest), pendingEntries: [] } } : {}),
+      ...(request.generationRequest ? { generation: { request: freezeGenerationRequest(request.generationRequest), pendingEntries: [] } } : {}),
       ...(pdfTaskRequest ? { pdfTaskRequest } : {}),
       ...(englishDiarySourcePath ? { englishDiarySourcePath } : {}),
       ...(request.workbenchSource ? { workbenchSource: request.workbenchSource } : {}),
@@ -5146,7 +5146,7 @@ export async function recordDurablePiAnswerSave(input: {
   conversationId: string;
   messageId: string;
   path: string;
-  resolveConversationCwd(conversationId: string): Promise<string> | string;
+  resolveConversationCwd(this: void, conversationId: string): Promise<string> | string;
   now?: () => number;
 }): Promise<void> {
   const catalog = await input.catalog.get(input.conversationId);

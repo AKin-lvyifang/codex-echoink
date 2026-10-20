@@ -38,7 +38,10 @@ function text(value: unknown, label: string): string {
 function sourcePath(value: unknown): string {
   if (typeof value !== "string" || !value || value.trim() !== value ||
       value.startsWith("/") || /^[a-z]:/iu.test(value) ||
-      /[\u0000-\u001f\u007f\\#^|\[\]]/u.test(value) ||
+      /[\\#^|[\]]/u.test(value) || Array.from(value).some(character => {
+        const code = character.charCodeAt(0);
+        return code <= 0x1f || code === 0x7f;
+      }) ||
       value.split("/").some(part => !part || part === "." || part === "..") || !/\.md$/iu.test(value)) {
     invalid("来源必须是可用于双链的完整 Vault 相对 Markdown 路径。");
   }
@@ -105,7 +108,7 @@ function textHeight(content: string, width: number): number {
       let lineWidth = 0;
       let wrappedLines = 1;
       for (const character of line) {
-        const characterWidth = /[\p{Mark}\u200d\ufe0e\ufe0f]/u.test(character) ? 0 :
+        const characterWidth = /\p{Mark}|\u200d|\ufe0e|\ufe0f/u.test(character) ? 0 :
           character === "\t" ? 32 : /^[\u0020-\u007e]$/u.test(character) ? 8 : 16;
         if (lineWidth + characterWidth > available) {
           wrappedLines++;

@@ -19,7 +19,7 @@ export function normalizeGenerationPath(value: string): string {
   const normalized = value.replace(/\\/gu, "/");
   if (!normalized || normalized.startsWith("/") || /^[a-z]:/iu.test(normalized)
     || normalized.split("/").some(part => !part || part === "." || part === ".." || part.startsWith("."))
-    || /[\p{C}#^|\[\]]/u.test(normalized)) throw new Error("资料路径无效，请重新选择笔记。");
+    || /[\p{C}#^|[\]]/u.test(normalized)) throw new Error("资料路径无效，请重新选择笔记。");
   return normalized;
 }
 export function isGenerationSourcePath(value: string, outputRoots: readonly string[] = []): boolean {
@@ -44,7 +44,7 @@ export async function assertGenerationPathSafe(vaultRoot: string, relativePath: 
   const parts = relative.split("/");
   let cursor = vaultRoot;
   for (let index = 0; index < parts.length; index += 1) {
-    cursor = path.join(cursor, parts[index]!);
+    cursor = path.join(cursor, parts[index]);
     try {
       const stat = await lstat(cursor);
       if (stat.isSymbolicLink() || index < parts.length - 1 && !stat.isDirectory()) throw new Error("资料或目录路径已失效。");

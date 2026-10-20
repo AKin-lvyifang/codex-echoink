@@ -1,7 +1,7 @@
 import type { GenerationRequest } from "./types";
 export function generationFileStem(title: string, templateName: string): string {
   const clean = (value: string, limit: number) => Array.from(value).slice(0, limit).join("")
-    .replace(/[<>:"/\\|?*\p{C}#^\[\]]/gu, "").replace(/\s+/gu, " ").replace(/[. ]+$/gu, "").trim();
+    .replace(/[<>:"/\\|?*\p{C}#^[\]]/gu, "").replace(/\s+/gu, " ").replace(/[. ]+$/gu, "").trim();
   const topic = clean(title, 20) || "生成成果";
   let stem = `${topic} · ${clean(templateName, 40) || "自制格式"}`;
   if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(stem)) stem = `成果 ${stem}`;

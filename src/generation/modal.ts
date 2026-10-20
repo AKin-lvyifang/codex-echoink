@@ -67,7 +67,7 @@ export class GenerationModal extends Modal {
     super(plugin.app);
     this.paths = [...new Set(options.sourcePaths)]; this.selectedPaths = new Set(this.paths);
     this.templates = normalizeGenerationTemplates(plugin.settings.generationTemplates);
-    this.selectedTemplateId = this.templates.some(item => item.id === options.templateId) ? options.templateId! : this.templates[0]!.id;
+    this.selectedTemplateId = this.templates.some(item => item.id === options.templateId) ? options.templateId! : this.templates[0].id;
     this.customName = uniqueGenerationTemplateName(this.templates);
     this.sourceExpanded = !this.paths.length;
   }
@@ -116,7 +116,7 @@ export class GenerationModal extends Modal {
 
   private selected(): GenerationTemplate {
     if (this.selectedTemplateId === "custom") return { id: "custom", name: this.customName.trim() || "我的格式", description: "自制格式", instructions: this.customInstructions.trim(), outputKind: "markdown" };
-    return [...this.templates, ...this.temporaryTemplates].find(item => item.id === this.selectedTemplateId) ?? this.templates[0]!;
+    return [...this.templates, ...this.temporaryTemplates].find(item => item.id === this.selectedTemplateId) ?? this.templates[0];
   }
   private selectedSourcePaths(): string[] { return this.paths.filter(path => this.selectedPaths.has(path)); }
   private updateSummary(): void { this.sourceSummary.setText(this.selectedPaths.size ? `已选 ${this.selectedPaths.size} 篇笔记` : "没有已选资料"); }
@@ -146,7 +146,7 @@ export class GenerationModal extends Modal {
   private sourcesChanged(): void {
     this.submitError = ""; this.updateSummary();
     this.recommendationVersion++; this.recommendationAbort?.abort(); this.recommending = false; this.recommendationError = "";
-    if (this.temporaryTemplates.some(item => item.id === this.selectedTemplateId)) this.selectedTemplateId = this.templates[0]!.id;
+    if (this.temporaryTemplates.some(item => item.id === this.selectedTemplateId)) this.selectedTemplateId = this.templates[0].id;
     this.temporaryTemplates = []; this.renderTemplates(); this.updateRecommendation(); void this.assess();
   }
 
@@ -242,7 +242,7 @@ export class GenerationModal extends Modal {
     try {
       const templates = await this.options.service.recommend(this.selectedSourcePaths(), controller.signal, this.options.sessionId);
       if (!this.active || version !== this.recommendationVersion) return;
-      if (this.temporaryTemplates.some(item => item.id === this.selectedTemplateId)) this.selectedTemplateId = this.templates[0]!.id;
+      if (this.temporaryTemplates.some(item => item.id === this.selectedTemplateId)) this.selectedTemplateId = this.templates[0].id;
       this.temporaryTemplates = templates; this.renderTemplates(); this.updateFooter();
     } catch (error) {
       if (!this.active || version !== this.recommendationVersion || controller.signal.aborted) return;

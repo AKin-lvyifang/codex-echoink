@@ -63,7 +63,7 @@ export function projectGenerationEntries(messages: ChatMessage[], entries: reado
         : result.writeState === "verified" ? "completed" : result.writeState === "unconfirmed" ? "interrupted" : "failed";
     const terminalAt = Math.max(terminalReasoning?.terminalAt ?? 0, ...runStages.map(stage => stage.completedAt ?? stage.createdAt));
     for (let index = 0; index < projected.length; index++) {
-      const message = projected[index]!;
+      const message = projected[index];
       if (message.runId !== runId || !message.assistantTurn && !message.generationResult) continue;
       // A model can finish its public thinking before the controlled write is
       // cancelled. Its completed segment is not the generation turn outcome.

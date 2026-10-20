@@ -3,7 +3,7 @@ import CodexForObsidianPlugin from "../main";
 import { PersonalMemoryRecallHarness } from "../harness/memory/personal-memory-recall-harness";
 import { createPiKnowledgeInlineExtension } from "../plugin/pi-production-runtime-composition";
 import { PiChatUiProjector } from "../harness/pi-native/pi-chat-ui-projector";
-import { PI_MEMORY_SOURCES_ENTRY_TYPE } from "../harness/pi-native/pi-memory-sources";
+import { PI_MEMORY_SOURCES_ENTRY_TYPE, normalizeInjectedMemorySources } from "../harness/pi-native/pi-memory-sources";
 import { createReasoningSummary, updateReasoningActivity, closeReasoningSummary } from "../harness/pi-native/pi-reasoning-summary";
 import { ECHOINK_REASONING_SUMMARY_ENTRY_TYPE, reasoningSummaryEntryData } from "../types/reasoning-summary";
 import type { InjectedPersonalMemorySourceReference } from "../settings/settings";
@@ -13,6 +13,11 @@ import { FakeElement, createTestContext, renderedText } from "./smooth-conversat
 import { withPersonalMemoryFixture } from "./personal-memory-fixture";
 
 export async function runMemorySourceTests(): Promise<void> {
+  assert.deepEqual(normalizeInjectedMemorySources([
+    null, 1, "source", { id: 1, title: "错误编号" }, { id: "invalid", title: 1 },
+    { id: "  first  ", title: "  第一条  ", revision: 2 }, { id: "first", title: "重复项", revision: 3 },
+    { id: "second", title: "第二条", revision: "2" }, { id: "third", title: "第三条", revision: 1.5 }
+  ]), [{ id: "first", title: "第一条", revision: 2 }, { id: "second", title: "第二条" }, { id: "third", title: "第三条" }]);
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", { configurable: true, value: {
     body: new FakeElement("body"), createElement: (tag: string) => new FakeElement(tag),

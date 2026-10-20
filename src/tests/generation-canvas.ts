@@ -56,6 +56,35 @@ export function runGenerationCanvasTests(): void {
     assert.deepEqual(parseGenerationMapHierarchy(input, []), input);
   });
 
+  test("source paths reject C0 and DEL while preserving C1 and format-character names", () => {
+    const parseSource = (source: string) => {
+      const input = hierarchy();
+      input.branches[0].points[0].sourcePaths = [source];
+      return parseGenerationMapHierarchy(input, [source]);
+    };
+    for (const code of [...Array.from({ length: 32 }, (_, code) => code), 0x7f]) {
+      assert.throws(() => parseSource(`资料/a${String.fromCodePoint(code)}b.md`), /来源必须/u);
+    }
+    for (const code of [0x80, 0x85, 0x9f, 0x200b, 0x200d]) {
+      const source = `资料/a${String.fromCodePoint(code)}b.md`;
+      assert.deepEqual(parseSource(source).branches[0].points[0].sourcePaths, [source]);
+    }
+    for (const source of ["资料/[原文].md", "资料/原文].md", "资料/原文#标题.md", "../原文.md", "资料/../原文.md", "/原文.md", "C:/原文.md", "资料\\原文.md"]) {
+      assert.throws(() => parseSource(source), /来源必须/u);
+    }
+  });
+
+  test("combining marks, ZWJ and variation selectors do not consume wrapping width", () => {
+    const input = hierarchy(3, 4);
+    input.branches[0].points = [
+      { text: "a".repeat(25) }, { text: "a\u0301".repeat(25) },
+      { text: "a".repeat(25) + "\u200d\ufe0e\ufe0f\u{e0100}" }, { text: "a".repeat(26) }
+    ];
+    const canvas = layoutGenerationCanvas(input);
+    validateGenerationCanvas(canvas);
+    assert.deepEqual(canvas.nodes.filter(node => node.id.startsWith("generation-point-1-")).map(node => node.height), [58, 58, 58, 82]);
+  });
+
   test("empty and malformed hierarchy objects are rejected", () => {
     for (const input of [null, [], "topic", {}, { title: "", branches: [] }, { title: "topic", branches: {} }]) {
       assert.throws(() => parseGenerationMapHierarchy(input, []), /导图结构无效/u);
