@@ -5,6 +5,7 @@ import type { AgentRegistry } from "../agents/types";
 import { getMobileTaskInstanceId } from "./task-identity";
 import { loadMobileSettings, type MobileSettings } from "./settings";
 import { MobileRuntime } from "./runtime";
+import { MobileUsageStore } from "./usage-store";
 import { MobileUI } from "../ui/mobile/mobile-ui";
 import { MobileWorkspace, MOBILE_VIEW, MOBILE_SETTINGS_VIEW } from "./workspace";
 import { mobilePluginDataRoot } from "./data-root";
@@ -32,6 +33,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   store!: MobileStore;
   settings!: MobileSettings;
   runtime!: MobileRuntime;
+  usage!: MobileUsageStore;
   navigation!: MobileWorkspace;
   services!: MobileServices;
   accountService!: AccountService;
@@ -53,14 +55,21 @@ export default class EchoInkMobilePlugin extends Plugin {
       const instanceId = await getMobileTaskInstanceId(this.app.secretStorage, `${this.manifest.id}:${mobileDirectory}`);
       this.store = new MobileStore(this.app.vault.adapter, mobileDirectory, instanceId);
       await this.store.load();
+      this.usage = new MobileUsageStore(this.app.vault.adapter, mobileDirectory, instanceId);
+      let usageWarningShown = false;
+      const usageWarning = () => { if (!usageWarningShown) { usageWarningShown = true; new Notice("使用统计未能完整保存，本次统计可能有缺口；任务记录不受影响。"); } };
+      await this.usage.initialize().catch(usageWarning);
       this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl,
         (id, turn) => this.services.context(id, turn), () => this.saveSettings(), () => this.accountService);
+      this.runtime.setUsage(this.usage);
       this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
       this.services = new MobileServices(this, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.manifest.dir));
       await this.services.initialize();
+      this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
       if (migratedBindings) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
+      this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
       await this.runtime.initialize();
       this.registerTaskLifecycle();
       await this.services.initializeFinance();

@@ -1,0 +1,82 @@
+.echoink-ipad.pd-settings .pd-account { width: 100%; min-width: 0; max-width: 720px; container-type: inline-size; --pd-account-gold: var(--gold, var(--text-warning)); --pd-account-gold-bg: var(--gold-bg, var(--background-secondary)); --pd-account-edition-ink: var(--echoink-pro-badge-text, var(--pd-account-gold)); --pd-account-edition-bg: var(--echoink-pro-badge-background, var(--background-primary-alt)); --pd-account-edition-line: var(--echoink-pro-badge-border, var(--pd-account-gold)); }
+.echoink-ipad.pd-settings .pd-account-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.echoink-ipad.pd-settings .pd-account-head { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+.echoink-ipad.pd-settings .pd-account-avatar { display: grid; place-items: center; flex: 0 0 48px; width: 48px; height: 48px; overflow: hidden; border-radius: 50%; color: var(--text-on-accent); background: var(--pd-account-gold); font-size: 1.125em; font-weight: 600; }
+.echoink-ipad.pd-settings .pd-account-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.echoink-ipad.pd-settings .pd-account-avatar.is-out { color: var(--text-faint); background: var(--pd-settings-soft); }
+.echoink-ipad.pd-settings .pd-account-avatar .pd-icon { width: 24px; height: 24px; }
+.echoink-ipad.pd-settings .pd-account-copy { flex: 1; min-width: 0; }
+.echoink-ipad.pd-settings .pd-account-name { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 1.0625em; font-weight: 600; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-account-sub { margin-top: 2px; font-size: .8125em; color: var(--text-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-account-login-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.echoink-ipad.pd-settings .pd-account-gift { padding: 2px 8px; border-radius: 999px; color: var(--pd-account-gold); background: color-mix(in srgb, var(--pd-account-gold) 14%, transparent); font-size: .75em; line-height: 1.55; }
+.echoink-ipad.pd-settings .pd-account-free { padding: 2px 8px; border-radius: 999px; background: var(--pd-settings-soft); color: var(--text-muted); font-size: .6875em; font-weight: 500; }
+.echoink-ipad.pd-settings .pd-account .echoink-plugin-edition-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; color: var(--pd-account-edition-ink); background: var(--pd-account-edition-bg); border: 1px solid var(--pd-account-edition-line); font-size: .6875rem; font-weight: 600; letter-spacing: .04em; }
+.echoink-ipad.pd-settings .pd-account .echoink-plugin-edition-icon { display: inline-flex; }
+.echoink-ipad.pd-settings .pd-account .echoink-plugin-edition-icon svg { width: 11px; height: 11px; }
+.echoink-ipad.pd-settings .pd-account-links { margin-top: 14px; }
+.echoink-ipad.pd-settings .pd-account-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 24px 2px 8px; }
+.echoink-ipad.pd-settings .pd-account-section-heading .pd-settings-label { margin: 0; font-size: .8125em; font-weight: 600; }
+.echoink-ipad.pd-settings .pd-account-location { color: var(--text-muted); font-size: .8125em; }
+.echoink-ipad.pd-settings .pd-account-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--pd-settings-line); border-radius: 12px; background: var(--pd-settings-line); }
+.echoink-ipad.pd-settings .pd-account-stat { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 14px 16px; background: var(--background-primary); }
+.echoink-ipad.pd-settings .pd-account-stat > span { color: var(--text-muted); font-size: .8125em; }
+.echoink-ipad.pd-settings .pd-account-stat strong { font-size: 1.375em; font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-account-stat small { margin-left: 4px; color: var(--text-muted); font-size: .75rem; font-weight: 400; }
+.echoink-ipad.pd-settings .pd-account-benefits { overflow: hidden; border: 1px solid var(--pd-settings-line); border-radius: 12px; }
+.echoink-ipad.pd-settings .pd-account-comparison-scroll { max-width: 100%; overflow-x: auto; }
+.echoink-ipad.pd-settings .pd-account-comparison { width: 100%; border-collapse: collapse; font-size: .875em; }
+.echoink-ipad.pd-settings .pd-account-comparison thead th { padding: 8px 12px; background: var(--pd-settings-soft); color: var(--text-muted); font-size: .75rem; font-weight: 500; text-align: left; }
+.echoink-ipad.pd-settings .pd-account-comparison td { padding: 9px 12px; border-top: 1px solid var(--pd-settings-line); vertical-align: middle; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-account-comparison th + th,
+.echoink-ipad.pd-settings .pd-account-comparison td + td { width: 56px; min-width: 44px; padding-right: 0; padding-left: 0; text-align: center; }
+.echoink-ipad.pd-settings .pd-account-benefit-group th { padding: 16px 12px 6px; font-size: .8125rem; font-weight: 600; text-align: left; }
+.echoink-ipad.pd-settings .pd-account-benefit-group .echoink-plugin-edition-badge { margin-left: 6px; }
+.echoink-ipad.pd-settings .pd-account-feature-description { display: block; margin-top: 1px; color: var(--text-muted); font-size: .75rem; }
+.echoink-ipad.pd-settings .pd-account-comparison .pd-icon { width: 16px; height: 16px; }
+.echoink-ipad.pd-settings .pd-account-comparison .is-included { color: var(--em-green, var(--interactive-accent)); }
+.echoink-ipad.pd-settings .pd-account-comparison .is-excluded { color: var(--text-faint); }
+.echoink-ipad.pd-settings .pd-account-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.echoink-ipad.pd-settings .pd-account-plans { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.echoink-ipad.pd-settings .pd-account-plan { display: flex; flex-direction: column; gap: 2px; min-width: 0; margin: 0; padding: 12px 14px 4px; border: 1px solid var(--pd-settings-line); border-radius: 12px; }
+.echoink-ipad.pd-settings .pd-account-plan.is-early { background: var(--pd-account-gold-bg); border-color: color-mix(in srgb, var(--pd-account-gold) 35%, var(--pd-settings-line)); }
+.echoink-ipad.pd-settings .pd-account-plan-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 500; }
+.echoink-ipad.pd-settings .pd-account-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px; font-size: 1.5em; font-weight: 550; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.echoink-ipad.pd-settings .pd-account-currency { margin-right: 2px; font-size: .875rem; }
+.echoink-ipad.pd-settings .pd-account-saving { align-self: center; margin-left: 6px; padding: 1px 6px; border-radius: 4px; color: var(--text-on-accent); background: var(--em-green, var(--interactive-accent)); font-size: .75rem; font-weight: 600; }
+.echoink-ipad.pd-settings .pd-account-plan-detail { color: var(--text-muted); font-size: .75em; line-height: 1.5; }
+.echoink-ipad.pd-settings .pd-account-current-plan { padding: 1px 6px; border-radius: 4px; color: var(--em-green, var(--interactive-accent)); background: color-mix(in srgb, var(--em-green, var(--interactive-accent)) 12%, transparent); font-size: .6875em; font-weight: 600; }
+.echoink-ipad.pd-settings .pd-account-plan .pd-settings-action { align-self: stretch; margin-top: auto; }
+.echoink-ipad.pd-settings .pd-account-plan .pd-settings-action-visible { flex: 1; }
+.echoink-ipad.pd-settings .pd-account-redemption { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.echoink-ipad.pd-settings .pd-account-redemption .pd-settings-field { flex: 1; min-width: 120px; margin: 0; }
+.echoink-ipad.pd-settings .pd-account-redemption > .pd-settings-error,
+.echoink-ipad.pd-settings .pd-account-redemption > .pd-account-feedback { flex-basis: 100%; }
+.echoink-ipad.pd-settings .pd-account-text-action .pd-settings-action-visible { border-color: transparent; }
+.echoink-ipad.pd-settings .pd-account-lifetime { margin-top: 8px; }
+.echoink-ipad.pd-settings .pd-account-lifetime > summary { display: flex; align-items: center; min-height: 44px; color: var(--text-muted); font-size: .8125em; cursor: pointer; }
+.echoink-ipad.pd-settings .pd-account-lifetime-body { font-size: .875em; line-height: 1.7; }
+.echoink-ipad.pd-settings .pd-account-code-row { display: flex; align-items: center; gap: 8px; }
+.echoink-ipad.pd-settings .pd-account-code-row .pd-settings-input { flex: 1; min-width: 0; }
+.echoink-ipad.pd-settings .pd-account-feedback { margin-top: 8px; color: var(--text-muted); font-size: .8125em; line-height: 1.5; }
+.echoink-ipad.pd-settings .pd-account-feedback[role="alert"] { color: var(--text-error); }
+.echoink-ipad.pd-settings .pd-account-inline-confirm:empty,
+.echoink-ipad.pd-settings .pd-account-leave:empty,
+.echoink-ipad.pd-settings .pd-account-notices:empty { display: none; }
+.echoink-ipad.pd-settings .pd-account-mode { position: relative; isolation: isolate; display: flex; min-height: 44px; padding: 8px 2px; border-radius: 7px; }
+.echoink-ipad.pd-settings .pd-account-mode::before { position: absolute; z-index: -2; content: ""; inset: 8px 0; border-radius: 7px; background: var(--pd-settings-soft); }
+.echoink-ipad.pd-settings .pd-account-mode-thumb { position: absolute; z-index: -1; inset: 10px auto 10px 2px; width: calc(50% - 2px); border-radius: 5px; background: var(--background-primary); transition: transform .16s; }
+.echoink-ipad.pd-settings .pd-account-mode[data-value="password"] .pd-account-mode-thumb { transform: translateX(100%); }
+.echoink-ipad.pd-settings button.pd-account-mode-button { appearance: none; display: inline-flex; align-items: center; justify-content: center; flex: 1; min-width: 0; min-height: 44px; height: auto; margin: -8px 0; padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font: inherit; font-size: .8125em; box-shadow: none; cursor: pointer; }
+.echoink-ipad.pd-settings button.pd-account-mode-button[aria-pressed="true"] { color: var(--text-normal); font-weight: 600; }
+.echoink-ipad.pd-settings button.pd-account-mode-button::after { content: none; }
+.echoink-ipad.pd-settings button.pd-account-mode-button:focus-visible,
+.echoink-ipad.pd-settings .pd-account-lifetime > summary:focus-visible { outline: none; background: var(--pd-settings-soft); box-shadow: none; }
+.echoink-ipad.pd-settings button.pd-account-mode-button:disabled { opacity: .45; cursor: default; }
+.echoink-ipad.pd-settings .pd-account .pd-settings-action-visible { min-height: 28px; }
+@container (max-width: 520px) { .echoink-ipad.pd-settings .pd-account-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 360px) { .echoink-ipad.pd-settings .pd-account-stat { padding: 12px; } .echoink-ipad.pd-settings .pd-account-plan { padding: 12px 10px 4px; } }
+@container (max-width: 280px) { .echoink-ipad.pd-settings .pd-account-plans { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .echoink-ipad.pd-settings .pd-account-mode-thumb { transition: none; } }
+
+.echoink-ipad.pd-settings .pd-account-form-actions { margin-top: 16px; }

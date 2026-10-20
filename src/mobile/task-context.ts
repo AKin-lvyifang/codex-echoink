@@ -3,7 +3,7 @@ import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/sett
 import { estimateTokenValue } from "../harness/usage/token-estimator";
 import { sha256Hex } from "../utils/sha256";
 import type { MobileStore } from "./store";
-import { mobileGenerateText, type MobileRequest } from "./transport";
+import { mobileGenerateText, type MobileRequest, type MobileUsageObserver } from "./transport";
 
 export const taskMessageDigest = (messages: readonly AgentMessage[]): string => sha256Hex(JSON.stringify(messages));
 const stopped = (signal: AbortSignal) => { if (signal.aborted) throw new Error("已停止"); };
@@ -44,7 +44,7 @@ function safeBoundaries(messages: readonly AgentMessage[]): number[] {
 export async function prepareMobileTaskContext(input: {
   store: MobileStore; taskId: string; messages: AgentMessage[]; text: string; systemPrompt: string;
   tools: AgentTool[]; provider: ApiProviderConfig; model: ApiProviderModelConfig;
-  request: MobileRequest; signal: AbortSignal; assertAllowed: () => void; repairInterruptedTools?: boolean;
+  request: MobileRequest; signal: AbortSignal; assertAllowed: () => void; repairInterruptedTools?: boolean; usage?: MobileUsageObserver;
 }): Promise<{ messages: AgentMessage[]; prefix: AgentMessage[]; systemPrompt: string }> {
   const { store, taskId, messages, model, signal } = input;
   const requestMessages = (value: AgentMessage[]) => input.repairInterruptedTools ? interruptedMobileRequestMessages(value) : value;
@@ -76,7 +76,7 @@ export async function prepareMobileTaskContext(input: {
         if (estimateTokenValue(source.slice(offset, offset + size)) <= room) { take = size; low = size + 1; } else high = size - 1;
       }
       if (!take) throw new Error("历史片段无法压缩，原文已保留。");
-      const next = await mobileGenerateText(input.provider, model, input.request, prompt, header + source.slice(offset, offset + take), summaryLimit, signal);
+      const next = await mobileGenerateText(input.provider, model, input.request, prompt, header + source.slice(offset, offset + take), summaryLimit, signal, input.usage);
       stopped(signal); input.assertAllowed();
       if (!next.trim()) throw new Error("模型未返回有效摘要，旧摘要和原文已保留。");
       summary = next; offset += take;

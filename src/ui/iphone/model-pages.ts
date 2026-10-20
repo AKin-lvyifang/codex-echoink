@@ -22,7 +22,7 @@ export class IPhoneModelPages {
   private renderList?: () => void;
   private readonly verified = new Map<string, string>();
   constructor(private readonly ctx: IPhonePageContext, private readonly changed: () => void) {
-    this.configuration = new MobileModelConfiguration(ctx.host.settings, ctx.host.saveSettings, ctx.host.modelRequest);
+    this.configuration = new MobileModelConfiguration(ctx.host.settings, ctx.host.saveSettings, ctx.host.modelRequest, ctx.host.services.usageObserver);
   }
   async open(): Promise<void> {
     const { ctx } = this, id = "iphone-settings-model";

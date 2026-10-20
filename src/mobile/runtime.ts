@@ -10,7 +10,7 @@ import { normalizeAgentId } from "../agents/registry";
 import type { TaskDraft } from "../agents/task-workspace";
 import { parseMobileWorkbenchSource } from "../home/workbench-source";
 import { MobileStore, newId, newSession, type MobileSession, type MobilePermission } from "./store";
-import { mobileStream, piModel, type MobileRequest } from "./transport";
+import { mobileStream, piModel, type MobileRequest, type MobileUsageObserver } from "./transport";
 import { selectedModel, validateMobileProvider, type MobileSettings } from "./settings";
 import { mobileTools, searchMemories } from "./tools";
 import { createScopedMobileBodySearch, MobileCapabilityPolicy } from "./capability-policy";
@@ -20,6 +20,7 @@ import type { MobileInterruptionReason, MobileQueuedTurn, MobileResumeSnapshot, 
 import type { MobileCapabilitiesService, MobileRemoteToolInvocation } from "./capabilities";
 import { sha256Hex } from "../utils/sha256";
 import type { MobileMemoryService } from "./memory-service";
+import type { MobileUsageStore } from "./usage-store";
 
 function deferred() {
   let resolve!: () => void, reject!: (error: unknown) => void;
@@ -76,6 +77,18 @@ export class MobileRuntime {
   private disposed = false;
   private capabilities?: () => MobileCapabilitiesService;
   private memory?: () => MobileMemoryService;
+  private usage?: MobileUsageStore;
+  private usageWarningShown = false;
+  setUsage(usage: MobileUsageStore): void { this.usage = usage; }
+  private usageObserver(): MobileUsageObserver | undefined {
+    const usage = this.usage;
+    return usage ? { recordUsage: event => usage.recordUsage(event), onRecordError: () => this.reportUsageGap() } : undefined;
+  }
+  private reportUsageGap(): void {
+    if (this.usageWarningShown) return;
+    this.usageWarningShown = true;
+    new Notice("使用统计未能完整保存，本次统计可能有缺口；任务记录不受影响。");
+  }
   setMemory(service: () => MobileMemoryService): void { this.memory = service; }
   setCapabilities(service: () => MobileCapabilitiesService): void { this.capabilities = service; }
   private readonly dispatchActive = () => this.notify(this.store.session.id);
@@ -382,7 +395,7 @@ export class MobileRuntime {
       const tools = run.model.toolCalling ? this.toolsFor(run) : [];
       const session = this.store.getSession(id) ?? run.candidate; if (!session) throw new Error("会话不存在。");
       const prepared = await prepareMobileTaskContext({ store: this.store, taskId: id, messages: session.messages, text: turn.text, systemPrompt: system,
-        tools, provider: run.provider, model: run.model, request: this.request, signal: controller.signal, assertAllowed: () => this.assertRun(run), repairInterruptedTools: !!run.resume });
+        tools, provider: run.provider, model: run.model, request: this.request, signal: controller.signal, assertAllowed: () => this.assertRun(run), repairInterruptedTools: !!run.resume, usage: this.usageObserver() });
       this.assertRun(run);
       if (run.resume) await abortable(assertMobileResumeObservations(this.app, this.store, run.resume, controller.signal), controller.signal);
       this.assertRun(run); prefix = prepared.prefix; run.prefix = prefix; run.stage = "保存用户输入";
@@ -412,13 +425,13 @@ export class MobileRuntime {
       });
       run.accepted = true; this.reviews.delete(id); run.stage = "等待模型"; run.admission.resolve(); this.notify(id);
       this.assertRun(run);
-      const stream = mobileStream(run.provider, this.request);
+      const stream = mobileStream(run.provider, this.request, this.usageObserver());
       run.agent = new Agent({ initialState: { model: piModel(run.provider, run.model), messages: prepared.messages, systemPrompt: prepared.systemPrompt, tools },
         streamFn: async (model, context, options) => {
           this.assertRun(run);
           run.stage = "整理长历史";
           const budgeted = await prepareMobileTaskContext({ store: this.store, taskId: id, messages: [...prefix, ...context.messages], text: "", systemPrompt: system,
-            tools, provider: run.provider, model: run.model, request: this.request, signal: controller.signal, assertAllowed: () => this.assertRun(run), repairInterruptedTools: !!run.resume });
+            tools, provider: run.provider, model: run.model, request: this.request, signal: controller.signal, assertAllowed: () => this.assertRun(run), repairInterruptedTools: !!run.resume, usage: this.usageObserver() });
           this.assertRun(run);
           if (run.resume) await abortable(assertMobileResumeObservations(this.app, this.store, run.resume, controller.signal), controller.signal);
           this.assertRun(run); run.stage = "等待模型";
@@ -471,6 +484,13 @@ export class MobileRuntime {
         });
       } catch (error) { run.persistenceFailed = true; run.persistenceError = error; if (!failed) { failed = true; failure = error; } }
       if (saveFailed) { failed = true; failure = persistenceFailure; }
+      if (run.accepted && !failed && !controller.signal.aborted && this.usage) {
+        const completed = this.store.getSession(id)?.runs?.find(item => item.id === turn.id);
+        if (completed?.status === "completed" && completed.completedAt !== undefined) {
+          try { await this.usage.recordCompletedTurn(turn.id, completed.completedAt); }
+          catch { this.reportUsageGap(); }
+        }
+      }
       if (this.runs.get(id) === run) this.runs.delete(id);
       this.inputs.delete(turn.id);
       if (failed || controller.signal.aborted) this.pauseQueue(id);

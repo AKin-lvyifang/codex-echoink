@@ -9,6 +9,7 @@ import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { refreshSettingsLanguage, settingsMessage } from "./settings-language";
 import { createAgentFormPage } from "./agent-form";
+import { IPhoneAccountPages } from "./account-pages";
 import { IPhoneAgentSettingsPages } from "./agent-settings-pages";
 import { IPhoneCapabilityPages } from "./capability-pages";
 import { IPhoneModelPages } from "./model-pages";
@@ -27,13 +28,15 @@ export class IPhoneSettingsPages {
   readonly models: IPhoneModelPages;
   readonly capabilityPages: IPhoneCapabilityPages;
   readonly agentPages: IPhoneAgentSettingsPages;
+  readonly accountPages: IPhoneAccountPages;
   private readonly refreshers = new Set<() => void>();
   constructor(private readonly ctx: IPhonePageContext, private readonly legacy: (route: MobileSettingsRoute) => Promise<void>) {
     this.models = new IPhoneModelPages(ctx, () => this.refresh());
     this.capabilityPages = new IPhoneCapabilityPages(ctx, id => this.agentForm(id));
     this.agentPages = new IPhoneAgentSettingsPages(ctx, id => this.agentForm(id));
+    this.accountPages = new IPhoneAccountPages(ctx);
   }
-  refresh(): void { for (const render of this.refreshers) render(); refreshSettingsLanguage(this.ctx); this.capabilityPages.refresh(); this.agentPages.refresh(); }
+  refresh(): void { for (const render of this.refreshers) render(); refreshSettingsLanguage(this.ctx); this.capabilityPages.refresh(); this.agentPages.refresh(); this.accountPages.refresh(); }
   private tracked(id: string, title: string, render: (body: HTMLElement) => void): MobileShellPage {
     const body = settingsBody(this.ctx), update = () => { body.replaceChildren(); render(body); };
     update(); this.refreshers.add(update);
@@ -44,7 +47,7 @@ export class IPhoneSettingsPages {
     if (category === "model") return this.models.open();
     if (category === "caps") return this.capabilityPages.open();
     if (category === "agent") return this.agentPages.open();
-    if (category === "account") return this.legacy("account");
+    if (category === "account") return this.accountPages.open();
     const title = IPHONE_SETTINGS_CATEGORIES.find(item => item[0] === category)?.[2] ?? "设置";
     const id = `iphone-settings-${category ?? "root"}`;
     if (ctx.shell.hasPage(id)) { this.refresh(); await ctx.shell.backTo(id); return; }

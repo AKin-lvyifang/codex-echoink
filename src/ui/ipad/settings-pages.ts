@@ -9,6 +9,7 @@ import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { IPadSettingsShell } from "./settings-shell";
 import { createAgentFormPage } from "./agent-form";
+import { createAccountPage } from "./account-pages";
 import { createAgentSettingsPage } from "./agent-settings-pages";
 import { createCapabilityPage } from "./capability-pages";
 import { createModelPage } from "./model-pages";
@@ -32,7 +33,7 @@ export class IPadSettings {
     const categories = CATEGORIES.map(([id, icon, label]) => ({ id, icon, label: t({ host }, label), createPage: () => this.category(id) }));
     this.shell = new IPadSettingsShell(root, categories, { onError: error => this.error(error) });
     this.context = { root, host, document: root.ownerDocument, shell: this.shell,
-      models: new MobileModelConfiguration(host.settings, host.saveSettings, host.modelRequest),
+      models: new MobileModelConfiguration(host.settings, host.saveSettings, host.modelRequest, host.services.usageObserver),
       error: error => this.error(error), refresh: () => this.refresh(),
       push: async page => { const moved = await this.shell.push(page); if (!moved) page.dispose?.(); return moved; }, back: () => this.shell.back() };
     this.unsubscribers.push(host.services.subscribeIdentity(() => this.refresh()), host.workbench.subscribe(() => this.refresh()));
@@ -67,7 +68,7 @@ export class IPadSettings {
     if (id === "agent") return this.agent();
     if (id === "caps") return this.capabilities();
     if (id === "mods") return this.modules();
-    return this.legacy("account", "账号与会员", "ipad-settings-account");
+    return createAccountPage(this.context);
   }
   private async save(change: (settings: ReturnType<IPadWorkbenchHost["settings"]>) => () => void): Promise<void> {
     const restore = change(this.host.settings());

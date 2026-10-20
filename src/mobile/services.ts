@@ -28,7 +28,7 @@ import type { AgentTemplateId } from "../harness/memory/agent-templates";
 import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
 import { defaultAgentIdentityState } from "../harness/memory/agent-identity-model";
 import { MobileCapabilitiesService } from "./capabilities";
-import type { MobileRequest } from "./transport";
+import type { MobileRequest, MobileUsageObserver } from "./transport";
 import { MobileMemoryService } from "./memory-service";
 
 export interface MobileServicesHost {
@@ -51,6 +51,9 @@ export class MobileServices implements HomeHost {
   private readonly todos: EchoInkTodoStore;
   private capabilitiesService?: MobileCapabilitiesService;
   private memoryService?: MobileMemoryService;
+  private usage?: MobileUsageObserver;
+  get usageObserver(): MobileUsageObserver | undefined { return this.usage; }
+  setUsage(observer: MobileUsageObserver): void { this.usage = observer; this.memory.setUsage(observer); }
   get memory(): MobileMemoryService {
     if (!this.memoryService) {
       this.memoryService = new MobileMemoryService({ adapter: this.app.vault.adapter, store: this.host.store, settings: () => this.settings,
@@ -131,7 +134,7 @@ export class MobileServices implements HomeHost {
   async generateLifestyleText(system: string, user: string, maxTokens: number, signal: AbortSignal) {
     const selected = selectedModel(this.settings);
     if (!selected) throw new Error("尚未配置当前 EchoInk Provider");
-    return mobileGenerateText(selected.provider, selected.model, requestUrl, system, user, maxTokens, signal);
+    return mobileGenerateText(selected.provider, selected.model, this.host.capabilityRequest ?? requestUrl, system, user, maxTokens, signal, this.usage);
   }
   async saveFinanceCsv(name: string, content: string) {
     const directory = "EchoInk/财务导出";

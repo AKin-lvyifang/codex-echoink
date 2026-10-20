@@ -29,6 +29,8 @@ export interface ObserveUsageOptions {
   readonly now?: () => number;
   /** Native document contents omitted from the text Context, when available. */
   readonly additionalInputTokens?: number;
+  /** Transport-specific visible output kept outside AssistantMessage.content. */
+  readonly estimateOutputTokens?: (message: Readonly<AssistantMessage>) => number;
   readonly onRecordError?: () => void;
 }
 
@@ -54,7 +56,7 @@ export function observeUsageStream(
   const record = async (message: AssistantMessage, status: UsageRequestEvent["status"]) => {
     if (settled) return;
     settled = true;
-    const outputTokens = estimateUsageOutputTokens(message);
+    const outputTokens = options.estimateOutputTokens?.(message) ?? estimateUsageOutputTokens(message);
     // A local admission error or rejected request is not evidence of inference.
     if (status !== "completed" && outputTokens === 0) return;
     try {

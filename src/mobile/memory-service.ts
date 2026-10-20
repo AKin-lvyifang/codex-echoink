@@ -6,7 +6,7 @@ import { projectedProfileItems } from "../harness/memory/cognitive-projection";
 import { defaultDreamState, parseDreamState, type DreamState } from "../harness/memory/dream-state-core";
 import { buildUserProfileDreamPrompt, parseUserProfileDreamCandidates, userProfileMemoryEligible } from "../harness/memory/dream-profile-core";
 import { memorySourceGroup } from "../harness/memory/dream-source-group";
-import { mobileGenerateText, type MobileRequest } from "./transport";
+import { mobileGenerateText, type MobileRequest, type MobileUsageObserver } from "./transport";
 import { selectedModel, type MobileSettings } from "./settings";
 import type { MobileStore } from "./store";
 import { sha256Hex } from "../utils/sha256";
@@ -31,6 +31,8 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
   private status: MobileDreamStatus;
   private settingsWrites: Promise<unknown> = Promise.resolve();
   private readonly now: () => number;
+  private usage?: MobileUsageObserver;
+  setUsage(observer: MobileUsageObserver): void { this.usage = observer; }
   constructor(private options: MobileMemoryServiceOptions) {
     this.now = options.now ?? Date.now; this.repository = new MobileMemoryRepository(options.adapter, options.store.instanceId, this.now);
     this.status = { phase: "idle", dayKey: this.day(), attemptsToday: 0, dailyLimit: this.readSettings().dreamRunsPerDay, startedAt: null, finishedAt: null, error: "" };
@@ -237,7 +239,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       const items: Parameters<typeof applyDreamProfileUpdate>[1]["items"][number][] = [];
       for (const record of candidates) {
         check(); const prompt = buildUserProfileDreamPrompt(record);
-        const output = await mobileGenerateText(model.provider, model.model, this.options.request, prompt.system, prompt.user, Math.min(4096, model.model.maxOutputTokens), controller.signal); check();
+        const output = await mobileGenerateText(model.provider, model.model, this.options.request, prompt.system, prompt.user, Math.min(4096, model.model.maxOutputTokens), controller.signal, this.usage); check();
         for (const item of parseUserProfileDreamCandidates(output)) {
           if (record.basis === "observed") {
             const group = memorySourceGroup(record.source, record.id); if (!group.independentContext) continue;

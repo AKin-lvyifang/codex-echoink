@@ -1,6 +1,9 @@
+import type { DataAdapter } from "obsidian";
 import { MarkdownRenderer, Platform, setIcon } from "./browser-obsidian";
 import { LifestyleView } from "../../src/lifestyle/view";
 import { MobileViewport } from "../../src/ui/mobile/viewport";
+import { createMobileAccountFixture } from "./account-fixture";
+import { MobileUsageStore } from "../../src/mobile/usage-store";
 import { createMobileAccountService } from "../../src/mobile/account";
 import EchoInkMobilePlugin from "../../src/mobile/plugin";
 import { mobileWorkspaceFixture } from "./workspace-fixture";
@@ -89,12 +92,16 @@ const runtime = new MobileRuntime(host.app as any, store, () => settings, async 
   if (!after.length && prompt.includes("读取")) { slowRead = true; return answer(protocol, "", [["read-" + requests.length, "note_read", { path: "笔记/来源.md" }]]); }
   return answer(protocol, "已完成。这是测试提供商返回的完整回答，正式组件使用真实 Agent 和工具回执。");
 }, (id, turn) => services.context(id, turn));
-const accountService = await createMobileAccountService(host.app as any, () => settings);
+const accountFixture = params.has("accountfixture") ? await createMobileAccountFixture() : undefined;
+const accountService = accountFixture?.service ?? await createMobileAccountService(host.app as any, () => settings);
+const usageStore = new MobileUsageStore(host.adapter as unknown as DataAdapter, "plugin/mobile", store.instanceId); await usageStore.initialize();
+runtime.setUsage(usageStore); accountService.setStatisticsSource({ read: () => usageStore.readStatistics(), subscribe: listener => usageStore.subscribe(listener) });
 const financeAccess = { checkCapability: () => !params.has("expired"), requireCapability: () => { if (params.has("expired")) throw new Error("替身：授权已失效"); }, subscribe: () => () => {} };
 const plugin = new EchoInkMobilePlugin(host.app as any, { id: "codex-echoink", version: "2.6.3-beta.7 fixture" } as any);
 const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) } as any, registerEvent() {}, showPage: page => plugin.showPage(page), saveSettings: registry => plugin.saveSettings(registry) }, "plugin/mobile");
 Object.assign(plugin, { app: host.app, settings, store, runtime, services, accountService });
 plugin.saveData = async data => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(data)); };
+services.setUsage({ recordUsage: event => usageStore.recordUsage(event) });
 await services.initialize();
 await runtime.initialize();
 plugin.registerTaskLifecycle();
@@ -161,7 +168,7 @@ if (params.has("long")) {
 document.querySelector("#fixture-home-tab")!.addEventListener("click", () => { void plugin.navigation.openHome(); });
 document.querySelector("#fixture-close-settings")!.addEventListener("click", () => { void workspaceFixture.closeSettings(); });
 window.addEventListener("pagehide", () => { void desktopDispose?.(); void workspaceFixture.dispose(); }, { once: true });
-Object.assign(window, { mobileFixture: { ...workbenchFixture, modelRequests } });
+Object.assign(window, { mobileFixture: { ...workbenchFixture, modelRequests, accountFixture, accountService, usageStore } });
 if (params.has("desktop") && params.has("identity-modal")) {
   new AgentIdentityModal(host.app as any, { initialName: "桌面墨墨", initialAvatar: { kind: "preset", presetId: "lin" }, language: "zh", mode: "edit", onConfirm: async () => {} }).open();
 }
