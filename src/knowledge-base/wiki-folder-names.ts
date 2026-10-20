@@ -1,4 +1,4 @@
-import { KNOWLEDGE_ROOT_NAMES, knowledgeRootRole } from "./root-paths";
+import { KNOWLEDGE_ROOT_NAMES, knowledgeRootRole } from "./root-paths-core";
 import { FINANCE_BILINGUAL_ROOT, FINANCE_BILINGUAL_TRANSACTIONS, isFinanceRootName, isFinanceTransactionsName } from "../lifestyle/finance-paths";
 /** A name is a single portable folder segment; the model never chooses paths. */
 const ENGLISH = /^[a-z][a-z0-9]*(?:[-_ ][a-z0-9]+)*$/iu;

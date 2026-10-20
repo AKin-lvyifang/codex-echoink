@@ -1,3 +1,5 @@
+import type { MobileKnowledgeFoldersPort } from "./knowledge-folders-contracts";
+import { MobileKnowledgeFoldersService } from "./knowledge-folders-service";
 import type { MobileModulePort } from "./module-contracts";
 import { MobileModuleService } from "./module-service";
 import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderIssues, normalizeKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -48,6 +50,7 @@ export interface MobileServicesHost {
 }
 export class MobileServices implements HomeHost {
   readonly modules: MobileModulePort;
+  readonly knowledgeFolders: MobileKnowledgeFoldersPort;
   readonly app: App;
   readonly homeActivity: HomeActivityCore;
   private preferenceRoot: string;
@@ -108,6 +111,7 @@ export class MobileServices implements HomeHost {
       write: bytes => adapter.write(`${directory}/home-activity.json`, bytes) });
     this.todos = new EchoInkTodoStore(this);
     this.modules = new MobileModuleService(this, host.store);
+    this.knowledgeFolders = new MobileKnowledgeFoldersService(this);
   }
   get settings() { return this.host.settings; }
   registerEvent(event: EventRef) { this.host.registerEvent(event); }

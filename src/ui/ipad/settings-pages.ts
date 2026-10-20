@@ -15,6 +15,7 @@ import { createCapabilityPage } from "./capability-pages";
 import { createModelPage } from "./model-pages";
 import { createTodoSettings } from "./todo-pages";
 import { createFinanceSettingsPage } from "./finance-forms";
+import { createIPadKnowledgeSettingsPage } from "./knowledge-settings-pages";
 import { settingsText as t } from "./settings-i18n";
 import type { IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadIcon } from "./workbench-elements";
@@ -48,6 +49,15 @@ export class IPadSettings {
   }
   async open(category?: string): Promise<void> {
     if (this.disposed) return;
+    if (category === "knowledge") {
+      if (!this.mounted) await this.mount("mods");
+      if (await this.shell.selectCategory("mods")) {
+        const pages = this.shell.activePageShell;
+        if (pages?.hasPage("ipad-settings-knowledge")) await pages.backTo("ipad-settings-knowledge");
+        else await this.context.push(createIPadKnowledgeSettingsPage(this.context));
+      }
+      this.refresh(); return;
+    }
     if (!this.mounted) { await this.mount(category); return; }
     if (category) {
       const id = aliases[category] ?? category;
@@ -162,7 +172,7 @@ export class IPadSettings {
         const copy = row.querySelector<HTMLElement>(".pd-settings-copy")!;
         if (route) {
           const title = el(ctx.document, "button", "pd-settings-module-title"); title.type = "button"; title.append(...Array.from(copy.childNodes)); copy.append(title);
-          title.addEventListener("click", event => { event.stopPropagation(); void Promise.resolve().then(() => ctx.push(route === "todos-settings" ? createTodoSettings(this.moduleContext()) : route === "finance-settings" ? createFinanceSettingsPage(this.moduleContext()) : this.legacy(route, label))).catch(error => ctx.error(error)); });
+          title.addEventListener("click", event => { event.stopPropagation(); void Promise.resolve().then(() => ctx.push(route === "knowledge" ? createIPadKnowledgeSettingsPage(ctx) : route === "todos-settings" ? createTodoSettings(this.moduleContext()) : route === "finance-settings" ? createFinanceSettingsPage(this.moduleContext()) : this.legacy(route, label))).catch(error => ctx.error(error)); });
         }
         if (!paid || qualified) {
           const control = settingsToggle(ctx, `${t(ctx, "启用")}${t(ctx, label)}`, mobileModuleEnabled(settings, id), async enabled => { await setMobileModuleEnabled(this.host, id, enabled); this.refresh(); });

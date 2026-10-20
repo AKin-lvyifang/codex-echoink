@@ -14,6 +14,7 @@ import { openIPhoneJournal } from "./journal-pages";
 import { openIPhoneTodos, openIPhoneTodoSettings } from "./todo-pages";
 import { openIPhoneFinance } from "./finance-pages";
 import { openIPhoneFinanceSettings } from "./finance-settings-pages";
+import { openIPhoneKnowledgeSettings } from "./knowledge-settings-pages";
 
 /** iPhone page composition. iPad never instantiates this controller. */
 export class IPhoneWorkbench {
@@ -77,6 +78,7 @@ export class IPhoneWorkbench {
     if (page === "settings") return this.settingsPages.open();
     if (page === "providers") return this.settingsPages.open("model");
     if (page === "account") return this.settingsPages.open("account");
+    if (page === "knowledge") return openIPhoneKnowledgeSettings(this.context);
     if (page === "todos" || page === "todos-settings") return openIPhoneTodoSettings(this.context);
     if (page === "finance-settings") return openIPhoneFinanceSettings(this.context);
     if (page === "finance-merchants") return openIPhoneFinanceSettings(this.context, "merchants");

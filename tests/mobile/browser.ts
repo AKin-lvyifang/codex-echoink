@@ -1,3 +1,4 @@
+import { prepareFolderFixture } from "./folder-fixture";
 import { seedMobileModuleFixture } from "./module-fixture";
 import type { DataAdapter } from "obsidian";
 import { MarkdownRenderer, Platform, setIcon } from "./browser-obsidian";
@@ -19,6 +20,17 @@ import { seedWorkbenchFixture } from "./workbench-fixture";
 import { createHost, answer } from "./host.mjs";
 
 const host = createHost({ "笔记/来源.md": "项目决定：先完成手机本地问答。", "Wiki/项目/产品草稿.md": "# 产品草稿\n\n本周聚焦真实场景。", "Wiki/项目/工作复盘.md": "# 工作复盘\n\n记录决定、证据与行动。", "Wiki/项目/手机验收.md": "# 知识", "Raw/资料.md": "# 原始资料", "Inbox/记录.md": "# Inbox" });
+// Browser-only filesystem surface: root listings include real seeded/empty folders.
+host.adapter.list = async (path: string) => {
+  const prefix = path ? `${path}/` : "", folders = new Set<string>(), files: string[] = [];
+  for (const entry of host.folders) if (entry.startsWith(prefix) && entry !== path) folders.add(prefix + entry.slice(prefix.length).split("/")[0]);
+  for (const entry of host.files.keys()) if (entry.startsWith(prefix)) {
+    const rest = entry.slice(prefix.length);
+    if (rest.includes("/")) folders.add(prefix + rest.split("/")[0]); else files.push(entry);
+  }
+  return { files, folders: [...folders] };
+};
+Object.assign(host.adapter, { readBinary: async (path: string) => new TextEncoder().encode(await host.adapter.read(path)).buffer });
 host.app.workspace.containerEl = document.body;
 const params = new URLSearchParams(location.search);
 const keyboard = Number(params.get("keyboard") ?? 0);
@@ -150,6 +162,7 @@ if (params.has("tablet")) {
 const workbenchFixture = { store, settings, runtime, host, requests, plugin, services, workspaceFixture };
 if (params.has("workbench")) await seedWorkbenchFixture(workbenchFixture);
 if (params.has("modulefixture")) await seedMobileModuleFixture(host, settings, services);
+if (params.has("folderfixture")) await prepareFolderFixture(host, services);
 let desktopDispose: (() => void | Promise<void>) | undefined;
 if (params.has("desktop") && params.has("account")) {
   const account = mountAccountMembership(root, { app: host.app as any, viewModel: accountService.read(), actions: accountService.actions, read: () => accountService.read(), language: "zh-CN", openProviders() {} });
