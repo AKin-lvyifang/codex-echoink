@@ -17,7 +17,7 @@ export async function openIPhoneJournal(ctx: IPhonePageContext): Promise<void> {
   const render = () => {
     if (!snapshot || !view.alive) return; view.body.replaceChildren();
     if (!snapshot.settings.available) { view.empty(view.body, "请先选择日记位置"); view.button(view.body, "设置日记位置", async () => { await view.run(async () => { api.openSettings(); }); }); return; }
-    const stats = el(ctx.document, "div", "ip-module-stats is-two"); moduleStat(view, stats, "连续记录", moduleText(ctx, `${snapshot.stats.streak} 天`, `${snapshot.stats.streak} days`)); moduleStat(view, stats, "今年", moduleText(ctx, `${snapshot.stats.currentYearCount} 篇`, `${snapshot.stats.currentYearCount} entries`)); view.body.append(stats);
+    const stats = el(ctx.document, "div", "ip-module-stats is-two ip-journal-stats"); moduleStat(view, stats, "连续记录", moduleText(ctx, `${snapshot.stats.streak} 天`, `${snapshot.stats.streak} days`)); moduleStat(view, stats, "今年", moduleText(ctx, `${snapshot.stats.currentYearCount} 篇`, `${snapshot.stats.currentYearCount} entries`)); view.body.append(stats);
     const calendar = el(ctx.document, "section", "ip-journal-calendar"), head = el(ctx.document, "div", "ip-module-section-head"); head.append(el(ctx.document, "h2", "", ctx.host.settings().settingsLanguage === "en" ? new Intl.DateTimeFormat("en", { year: "numeric", month: "long" }).format(month) : `${month.getFullYear()} 年 ${month.getMonth() + 1} 月`)); calendar.append(head);
     const controls = el(ctx.document, "div", "ip-module-inline-actions"); moduleIconButton(view, controls, "上个月", "chevron-left", () => shift(-1)); moduleIconButton(view, controls, "下个月", "chevron-right", () => shift(1)); head.append(controls);
     const weekdays = el(ctx.document, "div", "ip-journal-weekdays"), days = el(ctx.document, "div", "ip-journal-days"); calendar.append(weekdays, days); view.body.append(calendar);
@@ -26,7 +26,7 @@ export async function openIPhoneJournal(ctx: IPhonePageContext): Promise<void> {
     const matches = snapshot.stats.entries.filter(entry => entry.date === selected);
     if (!matches.length) view.button(view.body, "写这天日记", () => createJournal(ctx, snapshot!, selected, async () => { await refresh(); }));
     const heading = view.heading(view.body, "全部日记"); moduleSegments(view, heading, "日记范围", [["month", "按月"], ["year", "按年"]], mode, value => { mode = value; page = 1; render(); });
-    const list = el(ctx.document, "div", "ip-module-rows"); view.body.append(list);
+    const list = el(ctx.document, "div", "ip-module-rows ip-journal-list"); view.body.append(list);
     if (mode === "year") {
       const years = view.select(view.body, "年份", snapshot.stats.years.map(year => [String(year), String(year)]), String(month.getFullYear()), value => { month = new Date(Number(value), month.getMonth(), 1); render(); }); list.before(years.parentElement!);
       const months = new Map<string, number>(); for (const entry of snapshot.stats.entries) if (entry.date.startsWith(`${month.getFullYear()}-`)) months.set(entry.date.slice(0, 7), (months.get(entry.date.slice(0, 7)) ?? 0) + 1);

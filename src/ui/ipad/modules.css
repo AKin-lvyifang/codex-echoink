@@ -52,7 +52,7 @@
 .echoink-ipad .pd-journal-days > button.has-photo { color: var(--text-on-accent); }
 .echoink-ipad .pd-journal-days > button.has-record:not(.has-photo)::before { content: ""; position: absolute; left: calc(50% - 2px); bottom: 4px; width: 4px; height: 4px; border-radius: 50%; background: var(--em-green, var(--interactive-accent)); }
 .echoink-ipad .pd-journal-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 30px 0 10px; }
-.echoink-ipad .pd-journal-stat { display: flex; flex-direction: column; gap: 6px; }
+.echoink-ipad .pd-journal-stat { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 14px; border: 1px solid var(--background-modifier-border); border-radius: 12px; }
 .echoink-ipad .pd-journal-stat strong { font-size: 1.625em; font-weight: 550; font-variant-numeric: tabular-nums; }
 .echoink-ipad .pd-journal-stat span { color: var(--text-muted); font-size: .8125em; }
 .echoink-ipad .pd-journal-heatmap { max-width: 100%; padding: 12px 14px; border: 1px solid var(--background-modifier-border); border-radius: 12px; }
@@ -67,9 +67,20 @@
 .echoink-ipad button.pd-journal-entry:focus-visible { outline: none; background: var(--background-modifier-hover); }
 .echoink-ipad .pd-journal-entry-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .echoink-ipad .pd-journal-thumbnail { width: 40px; height: 40px; object-fit: cover; border-radius: 8px; flex: none; }
+.echoink-ipad .pd-journal-list, .echoink-ipad .pd-todo-list { overflow: hidden; border: 1px solid var(--background-modifier-border); border-radius: 12px; }
+.echoink-ipad .pd-journal-list > button.pd-journal-entry { padding-right: 12px; padding-left: 12px; }
+.echoink-ipad .pd-journal-list > button.pd-journal-entry:last-child, .echoink-ipad .pd-todo-table tbody tr:last-child td { border-bottom: 0; }
+.echoink-ipad .pd-journal-placeholder { display: grid; place-items: center; width: 40px; height: 40px; flex: none; color: var(--text-muted); }
+.echoink-ipad .pd-journal-placeholder[hidden] { display: none; }
+.echoink-ipad .pd-journal-placeholder svg { width: 20px; height: 20px; }
+
 .echoink-ipad .pd-todo-toolbar, .echoink-ipad .pd-todo-filters, .echoink-ipad .pd-finance-toolbar, .echoink-ipad .pd-finance-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .echoink-ipad .pd-todo-toolbar > .pd-module-field, .echoink-ipad .pd-todo-filters > .pd-module-field, .echoink-ipad .pd-finance-toolbar > .pd-module-field, .echoink-ipad .pd-finance-filters > .pd-module-field { flex: 1 1 150px; margin: 0; }
 .echoink-ipad .pd-todo-range { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 12px; margin: 10px 0; color: var(--text-muted); font-size: .8125em; font-variant-numeric: tabular-nums; }
+.echoink-ipad .pd-todo-toolbar > .pd-todo-project { position: relative; flex: 0 1 170px; max-width: 100%; margin-left: auto; }
+.echoink-ipad .pd-todo-project > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.echoink-ipad .pd-todo-more-filters > summary { box-sizing: border-box; width: max-content; min-height: 44px; padding: 10px 0; color: var(--text-muted); font-size: .8125em; cursor: pointer; }
+
 .echoink-ipad .pd-todo-range > span:last-child { white-space: nowrap; }
 .echoink-ipad .pd-todo-table, .echoink-ipad .pd-finance-table { width: 100%; border-collapse: collapse; font-size: .875em; }
 .echoink-ipad .pd-todo-table th, .echoink-ipad .pd-todo-table td, .echoink-ipad .pd-finance-table th, .echoink-ipad .pd-finance-table td { padding: 7px 8px; border-bottom: 1px solid var(--background-modifier-border); text-align: left; vertical-align: middle; }
@@ -86,7 +97,7 @@
 .echoink-ipad .pd-module-check-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .echoink-ipad .pd-module-check-row input { width: 18px; height: 18px; flex: none; accent-color: var(--em-green, var(--interactive-accent)); }
 .echoink-ipad .pd-finance-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
-.echoink-ipad .pd-finance-stat { display: flex; flex-direction: column; gap: 5px; }
+.echoink-ipad .pd-finance-stat { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 14px; border: 1px solid var(--background-modifier-border); border-radius: 12px; }
 .echoink-ipad .pd-finance-stat strong { font-size: 1.5em; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .echoink-ipad .pd-finance-stat span { color: var(--text-muted); font-size: .8125em; }
 .echoink-ipad .pd-finance-panel h2 { margin: 22px 0 10px; font-size: .875em; font-weight: 600; }

@@ -1,9 +1,10 @@
 .echoink-iphone .ip-knowledge-settings { width: 100%; max-width: 720px; min-width: 0; margin: 0 auto; }
 .echoink-iphone .ip-knowledge-body { min-width: 0; margin: 0; padding: 0; border: 0; }
 .echoink-iphone .ip-knowledge-body .ip-settings-heading:first-child { margin-top: 16px; }
-.echoink-iphone .ip-knowledge-body .ip-settings-row { flex-wrap: wrap; }
-.echoink-iphone .ip-knowledge-body .ip-settings-label { flex: 1 1 100px; min-width: 0; overflow-wrap: anywhere; }
-.echoink-iphone .ip-knowledge-body .ip-settings-value { min-width: 0; max-width: 65%; overflow-wrap: anywhere; }
+.echoink-iphone .ip-knowledge-settings .ip-settings-row { flex-wrap: nowrap; }
+.echoink-iphone .ip-knowledge-settings .ip-settings-label { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; }
+.echoink-iphone .ip-knowledge-settings .ip-settings-value { flex: 0 1 auto; min-width: 0; max-width: 50%; overflow-wrap: anywhere; }
+.echoink-iphone .ip-knowledge-settings .ip-settings-row > .ip-icon { flex: none; }
 .echoink-iphone .ip-knowledge-body input, .echoink-iphone .ip-knowledge-body select { font-size: max(16px, 1em); }
 .echoink-iphone .ip-knowledge-body .ip-settings-field { padding: 0 12px; }
 .echoink-iphone .ip-knowledge-choice { min-height: 44px; cursor: pointer; }
@@ -25,4 +26,3 @@
 .echoink-iphone .ip-knowledge-details p { margin: 8px 0; }
 .echoink-iphone .ip-knowledge-footer { flex-wrap: wrap; justify-content: flex-end; }
 .echoink-iphone .ip-knowledge-footer [hidden] { display: none; }
-@media (max-width: 359px) { .echoink-iphone .ip-knowledge-body .ip-settings-value { max-width: 100%; flex-basis: 100%; text-align: left; } }

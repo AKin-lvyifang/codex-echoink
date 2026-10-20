@@ -1,8 +1,9 @@
 .echoink-ipad .pd-knowledge-settings { width: 100%; max-width: 720px; min-width: 0; margin: 0 auto; container-type: inline-size; }
 .echoink-ipad .pd-knowledge-body { min-width: 0; margin: 0; padding: 0; border: 0; }
-.echoink-ipad .pd-knowledge-body .pd-settings-row { flex-wrap: wrap; }
-.echoink-ipad .pd-knowledge-body .pd-settings-copy, .echoink-ipad .pd-knowledge-body .pd-settings-label { min-width: 0; flex: 1 1 100px; overflow-wrap: anywhere; }
-.echoink-ipad .pd-knowledge-body .pd-settings-value { min-width: 0; max-width: 65%; overflow-wrap: anywhere; }
+.echoink-ipad .pd-knowledge-settings .pd-settings-row { flex-wrap: nowrap; }
+.echoink-ipad .pd-knowledge-settings .pd-settings-copy, .echoink-ipad .pd-knowledge-settings .pd-settings-label { min-width: 0; flex: 1 1 0; overflow-wrap: anywhere; }
+.echoink-ipad .pd-knowledge-settings .pd-settings-value { flex: 0 1 auto; min-width: 0; max-width: 50%; overflow-wrap: anywhere; }
+.echoink-ipad .pd-knowledge-settings .pd-settings-row > .pd-icon { flex: none; }
 .echoink-ipad .pd-knowledge-body input, .echoink-ipad .pd-knowledge-body select { font-size: max(16px, 1em); }
 .echoink-ipad .pd-knowledge-body .pd-settings-field { padding: 0 12px; }
 .echoink-ipad .pd-knowledge-choice { min-height: 44px; cursor: pointer; }
@@ -24,4 +25,4 @@
 .echoink-ipad .pd-knowledge-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .echoink-ipad .pd-knowledge-footer [hidden] { display: none; }
 .echoink-ipad .pd-knowledge-footer .pd-button-visible { min-height: 28px; }
-@container (max-width: 520px) { .echoink-ipad .pd-knowledge-routes { grid-template-columns: minmax(0, 1fr); } .echoink-ipad .pd-knowledge-body .pd-settings-value { max-width: 100%; flex-basis: 100%; text-align: left; } }
+@container (max-width: 520px) { .echoink-ipad .pd-knowledge-routes { grid-template-columns: minmax(0, 1fr); } }

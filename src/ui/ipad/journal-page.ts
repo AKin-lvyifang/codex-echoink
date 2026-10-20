@@ -6,12 +6,13 @@ import { formatMobileDateGroup } from "../../mobile/date-display";
 import type { HomeJournalTemplateChoice } from "../../home/home-workbench-data";
 import type { MobileShellPage } from "../mobile/shell-types";
 import type { IPadPageContext } from "./workbench-contract";
+import { ipadIcon } from "./workbench-elements";
 import { el, moduleActions, moduleButton, moduleConfirm, moduleEmpty, moduleSegments, selectModuleSegment, moduleView, moduleText as t } from "./module-elements";
 
 export function createJournalPage(ctx: IPadPageContext): MobileShellPage {
   const api = ctx.host.services.modules.journal, v = moduleView(ctx, "module:journal", t(ctx, "日记", "Journal"), "journal");
   let snapshot: MobileJournalSnapshot | undefined, month = new Date(new Date().getFullYear(), new Date().getMonth(), 1, 12), selected = dateKey(new Date()), mode = "month", page = 1, summaryGeneration = 0;
-  const top = el(ctx.document, "div", "pd-journal-top"), calendar = el(ctx.document, "section", "pd-journal-calendar"), calendarHead = el(ctx.document, "div", "pd-module-section-head"), monthLabel = el(ctx.document, "h2", ""), weekdays = el(ctx.document, "div", "pd-journal-weekdays"), days = el(ctx.document, "div", "pd-journal-days"), statistics = el(ctx.document, "section", "pd-journal-statistics"), listHead = el(ctx.document, "div", "pd-module-section-head"), list = el(ctx.document, "div", "pd-module-list"), listActions = moduleActions(ctx, v.body);
+  const top = el(ctx.document, "div", "pd-journal-top"), calendar = el(ctx.document, "section", "pd-journal-calendar"), calendarHead = el(ctx.document, "div", "pd-module-section-head"), monthLabel = el(ctx.document, "h2", ""), weekdays = el(ctx.document, "div", "pd-journal-weekdays"), days = el(ctx.document, "div", "pd-journal-days"), statistics = el(ctx.document, "section", "pd-journal-statistics"), listHead = el(ctx.document, "div", "pd-module-section-head"), list = el(ctx.document, "div", "pd-module-list pd-journal-list"), listActions = moduleActions(ctx, v.body);
   const moveMonth = (delta: number) => { month = new Date(month.getFullYear(), month.getMonth() + delta, 1, 12); selected = journalMonthSelection(month, selected); page = 1; render(); };
   calendarHead.append(monthLabel, moduleButton(ctx, "", () => moveMonth(-1), false, "chevron-left"), moduleButton(ctx, "", () => moveMonth(1), false, "chevron-right"));
   calendarHead.querySelectorAll("button")[0].setAttribute("aria-label", t(ctx, "上个月", "Previous month")); calendarHead.querySelectorAll("button")[1].setAttribute("aria-label", t(ctx, "下个月", "Next month"));
@@ -45,7 +46,8 @@ export function createJournalPage(ctx: IPadPageContext): MobileShellPage {
     const result = journalPageEntries(snapshot.stats.entries, month.getFullYear(), month.getMonth(), page); page = result.page;
     for (const entry of result.entries) {
       const row = el(ctx.document, "button", "pd-journal-entry"); row.type = "button"; row.dataset.path = entry.path;
-      if (entry.firstImageUrl) { const image = el(ctx.document, "img", "pd-journal-thumbnail"); image.src = entry.firstImageUrl; image.alt = ""; image.loading = "lazy"; image.addEventListener("error", () => image.remove(), { once: true }); row.append(image); }
+      const fallback = ipadIcon(ctx.document, "book-open"); fallback.classList.add("pd-journal-placeholder"); row.append(fallback);
+      if (entry.firstImageUrl) { const image = el(ctx.document, "img", "pd-journal-thumbnail"); image.src = entry.firstImageUrl; image.alt = ""; image.loading = "lazy"; image.addEventListener("error", () => { image.remove(); fallback.hidden = false; }, { once: true }); fallback.hidden = true; row.append(image); }
       const copy = el(ctx.document, "span", "pd-journal-entry-copy"), summary = el(ctx.document, "span", "pd-module-secondary"); copy.append(el(ctx.document, "span", "", formatMobileDateGroup(entry.date, Date.now(), ctx.host.settings().settingsLanguage)), summary); row.append(copy); row.classList.toggle("is-selected", entry.date === selected);
       row.addEventListener("click", () => { void ctx.host.openNote(entry.path).catch(error => v.report(error)); }); list.append(row);
       void api.readSummary(entry.path).then(text => { if (v.alive && ticket === summaryGeneration && row.isConnected) summary.textContent = text; }).catch(error => { if (v.alive && ticket === summaryGeneration) v.report(error); });
