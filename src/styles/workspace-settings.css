@@ -958,8 +958,8 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .codex-resource-manager .codex-resource-row.is-search-hidden{display:none}
 .echoink-settings-demo .codex-resource-manager .codex-resource-row-content{min-width:0;flex:1}
 .echoink-settings-demo .codex-resource-manager .codex-resource-row-actions{display:flex;align-items:center;flex:none;gap:8px}
-.echoink-settings-demo .echoink-plugin-edition-badge { gap: 5px; }
-.echoink-settings-demo .echoink-plugin-edition-badge.is-pro { color: #f3d995; background: #1f1b13; border: 1px solid #786334; }
+:is(.echoink-settings-demo, .echoink-workbench) .echoink-plugin-edition-badge { gap: 5px; }
+:is(.echoink-settings-demo, .echoink-workbench) .echoink-plugin-edition-badge.is-pro { color: #f3d995; background: #1f1b13; border: 1px solid #786334; }
 .echoink-plugin-edition-icon { display: inline-flex; flex: none; }
 .echoink-plugin-edition-icon > svg { width: 1em; height: 1em; }
 .echoink-settings-demo .codex-resource-manager button.codex-resource-row-name{font-size:calc(var(--font-text-size,16px)*.75);font-weight:500;line-height:1.55;white-space:normal;overflow-wrap:anywhere}
