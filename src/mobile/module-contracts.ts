@@ -11,7 +11,7 @@ import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import type { LifestyleData } from "../lifestyle/store-core";
 import type { readFinanceBill } from "../lifestyle/finance-domain";
 
-export type MobileModuleId = "journal" | "todos" | "finance" | "knowledge-base";
+export type MobileModuleId = "journal" | "todos" | "finance" | "knowledge-base" | "english-diary";
 export interface MobileJournalSnapshot {
   settings: ReturnType<typeof readNativeJournalSettings>; records: HomeVaultFileRecord[];
   stats: JournalStats; templates: HomeCustomTemplateSummary[];

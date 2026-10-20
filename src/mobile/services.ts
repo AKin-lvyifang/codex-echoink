@@ -1,3 +1,5 @@
+import type { MobileEnglishDiaryPort } from "./english-diary-contracts";
+import { MobileEnglishDiaryService } from "./english-diary-service";
 import type { MobileKnowledgePagePort } from "./knowledge-page-contracts";
 import { MobileKnowledgePageService } from "./knowledge-page-service";
 import type { MobileKnowledgeFoldersPort } from "./knowledge-folders-contracts";
@@ -15,7 +17,7 @@ import { HomeActivityCore } from "../home/home-activity-core";
 import { BUILTIN_SKILLS, renderBuiltinSkill } from "../harness/resources/builtin-skills";
 import { resolveKnowledgePathFromRoots } from "../knowledge-base/root-paths-core";
 import type { MobileSettings } from "./settings";
-import type { AgentRegistry } from "../agents/types";
+import type { AgentModuleId, AgentRegistry } from "../agents/types";
 import type { MobileQueuedTurn } from "./task-contracts";
 import { MobileCapabilityPolicy } from "./capability-policy";
 import type { MobileStore } from "./store";
@@ -49,11 +51,13 @@ export interface MobileServicesHost {
   saveSettings(candidateRegistry?: AgentRegistry): Promise<void>;
   registerEvent(event: EventRef): void;
   showPage(page: MobileSettingsRoute): Promise<void>;
+  openModule?(module: AgentModuleId): Promise<void>;
 }
 export class MobileServices implements HomeHost {
   readonly modules: MobileModulePort;
   readonly knowledgeFolders: MobileKnowledgeFoldersPort;
   readonly knowledgePage: MobileKnowledgePagePort;
+  readonly englishPage: MobileEnglishDiaryPort;
   readonly app: App;
   readonly homeActivity: HomeActivityCore;
   private preferenceRoot: string;
@@ -116,11 +120,13 @@ export class MobileServices implements HomeHost {
     this.modules = new MobileModuleService(this, host.store);
     this.knowledgeFolders = new MobileKnowledgeFoldersService(this);
     this.knowledgePage = new MobileKnowledgePageService(this);
+    this.englishPage = new MobileEnglishDiaryService(this, this.host.capabilityRequest ?? requestUrl);
   }
   get settings() { return this.host.settings; }
   registerEvent(event: EventRef) { this.host.registerEvent(event); }
   async saveSettings() { await this.host.saveSettings(); this.settingsChanged(); }
-  settingsChanged(): void { (this.knowledgePage as MobileKnowledgePageService).invalidate(); }
+  settingsChanged(): void { (this.knowledgePage as MobileKnowledgePageService).invalidate(); (this.englishPage as MobileEnglishDiaryService).settingsChanged(); }
+  suspendEnglishDiary(): void { (this.englishPage as MobileEnglishDiaryService).cancelWorkspace(); }
   getTodoStore() { return this.todos; }
   getKnowledgeSurfaceService() { return null; }
   async initialize() {
@@ -135,7 +141,7 @@ export class MobileServices implements HomeHost {
     this.registerEvent(this.app.vault.on("rename", (file, old) => this.homeActivity.rename(old, file.path)));
     this.registerEvent(this.app.vault.on("delete", file => this.homeActivity.delete(file.path)));
   }
-  async dispose() { (this.knowledgePage as MobileKnowledgePageService).dispose(); (this.modules as MobileModuleService).dispose(); this.todos.dispose(); this.lifestyle?.dispose(); await this.memoryService?.suspend(); await this.homeActivity.dispose(); }
+  async dispose() { (this.englishPage as MobileEnglishDiaryService).dispose(); (this.knowledgePage as MobileKnowledgePageService).dispose(); (this.modules as MobileModuleService).dispose(); this.todos.dispose(); this.lifestyle?.dispose(); await this.memoryService?.suspend(); await this.homeActivity.dispose(); }
   lifestyle!: MobileLifestyleService;
   get accountService() { return this.host.accountService; }
   async initializeFinance() { this.lifestyle = new MobileLifestyleService(this, this.preferenceRoot); await this.lifestyle.initialize(); }
@@ -158,12 +164,13 @@ export class MobileServices implements HomeHost {
     while (await this.app.vault.adapter.exists(path)) path = `${directory}/${stem}-${index++}.csv`;
     guard(); await this.app.vault.create(path, content); return path;
   }
-  readonly englishDiary = {
+  get englishDiary() { return {
+    api: this.englishPage.api,
     enabled: () => this.settings.englishDiary.enabled,
     setHomeShortcut: async (choice: "english-diary" | "quick-record") => { this.settings.englishDiary.homeShortcut = choice; await this.saveSettings(); },
-    openToday: async () => { throw new Error("移动端尚未支持英文日记工作区与纠错服务；可以打开已有原稿笔记。"); },
+    openToday: async () => { if (!this.host.openModule) throw new Error("英文日记入口尚未就绪，请重新打开工作台。"); await this.host.openModule("english-diary"); },
     openDiary: async (path: string) => { const file = this.app.vault.getAbstractFileByPath(path); if (file instanceof TFile) await this.host.navigation.openNote(file); else throw new Error("日记原稿不存在。"); }
-  };
+  }; }
   openEchoInkKnowledgeSettings() { return this.host.showPage("knowledge"); }
   openEchoInkGeneralSettings() { return this.host.showPage("settings"); }
   openEchoInkSkillSettings(_id: string) { return this.host.showPage("resources"); }

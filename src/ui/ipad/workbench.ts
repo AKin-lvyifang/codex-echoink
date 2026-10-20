@@ -11,6 +11,7 @@ import { createJournalPage } from "./journal-page";
 import { createTodoPage } from "./todo-pages";
 import { createFinancePage } from "./finance-pages";
 import { createKnowledgePage } from "./knowledge-pages";
+import { createEnglishDiaryPage } from "./english-diary-pages";
 
 /** Central iPad pages. Agent routes belong to the host's separate right pane. */
 export class IPadWorkbench {
@@ -53,31 +54,10 @@ export class IPadWorkbench {
         if (this.shell.hasPage("module:knowledge-base")) { await this.shell.backTo("module:knowledge-base"); return; }
         const page = createKnowledgePage(this.context); if (!await this.shell.push(page)) page.dispose?.(); return;
       }
-      if (module !== "english-diary") return;
-      const id = `module:${module}`;
-      if (this.shell.hasPage(id)) { await this.shell.backTo(id); return; }
-      const settings = this.host.settings();
-      const directory = this.host.services.safePath(settings.englishDiary.englishDirectory);
-      const content = el(this.root.ownerDocument, "div", "pd-module-files");
-      const render = () => {
-        const files = this.host.app.vault.getMarkdownFiles()
-          .filter(file => directory ? file.path.startsWith(`${directory}/`) : !file.path.includes("/"))
-          .sort((a, b) => b.stat.mtime - a.stat.mtime);
-        content.replaceChildren();
-        if (!files.length) content.append(el(this.root.ownerDocument, "p", "pd-empty", "还没有记录。"));
-        for (const file of files) {
-          const button = el(this.root.ownerDocument, "button", "pd-file-row", file.basename);
-          button.type = "button";
-          button.addEventListener("click", () => { void this.host.openNote(file.path).catch(error => this.error(error)); });
-          content.append(button);
-        }
-      };
-      render();
-      const vault = this.host.app.vault;
-      const refs = [vault.on("create", render), vault.on("delete", render), vault.on("rename", render)];
-      const page = { id, title: "英文日记", content,
-        dispose: () => { for (const ref of refs) vault.offref(ref); } };
-      if (!await this.shell.push(page)) page.dispose();
+      if (module === "english-diary") {
+        if (this.shell.hasPage("module:english-diary")) { await this.shell.backTo("module:english-diary"); return; }
+        const page = createEnglishDiaryPage(this.context); if (!await this.shell.push(page)) page.dispose?.();
+      }
     });
   }
 

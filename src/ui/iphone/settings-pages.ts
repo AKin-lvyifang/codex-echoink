@@ -127,7 +127,7 @@ export class IPhoneSettingsPages {
       { id: "review", name: "复盘", icon: "history", route: "review" },
       { id: "todos", name: "待办", icon: "list-todo", route: "todos-settings" },
       { id: "finance", name: "财务", icon: "wallet", route: "finance-settings", pro: true },
-      { id: "english-diary", name: "英文日记", icon: "languages", pro: true, value: settings.englishDiary.englishDirectory }
+      { id: "english-diary", name: "英文日记", icon: "languages", pro: true, route: "english-diary-settings", value: settings.englishDiary.englishDirectory }
     ];
     for (const entry of entries) {
       const group = entry.pro ? pro : base, row = settingsRow(ctx, group, entry.name, { icon: entry.icon, value: entry.value, literalValue: true });

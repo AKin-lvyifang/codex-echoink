@@ -118,3 +118,6 @@ export class Setting {
   setDesc(text: string) { this.settingEl.createSpan({text}); return this; }
   addButton(callback: (button: any) => void) { const element = this.settingEl.createEl("button"); const button = { buttonEl: element, setButtonText(text: string) { element.textContent = text; return this; }, setCta() { element.classList.add("mod-cta"); return this; }, onClick(fn: () => void) { element.onclick = fn; return this; } }; callback(button); return this; }
 }
+
+/** Native editor type boundary; browser preview does not emulate a real editor. */
+export class MarkdownView {}

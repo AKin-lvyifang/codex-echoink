@@ -16,6 +16,7 @@ import { createModelPage } from "./model-pages";
 import { createTodoSettings } from "./todo-pages";
 import { createFinanceSettingsPage } from "./finance-forms";
 import { createIPadKnowledgeSettingsPage } from "./knowledge-settings-pages";
+import { createEnglishDiarySettingsPage } from "./english-diary-pages";
 import { settingsText as t } from "./settings-i18n";
 import type { IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadIcon } from "./workbench-elements";
@@ -49,6 +50,15 @@ export class IPadSettings {
   }
   async open(category?: string): Promise<void> {
     if (this.disposed) return;
+    if (category === "english-diary-settings") {
+      if (!this.mounted) await this.mount("mods");
+      if (await this.shell.selectCategory("mods")) {
+        const pages = this.shell.activePageShell;
+        if (pages?.hasPage("ipad-english-settings")) await pages.backTo("ipad-english-settings");
+        else await this.context.push(createEnglishDiarySettingsPage(this.context, () => this.refresh()));
+      }
+      this.refresh(); return;
+    }
     if (category === "knowledge") {
       if (!this.mounted) await this.mount("mods");
       if (await this.shell.selectCategory("mods")) {
@@ -163,7 +173,7 @@ export class IPadSettings {
     let signature = "";
     return liveSettingsPage(ctx, { id: "ipad-settings-mods", title: "模块", content }, () => {
       const settings = this.host.settings(), qualified = getProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess, false).canToggle;
-      const definitions = [["knowledge-base", "知识库", "library", "knowledge", false], ["journal", "日记", "book-open", undefined, false], ["review", "复盘", "history", "review", false], ["todos", "待办", "list-todo", "todos-settings", false], ["finance", "财务", "wallet", "finance-settings", true], ["english-diary", "英文日记", "languages", undefined, true]] as const;
+      const definitions = [["knowledge-base", "知识库", "library", "knowledge", false], ["journal", "日记", "book-open", undefined, false], ["review", "复盘", "history", "review", false], ["todos", "待办", "list-todo", "todos-settings", false], ["finance", "财务", "wallet", "finance-settings", true], ["english-diary", "英文日记", "languages", "english-diary-settings", true]] as const;
       const key = JSON.stringify([settings.settingsLanguage, settings.journalDirectory, settings.englishDiary, qualified, definitions.map(([id]) => mobileModuleEnabled(settings, id))]); if (key === signature) return; signature = key; content.replaceChildren();
       const basic = settingsGroup(ctx, content, t(ctx, "基础模块")), pro = settingsGroup(ctx, content, t(ctx, "PRO 模块"));
       for (const [id, label, icon, route, paid] of definitions) {
@@ -172,7 +182,7 @@ export class IPadSettings {
         const copy = row.querySelector<HTMLElement>(".pd-settings-copy")!;
         if (route) {
           const title = el(ctx.document, "button", "pd-settings-module-title"); title.type = "button"; title.append(...Array.from(copy.childNodes)); copy.append(title);
-          title.addEventListener("click", event => { event.stopPropagation(); void Promise.resolve().then(() => ctx.push(route === "knowledge" ? createIPadKnowledgeSettingsPage(ctx) : route === "todos-settings" ? createTodoSettings(this.moduleContext()) : route === "finance-settings" ? createFinanceSettingsPage(this.moduleContext()) : this.legacy(route, label))).catch(error => ctx.error(error)); });
+          title.addEventListener("click", event => { event.stopPropagation(); void Promise.resolve().then(() => ctx.push(route === "knowledge" ? createIPadKnowledgeSettingsPage(ctx) : route === "english-diary-settings" ? createEnglishDiarySettingsPage(ctx, () => ctx.refresh()) : route === "todos-settings" ? createTodoSettings(this.moduleContext()) : route === "finance-settings" ? createFinanceSettingsPage(this.moduleContext()) : this.legacy(route, label))).catch(error => ctx.error(error)); });
         }
         if (!paid || qualified) {
           const control = settingsToggle(ctx, `${t(ctx, "启用")}${t(ctx, label)}`, mobileModuleEnabled(settings, id), async enabled => { await setMobileModuleEnabled(this.host, id, enabled); this.refresh(); });

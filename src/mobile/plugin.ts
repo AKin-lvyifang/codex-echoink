@@ -118,6 +118,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     if (this.taskLifecycleRegistered) return;
     this.taskLifecycleRegistered = true;
     const suspend = (reason: "app_backgrounded" | "app_closed") => {
+      this.services?.suspendEnglishDiary();
       void this.runtime.shutdown(reason).catch(error => new Notice(`中断记录未保存，原资料已保留：${String(error)}`));
     };
     const foreground = () => {
@@ -198,6 +199,11 @@ export default class EchoInkMobilePlugin extends Plugin {
     const leaf = await this.ipadNavigation!.openAgent();
     if (leaf.view instanceof EchoInkIPadView) await leaf.view.resumeTask(taskId);
   }
+  async openModule(module: AgentModuleId): Promise<void> {
+    if (Platform.isTablet) { await this.openIPadModule(module); return; }
+    const leaf = await this.iphoneNavigation!.open();
+    if (leaf.view instanceof EchoInkIPhoneView) await leaf.view.openModule(module);
+  }
   async openIPadModule(module: AgentModuleId): Promise<void> {
     const leaf = await this.ipadNavigation!.openHome();
     if (leaf.view instanceof EchoInkIPadView) await leaf.view.openModule(module);
@@ -212,7 +218,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   }
   async showPage(page: MobileSettingsRoute): Promise<void> {
     if (Platform.isTablet) {
-      if (page === "knowledge") { await this.openIPadSettings("knowledge"); return; }
+      if (page === "knowledge" || page === "english-diary-settings") { await this.openIPadSettings(page); return; }
       if (page === "settings" || page === "providers" || page === "account") {
         await this.openIPadSettings(page === "providers" ? "model" : page === "account" ? "account" : undefined);
         return;
@@ -267,6 +273,7 @@ export class EchoInkIPhoneView extends ItemView {
     });
     await this.ui.mount();
   }
+  async openModule(module: AgentModuleId): Promise<void> { await this.ui?.openModule(module); }
   async navigate(route: IPhoneRoute): Promise<void> { await this.ui?.navigate(route); }
   async showPage(page: MobileSettingsRoute): Promise<void> { await this.ui?.openLegacy(page); }
   async onClose(): Promise<void> { this.ui?.dispose(); this.ui = undefined; this.removeChild(this.markdown); await this.plugin.store.flush(); }

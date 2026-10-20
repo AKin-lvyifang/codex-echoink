@@ -1,3 +1,5 @@
+import { seedEnglishFixture, syntheticEnglishRequest } from "./english-fixture";
+import { seedKnowledgePageFixture } from "./knowledge-page-fixture";
 import { prepareFolderFixture } from "./folder-fixture";
 import { seedMobileModuleFixture } from "./module-fixture";
 import type { DataAdapter } from "obsidian";
@@ -111,9 +113,9 @@ const usageStore = new MobileUsageStore(host.adapter as unknown as DataAdapter, 
 runtime.setUsage(usageStore); accountService.setStatisticsSource({ read: () => usageStore.readStatistics(), subscribe: listener => usageStore.subscribe(listener) });
 const financeAccess = { checkCapability: () => !params.has("expired"), requireCapability: () => { if (params.has("expired")) throw new Error("替身：授权已失效"); }, subscribe: () => () => {} };
 const plugin = new EchoInkMobilePlugin(host.app as any, { id: "codex-echoink", version: "2.6.3-beta.7 fixture" } as any);
-const services = new MobileServices({ accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) } as any, registerEvent() {}, showPage: page => plugin.showPage(page), saveSettings: registry => plugin.saveSettings(registry) }, "plugin/mobile");
+const services = new MobileServices({ capabilityRequest: params.has("englishfixture") ? syntheticEnglishRequest : undefined, accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) } as any, registerEvent() {}, showPage: page => plugin.showPage(page), saveSettings: registry => plugin.saveSettings(registry) }, "plugin/mobile");
 Object.assign(plugin, { app: host.app, settings, store, runtime, services, accountService });
-plugin.saveData = async data => { localStorage.setItem(`${fixturePrefix}-settings`, JSON.stringify(data)); };
+plugin.saveData = async data => { const text = JSON.stringify(data); await host.adapter.write("plugin/data.json", text); localStorage.setItem(`${fixturePrefix}-settings`, text); };
 services.setUsage({ recordUsage: event => usageStore.recordUsage(event) });
 await services.initialize();
 await runtime.initialize();
@@ -162,7 +164,9 @@ if (params.has("tablet")) {
 const workbenchFixture = { store, settings, runtime, host, requests, plugin, services, workspaceFixture };
 if (params.has("workbench")) await seedWorkbenchFixture(workbenchFixture);
 if (params.has("modulefixture")) await seedMobileModuleFixture(host, settings, services);
-if (params.has("folderfixture")) await prepareFolderFixture(host, services);
+if (params.has("folderfixture") || params.has("knowledgefixture")) await prepareFolderFixture(host, services);
+if (params.has("knowledgefixture")) await seedKnowledgePageFixture(host, services);
+if (params.has("englishfixture")) await seedEnglishFixture(host, services);
 let desktopDispose: (() => void | Promise<void>) | undefined;
 if (params.has("desktop") && params.has("account")) {
   const account = mountAccountMembership(root, { app: host.app as any, viewModel: accountService.read(), actions: accountService.actions, read: () => accountService.read(), language: "zh-CN", openProviders() {} });

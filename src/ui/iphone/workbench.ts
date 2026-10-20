@@ -16,6 +16,7 @@ import { openIPhoneFinance } from "./finance-pages";
 import { openIPhoneFinanceSettings } from "./finance-settings-pages";
 import { openIPhoneKnowledgeSettings } from "./knowledge-settings-pages";
 import { openIPhoneKnowledge } from "./knowledge-pages";
+import { openIPhoneEnglishDiary, openIPhoneEnglishDiarySettings } from "./english-diary-pages";
 
 /** iPhone page composition. iPad never instantiates this controller. */
 export class IPhoneWorkbench {
@@ -80,6 +81,7 @@ export class IPhoneWorkbench {
     if (page === "providers") return this.settingsPages.open("model");
     if (page === "account") return this.settingsPages.open("account");
     if (page === "knowledge") return openIPhoneKnowledgeSettings(this.context);
+    if (page === "english-diary-settings") return openIPhoneEnglishDiarySettings(this.context, () => this.settingsPages.refresh());
     if (page === "todos" || page === "todos-settings") return openIPhoneTodoSettings(this.context);
     if (page === "finance-settings") return openIPhoneFinanceSettings(this.context);
     if (page === "finance-merchants") return openIPhoneFinanceSettings(this.context, "merchants");
@@ -104,18 +106,7 @@ export class IPhoneWorkbench {
     if (module === "todos") return openIPhoneTodos(this.context);
     if (module === "knowledge-base") return openIPhoneKnowledge(this.context);
     if (module === "finance") return openIPhoneFinance(this.context);
-    if (module !== "english-diary") return;
-    const title = "英文日记";
-    const settings = this.host.settings();
-    const directory = this.host.services.safePath(settings.englishDiary.englishDirectory);
-    const files = this.host.app.vault.getMarkdownFiles().filter(file => directory ? file.path.startsWith(`${directory}/`) : !file.path.includes("/")).sort((a, b) => b.stat.mtime - a.stat.mtime);
-    const content = shellElement(this.root.ownerDocument, "div", "ip-module-files");
-    if (!files.length) content.append(shellElement(this.root.ownerDocument, "p", "ip-empty", "还没有记录。"));
-    for (const file of files) {
-      const button = shellElement(this.root.ownerDocument, "button", "ip-file-row", file.basename);
-      button.type = "button"; button.addEventListener("click", () => { void this.host.openNote(file.path).catch(error => this.error(error)); }); content.append(button);
-    }
-    await this.shell.push({ id: `module:${module}`, title, content });
+    if (module === "english-diary") return openIPhoneEnglishDiary(this.context);
   }
   private error(error: unknown): void { new Notice(error instanceof Error ? error.message : String(error)); }
   dispose(): void { this.closed = true; this.shell.dispose(); }

@@ -24,7 +24,7 @@ import { FinanceCatalogPanel, type CatalogKind } from "../../lifestyle/finance-c
 type MobileFinanceCatalogPage = "finance-merchants" | "finance-accounts" | "finance-categories";
 const financeCatalogKinds: Record<MobileFinanceCatalogPage, CatalogKind> = { "finance-merchants": "merchants", "finance-accounts": "accounts", "finance-categories": "categories" };
 export type MobileSettingsPage = "basic" | "layout" | "resources" | "knowledge" | "review" | "todos-settings" | "todos" | "profile-agent" | "profile-user" | "archives" | "account" | "finance-settings" | MobileFinanceCatalogPage;
-export type MobileSettingsRoute = MobileSettingsPage | "settings" | "providers" | "memories";
+export type MobileSettingsRoute = MobileSettingsPage | "settings" | "providers" | "memories" | "english-diary-settings";
 interface Controls {
   go(page: MobileSettingsPage | "memories" | "providers" | "chat"): void;
   back(): void;

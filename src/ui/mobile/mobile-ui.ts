@@ -103,11 +103,11 @@ export class MobileUI {
     if (this.page === "chat" || (this.host.isTablet && this.page === "history")) this.refreshChat();
   };
   constructor(private root: HTMLElement, private host: MobileUIHost) { this.host.applyAppearance = () => this.applyAppearance(); this.settingPages = new MobileSettingsPages(host, { go: page => this.go(page), back: () => this.back(), captureScroll: key => this.captureScroll(key), restoreScroll: key => this.restoreScroll(key), updateHeader: () => this.syncHeader(), sheet: (title, render) => this.openSheet(title, render), closeSheet: () => this.closeSheet(), row: (parent, title, desc, name, action) => this.row(parent, title, desc, name, action), button: (parent, title, action, name, cls) => this.button(parent, title, action, name, cls), field: (parent, title, value, update, type) => this.field(parent, title, value, update, type), act: action => this.act(action) }); }
-  showPage(page: MobileSettingsRoute) { this.go(page, page === "settings"); }
+  showPage(page: MobileSettingsRoute) { if (page === "english-diary-settings") { if (this.host.openSettings) void this.act(() => this.host.openSettings!(page)); return; } this.go(page, page === "settings"); }
   showChat() { if (this.host.settingsOnly) return; if (this.page !== "chat") this.go("chat"); else this.refreshChat(); }
   mount() {
     this.mounted = true; this.root.classList.add("echoink-mobile"); this.root.classList.toggle("em-tablet", !!this.host.isTablet); this.root.classList.toggle("em-settings-surface", !!this.host.settingsOnly);
-    if (this.host.settingsOnly) this.page = this.host.settingsRoot ?? "settings";
+    if (this.host.settingsOnly) this.page = this.host.settingsRoot === "english-diary-settings" ? "settings" : this.host.settingsRoot ?? "settings";
     else { this.unsubscribeRuntime = this.host.runtime.subscribe(this.onRuntimeChange); this.timer = window.setInterval(() => this.updateTimers(), 250); }
     this.unsubscribeIdentity = this.host.services?.subscribeIdentity(() => { this.syncHeader(); this.settingPages.refreshIdentity(); });
     this.render(); this.viewport = new MobileViewport(this.root); this.applyAppearance();
