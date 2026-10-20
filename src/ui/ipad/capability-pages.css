@@ -1,0 +1,53 @@
+.echoink-ipad.pd-settings .pd-capabilities { width: 100%; max-width: 720px; min-width: 0; container-type: inline-size; }
+.echoink-ipad.pd-settings .pd-cap-icon { display: inline-grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; border-radius: 8px; background: var(--pd-settings-soft); color: var(--text-muted); }
+.echoink-ipad.pd-settings .pd-cap-icon .pd-icon { width: 18px; height: 18px; }
+.echoink-ipad.pd-settings .pd-cap-icon.is-large { flex-basis: 40px; width: 40px; height: 40px; border-radius: 10px; }
+.echoink-ipad.pd-settings .pd-cap-icon.is-large .pd-icon { width: 24px; height: 24px; }
+.echoink-ipad.pd-settings .pd-cap-skill-list { margin-top: 16px; }
+.echoink-ipad.pd-settings .pd-cap-skill-row { display: flex; align-items: center; gap: 4px; padding: 0 4px 0 12px; }
+.echoink-ipad.pd-settings .pd-cap-skill-row + .pd-cap-skill-row { border-top: 1px solid var(--pd-settings-line); }
+.echoink-ipad.pd-settings button.pd-cap-skill-main { appearance: none; display: flex; align-items: center; flex: 1; min-width: 0; min-height: 58px; height: auto; gap: 12px; margin: 0; padding: 6px 0; border: 0; border-radius: 0; color: var(--text-normal); background: transparent; font: inherit; text-align: left; box-shadow: none; cursor: pointer; }
+.echoink-ipad.pd-settings button.pd-cap-skill-main::before,
+.echoink-ipad.pd-settings button.pd-cap-skill-main::after { content: none; }
+.echoink-ipad.pd-settings .pd-cap-skill-main .pd-settings-description { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.echoink-ipad.pd-settings .pd-cap-skill-row:focus-within { background: var(--pd-settings-soft); }
+.echoink-ipad.pd-settings button.pd-cap-skill-main:focus-visible { outline: none; box-shadow: none; }
+.echoink-ipad.pd-settings button.pd-cap-skill-main:active { opacity: .65; }
+.echoink-ipad.pd-settings .pd-cap-skill-head { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.echoink-ipad.pd-settings .pd-cap-skill-title { font-size: 1.125em; font-weight: 600; }
+.echoink-ipad.pd-settings .pd-cap-skill-description { margin-top: 2px; font-size: .8125em; color: var(--text-muted); }
+.echoink-ipad.pd-settings .pd-cap-detail-state { margin-top: 16px; }
+.echoink-ipad.pd-settings .pd-cap-path { font-family: var(--font-monospace); font-size: .75em; color: var(--text-muted); overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-cap-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 24px 2px 8px; }
+.echoink-ipad.pd-settings .pd-cap-section-heading .pd-settings-label { margin: 0; font-size: .8125em; font-weight: 600; }
+.echoink-ipad.pd-settings .pd-cap-skill-body { max-width: 100%; max-height: 280px; overflow: auto; padding: 12px 14px; border: 1px solid var(--pd-settings-line); border-radius: 12px; font-size: .875em; line-height: 1.75; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-cap-skill-body > :first-child { margin-top: 0; }
+.echoink-ipad.pd-settings .pd-cap-skill-body > :last-child { margin-bottom: 0; }
+.echoink-ipad.pd-settings .pd-cap-skill-body pre,
+.echoink-ipad.pd-settings .pd-cap-skill-body table { max-width: 100%; overflow: auto; }
+.echoink-ipad.pd-settings textarea.pd-cap-skill-editor { display: block; width: 100%; min-width: 0; min-height: 280px; padding: 10px 12px; border: 1px solid var(--pd-settings-line); border-radius: 9px; color: var(--text-normal); background: var(--background-primary); font-family: var(--font-monospace); font-size: max(16px, 1em); line-height: 1.75; resize: vertical; box-shadow: none; outline: none; }
+.echoink-ipad.pd-settings textarea.pd-cap-skill-editor:focus { border-color: var(--pd-settings-line); outline: none; box-shadow: none; }
+.echoink-ipad.pd-settings .pd-cap-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.echoink-ipad.pd-settings .pd-cap-status { margin: 8px 0; color: var(--text-muted); overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-cap-text-action .pd-settings-action-visible { border-color: transparent; }
+.echoink-ipad.pd-settings .pd-cap-copy { flex: none; width: 44px; height: 44px; padding: 0; }
+.echoink-ipad.pd-settings .pd-cap-copy .pd-settings-action-visible { padding: 0; }
+.echoink-ipad.pd-settings .pd-cap-copy .pd-icon { width: 20px; height: 20px; }
+.echoink-ipad.pd-settings .pd-cap-check input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--em-green, var(--interactive-accent)); }
+.echoink-ipad.pd-settings .pd-cap-check:focus-within { background: var(--pd-settings-soft); }
+.echoink-ipad.pd-settings .pd-cap-check input:focus-visible { outline: none; box-shadow: none; }
+.echoink-ipad.pd-settings .pd-cap-tool + .pd-cap-tool { border-top: 1px solid var(--pd-settings-line); }
+.echoink-ipad.pd-settings .pd-cap-tool-title { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px 0; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-cap-tool .pd-settings-description { margin: 0; }
+.echoink-ipad.pd-settings .pd-cap-tool .pd-settings-row { border: 0; }
+.echoink-ipad.pd-settings .pd-cap-header-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: end; padding: 0 12px; }
+.echoink-ipad.pd-settings .pd-cap-header-fields + .pd-cap-header-fields { border-top: 1px solid var(--pd-settings-line); }
+.echoink-ipad.pd-settings .pd-cap-header-fields .pd-settings-field { margin: 12px 0; }
+.echoink-ipad.pd-settings .pd-cap-header-fields > .pd-settings-action { margin-bottom: 12px; }
+.echoink-ipad.pd-settings .pd-capabilities [hidden] { display: none; }
+@container (max-width: 520px) {
+  .echoink-ipad.pd-settings .pd-cap-header-fields { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .echoink-ipad.pd-settings .pd-cap-header-fields > .pd-settings-action { justify-self: end; }
+  .echoink-ipad.pd-settings .pd-cap-header-fields .pd-settings-field + .pd-settings-field { margin-top: 0; }
+}
+@media (hover: hover) { .echoink-ipad.pd-settings .pd-cap-skill-row:has(.pd-cap-skill-main:hover) { background: var(--pd-settings-soft); } }

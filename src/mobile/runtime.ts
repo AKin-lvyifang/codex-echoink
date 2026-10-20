@@ -15,8 +15,10 @@ import { selectedModel, validateMobileProvider, type MobileSettings } from "./se
 import { mobileTools, searchMemories } from "./tools";
 import { createScopedMobileBodySearch, MobileCapabilityPolicy } from "./capability-policy";
 import { prepareMobileTaskContext, interruptedMobileRequestMessages } from "./task-context";
-import { assertMobileResumeObservations, inspectMobileTaskResume, mobileResumeContext } from "./task-recovery";
+import { assertMobileResumeObservations, assertMobileWriteNotReplayed, assertMobileWriteRun, inspectMobileTaskResume, mobileResumeContext } from "./task-recovery";
 import type { MobileInterruptionReason, MobileQueuedTurn, MobileResumeSnapshot, MobileTaskInteraction, MobileTaskInterruption, MobileTaskSubmission, MobileTaskViewState } from "./task-contracts";
+import type { MobileCapabilitiesService, MobileRemoteToolInvocation } from "./capabilities";
+import { sha256Hex } from "../utils/sha256";
 
 function deferred() {
   let resolve!: () => void, reject!: (error: unknown) => void;
@@ -71,6 +73,8 @@ export class MobileRuntime {
   private lifecycleGeneration = 0;
   private legacyChange = () => {};
   private disposed = false;
+  private capabilities?: () => MobileCapabilitiesService;
+  setCapabilities(service: () => MobileCapabilitiesService): void { this.capabilities = service; }
   private readonly dispatchActive = () => this.notify(this.store.session.id);
   get onChange(): () => void { return this.dispatchActive; }
   set onChange(callback: () => void) { this.legacyChange = callback; }
@@ -510,7 +514,55 @@ export class MobileRuntime {
         } finally { if (run.waiter?.questionId === callId) run.waiter = undefined; }
       }
     });
+    const question = registered.find(tool => tool.name === "user_question")!;
+    registered.push(...(this.capabilities?.().runtimeTools(run.policy, input => this.invokeRemoteTool(run, input, question)) ?? []));
     return registered.filter(tool => { if (!run.memoryEnabled && tool.name.startsWith("memory_")) return false; try { run.policy.assertTool(tool.name); return true; } catch { return false; } });
+  }
+  private async invokeRemoteTool(run: ActiveTask, input: MobileRemoteToolInvocation, question: AgentTool): Promise<unknown> {
+    const allowed = () => { this.assertRun(run); run.policy.assertMcp(input.resourceId, input.tool.name, input.args); if (input.signal?.aborted) throw new Error("已停止"); };
+    allowed();
+    if (input.tool.readOnly) { const response = await input.call(); allowed(); return response.result; }
+    const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stable(item)])) : value;
+    const hash = sha256Hex(JSON.stringify(stable(input.args))), target = `${input.resourceId}/${input.tool.name}`;
+    const semanticKey = `mcp_write:${target}:${hash}`, execution = { runId: run.turn.id, ...(run.resume ? { resume: run.resume } : {}) };
+    const task = this.store.getSession(run.taskId); if (!task) throw new Error("任务不存在。");
+    assertMobileWriteNotReplayed(task, execution, "mcp_write", input.callId, semanticKey, target);
+    const questionId = `mcp-confirm-${input.callId}`;
+    const answer = await question.execute(`${input.callId}:confirmation`, { kind: "confirmation", questions: [{ questionId,
+      prompt: `允许 ${input.tool.name} 执行这一次外部写入吗？`, selection: "single", options: [{ optionId: "approve", label: "允许这一次" }, { optionId: "deny", label: "取消" }], allowSupplement: false }] }, input.signal);
+    const answers = (answer.details as { answers?: EchoInkQuestionAnswer[] } | undefined)?.answers;
+    if (!answers?.some(item => item.questionId === questionId && item.selectedOptionIds.length === 1 && item.selectedOptionIds[0] === "approve")) throw new Error("本次外部写入已取消。");
+    allowed();
+    const operationId = newId(); let started = false;
+    try {
+      const response = await input.call(async () => {
+        allowed(); await assertMobileResumeObservations(this.app, this.store, run.resume, input.signal); allowed();
+        await this.store.updateSession(run.taskId, current => {
+          allowed(); assertMobileWriteNotReplayed(current, execution, "mcp_write", input.callId, semanticKey, target);
+          const now = Date.now(); current.operations = [...(current.operations ?? []), { id: operationId, taskId: run.taskId, runId: run.turn.id,
+            toolCallId: input.callId, toolName: "mcp_write", mcp: { resourceId: input.resourceId, toolName: input.tool.name }, semanticKey,
+            status: "prepared", createdAt: now, updatedAt: now, target, expectedHash: hash }];
+        });
+        allowed();
+        await this.store.updateSession(run.taskId, current => {
+          allowed(); assertMobileWriteRun(current, execution); const operation = current.operations?.find(item => item.id === operationId);
+          if (!operation || operation.status !== "prepared") throw new Error("外部写入意图已变化，调用已停止。");
+          operation.status = "started"; operation.updatedAt = Date.now();
+        }); started = true; allowed();
+      });
+      await this.store.updateSession(run.taskId, current => {
+        const operation = current.operations?.find(item => item.id === operationId);
+        if (!operation) throw new Error("外部写入记录丢失，请先核对结果。");
+        operation.status = response.readbackVerified ? "completed" : "uncertain"; operation.updatedAt = Date.now();
+      });
+      allowed();
+      return { result: response.result, writeResult: response.readbackVerified ? "verified" : "unknown", ...(!response.readbackVerified ? { message: "服务已返回，但未提供可验证的结果核对；不能重放本次写入。" } : {}) };
+    } catch (error) {
+      if (started) await this.store.updateSession(run.taskId, current => { const operation = current.operations?.find(item => item.id === operationId);
+        if (operation && operation.status !== "completed") { operation.status = "uncertain"; operation.updatedAt = Date.now(); } });
+      throw error;
+    }
   }
   async answerQuestion(taskId: string, runId: string, questionId: string, answers: EchoInkQuestionAnswer[]): Promise<void> {
     const run = this.runs.get(taskId);

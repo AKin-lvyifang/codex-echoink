@@ -3,7 +3,6 @@ import license from "../../../LICENSE";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
 import { MobileModelConfiguration } from "../../mobile/model-configuration";
 import { GENERAL_ASSISTANT_ID, type AgentModuleId } from "../../agents/types";
-import { BUILTIN_SKILL_IDS } from "../../harness/resources/builtin-skills";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../../membership/access";
 import { mobileModuleEnabled, setMobileModuleEnabled } from "../../mobile/module-settings";
 import { MobileUI } from "../mobile/mobile-ui";
@@ -11,6 +10,7 @@ import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { IPadSettingsShell } from "./settings-shell";
 import { createAgentFormPage } from "./agent-form";
+import { createCapabilityPage } from "./capability-pages";
 import { createModelPage } from "./model-pages";
 import { settingsText as t } from "./settings-i18n";
 import type { IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
@@ -165,19 +165,7 @@ export class IPadSettings {
     return { id: `ipad-settings-owner-${moduleId}`, title: "模块负责人", content };
   }
   private capabilities(): MobileShellPage {
-    const ctx = this.context, content = settingsContent(ctx); let signature = "";
-    const render = () => {
-      const resources = this.host.settings().resources, key = JSON.stringify(resources); if (key === signature) return; signature = key; content.replaceChildren();
-      const skills = this.host.services.skills(), skillGroup = settingsGroup(ctx, content, "Skills");
-      const builtin = skills.filter(item => (BUILTIN_SKILL_IDS as readonly string[]).includes(item.id));
-      settingsRow(ctx, skillGroup, t(ctx, "内置技能"), `${builtin.length}`, () => ctx.push(this.legacy("resources", "Skills", undefined, "skills")), ipadIcon(ctx.document, "sparkles"));
-      settingsRow(ctx, skillGroup, t(ctx, "我的 Skill"), `${skills.length - builtin.length}`, () => ctx.push(this.legacy("resources", "Skills", undefined, "skills")), ipadIcon(ctx.document, "sparkles"));
-      const mcp = settingsGroup(ctx, content, "MCP");
-      for (const resource of resources.catalog.filter(item => item.kind === "mcp-server")) settingsRow(ctx, mcp, resource.name, resources.mcpConnections[resource.id]?.transport === "http" ? "远程配置" : "仅电脑", () => ctx.push(this.legacy("resources", resource.name, undefined, "mcp")), ipadIcon(ctx.document, "plug"));
-      settingsRow(ctx, mcp, t(ctx, "管理 MCP 服务"), "", () => ctx.push(this.legacy("resources", "MCP 服务", undefined, "mcp")), ipadIcon(ctx.document, "plus"));
-      settingsRow(ctx, settingsGroup(ctx, content, t(ctx, "工具")), "Tavily", t(ctx, "移动端暂不可配置"), undefined, ipadIcon(ctx.document, "globe"));
-    };
-    return liveSettingsPage(ctx, { id: "ipad-settings-caps", title: "能力", content }, render);
+    return createCapabilityPage(this.context, id => this.context.push(createAgentFormPage(this.agentContext(), id)));
   }
   private modules(): MobileShellPage {
     const ctx = this.context, content = settingsContent(ctx);

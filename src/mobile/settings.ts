@@ -9,6 +9,7 @@ import { normalizeTodoCompletions } from "../home/todo-completions";
 import type { TodoHost, HomeHost } from "../home/home-host";
 import { normalizeAgentRegistry } from "../agents/registry";
 import type { AgentRegistry } from "../agents/types";
+import { normalizeTavilySettings, type TavilySettings } from "../tools/tavily-settings";
 
 // Input provenance only: normalization must not make a fresh default look persisted.
 const registrySources = new WeakMap<MobileSettings, "missing" | "existing" | "invalid">();
@@ -33,6 +34,7 @@ export interface MobileSettings extends Record<string, unknown>, MobileHomeSetti
   autoOpenHome: boolean;
   mobileUi: MobileAppearance;
   agentRegistry: AgentRegistry;
+  tavily: TavilySettings;
 }
 export const MOBILE_DEFAULT_WELCOME = {
   title: "让想法，慢慢清晰。",
@@ -54,6 +56,7 @@ export function loadMobileSettings(value: unknown): MobileSettings {
     defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "",
     autoOpenHome: raw?.autoOpenHome === true,
     agentRegistry: normalizeAgentRegistry(raw?.agentRegistry),
+    tavily: { ...(raw?.tavily as object), ...normalizeTavilySettings(raw?.tavily) },
     customWelcomeEnabled: raw?.customWelcomeEnabled === true,
     customWelcomeTitle: typeof raw?.customWelcomeTitle === "string" ? raw.customWelcomeTitle : "",
     customWelcomeSubtitle: typeof raw?.customWelcomeSubtitle === "string" ? raw.customWelcomeSubtitle : "",

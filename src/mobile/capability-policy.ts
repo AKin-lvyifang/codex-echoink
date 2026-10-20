@@ -11,9 +11,10 @@ import { BUILTIN_SKILLS } from "../harness/resources/builtin-skills";
 import type { EchoInkResource } from "../resources/types";
 import { loadMobileSettings, type MobileSettings } from "./settings";
 import { mobileModuleEnabled } from "./module-settings";
+import { mobileMcpAdmitted, mobileMcpToolName } from "./remote-tools";
 import type { MobilePermission, MobileStore } from "./store";
 
-const MOBILE_TOOLS = new Set(["task_update", "user_question", "vault_search", "note_read", "note_create", "memory_search", "memory_read", "memory_write"]);
+const MOBILE_TOOLS = new Set(["task_update", "user_question", "vault_search", "note_read", "note_create", "memory_search", "memory_read", "memory_write", "web_search"]);
 const scopedPolicies = new WeakMap<KnowledgeBodySearchPort, MobileCapabilityPolicy>();
 export function isScopedMobileBodySearch(port: KnowledgeBodySearchPort, policy: MobileCapabilityPolicy): boolean { return scopedPolicies.get(port) === policy; }
 const toolAdapters: AgentCapabilityToolAdapters = {
@@ -84,7 +85,7 @@ export class MobileCapabilityPolicy {
       // The mobile v2 switch is authoritative; preserved desktop settings are not a second switch.
       memory: { useLongTermMemory: this.options.store.memoryEnabled },
       lifestyle: { finance: { enabled: s.lifestyle.finance.enabled } }, pdfReading: { enabled: false }, englishDiary: { enabled: s.englishDiary.enabled },
-      tavily: { enabled: false, apiKey: "" }, knowledgeBase: { folderBindings: s.knowledgeBase.folderBindings }
+      tavily: s.tavily, knowledgeBase: { folderBindings: s.knowledgeBase.folderBindings }
     }, agentId: this.options.agentId, resources: currentResources(s), proAccess: this.options.proAccess?.(),
     access: { permission: this.permission === "read-only" || this.options.store.permission === "read-only" ? "read-only" : "workspace-write",
       mode: "agent", memoryMode: this.options.store.memoryEnabled ? "default" : "no_memory" },
@@ -103,8 +104,26 @@ export class MobileCapabilityPolicy {
     relativeTarget: relativePath, resolvePath: value => relativePath(value) ?? "", toolAdapters };
   }
   snapshot(): AgentRunSnapshot { this.assertTool("task_update"); return resolveAgentRunSnapshot(this.options.settings(), this.options.agentId); }
-  assertSkill(skillId: string): void { requireMobileAgentCapability(checkAgentSkill(this.inputs(), skillId)); }
+  assertSkill(skillId: string): void {
+    if (skillId === "obsidian-cli") requireMobileAgentCapability(denied(skillId, "unknown_tool"));
+    requireMobileAgentCapability(checkAgentSkill(this.inputs(), skillId));
+  }
+  assertMcp(resourceId: string, toolName: string, args?: Readonly<Record<string, unknown>>): void {
+    const connection = this.options.settings().resources.mcpConnections[resourceId], tool = connection?.tools.find(item => item.name === toolName);
+    if (!connection || connection.transport !== "http" || !tool || !mobileMcpAdmitted(connection, toolName)) requireMobileAgentCapability(denied(resourceId, "resource_disabled"));
+    if (connection?.transport !== "http" || !tool) return;
+    if (connection.credential && !Object.keys(connection.headers ?? {}).some(key => key.toLowerCase() === connection.credential!.targetName.toLowerCase() && connection.headers?.[key])) {
+      throw new Error("此 MCP 的电脑凭据不可在移动端读取，请填写认证请求头。");
+    }
+    requireMobileAgentCapability(checkAgentTool(this.inputs(), mobileMcpToolName(resourceId, toolName), args, undefined,
+      { resourceId, toolName, readOnly: tool.readOnly, inputSchema: tool.inputSchema }));
+  }
   assertTool(name: string, args?: Readonly<Record<string, unknown>>, resolvedTarget?: unknown): void {
+    if (name.startsWith("mcp_")) {
+      for (const [id, connection] of Object.entries(this.options.settings().resources.mcpConnections)) for (const tool of connection.tools ?? []) {
+        if (mobileMcpToolName(id, tool.name) === name) { this.assertMcp(id, tool.name, args); return; }
+      }
+    }
     if (!MOBILE_TOOLS.has(name)) {
       requireMobileAgentCapability(denied(name, name.startsWith("pdf_") ? "module_disabled" : "unknown_tool"));
       return;
@@ -142,7 +161,7 @@ export class MobileCapabilityPolicy {
     const { agentRegistry, ...modules } = input.settings;
     const agent = agentRegistry.agents.find(item => item.id === input.agentId);
     return sha256Hex(JSON.stringify([modules, agent ? { id: agent.id, capabilityIds: agent.capabilityIds, disabledCapabilityIds: agent.disabledCapabilityIds } : null,
-      input.access, input.modulePaths, input.moduleEnabled,
+      input.access, input.modulePaths, input.moduleEnabled, this.options.settings().resources.mcpConnections,
       input.agentId, input.resources.map(resource => [resource.id, resource.kind, resource.enabled, resource.metadata?.resourceId]),
       PRO_CAPABILITIES.map(capability => pro?.checkCapability(capability) === true)]));
   }

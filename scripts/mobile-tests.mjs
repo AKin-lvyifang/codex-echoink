@@ -337,7 +337,7 @@ await test("native right chat coexists with outline; Home and protected central 
 await test("Vault services: shared preferences, actual knowledge, Todo persistence and real activity", async () => {
   const host = createHost({ "笔记/来源.md": "note", "Wiki/主题/知识.md": "# knowledge", ".echoink/shared-user/USER.md": "# Real profile" });
   const store = new MobileStore(host.adapter, "plugin/mobile", "fixture-instance"); await store.load(); const config = settings();
-  const services = new MobileServices({ app: host.app, settings: config, store, runtime: { busy: false, onChange() {} }, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile"); await services.initialize();
+  const services = new MobileServices({ app: host.app, settings: config, store, runtime: { busy: false, onChange() {}, setCapabilities() {} }, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile"); await services.initialize();
   assert.equal(services.knowledgeFiles("wiki").length, 1); assert.equal(await services.readProfile("user"), "# Real profile"); assert.equal(await services.readProfile("agent"), null); assert.equal(services.preferencesPath, "plugin/pi-agent-product-v1/knowledge/preferences.md");
   assert.ok(services.defaultPreferences.includes("关注维度")); assert.ok((await services.context()).includes(services.defaultPreferences));
   await store.patchSession(store.session.id, { skillId: "two-layer-explanation" }); assert.ok((await services.context()).includes(await services.requireAvailableEchoInkSkill("two-layer-explanation"))); config.resources.legacyEnabledOverrides = { "two-layer-explanation": false }; await assert.rejects(services.context(), /停用/u); await store.updateSession(store.session.id, session => { delete session.skillId; });
@@ -826,7 +826,7 @@ await test("mobile account: SecretStorage identity concurrency, real signed leas
 await test("mobile finance Skill files: desktop customization, disabled metadata, queued atomic usage and failure", async () => {
   const host = createHost({ ".echoink/resources/skills/finance-analysis/SKILL.md": "用户已有财务 Skill", ".echoink/resources/skill-state.json": JSON.stringify({ schema: "echoink.skill-runtime.v1", unowned: true, records: { "finance-analysis": { status: "active", lastUsedAt: null, usageCount: 2, contentHash: "preserved" } } }) });
   const store = new MobileStore(host.adapter, "plugin/mobile", "fixture-instance"); await store.load(); const config = settings();
-  const services = new MobileServices({ app: host.app, settings: config, store, runtime: {}, navigation: {}, registerEvent() {}, showPage: async () => {}, saveSettings: async () => {} }, "plugin/mobile");
+  const services = new MobileServices({ app: host.app, settings: config, store, runtime: { setCapabilities() {} }, navigation: {}, registerEvent() {}, showPage: async () => {}, saveSettings: async () => {} }, "plugin/mobile");
   assert.equal((await services.readEchoInkBuiltinSkill("finance-analysis")).content, "用户已有财务 Skill");
   const coordinator = services.getSkillRuntimeCoordinator(); await Promise.all([coordinator.recordUse("finance-analysis"), coordinator.recordUse("finance-analysis")]);
   const saved = host.files.get(".echoink/resources/skill-state.json"), state = JSON.parse(saved); assert.equal(state.records["finance-analysis"].usageCount, 4); assert.equal(state.unowned, true); assert.equal(state.records["finance-analysis"].contentHash, "preserved");

@@ -82,20 +82,28 @@ function validOperations(value: unknown, session: Record<string, unknown>, ids: 
     const call = `${String(operation.runId)}\0${String(operation.toolCallId)}`;
     if (ids.has(operation.id as string) || calls.has(call) || operation.taskId !== session.id || !nonempty(operation.runId)
       || !runs.some(run => run.id === operation.runId) || !nonempty(operation.toolCallId) || !nonempty(operation.semanticKey) || !nonempty(operation.target)
-      || !["note_create", "memory_write"].includes(operation.toolName as string) || !["prepared", "started", "completed", "uncertain"].includes(operation.status as string)
+      || !["note_create", "memory_write", "mcp_write"].includes(operation.toolName as string) || !["prepared", "started", "completed", "uncertain"].includes(operation.status as string)
       || !time(operation.createdAt) || !time(operation.updatedAt) || operation.updatedAt < operation.createdAt
       || typeof operation.expectedHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.expectedHash)
-      || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "targetWasMissing", "beforeRevision", "completedRevision"].includes(key))) return false;
+      || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "targetWasMissing", "beforeRevision", "completedRevision", "mcp"].includes(key))) return false;
+    if (operation.toolName !== "mcp_write" && operation.mcp !== undefined) return false;
     if (operation.toolName === "note_create") {
       const path = operation.target;
       if (path.trim() !== path || path.startsWith("/") || /[\\:]/u.test(path) || [...path].some(char => char.charCodeAt(0) < 32) || path.split("/").some(part => !part || part.startsWith(".")) || !/\.md$/iu.test(path)
         || operation.semanticKey !== `note_create:${path}` || operation.targetWasMissing !== true || operation.beforeRevision !== undefined || operation.completedRevision !== undefined) return false;
-    } else {
+    } else if (operation.toolName === "memory_write") {
       if (operation.status !== "completed" || typeof operation.targetWasMissing !== "boolean" || !Number.isSafeInteger(operation.completedRevision) || (operation.completedRevision as number) < 1
         || !/^memory_write:.+:[a-f0-9]{64}$/u.test(operation.semanticKey)) return false;
       if (operation.beforeRevision !== undefined && (!Number.isSafeInteger(operation.beforeRevision) || (operation.beforeRevision as number) < 1
         || operation.targetWasMissing || (operation.completedRevision as number) < (operation.beforeRevision as number) || (operation.completedRevision as number) > (operation.beforeRevision as number) + 1)) return false;
       if (operation.beforeRevision === undefined && (!operation.targetWasMissing || operation.completedRevision !== 1)) return false;
+    } else {
+      const mcp = operation.mcp;
+      const identity = (value: unknown, maximum: number): value is string => nonempty(value) && value === value.trim() && value.length <= maximum && ![...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
+      if (!object(mcp) || Object.keys(mcp).some(key => !["resourceId", "toolName"].includes(key))
+        || !identity(mcp.resourceId, 1024) || !identity(mcp.toolName, 256)
+        || operation.target !== `${mcp.resourceId}/${mcp.toolName}` || operation.semanticKey !== `mcp_write:${operation.target}:${operation.expectedHash}`
+        || operation.targetWasMissing !== undefined || operation.beforeRevision !== undefined || operation.completedRevision !== undefined) return false;
     }
     calls.add(call); ids.add(operation.id as string); return true;
   });

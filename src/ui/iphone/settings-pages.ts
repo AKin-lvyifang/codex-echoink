@@ -1,7 +1,6 @@
 import license from "../../../LICENSE";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
 import type { AgentModuleId } from "../../agents/types";
-import { BUILTIN_SKILL_IDS } from "../../harness/resources/builtin-skills";
 import { membershipWebsiteLink } from "../../membership/website-links";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../../membership/access";
 import { mobileModuleEnabled, setMobileModuleEnabled } from "../../mobile/module-settings";
@@ -10,6 +9,7 @@ import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { refreshSettingsLanguage, settingsMessage } from "./settings-language";
 import { createAgentFormPage } from "./agent-form";
+import { IPhoneCapabilityPages } from "./capability-pages";
 import { IPhoneModelPages } from "./model-pages";
 import type { IPhonePageContext } from "./workbench-contract";
 import { IPHONE_MODULES, iphoneAvatar, iphoneElement as el, iphoneIcon } from "./workbench-elements";
@@ -24,11 +24,13 @@ type Category = typeof IPHONE_SETTINGS_CATEGORIES[number][0];
 /** iPhone settings own their page stack; legacy content is bridged only at explicit leaf entries. */
 export class IPhoneSettingsPages {
   readonly models: IPhoneModelPages;
+  readonly capabilityPages: IPhoneCapabilityPages;
   private readonly refreshers = new Set<() => void>();
   constructor(private readonly ctx: IPhonePageContext, private readonly legacy: (route: MobileSettingsRoute) => Promise<void>) {
     this.models = new IPhoneModelPages(ctx, () => this.refresh());
+    this.capabilityPages = new IPhoneCapabilityPages(ctx, id => this.agentForm(id));
   }
-  refresh(): void { for (const render of this.refreshers) render(); refreshSettingsLanguage(this.ctx); }
+  refresh(): void { for (const render of this.refreshers) render(); refreshSettingsLanguage(this.ctx); this.capabilityPages.refresh(); }
   private tracked(id: string, title: string, render: (body: HTMLElement) => void): MobileShellPage {
     const body = settingsBody(this.ctx), update = () => { body.replaceChildren(); render(body); };
     update(); this.refreshers.add(update);
@@ -37,6 +39,7 @@ export class IPhoneSettingsPages {
   async open(category?: Category): Promise<void> {
     const { ctx } = this;
     if (category === "model") return this.models.open();
+    if (category === "caps") return this.capabilityPages.open();
     if (category === "account") return this.legacy("account");
     const title = IPHONE_SETTINGS_CATEGORIES.find(item => item[0] === category)?.[2] ?? "设置";
     const id = `iphone-settings-${category ?? "root"}`;
@@ -49,7 +52,6 @@ export class IPhoneSettingsPages {
           settingsRow(ctx, group, name, { icon, value: key === "account" ? account?.identity ? account.membership.planName ?? "免费版" : "未登录" : key === "model" ? current?.displayName || current?.id || "未选择" : undefined, valueLeading: key === "model" && current ? settingsBrand(ctx, active?.providerId) : undefined, literalValue: key === "model" && !!current, action: () => this.open(key) });
         }
       } else if (category === "agent") this.agents(body);
-      else if (category === "caps") this.capabilities(body);
       else if (category === "mods") this.modules(body);
     });
     await pushSettingsPage(ctx, page);
@@ -134,17 +136,6 @@ export class IPhoneSettingsPages {
       catch (failure) { error.show(failure); busy = false; for (const button of Array.from(group.querySelectorAll("button"))) button.disabled = false; }
     } });
     await pushSettingsPage(ctx, { id: `iphone-settings-owner-${module}`, title: "模块负责人", content: body, canLeave: () => !busy });
-  }
-  private capabilities(body: HTMLElement): void {
-    const { ctx } = this, resources = ctx.host.settings().resources, skills = resources.catalog.filter(item => item.kind === "skill");
-    const skillGroup = settingsGroup(ctx, body, "Skills");
-    settingsRow(ctx, skillGroup, "内置技能", { icon: "sparkles", value: `${BUILTIN_SKILL_IDS.length}`, action: () => this.legacy("resources") });
-    settingsRow(ctx, skillGroup, "我的 Skill", { icon: "sparkles", value: String(skills.length), action: () => this.legacy("resources") });
-    const mcp = settingsGroup(ctx, body, "MCP"), servers = resources.catalog.filter(item => item.kind === "mcp-server");
-    for (const server of servers) settingsRow(ctx, mcp, server.name, { literal: true, icon: "plug", value: server.enabled ? "已配置" : "未启用", action: () => this.legacy("resources") });
-    settingsRow(ctx, mcp, "添加 MCP 服务", { icon: "plus", action: () => this.legacy("resources") });
-    const tavily = ctx.host.settings().tavily as { apiKey?: string } | undefined;
-    settingsRow(ctx, settingsGroup(ctx, body, "工具"), "Tavily 联网搜索", { icon: "globe", value: tavily?.apiKey?.trim() ? "已填写 Key" : "未填写 Key", detail: "移动端未接通" });
   }
   private modules(body: HTMLElement): void {
     const { ctx } = this, base = settingsGroup(ctx, body, "基础模块"), pro = settingsGroup(ctx, body, "PRO 模块"), settings = ctx.host.settings();

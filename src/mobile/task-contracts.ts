@@ -15,7 +15,9 @@ export interface MobileWriteOperation {
   taskId: string;
   runId: string;
   toolCallId: string;
-  toolName: "note_create" | "memory_write";
+  toolName: "note_create" | "memory_write" | "mcp_write";
+  /** External effect identity only; never authentication headers or arguments. */
+  mcp?: { resourceId: string; toolName: string };
   semanticKey: string;
   status: "prepared" | "started" | "completed" | "uncertain";
   createdAt: number;

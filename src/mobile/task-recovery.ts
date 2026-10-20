@@ -36,7 +36,7 @@ export function assertMobileWriteNotReplayed(task: MobileSession, execution: Mob
   // The review does not erase uncertainty: this guard also applies to later ordinary turns.
   const legacy = legacyWrites(task).filter(operation => !(operation.runId === execution.runId && operation.toolName === toolName && operation.toolCallId === toolCallId));
   if (legacy.some(operation => operation.toolName === toolName && (!operation.target || operation.target === target || operation.requestedTarget === target || operation.semanticKey === semanticKey))
-    || execution.resume?.operations.some(operation => operation.toolName === toolName && (operation.target === target || operation.semanticKey === semanticKey))) {
+    || execution.resume?.operations.some(operation => operation.toolName === toolName && (toolName === "mcp_write" ? operation.semanticKey === semanticKey : operation.target === target || operation.semanticKey === semanticKey))) {
     throw new Error("上次写入已完成或结果仍不确定，不能重放；核对只允许基于现状继续。");
   }
   if (recordedRepeat) {
@@ -146,6 +146,13 @@ export async function inspectMobileTaskResume(app: App, store: MobileStore, task
   const observations = new Map<string, string>(), issues: MobileResumeSnapshot["issues"] = [], completed = new Set<string>();
   for (const operation of operations) {
     stopped(signal);
+    if (operation.toolName === "mcp_write") {
+      // Reading a local note cannot establish an external effect. Only the original
+      // same-call readback may have marked it completed. Resume never replays it.
+      if (operation.status !== "completed") issues.push({ operationId: operation.id, target: operation.target, status: "unknown",
+        label: "外部 MCP 写入结果尚未核实；只能基于现状继续，不能重放旧写入。" });
+      continue;
+    }
     const key = observationTarget(operation.toolName, operation.target), version = await currentVersion(app, store, key);
     stopped(signal); observations.set(key, version);
     if (operation.toolName === "note_create") {

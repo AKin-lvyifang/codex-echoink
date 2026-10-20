@@ -20,7 +20,6 @@ import { mobileGenerateText } from "./transport";
 import { selectedModel } from "./settings";
 import { requestUrl } from "obsidian";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
-import { mobileAtomicFilePort } from "./finance-store";
 import { MobileLifestyleService } from "./finance";
 import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
 import type { MobileAgentProfile } from "../harness/memory/mobile-profile-protocol";
@@ -28,6 +27,8 @@ import { MobileAgentRegistryService } from "./agent-registry-service";
 import type { AgentTemplateId } from "../harness/memory/agent-templates";
 import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
 import { defaultAgentIdentityState } from "../harness/memory/agent-identity-model";
+import { MobileCapabilitiesService } from "./capabilities";
+import type { MobileRequest } from "./transport";
 
 export interface MobileServicesHost {
   app: App;
@@ -36,6 +37,8 @@ export interface MobileServicesHost {
   runtime: MobileRuntime;
   navigation: MobileWorkspace;
   accountService?: CapabilityAccess;
+  /** Test transports are explicit; production always uses Obsidian requestUrl. */
+  capabilityRequest?: MobileRequest;
   saveSettings(candidateRegistry?: AgentRegistry): Promise<void>;
   registerEvent(event: EventRef): void;
   showPage(page: MobileSettingsRoute): Promise<void>;
@@ -45,7 +48,12 @@ export class MobileServices implements HomeHost {
   readonly homeActivity: HomeActivityCore;
   private preferenceRoot: string;
   private readonly todos: EchoInkTodoStore;
-  private skillStateWrites: Promise<void> = Promise.resolve();
+  private capabilitiesService?: MobileCapabilitiesService;
+  get capabilities(): MobileCapabilitiesService {
+    return this.capabilitiesService ??= new MobileCapabilitiesService({ adapter: this.app.vault.adapter, settings: () => this.settings,
+      saveSettings: () => this.host.saveSettings(), request: this.host.capabilityRequest,
+      policy: agentId => new MobileCapabilityPolicy({ store: this.host.store, settings: () => this.settings, agentId, proAccess: () => this.host.accountService }) });
+  }
   agentIdentity = defaultAgentIdentityState();
   private readonly identityListeners = new Set<() => void>();
   private profileProtocol: MobileAgentRegistryService;
@@ -76,6 +84,7 @@ export class MobileServices implements HomeHost {
   readonly homeUnavailableReason = "移动端尚未接通知识健康扫描；笔记数量来自当前笔记库";
   constructor(private host: MobileServicesHost, readonly directory: string) {
     this.app = host.app; this.preferenceRoot = directory.replace(/\/mobile$/u, "");
+    host.runtime.setCapabilities(() => this.capabilities);
     const adapter = this.app.vault.adapter; this.profileProtocol = new MobileAgentRegistryService(adapter, host.settings, registry => host.saveSettings(registry));
     this.homeActivity = new HomeActivityCore({ read: async () => await adapter.exists(`${directory}/home-activity.json`) ? adapter.read(`${directory}/home-activity.json`) : null,
       write: bytes => adapter.write(`${directory}/home-activity.json`, bytes) });
@@ -103,20 +112,7 @@ export class MobileServices implements HomeHost {
   notifyHomeSurfacesChanged() { for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) if (leaf.view instanceof EchoInkHomeView) leaf.view.refreshHomeSurfaces(); }
   openLifestyleSettings(_kind: "finance") { return this.host.showPage("finance-settings"); }
   getSkillRuntimeCoordinator() {
-    return { resolveById: (id: string) => this.requireAvailableEchoInkSkill(id), recordUse: (id: string) => {
-      const run = async () => {
-      const path = ".echoink/resources/skill-state.json", adapter = this.app.vault.adapter;
-      if (!await adapter.exists(path)) return;
-      const state = JSON.parse(await adapter.read(path)) as { schema: string; records?: Record<string, { status: string; lastUsedAt: number | null; usageCount: number }> };
-      if (state.schema !== "echoink.skill-runtime.v1" || !state.records) throw new Error("Skill 使用状态不可读取，原文件已保留。");
-      const item = state.records?.[id];
-      if (item && item.status === "active") {
-        if (!Number.isSafeInteger(item.usageCount) || item.usageCount < 0) throw new Error("Skill 使用状态不可读取，原文件已保留。");
-        item.lastUsedAt = Date.now(); item.usageCount += 1; await mobileAtomicFilePort(adapter, path).write(`${JSON.stringify(state, null, 2)}\n`);
-      }
-      };
-      const pending = this.skillStateWrites.then(run, run); this.skillStateWrites = pending.catch(() => {}); return pending;
-    } };
+    return { resolveById: (id: string) => this.requireAvailableEchoInkSkill(id), recordUse: (id: string) => this.capabilities.recordSkillUse(id) };
   }
   async readEchoInkBuiltinSkill(id: string) { return { fileStatus: "ready", content: await this.requireAvailableEchoInkSkill(id) }; }
   async generateLifestyleText(system: string, user: string, maxTokens: number, signal: AbortSignal) {
@@ -172,11 +168,9 @@ export class MobileServices implements HomeHost {
   async requireAvailableEchoInkSkill(id: string): Promise<string> {
     const skill = this.skills().find(item => item.id === id);
     if (!skill?.enabled) throw new Error(`Skill ${id} 已停用或不存在。`);
-    if (skill.contentPath) return this.app.vault.adapter.read(this.safePath(skill.contentPath));
-    const runtimePath = this.safePath(`.echoink/resources/skills/${id}/SKILL.md`);
-    if (await this.app.vault.adapter.exists(runtimePath)) return this.app.vault.adapter.read(runtimePath);
-    if (!skill.content) throw new Error("Skill 正文尚未导入当前笔记库。");
-    return skill.content;
+    const snapshot = await this.capabilities.readSkill(id);
+    if (!snapshot.mobileAvailable) throw new Error(snapshot.unavailableReason ?? "此 Skill 尚未接通移动端。");
+    return snapshot.content;
   }
   roots() {
     return this.app.vault.getRoot().children.map(file => file.name);
@@ -269,6 +263,7 @@ export class MobileServices implements HomeHost {
     if (skillId) policy.assertSkill(skillId);
     const profile = await this.profileProtocol.context(memoryAllowed, agentId, turn?.agentSnapshot);
     const skill = skillId ? await this.requireAvailableEchoInkSkill(skillId) : "";
+    if (skillId && turn) await this.capabilities.recordSkillUse(skillId);
     const preference = await this.readPreferences() ?? this.defaultPreferences;
     return `${profile}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify(this.settings.knowledgeBase.folderBindings?.roles ?? this.settings.mobileUi.knowledgePaths)}`;
   }

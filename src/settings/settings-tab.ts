@@ -1,3 +1,4 @@
+import { skillIcon } from "../agents/skill-icons";
 import { DesktopAgentSettings } from "./agent-settings";
 import { DesktopMemorySettings } from "./desktop-memory-settings";
 import { UserProfileSettingsController } from "./user-profile-settings";
@@ -6103,7 +6104,7 @@ export class CodexSettingTab extends PluginSettingTab {
       }
     });
     const icon = row.createSpan({ cls: "codex-resource-row-icon" });
-    setIcon(icon, isEnglishDiary ? "languages" : resource.kind === "skill" ? "sparkles" : resource.kind === "mcp-server" ? "blocks" : "package");
+    setIcon(icon, isEnglishDiary ? "languages" : resource.kind === "skill" ? skillIcon(typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id) : resource.kind === "mcp-server" ? "blocks" : "package");
     const content = row.createDiv({ cls: "codex-resource-row-content" });
     const name = presentation.name;
     const connectionStatus = resource.kind === "mcp-server" ? mcpConnectionStatus(resource, this.plugin.settings.resources) : "not-mcp";

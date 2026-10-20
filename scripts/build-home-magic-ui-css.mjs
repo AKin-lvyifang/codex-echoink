@@ -89,14 +89,14 @@ const diaryCurrent = diaryIndex < 0 ? "" : styles.slice(diaryIndex, styles.index
 
 const iphoneStart = "/* ECHOINK_IPHONE_PAGES_START */";
 const iphoneEnd = "/* ECHOINK_IPHONE_PAGES_END */";
-const iphoneCss = await Promise.all(["shell.css", "workbench.css", "task-detail.css", "integration.css", "settings.css"].map(name => readFile(path.join(rootDir, "src/ui/iphone", name), "utf8")));
+const iphoneCss = await Promise.all(["shell.css", "workbench.css", "task-detail.css", "integration.css", "settings.css", "capability-pages.css"].map(name => readFile(path.join(rootDir, "src/ui/iphone", name), "utf8")));
 const iphoneGenerated = `${iphoneStart}\n${iphoneCss.map(css => css.trim()).join("\n\n")}\n${iphoneEnd}`;
 const iphoneIndex = styles.indexOf(iphoneStart);
 const iphoneCurrent = iphoneIndex < 0 ? "" : styles.slice(iphoneIndex, styles.indexOf(iphoneEnd, iphoneIndex) + iphoneEnd.length);
 
 const ipadStart = "/* ECHOINK_IPAD_PAGES_START */";
 const ipadEnd = "/* ECHOINK_IPAD_PAGES_END */";
-const ipadCss = await Promise.all(["shell.css", "workbench.css", "task-detail.css", "agent-pane.css", "integration.css", "settings.css"].map(name => readFile(path.join(rootDir, "src/ui/ipad", name), "utf8")));
+const ipadCss = await Promise.all(["shell.css", "workbench.css", "task-detail.css", "agent-pane.css", "integration.css", "settings.css", "capability-pages.css"].map(name => readFile(path.join(rootDir, "src/ui/ipad", name), "utf8")));
 const ipadGenerated = `${ipadStart}\n${ipadCss.map(css => css.trim()).join("\n\n")}\n${ipadEnd}`;
 const ipadIndex = styles.indexOf(ipadStart);
 const ipadCurrent = ipadIndex < 0 ? "" : styles.slice(ipadIndex, styles.indexOf(ipadEnd, ipadIndex) + ipadEnd.length);
