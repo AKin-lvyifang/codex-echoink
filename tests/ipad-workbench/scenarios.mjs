@@ -114,13 +114,21 @@ export async function runIPadWorkbenchScenarios(api, win) {
   });
 
   await test("central module navigation and right-pane return preserve their independent routes and exact drafts", async () => {
-    const f = await fixture();
+    const f = await fixture(), englishListeners = new Set(); let englishReads = 0;
+    f.host.services.modules = { owner(moduleId) { assert.equal(moduleId, "english-diary"); return f.settings.agentRegistry.agents.find(agent => agent.id === f.settings.agentRegistry.moduleOwners[moduleId]); } };
+    f.host.services.englishPage = {
+      api: {},
+      async readPage() { englishReads++; return { streak: 0, expressionCount: 0, diaryCount: 0, activity: [], diaries: [], expressions: [], expressionVersions: {}, errors: {} }; },
+      subscribe(listener) { englishListeners.add(listener); return () => englishListeners.delete(listener); }
+    };
     try {
       const { pane, center } = await f.panes(); await pane.navigate({ kind: "agent", agentId: "sol" });
       const original = input(win, composerInput(f.right), "甲的未发送中文草稿"); original.focus(); original.setSelectionRange(2, 5);
       await until(() => f.store.state.newTaskDrafts.sol?.text === original.value, "Agent draft durable");
       f.settings.englishDiary.enabled = true;
       const rightRoute = pageId(f.right); await center.openModule("english-diary");
+      await until(() => englishReads === 1 && f.central.textContent.includes("还没有英文日记"), "central English page reads its controlled local port");
+      assert.equal(pageId(f.central), "module:english-diary"); assert.equal(f.errors.length, 0);
       assert.equal(pageId(f.right), rightRoute); assert.equal(composerInput(f.right), original); assert.equal(original.value, "甲的未发送中文草稿");
       const centralRoute = pageId(f.central);
       f.settings.englishDiary.enabled = false;
@@ -132,7 +140,7 @@ export async function runIPadWorkbenchScenarios(api, win) {
       click(f.right, "返回"); await until(() => pageId(f.right) === rightRoute, "task returns to originating Agent list");
       assert.equal(composerInput(f.right), original); assert.equal(original.selectionStart, 2); assert.equal(original.selectionEnd, 5);
       assert.equal(pageId(f.central), centralRoute); assert.equal(f.calls.length, 0);
-    } finally { await f.close(); }
+    } finally { await f.close(); assert.equal(englishListeners.size, 0, "central English navigation releases its read subscription"); }
   });
 
   await test("switching Agents and returning never mixes their new-task drafts", async () => {
@@ -246,8 +254,11 @@ export async function runIPadWorkbenchScenarios(api, win) {
     const f = await fixture();
     try {
       const id = f.store.session.id, surface = f.compose({ taskId: id }); input(win, composerInput(surface.element), "第一轮"); click(surface.element, "发送"); await until(() => f.calls.length === 1, "first run starts");
-      await until(() => button(surface.element, "发送").getAttribute("aria-busy") === "false", "first admission completed");
-      input(win, composerInput(surface.element), "第二轮排队"); click(surface.element, "发送"); click(surface.element, "发送");
+      const send = surface.element.querySelector(".pd-composer-send"); assert.ok(send, "real send/queue action");
+      await until(() => send.getAttribute("aria-busy") === "false", "first admission completed"); assert.equal(f.runtime.isBusy(id), true, "the first model turn remains active");
+      input(win, composerInput(surface.element), "第二轮排队");
+      const queueLabel = send.getAttribute("aria-label"); assert.ok(queueLabel); assert.equal(button(surface.element, queueLabel), send); assert.equal(send.disabled, false);
+      click(surface.element, queueLabel); click(surface.element, queueLabel);
       await until(() => f.store.getSession(id).queue?.length === 1, "one durable queued turn");
       assert.equal(f.calls.length, 1); assert.equal(f.store.state.sessions.length, 1); assert.match(surface.element.textContent, /排队 1 条/u);
       f.calls[0].resolve(answer("openai-completions", "第一轮完成")); await until(() => f.calls.length === 2, "queued turn starts after first finishes");
