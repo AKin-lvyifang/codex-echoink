@@ -1,5 +1,6 @@
 import { projectGenerationEntries, generationStageMessage, positionGenerationMessages } from "../../generation/projection";
 import { savedAnswerNotePaths } from "./pi-answer-save";
+import { projectInjectedMemorySources } from "./pi-memory-sources";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { selectionAnnotationsFromPiContext } from "./pi-selection-annotations";
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
@@ -445,6 +446,7 @@ export class PiChatUiProjector {
     };
     applyToolProductStates(view, input);
     projectSavedAnswerNotes(view.messages, input.entries, piSessionId);
+    projectInjectedMemorySources(view.messages, input.entries, piSessionId);
     this.applyReliableToolTimes(view);
     return view;
   }

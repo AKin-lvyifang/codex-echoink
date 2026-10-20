@@ -1791,6 +1791,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   async getEchoInkPersonalMemoryState() {
     return await (await this.ensurePiLocalData()).personalMemory.readUserControlState();
   }
+  async readEchoInkPersonalMemorySource(id: string, expectedRevision?: number) {
+    return await (await this.ensurePiLocalData()).personalMemory.readUserControlSource(id, expectedRevision);
+  }
 
   /** Desktop display identity comes only from the Agent registry. */
   getEchoInkAgentIdentityView(): AgentIdentityView {

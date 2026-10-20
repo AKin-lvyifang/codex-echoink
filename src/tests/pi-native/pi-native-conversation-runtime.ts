@@ -128,6 +128,7 @@ import {
 } from "../../types/reasoning-summary";
 import { stableHashedIdentity } from "../../core/mapping";
 import { PI_ANSWER_SAVE_ENTRY_TYPE } from "../../harness/pi-native/pi-answer-save";
+import { PI_MEMORY_SOURCES_ENTRY_TYPE } from "../../harness/pi-native/pi-memory-sources";
 import { piEntryIdFromProjectedMessageId } from "../../harness/pi-native/pi-chat-ui-projector";
 
 const API: PiSessionManagerApi = {
@@ -198,6 +199,34 @@ export async function runPiAnswerSaveStateTests(): Promise<void> {
   });
   await assertAnswerSaveActivationSerialization();
   console.log("PASS answer-save state: active and offline Session receipts, changed-leaf cold reopen, read-only, idempotence and conversation isolation");
+}
+
+export async function runPiMemorySourcesRuntimeTests(): Promise<void> {
+  for (const memoryMode of ["normal", "no_memory"] as const) {
+    await withFixture([`memory-sources-${memoryMode}`], async fixture => {
+      const conversationId = `memory-sources-${memoryMode}`;
+      await fixture.runtime.createConversation({ conversationId, title: "记忆来源", cwd: fixture.root });
+      await fixture.runtime.activateConversation(conversationId);
+      const run = await fixture.submit({ conversationId, text: "问题", memoryMode, submittedAt: 1 });
+      const sources = [{ id: "mem_first", title: "第一条", revision: 2, content: "BODY_MUST_STAY_IN_REPOSITORY" },
+        { id: "mem_second", title: "第二条", revision: 3 }];
+      await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources });
+      await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources });
+      fixture.latestSession().finishSuccessful("回答完成"); await run.result;
+      const warm = await fixture.runtime.readProjection(conversationId);
+      const expected = memoryMode === "normal" ? sources.map(({ id, title, revision }) => ({ id, title, revision })) : undefined;
+      assert.deepEqual(warm.messages.find(message => message.injectedMemorySources)?.injectedMemorySources, expected);
+      await fixture.runtime.releaseConversation(conversationId);
+      const cold = await fixture.runtime.readProjection(conversationId);
+      assert.deepEqual(cold.messages.find(message => message.injectedMemorySources)?.injectedMemorySources, expected);
+      const file = (await fixture.catalog.get(conversationId))!.sessionFile!;
+      const text = await readFile(file, "utf8");
+      assert.equal(text.includes("BODY_MUST_STAY_IN_REPOSITORY"), false);
+      assert.equal(text.trim().split("\n").map(line => JSON.parse(line)).filter(entry => entry.customType === PI_MEMORY_SOURCES_ENTRY_TYPE).length,
+        memoryMode === "normal" ? 1 : 0);
+    });
+  }
+  console.log("PASS memory sources runtime: actual injection metadata, idempotence, warm/cold projection, no_memory exclusion, no copied body");
 }
 
 export async function withPiAnswerSaveUiFixture(run: (fixture: {
@@ -5723,6 +5752,7 @@ interface RuntimeFixture {
   reportAskPersonalMemorySources(input: Parameters<NonNullable<
     PiNativeAgentSessionFactoryInput["reportAskPersonalMemorySources"]
   >>[0]): Promise<void>;
+  reportInjectedMemorySources(input: Parameters<NonNullable<PiNativeAgentSessionFactoryInput["reportPersonalMemorySourcesInjected"]>>[0]): Promise<void>;
   latestSession(): ControlledAgentSession;
 }
 
@@ -5763,6 +5793,7 @@ async function withFixture(
   let memoryRecallReporter: PiNativeAgentSessionFactoryInput["reportMemoryRecallProgress"] = undefined;
   let askPersonalMemorySourcesReporter:
     PiNativeAgentSessionFactoryInput["reportAskPersonalMemorySources"] = undefined;
+  let injectedMemorySourcesReporter: PiNativeAgentSessionFactoryInput["reportPersonalMemorySourcesInjected"];
   let nextActivationError: Error | null = null;
   let factoryWarnings: readonly string[] = [];
   let memoryToolNames: readonly string[] = [];
@@ -5802,6 +5833,7 @@ async function withFixture(
         input.currentSuccessfulExternalReadToolNames;
       memoryRecallReporter = input.reportMemoryRecallProgress;
       askPersonalMemorySourcesReporter = input.reportAskPersonalMemorySources;
+      injectedMemorySourcesReporter = input.reportPersonalMemorySourcesInjected;
       if (nextActivationError) {
         const error = nextActivationError;
         nextActivationError = null;
@@ -5897,6 +5929,10 @@ async function withFixture(
       reportAskPersonalMemorySources: async (input) => {
         assert.ok(askPersonalMemorySourcesReporter);
         await askPersonalMemorySourcesReporter(input);
+      },
+      reportInjectedMemorySources: async input => {
+        assert.ok(injectedMemorySourcesReporter);
+        await injectedMemorySourcesReporter(input);
       },
       latestSession: () => {
         const session = sessions.at(-1);

@@ -4115,7 +4115,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       return surface.findByClass("codex-assistant-turn-final")!;
     };
     const countOnlyAnswer = renderMemoryCountTurn(3);
-    assert.match(renderedText(countOnlyAnswer.findByClass("codex-answer-memory-count")!), /个人记忆：用上 3 条/u,
+    assert.match(renderedText(countOnlyAnswer.findByClass("codex-answer-memory-count")!), /记忆：用上 3 条/u,
       "filtered-away titles fall back to the actual injected memory count below the answer");
     assert.doesNotMatch(renderedText(countOnlyAnswer), /26/u, "candidate totals never claim to be used memories");
     assert.equal(renderMemoryCountTurn(undefined).findByClass("codex-answer-memory-count"), null,

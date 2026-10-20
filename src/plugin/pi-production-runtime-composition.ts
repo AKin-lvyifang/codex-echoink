@@ -1162,6 +1162,10 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
     productRunId: string;
     sources: readonly Readonly<PersonalMemorySourceReference>[];
   }>): void | Promise<void>;
+  onPersonalMemorySourcesInjected?(input: Readonly<{
+    productRunId: string;
+    sources: readonly Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>[];
+  }>): void | Promise<void>;
   personalMemoryAvailable?: boolean;
   contextLedger?: Pick<
     PiContextLedgerRecorder,
@@ -1187,7 +1191,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
       }> | null = null;
       let transientAskPersonalMemorySources: Readonly<{
         productRunId: string;
-        sources: readonly Readonly<PersonalMemorySourceReference>[];
+        sources: readonly Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>[];
       }> | null = null;
       let transientAskPersonalMemorySourcesReported = false;
       pi.on("before_agent_start", async (event) => {
@@ -1350,7 +1354,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             if (effectiveMode === "normal") {
               transientTurnContext = buildPersonalMemoryContextMessage(fixed);
             }
-            if (effectiveMode === "normal" && turn?.kind === "ask") {
+            if (effectiveMode === "normal") {
               transientAskPersonalMemorySources = Object.freeze({
                 productRunId: memoryTurn.productRunId,
                 sources: primaryPersonalMemorySources(fixed)
@@ -1518,11 +1522,15 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             && !transientAskPersonalMemorySourcesReported
           ) {
             transientAskPersonalMemorySourcesReported = true;
-            await input.onAskPersonalMemorySourcesInjected?.({
+            await input.onPersonalMemorySourcesInjected?.({
               productRunId: transientAskPersonalMemorySources.productRunId,
               sources: transientAskPersonalMemorySources.sources.map(
                 (source) => ({ ...source })
               )
+            });
+            if (turn?.kind === "ask") await input.onAskPersonalMemorySourcesInjected?.({
+              productRunId: transientAskPersonalMemorySources.productRunId,
+              sources: transientAskPersonalMemorySources.sources.map(({ id, title }) => ({ id, title }))
             });
           }
         } else {
@@ -1720,13 +1728,13 @@ function takePiCurrentTurnResourceContext(
 
 function primaryPersonalMemorySources(fixed: Readonly<{
   recall?: PersonalMemoryPreparedTurnContext["recall"];
-}>): readonly Readonly<PersonalMemorySourceReference>[] {
-  const unique = new Map<string, Readonly<PersonalMemorySourceReference>>();
+}>): readonly Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>[] {
+  const unique = new Map<string, Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>>();
   for (const candidate of fixed.recall?.candidates ?? []) {
     const id = candidate.id.trim();
     const title = candidate.title.trim();
     if (!id || !title || unique.has(id)) continue;
-    unique.set(id, Object.freeze({ id, title }));
+    unique.set(id, Object.freeze({ id, title, ...(candidate.revision === undefined ? {} : { revision: candidate.revision }) }));
   }
   return Object.freeze([...unique.values()]);
 }
@@ -2388,6 +2396,7 @@ async function createProductionAgentSession(input: {
       input.input.reportMemoryRecallProgress?.(progress),
     onAskPersonalMemorySourcesInjected: (snapshot) =>
       input.input.reportAskPersonalMemorySources?.(snapshot),
+    onPersonalMemorySourcesInjected: snapshot => input.input.reportPersonalMemorySourcesInjected?.(snapshot),
     personalMemoryAvailable: configured.toolCalling,
     contextLedger
   });

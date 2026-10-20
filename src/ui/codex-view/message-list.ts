@@ -158,6 +158,10 @@ export interface MessageListRenderInput {
   tokenUsage?: TokenUsage;
   vaultPath: string;
   readRawMessageText: (rawRef: string) => Promise<string>;
+  readPersonalMemorySource?: (id: string, revision?: number) => Promise<Readonly<{
+    status: "available" | "changed" | "missing";
+    content?: string;
+  }>>;
   onAnswerSaved?: (messageId: string, path: string) => Promise<void>;
   onDerivePiConversation?: (entryId: string) => Promise<void>;
   piConversationDeriveDisabled?: boolean;
@@ -2079,7 +2083,7 @@ export class CodexMessageListRenderer {
       if (untitledMemories.length + missingMemoryCount > 0) {
         const row = sources.createDiv({ cls: "codex-ai-elements-source-header codex-answer-memory-count" });
         setSemanticIcon(row.createSpan({ cls: "codex-ai-elements-source-icon", attr: { "aria-hidden": "true" } }), "user-round");
-        row.createSpan({ text: `${conversationUiText(env.settingsLanguage, "个人记忆", "Personal memory")}：${copy.process.memoryUsed(untitledMemories.length + missingMemoryCount)}` });
+        row.createSpan({ text: `${conversationUiText(env.settingsLanguage, "记忆", "Memory")}：${copy.process.memoryUsed(untitledMemories.length + missingMemoryCount)}` });
       }
     } else if (citations && !usage.askSourceAttribution) {
       container.createDiv({
@@ -2614,7 +2618,37 @@ export class CodexMessageListRenderer {
           conversationUiText(this.requireEnv().settingsLanguage, node.nodeId.endsWith(":memory:recall") ? "用上的记忆" : "本轮读到的笔记", node.nodeId.endsWith(":memory:recall") ? "Memories used" : "Notes read this turn"), true);
         disclosure.root.addClass("codex-work-record-sources");
         disclosure.body.addClass("codex-answer-source-list");
-        for (const document of documents) this.renderLocalDocumentSource(disclosure.body, document);
+        if (node.nodeId.endsWith(":memory:recall")) {
+          const sources = new Map(turn.messages.flatMap(message => message.injectedMemorySources ?? [])
+            .map(source => [source.id, source]));
+          let loading: Promise<void> | undefined;
+          const load = () => {
+            if (!disclosure.root.open || loading) return loading;
+            const env = this.requireEnv();
+            loading = Promise.all(documents.map(async document => {
+              this.renderLocalDocumentSource(disclosure.body, document);
+              if (document.kind !== "memory") return;
+              const source = sources.get(document.source.id);
+              if (!source || !env.readPersonalMemorySource) return;
+              const original = disclosure.body.createDiv({ cls: "codex-process-detail codex-memory-source-original",
+                text: conversationUiText(env.settingsLanguage, "读取中…", "Loading…") });
+              original.style.whiteSpace = "pre-wrap";
+              original.style.overflowWrap = "anywhere";
+              try {
+                const result = await env.readPersonalMemorySource(source.id, source.revision);
+                original.setText(result.status === "available" ? result.content ?? ""
+                  : result.status === "changed" ? conversationUiText(env.settingsLanguage, "这条记忆已修订，无法显示当时原文。", "This memory changed; its original text is unavailable.")
+                    : conversationUiText(env.settingsLanguage, "这条记忆已不存在或已被忘记。", "This memory is missing or has been forgotten."));
+              } catch {
+                original.setText(conversationUiText(env.settingsLanguage, "暂时无法读取这条记忆。", "This memory could not be read."));
+              }
+            })).then(() => { env.onScheduleMeasure(); });
+            return loading;
+          };
+          const onToggle = disclosure.root.ontoggle;
+          disclosure.root.ontoggle = event => { onToggle?.call(disclosure.root, event); return load(); };
+          void load();
+        } else for (const document of documents) this.renderLocalDocumentSource(disclosure.body, document);
       }
       return;
     }

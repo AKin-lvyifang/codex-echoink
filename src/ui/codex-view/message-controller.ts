@@ -100,6 +100,7 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     tokenUsage: session.tokenUsage,
     vaultPath: host.plugin.getVaultPath(),
     readRawMessageText: (rawRef) => host.plugin.readRawMessageText(rawRef),
+    readPersonalMemorySource: (id, revision) => host.plugin.readEchoInkPersonalMemorySource(id, revision),
     onAnswerSaved: async (messageId, path) => {
       await host.plugin.recordPiAnswerSave(session.id, messageId, path);
       const entryId = piEntryIdFromProjectedMessageId(messageId);

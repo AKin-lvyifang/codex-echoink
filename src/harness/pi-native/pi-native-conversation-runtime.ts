@@ -55,6 +55,7 @@ import {
   type PiChatUiViewModel
 } from "./pi-chat-ui-projector";
 import { appendSavedAnswerNote } from "./pi-answer-save";
+import { PI_MEMORY_SOURCES_ENTRY_TYPE, normalizeInjectedMemorySources, projectInjectedMemorySources } from "./pi-memory-sources";
 import {
   PiSessionDurabilityError,
   assertPiSessionAppendsDurable,
@@ -266,6 +267,10 @@ export interface PiNativeAgentSessionFactoryInput {
   reportAskPersonalMemorySources?(input: Readonly<{
     productRunId: string;
     sources: readonly Readonly<PersonalMemorySourceReference>[];
+  }>): Promise<void>;
+  reportPersonalMemorySourcesInjected?(input: Readonly<{
+    productRunId: string;
+    sources: readonly Readonly<import("../../settings/settings").InjectedPersonalMemorySourceReference>[];
   }>): Promise<void>;
 }
 
@@ -2963,6 +2968,20 @@ export class PiNativeConversationRuntime {
           input.sources
         );
       },
+      reportPersonalMemorySourcesInjected: async input => {
+        const active = holder.active;
+        const run = active?.currentRun;
+        if (!active || !run || run.memoryMode === "no_memory" || run.productRunId !== input.productRunId) return;
+        const sources = normalizeInjectedMemorySources(input.sources);
+        if (!sources.length || active.sessionManager.getBranch().some(entry => entry.type === "custom"
+          && entry.customType === PI_MEMORY_SOURCES_ENTRY_TYPE && (entry.data as { productRunId?: string })?.productRunId === run.productRunId)) return;
+        const id = active.sessionManager.appendCustomEntry(PI_MEMORY_SOURCES_ENTRY_TYPE, {
+          schemaVersion: 1, conversationId: active.catalog.conversationId,
+          piSessionId: active.catalog.piSessionId, productRunId: run.productRunId, sources
+        });
+        assertPiSessionAppendsDurable({ sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager, expectedEntryIds: [id] });
+        this.checkpointConversationLeaf(active);
+      },
       reportMemoryRecallProgress: async (progress) => {
         const active = holder.active;
         const run = active?.currentRun;
@@ -4813,6 +4832,7 @@ export class PiNativeConversationRuntime {
   private async projectionFromActive(
     active: ActiveConversation
   ): Promise<PiConversationProjection> {
+    projectInjectedMemorySources(active.projection.messages, active.sessionManager.getBranch(), active.catalog.piSessionId);
     active.projection.messages = projectGenerationEntries(active.projection.messages, active.sessionManager.getBranch());
     active.projection = this.projector.decorateToolProductState(
       active.projection,

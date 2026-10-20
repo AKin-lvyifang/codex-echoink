@@ -125,6 +125,11 @@ export interface PersonalMemorySourceReference {
   title: string;
 }
 
+/** Identity of a primary Memory actually inserted into this turn's model context. */
+export interface InjectedPersonalMemorySourceReference extends PersonalMemorySourceReference {
+  revision?: number;
+}
+
 export interface DiffFileSummary {
   path: string;
   previousPath?: string;
@@ -229,6 +234,8 @@ export interface ChatMessage {
   askSourceAttribution?: true;
   /** Display-only primary Memory ids and titles; never Memory bodies or prompts. */
   personalMemorySources?: readonly PersonalMemorySourceReference[];
+  /** Session-owned identities only; original Memory content stays in its repository. */
+  injectedMemorySources?: readonly InjectedPersonalMemorySourceReference[];
   /** Display-only note mention metadata; note bodies remain in Pi Session. */
   noteMentions?: readonly NoteMentionReference[];
   selectionAnnotations?: readonly SelectionAnnotation[];
