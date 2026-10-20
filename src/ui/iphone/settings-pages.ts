@@ -8,6 +8,7 @@ import { normalizeEchoInkColorTheme } from "../appearance-theme";
 import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { refreshSettingsLanguage, settingsMessage } from "./settings-language";
+import { IPhoneModulePage } from "./module-elements";
 import { createAgentFormPage } from "./agent-form";
 import { IPhoneAccountPages } from "./account-pages";
 import { IPhoneAgentSettingsPages } from "./agent-settings-pages";
@@ -126,17 +127,24 @@ export class IPhoneSettingsPages {
       { id: "journal", name: "日记", icon: "book-open", value: settings.journalDirectory },
       { id: "review", name: "复盘", icon: "history", route: "review" },
       { id: "todos", name: "待办", icon: "list-todo", route: "todos-settings" },
-      { id: "finance", name: "启用财务", icon: "wallet", pro: true },
+      { id: "finance", name: "财务", icon: "wallet", pro: true, route: "finance-settings" },
       { id: "english-diary", name: "英文日记", icon: "languages", pro: true, route: "english-diary-settings", value: settings.englishDiary.englishDirectory }
     ];
     for (const entry of entries) {
       const group = entry.pro ? pro : base, row = settingsRow(ctx, group, entry.name, { icon: entry.icon, value: entry.value, literalValue: true });
       row.classList.add("ip-settings-module-row");
       const enabled = () => mobileModuleEnabled(ctx.host.settings(), entry.id), policy = entry.pro ? getProPluginAccess(ctx.host.accountService ?? unavailableCapabilityAccess, enabled()) : undefined;
-      if (entry.route && (!policy || policy.canEnter)) {
-        const label = row.querySelector<HTMLElement>(".ip-settings-label")!, button = el(ctx.document, "button", "ip-settings-module-link"); button.type = "button";
-        button.append(...Array.from(label.childNodes)); label.replaceWith(button); button.addEventListener("click", () => { void this.legacy(entry.route!).catch(ctx.error); });
-      }
+      const label = row.querySelector<HTMLElement>(".ip-settings-label")!, button = el(ctx.document, "button", "ip-settings-module-link"); button.type = "button";
+      const value = row.querySelector<HTMLElement>(".ip-settings-value");
+      const icon = row.querySelector<HTMLElement>(".ip-icon"); if (icon) button.append(icon); button.append(label); if (value) button.append(value); button.append(iphoneIcon(ctx.document, "chevron-right")); row.prepend(button);
+      if (policy && !policy.canToggle) label.append(el(ctx.document, "span", "ip-settings-detail", policy.reason ?? "需要 PRO"));
+      button.addEventListener("click", () => { void Promise.resolve().then(async () => {
+        const current = entry.pro ? getProPluginAccess(ctx.host.accountService ?? unavailableCapabilityAccess, enabled()) : undefined;
+        if (current && !current.canToggle) throw new Error(current.reason ?? "需要 PRO");
+        if (entry.id === "journal") {
+          const view = new IPhoneModulePage(ctx, "iphone-settings-journal", "日记设置"); settingsRow(ctx, view.group(), "日记位置", { value: ctx.host.settings().journalDirectory, literalValue: true, action: async () => { ctx.host.services.modules.journal.openSettings(); } }); await view.push();
+        } else if (entry.route) await this.legacy(entry.route);
+      }).catch(ctx.error); });
       if (policy && !policy.canToggle) {
         const rights = el(ctx.document, "button", "ip-settings-module-rights"); rights.type = "button"; settingsMessage(ctx, rights, "需要 PRO"); rights.addEventListener("click", () => { void this.legacy("account").catch(ctx.error); }); row.append(rights);
       } else settingsSwitch(ctx, group, entry.id === "finance" ? "财务" : entry.name, enabled, value => setMobileModuleEnabled(ctx.host, entry.id, value), undefined, row);

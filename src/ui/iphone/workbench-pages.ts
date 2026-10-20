@@ -181,11 +181,15 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
     if (snapshot.todayTodos.length) {
       const area = section(ctx, "今日待办", snapshot.todayTodos.length), rows = el(ctx.document, "div", "ip-rows");
       area.heading.append(iphoneButton(ctx.document, "全部待办", () => { void ctx.host.openModule("todos").catch(error => ctx.error(error)); }, "is-text ip-section-more", "chevron-right"));
+      const source = snapshot.todoSource;
       for (const todo of snapshot.todayTodos) {
         const row = el(ctx.document, "div", "ip-row ip-todo-row"), label = el(ctx.document, "label", "ip-todo-check"), check = el(ctx.document, "input", ""); check.type = "checkbox"; check.checked = todo.done; check.setAttribute("aria-label", `完成 ${todo.title}`); label.append(check); row.append(label, el(ctx.document, "div", "ip-grow", todo.title));
         if (todo.project) { const project = el(ctx.document, "span", "ip-project"); project.append(iphoneIcon(ctx.document, "folder"), el(ctx.document, "span", "", todo.project)); row.append(project); }
         row.append(el(ctx.document, "span", "ip-due", iphoneDateGroup(new Date(`${todo.dueDate}T12:00:00`).getTime())));
-        check.addEventListener("change", () => { check.disabled = true; void ctx.host.services.getTodoStore().toggleDone(todo, check.checked).then(() => { void loadFacts(); }, error => { check.checked = todo.done; ctx.error(error); }).finally(() => { check.disabled = false; }); }); rows.append(row);
+        check.addEventListener("change", () => { check.disabled = true; void Promise.resolve().then(() => {
+          if (!source) throw new Error("待办来源尚未确认，请重新读取工作台。");
+          return ctx.host.services.getTodoStore().toggleDone(todo, check.checked, source.version, source.path);
+        }).then(() => { void loadFacts(); }, error => { check.checked = todo.done; ctx.error(error); }).finally(() => { check.disabled = false; }); }); rows.append(row);
       }
       area.element.append(rows); todos.append(area.element);
     }

@@ -3,9 +3,10 @@ import { BUILTIN_SKILLS, renderBuiltinSkill } from "../harness/resources/builtin
 import type { EchoInkResource } from "../resources/types";
 import { sha256Hex } from "../utils/sha256";
 import { skillIcon } from "../agents/skill-icons";
-import { checkAgentSkill, type AgentCapabilityContext } from "../agents/capability-core";
+import { checkAgentSkill, skillCapabilityIds, type AgentCapabilityContext } from "../agents/capability-core";
 import { mobileAtomicFilePort } from "./finance-store";
 import type { MobileCapabilityPolicy } from "./capability-policy";
+import type { MobileAgentRegistryService } from "./agent-registry-service";
 import type { MobileSettings } from "./settings";
 import type { MobileSkillSnapshot, MobileSkillSummary } from "./capabilities-contracts";
 
@@ -19,7 +20,7 @@ function safePath(path: string): string {
 interface SkillEntry { id: string; name: string; description: string; enabled: boolean; builtin: boolean; content: string; path: string; resource?: EchoInkResource }
 export class MobileSkillsService {
   private writes: Promise<unknown> = Promise.resolve();
-  constructor(private adapter: DataAdapter, private settings: () => MobileSettings, private save: () => Promise<void>, _policy: (agentId: string) => MobileCapabilityPolicy) {}
+  constructor(private adapter: DataAdapter, private settings: () => MobileSettings, private save: () => Promise<void>, _policy: (agentId: string) => MobileCapabilityPolicy, private agents?: Pick<MobileAgentRegistryService, "snapshot" | "update">) {}
   private serialize<T>(run: () => Promise<T>): Promise<T> { const pending = this.writes.then(run, run); this.writes = pending.catch(() => {}); return pending; }
   entries(): SkillEntry[] {
     const settings = this.settings(), saved = settings.resources.catalog.filter(item => item.kind === "skill");
@@ -64,6 +65,7 @@ export class MobileSkillsService {
     return { id: item.id, name: item.name, description: item.description, builtin: item.builtin, enabled: item.enabled, icon: skillIcon(item.id),
       mobileAvailable, ...(!mobileAvailable ? { unavailableReason: item.id === "obsidian-cli" ? "此 Skill 仅在电脑运行；移动端可以查看和编辑。" : "Skill 正文尚未导入当前笔记库。" } : {}),
       contentPath: actualPath, sourceLabel: actualPath ?? (item.builtin ? "EchoInk 内置正文" : "正文尚未导入"),
+      agentsVersion: sha256Hex(JSON.stringify(this.settings().agentRegistry)),
       agents: this.settings().agentRegistry.agents.map(agent => {
         return { id: agent.id, name: agent.name, allowed: this.configuredGrant(item, agent.id) };
       }) };
@@ -93,6 +95,29 @@ export class MobileSkillsService {
       await port.write(content, expected);
       if (await this.adapter.read(item.path) !== content) throw new Error("Skill 保存后核对失败，原稿与恢复备份已保留。");
       return this.readSkill(id);
+    });
+  }
+  saveSkillAgents(id: string, agentIds: string[], version: string): Promise<MobileSkillSummary> {
+    const selected = new Set(agentIds);
+    return this.serialize(async () => {
+      const item = this.entry(id);
+      const snapshot = await this.agents?.snapshot(), registry = snapshot?.registry ?? this.settings().agentRegistry;
+      if (sha256Hex(JSON.stringify(registry)) !== version) throw conflict();
+      if ([...selected].some(id => !registry.agents.some(agent => agent.id === id))) throw conflict();
+      const aliases = skillCapabilityIds(item.resource?.id ?? item.id, item.id), grant = aliases[0];
+      const apply = (draft: typeof registry) => {
+        for (const agent of draft.agents) {
+          agent.capabilityIds = (agent.capabilityIds ?? []).filter(value => !aliases.includes(value));
+          agent.disabledCapabilityIds = (agent.disabledCapabilityIds ?? []).filter(value => !aliases.includes(value));
+          if (selected.has(agent.id)) agent.capabilityIds.push(grant); else agent.disabledCapabilityIds.push(grant);
+        }
+      };
+      if (snapshot && this.agents) await this.agents.update(apply, snapshot.version);
+      else {
+        const settings = this.settings(), previous = settings.agentRegistry, next = structuredClone(previous); apply(next); settings.agentRegistry = next;
+        try { await this.save(); } catch (error) { if (settings.agentRegistry === next) settings.agentRegistry = previous; throw error; }
+      }
+      return this.summary(this.entry(id));
     });
   }
   setSkillEnabled(id: string, enabled: boolean): Promise<MobileSkillSummary> {

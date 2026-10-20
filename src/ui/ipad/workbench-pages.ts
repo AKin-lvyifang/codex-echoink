@@ -74,7 +74,7 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   const cards = new Map<string, { element: HTMLElement; who: HTMLElement; title: HTMLElement; step: HTMLElement;
     question?: ReturnType<typeof createInlineQuestion>; actions?: HTMLElement }>();
   const signalCache = new Map<string, { element: HTMLElement; signature: string; signal: WorkbenchSignal }>();
-  const todoCache = new Map<string, { element: HTMLElement; todo: ParsedTodoRecord; check: HTMLInputElement; title: HTMLElement; detail: HTMLElement }>();
+  const todoCache = new Map<string, { element: HTMLElement; todo: ParsedTodoRecord; source?: WorkbenchSnapshot["todoSource"]; check: HTMLInputElement; title: HTMLElement; detail: HTMLElement }>();
   const pendingTodos = new Set<string>();
 
   const taskCard = (task: MobileSession): HTMLElement => {
@@ -183,13 +183,16 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
       const current = entry;
       check.addEventListener("change", () => {
         if (pendingTodos.has(key)) return;
-        const target = current.todo, done = check.checked; pendingTodos.add(key); check.disabled = true;
-        void ctx.host.services.getTodoStore().toggleDone(target, done).then(() => loadFacts(), error => {
+        const target = current.todo, source = current.source, done = check.checked; pendingTodos.add(key); check.disabled = true;
+        void Promise.resolve().then(() => {
+          if (!source) throw new Error("待办来源尚未确认，请重新读取工作台。");
+          return ctx.host.services.getTodoStore().toggleDone(target, done, source.version, source.path);
+        }).then(() => loadFacts(), error => {
           check.checked = target.done; if (!disposed) ctx.error(error);
         }).finally(() => { pendingTodos.delete(key); if (!disposed) renderFacts(); });
       });
     }
-    entry.todo = todo; entry.check.disabled = pendingTodos.has(key);
+    entry.todo = todo; entry.source = snapshot?.todoSource; entry.check.disabled = pendingTodos.has(key);
     if (!pendingTodos.has(key)) entry.check.checked = todo.done;
     entry.check.setAttribute("aria-label", `完成 ${todo.title}`); entry.title.textContent = todo.title; entry.detail.replaceChildren();
     if (todo.project) { const project = el(ctx.document, "span", "pd-project"); project.append(ipadIcon(ctx.document, "folder"), el(ctx.document, "span", "", todo.project)); entry.detail.append(project); }

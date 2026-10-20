@@ -10,6 +10,18 @@ export function moduleButton(ctx: IPadPageContext, label: string, action: () => 
   const visible = el(ctx.document, "span", "pd-module-button-visible"); if (icon) visible.append(ipadIcon(ctx.document, icon)); visible.append(el(ctx.document, "span", "", label)); button.append(visible);
   button.addEventListener("click", () => { if (!button.disabled) void Promise.resolve().then(action).catch(error => ctx.error(error)); }); return button;
 }
+/** Settings reuse the same grouped rows inside module-owned pages. */
+export function moduleSettingsGroup(ctx: IPadPageContext, parent: HTMLElement, title?: string): HTMLElement {
+  if (title) parent.append(el(ctx.document, "h2", "pd-module-settings-label", title));
+  const group = el(ctx.document, "div", "pd-module-settings-group"); parent.append(group); return group;
+}
+export function moduleNavigationRow(ctx: IPadPageContext, parent: HTMLElement, label: string, value: string, action: () => void | Promise<unknown>): HTMLButtonElement {
+  const row = el(ctx.document, "button", "pd-module-settings-row"); row.type = "button";
+  row.append(el(ctx.document, "span", "pd-module-settings-name", label));
+  if (value) row.append(el(ctx.document, "span", "pd-module-settings-value", value));
+  row.append(ipadIcon(ctx.document, "chevron-right"));
+  row.addEventListener("click", () => { if (!row.disabled) void Promise.resolve().then(action).catch(ctx.error); }); parent.append(row); return row;
+}
 export function moduleField(ctx: IPadPageContext, parent: HTMLElement, label: string, value: string, change: (value: string) => void, type = "text"): HTMLInputElement {
   const field = el(ctx.document, "label", "pd-module-field"), input = el(ctx.document, "input", "pd-module-input"); input.type = type; input.value = value; input.setAttribute("aria-label", label);
   input.addEventListener("input", () => change(input.value)); field.append(el(ctx.document, "span", "", label), input); parent.append(field); return input;
@@ -69,7 +81,7 @@ export function moduleView(ctx: IPadPageContext, id: string, title: string, modu
       page.dispose = () => { if (disposed) return; disposed = true; generation++; cleanup.forEach(dispose => dispose()); }; return page;
     }
   };
-  const back = moduleButton(ctx, "", () => ctx.shell.back(), false, "arrow-left"); back.setAttribute("aria-label", moduleText(ctx, "返回", "Back")); back.classList.add("is-icon"); header.append(back, el(ctx.document, "h1", "pd-module-title", title));
+  const back = moduleButton(ctx, "", () => ctx.shell.back(), false, "chevron-left"); back.setAttribute("aria-label", moduleText(ctx, "返回", "Back")); back.classList.add("is-icon"); header.append(back, el(ctx.document, "h1", "pd-module-title", title));
   if (module) {
     const handoff = moduleButton(ctx, "", async () => {
       if (busy) return; const prompts = { journal: moduleText(ctx, "聊聊今天", "Let's talk about today"), todos: moduleText(ctx, "帮我把今天和本周的待办排个顺序", "Help me prioritize my to-dos for today and this week"), finance: moduleText(ctx, "看看这个月餐饮为什么快超预算了", "Review why dining spending is close to this month's budget") };

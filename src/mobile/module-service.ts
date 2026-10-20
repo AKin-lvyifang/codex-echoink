@@ -51,15 +51,26 @@ export class MobileModuleService implements MobileModulePort {
     };
     const todos = services.getTodoStore();
     this.todos = {
+      listSourceFiles: () => services.app.vault.getMarkdownFiles().map(file => file.path).sort((a, b) => a.localeCompare(b)),
+      selectSource: async (path, expectedPath) => {
+        if (!path || path !== path.trim() || path.startsWith("/") || /[\\:]/u.test(path) || [...path].some(character => character.charCodeAt(0) < 32) || path.split("/").some(part => !part || part === "." || part === "..")) throw new Error("请选择当前笔记库中的 Markdown 文件。");
+        const file = services.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile) || file.extension.toLowerCase() !== "md") throw new Error("所选文件已不存在，请重新选择。");
+        await todos.changeSource(expectedPath, async () => {
+          const before = services.settings.mobileUi.todoSourcePath; services.settings.mobileUi.todoSourcePath = path;
+          try { await services.saveSettings(); }
+          catch (error) { services.settings.mobileUi.todoSourcePath = before; throw error; }
+        });
+      },
       read: async () => {
         this.enabled("todos"); await todos.initialize();
         const snapshot = await todos.readOnlySnapshot();
         return { ...snapshot, projects: getTodoProjects(services), categories: structuredClone(services.settings.todoCategories), completion: todos.completionStatistics() };
       },
-      add: async (input, version) => { this.enabled("todos"); await todos.addTodo(input, version); },
-      update: async (target, patch, version) => { this.enabled("todos"); await todos.updateTodo(target, patch, version); },
-      toggle: async (target, done, version) => { this.enabled("todos"); await todos.updateTodo(target, { done }, version); },
-      remove: async (target, version) => { this.enabled("todos"); await todos.removeTodo(target, version); },
+      add: async (input, version, sourcePath) => { this.enabled("todos"); await todos.addTodo(input, version, sourcePath); },
+      update: async (target, patch, version, sourcePath) => { this.enabled("todos"); await todos.updateTodo(target, patch, version, sourcePath); },
+      toggle: async (target, done, version, sourcePath) => { this.enabled("todos"); await todos.updateTodo(target, { done }, version, sourcePath); },
+      remove: async (target, version, sourcePath) => { this.enabled("todos"); await todos.removeTodo(target, version, sourcePath); },
       addCategory: name => this.categoryWrite(async () => {
         name = this.categoryName(name);
         const category = { id: newId("todo-category"), name };
@@ -67,16 +78,17 @@ export class MobileModuleService implements MobileModulePort {
         try { await services.saveSettings(); }
         catch (error) { const index = services.settings.todoCategories.indexOf(category); if (index >= 0) services.settings.todoCategories.splice(index, 1); throw error; }
       }),
-      renameCategory: (oldName, name, version) => this.categoryWrite(async () => {
+      renameCategory: (oldName, name, version, sourcePath) => this.categoryWrite(async () => {
         if (oldName === name.trim()) return;
         name = this.categoryName(name);
         const category = services.settings.todoCategories.find(item => item.name === oldName);
         if (!category) throw new Error("分类已变化，请重新读取。");
+        if (sourcePath !== undefined && todos.sourcePath !== sourcePath) throw new Error("待办数据文件已切换，请返回后重新打开；输入已保留。");
         if ((await todos.readOnlySnapshot()).contentVersion !== version) throw new Error("待办源文件已变化，请重新读取。");
         category.name = name;
         try { await services.saveSettings(); }
         catch (error) { if (category.name === name) category.name = oldName; throw error; }
-        try { await todos.renameCategoryInSource(oldName, name, version); }
+        try { await todos.renameCategoryInSource(oldName, name, version, sourcePath); }
         catch (error) {
           if (category.name === name) { category.name = oldName; try { await services.saveSettings(); } catch (rollback) { throw new AggregateError([error, rollback], "分类未完成保存，请重新读取；原待办已保留。"); } }
           throw error;

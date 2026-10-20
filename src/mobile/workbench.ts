@@ -23,6 +23,7 @@ import { mobileModuleEnabled } from "./module-settings";
 /** Null is deliberately preserved at the acquisition boundary; it never becomes a count of zero. */
 export interface MobileWorkbenchFacts extends Omit<WorkbenchFacts, "todos" | "inbox" | "raw" | "finance"> {
   todos: WorkbenchFacts["todos"] | null;
+  todoSource?: WorkbenchSnapshot["todoSource"];
   inbox: WorkbenchFacts["inbox"] | null;
   raw: WorkbenchFacts["raw"] | null;
   finance: NonNullable<WorkbenchFacts["finance"]> | null;
@@ -341,6 +342,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
     const records = await attempt("工作台记录读取失败", null, () => this.readRecords());
     facts.todos = await attempt("待办读取失败", null, async () => {
       const snapshot = await this.services().getTodoStore().readOnlySnapshot();
+      facts.todoSource = { path: snapshot.sourcePath, version: snapshot.contentVersion };
       facts.versions[snapshot.sourcePath] = snapshot.contentVersion ?? "missing"; return snapshot.records;
     });
     if (pro && settings.lifestyle.finance.enabled) {
@@ -395,7 +397,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
         : signal.id === 14 ? [facts.isolated, facts.versions]
         : signal.id === 5 ? [facts.journals, facts.englishMissing, facts.versions]
         : signal.moduleId === "journal" ? [facts.journals, facts.versions]
-        : signal.moduleId === "todos" ? [facts.todos, facts.versions["EchoInk/待办.md"]]
+        : signal.moduleId === "todos" ? [facts.todos, facts.todoSource]
         : null;
       if (version) signal.source.versions = { ...signal.source.versions, "$facts": sha256Hex(JSON.stringify(version)) };
       return signal;
@@ -403,7 +405,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
   }
   async load(now = Date.now()): Promise<WorkbenchSnapshot> {
     const facts = await this.readFacts(now), input = this.signalFacts(facts, now), today = localWorkbenchDate(now);
-    return { generatedAt: now, modules: [...facts.modules], signals: this.signals(facts, now),
+    return { generatedAt: now, modules: [...facts.modules], todoSource: facts.todoSource, signals: this.signals(facts, now),
       todayTodos: facts.modules.includes("todos") ? facts.todos?.filter(todo => !todo.done && todo.dueDate === today) ?? [] : [], issues: [...facts.issues], nextRefreshAt: nextWorkbenchRefreshAt(input) };
   }
   async handoff(signal: WorkbenchSignal, replaceDraft = false): Promise<{ agentId: string; conflict: boolean }> {

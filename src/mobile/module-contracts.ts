@@ -30,13 +30,15 @@ export interface MobileTodoSnapshot extends TodoReadSnapshot {
   completion: ReturnType<EchoInkTodoStore["completionStatistics"]>;
 }
 export interface MobileTodoPort {
+  listSourceFiles(): string[];
+  selectSource(path: string, expectedPath: string): Promise<void>;
   read(): Promise<MobileTodoSnapshot>;
   addCategory(name: string): Promise<void>;
-  renameCategory(oldName: string, newName: string, expectedVersion: string | null): Promise<void>;
-  add(input: TodoInput, expectedVersion: string | null): Promise<void>;
-  update(target: ParsedTodoRecord, patch: Partial<TodoInput>, expectedVersion: string | null): Promise<void>;
-  toggle(target: ParsedTodoRecord, done: boolean, expectedVersion: string | null): Promise<void>;
-  remove(target: ParsedTodoRecord, expectedVersion: string | null): Promise<void>;
+  renameCategory(oldName: string, newName: string, expectedVersion: string | null, expectedSourcePath?: string): Promise<void>;
+  add(input: TodoInput, expectedVersion: string | null, expectedSourcePath?: string): Promise<void>;
+  update(target: ParsedTodoRecord, patch: Partial<TodoInput>, expectedVersion: string | null, expectedSourcePath?: string): Promise<void>;
+  toggle(target: ParsedTodoRecord, done: boolean, expectedVersion: string | null, expectedSourcePath?: string): Promise<void>;
+  remove(target: ParsedTodoRecord, expectedVersion: string | null, expectedSourcePath?: string): Promise<void>;
   subscribe(listener: () => void): () => void;
 }
 export interface MobileFinancePort {

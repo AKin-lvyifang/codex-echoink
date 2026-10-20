@@ -101,3 +101,8 @@
   .echoink-iphone .ip-settings-segment-slider,
   .echoink-iphone .ip-settings input.ip-settings-switch::before { transition: none; }
 }
+
+.echoink-iphone .ip-settings .ip-settings-module-row { padding: 0 12px 0 0; gap: 8px; }
+.echoink-iphone .ip-settings-module-row > .ip-settings-module-link { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; min-height: 52px; height: auto; padding: 8px 12px; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-align: left; box-shadow: none; }
+.echoink-iphone .ip-settings-module-link > .ip-icon { flex: none; }
+.echoink-iphone .ip-settings-module-link::before, .echoink-iphone .ip-settings-module-link::after { content: none; }

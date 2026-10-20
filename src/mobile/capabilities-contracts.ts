@@ -5,6 +5,7 @@ export interface MobileSkillSummary {
   id: string; name: string; description: string; icon: string; builtin: boolean; enabled: boolean;
   mobileAvailable: boolean; unavailableReason?: string; contentPath: string | null; sourceLabel: string;
   agents: { id: string; name: string; allowed: boolean }[];
+  agentsVersion: string;
   usageCount?: number; lastUsedAt?: number | null;
 }
 export interface MobileSkillSnapshot extends MobileSkillSummary { content: string; version: string }
@@ -26,6 +27,7 @@ export interface MobileCapabilitiesPort {
   readSkill(id: string): Promise<MobileSkillSnapshot>;
   setSkillEnabled(id: string, enabled: boolean): Promise<MobileSkillSummary>;
   saveSkill(id: string, content: string, version: string): Promise<MobileSkillSnapshot>;
+  saveSkillAgents(id: string, agentIds: string[], version: string): Promise<MobileSkillSummary>;
   defaultSkillContent(id: string): string | null;
   listMcp(): Promise<MobileMcpSummary[]>;
   createMcpDraft(id?: string): Promise<MobileMcpDraft>;

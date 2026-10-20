@@ -15,17 +15,19 @@ vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports,
 const tick = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const root = dom.window.document.querySelector("main"), right = dom.window.document.querySelector("aside textarea");
 const skills = [
-  { id: "todo-operations", name: "待办操作", builtin: true, enabled: false, mobileAvailable: true, contentPath: "Skills/todo/SKILL.md", sourceLabel: "EchoInk 内置", description: "处理待办", icon: "list-todo", agents: [{ id: "general", name: "总助", allowed: true }], content: "saved instructions", version: "v1" },
+  { id: "todo-operations", name: "待办操作", builtin: true, enabled: false, mobileAvailable: true, contentPath: "Skills/todo/SKILL.md", sourceLabel: "EchoInk 内置", description: "处理待办", icon: "list-todo", agentsVersion: "agents-v1", agents: [{ id: "general", name: "总助", allowed: true }, { id: "organizer", name: "整理员", allowed: false }], content: "saved instructions", version: "v1" },
   { id: "obsidian-cli", name: "Obsidian CLI", builtin: true, enabled: true, mobileAvailable: false, contentPath: null, sourceLabel: "EchoInk 内置", description: "电脑命令", icon: "terminal", agents: [], content: "CLI instructions", version: "v1" }
 ];
 const desktop = { id: "desktop", name: "本地服务", description: "", enabled: true, transport: "stdio", readonly: true, status: "desktop-only", statusLabel: "只能在电脑上用", trusted: true, tools: [], toolPolicies: {}, version: "v1" };
 const settings = { settingsLanguage: "zh-CN", resources: { tick: 0 }, agentRegistry: { agents: [{ id: "general", name: "总助", avatar: { kind: "default" } }] } };
+let failAgentSave = false;
 let tavily = { enabled: false, apiKey: "", version: "v1" }, failSave = false, failToggle = false, failMcpSave = false, failTavilySave = false, testFailure = "", pendingDiscovery = false, pendingTest = false, discoveryAborted = false, testAborted = false;
-const writes = { skills: [], mcp: [], tavily: [] }, stack = [], editedAgents = [];
+const writes = { agents: [], skills: [], mcp: [], tavily: [] }, stack = [], editedAgents = [];
 const api = {
   listSkills: async () => structuredClone(skills), readSkill: async id => structuredClone(skills.find(skill => skill.id === id)),
   setSkillEnabled: async (id, enabled) => { if (failToggle) throw new Error("toggle failed"); const item = skills.find(skill => skill.id === id); item.enabled = enabled; settings.resources.tick++; return structuredClone(item); },
   saveSkill: async (id, content, version) => { writes.skills.push({ id, content, version }); if (failSave) throw new Error("外部内容已更改"); const item = skills.find(skill => skill.id === id); Object.assign(item, { content, version: "v2" }); settings.resources.tick++; return structuredClone(item); },
+  saveSkillAgents: async (id, selected, version) => { writes.agents.push({ id, selected, version }); if (failAgentSave) throw new Error("授权保存失败"); const item = skills.find(skill => skill.id === id); assert.equal(version, item.agentsVersion); item.agents = item.agents.map(agent => ({ ...agent, allowed: selected.includes(agent.id) })); item.agentsVersion = "agents-v2"; settings.resources.tick++; return structuredClone(item); },
   defaultSkillContent: () => "default instructions", listMcp: async () => [desktop],
   createMcpDraft: async id => id ? { ...desktop, url: "", headers: {} } : { id: "remote", name: "", description: "", enabled: true, transport: "http", readonly: false, url: "", headers: {}, trusted: false, tools: [], toolPolicies: {}, version: "" },
   discoverMcp: async (draft, signal) => {
@@ -64,8 +66,12 @@ try {
   await click("恢复默认"); assert.equal(editor.value, "default instructions"); assert.equal(writes.skills.length, 0);
   input("Skill 指令", "conflicting draft"); failSave = true; await click("保存");
   assert.equal(current().content.querySelector("textarea").value, "conflicting draft"); assert.match(current().content.textContent, /外部内容已更改/);
-  await click("总助"); assert.deepEqual(editedAgents, ["general"]); assert.equal(current().id, "agent-editor");
-  await ctx.back(); assert.equal(current().content.querySelector("textarea"), editor, "Agent editor preserves central Skill draft nodes");
+  await click("总助"); assert.deepEqual(editedAgents, []); assert.equal(current().id, "ipad-skill-agents-todo-operations");
+  assert.equal(current().content.querySelectorAll('input[type="checkbox"]').length, 2, "all Agents are selectable");
+  const agentCheck = current().content.querySelector('[aria-label="整理员"]'); agentCheck.checked = true; agentCheck.dispatchEvent(new dom.window.Event("change"));
+  failAgentSave = true; await click("保存"); assert.match(current().content.textContent, /授权保存失败/); assert.equal(agentCheck.checked, true);
+  failAgentSave = false; await click("保存"); assert.equal(current().id, "ipad-skill-todo-operations"); assert.ok(skills[0].agents.every(agent => agent.allowed));
+  assert.equal(current().content.querySelector("textarea"), editor, "Agent selection preserves central Skill draft nodes");
   assert.equal(right.value, "right pane draft");
   const denied = ctx.back(); await tick(); await click("继续编辑"); assert.equal(await denied, false); assert.equal(editor.value, "conflicting draft");
   failSave = false; await click("保存"); assert.equal(skills[0].content, "conflicting draft"); assert.equal(writes.skills.at(-1).version, "v1");

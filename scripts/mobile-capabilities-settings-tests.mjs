@@ -70,6 +70,21 @@ await test("Skill Agent rows retain configured grants while global/runtime avail
   const desktopOnly = await f.service.readSkill("obsidian-cli"); assert.equal(desktopOnly.mobileAvailable, false); assert.equal(desktopOnly.agents.find(agent => agent.id === "sol").allowed, true);
   assert.throws(() => f.policy().assertSkill("obsidian-cli"));
 });
+await test("Skill Agent selection uses independent grants, preserves other permissions, rejects stale versions and rolls back failed saves", async () => {
+  let fail = false; const f = fixture(undefined, async () => { if (fail) throw new Error("save failed"); });
+  f.settings.agentRegistry.agents.push({ id: "other", name: "Other", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: ["knowledge", "unshown-future-capability"] });
+  const before = await f.service.readSkill("todo-operations");
+  fail = true; await assert.rejects(f.service.saveSkillAgents(before.id, ["other"], before.agentsVersion)); assert.equal((await f.service.readSkill(before.id)).agentsVersion, before.agentsVersion);
+  fail = false; const saved = await f.service.saveSkillAgents(before.id, ["other"], before.agentsVersion);
+  assert.deepEqual(plain(saved.agents.filter(agent => agent.allowed).map(agent => agent.id)), ["other"]);
+  assert.throws(() => f.policy("sol").assertSkill(before.id)); f.policy("other").assertSkill(before.id);
+  assert.equal(f.settings.agentRegistry.agents[1].capabilityIds.includes("todos"), false, "allowing a Skill does not grant its whole module");
+  f.settings.mobileUi.moduleEnabled = { todos: false }; assert.throws(() => f.policy("other").assertSkill(before.id)); f.settings.mobileUi.moduleEnabled = {};
+  assert.ok(f.settings.agentRegistry.agents[1].capabilityIds.includes("unshown-future-capability"));
+  await assert.rejects(f.service.saveSkillAgents(before.id, ["sol"], before.agentsVersion), /其他位置修改/);
+  const normalized = loadMobileSettings(plain(f.settings)); assert.ok(normalized.agentRegistry.agents[0].disabledCapabilityIds.includes("skill:todo-operations"));
+  assert.ok(normalized.agentRegistry.agents[1].capabilityIds.includes("skill:todo-operations"));
+});
 await test("Skill external edit conflict, failed atomic install restores original, retry retains custom metadata", async () => {
   const f = fixture(); const path = "Skills/custom/SKILL.md";
   f.files.set(path, "Original"); f.settings.resources.catalog.push({ id: "custom", kind: "skill", source: "manual", enabled: false, name: "Mine", description: "Custom", bridgeMode: "prompt-only", contentPath: path, metadata: { future: true } });
@@ -318,7 +333,7 @@ await test("MobileStore accepts all external effect stages and strictly rejects 
     operation => { operation.targetWasMissing = true; }, operation => { operation.beforeRevision = 1; }, operation => { operation.completedRevision = 1; },
     operation => { operation.toolName = "memory_write"; }, operation => { operation.arguments = { secret: "forbidden" }; }]) {
     const damaged = JSON.parse(valid); mutate(damaged.sessions.find(task => task.id === taskId).operations[0]); const bytes = JSON.stringify(damaged); f.files.set(f.store.statePath, bytes);
-    const loaded = new MobileStore(f.adapter, "plugin/mobile", f.store.instanceId); await assert.rejects(loaded.load(), /数据格式无法读取/u); assert.equal(f.files.get(f.store.statePath), bytes);
+    const loaded = new MobileStore(f.adapter, "plugin/mobile", f.store.instanceId); await assert.rejects(loaded.load(), /数据格式或版本无法读取/u); assert.equal(f.files.get(f.store.statePath), bytes);
   }
 });
 await test("transport failures are safe, timeout settles, SSE works and expired sessions never replay", async () => {

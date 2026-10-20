@@ -1,9 +1,9 @@
 import type { FinanceMerchantSetting, FinanceAccountSetting, FinanceCategorySetting } from "../../lifestyle/settings";
 import { DEFAULT_FINANCE_CATEGORIES } from "../../lifestyle/settings";
 import { setMobileModuleEnabled } from "../../mobile/module-settings";
-import { settingsCheck, settingsSwitch } from "./settings-elements";
+import { settingsCheck, settingsRow, settingsSwitch } from "./settings-elements";
 import type { IPhonePageContext } from "./workbench-contract";
-import { iphoneButton, iphoneElement as el } from "./workbench-elements";
+import { iphoneElement as el } from "./workbench-elements";
 import { IPhoneModulePage, moduleText } from "./module-elements";
 import { financeIconField } from "./finance-forms";
 type Catalog = "merchants" | "accounts" | "categories";
@@ -13,8 +13,6 @@ export async function openIPhoneFinanceSettings(ctx: IPhonePageContext, catalog?
   if (catalog) return openCatalog(ctx, catalog);
   const id = "iphone-settings-finance"; if (ctx.shell.hasPage(id)) { await ctx.shell.backTo(id); return; }
   const view = new IPhoneModulePage(ctx, id, "财务设置"), service = ctx.host.services.modules.finance.service;
-  let path = ctx.host.settings().lifestyle.finance.analysisDirectory ?? "", original = path;
-  view.dirty = () => path !== original;
   const saveOption = async (key: "aiEnabled" | "importAiEnabled" | "showOnHome", value: boolean) => { await view.run(async () => { await service.saveOption(key, value); }); render(); };
   const render = () => {
     if (!view.alive) return; view.body.replaceChildren(); const settings = ctx.host.settings().lifestyle.finance, group = view.group();
@@ -24,8 +22,16 @@ export async function openIPhoneFinanceSettings(ctx: IPhonePageContext, catalog?
       settingsCheck(ctx, group, "导入时智能整理", settings.importAiEnabled, value => { void saveOption("importAiEnabled", value); });
       settingsCheck(ctx, group, "在首页显示", ctx.host.settings().homeModules.finance !== false, value => { void saveOption("showOnHome", value); });
     }
-    const directory = view.group("目录"); for (const key of ["merchants", "accounts", "categories"] as const) view.button(directory, labels[key], () => openCatalog(ctx, key));
-    const reports = view.group("分析记录"); view.field(reports, "分析保存位置", path, value => { path = value; }); view.button(reports, "保存位置", async () => { await view.run(async () => { await service.saveAnalysisDirectory(path); original = path; }); render(); });
+    settingsRow(ctx, group, "分析保存位置", { value: settings.analysisDirectory || "未设置", literalValue: !!settings.analysisDirectory, action: () => openAnalysisLocation() });
+    const directory = view.group("目录"); for (const key of ["merchants", "accounts", "categories"] as const) settingsRow(ctx, directory, labels[key], { action: () => openCatalog(ctx, key) });
+  };
+  const openAnalysisLocation = async () => {
+    const form = new IPhoneModulePage(ctx, "iphone-finance-analysis-location", "分析保存位置");
+    let path = ctx.host.settings().lifestyle.finance.analysisDirectory ?? "", original = path;
+    form.dirty = () => path !== original; form.field(form.group(), "文件夹", path, value => { path = value; });
+    form.button(form.footer, "取消", () => ctx.shell.back().then(() => {}));
+    form.button(form.footer, "保存", async () => { if (await form.run(async () => { await service.saveAnalysisDirectory(path); original = path; render(); })) { form.allow(); await ctx.shell.back(); } }, true);
+    await form.push();
   }; render(); await view.push();
 }
 async function openCatalog(ctx: IPhonePageContext, kind: Catalog): Promise<void> {
@@ -33,11 +39,12 @@ async function openCatalog(ctx: IPhonePageContext, kind: Catalog): Promise<void>
   const view = new IPhoneModulePage(ctx, id, labels[kind]), service = ctx.host.services.modules.finance.service;
   const render = () => { if (!view.alive) return; view.body.replaceChildren(); const group = view.group(), items = ctx.host.settings().lifestyle.finance[kind];
     for (const item of items) {
-      const row = el(ctx.document, "div", "ip-module-catalog-row"), main = iphoneButton(ctx.document, item.name, () => { void editCatalog(ctx, kind, item.name, render).catch(error => ctx.error(error)); }); main.classList.add("ip-module-catalog-main"); row.append(main); group.append(row);
+      const row = el(ctx.document, "div", "ip-module-catalog-row"); group.append(row);
+      settingsRow(ctx, row, item.name, { literal: true, action: () => editCatalog(ctx, kind, item.name, render) }).classList.add("ip-module-catalog-main");
       settingsCheck(ctx, row, "启用", item.active, checked => { void view.run(async () => { await persistCatalog(ctx, kind, item.name, { ...item, active: checked }); }).then(render); });
       const remove = view.button(row, "删除", () => view.confirm(view.content, "删除这个目录项？已有账目和预算会保留。", "删除", async () => { await view.run(async () => { await persistCatalog(ctx, kind, item.name, null); render(); }); }, true)); remove.classList.add("is-danger");
     }
-    if (!items.length) view.empty(group, "还没有目录项"); view.button(view.body, "添加", () => editCatalog(ctx, kind, undefined, render));
+    if (!items.length) view.empty(group, "还没有目录项"); settingsRow(ctx, group, "添加", { action: () => editCatalog(ctx, kind, undefined, render) });
   }; view.cleanup(service.subscribe(() => { if (!view.busy) render(); })); render(); await view.push();
 }
 async function persistCatalog(ctx: IPhonePageContext, kind: Catalog, original: string | undefined, next: FinanceMerchantSetting | FinanceAccountSetting | FinanceCategorySetting | null): Promise<void> {

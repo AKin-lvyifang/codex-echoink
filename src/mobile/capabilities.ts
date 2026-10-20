@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import type { EchoInkMcpConnectionRecord, EchoInkMcpDiscoveredTool, EchoInkResource } from "../resources/types";
 import { normalizeTavilySettings, searchTavily, tavilyErrorMessage } from "../tools/tavily-search";
 import { sha256Hex } from "../utils/sha256";
+import type { MobileAgentRegistryService } from "./agent-registry-service";
 import type { MobileSettings } from "./settings";
 import type { MobileRequest } from "./transport";
 import type { MobileCapabilityPolicy } from "./capability-policy";
@@ -25,6 +26,7 @@ export interface MobileRemoteToolInvocation {
 export interface MobileMcpCallResult { result: Record<string, unknown>; readbackVerified: boolean }
 export interface MobileCapabilitiesServiceOptions {
   adapter: DataAdapter; settings(): MobileSettings; saveSettings(): Promise<void>;
+  agents?: Pick<MobileAgentRegistryService, "snapshot" | "update">;
   policy(agentId: string): MobileCapabilityPolicy; request?: MobileRequest;
 }
 /** Shared data/permissions only. Each device owns its own page stack and DOM. */
@@ -36,13 +38,14 @@ export class MobileCapabilitiesService implements MobileCapabilitiesPort {
   private readonly discoveries = new Map<string, { endpoint: string; tools: EchoInkMcpDiscoveredTool[]; at: number }>();
   constructor(private options: MobileCapabilitiesServiceOptions) {
     this.request = options.request ?? requestUrl;
-    this.skillsService = new MobileSkillsService(options.adapter, () => options.settings(), () => options.saveSettings(), id => options.policy(id));
+    this.skillsService = new MobileSkillsService(options.adapter, () => options.settings(), () => options.saveSettings(), id => options.policy(id), options.agents);
   }
   private serialize<T>(run: () => Promise<T>): Promise<T> { const pending = this.writes.then(run, run); this.writes = pending.catch(() => {}); return pending; }
   listSkills() { return this.skillsService.listSkills(); }
   readSkill(id: string) { return this.skillsService.readSkill(id); }
   setSkillEnabled(id: string, enabled: boolean) { return this.skillsService.setSkillEnabled(id, enabled); }
   saveSkill(id: string, content: string, expected: string) { return this.skillsService.saveSkill(id, content, expected); }
+  saveSkillAgents(id: string, agentIds: string[], expected: string) { return this.skillsService.saveSkillAgents(id, agentIds, expected); }
   defaultSkillContent(id: string) { return this.skillsService.defaultSkillContent(id); }
   recordSkillUse(id: string) { return this.skillsService.recordUse(id); }
   private resource(id: string): EchoInkResource | undefined { return this.options.settings().resources.catalog.find(item => item.id === id && item.kind === "mcp-server"); }

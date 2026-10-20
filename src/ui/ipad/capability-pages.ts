@@ -142,12 +142,20 @@ function createSkillDetail(ctx: IPadSettingsContext, id: string, editAgent: Edit
         try { await clipboard.writeText(snapshot!.contentPath!); if (!disposed) new Notice(t(ctx, "路径已复制")); } catch (failure) { report(failure); }
       }); copyButton.classList.add("pd-cap-copy"); copyButton.firstElementChild!.replaceChildren(ipadIcon(ctx.document, "copy")); copyButton.setAttribute("aria-label", t(ctx, "复制路径")); location.append(copyButton);
     }
-    const agents = settingsGroup(ctx, content, t(ctx, "哪些 Agent 能用")), allowed = snapshot.agents.filter(agent => agent.allowed);
-    for (const agent of allowed) {
-      const identity = ctx.host.settings().agentRegistry.agents.find(item => item.id === agent.id);
-      settingsRow(ctx, agents, agent.name, "", async () => { nested = true; try { await editAgent(agent.id); } finally { nested = false; } }, identity ? ipadAvatar(ctx.document, identity) : undefined);
-    }
-    if (!allowed.length) agents.append(el(ctx.document, "div", "pd-settings-empty", t(ctx, "还没有 Agent 能用")));
+    const agents = settingsGroup(ctx, content, t(ctx, "哪些 Agent 能用"));
+    const chooseAgents = async () => { nested = true; try {
+      await ctx.push(createSkillAgentsPage(ctx, snapshot!, summary => {
+        snapshot = { ...snapshot!, ...summary }; renderAgentRows(); ctx.refresh();
+      }));
+    } finally { nested = false; } };
+    const renderAgentRows = () => {
+      agents.replaceChildren();
+      for (const agent of snapshot!.agents.filter(agent => agent.allowed)) {
+        const identity = ctx.host.settings().agentRegistry.agents.find(item => item.id === agent.id);
+        settingsRow(ctx, agents, agent.name, "", chooseAgents, identity ? ipadAvatar(ctx.document, identity) : undefined);
+      }
+      if (!agents.childElementCount) settingsRow(ctx, agents, t(ctx, "选择 Agent"), "", chooseAgents);
+    }; renderAgentRows();
     const title = el(ctx.document, "div", "pd-cap-section-heading"); title.append(el(ctx.document, "h2", "pd-settings-label", t(ctx, "Skill 指令"))); content.append(title);
     if (editing) {
       const editor = el(ctx.document, "textarea", "pd-cap-skill-editor"); editor.value = draft; editor.setAttribute("aria-label", t(ctx, "Skill 指令")); editor.spellcheck = false;
@@ -181,6 +189,27 @@ function createSkillDetail(ctx: IPadSettingsContext, id: string, editAgent: Edit
     });
   };
   return liveSettingsPage(ctx, page, refresh);
+}
+
+function createSkillAgentsPage(ctx: IPadSettingsContext, snapshot: MobileSkillSnapshot, saved: (summary: Awaited<ReturnType<MobileCapabilitiesPort["saveSkillAgents"]>>) => void): MobileShellPage {
+  const content = settingsContent(ctx), group = settingsGroup(ctx, content, t(ctx, "哪些 Agent 能用")), error = settingsError(ctx), footer = el(ctx.document, "div", "pd-settings-actions"), leaveArea = el(ctx.document, "div", "");
+  const selected = new Set(snapshot.agents.filter(agent => agent.allowed).map(agent => agent.id)), original = [...selected].sort().join("\n");
+  let busy = false, disposed = false, allow = false; content.append(error, leaveArea);
+  for (const agent of snapshot.agents) {
+    const input = check(ctx, group, agent.name, selected.has(agent.id), value => { if (value) selected.add(agent.id); else selected.delete(agent.id); allow = false; error.hidden = true; });
+    const identity = ctx.host.settings().agentRegistry.agents.find(item => item.id === agent.id); if (identity) input.parentElement!.prepend(ipadAvatar(ctx.document, identity));
+  }
+  const cancel = settingsAction(ctx, "取消", () => { allow = true; return ctx.back(); }), save = settingsAction(ctx, "保存", async () => {
+    if (busy) return; busy = true; update(); error.hidden = true;
+    try { const summary = await capabilities(ctx).saveSkillAgents(snapshot.id, [...selected], snapshot.agentsVersion); if (disposed) return; saved(summary); allow = true; busy = false; await ctx.back(); }
+    catch (failure) { if (!disposed) showSettingsError(error, failure); }
+    finally { busy = false; if (!disposed) update(); }
+  }, true);
+  function update(): void { content.querySelectorAll<HTMLInputElement>("input").forEach(input => { input.disabled = busy; }); cancel.disabled = save.disabled = busy; content.setAttribute("aria-busy", String(busy)); }
+  footer.append(cancel, save);
+  return { id: `ipad-skill-agents-${snapshot.id}`, title: t(ctx, "选择 Agent"), content, footer,
+    canLeave: () => busy ? false : allow || [...selected].sort().join("\n") === original ? true : leaveSettingsConfirm(ctx, leaveArea),
+    dispose: () => { disposed = true; } };
 }
 
 function createMcpPage(ctx: IPadSettingsContext, input: MobileMcpDraft, summary?: MobileMcpSummary): MobileShellPage {

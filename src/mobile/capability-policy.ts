@@ -94,7 +94,7 @@ export class MobileCapabilityPolicy {
       todos: mobileModuleEnabled(s, "todos"), review: s.review.enabled && mobileModuleEnabled(s, "review") },
     modulePaths: {
       journal: [s.journalDirectory].filter(Boolean),
-      todos: ["EchoInk/待办.md"],
+      todos: [s.mobileUi.todoSourcePath || "EchoInk/待办.md"],
       finance: [FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT, s.lifestyle.finance.analysisDirectory].filter((path): path is string => !!path),
       "english-diary": [s.englishDiary.englishDirectory, s.englishDiary.expressionDirectory, ...(s.englishDiary.legacyEnglishDirectories ?? []),
         ...(s.englishDiary.legacyExpressionDirectories ?? []), "outputs/.english-diary", ".echoink/english-diary"],

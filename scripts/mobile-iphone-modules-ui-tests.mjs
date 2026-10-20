@@ -51,8 +51,10 @@ const journal = {
   async saveImportedTemplate(template, resolution) { calls.template.push({ template: clone(template), resolution }); return resolution ? { status: "saved", path: "Templates/duplicate copy.md", file: { basename: "duplicate copy" } } : { status: "conflict", path: "Templates/duplicate.md", safeCopyPath: "Templates/duplicate copy.md" }; },
   async create(date, choice) { calls.create.push({ date, choice: clone(choice) }); return { path: `Journal/${moment(date).format("YYYY-MM-DD")}.md`, created: true }; }
 };
+let todoSourcePath = "Todos.md";
 const todoApi = {
-  async read() { return { records: clone(todos), sourcePath: "Todos.md", exists: true, contentVersion: todoVersion, warnings: [], projects: [], categories: [{ name: "工作" }], completion: { total: 17, today: 2 } }; }, subscribe: subscribe("todos"),
+  listSourceFiles: () => ["Todos.md", "Other.md"], async selectSource(path, expected) { assert.equal(expected, todoSourcePath); todoSourcePath = path; },
+  async read() { return { records: clone(todos), sourcePath: todoSourcePath, exists: true, contentVersion: todoVersion, warnings: [], projects: [], categories: [{ name: "工作" }], completion: { total: 17, today: 2 } }; }, subscribe: subscribe("todos"),
   async toggle(record, done, version) { calls.toggle.push({ record, done, version }); if (todoConflict) throw new Error("源文件已改变"); todos.find(item => item.id === record.id).done = done; todoVersion = "v2"; },
   async add(draft, version) { calls.todo.push({ draft: clone(draft), version }); if (todoConflict) throw new Error("源文件已改变"); },
   async update(record, patch, version) { calls.todo.push({ record, patch: clone(patch), version }); if (todoConflict) throw new Error("源文件已改变"); },
@@ -112,10 +114,13 @@ try {
   assert.equal(body().querySelector('[aria-label="项目"]').value, "Missing Project"); assert.match(body().textContent, /截止时间会保存，此设备不会发送系统提醒。/); input("事项", "保留的草稿"); await click("保存"); assert.equal(body().querySelector('[aria-label="事项"]').value, "保留的草稿"); assert.equal(calls.todo.at(-1).version, "v1"); assert.deepEqual(Object.keys(calls.todo.at(-1).patch), ["title"]);
   todoConflict = false; todoVersion = "v3"; await click("重新读取"); await click("保存"); assert.equal(calls.todo.at(-1).version, "v3");
   await click("新增待办"); input("事项", "新待办"); input("相关人员（选填）", "李四，王五").dispatchEvent(new Event("blur")); input("截止日期（选填）", today); input("截止时间（选填，默认 09:00）", "11:30"); await click("新建分类"); input("新分类名称", "新分类"); await click("选用分类"); assert.equal(calls.categories.length, 0); await click("保存"); assert.equal(calls.todo.at(-1).draft.people, "李四、王五"); assert.equal(calls.todo.at(-1).draft.categoryName, "新分类");
-  await ui.openIPhoneTodoSettings(ctx); await click("工作"); input("分类名称", "重点工作"); await click("保存"); assert.deepEqual(calls.categories.at(-1), { oldName: "工作", name: "重点工作", version: "v3" }); await shell.back(); await shell.back();
+  await ui.openIPhoneTodoSettings(ctx); const dataRow = body().querySelector(".ip-settings-row"); assert.ok(dataRow.querySelector('[data-icon="chevron-right"]')); dataRow.click(); await tick(); assert.equal(shell.activePageId, "iphone-todo-source-picker"); await click("Other.md"); await click("保存"); assert.equal(todoSourcePath, "Other.md"); assert.equal(shell.activePageId, "iphone-settings-todos"); await click("工作"); input("分类名称", "重点工作"); await click("保存"); assert.deepEqual(calls.categories.at(-1), { oldName: "工作", name: "重点工作", version: "v3" }); await shell.back(); await shell.back();
   // Formal finance routing, NumberFlow, retained settings and original business dialogs
   // are covered together by the actual workspace entry, rather than the retired page.
   await runMobileFinanceWorkspaceUiTests("iphone");
+  await ui.openIPhoneFinanceSettings(ctx); assert.equal(body().querySelectorAll(".ip-settings-group").length, 2); assert.equal(body().querySelectorAll('button.ip-settings-row').length, 4);
+  const analysisRow = [...body().querySelectorAll("button.ip-settings-row")].find(node => node.textContent.includes("分析保存位置")); analysisRow.click(); await tick(); assert.equal(shell.activePageId, "iphone-finance-analysis-location"); input("文件夹", "Reports/Selected"); await click("保存"); assert.equal(settings.lifestyle.finance.analysisDirectory, "Reports/Selected");
+  await click("商户管理"); assert.equal(shell.activePageId, "iphone-finance-catalog-merchants"); assert.ok(body().querySelector('.ip-module-catalog-main [data-icon="chevron-right"]')); await shell.back(); await shell.back();
   settings.settingsLanguage = "en"; await ui.openIPhoneTodos(ctx); assert.match(body().textContent, /Total completed 17/); assert.equal(button("Add to-do") !== undefined, true); await shell.back();
   assert.equal(document.querySelector(".modal-container"), null); assert.equal(calls.submit, 0); assert.equal(Object.values(listeners).reduce((sum, set) => sum + set.size, 0), 0);
   const routeSource = await fs.readFile("src/ui/iphone/workbench.ts", "utf8"); assert.match(routeSource, /module === "journal"\) return openIPhoneJournal/); assert.match(routeSource, /page === "todos" \|\| page === "todos-settings"\) return openIPhoneTodoSettings/); assert.match(routeSource, /page === "finance-settings"\) return openIPhoneFinanceSettings/);

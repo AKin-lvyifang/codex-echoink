@@ -434,6 +434,7 @@ const messages: Record<string, string> = {
   "文件位置": "File location",
   "复制路径": "Copy path",
   "哪些 Agent 能用": "Available to these Agents",
+  "选择 Agent": "Choose Agents", "日记设置": "Journal settings", "日记位置": "Journal folder", "选择数据文件": "Choose source file", "搜索文件": "Search files", "没有匹配的文件": "No matching files",
   "Skill 指令": "Skill instructions",
   "启用": "Enable",
   "编辑": "Edit",

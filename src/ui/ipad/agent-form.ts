@@ -1,7 +1,7 @@
 import { AGENT_PRESETS } from "../../agents/presets";
 import { AGENT_STYLES } from "../../agents/styles";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "../../agents/types";
-import { mcpToolCapabilityId, vaultSkillCapabilityId } from "../../agents/capability-core";
+import { mcpToolCapabilityId, skillCapabilityIds } from "../../agents/capability-core";
 import { normalizeAgentDisplayName, type AgentAvatarState } from "../../harness/memory/agent-identity-model";
 import { BUILTIN_SKILL_IDS } from "../../harness/resources/builtin-skills";
 import type { MobileAgentRegistrySnapshot } from "../../mobile/agent-registry-service";
@@ -96,7 +96,15 @@ export function createAgentFormPage(ctx: IPadPageContext, agentId?: string): Mob
     const resources = ctx.host.settings().resources;
     const custom = resources.catalog.filter(resource => resource.kind === "skill" && !(BUILTIN_SKILL_IDS as readonly string[]).includes(typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id));
     capabilities.append(el(ctx.document, "div", "pd-capability-group-label", "我的 Skill"));
-    if (custom.length) { const rows = el(ctx.document, "div", "pd-choices"); for (const resource of custom) capability(rows, [vaultSkillCapabilityId(resource.id)], resource.name, resource.enabled ? undefined : "未启用"); capabilities.append(rows); }
+    if (custom.length) { const rows = el(ctx.document, "div", "pd-choices"); for (const resource of custom) {
+      const ids = skillCapabilityIds(resource.id), enabled = !ids.some(id => current.disabledCapabilityIds?.includes(id))
+        && (current.id === GENERAL_ASSISTANT_ID || ids.some(id => current.capabilityIds?.includes(id)));
+      checkbox(rows, resource.name, enabled, value => {
+        current.capabilityIds = (current.capabilityIds ?? []).filter(id => !ids.includes(id));
+        current.disabledCapabilityIds = (current.disabledCapabilityIds ?? []).filter(id => !ids.includes(id));
+        if (value) current.capabilityIds.push(ids[0]); else current.disabledCapabilityIds.push(ids[0]);
+      }, resource.enabled ? undefined : "未启用");
+    } capabilities.append(rows); }
     else capabilities.append(el(ctx.document, "div", "pd-form-empty", "暂无自建 Skill"));
     capabilities.append(el(ctx.document, "div", "pd-capability-group-label", "MCP 服务"));
     const remote = resources.catalog.filter(resource => resource.kind === "mcp-server" && resources.mcpConnections[resource.id]?.transport === "http");

@@ -18,6 +18,7 @@ export function mobileAgentRegistrySource(settings: MobileSettings): "missing" |
 }
 
 export interface MobileAppearance {
+  todoSourcePath?: string;
   appearance: "system" | "light" | "dark";
   largeText: boolean;
   /** Mobile-only opt-outs; absence preserves the existing enabled behavior. */
@@ -79,7 +80,7 @@ export function loadMobileSettings(value: unknown): MobileSettings {
     resources: { catalog: [], importedFrom: {}, mcpConnections: {}, lastScannedAt: 0, lastError: "", ...(raw?.resources as object) },
     knowledgeBase: { lastRunAt: 0, lastRunStatus: "idle", lastReportPath: "", lastError: "", lastSummary: "", lastCompletion: "", lastPendingSources: [], lastWarnings: [], initialization: { status: "not-started", initializedAt: 0, templateVersion: "", lastPreviewSummary: "" }, processedSources: {}, healthHistory: [], maintenanceHistory: [], ...(raw?.knowledgeBase as object), folderBindings: normalizeKnowledgeFolderBindings((raw?.knowledgeBase as { folderBindings?: unknown } | undefined)?.folderBindings) },
     review: { enabled: false, knowledgeBaseEnabled: true, agentChatEnabled: true, scheduleTime: "21:00", catchUpOnStartup: true, outputDir: "outputs/reviews", rangeMode: "previous-week", openHtmlAfterRun: false, reports: { knowledgeBase: { lastRangeKey: "" }, agentChat: { lastRangeKey: "" } }, ...(raw?.review as object) },
-    mobileUi: { ...saved, appearance: saved.appearance === "light" || saved.appearance === "dark" ? saved.appearance : "system", largeText: saved.largeText === true,
+    mobileUi: { ...saved, todoSourcePath: typeof saved.todoSourcePath === "string" && /\.md$/iu.test(saved.todoSourcePath) && !saved.todoSourcePath.startsWith("/") && !saved.todoSourcePath.split("/").some(part => !part || part === "." || part === "..") && !/[\\:]/u.test(saved.todoSourcePath) && ![...saved.todoSourcePath].some(character => character.charCodeAt(0) < 32) ? saved.todoSourcePath : undefined, appearance: saved.appearance === "light" || saved.appearance === "dark" ? saved.appearance : "system", largeText: saved.largeText === true,
       knowledgePaths: { wiki: "wiki", raw: "raw", inbox: "inbox", ...saved.knowledgePaths },
       reports: { ...saved.reports, agent: { period: "7d", schedule: "manual", ...saved.reports?.agent }, knowledge: { period: "7d", schedule: "manual", ...saved.reports?.knowledge } } }
   };

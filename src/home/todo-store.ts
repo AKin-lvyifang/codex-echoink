@@ -44,8 +44,8 @@ export class TodoConflictError extends Error {
   }
 }
 
-async function todoContentVersion(content: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+async function todoContentVersion(content: string, sourcePath = TODO_SOURCE_PATH): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sourcePath === TODO_SOURCE_PATH ? content : `${sourcePath}\u0000${content}`));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
@@ -66,10 +66,19 @@ export class EchoInkTodoStore {
   private hasObserved = false;
   private observedProjects: TodoProject[] = [];
 
-  constructor(private readonly plugin: TodoHost) {}
+  constructor(private readonly plugin: TodoHost, private readonly configuredSourcePath?: () => string | undefined) {}
 
   get sourcePath(): string {
-    return TODO_SOURCE_PATH;
+    return this.configuredSourcePath?.() || TODO_SOURCE_PATH;
+  }
+
+  /** Serialize source changes with pending mutations; selecting never moves either file. */
+  changeSource(expectedPath: string, save: () => Promise<void>): Promise<void> {
+    const run = this.writeQueue.then(async () => {
+      if (this.sourcePath !== expectedPath) throw new TodoConflictError("todo_source_changed", "待办源文件已变化，请重新读取后重试。");
+      await save(); this.records = []; this.hasObserved = false; await this.reloadInner();
+    });
+    this.writeQueue = run.catch(() => undefined); return run;
   }
 
   completionStatistics(now = new Date()) { return todoCompletionStatistics(this.plugin.settings.todoCompletions, now); }
@@ -80,11 +89,13 @@ export class EchoInkTodoStore {
 
   /** Agent reads never initialize, migrate, assign IDs, adopt categories or save history. */
   async readOnlySnapshot(): Promise<TodoReadSnapshot> {
-    const file = this.plugin.app.vault.getAbstractFileByPath(TODO_SOURCE_PATH);
-    if (!file) return { sourcePath: TODO_SOURCE_PATH, exists: false, contentVersion: null, records: [], warnings: [] };
+    const sourcePath = this.sourcePath, file = this.plugin.app.vault.getAbstractFileByPath(sourcePath);
+    if (!file) return { sourcePath, exists: false, contentVersion: null, records: [], warnings: [] };
     if (!(file instanceof TFile)) throw new Error("待办源文件位置不是文件。");
     const content = await this.plugin.app.vault.read(file);
-    return { sourcePath: TODO_SOURCE_PATH, exists: true, contentVersion: await todoContentVersion(content), ...parseTodoMarkdown(content) };
+    const contentVersion = await todoContentVersion(content, sourcePath);
+    if (this.sourcePath !== sourcePath) throw new TodoConflictError("todo_source_changed", "待办源文件已变化，请重新读取后重试。");
+    return { sourcePath, exists: true, contentVersion, ...parseTodoMarkdown(content) };
   }
 
   subscribe(listener: () => void): () => void {
@@ -120,20 +131,20 @@ export class EchoInkTodoStore {
     if (!this.observing) {
       this.observing = true;
       this.plugin.registerEvent(vault.on("modify", (file) => {
-        if (file.path === TODO_SOURCE_PATH) this.scheduleReload();
+        if (file.path === this.sourcePath) this.scheduleReload();
       }));
       this.plugin.registerEvent(vault.on("create", (file) => {
-        if (file.path === TODO_SOURCE_PATH) this.scheduleReload();
+        if (file.path === this.sourcePath) this.scheduleReload();
         else if (file instanceof TFolder) this.refreshProjects();
       }));
       this.plugin.registerEvent(vault.on("delete", (file) => {
-        if (file.path !== TODO_SOURCE_PATH) { if (file instanceof TFolder) this.refreshProjects(); return; }
+        if (file.path !== this.sourcePath) { if (file instanceof TFolder) this.refreshProjects(); return; }
         // Never resurrect from cache: a deleted source means an empty list.
         this.records = [];
         this.notify();
       }));
       this.plugin.registerEvent(vault.on("rename", (file, oldPath) => {
-        if (oldPath === TODO_SOURCE_PATH || file.path === TODO_SOURCE_PATH) this.scheduleReload();
+        if (oldPath === this.sourcePath || file.path === this.sourcePath) this.scheduleReload();
         if (file instanceof TFolder) {
           const before = this.observedProjects;
           const newPath = file.path;
@@ -149,7 +160,7 @@ export class EchoInkTodoStore {
         }
       }));
     }
-    await this.migrateLegacySettings();
+    if (this.sourcePath === TODO_SOURCE_PATH) await this.migrateLegacySettings();
     await this.reload();
   }
 
@@ -173,7 +184,7 @@ export class EchoInkTodoStore {
       const next = after.find(candidate => candidate.path === nextPath);
       if (next && (moved || project.value !== next.value)) mapping.set(project.path, nextPath);
     }
-    if (!mapping.size || !(this.plugin.app.vault.getAbstractFileByPath(TODO_SOURCE_PATH) instanceof TFile)) return;
+    if (!mapping.size || !(this.plugin.app.vault.getAbstractFileByPath(this.sourcePath) instanceof TFile)) return;
     await this.enqueueWrite(content => {
       let next = content;
       for (const record of parseTodoMarkdown(content).records.reverse()) {
@@ -190,10 +201,8 @@ export class EchoInkTodoStore {
   }
 
   private async ensureFolder(): Promise<void> {
-    const vault = this.plugin.app.vault;
-    if (!vault.getAbstractFileByPath("EchoInk")) {
-      await vault.createFolder("EchoInk");
-    }
+    const vault = this.plugin.app.vault, parts = this.sourcePath.split("/").slice(0, -1); let path = "";
+    for (const part of parts) { path = path ? `${path}/${part}` : part; if (!vault.getAbstractFileByPath(path)) await vault.createFolder(path); }
   }
 
   async reload(): Promise<void> {
@@ -228,7 +237,7 @@ export class EchoInkTodoStore {
 
   private async reloadInner(): Promise<void> {
     if (this.disposed) return;
-    const file = this.plugin.app.vault.getAbstractFileByPath(TODO_SOURCE_PATH);
+    const file = this.plugin.app.vault.getAbstractFileByPath(this.sourcePath);
     if (!(file instanceof TFile)) {
       this.records = [];
       this.notify();
@@ -245,7 +254,7 @@ export class EchoInkTodoStore {
     this.records = parsed.records;
     if (parsed.warnings.length) {
       console.warn(
-        `[EchoInk] ${TODO_SOURCE_PATH} 第 ${parsed.warnings.join(", ")} 行无法解析，已保留原文。`
+        `[EchoInk] ${this.sourcePath} 第 ${parsed.warnings.join(", ")} 行无法解析，已保留原文。`
       );
       new Notice(
         this.plugin.settings.settingsLanguage === "en"
@@ -294,7 +303,7 @@ export class EchoInkTodoStore {
         `${JSON.stringify({ todos: legacy }, null, 2)}\n`
       );
     }
-    const file = vault.getAbstractFileByPath(TODO_SOURCE_PATH);
+    const file = vault.getAbstractFileByPath(this.sourcePath);
     let existing = file instanceof TFile
       ? await vault.read(file)
       : "";
@@ -333,8 +342,8 @@ export class EchoInkTodoStore {
     if (!content.trim()) content = `${SOURCE_HEADER}\n`;
     for (const block of blocks) content = appendRecordBlock(content, block);
     if (file instanceof TFile) await vault.modify(file, content);
-    else await vault.create(TODO_SOURCE_PATH, content);
-    const verifyAbstract = vault.getAbstractFileByPath(TODO_SOURCE_PATH);
+    else await vault.create(this.sourcePath, content);
+    const verifyAbstract = vault.getAbstractFileByPath(this.sourcePath);
     if (!(verifyAbstract instanceof TFile)) {
       console.error("[EchoInk] To-do migration read-back verification failed; keeping settings.todos.");
       return;
@@ -359,16 +368,16 @@ export class EchoInkTodoStore {
   async openSourceFile(): Promise<void> {
     const vault = this.plugin.app.vault;
     await this.ensureFolder();
-    const abstract = vault.getAbstractFileByPath(TODO_SOURCE_PATH);
+    const abstract = vault.getAbstractFileByPath(this.sourcePath);
     const file = abstract instanceof TFile
       ? abstract
-      : await vault.create(TODO_SOURCE_PATH, `${SOURCE_HEADER}\n`);
+      : await vault.create(this.sourcePath, `${SOURCE_HEADER}\n`);
     const leaf = this.plugin.app.workspace.getLeaf("tab");
     await leaf.openFile(file, { active: true });
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
   }
 
-  async addTodo(input: TodoInput, expectedVersion?: string | null): Promise<void> {
+  async addTodo(input: TodoInput, expectedVersion?: string | null, expectedSourcePath?: string): Promise<void> {
     this.validateDueTime(input.dueTime);
     const record: ParsedTodoRecord = {
       id: input.id ?? newId("todo"),
@@ -385,10 +394,10 @@ export class EchoInkTodoStore {
     };
     await this.enqueueWrite((content) => ({
       content: appendRecordBlock(content, serializeTodoRecord(record))
-    }), expectedVersion);
+    }), expectedVersion, expectedSourcePath);
   }
 
-  async updateTodo(target: ParsedTodoRecord, patch: Partial<TodoInput>, expectedVersion?: string | null): Promise<void> {
+  async updateTodo(target: ParsedTodoRecord, patch: Partial<TodoInput>, expectedVersion?: string | null, expectedSourcePath?: string): Promise<void> {
     this.validateDueTime(patch.dueTime);
     await this.enqueueWrite((content) => {
       const parsed = parseTodoMarkdown(content);
@@ -406,7 +415,7 @@ export class EchoInkTodoStore {
       next.dueTime = patch.dueDate === "" ? undefined
         : patch.dueTime !== undefined ? normalizeTodoDueTime(patch.dueTime) || undefined : current.dueTime;
       return { content: replaceRecordLines(content, current, serializeTodoRecord(next)) };
-    }, expectedVersion);
+    }, expectedVersion, expectedSourcePath);
   }
 
   private sameRecord(current: ParsedTodoRecord, target: ParsedTodoRecord): boolean {
@@ -427,28 +436,28 @@ export class EchoInkTodoStore {
     }
   }
 
-  async toggleDone(target: ParsedTodoRecord, done: boolean): Promise<void> {
-    await this.updateTodo(target, { done });
+  async toggleDone(target: ParsedTodoRecord, done: boolean, expectedVersion?: string | null, expectedSourcePath?: string): Promise<void> {
+    await this.updateTodo(target, { done }, expectedVersion, expectedSourcePath);
   }
 
-  async removeTodo(target: ParsedTodoRecord, expectedVersion?: string | null): Promise<void> {
+  async removeTodo(target: ParsedTodoRecord, expectedVersion?: string | null, expectedSourcePath?: string): Promise<void> {
     await this.enqueueWrite((content) => {
       const parsed = parseTodoMarkdown(content);
       const current = locateRecord(parsed.records, target);
       if (!current || !this.sameRecord(current, target)) return { content, skipped: true };
       return { content: replaceRecordLines(content, current, null) };
-    }, expectedVersion);
+    }, expectedVersion, expectedSourcePath);
   }
 
   /** Rename writes every matching category meta line in the source file. */
-  async renameCategoryInSource(oldName: string, newName: string, expectedVersion?: string | null): Promise<void> {
+  async renameCategoryInSource(oldName: string, newName: string, expectedVersion?: string | null, expectedSourcePath?: string): Promise<void> {
     await this.enqueueWrite((content) => ({
       content: content.split("\n").map((line) => {
         const meta = /^(\s+[-*]\s+分类[：:])\s*(.*)$/u.exec(line);
         if (meta && meta[2].trim() === oldName) return `${meta[1]}${newName}`;
         return line;
       }).join("\n")
-    }), expectedVersion);
+    }), expectedVersion, expectedSourcePath);
   }
 
   /** Deleting a category clears its meta lines; todos themselves stay. */
@@ -467,20 +476,22 @@ export class EchoInkTodoStore {
   /** Serialize UI writes and atomically transform the latest Vault content. */
   private enqueueWrite(
     mutate: (content: string) => { content: string; skipped?: boolean },
-    expectedVersion?: string | null
+    expectedVersion?: string | null,
+    expectedSourcePath = this.sourcePath
   ): Promise<void> {
     const run = this.writeQueue.then(async () => {
+      if (this.sourcePath !== expectedSourcePath) throw new TodoConflictError("todo_source_changed", "待办数据文件已切换，请返回后重新打开；输入已保留。");
       const vault = this.plugin.app.vault;
-      const abstract = vault.getAbstractFileByPath(TODO_SOURCE_PATH);
+      const abstract = vault.getAbstractFileByPath(this.sourcePath);
       if (abstract && !(abstract instanceof TFile)) throw new Error("待办源文件位置不是文件。");
       const expectedContent = expectedVersion !== undefined && abstract instanceof TFile ? await vault.read(abstract) : undefined;
-      if (expectedVersion !== undefined && (abstract instanceof TFile ? await todoContentVersion(expectedContent!) !== expectedVersion : expectedVersion !== null)) {
+      if (expectedVersion !== undefined && (abstract instanceof TFile ? await todoContentVersion(expectedContent!, this.sourcePath) !== expectedVersion : expectedVersion !== null)) {
         throw new TodoConflictError("todo_source_changed", "待办源文件已变化，请重新读取后重试。");
       }
       await this.ensureFolder();
       const file = abstract instanceof TFile
         ? abstract
-        : await vault.create(TODO_SOURCE_PATH, `${SOURCE_HEADER}\n`);
+        : await vault.create(this.sourcePath, `${SOURCE_HEADER}\n`);
       let previous: ParsedTodoRecord[] = [];
       let next: ParsedTodoRecord[] = [];
       await vault.process(file, (content) => {

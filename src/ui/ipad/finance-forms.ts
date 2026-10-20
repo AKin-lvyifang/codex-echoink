@@ -9,7 +9,7 @@ import { resolveFinanceAccount, resolveFinanceMerchant } from "../../lifestyle/f
 import type { FinanceSettings } from "../../lifestyle/settings";
 import type { IPadPageContext } from "./workbench-contract";
 import type { MobileShellPage } from "../mobile/shell-types";
-import { createModuleForm, el, moduleActions, moduleButton, moduleConfirm, moduleEmpty, moduleField, moduleView, moduleText as t, type ModuleFormField } from "./module-elements";
+import { createModuleForm, el, moduleActions, moduleButton, moduleConfirm, moduleEmpty, moduleField, moduleView, moduleSettingsGroup, moduleNavigationRow, moduleText as t, type ModuleFormField } from "./module-elements";
 
 const port = (ctx: IPadPageContext) => ctx.host.services.modules.finance;
 const categories = (ctx: IPadPageContext) => ctx.host.settings().lifestyle.finance.categories.filter(item => item.active).map(item => item.name);
@@ -115,24 +115,26 @@ export function createFinanceBillForm(ctx: IPadPageContext, plan?: FinanceBillPl
 
 export function createFinanceSettingsPage(ctx: IPadPageContext): MobileShellPage {
   const service = port(ctx).service, v = moduleView(ctx, "ipad-finance-settings", t(ctx, "财务设置", "Finance settings"));
-  const settings = ctx.host.settings().lifestyle.finance;
+  v.content.classList.add("is-settings");
+  const settings = ctx.host.settings().lifestyle.finance, options = moduleSettingsGroup(ctx, v.body);
   for (const [key, label] of [["aiEnabled", t(ctx, "AI 分析", "AI analysis")], ["importAiEnabled", t(ctx, "账单智能整理", "Organize imported bills")], ["showOnHome", t(ctx, "在首页显示", "Show on home")]] as const) {
-    const row = el(ctx.document, "label", "pd-module-check-row"), input = el(ctx.document, "input", ""); input.type = "checkbox"; input.checked = key === "showOnHome" ? ctx.host.settings().homeModules.finance !== false : settings[key]; input.setAttribute("aria-label", label); row.append(el(ctx.document, "span", "", label), input); v.body.append(row);
+    const row = el(ctx.document, "label", "pd-module-check-row"), input = el(ctx.document, "input", ""); input.type = "checkbox"; input.checked = key === "showOnHome" ? ctx.host.settings().homeModules.finance !== false : settings[key]; input.setAttribute("aria-label", label); row.append(el(ctx.document, "span", "", label), input); options.append(row);
     input.addEventListener("change", () => { const requested = input.checked; void v.run(() => service.saveOption(key, requested)).then(saved => { if (!saved) input.checked = !requested; }); });
   }
-  v.body.append(moduleButton(ctx, t(ctx, "分析保存位置", "Analysis location"), () => v.push(createModuleForm(ctx, "ipad-finance-analysis-location", t(ctx, "分析保存位置", "Analysis location"), [{ key: "directory", label: t(ctx, "文件夹", "Folder"), value: settings.analysisDirectory ?? "" }], values => service.saveAnalysisDirectory(values.directory)))));
-  for (const [kind, label] of [["merchants", t(ctx, "商户", "Merchants")], ["accounts", t(ctx, "账户", "Accounts")], ["categories", t(ctx, "分类", "Categories")]] as const) v.body.append(moduleButton(ctx, label, () => v.push(createCatalogPage(ctx, kind))));
+  const location = moduleNavigationRow(ctx, options, t(ctx, "分析保存位置", "Analysis location"), settings.analysisDirectory || t(ctx, "未设置", "Not set"), () => v.push(createModuleForm(ctx, "ipad-finance-analysis-location", t(ctx, "分析保存位置", "Analysis location"), [{ key: "directory", label: t(ctx, "文件夹", "Folder"), value: ctx.host.settings().lifestyle.finance.analysisDirectory ?? "" }], async values => { await service.saveAnalysisDirectory(values.directory); location.querySelector(".pd-module-settings-value")!.textContent = values.directory || t(ctx, "未设置", "Not set"); })));
+  const catalog = moduleSettingsGroup(ctx, v.body, t(ctx, "目录", "Catalogs"));
+  for (const [kind, label] of [["merchants", t(ctx, "商户", "Merchants")], ["accounts", t(ctx, "账户", "Accounts")], ["categories", t(ctx, "分类", "Categories")]] as const) moduleNavigationRow(ctx, catalog, label, "", () => v.push(createCatalogPage(ctx, kind)));
   return v.finish();
 }
 function createCatalogPage<K extends "merchants" | "accounts" | "categories">(ctx: IPadPageContext, kind: K): MobileShellPage {
   const service = port(ctx).service, labels = { merchants: t(ctx, "商户", "Merchants"), accounts: t(ctx, "账户", "Accounts"), categories: t(ctx, "分类", "Categories") }, v = moduleView(ctx, `ipad-finance-catalog-${kind}`, labels[kind]);
   const draw = () => {
-    const list = ctx.host.settings().lifestyle.finance[kind]; v.body.replaceChildren();
+    const list = ctx.host.settings().lifestyle.finance[kind]; v.body.replaceChildren(); const group = moduleSettingsGroup(ctx, v.body); v.content.classList.add("is-settings");
     for (const [index, item] of list.entries()) {
-      const row = el(ctx.document, "div", "pd-finance-catalog-row"), confirmation = el(ctx.document, "div", "pd-module-confirm-area"); row.append(moduleButton(ctx, item.name, () => v.push(edit(index))));
-      const remove = moduleButton(ctx, t(ctx, "删除", "Delete"), () => moduleConfirm(ctx, confirmation, t(ctx, "删除这项配置？已有账目保留。", "Remove this setting? Existing transactions remain."), async () => { const saved = await v.run(() => service.saveCatalog(kind, list.filter((_, position) => position !== index) as FinanceSettings[K])); if (saved) draw(); }, t(ctx, "删除", "Delete"))); remove.classList.add("is-danger"); row.append(remove); v.body.append(row, confirmation);
+      const row = el(ctx.document, "div", "pd-finance-catalog-row"), confirmation = el(ctx.document, "div", "pd-module-confirm-area"); moduleNavigationRow(ctx, row, item.name, "", () => v.push(edit(index)));
+      const remove = moduleButton(ctx, t(ctx, "删除", "Delete"), () => moduleConfirm(ctx, confirmation, t(ctx, "删除这项配置？已有账目保留。", "Remove this setting? Existing transactions remain."), async () => { const saved = await v.run(() => service.saveCatalog(kind, list.filter((_, position) => position !== index) as FinanceSettings[K])); if (saved) draw(); }, t(ctx, "删除", "Delete"))); remove.classList.add("is-danger"); row.append(remove); group.append(row, confirmation);
     }
-    if (!list.length) moduleEmpty(ctx, v.body, t(ctx, "还没有配置", "No settings yet")); v.body.append(moduleButton(ctx, t(ctx, "新增", "Add"), () => v.push(edit())));
+    if (!list.length) moduleEmpty(ctx, group, t(ctx, "还没有配置", "No settings yet")); moduleNavigationRow(ctx, group, t(ctx, "新增", "Add"), "", () => v.push(edit()));
   };
   const edit = (index?: number) => {
     const list = structuredClone(ctx.host.settings().lifestyle.finance[kind]), old = index === undefined ? undefined : list[index], base = old as { name: string; aliases?: string[]; iconId?: string; defaultCategory?: string; icon?: string; color?: string; active: boolean } | undefined;

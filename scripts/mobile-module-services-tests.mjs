@@ -96,6 +96,27 @@ await test("a real TodoStore subscriber may read fresh module snapshots without 
     await port.read(); await Promise.all(refreshes); assert.equal(notifications, 1, "the subscription refresh must terminate");
   } finally { unsubscribe(); await f.release(); }
 });
+await test("mobile Todo source selection persists the chosen Markdown without moving the original and rejects stale source forms", async () => {
+  const f = await fixture(), port = f.services.modules.todos;
+  try {
+    await port.add({ title: "original source" }, null); const before = await port.read(), original = f.files.get(before.sourcePath);
+    await f.app.vault.create("journal/Other.md", original); assert.ok(port.listSourceFiles().includes("journal/Other.md"));
+    const save = f.services.saveSettings.bind(f.services); f.services.saveSettings = async () => { throw new Error("selection persistence failed"); };
+    await assert.rejects(port.selectSource("journal/Other.md", before.sourcePath)); assert.equal(f.services.getTodoStore().sourcePath, before.sourcePath); assert.equal(f.files.get(before.sourcePath), original);
+    f.services.saveSettings = save; await port.selectSource("journal/Other.md", before.sourcePath); const after = await port.read(); assert.equal(after.sourcePath, "journal/Other.md"); assert.notEqual(after.contentVersion, before.contentVersion);
+    await assert.rejects(port.add({ title: "stale edit" }, before.contentVersion)); assert.equal(f.files.get(before.sourcePath), original);
+    await port.add({ title: "chosen source" }, after.contentVersion); assert.match(f.files.get("journal/Other.md"), /chosen source/); assert.equal(f.files.get(before.sourcePath), original);
+    assert.equal(loadMobileSettings(plain(f.settings)).mobileUi.todoSourcePath, "journal/Other.md"); await assert.rejects(port.selectSource("../outside.md", after.sourcePath));
+  } finally { await f.release(); }
+});
+await test("Skill grants survive Agent editing through the production Registry writer", async () => {
+  const f = await fixture(); try {
+    const base = await f.services.agents.snapshot(); await f.services.agents.createAgent({ id: "other", name: "Other", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: ["knowledge"] }, base.version);
+    const skill = await f.services.capabilities.readSkill("todo-operations"); await f.services.capabilities.saveSkillAgents(skill.id, ["other"], skill.agentsVersion);
+    const after = await f.services.agents.snapshot(); await f.services.agents.patchAgent("other", { name: "Renamed" }, after.version);
+    const read = await f.services.capabilities.readSkill(skill.id); assert.equal(read.agents.find(agent => agent.id === "other").allowed, true); assert.equal(read.agents.find(agent => agent.id === "sol").allowed, false);
+  } finally { await f.release(); }
+});
 await test("module handoff only fills the Registry owner's unsent draft and conflicts never overwrite it", async () => {
   const f = await fixture(), count = f.store.state.sessions.length, owner = f.services.modules.owner("todos");
   const first = await f.services.modules.handoff("todos", "synthetic unsent request"); assert.equal(first.agentId, owner.id); assert.equal(first.conflict, false); assert.equal(f.store.state.sessions.length, count);

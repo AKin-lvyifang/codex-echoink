@@ -1,3 +1,4 @@
+import { settingsRow } from "./settings-elements";
 import type { MobileTodoSnapshot } from "../../mobile/module-contracts";
 import type { TodoInput } from "../../home/todo-store";
 import type { ParsedTodoRecord } from "../../home/todo-markdown";
@@ -46,6 +47,7 @@ export async function openIPhoneTodos(ctx: IPhonePageContext): Promise<void> {
 
 async function openTodoForm(ctx: IPhonePageContext, source: MobileTodoSnapshot, record: ParsedTodoRecord | null, saved: () => Promise<void>): Promise<void> {
   const api = ctx.host.services.modules.todos, view = new IPhoneModulePage(ctx, `iphone-todo-form-${record?.id ?? "new"}`, record ? "编辑待办" : "新增待办");
+  const sourcePath = source.sourcePath;
   let version = source.contentVersion, target = record; const draft: TodoInput = { title: record?.title ?? "", people: record?.people ?? "", dueDate: record?.dueDate ?? "", dueTime: record?.dueTime ?? "", categoryName: record?.categoryName ?? "", project: record?.project ?? "" }, original = structuredClone(draft), changed = new Set<keyof TodoInput>();
   const change = <K extends keyof TodoInput>(key: K, value: TodoInput[K]) => { draft[key] = value; changed.add(key); view.changed(); };
   view.dirty = () => JSON.stringify(draft) !== JSON.stringify(original);
@@ -66,13 +68,13 @@ async function openTodoForm(ctx: IPhonePageContext, source: MobileTodoSnapshot, 
   const categoryArea = el(ctx.document, "div", "ip-module-inline-editor"); categoryArea.hidden = true; const categoryName = view.field(categoryArea, "新分类名称", "", () => {});
   view.button(view.body, "新建分类", () => { categoryArea.hidden = false; categoryName.focus(); }); view.body.append(categoryArea);
   view.button(categoryArea, "取消", () => { categoryArea.hidden = true; categoryName.value = ""; }); view.button(categoryArea, "选用分类", () => { const name = categoryName.value.trim(); if (!name) { view.error.show(moduleText(ctx, "分类名称不能为空。")); return; } if (!Array.from(category.options).some(option => option.value === name)) { const option = el(ctx.document, "option", "", name); option.value = name; category.append(option); } category.value = name; change("categoryName", name); categoryArea.hidden = true; });
-  view.button(view.footer, "重新读取", async () => { await view.run(async () => { const latest = await api.read(); if (target) { const next = latest.records.find(item => item.id === target!.id); if (!next) throw new Error(moduleText(ctx, "待办已不存在。")); target = next; } version = latest.contentVersion; }); });
+  view.button(view.footer, "重新读取", async () => { await view.run(async () => { const latest = await api.read(); if (latest.sourcePath !== sourcePath) throw new Error(moduleText(ctx, "待办数据文件已切换，请返回后重新打开；输入已保留。", "The to-do file changed. Return and reopen; your draft is retained.")); if (target) { const next = latest.records.find(item => item.id === target!.id); if (!next) throw new Error(moduleText(ctx, "待办已不存在。")); target = next; } version = latest.contentVersion; }); });
   view.button(view.footer, "取消", async () => { view.allow(); await ctx.shell.back(); });
   view.button(view.footer, "保存", async () => {
-    addPeople(); const success = await view.run(async () => { if (!draft.title.trim()) throw new Error(moduleText(ctx, "请填写事项。")); if (target) { const patch: Partial<TodoInput> = {}; for (const key of changed) Object.assign(patch, { [key]: draft[key] }); await api.update(target, patch, version); } else await api.add({ ...draft, title: draft.title.trim() }, version); await saved(); });
+    addPeople(); const success = await view.run(async () => { if (!draft.title.trim()) throw new Error(moduleText(ctx, "请填写事项。")); if (target) { const patch: Partial<TodoInput> = {}; for (const key of changed) Object.assign(patch, { [key]: draft[key] }); await api.update(target, patch, version, sourcePath); } else await api.add({ ...draft, title: draft.title.trim() }, version, sourcePath); await saved(); });
     if (success) { view.allow(); await ctx.shell.back(); }
   }, true);
-  if (record) view.button(view.body, "删除待办", () => view.confirm(view.content, "删除这条待办？删除后无法恢复。", "删除", async () => { if (await view.run(async () => { await api.remove(target!, version); await saved(); })) { view.allow(); await ctx.shell.back(); } }, true)); await view.push();
+  if (record) view.button(view.body, "删除待办", () => view.confirm(view.content, "删除这条待办？删除后无法恢复。", "删除", async () => { if (await view.run(async () => { await api.remove(target!, version, sourcePath); await saved(); })) { view.allow(); await ctx.shell.back(); } }, true)); await view.push();
 }
 
 export async function openIPhoneTodoSettings(ctx: IPhonePageContext): Promise<void> {
@@ -80,15 +82,26 @@ export async function openIPhoneTodoSettings(ctx: IPhonePageContext): Promise<vo
   const view = new IPhoneModulePage(ctx, id, "待办设置"), api = ctx.host.services.modules.todos; let revision = 0;
   const refresh = async () => {
     const ticket = ++revision; try { const snapshot = await api.read(); if (!view.alive || ticket !== revision) return; view.body.replaceChildren(); const data = view.group("数据文件");
-      const source = view.button(data, "待办源文件", () => ctx.host.openNote(snapshot.sourcePath)); source.disabled = !snapshot.exists; data.append(el(ctx.document, "div", "ip-module-path", snapshot.sourcePath));
-      const categories = view.group("待办分类"); for (const item of snapshot.categories) { const row = iphoneButton(ctx.document, item.name, () => { void categoryForm(item.name, snapshot.contentVersion).catch(ctx.error); }); row.classList.add("ip-module-navigation-row"); categories.append(row); }
-      view.button(categories, "添加分类", () => categoryForm(undefined, snapshot.contentVersion));
+      settingsRow(ctx, data, "数据文件", { value: snapshot.sourcePath, literalValue: true, action: () => sourcePicker(snapshot.sourcePath) });
+      const categories = view.group("待办分类"); for (const item of snapshot.categories) settingsRow(ctx, categories, item.name, { literal: true, action: () => categoryForm(item.name, snapshot.contentVersion, snapshot.sourcePath) });
+      settingsRow(ctx, categories, "添加分类", { action: () => categoryForm(undefined, snapshot.contentVersion, snapshot.sourcePath) });
     } catch (error) { if (view.alive && ticket === revision) view.error.show(error); }
   };
-  const categoryForm = async (oldName: string | undefined, version: string | null) => {
+  const sourcePicker = async (original: string) => {
+    const picker = new IPhoneModulePage(ctx, "iphone-todo-source-picker", "选择数据文件"); let selected = original, query = "";
+    picker.field(picker.body, "搜索文件", "", value => { query = value; draw(); }, "search"); const list = picker.group();
+    const draw = () => { list.replaceChildren(); const files = api.listSourceFiles().filter(path => path.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+      for (const path of files) settingsRow(ctx, list, path, { literal: true, selected: path === selected, action: async () => { selected = path; draw(); } });
+      if (!files.length) picker.empty(list, "没有匹配的文件");
+    };
+    picker.button(picker.footer, "取消", () => ctx.shell.back().then(() => {})); picker.button(picker.footer, "保存", async () => {
+      if (await picker.run(() => api.selectSource(selected, original))) { picker.allow(); await refresh(); await ctx.shell.back(); }
+    }, true); draw(); await picker.push();
+  };
+  const categoryForm = async (oldName: string | undefined, version: string | null, sourcePath: string) => {
     const form = new IPhoneModulePage(ctx, `iphone-todo-category-${oldName ?? "new"}`, oldName ? "编辑分类" : "添加分类"); let name = oldName ?? ""; form.dirty = () => name !== (oldName ?? "");
     form.field(form.body, "分类名称", name, value => { name = value; }); form.button(form.footer, "取消", async () => { form.allow(); await ctx.shell.back(); });
-    form.button(form.footer, "保存", async () => { if (await form.run(async () => { if (oldName) await api.renameCategory(oldName, name.trim(), version); else await api.addCategory(name.trim()); await refresh(); })) { form.allow(); await ctx.shell.back(); } }, true); await form.push();
+    form.button(form.footer, "保存", async () => { if (await form.run(async () => { if (oldName) await api.renameCategory(oldName, name.trim(), version, sourcePath); else await api.addCategory(name.trim()); await refresh(); })) { form.allow(); await ctx.shell.back(); } }, true); await form.push();
   };
   view.cleanup(api.subscribe(() => { if (!view.busy) void refresh(); })); await view.push(); if (view.alive) await refresh();
 }

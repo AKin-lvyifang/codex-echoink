@@ -11,17 +11,18 @@ dom.window.HTMLElement.prototype.scrollIntoView = function () {};
 const notices = [], exported = { exports: {} };
 const icon = (parent, name) => { const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("data-icon", name); parent.replaceChildren(svg); };
 vm.runInNewContext(build.outputFiles[0].text, {
-  module: exported, exports: exported.exports, document, window: dom.window, console, structuredClone, AbortController, setTimeout, clearTimeout, atob, btoa, TextEncoder, TextDecoder,
+  module: exported, exports: exported.exports, document, window: dom.window, Error, console, structuredClone, AbortController, setTimeout, clearTimeout, atob, btoa, TextEncoder, TextDecoder,
   HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, SVGElement: dom.window.SVGElement,
   require: name => { assert.equal(name, "obsidian"); return { Notice: class { constructor(message) { notices.push(message); } }, setIcon: icon, getIcon: name => { const span = document.createElement("span"); icon(span, name); return span.firstChild; } }; }
 });
 const { IPhoneCapabilityPages } = exported.exports;
 const tick = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const skills = [
-  { id: "todo-operations", name: "待办操作", description: "维护待办", builtin: true, enabled: false, mobileAvailable: true, contentPath: "Skills/todo-operations/SKILL.md", sourceLabel: "内置技能", icon: "list-todo", agents: [{ id: "assistant", name: "总助", allowed: true }], content: "# saved instruction", version: "skill-v1" },
+  { id: "todo-operations", name: "待办操作", description: "维护待办", builtin: true, enabled: false, mobileAvailable: true, contentPath: "Skills/todo-operations/SKILL.md", sourceLabel: "内置技能", icon: "list-todo", agentsVersion: "agents-v1", agents: [{ id: "assistant", name: "总助", allowed: true }, { id: "organizer", name: "整理员", allowed: false }], content: "# saved instruction", version: "skill-v1" },
   { id: "obsidian-cli", name: "Obsidian CLI", description: "命令行", builtin: true, enabled: true, mobileAvailable: false, unavailableReason: "只能在电脑上用", contentPath: null, sourceLabel: "EchoInk 内置", icon: "terminal", agents: [], content: "CLI body", version: "cli-v1" }
 ];
-const calls = { saveSkill: [], toggles: [], discover: [], saveMcp: [], test: [], saveTavily: [], copy: [], editAgent: [] };
+const calls = { agents: [], saveSkill: [], toggles: [], discover: [], saveMcp: [], test: [], saveTavily: [], copy: [], editAgent: [] };
+let failAgentSave = false;
 let conflict = true, mcpConflict = true, tavilyFailure = true, testPending = false, activeSignal, mcpDraft = { id: "server", name: "远程工具", description: "真实配置", enabled: true, transport: "http", readonly: false, url: "https://tools.invalid/mcp", headers: { Authorization: "Bearer local-secret" }, trusted: false, tools: [], toolPolicies: { oldTool: { enabled: false, trusted: false } }, version: "mcp-v1", status: "configured" };
 let tavily = { enabled: false, apiKey: "", version: "tavily-v1" };
 const service = {
@@ -29,6 +30,7 @@ const service = {
   async readSkill(id) { return structuredClone(skills.find(skill => skill.id === id)); },
   async setSkillEnabled(id, enabled) { calls.toggles.push([id, enabled]); skills.find(skill => skill.id === id).enabled = enabled; return structuredClone(skills.find(skill => skill.id === id)); },
   async saveSkill(id, content, version) { calls.saveSkill.push({ id, content, version }); if (conflict) throw new Error("文件已在其他地方修改"); const skill = skills.find(skill => skill.id === id); Object.assign(skill, { content, version: "skill-v2" }); return structuredClone(skill); },
+  async saveSkillAgents(id, selected, version) { calls.agents.push({ id, selected, version }); if (failAgentSave) throw new Error("授权保存失败"); const item = skills.find(skill => skill.id === id); assert.equal(version, item.agentsVersion); item.agents = item.agents.map(agent => ({ ...agent, allowed: selected.includes(agent.id) })); item.agentsVersion = "agents-v2"; return structuredClone(item); },
   defaultSkillContent() { return "# default instruction"; },
   async listMcp() { return [{ ...structuredClone(mcpDraft), statusLabel: "已配置" }, { id: "desktop", name: "本地工具", description: "", transport: "stdio", readonly: true, enabled: true, status: "desktop-only", statusLabel: "只能在电脑上用", trusted: false, tools: [], toolPolicies: {}, version: "desktop-v1" }]; },
   async createMcpDraft(id) { return id === "desktop" ? { ...structuredClone(mcpDraft), id, transport: "stdio", readonly: true } : structuredClone(mcpDraft); },
@@ -43,14 +45,14 @@ Object.defineProperty(dom.window.navigator, "clipboard", { value: { async writeT
 const pages = [{ id: "base", content: document.createElement("div") }];
 const shell = {
   hasPage: id => pages.some(page => page.id === id), get activePageId() { return pages.at(-1).id; },
-  async push(page) { if (pages.at(-1).canLeave && !await pages.at(-1).canLeave()) return false; pages.push(page); document.body.replaceChildren(page.content); return true; },
-  async back() { if (pages.at(-1).canLeave && !await pages.at(-1).canLeave()) return false; pages.pop().dispose?.(); document.body.replaceChildren(pages.at(-1).content); return true; },
+  async push(page) { if (pages.at(-1).canLeave && !await pages.at(-1).canLeave()) return false; pages.push(page); document.body.replaceChildren(page.content, ...(page.footer ? [page.footer] : [])); return true; },
+  async back() { if (pages.at(-1).canLeave && !await pages.at(-1).canLeave()) return false; pages.pop().dispose?.(); document.body.replaceChildren(pages.at(-1).content, ...(pages.at(-1).footer ? [pages.at(-1).footer] : [])); return true; },
   async backTo(id) { while (pages.at(-1).id !== id) if (!await this.back()) return false; return true; }
 };
-const ctx = { document, shell, host: { services: { capabilities: service }, settings: () => ({ settingsLanguage: "zh" }), agents: { async snapshot() { return { registry: { agents: [{ id: "assistant", name: "总助", avatar: { kind: "preset", presetId: "nova" } }] } }; } }, renderMarkdown: (text, parent) => { parent.textContent = text; } }, error: error => { throw error; } };
+const ctx = { document, shell, host: { services: { capabilities: service }, settings: () => ({ settingsLanguage: "zh", agentRegistry: { agents: [{ id: "assistant", name: "总助", avatar: { kind: "default" } }] } }), agents: { async snapshot() { return { registry: { agents: [{ id: "assistant", name: "总助", avatar: { kind: "preset", presetId: "nova" } }] } }; } }, renderMarkdown: (text, parent) => { parent.textContent = text; } }, error: error => { throw error; } };
 const ui = new IPhoneCapabilityPages(ctx, async id => { calls.editAgent.push(id); await shell.push({ id: "agent-edit", content: document.createElement("div") }); });
 const body = () => pages.at(-1).content;
-const button = text => [...body().querySelectorAll("button")].find(item => item.textContent.trim() === text);
+const button = text => [...document.body.querySelectorAll("button")].find(item => item.textContent.trim() === text);
 const click = async text => { const target = button(text); assert.ok(target, `Button ${text} exists`); target.click(); await tick(); };
 const input = (label, value) => { const node = body().querySelector(`[aria-label="${label}"]`); assert.ok(node, `Input ${label} exists`); node.value = value; node.dispatchEvent(new Event("input", { bubbles: true })); return node; };
 try {
@@ -62,7 +64,11 @@ try {
   body().querySelector('[aria-label="复制路径"]').click(); await tick(); assert.deepEqual(calls.copy, ["Skills/todo-operations/SKILL.md"]);
   const detailToggle = body().querySelector('[role="switch"]'); detailToggle.checked = false; detailToggle.dispatchEvent(new Event("change")); await tick(); assert.match(body().textContent, /saved instruction/, "A disabled Skill remains readable");
   await click("编辑"); const editor = body().querySelector("textarea"); input("Skill 指令", "my draft");
-  await click("总助"); assert.deepEqual(calls.editAgent, ["assistant"]); await shell.back(); assert.equal(body().querySelector("textarea"), editor); assert.equal(editor.value, "my draft");
+  await click("总助"); assert.deepEqual(calls.editAgent, []); assert.equal(shell.activePageId, "iphone-skill-agents-todo-operations");
+  assert.equal(body().querySelectorAll('input[type="checkbox"]').length, 2);
+  const agentCheck = [...body().querySelectorAll("label")].find(label => label.textContent.trim() === "整理员").querySelector("input"); agentCheck.checked = true; agentCheck.dispatchEvent(new Event("change"));
+  failAgentSave = true; await click("保存"); assert.match(body().textContent, /授权保存失败/); assert.equal(agentCheck.checked, true);
+  failAgentSave = false; await click("保存"); assert.ok(skills[0].agents.every(agent => agent.allowed)); assert.equal(body().querySelector("textarea"), editor); assert.equal(editor.value, "my draft");
   await click("恢复默认"); assert.equal(editor.value, "# default instruction"); assert.equal(calls.saveSkill.length, 0);
   input("Skill 指令", "keep on conflict"); await click("保存"); assert.equal(body().querySelector("textarea").value, "keep on conflict"); assert.match(body().textContent, /其他地方修改/); assert.equal(calls.saveSkill[0].version, "skill-v1");
   const pendingBack = shell.back(); await tick(); await click("继续编辑"); assert.equal(await pendingBack, false); assert.equal(body().querySelector("textarea").value, "keep on conflict");

@@ -167,3 +167,19 @@
 
 .echoink-ipad .pd-todo-project-tag { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 5px; background: var(--pd-soft); color: var(--pd-secondary); font-size: .8125em; }
 .echoink-ipad .pd-todo-project-tag .pd-icon, .echoink-ipad .pd-todo-project-tag svg { width: 12px; height: 12px; flex: none; }
+
+.echoink-ipad .pd-module-page.is-settings { max-width: 720px; }
+.echoink-ipad .pd-module-settings-label { margin: 24px 12px 9px; color: var(--text-muted); font-size: .72em; font-weight: 500; }
+.echoink-ipad .pd-module-settings-group { min-width: 0; margin-bottom: 18px; border: 1px solid var(--background-modifier-border); border-radius: 12px; overflow: hidden; }
+.echoink-ipad .pd-module-settings-row { appearance: none; display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 48px; height: auto; margin: 0; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--background-modifier-border); border-radius: 0; background: transparent; color: var(--text-normal); font: inherit; text-align: left; white-space: normal; box-shadow: none; cursor: pointer; }
+.echoink-ipad .pd-module-settings-row:last-child, .echoink-ipad .pd-module-settings-group > .pd-module-check-row:last-child { border-bottom: 0; }
+.echoink-ipad .pd-module-settings-row::before, .echoink-ipad .pd-module-settings-row::after { content: none; }
+.echoink-ipad .pd-module-settings-name { flex: 1; min-width: 0; font-size: .92em; font-weight: 500; overflow-wrap: anywhere; }
+.echoink-ipad .pd-module-settings-value { min-width: 0; color: var(--text-muted); font-size: .85em; text-align: right; overflow-wrap: anywhere; }
+.echoink-ipad .pd-module-settings-row > .pd-icon { flex: none; width: 20px; height: 20px; color: var(--text-muted); }
+.echoink-ipad .pd-module-settings-row:hover, .echoink-ipad .pd-module-settings-row:focus-visible { background: var(--background-modifier-hover); outline: none; }
+.echoink-ipad .pd-module-settings-group > .pd-module-check-row { margin: 0; padding: 0 12px; font-size: .92em; }
+.echoink-ipad .pd-module-header > .is-icon .pd-module-button-visible { background: transparent; }
+
+.echoink-ipad .pd-module-settings-group > .pd-finance-catalog-row { gap: 0; flex-wrap: nowrap; }
+.echoink-ipad .pd-module-settings-group > .pd-finance-catalog-row > .pd-module-settings-row { border-bottom: 0; }

@@ -64,12 +64,20 @@ export function isAgentCapabilityPathField(key: string): boolean { return PATH_F
 
 /** Stable catalog identity, never a display name, description or Pi's hashed alias. */
 export function vaultSkillCapabilityId(resourceId: string): string { return `vault-skill:${encodeURIComponent(resourceId)}`; }
+/** Custom Skills use the existing Agent-editor ID; old detail-page aliases remain readable. */
+export function skillCapabilityIds(resourceId: string, skillId = resourceId): readonly string[] {
+  const legacy = `skill:${encodeURIComponent(skillId)}`;
+  return BASE_SKILLS.has(skillId) || skillId === "obsidian-cli" || MODULE_SKILLS[skillId]
+    ? [legacy] : [...new Set([vaultSkillCapabilityId(resourceId), legacy, `skill:${encodeURIComponent(resourceId)}`])];
+}
 export function mcpToolCapabilityId(resourceId: string, toolName: string): string { return `mcp:${encodeURIComponent(resourceId)}:${encodeURIComponent(toolName)}`; }
 export function resolveAgentRunSnapshot(settings: Pick<AgentCapabilitySettings, "agentRegistry">, agentId = GENERAL_ASSISTANT_ID): AgentRunSnapshot {
   const agent = settings.agentRegistry.agents.find(item => item.id === agentId);
   if (!agent) throw new Error("agent_capability_agent_missing");
   return Object.freeze({ agentId: agent.id, name: agent.name, position: agent.position, styleId: agent.styleId,
-    ...(agent.id === GENERAL_ASSISTANT_ID ? { disabledCapabilityIds: Object.freeze([...(agent.disabledCapabilityIds ?? [])]) } : { capabilityIds: Object.freeze([...(agent.capabilityIds ?? [])]) }) });
+    ...(agent.id === GENERAL_ASSISTANT_ID ? { disabledCapabilityIds: Object.freeze([...(agent.disabledCapabilityIds ?? [])]),
+      ...(agent.capabilityIds ? { capabilityIds: Object.freeze([...agent.capabilityIds]) } : {}) }
+      : { capabilityIds: Object.freeze([...(agent.capabilityIds ?? [])]), ...(agent.disabledCapabilityIds ? { disabledCapabilityIds: Object.freeze([...agent.disabledCapabilityIds]) } : {}) }) });
 }
 export function agentTaskSystemPrompt(snapshot: AgentRunSnapshot): string {
   const style = AGENT_STYLES.find(item => item.id === snapshot.styleId) ?? AGENT_STYLES[0];
@@ -110,9 +118,16 @@ export function checkAgentSkill(context: AgentCapabilityContext, skillId: string
   const resource = context.resources.find(item => item.kind === "skill" && (item.metadata?.resourceId === skillId || item.id === skillId));
   if (!resource) return decision(skillId, "unknown_resource");
   if (!resource.enabled) return decision(skillId, "resource_disabled");
-  if (BASE_SKILLS.has(skillId) || skillId === "obsidian-cli") return checkAgentCapability(context, "conversation", "resource");
-  const capability = MODULE_SKILLS[skillId] ?? vaultSkillCapabilityId(resource.id);
-  return checkAgentCapability(context, capability, "resource");
+  const capability = BASE_SKILLS.has(skillId) || skillId === "obsidian-cli" ? "conversation" : MODULE_SKILLS[skillId] ?? vaultSkillCapabilityId(resource.id);
+  const agent = currentAgent(context), skillGrants = skillCapabilityIds(resource.id, skillId);
+  if (skillGrants.some(id => agent?.disabledCapabilityIds?.includes(id))) return decision(capability, "agent_disabled");
+  if (!agent || !skillGrants.some(id => agent.capabilityIds?.includes(id))) return checkAgentCapability(context, capability, "resource");
+  // A Skill grant never changes the Agent's other tools or bypasses module/PRO checks.
+  const permitted = agent.id === GENERAL_ASSISTANT_ID
+    ? { ...agent, disabledCapabilityIds: agent.disabledCapabilityIds?.filter(id => id !== capability) }
+    : { ...agent, capabilityIds: [...(agent.capabilityIds ?? []), capability] };
+  return checkAgentCapability({ ...context, settings: { ...context.settings, agentRegistry: { ...context.settings.agentRegistry,
+    agents: context.settings.agentRegistry.agents.map(item => item.id === agent.id ? permitted : item) } } }, capability, "resource");
 }
 export function checkAgentSkillPath(context: AgentCapabilityContext, value: string): AgentCapabilityDecision {
   const full = context.resolvePath(value);

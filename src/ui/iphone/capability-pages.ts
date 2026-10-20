@@ -80,14 +80,16 @@ export class IPhoneCapabilityPages {
     const renderAgents = () => {
       if (!snapshot || !agentGroup) return; agentGroup.replaceChildren();
       const allowed = snapshot.agents.filter(agent => agent.allowed);
+      const choose = async () => {
+        visitingAgent = true;
+        try { await this.skillAgents(snapshot!, summary => { snapshot = { ...snapshot!, ...summary }; renderAgents(); this.refresh(); }); }
+        finally { visitingAgent = false; }
+      };
       for (const agent of allowed) {
         const definition = definitions.find(item => item.id === agent.id);
-        settingsRow(ctx, agentGroup, agent.name, { literal: true, leading: definition ? iphoneAvatar(ctx.document, definition) : iphoneIcon(ctx.document, "bot"), action: async () => {
-          visitingAgent = true;
-          try { await this.editAgent(agent.id); } finally { visitingAgent = false; }
-        } });
+        settingsRow(ctx, agentGroup, agent.name, { literal: true, leading: definition ? iphoneAvatar(ctx.document, definition) : iphoneIcon(ctx.document, "bot"), action: choose });
       }
-      if (!allowed.length) this.empty(agentGroup, "还没有 Agent 能用");
+      if (!allowed.length) settingsRow(ctx, agentGroup, "选择 Agent", { action: choose });
     };
     const render = () => {
       if (!snapshot || disposed) return;
@@ -145,6 +147,24 @@ export class IPhoneCapabilityPages {
     };
     this.loading(body); await refresh(); this.refreshers.add(refresh);
     await pushSettingsPage(ctx, { id: pageId, title: snapshot?.name ?? "Skill", content: body, canLeave: guard.canLeave, dispose: () => { disposed = true; revision++; guard.dispose(); this.refreshers.delete(refresh); } });
+  }
+
+  private async skillAgents(snapshot: MobileSkillSnapshot, saved: (summary: MobileSkillSummary) => void): Promise<void> {
+    const { ctx } = this, body = this.body(), group = settingsGroup(ctx, body, "哪些 Agent 能用"), error = settingsError(ctx, body);
+    const selected = new Set(snapshot.agents.filter(agent => agent.allowed).map(agent => agent.id)), baseline = [...selected].sort().join("\n"); let busy = false, disposed = false, allow = false;
+    const guard = this.leaveGuard(body, () => busy, () => !allow && [...selected].sort().join("\n") !== baseline);
+    for (const agent of snapshot.agents) {
+      const definition = ctx.host.settings().agentRegistry.agents.find(item => item.id === agent.id);
+      settingsCheck(ctx, group, agent.name, selected.has(agent.id), value => { if (value) selected.add(agent.id); else selected.delete(agent.id); error.show(); }, definition ? iphoneAvatar(ctx.document, definition) : iphoneIcon(ctx.document, "bot"), true);
+    }
+    const footer = el(ctx.document, "div", "ip-settings-actions");
+    footer.append(settingsButton(ctx, "取消", () => { allow = true; void ctx.shell.back(); }), settingsButton(ctx, "保存", () => { void (async () => {
+      if (busy) return; busy = true; error.show(); this.disabled(body, true); this.disabled(footer, true);
+      try { const summary = await this.service.saveSkillAgents(snapshot.id, [...selected], snapshot.agentsVersion); if (disposed) return; saved(summary); allow = true; busy = false; await ctx.shell.back(); }
+      catch (failure) { if (!disposed) error.show(failure); }
+      finally { busy = false; if (!disposed) { this.disabled(body, false); this.disabled(footer, false); } }
+    })(); }, "is-primary"));
+    await pushSettingsPage(ctx, { id: `iphone-skill-agents-${snapshot.id}`, title: "选择 Agent", content: body, footer, canLeave: guard.canLeave, dispose: () => { disposed = true; guard.dispose(); } });
   }
 
   private async mcp(id?: string): Promise<void> {

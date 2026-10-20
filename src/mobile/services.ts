@@ -77,7 +77,7 @@ export class MobileServices implements HomeHost {
   }
   get capabilities(): MobileCapabilitiesService {
     return this.capabilitiesService ??= new MobileCapabilitiesService({ adapter: this.app.vault.adapter, settings: () => this.settings,
-      saveSettings: () => this.host.saveSettings(), request: this.host.capabilityRequest,
+      saveSettings: () => this.host.saveSettings(), agents: this.profileProtocol, request: this.host.capabilityRequest,
       policy: agentId => new MobileCapabilityPolicy({ store: this.host.store, settings: () => this.settings, agentId, proAccess: () => this.host.accountService }) });
   }
   agentIdentity = defaultAgentIdentityState();
@@ -116,7 +116,7 @@ export class MobileServices implements HomeHost {
     const adapter = this.app.vault.adapter; this.profileProtocol = new MobileAgentRegistryService(adapter, host.settings, registry => host.saveSettings(registry));
     this.homeActivity = new HomeActivityCore({ read: async () => await adapter.exists(`${directory}/home-activity.json`) ? adapter.read(`${directory}/home-activity.json`) : null,
       write: bytes => adapter.write(`${directory}/home-activity.json`, bytes) });
-    this.todos = new EchoInkTodoStore(this);
+    this.todos = new EchoInkTodoStore(this, () => this.settings.mobileUi.todoSourcePath);
     this.modules = new MobileModuleService(this, host.store);
     this.knowledgeFolders = new MobileKnowledgeFoldersService(this);
     this.knowledgePage = new MobileKnowledgePageService(this);
@@ -134,10 +134,10 @@ export class MobileServices implements HomeHost {
     catch (error) {
       // The legacy Registry reader predates the typed storage boundary. Match
       // only its explicit format/version refusal, never arbitrary I/O failures.
-      if (error instanceof Error && error.message === "旧 Agent 资料损坏或版本不支持，无法切换身份；原资料已保留。")
-        error = new MobileDataConflictError(error.message);
-      if (!isMobileDataConflict(error)) throw error;
-      this.host.store.disableWrites(error.message);
+      const conflict: unknown = error instanceof Error && error.message === "旧 Agent 资料损坏或版本不支持，无法切换身份；原资料已保留。"
+        ? new MobileDataConflictError(error.message) : error;
+      if (!isMobileDataConflict(conflict)) throw conflict;
+      this.host.store.disableWrites(conflict.message);
     }
   }
   async initialize() {

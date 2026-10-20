@@ -13,6 +13,8 @@ import { createAccountPage } from "./account-pages";
 import { createAgentSettingsPage } from "./agent-settings-pages";
 import { createCapabilityPage } from "./capability-pages";
 import { createModelPage } from "./model-pages";
+import { createFinanceSettingsPage } from "./finance-forms";
+import { moduleView, moduleSettingsGroup, moduleNavigationRow } from "./module-elements";
 import { createTodoSettings } from "./todo-pages";
 import { createIPadKnowledgeSettingsPage } from "./knowledge-settings-pages";
 import { createEnglishDiarySettingsPage } from "./english-diary-pages";
@@ -172,17 +174,24 @@ export class IPadSettings {
     let signature = "";
     return liveSettingsPage(ctx, { id: "ipad-settings-mods", title: "模块", content }, () => {
       const settings = this.host.settings(), qualified = getProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess, false).canToggle;
-      const definitions = [["knowledge-base", "知识库", "library", "knowledge", false], ["journal", "日记", "book-open", undefined, false], ["review", "复盘", "history", "review", false], ["todos", "待办", "list-todo", "todos-settings", false], ["finance", "财务", "wallet", undefined, true], ["english-diary", "英文日记", "languages", "english-diary-settings", true]] as const;
+      const definitions = [["knowledge-base", "知识库", "library", "knowledge", false], ["journal", "日记", "book-open", "journal", false], ["review", "复盘", "history", "review", false], ["todos", "待办", "list-todo", "todos-settings", false], ["finance", "财务", "wallet", "finance-settings", true], ["english-diary", "英文日记", "languages", "english-diary-settings", true]] as const;
       const key = JSON.stringify([settings.settingsLanguage, settings.journalDirectory, settings.englishDiary, qualified, definitions.map(([id]) => mobileModuleEnabled(settings, id))]); if (key === signature) return; signature = key; content.replaceChildren();
       const basic = settingsGroup(ctx, content, t(ctx, "基础模块")), pro = settingsGroup(ctx, content, t(ctx, "PRO 模块"));
       for (const [id, label, icon, route, paid] of definitions) {
         const directory = id === "journal" ? settings.journalDirectory : id === "english-diary" ? settings.englishDiary.englishDirectory : "";
-        const row = settingsRow(ctx, paid ? pro : basic, id === "finance" ? t(ctx, "启用财务") : t(ctx, label), directory, undefined, ipadIcon(ctx.document, icon)); row.classList.add("pd-settings-module-row");
-        const copy = row.querySelector<HTMLElement>(".pd-settings-copy")!;
-        if (route) {
-          const title = el(ctx.document, "button", "pd-settings-module-title"); title.type = "button"; title.append(...Array.from(copy.childNodes)); copy.append(title);
-          title.addEventListener("click", event => { event.stopPropagation(); void Promise.resolve().then(() => ctx.push(route === "knowledge" ? createIPadKnowledgeSettingsPage(ctx) : route === "english-diary-settings" ? createEnglishDiarySettingsPage(ctx, () => ctx.refresh()) : route === "todos-settings" ? createTodoSettings(this.moduleContext()) : this.legacy(route, label))).catch(error => ctx.error(error)); });
-        }
+        const policy = paid ? getProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess, mobileModuleEnabled(settings, id)) : undefined;
+        const row = settingsRow(ctx, paid ? pro : basic, t(ctx, label)); row.classList.add("pd-settings-module-row");
+        const copy = row.querySelector<HTMLElement>(".pd-settings-copy")!, title = el(ctx.document, "button", "pd-settings-module-title"); title.type = "button";
+        const value = el(ctx.document, "span", "pd-settings-value", directory); title.append(ipadIcon(ctx.document, icon), copy, value, ipadIcon(ctx.document, "chevron-right")); row.append(title);
+        if (policy && !policy.canToggle) { title.title = policy.reason ?? t(ctx, "需要 PRO"); copy.append(el(ctx.document, "span", "pd-settings-description", policy.reason ?? t(ctx, "需要 PRO"))); }
+        title.addEventListener("click", event => { event.stopPropagation(); void Promise.resolve().then(async () => {
+          const current = paid ? getProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess, mobileModuleEnabled(this.host.settings(), id)) : undefined;
+          if (current && !current.canToggle) throw new Error(current.reason ?? t(ctx, "需要 PRO"));
+          if (route === "journal") {
+            const moduleCtx = this.moduleContext(), v = moduleView(moduleCtx, "ipad-journal-settings", t(ctx, "日记设置")); v.content.classList.add("is-settings");
+            moduleNavigationRow(moduleCtx, moduleSettingsGroup(moduleCtx, v.body), t(ctx, "日记位置"), this.host.settings().journalDirectory, () => this.host.services.modules.journal.openSettings()); await ctx.push(v.finish());
+          } else await ctx.push(route === "knowledge" ? createIPadKnowledgeSettingsPage(ctx) : route === "english-diary-settings" ? createEnglishDiarySettingsPage(ctx, () => ctx.refresh()) : route === "todos-settings" ? createTodoSettings(this.moduleContext()) : route === "finance-settings" ? createFinanceSettingsPage(this.moduleContext()) : this.legacy(route, label));
+        }).catch(error => ctx.error(error)); });
         if (!paid || qualified) {
           const control = settingsToggle(ctx, `${t(ctx, "启用")}${t(ctx, label)}`, mobileModuleEnabled(settings, id), async enabled => { await setMobileModuleEnabled(this.host, id, enabled); this.refresh(); });
           const hit = el(ctx.document, "label", "pd-settings-switch-hit"); hit.append(control); hit.addEventListener("click", event => event.stopPropagation()); row.append(hit);

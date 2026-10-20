@@ -76,3 +76,7 @@
 .echoink-ipad.pd-settings .echoink-ipad-content:has(> .pd-settings-legacy) { padding: 0; }
 @media (hover: hover) { .echoink-ipad.pd-settings button.pd-settings-row:hover { background: var(--pd-settings-soft); } }
 @media (prefers-reduced-motion: reduce) { .echoink-ipad.pd-settings .pd-settings-segment-thumb, .echoink-ipad.pd-settings input.pd-settings-switch::before { transition: none; } }
+
+.echoink-ipad.pd-settings .pd-settings-module-row { padding: 0 12px 0 0; gap: 8px; }
+.echoink-ipad.pd-settings .pd-settings-module-title { flex: 1; gap: 10px; padding: 8px 12px; min-height: 48px; }
+.echoink-ipad.pd-settings .pd-settings-module-title > .pd-icon { flex: none; width: 20px; height: 20px; color: var(--text-muted); }
