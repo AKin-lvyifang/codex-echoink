@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
 import { StrictAdapter, legacyState, memory, SecretFixture } from "./fixtures.mjs";
 
 const root = "plugin/mobile";
@@ -11,8 +12,38 @@ const once = (condition, action = () => { throw new Error("INJECTED_FAILURE"); }
   let fired = false;
   return event => { if (!fired && condition(event)) { fired = true; return action(event); } };
 };
+const taskKeys = namespace => {
+  const digest = createHash("sha256").update(namespace).digest("hex");
+  return { legacy: `echoink-mobile-task-instance-${digest}`, current: `echoink-mobile-task-instance-${digest.slice(0, 32)}` };
+};
+const strictSecret = () => ({
+  values: new Map(), writes: [],
+  getSecret(key) {
+    if (!/^[a-z0-9-]{1,64}$/.test(key)) throw new Error("INVALID_SECRET_KEY");
+    return this.values.get(key) ?? null;
+  },
+  setSecret(key, value) {
+    if (!/^[a-z0-9-]{1,64}$/.test(key)) throw new Error("INVALID_SECRET_KEY");
+    this.writes.push(key); this.values.set(key, value);
+  }
+});
+const localFixture = () => ({
+  values: new Map(), writes: 0,
+  loadLocalStorage(key) { return this.values.get(key); },
+  saveLocalStorage(key, value) { this.writes++; this.values.set(key, value); }
+});
+const asyncSecret = base => ({
+  async getSecret(key) { await Promise.resolve(); return base.getSecret(key); },
+  async setSecret(key, value) { await Promise.resolve(); base.setSecret(key, value); }
+});
+const asyncLocal = base => ({
+  async loadLocalStorage(key) { await Promise.resolve(); return base.loadLocalStorage(key); },
+  async saveLocalStorage(key, value) { await Promise.resolve(); base.saveLocalStorage(key, value); }
+});
+// Production JSON.parse runs in the browser VM; compare serialized state across realms.
+const plain = value => JSON.parse(JSON.stringify(value));
 
-export async function runStorageScenarios({ MobileStore, getMobileTaskInstanceId }) {
+export async function runStorageScenarios({ MobileStore, getMobileTaskInstanceId, createMobileMembershipStorage }) {
   let passed = 0;
   const test = async (name, work) => { await work(); passed++; console.log(`ok ${passed} - ${name}`); };
   const create = async (adapter = new StrictAdapter(), id = instance) => { const store = new MobileStore(adapter, root, id); await store.load(); return { adapter, store }; };
@@ -274,7 +305,7 @@ export async function runStorageScenarios({ MobileStore, getMobileTaskInstanceId
     assert.equal([...secret.values.keys()].every(key => key.startsWith("echoink-mobile-task-instance-") && !key.includes("membership")), true);
   });
 
-  await test("unavailable, unreadable, invalid and unconfirmed identity never falls back", async () => {
+  await test("without a local port, unavailable, unreadable, invalid and unconfirmed identity still rejects", async () => {
     const namespace = "echoink:plugin/mobile";
     await assert.rejects(getMobileTaskInstanceId(undefined, namespace), /不可用/);
     await assert.rejects(getMobileTaskInstanceId(new SecretFixture(), ""), /不可用/);
@@ -284,6 +315,170 @@ export async function runStorageScenarios({ MobileStore, getMobileTaskInstanceId
     const secret = new SecretFixture(); const id = await getMobileTaskInstanceId(secret, namespace); const key = [...secret.values.keys()][0];
     secret.values.set(key, "../foreign"); await assert.rejects(getMobileTaskInstanceId(secret, namespace), /无法读取或确认保存/); assert.equal(secret.values.get(key), "../foreign");
     secret.values.set(key, id); assert.equal(await getMobileTaskInstanceId(secret, namespace), id);
+  });
+
+  await test("strict native key limits reject the legacy write while new identity writes fit 64 characters", async () => {
+    const namespace = "echoink:plugin/mobile"; const keys = taskKeys(namespace); const secret = strictSecret();
+    assert.equal(keys.legacy.length, 93); assert.equal(keys.current.length, 61);
+    assert.throws(() => secret.setSecret(keys.legacy, randomUUID()), /INVALID_SECRET_KEY/);
+    const id = await getMobileTaskInstanceId(secret, namespace);
+    assert.deepEqual(secret.writes, [keys.current]); assert.equal(secret.values.get(keys.current), id);
+    const restarted = strictSecret(); restarted.values = new Map(secret.values);
+    assert.equal(await getMobileTaskInstanceId(restarted, namespace), id); assert.deepEqual(restarted.writes, []);
+  });
+
+  await test("awaited asynchronous secret and local ports persist one concurrent identity and mirror it", async () => {
+    const namespace = "async-vault"; const backing = strictSecret(); const backup = localFixture();
+    const secret = asyncSecret(backing); const local = asyncLocal(backup);
+    const ids = await Promise.all(Array.from({ length: 30 }, () => getMobileTaskInstanceId(secret, namespace, local)));
+    assert.equal(new Set(ids).size, 1); assert.equal(backing.writes.length, 1); assert.equal(backup.writes, 1);
+    assert.equal(backing.values.get(taskKeys(namespace).current), ids[0]);
+    assert.equal(backup.values.get(taskKeys(namespace).current), ids[0]);
+    assert.equal(await getMobileTaskInstanceId(undefined, namespace, asyncLocal(backup)), ids[0]);
+    assert.equal(backup.writes, 1);
+  });
+
+  await test("a valid legacy UUID takes priority, remains untouched, and survives secret loss through its local mirror", async () => {
+    const namespace = "legacy-vault"; const keys = taskKeys(namespace); const id = randomUUID();
+    const secret = new SecretFixture(); const local = localFixture();
+    secret.values.set(keys.legacy, id); secret.values.set(keys.current, randomUUID()); local.values.set(keys.current, randomUUID());
+    assert.equal(await getMobileTaskInstanceId(secret, namespace, local), id);
+    assert.equal(secret.writes, 0); assert.equal(secret.values.get(keys.legacy), id); assert.equal(local.values.get(keys.current), id);
+    assert.equal(await getMobileTaskInstanceId(undefined, namespace, local), id); assert.equal(local.writes, 1);
+  });
+
+  await test("existing short-key and local-only identities are reused before any new UUID is created", async () => {
+    const namespace = "existing-vault"; const key = taskKeys(namespace).current; const id = randomUUID();
+    const secret = strictSecret(); const local = localFixture(); local.values.set(key, id);
+    assert.equal(await getMobileTaskInstanceId(secret, namespace, local), id);
+    assert.equal(secret.values.get(key), id); assert.equal(local.writes, 0);
+    const mirrored = localFixture();
+    assert.equal(await getMobileTaskInstanceId(secret, namespace, mirrored), id);
+    assert.equal(mirrored.values.get(key), id); assert.equal(secret.writes.length, 1);
+  });
+
+  const failedSecrets = [
+    ["absent", () => undefined],
+    ["synchronous read throw", () => ({ getSecret() { throw new Error("LOCKED"); }, setSecret() { throw new Error("MUST_NOT_WRITE"); } })],
+    ["asynchronous read rejection", () => ({ async getSecret() { throw new Error("LOCKED"); }, async setSecret() { throw new Error("MUST_NOT_WRITE"); } })],
+    ["synchronous write throw", () => ({ getSecret() { return null; }, setSecret() { throw new Error("WRITE_FAILED"); } })],
+    ["asynchronous write rejection", () => ({ async getSecret() { return null; }, async setSecret() { throw new Error("WRITE_FAILED"); } })],
+    ["unconfirmed write", () => ({ async getSecret() { return null; }, async setSecret() {} })]
+  ];
+  for (const [name, makeSecret] of failedSecrets) await test(`secret ${name} falls back to a confirmed device-local identity and keeps it after restart`, async () => {
+    const namespace = `fallback-${name}`; const local = localFixture(); const secret = makeSecret();
+    const id = await getMobileTaskInstanceId(secret, namespace, asyncLocal(local));
+    assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.equal(local.values.get(taskKeys(namespace).current), id); assert.equal(local.writes, 1);
+    const restarted = localFixture(); restarted.values = new Map(local.values);
+    assert.equal(await getMobileTaskInstanceId(makeSecret(), namespace, asyncLocal(restarted)), id);
+    assert.equal(restarted.writes, 0);
+  });
+
+  await test("a secret write rejection after commit mirrors the same candidate instead of creating another identity", async () => {
+    const namespace = "partial-commit"; const secret = strictSecret(); const local = localFixture();
+    const rejecting = { getSecret: key => secret.getSecret(key), async setSecret(key, value) { secret.setSecret(key, value); throw new Error("AFTER_COMMIT"); } };
+    const id = await getMobileTaskInstanceId(rejecting, namespace, local);
+    assert.equal(secret.values.get(taskKeys(namespace).current), id); assert.equal(local.values.get(taskKeys(namespace).current), id);
+    assert.equal(await getMobileTaskInstanceId(secret, namespace, local), id);
+  });
+
+  await test("invalid saved UUIDs are never accepted or overwritten while a local backup can recover", async () => {
+    const namespace = "damaged-vault"; const keys = taskKeys(namespace); const secret = new SecretFixture();
+    secret.values.set(keys.legacy, "damaged-legacy"); secret.values.set(keys.current, "../foreign");
+    const before = [...secret.values]; const local = localFixture(); const id = randomUUID(); local.values.set(keys.current, id);
+    assert.equal(await getMobileTaskInstanceId(secret, namespace, local), id);
+    assert.deepEqual([...secret.values], before); assert.equal(secret.writes, 0);
+    await assert.rejects(getMobileTaskInstanceId(secret, namespace), /无法读取或确认保存/);
+  });
+
+  await test("a confirmed secret remains usable if the optional local mirror rejects", async () => {
+    const secret = strictSecret(); const namespace = "mirror-failed";
+    const local = { loadLocalStorage() { return null; }, async saveLocalStorage() { throw new Error("LOCAL_FAILED"); } };
+    const id = await getMobileTaskInstanceId(secret, namespace, local);
+    assert.equal(secret.values.get(taskKeys(namespace).current), id);
+  });
+
+  const failedLocals = [
+    ["read throw", { loadLocalStorage() { throw new Error("LOCAL_LOCKED"); }, saveLocalStorage() { throw new Error("MUST_NOT_WRITE"); } }],
+    ["read rejection", { async loadLocalStorage() { throw new Error("LOCAL_LOCKED"); }, async saveLocalStorage() { throw new Error("MUST_NOT_WRITE"); } }],
+    ["write throw", { loadLocalStorage() { return null; }, saveLocalStorage() { throw new Error("LOCAL_FAILED"); } }],
+    ["write rejection", { async loadLocalStorage() { return null; }, async saveLocalStorage() { throw new Error("LOCAL_FAILED"); } }],
+    ["readback mismatch", { loadLocalStorage() { return null; }, saveLocalStorage() {} }],
+    ["invalid UUID", { loadLocalStorage() { return "../foreign"; }, saveLocalStorage() { throw new Error("MUST_NOT_WRITE"); } }]
+  ];
+  for (const [name, local] of failedLocals) await test(`both stores unavailable with local ${name} rejects instead of inventing a usable identity`, async () => {
+    const secret = { getSecret() { throw new Error("LOCKED"); }, setSecret() { throw new Error("MUST_NOT_WRITE"); } };
+    await assert.rejects(getMobileTaskInstanceId(secret, "double-failure", local), /无法读取或确认保存/);
+  });
+
+  await test("local-only concurrency coalesces while Vaults and devices keep distinct identities", async () => {
+    const deviceA = localFixture(); const deviceB = localFixture(); const local = asyncLocal(deviceA);
+    const ids = await Promise.all(Array.from({ length: 30 }, () => getMobileTaskInstanceId(undefined, "vault-a", local)));
+    assert.equal(new Set(ids).size, 1); assert.equal(deviceA.writes, 1);
+    const vaultB = await getMobileTaskInstanceId(undefined, "vault-b", local);
+    const otherDevice = await getMobileTaskInstanceId(undefined, "vault-a", asyncLocal(deviceB));
+    assert.equal(new Set([ids[0], vaultB, otherDevice]).size, 3);
+    await assert.rejects(getMobileTaskInstanceId(undefined, "  ", local), /不可用/);
+  });
+
+  await test("membership async ports confirm short-key state and device credentials before reporting persistence", async () => {
+    const backing = strictSecret(); const secret = asyncSecret(backing); const namespace = "membership-fixture";
+    const storage = await createMobileMembershipStorage(secret, namespace);
+    assert.equal(storage.persistent, true); assert.deepEqual(plain(await storage.read()), {});
+    const state = { token: "fixture-token", deviceId: "fixture-device" }; await storage.write(state);
+    assert.deepEqual(plain(await storage.read()), state);
+    const identities = await Promise.all(Array.from({ length: 10 }, () => storage.identity()));
+    assert.equal(identities.every(value => value.publicKey.x === identities[0].publicKey.x), true);
+    assert.equal(backing.writes.filter(key => key.endsWith("-identity")).length, 1);
+    assert.equal(backing.writes.every(key => /^[a-z0-9-]{1,64}$/.test(key)), true);
+    const restarted = strictSecret(); restarted.values = new Map(backing.values);
+    const reopened = await createMobileMembershipStorage(asyncSecret(restarted), namespace);
+    assert.equal(reopened.persistent, true); assert.deepEqual(plain(await reopened.read()), state);
+    assert.deepEqual(plain(await reopened.identity()), plain(identities[0]));
+  });
+
+  await test("membership concurrent adapters share one persisted credential through awaited identity reads", async () => {
+    const backing = strictSecret(); const secret = asyncSecret(backing);
+    const a = await createMobileMembershipStorage(secret, "shared-membership");
+    const b = await createMobileMembershipStorage(secret, "shared-membership");
+    const [first, second] = await Promise.all([a.identity(), b.identity()]);
+    assert.deepEqual(plain(first), plain(second)); assert.equal(backing.writes.filter(key => key.endsWith("-identity")).length, 1);
+  });
+
+  for (const [name, makeSecret] of failedSecrets) await test(`membership secret ${name} creates a session-only adapter without rejecting plugin setup`, async () => {
+    const storage = await createMobileMembershipStorage(makeSecret(), "unavailable-membership");
+    assert.equal(storage.persistent, false); assert.deepEqual(plain(await storage.read()), {});
+    const state = { token: "session-only-token" }; await storage.write(state); state.token = "outside-change";
+    assert.deepEqual(plain(await storage.read()), { token: "session-only-token" }); assert.equal(storage.persistent, false);
+    const snapshot = await storage.read(); snapshot.token = "outside-read-change";
+    assert.deepEqual(plain(await storage.read()), { token: "session-only-token" });
+  });
+
+  await test("membership later async write rejection clears persistence and retains prior credentials", async () => {
+    const backing = strictSecret(); let fail = false;
+    const secret = {
+      async getSecret(key) { return backing.getSecret(key); },
+      async setSecret(key, value) { if (fail) throw new Error("WRITE_FAILED"); backing.setSecret(key, value); }
+    };
+    const storage = await createMobileMembershipStorage(secret, "write-failure-membership");
+    await storage.write({ token: "prior-token" }); const before = [...backing.values]; fail = true;
+    await assert.rejects(storage.write({ token: "new-token" }), /未确认持久化/);
+    assert.equal(storage.persistent, false); assert.deepEqual([...backing.values], before);
+  });
+
+  await test("membership async read failure and damaged credentials preserve old secret values", async () => {
+    const backing = strictSecret(); const secret = asyncSecret(backing); const namespace = "damaged-membership";
+    const storage = await createMobileMembershipStorage(secret, namespace); await storage.identity();
+    const identityKey = [...backing.values.keys()].find(key => key.endsWith("-identity"));
+    backing.values.set(identityKey, "{damaged-credential");
+    const restarted = strictSecret(); restarted.values = new Map(backing.values);
+    const reopened = await createMobileMembershipStorage(asyncSecret(restarted), namespace);
+    await assert.rejects(reopened.identity(), /设备凭据不可读取/);
+    assert.equal(restarted.values.get(identityKey), "{damaged-credential");
+    secret.getSecret = async () => { throw new Error("READ_FAILED"); };
+    await assert.rejects(storage.read(), /登录状态不可读取/); assert.equal(storage.persistent, false);
+    assert.equal(backing.values.get(identityKey), "{damaged-credential");
   });
 
   console.log(`Mobile storage: ${passed} scenarios passed (memory fixtures; no native-device claim).`);

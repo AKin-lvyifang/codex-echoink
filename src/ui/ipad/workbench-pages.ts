@@ -46,10 +46,12 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   const content = el(ctx.document, "div", "pd-workbench");
   const header = el(ctx.document, "div", "pd-workbench-heading"), copy = el(ctx.document, "div", "pd-grow");
   const date = el(ctx.document, "div", "pd-home-date"); copy.append(el(ctx.document, "h1", "", "工作台"), date);
+  const newTask = ipadButton(ctx.document, "新任务", () => { void ctx.navigate({ kind: "agent", agentId: GENERAL_ASSISTANT_ID }).catch(error => ctx.error(error)); }, "is-primary", "plus");
+  newTask.disabled = !!ctx.host.store.unavailableReason;
   header.append(copy,
     shellIconButton(ctx.document, "搜索笔记", "search", () => { void ctx.host.openSearch().catch(error => ctx.error(error)); }),
     shellIconButton(ctx.document, "EchoInk 设置", "settings", () => { void ctx.host.openLegacy("settings").catch(error => ctx.error(error)); }),
-    ipadButton(ctx.document, "新任务", () => { void ctx.navigate({ kind: "agent", agentId: GENERAL_ASSISTANT_ID }).catch(error => ctx.error(error)); }, "is-primary", "plus"));
+    newTask);
   const navigation = el(ctx.document, "nav", "pd-module-nav"); navigation.setAttribute("aria-label", "模块");
   for (const module of IPAD_MODULES.slice(0, 5)) {
     const button = el(ctx.document, "button", "pd-module-button"); button.type = "button";
@@ -66,6 +68,7 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   todos.heading.append(ipadButton(ctx.document, "全部待办", () => { void ctx.host.openModule("todos").catch(error => ctx.error(error)); }, "is-text pd-section-more", "chevron-right"));
   const readError = el(ctx.document, "div", "pd-error"); readError.setAttribute("role", "alert"); readError.hidden = true;
   content.append(header, navigation, ...taskGroups.map(group => group.element), signals.element, completed.element, todos.element, readError);
+  if (ctx.host.store.unavailableReason) content.insertBefore(readError, taskGroups[0].element);
   let disposed = false, showAll = false, snapshot: WorkbenchSnapshot | undefined, loading = false, reload = false, signature = "", factsFailure = "";
   let nextFactRefresh = Infinity;
   const cards = new Map<string, { element: HTMLElement; who: HTMLElement; title: HTMLElement; step: HTMLElement;

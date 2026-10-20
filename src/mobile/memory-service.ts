@@ -34,13 +34,15 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
   private usage?: MobileUsageObserver;
   setUsage(observer: MobileUsageObserver): void { this.usage = observer; }
   constructor(private options: MobileMemoryServiceOptions) {
-    this.now = options.now ?? Date.now; this.repository = new MobileMemoryRepository(options.adapter, options.store.instanceId, this.now);
+    this.now = options.now ?? Date.now; this.repository = new MobileMemoryRepository(options.adapter, options.store.instanceId, this.now, options.store.unavailableReason);
     this.status = { phase: "idle", dayKey: this.day(), attemptsToday: 0, dailyLimit: this.readSettings().dreamRunsPerDay, startedAt: null, finishedAt: null, error: "" };
   }
   private day() { const date = new Date(this.now()); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
   private emit() { try { this.options.changed(); } catch { /* A view cannot invalidate an already committed local change. */ } for (const listener of this.listeners) { try { listener(); } catch { /* Other listeners still receive committed state. */ } } }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   initialize(): Promise<void> {
+    // A temporary shell must neither claim a persisted Dream owner nor block plugin startup on its recovery.
+    if (this.options.store.unavailableReason) return Promise.resolve();
     return this.initialization ??= (async () => {
       await this.repository.importLegacy(this.options.store);
       const raw = await this.repository.readAuxiliary(DREAM_LEDGER);
@@ -62,9 +64,11 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       if (input.version !== this.readSettings().version) throw memoryConflict();
       if ([input.memoryEnabled, input.dreamEnabled, input.autoArchive].some(value => typeof value !== "boolean")) throw new Error("记忆设置的开关状态无效。");
       if (!Number.isSafeInteger(input.dreamRunsPerDay) || input.dreamRunsPerDay < 1 || input.dreamRunsPerDay > 6) throw new Error("每日整理次数请选择1到6次。");
+      const memoryChanged = input.memoryEnabled !== this.options.store.memoryEnabled;
+      if (memoryChanged && this.options.store.unavailableReason) throw new Error(this.options.store.unavailableReason);
       const settings = this.options.settings(), previous = settings.mobileMemory;
       const next = { ...previous, dreamEnabled: input.dreamEnabled, dreamRunsPerDay: input.dreamRunsPerDay, autoArchive: input.autoArchive }; settings.mobileMemory = next;
-      try { await this.options.saveSettings(); await this.options.store.setMemoryEnabled(input.memoryEnabled); }
+      try { await this.options.saveSettings(); if (memoryChanged) await this.options.store.setMemoryEnabled(input.memoryEnabled); }
       catch { if (settings.mobileMemory === next) { settings.mobileMemory = previous; try { await this.options.saveSettings(); } catch { /* Preserve the last known config; caller retains its draft. */ } } throw new Error("记忆设置保存失败，原输入已保留。"); }
       if (!input.memoryEnabled || !input.dreamEnabled) await this.cancelDream();
       await this.archiveCompleted(); this.emit(); return this.readSettings();
@@ -212,6 +216,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
     }); this.emit(); return this.dreamStatus();
   }
   runDream(signal?: AbortSignal): Promise<MobileDreamStatus> {
+    if (this.options.store.unavailableReason) return Promise.reject(new Error(this.options.store.unavailableReason));
     if (this.dreamRun) return Promise.reject(new Error("当前正在整理，请先等待或停止。"));
     const controller = new AbortController(), token = {}, abort = () => controller.abort(); signal?.addEventListener("abort", abort, { once: true }); if (signal?.aborted) controller.abort();
     const completion = this.executeDream(controller, token).finally(() => { signal?.removeEventListener("abort", abort); if (this.dreamRun?.token === token) this.dreamRun = undefined; if (activeDreams.get(this.options.adapter) === token) activeDreams.delete(this.options.adapter); });

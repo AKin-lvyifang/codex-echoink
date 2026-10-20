@@ -7,7 +7,7 @@ export function createHost(seed = { "笔记/来源.md": "项目决定：先完�
   const file = path => { if (!fileObjects.has(path)) fileObjects.set(path, new FixtureTFile(path)); return fileObjects.get(path); };
   const events = () => { const subscriptions = new Map(); return { on(name, cb) { const list = subscriptions.get(name) ?? []; list.push(cb); subscriptions.set(name, list); return { name, cb }; }, offref(ref) { subscriptions.set(ref.name, (subscriptions.get(ref.name) ?? []).filter(cb => cb !== ref.cb)); }, trigger(name, ...args) { for (const cb of subscriptions.get(name) ?? []) cb(...args); } }; };
   const vaultEvents = events(), workspaceEvents = events();
-  const secrets = new Map();
+  const secrets = new Map(), local = new Map();
   const adapter = {
     async exists(path) { return files.has(path) || folders.has(path) || [...files.keys()].some(key => key.startsWith(path + "/")); },
     async read(path) { if (!files.has(path)) throw new Error(`Missing ${path}`); return files.get(path); },
@@ -19,7 +19,9 @@ export function createHost(seed = { "笔记/来源.md": "项目决定：先完�
     async list(path) { const prefix = path + "/"; const childFolders = new Set(); const childFiles = []; for (const key of files.keys()) { if (!key.startsWith(prefix)) continue; const rest = key.slice(prefix.length); if (rest.includes("/")) childFolders.add(prefix + rest.split("/")[0]); else childFiles.push(key); } return { files: childFiles, folders: [...childFolders] }; }
   };
   const app = {
-    secretStorage: { getSecret(key) { return secrets.get(key) ?? null; }, setSecret(key, value) { secrets.set(key, value); } },
+    secretStorage: { getSecret(key) { return secrets.get(key) ?? null; }, setSecret(key, value) { if (!/^[a-z0-9-]{1,64}$/.test(key)) throw new Error("Secret ID must use lowercase letters, digits and dashes, at most 64 characters"); secrets.set(key, value); } },
+    loadLocalStorage(key) { return structuredClone(local.get(key) ?? null); },
+    saveLocalStorage(key, value) { if (value === null) local.delete(key); else local.set(key, structuredClone(value)); },
     scope: {}, keymap: { pushScope() {}, popScope() {} },
     metadataCache: { ...events(), getFileCache() { return {}; }, resolvedLinks: {} },
     vault: {

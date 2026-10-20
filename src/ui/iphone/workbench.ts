@@ -43,6 +43,7 @@ export class IPhoneWorkbench {
     }
   }
   navigate(route: IPhoneRoute, replace = false): Promise<void> {
+    if (this.host.store.unavailableReason && route.kind === "task") return this.navigate({ kind: "agent", agentId: "sol" }, replace);
     const next = this.serial.catch(() => {}).then(async () => {
       if (this.closed) return;
       if (route.kind === "task" && this.shell.activePageId !== `task:${route.taskId}`) {
@@ -65,7 +66,7 @@ export class IPhoneWorkbench {
       const moved = existing ? await this.shell.backTo(page.id) : replace ? await this.shell.replace(page) : await this.shell.push(page);
       if (existing) page.dispose?.();
       if (!moved) { if (!existing) page.dispose?.(); return; }
-      if (route.kind === "agent") await this.host.store.update(state => { state.page = { kind: "list", agentId: route.agentId }; });
+      if (route.kind === "agent" && !this.host.store.unavailableReason) await this.host.store.update(state => { state.page = { kind: "list", agentId: route.agentId }; });
       if (route.kind === "task") await this.host.store.update(state => {
         state.activeSessionId = route.taskId; state.page = { kind: "detail", taskId: route.taskId };
         const task = state.sessions.find(task => task.id === route.taskId);

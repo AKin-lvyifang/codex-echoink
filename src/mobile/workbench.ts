@@ -330,6 +330,12 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
       journals: [], englishMissing: null, inbox: null, inboxScope: scopeKey(this.roots("inbox")), raw: null,
       rawScope: scopeKey(this.roots("raw")), pdfJobs: [], reviewComplete: null, isolated: null,
       knowledgeScope: scopeKey([...this.roots("wiki"), ...this.roots("projects")]), language: settings.settingsLanguage, issues, versions: {} };
+    if (this.store.unavailableReason) {
+      facts.tasks = [];
+      facts.issues.push(this.store.unavailableReason);
+      facts.modules = (["journal", "todos", "finance", "knowledge-base", "english-diary"] as AgentModuleId[]).filter(id => mobileModuleEnabled(settings, id));
+      return facts;
+    }
     const finish = () => { facts.modules = modules.filter(module => mobileModuleEnabled(settings, module)); return facts; };
     if (!this.app.workspace.layoutReady) return finish();
     const records = await attempt("工作台记录读取失败", null, () => this.readRecords());
@@ -382,6 +388,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
     return finish();
   }
   private signals(facts: MobileWorkbenchFacts, now: number): WorkbenchSignal[] {
+    if (this.store.unavailableReason) return [];
     return calculateWorkbenchSignals(this.signalFacts(facts, now)).map(signal => {
       const version = signal.moduleId === "finance" ? facts.finance
         : signal.id === 9 ? [facts.reviewComplete, this.settings().review]
@@ -400,6 +407,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
       todayTodos: facts.modules.includes("todos") ? facts.todos?.filter(todo => !todo.done && todo.dueDate === today) ?? [] : [], issues: [...facts.issues], nextRefreshAt: nextWorkbenchRefreshAt(input) };
   }
   async handoff(signal: WorkbenchSignal, replaceDraft = false): Promise<{ agentId: string; conflict: boolean }> {
+    if (this.store.unavailableReason) throw new Error(this.store.unavailableReason);
     // Force current versions even when a file event hasn't arrived yet.
     const before = this.generation, facts = await this.readFacts(Date.now(), true), generation = this.generation;
     const current = this.signals(facts, facts.now).find(item => item.id === signal.id && item.key === signal.key);

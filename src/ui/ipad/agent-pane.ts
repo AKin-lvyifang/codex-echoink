@@ -67,6 +67,7 @@ export class IPadAgentPane {
   }
 
   navigate(route: IPadAgentRoute, replace = false): Promise<void> {
+    if (this.host.store.unavailableReason && route.kind === "task") return this.navigate({ kind: "agent", agentId: GENERAL_ASSISTANT_ID }, replace);
     const next = this.serial.catch(() => {}).then(async () => {
       if (this.closed) return;
       if (!this.shell.activePageId) await this.mount();
@@ -152,7 +153,7 @@ export class IPadAgentPane {
   }
 
   private syncActivePage(): Promise<void> {
-    if (this.closed) return Promise.resolve();
+    if (this.closed || this.host.store.unavailableReason) return Promise.resolve();
     const pageId = this.shell.activePageId, agentId = this.currentAgent();
     if (!pageId || !agentId) return Promise.resolve();
     if (this.activeSync?.id === pageId) return this.activeSync.promise;

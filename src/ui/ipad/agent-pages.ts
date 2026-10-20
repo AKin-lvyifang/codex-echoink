@@ -6,6 +6,10 @@ import { ipadAvatar, ipadDateGroup, ipadElement as el, ipadIcon, ipadStatus, ipa
 /** A single Agent's list lives entirely in the native right pane. */
 export function createAgentPage(ctx: IPadPageContext, agentId: string): MobileShellPage {
   const { document, host } = ctx;
+  if (host.store.unavailableReason) {
+    const content = el(document, "div", "pd-error", host.store.unavailableReason); content.setAttribute("role", "alert");
+    return { id: `ipad-agent-${agentId}`, title: "Agent", content, header: "content" };
+  }
   const content = el(document, "div", "pd-agent-page");
   const identity = el(document, "header", "pd-agent-identity");
   const list = el(document, "div", "pd-agent-tasks");

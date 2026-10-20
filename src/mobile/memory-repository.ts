@@ -28,7 +28,7 @@ interface JournalEntry { relativePath: string; existed: boolean; backupFile?: st
 interface Journal { schemaVersion: 1; transactionId: string; owner: string; operation: string; baseRevision: number; targetRevision: number; entries: JournalEntry[] }
 /** Desktop files and global revision, with a Vault DataAdapter instead of Node/fs/watchers. */
 export class MobileMemoryRepository {
-  constructor(readonly adapter: DataAdapter, readonly owner: string, private now = Date.now) {}
+  constructor(readonly adapter: DataAdapter, readonly owner: string, private now = Date.now, private mutationIssue?: string) {}
   private enqueue<T>(run: () => Promise<T>): Promise<T> { const pending = (lanes.get(this.adapter) ?? Promise.resolve()).catch(() => {}).then(run); lanes.set(this.adapter, pending); return pending; }
   private read(path: string): Promise<string | null> { return mobileAtomicFilePort(this.adapter, `${ROOT}${safe(path)}`).read(true); }
   private async mkdir(path: string) { let parent = ""; for (const part of `${ROOT}${path}`.split("/")) { parent = parent ? `${parent}/${part}` : part; if (!await this.adapter.exists(parent)) await this.adapter.mkdir(parent); } }
@@ -78,6 +78,7 @@ export class MobileMemoryRepository {
     }
   }
   private async transaction(baseRevision: number, targetRevision: number, changes: Map<string, string | null>, expected: Map<string, string | null>, operation: string, guard: () => void = () => {}) {
+    if (this.mutationIssue) throw new Error(this.mutationIssue);
     guard();
     for (const [path, bytes] of expected) if (await this.read(path) !== bytes) throw memoryConflict();
     await this.assertNoDesktopTransaction();
@@ -198,6 +199,7 @@ export class MobileMemoryRepository {
   snapshot(): Promise<MobileCanonicalSnapshot> { return this.enqueue(() => this.fresh()); }
   readAuxiliary(path: string): Promise<string | null> { return this.enqueue(async () => { await this.recover(); return this.read(path); }); }
   updateAuxiliary<T>(path: string, update: (before: string | null) => { content: string; value: T }): Promise<T> {
+    if (this.mutationIssue) return Promise.reject(new Error(this.mutationIssue));
     return this.enqueue(async () => { await this.recover(); const before = await this.read(path), next = update(before); await this.replace(path, next.content, before); return next.value; });
   }
   /** Mutation plans run synchronously against one revision and commit as one recoverable journal. */
@@ -243,6 +245,7 @@ export class MobileMemoryRepository {
     });
   }
   async importLegacy(store: MobileStore): Promise<void> {
+    if (store.unavailableReason || this.mutationIssue) return;
     await store.flush(); const source = await this.adapter.read(store.statePath); let oldState: unknown; try { oldState = JSON.parse(source); } catch { throw invalid(); }
     if (!object(oldState) || oldState.version !== 2 || oldState.instanceId !== store.instanceId || !Array.isArray(oldState.memories)) throw invalid();
     const memories = oldState.memories as PersonalMemoryRecord[];

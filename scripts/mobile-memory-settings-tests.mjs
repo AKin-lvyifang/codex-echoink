@@ -44,6 +44,27 @@ function model(f) {
   f.settings.apiProviders = [provider]; f.settings.activeApiProviderId = provider.id; f.settings.defaultModel = "fixture";
 }
 const answer = text => ({ status: 200, json: { choices: [{ message: { role: "assistant", content: text }, finish_reason: "stop" }] } });
+await test("unavailable identity keeps canonical reads and independent settings but never creates an ephemeral Memory transaction", async () => {
+  const f = await fixture(); await seed(f); await f.service.initialize();
+  const store = new MobileStore(f.adapter, "plugin/mobile", "ephemeral-shell", "本机任务标识无法保存");
+  await store.load();
+  const service = new MobileMemoryService({ adapter: f.adapter, store, settings: () => f.settings, saveSettings: async () => {}, request: async () => { throw new Error("No Provider"); }, changed() {}, isBusy: () => false });
+  const before = [...f.files]; await service.initialize();
+  assert.equal((await service.list()).records.length, 1);
+  const profile = await service.readProfile();
+  await assert.rejects(service.saveProfile("identity.name", "Uncommitted", profile.revision), /本机任务标识/u);
+  await assert.rejects(service.runDream(), /本机任务标识/u);
+  await assert.rejects(service.repository.updateAuxiliary("shared-user/.runtime/ephemeral.json", () => ({ content: "unsafe", value: true })), /本机任务标识/u);
+  assert.deepEqual([...f.files], before);
+  const draft = service.readSettings(); draft.dreamRunsPerDay = 2; await service.saveSettings(draft);
+  assert.equal(service.readSettings().dreamRunsPerDay, 2);
+  const empty = vault(), repository = new MobileMemoryRepository(empty.adapter, "another-ephemeral-shell", Date.now, store.unavailableReason);
+  await assert.rejects(repository.snapshot(), /本机任务标识/u); assert.equal(empty.files.size, 0);
+  const pending = ".echoink/shared-user/.runtime/mobile-transactions/txn_foreign";
+  await f.adapter.mkdir(pending); await f.adapter.write(`${pending}/plan.json`, JSON.stringify({ schemaVersion: 1, owner: "stable-owner", entries: [] }));
+  const withPending = [...f.files]; await service.initialize();
+  await assert.rejects(service.list(), /事务/u); assert.deepEqual([...f.files], withPending);
+});
 await test("real v2 bytes are backed up, imported once, canonical cold reads preserve source and old state", async () => {
   const f = await fixture(), original = await seed(f); await f.service.initialize();
   const list = await f.service.list(); assert.equal(list.records.length, 1); assert.equal(list.records[0].source, oldMemory().source); assert.equal(list.records[0].revision, list.revision);

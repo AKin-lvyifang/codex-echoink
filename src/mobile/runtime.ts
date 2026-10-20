@@ -118,6 +118,7 @@ export class MobileRuntime {
       paused: session?.queuePaused === true || this.pausedTasks.has(id), ...(session?.interaction ? { interaction: session.interaction } : {}) };
   }
   initialize(): Promise<void> {
+    if (this.store.unavailableReason) return Promise.reject(new Error(this.store.unavailableReason));
     return this.initialization ??= this.store.update(latest => {
       latest.taskRuntimeVersion = 2;
       for (const task of latest.sessions) {
@@ -157,6 +158,7 @@ export class MobileRuntime {
     run.controller.abort(); run.agent?.abort(); run.waiter?.reject(new Error("已停止"));
   }
   shutdown(reason: MobileInterruptionReason): Promise<void> {
+    if (this.store.unavailableReason) return this.memory?.().suspend() ?? Promise.resolve();
     this.lifecycleGeneration++; this.suspended = true; this.foregroundRequested = false;
     if (this.shutdownFlight) return this.shutdownFlight;
     const active = [...this.runs.values()];

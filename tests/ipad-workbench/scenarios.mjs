@@ -80,6 +80,20 @@ export async function runIPadWorkbenchScenarios(api, win) {
     };
   }
 
+  await test("unavailable task storage leaves the iPad pane readable and disables all task input", async () => {
+    const f = await fixture();
+    try {
+      f.store.unavailableReason = "本机任务标识无法保存，任务暂不可用";
+      const pane = new api.IPadAgentPane(f.right, f.host);
+      await pane.mount();
+      assert.match(f.right.textContent, /本机任务标识无法保存/u);
+      assert.equal(f.right.querySelectorAll("textarea").length, 0);
+      await pane.navigate({ kind: "task", taskId: "untrusted-old-task" });
+      assert.match(f.right.textContent, /本机任务标识无法保存/u);
+      assert.equal(f.errors.length, 0); pane.dispose();
+    } finally { await f.close(); }
+  });
+
   await test("date uses the actual calendar weekday and plain localized spacing", async () => {
     assert.equal(api.formatMobileWorkbenchDate(new Date(2026, 9, 17, 12)), "10 月 17 日 星期六");
   });

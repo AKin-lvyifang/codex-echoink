@@ -957,4 +957,75 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
   assert.match(await plugin.services.context(), /最短行动链/u);
   plugin.onunload(); dom.window.clearInterval(plugin.interval);
 });
+// Exercise the production bootstrap with the same SecretStorage key contract as iPad.
+for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, { isMobileApp: true, isMobile: false, isTablet: true }]) {
+  for (const mode of ["native-key-limit", "secret-unavailable", "secret-property-unavailable", "both-unavailable"]) await test(`production mobile task identity ${mode}: ${platform.isTablet ? "iPad" : "iPhone"}`, async () => {
+    const code = await fs.readFile("dist/main.js", "utf8"), host = createHost(), views = [], commands = [], notices = [], reads = [], factories = new Map();
+    const read = host.adapter.read.bind(host.adapter); host.adapter.read = async path => { reads.push(path); return read(path); };
+    if (mode !== "native-key-limit") host.app.secretStorage = { getSecret() { throw new Error("SECURE_UNAVAILABLE"); }, setSecret() { throw new Error("SECURE_UNAVAILABLE"); } };
+    if (mode === "secret-property-unavailable") Object.defineProperty(host.app, "secretStorage", { get() { throw new Error("SECRET_PORT_UNAVAILABLE"); } });
+    if (mode === "both-unavailable") {
+      host.app.loadLocalStorage = () => { throw new Error("LOCAL_UNAVAILABLE"); };
+      host.app.saveLocalStorage = () => { throw new Error("LOCAL_UNAVAILABLE"); };
+    }
+    class Plugin {
+      constructor() { this.app = host.app; this.manifest = { id: "codex-echoink", dir: "plugin" }; }
+      async loadData() { return { autoOpenHome: false }; }
+      async saveData() {}
+      registerEvent() {} register() {} registerDomEvent() {}
+      registerInterval(id) { this.interval = id; }
+      registerView(type, factory) { views.push(type); factories.set(type, factory); }
+      addRibbonIcon() {} addCommand(command) { commands.push(command.id); }
+    }
+    class NativeItemView {
+      constructor() { this.app = host.app; this.containerEl = dom.window.document.createElement("div"); this.contentEl = this.containerEl; }
+      async open(parent) { parent.append(this.containerEl); await this.onOpen(); }
+    }
+    const exports = { exports: {} }, context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
+      require(id) { assert.equal(id, "obsidian"); return { Platform: platform, Plugin, ItemView: NativeItemView, Component: class {}, Modal: class {}, TFile: FixtureTFile, Notice: class { constructor(message) { notices.push(message); } }, requestUrl() { throw new Error("startup requested Provider"); } }; }
+    });
+    vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports, plugin = new MobilePlugin();
+    try {
+      await plugin.onload(); await settle();
+      assert.ok(commands.includes("open-echoink-mobile")); assert.ok(views.length >= 4);
+      assert.ok(plugin.services.lifestyle); assert.ok(plugin.accountService);
+      if (platform.isTablet) {
+        const view = factories.get("echoink-ipad-settings-shell")({ app: host.app });
+        let opened = false; view.onOpen = async () => { opened = true; };
+        await view.open(dom.window.document.body);
+        assert.equal(opened, true, "settings navigation must not override the native View.open lifecycle");
+        const categories = []; view.ui = { open: async category => categories.push(category) };
+        await view.openCategory("caps"); assert.deepEqual(categories, ["caps"]); view.containerEl.remove();
+      }
+
+      if (mode === "both-unavailable") {
+        assert.match(plugin.store.unavailableReason, /本机任务标识/);
+        await assert.rejects(plugin.store.createSession(), /本机任务标识/);
+        await assert.rejects(plugin.runtime.sendNew("sol", "should not run"), /本机任务标识/);
+        const snapshot = await plugin.workbench.load(); assert.ok(snapshot.issues.includes(plugin.store.unavailableReason)); assert.equal(snapshot.signals.length, 0);
+        assert.equal([...host.writes, ...reads].some(path => /mobile\/devices\/|mobile\/workbench-/u.test(path)), false, "no anonymous task/usage/observation partition is read or written");
+        await plugin.services.getTodoStore().addTodo({ title: "独立模块仍可用" });
+        assert.ok(host.writes.some(path => path.endsWith("待办.md")), "independent to-do storage remains usable");
+        const memory = plugin.services.memory, memorySettings = memory.readSettings();
+        memorySettings.dreamRunsPerDay = 2;
+        await memory.saveSettings(memorySettings);
+        assert.equal(memory.readSettings().dreamRunsPerDay, 2, "independent Memory settings remain writable");
+        const beforeDream = host.writes.length;
+        await assert.rejects(memory.runDream(), /本机任务标识/);
+        assert.equal(host.writes.length, beforeDream, "an ephemeral shell never writes a Dream owner");
+        await assert.rejects(memory.saveSettings({ ...memory.readSettings(), memoryEnabled: !plugin.store.memoryEnabled }), /本机任务标识/);
+        assert.equal(memory.readSettings().dreamRunsPerDay, 2);
+      } else {
+        assert.equal(plugin.store.unavailableReason, undefined);
+        const id = plugin.store.instanceId;
+        assert.match(id, /^[0-9a-f-]{36}$/u); assert.ok(host.files.has(`plugin/mobile/devices/${id}/state.json`));
+        // The normal storage scenarios assert exact local key and restart identity.
+        assert.ok(host.writes.every(path => !path.includes("undefined")));
+      }
+      assert.equal(notices.some(text => String(text).startsWith("EchoInk 无法加载")), false);
+      await plugin.runtime.shutdown("plugin_disabled");
+    } finally { plugin.onunload(); dom.window.clearInterval(plugin.interval); }
+  });
+}
+
 console.log(`${passed} mobile integration checks passed (real Pi Agent; Provider and Obsidian API fixtures).`);

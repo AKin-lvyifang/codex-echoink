@@ -275,7 +275,7 @@ export class MobileStore {
   readonly statePath: string;
   get m2BackupPath(): string { return `${this.statePath}.m2-backup.json`; }
   get m3BackupPath(): string { return `${this.statePath}.m3-backup.json`; }
-  constructor(private adapter: MobileStorageAdapter, private directory: string, readonly instanceId: string) {
+  constructor(private adapter: MobileStorageAdapter, private directory: string, readonly instanceId: string, readonly unavailableReason?: string) {
     assertMobileTaskInstanceId(instanceId);
     this.statePath = `${directory}/devices/${instanceId}/state.json`;
     const session = newSession();
@@ -293,6 +293,8 @@ export class MobileStore {
     this.writes = next; return next;
   }
   load(): Promise<void> {
+    // A temporary in-memory shell is never a replacement task partition.
+    if (this.unavailableReason) return Promise.resolve();
     return this.enqueue(async () => {
       if (this.loaded) return;
       if (this.blocked) throw new Error("移动端资料恢复尚未完成，请恢复备份后重新打开。");
@@ -324,6 +326,7 @@ export class MobileStore {
     }
   }
   private async commit(next: MobileState): Promise<void> {
+    if (this.unavailableReason) throw new Error(this.unavailableReason);
     const snapshot = JSON.stringify(next);
     const validated = parseV2(snapshot, this.instanceId);
     await this.mkdir();
@@ -366,6 +369,7 @@ export class MobileStore {
   }
   update(change: (draft: MobileState) => void): Promise<void> {
     return this.enqueue(async () => {
+      if (this.unavailableReason) throw new Error(this.unavailableReason);
       if (!this.loaded || this.blocked) throw new Error("移动端本地资料尚未成功加载或恢复，未保存改动。");
       const draft = structuredClone(this.committed);
       const result: unknown = change(draft);

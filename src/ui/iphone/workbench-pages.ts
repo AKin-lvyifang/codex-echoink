@@ -72,8 +72,9 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   const content = el(ctx.document, "div", "ip-workbench");
   const header = el(ctx.document, "div", "ip-workbench-heading"), copy = el(ctx.document, "div", "ip-grow");
   const date = el(ctx.document, "div", "ip-home-date"); copy.append(el(ctx.document, "h1", "", "工作台"), date);
-  header.append(copy, shellIconButton(ctx.document, "EchoInk 设置", "settings", () => { void ctx.host.openLegacy("settings").catch(error => ctx.error(error)); }),
-    iphoneButton(ctx.document, "新任务", () => { void openNewTask(ctx, GENERAL_ASSISTANT_ID).catch(error => ctx.error(error)); }, "is-primary", "plus"));
+  const newTask = iphoneButton(ctx.document, "新任务", () => { void openNewTask(ctx, GENERAL_ASSISTANT_ID).catch(error => ctx.error(error)); }, "is-primary", "plus");
+  newTask.disabled = !!ctx.host.store.unavailableReason;
+  header.append(copy, shellIconButton(ctx.document, "EchoInk 设置", "settings", () => { void ctx.host.openLegacy("settings").catch(error => ctx.error(error)); }), newTask);
   const strip = el(ctx.document, "div", "ip-strip-slot"), navigation = el(ctx.document, "nav", "ip-module-nav"); navigation.setAttribute("aria-label", "模块");
   for (const module of IPHONE_MODULES.slice(0, 5)) {
     const button = el(ctx.document, "button", "ip-module-button"); button.type = "button";
@@ -83,6 +84,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   const topTasks = el(ctx.document, "div", "ip-task-groups"), signals = el(ctx.document, "div", "ip-signals"), bottomTasks = el(ctx.document, "div", "ip-completed-group"), todos = el(ctx.document, "div", "ip-home-todos");
   const readError = el(ctx.document, "div", "ip-error"); readError.setAttribute("role", "alert"); readError.hidden = true;
   content.append(header, strip, navigation, topTasks, signals, bottomTasks, todos, readError);
+  if (ctx.host.store.unavailableReason) content.insertBefore(readError, topTasks);
   let disposed = false, showAll = false, snapshot: WorkbenchSnapshot | undefined, loading = false, reload = false, signature = "";
   const questions = new Map<string, ReturnType<typeof createInlineQuestion>>();
 
@@ -220,6 +222,10 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
 }
 
 export function createAgentPage(ctx: IPhonePageContext, agentId: string): MobileShellPage {
+  if (ctx.host.store.unavailableReason) {
+    const content = el(ctx.document, "div", "ip-error", ctx.host.store.unavailableReason); content.setAttribute("role", "alert");
+    return { id: `iphone-agent-${agentId}`, title: "Agent", content };
+  }
   const content = el(ctx.document, "div", "ip-agent-page"), strip = el(ctx.document, "div", "ip-strip-slot"), list = el(ctx.document, "div", "ip-agent-tasks"); content.append(strip, list);
   const actions = shellIconButton(ctx.document, "编辑 Agent", "pencil", () => { void ctx.navigate({ kind: "agent-form", agentId }).catch(error => ctx.error(error)); });
   const composer = createIPhoneComposer(ctx, { agentId }); let signature = "", disposed = false;

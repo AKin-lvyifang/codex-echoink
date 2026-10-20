@@ -1,5 +1,5 @@
 import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
-import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, TFile, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
 import { MobileStore } from "./store";
 import type { AgentRegistry } from "../agents/types";
 import { getMobileTaskInstanceId } from "./task-identity";
@@ -52,25 +52,37 @@ export default class EchoInkMobilePlugin extends Plugin {
         this.settings.knowledgeBase.folderBindings = migrateKnowledgeFolderBindings(this.app.vault.getRoot().children.filter((file) => "children" in file).map((file) => file.path), this.settings.mobileUi.knowledgePaths);
       }
       const mobileDirectory = `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`;
-      const instanceId = await getMobileTaskInstanceId(this.app.secretStorage, `${this.manifest.id}:${mobileDirectory}`);
-      this.store = new MobileStore(this.app.vault.adapter, mobileDirectory, instanceId);
+      let instanceId: string, taskStorageIssue: string | undefined;
+      let secretStorage: App["secretStorage"] | undefined;
+      try { secretStorage = this.app.secretStorage; } catch { /* The device-local fallback remains available. */ }
+      try {
+        instanceId = await getMobileTaskInstanceId(secretStorage, `${this.manifest.id}:${mobileDirectory}`, {
+          loadLocalStorage: key => this.app.loadLocalStorage(key) as unknown,
+          saveLocalStorage: (key, value) => this.app.saveLocalStorage(key, value)
+        });
+      } catch {
+        taskStorageIssue = "本机任务标识无法保存，任务暂不可用；请恢复设备本地存储后重新打开插件。";
+        // Only for the non-persistent disabled shell; never reads or creates this partition.
+        instanceId = crypto.randomUUID();
+      }
+      this.store = new MobileStore(this.app.vault.adapter, mobileDirectory, instanceId, taskStorageIssue);
       await this.store.load();
       this.usage = new MobileUsageStore(this.app.vault.adapter, mobileDirectory, instanceId);
       let usageWarningShown = false;
       const usageWarning = () => { if (!usageWarningShown) { usageWarningShown = true; new Notice("使用统计未能完整保存，本次统计可能有缺口；任务记录不受影响。"); } };
-      await this.usage.initialize().catch(usageWarning);
+      if (!taskStorageIssue) await this.usage.initialize().catch(usageWarning);
       this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl,
         (id, turn) => this.services.context(id, turn), () => this.saveSettings(), () => this.accountService);
-      this.runtime.setUsage(this.usage);
+      if (!taskStorageIssue) this.runtime.setUsage(this.usage);
       this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
       this.services = new MobileServices(this, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.manifest.dir));
       await this.services.initialize();
-      this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
+      if (!taskStorageIssue) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
       if (migratedBindings) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
       this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
-      await this.runtime.initialize();
+      if (!taskStorageIssue) await this.runtime.initialize();
       this.registerTaskLifecycle();
       await this.services.initializeFinance();
       this.register(this.accountService.subscribe(() => { this.services.lifestyle.refresh(); this.services.notifyHomeSurfacesChanged(); }));
@@ -214,7 +226,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   }
   async openIPadSettings(category?: string): Promise<void> {
     const leaf = await this.ipadNavigation!.openSettings();
-    if (leaf.view instanceof EchoInkIPadSettingsView) await leaf.view.open(category);
+    if (leaf.view instanceof EchoInkIPadSettingsView) await leaf.view.openCategory(category);
   }
   async showPage(page: MobileSettingsRoute): Promise<void> {
     if (Platform.isTablet) {
@@ -360,7 +372,7 @@ export class EchoInkIPadSettingsView extends ItemView {
     });
     await this.ui.mount(); this.refreshSettings();
   }
-  async open(category?: string): Promise<void> { await this.ui?.open(category); }
+  async openCategory(category?: string): Promise<void> { await this.ui?.open(category); }
   async onClose(): Promise<void> { this.ui?.dispose(); this.ui = undefined; this.removeChild(this.markdown); await this.plugin.store.flush(); }
 }
 

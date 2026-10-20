@@ -6,7 +6,9 @@ import { membershipWebsiteUrl } from "../membership/website-links";
 import { selectedModel, type MobileSettings } from "./settings";
 
 export async function createMobileAccountService(app: App, settings: () => MobileSettings): Promise<AccountService> {
-  const storage = await createMobileMembershipStorage(app.secretStorage, membershipApiUrl || "disabled");
+  let secretStorage: App["secretStorage"] | undefined;
+  try { secretStorage = app.secretStorage; } catch { /* Keep membership session-only if the host port is unavailable. */ }
+  const storage = await createMobileMembershipStorage(secretStorage, membershipApiUrl || "disabled");
   const account = new AccountService(storage, createMembershipTransport(membershipApiUrl), membershipApiUrl,
     url => { window.open(url, "_blank", "noopener,noreferrer"); }, membershipWebsiteUrl,
     () => selectedModel(settings())?.provider.apiKey ? "configured" : "missing");
