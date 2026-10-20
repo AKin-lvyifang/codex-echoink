@@ -59,6 +59,9 @@ export async function runGenerationUiTests(): Promise<void> {
   open(custom.id); button("删除").click();
   assert.equal(plugin.settings.generationTemplates.length, 6, "delete requires inline confirmation");
   const confirmation = host.querySelector<HTMLElement>(".echoink-settings-inline-confirm")!;
+  const deleteConfirmation = Array.from(confirmation.querySelectorAll<HTMLButtonElement>("button")).find(item => item.textContent?.trim() === "删除")!;
+  assert.equal(deleteConfirmation.classList.contains("settings-danger"), true, "delete confirmation retains its danger styling by default");
+  assert.equal(deleteConfirmation.classList.contains("echoink-delete-button"), true, "delete confirmation retains Delete Shake styling");
   assert.ok(confirmation); [...confirmation.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.trim() === "取消")!.click();
   assert.equal(plugin.settings.generationTemplates.length, 6);
   button("删除").click(); host.querySelector<HTMLButtonElement>(".echoink-settings-inline-confirm .settings-danger")!.click(); await flush();
@@ -67,7 +70,11 @@ export async function runGenerationUiTests(): Promise<void> {
   field("写作要求", "修改后的要求"); button("保存").click(); await flush();
   open("brief"); button("恢复默认").click();
   assert.equal(plugin.settings.generationTemplates[0].instructions, "修改后的要求");
-  host.querySelector<HTMLButtonElement>(".echoink-settings-inline-confirm .settings-danger")!.click(); await flush();
+  const restoreConfirmation = Array.from(host.querySelectorAll<HTMLButtonElement>(".echoink-settings-inline-confirm button")).find(item => item.textContent?.trim() === "恢复")!;
+  assert.ok(restoreConfirmation);
+  assert.equal(restoreConfirmation.classList.contains("settings-danger"), false, "restore confirmation is not a danger action");
+  assert.equal(restoreConfirmation.classList.contains("echoink-delete-button"), false, "restore confirmation has no Delete Shake styling");
+  restoreConfirmation.click(); await flush();
   assert.equal(plugin.settings.generationTemplates[0].instructions, defaultGenerationTemplates()[0].instructions);
   assert.equal(host.querySelector<HTMLTextAreaElement>("textarea")!.value, defaultGenerationTemplates()[0].instructions);
   field("写作要求", "保存失败仍保留草稿"); plugin.failSave = true; button("保存").click(); await flush();

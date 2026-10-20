@@ -187,7 +187,7 @@ export function attachSettingsTooltip(
 const inlineConfirmations = new WeakMap<HTMLElement, () => void>();
 
 export function showSettingsInlineConfirmation(container: HTMLElement, trigger: HTMLButtonElement, options: {
-  message: string; confirmLabel: string; cancelLabel: string; onConfirm: () => Promise<void>; deleteAction?: boolean;
+  message: string; confirmLabel: string; cancelLabel: string; onConfirm: () => Promise<void>; deleteAction?: boolean; danger?: boolean;
 }): void {
   const root = container.closest<HTMLElement>(".echoink-settings-demo") ?? container;
   inlineConfirmations.get(root)?.();
@@ -195,7 +195,7 @@ export function showSettingsInlineConfirmation(container: HTMLElement, trigger: 
   panel.createEl("p", { text: options.message });
   const actions = panel.createDiv({ cls: "settings-inline" });
   const cancel = createOriginButton(actions, { cls: "button", text: options.cancelLabel, attr: { type: "button" } });
-  const confirm = createOriginButton(actions, { cls: "button settings-danger", text: options.confirmLabel, attr: { type: "button" } });
+  const confirm = createOriginButton(actions, { cls: options.danger === false ? "button" : "button settings-danger", text: options.confirmLabel, attr: { type: "button" } });
   if (options.deleteAction) applyDeleteButton(confirm);
   const close = () => { disposeOriginControls(panel); panel.remove(); if (inlineConfirmations.get(root) === close) inlineConfirmations.delete(root); trigger.setAttr("aria-expanded", "false"); };
   inlineConfirmations.set(root, close);

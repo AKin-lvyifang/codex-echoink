@@ -91,7 +91,7 @@ export class GenerationTemplatesSection {
     const saved = this.editingId ? this.templates().find(item => item.id === this.editingId) : null;
     if (saved?.builtin && generationTemplateIsEdited(saved)) {
       const restore = createOriginButton(secondary, { cls: "text-button", text: this.text("恢复默认", "Restore defaults") });
-      restore.onclick = () => showSettingsInlineConfirmation(form, restore, { message: this.text("恢复这个模板的默认内容？", "Restore this template's default content?"), confirmLabel: this.text("恢复", "Restore"), cancelLabel: this.text("不恢复", "Cancel"), onConfirm: async () => {
+      restore.onclick = () => showSettingsInlineConfirmation(form, restore, { message: this.text("恢复这个模板的默认内容？", "Restore this template's default content?"), confirmLabel: this.text("恢复", "Restore"), cancelLabel: this.text("不恢复", "Cancel"), danger: false, onConfirm: async () => {
         const original = defaultGenerationTemplates().find(item => item.id === saved.id)!;
         const errors = validateGenerationTemplate(original, this.templates());
         if (errors.name) { status.setText(this.text("默认名称已被其他模板使用，请先修改重名模板", "The default name is used by another template. Rename it first.")); return; }
