@@ -298,6 +298,37 @@ await test("physical DataAdapter persists ledger and M4 receipt for a fresh cold
     const row = (await f.services.modules.finance.service.readForConversation()).records[0]; assert.match(await fs.readFile(full(row.path), "utf8"), /12\.00/u);
     const cold = new MobileStore(f.adapter, "plugin/mobile", "module-fixture"); await cold.load(); assert.equal(cold.session.operations[0].status, "completed");
     const resumed = await inspectMobileTaskResume(f.app, cold, cold.session.id, undefined, f.services.modules.finance.service); assert.equal(resumed.issues.length, 0);
+    const service = f.services.modules.finance.service, ledger = service.ledger;
+    await ledger.reload();
+    let notifications = 0;
+    const refreshes = [], observed = [];
+    const unsubscribe = service.subscribeEntries(() => {
+      notifications++;
+      // Bound the old self-notification failure so a regression fails rather than hanging.
+      if (notifications <= 12) refreshes.push(ledger.readSnapshots({ notify: false }).then(records => { observed.push(records); }));
+    });
+    try {
+      const before = await fs.readFile(full(row.path), "utf8"), writesBefore = f.writes.length;
+      await ledger.readSnapshots({ notify: false }); await Promise.all(refreshes);
+      assert.equal(notifications, 0, "a read-only snapshot must not notify its own subscriber");
+      assert.equal(f.writes.length, writesBefore); assert.equal(await fs.readFile(full(row.path), "utf8"), before);
+      const external = before.replace(/^amount:.*$/mu, 'amount: "18.00"'); assert.notEqual(external, before);
+      await fs.writeFile(full(row.path), external); // Real external bytes; the Vault event is the host boundary.
+      f.app.vault.trigger("modify", f.app.vault.getAbstractFileByPath(row.path));
+      const changed = await ledger.readSnapshots({ notify: false }); await Promise.all(refreshes);
+      assert.equal(notifications, 1, "external modifications still notify");
+      assert.equal(changed[0].entry.amountCents, 1800); assert.equal(observed[0][0].entry.amountCents, 1800); assert.notEqual(changed[0].version, row.version);
+      await ledger.readSnapshots({ notify: false }); assert.equal(notifications, 1, "subscription reads terminate without another refresh");
+      await ledger.add({ ...changed[0].entry, id: "snapshot-manual", source: "manual", sourceId: "snapshot-manual" });
+      const withManual = await ledger.readSnapshots({ notify: false }); await Promise.all(refreshes);
+      assert.ok(notifications > 1, "an explicit manual ledger write still notifies");
+      assert.equal(withManual.length, 2); assert.ok(observed.at(-1).some(record => record.entry.id === "snapshot-manual"));
+      const afterWrite = notifications;
+      await ledger.readSnapshots(); await Promise.all(refreshes);
+      assert.equal(notifications, afterWrite + 1, "the default snapshot call retains its existing notification behavior");
+      await ledger.readSnapshots({ notify: false }); assert.equal(notifications, afterWrite + 1);
+    } finally { unsubscribe(); }
+
   } finally { await f.release(); await fs.rm(directory, { recursive: true }); }
 });
 console.log(`OK ${passed} mobile module service checks; no Node/security runtime in browser bundle; controlled transports only`);

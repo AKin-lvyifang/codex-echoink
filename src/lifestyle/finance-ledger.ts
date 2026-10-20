@@ -336,11 +336,11 @@ export class FinanceLedger {
 
   reload(): Promise<void> { return this.enqueue(() => this.readDirect()); }
 
-  /** Location discovery and Markdown reads only: no Base creation or migrations. */
-  readSnapshots(): Promise<FinanceRecordSnapshot[]> {
+  /** Location discovery and Markdown reads only. Subscription refreshes can opt out of notifications. */
+  readSnapshots(options: { notify?: boolean } = {}): Promise<FinanceRecordSnapshot[]> {
     return this.enqueue(async () => {
       await this.resolveLocation(true);
-      await this.readDirect();
+      await this.readDirect(options.notify !== false);
       return Promise.all(this.records.map(async entry => {
         const file = this.files.get(entry.id)!;
         const markdown = await this.app.vault.read(file);
@@ -407,7 +407,7 @@ export class FinanceLedger {
     }).catch((error) => console.error("EchoInk 财务账目刷新失败", error));
   }
 
-  private async readDirect(): Promise<void> {
+  private async readDirect(notify = true): Promise<void> {
     const records: FinanceEntry[] = [];
     const files = new Map<string, TFile>();
     const allIds = new Set<string>();
@@ -447,7 +447,7 @@ export class FinanceLedger {
     this.blockedSources = blockedSources;
     this.unidentifiedNote = unidentifiedNote;
     this.problems = problems;
-    for (const listener of this.listeners) listener();
+    if (notify) for (const listener of this.listeners) listener();
   }
 
   private async ensureFolder(guard: () => void = () => {}): Promise<void> {
