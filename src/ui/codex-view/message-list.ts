@@ -2566,7 +2566,7 @@ export class CodexMessageListRenderer {
     if (node.status === "running") {
       title.setAttribute("aria-label", `${node.title}, ${this.copy().process.nodeStatus(node.status)}`);
     }
-    if (node.summary) {
+    if (node.summary && !generationStage) {
       (node.status === "failed" ? content : heading).createSpan({
         cls: node.status === "failed" ? "codex-work-record-failure" : "codex-assistant-turn-node-summary",
         text: node.summary,

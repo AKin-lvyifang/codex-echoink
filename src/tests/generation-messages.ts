@@ -113,6 +113,8 @@ async function assertGenerationNativeGrouping(context: ReturnType<typeof createT
     ...(["reading", "writing", "approval", "saving"] as const).map((stage, index) => ({ type: "custom", id: `stage-${stage}`, timestamp: "2026-10-20T00:00:00.003Z", customType: GENERATION_STAGE_ENTRY, data: { productRunId: runId, requestId: request.id, stage, status: "completed", at: 3 + index } })),
     { type: "custom", id: "result-entry", timestamp: "2026-10-20T00:00:00.004Z", customType: GENERATION_RESULT_ENTRY, data: { productRunId: runId, result } }
   ] as never });
+  const receiptSummary = JSON.stringify({ source: { byteLength: 6014, contentSha256: "receipt-hash-must-stay-out-of-ui", relativePath: "outputs/Result.md", status: "present" } });
+  for (const message of cold.messages) if (message.id.includes(":tool:generation-") || message.id.endsWith(":saving")) message.details = receiptSummary;
   env.messages = cold.messages;
   const reopenedRows = (renderer as unknown as { buildVirtualRows(messages: ChatMessage[]): Array<{ kind: string; message?: ChatMessage }> }).buildVirtualRows(cold.messages);
   assert.deepEqual(reopenedRows.map(row => row.kind), ["message", "assistantTurn"]);
@@ -121,6 +123,7 @@ async function assertGenerationNativeGrouping(context: ReturnType<typeof createT
   assert.equal(reopened.findByClass("codex-ai-elements-chain-of-thought")?.open, false, "a reopened completed result uses the ordinary collapsed work record");
   assert.ok(reopened.findByClass("codex-generation-result")); assert.equal(reopened.findByClass("codex-process"), null);
   assert.doesNotMatch(renderedText(reopened), /暂无内容|正在接收过程内容|PRIVATE_MODEL_JSON/u);
+  assert.doesNotMatch(renderedText(reopened), /contentSha256|byteLength|relativePath|receipt-hash-must-stay-out-of-ui/u, "completed generation approval/saving rows must not render generic receipt JSON summaries");
   renderer.dispose();
   console.log("PASS generation native grouping: preflight/user replay order, one ordinary work record, no empty details, readable exact approval and live decision");
 }
