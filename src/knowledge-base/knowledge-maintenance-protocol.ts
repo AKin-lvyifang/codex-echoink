@@ -1,3 +1,4 @@
+import * as sources from "./knowledge-maintenance-sources-core";
 import { knowledgeRolePath } from "./root-paths";
 import * as path from "node:path";
 import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
@@ -38,8 +39,6 @@ export const ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_STEPS = Object.freeze([
   })
 ]);
 
-const REVISION = /^sha256:[a-f0-9]{64}$/u;
-
 // The authoring Agent supplies prose; the shared background judge owns new link placement.
 const KNOWLEDGE_LINKING_INSTRUCTION = [
   "为新知识生成有依据的常见中文/英文 aliases，保留已有别名。正文自然表达概念与关系，保留原有知识链接；新增提及使用原词，不手工选择或插入新的知识链接，不为双链改写原句、追加无提及的句子或相关知识区块。",
@@ -47,15 +46,7 @@ const KNOWLEDGE_LINKING_INSTRUCTION = [
   "knowledge_maintain 回执只确认正文安全写入与回读；收到关联任务后自然结束本轮写作，不要因为立即回读尚未出现首次链接而反复调用 knowledge_maintain 或重写正文。关联状态由后台结果显示，不能把正文写入成功声称为关联已完成。老知识不伪装成本轮 Raw 成果。"
 ].join("\n");
 
-export interface KnowledgeMaintenanceRawBinding {
-  readonly relativePath: string;
-  readonly contentSha256: string;
-}
-
-export interface KnowledgeMaintenanceSourceEvidence {
-  readonly relativePath: string;
-  readonly revision: string;
-}
+export type { KnowledgeMaintenanceRawBinding, KnowledgeMaintenanceSourceEvidence } from "./knowledge-maintenance-sources-core";
 
 import { knowledgeFolderOrganizationPrompt } from "./folder-bindings";
 
@@ -88,175 +79,15 @@ export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./f
   ].join("\n");
 }
 
-export function completeKnowledgeMaintenanceCandidateSources(input: Readonly<{
-  targetPath: string;
-  content: string;
-  selectedSources: readonly Readonly<KnowledgeMaintenanceRawBinding>[];
-  resolvePath?: (value: string) => string;
-}>): string {
-  const allowed = new Map(input.selectedSources.map((source) => [source.relativePath, source.contentSha256]));
-  const links = extractReadableRawLinks(input.content, input.targetPath, new Set(allowed.keys()));
-  for (const match of input.content.matchAll(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu)) {
-    try { const value = JSON.parse(match[1]) as { path?: string }; if (value.path) links.add(value.path); } catch { /* obsolete optional marker is replaced below */ }
-  }
-  if (input.resolvePath) {
-    for (const source of [...links]) { links.delete(source); links.add(input.resolvePath(source)); }
-  }
-  if (!links.size && allowed.size === 1) links.add([...allowed.keys()][0]);
-  if (!links.size) throw new Error("来源关系不明确：请注明本候选采用的 Raw；程序不会编造多来源关系。");
-  for (const source of links) if (!allowed.has(source)) throw new Error(`来源不在本次范围：${source}`);
-  const body = input.content
-    .replace(/\[\[([^\]|#\r\n]+)([^\]\r\n]*)\]\]/gu, (match, target: string, suffix: string) => input.resolvePath && knowledgeRolePath(target).startsWith("raw/") ? `[[${input.resolvePath(target)}${suffix}]]` : match)
-    .replace(/\[([^\]\r\n]*)\]\(([^)\r\n]+)\)/gu, (match, label: string, target: string) => {
-      const source = resolveRawLink(target, input.targetPath);
-      return input.resolvePath && source ? `[${label}](${input.resolvePath(source)})` : match;
-    })
-    .replace(/<!--\s*echoink-source[^\n]*?-->/gu, "").trimEnd();
-  return body + "\n\n" + [...links].map((source) =>
-    `[[${source}|原始材料]]\n<!-- echoink-source: ${JSON.stringify({ path: source, revision: `sha256:${allowed.get(source)}` })} -->`
-  ).join("\n") + "\n";
+const sourceHost: sources.KnowledgeMaintenanceSourcesHost = {
+  normalizePath: normalizeVaultRelativePath, rolePath: knowledgeRolePath, path: path.posix
+};
+export function completeKnowledgeMaintenanceCandidateSources(input: Parameters<typeof sources.completeKnowledgeMaintenanceCandidateSources>[0]): string {
+  return sources.completeKnowledgeMaintenanceCandidateSources(input, sourceHost);
 }
-
-/**
- * Fail-closed validation for every model-authored Wiki/Projects candidate.
- * Human links and machine revisions must form the same non-empty source set,
- * and every source must be one of the Raw snapshots locked for this run.
- */
-export function validateKnowledgeMaintenanceCandidateSources(input: Readonly<{
-  targetPath: string;
-  content: string;
-  selectedSources: readonly Readonly<KnowledgeMaintenanceRawBinding>[];
-}>): readonly Readonly<KnowledgeMaintenanceSourceEvidence>[] {
-  const targetPath = normalizeVaultRelativePath(input.targetPath);
-  const allowed = new Map(input.selectedSources.map((source) => [
-    normalizeRawPath(source.relativePath),
-    normalizeDigest(source.contentSha256)
-  ]));
-  const links = extractReadableRawLinks(input.content, targetPath, new Set(allowed.keys()));
-  const markers = extractMachineSourceMarkers(input.content);
-  if (links.size === 0 || markers.size === 0) {
-    throw new Error("knowledge_candidate_source_missing");
-  }
-  if (
-    links.size !== markers.size
-    || [...links].some((relativePath) => !markers.has(relativePath))
-    || [...markers.keys()].some((relativePath) => !links.has(relativePath))
-  ) {
-    throw new Error("knowledge_candidate_source_mismatch");
-  }
-  const evidence: KnowledgeMaintenanceSourceEvidence[] = [];
-  for (const relativePath of [...links].sort((left, right) =>
-    left.localeCompare(right, "en")
-  )) {
-    const expectedDigest = allowed.get(relativePath);
-    const revision = markers.get(relativePath);
-    if (!expectedDigest || !revision) {
-      throw new Error("knowledge_candidate_source_outside_snapshot");
-    }
-    if (revision !== `sha256:${expectedDigest}`) {
-      throw new Error("knowledge_candidate_source_revision_mismatch");
-    }
-    evidence.push(Object.freeze({ relativePath, revision }));
-  }
-  return Object.freeze(evidence);
+export function validateKnowledgeMaintenanceCandidateSources(input: Parameters<typeof sources.validateKnowledgeMaintenanceCandidateSources>[0]): ReturnType<typeof sources.validateKnowledgeMaintenanceCandidateSources> {
+  return sources.validateKnowledgeMaintenanceCandidateSources(input, sourceHost);
 }
-
 export function extractMachineSourceMarkers(content: string): Map<string, string> {
-  const markers = new Map<string, string>();
-  const markerLikeCount = [...content.matchAll(/echoink-source/giu)].length;
-  let parsedCount = 0;
-  for (const match of content.matchAll(
-    /<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu
-  )) {
-    parsedCount += 1;
-    let value: unknown;
-    try {
-      value = JSON.parse(match[1] ?? "");
-    } catch {
-      throw new Error("knowledge_candidate_source_marker_invalid");
-    }
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error("knowledge_candidate_source_marker_invalid");
-    }
-    const record = value as Record<string, unknown>;
-    if (
-      Object.keys(record).sort().join("\0") !== "path\0revision"
-      || typeof record.path !== "string"
-      || typeof record.revision !== "string"
-      || !REVISION.test(record.revision)
-    ) {
-      throw new Error("knowledge_candidate_source_marker_invalid");
-    }
-    const relativePath = normalizeRawPath(record.path);
-    const existing = markers.get(relativePath);
-    if (existing && existing !== record.revision) {
-      throw new Error("knowledge_candidate_source_marker_conflict");
-    }
-    markers.set(relativePath, record.revision);
-  }
-  if (markerLikeCount !== parsedCount) {
-    throw new Error("knowledge_candidate_source_marker_invalid");
-  }
-  return markers;
-}
-
-function extractReadableRawLinks(
-  content: string,
-  knowledgePath: string,
-  allowed?: ReadonlySet<string>
-): Set<string> {
-  const links = new Set<string>();
-  for (const match of content.matchAll(
-    /\[\[([^\]|#\r\n]+)(?:#[^\]|\r\n]+)?(?:\|[^\]\r\n]+)?\]\]/gu
-  )) {
-    const relativePath = resolveRawLink(match[1] ?? "", knowledgePath, allowed);
-    if (relativePath) links.add(relativePath);
-  }
-  for (const match of content.matchAll(/\[[^\]\r\n]*\]\(([^)\r\n]+)\)/gu)) {
-    const target = (match[1] ?? "").trim().replace(/^<|>$/gu, "")
-      .split(/\s+["']/u, 1)[0] ?? "";
-    const relativePath = resolveRawLink(target, knowledgePath, allowed);
-    if (relativePath) links.add(relativePath);
-  }
-  return links;
-}
-
-function resolveRawLink(value: string, knowledgePath: string, allowed?: ReadonlySet<string>): string | null {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(value.trim());
-  } catch {
-    return null;
-  }
-  if (!decoded || /^[a-z]+:\/\//iu.test(decoded)) return null;
-  const withoutAnchor = decoded.split(/[?#]/u, 1)[0]?.replace(/^\/+/, "") ?? "";
-  const candidate = (allowed ? allowed.has(withoutAnchor) : knowledgeRolePath(withoutAnchor).toLowerCase().startsWith("raw/"))
-    ? path.posix.normalize(withoutAnchor)
-    : path.posix.normalize(path.posix.join(
-        path.posix.dirname(knowledgePath),
-        withoutAnchor
-      ));
-  try {
-    if (allowed && !allowed.has(candidate)) return null;
-    return normalizeRawPath(candidate);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeRawPath(value: string): string {
-  const relativePath = normalizeVaultRelativePath(value);
-  if (
-     relativePath.split("/").some((segment) => segment.startsWith("."))
-  ) {
-    throw new Error("knowledge_candidate_raw_path_invalid");
-  }
-  return relativePath;
-}
-
-function normalizeDigest(value: string): string {
-  if (!/^[a-f0-9]{64}$/u.test(value)) {
-    throw new Error("knowledge_candidate_source_digest_invalid");
-  }
-  return value;
+  return sources.extractMachineSourceMarkers(content, sourceHost);
 }

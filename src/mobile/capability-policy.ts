@@ -15,7 +15,7 @@ import { mobileMcpAdmitted, mobileMcpToolName } from "./remote-tools";
 import type { MobilePermission, MobileStore } from "./store";
 import { PI_FINANCE_TOOL_IDS, isFinanceTool, normalizeFinanceToolRequest, financeToolEffect, type PiFinanceToolId } from "../harness/pi-native/finance-tool-policy";
 
-const MOBILE_TOOLS = new Set(["task_update", "user_question", "vault_search", "note_read", "note_create", "memory_search", "memory_read", "memory_write", "web_search", ...PI_FINANCE_TOOL_IDS]);
+const MOBILE_TOOLS = new Set(["task_update", "user_question", "vault_search", "note_read", "note_create", "note_update", "memory_search", "memory_read", "memory_write", "web_search", ...PI_FINANCE_TOOL_IDS]);
 const scopedPolicies = new WeakMap<KnowledgeBodySearchPort, MobileCapabilityPolicy>();
 export function isScopedMobileBodySearch(port: KnowledgeBodySearchPort, policy: MobileCapabilityPolicy): boolean { return scopedPolicies.get(port) === policy; }
 const toolAdapters: AgentCapabilityToolAdapters = {
@@ -136,7 +136,7 @@ export class MobileCapabilityPolicy {
       requireMobileAgentCapability(checkAgentTool(context, name));
       return;
     }
-    if (name === "note_read" || name === "note_create") {
+    if (name === "note_read" || name === "note_create" || name === "note_update") {
       const target = typeof resolvedTarget === "string" ? resolvedTarget
         : typeof object(resolvedTarget).path === "string" ? object(resolvedTarget).path as string
           : typeof args?.path === "string" ? args.path : undefined;

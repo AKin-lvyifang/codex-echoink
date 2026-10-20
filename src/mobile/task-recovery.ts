@@ -25,6 +25,7 @@ export function mobileMemoryWriteHash(value: Readonly<{ kind: string; title: str
   return sha256Hex(JSON.stringify({ kind: value.kind, title: value.title, content: value.content, recallWhen: value.recallWhen, basis: value.basis }));
 }
 export const mobileMemoryWriteKey = (hash: string, targetId?: string): string => `memory_write:${targetId ?? "new"}:${hash}`;
+export const mobileNoteUpdateKey = (path: string, beforeHash: string, requestedHash: string): string => `note_update:${path}:${beforeHash}:${requestedHash}`;
 export function assertMobileWriteRun(task: MobileSession, execution: MobileToolExecutionContext): void {
   const run = task.runs?.find(item => item.id === execution.runId);
   if (!run || run.status !== "running") throw new Error("这次运行已结束或中断，未开始新的写入。");
@@ -34,13 +35,13 @@ export function assertMobileWriteNotReplayed(task: MobileSession, execution: Mob
   toolName: WriteTool, toolCallId: string, semanticKey: string, target: string): void {
   assertMobileWriteRun(task, execution);
   const recordedRepeat = (task.operations ?? []).some(operation => operation.semanticKey === semanticKey
-      && (toolName !== "finance_write" || operation.toolName !== "finance_write" || operation.status !== "completed" || operation.runId === execution.runId || !!execution.resume)
+      && (!["finance_write", "note_update"].includes(toolName) || operation.toolName !== toolName || operation.status !== "completed" || operation.runId === execution.runId || !!execution.resume)
     || operation.runId === execution.runId && operation.toolCallId === toolCallId);
   if (recordedRepeat && !execution.resume) throw new Error("这次写入已有记录，不能重复执行；请基于现有结果继续。");
   // The review does not erase uncertainty: this guard also applies to later ordinary turns.
   const legacy = legacyWrites(task).filter(operation => !(operation.runId === execution.runId && operation.toolName === toolName && operation.toolCallId === toolCallId));
-  if (legacy.some(operation => operation.toolName === toolName && (!operation.target || operation.target === target || operation.requestedTarget === target || operation.semanticKey === semanticKey))
-    || execution.resume?.operations.some(operation => operation.toolName === toolName && (toolName === "mcp_write" ? operation.semanticKey === semanticKey : operation.target === target || operation.semanticKey === semanticKey))) {
+  if (legacy.some(operation => operation.toolName === toolName && (toolName === "note_update" && operation.semanticKey ? operation.semanticKey === semanticKey : !operation.target || operation.target === target || operation.requestedTarget === target || operation.semanticKey === semanticKey))
+    || execution.resume?.operations.some(operation => operation.toolName === toolName && (toolName === "mcp_write" || toolName === "note_update" ? operation.semanticKey === semanticKey : operation.target === target || operation.semanticKey === semanticKey))) {
     throw new Error("上次写入已完成或结果仍不确定，不能重放；核对只允许基于现状继续。");
   }
   if (recordedRepeat) {
@@ -64,7 +65,7 @@ async function currentVersion(app: App, store: MobileStore, target: string, fina
     const operation = operations.find(item => item.toolName === "finance_write" && observationTarget(item.toolName, item.target) === target);
     return operation?.finance ? (await mobileFinanceObservation(finance, operation.finance)).hash : "unreadable";
   }
-  return target.startsWith("note_create:") ? noteVersion(app, target.slice("note_create:".length))
+  return target.startsWith("note_update:") ? noteVersion(app, target.slice("note_update:".length)) : target.startsWith("note_create:") ? noteVersion(app, target.slice("note_create:".length))
     : target.startsWith("memory_write:") ? memoryVersion(await store.readMemoryRecords(), target.slice("memory_write:".length)) : "unreadable";
 }
 export async function assertMobileResumeObservations(app: App, store: MobileStore, snapshot?: MobileResumeSnapshot, signal?: AbortSignal, finance?: LifestyleFinanceService): Promise<void> {
@@ -102,14 +103,14 @@ function legacyWrites(task: MobileSession): LegacyWrite[] {
     if (item.role === "assistant" && Array.isArray(item.content)) for (const [blockIndex, raw] of item.content.entries()) {
       const block = object(raw);
       const financeTool = typeof block.name === "string" && isFinanceTool(block.name) ? block.name : undefined;
-      if (block.type !== "toolCall" || (block.name !== "note_create" && block.name !== "memory_write" && !financeTool)) continue;
+      if (block.type !== "toolCall" || (block.name !== "note_create" && block.name !== "note_update" && block.name !== "memory_write" && !financeTool)) continue;
       if (financeTool) { try { if (financeToolEffect(financeTool, normalizeFinanceToolRequest(financeTool, block.arguments)) === "read") continue; } catch { if (financeTool === "finance_query") continue; } }
       const callId = typeof block.id === "string" && block.id ? block.id : `unidentified-${messageIndex}-${blockIndex}`;
       const key = `${messageIndex}:${blockIndex}:${String(block.name)}:${callId}`;
       const args = object(block.arguments), fact: LegacyWrite = { id: `legacy-${sha256Hex(key).slice(0, 24)}`, toolCallId: callId, toolName: financeTool ? "finance_write" : block.name as WriteTool, ...(financeTool ? { financeTool } : {}),
         ...(runIds.has(messageIndex) ? { runId: runIds.get(messageIndex) } : {}) };
-      if (block.name === "note_create" && typeof args.path === "string") {
-        try { fact.target = normalizeMobileNoteTarget(args.path); fact.semanticKey = mobileNoteWriteKey(fact.target); } catch { /* Invalid historical targets remain unknown. */ }
+      if ((block.name === "note_create" || block.name === "note_update") && typeof args.path === "string") {
+        try { fact.target = normalizeMobileNoteTarget(args.path); fact.semanticKey = block.name === "note_update" && typeof args.expectedContentRevision === "string" && /^sha256:[a-f0-9]{64}$/u.test(args.expectedContentRevision) && typeof args.content === "string" ? mobileNoteUpdateKey(fact.target, args.expectedContentRevision.slice(7), sha256Hex(args.content)) : block.name === "note_create" ? mobileNoteWriteKey(fact.target) : undefined; } catch { /* Invalid historical targets remain unknown. */ }
         if (typeof args.content === "string") fact.expectedHash = sha256Hex(args.content);
       } else if (block.name === "memory_write") {
         if (typeof args.targetId === "string" && args.targetId) { fact.target = args.targetId; fact.requestedTarget = args.targetId; }
@@ -121,13 +122,13 @@ function legacyWrites(task: MobileSession): LegacyWrite[] {
       facts.push(fact);
     }
     const financeTool = typeof item.toolName === "string" && isFinanceTool(item.toolName) ? item.toolName : undefined;
-    if (item.role === "toolResult" && (item.toolName === "note_create" || item.toolName === "memory_write" || financeTool)) {
+    if (item.role === "toolResult" && (item.toolName === "note_create" || item.toolName === "note_update" || item.toolName === "memory_write" || financeTool)) {
       const callId = typeof item.toolCallId === "string" && item.toolCallId ? item.toolCallId : `unidentified-result-${messageIndex}`;
       const details = object(item.details);
       if (financeTool && (financeTool === "finance_query" || details.command === "finance_budget.get" || details.command === "finance_bill.list")) continue;
       const writeTool: WriteTool = financeTool ? "finance_write" : item.toolName as WriteTool;
       let target: string | undefined;
-      if (item.toolName === "note_create" && typeof details.path === "string") {
+      if ((item.toolName === "note_create" || item.toolName === "note_update") && typeof details.path === "string") {
         try { target = normalizeMobileNoteTarget(details.path); } catch { /* A receipt is not proof of a valid target. */ }
       } else if (item.toolName === "memory_write" && typeof details.id === "string" && details.id) target = details.id;
       const prior = [...facts].reverse().find(fact => !fact.receipt && fact.toolName === writeTool && fact.financeTool === financeTool && fact.toolCallId === callId
@@ -141,8 +142,8 @@ function legacyWrites(task: MobileSession): LegacyWrite[] {
   for (const operation of task.operations ?? []) {
     // Provider IDs are only unique within a run. Missing/ambiguous attribution stays unknown.
     const matches = facts.filter(fact => fact.runId === operation.runId && fact.toolName === operation.toolName && fact.toolCallId === operation.toolCallId
-      && (operation.toolName === "finance_write" ? fact.financeTool === operation.finance?.tool : fact.semanticKey === operation.semanticKey && (operation.toolName === "note_create"
-        ? fact.target === operation.target && fact.expectedHash === operation.expectedHash
+      && (operation.toolName === "finance_write" ? fact.financeTool === operation.finance?.tool : fact.semanticKey === operation.semanticKey && (operation.toolName === "note_create" || operation.toolName === "note_update"
+        ? fact.target === operation.target && fact.expectedHash === (operation.toolName === "note_update" ? operation.requestedHash : operation.expectedHash)
         : !fact.receiptTarget || fact.receiptTarget === operation.target)));
     if (matches.length === 1) covered.add(matches[0].id);
   }
@@ -157,6 +158,17 @@ export async function inspectMobileTaskResume(app: App, store: MobileStore, task
   if (!task) throw new Error("任务不存在，未核对写入记录。");
   const baseline = stableFacts(task), operations = structuredClone(task.operations ?? []), legacy = legacyWrites(task);
   const observations = new Map<string, string>(), issues: MobileResumeSnapshot["issues"] = [], completed = new Set<string>();
+  const noteVersions = new Map<string, string>(), verifiedNotes = new Set<string>();
+  for (let index = operations.length - 1; index >= 0; index--) {
+    const operation = operations[index];
+    if (operation.toolName !== "note_create" && operation.toolName !== "note_update") continue;
+    stopped(signal);
+    const version = noteVersions.get(operation.target) ?? await noteVersion(app, operation.target); noteVersions.set(operation.target, version);
+    const exact = version === `sha256:${operation.expectedHash}` && (operation.toolName === "note_update" || operation.targetWasMissing === true);
+    const followed = operation.status === "completed" && operations.slice(index + 1).some(next => next.toolName === "note_update" && next.status === "completed" && next.target === operation.target && next.beforeHash === operation.expectedHash && verifiedNotes.has(next.id));
+    if (exact || followed) verifiedNotes.add(operation.id);
+    if (exact && operation.status !== "completed") { operation.status = "completed"; completed.add(operation.id); }
+  }
   const financeObservations = new Map<string, MobileFinanceObservation>(), verifiedFinance = new Set<string>();
   for (let index = operations.length - 1; index >= 0; index--) {
     const operation = operations[index];
@@ -187,8 +199,8 @@ export async function inspectMobileTaskResume(app: App, store: MobileStore, task
     }
     const key = observationTarget(operation.toolName, operation.target), version = await currentVersion(app, store, key);
     stopped(signal); observations.set(key, version);
-    if (operation.toolName === "note_create") {
-      if (version === `sha256:${operation.expectedHash}` && operation.targetWasMissing === true) {
+    if (operation.toolName === "note_create" || operation.toolName === "note_update") {
+      if (verifiedNotes.has(operation.id)) {
         if (operation.status !== "completed") { operation.status = "completed"; completed.add(operation.id); }
       } else issues.push({ operationId: operation.id, target: operation.target, status: version === "missing" || version === "unreadable" ? "unknown" : "conflict",
         label: version === "missing" ? "原写入目标当前不存在，不能据此推断从未写入。" : version === "unreadable" ? "原写入目标暂时无法读取。" : "当前笔记与原写入内容不同。" });
@@ -203,7 +215,7 @@ export async function inspectMobileTaskResume(app: App, store: MobileStore, task
     stopped(signal);
     if (fact.target) observations.set(observationTarget(fact.toolName, fact.target), await currentVersion(app, store, observationTarget(fact.toolName, fact.target)));
     stopped(signal);
-    issues.push({ operationId: fact.id, target: fact.target ?? "目标未记录", status: "unknown", label: `旧${fact.toolName === "note_create" ? "笔记" : fact.toolName === "finance_write" ? "财务" : "记忆"}写调用缺少写前意图，不能判定是否完成，也不能重放。` });
+    issues.push({ operationId: fact.id, target: fact.target ?? "目标未记录", status: "unknown", label: `旧${fact.toolName === "note_create" || fact.toolName === "note_update" ? "笔记" : fact.toolName === "finance_write" ? "财务" : "记忆"}写调用缺少写前意图，不能判定是否完成，也不能重放。` });
   }
   const latest = store.getSession(taskId);
   if (!latest || stableFacts(latest) !== baseline) throw changed();

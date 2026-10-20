@@ -10,6 +10,7 @@ import { mobileModuleEnabled } from "../../mobile/module-settings";
 import { createJournalPage } from "./journal-page";
 import { createTodoPage } from "./todo-pages";
 import { createFinancePage } from "./finance-pages";
+import { createKnowledgePage } from "./knowledge-pages";
 
 /** Central iPad pages. Agent routes belong to the host's separate right pane. */
 export class IPadWorkbench {
@@ -48,7 +49,10 @@ export class IPadWorkbench {
         const page = module === "journal" ? createJournalPage(this.context) : module === "todos" ? createTodoPage(this.context) : createFinancePage(this.context);
         if (!await this.shell.push(page)) page.dispose?.(); return;
       }
-      if (module === "knowledge-base") { await this.host.openLegacy("knowledge"); return; }
+      if (module === "knowledge-base") {
+        if (this.shell.hasPage("module:knowledge-base")) { await this.shell.backTo("module:knowledge-base"); return; }
+        const page = createKnowledgePage(this.context); if (!await this.shell.push(page)) page.dispose?.(); return;
+      }
       if (module !== "english-diary") return;
       const id = `module:${module}`;
       if (this.shell.hasPage(id)) { await this.shell.backTo(id); return; }

@@ -107,7 +107,9 @@ export async function runMobileCapabilityScenarios(api) {
     assert.doesNotThrow(() => f.policy.assertSkill("daily-journal"));
     f.settings.resources.catalog.shift();
     assert.throws(() => f.policy.assertSkill("unknown"), code(/unknown_resource/u));
-    for (const name of ["bash", "note_delete", "todo_query", "finance_query", "mcp_execute"]) assert.throws(() => f.policy.assertTool(name, {}), code(/unknown_tool/u));
+    for (const name of ["bash", "note_delete", "todo_query", "mcp_execute"]) assert.throws(() => f.policy.assertTool(name, {}), code(/unknown_tool/u));
+    assert.throws(() => f.policy.assertTool("finance_query", {}), /finance_invalid_action/u);
+    assert.doesNotThrow(() => f.policy.assertTool("finance_query", { action: "records" }));
     assert.throws(() => f.policy.assertTool("web_search", {}), code(/module_disabled:web-search/u));
     f.settings.tavily = { enabled: true, apiKey: "" };
     assert.throws(() => f.policy.assertTool("web_search", {}), code(/module_disabled:web-search/u));

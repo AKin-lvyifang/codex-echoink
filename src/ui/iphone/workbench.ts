@@ -15,6 +15,7 @@ import { openIPhoneTodos, openIPhoneTodoSettings } from "./todo-pages";
 import { openIPhoneFinance } from "./finance-pages";
 import { openIPhoneFinanceSettings } from "./finance-settings-pages";
 import { openIPhoneKnowledgeSettings } from "./knowledge-settings-pages";
+import { openIPhoneKnowledge } from "./knowledge-pages";
 
 /** iPhone page composition. iPad never instantiates this controller. */
 export class IPhoneWorkbench {
@@ -101,7 +102,7 @@ export class IPhoneWorkbench {
     if (!mobileModuleEnabled(this.host.settings(), module)) throw new Error("此模块已停用。");
     if (module === "journal") return openIPhoneJournal(this.context);
     if (module === "todos") return openIPhoneTodos(this.context);
-    if (module === "knowledge-base") return this.openLegacy("knowledge");
+    if (module === "knowledge-base") return openIPhoneKnowledge(this.context);
     if (module === "finance") return openIPhoneFinance(this.context);
     if (module !== "english-diary") return;
     const title = "英文日记";

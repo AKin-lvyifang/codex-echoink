@@ -7,7 +7,7 @@ import { runMobileCapabilityScenarios } from "../tests/mobile-capabilities/scena
 const build = await esbuild.build({ entryPoints: ["tests/mobile-capabilities/entry.ts"], bundle: true, write: false,
   platform: "browser", target: "es2022", format: "cjs", metafile: true, loader: { ".md": "text" } });
 const inputs = Object.keys(build.metafile.inputs);
-for (const forbidden of ["src/settings/settings.ts", "src/agents/capability-policy.ts", "src/harness/pi-native/obsidian-cli-policy.ts", "src/harness/pi-native/finance-tool-policy.ts", "src/harness/pi-native/todo-tool-policy.ts"]) {
+for (const forbidden of ["src/settings/settings.ts", "src/agents/capability-policy.ts", "src/harness/pi-native/obsidian-cli-policy.ts", "src/harness/pi-native/todo-tool-policy.ts"]) {
   assert.ok(!inputs.includes(forbidden), `mobile bundle imported desktop ${forbidden}`);
 }
 const module = { exports: {} };

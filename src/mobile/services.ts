@@ -1,3 +1,5 @@
+import type { MobileKnowledgePagePort } from "./knowledge-page-contracts";
+import { MobileKnowledgePageService } from "./knowledge-page-service";
 import type { MobileKnowledgeFoldersPort } from "./knowledge-folders-contracts";
 import { MobileKnowledgeFoldersService } from "./knowledge-folders-service";
 import type { MobileModulePort } from "./module-contracts";
@@ -51,6 +53,7 @@ export interface MobileServicesHost {
 export class MobileServices implements HomeHost {
   readonly modules: MobileModulePort;
   readonly knowledgeFolders: MobileKnowledgeFoldersPort;
+  readonly knowledgePage: MobileKnowledgePagePort;
   readonly app: App;
   readonly homeActivity: HomeActivityCore;
   private preferenceRoot: string;
@@ -112,10 +115,12 @@ export class MobileServices implements HomeHost {
     this.todos = new EchoInkTodoStore(this);
     this.modules = new MobileModuleService(this, host.store);
     this.knowledgeFolders = new MobileKnowledgeFoldersService(this);
+    this.knowledgePage = new MobileKnowledgePageService(this);
   }
   get settings() { return this.host.settings; }
   registerEvent(event: EventRef) { this.host.registerEvent(event); }
-  saveSettings() { return this.host.saveSettings(); }
+  async saveSettings() { await this.host.saveSettings(); this.settingsChanged(); }
+  settingsChanged(): void { (this.knowledgePage as MobileKnowledgePageService).invalidate(); }
   getTodoStore() { return this.todos; }
   getKnowledgeSurfaceService() { return null; }
   async initialize() {
@@ -130,7 +135,7 @@ export class MobileServices implements HomeHost {
     this.registerEvent(this.app.vault.on("rename", (file, old) => this.homeActivity.rename(old, file.path)));
     this.registerEvent(this.app.vault.on("delete", file => this.homeActivity.delete(file.path)));
   }
-  async dispose() { (this.modules as MobileModuleService).dispose(); this.lifestyle?.dispose(); await this.memoryService?.suspend(); await this.homeActivity.dispose(); }
+  async dispose() { (this.knowledgePage as MobileKnowledgePageService).dispose(); (this.modules as MobileModuleService).dispose(); this.todos.dispose(); this.lifestyle?.dispose(); await this.memoryService?.suspend(); await this.homeActivity.dispose(); }
   lifestyle!: MobileLifestyleService;
   get accountService() { return this.host.accountService; }
   async initializeFinance() { this.lifestyle = new MobileLifestyleService(this, this.preferenceRoot); await this.lifestyle.initialize(); }

@@ -16,7 +16,7 @@ export interface MobileWriteOperation {
   taskId: string;
   runId: string;
   toolCallId: string;
-  toolName: "note_create" | "memory_write" | "mcp_write" | "finance_write";
+  toolName: "note_create" | "note_update" | "memory_write" | "mcp_write" | "finance_write";
   finance?: MobileFinanceEvidence;
   /** External effect identity only; never authentication headers or arguments. */
   mcp?: { resourceId: string; toolName: string };
@@ -28,6 +28,8 @@ export interface MobileWriteOperation {
   updatedAt: number;
   target: string;
   expectedHash: string;
+  beforeHash?: string;
+  requestedHash?: string;
   targetWasMissing?: boolean;
   beforeRevision?: number;
   completedRevision?: number;

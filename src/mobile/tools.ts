@@ -1,3 +1,4 @@
+import { mobileNoteUpdateTool } from "./note-update";
 import { boundKnowledgeSourceSpan, sliceKnowledgeSourceSpan, sourceSpanHasMore } from "../knowledge-base/source-span";
 import type { KnowledgeBodySearchPort } from "../knowledge-base/vault-body-search";
 import { tokenizeSearchText } from "../knowledge-base/search/tokenize";
@@ -93,7 +94,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
         writable();
         const semanticKey = mobileNoteWriteKey(path);
         if (execution) assertMobileWriteNotReplayed(store.getSession(sessionId)!, execution, "note_create", toolCallId, semanticKey, path);
-        await assertMobileResumeObservations(app, store, execution?.resume, signal);
+        await assertMobileResumeObservations(app, store, execution?.resume, signal, finance);
         writable();
         if (app.vault.getAbstractFileByPath(path) || await app.vault.adapter.exists(path)) throw new Error("同名文件已存在，请改用新文件名；原文件未被覆盖。");
         writable();
@@ -120,11 +121,11 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
         const parts = path.split("/").slice(0, -1);
         let directory = "";
         for (const part of parts) {
-          await assertMobileResumeObservations(app, store, execution?.resume, signal);
+          await assertMobileResumeObservations(app, store, execution?.resume, signal, finance);
           writable(); directory = directory ? `${directory}/${part}` : part;
           if (!app.vault.getAbstractFileByPath(directory)) await app.vault.createFolder(directory);
         }
-        await assertMobileResumeObservations(app, store, execution?.resume, signal);
+        await assertMobileResumeObservations(app, store, execution?.resume, signal, finance);
         writable();
         if (execution && await app.vault.adapter.exists(path)) throw new Error("目标在写入前已变化，原文件未被覆盖。");
         writable();
@@ -158,7 +159,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
       }),
       async execute(toolCallId, args: { targetId?: string; kind: PersonalMemoryKind; content: string; title: string; recallWhen: string; basis: "explicit" | "observed" }, signal) {
         enabled("memory_write", signal);
-        await assertMobileResumeObservations(app, store, execution?.resume, signal);
+        await assertMobileResumeObservations(app, store, execution?.resume, signal, finance);
         enabled("memory_write", signal);
         if (memory) {
           const plan = await memory.prepareToolMemory(args, sessionId, execution?.runId ?? "", toolCallId);
@@ -216,6 +217,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
       }
     });
   }
+  tools.push(mobileNoteUpdateTool(app, store, sessionId, policy, execution, bindings, finance));
   if (finance) tools.push(...mobileFinanceTools(app, finance, store, sessionId, policy, execution));
   return tools.filter(tool => {
     try { policy.assertTool(tool.name); return true; } catch { return false; }

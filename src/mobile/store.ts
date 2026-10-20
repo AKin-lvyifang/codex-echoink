@@ -82,17 +82,18 @@ function validOperations(value: unknown, session: Record<string, unknown>, ids: 
     const call = `${String(operation.runId)}\0${String(operation.toolCallId)}`;
     if (ids.has(operation.id as string) || calls.has(call) || operation.taskId !== session.id || !nonempty(operation.runId)
       || !runs.some(run => run.id === operation.runId) || !nonempty(operation.toolCallId) || !nonempty(operation.semanticKey) || !nonempty(operation.target)
-      || !["note_create", "memory_write", "mcp_write", "finance_write"].includes(operation.toolName as string) || !["prepared", "started", "completed", "uncertain"].includes(operation.status as string)
+      || !["note_create", "note_update", "memory_write", "mcp_write", "finance_write"].includes(operation.toolName as string) || !["prepared", "started", "completed", "uncertain"].includes(operation.status as string)
       || !time(operation.createdAt) || !time(operation.updatedAt) || operation.updatedAt < operation.createdAt
       || typeof operation.expectedHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.expectedHash)
-      || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "targetWasMissing", "beforeRevision", "completedRevision", "mcp", "memoryRepository", "finance"].includes(key))) return false;
+      || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "beforeHash", "requestedHash", "targetWasMissing", "beforeRevision", "completedRevision", "mcp", "memoryRepository", "finance"].includes(key))) return false;
+    if (operation.toolName !== "note_update" && (operation.beforeHash !== undefined || operation.requestedHash !== undefined)) return false;
     if (operation.toolName !== "mcp_write" && operation.mcp !== undefined) return false;
     if (operation.toolName !== "finance_write" && operation.finance !== undefined) return false;
     if (operation.memoryRepository !== undefined && (operation.toolName !== "memory_write" || operation.memoryRepository !== "canonical")) return false;
-    if (operation.toolName === "note_create") {
+    if (operation.toolName === "note_create" || operation.toolName === "note_update") {
       const path = operation.target;
       if (path.trim() !== path || path.startsWith("/") || /[\\:]/u.test(path) || [...path].some(char => char.charCodeAt(0) < 32) || path.split("/").some(part => !part || part.startsWith(".")) || !/\.md$/iu.test(path)
-        || operation.semanticKey !== `note_create:${path}` || operation.targetWasMissing !== true || operation.beforeRevision !== undefined || operation.completedRevision !== undefined) return false;
+        || (operation.toolName === "note_create" ? operation.semanticKey !== `note_create:${path}` || operation.targetWasMissing !== true : typeof operation.beforeHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.beforeHash) || typeof operation.requestedHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.requestedHash) || operation.semanticKey !== `note_update:${path}:${operation.beforeHash}:${operation.requestedHash}` || operation.targetWasMissing !== undefined) || operation.beforeRevision !== undefined || operation.completedRevision !== undefined) return false;
     } else if (operation.toolName === "memory_write" && operation.memoryRepository === "canonical") {
       if (typeof operation.targetWasMissing !== "boolean" || !/^memory_write:.+:[a-f0-9]{64}$/u.test(operation.semanticKey)
         || (operation.beforeRevision !== undefined && (!Number.isSafeInteger(operation.beforeRevision) || Number(operation.beforeRevision) < 1))

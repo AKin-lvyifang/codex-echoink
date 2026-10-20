@@ -1,65 +1,12 @@
+import { RAW_DIGEST_REGISTRY_PATH, RAW_DIGEST_SCHEMA_VERSION, RAW_DIGEST_FIELDS, RAW_DIGEST_STATUS_DIGESTED, RAW_DIGEST_STATUS_PENDING_REINGEST, RAW_DIGEST_STATUS_FAILED, RAW_DIGEST_STATUS_PENDING_CALIBRATION, RAW_DIGEST_MANAGED_KEYS, normalizeRawDigestRegistry, emptyRawDigestRegistry,
+  isRawMarkdownPath, canonicalRawMarkdownForDigest, rawDigestRecordFromText, rawDigestFrontmatterKey as frontmatterKey,
+  type RawDigestFrontmatterRecord, type RawDigestRegistryEntry, type RawDigestRegistry } from "./raw-digest-core";
+export * from "./raw-digest-core";
 import { resolveKnowledgePath, resolveKnowledgePathFromRoots, knowledgeRootEntries, knowledgePrivateRoot, getKnowledgeFolderBindings } from "./root-paths";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { contentFingerprint } from "./raw-integrity";
 import { writeFileAtomic, isMissingPathError } from "./utils";
-
-export const RAW_DIGEST_REGISTRY_PATH = "outputs/.raw-digest-registry.json";
-export const RAW_DIGEST_SCHEMA_VERSION = 1;
-
-export const RAW_DIGEST_FIELDS = {
-  processed: "已处理",
-  status: "提炼状态",
-  digestedAt: "提炼时间",
-  fingerprint: "提炼指纹",
-  reportPath: "提炼报告",
-  evidencePaths: "提炼证据"
-} as const;
-
-export const RAW_DIGEST_STATUS_DIGESTED = "已提炼";
-export const RAW_DIGEST_STATUS_PENDING_REINGEST = "待重新提炼";
-export const RAW_DIGEST_STATUS_FAILED = "提炼失败";
-export const RAW_DIGEST_STATUS_PENDING_CALIBRATION = "待校准";
-export const RAW_DIGEST_MANAGED_KEYS = new Set<string>(Object.values(RAW_DIGEST_FIELDS));
-
-export type RawDigestConfidence = "verified" | "repaired";
-
-export interface RawDigestRegistryEntry {
-  rawPath: string;
-  fingerprint: string;
-  size: number;
-  mtime: number;
-  digestedAt: number;
-  runId: string;
-  reportPath: string;
-  evidencePaths: string[];
-  confidence: RawDigestConfidence;
-}
-
-export interface RawDigestRegistry {
-  schemaVersion: number;
-  updatedAt: string;
-  entries: Record<string, RawDigestRegistryEntry>;
-}
-
-export interface RawDigestFrontmatterRecord {
-  processed: boolean;
-  status: string;
-  fingerprint: string;
-  digestedAt: number;
-  reportPath: string;
-  evidencePaths: string[];
-}
-
-interface ParsedFrontmatter {
-  hasFrontmatter: boolean;
-  frontmatter: string;
-  body: string;
-}
-
-export function isRawMarkdownPath(relativePath: string): boolean {
-  return /\.(?:md|markdown)$/i.test(relativePath);
-}
 
 export function rawDigestFingerprint(relativePath: string, content: Buffer): string {
   if (!isRawMarkdownPath(relativePath)) return contentFingerprint(content);
@@ -67,28 +14,7 @@ export function rawDigestFingerprint(relativePath: string, content: Buffer): str
 }
 
 export function rawDigestRecordFromMarkdown(content: Buffer): RawDigestFrontmatterRecord | null {
-  const parsed = splitFrontmatter(content.toString("utf8"));
-  if (!parsed.hasFrontmatter) return null;
-  const values = readFrontmatterValues(parsed.frontmatter);
-  const fingerprint = values.get(RAW_DIGEST_FIELDS.fingerprint)?.trim() ?? "";
-  if (!fingerprint) return null;
-  return {
-    processed: parseBoolean(values.get(RAW_DIGEST_FIELDS.processed)),
-    status: values.get(RAW_DIGEST_FIELDS.status)?.trim() ?? "",
-    fingerprint,
-    digestedAt: Date.parse(values.get(RAW_DIGEST_FIELDS.digestedAt)?.trim() ?? "") || 0,
-    reportPath: stripYamlString(values.get(RAW_DIGEST_FIELDS.reportPath) ?? ""),
-    evidencePaths: parseEvidencePaths(values.get(RAW_DIGEST_FIELDS.evidencePaths) ?? "")
-  };
-}
-
-export function rawDigestRecordIsTrusted(record: RawDigestFrontmatterRecord | null, fingerprint: string): boolean {
-  if (!record) return false;
-  return record.processed
-    && record.status === RAW_DIGEST_STATUS_DIGESTED
-    && record.fingerprint === fingerprint
-    && Boolean(record.reportPath)
-    && record.evidencePaths.length > 0;
+  return rawDigestRecordFromText(content.toString("utf8"));
 }
 
 export function applyRawDigestFrontmatter(content: Buffer, entry: RawDigestRegistryEntry): Buffer {
@@ -191,58 +117,6 @@ export function buildRawDigestRegistryContent(registry: RawDigestRegistry): Buff
     entries: Object.fromEntries(Object.entries(registry.entries).sort(([left], [right]) => left.localeCompare(right)))
   };
   return Buffer.from(`${JSON.stringify(next, null, 2)}\n`, "utf8");
-}
-
-export function normalizeRawDigestRegistry(value: any): RawDigestRegistry {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return emptyRawDigestRegistry();
-  const entries: Record<string, RawDigestRegistryEntry> = {};
-  const rawEntries = value.entries && typeof value.entries === "object" && !Array.isArray(value.entries) ? value.entries : {};
-  for (const [key, item] of Object.entries(rawEntries) as Array<[string, any]>) {
-    const rawPath = normalizeRelativePath(item?.rawPath || key);
-    const fingerprint = typeof item?.fingerprint === "string" ? item.fingerprint.trim() : "";
-    if (!rawPath || !fingerprint) continue;
-    entries[rawPath] = {
-      rawPath,
-      fingerprint,
-      size: nonNegativeNumber(item?.size),
-      mtime: nonNegativeNumber(item?.mtime),
-      digestedAt: nonNegativeNumber(item?.digestedAt),
-      runId: typeof item?.runId === "string" ? item.runId : "",
-      reportPath: normalizeRelativePath(item?.reportPath ?? ""),
-      evidencePaths: Array.isArray(item?.evidencePaths) ? item.evidencePaths.map(normalizeRelativePath).filter(Boolean) : [],
-      confidence: item?.confidence === "repaired" ? "repaired" : "verified"
-    };
-  }
-  return {
-    schemaVersion: RAW_DIGEST_SCHEMA_VERSION,
-    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "",
-    entries
-  };
-}
-
-export function emptyRawDigestRegistry(): RawDigestRegistry {
-  return { schemaVersion: RAW_DIGEST_SCHEMA_VERSION, updatedAt: "", entries: {} };
-}
-
-export function canonicalRawMarkdownForDigest(text: string): string {
-  const parsed = splitFrontmatter(text);
-  return parsed.body.replace(/^\r?\n/, "");
-}
-
-function splitFrontmatter(text: string): ParsedFrontmatter {
-  const normalized = text.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---\n")) return { hasFrontmatter: false, frontmatter: "", body: text };
-  const lines = normalized.split("\n");
-  for (let index = 1; index < lines.length; index += 1) {
-    if (lines[index] === "---" || lines[index] === "...") {
-      return {
-        hasFrontmatter: true,
-        frontmatter: lines.slice(1, index).join("\n"),
-        body: lines.slice(index + 1).join("\n")
-      };
-    }
-  }
-  return { hasFrontmatter: false, frontmatter: "", body: text };
 }
 
 function replaceManagedRawFrontmatter(content: Buffer, managedLines: string[]): Buffer {
@@ -358,57 +232,4 @@ function readRawMarkdownLine(
 
 function endsWithNewline(content: Buffer): boolean {
   return content.length > 0 && content[content.length - 1] === 0x0a;
-}
-
-function readFrontmatterValues(frontmatter: string): Map<string, string> {
-  const values = new Map<string, string>();
-  const lines = frontmatter.split("\n");
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const key = frontmatterKey(line);
-    if (!key) continue;
-    const value = line.slice(line.indexOf(":") + 1).trim();
-    if (key === RAW_DIGEST_FIELDS.evidencePaths && !value) {
-      const items: string[] = [];
-      for (let next = index + 1; next < lines.length && /^\s+-\s+/.test(lines[next]); next += 1) {
-        items.push(lines[next].replace(/^\s+-\s+/, "").trim());
-        index = next;
-      }
-      values.set(key, items.join(","));
-    } else {
-      values.set(key, value);
-    }
-  }
-  return values;
-}
-
-function frontmatterKey(line: string): string | null {
-  // EchoInk only owns column-zero frontmatter keys. An indented key such as
-  // `user:\n  已处理: false` belongs to the user's nested YAML and must remain
-  // byte-for-byte untouched.
-  const match = line.match(/^([^\s:#\n][^:\n]*):(?:\s|$)/);
-  return match?.[1]?.trim() || null;
-}
-
-function parseBoolean(value: string | undefined): boolean {
-  return /^(true|yes|1|已处理)$/i.test(String(value ?? "").trim());
-}
-
-function parseEvidencePaths(value: string): string[] {
-  if (!value.trim()) return [];
-  return value.split(",").map((item) => normalizeRelativePath(stripYamlString(item))).filter(Boolean);
-}
-
-function stripYamlString(value: string): string {
-  return value.trim().replace(/^['"]|['"]$/g, "");
-}
-
-function nonNegativeNumber(value: any): number {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : 0;
-}
-
-function normalizeRelativePath(value: any): string {
-  if (typeof value !== "string") return "";
-  return value.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter((part) => part && part !== "." && part !== "..").join("/");
 }

@@ -8,7 +8,8 @@ import { runStorageScenarios } from "../tests/mobile-storage/scenarios.mjs";
 const build = await esbuild.build({ entryPoints: ["tests/mobile-storage/entry.ts"], bundle: true, write: false,
   format: "cjs", platform: "browser", target: "es2022", metafile: true });
 const inputs = Object.keys(build.metafile.inputs);
-assert.deepEqual(inputs.filter(file => file.startsWith("src/")), ["src/mobile/replace-file.ts", "src/mobile/task-identity.ts", "src/mobile/store.ts"]);
+assert.ok(inputs.includes("src/mobile/store.ts"));
+assert.ok(!inputs.some(file => file.startsWith("node:") || /(?:tool-authorization|knowledge-maintenance-protocol)\.ts$/u.test(file)), "storage stays a browser-safe pure contract graph");
 const module = { exports: {} };
 vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports, crypto: webcrypto, structuredClone, TextEncoder, Uint8Array, console }, { filename: "mobile-storage-browser.cjs" });
 await runStorageScenarios(module.exports);

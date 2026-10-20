@@ -148,6 +148,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     });
     this.settingsWrites = write;
     await write;
+    this.services?.settingsChanged();
     for (const leaf of this.app.workspace.getLeavesOfType(MOBILE_VIEW)) if (leaf.view instanceof EchoInkMobileView) leaf.view.refreshSettings();
     this.workbench?.invalidate();
     for (const type of [IPAD_SHELL_HOME_VIEW, IPAD_SHELL_AGENT_VIEW]) for (const leaf of this.app.workspace.getLeavesOfType(type)) if (leaf.view instanceof EchoInkIPadView) leaf.view.refreshSettings();
