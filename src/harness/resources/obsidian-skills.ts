@@ -28,6 +28,9 @@ function reference(text: string): string {
     .replace(/\[([^\]]+)\]\(references\/[^)]+\)/gu, "$1（已附在本 Skill 下文）").trim();
 }
 
+/** Format knowledge only: dedicated generation never inherits Agent tools or permissions. */
+export const JSON_CANVAS_GENERATION_REFERENCE = [canvas, examples].map(reference).join("\n\n");
+
 function adapted(id: BuiltinSkillDefinition["id"], title: string, description: string, body: string): BuiltinSkillDefinition {
   return Object.freeze({
     id, title, description,
@@ -92,5 +95,5 @@ obsidian_plugin_search 使用 Obsidian 官方社区插件目录，示例 {"query
   adapted("obsidian-bases", "Obsidian Bases", "创建或修改 .base 文件、笔记表格视图、筛选条件、公式和汇总时启用。",
     [bases, functions].map(reference).join("\n\n")),
   adapted("json-canvas", "JSON Canvas", "创建或修改 .canvas 文件、节点、连线、分组、思维导图或流程图时启用。",
-    [canvas, examples].map(reference).join("\n\n"))
+    JSON_CANVAS_GENERATION_REFERENCE)
 ]);

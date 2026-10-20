@@ -3,6 +3,7 @@ import type { GenerationRequest, GenerationResult } from "./types";
 import { GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY, generationRequestSummary } from "./request";
 import type { GenerationStage } from "./runtime";
 export const GENERATION_STAGE_ENTRY = "echoink.generation-stage.v1";
+export const GENERATION_ATTEMPT_ENTRY = "echoink.generation-attempt.v1";
 export const GENERATION_STAGE_TITLES: Record<GenerationStage, string> = { reading: "读取资料", writing: "按模板写作", layout: "排版导图", approval: "等你确认写入", saving: "写入文件" };
 export interface GenerationStageData { productRunId: string; requestId?: string; stage: GenerationStage; status: "running" | "completed" | "failed" | "cancelled"; at: number }
 export function generationStageMessage(data: GenerationStageData): ChatMessage {
@@ -19,11 +20,13 @@ export function generationResultText(result: GenerationResult): string {
 /** Rebuilds from Pi custom entries, including offline task reopening. */
 export function projectGenerationEntries(messages: ChatMessage[], entries: readonly { type: string; customType?: string; data?: unknown }[]): ChatMessage[] {
   const requests = new Map<string, GenerationRequest>(), results = new Map<string, GenerationResult>(), stages = new Map<string, ChatMessage>();
+  const attemptUsers = new Map<string, string>();
   for (const entry of entries) {
     if (entry.type !== "custom" || !entry.data || typeof entry.data !== "object") continue;
     const data = entry.data as Record<string, unknown>;
     if (typeof data.productRunId !== "string") continue;
     if (entry.customType === GENERATION_REQUEST_ENTRY && data.request && typeof data.request === "object") requests.set(data.productRunId, data.request as GenerationRequest);
+    if (entry.customType === GENERATION_ATTEMPT_ENTRY && typeof data.userEntryId === "string") attemptUsers.set(data.userEntryId, data.productRunId);
     if (entry.customType === GENERATION_RESULT_ENTRY && data.result && typeof data.result === "object") results.set(data.productRunId, data.result as GenerationResult);
     if (entry.customType === GENERATION_STAGE_ENTRY && typeof data.stage === "string" && data.stage in GENERATION_STAGE_TITLES) {
       const stage = generationStageMessage(data as unknown as GenerationStageData);
@@ -31,11 +34,34 @@ export function projectGenerationEntries(messages: ChatMessage[], entries: reado
       stages.set(stage.id, stage);
     }
   }
+  // Ordinary Pi replay assigns each retry user a synthetic turn. Persisted
+  // attempt identities bring every response back under its one generation run.
+  const attemptRuns = new Map<string, string>();
+  for (const message of messages) {
+    if (message.role !== "user" || !message.runId) continue;
+    for (const [entryId, runId] of attemptUsers) {
+      if (message.id.endsWith(`:entry:${encodeURIComponent(entryId)}`) && requests.has(runId)) attemptRuns.set(message.runId, runId);
+    }
+  }
+  messages = messages.map(message => {
+    const runId = message.runId && attemptRuns.get(message.runId);
+    return runId ? { ...message, runId, turnId: runId } : message;
+  });
+  const lastAssistant = new Map<string, string>();
+  for (const message of messages) {
+    if (message.runId && requests.has(message.runId) && message.role === "assistant" && !message.processKind) lastAssistant.set(message.runId, message.id);
+  }
+  const shownUsers = new Set<string>();
   const projected = messages.flatMap(message => {
     const request = message.runId && requests.get(message.runId);
     if (!request) return [message];
-    if (message.role === "user") return [{ ...message, text: generationRequestSummary(request), generationRequest: structuredClone(request) }];
+    if (message.role === "user") {
+      if (shownUsers.has(message.runId!)) return [];
+      shownUsers.add(message.runId!);
+      return [{ ...message, text: generationRequestSummary(request), generationRequest: structuredClone(request) }];
+    }
     if (message.role === "assistant" && !message.processKind) {
+      if (lastAssistant.get(message.runId!) !== message.id) return [];
       const result = results.get(message.runId!);
       return result ? [{ ...message, text: generationResultText(result), generationRequest: structuredClone(request), generationResult: structuredClone(result), rawRef: undefined, previewText: undefined }] : [];
     }

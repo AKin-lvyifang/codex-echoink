@@ -1,6 +1,6 @@
 import { createGenerationRuntimePort } from "./generation-production";
 import { generationContextMessage, generationSystemPrompt } from "../generation/request";
-import type { GenerationRequest } from "../generation/types";
+import type { GenerationAttempt, GenerationRequest } from "../generation/types";
 import type { GenerationSourceAssessment } from "../generation/sources";
 import { buildPdfTaskContextMessage, PDF_TASK_CONTEXT_KEY, PDF_TASK_CONTEXT_TYPE } from "../pdf-reading/task-context";
 import type { PdfTaskRequest } from "../pdf-reading/types";
@@ -1138,7 +1138,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
-  currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment } | null;
+  currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment; attempt?: GenerationAttempt } | null;
   assertCurrentSkillsAllowed?(): Promise<void>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
@@ -1219,8 +1219,8 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         const generation = input.currentGenerationContext?.();
         if (generation) {
           transientTurnContext = null; transientResourceContextSignature = null;
-          const systemPrompt = generationSystemPrompt(generation.request);
-          const message = generationContextMessage(generation.request, generation.assessment.sources);
+          const systemPrompt = generationSystemPrompt(generation.request, generation.attempt);
+          const message = generationContextMessage(generation.request, generation.assessment.sources, generation.attempt);
           input.contextLedger?.captureBeforeAgentStart({ ...event, systemPrompt });
           input.contextLedger?.captureTransientContextMessages([]);
           input.contextLedger?.capturePersonalMemoryAccess({ mode: "not_applicable", effectiveMode: "not_applicable", capability: "not_applicable", fixedContextRevision: null });
@@ -1506,7 +1506,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         const generation = input.currentGenerationContext?.();
         if (generation) {
           const currentUser = event.messages[currentPiUserMessageIndex(event.messages)];
-          const context: AgentMessage = { role: "custom", ...generationContextMessage(generation.request, generation.assessment.sources), timestamp: Date.now() };
+          const context: AgentMessage = { role: "custom", ...generationContextMessage(generation.request, generation.assessment.sources, generation.attempt), timestamp: Date.now() };
           return { messages: currentUser ? [context, currentUser] : [context] };
         }
         // Personal Memory context is request-scoped and never persisted into

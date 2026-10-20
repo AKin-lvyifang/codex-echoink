@@ -1,6 +1,7 @@
-import { assertGenerationInputBudget, freezeGenerationRequest, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
-import { GENERATION_STAGE_ENTRY, projectGenerationEntries } from "../../generation/projection";
-import type { GenerationRequest, GenerationResult } from "../../generation/types";
+import { assertGenerationInputBudget, freezeGenerationRequest, generationRequestSummary, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
+import { GenerationOutputValidationError, prepareGenerationOutput } from "../../generation/output";
+import { GENERATION_ATTEMPT_ENTRY, GENERATION_STAGE_ENTRY, projectGenerationEntries } from "../../generation/projection";
+import type { GenerationAttempt, GenerationRequest, GenerationResult } from "../../generation/types";
 import type { GenerationSourceAssessment } from "../../generation/sources";
 import type { GenerationRuntimePort, GenerationStage, GenerationExecutionIdentity } from "../../generation/runtime";
 import { freezePdfTaskRequest, pdfTaskRequestFromEntries } from "../../pdf-reading/task-context";
@@ -214,7 +215,7 @@ type PiChatRuntimeEventPayload = DistributiveOmit<
 >;
 
 export interface PiNativeAgentSessionFactoryInput {
-  currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment } | null;
+  currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment; attempt?: GenerationAttempt } | null;
   providerSettingsId?: string;
   runtimeProviderId?: string;
   modelId?: string;
@@ -714,7 +715,7 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
-  generation?: { request: GenerationRequest; assessment?: GenerationSourceAssessment; stage?: GenerationStage; previousAutoCompaction?: boolean; durable?: boolean; pendingEntries: { customType: string; data: unknown }[] };
+  generation?: { request: GenerationRequest; assessment?: GenerationSourceAssessment; attempt?: GenerationAttempt; inputBudget?: number; stage?: GenerationStage; previousAutoCompaction?: boolean; durable?: boolean; pendingEntries: { customType: string; data: unknown }[] };
   pdfTaskRequest?: Readonly<PdfTaskRequest>;
   pdfDeliveryJobs?: Set<string>;
   englishDiarySourcePath?: string;
@@ -1647,6 +1648,7 @@ export class PiNativeConversationRuntime {
         await this.setGenerationStage(active, execution, "reading");
         execution.generation.assessment = await this.options.generation.prepare(execution.generation.request, this.generationIdentity(active, execution));
         const inputBudget = active.generationInputBudget ?? calculatePiEffectiveInputBudget({ contextWindow: active.session.model!.contextWindow, maxOutputReserve: active.session.model!.maxTokens }).effectiveInputBudget;
+        execution.generation.inputBudget = inputBudget;
         assertGenerationInputBudget(execution.generation.request, execution.generation.assessment.sources, inputBudget, request.text);
         await this.setGenerationStage(active, execution, "writing");
       } else if (englishDiarySourcePath) {
@@ -2880,7 +2882,7 @@ export class PiNativeConversationRuntime {
       },
       currentGenerationContext: () => {
         const generation = holder.active?.currentRun?.generation;
-        return generation?.assessment ? { request: generation.request, assessment: generation.assessment } : null;
+        return generation?.assessment ? { request: generation.request, assessment: generation.assessment, attempt: generation.attempt } : null;
       },
       currentWorkbenchSource: () => holder.active?.currentRun?.workbenchSource
         ?? workbenchTaskSourceFromEntries(holder.active?.sessionManager.getBranch() ?? []),
@@ -3247,10 +3249,86 @@ export class PiNativeConversationRuntime {
         promptError
       );
       if (execution.generation && this.options.generation && execution.generation.assessment) {
-        const generatedAssistant = lastAssistantEntry(runEntries);
-        const result = await this.options.generation.finish(execution.generation.request, execution.generation.assessment,
-          terminalState === "completed" && generatedAssistant ? publicMessageText(generatedAssistant.message) : null,
-          this.generationIdentity(active, execution), stage => this.setGenerationStage(active, execution, stage));
+        const generation = execution.generation, port = this.options.generation;
+        const assessment = generation.assessment!;
+        let generatedAssistant = lastAssistantEntry(runEntries);
+        let modelText = terminalState === "completed" && generatedAssistant ? publicMessageText(generatedAssistant.message) : null;
+        let modelAttempts = 1, canvasFallback = false, continuationError: unknown;
+        const canvasValidationErrors: string[] = [];
+        // Repair only pure output validation. Nothing from permission, Provider,
+        // cancellation or the write layer can re-enter this loop.
+        while (generation.request.outputKind === "canvas" && terminalState === "completed" && modelText !== null) {
+          try {
+            prepareGenerationOutput(generation.request, assessment.sources, modelText, generation.attempt);
+            break;
+          } catch (error) {
+            if (!(error instanceof GenerationOutputValidationError)) throw error;
+            canvasValidationErrors.push(error.message);
+            if (generation.attempt?.kind === "fallback") break;
+            const attempt: GenerationAttempt = generation.attempt?.kind === "repair"
+              ? { kind: "fallback" }
+              : { kind: "repair", failedOutput: modelText, validationError: error.message };
+            try {
+              assertPiSubmissionActive(execution.knowledgeAbort.signal);
+              await port.assertContinuation?.(generation.request, this.generationIdentity(active, execution));
+              assertPiSubmissionActive(execution.knowledgeAbort.signal);
+              const retryText = generationRequestSummary(generation.request);
+              assertGenerationInputBudget(generation.request, assessment.sources, generation.inputBudget!, retryText, attempt);
+              generation.attempt = attempt;
+              await this.setGenerationStage(active, execution, "writing");
+              assertPiSubmissionActive(execution.knowledgeAbort.signal);
+              const attemptBaseline = new Set(active.sessionManager.getEntries().map(entry => entry.id));
+              execution.agentSettledSeen = false;
+              promptError = null;
+              modelAttempts++;
+              if (attempt.kind === "fallback") canvasFallback = true;
+              try {
+                const retryStart = { readyAt: undefined as number | undefined, settled: false, error: undefined as unknown };
+                const retryPromise = active.session.prompt(retryText, { source: "interactive", preflightResult: accepted => {
+                  assertPiSubmissionActive(execution.knowledgeAbort.signal);
+                  if (accepted) retryStart.readyAt = Date.now();
+                } });
+                void retryPromise.then(() => { retryStart.settled = true; }, error => { retryStart.error = error; retryStart.settled = true; });
+                try {
+                  const userEntry = await waitForNewUserEntry(active.sessionManager, attemptBaseline, USER_ENTRY_WAIT_TIMEOUT_MS, retryStart);
+                  this.appendGenerationEntry(active, GENERATION_ATTEMPT_ENTRY, { productRunId: execution.productRunId, requestId: generation.request.id, userEntryId: userEntry.id });
+                  await retryPromise;
+                } catch (error) {
+                  if (active.session.isStreaming) await active.session.abort();
+                  await retryPromise.catch(() => undefined);
+                  throw error;
+                }
+              } catch (error) { promptError = error; }
+              await active.session.waitForIdle().catch(error => { promptError ??= error; });
+              await active.eventLane;
+              await active.queuePersistenceLane;
+              if (execution.eventError !== null) throw execution.eventError;
+              if (!execution.agentSettledSeen) promptError ??= new Error("Pi AgentSession stopped without native agent_settled");
+              entries = active.sessionManager.getEntries();
+              runEntries = entries.filter(entry => !execution.baselineEntryIds.has(entry.id));
+              const attemptEntries = entries.filter(entry => !attemptBaseline.has(entry.id));
+              terminalState = classifyTerminalState(attemptEntries, execution.abortRequested, promptError);
+              generatedAssistant = lastAssistantEntry(attemptEntries);
+              modelText = terminalState === "completed" && generatedAssistant ? publicMessageText(generatedAssistant.message) : null;
+            } catch (error) {
+              continuationError = error;
+              promptError = error;
+              terminalState = execution.abortRequested || execution.knowledgeAbort.signal.aborted ? "cancelled" : "failed";
+              modelText = null;
+              break;
+            }
+          }
+        }
+        const result = await port.finish(generation.request, assessment, modelText,
+          this.generationIdentity(active, execution), stage => this.setGenerationStage(active, execution, stage), generation.attempt);
+        result.modelAttempts = modelAttempts;
+        if (generation.request.outputKind === "canvas") {
+          result.canvasFallback = canvasFallback;
+          result.canvasValidationErrors = canvasValidationErrors;
+        }
+        if (continuationError && result.writeState === "not_written" && terminalState !== "cancelled") {
+          result.error = continuationError instanceof Error ? continuationError.message : "生成未完成，尚未写入文件。";
+        }
         this.appendGenerationEntry(active, GENERATION_RESULT_ENTRY, { productRunId: execution.productRunId, result });
         if (result.writeState !== "verified" && terminalState === "completed") { terminalState = "failed"; promptError = new Error(result.error ?? "生成未写入文件。"); }
         await this.setGenerationStage(active, execution, undefined, result.writeState === "verified" ? "completed" : execution.abortRequested ? "cancelled" : "failed");
