@@ -1,3 +1,7 @@
+import { createGenerationRuntimePort } from "./generation-production";
+import { generationContextMessage, generationSystemPrompt } from "../generation/request";
+import type { GenerationRequest } from "../generation/types";
+import type { GenerationSourceAssessment } from "../generation/sources";
 import { buildPdfTaskContextMessage, PDF_TASK_CONTEXT_KEY, PDF_TASK_CONTEXT_TYPE } from "../pdf-reading/task-context";
 import type { PdfTaskRequest } from "../pdf-reading/types";
 import { buildEnglishDiaryTaskContext, type EnglishDiaryTaskContext } from "../english-diary/task-context";
@@ -595,6 +599,25 @@ export async function createPiProductionRuntimeBundle(
         const context = await currentAgentCapabilityContext(plugin, catalog, entry.conversationId, access);
         requireAgentCapability(checkAgentCapability(context, "knowledge", action === "knowledge-write" ? "write" : "read"));
       },
+      generation: createGenerationRuntimePort({
+        app: plugin.app, vaultRoot: vaultRootPath, bindings: () => plugin.settings.knowledgeBase.folderBindings,
+        domain: vaultDomainService, writeExecution,
+        assertRead: async (relativePath, identity) => {
+          const context = await currentAgentCapabilityContext(plugin, catalog, identity.conversationId, identity.access);
+          requireAgentCapability(checkAgentTool(context, "note_read", { relativePath }));
+        },
+        assertWrite: async (relativePath, identity) => {
+          const context = await currentAgentCapabilityContext(plugin, catalog, identity.conversationId, identity.access);
+          requireAgentCapability(checkAgentTool(context, "note_create", { relativePath }));
+        },
+        authorization: identity => createPiVaultProductionAuthorizationPort({
+          approvals, adapter: vaultAdapter, currentRunIdentity: () => identity,
+          currentWorkspaceAccess: () => identity.access,
+          userId: localPiVaultUserId(deviceScope.deviceIdDigest), deviceId: deviceScope.deviceIdDigest,
+          confirmation: { confirm: request => approvalBroker.waitForDecision({ requestId: request.requestId, conversationId: request.conversationId, piSessionId: request.piSessionId,
+            productRunId: request.productRunId, toolCallId: request.toolCallId, target: canonicalJsonStringify(request.target), preview: canonicalJsonStringify(request.preview), signal: request.signal }) }
+        })
+      }),
       knowledge: knowledgeRuntime,
       recordDreamExperience: async (experience) => {
         await dreamExperienceInbox.append(experience);
@@ -1115,6 +1138,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
+  currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment } | null;
   assertCurrentSkillsAllowed?(): Promise<void>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
@@ -1159,6 +1183,10 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
     productRunId: string;
     sources: readonly Readonly<PersonalMemorySourceReference>[];
   }>): void | Promise<void>;
+  onPersonalMemorySourcesInjected?(input: Readonly<{
+    productRunId: string;
+    sources: readonly Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>[];
+  }>): void | Promise<void>;
   personalMemoryAvailable?: boolean;
   contextLedger?: Pick<
     PiContextLedgerRecorder,
@@ -1184,10 +1212,20 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
       }> | null = null;
       let transientAskPersonalMemorySources: Readonly<{
         productRunId: string;
-        sources: readonly Readonly<PersonalMemorySourceReference>[];
+        sources: readonly Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>[];
       }> | null = null;
       let transientAskPersonalMemorySourcesReported = false;
       pi.on("before_agent_start", async (event) => {
+        const generation = input.currentGenerationContext?.();
+        if (generation) {
+          transientTurnContext = null; transientResourceContextSignature = null;
+          const systemPrompt = generationSystemPrompt(generation.request);
+          const message = generationContextMessage(generation.request, generation.assessment.sources);
+          input.contextLedger?.captureBeforeAgentStart({ ...event, systemPrompt });
+          input.contextLedger?.captureTransientContextMessages([]);
+          input.contextLedger?.capturePersonalMemoryAccess({ mode: "not_applicable", effectiveMode: "not_applicable", capability: "not_applicable", fixedContextRevision: null });
+          return { systemPrompt, message };
+        }
         await input.assertCurrentSkillsAllowed?.();
         transientTurnContext = null;
         transientResourceContextSignature = null;
@@ -1337,7 +1375,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             if (effectiveMode === "normal") {
               transientTurnContext = buildPersonalMemoryContextMessage(fixed);
             }
-            if (effectiveMode === "normal" && turn?.kind === "ask") {
+            if (effectiveMode === "normal") {
               transientAskPersonalMemorySources = Object.freeze({
                 productRunId: memoryTurn.productRunId,
                 sources: primaryPersonalMemorySources(fixed)
@@ -1465,6 +1503,12 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           : systemPromptResult;
       });
       pi.on("context", async (event) => {
+        const generation = input.currentGenerationContext?.();
+        if (generation) {
+          const currentUser = event.messages[currentPiUserMessageIndex(event.messages)];
+          const context: AgentMessage = { role: "custom", ...generationContextMessage(generation.request, generation.assessment.sources), timestamp: Date.now() };
+          return { messages: currentUser ? [context, currentUser] : [context] };
+        }
         // Personal Memory context is request-scoped and never persisted into
         // the Pi conversation body.
         const messages = event.messages.filter(
@@ -1499,11 +1543,15 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             && !transientAskPersonalMemorySourcesReported
           ) {
             transientAskPersonalMemorySourcesReported = true;
-            await input.onAskPersonalMemorySourcesInjected?.({
+            await input.onPersonalMemorySourcesInjected?.({
               productRunId: transientAskPersonalMemorySources.productRunId,
               sources: transientAskPersonalMemorySources.sources.map(
                 (source) => ({ ...source })
               )
+            });
+            if (turn?.kind === "ask") await input.onAskPersonalMemorySourcesInjected?.({
+              productRunId: transientAskPersonalMemorySources.productRunId,
+              sources: transientAskPersonalMemorySources.sources.map(({ id, title }) => ({ id, title }))
             });
           }
         } else {
@@ -1705,13 +1753,13 @@ function takePiCurrentTurnResourceContext(
 
 function primaryPersonalMemorySources(fixed: Readonly<{
   recall?: PersonalMemoryPreparedTurnContext["recall"];
-}>): readonly Readonly<PersonalMemorySourceReference>[] {
-  const unique = new Map<string, Readonly<PersonalMemorySourceReference>>();
+}>): readonly Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>[] {
+  const unique = new Map<string, Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>>();
   for (const candidate of fixed.recall?.candidates ?? []) {
     const id = candidate.id.trim();
     const title = candidate.title.trim();
     if (!id || !title || unique.has(id)) continue;
-    unique.set(id, Object.freeze({ id, title }));
+    unique.set(id, Object.freeze({ id, title, ...(candidate.revision === undefined ? {} : { revision: candidate.revision }) }));
   }
   return Object.freeze([...unique.values()]);
 }
@@ -1978,6 +2026,7 @@ async function createProductionAgentSession(input: {
   // The task ID exists before a run is bound (Skill loading happens during activation).
   const liveCapabilityContext = async () => await currentAgentCapabilityContext(input.plugin, input.catalog, input.input.catalog.conversationId, input.input.currentWorkspaceAccess?.());
   const assertToolAllowed = async (name: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown, currentOperation?: Readonly<{ productRunId: string; toolCallId: string }>) => {
+    if (input.input.currentGenerationContext?.()) throw new Error("generation_tool_scope_blocked");
     if (input.input.currentEnglishDiaryRequest?.() && name !== "english_diary_generate") throw new Error("english_diary_task_scope_required");
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
     const context = await liveCapabilityContext();
@@ -2341,6 +2390,7 @@ async function createProductionAgentSession(input: {
     currentWorkbenchSource: () => input.input.currentWorkbenchSource?.() ?? null,
     currentPdfTaskRequest: () => input.input.currentPdfTaskRequest?.(),
     currentEnglishDiaryRequest: () => input.input.currentEnglishDiaryRequest?.() ?? null,
+    currentGenerationContext: () => input.input.currentGenerationContext?.() ?? null,
     assertCurrentSkillsAllowed: async () => {
       const context = await liveCapabilityContext();
       const paths = input.input.skillPath ? [input.input.skillPath] : [...(input.input.skillPaths ?? [])];
@@ -2373,6 +2423,7 @@ async function createProductionAgentSession(input: {
       input.input.reportMemoryRecallProgress?.(progress),
     onAskPersonalMemorySourcesInjected: (snapshot) =>
       input.input.reportAskPersonalMemorySources?.(snapshot),
+    onPersonalMemorySourcesInjected: snapshot => input.input.reportPersonalMemorySourcesInjected?.(snapshot),
     personalMemoryAvailable: configured.toolCalling,
     contextLedger
   });
@@ -2524,6 +2575,7 @@ async function createProductionAgentSession(input: {
         : checkAgentTool(context, name).allowed;
     },
     session: created.session,
+    generationInputBudget: contextBudget.effectiveInputBudget,
     memoryToolNames: configured.toolCalling
       ? PI_PERSONAL_MEMORY_TOOL_IDS
       : Object.freeze([]),

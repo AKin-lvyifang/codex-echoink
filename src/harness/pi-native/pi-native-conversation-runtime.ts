@@ -1,3 +1,8 @@
+import { assertGenerationInputBudget, freezeGenerationRequest, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
+import { GENERATION_STAGE_ENTRY, projectGenerationEntries } from "../../generation/projection";
+import type { GenerationRequest, GenerationResult } from "../../generation/types";
+import type { GenerationSourceAssessment } from "../../generation/sources";
+import type { GenerationRuntimePort, GenerationStage, GenerationExecutionIdentity } from "../../generation/runtime";
 import { freezePdfTaskRequest, pdfTaskRequestFromEntries } from "../../pdf-reading/task-context";
 import type { PdfTaskRequest } from "../../pdf-reading/types";
 import { normalizeEnglishDiarySourcePath, englishDiaryTaskContextFromEntries, type EnglishDiaryTaskContext } from "../../english-diary/task-context";
@@ -42,12 +47,16 @@ import type { FileConversationCatalog } from "./file-conversation-catalog";
 import type { FileProductRunStore } from "./file-product-run-store";
 import {
   PiChatUiProjector,
+  piEntryIdFromProjectedMessageId,
+  projectSavedAnswerNotes,
   piKnowledgeToolDisplayMetadata,
   type PiChatUiMessageDecoration,
   type PiChatUiRunIdentity,
   type PiChatUiToolProductProjectionInput,
   type PiChatUiViewModel
 } from "./pi-chat-ui-projector";
+import { appendSavedAnswerNote } from "./pi-answer-save";
+import { PI_MEMORY_SOURCES_ENTRY_TYPE, normalizeInjectedMemorySources, projectInjectedMemorySources } from "./pi-memory-sources";
 import {
   PiSessionDurabilityError,
   assertPiSessionAppendsDurable,
@@ -105,7 +114,7 @@ import {
   preflightPiAnthropicDocumentRequest
 } from "./pi-document-context";
 import type { PersonalMemorySourceReference } from "../../settings/settings";
-import { latestPiContextLedger } from "./pi-context-budget";
+import { calculatePiEffectiveInputBudget, latestPiContextLedger } from "./pi-context-budget";
 import {
   PI_KNOWLEDGE_MAINTAIN_TOOL_ID,
   type PiKnowledgeMaintenanceCommandContext
@@ -205,6 +214,7 @@ type PiChatRuntimeEventPayload = DistributiveOmit<
 >;
 
 export interface PiNativeAgentSessionFactoryInput {
+  currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment } | null;
   providerSettingsId?: string;
   runtimeProviderId?: string;
   modelId?: string;
@@ -258,6 +268,10 @@ export interface PiNativeAgentSessionFactoryInput {
   reportAskPersonalMemorySources?(input: Readonly<{
     productRunId: string;
     sources: readonly Readonly<PersonalMemorySourceReference>[];
+  }>): Promise<void>;
+  reportPersonalMemorySourcesInjected?(input: Readonly<{
+    productRunId: string;
+    sources: readonly Readonly<import("../../settings/settings").InjectedPersonalMemorySourceReference>[];
   }>): Promise<void>;
 }
 
@@ -375,6 +389,7 @@ export type PiNativeKnowledgeTurnContext =
     }>;
 
 export interface PiNativeAgentSessionFactoryResult {
+  generationInputBudget?: number;
   /** Exact saved Provider used when activation selected the global default. */
   providerSettingsId?: string;
   session: AgentSession;
@@ -424,6 +439,7 @@ export interface PiRuntimeResolvedSkill {
 }
 
 export interface PiNativeConversationRuntimeOptions {
+  generation?: GenerationRuntimePort;
   verifyPdfTaskDelivery?(request: Readonly<PdfTaskRequest> | string, noNewSourcePaths: readonly string[]): Promise<void>;
   resolveAgentRunSnapshot?: (catalog: Readonly<PiConversationCatalogEntry>) => AgentRunSnapshot;
   assertAgentActionAllowed?: (input: Readonly<{ catalog: Readonly<PiConversationCatalogEntry>; action: "knowledge-read" | "knowledge-write"; access?: Readonly<PiWorkspaceAccess> }>) => void | Promise<void>;
@@ -671,6 +687,7 @@ ReadonlySet<string> = new Set<PiNativeFileStoreErrorCode>([
 ]);
 
 interface ActiveConversation {
+  generationInputBudget?: number;
   lastPersistedLeafId: string | null;
   providerSettingsId?: string;
   catalog: Readonly<PiConversationCatalogEntry>;
@@ -697,6 +714,7 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  generation?: { request: GenerationRequest; assessment?: GenerationSourceAssessment; stage?: GenerationStage; previousAutoCompaction?: boolean; durable?: boolean; pendingEntries: { customType: string; data: unknown }[] };
   pdfTaskRequest?: Readonly<PdfTaskRequest>;
   pdfDeliveryJobs?: Set<string>;
   englishDiarySourcePath?: string;
@@ -869,7 +887,7 @@ export class PiNativeConversationRuntime {
   private readonly now: () => number;
   private readonly active = new Map<string, ActiveConversation>();
   private readonly submitting = new Set<string>();
-  private readonly activating = new Map<string, Promise<ActiveConversation>>();
+  private readonly activating = new Map<string, Promise<unknown>>();
   private readonly runChannels = new Map<string, PiRuntimeEventChannel>();
   private readonly recoveringConversations = new Set<string>();
   private initialized = false;
@@ -1430,11 +1448,11 @@ export class PiNativeConversationRuntime {
       : null;
 
     const knowledgeCommand: KnowledgeConversationCommand =
-      mode === "plan" || !this.options.knowledge
+      request.generationRequest || mode === "plan" || !this.options.knowledge
         ? Object.freeze({ kind: "chat", originalText: request.text })
         : routeKnowledgeConversationCommand(request.text);
 
-    const selectedRuntimeSkill = !request.pdfTaskRequest && !request.englishDiarySourcePath && !request.skillPath
+    const selectedRuntimeSkill = !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath && !request.skillPath
       ? catalog.defaultSkillId
         ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId, catalog)
         : mode !== "plan"
@@ -1529,7 +1547,7 @@ export class PiNativeConversationRuntime {
     }
 
     const productRunId = this.nextId("product-run");
-    const memoryMode = request.memoryMode ?? catalog.defaultMemoryMode;
+    const memoryMode = request.generationRequest ? "no_memory" : request.memoryMode ?? catalog.defaultMemoryMode;
     const projectId = resolveExplicitMemoryProjectId(request.text);
     const channel = new PiRuntimeEventChannel();
     this.runChannels.set(productRunId, channel);
@@ -1539,6 +1557,7 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
+      ...(request.generationRequest ? { generation: { request: freezeGenerationRequest(request.generationRequest), pendingEntries: [] } } : {}),
       ...(pdfTaskRequest ? { pdfTaskRequest } : {}),
       ...(englishDiarySourcePath ? { englishDiarySourcePath } : {}),
       ...(request.workbenchSource ? { workbenchSource: request.workbenchSource } : {}),
@@ -1615,7 +1634,22 @@ export class PiNativeConversationRuntime {
         summary: cloneReasoningSummary(execution.reasoningSummary)
       });
       this.configureToolsForTurn(active, knowledgeCommand, mode, memoryMode);
-      if (englishDiarySourcePath) {
+      if (execution.generation) {
+        if (!this.options.generation || mode === "plan" || permission === "read-only" || englishDiarySourcePath || pdfTaskRequest || noteMentions.length || documents.length || promptImages.length || request.skillPath) throw new Error("生成需要独立的资料选择、Agent 模式和可写权限。");
+        active.knowledgeTurnContext = null;
+        // Do not send an unrelated branch to a summarization Provider before
+        // before_agent_start/context has isolated this generation request.
+        if (typeof active.session.setAutoCompactionEnabled === "function") {
+          execution.generation.previousAutoCompaction = active.session.autoCompactionEnabled;
+          active.session.setAutoCompactionEnabled(false);
+        }
+        this.appendGenerationEntry(active, GENERATION_REQUEST_ENTRY, { productRunId, request: execution.generation.request });
+        await this.setGenerationStage(active, execution, "reading");
+        execution.generation.assessment = await this.options.generation.prepare(execution.generation.request, this.generationIdentity(active, execution));
+        const inputBudget = active.generationInputBudget ?? calculatePiEffectiveInputBudget({ contextWindow: active.session.model!.contextWindow, maxOutputReserve: active.session.model!.maxTokens }).effectiveInputBudget;
+        assertGenerationInputBudget(execution.generation.request, execution.generation.assessment.sources, inputBudget, request.text);
+        await this.setGenerationStage(active, execution, "writing");
+      } else if (englishDiarySourcePath) {
         active.knowledgeTurnContext = null;
       } else if (knowledgeCommand.kind === "ask") {
         await this.emitRuntimeEvent(active, execution, {
@@ -1762,7 +1796,7 @@ export class PiNativeConversationRuntime {
       throw error;
     }
 
-    const promptText = englishDiarySourcePath ? request.text : active.skillPromptPrefix
+    const promptText = execution.generation ? request.text : englishDiarySourcePath ? request.text : active.skillPromptPrefix
       ? `${active.skillPromptPrefix}\n\n${request.text}`
       : knowledgeCommand.kind === "chat" && active.skillCommandName
         ? `/skill:${active.skillCommandName} ${request.text}`
@@ -1959,6 +1993,13 @@ export class PiNativeConversationRuntime {
         userEntry.id
       );
     }
+    if (execution.generation) {
+      // Local preflight/auth may fail before a formal run exists. Keep its
+      // phases transient until the user Entry and ProductRun are both durable.
+      execution.generation.durable = true;
+      for (const entry of execution.generation.pendingEntries) this.appendGenerationEntry(active, entry.customType, entry.data);
+      execution.generation.pendingEntries = [];
+    }
     const result = this.completeProductRun(
       active,
       execution,
@@ -1974,12 +2015,41 @@ export class PiNativeConversationRuntime {
     });
   }
 
+  private appendGenerationEntry(active: ActiveConversation, customType: string, data: unknown): void {
+    const generation = active.currentRun?.generation;
+    if (generation && !generation.durable) {
+      generation.pendingEntries.push({ customType, data: structuredClone(data) });
+      return;
+    }
+    const id = active.sessionManager.appendCustomEntry(customType, data);
+    assertPiSessionAppendsDurable({ sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager, expectedEntryIds: [id] });
+    this.checkpointConversationLeaf(active);
+  }
+  private generationIdentity(active: ActiveConversation, execution: ActiveProductRun): GenerationExecutionIdentity {
+    return { conversationId: active.catalog.conversationId, piSessionId: active.catalog.piSessionId, productRunId: execution.productRunId,
+      vaultId: active.catalog.vaultId, access: { permission: execution.permission, mode: execution.mode, memoryMode: "no_memory" }, signal: execution.knowledgeAbort.signal };
+  }
+  private async setGenerationStage(active: ActiveConversation, execution: ActiveProductRun, stage?: GenerationStage, finalStatus: "completed" | "failed" | "cancelled" = "completed"): Promise<void> {
+    const generation = execution.generation; if (!generation) return;
+    if (generation.stage) {
+      const data = { productRunId: execution.productRunId, requestId: generation.request.id, stage: generation.stage, status: finalStatus, at: this.now() };
+      this.appendGenerationEntry(active, GENERATION_STAGE_ENTRY, data);
+      await this.emitRuntimeEvent(active, execution, { type: "generation_progress", requestId: generation.request.id, stage: generation.stage, status: finalStatus });
+    }
+    generation.stage = stage;
+    if (stage) {
+      const data = { productRunId: execution.productRunId, requestId: generation.request.id, stage, status: "running", at: this.now() };
+      this.appendGenerationEntry(active, GENERATION_STAGE_ENTRY, data);
+      await this.emitRuntimeEvent(active, execution, { type: "generation_progress", requestId: generation.request.id, stage, status: "running" });
+    }
+  }
   private configureToolsForTurn(
     active: ActiveConversation,
     command: Readonly<KnowledgeConversationCommand>,
     mode: PiChatMode,
     memoryMode: PiConversationMemoryMode
   ): void {
+    if (active.currentRun?.generation) { active.session.setActiveToolsByName([]); return; }
     const names = resolvePiTurnToolNames({
       commandKind: command.kind,
       englishDiary: Boolean(active.currentRun?.englishDiarySourcePath),
@@ -2017,6 +2087,11 @@ export class PiNativeConversationRuntime {
     execution: ActiveProductRun
   ): void {
     this.runChannels.delete(execution.productRunId);
+    if (execution.generation && !execution.generation.durable) {
+      active.projection.messages = active.projection.messages.filter(message => message.runId !== execution.productRunId);
+      active.projection.runState = "idle";
+      active.projection.productRunId = undefined;
+    }
     this.finishProductRunRuntimeState(active, execution);
   }
 
@@ -2024,6 +2099,7 @@ export class PiNativeConversationRuntime {
     active: ActiveConversation,
     execution: ActiveProductRun
   ): void {
+    if (execution.generation?.previousAutoCompaction !== undefined) active.session.setAutoCompactionEnabled(execution.generation.previousAutoCompaction);
     execution.releaseSubmissionAbort?.();
     execution.releaseSubmissionAbort = undefined;
     if (active.currentRun === execution) active.currentRun = null;
@@ -2531,6 +2607,38 @@ export class PiNativeConversationRuntime {
     });
   }
 
+  async recordAnswerSave(conversationId: string, messageId: string, path: string): Promise<void> {
+    this.assertReady();
+    const pending = this.activating.get(conversationId);
+    if (pending) {
+      await pending.catch(() => undefined);
+      return await this.recordAnswerSave(conversationId, messageId, path);
+    }
+    const active = this.active.get(conversationId);
+    if (!active) {
+      // Reuse the activation lane: neither operation may open a second manager
+      // while the other is awaiting catalog/session preparation.
+      const recording = recordDurablePiAnswerSave({
+        catalog: this.catalog, sessionApi: this.options.sessionApi, conversationId, messageId, path,
+        resolveConversationCwd: id => this.options.resolveConversationCwd(id), now: this.now
+      });
+      this.activating.set(conversationId, recording);
+      try {
+        await recording;
+      } finally {
+        if (this.activating.get(conversationId) === recording) this.activating.delete(conversationId);
+      }
+      return;
+    }
+    appendSavedAnswerNote({
+      sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager,
+      piSessionId: active.catalog.piSessionId,
+      assistantEntryId: piEntryIdFromProjectedMessageId(messageId) ?? "", path
+    });
+    active.lastPersistedLeafId = active.sessionManager.getLeafId();
+    projectSavedAnswerNotes(active.projection.messages, active.sessionManager.getBranch(), active.catalog.piSessionId);
+  }
+
   async releaseConversation(conversationId: string): Promise<void> {
     const active = this.active.get(conversationId);
     if (!active) return;
@@ -2770,6 +2878,10 @@ export class PiNativeConversationRuntime {
         // Bind the source intent to the task; the tool separately binds the live user entry.
         return { sourcePath: run.englishDiarySourcePath, intentEntryId: stored?.intentEntryId ?? `english-diary:${catalog.conversationId}` };
       },
+      currentGenerationContext: () => {
+        const generation = holder.active?.currentRun?.generation;
+        return generation?.assessment ? { request: generation.request, assessment: generation.assessment } : null;
+      },
       currentWorkbenchSource: () => holder.active?.currentRun?.workbenchSource
         ?? workbenchTaskSourceFromEntries(holder.active?.sessionManager.getBranch() ?? []),
       currentKnowledgeTurnContext: () =>
@@ -2779,7 +2891,7 @@ export class PiNativeConversationRuntime {
       currentMemoryTurnContext: () => {
         const active = holder.active;
         const run = active?.currentRun;
-        if (!active || !run || run.englishDiarySourcePath) return null;
+        if (!active || !run || run.englishDiarySourcePath || run.generation) return null;
         const branch = active.sessionManager.getBranch();
         // before_agent_start may run before or after Pi appends this turn's
         // user message. Entry identity preserves earlier identical text.
@@ -2862,6 +2974,20 @@ export class PiNativeConversationRuntime {
           ask.personalMemorySources,
           input.sources
         );
+      },
+      reportPersonalMemorySourcesInjected: async input => {
+        const active = holder.active;
+        const run = active?.currentRun;
+        if (!active || !run || run.memoryMode === "no_memory" || run.productRunId !== input.productRunId) return;
+        const sources = normalizeInjectedMemorySources(input.sources);
+        if (!sources.length || active.sessionManager.getBranch().some(entry => entry.type === "custom"
+          && entry.customType === PI_MEMORY_SOURCES_ENTRY_TYPE && (entry.data as { productRunId?: string })?.productRunId === run.productRunId)) return;
+        const id = active.sessionManager.appendCustomEntry(PI_MEMORY_SOURCES_ENTRY_TYPE, {
+          schemaVersion: 1, conversationId: active.catalog.conversationId,
+          piSessionId: active.catalog.piSessionId, productRunId: run.productRunId, sources
+        });
+        assertPiSessionAppendsDurable({ sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager, expectedEntryIds: [id] });
+        this.checkpointConversationLeaf(active);
       },
       reportMemoryRecallProgress: async (progress) => {
         const active = holder.active;
@@ -3009,6 +3135,7 @@ export class PiNativeConversationRuntime {
         : {}),
       sessionManager: opened.sessionManager,
       session: created.session,
+      generationInputBudget: created.generationInputBudget,
       defaultToolNames: Object.freeze(created.session.getActiveToolNames()),
       isToolCurrentlyEnabled: created.isToolCurrentlyEnabled,
       planToolNames: Object.freeze([
@@ -3119,6 +3246,15 @@ export class PiNativeConversationRuntime {
         execution.abortRequested,
         promptError
       );
+      if (execution.generation && this.options.generation && execution.generation.assessment) {
+        const generatedAssistant = lastAssistantEntry(runEntries);
+        const result = await this.options.generation.finish(execution.generation.request, execution.generation.assessment,
+          terminalState === "completed" && generatedAssistant ? publicMessageText(generatedAssistant.message) : null,
+          this.generationIdentity(active, execution), stage => this.setGenerationStage(active, execution, stage));
+        this.appendGenerationEntry(active, GENERATION_RESULT_ENTRY, { productRunId: execution.productRunId, result });
+        if (result.writeState !== "verified" && terminalState === "completed") { terminalState = "failed"; promptError = new Error(result.error ?? "生成未写入文件。"); }
+        await this.setGenerationStage(active, execution, undefined, result.writeState === "verified" ? "completed" : execution.abortRequested ? "cancelled" : "failed");
+      }
       const maintenance = execution.knowledgeWorkflow?.kind === "maintain"
         && execution.permission !== "read-only"
         ? execution.knowledgeWorkflow
@@ -3467,6 +3603,7 @@ export class PiNativeConversationRuntime {
       ].sort());
       if (
         this.options.skills
+        && !execution.generation
         && terminalState === "completed"
         && execution.mode !== "plan"
         && execution.commandKind === "chat"
@@ -3650,6 +3787,10 @@ export class PiNativeConversationRuntime {
     event: AgentSessionEvent
   ): Promise<void> {
     if (["message_end", "tool_execution_start", "tool_execution_end", "compaction_end", "agent_settled"].includes(event.type)) this.checkpointConversationLeaf(active);
+    if (execution.generation && (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") && runtimeMessageRole(event.message) === "assistant") {
+      if (event.type === "message_end" && publicMessageText(event.message).trim()) await this.observeFirstAssistantText(active, execution);
+      return;
+    }
     switch (event.type) {
       case "message_start":
         await this.emitOrBufferAskAssistantEvent(active, execution, event.message, {
@@ -4698,6 +4839,8 @@ export class PiNativeConversationRuntime {
   private async projectionFromActive(
     active: ActiveConversation
   ): Promise<PiConversationProjection> {
+    projectInjectedMemorySources(active.projection.messages, active.sessionManager.getBranch(), active.catalog.piSessionId);
+    active.projection.messages = projectGenerationEntries(active.projection.messages, active.sessionManager.getBranch());
     active.projection = this.projector.decorateToolProductState(
       active.projection,
       await this.loadToolProductState(active.catalog)
@@ -4993,6 +5136,29 @@ function collectMinimalDreamTaskResult(
     terminalState,
     successfulToolNames: Object.freeze([...successful].sort()),
     failedToolNames: Object.freeze([...failed].sort())
+  });
+}
+
+/** Append to one inactive conversation without constructing a Provider runtime. */
+export async function recordDurablePiAnswerSave(input: {
+  catalog: FileConversationCatalog;
+  sessionApi: PiSessionManagerApi;
+  conversationId: string;
+  messageId: string;
+  path: string;
+  resolveConversationCwd(this: void, conversationId: string): Promise<string> | string;
+  now?: () => number;
+}): Promise<void> {
+  const catalog = await input.catalog.get(input.conversationId);
+  if (!catalog || catalog.status === "deleted") throw new Error("原对话已不存在，无法保存关联状态。");
+  const opened = await openDurableConversationSession({
+    catalogStore: input.catalog, catalog, sessionApi: input.sessionApi,
+    resolveConversationCwd: input.resolveConversationCwd, now: input.now ?? Date.now
+  });
+  appendSavedAnswerNote({
+    sessionRoot: input.catalog.sessionRootPath, sessionManager: opened.sessionManager,
+    piSessionId: catalog.piSessionId,
+    assistantEntryId: piEntryIdFromProjectedMessageId(input.messageId) ?? "", path: input.path
   });
 }
 

@@ -5,6 +5,7 @@ import { mkdir, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import type { KnowledgeReference } from "./types";
 import type { PersonalMemorySourceReference } from "../settings/settings";
+import { normalizeInjectedMemorySources } from "../harness/pi-native/pi-memory-sources";
 import {
   PI_NATIVE_FILE_SCHEMA_VERSION,
   PiNativeFileStoreError,
@@ -408,6 +409,9 @@ export function knowledgeUsageMessageData(value: unknown): KnowledgeUsageMessage
     }
   }
   const personalMemorySources: PersonalMemorySourceReference[] = [];
+  for (const { id, title } of normalizeInjectedMemorySources(record.injectedMemorySources)) {
+    personalMemorySources.push({ id, title });
+  }
   if (askSourceAttribution && Array.isArray(record.personalMemorySources)) {
     for (const candidate of record.personalMemorySources) {
       try {
@@ -452,10 +456,10 @@ export function mergeKnowledgeUsageMessageData(
     producedPaths.push(...data.producedPaths);
     if (data.askSourceAttribution) {
       askSourceAttribution = true;
-      for (const source of data.personalMemorySources) {
-        if (!personalMemorySources.has(source.id)) {
-          personalMemorySources.set(source.id, clonePersonalMemorySource(source));
-        }
+    }
+    for (const source of data.personalMemorySources) {
+      if (!personalMemorySources.has(source.id)) {
+        personalMemorySources.set(source.id, clonePersonalMemorySource(source));
       }
     }
   }

@@ -1,3 +1,8 @@
+import { TFolder } from "obsidian";
+import { createGenerationRuntimePort } from "../../plugin/generation-production";
+import type { GenerationRuntimePort } from "../../generation/runtime";
+import type { GenerationProductionOptions } from "../../plugin/generation-production";
+import { createGenerationRequest, generationRequestSummary } from "../../generation/request";
 import { annotationFixture } from "../selection-annotations";
 import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
@@ -9,6 +14,9 @@ import {
   appendFile,
   copyFile,
   mkdtemp,
+  mkdir,
+  writeFile,
+  unlink,
   readFile,
   readdir,
   realpath,
@@ -50,6 +58,7 @@ import {
 } from "../../harness/pi-native/file-store-utils";
 import {
   PiNativeConversationRuntime,
+  readDurablePiConversationProjection,
   PiNativeConversationRuntimeError,
   type PiNativeAgentSessionFactoryInput,
   type PiNativeConversationRuntimeOptions,
@@ -63,6 +72,7 @@ import type {
   PiChatPreparedImage,
   PiChatSubmitRequest,
   PiChatRuntimeEvent,
+  PiConversationProjection,
   PiKnowledgeRuntimePort,
   PiKnowledgeReference
 } from "../../harness/pi-native/contracts";
@@ -117,6 +127,9 @@ import {
   type EchoInkReasoningSummarySnapshot
 } from "../../types/reasoning-summary";
 import { stableHashedIdentity } from "../../core/mapping";
+import { PI_ANSWER_SAVE_ENTRY_TYPE } from "../../harness/pi-native/pi-answer-save";
+import { PI_MEMORY_SOURCES_ENTRY_TYPE } from "../../harness/pi-native/pi-memory-sources";
+import { piEntryIdFromProjectedMessageId } from "../../harness/pi-native/pi-chat-ui-projector";
 
 const API: PiSessionManagerApi = {
   codingAgentVersion: VERSION,
@@ -134,6 +147,148 @@ export async function runPiWorkRecordProjectionTests(): Promise<void> {
   await assertKnowledgeObservationAndProgressArePrivacySafe();
   await assertWorkRecordMetadataSurvivesRuntimePrivacyFiltering();
   await assertSlowProviderWaitRefreshesAndStops();
+}
+
+export async function runPiAnswerSaveStateTests(): Promise<void> {
+  await withFixture(["save-first", "save-second"], async fixture => {
+    const conversationId = "answer-save-state";
+    await fixture.runtime.createConversation({ conversationId, title: "存为笔记", cwd: fixture.root });
+    await fixture.runtime.activateConversation(conversationId);
+    const first = await fixture.submit({ conversationId, text: "第一问", permission: "read-only", submittedAt: 1 });
+    fixture.latestSession().finishSuccessful("第一条回答");
+    await first.result;
+    const initial = await fixture.runtime.readProjection(conversationId);
+    const answer = initial.messages.find(message => message.role === "assistant" && message.text === "第一条回答")!;
+    assert.ok(answer);
+    assert.equal(answer.savedNotePath, undefined, "older sessions need no migration");
+
+    const second = await fixture.submit({ conversationId, text: "第二问", permission: "read-only", submittedAt: 2 });
+    await fixture.runtime.recordAnswerSave(conversationId, answer.id, "outputs/摘录/第一问.md");
+    assert.equal((await fixture.runtime.readProjection(conversationId)).messages.find(message =>
+      piEntryIdFromProjectedMessageId(message.id) === piEntryIdFromProjectedMessageId(answer.id))?.savedNotePath,
+    "outputs/摘录/第一问.md", "an older answer can be saved while another turn is running");
+    fixture.latestSession().finishSuccessful("第二条回答");
+    await second.result;
+    const warm = await fixture.runtime.readProjection(conversationId);
+    const secondAnswer = warm.messages.find(message => message.role === "assistant" && message.text === "第二条回答")!;
+    await fixture.runtime.releaseConversation(conversationId);
+    const activations = fixture.sessions.length;
+    fixture.failNextActivation(new Error("save receipt must not initialize an AgentSession"));
+    await fixture.runtime.recordAnswerSave(conversationId, secondAnswer.id, "outputs/摘录/第二问.md");
+    const readCold = () => readDurablePiConversationProjection({
+      catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId,
+      resolveConversationCwd: () => fixture.root
+    });
+    const cold = await readCold();
+    const reopenedFirst = cold.messages.find(message => message.text === "第一条回答")!;
+    assert.notEqual(reopenedFirst.id, answer.id, "the leaf changes when the receipt is appended");
+    assert.equal(reopenedFirst.savedNotePath, "outputs/摘录/第一问.md");
+    assert.equal(cold.messages.find(message => message.text === "第二条回答")?.savedNotePath, "outputs/摘录/第二问.md");
+    await fixture.runtime.recordAnswerSave(conversationId, reopenedFirst.id, "outputs/摘录/第一问.md");
+    assert.equal(fixture.sessions.length, activations, "offline saves never activate a Provider runtime");
+    const catalog = await fixture.catalog.get(conversationId);
+    const lines = (await readFile(catalog!.sessionFile!, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.equal(lines.filter(entry => entry.customType === PI_ANSWER_SAVE_ENTRY_TYPE).length, 2,
+      "repeated receipt writes do not create duplicate entries");
+    assert.equal(cold.messages.some(message => message.text.includes(PI_ANSWER_SAVE_ENTRY_TYPE)), false);
+    await createPiLocalConversation({ catalog: fixture.catalog, sessionApi: API },
+      { conversationId: "answer-save-other", title: "另一对话", cwd: fixture.root });
+    await assert.rejects(fixture.runtime.recordAnswerSave("answer-save-other", answer.id, "outputs/摘录/错误.md"), /原回答/u);
+    assert.equal((await readCold()).messages.find(message => message.text === "第一条回答")?.savedNotePath,
+      "outputs/摘录/第一问.md");
+  });
+  await assertAnswerSaveActivationSerialization();
+  console.log("PASS answer-save state: active and offline Session receipts, changed-leaf cold reopen, read-only, idempotence and conversation isolation");
+}
+
+export async function runPiMemorySourcesRuntimeTests(): Promise<void> {
+  for (const memoryMode of ["normal", "no_memory"] as const) {
+    await withFixture([`memory-sources-${memoryMode}`], async fixture => {
+      const conversationId = `memory-sources-${memoryMode}`;
+      await fixture.runtime.createConversation({ conversationId, title: "记忆来源", cwd: fixture.root });
+      await fixture.runtime.activateConversation(conversationId);
+      const run = await fixture.submit({ conversationId, text: "问题", memoryMode, submittedAt: 1 });
+      const sources = [{ id: "mem_first", title: "第一条", revision: 2, content: "BODY_MUST_STAY_IN_REPOSITORY" },
+        { id: "mem_second", title: "第二条", revision: 3 }];
+      await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources });
+      await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources });
+      fixture.latestSession().finishSuccessful("回答完成"); await run.result;
+      const warm = await fixture.runtime.readProjection(conversationId);
+      const expected = memoryMode === "normal" ? sources.map(({ id, title, revision }) => ({ id, title, revision })) : undefined;
+      assert.deepEqual(warm.messages.find(message => message.injectedMemorySources)?.injectedMemorySources, expected);
+      await fixture.runtime.releaseConversation(conversationId);
+      const cold = await fixture.runtime.readProjection(conversationId);
+      assert.deepEqual(cold.messages.find(message => message.injectedMemorySources)?.injectedMemorySources, expected);
+      const file = (await fixture.catalog.get(conversationId))!.sessionFile!;
+      const text = await readFile(file, "utf8");
+      assert.equal(text.includes("BODY_MUST_STAY_IN_REPOSITORY"), false);
+      assert.equal(text.trim().split("\n").map(line => JSON.parse(line)).filter(entry => entry.customType === PI_MEMORY_SOURCES_ENTRY_TYPE).length,
+        memoryMode === "normal" ? 1 : 0);
+    });
+  }
+  console.log("PASS memory sources runtime: actual injection metadata, idempotence, warm/cold projection, no_memory exclusion, no copied body");
+}
+
+export async function withPiAnswerSaveUiFixture(run: (fixture: {
+  message: import("../../settings/settings").ChatMessage;
+  runtime: PiNativeConversationRuntime;
+  localData: { catalog: FileConversationCatalog; sessionApi: PiSessionManagerApi; vaultRootPath: string };
+  conversationId: string;
+  readCold(): Promise<PiConversationProjection>;
+}) => Promise<void>): Promise<void> {
+  await withFixture(["save-ui"], async fixture => {
+    const conversationId = "answer-save-ui-integration";
+    await fixture.runtime.createConversation({ conversationId, title: "保存入口", cwd: fixture.root });
+    await fixture.runtime.activateConversation(conversationId);
+    const handle = await fixture.submit({ conversationId, text: "保存这条回答", submittedAt: 1 });
+    fixture.latestSession().finishSuccessful("真实会话中的回答"); await handle.result;
+    const message = (await fixture.runtime.readProjection(conversationId)).messages.find(message => message.text === "真实会话中的回答")!;
+    await fixture.runtime.releaseConversation(conversationId);
+    await run({ message, runtime: fixture.runtime, conversationId,
+      localData: { catalog: fixture.catalog, sessionApi: API, vaultRootPath: fixture.root },
+      readCold: () => readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns,
+        sessionApi: API, conversationId, resolveConversationCwd: () => fixture.root }) });
+  });
+}
+
+async function assertAnswerSaveActivationSerialization(): Promise<void> {
+  for (const order of ["activation-first", "save-first"] as const) {
+    await withFixture([`save-race-${order}`], async fixture => {
+      const conversationId = `save-race-${order}`;
+      await fixture.runtime.createConversation({ conversationId, title: "保存竞态", cwd: fixture.root });
+      await fixture.runtime.activateConversation(conversationId);
+      const handle = await fixture.submit({ conversationId, text: "问题", submittedAt: 1 });
+      fixture.latestSession().finishSuccessful("回答"); await handle.result;
+      const message = (await fixture.runtime.readProjection(conversationId)).messages.find(message => message.text === "回答")!;
+      await fixture.runtime.releaseConversation(conversationId);
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const originalGet = fixture.catalog.get.bind(fixture.catalog);
+      let gets = 0;
+      if (order === "activation-first") {
+        const options = (fixture.runtime as unknown as { options: PiNativeConversationRuntimeOptions }).options;
+        const create = options.createAgentSession;
+        let entered!: () => void;
+        const atFactory = new Promise<void>(resolve => { entered = resolve; });
+        options.createAgentSession = async input => { entered(); await gate; return await create(input); };
+        const activating = fixture.runtime.activateConversation(conversationId);
+        await atFactory;
+        fixture.catalog.get = async id => { gets++; return await originalGet(id); };
+        const recording = fixture.runtime.recordAnswerSave(conversationId, message.id, "outputs/摘录/竞态.md");
+        assert.equal(gets, 0, "save waits for activation and reuses its already-open manager");
+        release(); await activating; await recording;
+      } else {
+        fixture.catalog.get = async id => { gets++; if (gets === 1) await gate; return await originalGet(id); };
+        const recording = fixture.runtime.recordAnswerSave(conversationId, message.id, "outputs/摘录/竞态.md");
+        const activating = fixture.runtime.activateConversation(conversationId);
+        assert.equal(gets, 1, "activation waits while the offline receipt owns session preparation");
+        release(); await recording; await activating;
+      }
+      assert.equal((await fixture.runtime.readProjection(conversationId)).messages.find(message => message.text === "回答")?.savedNotePath,
+        "outputs/摘录/竞态.md", `${order}: the activated manager retains the receipt and current leaf`);
+    });
+  }
+  console.log("PASS answer-save state: activation-first and save-first reuse the existing session lane");
 }
 
 async function assertSlowProviderWaitRefreshesAndStops(): Promise<void> {
@@ -5641,6 +5796,7 @@ interface RuntimeFixture {
   reportAskPersonalMemorySources(input: Parameters<NonNullable<
     PiNativeAgentSessionFactoryInput["reportAskPersonalMemorySources"]
   >>[0]): Promise<void>;
+  reportInjectedMemorySources(input: Parameters<NonNullable<PiNativeAgentSessionFactoryInput["reportPersonalMemorySourcesInjected"]>>[0]): Promise<void>;
   latestSession(): ControlledAgentSession;
 }
 
@@ -5657,7 +5813,7 @@ async function withFixture(
   assertion: (fixture: RuntimeFixture) => Promise<void>,
   runtimeOptions: Pick<
     PiNativeConversationRuntimeOptions,
-    "hasPendingProductWork" | "knowledge" | "now" | "recordDreamExperience" | "skills"
+    "hasPendingProductWork" | "knowledge" | "now" | "recordDreamExperience" | "skills" | "generation"
   > = {}
 ): Promise<void> {
   const root = await realpath(await mkdtemp(
@@ -5681,6 +5837,7 @@ async function withFixture(
   let memoryRecallReporter: PiNativeAgentSessionFactoryInput["reportMemoryRecallProgress"] = undefined;
   let askPersonalMemorySourcesReporter:
     PiNativeAgentSessionFactoryInput["reportAskPersonalMemorySources"] = undefined;
+  let injectedMemorySourcesReporter: PiNativeAgentSessionFactoryInput["reportPersonalMemorySourcesInjected"];
   let nextActivationError: Error | null = null;
   let factoryWarnings: readonly string[] = [];
   let memoryToolNames: readonly string[] = [];
@@ -5720,6 +5877,7 @@ async function withFixture(
         input.currentSuccessfulExternalReadToolNames;
       memoryRecallReporter = input.reportMemoryRecallProgress;
       askPersonalMemorySourcesReporter = input.reportAskPersonalMemorySources;
+      injectedMemorySourcesReporter = input.reportPersonalMemorySourcesInjected;
       if (nextActivationError) {
         const error = nextActivationError;
         nextActivationError = null;
@@ -5815,6 +5973,10 @@ async function withFixture(
       reportAskPersonalMemorySources: async (input) => {
         assert.ok(askPersonalMemorySourcesReporter);
         await askPersonalMemorySourcesReporter(input);
+      },
+      reportInjectedMemorySources: async input => {
+        assert.ok(injectedMemorySourcesReporter);
+        await injectedMemorySourcesReporter(input);
       },
       latestSession: () => {
         const session = sessions.at(-1);
@@ -6449,4 +6611,78 @@ export async function runWikiStructurePreflightTests(): Promise<void> {
     await rejection;
   }, { knowledge });
   console.log("Production runtime structural preflight order, read-only, advice and cancellation: PASS");
+}
+
+/** Focused generation test using the same durable runtime fixture as ordinary chat. */
+export async function runGenerationRuntimeTests(): Promise<void> {
+  for (const writeState of ["verified", "unconfirmed"] as const) {
+    let retrieved = 0, selectedSkill = 0, wrote = 0;
+    await withFixture([`generation-${writeState}`], async fixture => {
+      fixture.configureFactoryTools({ registered: ["note_read", "note_create", "memory_read"], defaults: ["note_read", "note_create", "memory_read"], planAllowed: ["note_read"], externalReadAllowed: [] });
+      const request = createGenerationRequest({ id: "brief", name: "简报", description: "重点", instructions: "生成简报", outputKind: "markdown" }, ["资料/原文.md"], "输出");
+      await fixture.runtime.createConversation({ conversationId: `generation-${writeState}`, title: "生成", cwd: fixture.root });
+      await fixture.runtime.activateConversation(`generation-${writeState}`);
+      const compactionChoices: boolean[] = [];
+      Object.assign(fixture.latestSession(), { autoCompactionEnabled: true, setAutoCompactionEnabled: (enabled: boolean) => { compactionChoices.push(enabled); } });
+      fixture.latestSession().enableRuntimeMessageTimestampDrift();
+      const handle = await fixture.submit({ conversationId: `generation-${writeState}`, text: generationRequestSummary(request), generationRequest: request, memoryMode: "normal", submittedAt: 1 });
+      const session = fixture.latestSession(); assert.deepEqual(session.activeToolSelections.at(-1), []); assert.deepEqual(compactionChoices, [false]);
+      const initialProjection = await fixture.runtime.readProjection(handle.conversationId);
+      assert.equal(initialProjection.messages.find(message => message.role === "user")?.generationRequest?.id, request.id, JSON.stringify(initialProjection.messages.map(message => ({ id: message.id, role: message.role, runId: message.runId, generation: message.generationRequest?.id }))));
+      const events: PiChatRuntimeEvent[] = [];
+      const subscription = fixture.runtime.subscribeProductRun(handle.productRunId, event => { events.push(event); });
+      session.finishSuccessful('{"title":"MODEL_JSON_MUST_STAY_PRIVATE","markdown":"正文"}');
+      const settled = await handle.result;
+      assert.equal(settled.terminalState, writeState === "verified" ? "completed" : "failed"); assert.equal(settled.memoryMode, "no_memory"); assert.deepEqual(compactionChoices, [false, true]);
+      assert.equal(retrieved, 0); assert.equal(selectedSkill, 0); assert.equal(wrote, 1);
+      assert.equal(events.some(event => (event.type === "message_update" && event.textDelta.includes("MODEL_JSON")) || (event.type === "message_end" && event.text.includes("MODEL_JSON"))), false);
+      let projection = await fixture.runtime.readProjection(handle.conversationId);
+      assert.equal(projection.messages.some(message => message.text.includes("MODEL_JSON_MUST_STAY_PRIVATE")), false);
+      assert.equal(projection.messages.find(message => message.generationResult)?.generationResult?.writeState, writeState);
+      await fixture.runtime.shutdown();
+      projection = await readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId: handle.conversationId, resolveConversationCwd: () => fixture.root });
+      assert.equal(projection.messages.find(message => message.generationResult)?.generationResult?.writeState, writeState);
+      assert.equal(projection.messages.some(message => message.generationRequest?.template.instructions === "生成简报"), true);
+      subscription.unsubscribe();
+    }, {
+      knowledge: { retrieveChat: async () => { retrieved++; throw new Error("generation must skip retrieval"); } } as never,
+      skills: { selectForTask: async () => { selectedSkill++; return null; }, resolveById: async () => { throw new Error("generation must skip skills"); }, recordUse: async () => undefined, reviewCompletedTask: async () => undefined },
+      generation: {
+        prepare: async () => ({ sources: [{ path: "资料/原文.md", content: "全文", bytes: 6 }], totalBytes: 6, readFailures: [] }),
+        finish: async (request, _assessment, text, _identity, stage) => { if (text === null) return { requestId: request.id, outputKind: "markdown", writeState: "not_written", readFailures: [] }; assert.match(text, /MODEL_JSON/u); await stage("saving"); wrote++; return { requestId: request.id, outputKind: "markdown", writeState, path: "输出/报告/主题 · 简报.md", readFailures: [] }; }
+      }
+    });
+  }
+  for (const failure of ["source_deleted", "read_denied", "outputs_rebound", "model_budget"] as const) {
+    let port: GenerationRuntimePort, promptCalls = 0, providerCalls = 0;
+    await withFixture([`preflight-${failure}`], async fixture => {
+      await mkdir(path.join(fixture.root, "资料")); await mkdir(path.join(fixture.root, "输出"));
+      await writeFile(path.join(fixture.root, "资料/原文.md"), "本轮正文".repeat(100));
+      if (failure === "source_deleted") await unlink(path.join(fixture.root, "资料/原文.md"));
+      const options: GenerationProductionOptions = { app: { vault: { getAbstractFileByPath: () => new TFolder() } } as never,
+        vaultRoot: fixture.root, bindings: () => ({ roles: { outputs: { enabled: true, writePath: failure === "outputs_rebound" ? "别处" : "输出", readPaths: [failure === "outputs_rebound" ? "别处" : "输出"] } } }) as never,
+        assertRead: async () => { if (failure === "read_denied") throw new Error("读取准入拒绝"); }, assertWrite: async () => undefined,
+        authorization: () => { throw new Error("no approval before preflight"); }, domain: {} as never, writeExecution: {} as never };
+      port = createGenerationRuntimePort(options);
+      const id = `preflight-${failure}`;
+      await fixture.runtime.createConversation({ conversationId: id, title: "生成", cwd: fixture.root });
+      await fixture.runtime.activateConversation(id);
+      const session = fixture.latestSession(), originalPrompt = session.prompt.bind(session);
+      if (failure === "model_budget") { session.model.contextWindow = 512; session.model.maxTokens = 128; }
+      // Model a host that swallows before_agent_start errors and proceeds to
+      // Provider. A hard runtime preflight must never enter this prompt path.
+      session.prompt = async (...args) => { promptCalls++; try { throw new Error("extension budget error swallowed by runner"); } catch { /* real runner behavior */ } providerCalls++; return originalPrompt(...args); };
+      const request = createGenerationRequest({ id: "brief", name: "简报", description: "重点", instructions: "生成简报", outputKind: "markdown" }, ["资料/原文.md"], "输出");
+      await assert.rejects(fixture.submit({ conversationId: id, text: generationRequestSummary(request), generationRequest: request, submittedAt: 1 }), failure === "source_deleted" ? /均未读到正文/u : failure === "read_denied" ? /读取准入拒绝/u : failure === "outputs_rebound" ? /换绑/u : /本轮预算/u);
+      assert.equal(promptCalls, 0); assert.equal(providerCalls, 0);
+      const live = await fixture.runtime.readProjection(id);
+      assert.equal(live.messages.some(message => message.itemType === "generationProgress" || message.generationResult || message.status === "running"), false);
+      await fixture.runtime.shutdown();
+      const cold = await readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId: id, resolveConversationCwd: () => fixture.root });
+      assert.equal(cold.messages.some(message => message.itemType === "generationProgress" || message.generationResult || message.status === "running"), false, `${failure}: offline reopen must not resurrect a pre-acceptance spinner or success`);
+      assert.equal((await fixture.productRuns.list(id)).length, 0);
+    }, { generation: { prepare: (...args) => port.prepare(...args), finish: (...args) => port.finish(...args) } });
+  }
+  console.log("PASS generation: actual deleted-source/read-denied/rebound/budget preflight failures call neither prompt nor Provider and reopen with no running generation");
+  console.log("PASS generation: formal durable runtime disables retrieval/memory/skills/tools, hides model JSON, and reopens verified/uncertain results");
 }

@@ -1,3 +1,5 @@
+import { defaultGenerationTemplates, normalizeGenerationTemplates } from "./generation-templates";
+import type { GenerationTemplate } from "../generation/types";
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { defaultAgentRegistry, normalizeAgentRegistry } from "../agents/registry";
 import type { AgentRegistry } from "../agents/types";
@@ -123,6 +125,11 @@ export interface PersonalMemorySourceReference {
   title: string;
 }
 
+/** Identity of a primary Memory actually inserted into this turn's model context. */
+export interface InjectedPersonalMemorySourceReference extends PersonalMemorySourceReference {
+  revision?: number;
+}
+
 export interface DiffFileSummary {
   path: string;
   previousPath?: string;
@@ -187,6 +194,10 @@ export interface ChatMessageApprovalSnapshot {
 import type { SelectionAnnotation } from "../types/selection-annotations";
 
 export interface ChatMessage {
+  /** Manual save receipt projected from this conversation's durable Pi Session. */
+  savedNotePath?: string;
+  generationRequest?: import("../generation/types").GenerationRequest;
+  generationResult?: import("../generation/types").GenerationResult;
   id: string;
   role: "user" | "assistant" | "system" | "tool";
   text: string;
@@ -223,6 +234,8 @@ export interface ChatMessage {
   askSourceAttribution?: true;
   /** Display-only primary Memory ids and titles; never Memory bodies or prompts. */
   personalMemorySources?: readonly PersonalMemorySourceReference[];
+  /** Session-owned identities only; original Memory content stays in its repository. */
+  injectedMemorySources?: readonly InjectedPersonalMemorySourceReference[];
   /** Display-only note mention metadata; note bodies remain in Pi Session. */
   noteMentions?: readonly NoteMentionReference[];
   selectionAnnotations?: readonly SelectionAnnotation[];
@@ -503,6 +516,7 @@ export interface EchoInkTodoItem {
 }
 
 export interface CodexForObsidianSettings {
+  generationTemplates: GenerationTemplate[];
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
   selectionAsk: import("../selection-ask/settings").SelectionAskSettings;
   englishDiary: import("../english-diary/types").EnglishDiarySettings;
@@ -554,6 +568,7 @@ export interface CodexForObsidianSettings {
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
+  generationTemplates: defaultGenerationTemplates(),
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
   selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }] },
   englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS },
@@ -728,6 +743,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     ...DEFAULT_SETTINGS,
     ...currentData,
     productGeneration: DEFAULT_SETTINGS.productGeneration,
+    generationTemplates: normalizeGenerationTemplates(data.generationTemplates),
     settingsLanguage: normalizedLanguage,
     colorTheme: normalizeEchoInkColorTheme(data.colorTheme),
     settingsTab: normalizeSettingsTab(data?.settingsTab),

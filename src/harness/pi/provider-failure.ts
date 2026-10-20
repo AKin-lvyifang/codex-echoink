@@ -32,11 +32,12 @@ export function sanitizeProviderFailureDetail(status: number | null, raw: unknow
   const message = typeof candidate?.message === "string" ? candidate.message : text;
   const param = safeField(candidate?.param) ?? safeField(message.match(/(?:parameter|param)\s*[:=]?\s*[`'"]?([A-Za-z][A-Za-z0-9_.-]*)/iu)?.[1]);
   const code = safeField(candidate?.code);
-  const reason = /unsupported|not supported|unknown parameter/iu.test(message) ? "unsupported"
+  const effectiveStatus = status ?? (Number(text.match(/^(?:HTTP\s+)?([1-5]\d{2})(?:[:\s]|$)/u)?.[1]) || null);
+  const reason = effectiveStatus === 401 || effectiveStatus === 403 ? undefined
+    : /unsupported|not supported|unknown parameter/iu.test(message) ? "unsupported"
     : /must|range|exceed|maximum|limit/iu.test(message) ? "out_of_range"
     : /required|missing/iu.test(message) ? "required"
     : /invalid/iu.test(message) ? "invalid" : undefined;
-  const effectiveStatus = status ?? (Number(text.match(/^(?:HTTP\s+)?([1-5]\d{2})(?:[:\s]|$)/u)?.[1]) || null);
   const detail: ProviderFailureDetail = {
     ...(Number.isInteger(effectiveStatus) && effectiveStatus! >= 100 && effectiveStatus! <= 599 ? { status: effectiveStatus! } : {}),
     ...(code ? { code } : {}),
@@ -53,7 +54,7 @@ export function providerFailureDetailText(value: unknown): string {
   if (!detail) return "";
   const reason = { unsupported: "不支持该参数", invalid: "参数无效", required: "缺少必填参数", out_of_range: "参数超出允许范围" };
   return [detail.status ? `HTTP ${detail.status}` : "", detail.code, detail.param,
-    raw.reason && Object.hasOwn(reason, raw.reason) ? reason[raw.reason] : ""].filter(Boolean).join(" · ");
+    detail.status !== 401 && detail.status !== 403 && raw.reason && Object.hasOwn(reason, raw.reason) ? reason[raw.reason] : ""].filter(Boolean).join(" · ");
 }
 
 export function assistantProviderFailureText(message: { errorMessage?: string; echoInkProviderFailure?: unknown }): string {

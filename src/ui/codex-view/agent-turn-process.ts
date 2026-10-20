@@ -98,7 +98,8 @@ export type AgentTurnProjectionItem =
   | { kind: "completedProcess"; index: number; turn: CompletedAgentTurn };
 
 export function isAgentProcessItemType(itemType?: string): boolean {
-  return itemType === "thinking" ||
+  return itemType === "generationProgress" ||
+    itemType === "thinking" ||
     itemType === "reasoning" ||
     itemType === "commandExecution" ||
     itemType === "fileChange" ||
@@ -456,8 +457,18 @@ function buildProcessNodes(
     nodeIds.add(nodeId);
   }
 
+  // The projector has already reduced Provider failures to safe user-facing copy.
+  // Reuse that same-turn result rather than exposing raw transport errors here.
+  const providerFailure = [...messages].reverse().find(message =>
+    message.role === "assistant" && message.itemType === "error" && message.status === "failed");
+  const providerFailureText = providerFailure?.details?.trim() || providerFailure?.text.trim();
   return nodes
-    .map((node, index) => ({ node, index }))
+    .map((node, index) => ({
+      node: node.status === "failed" && node.title === copy.process.activityTitle("provider") && providerFailureText
+        ? { ...node, summary: providerFailureText }
+        : node,
+      index
+    }))
     .sort((left, right) =>
       left.node.startedAt - right.node.startedAt
       || left.node.updatedAt - right.node.updatedAt
@@ -542,6 +553,7 @@ function nodeForReasoningActivity(
 }
 
 function nodeKindForMessage(message: ChatMessage): EchoInkTurnProcessNodeKind | null {
+  if (message.itemType === "generationProgress") return message.processKind === "view" ? "retrieval" : "process";
   if (message.interactionRecord || message.itemType === "interactionRecord") return "interaction";
   if (message.taskPlan || message.itemType === "taskPlan" || message.itemType === "plan") return "task";
   if (message.itemType === "fileChange") return "diff";

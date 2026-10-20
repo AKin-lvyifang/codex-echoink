@@ -101,6 +101,7 @@ export interface ComposerResourcePanelState {
   language: "zh-CN" | "en";
   canAttachActiveFile: boolean;
   pdfPlugin?: { enabled: boolean; canWrite: boolean };
+  generationEntryReason?: string | null;
 }
 
 export interface ComposerResourcePanelCallbacks {
@@ -111,6 +112,7 @@ export interface ComposerResourcePanelCallbacks {
   onSelectSkill: (skill: EchoInkResource) => void;
   onOpenMcpSettings: () => void;
   onSelectPdfPlugin?: () => void;
+  onGenerateFromSources?: () => void;
 }
 
 export interface ComposerToolbarCallbacks {
@@ -576,6 +578,7 @@ export function renderComposerResourcePanel(
     state.selectedMode === "plan"
   );
   createResourcePanelRow(addGroup, "image", copy("添加图片", "Add image"), "", () => callbacks.onPickFiles(true));
+  if (Platform.isDesktopApp && callbacks.onGenerateFromSources) createResourcePanelRow(addGroup, "sparkles", copy("从资料生成…", "Generate from sources…"), state.generationEntryReason ?? "", callbacks.onGenerateFromSources, false, "", Boolean(state.generationEntryReason));
 
   const pluginGroup = createResourcePanelGroup(container, copy("插件", "Plugins"));
   const pdf = createResourcePanelRow(pluginGroup, "file-text", "PDF 精读", !state.pdfPlugin?.enabled ? copy("请先在插件设置中启用", "Enable in plugin settings") : "", () => callbacks.onSelectPdfPlugin?.(), false, "is-pdf-plugin", !state.pdfPlugin?.enabled || !state.pdfPlugin.canWrite);

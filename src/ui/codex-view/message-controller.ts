@@ -8,7 +8,7 @@ import { settleStaleRunningMessages } from "../../core/message-state";
 import { SessionMessageStore, type SessionMessageInput } from "./session-message-store";
 import { CodexMessageListRenderer } from "./message-list";
 import { MessageScrollFollowController, type MessageRenderScheduleOptions } from "./message-scroll-follow";
-import { piToolCallIdFromProjectedMessageId } from "../../harness/pi-native/pi-chat-ui-projector";
+import { piEntryIdFromProjectedMessageId, piToolCallIdFromProjectedMessageId } from "../../harness/pi-native/pi-chat-ui-projector";
 
 export interface CodexMessageHost {
   readonly app: App;
@@ -100,6 +100,15 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     tokenUsage: session.tokenUsage,
     vaultPath: host.plugin.getVaultPath(),
     readRawMessageText: (rawRef) => host.plugin.readRawMessageText(rawRef),
+    readPersonalMemorySource: (id, revision) => host.plugin.readEchoInkPersonalMemorySource(id, revision),
+    onAnswerSaved: async (messageId, path) => {
+      await host.plugin.recordPiAnswerSave(session.id, messageId, path);
+      const entryId = piEntryIdFromProjectedMessageId(messageId);
+      const message = session.messages.find(candidate => entryId
+        ? piEntryIdFromProjectedMessageId(candidate.id) === entryId
+        : candidate.id === messageId);
+      if (message) message.savedNotePath = path;
+    },
     resolveApprovalDecision: (message) => {
       const piSessionId = session.piSessionId?.trim();
       const productRunId = message.runId?.trim();

@@ -953,6 +953,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     const workbenchSource = freezeWorkbenchTaskSource(item.prefillSource);
     handle = await view.plugin.submitPiChat({
       ...(workbenchSource ? { workbenchSource } : {}),
+      ...(item.generationRequest ? { generationRequest: item.generationRequest } : {}),
       ...(item.pdfTaskRequest ? { pdfTaskRequest: item.pdfTaskRequest } : {}),
       ...(item.englishDiarySourcePath ? { englishDiarySourcePath: item.englishDiarySourcePath } : {}),
       ...(item.resumeContext ? { resumeContext: item.resumeContext } : {}),
@@ -1041,7 +1042,8 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       preparedDocumentSet.documents,
       item.noteMentions ?? [],
       item.selectionAnnotations ?? [],
-      submittedAt
+      submittedAt,
+      item.generationRequest
     );
     applyPiChatLiveProjection(view, session, liveProjection);
     approvalSubscription = view.plugin.subscribePiAgentApproval({
@@ -1585,10 +1587,11 @@ function piChatLiveProjectionFromSession(
   preparedDocuments: readonly Readonly<PiChatPreparedDocument>[],
   noteMentions: readonly Readonly<NonNullable<QueuedTurnItem["noteMentions"]>[number]>[],
   selectionAnnotations: readonly SelectionAnnotation[],
-  submittedAt: number
+  submittedAt: number,
+  generationRequest?: import("../../generation/types").GenerationRequest
 ): PiChatUiViewModel {
   const messages = clonePiChatMessages(session.messages);
-  if (preparedImages.length || preparedDocuments.length || noteMentions.length || selectionAnnotations.length) {
+  if (preparedImages.length || preparedDocuments.length || noteMentions.length || selectionAnnotations.length || generationRequest) {
     const acceptedUserMessage: ChatMessage = {
       id: piProjectedEntryMessageId(
         handle.piSessionId,
@@ -1598,6 +1601,7 @@ function piChatLiveProjectionFromSession(
       role: "user",
       itemType: "user",
       text: submittedText,
+      ...(generationRequest ? { generationRequest: structuredClone(generationRequest) } : {}),
       ...(selectionAnnotations.length ? { selectionAnnotations: cloneSelectionAnnotations(selectionAnnotations) } : {}),
       ...(preparedImages.length
         ? { images: preparedImages.map(({ attachment }) => ({ ...attachment })) }

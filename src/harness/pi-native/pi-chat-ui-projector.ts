@@ -1,3 +1,6 @@
+import { projectGenerationEntries, generationStageMessage, positionGenerationMessages } from "../../generation/projection";
+import { savedAnswerNotePaths } from "./pi-answer-save";
+import { projectInjectedMemorySources } from "./pi-memory-sources";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { selectionAnnotationsFromPiContext } from "./pi-selection-annotations";
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
@@ -433,7 +436,7 @@ export class PiChatUiProjector {
       activeLeafId: input.activeLeafId,
       productRunId: input.productRunId,
       runState,
-      messages: positionReasoningMessages(dedupeMessages(messages)),
+      messages: positionReasoningMessages(dedupeMessages(projectGenerationEntries(messages, input.entries))),
       diagnostics,
       queuedSteering: [...(input.queuedSteering ?? [])],
       queuedFollowUp: [...(input.queuedFollowUp ?? [])],
@@ -442,6 +445,8 @@ export class PiChatUiProjector {
       updatedAt
     };
     applyToolProductStates(view, input);
+    projectSavedAnswerNotes(view.messages, input.entries, piSessionId);
+    projectInjectedMemorySources(view.messages, input.entries, piSessionId);
     this.applyReliableToolTimes(view);
     return view;
   }
@@ -502,6 +507,12 @@ export class PiChatUiProjector {
       case "memory_recall_progress":
         this.projectMemoryRecallProgress(view, scope, event);
         break;
+      case "generation_progress": {
+        const message = generationStageMessage({ productRunId: event.productRunId, requestId: event.requestId, stage: event.stage, status: event.status, at: event.occurredAt });
+        const index = view.messages.findIndex(item => item.id === message.id);
+        if (index < 0) view.messages.push(message); else view.messages[index] = { ...message, createdAt: view.messages[index].createdAt };
+        break;
+      }
       case "message_start":
         if (!runtimeEventIsPrivate(event) && event.role !== "tool") {
           this.projectRuntimeMessageStart(view, scope, event);
@@ -559,7 +570,7 @@ export class PiChatUiProjector {
         this.projectProductSettlement(view, scope, event.terminalState, event.occurredAt);
         break;
     }
-    view.messages = positionReasoningMessages(dedupeMessages(view.messages));
+    view.messages = positionReasoningMessages(positionGenerationMessages(dedupeMessages(view.messages), event.productRunId));
     view.provisionalMessageIds = uniqueStrings(view.provisionalMessageIds);
     view.pendingToolCallIds = uniqueStrings(view.pendingToolCallIds);
     applyToolProductStates(view, input);
@@ -615,7 +626,7 @@ export class PiChatUiProjector {
         current.pendingInteraction
       );
     }
-    rebuilt.messages = dedupeMessages(rebuilt.messages);
+    rebuilt.messages = positionReasoningMessages(positionGenerationMessages(dedupeMessages(rebuilt.messages)));
     applyToolProductStates(rebuilt, input);
     this.applyReliableToolTimes(rebuilt);
     return rebuilt;
@@ -2792,6 +2803,20 @@ export function piEntryIdFromProjectedMessageId(
 ): string | undefined {
   const identity = projectionIdentity(messageId);
   return identity?.kind === "entry" ? identity.value : undefined;
+}
+
+export function projectSavedAnswerNotes(
+  messages: ChatMessage[],
+  entries: readonly PiSessionBranchEntryView[],
+  piSessionId: string
+): void {
+  const paths = savedAnswerNotePaths(entries, piSessionId);
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    const entryId = piEntryIdFromProjectedMessageId(message.id);
+    const path = entryId && paths.get(entryId);
+    if (path) message.savedNotePath = path;
+  }
 }
 
 export function piToolCallIdFromProjectedMessageId(

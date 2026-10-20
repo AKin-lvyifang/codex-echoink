@@ -21,7 +21,7 @@ import {
   REASONING_SCROLL_BOTTOM_EPSILON_PX,
   userVisibleProviderReasoningText
 } from "../ui/codex-view/message-list";
-import { buildAgentTurnProjection, type AgentTurnView } from "../ui/codex-view/agent-turn-process";
+import { buildAgentTurnProjection, buildAgentTurns, type AgentTurnView } from "../ui/codex-view/agent-turn-process";
 import { buildActionTimeline } from "../ui/codex-view/action-timeline";
 import {
   createAIElementsDocumentSources,
@@ -527,13 +527,13 @@ async function assertAnswerSaveUiContracts(): Promise<void> {
 }
 
 function assertWorkRecordProjectionContracts(): void {
-  const project = (activity: EchoInkReasoningActivity) => {
+  const project = (activity: EchoInkReasoningActivity, results: ChatMessage[] = []) => {
     const messages: ChatMessage[] = [{ id: "record-user", role: "user", text: "问题", createdAt: 1 }, {
       id: "record-process", role: "assistant", itemType: "reasoning", text: "", status: activity.status === "active" ? "running" : "completed",
       runId: "record-run", createdAt: 1,
       reasoningSummary: { schemaVersion: 1, conversationId: "record", piSessionId: "pi-record", productRunId: "record-run",
         status: activity.status === "active" ? "running" : "completed", startedAt: 1, updatedAt: activity.updatedAt, activities: [activity] }
-    }];
+    }, ...results];
     const projection = buildAgentTurnProjection(messages)[1];
     assert.equal(projection?.kind, "assistantTurn");
     return projection.kind === "assistantTurn" ? projection.turn : assert.fail("missing turn");
@@ -549,6 +549,19 @@ function assertWorkRecordProjectionContracts(): void {
   assert.equal(waiting.processNodes[0]?.title, "等待模型响应");
   assert.equal(waiting.processNodes[0]?.summary, "6 秒");
   assert.equal(project({ ...base, id: "provider", kind: "provider", status: "failed" }).processNodes[0]?.status, "failed");
+  const failure = new PiChatUiProjector().projectSessionBranch({
+    piSessionId: "provider-failed", activeLeafId: "failed-answer", entries: [{
+      type: "message", id: "failed-answer", parentId: null, timestamp: "2026-10-20T00:00:00Z",
+      message: { role: "assistant", stopReason: "error", errorMessage: "provider_auth_failed",
+        content: [{ type: "text", text: "sk-RAW_PROVIDER_RESPONSE_MUST_STAY_PRIVATE" }] }
+    }]
+  }).messages.find(message => message.itemType === "error")!;
+  failure.runId = "record-run";
+  const failed = project({ ...base, id: "provider", kind: "provider", status: "failed" }, [failure]);
+  const providerNode = failed.processNodes.find(node => node.title === "等待模型响应")!;
+  assert.equal(providerNode.summary, failure.details, "the failed wait node repeats the safe authentication reason, not partial model output");
+  assert.match(providerNode.summary!, /API Key 无效或未填写/u);
+  assert.equal(providerNode.summary!.includes("sk-RAW_PROVIDER_RESPONSE"), false);
 }
 
 function assertSourceLineRangeContracts(): void {
@@ -4102,7 +4115,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       return surface.findByClass("codex-assistant-turn-final")!;
     };
     const countOnlyAnswer = renderMemoryCountTurn(3);
-    assert.match(renderedText(countOnlyAnswer.findByClass("codex-answer-memory-count")!), /个人记忆：用上 3 条/u,
+    assert.match(renderedText(countOnlyAnswer.findByClass("codex-answer-memory-count")!), /记忆：用上 3 条/u,
       "filtered-away titles fall back to the actual injected memory count below the answer");
     assert.doesNotMatch(renderedText(countOnlyAnswer), /26/u, "candidate totals never claim to be used memories");
     assert.equal(renderMemoryCountTurn(undefined).findByClass("codex-answer-memory-count"), null,
@@ -4607,6 +4620,38 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       "the expanded Approval Tool exposes the structured preview Diff");
     assert.match(renderedText(approvalAction), /Foo\.md/u);
     assert.match(renderedText(approvalAction), /new/u);
+
+    const nativeUpdate = projector.projectSessionBranch({
+      piSessionId: "session-ledger", activeLeafId: "native-update-call", productRunId: "run-approval-ledger",
+      entries: [{ type: "message", id: "native-update-call", parentId: null, timestamp: "2026-10-20T00:00:00Z",
+        message: { role: "assistant", content: [{ type: "toolCall", id: approvalToolCallId, name: "note_update",
+          arguments: { relativePath: "Foo.md", content: "new", expectedVersion: "before" } }] } }]
+    }).messages.find(message => message.role === "tool")!;
+    assert.equal(nativeUpdate.title, "修改笔记", "use the formal localized Pi tool projection");
+    const renderNativeUpdate = (status: string) => {
+      const message = { ...nativeUpdate, status, diffSummary: approvalProjectionMessage.diffSummary,
+        files: approvalProjectionMessage.files, approval: approvalProjectionMessage.approval };
+      const turn = buildAgentTurns([{ id: "native-update-user", role: "user", text: "修改Foo", createdAt: 1,
+        runId: "run-approval-ledger" }, message])[0];
+      const host = new FakeElement("div");
+      (renderer as any).renderAssistantTurnActionNode(host, turn, turn.processNodes.find(node => node.sourceMessageId === message.id)!);
+      return host;
+    };
+    const nativePending = renderNativeUpdate("waiting_approval");
+    assert.equal(nativePending.findByClass("codex-action-item-verb")?.textContent, "等你确认 · 修改笔记 ·");
+    assert.equal(nativePending.findByClass("codex-action-item-icon")?.dataset.icon, "hand");
+    assert.match(renderedText(nativePending.findByClass("codex-action-item-main")!), /Foo/u);
+    assert.equal(nativePending.findAllByClass("codex-smooth-ai-approval-card").length, 1);
+    const nativeApprovalCard = nativePending.findByClass("codex-smooth-ai-approval-card")!;
+    const nativeActionHead = nativePending.findByClass("codex-action-item-head")!;
+    assert.ok(nativeApprovalCard.parent === nativeActionHead.parent
+      && nativeApprovalCard.parent!.children.indexOf(nativeApprovalCard) > nativeApprovalCard.parent!.children.indexOf(nativeActionHead),
+      "approval actions remain below the existing node heading");
+    const nativeCompleted = renderNativeUpdate("completed");
+    assert.equal(nativeCompleted.findByClass("codex-action-item-verb")?.textContent, "修改笔记 ·");
+    assert.equal(nativeCompleted.findByClass("codex-action-item-icon")?.dataset.icon, "file-diff");
+    assert.deepEqual(nativeCompleted.findAllByClass("codex-diff-stat").map(stat => stat.textContent), ["+1", "-1"]);
+    assert.equal(nativeCompleted.findByClass("codex-work-record-diff-separator")?.textContent, "·");
 
     const reopenedRenderer = new CodexMessageListRenderer();
     bindRenderer(reopenedRenderer, context);
