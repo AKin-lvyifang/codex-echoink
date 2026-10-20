@@ -21,7 +21,7 @@ import { createEnglishDiarySettingsPage } from "./english-diary-pages";
 import { settingsText as t } from "./settings-i18n";
 import type { IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadIcon } from "./workbench-elements";
-import { el, settingsContent, settingsGroup, settingsRow, settingsAction, settingsSwitch, settingsToggle, liveSettingsPage, type IPadSettingsContext } from "./settings-elements";
+import { el, settingsContent, settingsGroup, settingsRow, settingsAction, settingsSwitch, settingsToggle, settingsError, showSettingsError, leaveSettingsConfirm, liveSettingsPage, type IPadSettingsContext } from "./settings-elements";
 
 const CATEGORIES = [["general", "settings", "通用"], ["model", "key-round", "模型"], ["agent", "bot", "Agent"], ["caps", "layout-list", "能力"], ["mods", "blocks", "模块"], ["account", "feather", "账号与会员"]] as const;
 const aliases: Record<string, string> = { providers: "model", models: "model", basic: "general", layout: "general", resources: "caps", modules: "mods" };
@@ -190,7 +190,7 @@ export class IPadSettings {
           if (route === "journal") {
             const moduleCtx = this.moduleContext(), v = moduleView(moduleCtx, "ipad-journal-settings", t(ctx, "日记设置")); v.content.classList.add("is-settings");
             moduleNavigationRow(moduleCtx, moduleSettingsGroup(moduleCtx, v.body), t(ctx, "日记位置"), this.host.settings().journalDirectory, () => this.host.services.modules.journal.openSettings()); await ctx.push(v.finish());
-          } else await ctx.push(route === "knowledge" ? createIPadKnowledgeSettingsPage(ctx) : route === "english-diary-settings" ? createEnglishDiarySettingsPage(ctx, () => ctx.refresh()) : route === "todos-settings" ? createTodoSettings(this.moduleContext()) : route === "finance-settings" ? createFinanceSettingsPage(this.moduleContext()) : this.legacy(route, label));
+          } else await ctx.push(route === "knowledge" ? createIPadKnowledgeSettingsPage(ctx) : route === "english-diary-settings" ? createEnglishDiarySettingsPage(ctx, () => ctx.refresh()) : route === "todos-settings" ? createTodoSettings(this.moduleContext()) : route === "finance-settings" ? createFinanceSettingsPage(this.moduleContext()) : this.review());
         }).catch(error => ctx.error(error)); });
         if (!paid || qualified) {
           const control = settingsToggle(ctx, `${t(ctx, "启用")}${t(ctx, label)}`, mobileModuleEnabled(settings, id), async enabled => { await setMobileModuleEnabled(this.host, id, enabled); this.refresh(); });
@@ -200,6 +200,45 @@ export class IPadSettings {
         }
       }
     });
+  }
+  private review(): MobileShellPage {
+    const ctx = this.context, content = settingsContent(ctx), english = this.host.settings().settingsLanguage === "en";
+    const group = settingsGroup(ctx, content, english ? "Reports" : "周报");
+    settingsRow(ctx, group, english ? "Agent weekly report" : "Agent 周报", "", () => ctx.push(this.reportConfiguration("agent")));
+    settingsRow(ctx, group, english ? "Knowledge weekly report" : "知识库周报", "", () => ctx.push(this.reportConfiguration("knowledge")));
+    content.append(el(ctx.document, "p", "pd-settings-description", english ? "Mobile saves configuration only; reports are not generated automatically." : "移动端仅保存配置，不会自动生成周报。"));
+    return { id: "ipad-settings-review", title: english ? "Review" : "复盘", content };
+  }
+  private reportConfiguration(kind: "agent" | "knowledge"): MobileShellPage {
+    const ctx = this.context, english = this.host.settings().settingsLanguage === "en", content = settingsContent(ctx);
+    const original = this.host.settings().mobileUi.reports[kind], draft = { period: original.period, schedule: original.schedule }, baseline = JSON.stringify(draft);
+    const group = settingsGroup(ctx, content, english ? "Report configuration" : "周报配置"), error = settingsError(ctx), leaveArea = el(ctx.document, "div", ""), footer = el(ctx.document, "div", "pd-settings-actions");
+    const periods = [["7d", english ? "Last 7 days" : "最近 7 天"], ["last-week", english ? "Previous week" : "上一周"], ["30d", english ? "Last 30 days" : "最近 30 天"]] as const;
+    const schedules = [["manual", english ? "Manual" : "手动"], ["weekly", english ? "Weekly" : "每周"], ["monthly", english ? "Monthly" : "每月"]] as const;
+    let busy = false, allowed = false;
+    const choice = (label: string, entries: readonly (readonly [string, string])[], value: string, change: (value: string) => void) => {
+      const row = settingsRow(ctx, group, label), select = el(ctx.document, "select", "pd-settings-input"); select.setAttribute("aria-label", label);
+      for (const [id, name] of entries) { const option = el(ctx.document, "option", "", name); option.value = id; select.append(option); } select.value = value;
+      select.addEventListener("change", () => { change(select.value); error.hidden = true; }); row.append(select);
+    };
+    choice(english ? "Report period" : "统计周期", periods, draft.period, value => { draft.period = value as typeof draft.period; });
+    choice(english ? "Frequency" : "执行周期", schedules, draft.schedule, value => { draft.schedule = value as typeof draft.schedule; });
+    content.append(error, leaveArea);
+    const cancel = settingsAction(ctx, "取消", () => { allowed = true; return ctx.back(); }), save = settingsAction(ctx, "保存", async () => {
+      if (busy) return; busy = true; error.hidden = true; update();
+      try {
+        await this.save(settings => {
+          const previous = settings.mobileUi.reports[kind], next = { ...previous, ...draft }; settings.mobileUi.reports[kind] = next;
+          return () => { if (settings.mobileUi.reports[kind] === next) settings.mobileUi.reports[kind] = previous; };
+        });
+        allowed = true; busy = false; await ctx.back();
+      } catch (failure) { showSettingsError(error, failure); }
+      finally { busy = false; update(); }
+    }, true);
+    function update(): void { content.querySelectorAll<HTMLSelectElement>("select").forEach(select => { select.disabled = busy; }); cancel.disabled = save.disabled = busy; content.setAttribute("aria-busy", String(busy)); }
+    footer.append(cancel, save);
+    return { id: `ipad-settings-report-${kind}`, title: kind === "agent" ? english ? "Agent weekly report" : "Agent 周报" : english ? "Knowledge weekly report" : "知识库周报", content, footer,
+      canLeave: () => busy ? false : allowed || JSON.stringify(draft) === baseline ? true : leaveSettingsConfirm(ctx, leaveArea) };
   }
   private legacy(route: MobileSettingsRoute, title: string, id = `ipad-settings-legacy-${route}`, resourceTab?: string): MobileShellPage {
     const content = el(this.root.ownerDocument, "div", "pd-settings-legacy");

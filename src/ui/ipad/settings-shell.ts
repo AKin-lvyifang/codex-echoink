@@ -1,4 +1,5 @@
 import { setIcon } from "obsidian";
+import { createStaticSettingsTabIcon } from "../../settings/animated-settings-tab-icon";
 import { ContainedShellSheet, shellElement, shellIconButton } from "../mobile/shell-controls";
 import type { MobileShellCategory, MobileShellOptions, MobileShellPage, MobileShellSheet } from "../mobile/shell-types";
 import { MobileViewport } from "../mobile/viewport";
@@ -50,7 +51,8 @@ export class IPadSettingsShell {
       button.dataset.categoryId = category.id;
       const icon = shellElement(document, "span", "echoink-ipad-settings-category-icon");
       icon.setAttribute("aria-hidden", "true");
-      setIcon(icon, category.icon);
+      if (category.icon === "blocks") icon.append(createStaticSettingsTabIcon(document, "blocks"));
+      else setIcon(icon, category.icon);
       button.append(icon, shellElement(document, "span", "echoink-ipad-settings-category-label", category.label));
       button.addEventListener("click", () => { void this.selectCategory(category.id); });
       this.categoryButtons.set(category.id, button);
