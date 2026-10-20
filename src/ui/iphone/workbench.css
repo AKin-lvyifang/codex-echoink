@@ -45,7 +45,7 @@
 .echoink-iphone button.ip-button.is-text .ip-button-visible { border: 0; padding: 0 4px; font-size: calc(var(--ip-ui-font) * 0.8125); }
 .echoink-iphone button.ip-button:focus-visible,
 .echoink-iphone button.ip-agent-avatar:focus-visible,
-.echoink-iphone button.ip-module-button:focus-visible,
+.echoink-iphone .ip-module-nav > button.ip-module-button:focus-visible,
 .echoink-iphone button.ip-list-task:focus-visible,
 .echoink-iphone button.ip-completed-row:focus-visible,
 .echoink-iphone button.ip-preset:focus-visible,
@@ -77,9 +77,9 @@
 .echoink-iphone .ip-agent-badge.is-running svg { width: 13px; height: 13px; }
 .echoink-iphone .ip-agent-badge.is-unread { right: 7px; bottom: 7px; min-width: 8px; width: 8px; height: 8px; padding: 0; background: var(--ip-accent); }
 .echoink-iphone .ip-module-nav { display: flex; gap: 2px; overflow-x: auto; margin: 2px -16px 0; padding: 0 10px 8px; border-bottom: 1px solid var(--ip-line); scrollbar-width: none; }
-.echoink-iphone button.ip-module-button { appearance: none; display: flex; align-items: center; gap: 6px; min-width: 44px; min-height: 44px; margin: 0; padding: 0 10px; border: 0; border-radius: 10px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: calc(var(--ip-ui-font) * 0.875); white-space: nowrap; flex: 0 0 auto; cursor: pointer; }
-.echoink-iphone button.ip-module-button:hover,
-.echoink-iphone button.ip-module-button:active { background: var(--ip-soft); color: var(--ip-ink); }
+.echoink-iphone .ip-module-nav > button.ip-module-button { appearance: none; display: flex; align-items: center; gap: 6px; min-width: 44px; min-height: 44px; margin: 0; padding: 0 10px; border: 0; border-radius: 10px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: calc(var(--ip-ui-font) * 0.875); white-space: nowrap; flex: 0 0 auto; cursor: pointer; }
+.echoink-iphone .ip-module-nav > button.ip-module-button:hover,
+.echoink-iphone .ip-module-nav > button.ip-module-button:active { background: var(--ip-soft); color: var(--ip-ink); }
 .echoink-iphone .ip-module-button svg { width: 16px; height: 16px; }
 .echoink-iphone .ip-section { margin: 22px 0 0; }
 .echoink-iphone .ip-section-heading { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }

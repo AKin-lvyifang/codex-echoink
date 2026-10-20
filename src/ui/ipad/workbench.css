@@ -46,7 +46,7 @@
 .echoink-ipad button.pd-button.is-text .pd-button-visible { border: 0; padding: 0 4px; font-size: calc(var(--pd-ui-font) * 0.8125); }
 .echoink-ipad button.pd-button:focus-visible,
 .echoink-ipad button.pd-agent-avatar:focus-visible,
-.echoink-ipad button.pd-module-button:focus-visible,
+.echoink-ipad .pd-module-nav > button.pd-module-button:focus-visible,
 .echoink-ipad button.pd-list-task:focus-visible,
 .echoink-ipad button.pd-completed-row:focus-visible,
 .echoink-ipad button.pd-preset:focus-visible,
@@ -77,14 +77,14 @@
 .echoink-ipad .pd-agent-badge.is-running { display: grid; place-items: center; padding: 0; background: var(--pd-bg); color: var(--pd-accent); }
 .echoink-ipad .pd-agent-badge.is-running svg { width: 13px; height: 13px; }
 .echoink-ipad .pd-agent-badge.is-unread { right: 7px; bottom: 7px; min-width: 8px; width: 8px; height: 8px; padding: 0; background: var(--pd-accent); }
-.echoink-ipad .pd-module-nav { display: flex; flex-wrap: wrap; gap: 2px; margin: 10px 0 0 -10px; padding: 0 0 10px; border-bottom: 1px solid var(--pd-line); }
-.echoink-ipad button.pd-module-button { appearance: none; position: relative; isolation: isolate; display: flex; align-items: center; gap: 6px; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 0 10px; border: 0; border-radius: 6px; box-shadow: none; background: transparent; color: var(--pd-secondary); font: inherit; font-size: calc(var(--pd-ui-font) * 0.875); white-space: normal; flex: 0 0 auto; cursor: pointer; }
-.echoink-ipad button.pd-module-button::before { position: absolute; z-index: -1; inset: 8px 0; border-radius: 6px; content: ""; }
-.echoink-ipad button.pd-module-button::after { content: none; }
-.echoink-ipad button.pd-module-button:hover,
-.echoink-ipad button.pd-module-button:active { color: var(--pd-ink); background: transparent; }
-.echoink-ipad button.pd-module-button:is(:hover, :focus-visible)::before { background: var(--pd-soft); }
-.echoink-ipad button.pd-module-button:active { opacity: .65; }
+.echoink-ipad .pd-module-nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px; margin: 10px 0 0 -10px; padding: 0 0 10px; border-bottom: 1px solid var(--pd-line); }
+.echoink-ipad .pd-module-nav > button.pd-module-button { appearance: none; position: relative; isolation: isolate; display: flex; align-items: center; gap: 6px; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 0 10px; border: 0; border-radius: 6px; box-shadow: none; background: transparent; color: var(--pd-secondary); font: inherit; font-size: calc(var(--pd-ui-font) * 0.875); white-space: normal; flex: 0 0 auto; cursor: pointer; }
+.echoink-ipad .pd-module-nav > button.pd-module-button::before { position: absolute; z-index: -1; inset: 8px 0; border-radius: 6px; content: ""; }
+.echoink-ipad .pd-module-nav > button.pd-module-button::after { content: none; }
+.echoink-ipad .pd-module-nav > button.pd-module-button:hover,
+.echoink-ipad .pd-module-nav > button.pd-module-button:active { color: var(--pd-ink); background: transparent; }
+.echoink-ipad .pd-module-nav > button.pd-module-button:is(:hover, :focus-visible)::before { background: var(--pd-soft); }
+.echoink-ipad .pd-module-nav > button.pd-module-button:active { opacity: .65; }
 .echoink-ipad .pd-module-button svg { width: 16px; height: 16px; }
 .echoink-ipad .pd-section { margin: 24px 0 0; }
 .echoink-ipad .pd-section-heading { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }
