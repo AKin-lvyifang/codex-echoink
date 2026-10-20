@@ -1,6 +1,7 @@
 import { PiChatUiProjector, piProjectedEntryMessageId, type PiChatUiViewModel } from "../harness/pi-native/pi-chat-ui-projector";
 import { GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../generation/request";
-import { GENERATION_STAGE_ENTRY } from "../generation/projection";
+import { GENERATION_STAGE_ENTRY, projectGenerationEntries } from "../generation/projection";
+import { createReasoningSummary, closeReasoningSummary } from "../harness/pi-native/pi-reasoning-summary";
 import type { PiChatRuntimeEvent } from "../harness/pi-native/contracts";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../settings/settings";
@@ -109,7 +110,7 @@ async function assertGenerationNativeGrouping(context: ReturnType<typeof createT
   const cold = projector.projectSessionBranch({ piSessionId, activeLeafId: "final-entry", productRunId: runId, runState: "completed", runIdentities: [{ productRunId: runId, userEntryId: "accepted-user", assistantEntryId: "final-entry", toolCallIds: [], updatedAt: 20 }], entries: [
     { type: "message", id: "accepted-user", timestamp: "2026-10-20T00:00:00.000Z", message: { role: "user", content: "用「简报」生成 · 1 篇资料", timestamp: 1 } },
     { type: "custom", id: "request-entry", timestamp: "2026-10-20T00:00:00.001Z", customType: GENERATION_REQUEST_ENTRY, data: { productRunId: runId, request } },
-    { type: "message", id: "final-entry", timestamp: "2026-10-20T00:00:00.002Z", message: { role: "assistant", content: [{ type: "text", text: '{"title":"PRIVATE_MODEL_JSON","markdown":"正文"}' }], timestamp: 2, stopReason: "stop" } },
+    { type: "message", id: "final-entry", timestamp: "2026-10-20T00:00:00.002Z", message: { role: "assistant", content: [{ type: "thinking", thinking: "模型已经完成内容推理。" }, { type: "text", text: '{"title":"PRIVATE_MODEL_JSON","markdown":"正文"}' }], timestamp: 2, stopReason: "stop" } },
     ...(["reading", "writing", "approval", "saving"] as const).map((stage, index) => ({ type: "custom", id: `stage-${stage}`, timestamp: "2026-10-20T00:00:00.003Z", customType: GENERATION_STAGE_ENTRY, data: { productRunId: runId, requestId: request.id, stage, status: "completed", at: 3 + index } })),
     { type: "custom", id: "result-entry", timestamp: "2026-10-20T00:00:00.004Z", customType: GENERATION_RESULT_ENTRY, data: { productRunId: runId, result } }
   ] as never });
@@ -124,6 +125,38 @@ async function assertGenerationNativeGrouping(context: ReturnType<typeof createT
   assert.ok(reopened.findByClass("codex-generation-result")); assert.equal(reopened.findByClass("codex-process"), null);
   assert.doesNotMatch(renderedText(reopened), /暂无内容|正在接收过程内容|PRIVATE_MODEL_JSON/u);
   assert.doesNotMatch(renderedText(reopened), /contentSha256|byteLength|relativePath|receipt-hash-must-stay-out-of-ui/u, "completed generation approval/saving rows must not render generic receipt JSON summaries");
+  const cancelledRun = `${runId}-cancelled`, cancelledRequest = { ...request, id: "cancelled-request" };
+  const cancelled = projector.projectSessionBranch({ piSessionId, activeLeafId: "cancel-result", productRunId: cancelledRun, runState: "cancelled", runIdentities: [{ productRunId: cancelledRun, userEntryId: "cancel-user", assistantEntryId: "model-completed-before-cancel", toolCallIds: [], updatedAt: 114_000 }], entries: [
+    { type: "message", id: "cancel-user", timestamp: "2026-10-20T00:00:00.000Z", message: { role: "user", content: "用「简报」生成 · 1 篇资料", timestamp: 1 } },
+    { type: "custom", id: "cancel-request", timestamp: "2026-10-20T00:00:00.001Z", customType: GENERATION_REQUEST_ENTRY, data: { productRunId: cancelledRun, request: cancelledRequest } },
+    ...(["reading", "writing"] as const).map((stage, index) => ({ type: "custom", id: `cancel-${stage}`, timestamp: "2026-10-20T00:00:00.002Z", customType: GENERATION_STAGE_ENTRY, data: { productRunId: cancelledRun, requestId: cancelledRequest.id, stage, status: "completed", at: 2 + index } })),
+    { type: "message", id: "model-completed-before-cancel", timestamp: "2026-10-20T00:00:10.000Z", message: { role: "assistant", content: [{ type: "thinking", thinking: "内容已写好，接下来等待保存确认。" }, { type: "text", text: '{"title":"未保存报告","markdown":"本轮尚未落盘"}' }], timestamp: 10_000, stopReason: "stop" } },
+    { type: "custom", id: "cancel-approval-start", timestamp: "2026-10-20T00:00:10.001Z", customType: GENERATION_STAGE_ENTRY, data: { productRunId: cancelledRun, requestId: cancelledRequest.id, stage: "approval", status: "running", at: 10_001 } },
+    { type: "custom", id: "cancel-result", timestamp: "2026-10-20T00:01:54.000Z", customType: GENERATION_RESULT_ENTRY, data: { productRunId: cancelledRun, result: { requestId: cancelledRequest.id, outputKind: "markdown", writeState: "not_written", readFailures: [], error: "已取消，尚未写入文件。" } } },
+    { type: "custom", id: "cancel-approval-close", timestamp: "2026-10-20T00:01:54.001Z", customType: GENERATION_STAGE_ENTRY, data: { productRunId: cancelledRun, requestId: cancelledRequest.id, stage: "approval", status: "cancelled", at: 114_001 } }
+  ] as never });
+  const cancelledTurn = buildAgentTurns(cancelled.messages)[0]!;
+  assert.equal(cancelledTurn.status, "cancelled", "completed model thinking must not override a later cancelled generation write on cold reopen");
+  assert.equal(cancelledTurn.finalAnswer?.status, "cancelled");
+  env.messages = cancelled.messages;
+  const cancelledHost = new FakeElement("div");
+  (renderer as unknown as { renderAssistantTurn(host: unknown, turn: unknown, showAgentHeader: boolean): void }).renderAssistantTurn(cancelledHost, cancelledTurn, false);
+  assert.equal(cancelledHost.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false, "cancelled generation keeps its original stages expanded after restart");
+  assert.equal(cancelledHost.findByClass("codex-assistant-turn-process-toggle")?.hidden, true, "a cancelled turn must not offer the success-only elapsed-time fold");
+  assert.match(renderedText(cancelledHost), /读取资料/u); assert.match(renderedText(cancelledHost), /按模板写作/u); assert.match(renderedText(cancelledHost), /已取消，尚未写入文件/u);
+  for (const outcome of [{ writeState: "verified", expected: "cancelled", cancelledReasoning: true }, { writeState: "unconfirmed", expected: "interrupted", cancelledReasoning: false }, { writeState: "not_written", expected: "failed", cancelledReasoning: false }] as const) {
+    const base = structuredClone(cold.messages);
+    if (outcome.cancelledReasoning) base.push({ id: "persisted-cancelled-reasoning", role: "assistant", itemType: "reasoning", processKind: "reasoning", text: "", status: "cancelled", runId, createdAt: 1,
+      reasoningSummary: closeReasoningSummary({ summary: createReasoningSummary({ conversationId: "native-conversation", piSessionId, productRunId: runId, startedAt: 1 }), status: "cancelled", terminalAt: 114_000 }) });
+    const outcomeResult = { ...result, writeState: outcome.writeState, ...(outcome.writeState === "not_written" ? { path: undefined, error: "生成失败，尚未写入。" } : {}) };
+    const messages = projectGenerationEntries(base, [{ type: "custom", customType: GENERATION_REQUEST_ENTRY, data: { productRunId: runId, request } }, { type: "custom", customType: GENERATION_RESULT_ENTRY, data: { productRunId: runId, result: outcomeResult } }]);
+    const turn = buildAgentTurns(messages)[0]!; assert.equal(turn.status, outcome.expected, `${outcome.writeState} must honor a non-success terminal outcome`);
+    const surface = new FakeElement("div"); env.messages = messages;
+    (renderer as unknown as { renderAssistantTurn(host: unknown, turn: unknown, showAgentHeader: boolean): void }).renderAssistantTurn(surface, turn, false);
+    assert.equal(surface.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false);
+    if (outcome.writeState === "verified") assert.ok(surface.findByClass("codex-generation-result"), "cancellation after a verified write keeps the real file card without collapsing the cancelled turn");
+  }
+  console.log("PASS generation cold cancellation: completed provider thinking preserves cancelled write status and expanded original work record");
   renderer.dispose();
   console.log("PASS generation native grouping: preflight/user replay order, one ordinary work record, no empty details, readable exact approval and live decision");
 }

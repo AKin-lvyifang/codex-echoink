@@ -54,6 +54,26 @@ export function projectGenerationEntries(messages: ChatMessage[], entries: reado
       if (final >= 0) projected.splice(final, 0, stage); else projected.push(stage);
     }
   }
+  for (const [runId, result] of results) {
+    const runStages = [...stages.values()].filter(stage => stage.runId === runId);
+    const terminalReasoning = messages.filter(message => message.reasoningSummary?.productRunId === runId && message.reasoningSummary.terminalAt !== undefined)
+      .map(message => message.reasoningSummary!).sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    const status = runStages.some(stage => stage.status === "cancelled") ? "cancelled"
+      : terminalReasoning && (terminalReasoning.status === "cancelled" || terminalReasoning.status === "interrupted" || terminalReasoning.status === "failed") ? terminalReasoning.status
+        : result.writeState === "verified" ? "completed" : result.writeState === "unconfirmed" ? "interrupted" : "failed";
+    const terminalAt = Math.max(terminalReasoning?.terminalAt ?? 0, ...runStages.map(stage => stage.completedAt ?? stage.createdAt));
+    for (let index = 0; index < projected.length; index++) {
+      const message = projected[index]!;
+      if (message.runId !== runId || !message.assistantTurn && !message.generationResult) continue;
+      // A model can finish its public thinking before the controlled write is
+      // cancelled. Its completed segment is not the generation turn outcome.
+      projected[index] = { ...message,
+        ...(message.generationResult ? { status } : {}),
+        ...(message.assistantTurn ? { assistantTurn: { ...message.assistantTurn, status,
+          updatedAt: Math.max(message.assistantTurn.updatedAt, terminalAt),
+          completedAt: Math.max(message.assistantTurn.completedAt ?? 0, terminalAt) } } : {}) };
+    }
+  }
   return positionGenerationMessages(projected);
 }
 
