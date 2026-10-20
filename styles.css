@@ -23748,6 +23748,13 @@ body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned {
   --background-primary: var(--echoink-theme-bg);
   --interactive-normal: var(--echoink-theme-bg);
 }
+/* Maintenance is embedded in a data pane; keep its actual host surface visible. */
+body[data-echoink-theme] .echoink-knowledge-page .knowledge-legacy.echoink-settings-demo.echoink-settings-aligned {
+  --background-primary: inherit;
+  --bg: var(--background-primary);
+  --interactive-normal: var(--background-primary);
+  background: transparent;
+}
 /* Desktop settings presentation. Mobile retains its existing settings surfaces. */
 .echoink-settings-demo.echoink-settings-aligned {
   max-width: none; padding: 20px 32px 48px; font-size: 13px; line-height: 1.55;
