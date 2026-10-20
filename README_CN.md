@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.0：全新工作台与多 Agent 任务" src="assets/releases/echoink-agent-2.8.0-release.png">
+    <img width="1024" alt="EchoInk 2.8.1：从资料生成与手机平板新工作台" src="assets/releases/echoink-agent-2.8.1-release.png">
   </a>
 </p>
 
@@ -18,7 +18,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="桌面端与移动端 Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.0"><img src="https://img.shields.io/badge/version-2.8.0-0EA5E9?style=flat-square" alt="版本 2.8.0"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.1"><img src="https://img.shields.io/badge/version-2.8.1-0EA5E9?style=flat-square" alt="版本 2.8.1"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
 
