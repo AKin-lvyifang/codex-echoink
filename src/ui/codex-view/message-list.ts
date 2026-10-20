@@ -43,6 +43,8 @@ import {
 } from "./agent-turn-process";
 import { copyAnswerMarkdown, resolveAnswerMarkdown } from "./answer-copy";
 import { saveAnswerAsNote } from "./answer-save";
+import { sourceLineRangeLabel, sourceLineRanges } from "./source-line-ranges";
+import { shouldDisplayReasoning } from "./reasoning-visibility";
 import type { KnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
 import {
   piApprovalPreviewChangeProjection,
@@ -950,6 +952,7 @@ export class CodexMessageListRenderer {
     }
 
     for (const reasoning of turn.providerReasoningSegments) {
+      if (!shouldDisplayReasoning(reasoning, userVisibleProviderReasoningText(reasoning.text, assistantTurnHasPersonalMemoryContext(turn)))) continue;
       const root = turnRoot
         .querySelectorAll<HTMLDetailsElement>(".codex-ai-elements-reasoning");
       const matchingRoot = Array.from(root)
@@ -2033,7 +2036,8 @@ export class CodexMessageListRenderer {
     messageId: string,
     usage: KnowledgeUsageMessageData,
     citations?: KnowledgeBaseCitationSummary,
-    missingMemoryCount = 0
+    missingMemoryCount = 0,
+    compactRanges = false
   ): void {
     const env = this.requireEnv();
     const copy = this.copy();
@@ -2046,7 +2050,7 @@ export class CodexMessageListRenderer {
       const untitledMemories = documents.filter((document) => document.kind === "memory" && !document.source.title.trim());
       for (const document of documents) {
         if (document.kind === "memory" && !document.source.title.trim()) continue;
-        this.renderLocalDocumentSource(sources, document, citations?.status);
+        this.renderLocalDocumentSource(sources, document, citations?.status, compactRanges);
       }
       if (untitledMemories.length + missingMemoryCount > 0) {
         const row = sources.createDiv({ cls: "codex-ai-elements-source-header codex-answer-memory-count" });
@@ -2091,7 +2095,7 @@ export class CodexMessageListRenderer {
     previous?.remove();
     const host = container.createDiv({ cls: "codex-answer-sources" });
     host.dataset.signature = signature;
-    this.renderKnowledgeUsageCards(host, turn.finalAnswer?.id ?? turn.key, { ...usage, producedPaths: [] }, summary, missingMemoryCount);
+    this.renderKnowledgeUsageCards(host, turn.finalAnswer?.id ?? turn.key, { ...usage, producedPaths: [] }, summary, missingMemoryCount, true);
     const footer = container.querySelector<HTMLElement>(".codex-agent-footer");
     if (footer) container.insertBefore(host, footer);
   }
@@ -2099,7 +2103,8 @@ export class CodexMessageListRenderer {
   private renderLocalDocumentSource(
     container: HTMLElement,
     document: LocalDocumentSource,
-    evidenceStatus?: KnowledgeBaseCitationSummary["status"]
+    evidenceStatus?: KnowledgeBaseCitationSummary["status"],
+    compactRanges = false
   ): void {
     const copy = this.copy();
     const item = container.createDiv({
@@ -2153,12 +2158,12 @@ export class CodexMessageListRenderer {
       });
     }
 
-    const ranges = new Map(document.references.map((reference) => [`${reference.lineStart}:${reference.lineEnd}`, reference]));
-    if (ranges.size) {
+    const ranges = sourceLineRanges(document.references, compactRanges);
+    if (ranges.length) {
       const meta = header.createSpan({ cls: "codex-ai-elements-source-meta" });
-      for (const reference of ranges.values()) {
-        const label = copy.sources.lineRange(reference.lineStart, reference.lineEnd);
-        if (!(file instanceof TFile)) { meta.createSpan({ text: label }); continue; }
+      const label = sourceLineRangeLabel(ranges, env.settingsLanguage);
+      if (!(file instanceof TFile)) meta.createSpan({ text: label });
+      else {
         const range = meta.createEl("button", {
           cls: "codex-message-note-link codex-source-line-link",
           text: label,
@@ -2166,7 +2171,7 @@ export class CodexMessageListRenderer {
         });
         range.onclick = (event) => {
           event.preventDefault(); event.stopPropagation();
-          void this.openKnowledgeReference(reference);
+          void this.openKnowledgeReference(ranges[0].reference);
         };
       }
     }
@@ -2515,7 +2520,8 @@ export class CodexMessageListRenderer {
     turn: AgentTurnView,
     node: Readonly<EchoInkTurnProcessNode>
   ): void {
-    if (node.kind === "reasoning" && node.nodeId.startsWith("provider-reasoning:")) {
+    if (node.kind === "reasoning" && node.nodeId.startsWith("provider-reasoning:")
+      && turn.providerReasoningSegments.some((segment) => node.nodeId === `provider-reasoning:${segment.reasoningId}`)) {
       this.renderProviderReasoningNode(container, turn, node);
       return;
     }
@@ -2649,6 +2655,8 @@ export class CodexMessageListRenderer {
       segment.reasoningId === reasoningId
     );
     if (!reasoning) return;
+    const displayText = userVisibleProviderReasoningText(reasoning.text, assistantTurnHasPersonalMemoryContext(turn));
+    if (!shouldDisplayReasoning(reasoning, displayText)) return;
     const disclosureKey = `${env.sessionId}\0${turn.key}\0provider-reasoning\0${reasoning.reasoningId}`;
     const disclosure = nextReasoningDisclosureState(
       this.reasoningDisclosureStates.get(disclosureKey),
@@ -2680,10 +2688,6 @@ export class CodexMessageListRenderer {
       )
     );
     if (carrier) elements.root.dataset.messageId = carrier.id;
-    const displayText = userVisibleProviderReasoningText(
-      reasoning.text,
-      assistantTurnHasPersonalMemoryContext(turn)
-    );
     elements.body.dataset.renderedText = displayText;
     this.scheduleDisclosureAutoFold(
       `reasoning:${disclosureKey}`,

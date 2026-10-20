@@ -45,6 +45,8 @@ import {
 import type { EchoInkTaskPlanSnapshot } from "../types/task-plan";
 import type { EchoInkQuestionInteraction } from "../types/conversation-turn";
 import type { EchoInkReasoningActivity } from "../types/reasoning-summary";
+import type { KnowledgeReference } from "../knowledge-base/types";
+import { sourceLineRangeLabel, sourceLineRanges } from "../ui/codex-view/source-line-ranges";
 import { InteractionDockController } from "../ui/codex-view/interaction-dock";
 import { renderCodexTabs } from "../ui/codex-view/tabs";
 import { CodexView } from "../ui/codex-view";
@@ -549,6 +551,56 @@ function assertWorkRecordProjectionContracts(): void {
   assert.equal(project({ ...base, id: "provider", kind: "provider", status: "failed" }).processNodes[0]?.status, "failed");
 }
 
+function assertSourceLineRangeContracts(): void {
+  const ref = (start: number, end: number, totalLines?: number, revision = "a"): KnowledgeReference => ({
+    referenceId: `${revision}:${start}:${end}`, vaultRelativePath: "projects/Alpha.md", title: "Alpha", excerpt: "",
+    contentRevision: `sha256:${revision.repeat(64)}`, lineStart: start, lineEnd: end, ...(totalLines === undefined ? {} : { totalLines })
+  });
+  const first = ref(13, 16);
+  const partial = sourceLineRanges([ref(28, 43), ref(1, 60, 60), first]);
+  assert.equal(sourceLineRangeLabel(partial, "zh-CN"), "第 13–16、28–43 行");
+  assert.equal(sourceLineRangeLabel(partial, "en"), "Lines 13–16, 28–43");
+  assert.equal(partial[0].reference, first, "the sorted first range keeps its original revision-bearing reference");
+  assert.deepEqual(sourceLineRanges([ref(1, 60, 60)]), [], "a whole-file read has no redundant line label");
+  assert.deepEqual(sourceLineRanges([ref(1, 10, 20), ref(11, 20, 20)]), [], "adjacent ranges that cover the whole file also omit line labels");
+  assert.deepEqual(sourceLineRanges([ref(20, 22), ref(4, 6), ref(5, 7), ref(8, 10), ref(4, 6), ref(14, 15)])
+    .map((range) => [range.lineStart, range.lineEnd]), [[4, 10], [14, 15], [20, 22]], "ranges sort, deduplicate, and merge overlaps and adjacency");
+  assert.equal(sourceLineRangeLabel(sourceLineRanges([ref(5, 5)]), "zh-CN"), "第 5 行");
+  assert.equal(sourceLineRanges([ref(1, 60)])[0]?.lineEnd, 60, "an unknown total is never guessed");
+  assert.equal(sourceLineRanges([ref(1, 60, 60), ref(1, 60, undefined, "b")])[0]?.reference.contentRevision,
+    `sha256:${"b".repeat(64)}`, "whole-file metadata from another revision does not hide an old range");
+}
+
+function reasoningVisibilityFixture(explicit: boolean, durationMs: number, text: string, status: "completed" | "running" = "completed", summaryOnly = false): AgentTurnView {
+  const provider = { reasoningId: "visibility", source: "provider_public" as const, text, status, startedAt: 0, updatedAt: durationMs, durationMs };
+  const messages: ChatMessage[] = [{ id: "visibility-user", role: "user", text: "问题", createdAt: 0 }, {
+    id: "visibility-carrier", role: "assistant", itemType: "reasoning", text: "思考完成 · 1 秒", status,
+    runId: "visibility-run", createdAt: 0,
+    reasoningSummary: { schemaVersion: 1, conversationId: "visibility", piSessionId: "visibility-pi", productRunId: "visibility-run",
+      status, startedAt: 0, updatedAt: durationMs, activities: [] },
+    assistantTurn: { viewVersion: 1, turnId: "visibility-run", status, startedAt: 0, updatedAt: durationMs,
+      processNodes: explicit ? [{ nodeId: "provider-reasoning:visibility", kind: "reasoning", status, title: "思考", summary: "思考了 1 秒",
+        startedAt: 0, updatedAt: durationMs, sourceMessageId: "visibility-carrier" }] : [],
+      providerReasoningSegments: summaryOnly ? [] : [provider], interactionRecords: [] }
+  }];
+  const projection = buildAgentTurnProjection(messages)[1];
+  assert.equal(projection?.kind, "assistantTurn");
+  return (projection as { turn: AgentTurnView }).turn;
+}
+
+function assertReasoningVisibilityContracts(): void {
+  for (const explicit of [false, true]) {
+    assert.equal(reasoningVisibilityFixture(explicit, 1_999, " \n ").processNodes.length, 0, "short ended empty reasoning is hidden in either projection path");
+    assert.equal(reasoningVisibilityFixture(explicit, 2_000, "").processNodes.length, 1, "the two-second boundary remains visible");
+    assert.equal(reasoningVisibilityFixture(explicit, 1, "真实公开思考").processNodes.length, 1, "real short public text remains visible");
+    assert.equal(reasoningVisibilityFixture(explicit, 0, "", "running").processNodes.length, 1, "running reasoning always remains visible");
+  }
+  assert.equal(reasoningVisibilityFixture(true, 1_000, "", "completed", true).processNodes.length, 0,
+    "explicit summary and message status copy do not pretend to be public reasoning");
+  assert.equal(reasoningVisibilityFixture(true, 0, "", "running", true).processNodes.length, 1,
+    "an explicit running placeholder also stays visible without a completed public segment");
+}
+
 async function assertInlineApprovalDockIntegration(): Promise<void> {
   const broker = new PiAgentApprovalBroker();
   const identity = { conversationId: "inline-session", piSessionId: "inline-pi", productRunId: "inline-run", toolCallId: "inline-tool" };
@@ -595,6 +647,46 @@ async function assertInlineApprovalDockIntegration(): Promise<void> {
   assert.equal(messagesEl.findAllByClass("codex-smooth-ai-approval-card").length, 0, "settled work removes the previous live approval card");
   assert.equal(dockEl.findAllByClass("is-approve").length, 0);
   renderer.dispose(); view.interactionDock.dispose(); broker.dispose();
+}
+
+function assertReasoningTransitionRendererContracts(): void {
+  const context = createTestContext();
+  const renderer = new CodexMessageListRenderer();
+  const messagesEl = new FakeElement("div");
+  const virtualListEl = messagesEl.createDiv();
+  const running = reasoningVisibilityFixture(false, 0, "", "running");
+  const carrier: ChatMessage = { ...running.messages[0], assistantTurn: { ...running.messages[0].assistantTurn!,
+    providerReasoningSegments: [...running.providerReasoningSegments, {
+      reasoningId: "other-public", source: "provider_public", status: "completed", text: "其他公开内容",
+      startedAt: 0, updatedAt: 500, durationMs: 500
+    }] } };
+  const input = { app: context.app, component: context.component, messagesEl, virtualListEl, sessionId: "visibility-transitions",
+    settingsLanguage: "zh-CN", messages: [carrier], vaultPath: "/test-vault", readRawMessageText: async () => "", onScheduleMeasure() {}, onScheduleRunProgress() {} };
+  renderer.render(input as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  assert.equal(virtualListEl.findAllByClass("codex-assistant-turn-reasoning-node").length, 2,
+    "a short empty running segment stays visible next to real public content");
+  const completed: ChatMessage = { ...carrier, assistantTurn: { ...carrier.assistantTurn!, updatedAt: 1_999,
+    providerReasoningSegments: carrier.assistantTurn!.providerReasoningSegments!.map((segment) => segment.reasoningId === "visibility"
+      ? { ...segment, status: "completed", updatedAt: 1_999, completedAt: 1_999, durationMs: 1_999 } : segment) } };
+  assert.equal(renderer.tryUpdateMessage(completed, [completed]), false, "ending short empty reasoning requires one topology rebuild");
+  renderer.render({ ...input, messages: [completed] } as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  const surviving = virtualListEl.findByClass("codex-assistant-turn-reasoning-node")!;
+  assert.equal(virtualListEl.findAllByClass("codex-assistant-turn-reasoning-node").length, 1);
+  assert.match(renderedText(surviving), /其他公开内容/u);
+  const renderCount = virtualListEl.emptyCallCount;
+  const later: ChatMessage = { ...completed, assistantTurn: { ...completed.assistantTurn!, updatedAt: 2_100,
+    providerReasoningSegments: completed.assistantTurn!.providerReasoningSegments!.map((segment) => segment.reasoningId === "other-public"
+      ? { ...segment, text: `${segment.text}，新增内容`, updatedAt: 2_100 } : segment) } };
+  assert.equal(renderer.tryUpdateMessage(later, [later]), true, "the hidden ended segment does not force repeated rebuilds");
+  assert.equal(virtualListEl.emptyCallCount, renderCount);
+  assert.equal(virtualListEl.findByClass("codex-assistant-turn-reasoning-node"), surviving);
+  assert.match(renderedText(surviving), /新增内容/u);
+  const emptyTurn = reasoningVisibilityFixture(false, 1_999, "");
+  const guarded = new FakeElement("div");
+  (renderer as unknown as { renderProviderReasoningNode(host: unknown, turn: AgentTurnView, node: unknown): void })
+    .renderProviderReasoningNode(guarded, emptyTurn, { nodeId: "provider-reasoning:visibility", kind: "reasoning", status: "completed" });
+  assert.equal(guarded.childElementCount, 0, "the renderer itself rejects an empty short summary shell even if projection is bypassed");
+  renderer.dispose();
 }
 
 function renderMessage(
@@ -1348,6 +1440,8 @@ function taskPlanMessage(
 }
 
 export async function runSmoothConversationUiTests(): Promise<void> {
+  assertSourceLineRangeContracts();
+  assertReasoningVisibilityContracts();
   assertWorkRecordProjectionContracts();
   assert.equal(answerReadingSpacer(800, 50), 350, "short answers begin at viewport midpoint");
   assert.equal(answerReadingSpacer(800, 250), 200, "growing answers keep a quarter viewport free");
@@ -2203,6 +2297,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     }
   });
   try {
+    assertReasoningTransitionRendererContracts();
     await assertInlineApprovalDockIntegration();
     await assertAnswerSaveUiContracts();
     await assertMaintenanceLinkingResultVisibleFromPiProjection();
@@ -3821,7 +3916,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       "existing notes have separate name and line-range buttons");
     assert.doesNotMatch(renderedText(localSourcesRoot!), /Alpha citation excerpt/u);
     assert.doesNotMatch(renderedText(localSourcesRoot!), /Alpha reference excerpt/u);
-    assert.match(renderedText(localSourcesRoot!), /第 2-3 行/u);
+    assert.match(renderedText(localSourcesRoot!), /第 2–3 行/u);
     assert.doesNotMatch(renderedText(localSourcesRoot!), /强证据/u);
     const producedSources = localSourcesMessage.findByClass("codex-ai-elements-artifact-sources");
     assert.ok(producedSources, "generated paths remain a separate Sources-style surface");
@@ -3857,6 +3952,60 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     lineStarts.length = 0;
     await localSourcesRoot!.findAllByTag("button")[0].onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
     assert.deepEqual(lineStarts, [undefined], "the note name opens the note without selecting a line range");
+    const renderCompactAnswer = (message: ChatMessage) => {
+      const projected = buildAgentTurnProjection([{ ...message, runId: "compact-source-answer" }])[0] as { turn: AgentTurnView };
+      const surface = new FakeElement("div");
+      (renderer as unknown as { renderAssistantTurn(host: unknown, turn: AgentTurnView, showAgentHeader: boolean): void })
+        .renderAssistantTurn(surface, projected.turn, false);
+      return surface;
+    };
+    const sourceBase = localSourceMessage.knowledgeReferences![0];
+    const wholeReference = { ...sourceBase, referenceId: "alpha-whole", lineStart: 1, lineEnd: 60, totalLines: 60 };
+    const mergedSourceMessage = { ...localSourceMessage, id: "merged-source-answer", citations: undefined, personalMemorySources: [], knowledgeProducedPaths: [],
+      knowledgeReferences: [wholeReference, { ...sourceBase, referenceId: "alpha-later", lineStart: 28, lineEnd: 43 },
+        { ...sourceBase, referenceId: "alpha-first", lineStart: 13, lineEnd: 16 }] };
+    const mergedSource = renderCompactAnswer(mergedSourceMessage);
+    const mergedLineLink = mergedSource.findByClass("codex-source-line-link")!;
+    assert.equal(mergedSource.findAllByClass("codex-source-line-link").length, 1);
+    assert.equal(mergedLineLink.textContent, "第 13–16、28–43 行");
+    const navigation = renderer as unknown as { openKnowledgeReference(reference: KnowledgeReference): Promise<void> };
+    const originalOpenReference = navigation.openKnowledgeReference;
+    let openedReference: KnowledgeReference | undefined;
+    navigation.openKnowledgeReference = async (reference) => { openedReference = reference; await originalOpenReference.call(renderer, reference); };
+    lineStarts.length = 0;
+    await mergedLineLink.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+    assert.deepEqual(lineStarts, [12], "a combined range navigates to its first original start line");
+    assert.equal(openedReference?.referenceId, "alpha-first");
+    assert.equal(openedReference?.contentRevision, sourceBase.contentRevision, "navigation retains the original source revision authority");
+    navigation.openKnowledgeReference = originalOpenReference;
+    const wholeOnly = renderCompactAnswer({ ...mergedSourceMessage, id: "whole-source-answer", knowledgeReferences: [wholeReference] });
+    assert.equal(wholeOnly.findAllByClass("codex-source-line-link").length, 0);
+    assert.ok(wholeOnly.findByClass("codex-ai-elements-source-title"), "whole-file suppression retains the note name");
+    const wholeReadProjection = buildAgentTurnProjection([{
+      id: "whole-read-tool", role: "tool", itemType: "dynamicToolCall", processKind: "view", title: "读取笔记", text: "Alpha",
+      status: "completed", runId: "whole-read-turn", createdAt: 1, knowledgeReferences: [wholeReference]
+    }, { ...mergedSourceMessage, id: "whole-read-answer", runId: "whole-read-turn", knowledgeReferences: [wholeReference] }])[0] as { turn: AgentTurnView };
+    const wholeReadSurface = new FakeElement("div");
+    (renderer as unknown as { renderAssistantTurn(host: unknown, turn: AgentTurnView, showAgentHeader: boolean): void })
+      .renderAssistantTurn(wholeReadSurface, wholeReadProjection.turn, false);
+    const wholeReadAction = wholeReadSurface.findByClass("codex-assistant-turn-action-node")!;
+    wholeReadAction.open = true;
+    wholeReadAction.ontoggle?.({ isTrusted: true });
+    assert.equal(wholeReadAction.findByClass("codex-source-line-link")?.textContent, "第 1–60 行",
+      "the identical whole-file reference retains line navigation in work records");
+    assert.equal(wholeReadSurface.findByClass("codex-assistant-turn-final")?.findAllByClass("codex-source-line-link").length, 0);
+    const longName = "很长的来源笔记名称".repeat(12);
+    const longPath = `projects/${longName}.md`;
+    const originalGetFile = context.app.vault.getAbstractFileByPath;
+    context.app.vault.getAbstractFileByPath = (path) => path === longPath ? new TFile(path) : originalGetFile(path);
+    const longSource = renderCompactAnswer({ ...mergedSourceMessage, id: "long-source-answer",
+      knowledgeReferences: [{ ...sourceBase, referenceId: "long-source", vaultRelativePath: longPath, lineStart: 13, lineEnd: 16 }] });
+    const longTitle = longSource.findByClass("codex-ai-elements-source-title")!;
+    assert.equal(longTitle.textContent, longName, "ellipsis styling never truncates the stored note name");
+    assert.equal(longTitle.attributes.get("aria-label"), `打开笔记 ${longName}`);
+    assert.match(longTitle.attributes.get("title")!, new RegExp(longName, "u"));
+    assert.equal(longSource.findByClass("codex-source-line-link")?.textContent, "第 13–16 行", "long titles keep their full independent range label");
+    context.app.vault.getAbstractFileByPath = originalGetFile;
     context.app.workspace.getLeaf = originalGetLeaf;
 
     const citationOnlyMessage = renderMessage(renderer, {
@@ -3889,7 +4038,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
 
     const retrievalReferences = ["projects/Alpha.md", "outputs/Result.md", "wiki/Third.md", "journal/Fourth.md"].map((vaultRelativePath, index) => ({
       referenceId: `initial-retrieval-${index}`, vaultRelativePath, title: `笔记 ${index + 1}`, excerpt: "SOURCE_EXCERPT_MUST_NOT_APPEAR",
-      contentRevision: `sha256:${"a".repeat(64)}`, lineStart: index + 1, lineEnd: index + 2
+      contentRevision: `sha256:${"a".repeat(64)}`, lineStart: index + 1, lineEnd: index + 2, ...(index === 0 ? { totalLines: 2 } : {})
     }));
     const retrievalProjection = buildAgentTurnProjection([{
       id: "initial-retrieval-user", role: "user", text: "查四篇笔记", createdAt: 1
@@ -3923,6 +4072,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.equal(retrievalSummary.findByClass("codex-action-item-caret")?.dataset.icon, "chevron-down");
     assert.equal(retrievalWorkSources.findAllByClass("codex-ai-elements-source").length, 4,
       "expanding the source disclosure exposes all four read notes");
+    assert.equal(retrievalWorkSources.findByClass("codex-source-line-link")?.textContent, "第 1–2 行",
+      "retrieval work records retain a whole-file range as well");
     assert.match(renderedText(retrievalWorkSources), /本轮读到的笔记/u);
     assert.doesNotMatch(renderedText(retrievalWorkSources), /SOURCE_EXCERPT_MUST_NOT_APPEAR/u);
 

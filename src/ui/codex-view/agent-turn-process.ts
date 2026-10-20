@@ -17,6 +17,7 @@ import {
 import type { EchoInkReasoningActivity } from "../../types/reasoning-summary";
 import { stableHashedIdentity } from "../../core/mapping";
 import { piToolCallIdFromProjectedMessageId } from "../../harness/pi-native/pi-chat-ui-projector";
+import { shouldDisplayReasoning } from "./reasoning-visibility";
 
 const ACTIVE_STATUSES = new Set([
   "running",
@@ -345,15 +346,23 @@ function buildProcessNodes(
   explicitNodes: readonly Readonly<EchoInkTurnProcessNode>[],
   copy: ConversationCopy
 ): Readonly<EchoInkTurnProcessNode>[] {
+  const explicitTurn = latestExplicitTurn(messages);
+  const reasoningSegments = explicitTurn ? echoInkProviderReasoningSegments(explicitTurn) : [];
   const nodes: EchoInkTurnProcessNode[] = explicitNodes
     .filter((node) => !node.nodeId.startsWith("sources:"))
+    .filter((node) => {
+      if (node.kind !== "reasoning") return true;
+      const segment = reasoningSegments.find((candidate) => node.nodeId === `provider-reasoning:${candidate.reasoningId}`);
+      const source = messages.find((message) => message.id === node.sourceMessageId);
+      const readableText = segment?.text ?? (source?.itemType === "reasoning" && !source.reasoningSummary ? source.text : "");
+      return shouldDisplayReasoning(segment ?? node, readableText);
+    })
     .map((node) => ({ ...node }));
   const nodeIds = new Set(nodes.map((node) => node.nodeId));
   const representedMessageIds = new Set(nodes.flatMap((node) =>
     node.sourceMessageId ? [node.sourceMessageId] : []
   ));
   const representedToolActivityIds = new Set<string>();
-  const explicitTurn = latestExplicitTurn(messages);
   const responseHasStarted = messages.some((message) =>
     (isAgentAnswerMessage(message) && message.text.trim()) || isToolMessage(message))
     || (explicitTurn ? echoInkProviderReasoningSegments(explicitTurn).some((segment) => segment.text.trim()) : false);
@@ -403,8 +412,7 @@ function buildProcessNodes(
   for (const reasoning of explicitTurn
     ? echoInkProviderReasoningSegments(explicitTurn)
     : []) {
-    const duration = reasoning.durationMs ?? Math.max(0, reasoning.updatedAt - reasoning.startedAt);
-    if (!reasoning.text.trim() && duration < 2_000) continue;
+    if (!shouldDisplayReasoning(reasoning, reasoning.text)) continue;
     const nodeId = `provider-reasoning:${reasoning.reasoningId}`;
     if (!nodeIds.has(nodeId)) {
       nodes.push({

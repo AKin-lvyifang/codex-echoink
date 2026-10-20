@@ -18410,14 +18410,18 @@ button.codex-assistant-turn-process-toggle:is(:hover, :focus-visible) {
 }
 
 .codex-answer-source-list .codex-ai-elements-source-title {
+  flex: 0 1 auto;
   min-width: 0;
   max-width: calc(100% - 20px);
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-align: left;
 }
 
 .codex-answer-source-list .codex-ai-elements-source-meta {
+  flex: 0 1 auto;
+  max-width: calc(100% - 20px);
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px 8px;
@@ -18440,6 +18444,12 @@ button.codex-assistant-turn-process-toggle:is(:hover, :focus-visible) {
   line-height: inherit;
   color: var(--text-muted);
   background: transparent;
+}
+
+.codex-answer-source-list .codex-source-line-link {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .codex-answer-source-list .codex-message-note-link:hover,
@@ -18468,7 +18478,6 @@ button.codex-assistant-turn-process-toggle:is(:hover, :focus-visible) {
 @container echoink-turn (max-width: 420px) {
   .codex-assistant-turn-node-summary { flex-basis: 100%; }
   .codex-assistant-turn-action-node .codex-work-record-summary { flex-basis: 100%; }
-  .codex-answer-source-list .codex-ai-elements-source-meta { flex-basis: 100%; margin-left: 20px; }
 }
 
 @container echoink-turn (max-width: 330px) {
