@@ -3887,6 +3887,45 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.doesNotMatch(renderedText(emptyAttributionMessage), /Personal Memory|个人记忆|不会显示伪来源/u);
     assert.doesNotMatch(renderedText(emptyAttributionMessage), /使用了 0 个文档/u);
 
+    const retrievalReferences = ["projects/Alpha.md", "outputs/Result.md", "wiki/Third.md", "journal/Fourth.md"].map((vaultRelativePath, index) => ({
+      referenceId: `initial-retrieval-${index}`, vaultRelativePath, title: `笔记 ${index + 1}`, excerpt: "SOURCE_EXCERPT_MUST_NOT_APPEAR",
+      contentRevision: `sha256:${"a".repeat(64)}`, lineStart: index + 1, lineEnd: index + 2
+    }));
+    const retrievalProjection = buildAgentTurnProjection([{
+      id: "initial-retrieval-user", role: "user", text: "查四篇笔记", createdAt: 1
+    }, {
+      id: "initial-retrieval-process", role: "assistant", itemType: "reasoning", status: "completed", text: "", runId: "initial-retrieval", createdAt: 2,
+      reasoningSummary: { schemaVersion: 1, conversationId: "retrieval", piSessionId: "retrieval-pi", productRunId: "initial-retrieval",
+        status: "completed", startedAt: 1, updatedAt: 3,
+        activities: [{ id: "knowledge:retrieval", kind: "knowledge", status: "completed", startedAt: 1, updatedAt: 3, total: 4, current: 4, completed: 4 }] }
+    }, {
+      id: "initial-retrieval-answer", role: "assistant", text: "回答", status: "completed", runId: "initial-retrieval", createdAt: 4,
+      knowledgeReferences: retrievalReferences
+    }]);
+    const retrievalSurface = new FakeElement("div");
+    const retrievalTurn = (retrievalProjection[1] as { turn: AgentTurnView }).turn;
+    (renderer as unknown as { renderAssistantTurn(container: unknown, turn: AgentTurnView, showAgentHeader: boolean): void })
+      .renderAssistantTurn(retrievalSurface, retrievalTurn, false);
+    const retrievalWorkSources = retrievalSurface.findByClass("codex-work-record-sources")!;
+    assert.ok(retrievalWorkSources);
+    retrievalSurface.findByClass("codex-assistant-turn-process-toggle")!.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+    assert.equal(retrievalSurface.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false);
+    const retrievalSummary = retrievalWorkSources.findByClass("codex-assistant-turn-resource-summary")!;
+    assert.equal(retrievalWorkSources.tag, "details");
+    assert.equal(retrievalWorkSources.open, false, "read notes retain the existing default-closed disclosure");
+    assert.equal(retrievalSummary.attributes.get("aria-expanded"), "false");
+    assert.ok(retrievalSummary.attributes.get("aria-controls"));
+    assert.equal(retrievalSummary.findByClass("codex-action-item-caret")?.dataset.icon, "chevron-right",
+      "the closed source list has an explicit expand affordance");
+    retrievalWorkSources.open = true;
+    retrievalWorkSources.ontoggle?.({ isTrusted: true });
+    assert.equal(retrievalSummary.attributes.get("aria-expanded"), "true");
+    assert.equal(retrievalSummary.findByClass("codex-action-item-caret")?.dataset.icon, "chevron-down");
+    assert.equal(retrievalWorkSources.findAllByClass("codex-ai-elements-source").length, 4,
+      "expanding the source disclosure exposes all four read notes");
+    assert.match(renderedText(retrievalWorkSources), /本轮读到的笔记/u);
+    assert.doesNotMatch(renderedText(retrievalWorkSources), /SOURCE_EXCERPT_MUST_NOT_APPEAR/u);
+
     const renderMemoryCountTurn = (used: number | undefined, titles: Array<{ id: string; title: string }> = [], existingAnswer?: FakeElement) => {
       const projection = buildAgentTurnProjection([{
         id: "memory-count-user", role: "user", text: "用记忆回答", createdAt: 1

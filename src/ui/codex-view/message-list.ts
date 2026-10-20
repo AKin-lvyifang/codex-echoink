@@ -2572,7 +2572,9 @@ export class CodexMessageListRenderer {
         node.nodeId.endsWith(":memory:recall") ? document.kind === "memory" && document.source.title.trim() : document.kind === "vault");
       if (documents.length && node.kind === "retrieval") {
         const disclosure = this.createAssistantTurnResourceDisclosure(container, `${turn.key}:${node.nodeId}`,
-          conversationUiText(this.requireEnv().settingsLanguage, node.nodeId.endsWith(":memory:recall") ? "用上的记忆" : "本轮读到的笔记", node.nodeId.endsWith(":memory:recall") ? "Memories used" : "Notes read this turn"));
+          conversationUiText(this.requireEnv().settingsLanguage, node.nodeId.endsWith(":memory:recall") ? "用上的记忆" : "本轮读到的笔记", node.nodeId.endsWith(":memory:recall") ? "Memories used" : "Notes read this turn"), true);
+        disclosure.root.addClass("codex-work-record-sources");
+        disclosure.body.addClass("codex-answer-source-list");
         for (const document of documents) this.renderLocalDocumentSource(disclosure.body, document);
       }
       return;
@@ -2775,14 +2777,15 @@ export class CodexMessageListRenderer {
   private createAssistantTurnResourceDisclosure(
     container: HTMLElement,
     stateKey: string,
-    label: string
+    label: string,
+    withDisclosureHint = false
   ): { root: HTMLDetailsElement; body: HTMLElement } {
     const env = this.requireEnv();
     const bodyId = stableDomId(`codex-assistant-turn-resource-${stateKey}`);
     const root = container.createEl("details", { cls: "codex-assistant-turn-resource" });
     root.open = this.openProcessItems.get(stateKey) ?? false;
     const summary = root.createEl("summary", {
-      cls: "codex-assistant-turn-resource-summary",
+      cls: `codex-assistant-turn-resource-summary${withDisclosureHint ? " codex-action-item-head" : ""}`,
       text: label,
       attr: {
         "aria-controls": bodyId,
@@ -2790,6 +2793,10 @@ export class CodexMessageListRenderer {
         title: label
       }
     });
+    const caret = withDisclosureHint
+      ? summary.createSpan({ cls: "codex-action-item-caret", attr: { "aria-hidden": "true" } })
+      : null;
+    if (caret) setSemanticIcon(caret, root.open ? "chevron-down" : "chevron-right");
     const body = root.createDiv({
       cls: "codex-assistant-turn-resource-body",
       attr: { id: bodyId }
@@ -2797,6 +2804,7 @@ export class CodexMessageListRenderer {
     root.ontoggle = () => {
       rememberOpenState(this.openProcessItems, stateKey, root.open);
       summary.setAttribute("aria-expanded", String(root.open));
+      if (caret) setSemanticIcon(caret, root.open ? "chevron-down" : "chevron-right");
       env.onScheduleMeasure();
     };
     return { root, body };

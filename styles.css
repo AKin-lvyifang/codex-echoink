@@ -18422,12 +18422,14 @@ button.codex-assistant-turn-process-toggle:is(:hover, :focus-visible) {
   flex-wrap: wrap;
   gap: 4px 8px;
   margin: 0;
+  padding-left: 0;
   color: var(--text-muted);
   font-size: inherit;
 }
 
 .codex-answer-source-list .codex-message-note-link,
 .codex-answer-source-list .codex-source-line-link {
+  height: auto;
   min-height: 0;
   padding: 0;
   border: 0;
