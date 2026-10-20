@@ -2,7 +2,7 @@ import { TFolder } from "obsidian";
 import { createGenerationRuntimePort } from "../../plugin/generation-production";
 import type { GenerationRuntimePort } from "../../generation/runtime";
 import type { GenerationProductionOptions } from "../../plugin/generation-production";
-import { createGenerationRequest, generationRequestSummary } from "../../generation/request";
+import { createGenerationRequest, generationModelPrompt, generationRequestSummary } from "../../generation/request";
 import { annotationFixture } from "../selection-annotations";
 import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
@@ -6631,6 +6631,7 @@ export async function runGenerationRuntimeTests(): Promise<void> {
       fixture.latestSession().enableRuntimeMessageTimestampDrift();
       const handle = await fixture.submit({ conversationId: `generation-${writeState}`, text: generationRequestSummary(request), generationRequest: request, memoryMode: "normal", submittedAt: 1 });
       const session = fixture.latestSession(); assert.deepEqual(session.activeToolSelections.at(-1), []); assert.deepEqual(compactionChoices, [false]);
+      assert.equal(session.promptTexts[0], generationRequestSummary(request), "Markdown keeps its original model-facing text");
       const initialProjection = await fixture.runtime.readProjection(handle.conversationId);
       assert.equal(initialProjection.messages.find(message => message.role === "user")?.generationRequest?.id, request.id, JSON.stringify(initialProjection.messages.map(message => ({ id: message.id, role: message.role, runId: message.runId, generation: message.generationRequest?.id }))));
       const events: PiChatRuntimeEvent[] = [];
@@ -6751,6 +6752,7 @@ async function assertCanvasGenerationAttempts(): Promise<void> {
       assert.ok(result, `${mode}: final result persisted`);
       const expectedAttempts = mode === "fallback" || mode === "exhausted" ? 3 : mode === "repair" || mode === "cancel" ? 2 : 1;
       assert.equal(session.promptTexts.length, expectedAttempts, `${mode}: bounded prompt requests`);
+      assert.ok(session.promptTexts.every(text => text === generationModelPrompt(request) && !text.includes("思维导图")), `${mode}: every actual Canvas attempt uses the neutral model prompt`);
       assert.equal(result.modelAttempts, expectedAttempts);
       assert.equal(result.canvasFallback, expectedAttempts === 3);
       assert.equal(result.canvasValidationErrors?.length, mode === "exhausted" ? 3 : mode === "fallback" ? 2 : ["repair", "cancel", "permission", "budget"].includes(mode) ? 1 : 0);

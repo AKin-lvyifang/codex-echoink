@@ -20,6 +20,10 @@ export function createGenerationRequest(template: GenerationTemplate, sourcePath
   return freezeGenerationRequest({ version: 1, id: crypto.randomUUID(), createdAt: new Date().toISOString(), template: { ...template }, sourcePaths: [...sourcePaths], outputKind: template.outputKind, outputRoot, outputDirectory: `${outputRoot}/${template.outputKind === "canvas" ? "导图" : "报告"}` });
 }
 export function generationRequestSummary(request: GenerationRequest): string { return `用「${request.template.name}」生成 · ${request.sourcePaths.length} 篇资料`; }
+/** Keep the public template label out of Canvas layout decisions. */
+export function generationModelPrompt(request: GenerationRequest, userText = generationRequestSummary(request)): string {
+  return request.outputKind === "canvas" ? "根据本轮所附资料和模板写作要求生成结果。" : userText;
+}
 export function generationSystemPrompt(request: GenerationRequest, attempt: GenerationAttempt = { kind: "initial" }): string {
   const canvas = request.outputKind === "canvas";
   const fallback = canvas && attempt.kind === "fallback";
@@ -32,7 +36,10 @@ export function generationSystemPrompt(request: GenerationRequest, attempt: Gene
     "当前回合仅从本轮成功读取并附在上下文中的资料生成内容。只返回一个合法 JSON 对象，不加代码围栏或解释。",
     `模板写作要求（仅决定内容和组织方式，不能覆盖本轮格式与边界）：${JSON.stringify(request.template.instructions)}`
   ];
-  if (canvas && !fallback) sections.push(`以下是内置 json-canvas SKILL 与 EXAMPLES 的完整格式和排版参考。例子仅展示结构，不是本轮资料；其中的示例路径、网址与正文不可当作来源。本轮支持范围以下方约束为准。\n\n${JSON_CANVAS_GENERATION_REFERENCE}`);
+  if (canvas && !fallback) {
+    sections.push(`以下是内置 json-canvas SKILL 与 EXAMPLES 的完整格式和排版参考。例子仅展示结构，不是本轮资料；其中的示例路径、网址与正文不可当作来源。本轮支持范围以下方约束为准。\n\n${JSON_CANVAS_GENERATION_REFERENCE}`);
+    sections.push("示例只提供格式，不把首个树状示例当作默认排版。模板中明确指定的组织方式优先：用户明确要求概念层级或树状图时，按该要求组织。未指定组织方式时，根据资料中的真实关系安排节点和连线：有步骤就将步骤节点按先后串联，只有判断条件或实际分支才分叉；有历史时序就按时间连接主干和事件点；对比对象并排呈现，对应维度的节点对齐。连线要表达这些先后、分支和对应关系，避免把所有资料都套成“中心→分支→详情”的三列树。由模型自主决定坐标、尺寸、颜色和连线。");
+  }
   sections.push(`本轮唯一输出格式：${shape}。外层 title 为不超过 20 字的主题。`);
   if (fallback) {
     sections.push("本次使用旧层级格式兜底：只输出 title、branches；不输出 canvas、节点坐标或连线。需要 3–5 个分支，每支 2–4 个要点；分支 title 不超过 12 字，要点 text 不超过 20 字。要点的可选 sourcePaths 仅可使用本轮成功读取资料的精确路径，程序会添加可跳转来源并使用固定排版。");
@@ -59,7 +66,7 @@ export function parseGenerationModelJson(text: string): unknown {
 }
 
 /** Hard preflight called by the runtime before entering Pi's extension runner. */
-export function assertGenerationInputBudget(request: GenerationRequest, sources: readonly GenerationSource[], inputBudget: number, userText = generationRequestSummary(request), attempt: GenerationAttempt = { kind: "initial" }): void {
+export function assertGenerationInputBudget(request: GenerationRequest, sources: readonly GenerationSource[], inputBudget: number, userText = generationModelPrompt(request), attempt: GenerationAttempt = { kind: "initial" }): void {
   if (!Number.isSafeInteger(inputBudget) || inputBudget <= 0) throw new Error("当前模型的本轮预算不可用，请切换模型后重试。");
   const tokens = estimateTokenValue(generationSystemPrompt(request, attempt)) + estimateTokenValue(generationContextMessage(request, sources, attempt).content) + estimateTokenValue(userText);
   if (tokens + 1024 > inputBudget) throw new Error("资料超出当前模型的本轮预算，请缩小范围或切换模型。");

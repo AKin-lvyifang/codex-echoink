@@ -1,4 +1,4 @@
-import { assertGenerationInputBudget, freezeGenerationRequest, generationRequestSummary, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
+import { assertGenerationInputBudget, freezeGenerationRequest, generationModelPrompt, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
 import { GenerationOutputValidationError, prepareGenerationOutput } from "../../generation/output";
 import { GENERATION_ATTEMPT_ENTRY, GENERATION_STAGE_ENTRY, projectGenerationEntries } from "../../generation/projection";
 import type { GenerationAttempt, GenerationRequest, GenerationResult } from "../../generation/types";
@@ -1649,7 +1649,7 @@ export class PiNativeConversationRuntime {
         execution.generation.assessment = await this.options.generation.prepare(execution.generation.request, this.generationIdentity(active, execution));
         const inputBudget = active.generationInputBudget ?? calculatePiEffectiveInputBudget({ contextWindow: active.session.model!.contextWindow, maxOutputReserve: active.session.model!.maxTokens }).effectiveInputBudget;
         execution.generation.inputBudget = inputBudget;
-        assertGenerationInputBudget(execution.generation.request, execution.generation.assessment.sources, inputBudget, request.text);
+        assertGenerationInputBudget(execution.generation.request, execution.generation.assessment.sources, inputBudget, generationModelPrompt(execution.generation.request, request.text));
         await this.setGenerationStage(active, execution, "writing");
       } else if (englishDiarySourcePath) {
         active.knowledgeTurnContext = null;
@@ -1798,7 +1798,7 @@ export class PiNativeConversationRuntime {
       throw error;
     }
 
-    const promptText = execution.generation ? request.text : englishDiarySourcePath ? request.text : active.skillPromptPrefix
+    const promptText = execution.generation ? generationModelPrompt(execution.generation.request, request.text) : englishDiarySourcePath ? request.text : active.skillPromptPrefix
       ? `${active.skillPromptPrefix}\n\n${request.text}`
       : knowledgeCommand.kind === "chat" && active.skillCommandName
         ? `/skill:${active.skillCommandName} ${request.text}`
@@ -3272,7 +3272,7 @@ export class PiNativeConversationRuntime {
               assertPiSubmissionActive(execution.knowledgeAbort.signal);
               await port.assertContinuation?.(generation.request, this.generationIdentity(active, execution));
               assertPiSubmissionActive(execution.knowledgeAbort.signal);
-              const retryText = generationRequestSummary(generation.request);
+              const retryText = generationModelPrompt(generation.request);
               assertGenerationInputBudget(generation.request, assessment.sources, generation.inputBudget!, retryText, attempt);
               generation.attempt = attempt;
               await this.setGenerationStage(active, execution, "writing");
