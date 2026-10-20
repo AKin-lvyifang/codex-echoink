@@ -36,6 +36,7 @@ export async function runGenerationTests(testRoot: string): Promise<void> {
     await symlink(path.join(root, "资料/原文.md"), path.join(root, "资料/链接.md"));
     assert.equal((await readGenerationSources(root, ["资料/链接.md"])).sources.length, 0);
     const markdown = generationReportMarkdown(request, "报告正文", ["资料/原文.md"]); assert.match(markdown, /\[\[资料\/原文\|原文\]\]/u); assert.match(markdown, /生成时间/u);
+    assertLocalReportTime(request);
     const result = { requestId: request.id, outputKind: "markdown" as const, writeState: "verified" as const, path: "输出/报告/主题 · 简报.md", readFailures: [{ path: "资料/缺失.md", reason: "未找到" }] };
     const entries = [{ type: "custom", customType: GENERATION_REQUEST_ENTRY, data: { productRunId: "r1", request } }, { type: "custom", customType: GENERATION_RESULT_ENTRY, data: { productRunId: "r1", result } }];
     const projection = projectGenerationEntries([{ id: "u", role: "user", text: "short", runId: "r1", createdAt: 0 }, { id: "a", role: "assistant", text: '{"title":"MODEL_JSON"}', runId: "r1", createdAt: 0 }], entries);
@@ -54,6 +55,24 @@ export async function runGenerationTests(testRoot: string): Promise<void> {
     await assertContextIsolation(request, assessment);
     await assertWriteOutcomes(root, request);
   } finally { await rm(root, { recursive: true, force: true }); }
+}
+function assertLocalReportTime(request: ReturnType<typeof createGenerationRequest>): void {
+  const previousTimezone = process.env.TZ;
+  const fixedRequest = { ...request, createdAt: "2026-10-20T01:02:59.000Z" };
+  try {
+    for (const [timezone, expected] of [
+      ["UTC", "2026-10-20 01:02"], ["Asia/Shanghai", "2026-10-20 09:02"], ["America/Los_Angeles", "2026-10-19 18:02"]
+    ]) {
+      process.env.TZ = timezone;
+      const markdown = generationReportMarkdown(fixedRequest, "正文", ["资料/原文.md"]);
+      assert(markdown.includes(`生成时间: ${JSON.stringify(expected)}\n`), `report time must use local ${timezone} year/month/day/hour/minute`);
+      assert.equal(fixedRequest.createdAt, "2026-10-20T01:02:59.000Z", "the internal snapshot remains ISO UTC");
+    }
+  } finally {
+    if (previousTimezone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTimezone;
+  }
+  console.log("PASS generation: report time uses local YYYY-MM-DD HH:mm across timezones and day boundaries without changing the snapshot");
 }
 async function assertContextIsolation(request: ReturnType<typeof createGenerationRequest>, assessment: Awaited<ReturnType<typeof readGenerationSources>>): Promise<void> {
   const handlers = new Map<string, (...args: any[]) => any>(); let memoryReads = 0;

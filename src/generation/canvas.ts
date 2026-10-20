@@ -14,7 +14,8 @@ const POINT_GAP = 16;
 const GROUP_GAP = 28;
 const TEXT_PADDING = 16;
 const LINE_HEIGHT = 24;
-const MIN_HEIGHT = 64;
+const PARAGRAPH_GAP = 16;
+const NODE_BORDER = 1;
 
 function invalid(message: string): never {
   throw new Error(`导图结构无效：${message}`);
@@ -92,25 +93,30 @@ function pointText(point: GenerationMapPoint): string {
 }
 
 function textHeight(content: string, width: number): number {
-  const available = width - TEXT_PADDING * 2;
+  const available = width - (TEXT_PADDING + NODE_BORDER) * 2;
+  // Native Canvas uses 16px text / 24px lines, 16px paragraph gaps and up to
+  // 16px of space at each end. Its first/last paragraph margins are removed.
+  // Measure aliased wikilinks as their visible labels; the target stays intact in the node.
+  const visible = content.replace(/\[\[[^\]\n|]+\|([^\]\n]+)\]\]/gu, "$1");
+  const paragraphs = visible.split(/\n\s*\n/u);
   let lines = 0;
-  // Conservative text metrics keep Chinese, long words and source-link lines inside the node.
-  // Count the complete link syntax too, so paths never reduce the reserved height.
-  for (const line of content.split("\n")) {
-    let lineWidth = 0;
-    let wrappedLines = 1;
-    for (const character of line) {
-      const characterWidth = /[\p{Mark}\u200d\ufe0e\ufe0f]/u.test(character) ? 0 :
-        character === "\t" ? 36 : /^[\u0020-\u007e]$/u.test(character) ? 9 : 18;
-      if (lineWidth + characterWidth > available) {
-        wrappedLines++;
-        lineWidth = 0;
+  for (const paragraph of paragraphs) {
+    for (const line of paragraph.split("\n")) {
+      let lineWidth = 0;
+      let wrappedLines = 1;
+      for (const character of line) {
+        const characterWidth = /[\p{Mark}\u200d\ufe0e\ufe0f]/u.test(character) ? 0 :
+          character === "\t" ? 32 : /^[\u0020-\u007e]$/u.test(character) ? 8 : 16;
+        if (lineWidth + characterWidth > available) {
+          wrappedLines++;
+          lineWidth = 0;
+        }
+        lineWidth += characterWidth;
       }
-      lineWidth += characterWidth;
+      lines += wrappedLines;
     }
-    lines += wrappedLines;
   }
-  return Math.max(MIN_HEIGHT, lines * LINE_HEIGHT + TEXT_PADDING * 2);
+  return lines * LINE_HEIGHT + (paragraphs.length - 1) * PARAGRAPH_GAP + (TEXT_PADDING + NODE_BORDER) * 2;
 }
 
 /** Lay out the three columns from subtree heights, without relying on a DOM or a model. */

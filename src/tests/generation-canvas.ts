@@ -191,6 +191,40 @@ export function runGenerationCanvasTests(): void {
     assert(points[3].height > points[0].height);
   });
 
+  test("native line and paragraph metrics reserve equal end space without counting blank lines twice", () => {
+    const input = hierarchy(3, 4);
+    input.branches[0].points = [
+      { text: "一行文字" }, { text: "第一行\n第二行" },
+      { text: "第一段\n\n第二段" }, { text: "第一段\n\n\n第二段" }
+    ];
+    const canvas = layoutGenerationCanvas(input);
+    validateGenerationCanvas(canvas);
+    const heights = canvas.nodes.filter(node => node.id.startsWith("generation-point-1-")).map(node => node.height);
+    // 24px per visible line, 16px between paragraphs, 16px + 1px at each end.
+    assert.deepEqual(heights, [58, 82, 98, 98]);
+  });
+
+  test("source-link aliases determine height while exact long target paths remain unchanged", () => {
+    const input = hierarchy(3, 4);
+    const shortPath = "资料/原文.md";
+    const longPath = `${"非常长的资料目录/".repeat(12)}原文.md`;
+    input.branches[0].points = [
+      { text: "一行正文", sourcePaths: [shortPath] },
+      { text: "一行正文", sourcePaths: [longPath] },
+      { text: "一行正文", sourcePaths: [shortPath, "资料/另一篇.md"] },
+      { text: "一行正文", sourcePaths: ["资料/这是一份会换成多行的非常长的来源笔记显示名称.md"] }
+    ];
+    const canvas = layoutGenerationCanvas(input);
+    validateGenerationCanvas(canvas);
+    const points = canvas.nodes.filter(node => node.id.startsWith("generation-point-1-"));
+    assert.equal(points[0].height, 98, "one body line and one alias line occupy two paragraphs");
+    assert.equal(points[1].height, points[0].height, "hidden target directories must not add empty space");
+    assert(points[1].text.includes(`[[${longPath}|原文]]`), "height estimation must not shorten the saved link");
+    assert.equal(points[2].height, 122, "each visible source alias contributes a line");
+    assert(points[3].height > points[0].height, "a genuinely long visible alias still wraps");
+    console.log(`Canvas height examples: plain=${58}px; two lines=${82}px; body + source=${points[0].height}px; body + two sources=${points[2].height}px`);
+  });
+
   test("layout and serialization are deterministic and leave the model hierarchy unchanged", () => {
     const input = hierarchy(5, 4); const before = clone(input);
     const first = serializeGenerationCanvas(input);
