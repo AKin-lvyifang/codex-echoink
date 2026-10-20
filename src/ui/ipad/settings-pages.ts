@@ -2,7 +2,6 @@ import { Notice } from "obsidian";
 import license from "../../../LICENSE";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
 import { MobileModelConfiguration } from "../../mobile/model-configuration";
-import { GENERAL_ASSISTANT_ID, type AgentModuleId } from "../../agents/types";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../../membership/access";
 import { mobileModuleEnabled, setMobileModuleEnabled } from "../../mobile/module-settings";
 import { MobileUI } from "../mobile/mobile-ui";
@@ -10,11 +9,12 @@ import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { IPadSettingsShell } from "./settings-shell";
 import { createAgentFormPage } from "./agent-form";
+import { createAgentSettingsPage } from "./agent-settings-pages";
 import { createCapabilityPage } from "./capability-pages";
 import { createModelPage } from "./model-pages";
 import { settingsText as t } from "./settings-i18n";
 import type { IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
-import { IPAD_MODULES, ipadAvatar, ipadIcon } from "./workbench-elements";
+import { ipadIcon } from "./workbench-elements";
 import { el, settingsContent, settingsGroup, settingsRow, settingsAction, settingsSwitch, settingsToggle, liveSettingsPage, type IPadSettingsContext } from "./settings-elements";
 
 const CATEGORIES = [["general", "settings", "通用"], ["model", "key-round", "模型"], ["agent", "bot", "Agent"], ["caps", "layout-list", "能力"], ["mods", "blocks", "模块"], ["account", "feather", "账号与会员"]] as const;
@@ -135,34 +135,7 @@ export class IPadSettings {
       } };
   }
   private agent(): MobileShellPage {
-    const ctx = this.context, content = settingsContent(ctx); let signature = "";
-    const render = () => {
-      const registry = this.host.settings().agentRegistry, key = JSON.stringify([registry, this.host.store.state.memoryEnabled, this.host.settings().settingsLanguage]);
-      if (key === signature) return; signature = key; content.replaceChildren();
-      const agents = settingsGroup(ctx, content, t(ctx, "我的 Agent"));
-      for (const agent of registry.agents) settingsRow(ctx, agents, agent.name, "", () => ctx.push(createAgentFormPage(this.agentContext(), agent.id)), ipadAvatar(ctx.document, agent), agent.position);
-      settingsRow(ctx, agents, t(ctx, "新建 Agent"), "", () => ctx.push(createAgentFormPage(this.agentContext())), ipadIcon(ctx.document, "user-plus"));
-      const owners = settingsGroup(ctx, content, t(ctx, "模块负责人"));
-      for (const module of IPAD_MODULES) {
-        const owner = registry.agents.find(agent => agent.id === registry.moduleOwners[module.id]);
-        settingsRow(ctx, owners, module.name, owner?.name ?? "总助", () => ctx.push(this.owner(module.id)), ipadIcon(ctx.document, module.icon));
-      }
-      const memory = settingsGroup(ctx, content, t(ctx, "记忆"));
-      settingsSwitch(ctx, memory, t(ctx, "长期记忆"), this.host.store.state.memoryEnabled, async enabled => { await this.host.store.setMemoryEnabled(enabled); this.refresh(); });
-      settingsRow(ctx, memory, t(ctx, "记忆修正"), "", () => ctx.push(this.legacy("memories", "长期记忆")));
-      settingsRow(ctx, memory, t(ctx, "你的画像"), "", () => ctx.push(this.legacy("profile-user", "你的画像")));
-      settingsRow(ctx, settingsGroup(ctx, content, t(ctx, "会话")), t(ctx, "已归档会话"), "", () => ctx.push(this.legacy("archives", "已归档会话")));
-    };
-    return liveSettingsPage(ctx, { id: "ipad-settings-agent", title: "Agent", content }, render);
-  }
-  private owner(moduleId: AgentModuleId): MobileShellPage {
-    const ctx = this.context, content = settingsContent(ctx), group = settingsGroup(ctx, content, "选一位负责人"); let busy = false;
-    for (const agent of this.host.settings().agentRegistry.agents) settingsRow(ctx, group, agent.name, this.host.settings().agentRegistry.moduleOwners[moduleId] === agent.id ? "已选择" : "", async () => {
-      if (busy) return; busy = true;
-      try { const snapshot = await this.host.agents.snapshot(); await this.host.agents.setOwner(moduleId, agent.id || GENERAL_ASSISTANT_ID, snapshot.version); await this.host.services.refreshAgentIdentity(); this.refresh(); await ctx.back(); }
-      finally { busy = false; }
-    }, ipadAvatar(ctx.document, agent));
-    return { id: `ipad-settings-owner-${moduleId}`, title: "模块负责人", content };
+    return createAgentSettingsPage(this.context, id => this.context.push(createAgentFormPage(this.agentContext(), id)));
   }
   private capabilities(): MobileShellPage {
     return createCapabilityPage(this.context, id => this.context.push(createAgentFormPage(this.agentContext(), id)));

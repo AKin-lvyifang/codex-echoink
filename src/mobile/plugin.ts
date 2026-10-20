@@ -71,7 +71,7 @@ export default class EchoInkMobilePlugin extends Plugin {
           void this.services.lifestyle.finance.initialize().catch(error => new Notice(`财务账本初始化未完成，原数据已保留：${String(error)}`));
       });
       this.registerDomEvent(window, "focus", () => { void this.accountService.refresh(); });
-      this.registerInterval(window.setInterval(() => { void this.accountService.refresh(); }, 300000));
+      this.registerInterval(window.setInterval(() => { void this.accountService.refresh(); this.archiveMobileTasks(); }, 300000));
       this.registerWorkspaceViews();
       this.registerStartupWorkbench();
       this.addRibbonIcon("bot", "打开 EchoInk", () => { void this.open().catch(error => new Notice(String(error))); });
@@ -113,6 +113,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     };
     const foreground = () => {
       this.workbench?.invalidate();
+      this.archiveMobileTasks();
       void this.runtime.foreground().catch(error => new Notice(`中断记录尚未保存，请重新打开后再继续：${String(error)}`));
     };
     this.registerDomEvent(document, "visibilitychange", () => {
@@ -122,6 +123,10 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.registerDomEvent(window, "pagehide", () => suspend("app_closed"));
     this.registerDomEvent(window, "pageshow", () => { if (document.visibilityState === "visible") foreground(); });
     if (document.visibilityState === "hidden") suspend("app_backgrounded");
+  }
+  private archiveMobileTasks(): void {
+    if (this.unloaded || !this.services || document.visibilityState !== "visible") return;
+    void this.services.memory.archiveCompleted().catch(error => new Notice(`自动归档未完成，原会话已保留：${String(error)}`));
   }
   async saveSettings(candidateRegistry?: AgentRegistry): Promise<void> {
     const registry = candidateRegistry ? structuredClone(candidateRegistry) : undefined;

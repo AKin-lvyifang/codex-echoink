@@ -70,10 +70,14 @@ export async function profileScenarios(api, test, settings) {
   });
   function seed() {
     const agent = renderAgentMarkdown({ identity, styleName: getAgentTemplate("advisor").labelZh, self: agentSelfFromTemplate(getAgentTemplate("advisor"), habits) }) + "\n额外既有正文必须保留。\n";
-    const records = [{ id:"existing-memory",kind:"fact",status:"current",title:"旧记忆独有证据",date:"2026-10-11",basis:"explicit" }];
+    const memoryRecord = id => ({ schema: "echoink.memory.v1", id, kind: "fact", status: "current", title: "旧记忆独有证据", date: "2026-10-11", basis: "explicit", source: "fixture://profile-seed", recallWhen: "核对旧记忆", revision: 12, file: `shared-user/memory/facts/${id}.md` });
+    const record = memoryRecord("existing-memory"), records = [{ ...record, contentHash: hash("旧记忆独有证据") }];
+    const recordText = value => ["---", ...Object.entries({ schema: value.schema, id: value.id, kind: value.kind, status: value.status, date: value.date, source: value.source, basis: value.basis, title: value.title, recall_when: value.recallWhen, revision: value.revision }).map(([key, field]) => `${key}: ${JSON.stringify(field)}`), "---", "", "旧记忆独有证据", ""].join("\n");
+    const forgottenPath = "shared-user/.runtime/backups/forgets/forgotten-memory-42.md";
     const user = "用户画像独有证据", memory = renderPersonalMemoryOverview({revision:12}, records);
     return { [identityPath]: JSON.stringify(identity), [agentPath]: agent, [metaPath]: JSON.stringify({ ...emptyAgentSelfMetadata(42), revision: 3, templateId: "advisor" }),
-      [manifestPath]: JSON.stringify({ schemaVersion: 1, vaultId: "fixture-vault", revision: 12, records, tombstones: [{ recordId: "forgotten-memory" }], fixedFileHashes: { agent: hash(agent), user: hash(user) }, updatedAt: 42, unknownFutureField: "preserved" }),
+      [manifestPath]: JSON.stringify({ schemaVersion: 1, vaultId: "fixture-vault", revision: 12, records, tombstones: [{ recordId: "forgotten-memory", forgottenAt: 42, reason: "fixture", backupFile: forgottenPath, source: "ui://personal-memory-control" }], fixedFileHashes: { agent: hash(agent), user: hash(user) }, updatedAt: 42, unknownFutureField: "preserved" }),
+      [root + record.file]: recordText(record), [root + forgottenPath]: recordText(memoryRecord("forgotten-memory")),
       [root + "shared-user/USER.md"]: user, [root + "shared-user/MEMORY.md"]: memory, [root + "shared-user/.runtime/audit.jsonl"]: '{"type":"initialized","revision":12}\n',
       [root + "agents/echoink/dream-state.json"]: "dream-progress-must-stay", [root + "shared-user/.runtime/search-index.json"]: '{"schemaVersion":3,"revision":12,"checksum":"original"}' };
   }

@@ -29,6 +29,7 @@ import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
 import { defaultAgentIdentityState } from "../harness/memory/agent-identity-model";
 import { MobileCapabilitiesService } from "./capabilities";
 import type { MobileRequest } from "./transport";
+import { MobileMemoryService } from "./memory-service";
 
 export interface MobileServicesHost {
   app: App;
@@ -49,6 +50,15 @@ export class MobileServices implements HomeHost {
   private preferenceRoot: string;
   private readonly todos: EchoInkTodoStore;
   private capabilitiesService?: MobileCapabilitiesService;
+  private memoryService?: MobileMemoryService;
+  get memory(): MobileMemoryService {
+    if (!this.memoryService) {
+      this.memoryService = new MobileMemoryService({ adapter: this.app.vault.adapter, store: this.host.store, settings: () => this.settings,
+        saveSettings: () => this.host.saveSettings(), request: this.host.capabilityRequest ?? requestUrl, changed: () => this.host.runtime.onChange(), isBusy: id => this.host.runtime.isBusy(id) });
+      this.host.store.bindCanonicalMemory(() => this.memoryService!.recordsForRuntime());
+    }
+    return this.memoryService;
+  }
   get capabilities(): MobileCapabilitiesService {
     return this.capabilitiesService ??= new MobileCapabilitiesService({ adapter: this.app.vault.adapter, settings: () => this.settings,
       saveSettings: () => this.host.saveSettings(), request: this.host.capabilityRequest,
@@ -85,6 +95,7 @@ export class MobileServices implements HomeHost {
   constructor(private host: MobileServicesHost, readonly directory: string) {
     this.app = host.app; this.preferenceRoot = directory.replace(/\/mobile$/u, "");
     host.runtime.setCapabilities(() => this.capabilities);
+    host.runtime.setMemory?.(() => this.memory);
     const adapter = this.app.vault.adapter; this.profileProtocol = new MobileAgentRegistryService(adapter, host.settings, registry => host.saveSettings(registry));
     this.homeActivity = new HomeActivityCore({ read: async () => await adapter.exists(`${directory}/home-activity.json`) ? adapter.read(`${directory}/home-activity.json`) : null,
       write: bytes => adapter.write(`${directory}/home-activity.json`, bytes) });
@@ -97,6 +108,8 @@ export class MobileServices implements HomeHost {
   getKnowledgeSurfaceService() { return null; }
   async initialize() {
     await this.refreshAgentIdentity();
+    await this.memory.initialize();
+    await this.memory.archiveCompleted();
     await this.homeActivity.initialize(); await this.todos.initialize();
     this.homeActivity.restoreOpen(this.app.workspace.getActiveFile()?.path ?? null);
     this.registerEvent(this.app.workspace.on("file-open", file => this.homeActivity.open(file?.path ?? null)));
@@ -105,7 +118,7 @@ export class MobileServices implements HomeHost {
     this.registerEvent(this.app.vault.on("rename", (file, old) => this.homeActivity.rename(old, file.path)));
     this.registerEvent(this.app.vault.on("delete", file => this.homeActivity.delete(file.path)));
   }
-  async dispose() { this.lifestyle?.dispose(); await this.homeActivity.dispose(); }
+  async dispose() { this.lifestyle?.dispose(); await this.memoryService?.suspend(); await this.homeActivity.dispose(); }
   lifestyle!: MobileLifestyleService;
   get accountService() { return this.host.accountService; }
   async initializeFinance() { this.lifestyle = new MobileLifestyleService(this, this.preferenceRoot); await this.lifestyle.initialize(); }
@@ -251,6 +264,7 @@ export class MobileServices implements HomeHost {
   }
   readonly defaultPreferences = ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
   async context(sessionId = this.host.store.session.id, turn?: MobileQueuedTurn): Promise<string> {
+    await this.memory.initialize();
     const session = this.host.store.getSession(sessionId);
     if (!session && !turn) throw new Error("会话不存在，未读取运行上下文。");
     const agentId = turn?.agentSnapshot.agentId ?? session!.agentId;
@@ -261,7 +275,10 @@ export class MobileServices implements HomeHost {
     if (memoryAllowed) { try { policy.assertTool("memory_search"); } catch { memoryAllowed = false; } }
     const skillId = turn ? turn.skillId : session?.skillId;
     if (skillId) policy.assertSkill(skillId);
-    const profile = await this.profileProtocol.context(memoryAllowed, agentId, turn?.agentSnapshot);
+    const identity = await this.profileProtocol.context(false, agentId, turn?.agentSnapshot);
+    const memory = memoryAllowed ? await this.memory.contextForRuntime() : "";
+    if (memoryAllowed) policy.assertTool("memory_search");
+    const profile = `${identity}${memory}`;
     const skill = skillId ? await this.requireAvailableEchoInkSkill(skillId) : "";
     if (skillId && turn) await this.capabilities.recordSkillUse(skillId);
     const preference = await this.readPreferences() ?? this.defaultPreferences;

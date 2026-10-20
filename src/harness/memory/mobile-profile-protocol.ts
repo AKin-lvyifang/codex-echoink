@@ -1,3 +1,5 @@
+import { renderPersonalMemoryOverview, type OverviewRecord } from "./personal-memory-core";
+export { renderPersonalMemoryOverview, GENERATED_MEMORY_OVERVIEW_SENTINEL, type OverviewRecord } from "./personal-memory-core";
 import type { DataAdapter } from "obsidian";
 import { replaceMobileFile } from "../../mobile/replace-file";
 import { sha256Hex } from "../../utils/sha256";
@@ -239,36 +241,4 @@ export class MobileProfileProtocol {
     }
     await this.adapter.rmdir(directory, true);
   }
-}
-
-export const GENERATED_MEMORY_OVERVIEW_SENTINEL = "这是有上限的当前导航；完整内容按需通过 memory_search / memory_read 读取。";
-export interface OverviewRecord { id:string;kind:string;status:string;title:string;date:string;basis:string; }
-export function renderPersonalMemoryOverview(manifest: {revision:number}, records: readonly OverviewRecord[]): string {
-  const current = records.filter((record) => record.status === "current");
-  const groups: Array<readonly [string, readonly string[]]> = [
-    ["Facts", ["fact"]],
-    ["Views", ["view"]],
-    ["Decisions", ["decision"]],
-    ["Active", ["goal", "task", "open_loop"]],
-    ["Episodes", ["episode"]]
-  ];
-  const lines = [
-    "# Memory",
-    "",
-    `Revision: ${manifest.revision}`,
-    "",
-    GENERATED_MEMORY_OVERVIEW_SENTINEL,
-    ""
-  ];
-  for (const [heading, kinds] of groups) {
-    lines.push(`## ${heading}`, "");
-    const matches = current
-      .filter((record) => kinds.includes(record.kind))
-      .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id))
-      .slice(0, 8);
-    if (!matches.length) lines.push("- 暂无");
-    else for (const record of matches) lines.push(`- ${record.title}（${record.date}，${record.basis}，${record.id}）`);
-    lines.push("");
-  }
-  return `${lines.join("\n").slice(0, 20_000 - 1)}\n`;
 }

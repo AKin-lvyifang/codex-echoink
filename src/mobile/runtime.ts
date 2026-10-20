@@ -19,6 +19,7 @@ import { assertMobileResumeObservations, assertMobileWriteNotReplayed, assertMob
 import type { MobileInterruptionReason, MobileQueuedTurn, MobileResumeSnapshot, MobileTaskInteraction, MobileTaskInterruption, MobileTaskSubmission, MobileTaskViewState } from "./task-contracts";
 import type { MobileCapabilitiesService, MobileRemoteToolInvocation } from "./capabilities";
 import { sha256Hex } from "../utils/sha256";
+import type { MobileMemoryService } from "./memory-service";
 
 function deferred() {
   let resolve!: () => void, reject!: (error: unknown) => void;
@@ -74,6 +75,8 @@ export class MobileRuntime {
   private legacyChange = () => {};
   private disposed = false;
   private capabilities?: () => MobileCapabilitiesService;
+  private memory?: () => MobileMemoryService;
+  setMemory(service: () => MobileMemoryService): void { this.memory = service; }
   setCapabilities(service: () => MobileCapabilitiesService): void { this.capabilities = service; }
   private readonly dispatchActive = () => this.notify(this.store.session.id);
   get onChange(): () => void { return this.dispatchActive; }
@@ -142,7 +145,7 @@ export class MobileRuntime {
     for (const run of active) { this.interruptRun(run, reason); this.pauseQueue(run.taskId); }
     const preparing = [...this.resumes.keys()].map(id => this.cancelResume(id));
     const pending = (async () => {
-      await Promise.all(preparing); await this.initialize();
+      await Promise.all(preparing); await this.memory?.().suspend(); await this.initialize();
       await Promise.all(active.map(run => run.finished.promise));
       await this.store.update(latest => {
         for (const task of latest.sessions) {
@@ -370,7 +373,7 @@ export class MobileRuntime {
       const material = await abortable(run.search.search({ query: turn.text, limit: 6, signal: controller.signal }), controller.signal); this.assertRun(run);
       let memories: unknown[] = [];
       if (run.memoryEnabled) {
-        try { run.policy.assertTool("memory_search"); memories = searchMemories(this.store.state.memories, turn.text, 8).map(memory => ({ id: memory.id, title: memory.title, content: memory.content, basis: memory.basis })); }
+        try { run.policy.assertTool("memory_search"); const records = this.memory ? await this.memory().recordsForRuntime() : await this.store.readMemoryRecords(); this.assertRun(run); memories = searchMemories(records, turn.text, 8).map(memory => ({ id: memory.id, title: memory.title, content: memory.content, basis: memory.basis })); }
         catch { /* An Agent without Memory reads receives no memory context. */ }
       }
       const style = AGENT_STYLES.find(style => style.id === turn.agentSnapshot.styleId)!;
@@ -491,7 +494,7 @@ export class MobileRuntime {
     if (input) this.launch(id, input, undefined, true);
   }
   private toolsFor(run: ActiveTask): AgentTool[] {
-    const registered = mobileTools(this.app, this.store, () => run.turn.notePath, () => this.settings().knowledgeBase.folderBindings, run.search, run.taskId, run.policy, { runId: run.turn.id, ...(run.resume ? { resume: run.resume } : {}) });
+    const registered = mobileTools(this.app, this.store, () => run.turn.notePath, () => this.settings().knowledgeBase.folderBindings, run.search, run.taskId, run.policy, { runId: run.turn.id, ...(run.resume ? { resume: run.resume } : {}) }, this.memory?.());
     registered.push({ name: "user_question", label: "询问用户", description: "向当前任务的用户提出结构化问题，等待真实回答；确认操作可使用kind=confirmation。", parameters: Type.Object({ kind: Type.Optional(Type.Union([Type.Literal("question"), Type.Literal("confirmation")])), questions: Type.Array(Type.Object({ questionId: Type.String(), prompt: Type.String(), selection: Type.Union([Type.Literal("single"), Type.Literal("multiple")]), options: Type.Array(Type.Object({ optionId: Type.String(), label: Type.String(), description: Type.Optional(Type.String()) })), allowSupplement: Type.Boolean() })) }),
       execute: async (callId, args: { kind?: "question" | "confirmation"; questions: unknown }) => {
         this.assertRun(run); run.policy.assertTool("user_question"); run.stage = "等待你的回答";

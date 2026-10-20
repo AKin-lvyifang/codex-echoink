@@ -18,6 +18,8 @@ export interface MobileWriteOperation {
   toolName: "note_create" | "memory_write" | "mcp_write";
   /** External effect identity only; never authentication headers or arguments. */
   mcp?: { resourceId: string; toolName: string };
+  /** Canonical Memory is a separate recoverable transaction, never the legacy task-state array. */
+  memoryRepository?: "canonical";
   semanticKey: string;
   status: "prepared" | "started" | "completed" | "uncertain";
   createdAt: number;

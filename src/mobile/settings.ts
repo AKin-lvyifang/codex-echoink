@@ -35,6 +35,7 @@ export interface MobileSettings extends Record<string, unknown>, MobileHomeSetti
   mobileUi: MobileAppearance;
   agentRegistry: AgentRegistry;
   tavily: TavilySettings;
+  mobileMemory: { dreamEnabled: boolean; dreamRunsPerDay: number; autoArchive: boolean };
 }
 export const MOBILE_DEFAULT_WELCOME = {
   title: "让想法，慢慢清晰。",
@@ -48,6 +49,7 @@ export function supportedProvider(p: ApiProviderConfig): boolean {
 export function loadMobileSettings(value: unknown): MobileSettings {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
   const saved = (raw?.mobileUi ?? {}) as Partial<MobileAppearance>;
+  const savedMemory = (raw?.mobileMemory ?? {}) as { dreamEnabled?: unknown; dreamRunsPerDay?: unknown; autoArchive?: unknown };
   const settings: MobileSettings = {
     ...raw,
     // Both desktop and mobile persist the same provider configuration schema.
@@ -57,6 +59,12 @@ export function loadMobileSettings(value: unknown): MobileSettings {
     autoOpenHome: raw?.autoOpenHome === true,
     agentRegistry: normalizeAgentRegistry(raw?.agentRegistry),
     tavily: { ...(raw?.tavily as object), ...normalizeTavilySettings(raw?.tavily) },
+    mobileMemory: {
+      ...savedMemory, dreamEnabled: savedMemory.dreamEnabled !== false,
+      dreamRunsPerDay: typeof savedMemory.dreamRunsPerDay === "number" && Number.isFinite(savedMemory.dreamRunsPerDay)
+        ? Math.max(1, Math.min(6, Math.trunc(savedMemory.dreamRunsPerDay))) : 1,
+      autoArchive: savedMemory.autoArchive === true
+    },
     customWelcomeEnabled: raw?.customWelcomeEnabled === true,
     customWelcomeTitle: typeof raw?.customWelcomeTitle === "string" ? raw.customWelcomeTitle : "",
     customWelcomeSubtitle: typeof raw?.customWelcomeSubtitle === "string" ? raw.customWelcomeSubtitle : "",

@@ -11,7 +11,7 @@ import {
   USER_PROFILE_PROJECTION_TARGET_CHARS,
   type UserProfileItem,
   type UserProfileState
-} from "./user-profile-state";
+} from "./user-profile-core";
 
 export function renderUserMarkdown(state: UserProfileState): string {
   const renderable = projectedProfileItems(state);

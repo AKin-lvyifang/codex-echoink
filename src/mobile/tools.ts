@@ -10,6 +10,7 @@ import { MobileStore, newId } from "./store";
 import { createScopedMobileBodySearch, defaultMobileCapabilityPolicy, isScopedMobileBodySearch, requireMobileAgentCapability, type MobileCapabilityPolicy } from "./capability-policy";
 import { sha256Hex } from "../utils/sha256";
 import type { MobileToolExecutionContext, MobileWriteOperation } from "./task-contracts";
+import type { MobileMemoryService } from "./memory-service";
 import { assertMobileResumeMemoryObservations, assertMobileResumeObservations, assertMobileWriteNotReplayed, assertMobileWriteRun,
   mobileMemoryWriteHash, mobileMemoryWriteKey, mobileNoteWriteKey, normalizeMobileNoteTarget } from "./task-recovery";
 
@@ -35,7 +36,7 @@ export function searchMemories(records: readonly PersonalMemoryRecord[], query: 
 function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Error("已停止，未开始此操作。"); }
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
 /** Product runtime must pass its durable run. Legacy standalone fixtures have no journal/resume guarantee. */
-export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id, suppliedPolicy?: MobileCapabilityPolicy, execution?: MobileToolExecutionContext): AgentTool[] {
+export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id, suppliedPolicy?: MobileCapabilityPolicy, execution?: MobileToolExecutionContext, memory?: MobileMemoryService): AgentTool[] {
   const policy = suppliedPolicy ?? defaultMobileCapabilityPolicy(store, bindings, sessionId);
   const shared = sharedBodySearch && isScopedMobileBodySearch(sharedBodySearch, policy);
   const bodySearch = shared ? sharedBodySearch : createScopedMobileBodySearch(app, bindings, policy);
@@ -145,10 +146,10 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
     const enabled = (name: string, signal?: AbortSignal) => { checkStopped(signal); policy.assertTool(name); };
     tools.push({
       name: "memory_search", label: "查找记忆", description: "检索用户记忆；query 为空时列出最近记忆。涉及用户经历、观点、决定或目标时先检索。", parameters: Type.Object({ query: Type.String() }),
-      async execute(_id, args: { query: string }, signal) { enabled("memory_search", signal); return result(searchMemories(store.state.memories, args.query).map(r => ({ id: r.id, kind: r.kind, title: r.title, content: r.content, basis: r.basis, recallWhen: r.recallWhen }))); }
+      async execute(_id, args: { query: string }, signal) { enabled("memory_search", signal); const records = memory ? await memory.recordsForRuntime() : store.state.memories; enabled("memory_search", signal); return result(searchMemories(records, args.query).map(r => ({ id: r.id, kind: r.kind, title: r.title, content: r.content, basis: r.basis, recallWhen: r.recallWhen }))); }
     }, {
       name: "memory_read", label: "读取记忆", description: "读取指定记忆的完整内容和来源。", parameters: Type.Object({ id: Type.String() }),
-      async execute(_id, args: { id: string }, signal) { enabled("memory_read", signal); const record = store.state.memories.find(r => r.id === args.id); if (!record) throw new Error("记忆不存在。"); return result(record); }
+      async execute(_id, args: { id: string }, signal) { enabled("memory_read", signal); const record = memory ? (await memory.read(args.id)).record : store.state.memories.find(r => r.id === args.id); enabled("memory_read", signal); if (!record) throw new Error("记忆不存在。"); return result(record); }
     }, {
       name: "memory_write", label: "保存记忆", description: "忠实保存用户明确陈述或当前对话中可观察的长期信息。禁止把引用、文档知识、假设、工具输出或模型猜测写成用户事实。先搜索避免重复；修正旧记忆时提供 targetId。不能删除记忆。", parameters: Type.Object({
         kind: Type.Union(["fact", "view", "decision", "goal", "task", "open_loop", "episode"].map(k => Type.Literal(k))), title: Type.String({ minLength: 1 }), content: Type.String({ minLength: 1 }), recallWhen: Type.String(), basis: Type.Union([Type.Literal("explicit"), Type.Literal("observed")]), targetId: Type.Optional(Type.String())
@@ -157,6 +158,29 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
         enabled("memory_write", signal);
         await assertMobileResumeObservations(app, store, execution?.resume, signal);
         enabled("memory_write", signal);
+        if (memory) {
+          const plan = await memory.prepareToolMemory(args, sessionId, execution?.runId ?? "", toolCallId);
+          const semanticKey = mobileMemoryWriteKey(mobileMemoryWriteHash(args), args.targetId), now = Date.now();
+          const operation: MobileWriteOperation = { id: newId(), taskId: sessionId, runId: execution?.runId ?? "", toolCallId, toolName: "memory_write", memoryRepository: "canonical",
+            semanticKey, status: "prepared", createdAt: now, updatedAt: now, target: plan.record.id, expectedHash: mobileMemoryWriteHash(plan.record), targetWasMissing: !plan.duplicate,
+            ...(plan.duplicate ? { beforeRevision: plan.record.revision } : {}) };
+          const writable = () => { enabled("memory_write", signal); if (execution) { const task = store.getSession(sessionId); if (!task) throw new Error("任务不存在。"); assertMobileWriteRun(task, execution); } };
+          writable();
+          if (execution) {
+            await store.updateSession(sessionId, task => { writable(); assertMobileWriteNotReplayed(task, execution, "memory_write", toolCallId, semanticKey, plan.record.id); task.operations = [...(task.operations ?? []), operation]; });
+            await assertMobileResumeObservations(app, store, execution.resume, signal); writable();
+            await store.updateSession(sessionId, task => { writable(); const saved = task.operations?.find(item => item.id === operation.id); if (!saved || saved.status !== "prepared") throw new Error("记忆写入意图已变化。"); saved.status = "started"; saved.updatedAt = Date.now(); });
+          }
+          try {
+            const record = await memory.commitToolMemory(plan, writable);
+            if (mobileMemoryWriteHash(record) !== operation.expectedHash) throw new Error("记忆写后回读不一致，请核对当前结果。");
+            if (execution) await store.updateSession(sessionId, task => { const saved = task.operations?.find(item => item.id === operation.id); if (!saved) throw new Error("记忆写入记录丢失。"); saved.status = "completed"; saved.completedRevision = record.revision; saved.updatedAt = Date.now(); });
+            enabled("memory_write", signal); return result(record);
+          } catch (error) {
+            if (execution) await store.updateSession(sessionId, task => { const saved = task.operations?.find(item => item.id === operation.id); if (saved && saved.status !== "completed") { saved.status = "uncertain"; saved.updatedAt = Date.now(); } });
+            throw error;
+          }
+        }
         const before = args.targetId ? store.state.memories.find(item => item.id === args.targetId) : undefined;
         const expectedBefore = before ? { revision: before.revision, hash: mobileMemoryWriteHash(before) } : undefined;
         const semanticKey = mobileMemoryWriteKey(mobileMemoryWriteHash(args), args.targetId);

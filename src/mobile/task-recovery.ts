@@ -57,7 +57,7 @@ async function noteVersion(app: App, target: string): Promise<string> {
 }
 async function currentVersion(app: App, store: MobileStore, target: string): Promise<string> {
   return target.startsWith("note_create:") ? noteVersion(app, target.slice("note_create:".length))
-    : target.startsWith("memory_write:") ? memoryVersion(store.state.memories, target.slice("memory_write:".length)) : "unreadable";
+    : target.startsWith("memory_write:") ? memoryVersion(await store.readMemoryRecords(), target.slice("memory_write:".length)) : "unreadable";
 }
 export async function assertMobileResumeObservations(app: App, store: MobileStore, snapshot?: MobileResumeSnapshot, signal?: AbortSignal): Promise<void> {
   if (!snapshot) return;
@@ -160,6 +160,9 @@ export async function inspectMobileTaskResume(app: App, store: MobileStore, task
         if (operation.status !== "completed") { operation.status = "completed"; completed.add(operation.id); }
       } else issues.push({ operationId: operation.id, target: operation.target, status: version === "missing" || version === "unreadable" ? "unknown" : "conflict",
         label: version === "missing" ? "原写入目标当前不存在，不能据此推断从未写入。" : version === "unreadable" ? "原写入目标暂时无法读取。" : "当前笔记与原写入内容不同。" });
+    } else if (operation.memoryRepository === "canonical" && operation.targetWasMissing === true
+      && version.endsWith(`:sha256:${operation.expectedHash}`) && /^revision:[1-9][0-9]*:/u.test(version)) {
+      if (operation.status !== "completed") { operation.status = "completed"; operation.completedRevision = Number(version.split(":")[1]); completed.add(operation.id); }
     } else if (operation.status !== "completed" || version !== `revision:${operation.completedRevision}:sha256:${operation.expectedHash}`) {
       issues.push({ operationId: operation.id, target: operation.target, status: version === "missing" || version === "unreadable" || operation.status !== "completed" ? "unknown" : "conflict", label: "原记忆写入结果或当前版本尚未核实。" });
     }
@@ -176,7 +179,7 @@ export async function inspectMobileTaskResume(app: App, store: MobileStore, task
     await store.updateSession(taskId, current => {
       stopped(signal);
       if (stableFacts(current) !== baseline) throw changed();
-      for (const operation of current.operations ?? []) if (completed.has(operation.id)) { operation.status = "completed"; operation.updatedAt = Date.now(); }
+      for (const operation of current.operations ?? []) if (completed.has(operation.id)) { operation.status = "completed"; operation.completedRevision = operations.find(item => item.id === operation.id)?.completedRevision ?? operation.completedRevision; operation.updatedAt = Date.now(); }
     });
     for (const operation of operations) {
       const saved = store.getSession(taskId)?.operations?.find(item => item.id === operation.id);

@@ -1,3 +1,4 @@
+import { normalizeDreamUserProfileItems, userProfileMemoryEligible } from "./dream-profile-core";
 /**
  * dream-engine.ts — one dreaming round (做梦 PRD §5 + 最新决定).
  *
@@ -912,12 +913,7 @@ function mergeDreamProcessedSources(
 // Eligibility rules (做梦 PRD §7)
 // ---------------------------------------------------------------------------
 
-function isProfileEligible(record: PersonalMemoryRecord): boolean {
-  if (record.basis === "explicit") {
-    return record.kind === "fact" || record.kind === "view" || record.kind === "decision";
-  }
-  return record.basis === "observed" && record.kind === "view";
-}
+const isProfileEligible = userProfileMemoryEligible;
 
 // ---------------------------------------------------------------------------
 // Prompts
@@ -1428,27 +1424,7 @@ export function parseDreamOutput(raw: string): ParsedDreamOutput | null {
     }
   }
 
-  const profileItems: ParsedDreamOutput["profileItems"] = [];
-  const sections = new Set(["identity", "preference", "collaboration"]);
-  if (Array.isArray(root.userProfileItems)) {
-    for (const entry of root.userProfileItems) {
-      if (!entry || typeof entry !== "object") continue;
-      const item = entry as Record<string, unknown>;
-      if (!sections.has(item.section as string)) continue;
-      const text = typeof item.text === "string" ? item.text.trim() : "";
-      if (!text || text.length > USER_PROFILE_ITEM_HARD_MAX_CHARS) continue;
-      const rawKey = typeof item.profileKey === "string" ? item.profileKey.trim() : "";
-      if (!isUserProfileKey(rawKey)) continue;
-      const expectedSection = rawKey.split(".", 1)[0];
-      if (expectedSection !== item.section) continue;
-      profileItems.push(Object.freeze({
-        section: item.section as UserProfileSection,
-        profileKey: rawKey,
-        text
-      }));
-      break;
-    }
-  }
+  const profileItems = normalizeDreamUserProfileItems(root.userProfileItems);
 
   return Object.freeze({ facts, profileItems });
 }

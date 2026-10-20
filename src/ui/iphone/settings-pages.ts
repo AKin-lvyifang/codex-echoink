@@ -9,10 +9,11 @@ import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { refreshSettingsLanguage, settingsMessage } from "./settings-language";
 import { createAgentFormPage } from "./agent-form";
+import { IPhoneAgentSettingsPages } from "./agent-settings-pages";
 import { IPhoneCapabilityPages } from "./capability-pages";
 import { IPhoneModelPages } from "./model-pages";
 import type { IPhonePageContext } from "./workbench-contract";
-import { IPHONE_MODULES, iphoneAvatar, iphoneElement as el, iphoneIcon } from "./workbench-elements";
+import { iphoneElement as el, iphoneIcon } from "./workbench-elements";
 import { pushSettingsPage, settingsBody, settingsBrand, settingsError, settingsGroup, settingsRow, settingsSwitch } from "./settings-elements";
 
 export const IPHONE_SETTINGS_CATEGORIES = [
@@ -25,12 +26,14 @@ type Category = typeof IPHONE_SETTINGS_CATEGORIES[number][0];
 export class IPhoneSettingsPages {
   readonly models: IPhoneModelPages;
   readonly capabilityPages: IPhoneCapabilityPages;
+  readonly agentPages: IPhoneAgentSettingsPages;
   private readonly refreshers = new Set<() => void>();
   constructor(private readonly ctx: IPhonePageContext, private readonly legacy: (route: MobileSettingsRoute) => Promise<void>) {
     this.models = new IPhoneModelPages(ctx, () => this.refresh());
     this.capabilityPages = new IPhoneCapabilityPages(ctx, id => this.agentForm(id));
+    this.agentPages = new IPhoneAgentSettingsPages(ctx, id => this.agentForm(id));
   }
-  refresh(): void { for (const render of this.refreshers) render(); refreshSettingsLanguage(this.ctx); this.capabilityPages.refresh(); }
+  refresh(): void { for (const render of this.refreshers) render(); refreshSettingsLanguage(this.ctx); this.capabilityPages.refresh(); this.agentPages.refresh(); }
   private tracked(id: string, title: string, render: (body: HTMLElement) => void): MobileShellPage {
     const body = settingsBody(this.ctx), update = () => { body.replaceChildren(); render(body); };
     update(); this.refreshers.add(update);
@@ -40,6 +43,7 @@ export class IPhoneSettingsPages {
     const { ctx } = this;
     if (category === "model") return this.models.open();
     if (category === "caps") return this.capabilityPages.open();
+    if (category === "agent") return this.agentPages.open();
     if (category === "account") return this.legacy("account");
     const title = IPHONE_SETTINGS_CATEGORIES.find(item => item[0] === category)?.[2] ?? "设置";
     const id = `iphone-settings-${category ?? "root"}`;
@@ -51,8 +55,7 @@ export class IPhoneSettingsPages {
           const account = ctx.host.accountService?.read();
           settingsRow(ctx, group, name, { icon, value: key === "account" ? account?.identity ? account.membership.planName ?? "免费版" : "未登录" : key === "model" ? current?.displayName || current?.id || "未选择" : undefined, valueLeading: key === "model" && current ? settingsBrand(ctx, active?.providerId) : undefined, literalValue: key === "model" && !!current, action: () => this.open(key) });
         }
-      } else if (category === "agent") this.agents(body);
-      else if (category === "mods") this.modules(body);
+      } else if (category === "mods") this.modules(body);
     });
     await pushSettingsPage(ctx, page);
   }
@@ -109,33 +112,9 @@ export class IPhoneSettingsPages {
     }
     await pushSettingsPage(ctx, { id: "iphone-settings-about", title: "关于 EchoInk", content: body });
   }
-  private agents(body: HTMLElement): void {
-    const { ctx } = this, registry = ctx.host.settings().agentRegistry, agents = settingsGroup(ctx, body, "我的 Agent");
-    for (const agent of registry.agents) settingsRow(ctx, agents, agent.name, { leading: iphoneAvatar(ctx.document, agent), literal: true, literalDetail: true, detail: agent.position || undefined, action: () => this.agentForm(agent.id) });
-    settingsRow(ctx, agents, "新建 Agent", { icon: "user-plus", action: () => this.agentForm() });
-    const owners = settingsGroup(ctx, body, "模块负责人");
-    for (const module of [...IPHONE_MODULES, { id: "review" as const, name: "复盘", icon: "history" }]) {
-      settingsRow(ctx, owners, module.name, { literalValue: true, value: registry.agents.find(agent => agent.id === registry.moduleOwners[module.id])?.name ?? "未设置", action: () => this.owner(module.id, module.name) });
-    }
-    const memory = settingsGroup(ctx, body, "记忆");
-    settingsSwitch(ctx, memory, "长期记忆", () => ctx.host.store.state.memoryEnabled, value => ctx.host.store.setMemoryEnabled(value));
-    settingsRow(ctx, memory, "做梦", { value: "移动端未接通", icon: "moon" });
-    settingsRow(ctx, memory, "你的画像", { action: () => this.legacy("profile-user") });
-    settingsRow(ctx, memory, "记忆修正", { action: () => this.legacy("memories") });
-    settingsRow(ctx, settingsGroup(ctx, body, "会话"), "已归档会话", { value: String(ctx.host.store.state.sessions.filter(task => !!task.archivedAt).length), action: () => this.legacy("archives") });
-  }
   private async agentForm(agentId?: string): Promise<void> {
     const page = createAgentFormPage(this.ctx, agentId), dispose = page.dispose;
     page.dispose = () => { dispose?.(); this.refresh(); }; await pushSettingsPage(this.ctx, page);
-  }
-  private async owner(module: AgentModuleId, name: string): Promise<void> {
-    const { ctx } = this, snapshot = await ctx.host.agents.snapshot(), body = settingsBody(ctx), group = settingsGroup(ctx, body, `${name} 的负责人`), error = settingsError(ctx, body); let busy = false;
-    for (const agent of snapshot.registry.agents) settingsRow(ctx, group, agent.name, { leading: iphoneAvatar(ctx.document, agent), literal: true, selected: snapshot.registry.moduleOwners[module] === agent.id, action: async () => {
-      if (busy) return; busy = true; for (const button of Array.from(group.querySelectorAll("button"))) button.disabled = true;
-      try { await ctx.host.agents.setOwner(module, agent.id, snapshot.version); busy = false; this.refresh(); await ctx.shell.back(); }
-      catch (failure) { error.show(failure); busy = false; for (const button of Array.from(group.querySelectorAll("button"))) button.disabled = false; }
-    } });
-    await pushSettingsPage(ctx, { id: `iphone-settings-owner-${module}`, title: "模块负责人", content: body, canLeave: () => !busy });
   }
   private modules(body: HTMLElement): void {
     const { ctx } = this, base = settingsGroup(ctx, body, "基础模块"), pro = settingsGroup(ctx, body, "PRO 模块"), settings = ctx.host.settings();

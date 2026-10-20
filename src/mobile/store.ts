@@ -85,12 +85,18 @@ function validOperations(value: unknown, session: Record<string, unknown>, ids: 
       || !["note_create", "memory_write", "mcp_write"].includes(operation.toolName as string) || !["prepared", "started", "completed", "uncertain"].includes(operation.status as string)
       || !time(operation.createdAt) || !time(operation.updatedAt) || operation.updatedAt < operation.createdAt
       || typeof operation.expectedHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.expectedHash)
-      || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "targetWasMissing", "beforeRevision", "completedRevision", "mcp"].includes(key))) return false;
+      || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "targetWasMissing", "beforeRevision", "completedRevision", "mcp", "memoryRepository"].includes(key))) return false;
     if (operation.toolName !== "mcp_write" && operation.mcp !== undefined) return false;
+    if (operation.memoryRepository !== undefined && (operation.toolName !== "memory_write" || operation.memoryRepository !== "canonical")) return false;
     if (operation.toolName === "note_create") {
       const path = operation.target;
       if (path.trim() !== path || path.startsWith("/") || /[\\:]/u.test(path) || [...path].some(char => char.charCodeAt(0) < 32) || path.split("/").some(part => !part || part.startsWith(".")) || !/\.md$/iu.test(path)
         || operation.semanticKey !== `note_create:${path}` || operation.targetWasMissing !== true || operation.beforeRevision !== undefined || operation.completedRevision !== undefined) return false;
+    } else if (operation.toolName === "memory_write" && operation.memoryRepository === "canonical") {
+      if (typeof operation.targetWasMissing !== "boolean" || !/^memory_write:.+:[a-f0-9]{64}$/u.test(operation.semanticKey)
+        || (operation.beforeRevision !== undefined && (!Number.isSafeInteger(operation.beforeRevision) || Number(operation.beforeRevision) < 1))
+        || (operation.status === "completed" && (!Number.isSafeInteger(operation.completedRevision) || Number(operation.completedRevision) < 1))
+        || (operation.completedRevision !== undefined && (!Number.isSafeInteger(operation.completedRevision) || Number(operation.completedRevision) < Number(operation.beforeRevision ?? 0)))) return false;
     } else if (operation.toolName === "memory_write") {
       if (operation.status !== "completed" || typeof operation.targetWasMissing !== "boolean" || !Number.isSafeInteger(operation.completedRevision) || (operation.completedRevision as number) < 1
         || !/^memory_write:.+:[a-f0-9]{64}$/u.test(operation.semanticKey)) return false;
@@ -252,6 +258,9 @@ function migrateV1(content: string, instanceId: string): MobileState {
 
 /** One authority per instance; only verified commits are visible to readers. */
 export class MobileStore {
+  private canonicalMemory?: () => Promise<readonly PersonalMemoryRecord[]>;
+  bindCanonicalMemory(read: () => Promise<readonly PersonalMemoryRecord[]>): void { this.canonicalMemory = read; }
+  readMemoryRecords(): Promise<readonly PersonalMemoryRecord[]> { return this.canonicalMemory ? this.canonicalMemory() : Promise.resolve(this.state.memories); }
   private committed: MobileState;
   private writes: Promise<void> = Promise.resolve();
   private loaded = false;

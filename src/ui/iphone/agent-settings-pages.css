@@ -1,0 +1,37 @@
+.echoink-iphone .ip-agent-settings .ip-agent-owner-avatar { width: 20px; height: 20px; flex: 0 0 20px; }
+.echoink-iphone .ip-agent-settings .ip-agent-dream-row { padding-top: 0; padding-bottom: 0; }
+.echoink-iphone .ip-agent-settings button.ip-agent-dream-link { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; min-height: 52px; height: auto; margin: 0; padding: 8px 0; border: 0; border-radius: 0; color: var(--ip-ink); background: transparent; box-shadow: none; font: inherit; text-align: left; white-space: normal; }
+.echoink-iphone .ip-agent-dream-link:focus-visible { background: var(--background-modifier-hover); }
+.echoink-iphone .ip-agent-settings button.ip-agent-dream-link:disabled { opacity: 1; cursor: default; }
+.echoink-iphone .ip-agent-dream { padding: 12px; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-agent-status { margin: 12px 0; color: var(--ip-secondary); font-size: .88em; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-actions { gap: 8px; margin-top: 8px; }
+.echoink-iphone .ip-agent-profile-item, .echoink-iphone .ip-agent-forgotten-item { min-width: 0; padding: 12px; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-agent-profile-item:last-child, .echoink-iphone .ip-agent-forgotten-item:last-child { border-bottom: 0; }
+.echoink-iphone .ip-agent-item-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.echoink-iphone .ip-agent-item-head h3, .echoink-iphone .ip-agent-forgotten-item h3 { margin: 0; font-size: .92em; font-weight: 500; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-profile-text { margin: 8px 0; white-space: pre-wrap; font-size: .875em; line-height: 1.7; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-basis { color: var(--ip-secondary); font-size: .76em; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-sources > summary, .echoink-iphone .ip-agent-missing > summary, .echoink-iphone .ip-agent-forgotten > summary { min-height: 44px; padding: 10px 12px; color: var(--ip-secondary); font-size: .88em; cursor: pointer; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-sources > summary { padding-left: 0; padding-right: 0; }
+.echoink-iphone .ip-agent-sources .ip-settings-row { padding-left: 0; padding-right: 0; }
+.echoink-iphone .ip-agent-source-content { max-height: 260px; overflow: auto; margin-bottom: 8px; font-size: .875em; line-height: 1.8; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-missing { border-top: 1px solid var(--ip-line); }
+.echoink-iphone .ip-agent-missing:first-child { border-top: 0; }
+.echoink-iphone .ip-agent-settings textarea.ip-agent-editor { display: block; width: 100%; min-width: 0; max-width: 100%; min-height: 260px; padding: 10px; border: 1px solid var(--ip-line); border-radius: 9px; background: var(--ip-bg); color: var(--ip-ink); box-shadow: none; font-family: inherit; font-size: max(16px, 1em); line-height: 1.8; resize: vertical; }
+.echoink-iphone .ip-agent-settings textarea.ip-agent-editor:focus { border-color: var(--ip-line); outline: none; box-shadow: none; }
+.echoink-iphone .ip-agent-title { margin: 16px 0; font-size: 1.125em; font-weight: 600; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-markdown { min-width: 0; max-height: 520px; overflow: auto; margin: 12px 0; font-size: .875em; line-height: 1.8; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-markdown pre { overflow-x: auto; }
+.echoink-iphone .ip-agent-markdown > :first-child { margin-top: 0; }
+.echoink-iphone .ip-agent-markdown > :last-child { margin-bottom: 0; }
+.echoink-iphone .ip-agent-copy, .echoink-iphone .ip-agent-preview-title { margin: 0; padding: 12px; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-preview-title { font-size: .92em; font-weight: 500; }
+.echoink-iphone .ip-settings-group > .ip-agent-markdown { margin: 0; padding: 12px; }
+.echoink-iphone .ip-agent-empty { padding: 18px 12px; color: var(--ip-secondary); font-size: .88em; text-align: center; overflow-wrap: anywhere; }
+.echoink-iphone .ip-agent-history-message { padding: 12px 0; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-agent-history-message > h3 { margin: 0 0 8px; color: var(--ip-secondary); font-size: .8em; font-weight: 500; }
+.echoink-iphone .ip-agent-history-message .ip-agent-markdown { max-height: none; margin: 0; }
+.echoink-iphone .ip-agent-export:empty { display: none; }
+.echoink-iphone .ip-agent-settings :is(summary,textarea):focus-visible { outline: none; box-shadow: none; }
+.echoink-iphone .ip-agent-settings summary:focus-visible { background: var(--background-modifier-hover); }

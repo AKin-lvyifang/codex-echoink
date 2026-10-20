@@ -1,3 +1,4 @@
+import { renderCanonicalMemoryExport, serializeCanonicalMemoryRecord, parseCanonicalMemoryRecord, CanonicalMemoryFormatError } from "./personal-memory-core";
 import { renderPersonalMemoryOverview as renderOverview } from "./mobile-profile-protocol";
 import { createHash, randomUUID } from "node:crypto";
 import { watch, type FSWatcher, type Stats } from "node:fs";
@@ -25,7 +26,6 @@ import {
   type PersonalMemorySearchItem,
   type PersonalMemorySearchRequest,
   type PersonalMemorySearchResult,
-  type PersonalMemoryStatus,
   type PersonalMemoryWriteRequest,
   type PersonalMemoryWriteResult,
   type UserProfileControlSaveRequest,
@@ -422,6 +422,7 @@ export class PersonalMemoryRepository {
 
   async initialize(): Promise<Readonly<PersonalMemoryLayout>> {
     if (this.disposed) throw new PersonalMemoryAccessError("invalid_request", "Personal Memory Repository is disposed");
+    await this.assertNoMobileTransactions();
     if (!this.initialization) {
       this.initialization = this.initializeOnce().catch((error) => {
         this.initialization = null;
@@ -3620,12 +3621,15 @@ export class PersonalMemoryRepository {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const transactionRoot = path.join(this.layout.transactions, entry.name);
+      if (entry.name.startsWith("txn_mobile_")) throw new PersonalMemoryAccessError("revision_conflict", "Mobile Memory transaction requires its owner recovery; desktop did not alter it");
       const planPath = path.join(transactionRoot, "plan.json");
       if (!(await pathExists(planPath))) {
         await rm(transactionRoot, { recursive: true, force: true });
         continue;
       }
       const plan = JSON.parse(await readFile(planPath, "utf8")) as TransactionPlan;
+      const ownedPlan = plan as TransactionPlan & { owner?: unknown; ownerId?: unknown };
+      if (ownedPlan.owner !== undefined || ownedPlan.ownerId !== undefined) throw new PersonalMemoryAccessError("revision_conflict", "Foreign Memory transaction requires its owner recovery; desktop did not alter it");
       const state = (await readTextOrEmpty(path.join(transactionRoot, "state"))).trim();
       if (state === "committed") {
         await rm(transactionRoot, { recursive: true, force: true });
@@ -3871,6 +3875,19 @@ export class PersonalMemoryRepository {
     }
   }
 
+  private async assertNoMobileTransactions(): Promise<void> {
+    const directory = path.join(this.layout.runtime, "mobile-transactions");
+    if (await pathExists(directory)) for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isDirectory() && (await readTextOrEmpty(path.join(directory, entry.name, "state"))).trim() !== "committed") throw new PersonalMemoryAccessError("revision_conflict", "Mobile Memory transaction is pending; desktop did not read or alter half-written data");
+    }
+    if (await pathExists(this.layout.transactions)) for (const entry of await readdir(this.layout.transactions, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith("txn_mobile_")) throw new PersonalMemoryAccessError("revision_conflict", "Legacy Mobile Memory transaction requires its owner recovery");
+      const plan = await readJsonOrNull<Record<string, unknown>>(path.join(this.layout.transactions, entry.name, "plan.json"));
+      if (plan?.owner !== undefined || plan?.ownerId !== undefined) throw new PersonalMemoryAccessError("revision_conflict", "Foreign Memory transaction requires its owner recovery");
+    }
+  }
+
   private async withMutation<T>(callback: () => Promise<T>): Promise<T> {
     const previous = mutationLanes.get(this.layout.root) ?? Promise.resolve();
     const current = previous.catch(() => undefined).then(async () => {
@@ -3880,6 +3897,7 @@ export class PersonalMemoryRepository {
           "Personal Memory Repository is disposed"
         );
       }
+      await this.assertNoMobileTransactions();
       return await callback();
     });
     mutationLanes.set(this.layout.root, current);
@@ -4065,94 +4083,12 @@ function parseGeneratedOverviewRevision(
   return revision;
 }
 
-function renderExport(records: readonly PersonalMemoryRecord[], revision: number): string {
-  const lines = ["# EchoInk Memory Export", "", `Revision: ${revision}`, ""];
-  for (const record of [...records].sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))) {
-    lines.push(`## ${record.title}`, "", `- ID: ${record.id}`, `- Kind: ${record.kind}`, `- Status: ${record.status}`, `- Basis: ${record.basis}`, `- Date: ${record.date}`, `- Source: ${record.source}`, "", record.content, "");
-  }
-  return `${lines.join("\n")}\n`;
-}
+const renderExport = renderCanonicalMemoryExport;
 
-function serializeRecord(record: Readonly<PersonalMemoryRecord>): string {
-  const fields: Array<readonly [string, string | number | undefined]> = [
-    ["schema", record.schema],
-    ["id", record.id],
-    ["kind", record.kind],
-    ["status", record.status],
-    ["date", record.date],
-    ["source", record.source],
-    ["basis", record.basis],
-    ["content_origin", record.contentOrigin],
-    ["title", record.title],
-    ["recall_when", record.recallWhen],
-    ["scope", record.scope],
-    ["as_of", record.asOf],
-    ["supersedes", record.supersedes],
-    ["due", record.due],
-    ["remind_at", record.remindAt],
-    ["reason", record.reason],
-    ["revision", record.revision]
-  ];
-  return [
-    "---",
-    ...fields.filter(([, value]) => value !== undefined).map(([key, value]) => `${key}: ${JSON.stringify(value)}`),
-    "---",
-    "",
-    record.content.trim(),
-    ""
-  ].join("\n");
-}
-
+const serializeRecord = serializeCanonicalMemoryRecord;
 export function parsePersonalMemoryRecord(text: string, file: string): PersonalMemoryRecord {
-  const lines = text.split(/\r?\n/u);
-  if (lines[0] !== "---") throw new PersonalMemoryAccessError("invalid_request", `Memory ${file} has no frontmatter`);
-  const end = lines.indexOf("---", 1);
-  if (end < 0) throw new PersonalMemoryAccessError("invalid_request", `Memory ${file} frontmatter is incomplete`);
-  const fields = new Map<string, unknown>();
-  for (const line of lines.slice(1, end)) {
-    const separator = line.indexOf(":");
-    if (separator <= 0) throw new PersonalMemoryAccessError("invalid_request", `Memory ${file} frontmatter line is invalid`);
-    const key = line.slice(0, separator).trim();
-    const raw = line.slice(separator + 1).trim();
-    try {
-      fields.set(key, JSON.parse(raw));
-    } catch {
-      throw new PersonalMemoryAccessError("invalid_request", `Memory ${file} frontmatter value is invalid`);
-    }
-  }
-  const kind = fields.get("kind");
-  const status = fields.get("status");
-  const basis = fields.get("basis");
-  if (!isMemoryKind(kind) || !isMemoryStatus(status) || !isMemoryBasis(basis)) {
-    throw new PersonalMemoryAccessError("invalid_request", `Memory ${file} enum field is invalid`);
-  }
-  const content = lines.slice(end + 1).join("\n").trim();
-  const revision = fields.get("revision");
-  if (!Number.isSafeInteger(revision)) throw new PersonalMemoryAccessError("invalid_request", `Memory ${file} revision is invalid`);
-  const title = cleanRequired(requiredField(fields, "title"), "title", 200);
-  return Object.freeze({
-    schema: requiredField(fields, "schema") === PERSONAL_MEMORY_SCHEMA ? PERSONAL_MEMORY_SCHEMA : invalidField(file, "schema"),
-    id: assertSafeId(requiredField(fields, "id")),
-    kind,
-    status,
-    date: validateDate(requiredField(fields, "date"), "date"),
-    source: cleanRequired(requiredField(fields, "source"), "source", 2_000),
-    basis,
-    ...(optionalField(fields, "content_origin") ? { contentOrigin: requireContentOrigin(optionalField(fields, "content_origin")!) } : {}),
-    title,
-    recallWhen: optionalField(fields, "recall_when")
-      ? cleanRequired(optionalField(fields, "recall_when")!, "recall_when", 500)
-      : title,
-    content: cleanRequired(content, "content", MAX_RECORD_CONTENT_CHARS),
-    ...(optionalField(fields, "scope") ? { scope: cleanRequired(optionalField(fields, "scope")!, "scope", 240) } : {}),
-    ...(optionalField(fields, "as_of") ? { asOf: validateDate(optionalField(fields, "as_of")!, "as_of") } : {}),
-    ...(optionalField(fields, "supersedes") ? { supersedes: assertSafeId(optionalField(fields, "supersedes")!) } : {}),
-    ...(optionalField(fields, "due") ? { due: validateDateTime(optionalField(fields, "due")!, "due") } : {}),
-    ...(optionalField(fields, "remind_at") ? { remindAt: validateDateTime(optionalField(fields, "remind_at")!, "remind_at") } : {}),
-    ...(optionalField(fields, "reason") ? { reason: cleanRequired(optionalField(fields, "reason")!, "reason", 2_000) } : {}),
-    revision: revision as number,
-    file
-  });
+  try { return parseCanonicalMemoryRecord(text, file); }
+  catch (error) { if (error instanceof CanonicalMemoryFormatError) throw new PersonalMemoryAccessError(error.code, error.message); throw error; }
 }
 
 const parseRecord = parsePersonalMemoryRecord;
@@ -4477,39 +4413,6 @@ function validateDateTime(value: unknown, name: string): string {
 
 function isoDate(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
-}
-
-function isMemoryKind(value: unknown): value is PersonalMemoryKind {
-  return ["fact", "view", "decision", "goal", "task", "open_loop", "episode"].includes(String(value));
-}
-
-function isMemoryStatus(value: unknown): value is PersonalMemoryStatus {
-  return ["current", "superseded", "closed"].includes(String(value));
-}
-
-function isMemoryBasis(value: unknown): value is PersonalMemoryBasis {
-  return ["explicit", "observed", "inferred"].includes(String(value));
-}
-
-function requireContentOrigin(value: unknown): PersonalMemoryContentOrigin {
-  const origin = cleanRequired(value, "content_origin", 64) as PersonalMemoryContentOrigin;
-  if (!["user_statement", "user_edit", "confirmed_change", "current_instruction", "quotation", "code", "hypothesis", "knowledge", "tool_output"].includes(origin)) {
-    throw new PersonalMemoryAccessError("invalid_request", "content_origin is invalid");
-  }
-  return origin;
-}
-
-function requiredField(fields: ReadonlyMap<string, unknown>, key: string): string {
-  return cleanRequired(fields.get(key), key, 2_000);
-}
-
-function optionalField(fields: ReadonlyMap<string, unknown>, key: string): string | undefined {
-  const value = fields.get(key);
-  return value === undefined ? undefined : cleanRequired(value, key, 2_000);
-}
-
-function invalidField(file: string, field: string): never {
-  throw new PersonalMemoryAccessError("invalid_request", `Memory ${file} ${field} is invalid`);
 }
 
 function jsonText(value: unknown): string {
