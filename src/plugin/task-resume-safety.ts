@@ -243,7 +243,8 @@ function semanticOperation(toolName: string, args: unknown, target?: unknown): s
   const value = record(args);
   if (!value) return `${toolName}:missing_arguments`;
   const normalized = isPiTodoTool(toolName) ? normalizeTodoToolRequest(toolName, value) : { ...value };
-  if (toolName === "pdf_reading_process" && typeof record(target)?.jobId === "string") return `${toolName}:${record(target)!.jobId}`;
+  const jobId = record(target)?.jobId;
+  if (toolName === "pdf_reading_process" && typeof jobId === "string") return `${toolName}:${jobId}`;
   if (toolName === "english_diary_generate" && typeof normalized.sourcePath === "string") {
     normalized.sourcePath = normalizeVaultRelativePath(normalized.sourcePath);
   }
@@ -282,7 +283,8 @@ function isTodoWrite(name: string): boolean {
 function affectedFilePaths(toolName: string, args: unknown, target?: unknown): string[] {
   if (toolName === "pdf_reading_process") {
     const resolved = record(target), input = record(args);
-    return [resolved?.originalPath, resolved?.sourcePath ?? input?.path, ...(Array.isArray(resolved?.artifactPaths) ? resolved.artifactPaths : [])]
+    const artifactPaths: unknown[] = Array.isArray(resolved?.artifactPaths) ? resolved.artifactPaths : [];
+    return [resolved?.originalPath, resolved?.sourcePath ?? input?.path, ...artifactPaths]
       .flatMap(raw => typeof raw === "string" ? [normalizeVaultRelativePath(raw)] : []);
   }
   if (isTodoWrite(toolName)) return ["EchoInk/待办.md"];
@@ -402,7 +404,7 @@ async function localFileVersion(root: string, relativePath: string): Promise<str
     const canonical = await realpath(cursor);
     if (!canonical.startsWith(`${rootPath}${path.sep}`)) throw new Error("task_resume_unsafe_file_target");
     return createHash("sha256").update(await readFile(canonical)).digest("hex");
-  } catch (error) {
+  } catch (error: unknown) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return null;
     throw error;
   }

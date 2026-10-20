@@ -191,8 +191,8 @@ export async function organizeFinanceRows(
         for (const index of candidate.rowIndexes) {
           rows[index].entry = { ...rows[index].entry!, merchant: applied.merchant, description: applied.description,
             category: applied.category, account: applied.account, icon: applied.icon };
-          if (applied.classificationPending === true) rows[index].entry!.classificationPending = true;
-          else delete rows[index].entry!.classificationPending;
+          if (applied.classificationPending === true) rows[index].entry.classificationPending = true;
+          else delete rows[index].entry.classificationPending;
           if (review) rows[index].review = [rows[index].review, review].filter(Boolean).join("；");
           if (reason) rows[index].reason = reason;
           if (typeof proposedCategory !== "string")

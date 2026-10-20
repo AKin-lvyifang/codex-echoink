@@ -283,15 +283,14 @@ export class ConversationRunService {
     state.turnWatchdog = null;
   }
   private createHost(state: ConversationRunState, item: QueuedTurnItem, onAccepted?: () => void): CodexViewTurnContext {
-    const service = this;
     const plugin = this.plugin;
     const id = item.sessionId;
-    const refresh = (message?: ChatMessage) => service.notify(id, message);
+    const refresh = (message?: ChatMessage) => this.notify(id, message);
     const store = new SessionMessageStore({
       getActiveRunId: () => state.activeRunId, getActiveTurnId: () => state.activeTurnId,
       getVaultPath: () => plugin.getVaultPath(), getSettingsLanguage: () => plugin.settings.settingsLanguage,
       externalizeMessageText: (message, text) => plugin.externalizeMessageText(message, text),
-      renderMessagesIfActive: (_session, message) => refresh(message), scheduleSessionSave: () => service.scheduleSave()
+      renderMessagesIfActive: (_session, message) => refresh(message), scheduleSessionSave: () => this.scheduleSave()
     });
     const context: CodexViewTurnContext = {
       onPiRunAccepted: async () => {
@@ -303,7 +302,7 @@ export class ConversationRunService {
               plugin.setPiConversationTaskMetadata(id, { businessKey: origin.businessKey })
             ]);
             const failures = results.filter(result => result.status === "rejected");
-            if (failures.length) throw new AggregateError(failures.map(result => result.reason), "workbench_task_source_save_failed");
+            if (failures.length) throw new AggregateError(failures.map((result): unknown => result.reason), "workbench_task_source_save_failed");
           } catch (error) {
             console.warn("EchoInk accepted task could not save its workbench source.", error);
             new Notice("任务已开始，但提醒来源记录未保存；请勿重复发送。");
@@ -311,7 +310,7 @@ export class ConversationRunService {
         }
         onAccepted?.();
       },
-      onPiRunFailure: message => { if (item.resumeContext) service.resumeErrors.set(id, message); },
+      onPiRunFailure: message => { if (item.resumeContext) this.resumeErrors.set(id, message); },
       get lifecycleSignal() { return state.controller.signal; }, get app() { return plugin.app; }, plugin,
       get running() { return state.running; }, set running(value) { state.running = value; },
       get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; },
@@ -320,28 +319,28 @@ export class ConversationRunService {
       get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
       get queueStartInProgress() { return state.queueStartInProgress; }, set queueStartInProgress(value) { state.queueStartInProgress = value; },
       get turnStartedAt() { return state.turnStartedAt; }, set turnStartedAt(value) { state.turnStartedAt = value; },
-      turnQueue: service.turnQueue,
+      turnQueue: this.turnQueue,
       get inputEl(): HTMLTextAreaElement { throw new Error("Run host has no Composer DOM"); },
       attachments: item.attachments, selectedSkill: item.skill, selectedProviderSettingsId: item.turnOptions.providerSettingsId ?? "", selectedModel: item.turnOptions.model,
       messagesBottomFollowPaused: false,
       applyStatus: () => refresh(), renderToolbar: () => refresh(), renderQueue: () => refresh(), renderTabs: () => refresh(), renderMessages: () => refresh(),
       renderMessagesIfActive: (_session, message) => refresh(message),
-      clearActiveRun: () => { store.clearActiveRun(); service.clearActiveRun(id, state); },
+      clearActiveRun: () => { store.clearActiveRun(); this.clearActiveRun(id, state); },
       armTurnWatchdog: (timeout = CHAT_TURN_WATCHDOG_MS) => {
-        service.clearWatchdog(state);
+        this.clearWatchdog(state);
         state.turnWatchdog = window.setTimeout(() => {
           state.turnWatchdog = null;
-          if (state.running) void service.stopTask(id, "watchdog").catch(error => console.error("Conversation timeout cancellation failed", error));
+          if (state.running) void this.stopTask(id, "watchdog").catch(error => console.error("Conversation timeout cancellation failed", error));
         }, timeout);
-      }, clearTurnWatchdog: () => service.clearWatchdog(state),
+      }, clearTurnWatchdog: () => this.clearWatchdog(state),
       diagnoseCodexFailure: (error, model) => diagnoseProviderError(error, { model: model ?? item.turnOptions.model }),
-      ensureSession: () => service.session(id), sessionById: taskId => plugin.settings.sessions.find(session => session.id === taskId) ?? null,
+      ensureSession: () => this.session(id), sessionById: taskId => plugin.settings.sessions.find(session => session.id === taskId) ?? null,
       composerStateForSession: () => ({}) as never,
       enqueueComposerDraft: async () => { throw new Error("Run host cannot read a Composer draft"); },
       createQueuedTurnFromComposer: async () => { throw new Error("Run host requires a frozen queued item"); },
       clearComposerDraft: () => undefined,
       clearAcceptedComposerDraft: frozen => {
-        for (const subscriber of service.subscribers) {
+        for (const subscriber of this.subscribers) {
           try { subscriber.clearAcceptedDraft(frozen); }
           catch (error) { console.error("Accepted Composer draft could not refresh", error); }
         }
@@ -350,22 +349,22 @@ export class ConversationRunService {
       startQueuedTurnItem: (frozen, source) => startQueuedTurnItem(context, frozen, source),
       startQueuedTurnItemSafely: (frozen, source) => startQueuedTurnItemSafely(context, frozen, source),
       startChatTurn: (session, frozen, source) => startChatTurn(context, session, frozen, source),
-      resumeQueuedTurns: taskId => service.resumeQueuedTurns(taskId), startNextQueuedTurn: taskId => service.startNextQueuedTurn(taskId),
-      afterTurnSettled: async () => undefined, stopTurn: () => service.stopTask(id), pauseQueueForSession: taskId => service.turnQueue.pauseSessionQueue(taskId),
+      resumeQueuedTurns: taskId => this.resumeQueuedTurns(taskId), startNextQueuedTurn: taskId => this.startNextQueuedTurn(taskId),
+      afterTurnSettled: async () => undefined, stopTurn: () => this.stopTask(id), pauseQueueForSession: taskId => this.turnQueue.pauseSessionQueue(taskId),
       setPendingInteraction: (taskId, interaction, expectedTurnId) => {
-        const current = service.pendingInteractions.get(taskId);
-        const task = service.session(taskId);
-        const taskState = service.runs.get(taskId);
+        const current = this.pendingInteractions.get(taskId);
+        const task = this.session(taskId);
+        const taskState = this.runs.get(taskId);
         const terminal = task.taskStatus === "completed" || task.taskStatus === "interrupted";
         if ((interaction && interaction.conversationId !== taskId)
           || (!interaction && expectedTurnId && current && current.turnId !== expectedTurnId)
           || (interaction && terminal && !taskState?.activeTurnId)) return;
         const changed = JSON.stringify(current ?? null) !== JSON.stringify(interaction);
         if (changed) {
-          if (interaction) service.pendingInteractions.set(taskId, cloneEchoInkTurnInteraction(interaction));
-          else service.pendingInteractions.delete(taskId);
+          if (interaction) this.pendingInteractions.set(taskId, cloneEchoInkTurnInteraction(interaction));
+          else this.pendingInteractions.delete(taskId);
         }
-        const pending = service.pendingInteractions.get(taskId);
+        const pending = this.pendingInteractions.get(taskId);
         const waiting = pending && (pending.status === "pending" || pending.status === "submitting");
         const patch: ConversationTaskMetadataPatch = waiting
           ? { taskStatus: "waiting", pendingResponse: { runId: pending.turnId,
@@ -375,14 +374,14 @@ export class ConversationRunService {
         const key = JSON.stringify([pending ?? null, patch]);
         const metadataMatches = (!patch.taskStatus || task.taskStatus === patch.taskStatus)
           && JSON.stringify(task.pendingResponse) === JSON.stringify(patch.pendingResponse);
-        if (changed || (!metadataMatches && service.pendingInteractionWrites.get(taskId)?.key !== key)) {
+        if (changed || (!metadataMatches && this.pendingInteractionWrites.get(taskId)?.key !== key)) {
           const write = { key };
-          service.pendingInteractionWrites.set(taskId, write);
+          this.pendingInteractionWrites.set(taskId, write);
           void plugin.setPiConversationTaskMetadata(taskId, patch).catch(error => console.error("Conversation interaction state save failed", error)).finally(() => {
-            if (service.pendingInteractionWrites.get(taskId) === write) service.pendingInteractionWrites.delete(taskId);
+            if (this.pendingInteractionWrites.get(taskId) === write) this.pendingInteractionWrites.delete(taskId);
           });
         }
-        if (changed || !metadataMatches) service.notify(taskId);
+        if (changed || !metadataMatches) this.notify(taskId);
       },
       ensureThinkingMessage: (session, title, text) => store.ensureThinkingMessage(session, title, text),
       dismissThinkingMessage: session => store.dismissThinkingMessage(session),

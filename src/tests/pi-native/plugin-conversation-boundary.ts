@@ -11,7 +11,6 @@ import {
   SessionManager,
   VERSION
 } from "@earendil-works/pi-coding-agent";
-import { defaultAgentIdentityState } from "../../harness/memory/agent-identity-state";
 import { PersonalMemoryRepository } from "../../harness/memory/personal-memory-repository";
 import { FileDomainReceiptStore } from "../../harness/pi-native/domain-receipt-store";
 import { FileConversationCatalog } from "../../harness/pi-native/file-conversation-catalog";
@@ -1179,20 +1178,6 @@ async function localManagementAndMemoryStayProviderIndependent(): Promise<void> 
     piRuntimeBundle: null,
     piRuntimeFlight: null,
     piActivatedConversationId: "history-managed",
-    cognitiveSystem: {
-      readAgentProfile: async () => ({
-        revision: 7,
-        templateId: "executor",
-        preferredSkillNames: ["最小现实实验", "多视角解题", "深度理解与拆解"],
-        currentSelf: {
-          thinkingMethod: "我处理重要或复杂问题的方式是：先锁定目标、约束和验收结果。",
-          answerTone: "我的语气会保持简短、坚定和有推动力。",
-          answerStructure: "我的回答通常会按结论、立即行动和必要风险来组织。",
-          representativeHabits: ["我会先说明最关键的下一步。"]
-        }
-      }),
-      readAgentIdentity: async () => defaultAgentIdentityState()
-    },
     settlePiRuntimeFlight: async () => undefined,
     ensurePiLocalData: async () => localData,
     ensurePiProductionRuntime: async () => {
@@ -1231,28 +1216,11 @@ async function localManagementAndMemoryStayProviderIndependent(): Promise<void> 
     user: "# USER\n",
     memory: "# MEMORY\n",
     records: [{ id: "memory-local" }],
-    forgottenIds: [],
-    agentIdentity: defaultAgentIdentityState(),
-    agentProfile: {
-      kind: "ready",
-      revision: 7,
-      templateId: "executor",
-      preferredSkillNames: ["最小现实实验", "多视角解题", "深度理解与拆解"],
-      currentSelf: {
-        thinkingMethod: "我处理重要或复杂问题的方式是：先锁定目标、约束和验收结果。",
-        answerTone: "我的语气会保持简短、坚定和有推动力。",
-        answerStructure: "我的回答通常会按结论、立即行动和必要风险来组织。",
-        representativeHabits: ["我会先说明最关键的下一步。"]
-      }
-    }
+    forgottenIds: []
   });
-  assert.equal("styleName" in personalMemoryState.agentProfile, false);
-  assert.equal("introduction" in personalMemoryState.agentProfile, false);
-  assert.equal(
-    "personalityState" in personalMemoryState,
-    false,
-    "the settings DTO must expose the current-self profile, not a retired six-dimension field"
-  );
+  assert.equal("agentProfile" in personalMemoryState, false);
+  assert.equal("agentIdentity" in personalMemoryState, false);
+  assert.equal("personalityState" in personalMemoryState, false);
 }
 
 async function releaseClearsPluginActivationStateEvenWhenRuntimeReleaseFails():

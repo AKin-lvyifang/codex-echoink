@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import type { App, TFile } from "obsidian";
 import { BodySearchMemoryIndex, searchBodyDocuments } from "../knowledge-base/search/body-search";
 import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vault-body-search";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { buildSearchDictionary, tokenizeSearchText } from "../knowledge-base/search/tokenize";
 import { yieldSearchTask } from "../knowledge-base/search/scheduling";
+import { sliceKnowledgeSourceSpan } from "../knowledge-base/source-span";
+import { createKnowledgeDocumentOutline, extractMarkdownLinkTargets, fitKnowledgeOutlines, knowledgeLinkNeighborhood, knowledgeOutlineCharacters, KNOWLEDGE_LINK_LIMITS, KNOWLEDGE_OUTLINE_LIMITS, locateKnowledgeAnchor, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, parseMarkdownHeadings, verifyKnowledgeOutlineLines } from "../knowledge-base/search/markdown-navigation";
 import type { BodySearchDocument, BodySearchOptions, BodySearchRequest, BodySearchResult } from "../knowledge-base/search/contracts";
 
 function note(path: string, body: string, metadata: Partial<BodySearchDocument> = {}): BodySearchDocument {
@@ -14,6 +17,72 @@ function note(path: string, body: string, metadata: Partial<BodySearchDocument> 
 
 async function search(documents: readonly BodySearchDocument[], request: BodySearchRequest) {
   return searchBodyDocuments({ documents, request });
+}
+
+export async function runKnowledgeLinkNeighborhoodTests(): Promise<void> {
+  const bodies = new Map([["notes/A.md", "# A\nclay workshop claim.\n\n[[B]] [[Guide]] [[Guide]]"],
+    ["notes/B.md", "# B\nclay workshop claim.\n\n[A](A.md) [[Guide]]"], ["notes/C.md", "# C\nclay workshop claim.\n\n[[Alone]]"],
+    ["notes/Guide.md", "# Guide\nSupplemental instructions."], ["notes/Alone.md", "# Alone\nAnother reference."]]);
+  let reads = 0;
+  const documents = (code = false) => [...bodies].map(([path, body]) => {
+    const content = code ? body.replace(/(\[\[[^\]]+\]\]|\[A\]\(A.md\))/gu, "`$1`") : body;
+    return note(path, content, { revisionKey: code ? "code" : "real", read: async () => { reads++; return { content, contentRevision: `sha256:${createHash("sha256").update(content).digest("hex")}` }; } });
+  });
+  assert.deepEqual(extractMarkdownLinkTargets("---\nlink: '[[Property]]'\n---\n```md\n[[Fence]]\n```\n    [[Indent]]\n`[[Inline]]`\n<!-- [[HTML]] -->\n%% [[Comment]] %%\n\\[[Escaped]]\n`multiline code\n[[Multiline]]\nend`\n[[Real#Heading|label]] [doc](./Other.md#part) [web](https://example.com)"), ["Real", "./Other.md"]);
+  const docs = documents();
+  const candidates = [...bodies].slice(0, 3).map(([vaultRelativePath, content]) => ({ vaultRelativePath, contentRevision: `sha256:${createHash("sha256").update(content).digest("hex")}`, targets: extractMarkdownLinkTargets(content) }));
+  const neighborhood = knowledgeLinkNeighborhood(candidates, docs, new Set(candidates.map(candidate => candidate.vaultRelativePath)));
+  assert.deepEqual([...neighborhood.boosted].sort(), ["notes/A.md", "notes/B.md"]);
+  assert.equal([...neighborhood.cues.values()].flat().length, 1);
+  const cue = neighborhood.cues.get("notes/A.md")![0];
+  assert.equal(cue.vaultRelativePath, "notes/Guide.md"); assert.equal(cue.readStatus, "unread"); assert.equal(cue.label, "可能相关");
+  assert.equal(cue.via.length, 2, "duplicate links in one source cannot imitate multiple supporters");
+  const single = knowledgeLinkNeighborhood([candidates[0]], docs, new Set(["notes/A.md"]));
+  assert.equal(single.boosted.size, 0); assert.equal(single.cues.size, 0);
+  const externalTargets = extractMarkdownLinkTargets("[external](//example.test/path)");
+  const external = knowledgeLinkNeighborhood(candidates.slice(0, 2).map(candidate => ({ ...candidate, targets: externalTargets })),
+    [...docs, note("example.test/path.md", "External-name collision.", { title: "path" })], new Set(candidates.map(candidate => candidate.vaultRelativePath)));
+  assert.equal(external.boosted.size, 0); assert.equal(external.cues.size, 0, "protocol-relative external URLs never resolve to a coincidentally named Vault file");
+  const baseline = await search(documents(true), { query: "clay", limit: 20 });
+  const linked = await search(docs, { query: "clay", limit: 20 });
+  for (const hit of linked.hits) {
+    const before = baseline.hits.find(value => value.vaultRelativePath === hit.vaultRelativePath && value.lineStart === hit.lineStart)!;
+    const factor = neighborhood.boosted.has(hit.vaultRelativePath) ? 1 + KNOWLEDGE_LINK_LIMITS.boost : 1;
+    assert.ok(Math.abs(hit.score - before.score * factor) < 1e-10, "actual body retrieval applies one bounded 3% boost, never per edge");
+  }
+  assert.equal(linked.total, baseline.total); assert.ok(linked.hits.every(hit => hit.vaultRelativePath !== "notes/Guide.md"));
+  const namedDocs = docs.map(document => document.vaultRelativePath === "notes/A.md" ? { ...document, title: "Clay case" } : document);
+  const exact = await search(namedDocs, { query: "Clay case", limit: 20 });
+  assert.equal(exact.hits[0].vaultRelativePath, "notes/A.md"); assert.ok(exact.hits.every(hit => !hit.linkCues));
+  const aliasDocs = docs.map(document => document.vaultRelativePath === "notes/A.md" ? { ...document, aliases: ["Pottery master"] } : document);
+  const alias = await search(aliasDocs, { query: "Pottery master", limit: 20 });
+  assert.equal(alias.hits[0].vaultRelativePath, "notes/A.md"); assert.ok(alias.hits.every(hit => !hit.linkCues));
+  const isolated = await searchBodyDocuments({ documents: docs, activePath: "notes/A.md", recentPaths: ["notes/B.md"], request: { query: "这篇笔记讲什么", limit: 20 } });
+  assert.ok(isolated.hits.length > 0 && isolated.hits.every(hit => hit.vaultRelativePath === "notes/A.md" && !hit.linkCues));
+  const cache = new BodySearchMemoryIndex(); reads = 0;
+  const cold = await cache.search({ documents: docs, request: { query: "clay", limit: 20 } }); const coldReads = reads;
+  const warm = await cache.search({ documents: docs, request: { query: "clay", limit: 20 } });
+  assert.deepEqual(warm.hits, cold.hits); assert.equal(reads, coldReads);
+  const pages = [];
+  for (let offset = 0; offset < cold.total; offset++) pages.push(...(await cache.search({ documents: docs, request: { query: "clay", limit: 1, offset } })).hits);
+  assert.deepEqual(pages, cold.hits, "the neighborhood is computed before slicing, so page size and warm cache cannot alter rank or cues"); cache.dispose();
+  const many = Array.from({ length: 21 }, (_, index) => ({ vaultRelativePath: `notes/N${index}.md`, contentRevision: candidates[0].contentRevision, targets: index === 0 || index === 20 ? ["Guide"] : [] }));
+  assert.equal(knowledgeLinkNeighborhood(many, docs, new Set(many.map(candidate => candidate.vaultRelativePath))).boosted.size, 0, "a candidate outside the first twenty cannot form a shared-link vote");
+  let distributedBoundary = false;
+  for (let padding = 200; padding < 600 && !distributedBoundary; padding++) {
+    const sources = Array.from({ length: 4 }, (_, index) => ({ vaultRelativePath: `notes/${index}${"x".repeat(padding)}.md`, contentRevision: candidates[0].contentRevision, targets: [`Target${Math.floor(index / 2)}`] }));
+    const expected = [0, 1].map(index => ({ schemaVersion: 1 as const, readStatus: "unread" as const, label: "可能相关" as const, vaultRelativePath: `notes/Target${index}.md`, title: `Target${index}`,
+      via: sources.slice(index * 2, index * 2 + 2).map(({ vaultRelativePath, contentRevision }) => ({ vaultRelativePath, contentRevision })) }));
+    const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+    if (bytes({ linkCues: expected }) <= 2400 && expected.reduce((sum, cue) => sum + bytes({ linkCues: [cue] }) - 1, 0) > 2400) {
+      const bounded = knowledgeLinkNeighborhood(sources, expected.map(cue => ({ vaultRelativePath: cue.vaultRelativePath, title: cue.title })), new Set(sources.map(source => source.vaultRelativePath)));
+      assert.equal([...bounded.cues.values()].flat().length, 1);
+      assert.ok([...bounded.cues.values()].reduce((sum, cues) => sum + bytes({ linkCues: cues }) - 1, 0) <= 2400);
+      distributedBoundary = true;
+    }
+  }
+  assert.ok(distributedBoundary, "the independent fixture crosses 2400B specifically because each owner adds its own field/array wrapper");
+  console.log("Candidate link neighborhood: real wiki/Markdown parsing, reciprocal/shared one-time 3% gain, single-link rejection, unread cue, exact/current isolation and cache/paging parity PASS");
 }
 
 async function withCheckpointTask<T>(onTask: () => void, action: () => Promise<T>): Promise<T> {
@@ -32,6 +101,307 @@ async function withCheckpointTask<T>(onTask: () => void, action: () => Promise<T
     if (descriptor) Object.defineProperty(globalThis, "scheduler", descriptor);
     else Reflect.deleteProperty(globalThis, "scheduler");
   }
+}
+
+export async function runKnowledgeAnchorNavigationTests(): Promise<void> {
+  const lines = ["---", "description: |", "  ## Property fake", "  property ^property", "---", "# Root", "## Exact heading", "First claim.",
+    "### Child", "Child detail.", "## Tail", "Tail detail.", "Setext heading", "==============", "Setext detail.",
+    "```md", "## Code fake", "code ^code", "```", "    ## Indented fake", "    code ^indented", "Inline `^inline` example.", "",
+    "Paragraph first.", "Paragraph second. ^paragraph", "", "> Quote first paragraph.", ">", "> Quote second paragraph.", "", "^quote", "",
+    "- First list item.", "  Continued detail.", "", "- Second list item.", "", "^list", "", "## Duplicate", "One.", "## Duplicate", "Two.",
+    "", "First repeated block. ^repeated", "", "Second repeated block. ^repeated"];
+  const path = "notes/anchor-development.md";
+  const locate = (anchor: string) => locateKnowledgeAnchor(path, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", lines, anchor);
+  const line = (text: string) => lines.indexOf(text) + 1;
+  const heading = locate("Exact heading");
+  assert.equal(heading.status, "located");
+  if (heading.status === "located") {
+    assert.equal(heading.lineStart, line("## Exact heading"));
+    assert.equal(heading.lineEnd, line("## Tail") - 1, "a heading range includes its nested child but stops before its sibling");
+  }
+  const setext = locate("Setext heading");
+  assert.equal(setext.status, "located");
+  if (setext.status === "located") assert.equal(setext.lineStart, line("Setext heading"));
+  for (const [anchor, start, end] of [["^paragraph", "Paragraph first.", "Paragraph second. ^paragraph"],
+    ["^quote", "> Quote first paragraph.", "^quote"], ["^list", "- First list item.", "^list"]]) {
+    const block = locate(anchor);
+    assert.equal(block.status, "located");
+    if (block.status === "located") { assert.equal(block.lineStart, line(start)); assert.equal(block.lineEnd, line(end)); }
+    assert.equal(block.readStatus, "unread");
+    assert.deepEqual(normalizeKnowledgeAnchorLocation(block, path, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", lines.length), block);
+  }
+  const inlineItem = locateKnowledgeAnchor(path, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ["- First item", "- Second item ^item", "  Continuation.", "- Third item"], "^item");
+  assert.equal(inlineItem.status, "located");
+  if (inlineItem.status === "located") { assert.equal(inlineItem.lineStart, 2); assert.equal(inlineItem.lineEnd, 3); }
+  for (const anchor of ["Property fake", "Code fake", "Indented fake", "^property", "^code", "^indented", "^inline", "Missing"]) {
+    const result = locate(anchor); assert.equal(result.status, "not_located");
+    if (result.status === "not_located") assert.equal(result.reason, "missing");
+    assert.equal("lineStart" in result, false);
+  }
+  for (const anchor of ["Duplicate", "^repeated"]) {
+    const result = locate(anchor); assert.equal(result.status, "not_located");
+    if (result.status === "not_located") assert.equal(result.reason, "ambiguous");
+  }
+  const invalid = locate("^bad_id");
+  assert.equal(invalid.status, "not_located");
+  if (invalid.status === "not_located") assert.equal(invalid.reason, "invalid");
+  const shifted = [...lines]; shifted.splice(5, 0, "New body preface.", "");
+  const fresh = locateKnowledgeAnchor(path, "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", shifted, "Exact heading");
+  assert.equal(fresh.status, "located");
+  if (fresh.status === "located" && heading.status === "located") assert.equal(fresh.lineStart, heading.lineStart + 2);
+  const literalHash = locateKnowledgeAnchor(path, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ["# #Literal", "First.", "# Literal", "Second."], "#Literal");
+  assert.equal(literalHash.status, "located");
+  if (literalHash.status === "located") assert.equal(literalHash.lineStart, 1, "a literal hash in the heading name is never stripped");
+  console.log("Knowledge anchors: exact heading/Setext/paragraph and multi-paragraph containers, duplicate/missing/code rejection and relocation PASS");
+}
+
+export async function runKnowledgeBodySearchOutlineEligibilityTests(): Promise<void> {
+  const body = (lineCount: number, headingCount = 3, characters?: number) => {
+    const lines = Array.from({ length: lineCount }, () => "Ordinary body.");
+    for (let index = 0; index < headingCount; index++) lines[index * 4] = `${index ? "##" : "#"} Section ${index}`;
+    lines[1] = "OUTLINE_MID_TOKEN is local evidence.";
+    let text = lines.join("\n");
+    if (characters !== undefined) { assert.ok(text.length <= characters); lines[2] += "q".repeat(characters - text.length); text = lines.join("\n"); }
+    return text;
+  };
+  const cases = [
+    { scenario: "medium-multiple-sections", body: body(40), expected: true },
+    { scenario: "short-multiple-headings", body: body(12), expected: false },
+    { scenario: "long-without-headings", body: body(160, 0), expected: false },
+    { scenario: "one-fragment-line-boundary", body: body(24), expected: false },
+    { scenario: "second-fragment-by-line", body: body(25), expected: true },
+    { scenario: "one-fragment-character-boundary", body: body(12, 3, 2400), expected: false },
+    { scenario: "second-fragment-by-character", body: body(12, 3, 2401), expected: true },
+    { scenario: "two-headings-medium-body", body: body(40, 2), expected: false },
+    { scenario: "extreme-length-fallback", body: body(120, 1), expected: true },
+    { scenario: "long-properties-short-body", prefix: `---\n${Array.from({ length: 125 }, (_, index) => `field${index}: draft`).join("\n")}\n---\n`, body: body(12), expected: false },
+    { scenario: "medium-body-with-property-offsets", prefix: "---\naliases: [Independent development source]\n---\n", body: body(40), expected: true }
+  ];
+  const rows: { scenario: string; bodyLines: number; bodyCharacters: number; headings: number; expected: boolean; actual: boolean }[] = [];
+  for (const fixture of cases) {
+    const content = `${fixture.prefix ?? ""}${fixture.body}`;
+    const result = await search([note(`${fixture.scenario}.md`, content)], { query: "OUTLINE_MID_TOKEN", limit: 1 });
+    assert.equal(result.hits.length, 1);
+    const outline = result.hits[0].outline;
+    rows.push({ scenario: fixture.scenario, bodyLines: fixture.body.split("\n").length, bodyCharacters: fixture.body.length,
+      headings: parseMarkdownHeadings(content.split("\n")).length, expected: fixture.expected, actual: Boolean(outline) });
+    if (outline) {
+      assert.equal(verifyKnowledgeOutlineLines(outline, content.split("\n")), true);
+      assert.equal(outline.entries[0].lineStart, (fixture.prefix?.split("\n").length ?? 1), "outline coordinates retain original source lines after properties");
+    }
+  }
+  console.log("Outline readability development evidence:", JSON.stringify(rows));
+  assert.deepEqual(rows.filter(row => row.actual !== row.expected), [], "multi-section navigation follows body fragment boundaries, not raw document size");
+  console.log("Knowledge outline eligibility: medium sections, short complete notes, heading-free text, exact fragment boundaries and property exclusions PASS");
+}
+
+export async function runKnowledgeBodySearchOutlineTests(): Promise<void> {
+  const structured = ["---", "description: |", "  # Property fake", "---", "# Main", "OUTLINE_DEV_TOKEN is local evidence.",
+    "## Parent", "Body.", "```md", "# Fence fake", "## Fence child fake", "```", "### Child", "Child body.",
+    "    # Indented fake", "## Sibling", "Sibling body.", "Setext ending", "==============", ...Array.from({ length: 125 }, () => "Ordinary background.")].join("\r\n");
+  const lines = structured.split(/\r\n|\n|\r/u);
+  const headings = parseMarkdownHeadings(lines);
+  assert.deepEqual(headings.map(heading => heading.heading), ["Main", "Parent", "Child", "Sibling", "Setext ending"]);
+  const outline = createKnowledgeDocumentOutline(headings, lines, "revision-structural")!;
+  assert.equal(outline.entries[0].lineEnd, 17, "a parent outline range ends before the next same-level heading");
+  assert.equal(outline.entries[1].lineEnd, 15);
+  assert.equal(outline.entries[2].lineEnd, 15);
+  assert.equal(outline.entries[3].lineEnd, 17);
+  assert.equal(outline.entries[4].lineStart, 18);
+  assert.equal(outline.readStatus, "unread");
+  assert.equal(verifyKnowledgeOutlineLines(outline, lines), true);
+  assert.deepEqual(normalizeKnowledgeDocumentOutline(outline, "revision-structural", lines.length), outline);
+  const immutable: Readonly<{ label: string; outline?: typeof outline }> = Object.freeze({ label: "body preserved", outline });
+  const smaller = fitKnowledgeOutlines([immutable], values => (values[0].outline?.entries.length ?? 0) <= 2);
+  assert.equal(Object.isFrozen(smaller[0]), true, "shortened navigation preserves the result's frozen-object invariant");
+  assert.equal(Object.isFrozen(smaller[0].outline), true);
+  assert.equal(immutable.outline!.entries.length, 5);
+  const removed = fitKnowledgeOutlines([immutable], values => !Object.hasOwn(values[0], "outline"));
+  assert.equal(Object.isFrozen(removed[0]), true, "removing navigation also preserves the frozen result");
+  assert.equal(removed[0].label, immutable.label);
+  assert.equal(fitKnowledgeOutlines([immutable], () => true)[0], immutable, "unchanged results retain their original object");
+  const shortLines = ["# Short", "Body.", "## One", "Body.", "## Two", "Body."];
+  assert.equal(createKnowledgeDocumentOutline(parseMarkdownHeadings(shortLines), shortLines, "short"), undefined);
+  const longCharacters = ["# Long", "Background ".repeat(800), "## Tail", "Body."];
+  assert.ok(createKnowledgeDocumentOutline(parseMarkdownHeadings(longCharacters), longCharacters, "long-by-characters"));
+
+  const denseLines = Array.from({ length: 40 }, (_, index) => `## Heading ${index} ${"长标题".repeat(16)}\nDetails.\nMore background.\nFurther background.`).join("\n").split("\n");
+  const dense = createKnowledgeDocumentOutline(parseMarkdownHeadings(denseLines), denseLines, "dense")!;
+  assert.equal(dense.totalHeadings, 40);
+  assert.equal(dense.truncated, true);
+  assert.ok(dense.entries.length <= KNOWLEDGE_OUTLINE_LIMITS.entriesPerDocument);
+  assert.ok(knowledgeOutlineCharacters(dense) <= KNOWLEDGE_OUTLINE_LIMITS.totalCharacters);
+
+  let reads = 0;
+  const document = (path: string, content: string) => note(path, content, { revisionKey: path, read: async () => {
+    reads++; return { content, contentRevision: `sha256:${path}` };
+  } });
+  const documents = [document("short.md", "# Short\nOUTLINE_DEV_TOKEN is concise."),
+    ...Array.from({ length: 5 }, (_, index) => document(`long-${index}.md`, structured))];
+  const memory = new BodySearchMemoryIndex();
+  try {
+    const options = { documents, request: { query: "OUTLINE_DEV_TOKEN", limit: 100 } };
+    const cold = await memory.search(options);
+    const warm = await memory.search(options);
+    assert.equal(reads, documents.length, "outlines reuse the same body reads and warm statistics");
+    assert.deepEqual(warm.hits, cold.hits);
+    const selected = cold.hits.filter(hit => hit.outline);
+    const longPaths = [...new Set(cold.hits.filter(hit => hit.vaultRelativePath !== "short.md").map(hit => hit.vaultRelativePath))];
+    assert.deepEqual(selected.map(hit => hit.vaultRelativePath), longPaths.slice(0, 3));
+    assert.equal(cold.hits.find(hit => hit.vaultRelativePath === "short.md")!.outline, undefined);
+    assert.ok(selected.reduce((sum, hit) => sum + hit.outline!.entries.length, 0) <= KNOWLEDGE_OUTLINE_LIMITS.totalEntries);
+    assert.ok(selected.reduce((sum, hit) => sum + knowledgeOutlineCharacters(hit.outline!), 0) <= KNOWLEDGE_OUTLINE_LIMITS.totalCharacters);
+    for (const hit of selected) {
+      assert.equal(hit.outline!.contentRevision, hit.contentRevision);
+      assert.equal(hit.excerpt, sliceKnowledgeSourceSpan(lines, hit));
+      assert.ok(hit.lineEnd < hit.outline!.entries.at(-1)!.lineEnd, "navigation never widens the body excerpt's read range");
+    }
+    const changedContent = structured.replace("## Sibling", "## Revised sibling");
+    const changed = note("long-0.md", changedContent, { revisionKey: "changed", read: async () => ({ content: changedContent, contentRevision: "revision-new" }) });
+    const fresh = await memory.search({ ...options, documents: [changed] });
+    assert.equal(fresh.hits[0].outline!.contentRevision, "revision-new");
+    assert.ok(fresh.hits[0].outline!.entries.some(entry => entry.heading === "Revised sibling"));
+  } finally { memory.dispose(); }
+  console.log("Knowledge outlines: true hierarchy, property/code exclusions, long/short files, first-three selection, bounded totals and revisions PASS");
+}
+
+export async function runKnowledgeBodySearchMetadataTests(): Promise<void> {
+  const paragraph = "The glass samples stay in the north drawer.\nCount the lenses before packing.";
+  const cases = [
+    { query: "Nacre Atlas", metadata: { title: "Nacre Atlas" }, properties: "status: draft", heading: "# Nacre Atlas", source: "title" },
+    { query: "Tidal Compass", metadata: { title: "Field kit", aliases: ["Tidal Compass"] }, properties: "aliases: [Tidal Compass]", heading: "Field kit\n========", source: "alias" },
+    { query: "reserve-batch", metadata: { title: "Field kit", tags: ["#reserve-batch"] }, properties: "tags: [reserve-batch]", heading: "# Field kit", source: "tag" },
+  ] as const;
+  for (const fixture of cases) {
+    const content = ["\uFEFF---", fixture.properties, "---", "", fixture.heading, "", paragraph, "", "## Later notes", "A separate paragraph concerns the empty crates."].join("\r\n");
+    const document = note("metadata-fixture.md", content, fixture.metadata);
+    const result = await search([document], { query: fixture.query });
+    assert.ok(result.hits.length > 0);
+    for (const hit of result.hits) {
+      assert.equal(hit.excerpt, paragraph, "metadata matches deliver the first actual paragraph, excluding properties and headings");
+      assert.deepEqual(hit.matchSources, [fixture.source]);
+      assert.equal(hit.sectionTitle, fixture.metadata.title);
+      assert.equal(hit.excerpt, sliceKnowledgeSourceSpan(content.split(/\r\n|\n|\r/u), hit));
+      assert.equal(hit.contentRevision, "sha256:metadata-fixture.md");
+    }
+  }
+
+  const preciseBody = ["---", "aliases: [Tidal Compass]", "---", "# Tidal Compass", "A short introduction without the search name.", "",
+    ...Array.from({ length: 90 }, () => "Background about storage boxes."), "Tidal Compass uses the eastern loading gate."].join("\n");
+  const precise = (await search([note("precise.md", preciseBody, { title: "Field kit", aliases: ["Tidal Compass"] })], { query: "Tidal Compass" })).hits.find(hit => hit.matchSources?.includes("body"))!;
+  assert.ok(precise.lineStart > 70, "a real body match stays at its source position even when properties and headings repeat the name");
+  assert.match(precise.excerpt, /eastern loading gate/u);
+  assert.deepEqual(precise.matchSources, ["alias", "body"]);
+  assert.equal(precise.excerpt, sliceKnowledgeSourceSpan(preciseBody.split("\n"), precise));
+
+  const boilerplateBody = ["---", "status: draft", "---", "# Nacre Atlas", "", paragraph, "",
+    ...Array.from({ length: 90 }, () => "Background about storage boxes."), "这里的笔记和记录稍后再补充。"].join("\n");
+  for (const query of ["关于Nacre Atlas的笔记有哪些？", "找一下Nacre Atlas相关的记录"]) {
+    const result = await search([note("metadata-with-boilerplate.md", boilerplateBody, { title: "Nacre Atlas" })], { query });
+    assert.ok(result.hits.length > 0);
+    assert.equal(result.hits[0].excerpt, paragraph, "body boilerplate alone does not replace the first substantive paragraph for a metadata-led query");
+    assert.ok(result.hits[0].matchSources?.includes("title"));
+  }
+  const partialName = "青岚跨海物资转运总方案";
+  const partialBody = ["# Field kit", "An unrelated introduction.", "", ...Array.from({ length: 90 }, () => "Background about storage boxes."), "青岚装箱应先检查密封。"].join("\n");
+  const partialHit = (await search([note("metadata-partial-name.md", partialBody, { aliases: [partialName] })], { query: `关于${partialName}的笔记有哪些？` })).hits[0];
+  assert.ok(partialHit.lineStart > 70, "genuine partial-name bigrams retain their body position even at a small existing token weight");
+  assert.match(partialHit.excerpt, /青岚装箱/u);
+  assert.equal(partialHit.excerpt, sliceKnowledgeSourceSpan(partialBody.split("\n"), partialHit));
+
+  const longParagraph = "📌Lens measurements ".repeat(1500);
+  const longContent = `---\naliases: [Copper Beacon]\n---\n\n# Field kit\n\n${longParagraph}\n\nA later paragraph.`;
+  let reads = 0;
+  const longDocument = note("long-metadata.md", longContent, { aliases: ["Copper Beacon"], revisionKey: "first", read: async () => {
+    reads++; return { content: longContent, contentRevision: "sha256:long-metadata" };
+  } });
+  const memory = new BodySearchMemoryIndex();
+  try {
+    const options = { documents: [longDocument], request: { query: "Copper Beacon" } };
+    const cold = await memory.search(options);
+    const warm = await memory.search(options);
+    assert.equal(reads, 1);
+    assert.deepEqual(warm.hits, cold.hits, "cached statistics retain the same metadata provenance and first body coordinates");
+    const hit = cold.hits[0];
+    assert.equal(hit.lineStart, 7);
+    assert.equal(hit.lineEnd, 7);
+    assert.equal(hit.columnStart, 0);
+    assert.ok(hit.columnEnd! > 0 && hit.columnEnd! < longParagraph.length);
+    assert.ok(hit.excerpt.length <= 3200, "metadata fallback uses the original fragment budget for long single lines");
+    assert.equal(hit.excerpt, sliceKnowledgeSourceSpan(longContent.split("\n"), hit));
+    assert.deepEqual(hit.matchSources, ["alias"]);
+  } finally { memory.dispose(); }
+  console.log("Knowledge metadata evidence: title, alias, tag, boilerplate, partial-name/body priority, bounded columns and cached provenance PASS");
+}
+
+export async function runKnowledgeBodySearchReferenceBoundaryTests(): Promise<void> {
+  const current = note("wiki/current.md", "# Current source\n\n这份书单的下一步安排是先整理卡片。", { kind: "wiki", title: "Current source" });
+  const exact = note("wiki/exact.md", "# 这篇材料\n\n下一步安排先核对纸张数量。", { kind: "wiki", title: "这篇材料" });
+  const alias = note("wiki/alias.md", "# Alias source\n\n下一步安排先统计包装规格。", { kind: "wiki", aliases: ["刚才那篇方案"] });
+  const rows: { scenario: string; expected: string[]; actual: string[]; passes: boolean }[] = [];
+  const record = async (scenario: string, documents: readonly BodySearchDocument[], query: string, expected: string[], activePath?: string, recentPaths: string[] = []) => {
+    const result = await searchBodyDocuments({ documents, request: { query }, activePath, recentPaths });
+    const actual = [...new Set(result.hits.map(hit => hit.vaultRelativePath))];
+    rows.push({ scenario, expected, actual, passes: JSON.stringify(actual) === JSON.stringify(expected) });
+  };
+  await record("exact-title-is-not-a-pronoun", [current, exact], "这篇材料", [exact.vaultRelativePath], current.vaultRelativePath);
+  await record("exact-alias-is-not-a-pronoun", [current, alias], "刚才那篇方案", [alias.vaultRelativePath], current.vaultRelativePath);
+  await record("pronoun-text-inside-a-title-is-protected", [current, exact], "找一下这篇材料", [exact.vaultRelativePath], current.vaultRelativePath);
+  const recent = note("notes/recent.md", "# Recent source\n\n下一步安排先检查封口，再登记箱数。", { title: "Recent source" });
+  await record("current-single-source-boundary", [current, exact, recent], "当前这篇里，下一步安排是什么？", [current.vaultRelativePath], current.vaultRelativePath, [recent.vaultRelativePath]);
+  await record("recent-single-source-boundary", [current, exact, recent], "刚才那篇里面，下一步安排是什么？", [recent.vaultRelativePath], undefined, [recent.vaultRelativePath]);
+  console.log("Explicit reference boundary development evidence:", JSON.stringify(rows));
+  assert.deepEqual(rows.filter(row => !row.passes), [], "exact names and single-source boundaries must both hold");
+  console.log("Knowledge explicit reference boundaries: exact title/alias, internal name text and current/recent single-source evidence PASS");
+}
+
+export async function runKnowledgeBodySearchReferenceTests(): Promise<void> {
+  const currentBody = "---\nstatus: draft\n---\n# Current source\n\nThe current source requires a silver label.\n\nA later paragraph concerns packing.";
+  const current = note("notes/current.md", currentBody, { revisionKey: "current-1" });
+  const recent = note("notes/recent.md", "# Recent source\n\nThe recent source requires a violet label.", { revisionKey: "recent-1" });
+  const matching = note("notes/matching.md", "# Matching source\nQUARTZ_TARGET appears in this separate source.", { revisionKey: "matching-1" });
+  const documents = [current, recent, matching];
+  for (const query of ["刚才那篇讲了什么？", "这篇的重点是什么？", "当前这篇有什么条件？"]) {
+    const result = await searchBodyDocuments({ documents, request: { query }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] });
+    assert.equal(result.hits.length, 1);
+    const hit = result.hits[0];
+    assert.equal(hit.vaultRelativePath, current.vaultRelativePath, "current source takes precedence over a different most-recent source");
+    assert.equal(hit.excerpt, "The current source requires a silver label.");
+    assert.equal(hit.inclusionReason, "按指代带入");
+    assert.equal(hit.score, 0, "a directly included source does not invent a keyword score");
+    assert.equal(hit.matchSources, undefined, "an unmatched source does not claim a title, alias, tag or body match");
+    assert.equal(hit.excerpt, sliceKnowledgeSourceSpan(currentBody.split("\n"), hit));
+  }
+  const fallback = await searchBodyDocuments({ documents, request: { query: "这篇的重点是什么？" }, recentPaths: ["missing.md", recent.vaultRelativePath, current.vaultRelativePath] });
+  assert.equal(fallback.hits[0].vaultRelativePath, recent.vaultRelativePath);
+  assert.equal(fallback.hits.length, 1, "only the first eligible recent source is directly included");
+  const excluded = await searchBodyDocuments({ documents, request: { query: "这篇的重点是什么？", excludePaths: [current.vaultRelativePath] }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] });
+  assert.equal(excluded.hits[0].vaultRelativePath, recent.vaultRelativePath);
+  const restricted = await searchBodyDocuments({ documents, request: { query: "这篇的重点是什么？", kinds: ["wiki"] }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] });
+  assert.equal(restricted.hits.length, 0);
+  for (const query of ["QUARTZ_TARGET", "最近读过哪些资料？", "我那个想法是什么？", "它的截止时间呢？"]) {
+    const result = await searchBodyDocuments({ documents, request: { query }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] });
+    assert.equal(result.hits.some(hit => hit.vaultRelativePath === current.vaultRelativePath), false, "ordinary questions and broad pronouns do not include browsing context");
+    assert.equal(result.hits.some(hit => hit.inclusionReason !== undefined), false);
+  }
+  const memory = new BodySearchMemoryIndex();
+  try {
+    const options = { documents, request: { query: "这篇提到的 QUARTZ_TARGET 在别处还有吗？" }, activePath: current.vaultRelativePath, recentPaths: [recent.vaultRelativePath] };
+    const full = await memory.search(options);
+    assert.equal(full.hits[0].vaultRelativePath, current.vaultRelativePath, "the current source is directly included even when only another file matches the topic");
+    assert.ok(full.hits.some(hit => hit.vaultRelativePath === matching.vaultRelativePath));
+    const first = await memory.search({ ...options, request: { ...options.request, limit: 1 } });
+    const next = await memory.search({ ...options, request: { ...options.request, limit: 1, offset: 1 } });
+    assert.deepEqual([...first.hits, ...next.hits], full.hits);
+    assert.equal(first.coverage.readFiles, 0);
+    assert.equal(next.coverage.cachedFiles, documents.length);
+    assert.equal(next.hits[0].inclusionReason, undefined);
+    const matchingCurrent = await memory.search({ ...options, activePath: matching.vaultRelativePath });
+    assert.equal(matchingCurrent.total, (await memory.search({ documents, request: options.request })).total, "moving an existing keyword hit does not duplicate it");
+    assert.equal(matchingCurrent.hits[0].inclusionReason, "按指代带入");
+    assert.ok(matchingCurrent.hits[0].matchSources?.includes("body"), "actual keyword provenance remains available when the current source really matches");
+  } finally { memory.dispose(); }
+  console.log("Knowledge explicit references: current priority, recent fallback, truthful evidence, filters, ordinary queries and warm pagination PASS");
 }
 
 export async function runKnowledgeBodySearchColumnTests(): Promise<void> {

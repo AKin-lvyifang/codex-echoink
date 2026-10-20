@@ -414,7 +414,7 @@ export class EnglishExpressionBrowser {
     if (!this.canWrite()) return menu;
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("移除此出处").setIcon("unlink").onClick(action(async () => {
-      const confirmed = await confirmModal(this.app, "移除此出处？", `仅移除“${entry.term}”与“${occurrence.sourceTitle || occurrence.date}”的这条收录关联。日记原稿、英文稿、词条和备注都保留，其它出处也不受影响。`, "移除出处", "取消");
+      const confirmed = await confirmModal(this.app, "移除此出处？", `仅移除“${entry.term}”与“${occurrence.sourceTitle || occurrence.date}”的这条收录关联。日记原稿、英文稿、词条和备注都保留，其它出处也不受影响。`, "移除出处", "取消", { deleteAction: true });
       if (!confirmed) return;
       await this.host.api.repository.removeOccurrence(entry.id, occurrence.id);
       await this.refresh();

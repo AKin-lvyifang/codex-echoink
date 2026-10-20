@@ -8,7 +8,7 @@ import type CodexForObsidianPlugin from "../main";
 import type { ResourceManagementTab } from "../settings/settings";
 import type { SettingsTab } from "../settings/settings";
 import { resolveDesktopSettingsRoute } from "../settings/desktop-settings-route";
-import { EchoInkHomeView, EchoInkLegacyHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { EchoInkWorkbenchView } from "../home/workbench-view";
 import { openObsidianGraphLeaf } from "../home/open-native-graph";
 import { isReviewHtmlPath } from "../review/schedule";
@@ -74,7 +74,7 @@ export class EchoInkViewService {
     }
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
     if (leaf.view instanceof KnowledgePageView) {
-      await leaf.view.openPage(page);
+      leaf.view.openPage(page);
       leaf.view.refreshIfSettingsChanged();
     }
   }
@@ -88,16 +88,6 @@ export class EchoInkViewService {
     }
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
     if (leaf.view instanceof TodoPageView) leaf.view.refreshIfSettingsChanged();
-  }
-
-  async activateLegacyHomeView(section: "calendar" | "todos"): Promise<void> {
-    let leaf = this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home")[0];
-    if (!leaf) {
-      leaf = this.plugin.app.workspace.getLeaf("tab");
-      await leaf.setViewState({ type: "echoink-legacy-home", active: true });
-    }
-    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
-    if (leaf.view instanceof EchoInkLegacyHomeView) await leaf.view.revealWorkbenchSection(section);
   }
 
   async activateView(options: { focusInput?: boolean } = {}): Promise<void> {

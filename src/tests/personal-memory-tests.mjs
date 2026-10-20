@@ -1,13 +1,32 @@
 import { spawnSync } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../../", import.meta.url));
-const outputDir = path.join(rootDir, ".tmp");
+const testRoot = process.env.ECHOINK_MEMORY_TEST_ROOT;
+if (!testRoot) throw new Error("Set ECHOINK_MEMORY_TEST_ROOT to the registered task directory under ~/EchoInk-TestVaults/90-任务临时");
+const allowedRoot = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
+const outputRoot = await realpath(testRoot);
+const relative = path.relative(allowedRoot, outputRoot);
+if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Memory test root must be a child of 90-任务临时");
+if (await realpath(process.env.TMPDIR || "") !== outputRoot) throw new Error("TMPDIR must match ECHOINK_MEMORY_TEST_ROOT");
+const outputDir = path.join(outputRoot, "runtime-local-checks");
+const runtimeDependencyPlugin = { name: "runtime-test-dependencies", setup(build) {
+  build.onResolve({ filter: /^(?:@earendil-works\/pi-(?:agent-core|ai|coding-agent)(?:\/.*)?|yaml)$/ }, (args) => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true }));
+  build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(rootDir, "src/tests/obsidian-shim.ts") }));
+} };
 const outputFile = path.join(outputDir, "personal-memory-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
+const focusedRecall = process.argv.includes("--recall");
+const focusedSecondary = process.argv.includes("--secondary");
+const focusedPersistence = process.argv.includes("--secondary-persistence");
+if (process.argv.slice(2).some((argument) => !["--recall", "--secondary", "--secondary-persistence"].includes(argument))
+  || [focusedRecall, focusedSecondary, focusedPersistence].filter(Boolean).length > 1) {
+  throw new Error("personal-memory-tests: unsupported argument");
+}
 
 await mkdir(outputDir, { recursive: true });
 await esbuild.build({
@@ -22,27 +41,39 @@ await esbuild.build({
       'import { runAgentSelfMigrationScenarios } from "./src/tests/agent-self-migration";',
       'import { runDreamGrowthScenarios } from "./src/tests/dream-growth";',
       'import { runDreamLedgerScenarios } from "./src/tests/dream-ledger";',
+      'import { runSecondaryMemoryPersistentRecallTests, runSecondaryMemorySupportActivityTests } from "./src/tests/secondary-memory-support-activity";',
       'import { buildEchoInkSystemConstitutionPrompt } from "./src/harness/memory/personal-memory-contracts";',
-      "await runMemoryRecallHarnessContractScenarios();",
-      "await runPersonalMemoryToolContractScenarios();",
-      "await runPersonalMemoryCorrectionTests();",
-      "await runPersonalMemoryPathSafetyScenarios();",
-      "await runAgentSelfMigrationScenarios();",
-      "await runDreamGrowthScenarios();",
-      "await runDreamLedgerScenarios();",
-      "await withPersonalMemoryFixture(async (fixture) => {",
-      "  const fixed = await fixture.repository.loadFixedContext({ memoryMode: 'normal' });",
-      "  assert.ok(fixed.agent && fixed.user && fixed.memory);",
-      "  assert.match(fixture.repository.layout.agent, /AGENT\\.md$/u);",
-      "  assert.match(fixture.repository.layout.user, /USER\\.md$/u);",
-      "  assert.match(fixture.repository.layout.memory, /MEMORY\\.md$/u);",
-      "  assert.equal(Object.hasOwn(fixed, 'personalityState'), false);",
-      "});",
-      "const constitutionPrompt = buildEchoInkSystemConstitutionPrompt();",
-      "assert.match(constitutionPrompt, /产品身份与使命/u);",
-      "assert.match(constitutionPrompt, /不得虚构事实、来源、引用、执行过程、Tool 结果或写入成功/u);",
-      "assert.doesNotMatch(constitutionPrompt, /targetId|nextCursor|outcome=created/u);",
-      'console.log("Current file-based Personal Memory acceptance: PASS");'
+      ...(focusedSecondary || focusedPersistence ? [focusedPersistence
+        ? "await runSecondaryMemoryPersistentRecallTests();"
+        : "await runSecondaryMemorySupportActivityTests();"] : [
+        "await runMemoryRecallHarnessContractScenarios();",
+        "await runPersonalMemoryCorrectionTests();"
+      ]),
+      ...(focusedRecall || focusedSecondary || focusedPersistence ? [] : [
+        "await runSecondaryMemorySupportActivityTests();",
+        "await runPersonalMemoryToolContractScenarios();",
+        "await runPersonalMemoryPathSafetyScenarios();",
+        "await runAgentSelfMigrationScenarios();",
+        "await runDreamGrowthScenarios();",
+        "await runDreamLedgerScenarios();",
+        "await withPersonalMemoryFixture(async (fixture) => {",
+        "  const fixed = await fixture.repository.loadFixedContext({ memoryMode: 'normal' });",
+        "  assert.equal(fixed.agent, ''); assert.ok(fixed.user && fixed.memory);",
+        "  assert.match(fixture.repository.layout.agent, /AGENT\\.md$/u);",
+        "  assert.match(fixture.repository.layout.user, /USER\\.md$/u);",
+        "  assert.match(fixture.repository.layout.memory, /MEMORY\\.md$/u);",
+        "  assert.equal(Object.hasOwn(fixed, 'personalityState'), false);",
+        "});",
+        "const constitutionPrompt = buildEchoInkSystemConstitutionPrompt();",
+        "assert.match(constitutionPrompt, /产品身份与使命/u);",
+        "assert.match(constitutionPrompt, /不得虚构事实、来源、引用、执行过程、Tool 结果或写入成功/u);",
+        "assert.doesNotMatch(constitutionPrompt, /targetId|nextCursor|outcome=created/u);"
+      ]),
+      focusedSecondary || focusedPersistence
+        ? 'console.log("Focused secondary Memory acceptance: PASS");'
+        : focusedRecall
+        ? 'console.log("Recall and correction Personal Memory acceptance: PASS");'
+        : 'console.log("Current file-based Personal Memory acceptance: PASS");'
     ].join("\n"),
     resolveDir: rootDir,
     sourcefile: "personal-memory-test-entry.ts",
@@ -56,7 +87,7 @@ await esbuild.build({
   platform: "node",
   target: "node22",
   format: "esm",
-  plugins: [{
+  plugins: [runtimeDependencyPlugin, {
     name: "personal-memory-obsidian-stub",
     setup(build) {
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: obsidianShimPath }));
@@ -79,6 +110,7 @@ const result = spawnSync(process.execPath, [outputFile], {
 });
 
 if (result.status !== 0) process.exit(result.status ?? 1);
+if (focusedRecall || focusedSecondary || focusedPersistence) process.exit(0);
 
 const identityPathsResult = spawnSync(process.execPath, [path.join(rootDir, "src/tests/agent-identity-paths-tests.mjs")], {
   cwd: rootDir,

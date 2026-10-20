@@ -11,6 +11,9 @@ import { FinanceWorkspace } from "../lifestyle/finance-view";
 import { DEFAULT_LIFESTYLE_SETTINGS } from "../lifestyle/settings";
 import { EMPTY_LIFESTYLE_DATA } from "../lifestyle/store-core";
 import { paidTestAccess } from "./membership-access";
+import { renderKnowledgeFolderActions } from "../settings/knowledge-folder-actions";
+import { mountSettingsEditor, type SettingsEditorHandle } from "../settings/inline-editor";
+import { disposeOriginControls } from "../settings/origin-controls";
 
 const tick = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const button = (root: HTMLElement, selector: string): HTMLButtonElement => {
@@ -178,6 +181,58 @@ async function journalRouteAndReturn() {
 
 export async function runModuleNavigationTests(): Promise<void> {
   const desktop = Platform.isDesktopApp; (Platform as any).isDesktopApp = true;
-  try { await ownerAndDraftBoundary(); await financeHeader(); await journalRouteAndReturn(); }
+  try { await ownerAndDraftBoundary(); await financeHeader(); await journalRouteAndReturn(); await folderManagementInlineEditors(); }
   finally { (Platform as any).isDesktopApp = desktop; }
+}
+
+async function folderManagementInlineEditors(): Promise<void> {
+  const host = document.body.createDiv({ cls: "echoink-settings-demo echoink-settings-aligned" });
+  const navigation = host.createDiv(), outlet = host.createDiv();
+  let scopes = ["合成资料/阅读", "合成知识/卡片"];
+  let record: { createdAt: number; files: number } | null = { createdAt: 1_700_000_000_000, files: 4 };
+  const operations = { preview: 0, rename: 0, restore: 0, refresh: 0 };
+  const service: any = { app: {}, directoryWritable: true, folderOperationBusy: false,
+    folderNameScopes: () => scopes,
+    getOriginalDirectoryStatus: async () => record,
+    previewFolderNames: async () => { operations.preview++; throw new Error("opening must not preview names"); },
+    applyFolderNamePreview: async () => { operations.rename++; throw new Error("opening must not rename files"); },
+    restoreOriginalDirectories: async () => { operations.restore++; throw new Error("opening must not restore files"); } };
+  let editor: SettingsEditorHandle | undefined;
+  const find = (root: ParentNode, text: string) => {
+    const target = Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(element =>
+      element.querySelector(".echoink-settings-navigation-title")?.textContent === text || element.textContent?.trim() === text);
+    assert(target, `Missing folder-management action: ${text}`); return target;
+  };
+  const draw = async () => {
+    disposeOriginControls(navigation); navigation.empty();
+    renderKnowledgeFolderActions(navigation, service, "zh-CN", async () => { operations.refresh++; }, undefined,
+      modal => { editor = mountSettingsEditor(modal, outlet.createDiv(), "返回设置", () => {}); });
+    await tick();
+  };
+  try {
+    await draw(); find(navigation, "文件夹名称优化").click();
+    assert.equal(editor!.host.querySelector(".echoink-settings-inline-title")?.textContent, "文件夹名称优化");
+    for (const scope of scopes) assert(editor!.host.textContent?.includes(scope), "inline mount retains each actual directory option");
+    assert.equal(editor!.host.querySelectorAll('[role="checkbox"], input[type="checkbox"]').length >= scopes.length, true);
+    assert.equal(find(editor!.host, "预览改名").disabled, true, "preview still requires a selected directory");
+    find(editor!.host, "取消").click(); assert.equal(editor!.disposed, true);
+
+    find(navigation, "复原仓库").click();
+    assert.equal(editor!.host.querySelector(".echoink-settings-inline-title")?.textContent, "复原仓库");
+    assert(editor!.host.textContent?.includes("4 个文件"));
+    find(editor!.host, "复原目录").click();
+    assert(editor!.host.textContent?.includes("保留最新内容和新增文件"), "inline restore keeps the original consequence confirmation");
+    find(editor!.host, "取消").click(); find(editor!.host, "返回").click(); assert.equal(editor!.disposed, true);
+
+    scopes = []; record = null; await draw();
+    find(navigation, "文件夹名称优化").click();
+    assert(editor!.host.textContent?.includes("尚未绑定可优化的目录。"));
+    assert.equal(find(editor!.host, "预览改名").disabled, true); find(editor!.host, "取消").click();
+    find(navigation, "复原仓库").click();
+    assert(editor!.host.textContent?.includes("暂无可复原记录"));
+    assert.equal(Array.from(editor!.host.querySelectorAll("button")).some(element => element.textContent?.trim() === "复原目录"), false);
+    find(editor!.host, "返回").click();
+    assert.deepEqual(operations, { preview: 0, rename: 0, restore: 0, refresh: 0 }, "opening and cancelling either inline editor performs no file operation");
+  } finally { editor?.(); disposeOriginControls(host); host.remove(); }
+  console.log("PASS folder management: real navigation → inline mount retains titles, directory/empty states and confirmation; opening/cancelling performs zero file operations");
 }

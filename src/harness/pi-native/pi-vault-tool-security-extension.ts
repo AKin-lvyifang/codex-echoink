@@ -205,7 +205,7 @@ implements PiVaultToolExecutionSecurityPort {
   ): Promise<Readonly<{ block: true; reason: PiVaultToolBlockReason }> | void> {
     if (this.options.isToolAllowed) {
       try {
-        if (!await this.options.isToolAllowed(event.toolName, event.input as Record<string, unknown>)) return block("tool_policy_blocked");
+        if (!await this.options.isToolAllowed(event.toolName, event.input)) return block("tool_policy_blocked");
       } catch {
         return block("authorization_failed");
       }

@@ -1,4 +1,4 @@
-import { knowledgeRootRole, knowledgeRolePath, rebaseKnowledgePathRecords } from "./root-paths";
+import { knowledgeRootRole, knowledgeRolePath, rebaseKnowledgePathRecords, type KnowledgeFolderBindings, type KnowledgeRootRole } from "./root-paths";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgeErrorDetail } from "./initialization-error";
 import { createHash, randomUUID } from "node:crypto";
@@ -180,6 +180,9 @@ export interface KnowledgeInitializationBatchResult {
 export interface KnowledgeInitializationHost {
   readonly vaultRootPath: string;
   readonly privateRootPath: string;
+  /** Desktop projection; legacy/shared hosts retain the complete role contract. */
+  readonly roleScope?: readonly KnowledgeRootRole[];
+  folderBindings?(): KnowledgeFolderBindings | null | undefined;
   now(): number;
   folderBindingsRevision?(): number | undefined;
   resolvePath?(relativePath: string): string;
@@ -251,6 +254,7 @@ export class KnowledgeBaseInitializer {
   constructor(private readonly host: KnowledgeInitializationHost) {}
 
   private actualPath(relativePath: string): string { return this.host.resolvePath?.(relativePath) ?? relativePath; }
+  private roots(): readonly KnowledgeBaseRoot[] { return KNOWLEDGE_INITIALIZATION_ROOTS.filter(role => !this.host.roleScope || this.host.roleScope.includes(role)); }
 
   private isReusableGuide(content: string): boolean {
     const createdAt = echoInkKnowledgeGuideCreatedAt(content);
@@ -312,7 +316,7 @@ export class KnowledgeBaseInitializer {
   /** 每次由真实 Vault 路径类型派生，不读取历史 initialized 标记。 */
   async inspectStructure(): Promise<Readonly<KnowledgeBaseStructureSnapshot>> {
     const kinds = await Promise.all(
-      KNOWLEDGE_INITIALIZATION_ROOTS.map(async (root) => ({
+      this.roots().map(async (root) => ({
         root,
         kind: await this.host.pathKind(this.actualPath(root))
       }))
@@ -351,7 +355,8 @@ export class KnowledgeBaseInitializer {
     if (this.runFlight) throw new Error("知识库初始化正在运行，暂时不能恢复目录。");
     const createdRoots: KnowledgeBaseRoot[] = [];
     const warnings: string[] = [];
-    const total = KNOWLEDGE_INITIALIZATION_ROOTS.length;
+    const roots = this.roots();
+    const total = roots.length;
     const emit = (completed: number, currentRoot: KnowledgeBaseRoot | null) => {
       const progress = Object.freeze({
         completed,
@@ -366,8 +371,8 @@ export class KnowledgeBaseInitializer {
       }
     };
     emit(0, null);
-    for (let index = 0; index < KNOWLEDGE_INITIALIZATION_ROOTS.length; index += 1) {
-      const root = KNOWLEDGE_INITIALIZATION_ROOTS[index];
+    for (let index = 0; index < roots.length; index += 1) {
+      const root = roots[index];
       if (!root) continue;
       try {
         const kind = await this.host.pathKind(this.actualPath(root));
@@ -424,6 +429,12 @@ export class KnowledgeBaseInitializer {
     for (const file of files) {
       const relativePath = normalizeRelativePath(file.path);
       if (!relativePath || shouldExcludeFile(relativePath, file)) {
+        ignored += 1;
+        continue;
+      }
+      const retainedRole = knowledgeRootRole(relativePath, this.host.folderBindings?.());
+      if (retainedRole && this.host.roleScope && !this.host.roleScope.includes(retainedRole)) {
+        // A retired purpose is no longer an assignment or an implicit import source.
         ignored += 1;
         continue;
       }
@@ -573,7 +584,7 @@ export class KnowledgeBaseInitializer {
     const itemByPath = new Map(job.items.map((item) => [item.sourcePath, item] as const));
     const planned = new Map<string, KnowledgeInitializationRole>();
     for (const assignment of assignments) {
-      if (!isKnowledgeInitializationRole(assignment.role)) {
+      if (!isKnowledgeInitializationRole(assignment.role) || (assignment.role !== "keep" && this.host.roleScope && !this.host.roleScope.includes(assignment.role))) {
         throw new Error("无效的知识库目录角色。");
       }
       const normalizedSource = normalizeRelativePath(assignment.sourcePath);
@@ -752,7 +763,7 @@ export class KnowledgeBaseInitializer {
   private async createDirectories(job: KnowledgeInitializationJob, signal: AbortSignal): Promise<void> {
     job.phase = "create_directories";
     await this.persistJob(job);
-    for (const root of KNOWLEDGE_INITIALIZATION_ROOTS) {
+    for (const root of this.roots()) {
       assertNotCancelled(signal);
       await this.optionalStep(job, `创建目录 ${root}`, async () => {
         const kind = await this.host.pathKind(this.actualPath(root));

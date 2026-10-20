@@ -6,7 +6,7 @@ export class TaskNavigationState {
   private generation = 0;
   readonly listPositions: Map<string, { scrollTop: number; taskId?: string }>;
   constructor(private readonly workspace: () => TaskWorkspace, cacheKey: object = workspace) {
-    this.listPositions = listPositions.get(cacheKey) ?? new Map();
+    this.listPositions = listPositions.get(cacheKey) ?? new Map<string, { scrollTop: number; taskId?: string }>();
     listPositions.set(cacheKey, this.listPositions);
   }
   get page(): TaskPage { return this.workspace().page; }

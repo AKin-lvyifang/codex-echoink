@@ -4,7 +4,6 @@ import { DesktopMemorySettings } from "./desktop-memory-settings";
 import { UserProfileSettingsController } from "./user-profile-settings";
 import { renderKnowledgeLinkingSection } from "./knowledge-linking-section";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
-import { knowledgeRoleStatus, resolveKnowledgeRoleTarget } from "../knowledge-base/root-paths";
 import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
 import { renderSelectionAskPluginRow, renderSelectionAnnotationSettings, type SelectionAnnotationSettingsController } from "./selection-annotation-settings";
 import { renderDesktopModuleSettings as mountDesktopModuleSettings, type DesktopModuleId } from "./desktop-module-settings";
@@ -24,13 +23,9 @@ import { renderEnglishDiaryActivity } from "./english-diary-activity";
 import { renderAppearancePicker } from "./appearance-picker";
 import { renderObsidianCliStatus } from "./obsidian-cli-status";
 import { DESKTOP_SETTINGS_TAB_ICONS, SETTINGS_TAB_ICONS } from "./settings-tab-icons";
-import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
-import { renderManualDreamAction } from "./manual-dream-action";
 import { OriginSetting } from "./origin-setting";
 import { mergeKnowledgeMaintenanceHistory, renderKnowledgeMaintenanceHistoryList, renderKnowledgeMaintenanceRecordDetail, openKnowledgeMaintenancePath } from "./knowledge-maintenance-history";
-import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, createOriginSlider, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
-import { renderSettingsKnowledgeDashboard } from "./knowledge-dashboard";
-import { BUILTIN_SKILLS } from "../harness/resources/builtin-skills";
+import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
 import { mountSettingsEditor, type SettingsEditorHandle } from "./inline-editor";
 import { renderProviderServicePicker } from "./provider-service-picker";
 import { renderCompactAbout } from "./about-section";
@@ -38,7 +33,7 @@ import { ReleaseUpdateController } from "./release-update";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, normalizeDesktopSettingsRoute, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsRoute, type DesktopSettingsTab } from "./desktop-settings-route";
 import { GENERAL_ASSISTANT_ID } from "../agents/types";
 import { checkAgentSkill, mcpToolCapabilityId } from "../agents/capability-policy";
-import { Modal, Notice, Platform, PluginSettingTab, Setting, TFile, type TFolder, normalizePath, setIcon, setTooltip } from "obsidian";
+import { Modal, Notice, Platform, PluginSettingTab, Setting, setIcon, setTooltip } from "obsidian";
 import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obsidian-settings";
 import { desktopSettingsCategoryDefinitions, settingsCategoryDefinitions } from "./settings-search";
 import type CodexForObsidianPlugin from "../main";
@@ -48,10 +43,6 @@ import {
   type PersonalMemoryKind,
   type PersonalMemoryRecord
 } from "../harness/memory/personal-memory-contracts";
-import { initialTemplateSelectionStatus } from "../harness/memory/cognitive-system";
-import {
-  AGENT_TEMPLATES
-} from "../harness/memory/agent-templates";
 import {
   isBuiltinSkillId,
   type BuiltinSkillId
@@ -59,9 +50,7 @@ import {
 import type {
   BuiltinSkillRuntimeSnapshot
 } from "../harness/resources/skill-runtime";
-import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { normalizeJournalDirectory } from "../home/journal-directory";
-import { ECHOINK_HOME_MODULES } from "../home/home-modules";
 import { LifestyleSettingsPanel } from "../lifestyle/settings-panel";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 import type { LifestyleKind } from "../lifestyle/settings";
@@ -69,8 +58,6 @@ import { TODO_SOURCE_PATH } from "../home/todo-store";
 import { formatAcceleratorForDisplay, normalizeAccelerator, recordAcceleratorFromEvent } from "../core/quick-hotkey";
 import type { QuickChatRegistrationResult } from "../plugin/quick-chat-window";
 import { readNativeJournalSettings, saveNativeJournalFolder } from "../home/native-journal";
-import { AgentIdentityModal } from "../ui/agent-identity-modal";
-import { renderAnimateIcon } from "../ui/animate-icon";
 import {
   mountEchoInkOnboardingCoachmark,
   type EchoInkOnboardingCoachmarkHandle
@@ -127,9 +114,9 @@ import type { WorkspaceResourceSnapshot } from "../types/app-server";
 import {
   ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_STEPS
 } from "../knowledge-base/knowledge-maintenance-protocol";
-import { KnowledgeFolderSection } from "./knowledge-folder-section";
 import {
   applyAmicroButton,
+  applyDeleteButton,
   confirmAmicroButton,
   setAmicroButtonPending
 } from "./amicro-buttons";
@@ -182,13 +169,6 @@ import {
   type EchoInkOnboardingStep
 } from "./onboarding";
 import { openExternalInElectron } from "../core/electron";
-import type { KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
-import {
-  clearKnowledgeDashboardHealthTooltips,
-  createKnowledgeDashboardTooltipState,
-  disposeKnowledgeDashboardTooltipState,
-  type KnowledgeDashboardTooltipState
-} from "../ui/codex-view/knowledge-dashboard";
 
 type PersonalMemoryControlState = Awaited<
   ReturnType<CodexForObsidianPlugin["getEchoInkPersonalMemoryState"]>
@@ -199,14 +179,6 @@ type KnowledgeMaintenancePreferenceControlState = Awaited<
     "getEchoInkKnowledgeMaintenancePreferenceState"
   ]>
 >;
-
-interface AgentProfileCardRefs {
-  readonly templateBtn: HTMLElement;
-  readonly templateLabel: HTMLElement;
-  readonly pickerPanel: HTMLElement;
-  readonly collapsedTemplateLabel: string;
-  readonly expandedTemplateLabel: string;
-}
 
 interface BuiltinSkillEditorState {
   resourceId: string;
@@ -225,7 +197,6 @@ interface NativeSettingsNavigation {
 }
 
 const settingsContainerFocusIntents = new WeakMap<HTMLElement, string>();
-const PERSONALITY_TEMPLATE_FOCUS_INTENT = "explicit:general:personality-template";
 
 export class CodexSettingTab extends PluginSettingTab {
   private resourceSnapshot: WorkspaceResourceSnapshot | null = null;
@@ -250,16 +221,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private knowledgePreferenceLoadError: string | null = null;
   private knowledgeLinkingTaskId: string | null = null;
   private knowledgeLinkingCleanup: (() => void) | null = null;
-  private knowledgeInitSection: KnowledgeFolderSection | null = null;
   private knowledgePreferenceClosePromptRunning = false;
-  private knowledgeDashboardEl: HTMLElement | null = null;
-  private knowledgeDashboardSnapshot: KnowledgeBaseDashboardSnapshot | null = null;
-  private knowledgeDashboardExpanded = true;
-  private knowledgeDashboardLoading = false;
-  private knowledgeDashboardError = "";
-  private knowledgeDashboardRequestId = 0;
-  private readonly knowledgeDashboardTooltipState: KnowledgeDashboardTooltipState =
-    createKnowledgeDashboardTooltipState();
   private displayFrame: number | null = null;
   private displayFrameWindow: Window | null = null;
   private settingsTitleEl: HTMLElement | null = null;
@@ -385,7 +347,10 @@ export class CodexSettingTab extends PluginSettingTab {
     else if (/knowledge:restore/u.test(route.focus ?? "")) { this.desktopModuleExpanded.add("knowledge"); this.settingsFocusIntent = "explicit:module:knowledge"; }
     else if (/^pdf-reading/u.test(route.focus ?? "")) this.openPdfReadingDetail();
     else if (/^finance/u.test(route.focus ?? "")) this.openLifestyleDetail("finance");
-    else if (/^english-diary/u.test(route.focus ?? "")) this.openSettingsDetail("english-diary");
+    else if (/^english-diary/u.test(route.focus ?? "")) {
+      this.openSettingsDetail("english-diary");
+      if (route.focus === "english-diary:home-shortcut") this.settingsFocusIntent = "explicit:english-diary:home-shortcut";
+    }
     else if (/^selection-ask/u.test(route.focus ?? "")) this.openSettingsDetail("selection-ask");
     else if (/review:archives/u.test(route.focus ?? "")) this.openSettingsDetail("review-archives");
     else if (/agent:profile/u.test(route.focus ?? "")) { this.ensureDesktopProfile().refreshWhenOpened(); this.desktopProfileOpen = true; }
@@ -454,6 +419,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.containerEl.addClass("echoink-settings-host");
       workspaceEl.addClass("echoink-settings-demo", "echoink-native-settings-workspace");
       workspaceEl.toggleClass("echoink-settings-desktop", Platform.isDesktopApp);
+      workspaceEl.toggleClass("echoink-settings-aligned", Platform.isDesktopApp);
       this.nativeSettingsNavigation = { listEl: group.listEl, workspaceEl, rows: new Map() };
       this.settingsTitleEl = workspaceEl.createDiv({ cls: "codex-settings-title" });
       workspaceEl.insertBefore(this.settingsTitleEl, group.listEl);
@@ -629,13 +595,6 @@ export class CodexSettingTab extends PluginSettingTab {
     this.developerPanel = null;
     this.settingsVisible = false;
     this.clearOnboardingCoachmark(true);
-    this.knowledgeInitSection?.dispose();
-    this.knowledgeDashboardRequestId += 1;
-    this.knowledgeDashboardEl = null;
-    this.knowledgeDashboardSnapshot = null;
-    this.knowledgeDashboardLoading = false;
-    this.knowledgeDashboardError = "";
-    disposeKnowledgeDashboardTooltipState(this.knowledgeDashboardTooltipState);
     this.disconnectSettingsTabsResizeObserver();
     this.cancelScheduledDisplay();
     this.clearResourceSearchDebounceTimer();
@@ -665,6 +624,7 @@ export class CodexSettingTab extends PluginSettingTab {
     containerEl.empty();
     const workspace = containerEl.createDiv({ cls: "echoink-settings-demo" });
     workspace.toggleClass("echoink-settings-desktop", Platform.isDesktopApp);
+    workspace.toggleClass("echoink-settings-aligned", Platform.isDesktopApp);
     this.settingsTitleEl = workspace.createDiv({ cls: "codex-settings-title" });
     this.settingsTabsEl = workspace.createDiv({ cls: "codex-settings-tabs-slot" });
     this.createSettingsBody(workspace);
@@ -723,8 +683,6 @@ export class CodexSettingTab extends PluginSettingTab {
       const tabsEl = this.settingsTabsEl;
       const bodyEl = this.settingsBodyEl;
       if (!titleEl || !tabsEl || !bodyEl) return;
-      clearKnowledgeDashboardHealthTooltips(this.knowledgeDashboardTooltipState);
-      this.knowledgeDashboardEl = null;
       disposeOriginControls(titleEl);
       titleEl.empty();
       if (!this.nativeSettingsNavigation) {
@@ -742,7 +700,7 @@ export class CodexSettingTab extends PluginSettingTab {
       disposeOriginControls(bodyEl);
       bodyEl.empty();
       const pageTitle = new OriginSetting(titleEl)
-        .setName(copy.title)
+        .setName(Platform.isDesktopApp ? "EchoInk" : copy.title)
         .setHeading();
       pageTitle.settingEl.addClass("echoink-settings-page-title-row");
       pageTitle.nameEl.addClass("codex-settings-page-title");
@@ -774,7 +732,7 @@ export class CodexSettingTab extends PluginSettingTab {
       } else if (activeTab === "providers") {
         this.renderProviderModelManager(bodyEl);
       } else if (activeTab === "layout") {
-        this.renderLayoutSettings(bodyEl);
+        this.renderGeneralSettings(bodyEl);
       } else if (activeTab === "resources") {
         this.renderWorkspaceResourceManager(bodyEl);
       } else if (activeTab === "knowledgeBase") {
@@ -835,11 +793,6 @@ export class CodexSettingTab extends PluginSettingTab {
       }
       restoreSettingsScrollSnapshot(settingsScrollSnapshot);
       this.restoreSettingsFocusIntent();
-      if (this.plugin.consumeKnowledgeDashboardFocus?.()) {
-        this.knowledgeDashboardEl?.setAttribute("tabindex", "-1");
-        this.knowledgeDashboardEl?.focus({ preventScroll: true });
-        this.knowledgeDashboardEl?.scrollIntoView({ block: "start" });
-      }
       void this.refreshOnboardingCoachmark();
     }
   }
@@ -910,9 +863,10 @@ export class CodexSettingTab extends PluginSettingTab {
     if (sharedKey) {
       (this.containerEl.ownerDocument.defaultView ?? window).requestAnimationFrame(() => {
         const focusable = Array.from(this.containerEl.querySelectorAll<HTMLElement>(
-          "button, input, select, textarea, a[href]"
+          "button, input, select, textarea, a[href], [tabindex]"
         )).find((element) => this.settingsFocusKey(element) === sharedKey);
         if (!focusable?.isConnected) return;
+        if (sharedKey === "explicit:account:login" || sharedKey === "explicit:account:benefits") focusable.scrollIntoView({ block: "center" });
         focusable.focus({ preventScroll: true });
         if (this.containerEl.ownerDocument.activeElement !== focusable) return;
         settingsContainerFocusIntents.delete(this.containerEl);
@@ -921,23 +875,17 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     const focusable = Array.from(this.containerEl.querySelectorAll<HTMLElement>(
-      "button, input, select, textarea, a[href]"
+      "button, input, select, textarea, a[href], [tabindex]"
     )).find((element) => this.settingsFocusKey(element) === key);
     if (!focusable) return;
     const focusTarget = () => {
-      if (focusable.isConnected) focusable.focus({ preventScroll: true });
+      if (!focusable.isConnected || focusable.closest("[hidden], [inert]")) return;
+      if (key === "explicit:account:login" || key === "explicit:account:benefits") focusable.scrollIntoView({ block: "center" });
+      focusable.focus({ preventScroll: true });
     };
     focusTarget();
     (this.containerEl.ownerDocument.defaultView ?? window).requestAnimationFrame(focusTarget);
     this.settingsFocusIntent = null;
-  }
-
-  private requestPersonalityTemplateFocusRestore(): void {
-    this.settingsFocusIntent = PERSONALITY_TEMPLATE_FOCUS_INTENT;
-    settingsContainerFocusIntents.set(
-      this.containerEl,
-      PERSONALITY_TEMPLATE_FOCUS_INTENT
-    );
   }
 
   private settingsFocusKey(element: HTMLElement): string {
@@ -1179,24 +1127,26 @@ export class CodexSettingTab extends PluginSettingTab {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const page = createSettingsPage(containerEl, {
       title: zh ? (Platform.isDesktopApp ? "通用" : "基础设置") : "General",
+      titleVisibility: Platform.isDesktopApp ? "screen-reader" : "visible",
       description: Platform.isDesktopApp ? undefined : zh
         ? "调整 EchoInk 的界面语言、启动方式、长期记忆和个性化。"
         : "Choose EchoInk's language, startup behavior, long-term memory, and personalization."
     });
-    const appearanceSection = createSettingsSection(page, { surface: "group" });
+    page.addClass("echoink-general-page");
+    const appearanceSection = createSettingsSection(page, { title: Platform.isDesktopApp ? (zh ? "外观" : "Appearance") : undefined, surface: "group" });
     appearanceSection.addClass("echoink-appearance-section");
-    const appearanceRow = applySettingsRow(new OriginSetting(appearanceSection)
-      .setName(zh ? "外观" : "Appearance")
+    const appearanceRow = applySettingsRow(new OriginSetting(Platform.isDesktopApp ? createSettingsGroup(appearanceSection) : appearanceSection)
+      .setName(Platform.isDesktopApp ? (zh ? "配色" : "Color theme") : zh ? "外观" : "Appearance")
       .setDesc(zh
-        ? "选择主题颜色，浅色与深色跟随 Obsidian。"
-        : "Choose a color theme. Light and dark modes follow Obsidian."));
+        ? Platform.isDesktopApp ? "跟随 Obsidian 明暗" : "选择主题颜色，浅色与深色跟随 Obsidian。"
+        : Platform.isDesktopApp ? "Follows Obsidian light and dark modes" : "Choose a color theme. Light and dark modes follow Obsidian."));
     renderAppearancePicker(appearanceRow.controlEl, this.plugin, zh);
     const interfaceSection = createSettingsSection(page, {
       title: zh ? "界面与启动" : "Interface and startup",
       surface: "group"
     });
     const interfaceGroup = createSettingsGroup(interfaceSection);
-    applySettingsRow(new OriginSetting(interfaceGroup).setName(copy.general.settingsLanguage).setDesc(copy.general.settingsLanguageDesc).addOriginDropdown(this.app, (dropdown) => {
+    applySettingsRow(new OriginSetting(interfaceGroup).setName(copy.general.settingsLanguage).setDesc(Platform.isDesktopApp ? "" : copy.general.settingsLanguageDesc).addOriginDropdown(this.app, (dropdown) => {
       dropdown.selectEl.setAttr("aria-label", copy.general.settingsLanguage);
       for (const language of SETTINGS_LANGUAGE_OPTIONS) dropdown.addOption(language, copy.general.languageOptions[language]);
       dropdown.setValue(this.plugin.settings.settingsLanguage);
@@ -1213,24 +1163,9 @@ export class CodexSettingTab extends PluginSettingTab {
       });
     }));
 
-    applySettingsRow(new OriginSetting(interfaceGroup)
-      .setName(Platform.isDesktopApp ? (zh ? "启动时打开 Agent 侧栏" : "Open Agent sidebar on startup") : copy.general.autoOpen)
-      .setDesc(zh ? "Obsidian 启动后自动打开 EchoInk 侧栏。" : "Open the EchoInk sidebar when Obsidian starts.")
-      .addOriginToggle((toggle) => {
-        labelSettingsToggle(toggle, Platform.isDesktopApp ? (zh ? "启动时打开 Agent 侧栏" : "Open Agent sidebar on startup") : copy.general.autoOpen);
-        toggle.setValue(this.plugin.settings.autoOpen).onChange(async (value) => {
-          const previous = this.plugin.settings.autoOpen;
-          this.plugin.settings.autoOpen = value;
-          try { await this.plugin.saveSettings(); }
-          catch { this.plugin.settings.autoOpen = previous; toggle.setValue(previous); new Notice(zh ? "启动设置未保存，请重试" : "Startup setting was not saved. Try again."); }
-        });
-      }));
-
-    applySettingsRow(new OriginSetting(interfaceGroup)
+    const workbenchStartup = applySettingsRow(new OriginSetting(interfaceGroup)
       .setName(Platform.isDesktopApp ? (zh ? "启动时打开工作台" : "Open workbench on startup") : copy.general.autoOpenHome)
-      .setDesc(Platform.isDesktopApp
-        ? (zh ? "Obsidian 启动后显示 EchoInk 工作台。" : "Show the EchoInk workbench when Obsidian starts.")
-        : (zh ? "Obsidian 启动后显示 EchoInk 首页概览。" : "Show the EchoInk home overview when Obsidian starts."))
+      .setDesc(Platform.isDesktopApp ? "" : (zh ? "Obsidian 启动后显示 EchoInk 首页概览。" : "Show the EchoInk home overview when Obsidian starts."))
       .addOriginToggle((toggle) => {
         labelSettingsToggle(toggle, Platform.isDesktopApp ? (zh ? "启动时打开工作台" : "Open workbench on startup") : copy.general.autoOpenHome);
         toggle.setValue(this.plugin.settings.autoOpenHome).onChange(async (value) => {
@@ -1241,9 +1176,26 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
 
+    const sidebarStartup = applySettingsRow(new OriginSetting(interfaceGroup)
+      .setName(Platform.isDesktopApp ? (zh ? "启动时打开 Agent 侧栏" : "Open Agent sidebar on startup") : copy.general.autoOpen)
+      .setDesc(Platform.isDesktopApp ? "" : zh ? "Obsidian 启动后自动打开 EchoInk 侧栏。" : "Open the EchoInk sidebar when Obsidian starts.")
+      .addOriginToggle((toggle) => {
+        labelSettingsToggle(toggle, Platform.isDesktopApp ? (zh ? "启动时打开 Agent 侧栏" : "Open Agent sidebar on startup") : copy.general.autoOpen);
+        toggle.setValue(this.plugin.settings.autoOpen).onChange(async (value) => {
+          const previous = this.plugin.settings.autoOpen;
+          this.plugin.settings.autoOpen = value;
+          try { await this.plugin.saveSettings(); }
+          catch { this.plugin.settings.autoOpen = previous; toggle.setValue(previous); new Notice(zh ? "启动设置未保存，请重试" : "Startup setting was not saved. Try again."); }
+        });
+      }));
+
+    if (Platform.isDesktopApp) {
+      addSettingsHelp(workbenchStartup, "", zh ? "Obsidian 启动后显示 EchoInk 工作台。" : "Show the EchoInk workbench when Obsidian starts.");
+      addSettingsHelp(sidebarStartup, "", zh ? "Obsidian 启动后自动打开 EchoInk 侧栏。" : "Open the EchoInk sidebar when Obsidian starts.");
+    } else interfaceGroup.insertBefore(sidebarStartup.settingEl, workbenchStartup.settingEl);
     renderObsidianCliStatus(interfaceGroup, zh);
 
-    const quickChatSection = createSettingsSection(page, { title: Platform.isDesktopApp ? undefined : (zh ? "快捷 AI 小窗" : "Quick AI window"), surface: "group" });
+    const quickChatSection = createSettingsSection(page, { title: zh ? "快捷 AI 小窗" : "Quick AI window", surface: "group" });
     const quickDrawer = Platform.isDesktopApp ? quickChatSection.createEl("details", { cls: "echoink-quick-chat-drawer" }) : quickChatSection;
     if (quickDrawer instanceof this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement) {
       quickDrawer.open = this.plugin.settings.quickChat.enabled && (this.quickChatExpanded ?? true);
@@ -1251,10 +1203,10 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     const quickHeader = Platform.isDesktopApp ? quickDrawer.createEl("summary") : quickDrawer;
     const quickChatGroup = createSettingsGroup(quickHeader);
-    const quickChatToggleLabel = zh ? "全局快捷键唤起 AI 小窗" : "Global quick AI window hotkey";
+    const quickChatToggleLabel = Platform.isDesktopApp ? (zh ? "快捷 AI 小窗" : "Quick AI window") : zh ? "全局快捷键唤起 AI 小窗" : "Global quick AI window hotkey";
     applySettingsRow(new OriginSetting(quickChatGroup)
       .setName(quickChatToggleLabel)
-      .setDesc(zh
+      .setDesc(Platform.isDesktopApp ? this.plugin.settings.quickChat.enabled ? formatAcceleratorForDisplay(this.plugin.settings.quickChat.hotkey, Platform.isMacOS) : (zh ? "未启用" : "Not enabled") : zh
         ? "在任意应用前台时按快捷键，EchoInk 对话小窗浮现在当前屏幕上，直接提问；再次按下收起，按 Esc 关闭。收起保留草稿与正在生成的回答。需要 Obsidian 桌面端保持运行。"
         : "From any app, press the hotkey to float the EchoInk chat window over the current screen and ask directly. Press again or hit Esc to collapse; drafts and running generations survive. Requires the Obsidian desktop app to stay running.")
       .addOriginToggle((toggle) => {
@@ -1278,6 +1230,14 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
 
+    if (Platform.isDesktopApp) {
+      const row = quickChatGroup.querySelector<HTMLElement>(".setting-item");
+      if (row) {
+        const icon = row.createSpan({ cls: "echoink-quick-chat-icon", attr: { "aria-hidden": "true" } });
+        setIcon(icon, "zap");
+        row.prepend(icon);
+      }
+    }
     if (Platform.isDesktopApp) quickHeader.addEventListener("click", event => {
       if ((event.target as HTMLElement).closest("[role=switch]")) { event.preventDefault(); return; }
       if (!this.plugin.settings.quickChat.enabled) event.preventDefault();
@@ -1347,7 +1307,6 @@ export class CodexSettingTab extends PluginSettingTab {
 
     if (!Platform.isDesktopApp) {
       this.renderJournalSettings(page);
-      this.renderMemoryIdentitySettings(page);
     }
     this.renderDeveloperModeSettings(page);
     this.renderAboutSection(page);
@@ -1363,8 +1322,8 @@ export class CodexSettingTab extends PluginSettingTab {
     applySettingsRow(new OriginSetting(journalGroup)
       .setName(zh ? "日记保存文件夹" : "Journal folder")
       .setDesc(zh
-        ? "与 Obsidian 原生日记共用文件夹。日期格式和模板可在原生日记设置中调整；默认按月存放，每天一篇。"
-        : "Shared with Obsidian Daily notes. Set the date format and template there; the default is one note per day in monthly folders.")
+        ? embedded ? "与 Obsidian 原生日记共用文件夹、日期格式和模板。" : "与 Obsidian 原生日记共用文件夹。日期格式和模板可在原生日记设置中调整；默认按月存放，每天一篇。"
+        : embedded ? "Shares the Obsidian Daily notes folder, date format, and template." : "Shared with Obsidian Daily notes. Set the date format and template there; the default is one note per day in monthly folders.")
       .addOriginText((text) => {
         const label = zh ? "日记保存文件夹" : "Journal folder";
         text.setPlaceholder("journal").setValue(readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder);
@@ -1389,72 +1348,6 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
 
-  }
-
-  private renderMemoryIdentitySettings(page: HTMLElement): void {
-    const zh = this.plugin.settings.settingsLanguage !== "en";
-    const memorySection = createSettingsSection(page, {
-      title: zh ? "长期记忆" : "Long-term memory",
-      surface: "group"
-    });
-    const memoryGroup = createSettingsGroup(memorySection);
-    const memoryToggle = applySettingsRow(new OriginSetting(memoryGroup)
-      .setName(zh ? "使用长期记忆" : "Use long-term memory")
-      .setDesc(zh
-        ? "开启后，Agent 可在所有新旧对话中自主记住、更新、忘掉和整理长期记忆。关闭后仍保留 Agent 名称、头像与基础人格，但不会读取或写入记忆、不会做梦，也不会加载从长期协作中形成的用户画像或 Agent 学习内容。"
-        : "When enabled, the Agent can remember, update, forget, and consolidate long-term memory in every conversation. When disabled, its name, avatar, and base personality remain, but it does not read or write memory, dream, or load user-profile or Agent learning content formed through long-term collaboration.")
-      .addOriginToggle((toggle) => {
-        labelSettingsToggle(toggle, zh ? "使用长期记忆" : "Use long-term memory");
-        toggle.setValue(this.plugin.settings.memory.useLongTermMemory).onChange(async (enabled) => {
-          this.plugin.settings.memory.useLongTermMemory = enabled;
-          const mode = enabled ? "normal" : "no_memory";
-          for (const session of this.plugin.settings.sessions) session.defaultMemoryMode = mode;
-          await this.plugin.saveSettings(true);
-          this.plugin.getCodexView()?.refreshPersonalizationUi();
-          this.scheduleDisplay();
-        });
-      }));
-
-    addSettingsHelp(memoryToggle, zh ? "Agent 可在新旧对话中记住、更新、忘掉和整理记忆。" : "The Agent can remember, update, forget, and consolidate memory across conversations.", memoryToggle.descEl.textContent ?? "");
-
-    // --- Dream scheduler settings ---
-    const dreamToggle = applySettingsRow(new OriginSetting(memoryGroup)
-      .setName(zh ? "离线记忆整理（做梦）" : "Offline memory consolidation (dreaming)")
-      .setDesc(zh
-        ? "默认开启。开启后，Obsidian 打开期间定时处理一级 Memory，生成只帮助召回、不代表用户确认的二级联想，并更新用户画像与 Agent 长期形成的处事方式。关闭后，一级 Memory 仍在对话当轮正常写入和召回；派生状态与积压会保留，重新开启后继续处理。"
-        : "Enabled by default. While Obsidian is open, it periodically processes primary Memory, creates secondary associations that aid recall without representing user confirmation, and updates the user profile and the Agent's learned ways of working. When disabled, primary Memory still writes and recalls; derived state and backlog are preserved and resume after re-enabling.")
-      .addOriginToggle((toggle) => {
-        labelSettingsToggle(toggle, zh ? "离线记忆整理" : "Memory consolidation");
-        toggle.setValue(this.plugin.settings.memory.dreamEnabled).onChange(async (enabled) => {
-          this.plugin.settings.memory.dreamEnabled = enabled;
-          await this.plugin.saveSettings();
-          this.scheduleDisplay();
-        });
-      }));
-
-    addSettingsHelp(dreamToggle, zh ? "Obsidian 打开期间，定时整理 Memory，更新用户画像与 Agent 长期形成的处事方式。" : "While Obsidian is open, consolidate Memory and update the user profile and the Agent’s learned ways of working.", dreamToggle.descEl.textContent ?? "");
-
-    if (this.plugin.settings.memory.useLongTermMemory && this.plugin.settings.memory.dreamEnabled) {
-      const dreamOptions = memoryGroup.createDiv({ cls: "echoink-dream-options" });
-      renderManualDreamAction(dreamOptions, this.plugin, this.plugin.settings.settingsLanguage, () => this.scheduleDisplay());
-      const runsSetting = applySettingsRow(new OriginSetting(dreamOptions)
-        .setName(zh ? "每日整理次数" : "Runs per day")
-        .setDesc(zh ? "每天执行几次离线整理（1–6 次）。" : "Choose how many consolidation runs to schedule each day (1–6)."));
-      runsSetting.controlEl.addClass("general-range");
-      const runsOutput = runsSetting.controlEl.createEl("output", { text: zh ? `${this.plugin.settings.memory.dreamRunsPerDay} 次/天` : `${this.plugin.settings.memory.dreamRunsPerDay}/day` });
-      const slider = createOriginSlider(runsSetting.controlEl, {
-        value: this.plugin.settings.memory.dreamRunsPerDay, min: 1, max: 6, step: 1,
-        label: zh ? "每日整理次数" : "Runs per day",
-        onValueChange: (value) => { runsOutput.setText(zh ? `${value} 次/天` : `${value}/day`); },
-        onValueCommit: (value) => {
-          this.plugin.settings.memory.dreamRunsPerDay = value;
-          void this.plugin.saveSettings();
-        }
-      });
-      runsSetting.controlEl.insertBefore(slider, runsOutput);
-    }
-
-    this.renderFilePersonalizationSettings(page);
   }
 
   private ensureDesktopAgents(): DesktopAgentSettings {
@@ -1496,7 +1389,7 @@ export class CodexSettingTab extends PluginSettingTab {
       || typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "review-memory-category") {
       this.renderReviewSettings(container); return;
     }
-    const page = createSettingsPage(container, { title: "Agent" });
+    const page = createSettingsPage(container, { title: "Agent", titleVisibility: "screen-reader" });
     page.addClass("echoink-desktop-agent-page");
     agents.renderSummary(page);
     this.desktopMemory ??= new DesktopMemorySettings(this.plugin, {
@@ -1570,14 +1463,17 @@ export class CodexSettingTab extends PluginSettingTab {
       this.desktopRoute = { ...this.desktopRoute!, section: undefined };
     }
     if (this.settingsDetail === "pdf-reading") { this.desktopModuleExpanded.add("pdf"); this.settingsDetail = null; }
-    if (this.settingsDetail === "english-diary") { this.desktopModuleExpanded.add("english"); this.settingsDetail = null; this.settingsFocusIntent = "explicit:module:english"; }
+    if (this.settingsDetail === "english-diary") {
+      this.desktopModuleExpanded.add("english"); this.settingsDetail = null;
+      if (this.settingsFocusIntent !== "explicit:english-diary:home-shortcut") this.settingsFocusIntent = "explicit:module:english";
+    }
     if (typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "lifestyle") { this.desktopModuleExpanded.add("finance"); this.settingsDetail = null; }
     this.plugin.settings.resourceManagementTab = "plugins";
-    const page = createSettingsPage(container, { title: zh ? "模块" : "Modules" });
+    const page = createSettingsPage(container, { title: zh ? "模块" : "Modules", titleVisibility: "screen-reader" });
     this.desktopModuleCleanup = mountDesktopModuleSettings(page, {
       plugin: this.plugin, expanded: this.desktopModuleExpanded,
       summary: module => module === "knowledge" ? zh ? `${this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0} 个资料来源` : `${this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0} source folders` : module === "journal" ? readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder : module === "review" ? this.plugin.settings.review.outputDir : module === "todo" ? TODO_SOURCE_PATH : module === "finance" ? this.plugin.lifestyle.finance.ledger.paths().root : module === "english" ? this.plugin.settings.englishDiary.englishDirectory : module === "pdf" ? this.plugin.settings.pdfReading.engine === "mineru" ? "MinerU" : zh ? "本地文字提取" : "Local text extraction" : "",
-      onProBenefits: () => { void this.activateSettingsTab("account", false); },
+      onProBenefits: () => { this.openDesktopRoute({ tab: "account", focus: "account:benefits" }); },
       renderContent: (module, parent) => {
         try {
         if (module === "knowledge") knowledge.renderSummary(parent);
@@ -1641,31 +1537,6 @@ export class CodexSettingTab extends PluginSettingTab {
     createSettingsNavigationRow(parent, { title: zh ? "待办源文件" : "To-do source file", value: TODO_SOURCE_PATH, actionLabel: zh ? "打开" : "Open", onActivate: () => { void this.plugin.getTodoStore().openSourceFile(); } });
     this.disposeTodoReminders = renderTodoReminderSettings(parent, this.plugin, { embedded: true });
     createSettingsNavigationRow(parent, { title: zh ? "分类" : "Categories", value: String(this.plugin.settings.todoCategories.length), focusKey: "todo:categories", onActivate: () => this.openSettingsDetail("todo-categories") });
-  }
-
-  private renderLayoutSettings(page: HTMLElement): void {
-    const zh = this.plugin.settings.settingsLanguage !== "en";
-    const layoutSection = createSettingsSection(page, {
-      title: zh ? "首页入口显示" : "Home entry visibility",
-      surface: "group"
-    });
-    const layoutGroup = createSettingsGroup(layoutSection);
-    for (const module of ECHOINK_HOME_MODULES) {
-      const label = zh ? module.zhName : module.enName;
-      applySettingsRow(new OriginSetting(layoutGroup)
-        .setName(label)
-        .setDesc(zh
-          ? "控制工作台首页是否展示该入口；隐藏时保留原布局槽位，不删除模块数据。"
-          : "Show or hide this home entry. Hiding keeps its layout slot and data.")
-        .addOriginToggle((toggle) => {
-          labelSettingsToggle(toggle, label);
-          toggle.setValue(this.plugin.settings.homeModules[module.id] !== false).onChange(async (value) => {
-            this.plugin.settings.homeModules[module.id] = value;
-            await this.plugin.saveSettings();
-            this.plugin.notifyHomeSurfacesChanged();
-          });
-        }));
-    }
   }
 
   private renderTodosSettings(page: HTMLElement, categoriesOnly = false): void {
@@ -1755,8 +1626,9 @@ export class CodexSettingTab extends PluginSettingTab {
         cls: "icon-button settings-danger",
         attr: { type: "button", "aria-label": zh ? `删除分类 ${category.name}` : `Delete category ${category.name}`, "aria-expanded": "false" }
       });
-      setIcon(deleteButton, "trash-2");
+      if (Platform.isDesktopApp) applyDeleteButton(deleteButton, { iconOnly: true }); else setIcon(deleteButton, "trash-2");
       deleteButton.onclick = () => showSettingsInlineConfirmation(row, deleteButton, {
+        deleteAction: Platform.isDesktopApp,
         message: zh
           ? `删除「${category.name}」后，${store.snapshot().filter((record) => record.categoryName === category.name).length} 条相关待办将转为「未分类」；待办本身不会被删除。`
           : `Deleting "${category.name}" moves ${store.snapshot().filter((record) => record.categoryName === category.name).length} to-do(s) to Uncategorized. The to-dos themselves are kept.`,
@@ -1884,887 +1756,16 @@ export class CodexSettingTab extends PluginSettingTab {
     void panel.render();
   }
 
-  private renderFilePersonalizationSettings(page: HTMLElement): void {
-    const zh = this.plugin.settings.settingsLanguage !== "en";
-    const section = createSettingsSection(page, {
-      title: zh ? "身份与用户画像" : "Identity and user profile",
-      surface: "group"
-    });
-    const group = createSettingsGroup(section);
-    if (!this.personalMemoryState && !this.personalMemoryLoading && !this.personalMemoryError) {
-      void this.loadPersonalMemoryState();
-    }
-    if (this.personalMemoryLoading) {
-      createSettingsState(group, zh ? "正在读取画像数据…" : "Loading profile data…", "neutral");
-      return;
-    }
-    if (!this.personalMemoryState) {
-      createSettingsState(
-        group,
-        zh ? "画像数据暂时无法读取" : "Profile data is temporarily unavailable",
-        "error",
-        {
-          label: zh ? "重新加载画像数据" : "Reload profile data",
-          onActivate: () => void this.loadPersonalMemoryState(true)
-        }
-      );
-      return;
-    }
-    this.addAgentProfileCard(group);
-    // User profile: read-only (maintained by dreaming / memory corrections)
-    this.addReadOnlyUserProfileCard(group, this.personalMemoryState.user);
-    applySettingsRow(new OriginSetting(group)
-      .setName(this.copy.general.customWelcome)
-      .setDesc(this.copy.general.customWelcomeDesc)
-      .addOriginToggle((toggle) => {
-        labelSettingsToggle(toggle, this.copy.general.customWelcome);
-        toggle.setValue(this.plugin.settings.customWelcomeEnabled).onChange(async (value) => {
-          this.plugin.settings.customWelcomeEnabled = value;
-          await this.plugin.saveSettings(true);
-          this.plugin.getCodexView()?.refreshPersonalizationUi();
-          this.scheduleDisplay();
-        });
-      }));
-    if (this.plugin.settings.customWelcomeEnabled) {
-      applySettingsRow(new OriginSetting(group)
-        .setName(this.copy.general.welcomeTitle)
-        .setDesc(this.copy.general.welcomeTitleDesc)
-        .addOriginText((text) => {
-          text
-            .setValue(this.plugin.settings.customWelcomeTitle)
-            .setPlaceholder("What's new?")
-            .onChange(async (value) => {
-              this.plugin.settings.customWelcomeTitle = value;
-              await this.plugin.saveSettings(true);
-              this.plugin.getCodexView()?.refreshPersonalizationUi();
-            });
-          text.inputEl.maxLength = 80;
-          text.inputEl.setAttr("aria-label", this.copy.general.welcomeTitle);
-        }));
-      applySettingsRow(new OriginSetting(group)
-        .setName(this.copy.general.welcomeGreeting)
-        .setDesc(this.copy.general.welcomeGreetingDesc)
-        .addOriginText((text) => {
-          text
-            .setValue(this.plugin.settings.customWelcomeSubtitle)
-            .setPlaceholder("当前 Conversation 需要先选择工作区；添加笔记只作为本轮上下文。")
-            .onChange(async (value) => {
-              this.plugin.settings.customWelcomeSubtitle = value;
-              await this.plugin.saveSettings(true);
-              this.plugin.getCodexView()?.refreshPersonalizationUi();
-            });
-          text.inputEl.maxLength = 240;
-          text.inputEl.setAttr("aria-label", this.copy.general.welcomeGreeting);
-        }));
-    }
-
-  }
-
-  private renderAboutSection(page: HTMLElement): void {
+  private renderAboutSection(page: HTMLElement): void{
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const version = this.plugin.manifest.version ?? "unknown";
-
-    if (Platform.isDesktopApp) {
-      this.membershipRowsDisposers.push(renderCompactAbout(page, {
-        version, language: this.plugin.settings.settingsLanguage,
-        websiteUrl: membershipWebsiteLink("plugin.about"),
-        update: this.releaseUpdate,
-        onLogoClick: altKey => { if (this.plugin.developerMode.click(altKey)) this.renderSettingsContent(); }
-      }));
-      return;
-    }
-
-    const section = createSettingsSection(page, {
-      title: zh ? "关于 EchoInk" : "About EchoInk",
-      surface: "group"
-    });
-    const group = createSettingsGroup(section);
-
-    // --- Plugin info card ---
-    const card = group.createDiv({ cls: "echoink-about-card" });
-
-    // Logo + name + version
-    const header = card.createDiv({ cls: "echoink-about-header" });
-    const logoWrap = createOriginButton(header, {
-      cls: "echoink-about-logo",
-      attr: { type: "button", "aria-label": "EchoInk Agent" }
-    });
-    setIcon(logoWrap, "feather");
-    logoWrap.addEventListener("click", (event) => {
-      if (this.plugin.developerMode.click(event.altKey)) this.renderSettingsContent();
-    });
-    const nameArea = header.createDiv({ cls: "echoink-about-name-area" });
-    nameArea.createDiv({ cls: "echoink-about-name", text: "EchoInk Agent" });
-    nameArea.createDiv({ cls: "echoink-about-version", text: `v${version}` });
-
-    // Description
-    card.createDiv({
-      cls: "echoink-about-desc",
-      text: zh
-        ? "EchoInk 是一个 Obsidian 本地 AI 插件，让 Agent 拥有长期记忆、可演化的人格和知识库能力。所有数据留在你的 Vault 里，不上传任何云端。"
-        : "EchoInk is a local Obsidian AI plugin that gives your Agent long-term memory, evolving personality, and knowledge base capabilities. All data stays in your Vault — nothing is uploaded to the cloud."
-    });
-
-    // Philosophy
-    const philosophy = card.createDiv({ cls: "echoink-about-philosophy" });
-    philosophy.createDiv({
-      cls: "echoink-about-philosophy-title",
-      text: zh ? "设计理念" : "Philosophy"
-    });
-    const principles = zh
-      ? [
-          "真实高于迎合 — Agent 不会为了讨好你而隐藏风险或伪造确定性",
-          "记忆属于用户 — 所有记忆存在本地 Vault，你可随时查看、纠正、删除",
-          "人格缓慢演化 — 不是你说一次就改，而是从对话和记忆中逐渐校准",
-          "克制而非全能 — 只做该做的事，轻微变化保持安静"
-        ]
-      : [
-          "Truth over flattery — Agent won't hide risks or fake certainty to please you",
-          "Memory belongs to you — all memories live in your local Vault, always inspectable",
-          "Personality evolves slowly — calibrated from conversations and memories, not instant overrides",
-          "Restraint over omnipotence — does what's needed, stays quiet on minor changes"
-        ];
-    for (const p of principles) {
-      const item = philosophy.createDiv({ cls: "echoink-about-principle" });
-      item.createSpan({ cls: "echoink-about-principle-dot" });
-      item.createSpan({ cls: "echoink-about-principle-text", text: p });
-    }
-
-    // --- Action buttons row ---
-    const actions = card.createDiv({ cls: "echoink-about-actions" });
-
-    const website = actions.createEl("a", {
-      cls: "echoink-about-btn echoink-about-btn-surface",
-      attr: { href: membershipWebsiteLink("plugin.about"), target: "_blank", rel: "noopener noreferrer" }
-    });
-    const websiteIcon = website.createSpan();
-    websiteIcon.setAttribute("aria-hidden", "true");
-    setIcon(websiteIcon, "globe");
-    website.createSpan({ text: zh ? "访问官网" : "Visit website" });
-
-    // Star on GitHub button (sparkle animation)
-    const starBtn = actions.createEl("a", {
-      cls: "echoink-about-btn echoink-about-btn-surface echoink-about-btn-star",
-      attr: {
-        href: "https://github.com/AKin-lvyifang/codex-echoink",
-        target: "_blank",
-        rel: "noopener noreferrer"
-      }
-    });
-    const starIconWrap = starBtn.createSpan({ cls: "echoink-sparkle-icon-wrap" });
-    // Default icon: GitHub
-    const githubIcon = starIconWrap.createSpan({ cls: "echoink-sparkle-icon-default" });
-    appendAboutSvg(githubIcon, {
-      width: "16",
-      height: "16",
-      viewBox: "0 0 24 24",
-      fill: "currentColor"
-    }, [
-      "M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"
-    ]);
-    // Hover icon: Star (hidden by default)
-    const starIcon = starIconWrap.createSpan({ cls: "echoink-sparkle-icon-hover" });
-    appendAboutSvg(starIcon, {
-      width: "16",
-      height: "16",
-      viewBox: "0 0 24 24",
-      fill: "currentColor",
-      class: "echoink-star-yellow"
-    }, [
-      "M12 2l2.4 7.6H22l-6.2 4.5 2.4 7.6-6.2-4.5-6.2 4.5 2.4-7.6L2 9.6h7.6z"
-    ]);
-    // Sparkle particles (appear on hover)
-    const sparkle1 = starIconWrap.createSpan({ cls: "echoink-sparkle-particle echoink-sparkle-p1" });
-    appendAboutSvg(sparkle1, {
-      width: "8",
-      height: "8",
-      viewBox: "0 0 24 24",
-      fill: "currentColor"
-    }, [
-      "M12 2l2.4 7.6H22l-6.2 4.5 2.4 7.6-6.2-4.5-6.2 4.5 2.4-7.6L2 9.6h7.6z"
-    ]);
-    const sparkle2 = starIconWrap.createSpan({ cls: "echoink-sparkle-particle echoink-sparkle-p2" });
-    appendAboutSvg(sparkle2, {
-      width: "6",
-      height: "6",
-      viewBox: "0 0 24 24",
-      fill: "currentColor"
-    }, [
-      "M12 2l2.4 7.6H22l-6.2 4.5 2.4 7.6-6.2-4.5-6.2 4.5 2.4-7.6L2 9.6h7.6z"
-    ]);
-    starBtn.createSpan({ cls: "echoink-about-btn-label", text: "Star on GitHub" });
-
-    // Issues link (amicro btn-24: Send morphs into Check on hover/focus)
-    const issuesBtn = actions.createEl("a", {
-      cls: "echoink-about-btn echoink-about-btn-surface echoink-about-btn-issue",
-      attr: {
-        href: "https://github.com/AKin-lvyifang/codex-echoink/issues",
-        target: "_blank",
-        rel: "noopener noreferrer"
-      }
-    });
-    const issueIconWrap = issuesBtn.createSpan({ cls: "echoink-about-morph-icon-wrap" });
-    const issueSendIcon = issueIconWrap.createSpan({ cls: "echoink-about-morph-icon-default" });
-    appendAboutSvg(issueSendIcon, {
-      width: "16",
-      height: "16",
-      viewBox: "0 0 24 24",
-      fill: "none",
-      stroke: "currentColor",
-      "stroke-width": "2",
-      "stroke-linecap": "round",
-      "stroke-linejoin": "round",
-      "aria-hidden": "true"
-    }, [
-      "M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z",
-      "m21.854 2.147-10.94 10.939"
-    ]);
-    const issueCheckIcon = issueIconWrap.createSpan({ cls: "echoink-about-morph-icon-hover" });
-    appendAboutSvg(issueCheckIcon, {
-      width: "16",
-      height: "16",
-      viewBox: "0 0 24 24",
-      fill: "none",
-      stroke: "currentColor",
-      "stroke-width": "2",
-      "stroke-linecap": "round",
-      "stroke-linejoin": "round",
-      "aria-hidden": "true"
-    }, [
-      "M20 6 9 17l-5-5"
-    ]);
-    issuesBtn.createSpan({
-      cls: "echoink-about-btn-label",
-      text: zh ? "反馈问题" : "Report Issue"
-    });
-  }
-  /**
-   * Agent Profile is a read-only projection of AGENT.md/current-self. The UI
-   * receives no full AGENT.md content and exposes no numeric personality state.
-   */
-  private addAgentProfileCard(container: HTMLElement): void {
-    const zh = this.plugin.settings.settingsLanguage !== "en";
-    const state = this.personalMemoryState!;
-    const profile = state.agentProfile;
-    const readyProfile = profile.kind === "ready" ? profile : null;
-    const identity = state.agentIdentity;
-    const ready = readyProfile !== null;
-    const selectedTemplateId = readyProfile?.templateId ?? null;
-    const pickerId = "echoink-agent-template-picker";
-    const pickerTriggerId = `${pickerId}-trigger`;
-    const profileCardTitleId = "echoink-agent-profile-card-title";
-    const profileContentTitleId = "echoink-agent-profile-content-title";
-    const currentSectionTitleId = "echoink-agent-profile-current-title";
-    const growthSectionTitleId = "echoink-agent-profile-growth-title";
-    const collapsedTemplateLabel = !ready
-      ? (zh ? "重新读取人格" : "Reload profile")
-      : readyProfile.templateId
-        ? (zh ? "重新选择人格模板" : "Choose another template")
-        : (zh ? "选择人格模板" : "Choose a template");
-    const expandedTemplateLabel = zh ? "收起人格模板" : "Hide personality templates";
-    const card = container.createEl("section", {
-      cls: "echoink-agent-profile-card",
-      attr: { "aria-labelledby": profileCardTitleId }
-    });
-    card.dataset.profileState = ready ? "ready" : "error";
-
-    const header = card.createDiv({ cls: "echoink-agent-profile-card-header" });
-    const profileCardHeading = new OriginSetting(header)
-      .setName(zh ? "Agent 画像" : "Agent profile")
-      .setHeading();
-    profileCardHeading.settingEl.addClass("echoink-agent-profile-heading-row");
-    profileCardHeading.nameEl.addClass("echoink-agent-profile-card-label");
-    profileCardHeading.nameEl.setAttr("id", profileCardTitleId);
-    profileCardHeading.nameEl.setAttr("role", "heading");
-    profileCardHeading.nameEl.setAttr("aria-level", "4");
-    const templateBtn = createOriginButton(header, {
-      cls: "echoink-agent-profile-reselect",
-      attr: {
-        type: "button",
-        "data-echoink-focus-key": "general:personality-template",
-        ...(ready ? {
-          id: pickerTriggerId,
-          "aria-expanded": "false",
-          "aria-controls": pickerId
-        } : {})
-      }
-    });
-    if (ready) {
-      templateBtn.addClass("is-disclosure");
-      templateBtn.dataset.templateId = readyProfile.templateId ?? "";
-      const usersIcon = templateBtn.createSpan({ cls: "echoink-agent-profile-template-icon" });
-      renderAnimateIcon(usersIcon, "users");
-    } else {
-      templateBtn.dataset.failClosed = "true";
-    }
-    const templateLabel = templateBtn.createSpan({
-      cls: "echoink-agent-profile-template-label",
-      text: collapsedTemplateLabel
-    });
-    if (ready) {
-      const chevron = templateBtn.createSpan({
-        cls: "echoink-agent-profile-template-chevron",
-        attr: { "aria-hidden": "true" }
-      });
-      setIcon(chevron, "chevron-down");
-    }
-
-    const body = card.createDiv({ cls: "echoink-agent-profile-card-body" });
-    const identitySide = body.createDiv({ cls: "echoink-agent-profile-identity" });
-    const selectedTemplate = ready
-      ? AGENT_TEMPLATES.find((template) => template.id === readyProfile.templateId) ?? null
-      : null;
-    const avatarEl = identitySide.createDiv({ cls: "echoink-agent-profile-avatar" });
-    const avatarUrl = resolveAgentAvatarUrl(identity.avatar);
-    if (avatarUrl) {
-      const image = avatarEl.createEl("img", {
-        attr: { src: avatarUrl, alt: "" }
-      });
-      image.addEventListener("error", () => {
-        image.remove();
-        avatarEl.addClass("is-default");
-        setIcon(avatarEl, "bot");
-      }, { once: true });
-    } else {
-      avatarEl.addClass("is-default");
-      setIcon(avatarEl, "bot");
-    }
-    const nameRow = identitySide.createDiv({ cls: "echoink-agent-profile-name-row" });
-    nameRow.createDiv({ cls: "echoink-agent-profile-name", text: identity.displayName });
-    identitySide.createDiv({
-      cls: "echoink-agent-profile-personality",
-      text: ready
-        ? selectedTemplate ? (zh ? selectedTemplate.labelZh : selectedTemplate.labelEn) : (zh ? "尚未选择" : "Not selected")
-        : (zh ? "人格读取失败" : "Profile unavailable")
-    });
-    const editIdentityLabel = !selectedTemplateId
-      ? (zh ? "选择风格并设置身份" : "Choose a style and set identity")
-      : (zh ? "编辑 Agent 身份" : "Edit Agent identity");
-    const editIdentityBtn = ready
-      ? createOriginButton(identitySide, {
-          cls: "echoink-agent-identity-edit text-button",
-          attr: {
-            type: "button",
-            "aria-label": editIdentityLabel
-          }
-        })
-      : null;
-    if (editIdentityBtn) {
-      setTooltip(editIdentityBtn, editIdentityLabel, { placement: "top" });
-      const editIcon = editIdentityBtn.createSpan();
-      renderAnimateIcon(editIcon, "user-round-pen");
-      editIdentityBtn.createSpan({ text: selectedTemplateId ? (zh ? "编辑身份" : "Edit identity") : editIdentityLabel });
-    }
-    if (ready && selectedTemplate?.preferredSkillIds.length) {
-      const methods = identitySide.createDiv({ cls: "echoink-agent-profile-methods" });
-      methods.createDiv({
-        cls: "echoink-agent-profile-methods-label",
-        text: zh ? "风格默认携带的 Skills" : "Skills included with this style"
-      });
-      const methodTags = methods.createDiv({ cls: "echoink-agent-profile-method-tags" });
-      for (const skillId of selectedTemplate?.preferredSkillIds ?? []) {
-        methodTags.createSpan({ cls: "echoink-agent-profile-method-tag", text: zh ? (BUILTIN_SKILLS.find((skill) => skill.id === skillId)?.title ?? skillId) : skillId.replace(/-/g, " "), attr: { title: skillId } });
-      }
-    }
-
-    const contentSide = body.createEl("section", {
-      cls: "echoink-agent-profile-content",
-      attr: { "aria-labelledby": profileContentTitleId }
-    });
-    const profileContentHeading = new OriginSetting(contentSide)
-      .setName(zh ? "我的公开画像" : "My public profile")
-      .setHeading();
-    profileContentHeading.settingEl.addClass("echoink-agent-profile-heading-row");
-    profileContentHeading.nameEl.addClass("echoink-agent-profile-content-title");
-    profileContentHeading.nameEl.setAttr("id", profileContentTitleId);
-    profileContentHeading.nameEl.setAttr("role", "heading");
-    profileContentHeading.nameEl.setAttr("aria-level", "5");
-    contentSide.createEl("p", { cls: "general-growth-description", text: zh
-      ? "伴随聊天和记忆整理，Agent 会持续更新这份画像，逐步调整自己的处事方式。"
-      : "Through conversations and memory consolidation, the Agent updates this profile and gradually adjusts how it works with you." });
-    if (ready) {
-      const currentSection = contentSide.createEl("section", {
-        cls: "echoink-agent-profile-section is-current",
-        attr: { "aria-labelledby": currentSectionTitleId }
-      });
-      const currentSectionHeading = new OriginSetting(currentSection)
-        .setName(zh ? "当前方式" : "How I work now")
-        .setHeading();
-      currentSectionHeading.settingEl.addClass("echoink-agent-profile-heading-row");
-      currentSectionHeading.nameEl.addClass("echoink-agent-profile-section-title");
-      currentSectionHeading.nameEl.setAttr("id", currentSectionTitleId);
-      currentSectionHeading.nameEl.setAttr("role", "heading");
-      currentSectionHeading.nameEl.setAttr("aria-level", "6");
-      const currentFields = currentSection.createEl("dl", { cls: "echoink-agent-profile-current-fields" });
-      const fields = [
-        [zh ? "思考方式" : "Thinking", readyProfile.currentSelf.thinkingMethod],
-        [zh ? "回答语气" : "Answer tone", readyProfile.currentSelf.answerTone],
-        [zh ? "回答结构" : "Answer structure", readyProfile.currentSelf.answerStructure]
-      ] as const;
-      for (const [label, value] of fields) {
-        const field = currentFields.createDiv({ cls: "echoink-agent-profile-field" });
-        field.createEl("dt", { cls: "echoink-agent-profile-field-label", text: label });
-        field.createEl("dd", { cls: "echoink-agent-profile-field-value", text: value });
-      }
-
-      const growthSection = contentSide.createEl("section", {
-        cls: "echoink-agent-profile-section is-growth",
-        attr: { "aria-labelledby": growthSectionTitleId }
-      });
-      const growthSectionHeading = new OriginSetting(growthSection)
-        .setName(zh ? "长期成长" : "Long-term growth")
-        .setHeading();
-      growthSectionHeading.settingEl.addClass("echoink-agent-profile-heading-row");
-      growthSectionHeading.nameEl.addClass("echoink-agent-profile-section-title");
-      growthSectionHeading.nameEl.setAttr("id", growthSectionTitleId);
-      growthSectionHeading.nameEl.setAttr("role", "heading");
-      growthSectionHeading.nameEl.setAttr("aria-level", "6");
-      if (readyProfile.currentSelf.representativeHabits.length > 0) {
-        const habitList = growthSection.createEl("ul", { cls: "echoink-agent-profile-habit-list" });
-        for (const habit of readyProfile.currentSelf.representativeHabits) {
-          habitList.createEl("li", { cls: "echoink-agent-profile-habit", text: habit });
-        }
-      } else {
-        growthSection.createEl("p", {
-          cls: "echoink-agent-profile-growth-empty",
-          text: zh
-            ? "我们还没有形成需要长期展示的相处习惯。"
-            : "We have not formed any long-term habits to show here yet."
-        });
-      }
-      growthSection.createEl("p", {
-        cls: "echoink-agent-profile-growth-note",
-        text: zh
-          ? "我会随着与你的长期对话持续学习，逐步调整自己的处事方式。"
-          : "I keep learning through our long-term conversations and gradually adjust how I work with you."
-      });
-    } else {
-      contentSide.createEl("p", {
-        cls: "echoink-agent-profile-error",
-        text: zh
-          ? "当前人格无法读取。现有数据不会被覆盖，请重新读取。"
-          : "The current profile could not be read. Existing data was not overwritten; reload to try again."
-      });
-    }
-
-    const pickerPanel = card.createDiv({
-      cls: "echoink-template-picker general-template-picker",
-      attr: ready ? {
-        id: pickerId,
-        "aria-labelledby": pickerTriggerId
-      } : {}
-    });
-    const refs: AgentProfileCardRefs = {
-      templateBtn,
-      templateLabel,
-      pickerPanel,
-      collapsedTemplateLabel,
-      expandedTemplateLabel
-    };
-
-    templateBtn.onclick = () => {
-      if (!ready) {
-        void this.loadPersonalMemoryState(true);
-        return;
-      }
-      if (pickerPanel.hasClass("is-visible")) {
-        this.closeTemplatePicker(refs);
-        return;
-      }
-      this.showTemplatePicker(refs, zh);
-    };
-
-    if (editIdentityBtn) editIdentityBtn.onclick = () => {
-      if (!selectedTemplateId) {
-        this.startInitialIdentitySetup();
-        return;
-      }
-      const modal = new AgentIdentityModal(this.plugin.app, {
-        initialName: identity.displayName,
-        initialAvatar: identity.avatar,
-        language: zh ? "zh" : "en",
-        mode: "edit",
-        presets: AGENT_AVATAR_PRESETS,
-        onConfirm: async (draft) => {
-          const system = await this.plugin.getCognitiveSystem();
-          await system.updateAgentIdentity({
-            displayName: draft.displayName,
-            avatar: draft.avatar
-          });
-          await this.refreshIdentityAfterChange();
-          new Notice(zh ? "Agent 身份已更新" : "Agent identity updated");
-        }
-      });
-      this.openInlineEditor(modal, "general");
-    };
-  }
-
-  private showTemplatePicker(refs: AgentProfileCardRefs, zh: boolean): void {
-    const panel = refs.pickerPanel;
-    disposeOriginControls(panel);
-    panel.empty();
-    panel.addClass("is-visible");
-    this.setTemplatePickerExpanded(refs, true);
-    panel.onkeydown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229) return;
-      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-        const rows = Array.from(panel.querySelectorAll<HTMLButtonElement>(".echoink-picker-row"));
-        const index = rows.indexOf(panel.ownerDocument.activeElement as HTMLButtonElement);
-        if (index >= 0) {
-          event.preventDefault();
-          const next = event.key === "Home" ? 0 : event.key === "End" ? rows.length - 1 : (index + (event.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length;
-          rows[next]?.focus();
-        }
-        return;
-      }
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      this.closeTemplatePicker(refs);
-    };
-
-    const intro = panel.createDiv({ cls: "echoink-picker-intro" });
-    const introText = intro.createDiv({ cls: "echoink-picker-intro-text" });
-    introText.createDiv({
-      cls: "echoink-picker-intro-title",
-      text: zh ? "选择 Agent 的初始风格" : "Choose the Agent's starting style"
-    });
-    introText.createDiv({
-      cls: "echoink-picker-intro-copy",
-      text: zh
-        ? "只调整基础风格，长期形成的习惯会保留。关闭或取消不会产生修改。"
-        : "Only the base style changes; learned habits are preserved. Closing or cancelling makes no changes."
-    });
-    intro.createDiv({
-      cls: "echoink-picker-count",
-      text: zh ? `${AGENT_TEMPLATES.length} 种风格` : `${AGENT_TEMPLATES.length} styles`
-    });
-
-    const list = panel.createDiv({ cls: "echoink-picker-list general-template-grid" });
-    const currentTemplateId = refs.templateBtn.dataset.templateId ?? "";
-    let firstRow: HTMLElement | null = null;
-    let currentRow: HTMLElement | null = null;
-    for (const template of AGENT_TEMPLATES) {
-      const isCurrent = currentTemplateId === template.id;
-      const row = createOriginButton(list, {
-        cls: "echoink-picker-row general-template",
-        attr: {
-          type: "button",
-          "data-template-id": template.id,
-          ...(isCurrent ? { "aria-current": "true" } : {})
-        }
-      });
-      firstRow ??= row;
-      if (isCurrent) currentRow = row;
-      row.classList.toggle("is-current", isCurrent);
-      const heading = row.createEl("strong", { cls: "echoink-picker-row-heading" });
-      heading.createSpan({
-        cls: "echoink-picker-row-name",
-        text: zh ? template.labelZh : template.labelEn
-      });
-      if (isCurrent) {
-        heading.createSpan({
-          cls: "echoink-picker-current-badge settings-badge",
-          text: zh ? "当前模板" : "Current"
-        });
-      }
-      row.createEl("p", {
-        cls: "echoink-picker-row-desc",
-        text: template.complexProblemMethod
-      });
-      const indicator = row.createSpan({
-        cls: "echoink-picker-row-indicator",
-        attr: { "aria-hidden": "true" }
-      });
-      setIcon(indicator, "arrow-up-right");
-
-      row.onclick = () => {
-        row.setAttr("disabled", "true");
-        void (async () => {
-          try {
-            const system = await this.plugin.getCognitiveSystem();
-            const snapshot = await system.readAgentSelfState();
-            const identity = await system.readAgentIdentity();
-            const selection = initialTemplateSelectionStatus(snapshot.metadata, identity);
-            if (selection.requiresFirstNaming) {
-              row.removeAttribute("disabled");
-              this.openAgentIdentityModal({
-                templateId: template.id,
-                templateLabel: zh ? template.labelZh : template.labelEn,
-                panel,
-                refs,
-                zh
-              });
-              return;
-            }
-            await system.selectPersonalityTemplate(template.id);
-            this.requestPersonalityTemplateFocusRestore();
-            await this.refreshIdentityAfterChange();
-            new Notice(zh
-              ? `已应用「${template.labelZh}」人格模板`
-              : `Applied template: ${template.labelEn}`);
-            this.closeTemplatePicker(refs);
-          } catch (error) {
-            console.error("EchoInk personality template selection failed", error);
-            new Notice(zh ? "人格模板保存失败，请重试" : "Failed to save personality template");
-          } finally {
-            row.removeAttribute("disabled");
-          }
-        })();
-      };
-    }
-
-    const cancelRow = panel.createDiv({ cls: "echoink-picker-cancel-row" });
-    const cancelBtn = createOriginButton(cancelRow, {
-      cls: "echoink-picker-cancel-btn",
-      text: zh ? "取消" : "Cancel",
-      attr: { type: "button" }
-    });
-    cancelBtn.onclick = () => {
-      this.closeTemplatePicker(refs);
-    };
-
-    (currentRow ?? firstRow)?.focus({ preventScroll: true });
-  }
-
-  private closeTemplatePicker(refs: AgentProfileCardRefs): void {
-    if (!refs.templateBtn.isConnected || !refs.pickerPanel.isConnected) return;
-    refs.pickerPanel.removeClass("is-visible");
-    disposeOriginControls(refs.pickerPanel);
-    refs.pickerPanel.empty();
-    refs.pickerPanel.onkeydown = null;
-    this.setTemplatePickerExpanded(refs, false);
-    refs.templateBtn.focus({ preventScroll: true });
-  }
-
-  private setTemplatePickerExpanded(refs: AgentProfileCardRefs, expanded: boolean): void {
-    refs.templateBtn.setAttr("aria-expanded", expanded ? "true" : "false");
-    refs.templateBtn.classList.toggle("is-expanded", expanded);
-    refs.templateLabel.textContent = expanded
-      ? refs.expandedTemplateLabel
-      : refs.collapsedTemplateLabel;
-  }
-
-  private openAgentIdentityModal(context: Readonly<{
-    templateId: string;
-    templateLabel: string;
-    panel: HTMLElement;
-    refs: AgentProfileCardRefs;
-    zh: boolean;
-  }>): void {
-    const { templateId, templateLabel, refs, zh } = context;
-    let confirmed = false;
-    const modal = new AgentIdentityModal(this.plugin.app, {
-      initialName: "",
-      initialAvatar: Object.freeze({ kind: "default" }),
-      language: zh ? "zh" : "en",
-      mode: "first-run",
-      presets: AGENT_AVATAR_PRESETS,
-      onConfirm: async (draft) => {
-        const system = await this.plugin.getCognitiveSystem();
-        await system.selectPersonalityTemplate(templateId, {
-          initialIdentity: { displayName: draft.displayName, avatar: draft.avatar }
-        });
-        confirmed = true;
-        this.requestPersonalityTemplateFocusRestore();
-        await this.refreshIdentityAfterChange();
-        new Notice(zh
-          ? `已应用「${templateLabel}」人格模板，Agent 名称：${draft.displayName}`
-          : `Applied template: ${templateLabel}. Agent name: ${draft.displayName}`);
-        this.closeTemplatePicker(refs);
-      }
-    });
-    this.openInlineEditor(modal, "general", () => {
-      if (!confirmed) this.startInitialIdentitySetup();
-    });
-  }
-
-  private async refreshIdentityAfterChange(): Promise<void> {
-    await this.loadPersonalMemoryState(true);
-    this.plugin.getCodexView()?.refreshPersonalizationUi();
-  }
-
-  private startInitialIdentitySetup(): void {
-    const templateEntry = this.containerEl.querySelector<HTMLElement>(
-      '[data-echoink-focus-key="general:personality-template"]'
-    );
-    if (!templateEntry) return;
-    templateEntry.scrollIntoView({ block: "center", inline: "nearest" });
-    templateEntry.click();
-    const picker = this.containerEl.querySelector<HTMLElement>(
-      ".echoink-template-picker.is-visible"
-    );
-    if (!picker) return;
-    picker.scrollIntoView({ block: "center", inline: "nearest" });
-    const firstRow = picker.querySelector<HTMLElement>(".echoink-picker-row");
-    (firstRow ?? picker).focus({ preventScroll: true });
-  }
-
-  /** USER.md is maintained by dreaming / memory corrections — read-only here. */
-  private addReadOnlyUserProfileCard(container: HTMLElement, userContent: string): void {
-    const zh = this.plugin.settings.settingsLanguage !== "en";
-    const card = container.createDiv({ cls: "echoink-agent-profile-card" });
-    const header = card.createDiv({ cls: "echoink-agent-profile-card-header" });
-    const titleArea = header.createDiv({ cls: "echoink-agent-profile-card-title-area" });
-    titleArea.createDiv({ cls: "echoink-agent-profile-card-label", text: zh ? "用户画像" : "User profile" });
-    titleArea.createSpan({
-      cls: "echoink-agent-profile-card-badge",
-      text: zh ? "持续了解你" : "Keeps learning about you"
-    });
-    header.createDiv({
-      cls: "echoink-agent-profile-card-desc",
-      text: zh
-        ? "EchoInk 会从聊天和记忆整理中持续了解你，自动更新这份画像。"
-        : "EchoInk keeps learning about you through conversations and memory consolidation, and updates this profile automatically."
-    });
-    const pre = card.createEl("pre", {
-      cls: "echoink-user-profile-text",
-      text: userContent
-    });
-    pre.setAttr("tabindex", "0");
-  }
-
-  private ensureKnowledgeFolderSection(): KnowledgeFolderSection {
-    this.knowledgeInitSection ??= new KnowledgeFolderSection(
-      this.plugin,
-      () => this.scheduleDisplay(),
-      {
-        open: () => this.openSettingsDetail("knowledge-folders"),
-        close: () => { void this.closeSettingsDetail(); }
-      }
-    );
-    return this.knowledgeInitSection;
-  }
-
-  private mountKnowledgeInitializationSection(page: HTMLElement, zh: boolean): void {
-    this.ensureKnowledgeFolderSection().render(page, zh);
-  }
-
-  private mountKnowledgeDashboard(page: HTMLElement, zh: boolean): void {
-    const manager = this.plugin.getKnowledgeSurfaceService?.();
-    if (Platform.isDesktopApp) {
-      this.knowledgeDashboardEl = null;
-      if (manager) renderKnowledgeFolderActions(page, manager, this.plugin.settings.settingsLanguage,
-        async () => { this.knowledgeDashboardSnapshot = null; this.scheduleDisplay(); },
-        group => this.mountKnowledgeInitializationSection(group, zh));
-      else this.mountKnowledgeInitializationSection(page, zh);
-      createSettingsNavigationRow(createSettingsGroup(createSettingsSection(page, { surface: "flat" })), {
-        title: zh ? "知识库数据" : "Knowledge data", value: zh ? "工作台" : "Workbench",
-        actionLabel: zh ? "查看" : "View", focusKey: "knowledge:dashboard",
-        onActivate: () => void this.openKnowledgeDataPage("overview")
-      });
-      return;
-    }
-    if (!this.knowledgeInitSection?.showDashboard) {
-      this.knowledgeDashboardEl = null;
-      page.createEl("p", { cls: "init-awaiting", text: zh
-        ? "初始化后，这里会展示知识库状态与统计。"
-        : "Knowledge status and statistics will appear here after initialization." });
-    }
-    if (manager) renderKnowledgeFolderActions(page, manager, this.plugin.settings.settingsLanguage,
-      async () => { this.knowledgeDashboardSnapshot = null; this.scheduleDisplay(); },
-      group => this.mountKnowledgeInitializationSection(group, zh));
-    else this.mountKnowledgeInitializationSection(page, zh);
-    if (!this.knowledgeInitSection?.showDashboard) return;
-    const section = createSettingsSection(page, {
-      surface: "flat"
-    });
-    this.knowledgeDashboardEl = section.createDiv({
-      cls: "settings-knowledge-dashboard"
-    });
-    this.renderKnowledgeSettingsDashboard();
-    if (!this.knowledgeDashboardSnapshot && !this.knowledgeDashboardLoading) {
-      void this.refreshKnowledgeSettingsDashboard();
-    }
-  }
-
-  private renderKnowledgeSettingsDashboard(): void {
-    const container = this.knowledgeDashboardEl;
-    if (!container) return;
-    const manager = this.plugin.getKnowledgeSurfaceService?.();
-    const recovery = manager?.maintenanceRecoveryStatus ?? {
-      state: "ready" as const,
-      message: ""
-    };
-    renderSettingsKnowledgeDashboard(
-      container,
-      {
-        language: this.plugin.settings.settingsLanguage,
-        visible: true,
-        snapshot: this.knowledgeDashboardSnapshot,
-        expanded: this.knowledgeDashboardExpanded,
-        loading: this.knowledgeDashboardLoading,
-        error: this.knowledgeDashboardError,
-        recovery
-      },
-      {
-        onRefresh: () => void this.refreshKnowledgeSettingsDashboard(true),
-        onOpenHistory: () => this.openSettingsDetail("knowledge-maintenance-history"),
-        onOpenRaw: () => void this.openKnowledgeRawFolder(),
-        onToggleExpanded: () => {
-          this.knowledgeDashboardExpanded = !this.knowledgeDashboardExpanded;
-          this.renderKnowledgeSettingsDashboard();
-        }
-      },
-      this.app
-    );
-  }
-
-  private async openKnowledgeRawFolder(): Promise<void> {
-    const zh = this.plugin.settings.settingsLanguage !== "en";
-    const vaultRoot = this.plugin.getVaultPath();
-    const status = this.plugin.settings.knowledgeBase.folderBindings ? knowledgeRoleStatus(vaultRoot, "raw") : "unbound";
-    if (status !== "ready") {
-      const labels = { disabled: "未启用", unbound: "尚未选择默认位置", invalid: "默认位置已失效" };
-      new Notice(zh ? `资料来源${labels[status]}，请在知识库目录中选择有效位置。` : "Enable sources and choose a valid default folder in Knowledge folders.");
-      return;
-    }
-    let directory: string;
-    try { directory = resolveKnowledgeRoleTarget(vaultRoot, "raw"); }
-    catch { new Notice(zh ? "资料来源位置已改变，请在知识库目录中重新选择。" : "The source folder changed. Select it again in Knowledge folders."); return; }
-    const folder = this.app.vault.getAbstractFileByPath(directory);
-    const leaf = this.app.workspace.getLeavesOfType("file-explorer")[0];
-    const view = leaf?.view as (typeof leaf.view & { revealInFolder?: (folder: TFolder) => void | Promise<void> }) | undefined;
-    if (!folder || folder instanceof TFile || !leaf || !view?.revealInFolder) {
-      new Notice(zh ? `请在文件列表中打开资料来源：${directory}。` : `Open the source folder in the file explorer: ${directory}.`);
-      return;
-    }
-    try {
-      await view.revealInFolder(folder as TFolder);
-      await this.app.workspace.revealLeaf(leaf);
-      (this.app as unknown as { setting?: { close: () => void } }).setting?.close();
-    } catch {
-      new Notice(zh ? "资料来源目录未能打开，请从文件列表重试。" : "The source folder could not open. Retry from the file explorer.");
-    }
-  }
-
-  private async refreshKnowledgeSettingsDashboard(force = false): Promise<void> {
-    if (this.knowledgeDashboardLoading && !force) return;
-    const manager = this.plugin.getKnowledgeSurfaceService?.();
-    if (!manager) {
-      this.knowledgeDashboardError = this.plugin.settings.settingsLanguage === "en"
-        ? "Knowledge status is not ready yet."
-        : "知识库状态服务尚未就绪。";
-      this.renderKnowledgeSettingsDashboard();
-      return;
-    }
-    const requestId = ++this.knowledgeDashboardRequestId;
-    this.knowledgeDashboardLoading = true;
-    this.knowledgeDashboardError = "";
-    this.renderKnowledgeSettingsDashboard();
-    try {
-      const snapshot = await manager.getDashboardSnapshot();
-      if (requestId !== this.knowledgeDashboardRequestId) return;
-      this.knowledgeDashboardSnapshot = snapshot;
-    } catch (error) {
-      if (requestId !== this.knowledgeDashboardRequestId) return;
-      this.knowledgeDashboardError = error instanceof Error ? error.message : String(error);
-    } finally {
-      if (requestId === this.knowledgeDashboardRequestId) {
-        this.knowledgeDashboardLoading = false;
-        this.renderKnowledgeSettingsDashboard();
-      }
-    }
+    const section = createSettingsSection(page, { title: zh ? "关于" : "About", surface: "flat" });
+    this.membershipRowsDisposers.push(renderCompactAbout(section, {
+      version, language: this.plugin.settings.settingsLanguage,
+      websiteUrl: membershipWebsiteLink("plugin.about"),
+      update: this.releaseUpdate,
+      onLogoClick: altKey => { if (this.plugin.developerMode.click(altKey)) this.renderSettingsContent(); }
+    }));
   }
 
   private async openKnowledgeDataPage(page: "overview" | "health" | "history"): Promise<void> {
@@ -2876,70 +1877,8 @@ export class CodexSettingTab extends PluginSettingTab {
     await openKnowledgeMaintenancePath(this.app, relativePath, this.plugin.settings.settingsLanguage !== "en");
   }
 
-  private renderKnowledgeBaseSettings(container: HTMLElement): void {
-    this.knowledgeLinkingCleanup?.(); this.knowledgeLinkingCleanup = null;
-    if (this.plugin.consumeKnowledgeLinkingFocus()) { this.knowledgeLinkingTaskId = this.plugin.consumeKnowledgeLinkingTaskId(); this.settingsDetail = "knowledge-linking"; }
-    if (this.settingsDetail === "knowledge-linking") {
-      this.knowledgeLinkingCleanup = renderKnowledgeLinkingSection(container, this.plugin, () => { void this.closeSettingsDetail(); }, this.knowledgeLinkingTaskId ?? undefined);
-      return;
-    }
-    const copy = this.copy;
-    const zh = this.plugin.settings.settingsLanguage !== "en";
-    if (this.settingsDetail === "knowledge-folders") {
-      this.ensureKnowledgeFolderSection().renderDetail(container, zh);
-      return;
-    }
-    if (this.settingsDetail === "knowledge-maintenance-history") {
-      this.renderKnowledgeMaintenanceHistoryDetail(container, zh);
-      return;
-    }
-    if (this.settingsDetail === "knowledge-preferences") {
-      this.renderKnowledgeMaintenancePreferences(container);
-      return;
-    }
-
-    if (
-      !this.knowledgePreferenceState
-      && !this.knowledgePreferenceLoading
-      && !this.knowledgePreferenceLoadError
-    ) void this.loadKnowledgePreferenceState();
-
-    const page = createSettingsPage(container, {
-      title: copy.knowledge.title
-    });
-    page.addClass("codex-knowledge-settings");
-    this.renderSettingsActionError(page, "knowledge");
-
-    this.ensureKnowledgeFolderSection();
-    this.mountKnowledgeDashboard(page, zh);
-
-    if (!Platform.isDesktopApp) this.renderDefaultModelSelector(page);
-
-    this.renderKnowledgeMaintenanceHistory(page, zh);
-
-    const management = createSettingsSection(page, {
-      title: zh ? "管理" : "Management",
-      surface: "flat"
-    });
-    management.addClass("standard-section");
-    const managementGroup = createSettingsGroup(management);
-    managementGroup.addClass("settings-card");
-    createSettingsNavigationRow(managementGroup, {
-      title: zh ? "知识提炼偏好" : "Knowledge refinement preferences",
-      description: zh
-        ? "调整关注维度、颗粒度、组织、融合和表达；固定六步、权限与安全边界不可编辑。"
-        : "Adjust focus, granularity, organization, merging, and style. The fixed six steps and safety boundaries cannot be edited.",
-      value: this.knowledgePreferenceLoading
-        ? (zh ? "读取中" : "Loading")
-        : this.knowledgePreferenceLoadError
-          ? (zh ? "读取失败" : "Unavailable")
-          : this.knowledgePreferenceState?.state === "custom"
-            ? (zh ? "已自定义" : "Customized")
-            : (zh ? "使用默认" : "Using default"),
-      actionLabel: zh ? "编辑" : "Edit",
-      focusKey: "knowledge:preferences",
-      onActivate: () => this.openSettingsDetail("knowledge-preferences")
-    });
+  private renderKnowledgeBaseSettings(container: HTMLElement): void{
+    this.renderDesktopModuleSettings(container);
   }
 
   private renderKnowledgeMaintenancePreferences(container: HTMLElement): void {
@@ -3197,9 +2136,11 @@ export class CodexSettingTab extends PluginSettingTab {
       surface: "group"
     });
     const managementGroup = createSettingsGroup(management);
-    applySettingsRow(new OriginSetting(managementGroup)
+    const autoArchive = applySettingsRow(new OriginSetting(managementGroup)
       .setName(zh ? "自动归档" : "Automatically archive")
-      .setDesc(zh ? "归档超过指定天数未更新的对话；跳过使用中或有待发送内容的对话，可在下方恢复。" : "Archive conversations with no updates for the selected period. Conversations in use or with pending drafts are skipped. Restore them below.")
+      .setDesc(Platform.isDesktopApp
+        ? (zh ? "多久没更新的对话自动归档" : "How long conversations stay inactive before archiving")
+        : (zh ? "归档超过指定天数未更新的对话；跳过使用中或有待发送内容的对话，可在下方恢复。" : "Archive conversations with no updates for the selected period. Conversations in use or with pending drafts are skipped. Restore them below."))
       .addOriginDropdown(this.app, dropdown => {
         dropdown.selectEl.setAttr("aria-label", zh ? "自动归档" : "Automatically archive");
         dropdown.selectEl.setAttr("data-echoink-focus-key", "review:auto-archive");
@@ -3213,18 +2154,31 @@ export class CodexSettingTab extends PluginSettingTab {
           catch { this.plugin.settings.autoArchiveDays = previous; dropdown.setValue(String(previous)); new Notice(zh ? "自动归档设置未保存" : "Archive setting was not saved"); }
         });
       }));
-    createSettingsNavigationRow(managementGroup, {
+    if (Platform.isDesktopApp) {
+      const wrapper = autoArchive.nameEl.createSpan({ cls: "echoink-settings-help" });
+      const help = createOriginButton(wrapper, { cls: "echoink-settings-help-trigger is-icon", attr: { "aria-label": zh ? "自动归档说明" : "Automatic archive information" } });
+      setIcon(help, "circle-alert");
+      attachSettingsTooltip(help, zh ? "跳过使用中或有待发送内容的对话" : "Conversations in use or with pending drafts are skipped.", wrapper);
+    }
+    const archives = createSettingsNavigationRow(managementGroup, {
       title: zh ? "已归档会话" : "Archived conversations",
-      description: zh
-        ? "搜索、恢复或删除已归档会话；删除后无法在设置中恢复。"
-        : "Search, restore, or delete archived conversations. Deleted conversations cannot be restored in Settings.",
+      description: Platform.isDesktopApp
+        ? (zh ? "查看、恢复或删除已归档的对话" : "View, restore, or delete archived conversations")
+        : (zh ? "搜索、恢复或删除已归档会话；删除后无法在设置中恢复。" : "Search, restore, or delete archived conversations. Deleted conversations cannot be restored in Settings."),
       value: this.archivedConversations
         ? String(this.archivedConversations.length)
         : (zh ? "查看" : "View"),
-      actionLabel: zh ? "打开" : "Open",
+      actionLabel: Platform.isDesktopApp ? undefined : (zh ? "打开" : "Open"),
       focusKey: "review:archives",
       onActivate: () => this.openSettingsDetail("review-archives")
     });
+    if (Platform.isDesktopApp) {
+      const help = archives.querySelector<HTMLElement>(".echoink-settings-navigation-title")!.createSpan({ cls: "echoink-settings-help", attr: { "aria-hidden": "true" } });
+      setIcon(help, "circle-alert");
+      const activate = archives.onclick;
+      attachSettingsTooltip(archives, zh ? "删除后无法在设置中恢复" : "Deleted conversations cannot be restored in Settings.", help);
+      archives.onclick = activate;
+    }
     if (!Platform.isDesktopApp) createSettingsNavigationRow(managementGroup, {
       title: zh ? "记忆修正" : "Memory correction",
       description: zh
@@ -3358,7 +2312,9 @@ export class CodexSettingTab extends PluginSettingTab {
         attr: { type: "button", "aria-label": `${zh ? "删除" : "Delete"} ${entry.title}` }
       });
       remove.disabled = Boolean(this.archivedConversationBusyId);
+      if (Platform.isDesktopApp) applyDeleteButton(remove);
       remove.onclick = () => showSettingsInlineConfirmation(row, remove, {
+        deleteAction: Platform.isDesktopApp,
         message: zh ? `删除“${entry.title}”后无法在设置中恢复。确认删除这条会话？` : `Delete “${entry.title}”? It cannot be restored in Settings afterward.`,
         confirmLabel: zh ? "确认删除" : "Confirm deletion", cancelLabel: zh ? "取消" : "Cancel",
         onConfirm: () => this.softDeleteArchivedConversation(entry)
@@ -3541,8 +2497,10 @@ export class CodexSettingTab extends PluginSettingTab {
         }
       });
       forget.disabled = this.memoryActionRunning;
+      if (Platform.isDesktopApp) applyDeleteButton(forget);
       forget.onclick = () => showSettingsInlineConfirmation(row, forget, {
-        message: zh ? `忘掉“${record.title}”后，它不会再被召回；相关用户画像与 Agent 长期学习内容会同步更新。` : `After “${record.title}” is forgotten, it will no longer be recalled. Related user-profile and Agent learning projections will be updated too.`,
+        deleteAction: Platform.isDesktopApp,
+        message: zh ? `忘掉“${record.title}”后，它不会再被召回；相关用户画像与关联记忆会同步更新。` : `After “${record.title}” is forgotten, it will no longer be recalled. Related user-profile and memory projections will be updated too.`,
         confirmLabel: zh ? "确认忘掉" : "Confirm forgetting", cancelLabel: this.copy.common.cancel,
         onConfirm: () => this.forgetPersonalMemoryRecord(record)
       });
@@ -3893,6 +2851,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.settingsTabsResizeObserver.observe(tabs);
     }
     const now = Date.now();
+    const flatNavigation = Boolean(tabs.closest(".echoink-settings-aligned"));
     const reducedMotion = Boolean(
       container.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches
     );
@@ -3901,7 +2860,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (justSwitched) {
       // Bookmark rise finishes first (transitionend below), then the icon's own
       // animation starts. Reduced motion skips straight to the final state.
-      this.settingsTabIconAnimation = reducedMotion
+      this.settingsTabIconAnimation = reducedMotion || flatNavigation
         ? { tabId: activeTab, startedAtMs: now }
         : null;
     }
@@ -3954,7 +2913,7 @@ export class CodexSettingTab extends PluginSettingTab {
         tab.icon,
         isActive ? activeAnimationProgress : null
       );
-      if (isActive && justSwitched && !reducedMotion) {
+      if (isActive && justSwitched && !reducedMotion && !flatNavigation) {
         // Sequential handoff: play the icon's own animation only after the
         // bookmark rise transition completes; stale switches self-cancel.
         // NOTE: no `{ once: true }` — earlier background/color transitionend
@@ -4045,22 +3004,6 @@ export class CodexSettingTab extends PluginSettingTab {
       this.desktopKnowledge.requestLeave(() => { void this.activateSettingsTab(tabId, focus); }); return;
     }
     this.clearDesktopSelection();
-    if (this.settingsDetail === "knowledge-folders") {
-      if (this.knowledgeInitSection?.submitting) return;
-      if (this.knowledgeInitSection?.hasDraft) {
-        this.knowledgeInitSection.requestLeave(() => {
-          this.settingsDetail = null;
-          void this.activateSettingsTab(tabId, focus);
-        });
-        return;
-      }
-    }
-    if (
-      this.plugin.settings.settingsTab === "knowledgeBase"
-      && tabId !== "knowledgeBase"
-    ) {
-      this.knowledgeInitSection?.invalidate();
-    }
     if (
       this.settingsDetail === "knowledge-preferences"
       && knowledgeMaintenancePreferenceIsDirty(
@@ -4261,7 +3204,7 @@ export class CodexSettingTab extends PluginSettingTab {
     );
     const modelSetting = applySettingsRow(new OriginSetting(runGroup)
       .setName(Platform.isDesktopApp ? (zh ? "EchoInk 默认模型" : "EchoInk default model") : (zh ? "EchoInk 当前模型" : "Current EchoInk model"))
-      .setDesc(zh
+      .setDesc(Platform.isDesktopApp ? (zh ? "所有 Agent 默认使用" : "Default for all Agents") : zh
         ? "普通聊天、/ask、/maintain 与选区翻译共用这个模型。"
         : "Chat, /ask, /maintain, and selection translation share this model.")
       .addOriginDropdown(this.app, (dropdown) => {
@@ -4347,7 +3290,7 @@ export class CodexSettingTab extends PluginSettingTab {
         dropdown.selectEl.disabled = availableTargets.length === 0;
       })
       );
-    modelSetting.settingEl.dataset.echoinkFocusKey = "knowledge:provider";
+    modelSetting.settingEl.dataset.echoinkFocusKey = "models:default";
     if (!Platform.isDesktopApp) {
       const manage = createOriginButton(modelSetting.controlEl, { text: zh ? "管理模型" : "Manage models" });
       manage.onclick = () => void this.activateSettingsTab("providers", true);
@@ -4364,12 +3307,14 @@ export class CodexSettingTab extends PluginSettingTab {
       const page = createSettingsPage(container, { title: label("添加模型服务", "Add model service"), detail: true,
         backLabel: label("返回模型", "Back to models"), onBack: () => { this.providerPickerOpen = false; this.settingsFocusIntent = "explicit:providers:add"; this.scheduleDisplay(); } });
       renderProviderServicePicker(page, { language: this.plugin.settings.settingsLanguage,
+        addedProviderIds: this.plugin.settings.apiProviders.map(provider => normalizeApiProviderId(provider.providerId, provider.baseUrl, provider.name)),
         onSelect: preset => this.openProviderModelModal(createApiProviderConfig(preset.id), false) });
       for (const card of Array.from(page.querySelectorAll<HTMLElement>("[data-provider-service]"))) card.setAttr("data-echoink-focus-key", `provider-service:${card.dataset.providerService}`);
       return;
     }
     const page = createSettingsPage(container, {
-      title: Platform.isDesktopApp ? label("模型", "Models") : label("模型与提供商", "Models and providers")
+      title: Platform.isDesktopApp ? label("模型", "Models") : label("模型与提供商", "Models and providers"),
+      titleVisibility: Platform.isDesktopApp ? "screen-reader" : "visible"
     });
     page.addClass("codex-provider-model-manager");
     this.renderSettingsActionError(page, "providers");
@@ -4390,13 +3335,13 @@ export class CodexSettingTab extends PluginSettingTab {
     const addCopy = addSection.createDiv({ cls: "codex-provider-add-copy" });
     addCopy.createDiv({
       cls: "codex-provider-add-title",
-      text: Platform.isDesktopApp ? label("已保存连接", "Saved connections") : label("已保存模型", "Saved models")
+      text: Platform.isDesktopApp ? label("模型服务", "Model services") : label("已保存模型", "Saved models")
     });
     const addButton = createOriginButton(addSection, {
       cls: "codex-provider-add-button",
       attr: { type: "button", "data-echoink-focus-key": "providers:add" }
     });
-    applyAmicroButton(addButton, { variant: Platform.isDesktopApp ? "secondary" : "primary", icon: "plus" });
+    applyAmicroButton(addButton, { variant: Platform.isDesktopApp ? "tertiary" : "primary", icon: "plus" });
     if (Platform.isDesktopApp) { addButton.setAttr("aria-label", label("添加模型服务", "Add model service")); addButton.addClass("icon-button"); }
     else addButton.createSpan({ text: label("添加模型", "Add model") });
     addButton.onclick = () => {
@@ -4421,6 +3366,29 @@ export class CodexSettingTab extends PluginSettingTab {
         saved.name,
         this.plugin.settings.settingsLanguage
       );
+      if (Platform.isDesktopApp) {
+        const verified = this.verifiedProviderConnections.get(saved.id) === providerConfigurationFingerprint(saved);
+        const signedIn = saved.authMode === "oauth" && apiProviderHasUsableCredential(saved, this.plugin.settings.openAICodexCredential);
+        const status = verified ? "connected" : signedIn ? "signed-in" : "unverified";
+        const statusLabel = verified ? label("连接正常", "Connection verified")
+          : signedIn ? label("已登录", "Signed in") : label("未验证", "Not verified");
+        const modelCount = label(`${saved.models.length} 个模型`, `${saved.models.length} models`);
+        const row = createOriginButton(savedList, {
+          cls: `codex-provider-saved-row codex-provider-service-row is-provider-${providerId}`,
+          attr: { type: "button", "data-echoink-focus-key": `provider:${saved.id}:edit`, "aria-label": `${providerDisplayName} · ${modelCount} · ${statusLabel}` }
+        });
+        const identity = row.createSpan({ cls: "codex-provider-saved-identity" });
+        renderProviderBrandIcon(identity.createSpan({ cls: `codex-provider-saved-icon is-${providerId}`, attr: { "aria-hidden": "true" } }), providerId);
+        const copy = identity.createSpan({ cls: "codex-provider-saved-copy" });
+        copy.createSpan({ cls: "codex-provider-saved-model" }).createEl("strong", { text: providerDisplayName });
+        copy.createSpan({ cls: "codex-provider-saved-details", text: modelCount });
+        const connection = row.createSpan({ cls: `codex-provider-connection-badge is-${status}` });
+        setIcon(connection.createSpan({ attr: { "aria-hidden": "true" } }), verified || signedIn ? "check-circle-2" : "circle-help");
+        connection.createSpan({ text: statusLabel });
+        setIcon(row.createSpan({ cls: "codex-provider-saved-arrow", attr: { "aria-hidden": "true" } }), "chevron-right");
+        row.onclick = () => this.openProviderModelModal(saved, true);
+        continue;
+      }
       const defaultModel = getDefaultApiProviderModel(saved);
       const modelDisplayName = defaultModel
         ? defaultModel.displayName
@@ -4471,6 +3439,7 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }
 
+      if (Platform.isDesktopApp) setIcon(identity.createSpan({ cls: "codex-provider-saved-arrow", attr: { "aria-hidden": "true" } }), "chevron-right");
       const rowMeta = row.createDiv({ cls: "codex-provider-saved-meta" });
       const apiKeyRequired = apiProviderApiKeyRequired(providerId);
       const credentialReady = apiProviderHasUsableCredential(
@@ -4541,13 +3510,14 @@ export class CodexSettingTab extends PluginSettingTab {
           "data-echoink-focus-key": `provider:${saved.id}:delete`
         }
       });
-      setIcon(remove, "trash-2");
+      if (Platform.isDesktopApp) applyDeleteButton(remove, { iconOnly: true }); else setIcon(remove, "trash-2");
       remove.onclick = () => showSettingsInlineConfirmation(row, remove, {
+        deleteAction: Platform.isDesktopApp,
         message: `${this.copy.providers.deleteConfirm(providerDisplayName)} ${saved.id === active?.id
           ? label("将删除当前使用中的模型。EchoInk 会切换到下一项；若没有其他项，则进入未配置状态。", "The active model will be removed. EchoInk will switch to the next saved model, or become unconfigured if none remains.")
           : label("这会删除已保存的模型配置。", "This removes the saved model configuration.")}`,
         confirmLabel: label("确认删除", "Confirm deletion"), cancelLabel: this.copy.common.cancel,
-        onConfirm: () => this.deleteSavedProviderModel(saved.id)
+        onConfirm: async () => { await this.deleteSavedProviderModel(saved.id); }
       });
     }
 
@@ -4591,6 +3561,7 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     const host = this.containerEl.ownerDocument.createElement("div");
+    host.toggleClass("echoink-settings-aligned", Platform.isDesktopApp);
     const modelEditor = tab === "providers" || tab === "models";
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const backLabel = modelEditor ? (zh ? "返回模型" : "Back to models") : (zh ? "返回设置" : "Back to settings");
@@ -4644,6 +3615,12 @@ export class CodexSettingTab extends PluginSettingTab {
         openExternal: async (url) =>
           await openExternalInElectron(url)
       },
+      remove: Platform.isDesktopApp && editing ? {
+        message: `${this.copy.providers.deleteConfirm(apiProviderConfiguredDisplayName(normalizeApiProviderId(source.providerId, source.baseUrl, source.name), source.name, this.plugin.settings.settingsLanguage))} ${source.id === this.plugin.settings.activeApiProviderId
+          ? (this.plugin.settings.settingsLanguage === "en" ? "The active model will be removed. EchoInk will switch to the next saved model, or become unconfigured if none remains." : "将删除当前使用中的模型。EchoInk 会切换到下一项；若没有其他项，则进入未配置状态。")
+          : (this.plugin.settings.settingsLanguage === "en" ? "This removes the saved model configuration." : "这会删除已保存的模型配置。")}`,
+        action: () => this.deleteSavedProviderModel(source.id)
+      } : undefined,
       save: async (draft, apiKey, connectionVerified) =>
         await this.saveAndActivateProviderModel(
           draft,
@@ -4788,11 +3765,11 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
-  private async deleteSavedProviderModel(providerId: string): Promise<void> {
+  private async deleteSavedProviderModel(providerId: string): Promise<boolean> {
     const provider = this.plugin.settings.apiProviders.find(
       (item) => item.id === providerId
     );
-    if (!provider) return;
+    if (!provider) return false;
     const wasActive = this.plugin.settings.activeApiProviderId === providerId;
     const fallback = this.plugin.settings.apiProviders.find(
       (item) => item.id !== providerId && apiProviderHasUsableCredential(
@@ -4834,8 +3811,10 @@ export class CodexSettingTab extends PluginSettingTab {
           ? "Saved model removed."
           : "已删除已保存模型。"));
       this.scheduleDisplay();
+      return true;
     } catch (error) {
       new Notice(error instanceof Error ? error.message : this.copy.providers.saveFailed);
+      return false;
     }
   }
 
@@ -5001,6 +3980,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const page = createSettingsPage(container, {
       title: Platform.isDesktopApp ? this.settingsTabLabel(desktopModules ? "modules" : "capabilities") : copy.resources.title,
       headingId: RESOURCE_TITLE_ID,
+      titleVisibility: Platform.isDesktopApp ? "screen-reader" : "visible",
       description: Platform.isDesktopApp ? undefined : copy.resources.note
     });
     if (desktopModules) {
@@ -5076,9 +4056,15 @@ export class CodexSettingTab extends PluginSettingTab {
       this.suppressResourceTabFocusRestore = false;
       return;
     }
-    this.renderResourceSearch(toolbar, activeTab);
+    const desktopMcp = Platform.isDesktopApp && activeTab === "mcp";
+    const showSearch = !desktopMcp || this.currentEchoInkResourceCatalog().filter(resource => resource.kind === "mcp-server").length > 8;
+    if (showSearch) this.renderResourceSearch(toolbar, activeTab);
+    else {
+      this.resourceSearchQuery.mcp = "";
+      toolbar.remove();
+    }
     const toolbarActions = toolbar.createDiv({ cls: "codex-resource-toolbar-actions" });
-    if (activeTab === "mcp") {
+    if (activeTab === "mcp" && !Platform.isDesktopApp) {
       const add = createOriginButton(toolbarActions, {
         cls: "codex-resource-add",
         attr: {
@@ -5091,14 +4077,22 @@ export class CodexSettingTab extends PluginSettingTab {
       add.createSpan({ text: this.plugin.settings.settingsLanguage === "en" ? "Add server" : "新增 Server" });
       add.onclick = () => this.openMcpServerModal();
     }
-    const refresh = createOriginButton(toolbarActions, {
-      cls: "codex-resource-refresh",
-      attr: { type: "button", "aria-label": copy.resources.refreshTitle, "data-echoink-focus-key": "resources:refresh" }
-    });
-    applyAmicroButton(refresh, { variant: "secondary", motion: "rotate", icon: "refresh-cw" });
-    refresh.createSpan({ text: this.resourceLoadingTab === this.plugin.settings.resourceManagementTab ? copy.common.loading : copy.common.refresh });
-    refresh.disabled = this.resourceLoadingTab === this.plugin.settings.resourceManagementTab;
-    refresh.onclick = () => void this.loadWorkspaceResources(true, this.plugin.settings.resourceManagementTab);
+    const renderRefresh = (parent: HTMLElement, iconOnly = false) => {
+      const refresh = createOriginButton(parent, {
+        cls: `codex-resource-refresh${iconOnly ? " icon-button" : ""}`,
+        attr: { type: "button", "aria-label": iconOnly ? copy.common.refresh : copy.resources.refreshTitle, "data-echoink-focus-key": "resources:refresh" }
+      });
+      applyAmicroButton(refresh, { variant: iconOnly ? "tertiary" : "secondary", motion: "rotate", icon: "refresh-cw" });
+      const loading = this.resourceLoadingTab === activeTab;
+      if (iconOnly) {
+        setTooltip(refresh, copy.common.refresh);
+        setAmicroButtonPending(refresh, loading);
+      } else refresh.createSpan({ text: loading ? copy.common.loading : copy.common.refresh });
+      refresh.disabled = loading;
+      refresh.onclick = () => void this.loadWorkspaceResources(true, activeTab);
+    };
+    if (!desktopMcp) renderRefresh(toolbarActions);
+    else toolbarActions.remove();
 
     const english = this.plugin.settings.settingsLanguage === "en";
     if (!Platform.isDesktopApp) wrapper.createEl("p", {
@@ -5123,6 +4117,18 @@ export class CodexSettingTab extends PluginSettingTab {
         "aria-busy": String(isLoading)
       }
     });
+    if (Platform.isDesktopApp && activeTab === "mcp") {
+      const header = body.createDiv({ cls: "codex-resource-list-header" });
+      const heading = new OriginSetting(header).setName(this.plugin.settings.settingsLanguage === "en" ? "Added" : "已添加").setHeading();
+      heading.settingEl.addClass("codex-resource-group-title");
+      const actions = header.createDiv({ cls: "codex-resource-header-actions" });
+      renderRefresh(actions, true);
+      const add = createOriginButton(actions, { cls: "codex-resource-add icon-button", attr: {
+        type: "button", "aria-label": this.plugin.settings.settingsLanguage === "en" ? "Add MCP server" : "新增 MCP Server",
+        "data-echoink-focus-key": "resources:mcp:add"
+      } });
+      setIcon(add, "plus"); add.onclick = () => this.openMcpServerModal();
+    }
     if (isLoading && activeTab !== "plugins") {
       createSettingsState(body, copy.resources.loadingTab(activeMeta ? copy.resources.tabs[activeMeta.id] : copy.tabs.resources));
     }
@@ -5804,7 +4810,7 @@ export class CodexSettingTab extends PluginSettingTab {
       void renderEnglishDiaryActivity(statistics, repository, this.app);
       this.disposeDiaryActivity = repository?.subscribe?.(renderStatistics) ?? null;
     }
-    const section = createSettingsSection(page, { title: "模型", surface: "flat" });
+    const section = createSettingsSection(page, { title: embedded ? undefined : "模型", surface: "flat" });
     const group = createSettingsGroup(section);
     const current = this.plugin.settings.englishDiary;
     const value = current.providerSettingsId ? providerModelSelectionValue(current.providerSettingsId, current.modelId) : "";
@@ -5848,11 +4854,15 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
     if (!embedded) this.decorateSetting(modelSetting, "brain-circuit");
-    const files = createSettingsGroup(createSettingsSection(page, { title: "文件与内容", description: "原稿、英文稿和词条都是可从文件夹查看的 Markdown 笔记。分类与备注可在表达库内修改。", surface: "flat" }));
+    const files = createSettingsGroup(createSettingsSection(page, { title: embedded ? undefined : "文件与内容", description: embedded ? undefined : "原稿、英文稿和词条都是可从文件夹查看的 Markdown 笔记。分类与备注可在表达库内修改。", surface: "flat" }));
     const native = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory);
     applySettingsRow(new OriginSetting(files).setName("日记原稿").setDesc(`沿用 Obsidian 日记：${native.folder || "Vault 根目录"}，可正常编辑。在英文面板更多菜单的“发送范围”中选择允许生成的段落。`));
-    applySettingsRow(new OriginSetting(files).setName("英文稿位置").setDesc(current.englishDirectory));
-    applySettingsRow(new OriginSetting(files).setName("表达库位置").setDesc(current.expressionDirectory));
+    for (const [name, value] of [["英文稿位置", current.englishDirectory], ["表达库位置", current.expressionDirectory]]) {
+      const row = new OriginSetting(files);
+      row.setName(name); applySettingsRow(row);
+      if (Platform.isDesktopApp && embedded) row.addOriginText(text => { text.setValue(value); text.inputEl.readOnly = true; text.inputEl.setAttr("aria-label", name); });
+      else row.setDesc(value);
+    }
     const openLibrary = async () => {
       try {
         if (!current.enabled) { new Notice("请先在插件列表中启用英文日记。"); return; }
@@ -5862,9 +4872,14 @@ export class CodexSettingTab extends PluginSettingTab {
     };
     if (!embedded) createSettingsNavigationRow(files, { title: "表达库", description: "搜索已收录的表达，查看出处、修改分类与备注。", actionLabel: "打开", onActivate: () => { void openLibrary(); } });
     const zh = this.plugin.settings.settingsLanguage !== "en";
-    const shortcutLabel = zh ? "首页快捷入口" : "Home shortcut";
+    const shortcutLabel = Platform.isDesktopApp
+      ? (zh ? "移动端英文日记快捷入口" : "English diary shortcut on mobile")
+      : (zh ? "首页快捷入口" : "Home shortcut");
+    const shortcutHint = Platform.isDesktopApp
+      ? (zh ? "将移动端的快速记录入口改为写英文日记" : "Replace Quick note on mobile with Write English diary")
+      : (zh ? "将首页“快速记录”替换为“写英文日记”。" : "Replace Quick note on Home with Write English diary.");
     if (embedded) {
-      this.renderModuleCheckbox(files, shortcutLabel, current.homeShortcut === "english-diary", zh ? "将首页“快速记录”替换为“写英文日记”。" : "Replace Quick note on Home with Write English diary.", async enabled => {
+      this.renderModuleCheckbox(files, shortcutLabel, current.homeShortcut === "english-diary", shortcutHint, async enabled => {
         if (!this.plugin.englishDiary) throw new Error(zh ? "英文日记尚未就绪" : "English Diary is not ready");
         await this.plugin.englishDiary.setHomeShortcut(enabled ? "english-diary" : "quick-record");
       }, true, "english-diary:home-shortcut");
@@ -6018,9 +5033,26 @@ export class CodexSettingTab extends PluginSettingTab {
     const clear = createOriginButton(empty, { cls: "text-button", text: copy.resources.clearSearch });
     clear.onclick = () => this.containerEl.querySelector<HTMLButtonElement>(".codex-resource-search-clear")?.click();
     const visibleKeys = new Set(filtered.map((row) => row.key));
-    for (const row of rows) {
-      if (row.lifeKind) this.renderBuiltinPluginRow(container, row.lifeKind, visibleKeys.has(row.key), row);
-      else if (row.resource) this.renderResourceRow(container, row.resource, visibleKeys.has(row.key), row);
+    const groups = new Map<string, HTMLElement>();
+    const groupFor = (row: typeof rows[number]): HTMLElement => {
+      if (!Platform.isDesktopApp || activeTab === "plugins") return container;
+      const key = activeTab === "mcp" ? "mcp" : row.resource && builtinSkillIdForResource(row.resource) ? "builtin" : "custom";
+      let group = groups.get(key);
+      if (!group) {
+        const section = createSettingsSection(container, { title: key === "mcp" ? undefined : key === "builtin"
+          ? (this.plugin.settings.settingsLanguage === "en" ? "Built-in" : "内置")
+          : (this.plugin.settings.settingsLanguage === "en" ? "My Skills" : "我的 Skill"), surface: "flat" });
+        section.setAttr("data-resource-group", key);
+        group = createSettingsGroup(section); groups.set(key, group);
+      }
+      return group;
+    };
+    const ordered = Platform.isDesktopApp && activeTab === "skills"
+      ? [...rows.filter(row => row.resource && builtinSkillIdForResource(row.resource)), ...rows.filter(row => !row.resource || !builtinSkillIdForResource(row.resource))] : rows;
+    for (const row of ordered) {
+      const target = groupFor(row);
+      if (row.lifeKind) this.renderBuiltinPluginRow(target, row.lifeKind, visibleKeys.has(row.key), row);
+      else if (row.resource) this.renderResourceRow(target, row.resource, visibleKeys.has(row.key), row);
     }
   }
 
@@ -6080,7 +5112,8 @@ export class CodexSettingTab extends PluginSettingTab {
     if (resource.kind !== "skill") return 0;
     const catalog = this.currentEchoInkResourceCatalog().map(item => item.id === resource.id ? { ...item, enabled: true } : item);
     return settings.agentRegistry.agents.filter(agent => {
-      const result = checkAgentSkill({ settings, agentId: agent.id, vaultRoot: "", resources: catalog }, String(resource.metadata?.resourceId ?? resource.id));
+      const skillId = typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id;
+      const result = checkAgentSkill({ settings, agentId: agent.id, vaultRoot: "", resources: catalog }, skillId);
       return !["agent_disabled", "agent_missing", "unknown_resource"].includes(result.reason);
     }).length;
   }
@@ -6088,6 +5121,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderResourceRow(container: HTMLElement, resource: EchoInkResource, visible = true, searchRow?: { key: string; name: string; meta?: string; desc?: string; aliases?: readonly string[] }): void {
     const copy = this.copy;
     const presentation = resourcePresentation(resource, this.plugin.settings.settingsLanguage);
+    const builtinSkillId = builtinSkillIdForResource(resource);
     if (resource.id === "echoink:selection-ask") {
       renderSelectionAskPluginRow(container, this.plugin, visible, () => this.openSettingsDetail("selection-ask")); return;
     }
@@ -6103,14 +5137,21 @@ export class CodexSettingTab extends PluginSettingTab {
         "data-resource-aliases": (searchRow?.aliases ?? presentation.aliases).join("\n")
       }
     });
-    const icon = row.createSpan({ cls: "codex-resource-row-icon" });
-    setIcon(icon, isEnglishDiary ? "languages" : resource.kind === "skill" ? skillIcon(typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id) : resource.kind === "mcp-server" ? "blocks" : "package");
-    const content = row.createDiv({ cls: "codex-resource-row-content" });
+    const openArea = Platform.isDesktopApp ? createOriginButton(row, {
+      cls: "codex-resource-row-open codex-resource-row-name text-button",
+      attr: { type: "button", "data-echoink-focus-key": `resource:${resource.id}:detail`,
+        "aria-label": this.plugin.settings.settingsLanguage === "en" ? `Open ${presentation.name} details` : `打开 ${presentation.name} 详情` }
+    }) : row;
+    const icon = openArea.createSpan({ cls: "codex-resource-row-icon" });
+    setIcon(icon, isEnglishDiary ? "languages" : resource.kind === "skill"
+      ? Platform.isDesktopApp ? builtinSkillId ? DESKTOP_BUILTIN_SKILL_ICONS[builtinSkillId] ?? "sparkles" : "sparkles" : skillIcon(typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id)
+      : resource.kind === "mcp-server" ? "blocks" : "package");
+    const content = openArea.createDiv({ cls: "codex-resource-row-content" });
     const name = presentation.name;
     const connectionStatus = resource.kind === "mcp-server" ? mcpConnectionStatus(resource, this.plugin.settings.resources) : "not-mcp";
     const meta = resourceDisplayMeta(resource, this.plugin.settings.resources, this.plugin.settings.settingsLanguage);
     const title = content.createDiv({ cls: "codex-resource-row-title" });
-    const nameButton = createOriginButton(title, {
+    const nameButton = Platform.isDesktopApp ? openArea as HTMLButtonElement : createOriginButton(title, {
       cls: "codex-resource-row-name",
       text: name,
       attr: {
@@ -6121,13 +5162,13 @@ export class CodexSettingTab extends PluginSettingTab {
           : `打开 ${name} 详情`
       }
     });
+    if (Platform.isDesktopApp) title.createSpan({ text: name });
     nameButton.onclick = () => this.openSettingsDetail(isEnglishDiary ? "english-diary" : { kind: "resource", resourceId: resource.id });
     if (resource.kind === "tool-bundle") {
       createPluginEditionBadge(title, isEnglishDiary && resource.metadata?.edition === "basic" ? "basic" : "pro", this.plugin.settings.settingsLanguage);
     }
-    const builtinSkillId = builtinSkillIdForResource(resource);
     if (builtinSkillId) {
-      title.createSpan({
+      if (!Platform.isDesktopApp) title.createSpan({
         cls: "codex-resource-preset-badge",
         text: builtinSkillId === "daily-journal"
           ? (this.plugin.settings.settingsLanguage === "en" ? "EchoInk default" : "EchoInk 默认")
@@ -6154,7 +5195,8 @@ export class CodexSettingTab extends PluginSettingTab {
       }
     }
     const desc = presentation.description || resource.contentPath || resource.configPath || copy.resources.noDesc;
-    const description = [desc, meta].filter(Boolean).join(" · ");
+    const description = Platform.isDesktopApp ? desc : [desc, meta].filter(Boolean).join(" · ");
+    if (Platform.isDesktopApp) setTooltip(icon, resourceSourceLabel(resource.source, this.plugin.settings.settingsLanguage));
     if (description) content.createDiv({ cls: "codex-resource-row-desc", text: description });
     let diarySettings: HTMLButtonElement | undefined;
     if (isEnglishDiary) {
@@ -6162,6 +5204,11 @@ export class CodexSettingTab extends PluginSettingTab {
       const settings = createOriginButton(actions, { cls: "text-button", text: this.plugin.settings.settingsLanguage === "en" ? "Settings" : "设置", attr: { type: "button", "data-echoink-focus-key": "english-diary:settings" } });
       diarySettings = settings;
       settings.onclick = () => this.openSettingsDetail("english-diary");
+    }
+    if (Platform.isDesktopApp && resource.kind === "mcp-server") {
+      const status = row.createSpan({ cls: `codex-resource-connection-state is-${connectionStatus}` });
+      setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), connectionStatus === "verified" ? "check-circle-2" : connectionStatus === "failed" ? "circle-alert" : "circle-help");
+      status.createSpan({ text: mcpConnectionStatusLabel(connectionStatus, this.plugin.settings.settingsLanguage) });
     }
     if (Platform.isDesktopApp && resource.kind !== "tool-bundle") row.createSpan({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(this.resourceAssignedAgentCount(resource)) });
     const toggle = createOriginSwitch(row, {
@@ -6280,7 +5327,9 @@ export class CodexSettingTab extends PluginSettingTab {
         text: this.plugin.settings.settingsLanguage === "en" ? "Delete server" : "删除 Server",
         attr: { type: "button", "data-echoink-focus-key": `resource:${resource.id}:delete` }
       });
+      if (Platform.isDesktopApp) applyDeleteButton(remove);
       remove.onclick = () => showSettingsInlineConfirmation(row, remove, {
+        deleteAction: Platform.isDesktopApp,
         message: this.plugin.settings.settingsLanguage === "en" ? `Delete ${resource.name} and its local connection settings? This does not execute any MCP tool.` : `删除 ${resource.name} 及其本地连接设置？此操作不会执行任何 MCP Tool。`,
         confirmLabel: this.plugin.settings.settingsLanguage === "en" ? "Confirm deletion" : "确认删除", cancelLabel: this.copy.common.cancel,
         onConfirm: () => this.deleteMcpServer(resource, remove)
@@ -6379,24 +5428,6 @@ export class CodexSettingTab extends PluginSettingTab {
     void iconName;
     return applySettingsRow(setting);
   }
-}
-
-function appendAboutSvg(
-  parent: HTMLElement,
-  attributes: Readonly<Record<string, string>>,
-  paths: readonly string[]
-): void {
-  const doc = parent.ownerDocument;
-  const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
-  for (const [name, value] of Object.entries(attributes)) {
-    svg.setAttribute(name, value);
-  }
-  for (const d of paths) {
-    const pathNode = doc.createElementNS("http://www.w3.org/2000/svg", "path");
-    pathNode.setAttribute("d", d);
-    svg.appendChild(pathNode);
-  }
-  parent.appendChild(svg);
 }
 
 function providerModelSelectionValue(
@@ -6618,6 +5649,17 @@ function tabIndexFromKeyboard(
 function resourceKindForResourceTab(tab: ResourceManagementTab): EchoInkResource["kind"] {
   return tab === "mcp" ? "mcp-server" : tab === "skills" ? "skill" : "tool-bundle";
 }
+
+/** The desktop Demo maps these stable built-in IDs to existing Lucide icons. */
+const DESKTOP_BUILTIN_SKILL_ICONS: Readonly<Record<string, string>> = {
+  "clarify-real-question": "circle-help", "two-layer-explanation": "layers",
+  "deep-understanding": "microscope", "evidence-freshness-audit": "badge-check",
+  "multi-lens-problem-solving": "shapes", "minimum-real-world-experiment": "flask-conical",
+  "knowledge-review": "graduation-cap", "self-discovery-life-design": "sprout",
+  "daily-journal": "book-open", "english-diary": "languages",
+  "finance-bill-import": "receipt", "finance-analysis": "chart-pie", "finance-operations": "wallet",
+  "obsidian-markdown": "hash", "obsidian-bases": "table", "json-canvas": "layout-dashboard", "obsidian-cli": "terminal"
+};
 
 function resourceDisplayMeta(
   resource: EchoInkResource,

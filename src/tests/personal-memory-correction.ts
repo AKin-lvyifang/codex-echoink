@@ -4,6 +4,7 @@ import {
   parsePersonalMemoryCorrectionPreview
 } from "../plugin/personal-memory-correction-service";
 import { PersonalMemoryAccessError } from "../harness/memory/personal-memory-repository";
+import { PersonalMemoryRecallHarness, serializeRecallBlocks } from "../harness/memory/personal-memory-recall-harness";
 import { withPersonalMemoryFixture } from "./personal-memory-fixture";
 
 export async function runPersonalMemoryCorrectionTests(): Promise<void> {
@@ -113,7 +114,7 @@ async function assertConfirmedCorrectionSupersedesAndReloads(): Promise<void> {
       operation: "create",
       kind: "decision",
       title: "旧决定",
-      content: "旧内容",
+      content: "旧决定原文标记：先在蓝鹭进行试点。",
       recallWhen: "讨论当前决定时",
       basis: "explicit",
       contentOrigin: "user_statement"
@@ -132,7 +133,8 @@ async function assertConfirmedCorrectionSupersedesAndReloads(): Promise<void> {
     assert.equal(corrected.record?.source, "ui://personal-memory-correction");
     assert.equal(corrected.record?.supersedes, created.record!.id);
 
-    const reloaded = await (await fixture.reopen()).readUserControlState();
+    const reopened = await fixture.reopen();
+    const reloaded = await reopened.readUserControlState();
     const previous = reloaded.records.find((record) =>
       record.id === created.record!.id
     );
@@ -142,6 +144,24 @@ async function assertConfirmedCorrectionSupersedesAndReloads(): Promise<void> {
     assert.equal(previous?.status, "superseded");
     assert.equal(replacement?.status, "current");
     assert.equal(replacement?.title, "新决定");
+    const runtime = fixture.runtime();
+    const prepared = await new PersonalMemoryRecallHarness(reopened).prepareTurnContext({
+      memoryMode: "normal", query: "", tokenBudget: 2_000,
+      vaultId: runtime.vaultId, conversationId: runtime.conversationId,
+      piSessionId: runtime.piSessionId, productRunId: runtime.productRunId
+    });
+    const candidate = prepared.recall!.candidates[0]!;
+    assert.equal(candidate.id, corrected.record!.id);
+    assert.equal(candidate.status, "current");
+    assert.equal(candidate.contentOrigin, "user_edit");
+    assert.equal(candidate.supersededRecord?.id, created.record!.id);
+    assert.equal(Object.hasOwn(candidate.supersededRecord!, "asOf"), false,
+      "旧记录无 asOf 时不能把录入日期猜成成立时间");
+    const blocks = serializeRecallBlocks({ ...prepared.recall!, secondaryFacts: [] });
+    assert.equal(blocks.combined.includes(created.record!.content), false);
+    const historical = await reopened.read(candidate.supersededRecord!.id, runtime, { includeHistorical: true });
+    assert.equal(historical.record.content, created.record!.content);
+    assert.equal(historical.record.status, "superseded");
   });
 }
 

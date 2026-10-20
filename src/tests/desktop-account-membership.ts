@@ -25,8 +25,30 @@ function fixture(value = initial(), actions: AccountActions = {}) {
 
 export async function runDesktopAccountMembershipTests() {
   installProviderBrowserHost(); HTMLElement.prototype.scrollIntoView = () => {};
-  await structure(); await sourceFocus(); await forms(); await accountSwitch(); await redemption(); await confirmations(); await mobileDefault();
+  await structure(); await anonymousOverview(); await sourceFocus(); await forms(); await accountSwitch(); await redemption(); await confirmations(); await mobileDefault();
   console.log("P14 desktop account real controls: structure, states, drafts, suspend, identity, redemption and confirmation PASS");
+}
+
+async function anonymousOverview() {
+  const f = fixture({ ...initial("anonymous"), identity: null }, { requestCode: async () => {}, signIn: async () => {} });
+  try {
+    const header = f.host.querySelector<HTMLElement>(".desktop-account-header")!;
+    assert.equal((header.textContent!.match(/未登录/g) ?? []).length, 1);
+    assert.equal(header.querySelector(".profile-copy h2")?.textContent, "未登录");
+    assert.match(header.querySelector(".profile-copy .membership-copy p")!.textContent!, /财务和英文日记需要 PRO/);
+    assert.equal(header.querySelector(".desktop-account-plan-status"), null);
+    assert.equal(header.querySelectorAll(".profile-actions button").length, 1);
+    const login = button(header, "登录 / 注册");
+    assert.equal(login.dataset.echoinkFocusKey, "account:login");
+    assert.equal(login.parentElement?.lastElementChild, login, "the only primary action stays last in reading order");
+    assert.equal(login.previousElementSibling?.textContent, "注册送激活码");
+    assert.equal(f.host.querySelector("input, form"), null, "the overview does not contain a login form");
+    login.click();
+    assert.equal(openTestModals.length, 0);
+    assert.equal(f.detail().querySelectorAll('input[type="email"]').length, 1);
+    assert.equal(button(f.detail(), "登录").disabled, false);
+    assert.equal(f.detail().querySelector(".desktop-account-header"), null, "the login subpage remains the real form");
+  } finally { f.dispose(); }
 }
 
 async function sourceFocus() {
@@ -58,6 +80,9 @@ async function structure() {
   assert.equal(f.host.querySelector(".heat-cell, .assets-panel, .plugin-feature-card, .desktop-account-more-usage"), null);
   assert.equal(f.host.querySelector(".desktop-account-header")?.textContent?.includes("2026-10-01"), false);
   assert.equal(f.host.querySelectorAll(".benefits-table button").length, 0);
+  const benefits = f.host.querySelector<HTMLElement>('[data-echoink-focus-key="account:benefits"]')!;
+  assert.equal(benefits.dataset.accountSection, "benefits"); assert.equal(benefits.tabIndex, -1);
+  benefits.focus(); assert.equal(document.activeElement, benefits, "benefits can receive route focus without opening a form");
   assert.equal(f.host.querySelectorAll(".plan").length, 4);
   assert(f.host.querySelector<HTMLDetailsElement>(".plan-scope") && !f.host.querySelector<HTMLDetailsElement>(".plan-scope")!.open);
   assert(Array.from(f.host.querySelectorAll<HTMLButtonElement>(".plan button")).every(node => node.disabled));
@@ -179,14 +204,23 @@ async function redemption() {
 async function confirmations() {
   let signouts = 0, removals = 0, renames = 0;
   const f = fixture(initial(), { signOut: async () => { signouts++; throw new Error("退出失败"); }, removeDevice: async id => { assert.equal(id, "device-a"); removals++; throw new Error("解绑失败"); }, renameDevice: async (id, name) => { assert.equal(id, "device-a"); assert.equal(name, "改名设备"); renames++; throw new Error("改名失败"); } });
-  button(f.host, "退出登录").click(); button(f.host.querySelector(".echoink-settings-inline-confirm")!, "取消").click(); assert.equal(signouts, 0);
+  assert(!button(f.host, "退出登录").classList.contains("echoink-delete-button"));
+  button(f.host, "退出登录").click();
+  assert(!button(f.host.querySelector(".echoink-settings-inline-confirm")!, "退出登录").classList.contains("echoink-delete-button"));
+  button(f.host.querySelector(".echoink-settings-inline-confirm")!, "取消").click(); assert.equal(signouts, 0);
   button(f.host, "退出登录").click(); button(f.host.querySelector(".echoink-settings-inline-confirm")!, "退出登录").click(); await tick(); assert.equal(signouts, 1); assert.match(f.host.textContent!, /退出失败/);
-  f.host.querySelector<HTMLButtonElement>('.membership-footer [aria-label^="设备管理"]')!.click(); const detail = f.detail(); button(detail, "解绑本机").click(); button(detail.querySelector(".echoink-settings-inline-confirm")!, "取消").click(); assert.equal(removals, 0);
+  f.host.querySelector<HTMLButtonElement>('.membership-footer [aria-label^="设备管理"]')!.click(); const detail = f.detail();
+  assert(button(detail, "解绑本机").classList.contains("echoink-delete-button"));
+  button(detail, "解绑本机").click();
+  assert(button(detail, "确认解绑").classList.contains("echoink-delete-button"));
+  assert(!button(detail.querySelector(".echoink-settings-inline-confirm")!, "取消").classList.contains("echoink-delete-button"));
+  button(detail.querySelector(".echoink-settings-inline-confirm")!, "取消").click(); assert.equal(removals, 0);
   button(detail, "解绑本机").click(); button(detail, "确认解绑").click(); await tick(); assert.equal(removals, 1); assert.match(detail.textContent!, /解绑失败/);
   button(detail, "改名").click(); fill(detail.querySelector<HTMLInputElement>('input[type="text"]')!, "改名设备"); button(detail, "保存名称").click(); await tick(); assert.equal(renames, 1); assert.match(detail.textContent!, /改名失败/); assert.equal(f.controller.hasDraft, true); f.dispose();
 }
 
 async function mobileDefault() {
   const host = document.body.createDiv(); const handle = mountAccountMembership(host, { app: new App(), viewModel: { ...initial("anonymous"), identity: null }, language: "zh-CN", openProviders() {} });
+  assert.equal(host.querySelector('[data-echoink-focus-key="account:login"], [data-echoink-focus-key="account:benefits"]'), null, "desktop route anchors do not change mobile DOM");
   assert.equal(host.querySelectorAll(".heat-cell").length, 365); assert.equal(host.querySelector(".echoink-desktop-account-settings"), null); button(host, "登录 / 注册").click(); assert.equal(openTestModals.length, 1); handle.dispose(); assert.equal(openTestModals.length, 0); host.remove();
 }

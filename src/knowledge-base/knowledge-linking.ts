@@ -47,9 +47,17 @@ export function readKnowledgeLinkingDocument(documentPath: string, content: stri
 }
 
 function safeTargetPath(value: string): boolean {
-  return typeof value === "string" && !!value && !/[\u0000-\u001f\u007f\\|\[\]#^]/u.test(value)
+  return typeof value === "string" && !!value && !hasControlCharacters(value) && !/[\\|[\]#^]/u.test(value)
     && !path.posix.isAbsolute(value) && !/^[a-z][a-z\d+.-]*:/iu.test(value)
     && !value.split("/").some((part) => !part || part === "." || part === "..") && /\.(?:md|markdown)$/iu.test(value);
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code <= 31 || code === 127) return true;
+  }
+  return false;
 }
 
 /** The caller supplies only authorized Wiki/Projects documents, including valid batch targets. */
@@ -114,7 +122,7 @@ export function scanKnowledgeLinkingMentions(document: KnowledgeLinkingDocument,
 }
 
 function appendAliases(content: string, proposed: readonly string[]): { content: string; added: string[] } {
-  if (proposed.some((value) => typeof value !== "string" || !value.trim() || /[\r\n\u0000]/u.test(value))) throw new Error("Proposed aliases must be nonempty single-line strings.");
+  if (proposed.some((value) => typeof value !== "string" || !value.trim() || /[\r\n]/u.test(value) || value.includes("\0"))) throw new Error("Proposed aliases must be nonempty single-line strings.");
   const parsed = parseFrontmatter(content);
   const existing = new Set(parsed?.aliases ?? []);
   const added = [...new Set(proposed.map((value) => value.trim()))].filter((value) => !existing.has(value));
@@ -178,7 +186,7 @@ export function buildKnowledgeLinkingPatch(document: KnowledgeLinkingDocument, p
   let previousEnd = -1;
   for (const mention of mentions) {
     if (!Number.isSafeInteger(mention.start) || !Number.isSafeInteger(mention.end) || mention.start < 0 || mention.end > document.content.length || mention.start >= mention.end
-      || document.content.slice(mention.start, mention.end) !== mention.text || /[\r\n|\[\]]/u.test(mention.text)
+      || document.content.slice(mention.start, mention.end) !== mention.text || /[\r\n|[\]]/u.test(mention.text)
       || !candidates.has(JSON.stringify({ start: mention.start, end: mention.end, text: mention.text, targetPath: mention.targetPath }))) return reject("A mention does not match an authorized plain-text span in the original.", mention);
     if (mention.start < previousEnd || usedTargets.has(mention.targetPath)) return reject("Overlapping mentions or multiple links to the same target are not allowed.", mention);
     usedTargets.add(mention.targetPath); previousEnd = mention.end;

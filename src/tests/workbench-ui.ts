@@ -11,6 +11,7 @@ import type { ConversationRunSubscriber } from "../plugin/conversation-run-servi
 import type { ParsedTodoRecord } from "../home/todo-markdown";
 import { DEFAULT_ENGLISH_DIARY_SETTINGS } from "../english-diary/types";
 import type { ChatMessage } from "../settings/settings";
+import { runDesktopModuleSettingsTests } from "./desktop-module-settings";
 
 const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const entry = (id: string, state: TaskEntry["taskStatus"], at = Date.now()): TaskEntry => ({ conversationId: id, piSessionId: `session-${id}`, vaultId: "fixture", title: `任务 ${id}`, status: "active", defaultMemoryMode: "normal", createdAt: at, updatedAt: at, agentId: "sol", taskStatus: state, taskStartedAt: at, taskCompletedAt: at, taskInterruptedAt: at });
@@ -34,6 +35,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
   let tasks: readonly TaskEntry[] = [], failTasks = false, failData = false, hasFocus = true, todoFailure = false;
   let taskReads = 0, dataReads = 0;
   let projectionsInFlight = 0, maxProjectionConcurrency = 0;
+  let pro = true;
   const projectionReads = new Map<string, number>(), projectionText = new Map<string, string>(), failedProjections = new Set<string>();
   let releaseResume: (() => void) | undefined;
   const pending = new Map([[waiting.conversationId, question]]);
@@ -51,7 +53,8 @@ export async function runWorkbenchUiTests(): Promise<void> {
       metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["别名"] }, tags: [{ tag: "#fixture" }] }) },
       workspace: { on() { return {}; }, getLeaf() { return { async openFile(file: TFile) { calls.push(["note", file.path]); } }; } }
     },
-    settings: { settingsLanguage: "zh-CN", englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
+    settings: { settingsLanguage: "zh-CN", lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
+    accountService: { checkCapability: () => pro, subscribe: () => () => {} },
     getConversationRunService: () => ({ pendingInteractions: pending, runs: new Map(), subscribe(listener: ConversationRunSubscriber) { subscribers.add(listener); return () => { subscribers.delete(listener); }; } }),
     async listAgentTaskEntries() { taskReads++; if (failTasks) throw new Error("任务读取失败"); return tasks; },
     async readPiConversationProjection(taskId: string) {
@@ -76,8 +79,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async activateTodoView() { calls.push(["todos"]); },
     async activateJournalView() { calls.push(["journal"]); },
     async activateEnglishDiaryPage() { calls.push(["english"]); },
-    async activateLegacyHomeView(section: string) { calls.push(["legacy", section]); },
+    async activatePdfReadingPage() { calls.push(["pdf"]); },
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
+    async openEchoInkAccountSettings(target?: "login" | "benefits") { calls.push(["account", target]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
     lifestyle: { async open(kind: string) { calls.push(["lifestyle", kind]); } },
     englishDiary: { async openToday() { calls.push(["english"]); } },
@@ -112,11 +116,41 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.ok(calls.some(call => JSON.stringify(call) === '["lifestyle","finance"]'));
     assert.ok(calls.some(call => call[0] === "knowledge")); assert.ok(calls.some(call => call[0] === "english"));
 
+    pro = false; host.settings.englishDiary.enabled = true; await view.refresh();
+    for (const id of ["finance", "english-diary", "pdf-reading"] as const) {
+      assert.equal(button(`module-${id}`).hidden, false);
+      assert.ok(button(`module-${id}`).querySelector('[data-plugin-edition="pro"]'));
+      const previousCalls = calls.length;
+      await click(`module-${id}`);
+      const locked = content.querySelector<HTMLElement>(`[data-locked-module="${id}"]`)!;
+      assert.ok(locked); assert.match(locked.textContent ?? "", /PRO 模块/);
+      assert.equal(calls.length, previousCalls, "locked navigation never opens the module service");
+      assert.equal(content.querySelector<HTMLElement>('[data-wb="page"]')!.inert, true);
+      await click("module-lock-login"); assert.deepEqual(calls.at(-1), ["account", "login"]);
+      await click("module-lock-benefits"); assert.deepEqual(calls.at(-1), ["account", "benefits"]);
+      await click("module-lock-back"); assert.equal(document.activeElement, button(`module-${id}`));
+    }
+    host.settings.lifestyle.finance.enabled = false; await view.refresh();
+    assert.equal(button("module-finance").hidden, true);
+    const disabledCalls = calls.length;
+    button("module-finance").click(); await tick(); assert.equal(calls.length, disabledCalls, "stale hidden navigation cannot open a disabled module");
+    host.settings.lifestyle.finance.enabled = true; pro = true; await view.refresh();
+    assert.equal(button("module-finance").querySelector('[data-plugin-edition="pro"]'), null);
+    await click("module-finance"); assert.deepEqual(calls.at(-1), ["lifestyle", "finance"]);
+    host.settings.englishDiary.enabled = false;
+
     const completed = Object.freeze({ ...entry("done", "completed"), unreadAnswerAt: Date.now() });
-    tasks = [stopped, waiting, entry("run", "running"), completed];
+    const runningTitle = `完整工作台标题 ${"长".repeat(110)}`, runningStage = "😀".repeat(110);
+    tasks = [stopped, waiting, { ...entry("run", "running"), title: runningTitle, taskStage: runningStage }, completed];
     host.settings.sessions.push({ id: completed.conversationId, messages: [] });
     snapshot = { ...snapshot, signals: Array.from({ length: 7 }, (_, index) => signal(index)) };
     await view.refresh();
+    assert.equal(button("task-run").getAttribute("aria-label"), `${runningTitle}\n${"😀".repeat(99)}…`);
+    assert.equal(button("task-run").getAttribute("data-tooltip-class"), "echoink-task-card-tooltip");
+    assert.equal(button("task-run").hasAttribute("title"), false, "use the existing host tooltip rather than a browser title");
+    assert.equal(button("task-run").querySelector(".wb-task-step")?.textContent, runningStage, "visible stage remains intact");
+    await click("task-run"); assert.deepEqual(calls.at(-1), ["detail", "run"]);
+    calls.pop();
     assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /总助 · 真正结果 已整理 3 篇笔记。/);
     assert.equal(projectionReads.get("done"), 1, "cold settings shells read the real stored projection");
     assert.equal(host.settings.sessions[0].messages.length, 0, "preview does not hydrate or mutate the resident shell");
@@ -212,6 +246,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     await view.onClose(); for (const cleanup of cleanups.reverse()) cleanup(); container.remove();
     assert.equal(subscribers.size, 0); assert.equal(dataSubscribers.size, 0);
   }
+  await runDesktopModuleSettingsTests();
 }
 function signal(index: number): WorkbenchSignal {
   const moduleId: AgentModuleId = "todos";

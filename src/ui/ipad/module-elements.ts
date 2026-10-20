@@ -35,7 +35,7 @@ export function selectModuleSegment(track: HTMLElement, value: string): void {
   const thumb = track.querySelector<HTMLElement>(".pd-module-segment-thumb"); if (thumb) thumb.style.transform = `translateX(${index * 100}%)`;
   buttons.forEach(button => button.setAttribute("aria-pressed", String(button.dataset.value === value)));
 }
-export function moduleView(ctx: IPadPageContext, id: string, title: string, module?: MobileModuleId) {
+export function moduleView(ctx: IPadPageContext, id: string, title: string, module?: "journal" | "todos" | "finance") {
   const content = el(ctx.document, "div", "pd-module-page"), header = el(ctx.document, "header", "pd-module-header"), fields = el(ctx.document, "fieldset", "pd-module-fields"), body = el(ctx.document, "div", "pd-module-body"), feedback = el(ctx.document, "div", "pd-module-status"), leaveArea = el(ctx.document, "div", "pd-module-leave"), handoffArea = el(ctx.document, "div", "pd-module-handoff");
   feedback.setAttribute("role", "status"); feedback.hidden = true; fields.append(header, handoffArea, body); content.append(fields, feedback, leaveArea);
   let busy = false, disposed = false, allowed = false, nested = false, generation = 0, pendingLeave: Promise<boolean> | undefined;

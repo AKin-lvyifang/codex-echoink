@@ -193,7 +193,7 @@ export class IPhoneModelPages {
       picked.add(id); edited.add(id); input.value = ""; manualId = ""; add.disabled = true; error.show(); changed(true);
     }); add.disabled = true; manual.append(add);
     const page: MobileShellPage = { id: `iphone-settings-provider-parameters-${draft.id}`, title: "参数", content: body, canLeave: () => {
-      if (invalid.size) { error.show("请先修正参数。"); invalid.values().next().value?.focus(); return false; }
+      if (invalid.size) { error.show("请先修正参数。"); [...invalid][0]?.focus(); return false; }
       try { for (const model of models.values()) validateMobileModelParameters(model); error.show(); changed(); return true; }
       catch (failure) { error.show(failure); return false; }
     } };

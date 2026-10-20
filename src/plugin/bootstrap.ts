@@ -5,7 +5,7 @@ import { TodoPageView, TODO_PAGE_VIEW_TYPE } from "../home/todo-page";
 import { EchoInkJournalView, VIEW_TYPE_ECHOINK_JOURNAL } from "../home/journal-page";
 import { Notice, Platform, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { EchoInkHomeView, EchoInkLegacyHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { EchoInkWorkbenchView } from "../home/workbench-view";
 import { getWorkbenchDataService } from "../home/workbench-data";
 import { EchoInkKnowledgeSurfaceService } from "./knowledge-surface-service";
@@ -36,7 +36,9 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
     plugin.registerView(KNOWLEDGE_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new KnowledgePageView(leaf, plugin));
     plugin.registerView(TODO_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TodoPageView(leaf, plugin));
     plugin.registerView(VIEW_TYPE_ECHOINK_JOURNAL, (leaf: WorkspaceLeaf) => new EchoInkJournalView(leaf, plugin));
-    plugin.registerView("echoink-legacy-home", (leaf: WorkspaceLeaf) => new EchoInkLegacyHomeView(leaf, plugin));
+    // Restore historical layout leaves directly as the current workbench.
+    // This alias has no navigation/command entry and starts no task.
+    plugin.registerView("echoink-legacy-home", (leaf: WorkspaceLeaf) => new EchoInkWorkbenchView(leaf, plugin));
     const workbench = getWorkbenchDataService(plugin);
     plugin.register(() => workbench.dispose());
   }

@@ -1,4 +1,5 @@
 import { Platform, setIcon } from "obsidian";
+import { applyDeleteButton } from "../../settings/amicro-buttons";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import {
   renderProviderBrandIcon,
@@ -1040,6 +1041,7 @@ function renderPiConversationDrafts(
     });
     remove.disabled = !state.canManagePiSupport;
     setIcon(remove, "x");
+    applyDeleteButton(remove, { iconOnly: true });
     remove.onclick = () => callbacks.onRemovePiDraft(draft.draftId);
   }
 }
@@ -1332,6 +1334,7 @@ function renderQueuedTurnItem(
     }
   });
   setIcon(remove, "x");
+  applyDeleteButton(remove, { iconOnly: true });
   remove.onclick = (event) => {
     event.preventDefault();
     event.stopPropagation();

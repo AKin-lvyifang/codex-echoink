@@ -28,7 +28,7 @@ export function createPiKnowledgeLinkingTool(batch: PiKnowledgeLinkingBatch) {
     }),
     async execute(_id, args) {
       if (batch.proposals !== null) throw new Error("本批关联提案已提交。");
-      const proposals = new Map(batch.documents.map(doc => [doc.path, { path: doc.path, version: doc.version, mentions: [] as KnowledgeLinkingMention[] } as KnowledgeLinkingProposal]));
+      const proposals = new Map<string, KnowledgeLinkingProposal>(batch.documents.map(doc => [doc.path, { path: doc.path, version: doc.version, mentions: [] }]));
       for (const index of new Set(args.accepted)) {
         const candidate = batch.candidates[index];
         if (!candidate) throw new Error("关联候选不在本批范围。");
@@ -38,7 +38,7 @@ export function createPiKnowledgeLinkingTool(batch: PiKnowledgeLinkingBatch) {
       for (const item of args.aliases ?? []) {
         const proposal = proposals.get(item.path);
         if (!proposal) throw new Error("别名笔记不在本批范围。");
-        proposal.aliases = [...new Set(item.values.map(value => value.trim()).filter(value => value.length > 0 && value.length <= 120 && !/[\r\n\[\]|]/u.test(value)))];
+        proposal.aliases = [...new Set(item.values.map(value => value.trim()).filter(value => value.length > 0 && value.length <= 120 && !/[\r\n[\]|]/u.test(value)))];
       }
       batch.proposals = [...proposals.values()].filter(item => item.mentions.length || item.aliases?.length);
       return { content: [{ type: "text" as const, text: JSON.stringify({ status: "proposal_recorded", notes: batch.proposals.length }) }], details: { status: "proposal_recorded" } };

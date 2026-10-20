@@ -1,3 +1,4 @@
+import previewManifest from "../../manifest.json";
 import { seedEnglishFixture, syntheticEnglishRequest } from "./english-fixture";
 import { seedKnowledgePageFixture } from "./knowledge-page-fixture";
 import { prepareFolderFixture } from "./folder-fixture";
@@ -112,7 +113,7 @@ const accountService = accountFixture?.service ?? await createMobileAccountServi
 const usageStore = new MobileUsageStore(host.adapter as unknown as DataAdapter, "plugin/mobile", store.instanceId); await usageStore.initialize();
 runtime.setUsage(usageStore); accountService.setStatisticsSource({ read: () => usageStore.readStatistics(), subscribe: listener => usageStore.subscribe(listener) });
 const financeAccess = { checkCapability: () => !params.has("expired"), requireCapability: () => { if (params.has("expired")) throw new Error("替身：授权已失效"); }, subscribe: () => () => {} };
-const plugin = new EchoInkMobilePlugin(host.app as any, { id: "codex-echoink", version: "2.6.3-beta.7 fixture" } as any);
+const plugin = new EchoInkMobilePlugin(host.app as any, { ...previewManifest, version: `${previewManifest.version} fixture` } as any);
 const services = new MobileServices({ capabilityRequest: params.has("englishfixture") ? syntheticEnglishRequest : undefined, accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) } as any, registerEvent() {}, showPage: page => plugin.showPage(page), saveSettings: registry => plugin.saveSettings(registry) }, "plugin/mobile");
 Object.assign(plugin, { app: host.app, settings, store, runtime, services, accountService });
 plugin.saveData = async data => { const text = JSON.stringify(data); await host.adapter.write("plugin/data.json", text); localStorage.setItem(`${fixturePrefix}-settings`, text); };

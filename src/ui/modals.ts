@@ -1,5 +1,6 @@
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { showSettingsInlineConfirmation } from "../settings/settings-v2";
+import { applyDeleteButton } from "../settings/amicro-buttons";
 import { App, Modal, Setting } from "obsidian";
 
 export function confirmModal(
@@ -8,7 +9,7 @@ export function confirmModal(
   body: string,
   acceptText = "允许",
   declineText = "拒绝",
-  options: { signal?: AbortSignal; preformatted?: boolean; originControls?: boolean } = {}
+  options: { signal?: AbortSignal; preformatted?: boolean; originControls?: boolean; deleteAction?: boolean } = {}
 ): Promise<boolean> {
   if (options.signal?.aborted) return Promise.resolve(false);
   return new Promise((resolve) => {
@@ -32,7 +33,8 @@ export function confirmModal(
       declineText,
       options.preformatted === true,
       finish,
-      options.originControls === true
+      options.originControls === true,
+      options.deleteAction === true
     );
     options.signal?.addEventListener("abort", abort, { once: true });
     if (options.signal?.aborted) {
@@ -126,7 +128,8 @@ class ConfirmModal extends Modal {
     private readonly declineText: string,
     private readonly preformatted: boolean,
     private readonly done: (accepted: boolean) => void,
-    private readonly originControls = false
+    private readonly originControls = false,
+    private readonly deleteAction = false
   ) {
     super(app);
   }
@@ -149,6 +152,7 @@ class ConfirmModal extends Modal {
       const actions = new Setting(contentEl).controlEl;
       const decline = createOriginButton(actions, { text: this.declineText });
       const accept = createOriginButton(actions, { text: this.acceptText, cls: "mod-cta" });
+      if (this.deleteAction) applyDeleteButton(accept);
       decline.onclick = () => { this.finish(false); this.close(); };
       accept.onclick = () => { this.finish(true); this.close(); };
       return;
@@ -160,15 +164,16 @@ class ConfirmModal extends Modal {
           this.close();
         })
       )
-      .addButton((button) =>
+      .addButton((button) => {
         button
           .setButtonText(this.acceptText)
           .setCta()
           .onClick(() => {
             this.finish(true);
             this.close();
-          })
-      );
+          });
+        if (this.deleteAction) applyDeleteButton(button.buttonEl);
+      });
   }
 
   onClose(): void {

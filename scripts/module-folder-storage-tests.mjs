@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -7,9 +7,12 @@ import esbuild from "esbuild";
 const repo = fileURLToPath(new URL("../", import.meta.url));
 const configured = process.env.ECHOINK_MODULES_TEST_ROOT;
 if (!configured) throw new Error("Set ECHOINK_MODULES_TEST_ROOT to the registered P12 automatic-test root.");
+const temporaryVaults = await realpath(path.join(homedir(), "EchoInk-TestVaults/90-任务临时"));
 const root = await realpath(configured);
-const expected = await realpath(path.join(homedir(), "EchoInk-TestVaults/90-任务临时/工作台P12自动测试-20261019"));
-if (root !== expected) throw new Error("Module folder fixtures must use the registered P12 automatic-test root.");
+const relativeFixture = path.relative(temporaryVaults, root);
+if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture) || !(await stat(root)).isDirectory()) {
+  throw new Error("Module folder fixtures must use an existing directory inside EchoInk-TestVaults/90-任务临时");
+}
 const run = await mkdtemp(path.join(root, "module-folder-storage-"));
 try {
   const output = path.join(run, "tests.mjs");

@@ -69,7 +69,7 @@ export class MobileModelConfiguration {
   }
 
   fetchModels(provider: ApiProviderConfig): Promise<{ models: ApiProviderModelConfig[]; incomplete: boolean }> {
-    try { validateConnection(provider); } catch (error) { return Promise.reject(error); }
+    try { validateConnection(provider); } catch (error) { return Promise.reject(error instanceof Error ? error : new Error("模型配置无效。")); }
     const draft = copy(provider), key = fingerprint(draft);
     const previous = this.fetching.get(draft.id);
     if (previous?.key === key) return previous.promise;

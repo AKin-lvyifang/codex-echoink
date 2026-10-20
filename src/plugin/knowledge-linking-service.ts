@@ -178,10 +178,10 @@ export class KnowledgeLinkingService {
         await this.store.saveRecord?.(this.queuedTask(queued));
       }
       if (ownsCurrent) {
-        current!.pausedForHandoff = true;
+        current.pausedForHandoff = true;
         this.controller?.abort();
         await this.flight;
-        if (this.task === current && !["completed", "partial", "cancelled"].includes(current!.phase)) current!.phase = "interrupted";
+        if (this.task === current && !["completed", "partial", "cancelled"].includes(current.phase)) current.phase = "interrupted";
         await this.host.release?.();
       }
       await this.persist();

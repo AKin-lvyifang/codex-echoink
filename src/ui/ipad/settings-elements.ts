@@ -25,7 +25,7 @@ export function settingsBrand(ctx: Pick<IPadSettingsContext, "document">, provid
 export function settingsRow(ctx: IPadSettingsContext, parent: HTMLElement, title: string, value = "", action?: () => void | Promise<unknown>, lead?: HTMLElement, description?: string, navigation = true): HTMLElement {
   const row = action ? el(ctx.document, "button", "pd-settings-row") : el(ctx.document, "div", "pd-settings-row");
   if (row instanceof ctx.document.defaultView!.HTMLButtonElement) {
-    row.type = "button"; row.addEventListener("click", () => { void Promise.resolve().then(action).catch(ctx.error); });
+    row.type = "button"; row.addEventListener("click", () => { void Promise.resolve().then(action).catch(error => ctx.error(error)); });
   }
   if (lead) row.append(lead);
   const copy = el(ctx.document, "span", "pd-settings-copy"); copy.append(el(ctx.document, "span", "pd-settings-name", title));
@@ -36,7 +36,7 @@ export function settingsRow(ctx: IPadSettingsContext, parent: HTMLElement, title
 export function settingsAction(ctx: IPadSettingsContext, label: string, action: () => void | Promise<unknown>, primary = false): HTMLButtonElement {
   const button = el(ctx.document, "button", `pd-settings-action${primary ? " is-primary" : ""}`); button.type = "button";
   button.append(el(ctx.document, "span", "pd-settings-action-visible", t(ctx, label)));
-  button.addEventListener("click", () => { if (!button.disabled) void Promise.resolve().then(action).catch(ctx.error); }); return button;
+  button.addEventListener("click", () => { if (!button.disabled) void Promise.resolve().then(action).catch(error => ctx.error(error)); }); return button;
 }
 export function settingsField(ctx: IPadSettingsContext, parent: HTMLElement, name: string, value: string, change: (value: string) => void, type = "text"): HTMLInputElement {
   const field = el(ctx.document, "label", "pd-settings-field"), input = el(ctx.document, "input", "pd-settings-input");

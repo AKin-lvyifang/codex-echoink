@@ -42,6 +42,8 @@ export interface ObsidianNativePort {
 interface RunIdentity { vaultId: string; conversationId: string; piSessionId: string; productRunId: string }
 export interface ObsidianApprovalInput extends RunIdentity {
   requestId: string; toolCallId: string; toolId: "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill"; target: JsonValue; preview: JsonValue; signal: AbortSignal | undefined;
+  /** Live presentation only; never part of the authorization Ticket. */
+  deleteAction?: boolean;
 }
 export interface PiObsidianSecurityOptions {
   assertToolAllowed?(toolName: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown): Promise<void>;
@@ -151,7 +153,8 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
           let accepted: boolean;
           try {
             accepted = !!(financeTool && entry?.entryId && hasDirectFinanceIntent(financeTool, financeRequest!, entry.text))
-              || await confirmation.confirm({ ...identity, toolId: contract.toolId as ObsidianApprovalInput["toolId"], requestId: ticket.ticketId, toolCallId: event.toolCallId, target: ticket.resolvedTarget, preview: ticket.preview, signal });
+              || await confirmation.confirm({ ...identity, toolId: contract.toolId as ObsidianApprovalInput["toolId"], requestId: ticket.ticketId, toolCallId: event.toolCallId, target: ticket.resolvedTarget, preview: ticket.preview,
+                ...(request?.command === "plugin:uninstall" || financeTool === "finance_record" && financeRequest?.action === "delete" ? { deleteAction: true } : {}), signal });
           } catch {
             await approvals.resolve({ ticketId: ticket.ticketId, productRunId: identity.productRunId, toolCallId: event.toolCallId, resolution: "cancelled" });
             throw new Error("approval_cancelled");

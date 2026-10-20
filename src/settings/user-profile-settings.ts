@@ -1,7 +1,8 @@
-import { setIcon } from "obsidian";
+import { Platform, setIcon } from "obsidian";
+import { applyDeleteButton } from "./amicro-buttons";
 import { USER_PROFILE_SLOTS, USER_PROFILE_ITEM_HARD_MAX_CHARS, type UserProfileItem, type UserProfileControlSnapshot } from "../harness/memory/user-profile-state";
 import { createOriginButton, disposeOriginControls } from "./origin-controls";
-import { createSettingsPage, createSettingsSection, createSettingsState, showSettingsInlineConfirmation } from "./settings-v2";
+import { createSettingsGroup, createSettingsPage, createSettingsSection, createSettingsState, showSettingsInlineConfirmation } from "./settings-v2";
 
 /** The repository selects one eligible item per slot from a single revision. */
 export type ProfileSnapshot = UserProfileControlSnapshot;
@@ -114,10 +115,11 @@ export class UserProfileSettingsController {
         const populated = slots.filter(slot => this.item(slot.profileKey));
         const group = createSettingsSection(page, { title: titles[section], surface: "flat" }); group.dataset.profileSection = section;
         group.querySelector("h3")!.createSpan({ cls: "echoink-profile-count", text: `${populated.length}/${slots.length}` });
-        for (const slot of populated) this.renderSlot(group, slot.profileKey, this.zh ? slot.labelZh : ENGLISH_SLOT_LABELS[slot.profileKey] ?? slot.labelZh);
+        const rows = page.closest(".echoink-settings-aligned") ? createSettingsGroup(group) : group;
+        for (const slot of populated) this.renderSlot(rows, slot.profileKey, this.zh ? slot.labelZh : ENGLISH_SLOT_LABELS[slot.profileKey] ?? slot.labelZh);
         const empty = slots.filter(slot => !this.item(slot.profileKey));
         if (empty.length) {
-          const details = group.createEl("details", { cls: "echoink-profile-empty" });
+          const details = rows.createEl("details", { cls: "echoink-profile-empty" });
           details.open = this.expanded.has(section) || empty.some(slot => this.drafts.has(slot.profileKey));
           details.ontoggle = () => { if (details.open) this.expanded.add(section); else this.expanded.delete(section); };
           details.createEl("summary", { text: this.zh ? `还有 ${empty.length} 项没填` : `${empty.length} unfilled items` });
@@ -141,7 +143,8 @@ export class UserProfileSettingsController {
     const item = this.item(key), draft = this.drafts.get(key);
     const row = parent.createDiv({ cls: "echoink-profile-row", attr: { "data-profile-key": key } });
     const copy = row.createDiv({ cls: "echoink-profile-copy" });
-    copy.createDiv({ cls: "echoink-profile-name", text: label });
+    const name = (row.closest(".echoink-settings-aligned") ? row : copy).createDiv({ cls: "echoink-profile-name", text: label });
+    if (name.parentElement === row) row.prepend(name);
     if (item) {
       copy.createDiv({ cls: "echoink-profile-value", text: item.text });
       copy.createDiv({ cls: "echoink-profile-source", text: item.basis === "observed_memory" ? (this.zh ? "系统观察 · 仅供参考" : "System observation · For reference") : (this.zh ? "你确认的" : "Confirmed by you") });
@@ -155,8 +158,9 @@ export class UserProfileSettingsController {
       }, `${key}:edit`);
       if (item?.basis === "observed_memory") this.button(actions, this.zh ? "确认" : "Confirm", () => void this.mutate("confirm", key), `${key}:confirm`);
       if (item) {
-        const remove = this.button(actions, "", () => showSettingsInlineConfirmation(row, remove, { message: this.zh ? "只删除这项画像，原记忆会保留。" : "Only this profile item will be removed. The original memories remain.", confirmLabel: this.zh ? "删除" : "Delete", cancelLabel: this.zh ? "取消" : "Cancel", onConfirm: () => this.mutate("remove", key) }), `${key}:remove`, "is-icon is-danger");
-        remove.setAttribute("aria-label", this.zh ? `删除${label}` : `Delete ${label}`); setIcon(remove, "trash-2");
+        const remove = this.button(actions, "", () => showSettingsInlineConfirmation(row, remove, { deleteAction: Platform.isDesktopApp, message: this.zh ? "只删除这项画像，原记忆会保留。" : "Only this profile item will be removed. The original memories remain.", confirmLabel: this.zh ? "删除" : "Delete", cancelLabel: this.zh ? "取消" : "Cancel", onConfirm: () => this.mutate("remove", key) }), `${key}:remove`, "is-icon is-danger");
+        remove.setAttribute("aria-label", this.zh ? `删除${label}` : `Delete ${label}`);
+        if (Platform.isDesktopApp) applyDeleteButton(remove, { iconOnly: true }); else setIcon(remove, "trash-2");
       }
       return;
     }

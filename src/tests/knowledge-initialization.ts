@@ -21,8 +21,10 @@ import {
 } from "../knowledge-base/initializer";
 import { buildKnowledgeInitializationProgress } from "../knowledge-base/initialization-progress";
 import { deriveKnowledgeInitializationRecovery } from "../settings/knowledge-initialization-recovery";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, emptyKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 
 export async function runKnowledgeInitializationTests(): Promise<void> {
+  await assertDesktopInitializationRetiresPurposesOnly();
   await assertDirectorySnapshotAndNamingCancellation();
   await assertPartialRecoveryAndSaveOnlyRetry();
   await assertCorruptJobCanBeRescanned();
@@ -52,6 +54,32 @@ export async function runKnowledgeInitializationTests(): Promise<void> {
   await assertGuideAssetConflictPreservesUserFile();
   await assertPriorGeneratedGuideIsReusableAfterNewPreview();
   await assertRestartPausesWithoutProviderReplay();
+}
+
+async function assertDesktopInitializationRetiresPurposesOnly(): Promise<void> {
+  await withHost(async host => {
+    const bindings = emptyKnowledgeFolderBindings();
+    Object.assign(bindings.roles.work, { enabled: true, readPaths: ["自定义旧工作"], writePath: "自定义旧工作" });
+    Object.assign(bindings.roles.archive, { enabled: true, readPaths: ["自定义旧存档"], writePath: "自定义旧存档" });
+    const scopedHost = Object.assign(host, { roleScope: DESKTOP_KNOWLEDGE_ROOT_ROLES, folderBindings: () => bindings });
+    for (const directory of ["自定义旧工作", "自定义旧存档"]) host.addFile(`${directory}/keep.md`, directory);
+    host.addFile("普通笔记.md", "NOTE");
+    const initializer = new KnowledgeBaseInitializer(scopedHost);
+    const structure = await initializer.inspectStructure();
+    assert.ok(!structure.missingRoots.includes("work") && !structure.missingRoots.includes("archive"));
+    const plan = await initializer.startPreview("custom");
+    assert.deepEqual(plan.items.map(item => item.sourcePath), ["普通笔记.md"], "retired custom paths are retained without becoming Raw imports");
+    assert.equal(host.moveCalls, 0);
+    assert.equal(host.folders.size, 0, "preview writes no Vault directories");
+    assert.equal(host.batchCalls.length, 0);
+    await assert.rejects(initializer.assignMany([{ sourcePath: "普通笔记.md", role: "archive" }]), /无效/u);
+    await initializer.assignMany([{ sourcePath: "普通笔记.md", role: "projects" }]);
+    const repaired = await initializer.restoreStructure();
+    assert.ok(repaired.createdRoots.includes("projects"), "project repair remains available");
+    assert.ok(!host.folders.has("work") && !host.folders.has("archive"));
+    assert.equal(host.read("自定义旧工作/keep.md"), "自定义旧工作");
+    assert.equal(host.read("自定义旧存档/keep.md"), "自定义旧存档");
+  });
 }
 
 async function assertCorruptJobCanBeRescanned(): Promise<void> {

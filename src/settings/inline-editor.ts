@@ -39,7 +39,7 @@ export function mountSettingsEditor(
   modal.titleEl = surface.createEl("h2", { cls: "echoink-settings-inline-title" });
   modal.contentEl = surface.createDiv({ cls: "echoink-settings-inline-content" });
   const inlineAware = modal as InlineEditor;
-  const originalClose = modal.close;
+  const originalClose = modal.close.bind(modal) as Modal["close"];
   let disposed = false;
   let suspended = false;
   let focused: HTMLElement | null = null;

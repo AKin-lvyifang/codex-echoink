@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -6,10 +6,12 @@ import { spawnSync } from "node:child_process";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P12自动测试-20261019");
-const fixtureRoot = process.env.ECHOINK_MODULES_TEST_ROOT ?? allowed;
-if (path.resolve(fixtureRoot) !== allowed) throw new Error("P12 runtime tests require the registered disposable root");
-await access(fixtureRoot);
+const temporaryVaults = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
+const fixtureRoot = await realpath(process.env.ECHOINK_MODULES_TEST_ROOT ?? path.join(temporaryVaults, "工作台P12自动测试-20261019"));
+const relativeFixture = path.relative(temporaryVaults, fixtureRoot);
+if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture) || !(await stat(fixtureRoot)).isDirectory()) {
+  throw new Error("P12 runtime fixtures must use an existing directory inside EchoInk-TestVaults/90-任务临时");
+}
 const directory = await mkdtemp(path.join(fixtureRoot, "runtime-"));
 try {
   const output = path.join(directory, "tests.mjs");

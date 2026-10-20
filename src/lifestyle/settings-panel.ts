@@ -19,6 +19,7 @@ export class LifestyleSettingsPanel {
     this.dispose();
     this.embedded = options.embedded === true;
     const page = this.page = container.createDiv({ cls: "echoink-life-settings-page" });
+    if (this.embedded && this.financeCatalog) page.addClass("echoink-module-detail");
     if (!this.embedded || this.financeCatalog) {
     const back = page.createEl("button", { cls: "echoink-life-settings-back", text: `‹ ${this.financeCatalog?.backLabel() ?? "返回插件列表"}` });
     back.onclick = this.financeCatalog ? () => this.financeCatalog?.back() : this.back;
@@ -35,7 +36,12 @@ export class LifestyleSettingsPanel {
 
   private renderFinance(page: HTMLElement): void {
     const settings = this.plugin.settings.lifestyle.finance;
-    this.toggle(page, "AI 分析", "默认关闭；仅在开启后显示分析模块，关闭模型不影响记账和预算。", settings.aiEnabled, async (value) => {
+    if (this.embedded) {
+      const location = page.createDiv({ cls: "echoink-life-setting-row echoink-finance-root-location" });
+      location.createEl("strong", { text: "保存位置" });
+      location.createSpan({ cls: "echoink-module-path-value", text: this.plugin.lifestyle.finance.ledger.paths().root });
+    }
+    const analysis = this.toggle(page, "AI 分析", "默认关闭；仅在开启后显示分析模块，关闭模型不影响记账和预算。", settings.aiEnabled, async (value) => {
       await this.plugin.lifestyle.finance.saveOption("aiEnabled", value);
     });
     const location = page.createDiv({ cls:"echoink-life-setting-row echoink-finance-analysis-location" });
@@ -54,27 +60,35 @@ export class LifestyleSettingsPanel {
         .catch(error=>{message.setText(error instanceof Error?error.message:String(error));})
         .finally(()=>{saving=false;this.controls?.refresh();});
     };
-    this.toggle(page, "导入时智能整理", "使用当前模型提出商户、账户、分类与图标建议；失败时仍可基础导入。", settings.importAiEnabled, async (value) => {
+    const importAi = this.toggle(page, "导入时智能整理", "使用当前模型提出商户、账户、分类与图标建议；失败时仍可基础导入。", settings.importAiEnabled, async (value) => {
       await this.plugin.lifestyle.finance.saveOption("importAiEnabled", value);
     });
-    for (const [kind, title, detail] of [
+    const catalogs = [
       ["merchants", "管理商户", "维护名称、别名、真实品牌图标与默认分类。"],
       ["accounts", "管理账户", "把支付方式映射为自己的账户名称。"],
       ["categories", "管理分类", "自定义图标和颜色；历史账目与预算保持原样。"]
-    ] as const) {
-      createSettingsNavigationRow(page, { title, description: detail, focusKey: `finance-catalog:${kind}`,
+    ] as const;
+    const orderedCatalogs = this.embedded ? [catalogs[2], catalogs[0], catalogs[1]] : catalogs;
+    for (const [kind, title, detail] of orderedCatalogs) {
+      const row = createSettingsNavigationRow(page, { title, description: this.embedded ? undefined : detail, value: this.embedded ? `${settings[kind].length} 个` : undefined, focusKey: `finance-catalog:${kind}`,
         onActivate: () => {
           this.financeCatalog = new FinanceCatalogPanel(this.plugin, kind,
             () => { this.financeCatalog?.dispose(); this.financeCatalog = null; this.redraw(); }, this.redraw, { embedded: this.embedded });
           this.redraw();
         } });
+      if (this.embedded) {
+        const help = row.querySelector<HTMLElement>(".echoink-settings-navigation-title")?.createSpan({ cls: "echoink-module-navigation-help", attr: { "aria-hidden": "true" } });
+        if (help) setIcon(help, "circle-help");
+        const activate = row.onclick;
+        attachSettingsTooltip(row, detail);
+        row.onclick = activate;
+      }
     }
-    if (!this.embedded) this.toggle(page, "在首页显示", "关闭后首页不留空位；数据和工作区保留。", this.plugin.settings.homeModules.finance !== false, async (value) => {
-      await this.plugin.lifestyle.finance.saveOption("showOnHome", value);
-    });
+    if (this.embedded) page.append(importAi, analysis);
+
   }
 
-  private toggle(page: HTMLElement, title: string, detail: string, checked: boolean, save: (value: boolean) => Promise<void>): void {
+  private toggle(page: HTMLElement, title: string, detail: string, checked: boolean, save: (value: boolean) => Promise<void>): HTMLElement {
     const row = page.createDiv({ cls: "echoink-life-setting-row" });
     const copy = row.createDiv({ cls: this.embedded ? "echoink-module-boolean-copy" : "" }); copy.createEl("strong", { text: title });
     if (this.embedded) {
@@ -92,5 +106,6 @@ export class LifestyleSettingsPanel {
         .catch((error) => { input.checked = previous; new Notice(String(error)); })
         .finally(() => { pending = false; this.controls?.refresh(); });
     };
+    return row;
   }
 }

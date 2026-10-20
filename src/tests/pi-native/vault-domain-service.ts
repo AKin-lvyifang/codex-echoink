@@ -1,4 +1,6 @@
 import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
+import { VaultBodySearch } from "../../knowledge-base/vault-body-search";
+import { createDesktopKnowledgeSourcePathResolver } from "../../plugin/pi-production-runtime-composition";
 import { maintenanceSourceFingerprintsFromEntries } from "../../harness/pi-native/pi-knowledge-maintenance-tool";
 import { FileApprovalTicketStore } from "../../harness/pi-native/tool-authorization";
 import { FileDomainReceiptStore } from "../../harness/pi-native/domain-receipt-store";
@@ -54,6 +56,112 @@ export async function runVaultDomainServiceTests(): Promise<void> {
   await withFixture(assertWritesUseCasReadbackAndRecoverableTrash);
   await withFixture(assertAbortAndUncertainDoNotRepeatWrites);
   await withFixture(assertMaintenanceCreatesMissingManagedFolders);
+}
+
+export async function runVaultPrivateBoundaryTests(): Promise<void> {
+  await withFixture(async fixture => {
+    const protectedPaths = ["私有记忆/偏好草稿.md", ".obsidian/plugins/echoink/偏好缓存.md"];
+    const publicPaths = ["私有记忆备份/公开.md", "笔记/私有记忆/公开.md", "templates/example.md", "ordinary/view.base", "ordinary/board.canvas"];
+    for (const name of [...protectedPaths, ...publicPaths]) await fixture.write(name, `BOUNDARY_SHARED_TOKEN ${name}`);
+    await symlink(path.join(fixture.root, "私有记忆"), path.join(fixture.root, "linked-private"));
+    const entries = [...protectedPaths, ...publicPaths, "linked-private/偏好草稿.md"].map(name => ({ path: name }));
+    const adapter = new ObsidianVaultDomainAdapter({ vault: { getFiles: () => entries } } as never, fixture.adapter.vaultId, fixture.root);
+    const service = new VaultDomainService(adapter);
+    const contentReads: string[] = [];
+    const baseRead = adapter.readFile.bind(adapter);
+    adapter.readFile = async (target, options) => { contentReads.push(target.relativePath); return await baseRead(target, options); };
+    const blocked: Record<string, boolean> = {};
+    for (const name of [...protectedPaths, "linked-private/偏好草稿.md"]) {
+      const before = contentReads.length;
+      try { await service.noteRead({ vaultId: adapter.vaultId, relativePath: name }); blocked[name] = false; } catch (error) { blocked[name] = (error as { code?: string }).code === "unsafe_target"; }
+      blocked[`${name}:beforeIO`] = before === contentReads.length;
+    }
+    const publicReads = [];
+    for (const name of publicPaths) publicReads.push((await service.noteRead({ vaultId: adapter.vaultId, relativePath: name })).snapshot.relativePath);
+    console.log(JSON.stringify({ kind: "private-boundary-vault-direct", blocked, contentReads, publicReads }));
+    // A stale private listing proves exclusion happens before resolution and
+    // prefix I/O, independently of the readFile spy above.
+    adapter.readFile = baseRead;
+    entries.push({ path: "私有记忆/stale.md" });
+    const search = await service.vaultSearch({ vaultId: adapter.vaultId, query: "BOUNDARY_SHARED_TOKEN" });
+    const explicitSearch = await service.vaultSearch({ vaultId: adapter.vaultId, query: "私有记忆" });
+    console.log(JSON.stringify({ kind: "private-boundary-vault", blocked, contentReads, publicReads, search, explicitSearch }));
+    assert.ok(Object.values(blocked).every(Boolean), "ordinary reads must reject requested and canonical private roots before adapter content I/O");
+    assert.deepEqual(publicReads.sort(), [...publicPaths].sort());
+    assert.deepEqual(search.items.map(item => item.relativePath).sort(), [...publicPaths].sort());
+    assert.ok(explicitSearch.items.every(item => publicPaths.includes(item.relativePath)));
+  });
+  console.log("Private Vault boundary: real production adapter direct/canonical reads and pre-prefix search exclusion; public Base/Canvas/templates PASS");
+}
+
+export async function runVaultBodySearchCanonicalBoundaryTests(): Promise<void> {
+  await withFixture(async fixture => {
+    const sourcePath = "公开/cached-note.md", allowedTarget = "私有记忆备份/公开.md";
+    const reads: string[] = [], metadata: string[] = [];
+    let cached: { path: string; basename: string; extension: string; stat: { mtime: number; size: number } };
+    const app = { vault: { getMarkdownFiles: () => [cached], getAbstractFileByPath: (name: string) => name === sourcePath ? cached : null,
+      read: async (file: { path: string }) => { reads.push(file.path); return await readFile(path.join(fixture.root, file.path), "utf8"); } },
+      metadataCache: { getFileCache: (file: { path: string }) => { metadata.push(file.path); return null; } }, workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } };
+    const adapter = new ObsidianVaultDomainAdapter(app as never, fixture.adapter.vaultId, fixture.root);
+    const resolveSourcePath = createDesktopKnowledgeSourcePathResolver(adapter);
+    const observations = [];
+    for (const target of ["私有记忆/偏好.md", ".obsidian/plugins/echoink/cache.md", ".echoink/memory.md", "outside", allowedTarget]) {
+      await fixture.write(sourcePath, "SAFE_CACHED_BODY");
+      cached = { path: sourcePath, basename: "cached-note", extension: "md", stat: { mtime: 10, size: 16 } };
+      if (target === "outside") await writeFile(path.join(fixture.outsideRoot, "private.md"), "PRIVATE_CANONICAL_MARKER");
+      else await fixture.write(target, target === allowedTarget ? "PUBLIC_CANONICAL_MARKER" : "PRIVATE_CANONICAL_MARKER");
+      const port = new VaultBodySearch(app as never, () => null, { excludedRoots: () => [".echoink"], resolveSourcePath });
+      try {
+        await port.search({ query: "SAFE_CACHED_BODY" });
+        const swapPath = path.join(fixture.root, "公开/pending-link");
+        await symlink(target === "outside" ? path.join(fixture.outsideRoot, "private.md") : path.join(fixture.root, target), swapPath);
+        await rename(swapPath, path.join(fixture.root, sourcePath));
+        reads.length = 0; metadata.length = 0;
+        let direct, error;
+        try { direct = await port.read({ vaultRelativePath: sourcePath }); } catch (cause) { error = String(cause); }
+        const page = await port.search({ query: target === allowedTarget ? "PUBLIC_CANONICAL_MARKER" : "PRIVATE_CANONICAL_MARKER" });
+        const recent = await port.search({ mode: "recent" });
+        const coldPort = new VaultBodySearch(app as never, () => null, { excludedRoots: () => [".echoink"], resolveSourcePath });
+        let coldPage;
+        try { coldPage = await coldPort.search({ query: target === allowedTarget ? "PUBLIC_CANONICAL_MARKER" : "PRIVATE_CANONICAL_MARKER" }); } finally { coldPort.dispose(); }
+        observations.push({ target, direct, error, page, recent, coldPage, bodyReads: [...reads], metadata: [...metadata] });
+      } finally { port.dispose(); await rm(path.join(fixture.root, sourcePath)); }
+    }
+    console.log(JSON.stringify({ kind: "private-boundary-cached-tfile-real-symlink", observations }));
+    for (const row of observations) {
+      if (row.target === allowedTarget) { assert.equal(row.direct?.vaultRelativePath, sourcePath); assert.equal(row.direct?.content, "PUBLIC_CANONICAL_MARKER"); assert.equal(row.page.hits[0].vaultRelativePath, sourcePath); }
+      else { assert.ok(row.error); assert.equal(row.direct, undefined); assert.equal(row.page.hits.length, 0); assert.equal(row.coldPage.hits.length, 0); assert.equal(row.recent.hits.length, 0); assert.deepEqual(row.bodyReads, []); assert.deepEqual(row.metadata, []); }
+    }
+  });
+  console.log("Cached public TFile: actual atomic symlink replacement rejects private/plugin/Memory/outside targets before metadata/body I/O and cache reuse; public logical source paths retained PASS");
+}
+
+export async function runVaultBodySearchCanonicalPerformanceTests(): Promise<void> {
+  await withFixture(async fixture => {
+    const files = Array.from({ length: 2940 }, (_, index) => ({ path: `notes/note-${String(index).padStart(4, "0")}.md`, basename: `note-${index}`, extension: "md", stat: { mtime: 10, size: 160 } }));
+    await mkdir(path.join(fixture.root, "notes"));
+    for (let offset = 0; offset < files.length; offset += 32) await Promise.all(files.slice(offset, offset + 32).map(file => writeFile(path.join(fixture.root, file.path), `# Benchmark\nOrdinary synthetic source paragraph ${file.basename}.\n${file === files[0] ? "CANONICAL_PERF_NEEDLE" : "Unrelated background."}\n`)));
+    let reads = 0, resolutions = 0;
+    const byPath = new Map(files.map(file => [file.path, file]));
+    const app = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (name: string) => byPath.get(name) ?? null,
+      read: async (file: { path: string }) => { reads++; return await readFile(path.join(fixture.root, file.path), "utf8"); } }, metadataCache: { getFileCache: () => null } };
+    const adapter = new ObsidianVaultDomainAdapter(app as never, fixture.adapter.vaultId, fixture.root);
+    const resolve = createDesktopKnowledgeSourcePathResolver(adapter);
+    const measurements = [];
+    for (const enabled of [false, true]) {
+      const port = new VaultBodySearch(app as never, () => null, enabled ? { resolveSourcePath: async name => { resolutions++; return await resolve(name); } } : {});
+      try {
+        for (const stage of ["cold", "warm"] as const) {
+          reads = 0; resolutions = 0;
+          const started = performance.now(), result = await port.search({ query: "CANONICAL_PERF_NEEDLE", limit: 1 }), elapsed = performance.now() - started;
+          measurements.push({ canonical_path_port: enabled, stage, elapsed_ms: elapsed, body_reads: reads, path_resolutions: resolutions, coverage: result.coverage });
+          assert.equal(result.hits[0].vaultRelativePath, files[0].path);
+          assert.equal(reads, stage === "cold" ? files.length : 0, "path validation must preserve the warm zero-body-read cache");
+        }
+      } finally { port.dispose(); }
+    }
+    console.log(JSON.stringify({ kind: "canonical-path-performance-2940", comparison: "Same production search class and synthetic files; prior production wiring had no canonical path port. Single cold/warm pair per wiring; program timing, not native acceptance.", measurements }));
+  });
 }
 
 interface Fixture {

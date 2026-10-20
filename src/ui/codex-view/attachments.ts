@@ -195,7 +195,8 @@ function appendPiChatFile(host: CodexAttachmentHost, file: File): void {
   // New Electron versions removed File.path; the host-owned picker still
   // supplies a local path through its public webUtils API.
   if (!filePath) {
-    try { filePath = (require("electron") as { webUtils?: { getPathForFile(file: File): string } }).webUtils?.getPathForFile(file); }
+    const electronRequire = window.require ?? globalThis.require;
+    try { filePath = (electronRequire?.("electron") as { webUtils?: { getPathForFile(file: File): string } } | undefined)?.webUtils?.getPathForFile(file); }
     catch { /* The ordinary unavailable-attachment notice below remains authoritative. */ }
   }
   if (!filePath) {

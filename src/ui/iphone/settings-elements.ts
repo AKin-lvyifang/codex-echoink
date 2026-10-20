@@ -38,7 +38,7 @@ export function settingsRow(ctx: IPhonePageContext, parent: HTMLElement, name: s
 }
 export function settingsError(ctx: IPhonePageContext, parent: HTMLElement): { element: HTMLElement; show: (failure?: unknown) => void } {
   const element = el(ctx.document, "div", "ip-settings-error"); element.hidden = true; element.setAttribute("role", "alert"); parent.append(element);
-  return { element, show: failure => { element.textContent = failure === undefined ? "" : failure instanceof Error ? failure.message : String(failure); element.hidden = failure === undefined; } };
+  return { element, show: failure => { element.textContent = failure === undefined ? "" : failure instanceof Error ? failure.message : typeof failure === "string" ? failure : "操作失败，请重试。"; element.hidden = failure === undefined; } };
 }
 export function settingsField(ctx: IPhonePageContext, parent: HTMLElement, name: string, value: string, change: (value: string) => void, type = "text"): HTMLInputElement {
   const label = el(ctx.document, "label", "ip-settings-field"), input = el(ctx.document, "input", "ip-settings-input");

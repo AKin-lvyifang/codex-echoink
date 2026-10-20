@@ -18,7 +18,7 @@ import { financeIconOptions, openFinanceIconPicker, renderFinanceIcon } from "./
 import { FINANCE_ANALYSIS_PROMPT_VERSION, type FinanceImportCompletionOptions } from "./finance-service";
 import type { FinanceImportResult } from "./finance-ledger";
 import { financeDailyWeeks, type FinanceReportSnapshot, type FinanceChartSnapshot, type FinanceReportBlock, type FinanceTableSnapshot } from "./finance-analysis";
-import { applyAmicroButton } from "../settings/amicro-buttons";
+import { applyAmicroButton, applyDeleteButton } from "../settings/amicro-buttons";
 import { renderAnimateIcon } from "../ui/animate-icon";
 
 import { disposeOriginControls } from "../settings/origin-controls";
@@ -510,7 +510,7 @@ export class FinanceWorkspace {
       const title = row.createDiv({ cls: "echoink-finance-section-head" });
       title.createEl("strong", { text: goal.name });
       this.writeButton(title, "编辑", () => this.goalEditor(goal));
-      this.writeButton(title, "删除", () => void this.service.finance.deleteContinuousGoal(goal.id).then(() => this.redraw()).catch((error) => new Notice(errorText(error))));
+      applyDeleteButton(this.writeButton(title, "删除", () => void this.service.finance.deleteContinuousGoal(goal.id).then(() => this.redraw()).catch((error) => new Notice(errorText(error)))));
       row.createEl("small", { text: `${progress.start} 至 ${progress.end}` });
       row.createEl("p", { text: `${progress.actual === null ? "—" : display(progress.actual)} / ${display(goal.target)} · ${status}` });
       const bar = row.createDiv({ cls: "echoink-finance-progress", attr: { role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(goal.target), "aria-valuenow": String(Math.min(Math.max(progress.actual ?? 0, 0), goal.target)) } });
@@ -1114,7 +1114,7 @@ export class FinanceWorkspace {
         if(!active.includes(category))row.createEl("small",{text:"原分类已停用或更名，额度保留"});
         const amount=field(row,`${category}额度 · 元`,"number",value);amount.min="0";amount.step="0.01";
         amount.oninput=refreshTotal;fields.set(category,amount);
-        button(row,"移除",()=>{fields.delete(category);row.remove();refreshChoices();refreshTotal();});
+        applyDeleteButton(button(row,"移除",()=>{fields.delete(category);row.remove();refreshChoices();refreshTotal();}));
         refreshTotal();
       };
       for(const [category,amount] of Object.entries(plan?.allocations??{}))addAllocation(category,yuanInput(amount));

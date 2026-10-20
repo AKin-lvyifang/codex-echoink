@@ -14,6 +14,7 @@ import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { isEchoInkFinanceBase } from "../lifestyle/finance-paths";
 import { parseFinanceNote } from "../lifestyle/finance-ledger";
 import { financeConversationPort } from "../lifestyle/finance-conversation-port";
+import { isPrivateNoteSourcePath } from "../knowledge-base/note-source-policy";
 import { getKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
 
@@ -35,8 +36,17 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
   };
   const targetFor = async (relativePath: string, mustExist = true, expectedKind: "file" | "directory" = "file") => await resolver.resolve({ vaultId: adapter.vaultId, relativePath, mustExist, expectedKind, allowRoot: expectedKind === "directory", allowMissingParentDirectories: !mustExist });
   const recallCandidateAllowed = (relativePath: string) => knowledgeRecallCandidateAllowed(options.knowledgeBindings?.() ?? getKnowledgeFolderBindings(adapter.vaultRootPath), relativePath);
-  const snapshot = async (relativePath: string, maxBytes = 32_000) => {
-    const target = await targetFor(relativePath, false);
+  const assertNoteSource = (relativePath: string) => {
+    if (isPrivateNoteSourcePath(relativePath)) throw new Error("obsidian_cli_private_note_source");
+  };
+  const ordinaryTargetFor: typeof targetFor = async (relativePath, mustExist = true, expectedKind = "file") => {
+    assertNoteSource(relativePath);
+    const target = await targetFor(relativePath, mustExist, expectedKind);
+    assertNoteSource(target.relativePath);
+    return target;
+  };
+  const snapshot = async (relativePath: string, maxBytes = 32_000, resolve = targetFor) => {
+    const target = await resolve(relativePath, false);
     const value = target.exists ? await adapter.readFile(target, { maxBytes }) : null;
     if (value?.truncated) throw new Error("obsidian_cli_target_truncated");
     return value;
@@ -88,7 +98,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
     async context() {
       checkVault();
       await targetFor(nativeJournalPathForDate(app, new Date(), legacyDirectory(), options.knowledgeBindings?.()), false);
-      return await readNativeJournalContext(app, { now: new Date(), legacyDirectory: legacyDirectory(), bindings: options.knowledgeBindings?.(), readTemplate: async relativePath => (await snapshot(relativePath, 24_000))?.content ?? null });
+      return await readNativeJournalContext(app, { now: new Date(), legacyDirectory: legacyDirectory(), bindings: options.knowledgeBindings?.(), readTemplate: async relativePath => (await snapshot(relativePath, 24_000, ordinaryTargetFor))?.content ?? null });
     },
     async pluginSearch(query, limit, signal) { return await directory.search(query, limit, signal); },
     async cli(request, signal) {
@@ -101,27 +111,28 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
       const request = { ...normalizeObsidianCliRequest({ ...input }) };
       const effect = obsidianCliEffect(request);
       const writing = effect === "note_write" || effect === "plugin_write";
+      const selectedTargetFor = effect === "read" ? ordinaryTargetFor : targetFor;
       if (["plugin:disable", "plugin:uninstall", "plugin:reload"].includes(request.command) && request.id === (options.ownPluginId ?? "codex-echoink")) throw new Error("obsidian_cli_cannot_interrupt_echoink_itself");
       // Bind every file selector before help, confirmation or execution. No active-file fallback.
       if (request.file) {
         const file = request.command === "tab:open" ? request.file : fileNameTarget(request.file);
-        request.path = (await targetFor(file)).relativePath;
+        request.path = (await selectedTargetFor(file)).relativePath;
         if (request.command === "tab:open") { request.file = request.path; delete request.path; }
         else delete request.file;
       }
       if (request.ref) {
         const match = /^(.*):(\d+)$/u.exec(request.ref);
         if (!match) throw new Error("obsidian_invalid_task_reference");
-        request.path = (await targetFor(match[1])).relativePath;
+        request.path = (await selectedTargetFor(match[1])).relativePath;
         request.line = Number(match[2]); delete request.ref;
         if (!Number.isSafeInteger(request.line) || request.line < 1) throw new Error("obsidian_invalid_task_reference");
       }
-      if (request.path) request.path = (await targetFor(request.path, true, ["folder", "search", "search:context"].includes(request.command) ? "directory" : "file")).relativePath;
-      if (request.folder) request.folder = (await targetFor(request.folder, true, "directory")).relativePath;
+      if (request.path) request.path = (await selectedTargetFor(request.path, true, ["folder", "search", "search:context"].includes(request.command) ? "directory" : "file")).relativePath;
+      if (request.folder) request.folder = (await selectedTargetFor(request.folder, true, "directory")).relativePath;
       if (request.active) {
         const active = app.workspace.getActiveFile?.();
         if (!active) throw new Error("obsidian_cli_active_file_missing");
-        request.path = (await targetFor(active.path)).relativePath; delete request.active;
+        request.path = (await selectedTargetFor(active.path)).relativePath; delete request.active;
       }
       if (request.command === "diff") request.filter = "local";
       let dailyPath: string | undefined;
@@ -134,13 +145,16 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
         }
         // The public CLI owns its defaults; EchoInk's journal fallback may differ.
         dailyPath = await officialDailyTarget(signal);
+        if (effect === "read") assertNoteSource(dailyPath);
       }
-      if (request.daily && ["tasks", "task"].includes(request.command)) { request.path = dailyPath; delete request.daily; await targetFor(request.path!); }
+      if (request.daily && ["tasks", "task"].includes(request.command)) { request.path = dailyPath; delete request.daily; await selectedTargetFor(request.path!); }
+      let templatePath: string | undefined;
       if (request.command === "template:read") {
         const settings = readNativeJournalSettings(app, legacyDirectory(), options.knowledgeBindings?.());
         const template = request.name!.endsWith(".md") ? request.name! : `${request.name}.md`;
-        const scoped = (await targetFor(`${settings.templatesFolder}/${template}`)).relativePath;
+        const scoped = (await selectedTargetFor(`${settings.templatesFolder}/${template}`)).relativePath;
         if (!scoped.startsWith(`${settings.templatesFolder}/`)) throw new Error("obsidian_cli_template_outside_folder");
+        templatePath = scoped;
       }
       if (request.command.startsWith("base:") && !request.path?.endsWith(".base")) throw new Error("obsidian_cli_base_file_required");
       if (request.command === "base:views" && !activeBase(request.path!)) throw new Error("obsidian_cli_active_base_mismatch_open_target_first");
@@ -212,7 +226,13 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
             const failure = await preflight(executionSignal);
             if (failure) return { ...failure, command: request.command };
           }
-          if (request.path) await targetFor(request.path, true, ["folder", "search", "search:context"].includes(request.command) ? "directory" : "file");
+          if (request.path) await selectedTargetFor(request.path, true, ["folder", "search", "search:context"].includes(request.command) ? "directory" : "file");
+          if (request.folder) await selectedTargetFor(request.folder, true, "directory");
+          if (templatePath) {
+            const settings = readNativeJournalSettings(app, legacyDirectory(), options.knowledgeBindings?.());
+            const name = request.name!.endsWith(".md") ? request.name! : `${request.name}.md`;
+            if ((await selectedTargetFor(`${settings.templatesFolder}/${name}`)).relativePath !== templatePath) throw new Error("obsidian_cli_template_target_changed");
+          }
           if (request.command === "base:views" && !activeBase(request.path!)) throw new Error("obsidian_cli_active_base_mismatch_open_target_first");
           if (dailyPath && await officialDailyTarget(executionSignal) !== dailyPath) throw new Error("obsidian_cli_daily_target_changed");
           if (writing && before && await version(request.path ?? dailyPath!) !== before.version) throw new Error("obsidian_cli_target_changed_since_approval");

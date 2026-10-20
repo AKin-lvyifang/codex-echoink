@@ -7,12 +7,12 @@ export function markdownProjection(markdown: string): { text: string; offsets: n
   const hidden = new Uint8Array(markdown.length);
   const hide = (from: number, to: number) => hidden.fill(1, from, to);
   const patterns = [/^ {0,3}(?:#{1,6}\s+|>\s*|[-+*]\s+|\d+[.)]\s+)/gmu, /^\s*\|?[ :|-]+\|[ :|-]*$/gmu, /<!--[^]*?-->/gu];
-  for (const pattern of patterns) for (const match of markdown.matchAll(pattern)) hide(match.index!, match.index! + match[0].length);
+  for (const pattern of patterns) for (const match of markdown.matchAll(pattern)) hide(match.index, match.index + match[0].length);
   for (const match of markdown.matchAll(/!?\[([^\]\n]+)\]\([^\n)]*\)/gu)) {
-    const start = match.index!, labelStart = start + match[0].indexOf("[") + 1;
+    const start = match.index, labelStart = start + match[0].indexOf("[") + 1;
     hide(start, labelStart); hide(labelStart + match[1].length, start + match[0].length);
   }
-  for (const match of markdown.matchAll(/(?<!\\)(?:\*\*|__|~~|`+|\*|_)/gu)) hide(match.index!, match.index! + match[0].length);
+  for (const match of markdown.matchAll(/(?<!\\)(?:\*\*|__|~~|`+|\*|_)/gu)) hide(match.index, match.index + match[0].length);
   const offsets: number[] = []; let text = "";
   for (let index = 0; index < markdown.length; index++) if (!hidden[index] && !/\s|\|/u.test(markdown[index])) { text += markdown[index]; offsets.push(index); }
   return { text, offsets };

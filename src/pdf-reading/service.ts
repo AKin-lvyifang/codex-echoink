@@ -85,7 +85,7 @@ export class PdfReadingService {
       const renameLinks = (text: string) => rebasePdfKnownLinks(text, knownPaths, from, to, oldDirectory, newDirectory);
       next.pages = next.pages.map(page => ({ ...page, markdown: renameLinks(page.markdown) }));
       next.chunks = next.chunks.map(chunk => ({ ...chunk, source: renameLinks(chunk.source), ...(chunk.reading ? { reading: renameLinks(chunk.reading) } : {}), ...(chunk.translation ? { translation: renameLinks(chunk.translation) } : {}) }));
-      next.published = Object.fromEntries(Object.entries(next.published).map(([kind, text]) => [kind, renameLinks(text!)]));
+      next.published = Object.fromEntries(Object.entries(next.published).map(([kind, text]) => [kind, renameLinks(text)]));
       if (JSON.stringify(next) === JSON.stringify(base)) continue;
       if (active) {
         // The generator can be awaiting a chunk. Keep those object identities
@@ -427,9 +427,9 @@ function rebasePdfKnownLinks(text: string, known: ReadonlySet<string>, from: str
     const destination = direct ? changed : pdfRelativeLink(newDirectory, changed);
     return destination.split("/").map(part => encodeURIComponent(part).replace(/\(/gu, "%28").replace(/\)/gu, "%29")).join("/") + (target.includes("#") ? target.slice(target.indexOf("#")) : "");
   };
-  return text.replace(/(!?\[[^\]]*\]\()(<([^>]+)>|([^\s)]+))(\))/gu, (whole, prefix, _wrapped, angled, plain, suffix) => {
-    const changed = move(angled ?? plain); return changed ? `${prefix}${angled !== undefined ? `<${changed}>` : changed}${suffix}` : whole;
-  }).replace(/(!?\[\[)([^\]|]+)([^\]]*\]\])/gu, (whole, prefix, target, suffix) => {
+  return text.replace(/(!?\[[^\]]*\]\()(<([^>]+)>|([^\s)]+))(\))/gu, (whole: string, prefix: string, _wrapped: string, angled: string | undefined, plain: string | undefined, suffix: string) => {
+    const changed = move(angled ?? plain ?? ""); return changed ? `${prefix}${angled !== undefined ? `<${changed}>` : changed}${suffix}` : whole;
+  }).replace(/(!?\[\[)([^\]|]+)([^\]]*\]\])/gu, (whole: string, prefix: string, target: string, suffix: string) => {
     const changed = move(target); return changed ? `${prefix}${decodeURI(changed)}${suffix}` : whole;
   });
 }

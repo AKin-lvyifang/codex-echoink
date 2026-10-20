@@ -8,6 +8,7 @@ import { financeToolEffect, isFinanceTool, normalizeFinanceToolRequest, type PiF
 import { isPiTodoTool, normalizeTodoToolRequest, type PiTodoToolId } from "../harness/pi-native/todo-tool-policy";
 import { GENERAL_ASSISTANT_ID, type AgentRunSnapshot } from "./types";
 import * as core from "./capability-core";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
 import type { AgentModuleCapability, AgentCapabilityDecision, AgentMcpCapabilityTarget } from "./capability-core";
 export { AGENT_MODULE_CAPABILITIES, isAgentCapabilityPathField, vaultSkillCapabilityId, mcpToolCapabilityId, agentTaskSystemPrompt, requireAgentCapability } from "./capability-core";
 export type { AgentModuleCapability, AgentCapabilityDecision, AgentMcpCapabilityTarget } from "./capability-core";
@@ -37,7 +38,7 @@ const toolAdapters: core.AgentCapabilityToolAdapters = {
 };
 function inputs(context: AgentCapabilityContext): core.AgentCapabilityContext {
   return { ...context, relativeTarget: value => relativeTarget(context, value),
-    resolvePath: value => path.resolve(context.vaultRoot, value), toolAdapters };
+    resolvePath: value => path.resolve(context.vaultRoot, value), knowledgeRoles: DESKTOP_KNOWLEDGE_ROOT_ROLES, toolAdapters };
 }
 export function resolveAgentRunSnapshot(settings: CodexForObsidianSettings, agentId = GENERAL_ASSISTANT_ID): AgentRunSnapshot {
   return core.resolveAgentRunSnapshot(settings, agentId);

@@ -499,6 +499,10 @@ export class CodexView extends ItemView {
     this.openAgentEditor(undefined, true);
     return this.taskEditorEl?.querySelector<HTMLElement>(".echoink-agent-editor-header") ?? this.taskEditorEl ?? null;
   }
+  async submitOnboardingAgentEditor(): Promise<void> {
+    if (!this.taskEditorOnboarding || !this.taskEditor) throw new Error(this.taskText("新建表单还没准备好，请重试。", "The new Agent form is not ready. Try again."));
+    await this.taskEditor.submitOnboarding();
+  }
   requestOnboardingEditorLeave(done: () => void): void {
     if (!this.taskEditorOnboarding || !this.taskEditor) { done(); return; }
     this.taskEditor.requestLeave(() => { this.taskEditor?.dispose(); this.taskEditor = undefined; this.taskEditorOnboarding = false; this.renderTaskPages(); done(); });
@@ -511,14 +515,14 @@ export class CodexView extends ItemView {
       this.requestOnboardingEditorLeave(() => { this.plugin.hideEchoInkOnboardingWorkspaceCard(); this.openAgentEditor(agentId, onboarding); });
       return;
     }
-    const view = this;
+    const plugin = this.plugin;
     this.saveTaskComposerDraft(); this.rememberTaskListPosition(); this.closeComposerMenus();
     this.taskEditorReturnPage = this.taskNavigation.page;
     this.taskEditor?.dispose();
     this.taskEditorOnboarding = onboarding;
     this.taskEditor = new AgentEditorController({
       onboarding, confirmLeave: onboarding,
-      get settings() { return view.plugin.settings; }, draftCacheKey: this.plugin,
+      get settings() { return plugin.settings; }, draftCacheKey: this.plugin,
       loadResources: () => this.plugin.buildRuntimeEchoInkResourceCatalog(),
       saveAgent: (agent, moduleIds, baseline) => onboarding ? this.plugin.saveOnboardingAgentDefinition(agent, moduleIds) : this.plugin.saveAgentDefinition(agent, moduleIds, baseline),
       deleteAgent: async id => { await this.plugin.deleteAgent(id); this.taskEditorReturnPage = { kind: "list", agentId: GENERAL_ASSISTANT_ID }; await this.reloadTaskCatalog(); },
@@ -1449,7 +1453,16 @@ export class CodexView extends ItemView {
         productRunId,
         toolCallId
       });
-      if (binding) return binding;
+      if (binding) {
+        const inline = Array.from(this.messagesEl?.querySelectorAll<HTMLElement>(".codex-smooth-ai-approval-card") ?? [])
+          .find((card) => card.dataset.approvalMessageId === message.id
+            && !card.hidden
+            && !card.closest<HTMLElement>(".codex-ai-elements-chain-of-thought")?.hidden
+            && card.querySelector<HTMLButtonElement>(".is-approve")?.disabled === false);
+        // The inline record owns this exact live approval; virtualized-away
+        // records still use the Composer dock as their reachable fallback.
+        return inline ? null : binding;
+      }
     }
     return null;
   }

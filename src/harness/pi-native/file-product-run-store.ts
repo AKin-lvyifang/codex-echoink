@@ -1160,5 +1160,5 @@ function requireInterruption(value: unknown): TaskInterruptionRecord {
   if (!TASK_INTERRUPTION_REASONS.includes(raw.reason as TaskInterruptionRecord["reason"])) throw new Error("Invalid task interruption reason");
   if (typeof raw.stage !== "string" || raw.stage.length > 500) throw new Error("Invalid task interruption stage");
   if (raw.detail !== undefined && (typeof raw.detail !== "string" || raw.detail.length > 2000)) throw new Error("Invalid task interruption detail");
-  return { at: requireTimestamp(raw.at, "productRun.interruption.at"), reason: raw.reason as TaskInterruptionRecord["reason"], stage: raw.stage, ...(raw.detail ? { detail: raw.detail as string } : {}) };
+  return { at: requireTimestamp(raw.at, "productRun.interruption.at"), reason: raw.reason as TaskInterruptionRecord["reason"], stage: raw.stage, ...(raw.detail ? { detail: raw.detail } : {}) };
 }

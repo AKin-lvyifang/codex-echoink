@@ -6,12 +6,960 @@ import * as path from "node:path";
 import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vault-body-search";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
-import { KnowledgeRetriever, formatKnowledgeReferencesForPrompt } from "../knowledge-base/query";
-import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime } from "../plugin/pi-production-runtime-composition";
+import { KnowledgeReferenceBuilder, KnowledgeRetriever, formatKnowledgeReferencesForPrompt } from "../knowledge-base/query";
+import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime, createProductionPiKnowledgeToolRetriever } from "../plugin/pi-production-runtime-composition";
 import { PiKnowledgeReadToolSecurity, createPiKnowledgeReadToolDefinitions } from "../harness/pi-native/pi-knowledge-read-tools";
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+import { searchBodyDocuments } from "../knowledge-base/search/body-search";
+import { sha256Hex } from "../utils/sha256";
+
+export async function runVaultBodySearchWorkflowNavigationTests(root: string): Promise<void> {
+  await mkdir(root, { recursive: true });
+  const sourcePath = "知识/来源A.md", secondPath = "知识/来源B.md", allowedTarget = "知识/允许.md";
+  const notesTarget = "普通笔记/隐含.md", inboxTarget = "收件箱/隐含.md";
+  const notesVia = "普通笔记/共同来源.md", inboxVia = "收件箱/共同来源.md";
+  const links = `[[${allowedTarget}#允许标题]] [[${notesTarget}#范围外标题]] [[${inboxTarget}#旧收件标题]]`;
+  const source = (title: string, tokens: string) => [`# ${title}`, tokens, "", ...Array.from({ length: 65 }, () => "Background without query terms."), "", links].join("\n");
+  const bodies = new Map([
+    [sourcePath, source("来源A", "POLICY_NAV_TOKEN VIA_NOTES_TOKEN VIA_INBOX_TOKEN")],
+    [secondPath, source("来源B", "POLICY_NAV_TOKEN")],
+    [allowedTarget, "# 允许标题\nALLOWED_UNREAD_BODY"], [notesTarget, "# 范围外标题\nNOTES_UNREAD_BODY"], [inboxTarget, "# 旧收件标题\nINBOX_UNREAD_BODY"],
+    [notesVia, `# 普通共同来源\nVIA_NOTES_TOKEN\n\n${"Long background without query terms.\n".repeat(200)}\n[[${allowedTarget}]]`],
+    [inboxVia, `# 收件共同来源\nVIA_INBOX_TOKEN\n\n${"Long background without query terms.\n".repeat(200)}\n[[${allowedTarget}]]`]
+  ]);
+  const bindings = emptyKnowledgeFolderBindings();
+  for (const [role, folder] of [["wiki", "知识"], ["inbox", "收件箱"]] as const) {
+    Object.assign(bindings.roles[role], { enabled: true, searchEnabled: true, readPaths: [folder], writePath: folder });
+  }
+  let unavailableNotesTarget = false;
+  const file = (name: string) => ({ path: name, basename: path.basename(name, ".md"), extension: "md", stat: { mtime: 1, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => {
+      if (unavailableNotesTarget && entry.path === notesTarget) throw new Error("synthetic target read failure");
+      return bodies.get(entry.path)!;
+    } }, metadataCache: { getFileCache: () => null },
+    workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
+  const release = registerKnowledgeFolderBindings(root, () => bindings);
+  const port = new VaultBodySearch(app, () => bindings);
+  const index = new KnowledgeAgentIndex({ vaultPath: root, storageRootPath: path.join(root, ".index"), bodySearch: port });
+  index.refresh = async () => { assert.fail("workflow navigation never initializes the maintenance index"); };
+  const unscoped = new KnowledgeRetriever(root, { agentIndex: index });
+  const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: root, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  let workflow: "chat" | "ask" | "maintain" = "ask";
+  const tools = createProductionPiKnowledgeToolRetriever(root, index, () => workflow);
+  const policy = { kinds: ["wiki", "projects", "raw"] as const };
+  const request = (question: string, explicitPaths: string[] = []) => ({ conversationId: "workflow-navigation", question, explicitPaths, includeUnrefined: false });
+  type Navigation = { related?: import("../knowledge-base/knowledge-relations").KnowledgeRelationPage; linkCues?: readonly import("../knowledge-base/search/contracts").KnowledgeLinkCue[] };
+  const navigation = (value: Navigation) => ({ related: value.related, linkCues: value.linkCues });
+  const bodyOnly = <T extends Navigation>({ related: _related, linkCues: _linkCues, ...body }: T) => body;
+  const failures: string[] = [];
+  const check = (label: string, verify: () => void) => {
+    try { verify(); console.log(`Workflow navigation ${label}: PASS`); }
+    catch (error) { failures.push(label); console.error(`Workflow navigation ${label}: FAIL ${error instanceof Error ? error.message : error}`); }
+  };
+  const assertNavigation = (values: readonly Navigation[], denied: readonly string[], allowed: readonly string[]) => {
+    // Source context is already authorized prose and remains byte-for-byte
+    // intact; these checks cover newly resolved target/via metadata only.
+    const paths = values.flatMap(value => [
+      ...(value.related?.items.flatMap(item => [item.source.vaultRelativePath, item.target?.vaultRelativePath,
+        item.anchorLocation?.vaultRelativePath, ...(item.candidates?.map(candidate => candidate.vaultRelativePath) ?? [])]) ?? []),
+      ...(value.linkCues?.flatMap(cue => [cue.vaultRelativePath, ...cue.via.map(source => source.vaultRelativePath)]) ?? [])
+    ]);
+    for (const target of denied) assert.ok(!paths.includes(target), `automatic navigation leaked ${target}`);
+    for (const target of allowed) assert.ok(paths.includes(target), `allowed navigation disappeared: ${target}`);
+    assert.ok(values.filter(value => value.related).length <= 3, "the first-three navigation source budget is retained");
+    for (const value of values) if (value.related) assert.ok(value.related.returned <= 4, "the per-source navigation budget is retained");
+  };
+  try {
+    const baseline = await index.search({ query: "POLICY_NAV_TOKEN", limit: 6 });
+    assert.equal(baseline.hits.length, 2);
+    assert.ok(baseline.hits.some(hit => hit.related?.items.some(item => item.target?.vaultRelativePath === notesTarget && item.anchorLocation?.status === "located")));
+    assert.ok(baseline.hits.some(hit => hit.linkCues?.some(cue => cue.vaultRelativePath === notesTarget)));
+    const scopedBaseline = await index.search({ query: "POLICY_NAV_TOKEN", kinds: [...policy.kinds], limit: 6 });
+    const baselineReferences = (await unscoped.retrieve({ question: "POLICY_NAV_TOKEN", limit: 6 })).references;
+    for (const restricted of ["ask", "maintain"] as const) {
+      workflow = restricted;
+      const searched = await tools.searchAgentIndex({ query: "POLICY_NAV_TOKEN", limit: 6 });
+      check(`${restricted} search targets and body`, () => {
+        assertNavigation(searched.hits, [notesTarget, inboxTarget], [allowedTarget]);
+        assert.deepEqual(searched.hits.map(bodyOnly), scopedBaseline.hits.map(bodyOnly));
+        assert.deepEqual(searched.hits.flatMap(hit => hit.linkCues ?? []), scopedBaseline.hits.flatMap(hit => hit.linkCues?.filter(cue => cue.vaultRelativePath === allowedTarget) ?? []));
+        assert.deepEqual(searched.hits.flatMap(hit => hit.related?.items ?? []), scopedBaseline.hits.flatMap(hit => hit.related?.items.filter(item => item.target?.vaultRelativePath === allowedTarget) ?? []),
+          "allowed navigation retains its original context, titles, anchors, revisions and unread fields");
+      });
+      const references = (await unscoped.retrieve({ question: "POLICY_NAV_TOKEN", limit: 6 }, policy)).references;
+      check(`${restricted} preflight targets and body`, () => {
+        assertNavigation(references, [notesTarget, inboxTarget], [allowedTarget]);
+        assert.deepEqual(references.map(bodyOnly), baselineReferences.map(bodyOnly));
+        assert.equal((knowledgeReferenceEntryDetails(references).references[0].related?.items[0].anchorLocation?.readStatus), "unread");
+      });
+      const via = await index.search({ query: "VIA_NOTES_TOKEN", limit: 6 });
+      assert.ok(via.hits.find(hit => hit.vaultRelativePath === sourcePath)?.linkCues?.some(cue => cue.via.some(item => item.vaultRelativePath === notesVia)), "the allowed owner must carry a cue supported by a disallowed ordinary note");
+      const viaSearch = await tools.searchAgentIndex({ query: "VIA_NOTES_TOKEN", limit: 6 });
+      const viaReferences = (await unscoped.retrieve({ question: "VIA_NOTES_TOKEN", limit: 6 }, policy)).references;
+      check(`${restricted} cue supporters`, () => {
+        assert.ok(viaSearch.hits.every(hit => !hit.linkCues), "a cue cannot expose an out-of-workflow via source");
+        assert.ok(viaReferences.every(reference => !reference.linkCues), "preflight applies the same via policy");
+      });
+    }
+    const explicitBaseline = (await unscoped.retrieve({ question: sourcePath, explicitPaths: [sourcePath], limit: 1 })).references;
+    const explicit = (await unscoped.retrieve({ question: sourcePath, explicitPaths: [sourcePath], limit: 1 }, policy)).references;
+    check("ask explicit-source automatic anchors", () => {
+      assertNavigation(explicit, [notesTarget, inboxTarget], [allowedTarget]);
+      assert.deepEqual(explicit.map(bodyOnly), explicitBaseline.map(bodyOnly));
+    });
+    const ask = await runtime.retrieveAsk(request("POLICY_NAV_TOKEN") as never);
+    check("ask Provider and storage parity", () => {
+      assertNavigation(ask.references, [notesTarget, inboxTarget], [allowedTarget]);
+      assert.deepEqual(JSON.parse(ask.providerResourceText).sources.map(navigation), ask.references.map(navigation));
+      assert.deepEqual(knowledgeReferenceEntryDetails(ask.references).references.map(navigation), ask.references.map(navigation));
+      assert.doesNotMatch(ask.providerResourceText, /ALLOWED_UNREAD_BODY|NOTES_UNREAD_BODY|INBOX_UNREAD_BODY/u);
+    });
+    unavailableNotesTarget = true; port.invalidate(notesTarget);
+    const unavailablePage = (await port.search({ mode: "related", vaultRelativePath: sourcePath, limit: 4 })).related!;
+    assert.ok(unavailablePage.items.some(item => !item.target && item.anchorLocation?.vaultRelativePath === notesTarget), "read failure must exercise anchorLocation without a resolved target");
+    const unavailable = await runtime.retrieveAsk(request(sourcePath, [sourcePath]) as never);
+    check("ask unavailable target anchor path", () => assertNavigation(unavailable.references, [notesTarget, inboxTarget], [allowedTarget]));
+    unavailableNotesTarget = false; port.invalidate(notesTarget);
+
+    bindings.roles.inbox.enabled = false; bindings.roles.inbox.readPaths = []; bindings.roles.inbox.writePath = null;
+    bindings.inboxRecallExclusions = ["收件箱"];
+    workflow = "chat";
+    const chatSearch = await tools.searchAgentIndex({ query: "POLICY_NAV_TOKEN", limit: 6 });
+    const chat = await runtime.retrieveChat!(request("POLICY_NAV_TOKEN") as never);
+    const chatExplicit = await runtime.retrieveChat!(request(sourcePath, [sourcePath]) as never);
+    check("chat unbound Inbox search and references", () => {
+      assertNavigation(chatSearch.hits, [inboxTarget], [allowedTarget, notesTarget]);
+      assertNavigation(chat.references, [inboxTarget], [allowedTarget, notesTarget]);
+      assertNavigation(chatExplicit.references, [inboxTarget], [allowedTarget, notesTarget]);
+      assert.deepEqual(JSON.parse(chat.providerResourceText).sources.map(navigation), chat.references.map(navigation));
+      assert.deepEqual(chat.references.map(bodyOnly), baselineReferences.map(bodyOnly));
+    });
+    const inboxCue = await index.search({ query: "VIA_INBOX_TOKEN", limit: 6 });
+    assert.ok(inboxCue.hits.find(hit => hit.vaultRelativePath === sourcePath)?.linkCues?.some(cue => cue.via.some(item => item.vaultRelativePath === inboxVia)), "the allowed owner must carry the unbound Inbox via path from the shared adapter");
+    const chatVia = await tools.searchAgentIndex({ query: "VIA_INBOX_TOKEN", limit: 6 });
+    const chatViaPreflight = await runtime.retrieveChat!(request("VIA_INBOX_TOKEN") as never);
+    check("chat unbound Inbox cue supporters", () => {
+      assert.ok(chatVia.hits.every(hit => !hit.linkCues));
+      assert.ok(chatViaPreflight.references.every(reference => !reference.linkCues));
+    });
+    const manual = await runtime.retrieveChat!(request(inboxTarget, [inboxTarget]) as never);
+    const manualBaseline = await unscoped.retrieve({ question: inboxTarget, explicitPaths: [inboxTarget], limit: 1 });
+    const manualRead = await tools.readAgentIndex({ vaultRelativePath: inboxTarget });
+    check("chat manual public reads remain authorized", () => {
+      assert.equal(manual.references[0].vaultRelativePath, inboxTarget);
+      assert.deepEqual(manual.references.map(bodyOnly), manualBaseline.references.map(bodyOnly));
+      assert.match(manualRead.content, /INBOX_UNREAD_BODY/u);
+    });
+    assert.deepEqual(failures, [], "workflow candidate policy must filter nested navigation at every delivery boundary");
+  } finally { release(); port.dispose(); }
+}
+
+export async function runVaultBodySearchPrivateBoundaryTests(): Promise<void> {
+  const privatePaths = ["私有记忆/偏好草稿.md", ".obsidian/plugins/echoink/偏好缓存.md"];
+  const publicPaths = ["私有记忆备份/公开.md", "笔记/私有记忆/公开.md", "普通/公开.md"];
+  const bodies = new Map([...privatePaths, ...publicPaths].map(name => [name, `---\naliases: [BOUNDARY_ALIAS_TOKEN]\ntags: [boundary-tag]\n---\n# Boundary\nBOUNDARY_SHARED_TOKEN ${name}\n`]));
+  const reads: string[] = [], metadata: string[] = [];
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : name === "alias.md" ? file(privatePaths[0]) : null,
+    read: async (entry: TFile) => { reads.push(entry.path); return bodies.get(entry.path)!; } },
+    metadataCache: { getFileCache: (entry: TFile) => { metadata.push(entry.path); return { frontmatter: { aliases: ["BOUNDARY_ALIAS_TOKEN"], tags: ["boundary-tag"] } }; } },
+    workspace: { getActiveFile: () => file(privatePaths[0]), getLastOpenFiles: () => privatePaths } } as unknown as App;
+  // No fixture-specific excludedRoots: this must exercise the product default.
+  const port = new VaultBodySearch(app, () => null);
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-private-boundary", storageRootPath: "/synthetic-private-boundary-state", bodySearch: port });
+  const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  const blocked: Record<string, boolean> = {};
+  try {
+    const pages = [];
+    for (const request of [{ query: "BOUNDARY_SHARED_TOKEN" }, { query: "BOUNDARY_ALIAS_TOKEN" }, { query: "boundary-tag" }, { mode: "recent" as const }, { queries: ["BOUNDARY_SHARED_TOKEN", "BOUNDARY_ALIAS_TOKEN"] }, { query: "私有记忆/偏好草稿.md" }, { query: "这篇笔记讲什么" }]) pages.push(await port.search(request));
+    const contexts = [];
+    contexts.push(await runtime.retrieveChat!({ question: "BOUNDARY_SHARED_TOKEN", explicitPaths: [], includeUnrefined: false } as never));
+    try { const context = await runtime.retrieveChat!({ question: "BOUNDARY_SHARED_TOKEN", explicitPaths: [privatePaths[0]], includeUnrefined: false } as never); contexts.push(context); blocked.explicitPreflight = !context.references.some(reference => privatePaths.includes(reference.vaultRelativePath)); } catch { blocked.explicitPreflight = true; }
+    await assert.rejects(runtime.retrieveChat!({ question: "BOUNDARY_SHARED_TOKEN", explicitPaths: [privatePaths[1]], includeUnrefined: false } as never), { code: "forbidden-path" });
+    for (const name of [...privatePaths, "alias.md"]) {
+      const before = reads.length;
+      try { await port.read({ vaultRelativePath: name }); blocked[name] = false; } catch (error) { blocked[name] = (error as { code?: string }).code === "invalid_path"; }
+      blocked[`${name}:beforeIO`] = before === reads.length;
+    }
+    const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "private-v", conversationId: "private-c", piSessionId: "private-s", productRunId: "private-r" }), currentWorkflow: () => "chat", egress: new EchoInkVaultToolEgressPolicy() });
+    const tools = createPiKnowledgeReadToolDefinitions({ retriever: new KnowledgeRetriever(index.vaultPath, { agentIndex: index }), security });
+    const toolResults = [];
+    for (const input of [{ toolName: "knowledge_search", args: { query: "BOUNDARY_SHARED_TOKEN" } }, { toolName: "knowledge_search", args: { mode: "recent" } }, { toolName: "knowledge_search", args: { queries: ["BOUNDARY_SHARED_TOKEN", "BOUNDARY_ALIAS_TOKEN"] } }, ...privatePaths.map(name => ({ toolName: "knowledge_read", args: { vaultRelativePath: name, expectedContentRevision: `sha256:${sha256Hex(bodies.get(name)!)}` } }))]) {
+      const id = `private-tool-${toolResults.length}`, before = reads.length;
+      const denied = await security.handleToolCall({ toolName: input.toolName, toolCallId: id, input: input.args } as never, undefined);
+      if (denied) { toolResults.push({ isError: true, denied }); continue; }
+      try { await tools.find(tool => tool.name === input.toolName)!.execute(id, input.args as never, undefined, undefined); } catch { /* Security returns the safe tool error below. */ }
+      const result = await security.handleToolResult({ toolName: input.toolName, toolCallId: id, isError: false } as never);
+      toolResults.push(result);
+      if (input.toolName === "knowledge_read") { assert.equal(result.isError, true); assert.equal(reads.length, before, "knowledge_read rejects private sources before body I/O"); }
+      else { assert.equal(result.isError, false); assert.ok(!privatePaths.some(name => JSON.stringify(result).includes(name))); }
+    }
+    console.log(JSON.stringify({ kind: "private-boundary-knowledge", candidates: pages.map(page => page.hits.map(hit => hit.vaultRelativePath)), delivered: contexts.map(context => context.references.map(reference => reference.vaultRelativePath)), toolResults, blocked, reads, metadata }));
+    assert.ok(pages.every(page => page.hits.every(hit => !privatePaths.includes(hit.vaultRelativePath))));
+    assert.ok(contexts.every(context => !privatePaths.some(name => context.providerResourceText.includes(name) || context.references.some(reference => reference.vaultRelativePath === name))));
+    assert.ok(Object.values(blocked).every(Boolean), "direct and canonical-host paths must reject before content I/O");
+    assert.ok(reads.every(name => !privatePaths.includes(name)));
+    assert.ok(metadata.every(name => !privatePaths.includes(name)), "exclude private candidates before asking metadata cache");
+    assert.deepEqual(pages[0].hits.map(hit => hit.vaultRelativePath).sort(), [...publicPaths].sort());
+    assert.ok(pages[1].hits.length && pages[2].hits.length, "metadata-only alias and tag queries actually match public sources");
+  } finally { port.dispose(); }
+  const sourceErrorObservations = [];
+  for (const code of ["EACCES", "ELOOP"]) {
+    let failed = true;
+    const sourceReads: string[] = [], sourceMetadata: string[] = [];
+    const files = ["notes/broken.md", "notes/public.md"].map(name => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, size: 20 } }));
+    const sourceApp = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (name: string) => files.find(file => file.path === name), read: async (file: { path: string }) => { sourceReads.push(file.path); return "SOURCE_ERROR_PUBLIC_TOKEN"; } },
+      metadataCache: { getFileCache: (file: { path: string }) => { sourceMetadata.push(file.path); return null; } } } as unknown as App;
+    const resolveSourcePath = async (name: string) => { if (failed && name.endsWith("/broken.md")) throw Object.assign(new Error(code), { code }); return name; };
+    const guarded = new VaultBodySearch(sourceApp, () => null, { resolveSourcePath });
+    try {
+      for (const request of [{ query: "SOURCE_ERROR_PUBLIC_TOKEN" }, { query: "SOURCE_ERROR_PUBLIC_TOKEN" }, { mode: "recent" as const }]) {
+        const result = await guarded.search(request);
+        assert.deepEqual(result.hits.map(hit => hit.vaultRelativePath), ["notes/public.md"]);
+        assert.equal(result.coverage?.totalFiles, 2); assert.equal(result.coverage?.failedFiles, 1); assert.equal(result.coverage?.indexedFiles, 1); assert.equal(result.coverage?.complete, false); assert.equal(result.exhausted, false);
+        sourceErrorObservations.push({ code, request, coverage: result.coverage });
+      }
+      assert.ok(sourceReads.every(name => name !== "notes/broken.md")); assert.ok(sourceMetadata.every(name => name !== "notes/broken.md"));
+      const scoped = await guarded.search({ query: "SOURCE_ERROR_PUBLIC_TOKEN", excludePaths: ["notes/broken.md"] });
+      assert.equal(scoped.coverage?.complete, true); assert.equal(scoped.coverage?.failedFiles, 0);
+      failed = false;
+      const recovered = await guarded.search({ query: "SOURCE_ERROR_PUBLIC_TOKEN" });
+      assert.equal(recovered.hits.length, 2); assert.equal(recovered.coverage?.failedFiles, 0); assert.equal(recovered.coverage?.complete, true);
+    } finally { guarded.dispose(); }
+    for (const fatal of [Object.assign(new Error("aborted"), { name: "AbortError" }), ...["disposed", "source_changed", "search_index_stale", "search_index_disposed"].map(code => Object.assign(new Error(code), { code }))]) {
+      const fatalPort = new VaultBodySearch(sourceApp, () => null, { resolveSourcePath: async () => { throw fatal; } });
+      try { await assert.rejects(fatalPort.search({ query: "SOURCE_ERROR_PUBLIC_TOKEN" }), error => error === fatal); } finally { fatalPort.dispose(); }
+    }
+  }
+  console.log(JSON.stringify({ kind: "canonical-single-source-error-regression", sourceErrorObservations }));
+  console.log("Private Knowledge boundary: default search/body/metadata/recent/supplemental/explicit/preflight/direct reads PASS");
+}
+
+export async function runVaultBodySearchLinkCueTests(): Promise<void> {
+  const targetPath = "support/Guide.md";
+  const links = "[[support/Guide]] [[private/Hidden]] [[disabled/Hidden]] [[.obsidian/Hidden]] [[Missing]] [[Duplicate]]";
+  const bodies = new Map([["notes/A.md", `# A\nCOHORT_LINK_TOKEN local claim A.\n\n[[B]] ${links}`], ["notes/B.md", `# B\nCOHORT_LINK_TOKEN local claim B.\n\n[[A]] ${links}`],
+    ["notes/C.md", "# C\nCOHORT_LINK_TOKEN separate claim C.\n\n[[Alone]]"], [targetPath, "# Guide\nUNREAD_CUE_TARGET_BODY"], ["notes/Alone.md", "# Alone\nOther material."],
+    ["one/Duplicate.md", "# One\nOther material."], ["two/Duplicate.md", "# Two\nOther material."], ["private/Hidden.md", "PRIVATE_CUE_BODY"], ["disabled/Hidden.md", "DISABLED_CUE_BODY"], [".obsidian/Hidden.md", "HIDDEN_CUE_BODY"]]);
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.wiki.enabled = true; bindings.roles.wiki.readPaths = ["support"];
+  bindings.roles.work.enabled = false; bindings.roles.work.readPaths = ["disabled"];
+  const reads = new Map<string, number>();
+  let pause: { entered: () => void; wait: Promise<void> } | undefined;
+  let activePath: string | undefined;
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => {
+      assert.ok(!entry.path.startsWith("private/") && !entry.path.startsWith("disabled/") && !entry.path.startsWith(".obsidian/"));
+      reads.set(entry.path, (reads.get(entry.path) ?? 0) + 1);
+      if (entry.path === "notes/A.md" && pause) { pause.entered(); await pause.wait; }
+      return bodies.get(entry.path)!;
+    } }, metadataCache: { getFileCache: () => null }, workspace: { getActiveFile: () => activePath ? file(activePath) : null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings, { excludedRoots: () => ["private"] });
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-link-cues", storageRootPath: "/synthetic-link-cue-state", bodySearch: port });
+  index.refresh = async () => { assert.fail("candidate link cues never initialize a maintained graph"); };
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const captured: import("../knowledge-base/types").KnowledgeReference[] = [];
+  const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "cue-v", conversationId: "cue-c", piSessionId: "cue-s", productRunId: "cue-r" }),
+    currentWorkflow: () => "chat", onSourceRead: reference => { captured.push(reference); }, egress: new EchoInkVaultToolEgressPolicy() });
+  const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+  let sequence = 0;
+  const call = async (signal?: AbortSignal) => {
+    const id = `cue-${++sequence}`, input = { query: "COHORT_LINK_TOKEN", limit: 10 };
+    await security.handleToolCall({ toolName: "knowledge_search", toolCallId: id, input } as never, undefined);
+    try { await tools[0].execute(id, input, signal, undefined); } catch { /* security owns the safe failure */ }
+    return await security.handleToolResult({ toolName: "knowledge_search", toolCallId: id, isError: false } as never);
+  };
+  const gate = () => { let entered!: () => void, resume!: () => void; const started = new Promise<void>(resolve => { entered = resolve; }); pause = { entered, wait: new Promise<void>(resolve => { resume = resolve; }) }; return { started, resume: () => { pause = undefined; resume(); } }; };
+  try {
+    const cold = await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 });
+    const owner = cold.hits.find(hit => hit.linkCues)!;
+    assert.ok(owner); assert.equal(owner.linkCues!.length, 1);
+    const cue = owner.linkCues![0]; assert.equal(cue.vaultRelativePath, targetPath); assert.equal(cue.via.length, 2);
+    assert.equal(cue.readStatus, "unread"); assert.equal(cue.label, "可能相关");
+    assert.ok(!cold.hits.some(hit => hit.vaultRelativePath === targetPath));
+    assert.equal(reads.get(targetPath), 1, "the normal statistics scan is the only target body read; publishing a cue never reads it again");
+    const warm = await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 }); assert.deepEqual(warm.hits, cold.hits);
+    assert.equal(reads.get(targetPath), 1);
+    const pages = [];
+    let cursor: string | undefined;
+    do { const page = await index.search({ query: "COHORT_LINK_TOKEN", limit: 1, cursor }); pages.push(...page.hits); cursor = page.continuationCursor; } while (cursor);
+    assert.deepEqual(pages, cold.hits);
+    const references = (await retriever.retrieve({ question: "COHORT_LINK_TOKEN", limit: 6 })).references;
+    const reference = references.find(item => item.linkCues)!;
+    assert.deepEqual(reference.linkCues, owner.linkCues);
+    assert.equal((await retriever.verifyReferences(references)).status, "valid");
+    assert.deepEqual(knowledgeReferenceEntryDetails(references).references.map(item => item.linkCues), references.map(item => item.linkCues));
+    const result = await call(); assert.equal(result.isError, false);
+    const delivered = JSON.parse(result.content[0].text).hits;
+    assert.deepEqual(delivered.map((hit: { linkCues: unknown }) => hit.linkCues), captured.map(item => item.linkCues));
+    assert.deepEqual((result.details.references as typeof captured).map(item => item.linkCues), captured.map(item => item.linkCues));
+    assert.equal(captured.length, cold.hits.length); assert.ok(captured.every(item => item.vaultRelativePath !== targetPath));
+    const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+    const contexts = [await runtime.retrieveChat!({ question: "COHORT_LINK_TOKEN", explicitPaths: [], includeUnrefined: false } as never)];
+    const ask = await runtime.retrieveAsk({ question: "COHORT_LINK_TOKEN", explicitPaths: [], includeUnrefined: false } as never);
+    assert.equal(ask.status, "no_evidence", "/ask excludes this fixture's ordinary-note candidates");
+    assert.deepEqual(ask.references, []);
+    assert.doesNotMatch(ask.providerResourceText, /notes\/[ABC]\.md|support\/Guide\.md|UNREAD_CUE_TARGET_BODY/u, "/ask cannot expose ordinary-note navigation through a no-evidence response");
+    for (const context of contexts) {
+      assert.deepEqual(JSON.parse(context.providerResourceText).sources.map((source: { linkCues: unknown }) => source.linkCues), context.references.map(item => item.linkCues));
+      assert.doesNotMatch(context.providerResourceText, /UNREAD_CUE_TARGET_BODY|PRIVATE_CUE_BODY|DISABLED_CUE_BODY/u);
+      assert.match(context.providerResourceText, /链接不代表观点一致/u);
+    }
+    const identity = (item: import("../knowledge-base/types").KnowledgeReference) => ({ referenceId: item.referenceId, vaultRelativePath: item.vaultRelativePath,
+      contentRevision: item.contentRevision, lineStart: item.lineStart, lineEnd: item.lineEnd, columnStart: item.columnStart, columnEnd: item.columnEnd, excerpt: item.excerpt, linkCues: item.linkCues });
+    console.log(JSON.stringify({ kind: "knowledge-link-cue-delivery-dev", runtime: contexts.map(context => ({ providerResourceText: context.providerResourceText, references: context.references.map(identity) })),
+      tool: { text: result.content[0].text, detailsReferences: result.details.references }, onSourceRead: captured.map(identity), usage: knowledgeReferenceEntryDetails(captured).references.map(identity),
+      targetPath, targetBodyReadsForSearchStatistics: reads.get(targetPath), targetReadReferences: captured.filter(item => item.vaultRelativePath === targetPath).length }));
+    for (const linkCues of [undefined, [], [{ ...cue, extra: true }], [{ ...cue, readStatus: "read" }], [{ ...cue, contentRevision: reference.contentRevision }],
+      [{ ...cue, via: cue.via.slice(0, 1) }], [{ ...cue, via: [cue.via[0], cue.via[0]] }], [{ ...cue, via: cue.via.map(item => ({ ...item, contentRevision: `sha256:${"a".repeat(64)}` })) }],
+      [{ ...cue, vaultRelativePath: "private/../Hidden.md" }], [{ ...cue, title: "x".repeat(201) }]]) {
+      assert.throws(() => knowledgeReferenceEntryDetails([{ ...reference, linkCues } as never]), /linkCues 无效/u);
+    }
+    activePath = "notes/A.md";
+    const single = await index.search({ query: "这篇笔记讲什么", limit: 10 });
+    assert.ok(single.hits.length && single.hits.every(hit => hit.vaultRelativePath === activePath && !hit.linkCues)); activePath = undefined;
+    const blocked = gate(); const pending = index.search({ query: "COHORT_LINK_TOKEN", limit: 10 });
+    const rejected = assert.rejects(pending, { code: "source_changed" }); await blocked.started; port.invalidate("notes/A.md"); blocked.resume(); await rejected;
+    await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 });
+    const beforeCancel = captured.length, cancel = new AbortController(), waiting = gate(); const cancelled = call(cancel.signal);
+    await waiting.started; cancel.abort(); waiting.resume(); assert.equal((await cancelled).isError, true); assert.equal(captured.length, beforeCancel);
+    bindings.roles.wiki.searchEnabled = false;
+    assert.ok((await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 })).hits.every(hit => !hit.linkCues));
+    bindings.roles.wiki.searchEnabled = true; bodies.delete(targetPath);
+    assert.ok((await index.search({ query: "COHORT_LINK_TOKEN", limit: 10 })).hits.every(hit => !hit.linkCues));
+  } finally { port.dispose(); }
+  console.log("Public link cues: actual search/preflight/tool/usage parity, unread target accounting, bounded candidate verification, private/disabled/deleted isolation, cache/paging and cancellation PASS");
+}
+
+export async function runVaultBodySearchSourceRevisionTests(): Promise<void> {
+  const sourcePath = "projects/Decision.md", targetPath = "notes/Target.md";
+  const oldMarker = "OLD_DELIVERED_ZQWERTY", newMarker = "NEW_CURRENT_ASDFGHJ";
+  const oldSource = `# Decision\n${oldMarker}\n\n[[notes/Target#Heading]]`;
+  const newSource = oldSource.replace(oldMarker, newMarker);
+  const bodies = new Map([[sourcePath, oldSource], [targetPath, "# Heading\nTarget navigation body."]]);
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.projects.enabled = true; bindings.roles.projects.readPaths = ["projects"];
+  let targetWait: { entered: () => void; wait: Promise<void> } | undefined;
+  let sourceWait: { entered: () => void; wait: Promise<void> } | undefined;
+  let sourceReads = 0;
+  let targetUnavailable = false;
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => {
+      if (entry.path === sourcePath && sourceWait && ++sourceReads === 2) { sourceWait.entered(); await sourceWait.wait; }
+      if (entry.path === targetPath && targetUnavailable) throw new Error("Target is unavailable");
+      if (entry.path === targetPath && targetWait) { targetWait.entered(); await targetWait.wait; }
+      return bodies.get(entry.path)!;
+    } }, metadataCache: { getFileCache: () => null } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings);
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-source-revision", storageRootPath: "/synthetic-source-revision-state", bodySearch: port });
+  index.refresh = async () => { assert.fail("source revision checks cannot initialize a maintained index"); };
+  const builder = new KnowledgeReferenceBuilder(index.vaultPath, port);
+  const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  const search = port.search.bind(port);
+  const observations: { route: string; race: string; oldBodyDelivered: boolean; errorCode?: string; sourceChanged?: boolean }[] = [];
+  const race = async <T>(mode: "page" | "event" | "deleted" | "deleted-read", action: () => Promise<T>) => {
+    bodies.set(sourcePath, oldSource); port.invalidate(sourcePath);
+    sourceReads = 0;
+    let entered!: () => void, resume!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const wait = new Promise<void>(resolve => { resume = resolve; });
+    if (mode === "page" || mode === "deleted") port.search = async request => { if (request.mode === "related") { entered(); await wait; } return await search(request); };
+    else if (mode === "event") targetWait = { entered, wait };
+    else sourceWait = { entered, wait };
+    const pending = action().then(value => ({ value, errorCode: undefined }), (error: { code?: string }) => ({ value: undefined, errorCode: error.code }));
+    await started;
+    if (mode.startsWith("deleted")) bodies.delete(sourcePath); else bodies.set(sourcePath, newSource);
+    if (mode === "event") port.invalidate(sourcePath);
+    resume();
+    const result = await pending;
+    targetWait = undefined; sourceWait = undefined; port.search = search;
+    return result;
+  };
+  try {
+    const baseline = await builder.buildReference({ vaultRelativePath: sourcePath, question: oldMarker, includeAnchorNavigation: true });
+    assert.equal(baseline.excerpt, oldMarker, "the replaced marker is the actual delivered paragraph, not an unread tail");
+    const baselineChat = await runtime.retrieveChat!({ question: oldMarker, explicitPaths: [sourcePath], includeUnrefined: false } as never);
+    assert.ok(baselineChat.providerResourceText.includes(oldMarker), "the production baseline actually delivers the paragraph that the race replaces");
+    for (const mode of ["page", "event", "deleted", "deleted-read"] as const) {
+      const built = await race(mode, () => builder.buildReference({ vaultRelativePath: sourcePath, question: oldMarker, includeAnchorNavigation: true }));
+      observations.push({ route: "builder", race: mode, errorCode: built.errorCode, oldBodyDelivered: Boolean(built.value?.excerpt.includes(oldMarker)) });
+      const chat = await race(mode, () => runtime.retrieveChat!({ question: oldMarker, explicitPaths: [sourcePath], includeUnrefined: false } as never));
+      observations.push({ route: "production.retrieveChat", race: mode, errorCode: chat.errorCode,
+        oldBodyDelivered: Boolean(chat.value?.providerResourceText.includes(oldMarker) || chat.value?.references.some(reference => reference.excerpt.includes(oldMarker))),
+        sourceChanged: chat.value ? (JSON.stringify(chat.value).includes("source-changed") || chat.value.status === "no_evidence") : undefined });
+    }
+    console.log(`Source revision replacement development evidence: ${JSON.stringify(observations)}`);
+    assert.ok(observations.every(item => !item.oldBodyDelivered), "a known source revision change must never deliver the replaced old paragraph");
+    assert.ok(observations.filter(item => item.route === "builder").every(item => item.errorCode === "source-changed"));
+    bodies.set(sourcePath, oldSource); port.invalidate(sourcePath); targetUnavailable = true;
+    const unavailable = await builder.buildReference({ vaultRelativePath: sourcePath, question: oldMarker, includeAnchorNavigation: true });
+    assert.equal(unavailable.excerpt, oldMarker, "a stable source remains readable when only its target is unavailable");
+    assert.equal(unavailable.related!.items[0].anchorLocation!.status, "not_located");
+    if (unavailable.related!.items[0].anchorLocation!.status === "not_located") assert.equal(unavailable.related!.items[0].anchorLocation!.reason, "unavailable");
+    const unavailableChat = await runtime.retrieveChat!({ question: oldMarker, explicitPaths: [sourcePath], includeUnrefined: false } as never);
+    assert.ok(unavailableChat.providerResourceText.includes(oldMarker), "target-only failure still delivers the stable source through the real Chat route");
+    assert.equal(unavailableChat.references[0].related!.items[0].anchorLocation!.status, "not_located");
+  } finally { port.dispose(); }
+  console.log("Source revision replacement: builder and actual Chat reject page mismatches and async source_changed; target-only failures retain stable source body PASS");
+}
+
+export async function runVaultBodySearchExplicitAnchorTests(): Promise<void> {
+  const sourcePath = "projects/exports/Brief.md", targetPath = "notes/Checklist.md";
+  const source = ["# Brief", "EXPLICIT_ANCHOR_TOKEN is the selected claim.", ...Array.from({ length: 65 }, () => "Background."),
+    "[[notes/Checklist#Packing]]", "[[notes/Checklist#^sleeve]]", "[[notes/Checklist#Missing]]"].join("\n");
+  const target = ["# Checklist", ...Array.from({ length: 40 }, () => "Preface."), "## Packing", "UNREAD_PACKING_BODY", "## Other", "Other detail.", "", "Use the padded sleeve. ^sleeve"].join("\n");
+  const bodies = new Map([[sourcePath, source], [targetPath, target]]);
+  const reads: string[] = [];
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.projects.enabled = true; bindings.roles.projects.readPaths = ["projects"];
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => { reads.push(entry.path); return bodies.get(entry.path)!; } }, metadataCache: { getFileCache: () => null } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings);
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-explicit-anchors", storageRootPath: "/synthetic-explicit-anchor-state", bodySearch: port });
+  index.refresh = async () => { assert.fail("explicit anchors never initialize the maintained index"); };
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const builder = new KnowledgeReferenceBuilder(index.vaultPath, port);
+  const question = sourcePath;
+  try {
+    const baseline = await builder.buildReference({ vaultRelativePath: sourcePath, question, allowUnrefined: true });
+    reads.length = 0;
+    const result = await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 });
+    assert.equal(result.references.length, 1);
+    const reference = result.references[0];
+    assert.ok(reference.related, "an explicit source excluded from normal search still delivers bounded anchor navigation");
+    const { related, ...body } = reference;
+    assert.deepEqual(body, baseline, "adding explicit anchor navigation never expands the delivered body range or identity");
+    assert.equal(related!.contentRevision, reference.contentRevision);
+    assert.equal(related!.returned, 3);
+    assert.equal(related!.items[0].anchorLocation!.status, "located");
+    assert.equal(related!.items[0].anchorLocation!.readStatus, "unread");
+    assert.equal(related!.items[0].anchorLocation!.contentRevision, related!.items[0].target!.contentRevision);
+    assert.equal(related!.items[1].anchorLocation!.kind, "block");
+    assert.equal(related!.items[2].anchorLocation!.status, "not_located");
+    assert.ok(reference.lineEnd < 65);
+    assert.deepEqual(reads, [sourcePath, sourcePath, targetPath], "only this explicit source and its one unique target are read; no global scan is needed");
+    assert.equal((await retriever.verifyReferences([reference])).status, "valid");
+    assert.deepEqual(knowledgeReferenceEntryDetails([reference]).references[0].related, related);
+    assert.doesNotMatch(formatKnowledgeReferencesForPrompt([reference]), /UNREAD_PACKING_BODY/u);
+    const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+    for (const [workflow, delivered] of [["chat", await runtime.retrieveChat!({ question, explicitPaths: [sourcePath], includeUnrefined: false } as never)],
+      ["ask", await runtime.retrieveAsk({ question, explicitPaths: [sourcePath], includeUnrefined: false } as never)]] as const) {
+      assert.deepEqual(JSON.parse(delivered.providerResourceText).sources[0].related, delivered.references[0].related);
+      if (workflow === "chat") assert.deepEqual(delivered.references[0].related, related);
+      else {
+        assert.deepEqual(delivered.references[0].related?.items, [], "/ask never decorates an allowed explicit source with automatic ordinary-note navigation");
+        assert.equal(delivered.references[0].related?.returned, 0);
+      }
+      assert.equal(delivered.references[0].referenceId, baseline.referenceId);
+    }
+    bodies.set(targetPath, `New preface.\n\n${target}`);
+    const moved = (await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 })).references[0];
+    assert.notEqual(moved.related!.items[0].target!.contentRevision, related!.items[0].target!.contentRevision);
+    if (moved.related!.items[0].anchorLocation!.status === "located" && related!.items[0].anchorLocation!.status === "located") {
+      assert.equal(moved.related!.items[0].anchorLocation!.lineStart, related!.items[0].anchorLocation!.lineStart + 2);
+    }
+    // A source edit between the body snapshot and optional navigation cannot mix revisions.
+    const search = port.search.bind(port);
+    port.search = async request => {
+      if (request.mode === "related") bodies.set(sourcePath, source.replace("EXPLICIT_ANCHOR_TOKEN is the selected claim.", "EXPLICIT_NEW_SOURCE_CLAIM"));
+      return await search(request);
+    };
+    const changed = await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 });
+    assert.equal(changed.references.length, 0, "a known source SHA mismatch rejects the old body rather than only omitting navigation");
+    assert.equal(changed.localIssues![0].status, "source-changed");
+    port.search = search; bodies.set(sourcePath, source); port.invalidate(sourcePath);
+    port.search = async request => {
+      if (request.mode === "related") bindings.roles.projects.searchEnabled = false;
+      return await search(request);
+    };
+    const revoked = await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 });
+    assert.equal(revoked.references.length, 0, "a scope revocation while decorating explicit navigation cannot publish the earlier body snapshot");
+    assert.equal(revoked.localIssues![0].status, "source-changed");
+    port.search = search; bindings.roles.projects.searchEnabled = true; port.invalidate(sourcePath);
+    for (let i = 0; i < 5; i++) bodies.set(`notes/Other-${i}.md`, source.replace("# Brief", `# Other ${i}`));
+    const mixed = await retriever.retrieve({ question: "EXPLICIT_ANCHOR_TOKEN", explicitPaths: [sourcePath], limit: 6 });
+    assert.equal(mixed.references.length, 6);
+    const navigation = mixed.references.filter(item => item.related);
+    assert.equal(navigation.length, 3, "explicit and ordinary search share the first-three navigation source budget");
+    assert.equal(navigation[0].vaultRelativePath, sourcePath);
+    assert.ok(navigation.every(item => item.related!.returned <= 4));
+    assert.deepEqual(knowledgeReferenceEntryDetails(mixed.references).references.map(item => item.related), mixed.references.map(item => item.related));
+    bodies.set(sourcePath, "# Brief\nOrdinary [[notes/Checklist]] link and `[[notes/Checklist#Fake]]` code."); port.invalidate(sourcePath);
+    reads.length = 0;
+    const plain = (await retriever.retrieve({ question, explicitPaths: [sourcePath], limit: 1 })).references[0];
+    assert.equal(plain.related, undefined);
+    assert.deepEqual(reads, [sourcePath], "anchorless explicit sources retain their single original body read");
+  } finally { port.dispose(); }
+  console.log("Explicit source anchors: bounded same-source revision navigation, current target SHA, exact body/provider/storage parity and shared first-three source budget PASS");
+}
+
+export async function runVaultBodySearchAnchorTests(): Promise<void> {
+  const sourcePath = "notes/Source.md", targetPath = "notes/Target.md";
+  const source = ["# Source", "REAL_ANCHOR_TOKEN is the delivered source claim.", ...Array.from({ length: 60 }, () => "Background."),
+    "[[Target#Exact heading]]", "[[Target#^paragraph]]", "[[Target#Missing]]", "[[private/Hidden#Secret]]", "[[disabled/Hidden#Secret]]", "[[.obsidian/Hidden#Secret]]", "[[../../escape#Secret]]",
+    "[[Target#^bad_id]]", "[[Gone#Lost]]"].join("\n");
+  const target = ["# Target", ...Array.from({ length: 45 }, () => "Preface."), "## Exact heading", "TARGET_BODY_SENTINEL is only unread navigation until requested.", "### Child", "Detail.",
+    "## Tail", "TAIL_SENTINEL", "", "Paragraph first.", "Paragraph second. ^paragraph", "", "[[Source#Source]]"].join("\n");
+  const bodies = new Map([[sourcePath, source], [targetPath, target], ["private/Hidden.md", "# Secret\nPRIVATE_BODY_SENTINEL"],
+    ["disabled/Hidden.md", "# Secret\nDISABLED_BODY_SENTINEL"], [".obsidian/Hidden.md", "# Secret\nHIDDEN_BODY_SENTINEL"]]);
+  const bindings = emptyKnowledgeFolderBindings();
+  bindings.roles.wiki.readPaths = ["disabled"];
+  let clock = 10;
+  let reads = 0;
+  let pause: { entered: () => void; wait: Promise<void> } | undefined;
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: clock, ctime: 1, size: bodies.get(name)?.length ?? 0 } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => {
+      reads++;
+      assert.ok(!entry.path.startsWith("private/") && !entry.path.startsWith("disabled/") && !entry.path.startsWith(".obsidian/"));
+      const content = bodies.get(entry.path)!;
+      if (entry.path === targetPath && pause) { pause.entered(); await pause.wait; }
+      return content;
+    } }, metadataCache: { getFileCache: () => null, getFirstLinkpathDest: () => file("private/Hidden.md") },
+    workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings, { excludedRoots: () => ["private"] });
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-anchor-vault", storageRootPath: "/synthetic-anchor-state", bodySearch: port });
+  index.refresh = async () => { assert.fail("ordinary anchor navigation must never initialize the maintained index"); };
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const observed: import("../knowledge-base/types").KnowledgeReference[] = [];
+  const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "vault-anchor-v", conversationId: "vault-anchor-c", piSessionId: "vault-anchor-s", productRunId: "vault-anchor-r" }),
+    currentWorkflow: () => "chat", onSourceRead: reference => { observed.push(reference); }, egress: new EchoInkVaultToolEgressPolicy() });
+  const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+  let sequence = 0;
+  const call = async (name: "knowledge_search" | "knowledge_read", input: Record<string, unknown>, signal?: AbortSignal) => {
+    const id = `vault-anchor-${++sequence}`;
+    assert.equal(await security.handleToolCall({ toolName: name, toolCallId: id, input } as never, undefined), undefined);
+    try { await tools.find(tool => tool.name === name)!.execute(id, input, signal, undefined); } catch { /* security returns the safe failure */ }
+    return await security.handleToolResult({ toolName: name, toolCallId: id, isError: false } as never);
+  };
+  const gate = () => {
+    let entered!: () => void, resume!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    pause = { entered, wait: new Promise<void>(resolve => { resume = resolve; }) };
+    return { started, resume: () => { pause = undefined; resume(); } };
+  };
+  try {
+    const initial = await index.search({ query: "REAL_ANCHOR_TOKEN", limit: 1 });
+    const hit = initial.hits[0], page = hit.related!;
+    assert.equal(page.returned, 4);
+    assert.equal(page.total, 9);
+    assert.ok(hit.lineEnd < 60, "links outside the excerpt still supply navigation");
+    const heading = page.items[0];
+    assert.equal(heading.target!.vaultRelativePath, targetPath);
+    assert.equal(heading.anchorLocation!.status, "located");
+    assert.equal(heading.anchorLocation!.contentRevision, heading.target!.contentRevision);
+    assert.equal(heading.anchorLocation!.readStatus, "unread");
+    assert.equal(page.items[2].anchorLocation!.status, "not_located");
+    assert.equal(page.items[3].target, undefined, "host resolution cannot widen a private target into the allowed scope");
+    const retrieval = await retriever.retrieve({ question: "REAL_ANCHOR_TOKEN", limit: 1 });
+    assert.deepEqual(retrieval.references[0].related, page);
+    assert.deepEqual(knowledgeReferenceEntryDetails(retrieval.references).references[0].related, page);
+    assert.equal((await retriever.verifyReferences(retrieval.references)).status, "valid");
+    assert.doesNotMatch(formatKnowledgeReferencesForPrompt(retrieval.references), /TARGET_BODY_SENTINEL|PRIVATE_BODY_SENTINEL|DISABLED_BODY_SENTINEL/u);
+    const searchTool = await call("knowledge_search", { query: "REAL_ANCHOR_TOKEN", limit: 1 });
+    assert.equal(searchTool.isError, false);
+    const delivered = JSON.parse(searchTool.content[0].text).hits[0];
+    assert.deepEqual(delivered.related, page);
+    assert.deepEqual((searchTool.details.references as typeof observed)[0].related, page);
+    assert.deepEqual(observed[0].related, page);
+    assert.equal(observed[0].lineEnd, hit.lineEnd);
+    assert.equal(observed.length, 1, "target navigation never creates a target read record");
+    const all = await call("knowledge_search", { mode: "related", vaultRelativePath: sourcePath, limit: 8 });
+    assert.equal(all.isError, false);
+    assert.equal(observed.length, 1);
+    const relations = JSON.parse(all.content[0].text).related;
+    assert.equal(relations.returned, 8);
+    for (const relation of relations.items.slice(3, 7)) assert.equal(relation.target, undefined);
+    assert.equal(relations.items[7].anchorLocation.reason, "invalid");
+    const next = await index.search({ mode: "related", vaultRelativePath: sourcePath, cursor: relations.continuationCursor, limit: 8 });
+    assert.equal(next.related!.items[0].status, "unresolved");
+    const beforeRevision = heading.target!.contentRevision;
+    bodies.set(targetPath, `New preface.\n\n${target}`);
+    const moved = (await index.search({ query: "REAL_ANCHOR_TOKEN", limit: 1 })).hits[0].related!.items[0];
+    assert.notEqual(moved.target!.contentRevision, beforeRevision);
+    if (moved.anchorLocation!.status === "located" && heading.anchorLocation!.status === "located") assert.equal(moved.anchorLocation!.lineStart, heading.anchorLocation!.lineStart + 2);
+    const fresh = await call("knowledge_read", { vaultRelativePath: targetPath, expectedContentRevision: moved.target!.contentRevision, anchor: "Exact heading" });
+    assert.equal(fresh.isError, false);
+    assert.match(JSON.parse(fresh.content[0].text).excerpt, /TARGET_BODY_SENTINEL/u);
+    assert.doesNotMatch(JSON.parse(fresh.content[0].text).excerpt, /TAIL_SENTINEL/u);
+    const beforeStale = observed.length;
+    const stale = await call("knowledge_read", { vaultRelativePath: targetPath, expectedContentRevision: beforeRevision, anchor: "Exact heading" });
+    assert.equal(stale.isError, true);
+    assert.equal(stale.details.errorCode, "knowledge_source_changed");
+    assert.equal(observed.length, beforeStale);
+    for (const related of [undefined, { ...page, extra: true }, { ...page, vaultRelativePath: targetPath }, { ...page, contentRevision: beforeRevision }, { ...page, returned: 0 },
+      { ...page, items: [...page.items, ...page.items, ...page.items], returned: 12 },
+      { ...page, items: [{ ...heading, original: "X".repeat(2049) }], returned: 1 },
+      { ...page, items: [{ ...heading, target: { ...heading.target, contentRevision: hit.contentRevision } }], returned: 1 },
+      { ...page, items: [{ ...page.items[2], anchorLocation: { schemaVersion: 1, readStatus: "unread", vaultRelativePath: targetPath, anchor: "Missing", kind: "heading", status: "not_located", reason: "missing" } }], returned: 1 },
+      { ...page, items: [{ ...heading, anchorLocation: { ...heading.anchorLocation, readStatus: "read" } }], returned: 1 }]) {
+      assert.throws(() => knowledgeReferenceEntryDetails([{ ...retrieval.references[0], related } as never]), /related 无效/u);
+    }
+    // Unchanged host metadata cannot authorize a cached source body with an old SHA.
+    bodies.set(sourcePath, source.replace("REAL_ANCHOR_TOKEN", "FAKE_ANCHOR_TOKEN"));
+    await assert.rejects(index.search({ query: "REAL_ANCHOR_TOKEN", limit: 1 }), { code: "source_changed" });
+    bodies.set(sourcePath, source); port.invalidate(sourcePath);
+    await index.search({ query: "REAL_ANCHOR_TOKEN", limit: 1 });
+    for (const change of ["scope", "source", "cursor"] as const) {
+      const currentPage = change === "cursor" ? await index.search({ mode: "related", vaultRelativePath: sourcePath, limit: 1 }) : undefined;
+      const blocked = gate();
+      const pending = index.search(change === "cursor" ? { mode: "related", vaultRelativePath: sourcePath, limit: 1, cursor: currentPage!.continuationCursor } : { query: "REAL_ANCHOR_TOKEN", limit: 1 });
+      const rejected = assert.rejects(pending, { code: change === "cursor" ? "cursor_stale" : "source_changed" });
+      await blocked.started;
+      if (change === "scope") bindings.revision++; else port.invalidate(sourcePath);
+      blocked.resume(); await rejected;
+      await index.search({ query: "REAL_ANCHOR_TOKEN", limit: 1 });
+    }
+    const cancel = new AbortController();
+    const blocked = gate();
+    const pending = call("knowledge_search", { query: "REAL_ANCHOR_TOKEN", limit: 1 }, cancel.signal);
+    await blocked.started; cancel.abort(); blocked.resume();
+    assert.equal((await pending).isError, true);
+    assert.equal(observed.length, beforeStale, "cancelled navigation cannot publish any read record");
+    bodies.delete(targetPath); clock++; port.invalidate(targetPath);
+    const deleted = (await index.search({ query: "REAL_ANCHOR_TOKEN", limit: 1 })).hits[0].related!.items[0];
+    assert.equal(deleted.status, "unresolved"); assert.equal(deleted.target, undefined);
+    bodies.set(sourcePath, "# Source\nOrdinary link [[Other]] and `[[Target#Fake]]` code."); port.invalidate(sourcePath);
+    const plain = await port.read({ vaultRelativePath: sourcePath });
+    const beforePlainRead = reads;
+    assert.equal((await retriever.readAgentIndex({ vaultRelativePath: sourcePath, expectedContentRevision: plain.contentRevision })).related, undefined);
+    assert.equal(reads - beforePlainRead, 1, "ordinary wiki links and code examples do not trigger a redundant source read");
+  } finally { port.dispose(); }
+  console.log("Public Vault anchors: ordinary search/preflight/tool delivery, fresh target SHA, strict unread storage, private boundaries, async scope/source guards and cancellation PASS");
+}
+
+export async function runVaultBodySearchOutlineTests(): Promise<void> {
+  const sourcePath = "notes/guide.md";
+  const content = ["# Guide", "OUTLINE_DEV_TOKEN is the delivered claim.", ...Array.from({ length: 25 }, () => "Background."),
+    "## Details", "UNREAD_BODY_SENTINEL is outside the delivered passage.", "### Conditions", ...Array.from({ length: 12 }, () => "Unrelated background.")].join("\n");
+  const bodies = new Map([[sourcePath, content]]);
+  let clock = 10;
+  let reads = 0;
+  const file = (path: string) => ({ path, basename: "guide", extension: "md", stat: { mtime: clock, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => { reads++; return bodies.get(source.path)!; } },
+  metadataCache: { getFileCache: () => ({ headings: [{ heading: "Stale fake", level: 1, position: { start: { line: 0 } } }] }) },
+  workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-outline-search", storageRootPath: "/synthetic-outline-state", bodySearch: port });
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const production = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  try {
+    const search = await index.search({ query: "OUTLINE_DEV_TOKEN" });
+    assert.equal(reads, 1, "search navigation adds no second body read");
+    const hit = search.hits[0];
+    assert.deepEqual(hit.outline!.entries.map(entry => entry.heading), ["Guide", "Details", "Conditions"]);
+    const retrieval = await retriever.retrieve({ question: "OUTLINE_DEV_TOKEN" });
+    const reference = retrieval.references[0];
+    assert.deepEqual(reference.outline, hit.outline);
+    assert.equal(reference.lineEnd, hit.lineEnd);
+    assert.ok(reference.lineEnd < reference.outline!.entries[0].lineEnd);
+    assert.equal((await retriever.verifyReferences([reference])).status, "valid");
+    assert.deepEqual(knowledgeReferenceEntryDetails([reference]).references[0].outline, hit.outline);
+    const chat = await production.retrieveChat!({ question: "OUTLINE_DEV_TOKEN", explicitPaths: [], includeUnrefined: false } as never);
+    assert.deepEqual(JSON.parse(chat.providerResourceText).sources[0].outline, chat.references[0].outline);
+    assert.equal(chat.references[0].referenceId, reference.referenceId);
+    assert.doesNotMatch(chat.providerResourceText, /UNREAD_BODY_SENTINEL/u);
+    const captured: import("../knowledge-base/types").KnowledgeReference[] = [];
+    const security = new PiKnowledgeReadToolSecurity({ currentRunIdentity: () => ({ vaultId: "outline-v", conversationId: "outline-c", piSessionId: "outline-s", productRunId: "outline-r" }),
+      currentWorkflow: () => "chat", onSourceRead: (item, fingerprint) => { captured.push(item); assert.equal(fingerprint, undefined); }, egress: new EchoInkVaultToolEgressPolicy() });
+    const tools = createPiKnowledgeReadToolDefinitions({ retriever, security });
+    const input = { query: "OUTLINE_DEV_TOKEN", limit: 1 };
+    await security.handleToolCall({ toolName: "knowledge_search", toolCallId: "outline-search", input } as never, undefined);
+    await tools[0].execute("outline-search", input, undefined, undefined);
+    const tool = await security.handleToolResult({ toolName: "knowledge_search", toolCallId: "outline-search", isError: false } as never);
+    assert.equal(tool.isError, false);
+    const delivered = JSON.parse(tool.content[0].text).hits[0];
+    assert.deepEqual(delivered.outline, captured[0].outline);
+    assert.deepEqual((tool.details.references as typeof captured)[0].outline, delivered.outline);
+    assert.equal(captured[0].lineEnd, reference.lineEnd, "onSourceRead records only excerpt lines, never the outline's document-wide range");
+    assert.equal(captured[0].referenceId, reference.referenceId);
+    for (const outline of [undefined, null, { ...hit.outline, schemaVersion: 2 }, { ...hit.outline, readStatus: "read" }, { ...hit.outline, contentRevision: "stale" },
+      { ...hit.outline, entries: [] }, { ...hit.outline, extra: true }, { ...hit.outline, entries: [{ ...hit.outline!.entries[0], level: 0 }] },
+      { ...hit.outline, entries: [{ ...hit.outline!.entries[0], lineEnd: reference.totalLines! + 1 }] }]) {
+      assert.throws(() => knowledgeReferenceEntryDetails([{ ...reference, outline } as never]), /outline 无效/u);
+    }
+    const forged = { ...reference, outline: { ...reference.outline!, entries: reference.outline!.entries.map((entry, index) => index ? entry : { ...entry, heading: "Forged heading" }) } };
+    assert.equal((await retriever.verifyReferences([forged])).status, "source_changed");
+    const { outline: _outline, ...legacy } = reference;
+    assert.equal(Object.hasOwn(knowledgeReferenceEntryDetails([legacy]).references[0], "outline"), false);
+    bodies.set(sourcePath, content.replace("## Details", "## Revised details")); clock++; port.invalidate(sourcePath);
+    assert.equal((await retriever.verifyReferences([reference])).status, "source_changed");
+    const revised = (await index.search({ query: "OUTLINE_DEV_TOKEN" })).hits[0];
+    assert.notEqual(revised.outline!.contentRevision, reference.contentRevision);
+    assert.ok(revised.outline!.entries.some(entry => entry.heading === "Revised details"));
+
+    const budgetContent = ["# Guide", `BUDGET_NAV_TOKEN ${"文".repeat(5000)}`, ...Array.from({ length: 5 }, (_, index) => `## ${index}${"目录标题".repeat(65)}\nDetails.`), ...Array.from({ length: 120 }, () => "Background.")].join("\n");
+    bodies.set(sourcePath, budgetContent); clock++; port.invalidate(sourcePath);
+    const raw = await searchBodyDocuments({ documents: [{ vaultRelativePath: sourcePath, title: "guide", kind: "notes", recordedAt: clock, read: () => port.read({ vaultRelativePath: sourcePath }) }], request: { query: "BUDGET_NAV_TOKEN" } });
+    const budget = (await index.search({ query: "BUDGET_NAV_TOKEN" })).hits[0];
+    const { outline: fittedOutline, ...body } = budget;
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+    assert.ok(bytes([body]) < 10_000 && bytes([{ ...body, outline: raw.hits[0].outline }]) > 10_000, "the fixture crosses the real Vault cap only when its full outline is added");
+    assert.ok(bytes([budget]) <= 10_000);
+    assert.equal(budget.excerpt, raw.hits[0].excerpt);
+    assert.ok(!fittedOutline || fittedOutline.entries.length < raw.hits[0].outline!.entries.length);
+  } finally { port.dispose(); }
+  console.log("Public Vault outlines: preflight/tool/storage parity, excerpt-only read accounting, strict validation, revision changes and 10KB body preservation PASS");
+}
+
+async function runVaultBodySearchMetadataDedupTests(): Promise<void> {
+  const sourcePath = "notes/Orbital Manual.md", companionPath = "notes/Companion.md";
+  const paragraph = "Keep the amber filter in the upper drawer.";
+  const metadata = "---\naliases: [Copper Beacon]\ntags: [reserve-batch]\n---\n";
+  const bodies = new Map([
+    [sourcePath, `${metadata}# Orbital Manual\n${paragraph}\n\n## reserve-batch\nHistorical background only.\n\n## Trial\nDISTINCT_BODY_TOKEN first independent evidence.\n\n## Verification\nDISTINCT_BODY_TOKEN second independent evidence.\n[[notes/Companion#Target]]`],
+    [companionPath, `${metadata}# Target\n${paragraph}\n\n## reserve-batch\nEarlier background only.`]
+  ]);
+  let activePath: string | undefined;
+  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 20, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: {
+    getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (source: TFile) => bodies.get(source.path)!
+  }, metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["Copper Beacon"], tags: ["reserve-batch"] } }) },
+  workspace: { getActiveFile: () => activePath ? file(activePath) : null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-metadata-dedup", storageRootPath: "/synthetic-metadata-dedup-state", bodySearch: port });
+  try {
+    const metadataPages = await Promise.all(["Orbital Manual", "Copper Beacon", "reserve-batch"].map(query => index.search({ query, limit: 100 })));
+    const mixed = await index.search({ query: "Orbital Manual DISTINCT_BODY_TOKEN", limit: 100 });
+    const fusedRequest = { queries: ["Copper Beacon", "DISTINCT_BODY_TOKEN"], limit: 100 };
+    const fused = await index.search(fusedRequest);
+    const reversed = await index.search({ queries: [...fusedRequest.queries].reverse(), limit: 100 });
+    console.log(JSON.stringify({ kind: "metadata-fallback-dedup", metadata: metadataPages.map(page => ({ total: page.total, scores: page.hits.map(hit => hit.score), paths: page.hits.map(hit => hit.vaultRelativePath) })),
+      mixed: mixed.hits.map(hit => ({ path: hit.vaultRelativePath, line: hit.lineStart, excerpt: hit.excerpt })), fused: fused.hits.map(hit => ({ path: hit.vaultRelativePath, line: hit.lineStart, matchSources: hit.matchSources })), reversedTotal: reversed.total }));
+    for (const [page, expected, source] of [[metadataPages[0], 1, "title"], [metadataPages[1], 2, "alias"], [metadataPages[2], 2, "tag"]] as const) {
+      assert.equal(page.total, expected, `${source}-only fallback occupies one result per note`);
+      assert.equal(page.hits.length, expected);
+      assert.equal(new Set(page.hits.map(hit => hit.vaultRelativePath)).size, expected, "identical paragraphs from different notes remain separate");
+      assert.ok(page.hits.every(hit => hit.excerpt === paragraph && hit.matchSources?.includes(source)));
+    }
+    const top = await index.search({ query: "Orbital Manual", limit: 1 });
+    assert.deepEqual(top.hits, metadataPages[0].hits, "the highest-ranked metadata fallback is retained");
+    assert.equal(mixed.total, 3, "two body chapters survive beside one metadata fallback");
+    assert.equal(mixed.hits.filter(hit => hit.excerpt.includes("DISTINCT_BODY_TOKEN")).length, 2);
+    assert.equal(new Set(mixed.hits.filter(hit => hit.matchSources?.includes("body")).map(hit => hit.lineStart)).size, 2, "independent body chapters are not collapsed by note path");
+    for (const page of [fused, reversed]) {
+      assert.equal(page.total, 4, "body matches from any fused query protect their sections");
+      assert.equal(page.hits.filter(hit => hit.vaultRelativePath === sourcePath).length, 3);
+      assert.equal(page.hits.filter(hit => hit.vaultRelativePath === companionPath).length, 1);
+    }
+    const paged: typeof fused.hits = [];
+    let cursor: string | undefined;
+    do {
+      const page = await index.search({ ...fusedRequest, limit: 1, cursor });
+      paged.push(...page.hits);
+      assert.equal(page.total, fused.total);
+      assert.equal(page.returned, page.hits.length);
+      assert.equal(page.remaining, fused.total - paged.length);
+      assert.equal(page.hasMore, page.remaining > 0);
+      assert.equal(page.exhausted, page.remaining === 0);
+      assert.equal(Boolean(page.continuationCursor), page.hasMore);
+      assert.ok(paged.length <= fused.total, "pagination always advances");
+      cursor = page.continuationCursor;
+    } while (cursor);
+    // Related navigation is attached to the first hit per note on each page.
+    const withoutRelated = (hits: typeof fused.hits) => hits.map(({ related: _related, ...hit }) => hit);
+    assert.deepEqual(withoutRelated(paged), withoutRelated(fused.hits), "cursor pages exactly reproduce the deduplicated body results");
+    activePath = sourcePath;
+    const pointer = await index.search({ query: "这篇提到的 MISSING_ELSEWHERE 在别处还有吗？" });
+    assert.equal(pointer.hits.length, 1);
+    assert.equal(pointer.hits[0].vaultRelativePath, sourcePath);
+    assert.equal(pointer.hits[0].inclusionReason, "按指代带入");
+    const related = await index.search({ mode: "related", vaultRelativePath: sourcePath });
+    assert.equal(related.total, 1, "related navigation is independent of metadata fallback deduplication");
+    assert.equal(related.related?.items[0].target?.vaultRelativePath, companionPath);
+    const protectedPath = "notes/protected.md";
+    const protectedBody = `---\naliases: [POINT_ALIAS]\n---\n# Introduction\nOpening paragraph.\n\n## Evidence\n${"background ".repeat(500)}FUSION_BODY_TOKEN`;
+    const protectedFusion = await searchBodyDocuments({ documents: [{ vaultRelativePath: protectedPath, title: "Protected", aliases: ["POINT_ALIAS"], kind: "notes", recordedAt: 20,
+      read: async () => ({ content: protectedBody, contentRevision: "protected" }) }, ...Array.from({ length: 4 }, (_, index) => ({ vaultRelativePath: `notes/body-${index}.md`, title: `Body ${index}`, kind: "notes" as const, recordedAt: 20,
+      read: async () => ({ content: "FUSION_BODY_TOKEN", contentRevision: `body-${index}` }) }))], request: { queries: ["POINT_ALIAS", "FUSION_BODY_TOKEN"], limit: 100 } });
+    const protectedHits = protectedFusion.hits.filter(hit => hit.vaultRelativePath === protectedPath);
+    assert.equal(protectedFusion.total, 6);
+    assert.equal(protectedHits.length, 2, "a body-matched section survives even when its best fusion rank chose the metadata query");
+    assert.ok(protectedHits.every(hit => hit.matchSources?.includes("alias") && hit.excerpt === "Opening paragraph."), "the fixture really exercises the metadata display query for both protected hits");
+    const headingOnly = await searchBodyDocuments({ documents: [{ vaultRelativePath: "notes/Empty Cabinet.md", title: "Empty Cabinet", kind: "notes", recordedAt: 20,
+      read: async () => ({ content: "# Empty Cabinet\n## Left\n## Right", contentRevision: "heading-only" }) }], request: { query: "Empty Cabinet", limit: 100 } });
+    assert.equal(headingOnly.total, 3, "sections without an actual first-paragraph fallback are retained");
+  } finally { port.dispose(); }
+  console.log("Public Vault metadata fallback dedup: per-note title/alias/tag, independent body chapters, fused queries, cursors and navigation PASS");
+}
+
+export async function runVaultBodySearchMetadataTests(): Promise<void> {
+  await runVaultBodySearchMetadataDedupTests();
+  const paragraph = "Keep the amber filter in the upper drawer.\nCheck the spare lens before departure.";
+  const bodies = new Map([
+    ["notes/Field kit.md", `---\naliases: [Copper Beacon]\ntags: [reserve-batch]\n---\n\n# Field kit\n\n${paragraph}\n\n## Archive\nThe earlier packing list is obsolete.`]
+  ]);
+  const file = (path: string) => ({ path, basename: "Field kit", extension: "md", stat: { mtime: 20, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const app = { vault: {
+    getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => bodies.get(source.path)!
+  }, metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["Copper Beacon"], tags: ["reserve-batch"] } }) },
+  workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
+  const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-metadata-search", storageRootPath: "/synthetic-metadata-state", bodySearch: port });
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const production = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  try {
+    for (const [query, source] of [["Field kit", "title"], ["Copper Beacon", "alias"], ["reserve-batch", "tag"]] as const) {
+      const search = await index.search({ query, limit: 1 });
+      assert.equal(search.hits[0].excerpt, paragraph);
+      assert.equal(search.hits[0].lineStart, 8);
+      assert.equal(search.hits[0].lineEnd, 9);
+      assert.deepEqual(search.hits[0].matchSources, [source]);
+      const retrieval = await retriever.retrieve({ question: query, limit: 1 });
+      assert.equal(retrieval.references.length, 1);
+      assert.equal(retrieval.references[0].excerpt, paragraph);
+      assert.deepEqual(retrieval.references[0].matchSources, [source]);
+      assert.equal((await retriever.verifyReferences(retrieval.references)).status, "valid");
+      const reference = retrieval.references[0];
+      const recorded = knowledgeReferenceEntryDetails([reference]).references[0];
+      assert.deepEqual(recorded.matchSources, [source]);
+      assert.equal(recorded.referenceId, reference.referenceId, "provenance does not change body-range identity");
+      const { matchSources: _matchSources, ...legacy } = reference;
+      assert.equal(Object.hasOwn(knowledgeReferenceEntryDetails([legacy]).references[0], "matchSources"), false, "legacy references remain valid without provenance");
+      for (const matchSources of [[], ["body", "alias", "title", "tag", "alias"]] as const) {
+        const normalized = knowledgeReferenceEntryDetails([{ ...reference, matchSources }]).references[0];
+        assert.deepEqual(normalized.matchSources, matchSources, "valid provenance arrays retain their original order and entries");
+        assert.equal(Object.isFrozen(normalized.matchSources), true);
+      }
+      for (const matchSources of ["title", null, undefined, ["unknown"], ["body", 1], ["Alias"], new Array(1)]) {
+        assert.throws(() => knowledgeReferenceEntryDetails([{ ...reference, matchSources } as never]), /matchSources 无效/u);
+      }
+      const result = await production.retrieveChat!({ question: query, explicitPaths: [], includeUnrefined: false } as never);
+      const delivered = JSON.parse(result.providerResourceText).sources[0];
+      assert.equal(delivered.excerpt, paragraph);
+      assert.equal(delivered.lineStart, 8);
+      assert.deepEqual(delivered.matchSources, [source], "production preflight JSON retains the actual matching field");
+      assert.equal(delivered.contentRevision, retrieval.references[0].contentRevision);
+    }
+  } finally { port.dispose(); }
+  console.log("Public Vault metadata evidence: verified search/preflight JSON, strict provenance storage and legacy compatibility PASS");
+}
+
+export async function runVaultBodySearchReferenceTests(): Promise<void> {
+  const bindings = emptyKnowledgeFolderBindings();
+  for (const role of ["wiki", "projects", "journal"] as const) {
+    bindings.roles[role].enabled = role !== "projects";
+    bindings.roles[role].readPaths = [role];
+  }
+  const currentPath = "notes/current.md";
+  const recentPath = "notes/recent.md";
+  const bodies = new Map([
+    [currentPath, "---\nstatus: draft\n---\n# Current source\n\nUse a silver label on the current crate."],
+    [recentPath, "# Recent source\nUse a violet label on the recent crate."],
+    ["notes/target-a.md", "# Target A\nQUARTZ_TARGET first independent evidence."],
+    ["notes/target-b.md", "# Target B\nQUARTZ_TARGET second independent evidence."],
+    ["notes/other-actions.md", "# Other actions\n这种方法的下一步安排是先检查封套。"],
+    ["wiki/这篇材料.md", "# 这篇材料\n\n这篇材料先核对备用纸张。Check the spare paper count.\n\n## Appendix\n这篇材料还需复核装箱单。Review the packing sheet."],
+    ["wiki/guide.md", "# Guide\nThe guide requires an amber label."],
+    ["journal/2026-08-01.md", "# Old journal\nThe older entry requires a brown label."],
+    ["journal/2026-09-03.md", "# Current journal\nThe newer entry requires a blue label."],
+    ["private/secret.md", "PRIVATE_REFERENCE_SECRET"], ["projects/disabled.md", "DISABLED_REFERENCE_SECRET"], [".hidden/secret.md", "HIDDEN_REFERENCE_SECRET"]
+  ]);
+  let activePath: string | undefined = currentPath;
+  let recentPaths = [recentPath];
+  const reads: string[] = [];
+  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
+  const app = { vault: {
+    getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
+    read: async (source: TFile) => { reads.push(source.path); return bodies.get(source.path)!; }
+  }, metadataCache: { getFileCache: () => null }, workspace: { getActiveFile: () => activePath ? file(activePath) : null, getLastOpenFiles: () => recentPaths } } as unknown as App;
+  const port = new VaultBodySearch(app, () => bindings, { excludedRoots: () => ["private"] });
+  const index = new KnowledgeAgentIndex({ vaultPath: "/synthetic-reference-search", storageRootPath: "/synthetic-reference-state", bodySearch: port });
+  const retriever = new KnowledgeRetriever(index.vaultPath, { agentIndex: index });
+  const production = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  try {
+    const query = "这篇的重点是什么？";
+    const retrieval = await retriever.retrieve({ question: query, limit: 1 });
+    const reference = retrieval.references[0];
+    assert.equal(reference.vaultRelativePath, currentPath);
+    assert.equal(reference.excerpt, "Use a silver label on the current crate.");
+    assert.equal(reference.inclusionReason, "按指代带入");
+    assert.equal(reference.matchSources, undefined);
+    assert.equal((await retriever.verifyReferences([reference])).status, "valid");
+    const stored = knowledgeReferenceEntryDetails([reference]).references[0];
+    assert.equal(stored.inclusionReason, "按指代带入");
+    assert.equal(stored.referenceId, reference.referenceId);
+    const { inclusionReason: _reason, ...legacy } = reference;
+    assert.equal(Object.hasOwn(knowledgeReferenceEntryDetails([legacy]).references[0], "inclusionReason"), false);
+    for (const inclusionReason of [null, undefined, "body", "", ["按指代带入"]]) {
+      assert.throws(() => knowledgeReferenceEntryDetails([{ ...reference, inclusionReason } as never]), /inclusionReason 无效/u);
+    }
+    const chat = await production.retrieveChat!({ question: query, explicitPaths: [], includeUnrefined: false } as never);
+    const delivered = JSON.parse(chat.providerResourceText).sources[0];
+    assert.equal(delivered.inclusionReason, "按指代带入");
+    assert.equal(delivered.matchSources, undefined);
+    assert.equal(delivered.contentRevision, reference.contentRevision);
+
+    const singleQuestion = "当前这篇里，下一步安排是什么？";
+    const single = await production.retrieveChat!({ question: singleQuestion, explicitPaths: [], includeUnrefined: false } as never);
+    assert.deepEqual([...new Set(JSON.parse(single.providerResourceText).sources.map((source: { vaultRelativePath: string }) => source.vaultRelativePath))], [currentPath], "a current-note question cannot receive another note's action plan");
+    const exact = await index.search({ query: "这篇材料", limit: 1 });
+    assert.equal(exact.hits[0].vaultRelativePath, "wiki/这篇材料.md");
+    assert.equal(exact.hits[0].inclusionReason, undefined);
+    assert.equal(exact.total, 2, "exact-name pagination uses two genuine body chapters");
+    assert.ok(exact.hits[0].matchSources?.includes("body"));
+    assert.ok(exact.continuationCursor);
+    activePath = recentPath; recentPaths = [currentPath];
+    const exactNext = await index.search({ query: "这篇材料", limit: 1, cursor: exact.continuationCursor });
+    assert.equal(exactNext.hits[0].vaultRelativePath, "wiki/这篇材料.md", "exact-name pagination does not bind unrelated browsing context");
+    assert.equal(exactNext.hits[0].inclusionReason, undefined);
+
+    activePath = undefined;
+    recentPaths = [recentPath];
+    assert.equal((await index.search({ query })).hits[0].vaultRelativePath, recentPath);
+    const recentSingle = await index.search({ query: "刚才那篇里面，下一步安排是什么？" });
+    assert.deepEqual([...new Set(recentSingle.hits.map(hit => hit.vaultRelativePath))], [recentPath]);
+    for (const crossQuestion of ["刚才那篇讲的方法我在别处还用过吗？", "刚才那篇讲的方法在其他地方还用过吗？"]) {
+      const cross = await index.search({ query: crossQuestion });
+      assert.equal(cross.hits[0].vaultRelativePath, recentPath);
+      assert.ok(cross.hits.some(hit => hit.vaultRelativePath === "notes/other-actions.md"), "an explicit elsewhere question keeps cross-source retrieval");
+    }
+    for (const unavailable of ["private/secret.md", ".hidden/secret.md", "projects/disabled.md", "notes/deleted.md", "../outside.md"]) {
+      activePath = unavailable;
+      recentPaths = [unavailable, "private/secret.md", "projects/disabled.md", recentPath, currentPath];
+      const result = await index.search({ query });
+      assert.equal(result.hits[0].vaultRelativePath, recentPath);
+      assert.equal(result.hits.some(hit => hit.vaultRelativePath === unavailable), false);
+    }
+    assert.equal(reads.some(path => path.startsWith("private/") || path.startsWith(".hidden/") || path.startsWith("projects/")), false);
+    activePath = currentPath; recentPaths = [recentPath, "wiki/guide.md"];
+    assert.equal((await index.search({ query, excludePaths: [currentPath] })).hits[0].vaultRelativePath, recentPath);
+    assert.equal((await index.search({ query, kinds: ["wiki"] })).hits[0].vaultRelativePath, "wiki/guide.md");
+    activePath = "journal/2026-08-01.md"; recentPaths = [activePath, "journal/2026-09-03.md"];
+    assert.equal((await index.search({ query, kinds: ["journal"], dateFrom: "2026-09-01", dateTo: "2026-09-30" })).hits[0].vaultRelativePath, "journal/2026-09-03.md");
+
+    activePath = currentPath; recentPaths = [recentPath];
+    const page = await index.search({ query: "这篇提到的 QUARTZ_TARGET 在别处还有吗？", limit: 1 });
+    assert.equal(page.hits[0].vaultRelativePath, currentPath);
+    assert.ok(page.continuationCursor);
+    const next = await index.search({ query: "这篇提到的 QUARTZ_TARGET 在别处还有吗？", limit: 1, cursor: page.continuationCursor });
+    assert.equal(next.hits[0].inclusionReason, undefined);
+    activePath = recentPath;
+    await assert.rejects(() => index.search({ query: "这篇提到的 QUARTZ_TARGET 在别处还有吗？", limit: 1, cursor: page.continuationCursor }), { code: "cursor_stale" });
+    const ordinary = await index.search({ query: "QUARTZ_TARGET", limit: 1 });
+    assert.ok(ordinary.continuationCursor);
+    activePath = currentPath; recentPaths = [currentPath, recentPath];
+    const ordinaryNext = await index.search({ query: "QUARTZ_TARGET", limit: 1, cursor: ordinary.continuationCursor });
+    assert.equal(ordinaryNext.hits[0].inclusionReason, undefined, "ordinary cursors do not depend on unrelated browsing changes");
+    bodies.delete(currentPath);
+    assert.equal((await index.search({ query })).hits[0].vaultRelativePath, recentPath, "deleted current sources cannot be directly included");
+  } finally { port.dispose(); }
+  console.log("Public Vault explicit references: verified preflight/storage, private/disabled/deleted scope, kind/date/exclusions and context-aware cursors PASS");
+}
 
 export async function runVaultBodySearchTests(): Promise<void> {
   const bindings = emptyKnowledgeFolderBindings();
@@ -114,10 +1062,11 @@ export async function runVaultBodySearchTests(): Promise<void> {
     await assert.rejects(() => index.search({ query: "any", signal: controller.signal }), { name: "AbortError" });
     await assert.rejects(() => production.retrieveChat!({ question: "any", explicitPaths: [], includeUnrefined: false, signal: controller.signal } as never), { name: "AbortError" });
     await assert.rejects(() => index.related({ vaultRelativePath: "项目/决定.md" }), /outside the search scope/u);
-    const graph = index as unknown as { current: unknown; relations: Map<string, unknown[]>; relationPage(path: string, limit: number): { items: unknown[] } };
+    const graph = index as unknown as { current: unknown; relations: Map<string, unknown[]>; ensureFresh(): Promise<void>; relationPage(path: string, limit: number): Promise<{ items: unknown[] }> };
     graph.current = { generation: 1, entries: { "知识/允许.md": { contentRevision: span.contentRevision } } };
+    graph.ensureFresh = async () => {};
     graph.relations = new Map([["知识/允许.md", [{ direction: "outgoing", source: { vaultRelativePath: "知识/允许.md" }, target: { vaultRelativePath: "项目/决定.md" }, status: "available" }]]]);
-    assert.equal(graph.relationPage("知识/允许.md", 8).items.length, 0, "related targets obey the same disabled scope");
+    assert.equal((await graph.relationPage("知识/允许.md", 8)).items.length, 0, "related targets obey the same disabled scope");
   } finally { unbind(); }
   console.log("Public Vault body search, scope, delivery, events and freshness: PASS");
 }

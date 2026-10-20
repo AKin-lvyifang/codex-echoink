@@ -1,17 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults", "90-任务临时", "工作台改版-20261017"));
-const requestedRoot = process.env.ECHOINK_APPROVAL_PRESENTATION_TEST_ROOT?.trim();
-if (!requestedRoot) throw new Error("Set ECHOINK_APPROVAL_PRESENTATION_TEST_ROOT to ~/EchoInk-TestVaults/90-任务临时/工作台改版-20261017");
-const requested = await realpath(path.resolve(requestedRoot));
-if (requested !== allowed) throw new Error("Approval presentation fixtures must use the dedicated 工作台改版-20261017 test Vault");
-const run = await mkdtemp(path.join(allowed, ".approval-presentation-"));
+const temporaryVaults = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
+const requestedRoot = process.env.ECHOINK_APPROVAL_PRESENTATION_TEST_ROOT?.trim() || process.env.ECHOINK_WORKBENCH_TEST_ROOT?.trim() || path.join(temporaryVaults, "工作台改版-20261017");
+const fixture = await realpath(requestedRoot);
+const relativeFixture = path.relative(temporaryVaults, fixture);
+if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture) || !(await stat(fixture)).isDirectory()) {
+  throw new Error("Approval presentation fixtures must use an existing directory inside EchoInk-TestVaults/90-任务临时");
+}
+const run = await mkdtemp(path.join(fixture, ".approval-presentation-"));
 try {
   const outfile = path.join(run, "approval-presentation-tests.mjs");
   await esbuild.build({

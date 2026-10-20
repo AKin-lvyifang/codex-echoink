@@ -92,7 +92,7 @@ export async function runSkillRuntimeScenarios(): Promise<void> {
     assert.equal(await coordinator.selectForTask({
       text: "把 hello 翻译成中文",
       preferredSkillIds: ["evidence-freshness-audit"]
-    }), null, "personality preference cannot trigger a Skill for a simple task");
+    }), null, "caller preference cannot trigger a Skill for a simple task");
 
     const review = await coordinator.selectForTask({
       text: "请做知识复盘，带我回看这些知识"

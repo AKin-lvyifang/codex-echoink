@@ -117,7 +117,7 @@ export class DesktopAccountMembershipController implements DesktopAccountMembers
         } finally { release(); }
       };
     }
-    return wrapped as AccountActions;
+    return wrapped;
   }
   private refresh(): void {
     if (this.closed) return;

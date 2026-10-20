@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
-import { App, openTestModals } from "./obsidian-shim";
+import { App, openTestModals, Platform } from "./obsidian-shim";
 import { installProviderBrowserHost } from "./provider-discovery-dom-host";
 import { PersonalMemoryRepository } from "../harness/memory/personal-memory-repository";
 import { UserProfileSettingsController, type ProfileSnapshot } from "../settings/user-profile-settings";
@@ -16,8 +16,11 @@ function textButton(root: HTMLElement, text: string): HTMLButtonElement { const 
 
 export async function runUserProfileSettingsTests(root: string): Promise<void> {
   installProviderBrowserHost();
-  await profileUi(path.join(root, "repository"));
-  await correctionInline();
+  const priorDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
+  try {
+    await profileUi(path.join(root, "repository"));
+    await correctionInline();
+  } finally { Platform.isDesktopApp = priorDesktop; }
   console.log("P13 real profile controller/repository and inline correction UI: PASS");
 }
 
@@ -84,8 +87,12 @@ async function profileUi(root: string) {
     assert(container.textContent!.includes("已保存，画像暂时读不到")); assert(!controller.hasDraft);
     assert.equal((await repository.readUserProfileControlSnapshot()).items[0].text, "我的草稿");
     readFails = false; textButton(container, "重试").click(); await until(() => !container.textContent!.includes("画像暂时读不到"));
+    assert(field(container, "identity.name:remove").classList.contains("echoink-delete-button"));
+    assert(field(container, "identity.name:remove").classList.contains("is-delete-icon"));
     click(container, "identity.name:remove"); assert.equal(removed, 0);
     assert(container.textContent!.includes("只删除这项画像，原记忆会保留"));
+    assert(textButton(container, "删除").classList.contains("echoink-delete-button"));
+    assert(!textButton(container, "取消").classList.contains("echoink-delete-button"));
     textButton(container, "删除").click(); await until(() => !controller.submitting);
     assert.equal(removed, 1); assert.equal((await repository.readUserControlState()).records.length > 0, true);
     assert.equal((await repository.readUserProfileControlSnapshot()).items.length, 0);

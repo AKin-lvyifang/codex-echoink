@@ -1,6 +1,6 @@
 import { createOriginButton, disposeOriginControls } from "./origin-controls";
 import { Setting, setIcon } from "obsidian";
-import { applyAmicroButton } from "./amicro-buttons";
+import { applyAmicroButton, applyDeleteButton } from "./amicro-buttons";
 
 export type SettingsStateTone = "neutral" | "error" | "success";
 
@@ -11,6 +11,8 @@ export interface SettingsPageOptions {
   readonly detail?: boolean;
   readonly onBack?: () => void;
   readonly backLabel?: string;
+  /** Keep a top-level heading available to assistive technology without duplicating the tab label. */
+  readonly titleVisibility?: "visible" | "screen-reader";
 }
 
 export interface SettingsSectionOptions {
@@ -50,6 +52,7 @@ export function createSettingsPage(
     back.onclick = options.onBack;
   }
   const header = page.createDiv({ cls: "echoink-settings-page-header page-intro" });
+  if (options.titleVisibility === "screen-reader") header.addClass("is-title-hidden");
   const heading = header.createDiv({ cls: "echoink-settings-page-heading" });
   heading.createEl("h2", {
     text: options.title,
@@ -184,7 +187,7 @@ export function attachSettingsTooltip(
 const inlineConfirmations = new WeakMap<HTMLElement, () => void>();
 
 export function showSettingsInlineConfirmation(container: HTMLElement, trigger: HTMLButtonElement, options: {
-  message: string; confirmLabel: string; cancelLabel: string; onConfirm: () => Promise<void>;
+  message: string; confirmLabel: string; cancelLabel: string; onConfirm: () => Promise<void>; deleteAction?: boolean;
 }): void {
   const root = container.closest<HTMLElement>(".echoink-settings-demo") ?? container;
   inlineConfirmations.get(root)?.();
@@ -193,6 +196,7 @@ export function showSettingsInlineConfirmation(container: HTMLElement, trigger: 
   const actions = panel.createDiv({ cls: "settings-inline" });
   const cancel = createOriginButton(actions, { cls: "button", text: options.cancelLabel, attr: { type: "button" } });
   const confirm = createOriginButton(actions, { cls: "button settings-danger", text: options.confirmLabel, attr: { type: "button" } });
+  if (options.deleteAction) applyDeleteButton(confirm);
   const close = () => { disposeOriginControls(panel); panel.remove(); if (inlineConfirmations.get(root) === close) inlineConfirmations.delete(root); trigger.setAttr("aria-expanded", "false"); };
   inlineConfirmations.set(root, close);
   trigger.setAttr("aria-expanded", "true");

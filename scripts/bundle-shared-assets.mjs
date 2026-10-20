@@ -138,7 +138,7 @@ export const profileSharedModules = new Map([
   ["src/ui/agent-avatar-processor.ts", ["AGENT_AVATAR_SOURCE_MAX_BYTES", "AGENT_AVATAR_SOURCE_MAX_EDGE", "AGENT_AVATAR_OUTPUT_EDGE", "AGENT_AVATAR_OUTPUT_MAX_DATA_URL_CHARS", "AGENT_AVATAR_WEBP_QUALITY", "AGENT_AVATAR_ACCEPTED_TYPES", "AvatarProcessingError", "validateAvatarSourceType", "validateAvatarSourceSize", "validateAvatarDataUrl", "validateAgentAvatarSvg", "processAgentAvatar", "createBrowserAvatarRenderer"]],
   // These are the existing Modal's small DOM helpers, without business changes.
   ["src/ui/agent-avatar-presets.ts", ["DEFAULT_AGENT_AVATAR_PRESET_ID", "AGENT_AVATAR_PRESETS", "resolveAgentAvatarPresetAsset", "resolveAgentAvatarUrl"]],
-  ["src/settings/amicro-buttons.ts", ["applyAmicroButton", "applyParticleButton", "triggerParticleButton", "setAmicroButtonPending", "confirmAmicroButton"]],
+  ["src/settings/amicro-buttons.ts", ["applyAmicroButton", "applyDeleteButton", "applyParticleButton", "triggerParticleButton", "setAmicroButtonPending", "confirmAmicroButton"]],
   ["src/ui/animate-icon.ts", ["renderAnimateIcon"]],
   ["src/utils/sha256.ts", ["sha256Hex"]]
 ]);

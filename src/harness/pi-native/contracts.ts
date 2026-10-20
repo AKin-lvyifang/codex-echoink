@@ -182,6 +182,9 @@ export interface ExperienceSourceRef {
 
 /** Structural Phase 3 pointer; the Vault file remains the only content source. */
 export interface PiKnowledgeReference {
+  readonly linkCues?: readonly import("../../knowledge-base/search/contracts").KnowledgeLinkCue[];
+  readonly anchorLocation?: import("../../knowledge-base/search/contracts").KnowledgeAnchorLocation;
+  readonly outline?: Readonly<import("../../knowledge-base/search/contracts").KnowledgeDocumentOutline>;
   readonly columnStart?: number;
   readonly columnEnd?: number;
   totalLines?: number;

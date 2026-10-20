@@ -50,7 +50,7 @@ export function formatApprovalPresentation(input: Readonly<{
     for (const key of ["domain", "action", "relativePath", "before", "after"]) consumedPreview.add(key);
     const before = objectValue(previewObject.before), after = objectValue(previewObject.after);
     const labels: Record<string, string> = { title: text("事项", "Title"), people: text("相关人员", "People"), dueDate: text("截止日期", "Due date"), dueTime: text("截止时间", "Due time"), categoryName: text("分类", "Category"), project: text("项目", "Project"), done: text("状态", "Status") };
-    const value = (key: string, item: unknown) => key === "done" ? item === true ? text("已完成", "Completed") : text("未完成", "Open") : item === "" || item == null ? text("未设置", "Not set") : String(item);
+    const value = (key: string, item: unknown) => key === "done" ? item === true ? text("已完成", "Completed") : text("未完成", "Open") : item === "" || item == null ? text("未设置", "Not set") : displayScalar(item, english);
     for (const [key, label] of Object.entries(labels)) {
       if (!after || !(key in after) || before && before[key] === after[key] && key !== "title") continue;
       if (!before && (after[key] === "" || after[key] == null)) continue;
@@ -70,11 +70,12 @@ export function formatApprovalPresentation(input: Readonly<{
     if (targetObject?.rawDirectory) add(destination, text("原文和译文位置", "Extracted text and translation"), targetObject.rawDirectory);
     const delivery = objectValue(previewObject.delivery);
     const options = objectValue(targetObject?.options);
+    const translationLanguage = typeof options?.translationLanguage === "string" ? options.translationLanguage : undefined;
     add(changes, text("本次成果", "Requested results"), [text("提取原文（用于引用来源）", "Extracted text for citations"),
-      ...(delivery?.translation ? [text(`译文（${String(options?.translationLanguage ?? "中文")}）`, `Translation (${String(options?.translationLanguage ?? "Chinese")})`)] : []),
+      ...(delivery?.translation ? [text(`译文（${translationLanguage ?? "中文"}）`, `Translation (${translationLanguage ?? "Chinese"})`)] : []),
       ...(delivery?.reading ? [text("精读 · 保存到知识成果", "Close reading in Knowledge notes")] : []),
       ...(delivery?.summary ? [text("摘要 · 保存到知识成果", "Summary in Knowledge notes")] : [])].join("、"));
-    for (const key of ["recipient", "model"]) if (typeof previewObject[key] === "string") notices.push(previewObject[key] as string);
+    for (const key of ["recipient", "model"]) if (typeof previewObject[key] === "string") notices.push(previewObject[key]);
     notices.push(text("原文件保留。处理中断或失败后，已保存的原件和成果也保留。", "Your source is kept. Saved originals and results remain after an interruption or failure."));
     Object.keys(targetObject ?? {}).forEach(key => consumedTarget.add(key));
     Object.keys(previewObject).forEach(key => consumedPreview.add(key));
@@ -117,7 +118,7 @@ export function formatApprovalPresentation(input: Readonly<{
       delete: text("删除文件", "Delete a file")
     };
     if (typeof operation === "string") {
-      action = Object.hasOwn(actions, operation) ? actions[operation]! : operation;
+      action = Object.hasOwn(actions, operation) ? actions[operation] : operation;
       if (previewObject?.operation === operation) consumedPreview.add("operation");
       if (previewObject?.command === operation) consumedPreview.add("command");
       if (targetObject?.command === operation) consumedTarget.add("command");
@@ -252,7 +253,7 @@ function renderContentFields(preview: JsonObject | undefined, fields: ApprovalPr
   };
   for (const key of Object.keys(labels)) {
     if (typeof preview[key] !== "string") continue;
-    fields.push({ label: labels[key]!, value: displayScalar(preview[key], english) });
+    fields.push({ label: labels[key], value: displayScalar(preview[key], english) });
     consumed.add(key);
   }
 }
@@ -274,8 +275,8 @@ function flattenFields(value: JsonObject, prefix: string, consumed: ReadonlySet<
     const entries = Array.isArray(field.value)
       ? field.value.map((entry, index) => [`${field.label}[${index}]`, entry] as const)
       : objectValue(field.value) ? Object.entries(field.value as JsonObject).map(([key, entry]) => [`${field.label}.${key}`, entry] as const) : [];
-    if (!entries.length) fields.push({ label: Object.hasOwn(knownLabels, field.label) ? knownLabels[field.label]! : field.label, value: displayScalar(field.value, english) });
-    else for (let index = entries.length - 1; index >= 0; index--) pending.push({ label: entries[index]![0], value: entries[index]![1] });
+    if (!entries.length) fields.push({ label: Object.hasOwn(knownLabels, field.label) ? knownLabels[field.label] : field.label, value: displayScalar(field.value, english) });
+    else for (let index = entries.length - 1; index >= 0; index--) pending.push({ label: entries[index][0], value: entries[index][1] });
   }
   return fields;
 }

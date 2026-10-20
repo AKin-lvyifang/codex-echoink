@@ -8,6 +8,7 @@ import { MobileViewport } from "../ui/mobile/viewport";
 import { createSettingsNavigationRow, showSettingsInlineConfirmation } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 import type { DesktopAccountHooks, AccountFormHandle } from "./desktop-account-membership";
+import { applyDeleteButton } from "./amicro-buttons";
 
 export type AccountMembershipPageOptions = { app: App; viewModel: AccountMembershipViewModel; actions?: AccountActions; language: string; openProviders: () => void; subscribe?: (listener:()=>void)=>()=>void; read?:()=>AccountMembershipViewModel; beginAction?:()=>()=>void; activationNotice?: string; desktopHooks?: DesktopAccountHooks };
 type PageOptions = AccountMembershipPageOptions;
@@ -116,8 +117,8 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     node.setAttribute("role", state === "error" ? "alert" : "status");
     node.textContent = message;
   };
-  const confirmInline = (host: HTMLElement, trigger: HTMLButtonElement, message: string, label: string, action: () => Promise<void>, saved?: () => void) => {
-    showSettingsInlineConfirmation(host, trigger, { message, confirmLabel: label, cancelLabel: t("取消", "Cancel"), onConfirm: async () => {
+  const confirmInline = (host: HTMLElement, trigger: HTMLButtonElement, message: string, label: string, action: () => Promise<void>, saved?: () => void, deleteAction = false) => {
+    showSettingsInlineConfirmation(host, trigger, { message, deleteAction, confirmLabel: label, cancelLabel: t("取消", "Cancel"), onConfirm: async () => {
       const release = beginAction();
       try { await action(); if (!disposed) saved?.(); }
       catch (error) { if (!disposed) { const status = el(host, "p", "activation-feedback"); feedbackState(status, "error", error instanceof Error ? error.message : t("操作失败，请重试", "Unable to complete the action")); } }
@@ -279,9 +280,10 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       const row = el(body, "div", "device-row"); const info = el(row, "div"); el(info, "strong", "", device.name); el(info, "small", "", device.description);
       if(actions.renameDevice) button(row,t("改名","Rename"),"quiet",()=>{const form=el(desktop ? row : body,"form");const name=field(form,t("设备名称","Device name"),"text",device.name);name.maxLength=80;submit(form,t("保存名称","Save name"),()=>actions.renameDevice!(device.id,name.value),modal);});
       const remove = button(row, device.current ? t("解绑本机", "Remove this device") : t("解绑", "Remove"), "secondary");
+      if (desktop) applyDeleteButton(remove);
       remove.disabled = !vm.serviceAvailable || !actions.removeDevice;
       remove.onclick = () => { if (!remove.disabled) {
-        if (desktop) confirmInline(row, remove, device.current ? t("解绑本机后需要重新激活，当前库内容会保留。", "This device will need activation again. Vault content remains.") : t("解绑此设备，当前库内容会保留。", "Remove this device. Vault content remains."), t("确认解绑", "Confirm removal"), () => actions.removeDevice!(device.id), () => { desktop.committed(); modal.close(); });
+        if (desktop) confirmInline(row, remove, device.current ? t("解绑本机后需要重新激活，当前库内容会保留。", "This device will need activation again. Vault content remains.") : t("解绑此设备，当前库内容会保留。", "Remove this device. Vault content remains."), t("确认解绑", "Confirm removal"), () => actions.removeDevice!(device.id), () => { desktop.committed(); modal.close(); }, true);
         else { const form = el(body, "form"); submit(form, t("确认解绑", "Confirm removal"), () => actions.removeDevice!(device.id), modal); }
       } };
     }
@@ -317,8 +319,14 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     };
   } else {
     const identity = el(profileCopy, "div"); el(identity, "h2", "", t("未登录", "Signed out"));
-    button(profileActions, t("登录 / 注册", "Sign in / register"), "primary account-login-action", () => login());
-    el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
+    if (desktop) {
+      identityCopy = identity;
+      profileSection.classList.add("is-anonymous");
+      el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
+    }
+    const signIn = button(profileActions, t("登录 / 注册", "Sign in / register"), "primary account-login-action", () => login());
+    if (desktop) signIn.dataset.echoinkFocusKey = "account:login";
+    if (!desktop) el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
   }
   const heading = (parent: HTMLElement, title: string, caption?: string) => {
     const row = el(parent, "div", "section-heading"); el(row, "h2", "", title); if (caption) el(row, "span", "muted", caption); return row;
@@ -434,12 +442,14 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const plansHeading = heading(membership, desktop ? t("购买方案", "Plans") : t("订阅管理", "Subscription"));
   if (desktop) plansHeading.classList.add("desktop-account-plans-heading");
   const panel = desktop ? membership : el(membership, "div", "panel membership-panel");
-  const compactAuthorization = !!desktop && !!identityCopy && (valid || vm.membership.state === "free") && !vm.verificationError;
-  const summary = el(desktop ? compactAuthorization ? identityCopy! : profileSection : panel, "div", desktop ? `desktop-account-authorization${compactAuthorization ? " is-compact" : ""}` : "membership-summary");
+  const compactAuthorization = !!desktop && !!vm.identity && (valid || vm.membership.state === "free") && !vm.verificationError;
+  const anonymousAuthorization = !!desktop && !vm.identity;
+  const inlineAuthorization = compactAuthorization || anonymousAuthorization;
+  const summary = el(desktop ? inlineAuthorization ? identityCopy! : profileSection : panel, "div", desktop ? `desktop-account-authorization${inlineAuthorization ? " is-compact" : ""}` : "membership-summary");
   if (!desktop) icon(summary, "feather", "membership-symbol");
   const memberCopy = el(summary, "div", "membership-copy");
   if (compactAuthorization) el(memberCopy, "div", "desktop-account-membership-line", [valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1], vm.membership.expiresAt && `${t("有效至", "Valid until")} ${vm.membership.expiresAt}`, vm.membership.verifiedAt && `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}`, vm.membership.offlineUntil && `${t("凭证有效至", "Offline until")} ${vm.membership.offlineUntil}`].filter(Boolean).join(" · "));
-  else if (desktop) el(memberCopy, "div", "desktop-account-plan-status", valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1]);
+  else if (desktop) { if (!anonymousAuthorization) el(memberCopy, "div", "desktop-account-plan-status", valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1]); }
   else { const nameLine = el(memberCopy, "div", "name-line"); el(nameLine, "h3", "", retainedMembership ? "EchoInk PRO" : t("EchoInk 基础版", "EchoInk Free")); el(nameLine, "span", `badge${valid ? " pro" : ["expired", "revoked"].includes(vm.membership.state) ? " expired" : ""}`, (stateLabels[vm.membership.state] ?? stateLabels["verification-required"])[zh ? 0 : 1]); }
   const descriptions: Partial<Record<MembershipState, string>> = {
     scheduled: vm.membership.startsAt ? `${t("权益开始于", "Access starts on")} ${vm.membership.startsAt}` : t("权益尚未生效。", "Access has not started yet."),
@@ -550,7 +560,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   }
   const memberFooter = el(desktop ? profileSection : panel, "div", "membership-footer");
   if (vm.identity) {
-    if (desktop) createSettingsNavigationRow(memberFooter, { title: t("设备管理", "Devices"), value: vm.membership.devices == null ? undefined : `${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`, onActivate: devices });
+    if (desktop) createSettingsNavigationRow(memberFooter, { title: t("设备管理", "Devices"), value: vm.membership.devices == null ? undefined : `${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`, onActivate: devices }).addClass("desktop-account-device-navigation");
     else { const devicesButton = button(memberFooter, "", "quiet", devices); icon(devicesButton, "layers");
       el(devicesButton, "span", "", vm.membership.devices == null ? t("设备管理", "Devices") : `${t("设备管理", "Devices")} · ${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`); icon(devicesButton, "chevron-right"); }
   }
@@ -610,8 +620,10 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   if (desktop) {
     const scope = el(membership, "details", "plan-scope"); el(scope, "summary", "", t("买断包含什么", "What lifetime access includes"));
     el(scope, "p", "", t("包含购买时的 2.x 版本 PRO 插件，长期可用；不包含 3.x、以后的新插件和模型调用额度。需要定期联网更新授权，不等于永久离线。", "Includes the purchased 2.x PRO plugins. It excludes 3.x, future plugins and model credits. Periodic online verification is required; it is not permanent offline access."));
-    const benefits = el(page, "section", "desktop-account-benefits"); benefits.dataset.accountSection = "benefits"; heading(benefits, t("权益对比", "Benefits"));
-    const table = el(benefits, "table", "benefits-table"); const header = el(el(table, "thead"), "tr");
+    const benefits = el(page, "section", "desktop-account-benefits"); benefits.dataset.accountSection = "benefits";
+    benefits.dataset.echoinkFocusKey = "account:benefits"; benefits.tabIndex = -1;
+    heading(benefits, t("权益对比", "Benefits"));
+    const table = el(el(benefits, "div", "desktop-account-benefits-group"), "table", "benefits-table"); const header = el(el(table, "thead"), "tr");
     for (const title of [t("功能", "Feature"), t("免费", "Free"), "PRO"]) el(header, "th", "", title).scope = "col";
     const body = el(table, "tbody");
     const groups: { title: string; pro: boolean; rows: [string, string][] }[] = [

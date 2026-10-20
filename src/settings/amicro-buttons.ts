@@ -44,6 +44,27 @@ export function applyAmicroButton(
   return button;
 }
 
+/** Desktop-only Delete/Shake presentation. Call only for an explicit deletion,
+ * never by guessing from a label or from the generic danger variant. */
+export function applyDeleteButton(button: HTMLButtonElement, options: { iconOnly?: boolean } = {}): HTMLButtonElement {
+  if (button.ownerDocument.body.classList.contains("is-mobile") || button.closest(".echoink-mobile")) return button;
+  button.classList.add("echoink-delete-button");
+  button.classList.remove("mod-cta", "is-primary", "is-secondary", "is-tertiary");
+  button.classList.toggle("is-delete-icon", options.iconOnly === true);
+  if (options.iconOnly) {
+    setIcon(button, "trash-2");
+  } else if (!button.querySelector(".echoink-delete-button-icon")) {
+    button.querySelector(".echoink-amicro-button-icon")?.remove();
+    button.querySelector(":scope > svg")?.remove();
+    const icon = button.ownerDocument.createElement("span");
+    icon.className = "echoink-delete-button-icon";
+    icon.setAttribute("aria-hidden", "true");
+    setIcon(icon, "trash-2");
+    button.insertBefore(icon, button.firstChild);
+  }
+  return button;
+}
+
 const particleButtonTimers = new WeakMap<HTMLButtonElement, number>();
 
 /**

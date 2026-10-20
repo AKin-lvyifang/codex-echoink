@@ -232,18 +232,21 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     catch (error) { issues.push(`日记配置：${message(error)}`); }
     if (journalAvailable) modules.push("journal");
     if (["raw", "wiki", "projects", "inbox"].some(role => this.roots(role as "raw").length)) modules.push("knowledge-base");
-    if (pro && this.plugin.settings.lifestyle.finance.enabled) modules.push("finance");
-    if (pro && this.plugin.settings.englishDiary.enabled) modules.push("english-diary");
-    if (pro && this.plugin.settings.pdfReading.enabled) modules.push("pdf-reading");
+    if (this.plugin.settings.lifestyle.finance.enabled !== false) modules.push("finance");
+    if (this.plugin.settings.englishDiary.enabled !== false) modules.push("english-diary");
+    if (this.plugin.settings.pdfReading.enabled !== false) modules.push("pdf-reading");
+    const lockedModules: AgentModuleId[] = pro ? [] : modules.filter(id => id === "finance" || id === "english-diary" || id === "pdf-reading");
+    // Discoverability does not authorize a module's data reads or Agent signals.
+    const authorizedModules = modules.filter(id => !lockedModules.includes(id));
     const tasks = await attempt("任务读取失败", [], () => this.plugin.listPiConversations(["active"]));
     const todos = await attempt("待办读取失败", [], async () => {
       const file = this.plugin.app.vault.getAbstractFileByPath("EchoInk/待办.md");
       return file instanceof TFile ? parseTodoMarkdown(await this.plugin.app.vault.read(file)).records : [];
     });
-    const facts: WorkbenchFacts = { now, modules, tasks, todos, journals: [], englishMissing: null, inbox: [],
+    const facts: WorkbenchFacts = { now, modules: authorizedModules, tasks, todos, journals: [], englishMissing: null, inbox: [],
       inboxScope: scopeKey(this.roots("inbox")), raw: [], rawScope: scopeKey(this.roots("raw")), pdfJobs: [], reviewComplete: null,
       isolated: null, knowledgeScope: scopeKey([...this.roots("wiki"), ...this.roots("projects")]), language: this.plugin.settings.settingsLanguage };
-    if (modules.includes("finance") && this.plugin.app.workspace.layoutReady) facts.finance = await attempt("财务读取失败", undefined, async () => {
+    if (authorizedModules.includes("finance") && this.plugin.app.workspace.layoutReady) facts.finance = await attempt("财务读取失败", undefined, async () => {
       const records = await this.plugin.lifestyle.finance.ledger.readSnapshots(), data = await this.plugin.lifestyle.store.readFresh();
       const errors = this.plugin.lifestyle.finance.ledger.issues();
       issues.push(...errors.map(error => `财务：${error.path}：${error.reason}`));
@@ -263,7 +266,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
         facts.journals = []; issues.push("日记日期格式无法区分日期");
       }
     }
-    if (modules.includes("english-diary") && facts.journals[0]?.state === "body") facts.englishMissing = await attempt("英文日记关联读取失败", null,
+    if (authorizedModules.includes("english-diary") && facts.journals[0]?.state === "body") facts.englishMissing = await attempt("英文日记关联读取失败", null,
       () => this.readEnglishMissing(facts.journals[0].path));
     if (modules.includes("knowledge-base") && !this.initializationError) facts.inbox = await attempt("收件箱读取失败", [], () => this.observeInbox(now));
     if (modules.includes("knowledge-base")) {
@@ -274,13 +277,13 @@ export class WorkbenchDataService implements WorkbenchDataPort {
         else if (health?.reason) issues.push(health.reason);
       }
     }
-    if (modules.includes("pdf-reading")) facts.pdfJobs = await attempt("PDF 历史读取失败", [], async () => {
+    if (authorizedModules.includes("pdf-reading")) facts.pdfJobs = await attempt("PDF 历史读取失败", [], async () => {
       if (!this.plugin.pdfReading) throw new Error("PDF 本地服务尚未就绪");
       return this.plugin.pdfReading.api.history();
     });
     if (records) facts.reviewComplete = await attempt("复盘记录读取失败", null, () => this.hasReviewThisWeek(records, now));
     return { generatedAt: now, signals: calculateWorkbenchSignals(facts), todayTodos: todos.filter(todo => !todo.done && todo.dueDate === today),
-      modules, issues, nextRefreshAt: nextWorkbenchRefreshAt(facts) };
+      modules, lockedModules, issues, nextRefreshAt: nextWorkbenchRefreshAt(facts) };
   }
   private async readPendingRaw(issues: string[]): Promise<WorkbenchSourceFile[]> {
     const bindings = this.bindings, roots = this.roots("raw");
@@ -395,7 +398,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     this.disposed = true;
     this.links.dispose();
     this.releases.splice(0).forEach(release => release());
-    this.eventRefs.splice(0).forEach(({ offref, ref }) => offref(ref));
+    this.eventRefs.splice(0).forEach(entry => entry.offref(entry.ref));
     this.listeners.clear(); instances.delete(this.plugin);
     this.sourceContent.clear();
   }

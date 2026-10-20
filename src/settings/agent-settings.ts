@@ -4,7 +4,7 @@ import { AgentEditorController } from "../ui/codex-view/agent-editor";
 import type { AgentEditorHost } from "../ui/codex-view/agent-editor-contract";
 import { resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { createOriginButton, createOriginSelect, disposeOriginControls } from "./origin-controls";
-import { createSettingsNavigationRow, createSettingsSection } from "./settings-v2";
+import { attachSettingsTooltip, createSettingsGroup, createSettingsNavigationRow, createSettingsSection } from "./settings-v2";
 
 export interface DesktopAgentSettingsHost extends Omit<AgentEditorHost, "onClose" | "backLabel" | "confirmLeave"> {
   readonly app?: Pick<App, "scope" | "keymap">;
@@ -48,27 +48,36 @@ export class DesktopAgentSettings {
     if (this.disposed) return;
     this.clearSummary();
     const root = this.summaryHost = parent.createDiv({ cls: "echoink-agent-settings" });
-    const agents = createSettingsSection(root, { title: this.text("Agent 成员", "Agent members"), surface: "flat" });
+    const agents = createSettingsSection(root, { title: "Agent", surface: "flat" });
     const header = agents.querySelector<HTMLElement>(".echoink-settings-section-header")!;
     const add = createOriginButton(header, { cls: "is-icon", attr: { "aria-label": this.text("新建 Agent", "New Agent"), "data-echoink-focus-key": "agent:new" } });
     setIcon(add, "plus"); add.onclick = () => this.open();
-    const list = agents.createDiv({ cls: "echoink-agent-settings-list" });
+    const list = createSettingsGroup(agents); list.addClass("echoink-agent-settings-list");
     for (const agent of this.host.settings.agentRegistry.agents) {
       const owned = AGENT_MODULE_IDS.filter(module => this.host.settings.agentRegistry.moduleOwners[module] === agent.id);
       const row = createSettingsNavigationRow(list, { title: agent.name, description: agent.position || undefined,
         focusKey: `agent:${agent.id}:edit`, onActivate: () => this.open(agent.id) });
       row.addClass("echoink-agent-settings-row");
-      if (owned.length) row.querySelector<HTMLElement>(".echoink-settings-navigation-copy")?.createDiv({ cls: "echoink-agent-settings-modules", text: `${this.text("负责", "Responsible for")} ${owned.map(module => this.moduleName(module)).join(this.text("、", ", "))}` });
+      if (owned.length) {
+        const fullList = `${this.text("负责", "Responsible for")} ${owned.map(module => this.moduleName(module)).join(this.text("、", ", "))}`;
+        const modules = row.createSpan({ cls: "echoink-agent-settings-modules", text: owned.length > 3 ? this.text(`负责 ${owned.length} 个模块`, `Responsible for ${owned.length} modules`) : fullList });
+        row.insertBefore(modules, row.querySelector(".echoink-settings-navigation-trailing"));
+        const activate = row.onclick;
+        attachSettingsTooltip(row, fullList, row, { interactive: false });
+        row.onclick = activate;
+      }
       const avatar = row.createSpan({ cls: "echoink-agent-settings-avatar", attr: { "aria-hidden": "true" } }); this.avatar(avatar, agent);
       row.insertBefore(avatar, row.firstChild);
       if (agent.id === GENERAL_ASSISTANT_ID) row.querySelector<HTMLElement>(".echoink-settings-navigation-title")?.createSpan({ cls: "settings-badge echoink-agent-settings-builtin", text: this.text("内置", "Built-in") });
     }
     const owners = createSettingsSection(root, { title: this.text("模块负责人", "Module owners"), surface: "flat" });
+    const ownerList = createSettingsGroup(owners);
     for (const module of moduleOrder) {
-      const row = owners.createDiv({ cls: "echoink-agent-owner-row", attr: { "data-agent-owner-module": module } });
+      const row = ownerList.createDiv({ cls: "echoink-agent-owner-row", attr: { "data-agent-owner-module": module } });
       const label = row.createEl("label", { text: this.moduleName(module), attr: { id: `echoink-agent-owner-label-${module}` } });
       const controls = row.createDiv({ cls: "echoink-agent-owner-control" });
       const initial = this.owner(module);
+      const avatar = controls.createSpan({ cls: "echoink-agent-owner-avatar echoink-agent-settings-avatar", attr: { "aria-hidden": "true" } }); this.avatar(avatar, initial);
       const select = createOriginSelect(controls, { attr: { "aria-labelledby": label.id, "aria-label": this.text(`${this.moduleName(module)}负责人`, `${this.moduleName(module)} owner`), "data-echoink-focus-key": `agent:owner:${module}` } },
         this.host.settings.agentRegistry.agents.map(agent => ({ value: agent.id, label: agent.name })), initial.id, this.host.app).element;
       select.disabled = this.pendingOwners.has(module);

@@ -8,7 +8,9 @@ export function waitForPiSubmission<T>(operation: Promise<T>, signal?: AbortSign
   return new Promise<T>((resolve, reject) => {
     const abort = () => { cleanup(); reject(Object.assign(new Error("Pi submission cancelled"), { name: "AbortError" })); };
     const cleanup = () => signal.removeEventListener("abort", abort);
-    operation.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+    operation.then(value => { cleanup(); resolve(value); }, (error: unknown) => {
+      cleanup(); reject(error instanceof Error ? error : new Error("Pi submission failed", { cause: error }));
+    });
     if (signal.aborted) abort();
     else signal.addEventListener("abort", abort, { once: true });
   });

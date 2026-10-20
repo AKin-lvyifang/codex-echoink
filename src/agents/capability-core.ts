@@ -35,6 +35,8 @@ export interface AgentCapabilityContext {
   readonly access?: { readonly permission: string; readonly mode: string; readonly memoryMode: string } | null;
   readonly proAccess?: CapabilityAccess;
   readonly modulePaths?: Partial<Record<AgentModuleCapability, readonly string[]>>;
+  /** Desktop excludes retired roles; mobile retains its compatibility scopes until M15. */
+  readonly knowledgeRoles?: readonly string[];
   readonly moduleEnabled?: Partial<Record<AgentModuleCapability, boolean>>;
   readonly isRootJournalPath?: (value: string) => boolean;
   readonly relativeTarget: (value: string) => string | null;
@@ -115,13 +117,14 @@ export function checkAgentSkill(context: AgentCapabilityContext, skillId: string
 export function checkAgentSkillPath(context: AgentCapabilityContext, value: string): AgentCapabilityDecision {
   const full = context.resolvePath(value);
   const resource = context.resources.find(item => item.kind === "skill" && item.contentPath && context.resolvePath(item.contentPath) === full);
-  const skillId: unknown = resource?.metadata?.resourceId ?? resource?.id;
-  return resource ? checkAgentSkill(context, String(skillId)) : decision(value, "unknown_resource");
+  if (!resource) return decision(value, "unknown_resource");
+  const resourceId = resource.metadata?.resourceId;
+  return checkAgentSkill(context, typeof resourceId === "string" ? resourceId : resource.id);
 }
 function relativeTarget(context: AgentCapabilityContext, value: string): string | null { return context.relativeTarget(value); }
 function inside(value: string, root: string): boolean { return value === root || value.startsWith(root + "/"); }
-function moduleForRole(role: string): AgentModuleCapability | null {
-  return role === "journal" ? "journal" : ["raw", "wiki", "projects", "inbox", "outputs", "work", "archive", "templates", "assets"].includes(role) ? "knowledge" : null;
+function moduleForRole(context: AgentCapabilityContext, role: string): AgentModuleCapability | null {
+  return role === "journal" ? "journal" : (context.knowledgeRoles ?? ["raw", "wiki", "projects", "inbox", "outputs", "work", "archive", "templates", "assets"]).includes(role) ? "knowledge" : null;
 }
 export function checkAgentTarget(context: AgentCapabilityContext, target: string, effect: Effect, broad = false): AgentCapabilityDecision {
   const value = relativeTarget(context, target);
@@ -131,7 +134,7 @@ export function checkAgentTarget(context: AgentCapabilityContext, target: string
   for (const [capability, roots] of Object.entries(context.modulePaths ?? {})) for (const root of roots ?? []) if (root && (inside(value, root) || broad && inside(root, value))) matches.push({ root, capability: capability as AgentModuleCapability, enabled: true });
   const bindings = context.settings.knowledgeBase.folderBindings;
   if (bindings) for (const [role, binding] of Object.entries(bindings.roles)) {
-    const capability = moduleForRole(role); if (!capability) continue;
+    const capability = moduleForRole(context, role); if (!capability) continue;
     for (const root of [...binding.readPaths, ...(binding.writePath ? [binding.writePath] : [])]) if (inside(value, root) || broad && inside(root, value)) matches.push({ root, capability, enabled: binding.enabled });
   }
   // More specific module outputs (English/finance/review) override the generic outputs root.

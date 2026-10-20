@@ -6,6 +6,7 @@ import type { FinanceSettings, FinanceAccountSetting, FinanceCategorySetting, Fi
 import { createOriginCheck, createOriginSwitch } from "../settings/origin-controls";
 import { createSettingsState, showSettingsInlineConfirmation } from "../settings/settings-v2";
 import { confirmModal } from "../ui/modals";
+import { applyDeleteButton } from "../settings/amicro-buttons";
 
 export type CatalogKind = "merchants" | "accounts" | "categories";
 type CatalogItem = FinanceMerchantSetting | FinanceAccountSetting | FinanceCategorySetting;
@@ -72,7 +73,7 @@ export class FinanceCatalogPanel {
     let saved = false;
     try {
       const accepted = await confirmModal(this.plugin.app, `删除${labels[this.kind]}`,
-        `删除「${item.name}」？已有账目和预算不会删除。`, "删除", "取消", { signal: controller.signal });
+        `删除「${item.name}」？已有账目和预算不会删除。`, "删除", "取消", { signal: controller.signal, deleteAction: true });
       if (!accepted || controller.signal.aborted) return;
       const items = this.items();
       if (!items.includes(item)) return;
@@ -89,6 +90,7 @@ export class FinanceCatalogPanel {
   private confirmEmbeddedRemoval(item: CatalogItem, row: HTMLElement, trigger: HTMLButtonElement): void {
     if (this.pending || !this.plugin.lifestyle.finance.accessState().canWrite) return;
     showSettingsInlineConfirmation(row, trigger, {
+      deleteAction: true,
       message: `删除「${item.name}」？已有账目和预算不会删除。`, confirmLabel: "删除", cancelLabel: "取消",
       onConfirm: async () => {
         if (this.pending) return;
@@ -153,6 +155,7 @@ export class FinanceCatalogPanel {
           .catch((error) => { this.pending = false; toggle.checked = item.active; this.controls?.refresh(); new Notice(errorText(error)); });
       };
       const remove = row.createEl("button", { text: "删除", attr: { type: "button" } });
+      applyDeleteButton(remove);
       this.controls?.bind(remove, { businessDisabled: () => this.pending });
       remove.onclick = () => { if (this.options.embedded) this.confirmEmbeddedRemoval(item, row, remove); else void this.removeItem(item); };
     }

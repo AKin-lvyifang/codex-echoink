@@ -72,7 +72,9 @@ export class PdfReadingController {
     const current = this.api.current;
     if (current && (!jobId || current.id === jobId)) jobs = [structuredClone(current), ...jobs.filter(job => job.id !== current.id)].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     const entries: PdfNavigationEntry[] = [];
-    const reader = (this.plugin as CodexForObsidianPlugin & { readPdfKnowledgeArtifacts?(rawPath: string): Promise<PdfNavigationArtifact[]> }).readPdfKnowledgeArtifacts;
+    const reader = this.plugin.readPdfKnowledgeArtifacts
+      ? (rawPath: string) => this.plugin.readPdfKnowledgeArtifacts(rawPath)
+      : undefined;
     for (const job of jobs) {
       const artifacts: PdfNavigationArtifact[] = [];
       let originalState: PdfNavigationEntry["originalState"] = "not-saved";
@@ -101,7 +103,7 @@ export class PdfReadingController {
       const raw = job.artifacts.find(artifact => artifact.kind === "raw");
       if (raw && reader) {
         try {
-          for (const artifact of await reader.call(this.plugin, raw.path)) {
+          for (const artifact of await reader(raw.path)) {
             if (artifact.kind === "reading" && !job.options.reading || artifact.kind === "summary" && !job.options.summary) continue;
             const filePath = artifact.path.split("#")[0];
             const missing = artifact.missing || !await this.api.files.exists(filePath) || !(await this.api.files.read(filePath)).trim();

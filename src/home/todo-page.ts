@@ -154,7 +154,7 @@ export class TodoPageView extends ItemView {
         if (result && typeof (result as Promise<unknown>).then === "function") {
           applyAmicroButton(button, { variant: cls.includes("is-primary") ? "primary" : "secondary" });
           button.disabled = true; setAmicroButtonPending(button, true);
-          try { await result; } finally { button.disabled = false; setAmicroButtonPending(button, false); }
+          try { await Promise.resolve(result); } finally { button.disabled = false; setAmicroButtonPending(button, false); }
         }
       } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
     };
@@ -292,7 +292,7 @@ export class TodoPageView extends ItemView {
   }
   private async remove(record: ParsedTodoRecord): Promise<void> {
     const accepted = await confirmModal(this.app, this.t("删除待办", "Delete to-do"),
-      this.t(`确定删除「${record.title}」吗？删除后无法恢复。`, `Delete "${record.title}"? This cannot be undone.`), this.t("删除", "Delete"), this.t("取消", "Cancel"));
+      this.t(`确定删除「${record.title}」吗？删除后无法恢复。`, `Delete "${record.title}"? This cannot be undone.`), this.t("删除", "Delete"), this.t("取消", "Cancel"), { deleteAction: true });
     if (accepted) await this.plugin.getTodoStore().removeTodo(record);
   }
 }

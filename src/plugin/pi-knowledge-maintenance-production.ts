@@ -1179,7 +1179,7 @@ implements Phase3MaintenanceProposalPort {
       this.privateKnowledgeRootPath,
       ["shadow", previewId]
     );
-    const knowledgeActions: { targetPath: string; content: string; expectedTarget: typeof this.options.candidateActions[number]["expectedTarget"] }[] = [];
+    const knowledgeActions: { targetPath: string; content: string; expectedTarget: NonNullable<Phase3MaintenanceProposal["actions"][number]["expectedTarget"]> }[] = [];
     for (const action of this.options.candidateActions) {
       try {
         const content = completeKnowledgeMaintenanceCandidateSources({
@@ -1637,11 +1637,9 @@ function candidateSourcePaths(content: string, selected: readonly string[]): str
 function extractExplicitRawPaths(value: string, vaultRoot = ""): string[] {
   const paths = new Set<string>();
   for (const match of value.matchAll(/[^\s`[\]\r\n]+\/[^`[\]\r\n]+?\.md\b/giu)) {
-    try {
-      const candidate = normalizeVaultRelativePath(match[0].trim());
-      if (knowledgePathRole(vaultRoot, candidate) !== "raw") throw new Error("指定资料不在来源范围，不能回退全局维护。");
-      paths.add(candidate);
-    } catch (error) { throw error; }
+    const candidate = normalizeVaultRelativePath(match[0].trim());
+    if (knowledgePathRole(vaultRoot, candidate) !== "raw") throw new Error("指定资料不在来源范围，不能回退全局维护。");
+    paths.add(candidate);
   }
   return [...paths].sort((left, right) => left.localeCompare(right, "en"));
 }

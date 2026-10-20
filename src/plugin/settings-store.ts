@@ -20,7 +20,7 @@ import {
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { ResourceMutationError } from "./resource-mutation-authority";
 import { isEmptyEchoInkPluginData } from "../settings/onboarding";
-import { knowledgeRootEntries, migrateKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, knowledgeRootEntries, migrateKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 export { ResourceMutationError, resourceMutationRollbackIsSafe } from "./resource-mutation-authority";
 
 export interface SettingsSaveOptions {
@@ -120,7 +120,7 @@ export class EchoInkSettingsStore {
       bindingsMigrated = true;
     }
     // Registered before local runtimes and feature controllers are constructed; reloads read live settings.
-    registerKnowledgeFolderBindings(this.plugin.getVaultPath(), () => this.plugin.settings.knowledgeBase.folderBindings);
+    registerKnowledgeFolderBindings(this.plugin.getVaultPath(), () => this.plugin.settings.knowledgeBase.folderBindings, DESKTOP_KNOWLEDGE_ROOT_ROLES);
     this.settingsPersistenceRecoveryError = null;
     this.resourceMutationRecoveryError = null;
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();

@@ -12,7 +12,7 @@ export function freezePdfTaskRequest(value: unknown): Readonly<PdfTaskRequest> |
     || typeof v.name !== "string" || !/\.pdf$/iu.test(v.name) || /[\p{Cc}]/u.test(v.name)
     || typeof v.sourceFingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(v.sourceFingerprint)
     || !Number.isSafeInteger(v.byteLength) || v.byteLength! < 5 || v.byteLength! > 20 * 1024 * 1024
-    || typeof v.originalDirectory !== "string" || !v.originalDirectory || /^[\/]/u.test(v.originalDirectory)
+    || typeof v.originalDirectory !== "string" || !v.originalDirectory || v.originalDirectory.startsWith("/")
     || /[\p{Cc}:\\]/u.test(v.originalDirectory) || v.originalDirectory.split("/").some(p => !p || p === "." || p === "..")
     || !o || !["local", "mineru"].includes(o.engine) || typeof o.reading !== "boolean"
     || typeof o.translation !== "boolean" || typeof o.summary !== "boolean"

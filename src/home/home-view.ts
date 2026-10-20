@@ -786,7 +786,8 @@ export class EchoInkHomeView extends ItemView {
       this.t("删除待办", "Delete to-do"),
       this.t(`确定删除「${record.title}」吗？删除后无法恢复。`, `Delete "${record.title}"? This cannot be undone.`),
       this.t("删除", "Delete"),
-      this.t("取消", "Cancel")
+      this.t("取消", "Cancel"),
+      { deleteAction: true }
     );
     if (!accepted) return;
     await this.plugin.getTodoStore().removeTodo(record);
@@ -1112,10 +1113,5 @@ export class EchoInkHomeView extends ItemView {
   }
 
   }
-
-/** Desktop-only temporary target; mobile continues using EchoInkHomeView. */
-export class EchoInkLegacyHomeView extends EchoInkHomeView {
-  getViewType(): string { return "echoink-legacy-home"; }
-}
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

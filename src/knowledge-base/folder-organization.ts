@@ -1,5 +1,5 @@
 import { normalizeKnowledgeDirectory, pathInKnowledgeDirectory, type KnowledgeFolderBinding, type KnowledgeFolderBindings } from "./folder-bindings";
-import { KNOWLEDGE_ROOT_ROLES, type KnowledgeRootRole } from "./root-paths-core";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, type KnowledgeRootRole } from "./root-paths-core";
 
 export interface KnowledgeOrganizationBinding {
   readonly role: KnowledgeRootRole;
@@ -28,12 +28,14 @@ export function knowledgeOrganizationBinding(
   const target = normalizeKnowledgeDirectory(relativePath);
   const matches = KNOWLEDGE_ROOT_ROLES.flatMap(role => {
     const binding = config.roles[role];
-    if (!binding.enabled || config.migrationIssues.some(issue => issue.startsWith(`${role}：`))) return [];
+    if (!binding.enabled) return [];
     return binding.readPaths.filter(root => pathInKnowledgeDirectory(target, root)).map(root => ({ role, root, binding }));
   }).sort((left, right) => right.root.length - left.root.length);
   // Ambiguous shared roots never gain organization permission by role order.
   if (!matches.length || matches.filter(match => match.root.length === matches[0].root.length).length !== 1) return null;
-  return matches[0];
+  const owner = matches[0];
+  // Retired or invalid owners keep their boundary; they cannot inherit an ancestor's grant.
+  return DESKTOP_KNOWLEDGE_ROOT_ROLES.includes(owner.role) && !config.migrationIssues.some(issue => issue.startsWith(`${owner.role}：`)) ? owner : null;
 }
 
 /** Legacy approvals cover exactly their declared children and required ancestors. */

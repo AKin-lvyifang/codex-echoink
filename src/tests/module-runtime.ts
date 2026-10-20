@@ -31,11 +31,13 @@ import { rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { createObsidianNativePort } from "../plugin/obsidian-native-tools";
 import { PiObsidianToolSecurity, createPiObsidianToolDefinitions } from "../harness/pi-native/pi-obsidian-tools";
+import { runVaultBodySearchWorkflowNavigationTests } from "./vault-body-search";
 
 export async function runModuleRuntimeTests(root: string): Promise<void> {
   await collectionTargets(path.join(root, "collection"));
   await directoryExecution(path.join(root, "directories"), path.join(root, "state"));
   await chatRecall(path.join(root, "recall"));
+  await runVaultBodySearchWorkflowNavigationTests(path.join(root, "workflow-navigation"));
   await automaticLinking(path.join(root, "automatic-linking"));
   await automaticQueue(path.join(root, "automatic-queue"));
   await vaultSearchRecall(path.join(root, "vault-search-recall"));

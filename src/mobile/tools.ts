@@ -54,7 +54,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
         if (!shared) bodySearch.invalidate();
         const found = await bodySearch.search({ ...args, signal });
         checkStopped(signal); policy.assertTool("vault_search", args);
-        return result(found);
+        return result({ ...found, hits: found.hits.map(hit => ({ ...hit, sourceType: hit.kind })) });
       }
     },
     {
@@ -74,7 +74,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
         const span = boundKnowledgeSourceSpan(lines, { lineStart, lineEnd: requestedEnd, ...(args.columnStart === undefined && args.columnEnd === undefined ? {} : { columnStart: args.columnStart ?? 0, columnEnd: args.columnEnd ?? lines[requestedEnd - 1].length }) });
         const lineEnd = span.lineEnd;
         const partialLast = span.columnEnd !== undefined && span.columnEnd < lines[lineEnd - 1].length;
-        return result({ path, title: source.title, sourceType: source.kind, contentRevision: source.contentRevision,
+        return result({ path, vaultRelativePath: source.vaultRelativePath, title: source.title, sourceType: source.kind, contentRevision: source.contentRevision,
           ...span, totalLines: lines.length, content: sliceKnowledgeSourceSpan(lines, span),
           hasMore: sourceSpanHasMore(lines, span), ...(partialLast || lineEnd < lines.length ? { nextLineStart: partialLast ? lineEnd : lineEnd + 1, ...(partialLast ? { nextColumnStart: span.columnEnd } : {}) } : {}) });
       }

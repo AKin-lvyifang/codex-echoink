@@ -76,72 +76,83 @@ export function renderKnowledgeFolderActions(
   const openOptimize = () => {
     if (state.running || service.folderOperationBusy) return;
     const modal = new Modal(service.app);
-    modal.modalEl.addClass("echoink-settings-modal", "echoink-theme-boundary");
-    modal.setTitle(zh ? "文件夹名称优化" : "Folder names");
-    const selected = new Set<string>();
-    const body = modal.contentEl;
-    const scopes = service.folderNameScopes();
-    const fields = body.createDiv();
-    if (!scopes.length) fields.createDiv({ cls: "setting-item-description", text: zh ? "尚未绑定可优化的目录。" : "No bound folders are available." });
-    const checks = scopes.map(scope => {
-      const row = new OriginSetting(fields).setName(scope);
-      const check = createOriginCheck(row.controlEl, { attr: { "aria-label": scope } });
-      check.onchange = () => { check.checked ? selected.add(scope) : selected.delete(scope); preview.disabled = !selected.size || !service.directoryWritable; };
-      return check;
-    });
-    const error = body.createDiv({ cls: "settings-error", attr: { role: "alert" } });
-    const resultEl = body.createDiv();
-    const actions = body.createDiv({ cls: "echoink-knowledge-init-actions" });
-    const cancel = createOriginButton(actions, { text: zh ? "取消" : "Cancel" }); cancel.onclick = () => modal.close();
-    const preview = createOriginButton(actions, { cls: "mod-cta", text: zh ? "预览改名" : "Preview names" }); preview.disabled = true;
-    let pending = false;
-    preview.onclick = async () => {
-      if (pending) return;
-      pending = true; error.empty(); preview.disabled = true; preview.setText(zh ? "生成中…" : "Generating…"); body.setAttr("aria-busy", "true"); checks.forEach(check => { check.disabled = true; });
-      try {
-        const plan = await service.previewFolderNames([...selected]);
-        if (!body.isConnected) return;
-        resultEl.empty();
-        for (const change of plan.result.renamed) resultEl.createDiv({ cls: "setting-item-description", text: `${change.from} → ${change.to}` });
-        for (const skipped of plan.result.skipped) resultEl.createDiv({ cls: "settings-error", text: `${skipped.path}：${skipped.reason}` });
-        if (!plan.result.renamed.length) resultEl.createDiv({ cls: "setting-item-description", text: zh ? "没有可应用的名称变化。" : "No name changes to apply." });
-        const apply = createOriginButton(actions, { cls: "mod-cta", text: zh ? "应用改名" : "Apply names" });
-        apply.disabled = !plan.result.renamed.length || !service.directoryWritable;
-        apply.onclick = () => { if (pending || state.running) return; apply.disabled = true; void run("optimize", async () => { const result = await service.applyFolderNamePreview(plan); modal.close(); return zh ? `已改名 ${result.renamed.length} 个目录，${result.skipped.length} 项未改动。` : `Renamed ${result.renamed.length} folders; ${result.skipped.length} unchanged.`; }).finally(() => { apply.disabled = !service.directoryWritable; }); };
-        preview.hidden = true;
-      } catch (failure) { error.setText(failure instanceof Error ? failure.message : String(failure)); preview.disabled = !selected.size || !service.directoryWritable; }
-      finally { pending = false; body.removeAttribute("aria-busy"); preview.setText(zh ? "预览改名" : "Preview names"); checks.forEach(check => { check.disabled = preview.hidden; }); }
+    modal.onOpen = () => {
+      modal.modalEl.addClass("echoink-settings-modal", "echoink-theme-boundary");
+      modal.setTitle(zh ? "文件夹名称优化" : "Folder names");
+      const selected = new Set<string>();
+      const body = modal.contentEl;
+      body.addClass("echoink-knowledge-folder-editor");
+      const scopes = service.folderNameScopes();
+      if (openEditor) {
+        const heading = body.createDiv({ cls: "echoink-knowledge-folder-heading" });
+        heading.createEl("h3", { text: zh ? "可优化的目录" : "Available folders" });
+        heading.createSpan({ cls: "echoink-knowledge-folder-count", text: zh ? `${scopes.length} 个` : `${scopes.length} folder${scopes.length === 1 ? "" : "s"}` });
+      }
+      const fields = body.createDiv({ cls: "echoink-knowledge-folder-list" });
+      if (!scopes.length) fields.createDiv({ cls: "setting-item-description", text: zh ? "尚未绑定可优化的目录。" : "No bound folders are available." });
+      const checks = scopes.map(scope => {
+        const row = new OriginSetting(fields).setName(scope);
+        const check = createOriginCheck(row.controlEl, { attr: { "aria-label": scope } });
+        check.onchange = () => { check.checked ? selected.add(scope) : selected.delete(scope); preview.disabled = !selected.size || !service.directoryWritable; };
+        return check;
+      });
+      const error = body.createDiv({ cls: "settings-error", attr: { role: "alert" } });
+      const resultEl = body.createDiv();
+      const actions = body.createDiv({ cls: "echoink-knowledge-init-actions" });
+      const cancel = createOriginButton(actions, { text: zh ? "取消" : "Cancel" }); cancel.onclick = () => modal.close();
+      const preview = createOriginButton(actions, { cls: "mod-cta", text: zh ? "预览改名" : "Preview names" }); preview.disabled = true;
+      let pending = false;
+      preview.onclick = async () => {
+        if (pending) return;
+        pending = true; error.empty(); preview.disabled = true; preview.setText(zh ? "生成中…" : "Generating…"); body.setAttr("aria-busy", "true"); checks.forEach(check => { check.disabled = true; });
+        try {
+          const plan = await service.previewFolderNames([...selected]);
+          if (!body.isConnected) return;
+          resultEl.empty();
+          for (const change of plan.result.renamed) resultEl.createDiv({ cls: "setting-item-description", text: `${change.from} → ${change.to}` });
+          for (const skipped of plan.result.skipped) resultEl.createDiv({ cls: "settings-error", text: `${skipped.path}：${skipped.reason}` });
+          if (!plan.result.renamed.length) resultEl.createDiv({ cls: "setting-item-description", text: zh ? "没有可应用的名称变化。" : "No name changes to apply." });
+          const apply = createOriginButton(actions, { cls: "mod-cta", text: zh ? "应用改名" : "Apply names" });
+          apply.disabled = !plan.result.renamed.length || !service.directoryWritable;
+          apply.onclick = () => { if (pending || state.running) return; apply.disabled = true; void run("optimize", async () => { const result = await service.applyFolderNamePreview(plan); modal.close(); return zh ? `已改名 ${result.renamed.length} 个目录，${result.skipped.length} 项未改动。` : `Renamed ${result.renamed.length} folders; ${result.skipped.length} unchanged.`; }).finally(() => { apply.disabled = !service.directoryWritable; }); };
+          preview.hidden = true;
+        } catch (failure) { error.setText(failure instanceof Error ? failure.message : String(failure)); preview.disabled = !selected.size || !service.directoryWritable; }
+        finally { pending = false; body.removeAttribute("aria-busy"); preview.setText(zh ? "预览改名" : "Preview names"); checks.forEach(check => { check.disabled = preview.hidden; }); }
+      };
+      modal.onClose = () => disposeOriginControls(body);
     };
-    modal.onClose = () => disposeOriginControls(body);
     if (openEditor) openEditor(modal); else modal.open();
   };
   const openRestore = () => {
     if (state.running || service.folderOperationBusy || recordLoading) return;
     const modal = new Modal(service.app);
-    modal.modalEl.addClass("echoink-settings-modal", "echoink-theme-boundary");
-    modal.setTitle(zh ? "复原仓库" : "Restore vault");
-    const body = modal.contentEl;
-    body.createDiv({ cls: "setting-item-description", text: restoreSummary() });
-    const actions = body.createDiv({ cls: "echoink-knowledge-init-actions" });
-    createOriginButton(actions, { cls: "text-button", text: zh ? "返回" : "Back" }).onclick = () => modal.close();
-    if (record) {
-      const confirm = createOriginButton(actions, { text: zh ? "复原目录" : "Restore folders" });
-      confirm.disabled = !service.directoryWritable;
-      confirm.onclick = () => showSettingsInlineConfirmation(body, confirm, {
-        message: zh ? "恢复初始化前的目录结构，保留最新内容和新增文件。确认后开始移动文件。" : "Restore the pre-initialization folder structure, keeping current content and new files. Confirmation starts moving files.",
-        confirmLabel: zh ? "确认复原" : "Confirm restore", cancelLabel: zh ? "取消" : "Cancel",
-        onConfirm: async () => {
-          await run("restore", async () => {
-            const result = await service.restoreOriginalDirectories();
-            modal.close();
-            return zh
-              ? `已恢复 ${result.restored} 个文件${result.skipped.length ? `，${result.skipped.length} 项需处理` : ""}。`
-              : `Restored ${result.restored} file${result.restored === 1 ? "" : "s"}${result.skipped.length ? `; ${result.skipped.length} item${result.skipped.length === 1 ? " needs" : "s need"} attention` : ""}.`;
-          });
-        }
-      });
-    }
-    modal.onClose = () => disposeOriginControls(body);
+    modal.onOpen = () => {
+      modal.modalEl.addClass("echoink-settings-modal", "echoink-theme-boundary");
+      modal.setTitle(zh ? "复原仓库" : "Restore vault");
+      const body = modal.contentEl;
+      body.addClass("echoink-knowledge-folder-editor");
+      body.createDiv({ cls: "setting-item-description echoink-knowledge-folder-record", text: restoreSummary() });
+      const actions = body.createDiv({ cls: "echoink-knowledge-init-actions" });
+      createOriginButton(actions, { cls: "text-button", text: zh ? "返回" : "Back" }).onclick = () => modal.close();
+      if (record) {
+        const confirm = createOriginButton(actions, { text: zh ? "复原目录" : "Restore folders" });
+        confirm.disabled = !service.directoryWritable;
+        confirm.onclick = () => showSettingsInlineConfirmation(body, confirm, {
+          message: zh ? "恢复初始化前的目录结构，保留最新内容和新增文件。确认后开始移动文件。" : "Restore the pre-initialization folder structure, keeping current content and new files. Confirmation starts moving files.",
+          confirmLabel: zh ? "确认复原" : "Confirm restore", cancelLabel: zh ? "取消" : "Cancel",
+          onConfirm: async () => {
+            await run("restore", async () => {
+              const result = await service.restoreOriginalDirectories();
+              modal.close();
+              return zh
+                ? `已恢复 ${result.restored} 个文件${result.skipped.length ? `，${result.skipped.length} 项需处理` : ""}。`
+                : `Restored ${result.restored} file${result.restored === 1 ? "" : "s"}${result.skipped.length ? `; ${result.skipped.length} item${result.skipped.length === 1 ? " needs" : "s need"} attention` : ""}.`;
+            });
+          }
+        });
+      }
+      modal.onClose = () => disposeOriginControls(body);
+    };
     if (openEditor) openEditor(modal); else modal.open();
   };
 }

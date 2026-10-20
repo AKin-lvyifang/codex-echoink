@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.7.0 — ready on your tablet and phone" src="assets/releases/echoink-agent-2.7.0-release.png">
+    <img width="1024" alt="EchoInk 2.8.0 — a new workbench and multi-agent tasks" src="assets/releases/echoink-agent-2.8.0-release.png">
   </a>
 </p>
 
@@ -11,14 +11,14 @@
 <p align="center">
   <a href="https://echoink.cn">Official website</a> ·
   <a href="https://echoink.cn/install">Download &amp; installation</a> ·
-  <a href="#whats-new-in-270">What's new</a> ·
+  <a href="#whats-new-in-280">What's new</a> ·
   <a href="#privacy-and-data">Privacy</a> ·
   <a href="README_CN.md">中文</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="Desktop and Mobile Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.7.0"><img src="https://img.shields.io/badge/version-2.7.0-0EA5E9?style=flat-square" alt="Version 2.7.0"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.0"><img src="https://img.shields.io/badge/version-2.8.0-0EA5E9?style=flat-square" alt="Version 2.8.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT base + Commercial PRO — see LICENSE"></a>
 </p>
 
@@ -26,26 +26,26 @@
 
 EchoInk is a personal knowledge agent that lives in Obsidian. Chat with your notes, organize knowledge, keep visible and editable long-term memory, and record everyday life. Your notes stay in your vault; connect your own supported model service for AI features. Normal installation does not require Codex CLI.
 
-## What's new in 2.7.0
+## What's new in 2.8.0
 
-**Ready on your tablet and phone.** Chat, read notes, and manage finances on your phone, or keep the workbench and chat side by side on a wide iPad screen. Mobile remains Beta.
+**A new workbench and multi-agent tasks.** The desktop Home gathers work that needs your response, running tasks, and completed results. Reminders for to-dos, sources, and PDFs can start an Agent task with the relevant content.
 
-- **Accounts and Finance on phones and tablets.** Sign in, activate PRO, and work with transactions, budgets, bill plans, and financial analysis. Home, settings, persona editing, and Finance controls adapt to single-column phone and wide tablet layouts.
-- **Handle finances in desktop chat.** Say “Log 12 yuan for breakfast today,” or ask to find or edit transactions, adjust budgets, create bill plans, and link records.
-- **Revisit financial analysis.** Reports are saved as Markdown by month and version, alongside the data used at the time. Bill plans support category allocations, with category progress and unallocated amounts visible.
-- **Desktop to-do reminders.** Enable reminders to receive due alerts while Obsidian is running. A date without a time uses 09:00 locally; reminders stop when the app is closed.
-- **Smoother knowledge setup and onboarding.** Fixed initialization batch conflicts and link updates after folder changes. A new paper-style guide lets you choose another feature after each answer.
-- **Easier reading and navigation.** Reduced repeated Home and expression-library refreshes, collapsed work logs after replies while preserving reading position, and improved fonts, images, and controls across Obsidian themes.
+- Create Agents with their own identity, model, and available capabilities. Use each Agent's task list to check progress, handle approvals, and continue conversations.
+- Interrupted tasks keep their reason and last stage. **Continue from here** checks operations and file changes, prompting you to review uncertain results. Tasks do not run after Obsidian closes or restart automatically.
+- Dedicated pages for Journal, To-dos, Finance, Knowledge, English Diary, and PDF let you edit by date, link to-dos to projects, browse Knowledge folders, and revisit English drafts, PDF originals, and saved results.
+- Six settings tabs—General, Models, Agent, Capabilities, Modules, and Account and membership—and updated onboarding provide clear places for Agents, your profile, memory, and module folders.
+- Knowledge recall adds body text, sections, and reference navigation. Memory stays closer to the current question and explicitly named projects. Knowledge retrieval excludes private-memory and internal plugin data; check sources for important information.
+- Custom Knowledge folders, folder graphs, selection questions and annotations, and saving answers as notes connect reading with chat. English Diary improves native editing, expression review, and daily expressions on Home.
 
-Finance and desktop English Diary require active PRO. **PRO does not include model credits.** Campaign and subscription details are on the [website](https://echoink.cn/plans). See the [CHANGELOG](CHANGELOG.md) for the full release notes.
+Finance, English Diary, and PDF reading require active PRO. **PRO does not include model credits.** Campaign and subscription details are on the [website](https://echoink.cn/plans). See the [CHANGELOG](CHANGELOG.md) for full release notes and usage instructions.
 
 ## Download and documentation
 
 Visit [echoink.cn](https://echoink.cn) for [installation](https://echoink.cn/install), [features](https://echoink.cn/features), and [help](https://echoink.cn/support). The repository's [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases) remain the official source of plugin files.
 
-Requires **Obsidian 1.11.4 or later**. For manual upgrades, replace only the official `main.js`, `manifest.json`, and `styles.css`, keep your existing settings and data files, and re-enable the plugin.
+Requires **Obsidian 1.11.4 or later**. **Make a complete backup of your vault, plugin settings, and data before upgrading.** For manual upgrades, replace only the official `main.js`, `manifest.json`, and `styles.css`, keep your existing settings and data files, and re-enable the plugin. To roll back, restore the complete pre-upgrade backup together with the matching older plugin; replacing only the plugin files with an older version is not a supported downgrade.
 
-Mobile Beta supports text chat, Markdown note reading and creation, local memory, accounts, Finance, and phone/tablet layouts. English Diary generation, attachments, CLI, financial operations in chat, and desktop background knowledge/memory tasks are not yet available. You can view, enable, and select Skills, but they use only the available mobile tools; MCP currently saves configuration only. Full device validation across iOS, iPadOS, and Android is still incomplete.
+Mobile Beta supports text chat, Markdown note reading and creation, local memory, accounts, Finance, and phone/tablet layouts. English Diary generation, attachments, CLI, financial operations in chat, and desktop background knowledge/memory tasks are not yet available. You can view, enable, and select Skills, but they use only the available mobile tools; MCP currently saves configuration only. The new desktop workbench and multi-agent tasks are not available on mobile. Validation on physical iOS, iPadOS, and Android devices and native Windows and Linux environments is still incomplete.
 
 The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or update the plugin independently on each device through the official download or Community Plugins; do not rely on Sync Standard to transfer this file.
 
@@ -59,6 +59,8 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 - Your selected model service receives the prompts, notes, attachments, memory, and tool results needed for the current AI request. Model services may require their own account and charge separately; image input requires a vision-capable model.
 - Desktop conversations can use a local workspace outside the vault. File access follows the selected permission mode; Full access removes the workspace boundary. Outside-vault attachments are read when you explicitly select, drag, or paste them.
 - Tavily web search is off by default. When enabled, queries go to `api.tavily.com`, and returned snippets and links go to your model. Tavily needs its own account and API key; connection tests also perform a basic search and consume one credit. See [Tavily's pricing policy](https://docs.tavily.com/documentation/api-credits).
+- Knowledge retrieval excludes the private-memory and internal plugin data folders. This is not a global access restriction for every file tool or third-party service.
+- Local PDF text extraction runs on your device. MinerU enhanced parsing sends the PDF to MinerU, requires separate credentials and credits, and follows that service's retention policy. Extracted content needed for reading notes or translations is sent to your selected model.
 - Link capture uses the plugin's built-in fetcher to access pages you explicitly submit.
 - Custom Providers and MCP connections contact the services or local commands you configure. Local MCP processes run with your operating-system user permissions and inherit the application environment; approving tools in the plugin does not restrict those processes to the workspace.
 - The plugin has no client usage telemetry. Website and account-service data handling is described in the [privacy policy](https://echoink.cn/support#privacy).

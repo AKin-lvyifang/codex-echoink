@@ -21,5 +21,5 @@
 .echoink-selection-menu svg { display: block; width: 14px; height: 14px; }
 .echoink-selection-mark { background: rgb(70 130 210 / .12); }
 .markdown-source-view.mod-cm6 button.echoink-selection-tag, .echoink-selection-overlay button.echoink-selection-tag { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 5px; background: #3478d4; color: #fff; font-size: 11px; cursor: pointer; box-shadow: none; }
-.echoink-selection-overlay { position: fixed; z-index: 20; pointer-events: none; }
+.echoink-selection-overlay { position: fixed; inset: 0; z-index: 20; pointer-events: none; }
 .echoink-selection-overlay .echoink-selection-tag { position: absolute; pointer-events: auto; }

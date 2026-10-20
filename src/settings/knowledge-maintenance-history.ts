@@ -1,4 +1,4 @@
-import { Notice, TFile, normalizePath, setIcon, type App } from "obsidian";
+import { Notice, Platform, TFile, normalizePath, setIcon, type App } from "obsidian";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import type { KnowledgeBaseMaintenanceHistoryEntry } from "./settings";
 import { OriginSetting } from "./origin-setting";
@@ -32,8 +32,9 @@ export { mergeKnowledgeMaintenanceHistory } from "../knowledge-base/maintenance-
 /** Render the existing Origin list; call the disposer before replacing its container. */
 export function renderKnowledgeMaintenanceHistoryList(container: HTMLElement, options: KnowledgeMaintenanceHistoryListOptions): () => void {
   const { zh, state } = options;
+  const restoreSurface = alignDesktopMaintenanceSurface(container);
   let listCleanup: (() => void) | undefined;
-  const cleanup = () => { listCleanup?.(); disposeOriginControls(page); };
+  const cleanup = () => { listCleanup?.(); disposeOriginControls(page); restoreSurface(); };
   const page = createSettingsPage(container, {
     title: zh ? "维护记录" : "Maintenance records",
     description: zh
@@ -157,6 +158,7 @@ export interface KnowledgeMaintenanceRecordDetailOptions {
 
 export function renderKnowledgeMaintenanceRecordDetail(container: HTMLElement, options: KnowledgeMaintenanceRecordDetailOptions): () => void {
   const { zh, record } = options;
+  const restoreSurface = alignDesktopMaintenanceSurface(container);
   const page = createSettingsPage(container, { title: zh ? "维护详情" : "Maintenance details", detail: true, backLabel: zh ? "返回维护记录" : "Back to records", onBack: options.onBack });
   const overview = createSettingsGroup(page);
   new OriginSetting(overview).setName(knowledgeMaintenanceHistoryStatus({ status: record.cancelled ? "canceled" : "success", resultStatus: record.cancelled ? "cancelled" : record.result.status } as KnowledgeBaseMaintenanceHistoryEntry, zh)).setDesc(record.summary);
@@ -176,7 +178,15 @@ export function renderKnowledgeMaintenanceRecordDetail(container: HTMLElement, o
     const issues = createSettingsGroup(createSettingsSection(page, { title: zh ? "问题与未完成项" : "Issues", surface: "flat" }));
     for (const issue of record.result.issues) applySettingsRow(new OriginSetting(issues).setName(issue.path ?? issue.code).setDesc(issue.message));
   }
-  return () => disposeOriginControls(page);
+  return () => { disposeOriginControls(page); restoreSurface(); };
+}
+
+/** The data page reuses these settings rows without the desktop settings shell. */
+function alignDesktopMaintenanceSurface(container: HTMLElement): () => void {
+  const surface = Platform.isDesktopApp ? container.closest<HTMLElement>(".echoink-settings-demo") : null;
+  const added = Boolean(surface && !surface.classList.contains("echoink-settings-aligned"));
+  if (added) surface!.addClass("echoink-settings-aligned");
+  return () => { if (added) surface!.removeClass("echoink-settings-aligned"); };
 }
 
 function renderHistoryEmpty(container: HTMLElement, title: string, description: string): void {

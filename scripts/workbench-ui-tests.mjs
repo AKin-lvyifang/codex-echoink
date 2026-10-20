@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -6,7 +6,11 @@ import { createRequire } from "node:module";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const directory = path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台改版-20261017/.p5-ui-tests");
+const temporaryVaults = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
+const fixture = await realpath(process.env.ECHOINK_WORKBENCH_TEST_ROOT || path.join(temporaryVaults, "工作台改版-20261017"));
+const relativeFixture = path.relative(temporaryVaults, fixture);
+if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture)) throw new Error("Workbench UI fixtures must be inside EchoInk-TestVaults/90-任务临时");
+const directory = path.join(fixture, ".p5-ui-tests");
 const require = createRequire(import.meta.url);
 const { JSDOM } = require("jsdom");
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://workbench-fixture.invalid" });

@@ -107,7 +107,7 @@ function categoryLine(content: string, entry: ExpressionEntry): { start: number;
   if (start < 0 || end < 0 || content.indexOf(title, start + title.length) >= 0) return null;
   const matches = [...content.slice(start, end).matchAll(/^分类：([^\r\n]*)/gm)];
   if (matches.length !== 1) return null;
-  const match = matches[0], offset = start + match.index!;
+  const match = matches[0], offset = start + match.index;
   return { start: offset, end: offset + match[0].length, value: match[1].trim() };
 }
 

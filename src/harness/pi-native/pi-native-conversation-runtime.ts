@@ -3,6 +3,7 @@ import type { PdfTaskRequest } from "../../pdf-reading/types";
 import { normalizeEnglishDiarySourcePath, englishDiaryTaskContextFromEntries, type EnglishDiaryTaskContext } from "../../english-diary/task-context";
 import type { TaskInterruptionReason, TaskInterruptionRecord, TaskResumeContext } from "../../agents/task-resume";
 import { assertPiSubmissionActive } from "./pi-submission-lifecycle";
+import { selectMemoryRecallPreviousUserContext } from "../memory/personal-memory-recall-harness";
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../../knowledge-base/search/contracts";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../../knowledge-base/root-paths";
 import { normalizeConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
@@ -41,6 +42,7 @@ import type { FileConversationCatalog } from "./file-conversation-catalog";
 import type { FileProductRunStore } from "./file-product-run-store";
 import {
   PiChatUiProjector,
+  piKnowledgeToolDisplayMetadata,
   type PiChatUiMessageDecoration,
   type PiChatUiRunIdentity,
   type PiChatUiToolProductProjectionInput,
@@ -731,6 +733,7 @@ interface ActiveProductRun {
   skillTurnContext: Readonly<PiNativeSkillTurnContext> | null;
   memoryRecall?: PiMemoryRecallObservation;
   providerStartedAt?: number;
+  providerWaitTimer?: ReturnType<typeof setInterval>;
   firstAssistantTextSeen: boolean;
   providerReasoningBlocks: Map<string, MutableProviderReasoningBlock>;
   providerReasoningExposedMessageKeys: Set<string>;
@@ -2296,6 +2299,7 @@ export class PiNativeConversationRuntime {
     if (!active?.currentRun) return;
     const execution = active.currentRun;
     execution.abortRequested = true;
+    this.finishProviderWait(execution, "cancelled");
     execution.knowledgeAbort.abort();
     const abortErrors: unknown[] = [];
     try {
@@ -2700,6 +2704,19 @@ export class PiNativeConversationRuntime {
             startedAt: providerStartedAt,
             updatedAt: providerStartedAt
           });
+          run.providerWaitTimer = setInterval(() => {
+            if (active.currentRun !== run || run.firstAssistantTextSeen
+              || run.knowledgeAbort.signal.aborted || run.reasoningSummary.terminalAt !== undefined) {
+              this.finishProviderWait(run);
+              return;
+            }
+            const observedAt = this.now();
+            if (observedAt - providerStartedAt <= 5_000) return;
+            this.queueReasoningActivity(active, run, {
+              id: "provider", kind: "provider", status: "active", stage: "requesting",
+              startedAt: providerStartedAt, updatedAt: observedAt
+            });
+          }, 1_000);
         }
         return execution;
       },
@@ -2763,6 +2780,14 @@ export class PiNativeConversationRuntime {
         const active = holder.active;
         const run = active?.currentRun;
         if (!active || !run || run.englishDiarySourcePath) return null;
+        const branch = active.sessionManager.getBranch();
+        // before_agent_start may run before or after Pi appends this turn's
+        // user message. Entry identity preserves earlier identical text.
+        const currentUserEntry = branch.find((entry) =>
+          !run.baselineEntryIds.has(entry.id)
+          && entry.type === "message"
+          && entry.message.role === "user"
+        );
         return Object.freeze({
           vaultId: catalog.vaultId,
           conversationId: catalog.conversationId,
@@ -2771,12 +2796,10 @@ export class PiNativeConversationRuntime {
           memoryMode: run.memoryMode,
           ...(run.projectId ? { projectId: run.projectId } : {}),
           query: run.requestText,
-          recentConversation: Object.freeze(active.sessionManager.getBranch()
-            .filter((entry) => entry.type === "message")
-            .filter((entry) => isValidRecentConversationMessage(entry.message))
-            .map((entry) => publicMessageText(entry.message).trim())
-            .filter(Boolean)
-            .slice(-6))
+          recentConversation: selectMemoryRecallPreviousUserContext(branch.flatMap((entry) =>
+            entry.id !== currentUserEntry?.id && entry.type === "message" && entry.message.role === "user"
+              ? [{ role: entry.message.role, content: publicMessageText(entry.message) }]
+              : []))
         });
       },
       currentSelectionAnnotationTurnContext: () => holder.active?.currentRun?.selectionAnnotations ?? [],
@@ -3710,6 +3733,7 @@ export class PiNativeConversationRuntime {
         break;
       }
       case "tool_execution_start":
+        this.finishProviderWait(execution);
         execution.toolCallIds.add(event.toolCallId);
         await this.beginKnowledgeToolProgress(
           active,
@@ -3904,6 +3928,7 @@ export class PiNativeConversationRuntime {
       return;
     }
     if (block.redacted || !event.delta) return;
+    this.finishProviderWait(execution);
     block.text += event.delta;
     if (!block.exposed) {
       if (!block.text.trim()) return;
@@ -4104,11 +4129,28 @@ export class PiNativeConversationRuntime {
     }, observedAt);
   }
 
+  private finishProviderWait(
+    execution: ActiveProductRun,
+    status: EchoInkReasoningActivityStatus = "completed"
+  ): void {
+    if (execution.providerWaitTimer !== undefined) {
+      clearInterval(execution.providerWaitTimer);
+      delete execution.providerWaitTimer;
+    }
+    const provider = execution.reasoningSummary.activities.find((activity) =>
+      activity.id === "provider" && activity.status === "active"
+    );
+    if (provider) this.updateReasoningActivitySafely(execution, {
+      ...provider, status, updatedAt: Math.max(provider.updatedAt, this.now())
+    });
+  }
+
   private async observeFirstAssistantText(
     active: ActiveConversation,
     execution: ActiveProductRun
   ): Promise<void> {
     if (execution.firstAssistantTextSeen) return;
+    this.finishProviderWait(execution);
     execution.firstAssistantTextSeen = true;
     const observedAt = this.now();
     execution.reasoningSummary = completeReasoningAtFirstText({
@@ -4351,6 +4393,7 @@ export class PiNativeConversationRuntime {
     status: Exclude<EchoInkReasoningSummaryStatus, "running">,
     terminalAt: number
   ): Promise<void> {
+    this.finishProviderWait(execution, status === "completed" ? "completed" : status);
     if (execution.reasoningTerminalEntryId) return;
     const plan = activeTaskPlanFromBranch(active.sessionManager.getBranch());
     if (plan) this.updateReasoningTaskPlan(execution, plan, terminalAt);
@@ -4438,6 +4481,14 @@ export class PiNativeConversationRuntime {
     occurredAt: number
   ): void {
     if (event.type === "knowledge_progress") {
+      // Tool calls already have their own stable rows and per-call result counts.
+      // This row describes only the initial retrieval, never the turn aggregate.
+      const retrieval = event.stage === "searching" || event.stage === "continuing_search"
+        || event.stage === "reading_knowledge";
+      if (event.stage === "comparing_memory" || execution.knowledgeToolStages.size > 0) return;
+      if (retrieval && execution.reasoningSummary.activities.some((activity) =>
+        activity.id === "knowledge:retrieval" && activity.status === "completed"
+      )) return;
       const observation = execution.knowledgeObservation;
       const counts = observation && observation.candidates > 0
         ? {
@@ -4447,7 +4498,7 @@ export class PiNativeConversationRuntime {
           }
         : {};
       this.updateReasoningActivitySafely(execution, {
-        id: `knowledge:${event.stage}`,
+        id: retrieval ? "knowledge:retrieval" : `knowledge:${event.stage}`,
         kind: "knowledge",
         status: event.status === "active" ? "active" : "completed",
         stage: event.stage,
@@ -4459,7 +4510,7 @@ export class PiNativeConversationRuntime {
     }
     if (event.type === "memory_recall_progress") {
       const recall = event.recall;
-      const counts = recall && recall.candidates > 0
+      const counts = recall
         ? {
             current: Math.min(recall.injected, recall.candidates),
             total: recall.candidates,
@@ -4467,7 +4518,7 @@ export class PiNativeConversationRuntime {
           }
         : {};
       this.updateReasoningActivitySafely(execution, {
-        id: `memory:${event.stage}`,
+        id: "memory:recall",
         kind: "memory",
         status: event.status === "active" ? "active" : "completed",
         stage: event.stage,
@@ -5485,14 +5536,6 @@ function stripInternalSkillPromptPrefix(text: string): string {
     stripped = true;
   }
   return stripped ? remaining : text;
-}
-
-function isValidRecentConversationMessage(message: AgentMessage): boolean {
-  if (message.role === "user") return true;
-  return message.role === "assistant"
-    && message.stopReason !== "error"
-    && message.stopReason !== "aborted"
-    && message.stopReason !== "length";
 }
 
 function classifyTerminalState(
@@ -6647,8 +6690,12 @@ function runtimeToolPayloadForProjection(
       });
     }
   }
+  const metadata = piKnowledgeToolDisplayMetadata(toolName, payload);
   return Object.freeze({
-    status: isError ? "failed" : "completed"
+    status: isError ? "failed" : "completed",
+    details: isError
+      ? metadata.errorCode ? { errorCode: metadata.errorCode } : {}
+      : metadata
   });
 }
 

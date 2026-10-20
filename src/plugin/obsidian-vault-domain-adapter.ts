@@ -1,5 +1,6 @@
 import { getKnowledgeFolderBindings, knowledgeRolePath } from "../knowledge-base/root-paths";
 import { knowledgeMayCreateCategoryDirectory, knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
+import { isPrivateNoteSourcePath } from "../knowledge-base/note-source-policy";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
@@ -101,6 +102,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
     const results: VaultAdapterSearchResult[] = [];
     for (const file of this.app.vault.getFiles().filter((entry) => /\.(md|base|canvas)$/iu.test(entry.path))) {
       if (results.length >= input.maxResults) break;
+      if (isPrivateNoteSourcePath(file.path)) continue;
       if (!knowledgeRecallCandidateAllowed(getKnowledgeFolderBindings(this.vaultRootPath), file.path)) continue;
       if (
         scopePrefix
@@ -114,6 +116,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
         mustExist: true,
         expectedKind: "file"
       });
+      if (isPrivateNoteSourcePath(target.relativePath)) continue;
       const maxBytes = Math.min(SEARCH_SCAN_LIMIT_BYTES, Math.max(1, input.maxExcerptBytes));
       const pathMatches = target.relativePath.toLocaleLowerCase().includes(query);
       if (!pathMatches) {

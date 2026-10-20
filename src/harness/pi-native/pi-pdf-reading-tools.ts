@@ -176,8 +176,8 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
     } finally { bytes?.fill(0); }
     const original = saved?.original ?? intent?.original;
     const sourceFingerprint = saved?.sourceFingerprint ?? intent?.sourceFingerprint;
-    const target = normalizeJsonValue({ jobId: saved?.id ?? intent!.id, sourcePath: args.path ?? null, originalPath: original?.plannedPath ?? null,
-      rawDirectory: saved?.rawDirectory ?? intent!.rawDirectory, artifactPaths: saved?.artifacts.map(artifact => artifact.path) ?? [], options, sourceFingerprint,
+    const target = normalizeJsonValue({ jobId: saved?.id ?? intent.id, sourcePath: args.path ?? null, originalPath: original?.plannedPath ?? null,
+      rawDirectory: saved?.rawDirectory ?? intent.rawDirectory, artifactPaths: saved?.artifacts.map(artifact => artifact.path) ?? [], options, sourceFingerprint,
       ...(saved?.options.engine === "mineru" && saved.batchId && (saved.uploadState === "uncertain" || saved.uploadState === "uploaded")
         ? { resumeMode: "poll-existing-batch", batchId: saved.batchId } : {}) });
     const paths = [original?.plannedPath, args.path, ...(saved?.artifacts.map(artifact => artifact.path) ?? [])].filter((value): value is string => !!value);
@@ -186,7 +186,7 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
     if (original && await host.api.files.exists(original.plannedPath)) {
       if (!host.api.files.readBinary || hash(await host.api.files.readBinary(original.plannedPath)) !== sourceFingerprint) throw new Error("原PDF已经改过，请先核对。");
     } else if (saved?.original?.savedPath) throw new Error("原PDF找不到了，请先恢复后继续。");
-    return { jobId: saved?.id ?? intent!.id, options, intent, existing: !!saved, attachmentId, path: args.path, sourceFingerprint, request, run, target, version };
+    return { jobId: saved?.id ?? intent.id, options, intent, existing: !!saved, attachmentId, path: args.path, sourceFingerprint, request, run, target, version };
   }
   async handleToolCall(event: ToolCallEvent, signal?: AbortSignal) {
     try {
@@ -306,7 +306,7 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
       }
       call.status ??= "completed";
       if (name === "pdf_reading_query" && args.readingOffset !== undefined) {
-        const reading = jobs[0]!.chunks.filter(c => c.reading).map(c => `第 ${c.page} 页 · 片段 ${c.part}\n${c.reading}`).join("\n\n");
+        const reading = jobs[0].chunks.filter(c => c.reading).map(c => `第 ${c.page} 页 · 片段 ${c.part}\n${c.reading}`).join("\n\n");
         const page = pdfReadingPage(reading, args.readingOffset);
         call.result = `内部精读辅助材料（原文需另行实际读取），位置 ${args.readingOffset}/${page.total}。\nnextOffset=${page.nextOffset ?? "null（已到结尾）"}\n\n${page.text}`;
         call.readbackVerified = true;
@@ -348,7 +348,7 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
       const consumedAttachmentId = call.prepared?.attachmentId;
       if (name === "pdf_reading_process" && call.status === "completed" && consumedAttachmentId) {
         const document = this.attachment(consumedAttachmentId);
-        const artifacts = await host.api.actualArtifacts(jobs[0]!);
+        const artifacts = await host.api.actualArtifacts(jobs[0]);
         if (!artifacts.some(a => a.kind === "raw")) throw new Error("原文回读未确认；附件仍保留。");
         const binding = this.options.consume(consumedAttachmentId, document.sha256);
         if (!binding) throw new Error("附件消费未确认；请查询已有任务，不要重复提取。");

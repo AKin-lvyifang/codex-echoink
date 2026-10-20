@@ -38,9 +38,11 @@ import { FileConversationCatalog } from "../harness/pi-native/file-conversation-
 import { ProductionPiKnowledgeMaintenanceToolPort, readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
 import { rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { createHash } from "node:crypto";
-import { createApiProviderConfig, createApiProviderModelConfig, activateApiProviderModel } from "../settings/settings";
+import { createApiProviderConfig, createApiProviderModelConfig, activateApiProviderModel, DEFAULT_SETTINGS } from "../settings/settings";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 
 export async function runAgentCapabilitiesTests(root: string): Promise<void> {
+  runDesktopDirectoryCapabilityTests();
   assert.ok(root && path.basename(root).startsWith("capabilities-run-"));
   await productionSkillSelectionTests(path.join(root, "production-skill-selection"));
   await unrestrictedAgentCompatibility(path.join(root, "unrestricted-agent"));
@@ -326,6 +328,26 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.equal(hiddenRetrieval, 0);
   console.log("PASS current-task controlled identity and blocked hidden Knowledge resource path");
   await linkingWriteAndHandoffTests(path.join(root, "linking-origin"));
+}
+
+export function runDesktopDirectoryCapabilityTests(): void {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const bindings = emptyKnowledgeFolderBindings();
+  settings.knowledgeBase.folderBindings = bindings;
+  for (const [role, directory] of [["raw", "资料"], ["projects", "项目/研究"], ["journal", "日记"], ["work", "日记/旧工作"], ["archive", "日记/旧存档"]] as const) {
+    Object.assign(bindings.roles[role], { enabled: true, readPaths: [directory], writePath: directory });
+  }
+  bindings.roles.work.enabled = false;
+  settings.agentRegistry.agents.push({ id: "journal-only", name: "日记员", avatar: { kind: "default" }, position: "日记", styleId: "analysis", capabilityIds: ["journal"] },
+    { id: "knowledge-only", name: "知识员", avatar: { kind: "default" }, position: "知识", styleId: "analysis", capabilityIds: ["knowledge"] });
+  const context: AgentCapabilityContext = { settings, agentId: "journal-only", vaultRoot: "/synthetic/desktop-policy", resources: [], access: { permission: "workspace-write", mode: "agent", memoryMode: "normal" } };
+  for (const relativePath of ["日记/旧工作/day.md", "日记/旧存档/day.md"]) {
+    assert(checkAgentTool(context, "note_update", { relativePath }).allowed, "retired bindings cannot shadow the active journal scope, enabled or disabled");
+    assert.equal(checkAgentTool({ ...context, agentId: "knowledge-only" }, "note_update", { relativePath }).reason, "agent_disabled", "retired bindings cannot grant Knowledge authority over a journal");
+  }
+  assert(checkAgentTool({ ...context, agentId: "knowledge-only" }, "note_update", { relativePath: "项目/研究/a.md" }).allowed);
+  assert.equal(checkAgentTool(context, "note_update", { relativePath: "项目/研究/a.md" }).reason, "agent_disabled", "project authority stays Knowledge");
+  console.log("PASS desktop retired directory roles do not override module authorization");
 }
 
 async function productionSkillSelectionTests(root: string): Promise<void> {

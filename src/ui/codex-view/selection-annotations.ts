@@ -38,7 +38,7 @@ export function renderSelectionAnnotationSummary(host: HTMLElement, annotations:
   }
   if (actions.onRemoveAll) {
     const remove = doc.createElement("button"); remove.type = "button"; remove.className = "echoink-annotation-remove-all";
-    remove.textContent = conversationUiText(language, "移除全部", "Remove all"); remove.onclick = actions.onRemoveAll; panel.append(remove);
+    remove.textContent = conversationUiText(language, "移除全部", "Remove all"); remove.onclick = () => actions.onRemoveAll?.(); panel.append(remove);
   }
   let timer: number | undefined, timerWindow: typeof win | undefined, observer: MutationObserver | undefined, suppressed = false;
   let openDocument: Document | null = null, openWindow: typeof win | null = null, escapeScope: Scope | null = null;

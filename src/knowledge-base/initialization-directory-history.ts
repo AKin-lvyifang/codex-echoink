@@ -121,7 +121,7 @@ export class InitializationDirectoryHistory {
   async capture(jobId: string): Promise<readonly string[]> {
     if (await this.read()) return []; // Never replace the original with a later layout.
     const warnings: string[] = [];
-    const record: DirectoryHistory = { bindings: this.host.currentBindings?.() ? structuredClone(this.host.currentBindings!()!) : undefined, version: 1, createdAt: Date.now(), jobId, folders: [], files: [], createdFolders: [], pending: null };
+    const record: DirectoryHistory = { bindings: this.host.currentBindings?.() ? structuredClone(this.host.currentBindings()!) : undefined, version: 1, createdAt: Date.now(), jobId, folders: [], files: [], createdFolders: [], pending: null };
     const walk = async (parent: string): Promise<void> => {
       for (const entry of await fs.readdir(path.join(this.host.vaultRoot, parent), { withFileTypes: true })) {
         if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.isSymbolicLink()) continue;

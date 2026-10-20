@@ -108,7 +108,7 @@ export class PdfReadingPageView extends ItemView {
         if (result && typeof (result as Promise<unknown>).then === "function") {
           applyAmicroButton(button, { variant: "tertiary" });
           button.disabled = true; setAmicroButtonPending(button, true);
-          try { await result; } finally { if (button.isConnected) { button.disabled = false; setAmicroButtonPending(button, false); } }
+          try { await Promise.resolve(result); } finally { if (button.isConnected) { button.disabled = false; setAmicroButtonPending(button, false); } }
         }
       } catch (error) { new Notice(this.error(error)); }
     };

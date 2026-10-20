@@ -1,5 +1,5 @@
 import { createProductionKnowledgeLinkingService } from "./knowledge-linking-production";
-import { rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
 import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -114,9 +114,9 @@ export class EchoInkKnowledgeSurfaceService {
           const originalPaths = originalBindings?.roles[role].readPaths ?? (knowledgeRootRole(to) === role ? [to] : []);
           const eligible = (directory: string) => (directory === from || directory.startsWith(`${from}/`)) && originalPaths.includes(rebaseKnowledgePath(directory, from, to));
           restored.roles[role].readPaths = [...new Set(bindings.roles[role].readPaths.flatMap((directory) => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
-          if (bindings.roles[role].writePath && eligible(bindings.roles[role].writePath!)) restored.roles[role].writePath = rebaseKnowledgePath(bindings.roles[role].writePath!, from, to);
-          if (bindings.roles[role].autoOrganizePaths) restored.roles[role].autoOrganizePaths = [...new Set(bindings.roles[role].autoOrganizePaths!.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
-          if (bindings.roles[role].allowedSubdirectoryRoots) restored.roles[role].allowedSubdirectoryRoots = [...new Set(bindings.roles[role].allowedSubdirectoryRoots!.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
+          if (bindings.roles[role].writePath && eligible(bindings.roles[role].writePath)) restored.roles[role].writePath = rebaseKnowledgePath(bindings.roles[role].writePath, from, to);
+          if (bindings.roles[role].autoOrganizePaths) restored.roles[role].autoOrganizePaths = [...new Set(bindings.roles[role].autoOrganizePaths.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
+          if (bindings.roles[role].allowedSubdirectoryRoots) restored.roles[role].allowedSubdirectoryRoots = [...new Set(bindings.roles[role].allowedSubdirectoryRoots.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
           if (keepCurrent && restored.roles[role].readPaths.length > 1) restored.roles[role].compatibilityReadScopes = true;
         }
         if (restored.collectionTargets) for (const kind of ["web", "wechat"] as const) {
@@ -275,7 +275,8 @@ export class EchoInkKnowledgeSurfaceService {
   }
 
   folderNameScopes(): string[] {
-    return [...new Set(Object.values(this.plugin.settings.knowledgeBase.folderBindings?.roles ?? {}).flatMap(binding => binding.enabled ? binding.readPaths : []))].filter(directory => this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder);
+    const bindings = this.plugin.settings.knowledgeBase.folderBindings;
+    return [...new Set(bindings ? DESKTOP_KNOWLEDGE_ROOT_ROLES.flatMap(role => bindings.roles[role].enabled ? bindings.roles[role].readPaths : []) : [])].filter(directory => this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder);
   }
 
   async previewFolderNames(scopes: readonly string[]): Promise<KnowledgeFolderNamePreview> {
@@ -537,8 +538,8 @@ export class EchoInkKnowledgeSurfaceService {
     this.plugin.settings.englishDiary?.legacyEnglishDirectories?.forEach(protect);
     this.plugin.settings.englishDiary?.legacyExpressionDirectories?.forEach(protect);
     protect(this.plugin.settings.pdfReading?.originalDirectory);
-    for (const directory of Object.values(options.moduleDirectories ?? {})) {
-      if (!directory.trim()) continue;
+    for (const directory of Object.values<unknown>({ ...options.moduleDirectories })) {
+      if (typeof directory !== "string" || !directory.trim()) continue;
       try { protect(normalizeKnowledgeDirectory(directory)); } catch { /* The plan reports invalid selections. */ }
     }
     protect(this.plugin.settings.journalDirectory);
@@ -560,7 +561,7 @@ export class EchoInkKnowledgeSurfaceService {
         if (base && isEchoInkFinanceBase(await vault.cachedRead(base))) protect(file.path.slice(0, -"/ledger.base".length));
       }
     }
-    const plan = await previewKnowledgeDirectoryPlan({ baseRevision: baseline?.revision ?? 0, baseline, baseSettingsSignature, wikiChanged: options.wikiChanged, moduleDirectories: options.moduleDirectories, mode: options.mode, bindings, createPaths, files, protectedPaths: [...protectedPaths],
+    const plan = await previewKnowledgeDirectoryPlan({ roleScope: DESKTOP_KNOWLEDGE_ROOT_ROLES, baseRevision: baseline?.revision ?? 0, baseline, baseSettingsSignature, wikiChanged: options.wikiChanged, moduleDirectories: options.moduleDirectories, mode: options.mode, bindings, createPaths, files, protectedPaths: [...protectedPaths],
       kind: async (relative) => {
         if (await knowledgeInitializationPathHasSymbolicLink(vaultRoot, relative, true)) return "other";
         const file = vault.getAbstractFileByPath(relative);
@@ -597,17 +598,19 @@ export class EchoInkKnowledgeSurfaceService {
     return await this.withStructureMutation(async () => {
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
       if (previous && next.revision !== previous.revision) throw new Error("目录配置已改变，请重新选择。");
+      for (const role of KNOWLEDGE_ROOT_ROLES) if (!DESKTOP_KNOWLEDGE_ROOT_ROLES.includes(role) && previous) next.roles[role] = structuredClone(previous.roles[role]);
       const baseSignature = knowledgeFolderBindingsSignature(previous);
       const exclusions = knowledgeInboxRecallExclusions(previous, next);
       if (exclusions.length || next.inboxRecallExclusions) next.inboxRecallExclusions = exclusions;
-      const oldIssues = new Set(previous ? knowledgeFolderIssues(previous) : []);
-      const issues = knowledgeFolderIssues(next).filter(issue => !oldIssues.has(issue));
+      const oldIssues = new Set(previous ? knowledgeFolderIssues(previous, DESKTOP_KNOWLEDGE_ROOT_ROLES) : []);
+      const issues = knowledgeFolderIssues(next, DESKTOP_KNOWLEDGE_ROOT_ROLES).filter(issue => !oldIssues.has(issue));
       if (options.wikiChanged) issues.push(...knowledgeWikiFolderSelectionIssues(next));
       if (issues.length) throw new Error(issues.join("；"));
       const checkPaths = new Set<string>();
-      for (const [role, binding] of Object.entries(next.roles)) {
+      for (const role of DESKTOP_KNOWLEDGE_ROOT_ROLES) {
+        const binding = next.roles[role];
         if (!binding.enabled || (binding.native && ["journal", "templates"].includes(role))) continue;
-        const before = previous?.roles[role as keyof KnowledgeFolderBindings["roles"]];
+        const before = previous?.roles[role];
         const newlyEnabled = !before?.enabled || (binding.searchEnabled !== false && before.searchEnabled === false);
         const newChildApproval = binding.allowedSubdirectories.some(child => !before?.allowedSubdirectories.includes(child));
         const newAgentApproval = next.allowAgentSubfolders === true && previous?.allowAgentSubfolders !== true && ["wiki", "projects"].includes(role);
@@ -935,6 +938,8 @@ export function createKnowledgeInitializationHost(
   return {
     vaultRootPath,
     privateRootPath,
+    roleScope: DESKTOP_KNOWLEDGE_ROOT_ROLES,
+    folderBindings: () => plugin.settings.knowledgeBase.folderBindings,
     resolvePath: (relative) => resolveKnowledgePath(vaultRootPath, relative),
     now: Date.now,
     async listVaultFiles(): Promise<readonly KnowledgeInitializationVaultFile[]> {

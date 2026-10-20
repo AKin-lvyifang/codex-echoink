@@ -34,6 +34,7 @@ export function resolveDesktopSettingsRoute(
   options: { focus?: string; resourceTab?: ResourceManagementTab; resourceId?: string } = {}
 ): DesktopSettingsRoute {
   const focus = options.focus ?? "";
+  if (focus.replace(/^explicit:/u, "") === "knowledge:provider") return { tab: "models", focus: "models:default" };
   const extra = { ...(focus ? { focus } : {}), ...(options.resourceId ? { resourceId: options.resourceId } : {}) };
   if (legacyTab === "agents" || legacyTab === "providers") {
     return { tab: /tavily|tools/iu.test(focus) ? "capabilities" : "models", ...(/tavily|tools/iu.test(focus) ? { capabilityTab: "tools" as const } : {}), ...extra };
@@ -56,6 +57,7 @@ export function resolveDesktopSettingsSearchRoute(tab: DesktopSettingsTab, query
     if (/skills?|技能/iu.test(term)) return { tab, capabilityTab: "skills" };
   }
   if (tab === "modules") {
+    if (/移动端英文日记快捷入口|首页快捷入口|home.*shortcut|english.*diary.*shortcut/iu.test(term)) return { tab, focus: "english-diary:home-shortcut" };
     if (/日记模板|journal.*template|template.*journal|导入.*模板/iu.test(term)) return { tab, focus: "journal:templates" };
     if (/待办分类|todo.*categor/iu.test(term)) return { tab, focus: "todo:categories" };
     if (/资料来源|raw.*source|sources?/iu.test(term)) return { tab, focus: "knowledge:sources" };

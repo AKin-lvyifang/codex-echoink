@@ -1374,10 +1374,10 @@ async function imageCapabilityPreflightPreservesCompletedTurn(): Promise<void> {
 }
 
 function emptyPersonalMemorySourceDisplayDoesNotClaimInjection(): void {
-  assert.equal(personalMemorySourceCountLabel(0), "Personal Memory 来源");
+  assert.equal(personalMemorySourceCountLabel(0), "个人记忆");
   assert.equal(
     personalMemorySourceEmptyStateLabel(),
-    "未记录可展示的 Personal Memory 来源。"
+    "未记录可展示的个人记忆。"
   );
   assert.doesNotMatch(
     `${personalMemorySourceCountLabel(0)} ${personalMemorySourceEmptyStateLabel()}`,
@@ -1505,7 +1505,7 @@ function composerModelLabelsOnlyRemoveKnownBrandPrefixes(): void {
 
 async function messageActionContractsStayTruthful(): Promise<void> {
   assert.equal(piConversationDeriveActionLabel({ role: "user" }), null);
-  assert.equal(piConversationDeriveActionLabel({ role: "assistant" }), "从这条回复新建会话");
+  assert.equal(piConversationDeriveActionLabel({ role: "assistant" }), "从这里另开对话");
 
   let copiedText = "";
   const success = await copyAnswerMarkdown(
@@ -2153,26 +2153,43 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
 
   await emit(listener, runtimeEvent({
     type: "provider_reasoning_start",
+    messageKey: "assistant-reasoning-empty",
+    reasoningId: "reasoning-turn-runner-empty"
+  }));
+  assert.ok(virtualListEl.findByClass("codex-ai-elements-reasoning"),
+    "running empty Reasoning keeps its progress disclosure visible");
+  await emit(listener, runtimeEvent({
+    type: "provider_reasoning_end",
+    messageKey: "assistant-reasoning-empty",
+    reasoningId: "reasoning-turn-runner-empty",
+    text: "",
+    status: "completed"
+  }));
+  assert.equal(virtualListEl.findByClass("codex-ai-elements-reasoning"), null,
+    "empty completed Reasoning under two seconds stays hidden without public content");
+
+  await emit(listener, runtimeEvent({
+    type: "provider_reasoning_start",
     messageKey: "assistant-reasoning-1",
     reasoningId: "reasoning-turn-runner-1"
   }));
-  const fullRenderCountAfterReasoningTopology = virtualListEl.emptyCallCount;
   const reasoningRoot = virtualListEl.findByClass("codex-ai-elements-reasoning");
-  assert.ok(reasoningRoot, "the first real Reasoning event creates the required topology");
+  assert.ok(reasoningRoot, "Reasoning start creates its running progress disclosure");
   await emit(listener, runtimeEvent({
     type: "provider_reasoning_delta",
     messageKey: "assistant-reasoning-1",
     reasoningId: "reasoning-turn-runner-1",
     textDelta: "真实公开推理增量"
   }));
+  const fullRenderCountAfterReasoningTopology = virtualListEl.emptyCallCount;
+  assert.equal(virtualListEl.findByClass("codex-ai-elements-reasoning"), reasoningRoot,
+    "the first public Reasoning text updates the existing running disclosure");
   assert.equal(
     renderedIncrementalMessages.at(-1)?.assistantTurn
-      ?.providerReasoningSegments?.[0]?.text,
+      ?.providerReasoningSegments?.find((segment) => segment.reasoningId === "reasoning-turn-runner-1")?.text,
     "真实公开推理增量",
     "production reasoning delta passes its changed Assistant Turn carrier to the local updater"
   );
-  assert.equal(virtualListEl.emptyCallCount, fullRenderCountAfterReasoningTopology,
-    "a reasoning delta reaches message-controller and tryUpdateMessage without clearing the virtual list");
   assert.equal(virtualListEl.findByClass("codex-ai-elements-reasoning"), reasoningRoot,
     "the Reasoning DOM keeps identity after its first production delta");
   const reasoningBody = reasoningRoot!.findByClass("codex-ai-elements-reasoning-content");

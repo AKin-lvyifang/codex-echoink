@@ -1,14 +1,17 @@
-import { mkdir, mkdtemp, realpath, rm, rmdir } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const fixture = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台改版-20261017"));
-const fixtureRoot = path.join(fixture, ".p5-signal-tests");
-await mkdir(fixtureRoot, { recursive: true });
-const runRoot = await mkdtemp(path.join(fixtureRoot, "workbench-launcher-"));
+const temporaryVaults = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
+const fixture = await realpath(process.env.ECHOINK_WORKBENCH_TEST_ROOT?.trim() || path.join(temporaryVaults, "工作台改版-20261017"));
+const relativeFixture = path.relative(temporaryVaults, fixture);
+if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture) || !(await stat(fixture)).isDirectory()) {
+  throw new Error("Workbench launcher fixtures must use an existing directory inside EchoInk-TestVaults/90-任务临时");
+}
+const runRoot = await mkdtemp(path.join(fixture, ".workbench-launcher-tests-"));
 try {
   const output = path.join(runRoot, "workbench-launcher.mjs");
   await esbuild.build({ stdin: { contents: `import { runWorkbenchLauncherTests } from "./src/tests/workbench-launcher"; await runWorkbenchLauncherTests(${JSON.stringify(runRoot)});`, resolveDir: root, loader: "ts" },
@@ -26,5 +29,4 @@ try {
   process.exitCode = result.status ?? 1;
 } finally {
   await rm(runRoot, { recursive: true, force: true });
-  await rmdir(fixtureRoot).catch(error => { if (error.code !== "ENOTEMPTY" && error.code !== "ENOENT") throw error; });
 }

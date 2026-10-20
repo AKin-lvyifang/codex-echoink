@@ -47,6 +47,7 @@ try {
     plugins: [{ name: "unrelated-view-shells", setup(build) {
       build.onResolve({ filter: /^[^./]/ }, args => {
         if (args.path === "obsidian") return { path: path.join(root, "src/tests/obsidian-shim.ts") };
+        if (args.path === "electron") return { path: args.path, external: true };
         const resolved = import.meta.resolve(args.path);
         return { path: resolved.startsWith("node:") ? resolved : fileURLToPath(resolved), external: true };
       });
@@ -57,7 +58,7 @@ try {
         return { path: args.path, namespace: "p6-view-shell" };
       });
       build.onLoad({ filter: /.*/, namespace: "p6-view-shell" }, () => ({ contents: `
-        export class EchoInkHomeView {} export class EchoInkLegacyHomeView {}
+        export class EchoInkHomeView {}
         export class EchoInkWorkbenchView {} export class ReviewPreviewView {} export class CodexView {}
         export const VIEW_TYPE_ECHOINK_HOME = "echoink-home";
         export const VIEW_TYPE_REVIEW_PREVIEW = "echoink-review-preview";

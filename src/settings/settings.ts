@@ -281,14 +281,9 @@ export const DEFAULT_ECHOINK_WELCOME_TITLE = "What's new?";
 export const DEFAULT_ECHOINK_WELCOME_SUBTITLE =
   "当前 Conversation 需要先选择工作区；添加笔记只作为本轮上下文。";
 
-export interface EchoInkWelcomeCopy {
-  readonly title: string;
-  readonly subtitle: string;
-}
-
 export interface EchoInkMemorySettings {
   useLongTermMemory: boolean;
-  /** Dream scheduler: offline memory consolidation (anchor expansion + personality signal extraction). */
+  /** Dream scheduler: offline memory consolidation (anchor expansion + user-profile signal extraction). */
   dreamEnabled: boolean;
   /** Number of dream runs per day (1-6). */
   dreamRunsPerDay: number;
@@ -849,24 +844,6 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
       || JSON.stringify(data.agentRegistry) !== JSON.stringify(settings.agentRegistry)
       || JSON.stringify(data.taskWorkspace) !== JSON.stringify(settings.taskWorkspace)
   };
-}
-
-export function resolveEchoInkWelcomeCopy(
-  settings: Pick<
-    CodexForObsidianSettings,
-    "customWelcomeEnabled" | "customWelcomeTitle" | "customWelcomeSubtitle"
-  >
-): Readonly<EchoInkWelcomeCopy> {
-  if (!settings.customWelcomeEnabled) {
-    return Object.freeze({
-      title: DEFAULT_ECHOINK_WELCOME_TITLE,
-      subtitle: DEFAULT_ECHOINK_WELCOME_SUBTITLE
-    });
-  }
-  return Object.freeze({
-    title: settings.customWelcomeTitle.trim() || DEFAULT_ECHOINK_WELCOME_TITLE,
-    subtitle: settings.customWelcomeSubtitle.trim() || DEFAULT_ECHOINK_WELCOME_SUBTITLE
-  });
 }
 
 function hasRetiredSettingsData(data: Record<string, unknown>): boolean {
