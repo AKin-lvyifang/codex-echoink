@@ -54,5 +54,49 @@ export function projectGenerationEntries(messages: ChatMessage[], entries: reado
       if (final >= 0) projected.splice(final, 0, stage); else projected.push(stage);
     }
   }
-  return projected;
+  return positionGenerationMessages(projected);
+}
+
+export function isGenerationProgressMessage(message: Pick<ChatMessage, "id" | "itemType">): boolean {
+  return message.itemType === "generationProgress" || message.itemType === "dynamicToolCall" && message.id.startsWith("generation:") && message.id.includes(":tool:generation-");
+}
+export function generationProgressStage(message: Pick<ChatMessage, "id" | "itemType">): GenerationStage | undefined {
+  if (!isGenerationProgressMessage(message)) return undefined;
+  if (message.itemType === "dynamicToolCall") return "approval";
+  const stage = message.id.split(":").at(-1);
+  return stage && stage in GENERATION_STAGE_TITLES ? stage as GenerationStage : undefined;
+}
+export function generationProgressTitle(message: ChatMessage): string {
+  const stage = generationProgressStage(message);
+  return stage ? GENERATION_STAGE_TITLES[stage] : message.title ?? "生成资料";
+}
+/** A replayed user event replaces the accepted seed. Keep its generation
+ * members after it so the ordinary Assistant Turn grouping has no user gap. */
+export function positionGenerationMessages(messages: ChatMessage[], targetRunId?: string): ChatMessage[] {
+  const runs = new Set(messages.filter(message => (!targetRunId || message.runId === targetRunId)
+    && (message.generationRequest || message.generationResult || isGenerationProgressMessage(message))).map(message => message.runId).filter((id): id is string => Boolean(id)));
+  for (const runId of runs) {
+    const user = messages.find(message => message.role === "user" && message.runId === runId);
+    if (!user) continue;
+    const members = messages.filter(message => message.runId === runId && message.role !== "user");
+    if (!members.length) continue;
+    const retained = messages.filter(message => message.runId !== runId || message.role === "user");
+    retained.splice(retained.indexOf(user) + 1, 0, ...members);
+    messages.splice(0, messages.length, ...retained);
+  }
+  return messages;
+}
+/** Display-only conversion; authorization strings and decision binding stay untouched. */
+export function generationApprovalPresentation(target?: string, preview?: string): { target?: string; preview?: string } {
+  let readableTarget = target, readablePreview = preview;
+  try {
+    const value = JSON.parse(target ?? "") as { relativePath?: unknown };
+    if (typeof value?.relativePath === "string") readableTarget = value.relativePath;
+  } catch { /* An already readable path remains literal. */ }
+  try {
+    const value = JSON.parse(preview ?? "") as { content?: unknown; change?: { diff?: unknown; truncated?: unknown } };
+    if (typeof value?.change?.diff === "string") readablePreview = value.change.diff + (value.change.truncated === true ? "\n差异预览已截短。" : "");
+    else if (typeof value?.content === "string") readablePreview = value.content;
+  } catch { /* An already readable preview remains literal. */ }
+  return { target: readableTarget, preview: readablePreview };
 }

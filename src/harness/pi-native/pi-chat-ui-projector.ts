@@ -1,4 +1,4 @@
-import { projectGenerationEntries, generationStageMessage } from "../../generation/projection";
+import { projectGenerationEntries, generationStageMessage, positionGenerationMessages } from "../../generation/projection";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { selectionAnnotationsFromPiContext } from "./pi-selection-annotations";
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
@@ -566,7 +566,7 @@ export class PiChatUiProjector {
         this.projectProductSettlement(view, scope, event.terminalState, event.occurredAt);
         break;
     }
-    view.messages = positionReasoningMessages(dedupeMessages(view.messages));
+    view.messages = positionReasoningMessages(positionGenerationMessages(dedupeMessages(view.messages), event.productRunId));
     view.provisionalMessageIds = uniqueStrings(view.provisionalMessageIds);
     view.pendingToolCallIds = uniqueStrings(view.pendingToolCallIds);
     applyToolProductStates(view, input);
@@ -622,7 +622,7 @@ export class PiChatUiProjector {
         current.pendingInteraction
       );
     }
-    rebuilt.messages = dedupeMessages(rebuilt.messages);
+    rebuilt.messages = positionReasoningMessages(positionGenerationMessages(dedupeMessages(rebuilt.messages)));
     applyToolProductStates(rebuilt, input);
     this.applyReliableToolTimes(rebuilt);
     return rebuilt;

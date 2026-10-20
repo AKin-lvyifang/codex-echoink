@@ -1,3 +1,4 @@
+import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
 import { renderGenerationRequestSummary, renderGenerationResultCard } from "../../generation/message-ui";
 import type CodexForObsidianPlugin from "../../main";
 import { knowledgeLinkingProgressText } from "./knowledge-linking-progress";
@@ -938,7 +939,8 @@ export class CodexMessageListRenderer {
       if (icon) setSemanticIcon(icon, node.kind === "artifact" && node.status === "completed"
         && produced.length && produced.every((path) => path.endsWith(".canvas")) ? "layout-dashboard" : assistantTurnNodeIcon(node));
       const title = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-title");
-      if (title && title.textContent !== node.title) title.setText(node.title);
+      const displayedTitle = nodeSource && isGenerationProgressMessage(nodeSource) ? generationProgressTitle(nodeSource) : node.title;
+      if (title && title.textContent !== displayedTitle) title.setText(displayedTitle);
       const summary = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-summary");
       if (summary && node.summary !== undefined && summary.textContent !== node.summary) {
         summary.setText(node.summary);
@@ -2453,7 +2455,7 @@ export class CodexMessageListRenderer {
     node: Readonly<EchoInkTurnProcessNode>
   ): void {
     const message = actionMessageForProcessNode(turn, node);
-    if (!message) {
+    if (!message || isGenerationProgressMessage(message)) {
       this.renderAssistantTurnProcessNode(container, turn, node);
       return;
     }
@@ -2546,16 +2548,20 @@ export class CodexMessageListRenderer {
       attr: { "aria-hidden": "true" }
     });
     const source = node.sourceMessageId ? turn.messages.find((message) => message.id === node.sourceMessageId) : undefined;
+    const generationStage = source ? generationProgressStage(source) : undefined;
+    if (generationStage) row.dataset.nodeStatus = node.status;
     const paths = source ? knowledgeUsageMessageData(source).producedPaths : [];
-    setSemanticIcon(icon, node.kind === "artifact" && node.status === "completed" && paths.length && paths.every((path) => path.endsWith(".canvas"))
-      ? "layout-dashboard" : assistantTurnNodeIcon(node));
+    const generationIcon = generationStage && node.status === "completed"
+      ? ({ reading: "file-text", writing: "file-text", layout: "layout-dashboard", approval: "hand", saving: "file-plus" } as const)[generationStage] : undefined;
+    setSemanticIcon(icon, generationIcon ?? (node.kind === "artifact" && node.status === "completed" && paths.length && paths.every((path) => path.endsWith(".canvas"))
+      ? "layout-dashboard" : assistantTurnNodeIcon(node)));
 
     const content = row.createDiv({ cls: "codex-assistant-turn-node-content" });
     const heading = content.createDiv({ cls: "codex-assistant-turn-node-heading" });
     const title = heading.createSpan({
       cls: "codex-assistant-turn-node-title",
-      text: node.title,
-      attr: { title: node.title }
+      text: source && generationStage ? generationProgressTitle(source) : node.title,
+      attr: { title: source && generationStage ? generationProgressTitle(source) : node.title }
     });
     if (node.status === "running") {
       title.setAttribute("aria-label", `${node.title}, ${this.copy().process.nodeStatus(node.status)}`);
@@ -2581,6 +2587,10 @@ export class CodexMessageListRenderer {
       ? turn.messages.find((message) => message.id === node.sourceMessageId)
       : undefined;
     if (!source) return;
+    if (isGenerationProgressMessage(source)) {
+      if (node.status === "waiting") this.renderApprovalCard(container, source);
+      return;
+    }
     if (node.nodeId.startsWith("process-activity:")) {
       const usage = mergeKnowledgeUsageMessageData(turn.messages);
       const documents = localDocumentSources(undefined, usage).filter((document) =>
@@ -3236,10 +3246,11 @@ export class CodexMessageListRenderer {
     const state = approvalStateForMessage(message)
       ?? (binding ? "waiting_approval" : null);
     if (!state) return;
+    const rawPresentation = { target: message.approval?.target || binding?.target, preview: message.approval?.preview || binding?.preview };
+    const presentation = isGenerationProgressMessage(message) ? generationApprovalPresentation(rawPresentation.target, rawPresentation.preview) : rawPresentation;
     const elements = createSmoothAIApprovalCard(container, {
       state,
-      target: message.approval?.target || binding?.target,
-      preview: message.approval?.preview || binding?.preview,
+      ...presentation,
       ...(binding?.deleteAction === true ? { deleteAction: true } : {}),
       controlled: state === "waiting_approval" && Boolean(binding),
       language: env.settingsLanguage
