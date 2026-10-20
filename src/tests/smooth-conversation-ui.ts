@@ -527,13 +527,13 @@ async function assertAnswerSaveUiContracts(): Promise<void> {
 }
 
 function assertWorkRecordProjectionContracts(): void {
-  const project = (activity: EchoInkReasoningActivity) => {
+  const project = (activity: EchoInkReasoningActivity, results: ChatMessage[] = []) => {
     const messages: ChatMessage[] = [{ id: "record-user", role: "user", text: "问题", createdAt: 1 }, {
       id: "record-process", role: "assistant", itemType: "reasoning", text: "", status: activity.status === "active" ? "running" : "completed",
       runId: "record-run", createdAt: 1,
       reasoningSummary: { schemaVersion: 1, conversationId: "record", piSessionId: "pi-record", productRunId: "record-run",
         status: activity.status === "active" ? "running" : "completed", startedAt: 1, updatedAt: activity.updatedAt, activities: [activity] }
-    }];
+    }, ...results];
     const projection = buildAgentTurnProjection(messages)[1];
     assert.equal(projection?.kind, "assistantTurn");
     return projection.kind === "assistantTurn" ? projection.turn : assert.fail("missing turn");
@@ -549,6 +549,19 @@ function assertWorkRecordProjectionContracts(): void {
   assert.equal(waiting.processNodes[0]?.title, "等待模型响应");
   assert.equal(waiting.processNodes[0]?.summary, "6 秒");
   assert.equal(project({ ...base, id: "provider", kind: "provider", status: "failed" }).processNodes[0]?.status, "failed");
+  const failure = new PiChatUiProjector().projectSessionBranch({
+    piSessionId: "provider-failed", activeLeafId: "failed-answer", entries: [{
+      type: "message", id: "failed-answer", parentId: null, timestamp: "2026-10-20T00:00:00Z",
+      message: { role: "assistant", stopReason: "error", errorMessage: "provider_auth_failed",
+        content: [{ type: "text", text: "sk-RAW_PROVIDER_RESPONSE_MUST_STAY_PRIVATE" }] }
+    }]
+  }).messages.find(message => message.itemType === "error")!;
+  failure.runId = "record-run";
+  const failed = project({ ...base, id: "provider", kind: "provider", status: "failed" }, [failure]);
+  const providerNode = failed.processNodes.find(node => node.title === "等待模型响应")!;
+  assert.equal(providerNode.summary, failure.details, "the failed wait node repeats the safe authentication reason, not partial model output");
+  assert.match(providerNode.summary!, /API Key 无效或未填写/u);
+  assert.equal(providerNode.summary!.includes("sk-RAW_PROVIDER_RESPONSE"), false);
 }
 
 function assertSourceLineRangeContracts(): void {

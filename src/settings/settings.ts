@@ -189,6 +189,8 @@ export interface ChatMessageApprovalSnapshot {
 import type { SelectionAnnotation } from "../types/selection-annotations";
 
 export interface ChatMessage {
+  /** Manual save receipt projected from this conversation's durable Pi Session. */
+  savedNotePath?: string;
   generationRequest?: import("../generation/types").GenerationRequest;
   generationResult?: import("../generation/types").GenerationResult;
   id: string;

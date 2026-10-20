@@ -113,6 +113,7 @@ import type {
   PiNativeConversationRecoveryResult,
   RecoverPiNativeConversationInput
 } from "./harness/pi-native/pi-native-conversation-runtime";
+import { recordDurablePiAnswerSave } from "./harness/pi-native/pi-native-conversation-runtime";
 import { createPiLocalConversation } from "./harness/pi-native/pi-local-data-service";
 import {
   createPiProductionModelDefinition,
@@ -993,6 +994,22 @@ export default class CodexForObsidianPlugin extends Plugin {
   ): Promise<PiConversationSupportState> {
     return await (await this.ensurePiLocalData())
       .readConversationSupportState(conversationId);
+  }
+  async recordPiAnswerSave(conversationId: string, messageId: string, path: string): Promise<void> {
+    const recording = this.piConversationActivationLane.then(async () => {
+      if (this.piRuntimeBundle) {
+        await this.piRuntimeBundle.runtime.recordAnswerSave(conversationId, messageId, path);
+        return;
+      }
+      const localData = await this.ensurePiLocalData();
+      await recordDurablePiAnswerSave({
+        catalog: localData.catalog, sessionApi: localData.sessionApi, conversationId, messageId, path,
+        resolveConversationCwd: () => this.settings.sessions.find(session => session.id === conversationId)?.cwd
+          || localData.vaultRootPath
+      });
+    });
+    this.piConversationActivationLane = recording.catch(() => undefined);
+    await recording;
   }
   async discardPiConversationDraft(
     conversationId: string,

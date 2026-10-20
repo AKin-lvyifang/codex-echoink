@@ -1,4 +1,5 @@
 import { projectGenerationEntries, generationStageMessage, positionGenerationMessages } from "../../generation/projection";
+import { savedAnswerNotePaths } from "./pi-answer-save";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { selectionAnnotationsFromPiContext } from "./pi-selection-annotations";
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
@@ -443,6 +444,7 @@ export class PiChatUiProjector {
       updatedAt
     };
     applyToolProductStates(view, input);
+    projectSavedAnswerNotes(view.messages, input.entries, piSessionId);
     this.applyReliableToolTimes(view);
     return view;
   }
@@ -2799,6 +2801,20 @@ export function piEntryIdFromProjectedMessageId(
 ): string | undefined {
   const identity = projectionIdentity(messageId);
   return identity?.kind === "entry" ? identity.value : undefined;
+}
+
+export function projectSavedAnswerNotes(
+  messages: ChatMessage[],
+  entries: readonly PiSessionBranchEntryView[],
+  piSessionId: string
+): void {
+  const paths = savedAnswerNotePaths(entries, piSessionId);
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    const entryId = piEntryIdFromProjectedMessageId(message.id);
+    const path = entryId && paths.get(entryId);
+    if (path) message.savedNotePath = path;
+  }
 }
 
 export function piToolCallIdFromProjectedMessageId(

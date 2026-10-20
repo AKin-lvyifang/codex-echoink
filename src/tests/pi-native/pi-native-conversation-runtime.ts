@@ -72,6 +72,7 @@ import type {
   PiChatPreparedImage,
   PiChatSubmitRequest,
   PiChatRuntimeEvent,
+  PiConversationProjection,
   PiKnowledgeRuntimePort,
   PiKnowledgeReference
 } from "../../harness/pi-native/contracts";
@@ -126,6 +127,8 @@ import {
   type EchoInkReasoningSummarySnapshot
 } from "../../types/reasoning-summary";
 import { stableHashedIdentity } from "../../core/mapping";
+import { PI_ANSWER_SAVE_ENTRY_TYPE } from "../../harness/pi-native/pi-answer-save";
+import { piEntryIdFromProjectedMessageId } from "../../harness/pi-native/pi-chat-ui-projector";
 
 const API: PiSessionManagerApi = {
   codingAgentVersion: VERSION,
@@ -143,6 +146,120 @@ export async function runPiWorkRecordProjectionTests(): Promise<void> {
   await assertKnowledgeObservationAndProgressArePrivacySafe();
   await assertWorkRecordMetadataSurvivesRuntimePrivacyFiltering();
   await assertSlowProviderWaitRefreshesAndStops();
+}
+
+export async function runPiAnswerSaveStateTests(): Promise<void> {
+  await withFixture(["save-first", "save-second"], async fixture => {
+    const conversationId = "answer-save-state";
+    await fixture.runtime.createConversation({ conversationId, title: "存为笔记", cwd: fixture.root });
+    await fixture.runtime.activateConversation(conversationId);
+    const first = await fixture.submit({ conversationId, text: "第一问", permission: "read-only", submittedAt: 1 });
+    fixture.latestSession().finishSuccessful("第一条回答");
+    await first.result;
+    const initial = await fixture.runtime.readProjection(conversationId);
+    const answer = initial.messages.find(message => message.role === "assistant" && message.text === "第一条回答")!;
+    assert.ok(answer);
+    assert.equal(answer.savedNotePath, undefined, "older sessions need no migration");
+
+    const second = await fixture.submit({ conversationId, text: "第二问", permission: "read-only", submittedAt: 2 });
+    await fixture.runtime.recordAnswerSave(conversationId, answer.id, "outputs/摘录/第一问.md");
+    assert.equal((await fixture.runtime.readProjection(conversationId)).messages.find(message =>
+      piEntryIdFromProjectedMessageId(message.id) === piEntryIdFromProjectedMessageId(answer.id))?.savedNotePath,
+    "outputs/摘录/第一问.md", "an older answer can be saved while another turn is running");
+    fixture.latestSession().finishSuccessful("第二条回答");
+    await second.result;
+    const warm = await fixture.runtime.readProjection(conversationId);
+    const secondAnswer = warm.messages.find(message => message.role === "assistant" && message.text === "第二条回答")!;
+    await fixture.runtime.releaseConversation(conversationId);
+    const activations = fixture.sessions.length;
+    fixture.failNextActivation(new Error("save receipt must not initialize an AgentSession"));
+    await fixture.runtime.recordAnswerSave(conversationId, secondAnswer.id, "outputs/摘录/第二问.md");
+    const readCold = () => readDurablePiConversationProjection({
+      catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId,
+      resolveConversationCwd: () => fixture.root
+    });
+    const cold = await readCold();
+    const reopenedFirst = cold.messages.find(message => message.text === "第一条回答")!;
+    assert.notEqual(reopenedFirst.id, answer.id, "the leaf changes when the receipt is appended");
+    assert.equal(reopenedFirst.savedNotePath, "outputs/摘录/第一问.md");
+    assert.equal(cold.messages.find(message => message.text === "第二条回答")?.savedNotePath, "outputs/摘录/第二问.md");
+    await fixture.runtime.recordAnswerSave(conversationId, reopenedFirst.id, "outputs/摘录/第一问.md");
+    assert.equal(fixture.sessions.length, activations, "offline saves never activate a Provider runtime");
+    const catalog = await fixture.catalog.get(conversationId);
+    const lines = (await readFile(catalog!.sessionFile!, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.equal(lines.filter(entry => entry.customType === PI_ANSWER_SAVE_ENTRY_TYPE).length, 2,
+      "repeated receipt writes do not create duplicate entries");
+    assert.equal(cold.messages.some(message => message.text.includes(PI_ANSWER_SAVE_ENTRY_TYPE)), false);
+    await createPiLocalConversation({ catalog: fixture.catalog, sessionApi: API },
+      { conversationId: "answer-save-other", title: "另一对话", cwd: fixture.root });
+    await assert.rejects(fixture.runtime.recordAnswerSave("answer-save-other", answer.id, "outputs/摘录/错误.md"), /原回答/u);
+    assert.equal((await readCold()).messages.find(message => message.text === "第一条回答")?.savedNotePath,
+      "outputs/摘录/第一问.md");
+  });
+  await assertAnswerSaveActivationSerialization();
+  console.log("PASS answer-save state: active and offline Session receipts, changed-leaf cold reopen, read-only, idempotence and conversation isolation");
+}
+
+export async function withPiAnswerSaveUiFixture(run: (fixture: {
+  message: import("../../settings/settings").ChatMessage;
+  runtime: PiNativeConversationRuntime;
+  localData: { catalog: FileConversationCatalog; sessionApi: PiSessionManagerApi; vaultRootPath: string };
+  conversationId: string;
+  readCold(): Promise<PiConversationProjection>;
+}) => Promise<void>): Promise<void> {
+  await withFixture(["save-ui"], async fixture => {
+    const conversationId = "answer-save-ui-integration";
+    await fixture.runtime.createConversation({ conversationId, title: "保存入口", cwd: fixture.root });
+    await fixture.runtime.activateConversation(conversationId);
+    const handle = await fixture.submit({ conversationId, text: "保存这条回答", submittedAt: 1 });
+    fixture.latestSession().finishSuccessful("真实会话中的回答"); await handle.result;
+    const message = (await fixture.runtime.readProjection(conversationId)).messages.find(message => message.text === "真实会话中的回答")!;
+    await fixture.runtime.releaseConversation(conversationId);
+    await run({ message, runtime: fixture.runtime, conversationId,
+      localData: { catalog: fixture.catalog, sessionApi: API, vaultRootPath: fixture.root },
+      readCold: () => readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns,
+        sessionApi: API, conversationId, resolveConversationCwd: () => fixture.root }) });
+  });
+}
+
+async function assertAnswerSaveActivationSerialization(): Promise<void> {
+  for (const order of ["activation-first", "save-first"] as const) {
+    await withFixture([`save-race-${order}`], async fixture => {
+      const conversationId = `save-race-${order}`;
+      await fixture.runtime.createConversation({ conversationId, title: "保存竞态", cwd: fixture.root });
+      await fixture.runtime.activateConversation(conversationId);
+      const handle = await fixture.submit({ conversationId, text: "问题", submittedAt: 1 });
+      fixture.latestSession().finishSuccessful("回答"); await handle.result;
+      const message = (await fixture.runtime.readProjection(conversationId)).messages.find(message => message.text === "回答")!;
+      await fixture.runtime.releaseConversation(conversationId);
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const originalGet = fixture.catalog.get.bind(fixture.catalog);
+      let gets = 0;
+      if (order === "activation-first") {
+        const options = (fixture.runtime as unknown as { options: PiNativeConversationRuntimeOptions }).options;
+        const create = options.createAgentSession;
+        let entered!: () => void;
+        const atFactory = new Promise<void>(resolve => { entered = resolve; });
+        options.createAgentSession = async input => { entered(); await gate; return await create(input); };
+        const activating = fixture.runtime.activateConversation(conversationId);
+        await atFactory;
+        fixture.catalog.get = async id => { gets++; return await originalGet(id); };
+        const recording = fixture.runtime.recordAnswerSave(conversationId, message.id, "outputs/摘录/竞态.md");
+        assert.equal(gets, 0, "save waits for activation and reuses its already-open manager");
+        release(); await activating; await recording;
+      } else {
+        fixture.catalog.get = async id => { gets++; if (gets === 1) await gate; return await originalGet(id); };
+        const recording = fixture.runtime.recordAnswerSave(conversationId, message.id, "outputs/摘录/竞态.md");
+        const activating = fixture.runtime.activateConversation(conversationId);
+        assert.equal(gets, 1, "activation waits while the offline receipt owns session preparation");
+        release(); await recording; await activating;
+      }
+      assert.equal((await fixture.runtime.readProjection(conversationId)).messages.find(message => message.text === "回答")?.savedNotePath,
+        "outputs/摘录/竞态.md", `${order}: the activated manager retains the receipt and current leaf`);
+    });
+  }
+  console.log("PASS answer-save state: activation-first and save-first reuse the existing session lane");
 }
 
 async function assertSlowProviderWaitRefreshesAndStops(): Promise<void> {

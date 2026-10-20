@@ -46,12 +46,15 @@ import type { FileConversationCatalog } from "./file-conversation-catalog";
 import type { FileProductRunStore } from "./file-product-run-store";
 import {
   PiChatUiProjector,
+  piEntryIdFromProjectedMessageId,
+  projectSavedAnswerNotes,
   piKnowledgeToolDisplayMetadata,
   type PiChatUiMessageDecoration,
   type PiChatUiRunIdentity,
   type PiChatUiToolProductProjectionInput,
   type PiChatUiViewModel
 } from "./pi-chat-ui-projector";
+import { appendSavedAnswerNote } from "./pi-answer-save";
 import {
   PiSessionDurabilityError,
   assertPiSessionAppendsDurable,
@@ -878,7 +881,7 @@ export class PiNativeConversationRuntime {
   private readonly now: () => number;
   private readonly active = new Map<string, ActiveConversation>();
   private readonly submitting = new Set<string>();
-  private readonly activating = new Map<string, Promise<ActiveConversation>>();
+  private readonly activating = new Map<string, Promise<unknown>>();
   private readonly runChannels = new Map<string, PiRuntimeEventChannel>();
   private readonly recoveringConversations = new Set<string>();
   private initialized = false;
@@ -2596,6 +2599,38 @@ export class PiNativeConversationRuntime {
       projector: this.projector,
       now: this.now
     });
+  }
+
+  async recordAnswerSave(conversationId: string, messageId: string, path: string): Promise<void> {
+    this.assertReady();
+    const pending = this.activating.get(conversationId);
+    if (pending) {
+      await pending.catch(() => undefined);
+      return await this.recordAnswerSave(conversationId, messageId, path);
+    }
+    const active = this.active.get(conversationId);
+    if (!active) {
+      // Reuse the activation lane: neither operation may open a second manager
+      // while the other is awaiting catalog/session preparation.
+      const recording = recordDurablePiAnswerSave({
+        catalog: this.catalog, sessionApi: this.options.sessionApi, conversationId, messageId, path,
+        resolveConversationCwd: id => this.options.resolveConversationCwd(id), now: this.now
+      });
+      this.activating.set(conversationId, recording);
+      try {
+        await recording;
+      } finally {
+        if (this.activating.get(conversationId) === recording) this.activating.delete(conversationId);
+      }
+      return;
+    }
+    appendSavedAnswerNote({
+      sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager,
+      piSessionId: active.catalog.piSessionId,
+      assistantEntryId: piEntryIdFromProjectedMessageId(messageId) ?? "", path
+    });
+    active.lastPersistedLeafId = active.sessionManager.getLeafId();
+    projectSavedAnswerNotes(active.projection.messages, active.sessionManager.getBranch(), active.catalog.piSessionId);
   }
 
   async releaseConversation(conversationId: string): Promise<void> {
@@ -5074,6 +5109,29 @@ function collectMinimalDreamTaskResult(
     terminalState,
     successfulToolNames: Object.freeze([...successful].sort()),
     failedToolNames: Object.freeze([...failed].sort())
+  });
+}
+
+/** Append to one inactive conversation without constructing a Provider runtime. */
+export async function recordDurablePiAnswerSave(input: {
+  catalog: FileConversationCatalog;
+  sessionApi: PiSessionManagerApi;
+  conversationId: string;
+  messageId: string;
+  path: string;
+  resolveConversationCwd(conversationId: string): Promise<string> | string;
+  now?: () => number;
+}): Promise<void> {
+  const catalog = await input.catalog.get(input.conversationId);
+  if (!catalog || catalog.status === "deleted") throw new Error("原对话已不存在，无法保存关联状态。");
+  const opened = await openDurableConversationSession({
+    catalogStore: input.catalog, catalog, sessionApi: input.sessionApi,
+    resolveConversationCwd: input.resolveConversationCwd, now: input.now ?? Date.now
+  });
+  appendSavedAnswerNote({
+    sessionRoot: input.catalog.sessionRootPath, sessionManager: opened.sessionManager,
+    piSessionId: catalog.piSessionId,
+    assistantEntryId: piEntryIdFromProjectedMessageId(input.messageId) ?? "", path: input.path
   });
 }
 

@@ -158,6 +158,7 @@ export interface MessageListRenderInput {
   tokenUsage?: TokenUsage;
   vaultPath: string;
   readRawMessageText: (rawRef: string) => Promise<string>;
+  onAnswerSaved?: (messageId: string, path: string) => Promise<void>;
   onDerivePiConversation?: (entryId: string) => Promise<void>;
   piConversationDeriveDisabled?: boolean;
   onTaskPlanAction?: (
@@ -1743,7 +1744,10 @@ export class CodexMessageListRenderer {
   private renderAnswerSaveAction(container: HTMLElement, message: ChatMessage): void {
     if (message.generationRequest || message.generationResult) return;
     const env = this.requireEnv();
-    const key = `${env.sessionId}\0${message.id}`;
+    const key = `${env.sessionId}\0${piEntryIdFromProjectedMessageId(message.id) ?? message.id}`;
+    if (message.savedNotePath && !this.answerSaveStates.has(key)) {
+      this.answerSaveStates.set(key, { status: "saved", path: message.savedNotePath });
+    }
     const button = container.createEl("button", {
       cls: "codex-message-action codex-answer-save",
       attr: { type: "button" }
@@ -1797,8 +1801,18 @@ export class CodexMessageListRenderer {
           sourcePaths: [...sourcePaths]
         });
         this.answerSaveStates.set(key, { status: "saved", path });
+        let receiptError = "";
+        try {
+          await env.onAnswerSaved?.(message.id, path);
+        } catch (error) {
+          receiptError = error instanceof Error ? error.message : String(error);
+        }
         const notice = env.messagesEl.ownerDocument.createDocumentFragment();
-        notice.append(conversationUiText(env.settingsLanguage, `已存为 ${path}　`, `Saved as ${path} `));
+        notice.append(receiptError
+          ? conversationUiText(env.settingsLanguage,
+            `已存为 ${path}，但保存状态未能写入对话，重开后可能无法识别：${receiptError}　`,
+            `Saved as ${path}, but the conversation could not remember it after reopening: ${receiptError} `)
+          : conversationUiText(env.settingsLanguage, `已存为 ${path}　`, `Saved as ${path} `));
         const open = env.messagesEl.ownerDocument.createElement("button");
         open.textContent = conversationUiText(env.settingsLanguage, "打开", "Open");
         open.onclick = () => { void this.openSavedAnswerNote(env, path); };
