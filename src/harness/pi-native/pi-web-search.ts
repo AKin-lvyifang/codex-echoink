@@ -17,9 +17,10 @@ export class PiWebSearchSecurity implements PiVaultAdditionalToolSecurityPort {
   readonly toolName = WEB_SEARCH_TOOL_NAME;
   private readonly seen = new Set<string>();
   private readonly calls = new Map<string, { query: string; consumed: boolean; result?: unknown; failed?: boolean }>();
-  constructor(private readonly settings: () => TavilySettings) {}
+  constructor(private readonly settings: () => TavilySettings, private readonly assertAllowed?: () => Promise<void>) {}
   available(): boolean { return tavilyAvailable(this.settings()); }
   async handleToolCall(event: ToolCallEvent) {
+    try { await this.assertAllowed?.(); } catch { return { block: true as const, reason: "tool_policy_blocked" }; }
     if (!this.available() || this.seen.has(event.toolCallId)) return { block: true as const, reason: "tool_policy_blocked" };
     this.seen.add(event.toolCallId);
     try { this.calls.set(event.toolCallId, { query: queryFrom(event.input), consumed: false }); }
@@ -28,6 +29,7 @@ export class PiWebSearchSecurity implements PiVaultAdditionalToolSecurityPort {
   async execute(id: string, args: unknown, signal?: AbortSignal, search = searchTavily) {
     const call = this.calls.get(id);
     if (!call || call.consumed || call.query !== queryFrom(args)) throw new Error("web_search_authorization_failed");
+    await this.assertAllowed?.();
     call.consumed = true;
     try {
       if (!this.available()) throw new Error("web_search_disabled");

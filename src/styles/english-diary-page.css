@@ -1,0 +1,103 @@
+/* P9 navigation reuses the saved-expression browser and the shared activity heatmap. */
+.echoink-english-diary-page {
+  container: echoink-english-diary / inline-size;
+  --bg: var(--echoink-theme-bg, var(--background-primary));
+  --text: var(--echoink-theme-text, var(--text-normal));
+  --secondary: var(--echoink-theme-secondary, var(--text-muted));
+  --muted: var(--echoink-theme-muted, var(--text-faint));
+  --line: var(--echoink-theme-line, var(--background-modifier-border));
+  --soft: var(--echoink-theme-hover, var(--background-modifier-hover));
+  --accent: var(--echoink-theme-accent, var(--interactive-accent));
+  padding: 0; overflow: auto; color: var(--text); background: var(--bg);
+  font: calc(var(--font-text-size, 16px) * .8125)/1.6 var(--font-interface);
+}
+.echoink-english-diary-page *, .echoink-english-diary-page *::before, .echoink-english-diary-page *::after { box-sizing: border-box; }
+.echoink-english-diary-page [hidden] { display: none !important; }
+.echoink-english-diary-page .english-page-inner { width: 100%; max-width: 920px; margin: 0 auto; padding: 28px 32px 40px; }
+.echoink-english-diary-page h1 { margin: 0; font-size: calc(var(--font-text-size, 16px) * 1.375); font-weight: 600; line-height: 1.55; }
+.echoink-english-diary-page h2 { margin: 0; font-size: calc(var(--font-text-size, 16px) * .9375); font-weight: 500; line-height: 1.6; }
+.echoink-english-diary-page .english-page-header, .echoink-english-diary-page .english-page-title, .echoink-english-diary-page .english-page-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.echoink-english-diary-page .english-page-header { flex-wrap: wrap; justify-content: space-between; gap: 14px; margin-bottom: 22px; }
+.echoink-english-diary-page .english-page-header > button.echoink-origin-control[data-slot=button].english-page-button { margin-left: auto; }
+.echoink-english-diary-page .english-page-heading { flex-wrap: wrap; justify-content: space-between; margin-bottom: 12px; }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; height: auto;
+  min-height: 32px; max-width: 100%; min-width: 0; margin: 0; padding: 7px 10px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text);
+  font: calc(var(--font-text-size, 16px) * .75)/1.55 var(--font-interface); white-space: normal;
+  overflow-wrap: anywhere; box-shadow: none; outline: none; cursor: pointer;
+}
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button.is-primary { background: var(--accent); border-color: transparent; color: var(--echoink-theme-on-accent, var(--text-on-accent)); }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button:is(.is-tertiary,.is-icon) { background: transparent; border-color: transparent; }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button.is-icon { flex: 0 0 30px; width: 30px; min-height: 30px; padding: 0; }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button.is-icon svg { width: 15px; height: 15px; }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button:is(:hover,:focus-visible):not(:disabled) { background: var(--soft); outline: none; box-shadow: none; }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button.is-primary:hover:not(:disabled) { background: var(--accent); color: var(--echoink-theme-on-accent, var(--text-on-accent)); filter: brightness(.95); }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button.is-primary:focus-visible:not(:disabled) { background: var(--soft); color: var(--text); filter: none; }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button:active:not(:disabled) { background: var(--soft); filter: brightness(.9); }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-button:disabled { opacity: .45; cursor: default; }
+.echoink-english-diary-page .english-page-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(120px, 100%), 1fr)); gap: 14px; }
+.echoink-english-diary-page .english-page-metric { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; padding: 18px 21px; border: 1px solid var(--line); border-radius: 10px; }
+.echoink-english-diary-page .english-page-metric > span:first-child { font-weight: 500; }
+.echoink-english-diary-page .english-page-metric-number { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 5px; width: 100%; margin-top: 9px; font-variant-numeric: tabular-nums; }
+.echoink-english-diary-page .english-page-metric-number strong { font-size: calc(var(--font-text-size, 16px) * 1.375); font-weight: 500; line-height: 1.6; }
+.echoink-english-diary-page .english-page-metric-number span, .echoink-english-diary-page .english-page-note { font-size: calc(var(--font-text-size, 16px) * .75); color: var(--secondary); overflow-wrap: anywhere; }
+.echoink-english-diary-page .english-page-activity { min-width: 0; margin-top: 24px; }
+.echoink-english-diary-page .english-page-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 24px 0 20px; }
+.echoink-english-diary-page .english-page-toolbar > button.echoink-origin-control[data-slot=button].english-page-button { margin-left: auto; }
+.echoink-english-diary-page .english-page-tabs { position: relative; display: inline-grid; grid-template-columns: repeat(2, 1fr); width: max-content; align-items: stretch; gap: 0; padding: 3px; border-radius: 8px; background: var(--soft); }
+.echoink-english-diary-page .english-page-tab-indicator { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 2); border-radius: 6px; background: var(--bg); transition: transform 160ms ease; pointer-events: none; }
+.echoink-english-diary-page .english-page-tabs[data-selected=expressions] > .english-page-tab-indicator { transform: translateX(100%); }
+.echoink-english-diary-page .english-page-tabs > button.echoink-origin-control[data-slot=button].english-page-button { position: relative; z-index: 1; white-space: nowrap; min-height: 28px; padding: 4px 12px; border-radius: 6px; background: transparent; border-color: transparent; }
+.echoink-english-diary-page .english-page-tabs > button.echoink-origin-control[data-slot=button].english-page-button[aria-selected=true] { background: transparent; color: var(--text); font-weight: 600; }
+.echoink-english-diary-page .english-page-tabs > button.echoink-origin-control[data-slot=button].english-page-button[aria-selected=false] { color: var(--secondary); }
+.echoink-english-diary-page .english-page-status, .echoink-english-diary-page .english-page-error { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; overflow-wrap: anywhere; }
+.echoink-english-diary-page .english-page-status:empty { display: none; }
+.echoink-english-diary-page .english-page-status:not(:empty) { margin-bottom: 18px; }
+.echoink-english-diary-page .english-page-error { margin-bottom: 12px; color: var(--text-error); }
+.echoink-english-diary-page .english-page-empty { padding: 12px 0; color: var(--secondary); }
+.echoink-english-diary-page .english-page-diary-list { max-height: min(560px, 65vh); overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-diary-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, max-content) 15px; align-items: center; gap: 12px; width: 100%; padding: 13px 18px; border: 0; border-radius: 0; text-align: left; }
+.echoink-english-diary-page .english-page-diary-row + .english-page-diary-row { border-top: 1px solid var(--line); }
+.echoink-english-diary-page .english-page-row-copy { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.echoink-english-diary-page .english-page-row-copy strong { font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 500; overflow-wrap: anywhere; }
+.echoink-english-diary-page .english-page-preview { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--secondary); }
+.echoink-english-diary-page .english-page-row-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; min-width: 0; max-width: 240px; }
+.echoink-english-diary-page .english-page-count { text-align: right; font-variant-numeric: tabular-nums; }
+.echoink-english-diary-page .english-page-row-arrow { display: flex; flex: 0 0 15px; width: 15px; }
+.echoink-english-diary-page .english-page-row-arrow svg { width: 15px; height: 15px; }
+.echoink-english-diary-page .english-page-pagination, .echoink-expression-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.echoink-english-diary-page .english-page-pagination { margin-top: 18px; }
+/* The same controller keeps its native detail editor. Only its embedded list shell changes. */
+.echoink-english-diary-page .echoink-expression-embedded { container-type: normal; background: transparent; overflow: visible; }
+.echoink-english-diary-page .echoink-expression-embedded > .echoink-diary-page { padding: 0; max-width: none; gap: 18px; }
+.echoink-english-diary-page .echoink-expression-embedded .echoink-diary-header:empty { display: none; }
+.echoink-expression-search-field { position: relative; flex: 1; min-width: 0; }
+.echoink-expression-search-icon { position: absolute; display: flex; align-items: center; inset: 0 auto 0 9px; pointer-events: none; color: var(--secondary, var(--text-muted)); }
+.echoink-expression-search-icon svg { width: 13px; height: 13px; }
+.echoink-english-diary-page .echoink-expression-search-field > input.echoink-origin-control[data-slot=input] { width: 100%; padding-left: 28px; }
+.echoink-english-diary-page .echoink-expression-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.echoink-english-diary-page .echoink-expression-embedded .echoink-expression-list { gap: 0; max-height: min(560px, 65vh); overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.echoink-english-diary-page .echoink-expression-embedded .echoink-origin-control[data-slot=button].echoink-expression-list-item { flex: 0 0 auto; padding: 13px 18px; border: 0; border-radius: 0; gap: 5px; }
+.echoink-english-diary-page .echoink-expression-embedded .echoink-origin-control[data-slot=button].echoink-expression-list-item + .echoink-expression-list-item { border-top: 1px solid var(--line); }
+.echoink-english-diary-page .echoink-expression-embedded .echoink-expression-list-title { font-weight: 500; }
+.echoink-english-diary-page .echoink-expression-embedded .echoink-origin-control[data-slot=button].echoink-expression-list-item > .echoink-diary-row { flex-wrap: wrap; }
+@container echoink-english-diary (max-width: 760px) {
+  .echoink-english-diary-page .english-page-inner { padding: 24px; }
+  .echoink-english-diary-page .english-page-header > button.echoink-origin-control[data-slot=button].english-page-button { max-width: 100%; }
+}
+@container echoink-english-diary (max-width: 520px) {
+  .echoink-english-diary-page .english-page-inner { padding: 20px 16px 28px; }
+  .echoink-english-diary-page .english-page-title { flex: 1 0 100%; }
+  .echoink-english-diary-page button.echoink-origin-control[data-slot=button].english-page-diary-row { grid-template-columns: minmax(0, 1fr) 15px; gap: 6px 10px; padding: 11px 12px; }
+  .echoink-english-diary-page .english-page-diary-row > .english-page-row-copy { grid-column: 1; grid-row: 1; }
+  .echoink-english-diary-page .english-page-diary-row > .english-page-row-meta { grid-column: 1; grid-row: 2; max-width: none; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+  .echoink-english-diary-page .english-page-diary-row > .english-page-row-arrow { grid-column: 2; grid-row: 1; }
+  .echoink-english-diary-page .english-page-preview { display: none; }
+  .echoink-english-diary-page .echoink-expression-embedded .echoink-origin-control[data-slot=button].echoink-expression-list-item { flex: 0 0 auto; padding: 11px 12px; }
+  .echoink-english-diary-page .echoink-expression-embedded .echoink-expression-search-field { flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .echoink-english-diary-page .english-page-tab-indicator { transition: none; }
+}

@@ -1,7 +1,13 @@
+import { freezePdfTaskRequest, pdfTaskRequestFromEntries } from "../../pdf-reading/task-context";
+import type { PdfTaskRequest } from "../../pdf-reading/types";
+import { normalizeEnglishDiarySourcePath, englishDiaryTaskContextFromEntries, type EnglishDiaryTaskContext } from "../../english-diary/task-context";
+import type { TaskInterruptionReason, TaskInterruptionRecord, TaskResumeContext } from "../../agents/task-resume";
 import { assertPiSubmissionActive } from "./pi-submission-lifecycle";
 import { selectMemoryRecallPreviousUserContext } from "../memory/personal-memory-recall-harness";
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../../knowledge-base/search/contracts";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../../knowledge-base/root-paths";
+import { normalizeConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
+import type { AgentRunSnapshot } from "../../agents/types";
 import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { maintenanceRequestsAdviceOnly } from "../../knowledge-base/wiki-folder-names";
@@ -36,6 +42,7 @@ import type { FileConversationCatalog } from "./file-conversation-catalog";
 import type { FileProductRunStore } from "./file-product-run-store";
 import {
   PiChatUiProjector,
+  piKnowledgeToolDisplayMetadata,
   type PiChatUiMessageDecoration,
   type PiChatUiRunIdentity,
   type PiChatUiToolProductProjectionInput,
@@ -50,6 +57,7 @@ import {
   inspectPiSessionJsonl,
   openDurablePiSession,
   persistPiActiveLeaf,
+  readPiActiveLeafCheckpoint,
   type InvalidPiSessionJsonlInspection,
   type PiSessionDurabilityErrorCode,
   type PiSessionManagerApi,
@@ -89,6 +97,8 @@ import type {
 import { PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE } from "./contracts";
 import { normalizePiChatNoteMentions } from "./pi-note-mentions";
 import { normalizeSelectionAnnotations } from "./pi-selection-annotations";
+import { freezeWorkbenchTaskSource, workbenchTaskSourceFromEntries } from "../../home/workbench-context";
+import type { WorkbenchTaskSource } from "../../home/workbench-types";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 import {
   normalizePiChatPreparedDocuments,
@@ -215,6 +225,11 @@ export interface PiNativeAgentSessionFactoryInput {
     userEntryText: string;
   }>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
+  currentTaskResumeContext?(): Readonly<TaskResumeContext> | undefined;
+  currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
+  bindPdfDeliveryJob?(jobId: string): void;
+  currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
+  currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
   currentMaintenanceCommand?(): Promise<Readonly<PiKnowledgeMaintenanceCommandContext>>;
   currentSkillTurnContext?(): Readonly<PiNativeSkillTurnContext> | null;
@@ -316,6 +331,7 @@ export function knowledgeReferencesRequireFreshnessVerification(
 
 export function resolvePiTurnToolNames(input: Readonly<{
   commandKind: "chat" | "ask" | "maintain";
+  englishDiary?: boolean;
   permission?: PiWorkspaceAccess["permission"];
   mode: PiChatMode;
   memoryMode: PiConversationMemoryMode;
@@ -325,7 +341,7 @@ export function resolvePiTurnToolNames(input: Readonly<{
   externalReadToolNames?: readonly string[];
   requiresFreshnessVerification?: boolean;
 }>): readonly string[] {
-  const candidates = input.mode === "plan" ? input.planToolNames : input.defaultToolNames;
+  const candidates = input.englishDiary ? (input.mode === "agent" ? input.defaultToolNames.filter(name => name === "english_diary_generate") : []) : input.mode === "plan" ? input.planToolNames : input.defaultToolNames;
   return [...new Set(candidates)].filter((toolName) => piWorkspaceAllowsTool({
     toolName,
     permission: normalizePiWorkspacePermission(input.permission),
@@ -378,10 +394,10 @@ export interface PiNativeAgentSessionFactoryResult {
 
 export interface PiRuntimeSkillPort {
   selectForTask(
-    input: Readonly<{ text: string }>
+    input: Readonly<{ text: string; catalog?: Readonly<PiConversationCatalogEntry> }>
   ): Promise<Readonly<PiRuntimeResolvedSkill> | null>;
   resolveById?(
-    input: Readonly<{ id: string }>
+    input: Readonly<{ id: string; catalog?: Readonly<PiConversationCatalogEntry> }>
   ): Promise<Readonly<PiRuntimeResolvedSkill>>;
   recordUse(skillId: string, usedAt: number): Promise<void>;
   reviewCompletedTask(input: Readonly<{
@@ -408,6 +424,9 @@ export interface PiRuntimeResolvedSkill {
 }
 
 export interface PiNativeConversationRuntimeOptions {
+  verifyPdfTaskDelivery?(request: Readonly<PdfTaskRequest> | string, noNewSourcePaths: readonly string[]): Promise<void>;
+  resolveAgentRunSnapshot?: (catalog: Readonly<PiConversationCatalogEntry>) => AgentRunSnapshot;
+  assertAgentActionAllowed?: (input: Readonly<{ catalog: Readonly<PiConversationCatalogEntry>; action: "knowledge-read" | "knowledge-write"; access?: Readonly<PiWorkspaceAccess> }>) => void | Promise<void>;
   catalog: FileConversationCatalog;
   productRuns: FileProductRunStore;
   sessionApi: PiSessionManagerApi;
@@ -460,7 +479,7 @@ export interface ReadDurablePiConversationProjectionOptions {
   now?: () => number;
 }
 
-export interface CreatePiNativeConversationInput {
+export interface CreatePiNativeConversationInput extends ConversationTaskMetadata {
   conversationId: string;
   title: string;
   cwd: string;
@@ -495,6 +514,8 @@ export async function createPiConversation(
       piSessionId: durable.piSessionId,
       vaultId: catalog.vaultId,
       title: conversation.title,
+      ...normalizeConversationTaskMetadata(conversation),
+      taskMetadataUpdatedAt: createdAt,
       status: "active",
       defaultMemoryMode: conversation.defaultMemoryMode ?? "normal",
       ...(conversation.defaultSkillId
@@ -650,6 +671,7 @@ ReadonlySet<string> = new Set<PiNativeFileStoreErrorCode>([
 ]);
 
 interface ActiveConversation {
+  lastPersistedLeafId: string | null;
   providerSettingsId?: string;
   catalog: Readonly<PiConversationCatalogEntry>;
   cwd: string;
@@ -675,6 +697,12 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  pdfTaskRequest?: Readonly<PdfTaskRequest>;
+  pdfDeliveryJobs?: Set<string>;
+  englishDiarySourcePath?: string;
+  workbenchSource?: Readonly<WorkbenchTaskSource>;
+  resumeContext?: TaskResumeContext;
+  interruption?: TaskInterruptionRecord;
   productRunId: string;
   submittedAt: number;
   baselineEntryIds: ReadonlySet<string>;
@@ -690,6 +718,7 @@ interface ActiveProductRun {
   settlementBarrier: PiProductRunSettlementBarrier;
   requestText: string;
   commandKind: "chat" | "ask" | "maintain";
+  englishDiary?: boolean;
   selectedSkillIds: readonly string[];
   requiresFreshnessVerification: boolean;
   successfulCapabilityIds: Set<string>;
@@ -704,6 +733,7 @@ interface ActiveProductRun {
   skillTurnContext: Readonly<PiNativeSkillTurnContext> | null;
   memoryRecall?: PiMemoryRecallObservation;
   providerStartedAt?: number;
+  providerWaitTimer?: ReturnType<typeof setInterval>;
   firstAssistantTextSeen: boolean;
   providerReasoningBlocks: Map<string, MutableProviderReasoningBlock>;
   providerReasoningExposedMessageKeys: Set<string>;
@@ -958,6 +988,8 @@ export class PiNativeConversationRuntime {
         piSessionId: durable.piSessionId,
         vaultId: this.catalog.vaultId,
         title,
+        agentId: source.catalog.agentId,
+        taskMetadataUpdatedAt: createdAt,
         status: "active",
         defaultMemoryMode: source.catalog.defaultMemoryMode,
         ...(source.catalog.defaultSkillId
@@ -1142,6 +1174,19 @@ export class PiNativeConversationRuntime {
       defaultMemoryMode,
       updatedAt: this.now()
     });
+    const active = this.active.get(conversationId);
+    if (active) active.catalog = updated;
+    return updated;
+  }
+
+  async setConversationTaskMetadata(
+    conversationId: string,
+    metadata: ConversationTaskMetadata,
+    expectedRevision: number | undefined,
+    updatedAt = this.now()
+  ): Promise<Readonly<PiConversationCatalogEntry>> {
+    this.assertReady();
+    const updated = await this.catalog.updateTaskMetadata(conversationId, metadata, expectedRevision, updatedAt);
     const active = this.active.get(conversationId);
     if (active) active.catalog = updated;
     return updated;
@@ -1333,7 +1378,8 @@ export class PiNativeConversationRuntime {
     }
     this.submitting.add(request.conversationId);
     try {
-      return await this.submitPrepared(Object.freeze({ ...request, permission: normalizePiWorkspacePermission(request.permission) }));
+      const workbenchSource = freezeWorkbenchTaskSource(request.workbenchSource);
+      return await this.submitPrepared(Object.freeze({ ...request, workbenchSource: workbenchSource ?? undefined, permission: normalizePiWorkspacePermission(request.permission) }));
     } finally {
       this.submitting.delete(request.conversationId);
     }
@@ -1388,11 +1434,11 @@ export class PiNativeConversationRuntime {
         ? Object.freeze({ kind: "chat", originalText: request.text })
         : routeKnowledgeConversationCommand(request.text);
 
-    const selectedRuntimeSkill = !request.skillPath
+    const selectedRuntimeSkill = !request.pdfTaskRequest && !request.englishDiarySourcePath && !request.skillPath
       ? catalog.defaultSkillId
-        ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId)
+        ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId, catalog)
         : mode !== "plan"
-          ? await this.options.skills?.selectForTask({ text: request.text }) ?? null
+          ? await this.options.skills?.selectForTask({ text: request.text, catalog }) ?? null
           : null
       : null;
     const selectedRuntimeSkills = selectedRuntimeSkill
@@ -1406,6 +1452,7 @@ export class PiNativeConversationRuntime {
       : Object.freeze([]);
 
     assertPiSubmissionActive(request.signal);
+    if (request.resumeContext) await this.prepareTaskResumeBranch(catalog, request.resumeContext, request.signal);
     const active = await this.requireActiveConversation(
       request.conversationId,
       {
@@ -1430,6 +1477,19 @@ export class PiNativeConversationRuntime {
         `Conversation ${request.conversationId} 已有运行中的 ProductRun`
       );
     }
+    const inheritedPdf = pdfTaskRequestFromEntries(active.sessionManager.getBranch());
+    const pdfTaskRequest = request.pdfTaskRequest ? freezePdfTaskRequest(request.pdfTaskRequest) : inheritedPdf;
+    if (request.pdfTaskRequest && (!pdfTaskRequest || inheritedPdf && JSON.stringify(inheritedPdf) !== JSON.stringify(pdfTaskRequest))) throw new PiNativeConversationRuntimeError("agent_session_invalid", "PDF任务的文件和成果已固定，请从PDF页另建任务。");
+    if (request.pdfTaskRequest && !inheritedPdf && active.sessionManager.getBranch().some(entry => entry.type === "message")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "请从PDF页新建独立任务。");
+    if (request.pdfTaskRequest && (documents.length !== 1 || documents[0].transport !== "tool_reference" || documents[0].attachmentId !== pdfTaskRequest!.attachmentId || documents[0].sha256 !== pdfTaskRequest!.sourceFingerprint || documents[0].bytes.length !== pdfTaskRequest!.byteLength || promptImages.length || noteMentions.length || selectionAnnotations.length || request.skillPath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "PDF任务的附件与本次选择不一致，未发送。");
+    if (pdfTaskRequest && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "处理PDF需要可写工作区和Agent模式，请调整对话栏权限后重试。");
+    const inheritedEnglish = englishDiaryTaskContextFromEntries(active.sessionManager.getBranch());
+    const englishDiarySourcePath = normalizeEnglishDiarySourcePath(request.englishDiarySourcePath) ?? inheritedEnglish?.sourcePath;
+    if (request.englishDiarySourcePath && inheritedEnglish && request.englishDiarySourcePath !== inheritedEnglish.sourcePath) throw new PiNativeConversationRuntimeError("agent_session_invalid", "这件任务的原稿范围已固定，请从列表另建一件事。");
+    if (request.englishDiarySourcePath && !inheritedEnglish && active.sessionManager.getBranch().some(entry => entry.type === "message")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "请从英文日记页新建独立任务，避免把原有会话内容带入生成。");
+    if (request.englishDiarySourcePath && !normalizeEnglishDiarySourcePath(request.englishDiarySourcePath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记原稿位置无效，请从英文日记页重新选择。");
+    if (englishDiarySourcePath && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "生成英文日记需要可写工作区和 Agent 模式；原稿已保留。");
+    if (englishDiarySourcePath && (documents.length || promptImages.length || noteMentions.length || selectionAnnotations.length || request.skillPath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记任务沿已确认的发送范围处理，请移除额外附件、引用和 Skill 后再发送。");
     if (knowledgeCommand.kind === "maintain" && promptImages.length) {
       throw new PiNativeConversationRuntimeError(
         "agent_session_invalid",
@@ -1479,6 +1539,10 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
+      ...(pdfTaskRequest ? { pdfTaskRequest } : {}),
+      ...(englishDiarySourcePath ? { englishDiarySourcePath } : {}),
+      ...(request.workbenchSource ? { workbenchSource: request.workbenchSource } : {}),
+      ...(request.resumeContext ? { resumeContext: structuredClone(request.resumeContext) } : {}),
       productRunId,
       submittedAt: request.submittedAt,
       baselineEntryIds: new Set(
@@ -1551,7 +1615,9 @@ export class PiNativeConversationRuntime {
         summary: cloneReasoningSummary(execution.reasoningSummary)
       });
       this.configureToolsForTurn(active, knowledgeCommand, mode, memoryMode);
-      if (knowledgeCommand.kind === "ask") {
+      if (englishDiarySourcePath) {
+        active.knowledgeTurnContext = null;
+      } else if (knowledgeCommand.kind === "ask") {
         await this.emitRuntimeEvent(active, execution, {
           type: "knowledge_progress",
           status: "active",
@@ -1644,6 +1710,7 @@ export class PiNativeConversationRuntime {
           references: Object.freeze([])
         });
       } else if (knowledgeCommand.kind === "maintain") {
+        await this.options.assertAgentActionAllowed?.({ catalog, action: "knowledge-write", access: { permission, mode, memoryMode } });
         const preference =
           await this.options.knowledge!.prepareMaintenancePreferences?.();
         if (!preference) {
@@ -1695,7 +1762,7 @@ export class PiNativeConversationRuntime {
       throw error;
     }
 
-    const promptText = active.skillPromptPrefix
+    const promptText = englishDiarySourcePath ? request.text : active.skillPromptPrefix
       ? `${active.skillPromptPrefix}\n\n${request.text}`
       : knowledgeCommand.kind === "chat" && active.skillCommandName
         ? `/skill:${active.skillCommandName} ${request.text}`
@@ -1779,6 +1846,7 @@ export class PiNativeConversationRuntime {
         sessionManager: active.sessionManager,
         expectedEntryIds: [userEntry.id]
       });
+      this.checkpointConversationLeaf(active);
     } catch (error) {
       await this.appendProductRunStartFailureDiagnostic(
         active,
@@ -1826,6 +1894,7 @@ export class PiNativeConversationRuntime {
     let accepted: Readonly<PiProductRunRecord>;
     try {
       accepted = await this.productRuns.create({
+        ...(this.options.resolveAgentRunSnapshot ? { agentSnapshot: this.options.resolveAgentRunSnapshot(catalog) } : {}),
         productRunId,
         conversationId: catalog.conversationId,
         piSessionId: catalog.piSessionId,
@@ -1913,6 +1982,7 @@ export class PiNativeConversationRuntime {
   ): void {
     const names = resolvePiTurnToolNames({
       commandKind: command.kind,
+      englishDiary: Boolean(active.currentRun?.englishDiarySourcePath),
       permission: active.currentRun?.permission ?? "read-only",
       mode,
       memoryMode,
@@ -1923,6 +1993,7 @@ export class PiNativeConversationRuntime {
       requiresFreshnessVerification:
         active.currentRun?.requiresFreshnessVerification === true
     }).filter(name => active.isToolCurrentlyEnabled?.(name) !== false);
+    if (active.currentRun?.englishDiarySourcePath && names.length !== 1) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记能力、功能开关或 PRO 当前不可用。");
     if (mode === "plan") {
       if (
         names.length === 0
@@ -2166,11 +2237,69 @@ export class PiNativeConversationRuntime {
     return draft;
   }
 
+  /** A verified cursor checkpoint is needed before a later open can restore this Branch. */
+  private checkpointConversationLeaf(active: ActiveConversation): void {
+    const leaf = active.sessionManager.getLeafId();
+    if (leaf === active.lastPersistedLeafId) return;
+    persistPiActiveLeaf({ sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager });
+    active.lastPersistedLeafId = leaf;
+  }
+
+  /** Repair only a provably stale pre-acceptance cursor during explicit task resume. */
+  private async prepareTaskResumeBranch(catalog: Readonly<PiConversationCatalogEntry>, resume: TaskResumeContext, signal?: AbortSignal): Promise<void> {
+    const prior = await this.productRuns.read(resume.safety.interruptedRunId);
+    assertPiSubmissionActive(signal);
+    const fail = (): never => { throw new PiNativeConversationRuntimeError("agent_session_invalid", "无法确认原任务的当前记录分支，本次没有继续。请保留记录并重新核对，避免丢失原任务上下文。"); };
+    if (!prior || prior.conversationId !== catalog.conversationId || prior.piSessionId !== catalog.piSessionId || prior.userEntryId !== resume.safety.interruptedUserEntryId) return fail();
+    const existing = this.active.get(catalog.conversationId);
+    if (existing?.currentRun || existing?.session.isStreaming) throw new PiNativeConversationRuntimeError("conversation_busy", "当前任务仍在运行，请等待本轮完成。");
+    if (existing?.sessionManager.getBranch().some(entry => entry.id === prior.userEntryId)) return;
+    const opened = await this.openCatalogSession(catalog);
+    assertPiSubmissionActive(signal);
+    const manager = opened.sessionManager;
+    if (manager.getBranch().some(entry => entry.id === prior.userEntryId)) return;
+    const checkpoint = readPiActiveLeafCheckpoint({ sessionRoot: this.catalog.sessionRootPath, piSessionId: catalog.piSessionId });
+    // A later selection can be intentional. Never replace it by choosing the last JSONL line.
+    if (!checkpoint || checkpoint.modifiedAt > prior.createdAt || prior.state === "product_run_settled" || !prior.activeLeafId) return fail();
+    const anchorBranch = manager.getBranch(prior.activeLeafId);
+    if (!anchorBranch.some(entry => entry.id === prior.userEntryId)
+      || checkpoint.activeLeafId !== null && !anchorBranch.some(entry => entry.id === checkpoint.activeLeafId)) fail();
+    const descendants = new Set([prior.activeLeafId]);
+    const parents = new Set<string>();
+    for (const entry of manager.getEntries()) {
+      if (entry.parentId === null || !descendants.has(entry.parentId)) continue;
+      if (entry.type === "message" && entry.message.role === "user" && entry.id !== prior.userEntryId) continue;
+      descendants.add(entry.id); parents.add(entry.parentId);
+    }
+    const leaves = [...descendants].filter(id => !parents.has(id));
+    if (leaves.length !== 1) fail();
+    if (existing) await this.releaseConversation(catalog.conversationId);
+    assertPiSubmissionActive(signal);
+    manager.branch(leaves[0]);
+    persistPiActiveLeaf({ sessionRoot: this.catalog.sessionRootPath, sessionManager: manager });
+  }
+
+  /** Record an evidenced stop cause before cancellation; no change to task Catalog. */
+  async recordTaskInterruption(conversationId: string, reason: TaskInterruptionReason): Promise<void> {
+    const active = this.active.get(conversationId);
+    const execution = active?.currentRun ?? active?.pendingSettlement;
+    if (!active || !execution) return;
+    const interruption: TaskInterruptionRecord = {
+      at: this.now(), reason, stage: taskInterruptionStage(active)
+    };
+    // Bind synchronously so cancellation settlement cannot race away the cause.
+    execution.interruption = interruption;
+    this.checkpointConversationLeaf(active);
+    const run = await this.productRuns.read(execution.productRunId);
+    if (run && run.state !== "product_run_settled") await this.productRuns.update(run.productRunId, { interruption, activeLeafId: active.sessionManager.getLeafId(), toolCallIds: [...execution.toolCallIds], updatedAt: Math.max(run.updatedAt, interruption.at) });
+  }
+
   async abort(conversationId: string): Promise<void> {
     const active = this.active.get(conversationId);
     if (!active?.currentRun) return;
     const execution = active.currentRun;
     execution.abortRequested = true;
+    this.finishProviderWait(execution, "cancelled");
     execution.knowledgeAbort.abort();
     const abortErrors: unknown[] = [];
     try {
@@ -2563,6 +2692,7 @@ export class PiNativeConversationRuntime {
           );
         }
         assertPiSubmissionActive(run?.knowledgeAbort.signal);
+        this.checkpointConversationLeaf(active);
         if (run && run.providerStartedAt === undefined) {
           const providerStartedAt = this.now();
           run.providerStartedAt = providerStartedAt;
@@ -2574,6 +2704,19 @@ export class PiNativeConversationRuntime {
             startedAt: providerStartedAt,
             updatedAt: providerStartedAt
           });
+          run.providerWaitTimer = setInterval(() => {
+            if (active.currentRun !== run || run.firstAssistantTextSeen
+              || run.knowledgeAbort.signal.aborted || run.reasoningSummary.terminalAt !== undefined) {
+              this.finishProviderWait(run);
+              return;
+            }
+            const observedAt = this.now();
+            if (observedAt - providerStartedAt <= 5_000) return;
+            this.queueReasoningActivity(active, run, {
+              id: "provider", kind: "provider", status: "active", stage: "requesting",
+              startedAt: providerStartedAt, updatedAt: observedAt
+            });
+          }, 1_000);
         }
         return execution;
       },
@@ -2587,6 +2730,7 @@ export class PiNativeConversationRuntime {
           );
         }
         assertPiSubmissionActive(run.knowledgeAbort.signal);
+        this.checkpointConversationLeaf(active);
         const userEntry = currentRunUserEntry(active.sessionManager, run.baselineEntryIds);
         return {
           conversationId: catalog.conversationId,
@@ -2600,6 +2744,7 @@ export class PiNativeConversationRuntime {
       currentMaintenanceCommand: async () => {
         const run = holder.active?.currentRun;
         if (!run) throw new Error("knowledge_maintenance_command_unavailable");
+        await this.options.assertAgentActionAllowed?.({ catalog: holder.active?.catalog ?? catalog, action: "knowledge-write", access: { permission: run.permission, mode: run.mode, memoryMode: run.memoryMode } });
         if (run.knowledgeWorkflow?.kind === "maintain") return run.knowledgeWorkflow.command;
         const preference = await this.options.knowledge?.prepareMaintenancePreferences?.();
         if (!preference) throw new Error("knowledge_maintenance_preferences_unavailable");
@@ -2614,6 +2759,19 @@ export class PiNativeConversationRuntime {
         const run = holder.active?.currentRun;
         return run ? Object.freeze({ permission: run.permission, mode: run.mode, memoryMode: run.memoryMode }) : null;
       },
+      currentTaskResumeContext: () => holder.active?.currentRun?.resumeContext,
+      bindPdfDeliveryJob: jobId => { const run = holder.active?.currentRun; if (run) (run.pdfDeliveryJobs ??= new Set()).add(jobId); },
+      currentPdfTaskRequest: () => holder.active?.currentRun?.pdfTaskRequest,
+      currentEnglishDiaryRequest: () => {
+        const active = holder.active, run = active?.currentRun;
+        if (!active || !run?.englishDiarySourcePath) return null;
+        const stored = englishDiaryTaskContextFromEntries(active.sessionManager.getBranch());
+        // before_agent_start runs before Pi appends this turn's user entry.
+        // Bind the source intent to the task; the tool separately binds the live user entry.
+        return { sourcePath: run.englishDiarySourcePath, intentEntryId: stored?.intentEntryId ?? `english-diary:${catalog.conversationId}` };
+      },
+      currentWorkbenchSource: () => holder.active?.currentRun?.workbenchSource
+        ?? workbenchTaskSourceFromEntries(holder.active?.sessionManager.getBranch() ?? []),
       currentKnowledgeTurnContext: () =>
         holder.active?.knowledgeTurnContext ?? null,
       currentSkillTurnContext: () =>
@@ -2621,7 +2779,7 @@ export class PiNativeConversationRuntime {
       currentMemoryTurnContext: () => {
         const active = holder.active;
         const run = active?.currentRun;
-        if (!active || !run) return null;
+        if (!active || !run || run.englishDiarySourcePath) return null;
         const branch = active.sessionManager.getBranch();
         // before_agent_start may run before or after Pi appends this turn's
         // user message. Entry identity preserves earlier identical text.
@@ -2834,6 +2992,7 @@ export class PiNativeConversationRuntime {
       await this.loadKnowledgeDecorations(catalog, branchEntries)
     ));
     const active: ActiveConversation = {
+      lastPersistedLeafId: opened.restoredActiveLeafId,
       providerSettingsId: created.providerSettingsId ?? options.providerSettingsId,
       catalog,
       cwd,
@@ -2893,7 +3052,8 @@ export class PiNativeConversationRuntime {
   }
 
   private async resolveConversationDefaultSkill(
-    skillId: string
+    skillId: string,
+    catalog: Readonly<PiConversationCatalogEntry>
   ): Promise<Readonly<PiRuntimeResolvedSkill>> {
     const skills = this.options.skills;
     if (!skills?.resolveById) {
@@ -2903,7 +3063,7 @@ export class PiNativeConversationRuntime {
       );
     }
     try {
-      const resolved = await skills.resolveById({ id: skillId });
+      const resolved = await skills.resolveById({ id: skillId, catalog });
       if (resolved.id !== skillId) {
         throw new Error("resolved_skill_identity_mismatch");
       }
@@ -3214,7 +3374,9 @@ export class PiNativeConversationRuntime {
       }
       if (
         active.projection.provisionalMessageIds.length > 0
-        || active.projection.pendingToolCallIds.length > 0
+        // The selected Branch also contains interrupted historical runs. Their
+        // unresolved Tool calls remain unknown and must not block this run.
+        || active.projection.pendingToolCallIds.some(toolCallId => toolCallIds.includes(toolCallId))
         || active.projection.queuedSteering.length > 0
         || active.projection.queuedFollowUp.length > 0
       ) {
@@ -3234,6 +3396,26 @@ export class PiNativeConversationRuntime {
         );
       }
 
+      if (terminalState === "completed" && (execution.pdfTaskRequest || execution.pdfDeliveryJobs?.size) && this.options.verifyPdfTaskDelivery) {
+        const noNewSourcePaths = active.sessionManager.getBranch().flatMap(entry => {
+          if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== PI_KNOWLEDGE_MAINTAIN_TOOL_ID || entry.message.isError) return [];
+          const envelope = knowledgeMaintenanceEnvelopeFromToolResult(entry.message);
+          const details = safeRecord(entry.message.details);
+          return envelope?.status === "noop" && Array.isArray(details?.processedSourcePaths) ? details.processedSourcePaths.filter((value): value is string => typeof value === "string") : [];
+        });
+        try {
+          if (execution.pdfTaskRequest) await this.options.verifyPdfTaskDelivery(execution.pdfTaskRequest, noNewSourcePaths);
+          for (const jobId of execution.pdfDeliveryJobs ?? []) if (jobId !== execution.pdfTaskRequest?.jobId) await this.options.verifyPdfTaskDelivery(jobId, noNewSourcePaths);
+        } catch (error) {
+          // Missing selected outputs are an ordinary failed task, not a broken settlement.
+          // Persist a terminal run so explicit recovery can continue it normally.
+          terminalState = "failed"; promptError = error;
+          execution.interruption = { at: this.now(), reason: "run_failed", stage: "核对 PDF 成果",
+            detail: error instanceof Error ? error.message.slice(0, 1000) : "PDF 成果尚未核实，已有文件保留。" };
+          this.settleTaskPlanAfterRun(active, execution, terminalState);
+        }
+      }
+
       await this.closeAndPersistReasoningSummary(
         active,
         execution,
@@ -3249,6 +3431,10 @@ export class PiNativeConversationRuntime {
         {
           state: "product_run_settled",
           terminalState,
+          ...(terminalState !== "completed" ? { interruption: execution.interruption ?? {
+            at: settledAt, reason: terminalState === "failed" ? "run_failed" as const : "process_unknown" as const,
+            stage: taskInterruptionStage(active), ...(terminalState === "failed" ? { detail: safeProductRunErrorCode(promptError, runEntries) } : {})
+          } } : {}),
           assistantEntryId,
           toolCallIds,
           activeLeafId: active.sessionManager.getLeafId(),
@@ -3463,6 +3649,7 @@ export class PiNativeConversationRuntime {
     execution: ActiveProductRun,
     event: AgentSessionEvent
   ): Promise<void> {
+    if (["message_end", "tool_execution_start", "tool_execution_end", "compaction_end", "agent_settled"].includes(event.type)) this.checkpointConversationLeaf(active);
     switch (event.type) {
       case "message_start":
         await this.emitOrBufferAskAssistantEvent(active, execution, event.message, {
@@ -3546,6 +3733,7 @@ export class PiNativeConversationRuntime {
         break;
       }
       case "tool_execution_start":
+        this.finishProviderWait(execution);
         execution.toolCallIds.add(event.toolCallId);
         await this.beginKnowledgeToolProgress(
           active,
@@ -3740,6 +3928,7 @@ export class PiNativeConversationRuntime {
       return;
     }
     if (block.redacted || !event.delta) return;
+    this.finishProviderWait(execution);
     block.text += event.delta;
     if (!block.exposed) {
       if (!block.text.trim()) return;
@@ -3940,11 +4129,28 @@ export class PiNativeConversationRuntime {
     }, observedAt);
   }
 
+  private finishProviderWait(
+    execution: ActiveProductRun,
+    status: EchoInkReasoningActivityStatus = "completed"
+  ): void {
+    if (execution.providerWaitTimer !== undefined) {
+      clearInterval(execution.providerWaitTimer);
+      delete execution.providerWaitTimer;
+    }
+    const provider = execution.reasoningSummary.activities.find((activity) =>
+      activity.id === "provider" && activity.status === "active"
+    );
+    if (provider) this.updateReasoningActivitySafely(execution, {
+      ...provider, status, updatedAt: Math.max(provider.updatedAt, this.now())
+    });
+  }
+
   private async observeFirstAssistantText(
     active: ActiveConversation,
     execution: ActiveProductRun
   ): Promise<void> {
     if (execution.firstAssistantTextSeen) return;
+    this.finishProviderWait(execution);
     execution.firstAssistantTextSeen = true;
     const observedAt = this.now();
     execution.reasoningSummary = completeReasoningAtFirstText({
@@ -4187,6 +4393,7 @@ export class PiNativeConversationRuntime {
     status: Exclude<EchoInkReasoningSummaryStatus, "running">,
     terminalAt: number
   ): Promise<void> {
+    this.finishProviderWait(execution, status === "completed" ? "completed" : status);
     if (execution.reasoningTerminalEntryId) return;
     const plan = activeTaskPlanFromBranch(active.sessionManager.getBranch());
     if (plan) this.updateReasoningTaskPlan(execution, plan, terminalAt);
@@ -4274,6 +4481,14 @@ export class PiNativeConversationRuntime {
     occurredAt: number
   ): void {
     if (event.type === "knowledge_progress") {
+      // Tool calls already have their own stable rows and per-call result counts.
+      // This row describes only the initial retrieval, never the turn aggregate.
+      const retrieval = event.stage === "searching" || event.stage === "continuing_search"
+        || event.stage === "reading_knowledge";
+      if (event.stage === "comparing_memory" || execution.knowledgeToolStages.size > 0) return;
+      if (retrieval && execution.reasoningSummary.activities.some((activity) =>
+        activity.id === "knowledge:retrieval" && activity.status === "completed"
+      )) return;
       const observation = execution.knowledgeObservation;
       const counts = observation && observation.candidates > 0
         ? {
@@ -4283,7 +4498,7 @@ export class PiNativeConversationRuntime {
           }
         : {};
       this.updateReasoningActivitySafely(execution, {
-        id: `knowledge:${event.stage}`,
+        id: retrieval ? "knowledge:retrieval" : `knowledge:${event.stage}`,
         kind: "knowledge",
         status: event.status === "active" ? "active" : "completed",
         stage: event.stage,
@@ -4295,7 +4510,7 @@ export class PiNativeConversationRuntime {
     }
     if (event.type === "memory_recall_progress") {
       const recall = event.recall;
-      const counts = recall && recall.candidates > 0
+      const counts = recall
         ? {
             current: Math.min(recall.injected, recall.candidates),
             total: recall.candidates,
@@ -4303,7 +4518,7 @@ export class PiNativeConversationRuntime {
           }
         : {};
       this.updateReasoningActivitySafely(execution, {
-        id: `memory:${event.stage}`,
+        id: "memory:recall",
         kind: "memory",
         status: event.status === "active" ? "active" : "completed",
         stage: event.stage,
@@ -6475,8 +6690,12 @@ function runtimeToolPayloadForProjection(
       });
     }
   }
+  const metadata = piKnowledgeToolDisplayMetadata(toolName, payload);
   return Object.freeze({
-    status: isError ? "failed" : "completed"
+    status: isError ? "failed" : "completed",
+    details: isError
+      ? metadata.errorCode ? { errorCode: metadata.errorCode } : {}
+      : metadata
   });
 }
 
@@ -6610,4 +6829,63 @@ function reasoningSummaryTerminalStatus(
 function safeIdentifier(value: unknown): value is string {
   return typeof value === "string"
     && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(value);
+}
+
+/** Reconstruct a missing stop-stage from the selected durable Branch without runtime activation. */
+export function readDurableTaskInterruptionStage(input: {
+  catalogStore: Pick<FileConversationCatalog, "sessionRootPath">;
+  catalog: Readonly<PiConversationCatalogEntry>;
+  runs: readonly Readonly<PiProductRunRecord>[];
+  productRunId: string;
+}): string {
+  const run = input.runs.find(run => run.productRunId === input.productRunId);
+  if (!run || run.piSessionId !== input.catalog.piSessionId || !input.catalog.sessionFile) return "";
+  const inspected = inspectPiSessionJsonl({ sessionRoot: input.catalogStore.sessionRootPath, sessionFile: input.catalog.sessionFile });
+  if (!inspected.valid || inspected.header.id !== input.catalog.piSessionId) return "";
+  const checkpoint = readPiActiveLeafCheckpoint({ sessionRoot: input.catalogStore.sessionRootPath, piSessionId: input.catalog.piSessionId });
+  const leafId = checkpoint ? checkpoint.activeLeafId : inspected.entries.at(-1)?.id ?? null;
+  const byId = new Map(inspected.entries.map(entry => [entry.id, entry]));
+  const branch: SessionEntry[] = [];
+  for (let id = leafId; id !== null;) {
+    const entry = byId.get(id);
+    if (!entry) return "";
+    branch.push(entry); id = entry.parentId;
+  }
+  branch.reverse();
+  if (!branch.some(entry => entry.id === run.userEntryId)) return "";
+  const projection = new PiChatUiProjector().projectSessionBranch({
+    piSessionId: input.catalog.piSessionId, activeLeafId: leafId, entries: branch,
+    productRunId: run.productRunId, runIdentities: input.runs.map(runIdentity), runState: "running", now: run.updatedAt
+  });
+  return taskInterruptionStage({ catalog: input.catalog, sessionManager: { getBranch: () => branch }, projection, currentRun: run });
+}
+
+/** Use recorded task steps or display-safe live Tool titles, never Tool payloads. */
+function taskInterruptionStage(active: {
+  catalog: Pick<PiConversationCatalogEntry, "taskStage">;
+  sessionManager: Pick<SessionManager, "getBranch">;
+  projection: Pick<PiChatUiViewModel, "messages">;
+  currentRun?: Pick<ActiveProductRun, "productRunId"> | null;
+  pendingSettlement?: Pick<ActiveProductRun, "productRunId"> | null;
+}): string {
+  if (active.catalog.taskStage?.trim()) return active.catalog.taskStage.trim().slice(0, 500);
+  const plan = latestTaskPlanFromBranch(active.sessionManager.getBranch());
+  const step = plan?.steps.find(step => step.stepId === plan.currentStepId);
+  if (step?.text.trim()) return step.text.trim().slice(0, 500);
+  const runId = active.currentRun?.productRunId ?? active.pendingSettlement?.productRunId;
+  if (!runId) return "";
+  const candidates: { title: string; at: number }[] = [];
+  for (const message of active.projection.messages) {
+    const turn = message.assistantTurn;
+    if (turn?.turnId === runId) for (const node of turn.processNodes) {
+      if (node.kind === "tool" && (node.status === "running" || node.status === "waiting") && node.title.trim()) {
+        candidates.push({ title: node.title.trim(), at: node.updatedAt });
+      }
+    }
+    if ((message.runId === runId || message.turnId === runId) && message.role === "tool"
+      && ["running", "pending", "waiting", "waiting_approval"].includes(message.status ?? "") && message.title?.trim()) {
+      candidates.push({ title: message.title.trim(), at: message.createdAt });
+    }
+  }
+  return candidates.sort((left, right) => right.at - left.at)[0]?.title.slice(0, 500) ?? "";
 }

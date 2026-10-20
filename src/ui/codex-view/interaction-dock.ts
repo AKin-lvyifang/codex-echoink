@@ -342,6 +342,7 @@ export class InteractionDockController {
       state: "waiting_approval",
       target: binding.target,
       preview: binding.preview,
+      ...(binding.deleteAction === true ? { deleteAction: true } : {}),
       controlled: true,
       language
     });

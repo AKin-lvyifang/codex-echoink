@@ -1,6 +1,13 @@
-import { Notice, type WorkspaceLeaf } from "obsidian";
+import { PdfReadingPageView, PDF_READING_PAGE_VIEW_TYPE } from "../home/pdf-reading-page";
+import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/english-diary-page";
+import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
+import { TodoPageView, TODO_PAGE_VIEW_TYPE } from "../home/todo-page";
+import { EchoInkJournalView, VIEW_TYPE_ECHOINK_JOURNAL } from "../home/journal-page";
+import { Notice, Platform, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { EchoInkWorkbenchView } from "../home/workbench-view";
+import { getWorkbenchDataService } from "../home/workbench-data";
 import { EchoInkKnowledgeSurfaceService } from "./knowledge-surface-service";
 import { ReviewManager } from "../review/manager";
 import { ReviewPreviewView, VIEW_TYPE_REVIEW_PREVIEW } from "../review/preview-view";
@@ -21,10 +28,23 @@ export interface EchoInkPluginControllers {
 
 export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): EchoInkPluginControllers {
   plugin.registerView(VIEW_TYPE_CODEX, (leaf: WorkspaceLeaf) => new CodexView(leaf, plugin));
-  plugin.registerView(VIEW_TYPE_ECHOINK_HOME, (leaf: WorkspaceLeaf) => new EchoInkHomeView(leaf, plugin));
+  plugin.registerView(VIEW_TYPE_ECHOINK_HOME, (leaf: WorkspaceLeaf) => Platform.isDesktopApp
+    ? new EchoInkWorkbenchView(leaf, plugin) : new EchoInkHomeView(leaf, plugin));
+  if (Platform.isDesktopApp) {
+    plugin.registerView(PDF_READING_PAGE_VIEW_TYPE, leaf => new PdfReadingPageView(leaf, plugin));
+    plugin.registerView(ENGLISH_DIARY_PAGE_VIEW_TYPE, leaf => new EnglishDiaryPageView(leaf, plugin));
+    plugin.registerView(KNOWLEDGE_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new KnowledgePageView(leaf, plugin));
+    plugin.registerView(TODO_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TodoPageView(leaf, plugin));
+    plugin.registerView(VIEW_TYPE_ECHOINK_JOURNAL, (leaf: WorkspaceLeaf) => new EchoInkJournalView(leaf, plugin));
+    // Restore historical layout leaves directly as the current workbench.
+    // This alias has no navigation/command entry and starts no task.
+    plugin.registerView("echoink-legacy-home", (leaf: WorkspaceLeaf) => new EchoInkWorkbenchView(leaf, plugin));
+    const workbench = getWorkbenchDataService(plugin);
+    plugin.register(() => workbench.dispose());
+  }
   plugin.registerView(VIEW_TYPE_REVIEW_PREVIEW, (leaf: WorkspaceLeaf) => new ReviewPreviewView(leaf, plugin));
 
-  const ribbonAnchor = plugin.addRibbonIcon("feather", "打开 EchoInk 首页和 Agent 侧栏", () => {
+  const ribbonAnchor = plugin.addRibbonIcon("feather", Platform.isDesktopApp ? "打开 EchoInk 工作台和 Agent 侧栏" : "打开 EchoInk 首页和 Agent 侧栏", () => {
     void (async () => {
       await plugin.activateHomeAndSidebar();
       await plugin.handleEchoInkOnboardingTargetActivated("sidebar");
@@ -34,7 +54,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
 
   plugin.addCommand({
     id: "open-echoink-home",
-    name: "打开 EchoInk 首页",
+    name: Platform.isDesktopApp ? "打开 EchoInk 工作台" : "打开 EchoInk 首页",
     callback: () => void plugin.activateHomeView()
   });
   plugin.addCommand({

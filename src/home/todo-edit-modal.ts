@@ -3,6 +3,7 @@ import type { TodoHost } from "./home-host";
 import { newId } from "../core/new-id";
 import { createOriginButton, createOriginInput, createOriginSelect, disposeOriginControls } from "../settings/origin-controls";
 import type { ParsedTodoRecord } from "./todo-markdown";
+import { getTodoProjects, resolveTodoProject, serializeTodoProject } from "./todo-projects";
 import { joinPeopleNames, parsePeopleNames, personColorIndex, personInitial, TODO_AVATAR_PALETTE_SIZE } from "./todo-people";
 
 /** The form reuses settings' native date input and Origin/Radix selection. */
@@ -16,6 +17,8 @@ export class EchoInkTodoFormModal extends Modal {
   private dueTimeValue = "";
   private deadlineChanged = false;
   private categoryName = "";
+  private projectPath = "";
+  private projectChanged = false;
   private saving = false;
   private syncDisabled: (() => void) | null = null;
   private commitPeopleDraft: (() => void) | null = null;
@@ -82,6 +85,24 @@ export class EchoInkTodoFormModal extends Modal {
     });
     titleInput.value = this.titleValue;
     titleInput.oninput = () => { this.titleValue = titleInput.value; };
+
+    const projects = getTodoProjects(this.plugin);
+    const project = resolveTodoProject(this.record?.project, projects);
+    const original = project.status === "resolved" ? project.project!.path : this.record?.project ? `original:${this.record.project}` : "";
+    if (!this.projectChanged) this.projectPath = original;
+    const projectLabel = this.t("项目", "Project");
+    const projectSelect = createOriginSelect(field(projectLabel), {
+      cls: "echoink-todo-project-select", attr: { "aria-label": projectLabel }
+    }, [
+      { value: "", label: this.t("不属于项目", "No project") },
+      ...projects.map(entry => ({ value: entry.path, label: entry.label })),
+      ...(project.status === "missing" || project.status === "ambiguous" ? [{ value: original, label: `${this.record!.project} · ${project.status === "missing"
+        ? this.t("项目已不存在", "Project no longer exists") : this.t("有同名项目，请重新选择", "Duplicate project names; select again")}` }] : [])
+    ], this.projectPath, this.app);
+    projectSelect.element.onchange = () => {
+      this.projectPath = projectSelect.element.value;
+      this.projectChanged = this.projectPath !== original;
+    };
 
     const peopleLabel = this.t("相关人员（选填）", "People (optional)");
     const peopleBox = field(peopleLabel).createDiv({ cls: "echoink-people-field" });
@@ -253,6 +274,10 @@ export class EchoInkTodoFormModal extends Modal {
     this.saving = true;
     this.syncDisabled?.();
     try {
+      // Re-read directories at submission: a deleted/renamed selection must not
+      // silently attach this draft to a different project. Unchanged raw values
+      // (including invalid old associations) remain the store's responsibility.
+      const project = this.projectChanged ? serializeTodoProject(this.projectPath, getTodoProjects(this.plugin)) : undefined;
       const categoryName = this.categoryName;
       if (categoryName && !this.plugin.settings.todoCategories.some((entry) => entry.name === categoryName)) {
         const category = { id: newId("todo-category"), name: categoryName };
@@ -269,6 +294,7 @@ export class EchoInkTodoFormModal extends Modal {
       // a time entered before its date. Only explicit deadline edits replace it.
       const values = {
         title, people: joinPeopleNames(this.peopleNames), categoryName,
+        ...(this.projectChanged ? { project } : {}),
         ...(!this.record || this.deadlineChanged ? { dueDate: this.dueValue, dueTime: this.dueValue ? this.dueTimeValue : "" } : {})
       };
       if (this.record) await store.updateTodo(this.record, values);

@@ -1,4 +1,5 @@
-import { knowledgeRolePath } from "../knowledge-base/root-paths";
+import { getKnowledgeFolderBindings, knowledgeRolePath } from "../knowledge-base/root-paths";
+import { knowledgeMayCreateCategoryDirectory, knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
 import { isPrivateNoteSourcePath } from "../knowledge-base/note-source-policy";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
@@ -102,6 +103,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
     for (const file of this.app.vault.getFiles().filter((entry) => /\.(md|base|canvas)$/iu.test(entry.path))) {
       if (results.length >= input.maxResults) break;
       if (isPrivateNoteSourcePath(file.path)) continue;
+      if (!knowledgeRecallCandidateAllowed(getKnowledgeFolderBindings(this.vaultRootPath), file.path)) continue;
       if (
         scopePrefix
         && file.path !== input.scope.relativePath
@@ -125,6 +127,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
       // match in the returned snapshot in case the file changed during search.
       const snapshot = await this.readFile(target, { maxBytes });
       if (!snapshot) continue;
+      if (!knowledgeRecallCandidateAllowed(getKnowledgeFolderBindings(this.vaultRootPath), target.relativePath)) continue;
       const contentIndex = snapshot.content.toLocaleLowerCase().indexOf(query);
       if (!pathMatches && contentIndex < 0) continue;
       results.push(Object.freeze({
@@ -172,7 +175,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
   ): Promise<void> {
     await this.assertMissingTargetStable(target);
     try {
-      await this.createMissingParentDirectories(target);
+      await this.createMissingParentDirectories(target, true);
       await this.app.vault.create(target.relativePath, content);
     } catch (error) {
       throw mapMutationError(error, "already_exists", "Vault create failed");
@@ -264,7 +267,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
       );
     }
     try {
-      await this.createMissingParentDirectories(target);
+      await this.createMissingParentDirectories(target, false);
       await this.app.fileManager.renameFile(file, target.relativePath);
     } catch (error) {
       throw mapMutationError(error, "io_error", "Vault move failed");
@@ -340,7 +343,8 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
   }
 
   private async createMissingParentDirectories(
-    target: Readonly<ResolvedVaultTarget>
+    target: Readonly<ResolvedVaultTarget>,
+    allowAgentSubfolders: boolean
   ): Promise<void> {
     const parentSegments = target.relativePath.split("/").slice(0, -1);
     let relativeParent = "";
@@ -364,6 +368,10 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
           );
         }
         continue;
+      }
+      const config = getKnowledgeFolderBindings(this.vaultRootPath);
+      if (config && !knowledgeMayCreateCategoryDirectory(config, relativeParent, { allowAgentSubfolders })) {
+        throw adapterError("unsafe_target", "Vault parent directory creation is not allowed");
       }
       try {
         await this.app.vault.createFolder(normalizePath(relativeParent));

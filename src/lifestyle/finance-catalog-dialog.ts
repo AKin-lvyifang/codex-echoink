@@ -3,8 +3,10 @@ import { Notice } from "obsidian";
 import type { LifestylePluginHost, LifestyleHost } from "./host";
 import { openFinanceIconPicker, financeIconOptions, renderFinanceIcon, type FinanceIconScope } from "./finance-icon-picker";
 import type { FinanceSettings, FinanceAccountSetting, FinanceCategorySetting, FinanceMerchantSetting } from "./settings";
-import { createOriginSwitch } from "../settings/origin-controls";
+import { createOriginCheck, createOriginSwitch } from "../settings/origin-controls";
+import { createSettingsState, showSettingsInlineConfirmation } from "../settings/settings-v2";
 import { confirmModal } from "../ui/modals";
+import { applyDeleteButton } from "../settings/amicro-buttons";
 
 export type CatalogKind = "merchants" | "accounts" | "categories";
 type CatalogItem = FinanceMerchantSetting | FinanceAccountSetting | FinanceCategorySetting;
@@ -47,7 +49,8 @@ export class FinanceCatalogPanel {
   private focusName = false;
   private focusRow: number | null = null;
   constructor(private readonly plugin: LifestylePluginHost & { lifestyle: LifestyleHost }, readonly kind: CatalogKind,
-    private readonly exit: () => void, private readonly redraw: () => void) {}
+    private readonly exit: () => void, private readonly redraw: () => void,
+    private readonly options: { embedded?: boolean } = {}) {}
 
   title(): string { return this.editing === null ? `管理${labels[this.kind]}` : `${this.editing < 0 ? "新增" : "编辑"}${labels[this.kind]}`; }
   backLabel(): string { return this.editing === null ? "返回财务设置" : `返回${labels[this.kind]}列表`; }
@@ -70,7 +73,7 @@ export class FinanceCatalogPanel {
     let saved = false;
     try {
       const accepted = await confirmModal(this.plugin.app, `删除${labels[this.kind]}`,
-        `删除「${item.name}」？已有账目和预算不会删除。`, "删除", "取消", { signal: controller.signal });
+        `删除「${item.name}」？已有账目和预算不会删除。`, "删除", "取消", { signal: controller.signal, deleteAction: true });
       if (!accepted || controller.signal.aborted) return;
       const items = this.items();
       if (!items.includes(item)) return;
@@ -84,6 +87,34 @@ export class FinanceCatalogPanel {
       if (saved && !controller.signal.aborted) this.redraw();
     }
   }
+  private confirmEmbeddedRemoval(item: CatalogItem, row: HTMLElement, trigger: HTMLButtonElement): void {
+    if (this.pending || !this.plugin.lifestyle.finance.accessState().canWrite) return;
+    showSettingsInlineConfirmation(row, trigger, {
+      deleteAction: true,
+      message: `删除「${item.name}」？已有账目和预算不会删除。`, confirmLabel: "删除", cancelLabel: "取消",
+      onConfirm: async () => {
+        if (this.pending) return;
+        if (!this.plugin.lifestyle.finance.accessState().canWrite) {
+          createSettingsState(row, this.plugin.lifestyle.finance.accessState().reason ?? "需要有效 PRO，已有资料仍可查看。", "error");
+          return;
+        }
+        this.pending = true; this.controls?.refresh();
+        let saved = false;
+        try {
+          const items = this.items();
+          if (!items.includes(item)) return;
+          await this.update(items.filter(current => current !== item));
+          saved = true;
+        } catch (error) {
+          row.querySelector(".echoink-settings-state")?.remove();
+          createSettingsState(row, errorText(error), "error");
+        } finally {
+          this.pending = false; this.controls?.refresh();
+          if (saved) this.redraw();
+        }
+      }
+    });
+  }
   private openEditor(index: number): void {
     if (this.pending) return;
     this.editing = index; this.focusName = true; this.redraw();
@@ -94,6 +125,7 @@ export class FinanceCatalogPanel {
     const back = content.querySelector<HTMLButtonElement>(":scope > .echoink-life-settings-back");
     if (back) this.controls.bind(back, { businessDisabled: () => this.pending, needsWrite: () => false });
     content.addClass("echoink-finance-catalog-page");
+    content.toggleClass("echoink-finance-catalog-embedded", this.options.embedded === true);
     if (this.editing === null) this.renderList(content);
     else this.renderEditor(content);
   }
@@ -113,7 +145,7 @@ export class FinanceCatalogPanel {
       edit.createSpan({ text: "›", cls: "echoink-finance-catalog-chevron", attr: { "aria-hidden": "true" } });
       edit.setAttr("aria-label", `编辑${item.name}`);
       edit.onclick = () => this.openEditor(index);
-      const toggle = createOriginSwitch(row, { attr: { "aria-label": `${item.active ? "停用" : "启用"}${item.name}` } });
+      const toggle = (this.options.embedded ? createOriginCheck : createOriginSwitch)(row, { attr: { "aria-label": `${item.active ? "停用" : "启用"}${item.name}` } });
       this.controls?.bind(toggle, { businessDisabled: () => this.pending });
       toggle.checked = item.active;
       toggle.onchange = () => {
@@ -123,8 +155,9 @@ export class FinanceCatalogPanel {
           .catch((error) => { this.pending = false; toggle.checked = item.active; this.controls?.refresh(); new Notice(errorText(error)); });
       };
       const remove = row.createEl("button", { text: "删除", attr: { type: "button" } });
+      applyDeleteButton(remove);
       this.controls?.bind(remove, { businessDisabled: () => this.pending });
-      remove.onclick = () => { void this.removeItem(item); };
+      remove.onclick = () => { if (this.options.embedded) this.confirmEmbeddedRemoval(item, row, remove); else void this.removeItem(item); };
     }
     const add = content.createEl("button", { text: `新增${labels[this.kind]}`, cls: "echoink-finance-catalog-add", attr: { type: "button" } });
     this.controls?.bind(add, { businessDisabled: () => this.pending });
@@ -146,7 +179,7 @@ export class FinanceCatalogPanel {
     }
     const active = form.createDiv({ cls: "echoink-life-setting-row" });
     active.createSpan({ text: "启用" });
-    const activeInput = createOriginSwitch(active, { attr: { "aria-label": `启用${labels[this.kind]}` } }); activeInput.checked = existing?.active !== false;
+    const activeInput = (this.options.embedded ? createOriginCheck : createOriginSwitch)(active, { attr: { "aria-label": `启用${labels[this.kind]}` } }); activeInput.checked = existing?.active !== false;
     let aliasesInput: HTMLInputElement | null = null;
     let iconValue = this.kind === "categories" ? (existing as FinanceCategorySetting | null)?.icon ?? "package"
       : (existing as FinanceMerchantSetting | null)?.iconId ?? "auto";

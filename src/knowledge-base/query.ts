@@ -1,6 +1,7 @@
 import { knowledgeRootRole, resolveKnowledgePath, knowledgePathRole } from "./root-paths";
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeBodySearchPort } from "./vault-body-search";
+import type { KnowledgeRelationPage } from "./knowledge-relations";
 import { knowledgeSpanReferenceId, sliceKnowledgeSourceSpan, sourceSpanHasMore, boundKnowledgeSourceSpan } from "./source-span";
 import { extractMarkdownAnchorLinks, knowledgeAnchorCoversSpan, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, normalizeKnowledgeLinkCues, verifyKnowledgeAnchorLines, verifyKnowledgeOutlineLines } from "./search/markdown-navigation";
 import { createHash } from "node:crypto";
@@ -121,6 +122,12 @@ interface KnowledgeCandidate {
   vaultRelativePath: string;
   score: number;
   explicit: boolean;
+}
+
+export interface KnowledgeRetrievalCandidatePolicy {
+  readonly kinds?: readonly KnowledgeSearchKind[];
+  /** Candidate-only restriction; explicitly requested sources keep their read path. */
+  readonly allowsCandidate?: (relativePath: string) => boolean;
 }
 
 /** Builds and revalidates exact local references without an index fallback. */
@@ -304,14 +311,16 @@ export class KnowledgeRetriever {
   readonly vaultPath: string;
   readonly referenceBuilder: KnowledgeReferenceBuilder;
   readonly agentIndex?: KnowledgeAgentIndex;
+  private readonly toolCandidatePolicy?: () => Readonly<KnowledgeRetrievalCandidatePolicy>;
 
   constructor(
     vaultPath: string,
-    options: Readonly<{ agentIndex?: KnowledgeAgentIndex }> = {}
+    options: Readonly<{ agentIndex?: KnowledgeAgentIndex; toolCandidatePolicy?: () => Readonly<KnowledgeRetrievalCandidatePolicy> }> = {}
   ) {
     this.referenceBuilder = new KnowledgeReferenceBuilder(vaultPath, options.agentIndex?.bodySearch);
     this.vaultPath = this.referenceBuilder.vaultPath;
     this.agentIndex = options.agentIndex;
+    this.toolCandidatePolicy = options.toolCandidatePolicy;
     if (
       this.agentIndex
       && path.resolve(this.agentIndex.vaultPath) !== this.vaultPath
@@ -324,9 +333,10 @@ export class KnowledgeRetriever {
   }
 
   async retrieve(
-    request: Readonly<KnowledgeRetrievalRequest>
+    request: Readonly<KnowledgeRetrievalRequest>,
+    policy: Readonly<KnowledgeRetrievalCandidatePolicy> = {}
   ): Promise<KnowledgeRetrievalResult> {
-    if (this.agentIndex) return await this.retrieveFromAgentIndex(request);
+    if (this.agentIndex) return await this.retrieveFromAgentIndex(request, policy);
     const question = normalizeKnowledgeQuestion(request.question);
     const limit = normalizeKnowledgeReferenceLimit(request.limit);
     const explicitPaths = uniqueExplicitKnowledgePaths(request.explicitPaths ?? []);
@@ -335,6 +345,7 @@ export class KnowledgeRetriever {
     const explicitSet = new Set<string>();
 
     for (const explicitPath of explicitPaths) {
+      if (policy.kinds && !policy.kinds.includes(knowledgePathRole(this.vaultPath, explicitPath) as KnowledgeSearchKind)) continue;
       const snapshot = await readKnowledgeSourceSnapshot(
         this.vaultPath,
         explicitPath,
@@ -359,6 +370,7 @@ export class KnowledgeRetriever {
     const terms = extractSearchTerms(searchQuestion);
     for (const relativePath of discovered) {
       if (explicitSet.has(relativePath)) continue;
+      if ((policy.kinds && !policy.kinds.includes(knowledgePathRole(this.vaultPath, relativePath) as KnowledgeSearchKind)) || (policy.allowsCandidate && !policy.allowsCandidate(relativePath))) continue;
       try {
         const snapshot = await readKnowledgeSourceSnapshot(
           this.vaultPath,
@@ -438,7 +450,33 @@ export class KnowledgeRetriever {
         "Knowledge Agent index is not configured"
       );
     }
-    return await this.agentIndex.search(request);
+    const policy = this.toolCandidatePolicy?.();
+    if (!policy) return await this.agentIndex.search(request);
+    const allowsPath = (relativePath: string) => (!policy.kinds || policy.kinds.includes(knowledgePathRole(this.vaultPath, relativePath) as KnowledgeSearchKind))
+      && (!policy.allowsCandidate || policy.allowsCandidate(relativePath));
+    if (request.mode === "related") {
+      if (!request.vaultRelativePath || !allowsPath(request.vaultRelativePath)) throw new KnowledgeRetrievalError("forbidden-path", "Knowledge relation source is outside this workflow");
+      const result = await this.agentIndex.search(request);
+      if (!result.related) return result;
+      const related = filterKnowledgeRelationPage(result.related, allowsPath);
+      return { ...result, total: related.total, returned: related.returned, remaining: related.remaining, hasMore: related.hasMore, exhausted: related.exhausted, related };
+    }
+    const kinds = policy.kinds ? policy.kinds.filter(kind => !request.kinds?.length || request.kinds.includes(kind)) : request.kinds;
+    if (kinds && !kinds.length) return emptyAgentIndexSearchResult();
+    const limit = Math.max(0, Math.min(50, request.limit ?? (this.agentIndex.bodySearch ? 20 : 8)));
+    const hits: KnowledgeAgentSearchResult["hits"] = [];
+    let excluded = 0;
+    let result: KnowledgeAgentSearchResult;
+    let cursor = request.cursor;
+    do {
+      result = await this.agentIndex.search({ ...request, kinds, limit: limit - hits.length, cursor });
+      for (const hit of result.hits) {
+        if (policy.allowsCandidate && !policy.allowsCandidate(hit.vaultRelativePath)) excluded++;
+        else hits.push(filterKnowledgeNavigation(hit, allowsPath));
+      }
+      cursor = result.continuationCursor;
+    } while (policy.allowsCandidate && hits.length < limit && result.hasMore && cursor);
+    return { ...result, total: Math.max(0, result.total - excluded), returned: hits.length, hits };
   }
 
   async readAgentIndex(input: Readonly<{
@@ -451,17 +489,27 @@ export class KnowledgeRetriever {
         "Knowledge Agent index is not configured"
       );
     }
-    const snapshot = await (this.agentIndex.bodySearch ?? this.agentIndex).read(input);
-    if (this.agentIndex.bodySearch && snapshot.content.includes("[[") && snapshot.content.includes("#") && extractMarkdownAnchorLinks(snapshot.content, 0).total > 0) {
-      const related = (await this.agentIndex.bodySearch.search({ mode: "related", vaultRelativePath: snapshot.vaultRelativePath, limit: 8 })).related;
-      if (related?.contentRevision !== snapshot.contentRevision) throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath);
-      return Object.freeze({ ...snapshot, related });
+    const policy = this.toolCandidatePolicy?.();
+    // Ordinary-chat explicit reads retain their existing public Vault authority.
+    if (policy?.kinds && !policy.kinds.includes(knowledgePathRole(this.vaultPath, input.vaultRelativePath) as KnowledgeSearchKind)) {
+      throw new KnowledgeRetrievalError("forbidden-path", "Knowledge source is outside this workflow");
     }
-    return snapshot;
+    const snapshot = await (this.agentIndex.bodySearch ?? this.agentIndex).read(input);
+    if (policy?.kinds && !policy.kinds.includes(snapshot.kind)) throw new KnowledgeRetrievalError("forbidden-path", "Knowledge source is outside this workflow");
+    let related = snapshot.related;
+    if (this.agentIndex.bodySearch && snapshot.content.includes("[[") && snapshot.content.includes("#") && extractMarkdownAnchorLinks(snapshot.content, 0).total > 0) {
+      related = (await this.agentIndex.bodySearch.search({ mode: "related", vaultRelativePath: snapshot.vaultRelativePath, limit: 8 })).related;
+      if (related?.contentRevision !== snapshot.contentRevision) throw new KnowledgeRetrievalError("source-changed", KNOWLEDGE_SOURCE_CHANGED_RESPONSE, snapshot.vaultRelativePath);
+    }
+    if (!related) return snapshot;
+    return Object.freeze({ ...snapshot, related: policy ? filterKnowledgeRelationPage(related, relativePath =>
+      (!policy.kinds || policy.kinds.includes(knowledgePathRole(this.vaultPath, relativePath) as KnowledgeSearchKind))
+      && (!policy.allowsCandidate || policy.allowsCandidate(relativePath))) : related });
   }
 
   private async retrieveFromAgentIndex(
-    request: Readonly<KnowledgeRetrievalRequest>
+    request: Readonly<KnowledgeRetrievalRequest>,
+    policy: Readonly<KnowledgeRetrievalCandidatePolicy>
   ): Promise<KnowledgeRetrievalResult> {
     const question = normalizeKnowledgeQuestion(request.question);
     const limit = normalizeKnowledgeReferenceLimit(request.limit);
@@ -473,6 +521,7 @@ export class KnowledgeRetriever {
     const explicitSet = new Set<string>();
     let explicitNavigationSources = 0;
     for (const explicitPath of explicitPaths.slice(0, limit)) {
+      if (policy.kinds && !policy.kinds.includes(knowledgePathRole(this.vaultPath, explicitPath) as KnowledgeSearchKind)) continue;
       try {
       const reference = await this.referenceBuilder.buildReference({
         vaultRelativePath: explicitPath,
@@ -503,41 +552,47 @@ export class KnowledgeRetriever {
         "Knowledge continuation requires the same non-empty search question"
       );
     }
-    const search = searchQuestion
-      ? await this.agentIndex!.search({
-          query: searchQuestion,
-          signal: request.signal,
-          limit: request.cursor ? limit : limit - references.length,
-          ...(indexedExplicitPaths.length
-            ? { excludePaths: indexedExplicitPaths }
-            : {}),
-          ...(request.cursor ? { cursor: request.cursor } : {})
-        })
+    const searchPage = (cursor?: string) => this.agentIndex!.search({
+      query: searchQuestion,
+      signal: request.signal,
+      limit: Math.max(1, limit - references.length),
+      ...(policy.kinds ? { kinds: [...policy.kinds] } : {}),
+      ...(indexedExplicitPaths.length ? { excludePaths: indexedExplicitPaths } : {}),
+      ...(cursor ? { cursor } : {})
+    });
+    let search = searchQuestion && references.length < limit
+      ? await searchPage(request.cursor)
       : emptyAgentIndexSearchResult();
-    for (const hit of search.hits) {
-      if (explicitSet.has(hit.vaultRelativePath)) continue;
-      try {
-        references.push(await this.referenceBuilder.buildReference({
-          vaultRelativePath: hit.vaultRelativePath,
-          question,
-          lineStart: hit.lineStart,
-          lineEnd: hit.lineEnd,
-          columnStart: hit.columnStart,
-          columnEnd: hit.columnEnd,
-          excerpt: hit.excerpt,
-          sectionTitle: hit.sectionTitle,
-          matchSources: hit.matchSources,
-          inclusionReason: hit.inclusionReason,
-          outline: hit.outline,
-          related: hit.related,
-          linkCues: hit.linkCues,
-          allowUnrefined: hit.kind === "raw",
-          expectedContentRevision: hit.contentRevision
-        }));
-      } catch (error) {
-        if (!(error instanceof KnowledgeRetrievalError) || !["not-found", "source-changed", "not-markdown", "invalid-utf8", "read-failed", "forbidden-path"].includes(error.code)) throw error;
-        localIssues.push({ vaultRelativePath: hit.vaultRelativePath, status: error.code });
+    let excludedCandidates = 0;
+    while (true) {
+      for (const hit of search.hits) {
+        if (explicitSet.has(hit.vaultRelativePath)) continue;
+        if (policy.allowsCandidate && !policy.allowsCandidate(hit.vaultRelativePath)) { excludedCandidates++; continue; }
+        try {
+          references.push(await this.referenceBuilder.buildReference({
+            vaultRelativePath: hit.vaultRelativePath,
+            question,
+            lineStart: hit.lineStart,
+            lineEnd: hit.lineEnd,
+            columnStart: hit.columnStart,
+            columnEnd: hit.columnEnd,
+            excerpt: hit.excerpt,
+            sectionTitle: hit.sectionTitle,
+            matchSources: hit.matchSources,
+            inclusionReason: hit.inclusionReason,
+            outline: hit.outline,
+            related: hit.related,
+            linkCues: hit.linkCues,
+            allowUnrefined: hit.kind === "raw",
+            expectedContentRevision: hit.contentRevision
+          }));
+        } catch (error) {
+          if (!(error instanceof KnowledgeRetrievalError) || !["not-found", "source-changed", "not-markdown", "invalid-utf8", "read-failed", "forbidden-path"].includes(error.code)) throw error;
+          localIssues.push({ vaultRelativePath: hit.vaultRelativePath, status: error.code });
+        }
       }
+      if (!policy.allowsCandidate || references.length >= limit || !search.hasMore || !search.continuationCursor) break;
+      search = await searchPage(search.continuationCursor);
     }
     if (this.agentIndex?.bodySearch) {
       const navigationSources = new Set<string>();
@@ -557,7 +612,14 @@ export class KnowledgeRetriever {
         if (related.contentRevision === references[i].contentRevision) references[i] = Object.freeze({ ...references[i], related, applicability: (() => { const hit = search.hits.find((candidate) => candidate.vaultRelativePath === references[i].vaultRelativePath); return hit ? { subjects: hit.subjects, applicableTime: hit.applicableTime, documentKind: hit.documentKind } : undefined; })() });
       } catch { /* A relationship enhancement never hides an already readable excerpt. */ }
     }
-    const total = search.total + explicitSet.size;
+    if (policy.kinds || policy.allowsCandidate) {
+      // Explicit source reads retain their authority, but every automatic
+      // navigation path (including builder-added anchors) uses candidate scope.
+      const allowsPath = (relativePath: string) => (!policy.kinds || policy.kinds.includes(knowledgePathRole(this.vaultPath, relativePath) as KnowledgeSearchKind))
+        && (!policy.allowsCandidate || policy.allowsCandidate(relativePath));
+      for (let i = 0; i < references.length; i++) references[i] = filterKnowledgeNavigation(references[i], allowsPath);
+    }
+    const total = Math.max(0, search.total - excludedCandidates) + explicitSet.size;
     if (references.length === 0) {
       return {
         localIssues,
@@ -1321,6 +1383,28 @@ function uniqueExplicitKnowledgePaths(paths: readonly string[]): string[] {
 function isKnowledgeAgentIndexedPath(relativePath: string, vaultPath = ""): boolean {
   const root = knowledgePathRole(vaultPath, relativePath);
   return root === "wiki" || root === "projects" || root === "raw";
+}
+
+function filterKnowledgeRelationPage(page: KnowledgeRelationPage, allowsPath: (relativePath: string) => boolean): KnowledgeRelationPage {
+  const items = page.items.flatMap(item => {
+    if (!allowsPath(item.source.vaultRelativePath) || (item.target && !allowsPath(item.target.vaultRelativePath))
+      || (item.anchorLocation && !allowsPath(item.anchorLocation.vaultRelativePath))) return [];
+    if (!item.candidates) return [item];
+    const candidates = item.candidates.filter(candidate => allowsPath(candidate.vaultRelativePath));
+    return candidates.length ? [{ ...item, candidates }] : [];
+  });
+  return { ...page, total: Math.max(0, page.total - (page.items.length - items.length)), returned: items.length, items };
+}
+
+function filterKnowledgeNavigation<T extends { related?: KnowledgeRelationPage; linkCues?: KnowledgeReference["linkCues"] }>(value: T, allowsPath: (relativePath: string) => boolean): T {
+  const linkCues = value.linkCues?.filter(cue => allowsPath(cue.vaultRelativePath)
+    && cue.via.every(source => allowsPath(source.vaultRelativePath)));
+  const { linkCues: _linkCues, ...body } = value;
+  return Object.freeze({
+    ...body,
+    ...(value.related ? { related: filterKnowledgeRelationPage(value.related, allowsPath) } : {}),
+    ...(linkCues?.length ? { linkCues: Object.freeze(linkCues) } : {})
+  }) as T;
 }
 
 function emptyAgentIndexSearchResult(): KnowledgeAgentSearchResult {

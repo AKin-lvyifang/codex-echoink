@@ -1,4 +1,6 @@
-import { unlink } from "node:fs/promises";
+import { copyFile, lstat, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { CONVERSATION_TASK_METADATA_KEYS, normalizeConversationTaskMetadata, applyConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
 import * as path from "node:path";
 import type {
   PiConversationCatalogEntry,
@@ -72,6 +74,7 @@ export interface FileConversationCatalogOptions {
 
 export interface PiConversationCatalogListOptions {
   statuses?: readonly PiConversationCatalogStatus[];
+  agentId?: string;
 }
 
 export interface AdoptVerifiedRecoverySessionFileInput {
@@ -102,6 +105,7 @@ export class FileConversationCatalog {
 
   private readonly layout: PiNativeVaultFileLayout;
   private readonly now: () => number;
+  private preAgentMetadataBackupReady = false;
 
   constructor(options: FileConversationCatalogOptions) {
     this.vaultId = requireNonEmptyString(options.vaultId, "vaultId");
@@ -140,6 +144,7 @@ export class FileConversationCatalog {
       : null;
     return document.entries
       .filter((entry) => !statuses || statuses.has(entry.status))
+      .filter((entry) => !options.agentId || entry.agentId === options.agentId)
       .sort((left, right) =>
         right.updatedAt - left.updatedAt
         || left.conversationId.localeCompare(right.conversationId)
@@ -192,6 +197,9 @@ export class FileConversationCatalog {
         if (existingIndex >= 0) {
           const existing = document.entries[existingIndex];
           assertStableCatalogIdentity(existing, candidate);
+          // Existing task fields have their own CAS writer. A stale full-entry
+          // upsert for memory/session metadata must not erase a newer task patch.
+          applyConversationTaskMetadata(candidate, existing);
           if (existing.status === "deleted" && candidate.status !== "deleted") {
             throw mappingConflict(
               `已删除的 Conversation ${candidate.conversationId} 不能重新激活或复用`
@@ -307,6 +315,25 @@ export class FileConversationCatalog {
         return { ...entry, status: normalizedStatus };
       }
     );
+  }
+
+  /** Optimistic projection writes cannot replace newer Catalog metadata. */
+  async updateTaskMetadata(
+    conversationId: string,
+    metadata: ConversationTaskMetadata,
+    expectedRevision: number | undefined,
+    metadataUpdatedAt = this.now()
+  ): Promise<Readonly<PiConversationCatalogEntry>> {
+    const metadataTimestamp = requireTimestamp(metadataUpdatedAt, "taskMetadataUpdatedAt");
+    // Metadata projections are not conversation activity (sorting/auto-archive).
+    return await this.updateEntry(conversationId, undefined, entry => {
+      if (entry.taskMetadataUpdatedAt !== expectedRevision) {
+        throw new PiNativeFileStoreError("invalid-input", "Conversation task metadata changed; reload before saving");
+      }
+      const next = applyConversationTaskMetadata(entry, metadata);
+      next.taskMetadataUpdatedAt = Math.max(metadataTimestamp, (expectedRevision ?? 0) + 1);
+      return next;
+    });
   }
 
   async sessionFile(conversationId: string): Promise<string | null>;
@@ -630,7 +657,7 @@ export class FileConversationCatalog {
 
   private async updateEntry(
     conversationId: string,
-    updatedAt: number,
+    updatedAt: number | undefined,
     update: (
       entry: PiConversationCatalogEntry
     ) => PiConversationCatalogEntry
@@ -639,7 +666,7 @@ export class FileConversationCatalog {
       conversationId,
       "conversationId"
     );
-    const normalizedUpdatedAt = requireTimestamp(updatedAt, "updatedAt");
+    const normalizedUpdatedAt = updatedAt === undefined ? undefined : requireTimestamp(updatedAt, "updatedAt");
     return await serializePiNativeFileWrite(
       this.storageRootPath,
       async () => {
@@ -649,14 +676,14 @@ export class FileConversationCatalog {
         );
         if (index < 0) throw notFound(normalizedConversationId);
         const existing = document.entries[index];
-        if (normalizedUpdatedAt < existing.updatedAt) {
+        if (normalizedUpdatedAt !== undefined && normalizedUpdatedAt < existing.updatedAt) {
           throw new PiNativeFileStoreError(
             "invalid-input",
             `Conversation ${normalizedConversationId} 的 updatedAt 不得回退`
           );
         }
         const candidate = normalizeCatalogEntry(
-          update({ ...cloneCatalogEntry(existing), updatedAt: normalizedUpdatedAt }),
+          update({ ...cloneCatalogEntry(existing), ...(normalizedUpdatedAt === undefined ? {} : { updatedAt: normalizedUpdatedAt }) }),
           this.vaultId,
           this.layout
         );
@@ -685,12 +712,41 @@ export class FileConversationCatalog {
   private async writeDocument(
     document: ConversationCatalogDocumentV1
   ): Promise<ConversationCatalogDocumentV1> {
+    await this.ensurePreAgentMetadataBackup(document);
     return await atomicWriteJsonFile(
       this.filePath,
       document,
       "Pi Conversation Catalog",
       (value) => parseCatalogDocument(value, this.vaultId, this.layout)
     );
+  }
+
+  /** Back up actual old bytes before any writer publishes the new strict-schema fields. */
+  private async ensurePreAgentMetadataBackup(document: ConversationCatalogDocumentV1): Promise<void> {
+    // Every nonempty document gains agentId during schema normalization.
+    if (this.preAgentMetadataBackupReady || document.entries.length === 0) return;
+    try {
+      const original = await readJsonFileIfPresent(this.filePath, "Pi Conversation Catalog");
+      // There is no pre-migration document to recover on a new install. Once
+      // upgraded, never label a P1 document as an old-version backup either.
+      if (original !== null) {
+        const raw = requirePlainObject(original, "Pi Conversation Catalog");
+        if (!Array.isArray(raw.entries)) throw new Error("Catalog entries invalid");
+        const alreadyUpgraded = raw.entries.some(entry => entry && typeof entry === "object"
+          && CONVERSATION_TASK_METADATA_KEYS.some(key => Object.hasOwn(entry, key)));
+        if (!alreadyUpgraded) {
+          const backupPath = this.filePath.replace(/\.json$/u, ".pre-agent-metadata-v1.json");
+          try {
+            await copyFile(this.filePath, backupPath, constants.COPYFILE_EXCL);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !(await lstat(backupPath)).isFile()) throw error;
+          }
+        }
+      }
+      this.preAgentMetadataBackupReady = true;
+    } catch (error) {
+      throw new Error("Pi Conversation Catalog backup failed; task metadata was not written.", { cause: error });
+    }
   }
 
   private async ensureBindingClaims(
@@ -844,7 +900,8 @@ function normalizeCatalogEntry(
       "createdAt",
       "updatedAt"
     ],
-    ["sessionFile", "defaultSkillId", "journalDirectory"],
+    // Legacy P3 display metadata is accepted only for reading and omitted from normalized entries.
+    ["sessionFile", "defaultSkillId", "journalDirectory", "taskTransfers", ...CONVERSATION_TASK_METADATA_KEYS],
     "Conversation Catalog Entry"
   );
   const vaultId = requireNonEmptyString(object.vaultId, "entry.vaultId");
@@ -873,7 +930,21 @@ function normalizeCatalogEntry(
         object.journalDirectory,
         "entry.journalDirectory"
       );
+  const taskMetadata = normalizeConversationTaskMetadata(object);
+  for (const key of CONVERSATION_TASK_METADATA_KEYS) {
+    const raw = object[key];
+    const expected = taskMetadata[key];
+    const matches = key === "pendingResponse" && raw && expected
+      ? typeof raw === "object" && !Array.isArray(raw)
+        && Object.keys(raw).sort().join(",") === "kind,questionId,runId"
+        && Object.entries(raw).every(([name, value]) => value === (expected as unknown as Record<string, unknown>)[name])
+      : raw === expected;
+    if (raw !== undefined && !matches) {
+      throw new PiNativeFileStoreError("invalid-input", `Conversation task metadata ${key} invalid`);
+    }
+  }
   return {
+    ...taskMetadata,
     conversationId: requireNonEmptyString(
       object.conversationId,
       "entry.conversationId"
@@ -1321,6 +1392,7 @@ function cloneCatalogEntry(
   entry: PiConversationCatalogEntry
 ): PiConversationCatalogEntry {
   return {
+    ...normalizeConversationTaskMetadata(entry),
     conversationId: entry.conversationId,
     piSessionId: entry.piSessionId,
     vaultId: entry.vaultId,

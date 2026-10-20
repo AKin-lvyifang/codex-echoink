@@ -1,4 +1,8 @@
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { defaultAgentRegistry, normalizeAgentRegistry } from "../agents/registry";
+import type { AgentRegistry } from "../agents/types";
+import { defaultTaskWorkspace, normalizeTaskWorkspace, type TaskWorkspace } from "../agents/task-workspace";
+import { normalizeConversationTaskMetadata } from "../agents/task-metadata";
 import { normalizeSelectionAskSettings } from "../selection-ask/settings";
 import { newId } from "../core/new-id";
 export { newId } from "../core/new-id";
@@ -269,21 +273,17 @@ export interface SetupSettings {
   lastCheckedAt: number;
   dismissedVersion: string;
   tutorialVersion: string;
-  tutorialStep: "sidebar" | "settings" | "provider" | "knowledge" | "personality";
+  tutorialStep: "sidebar" | "settings" | "provider" | "knowledge" | "personality" | "colleague";
+  onboardingAgentId?: string;
 }
 
 export const DEFAULT_ECHOINK_WELCOME_TITLE = "What's new?";
 export const DEFAULT_ECHOINK_WELCOME_SUBTITLE =
   "当前 Conversation 需要先选择工作区；添加笔记只作为本轮上下文。";
 
-export interface EchoInkWelcomeCopy {
-  readonly title: string;
-  readonly subtitle: string;
-}
-
 export interface EchoInkMemorySettings {
   useLongTermMemory: boolean;
-  /** Dream scheduler: offline memory consolidation (anchor expansion + personality signal extraction). */
+  /** Dream scheduler: offline memory consolidation (anchor expansion + user-profile signal extraction). */
   dreamEnabled: boolean;
   /** Number of dream runs per day (1-6). */
   dreamRunsPerDay: number;
@@ -327,6 +327,7 @@ export interface KnowledgeBaseMaintenanceHistoryEntry {
 }
 
 export interface KnowledgeBaseSettings {
+  autoLinkEnabled?: boolean;
   journalSearchDisclosureSeen?: boolean;
   folderBindings?: import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null;
   lastRunAt: number;
@@ -545,6 +546,8 @@ export interface CodexForObsidianSettings {
   workspaceResources: WorkspaceResourceToggles;
   workspaceResourceCache: WorkspaceResourceCache;
   sessions: StoredSession[];
+  agentRegistry: AgentRegistry;
+  taskWorkspace: TaskWorkspace;
   activeSessionId: string;
 }
 
@@ -597,7 +600,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     lastCheckedAt: 0,
     dismissedVersion: "",
     tutorialVersion: "",
-    tutorialStep: "sidebar"
+    tutorialStep: "sidebar",
+    onboardingAgentId: ""
   },
   memory: {
     useLongTermMemory: true,
@@ -607,6 +611,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   },
   resourceManagementTab: "plugins",
   knowledgeBase: {
+    autoLinkEnabled: true,
     lastRunAt: 0,
     lastRunStatus: "idle",
     lastReportPath: "",
@@ -651,6 +656,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   },
   workspaceResourceCache: {},
   sessions: [],
+  agentRegistry: defaultAgentRegistry(),
+  taskWorkspace: defaultTaskWorkspace(),
   activeSessionId: ""
 };
 
@@ -765,6 +772,8 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     workspaceResources: normalizeWorkspaceResources(data?.workspaceResources),
     workspaceResourceCache: normalizeWorkspaceResourceCache(data?.workspaceResourceCache),
     sessions: currentProductData ? normalizeStoredSessions(data?.sessions) : [],
+    agentRegistry: normalizeAgentRegistry(data.agentRegistry),
+    taskWorkspace: normalizeTaskWorkspace(data.taskWorkspace),
     activeSessionId: currentProductData && typeof data?.activeSessionId === "string"
       ? data.activeSessionId
       : ""
@@ -832,25 +841,9 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
       || retiredDataPresent
       || legacyTokenPlanCustomPresent
       || JSON.stringify(data.englishDiary) !== JSON.stringify(settings.englishDiary)
+      || JSON.stringify(data.agentRegistry) !== JSON.stringify(settings.agentRegistry)
+      || JSON.stringify(data.taskWorkspace) !== JSON.stringify(settings.taskWorkspace)
   };
-}
-
-export function resolveEchoInkWelcomeCopy(
-  settings: Pick<
-    CodexForObsidianSettings,
-    "customWelcomeEnabled" | "customWelcomeTitle" | "customWelcomeSubtitle"
-  >
-): Readonly<EchoInkWelcomeCopy> {
-  if (!settings.customWelcomeEnabled) {
-    return Object.freeze({
-      title: DEFAULT_ECHOINK_WELCOME_TITLE,
-      subtitle: DEFAULT_ECHOINK_WELCOME_SUBTITLE
-    });
-  }
-  return Object.freeze({
-    title: settings.customWelcomeTitle.trim() || DEFAULT_ECHOINK_WELCOME_TITLE,
-    subtitle: settings.customWelcomeSubtitle.trim() || DEFAULT_ECHOINK_WELCOME_SUBTITLE
-  });
 }
 
 function hasRetiredSettingsData(data: Record<string, unknown>): boolean {
@@ -884,6 +877,8 @@ function hasLegacyTokenPlanCustomProvider(value: unknown): boolean {
 }
 
 const KNOWLEDGE_BASE_SETTINGS_KEYS = new Set<string>([
+  "autoLinkEnabled",
+  "journalSearchDisclosureSeen",
   "folderBindings",
   "lastRunAt",
   "lastRunStatus",
@@ -1771,10 +1766,11 @@ function normalizeSetupSettings(input: unknown): SetupSettings {
     lastCheckedAt: normalizeNonNegativeNumber(value?.lastCheckedAt),
     dismissedVersion: normalizeOptionalText(value?.dismissedVersion),
     tutorialVersion: normalizeOptionalText(value?.tutorialVersion),
-    tutorialStep: tutorialStep === "settings"
-      || tutorialStep === "provider"
+    onboardingAgentId: normalizeOptionalText(value?.onboardingAgentId),
+    tutorialStep: tutorialStep === "provider"
       || tutorialStep === "knowledge"
       || tutorialStep === "personality"
+      || tutorialStep === "colleague"
       ? tutorialStep
       : "sidebar"
   };
@@ -1803,6 +1799,7 @@ function normalizeMemorySettings(input: unknown): EchoInkMemorySettings {
 function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
   const value = settingsRecord(input) ?? {};
   const normalized: KnowledgeBaseSettings = {
+    autoLinkEnabled: value.autoLinkEnabled !== false,
     ...(value.journalSearchDisclosureSeen === true ? { journalSearchDisclosureSeen: true } : {}),
     folderBindings: normalizeKnowledgeFolderBindings(value.folderBindings),
     lastRunAt: normalizeNonNegativeNumber(value?.lastRunAt),
@@ -1915,6 +1912,7 @@ function normalizeStoredSessions(value: unknown): StoredSession[] {
       );
       return {
         id,
+        ...normalizeConversationTaskMetadata(session),
         title: normalizeText(session.title, "新会话"),
         piSessionId,
         defaultMemoryMode: normalizeStoredSessionMemoryMode(session.defaultMemoryMode),
@@ -3195,5 +3193,7 @@ export function normalizeAutoArchiveDays(value: unknown): 0 | 7 | 14 | 30 | 90 {
 
 function normalizePdfReading(value: unknown): CodexForObsidianSettings["pdfReading"] {
   const data = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  return { enabled: data.enabled === true, mineruToken: typeof data.mineruToken === "string" ? data.mineruToken : "", engine: data.engine === "mineru" ? "mineru" : "local", translationLanguage: typeof data.translationLanguage === "string" && data.translationLanguage.trim() ? data.translationLanguage.trim().slice(0, 40) : "中文" };
+  return { enabled: data.enabled === true, mineruToken: typeof data.mineruToken === "string" ? data.mineruToken : "", engine: data.engine === "mineru" ? "mineru" : "local", translationLanguage: typeof data.translationLanguage === "string" && data.translationLanguage.trim() ? data.translationLanguage.trim().slice(0, 40) : "中文",
+    // Keep the saved choice verbatim; the desktop controller reports stale/invalid bindings instead of silently choosing another folder.
+    ...(typeof data.originalDirectory === "string" && data.originalDirectory ? { originalDirectory: data.originalDirectory } : {}) };
 }

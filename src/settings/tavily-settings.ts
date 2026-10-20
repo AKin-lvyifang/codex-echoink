@@ -10,14 +10,21 @@ export function renderTavilySettings(parent: HTMLElement, host: {
 }, search: typeof searchTavily = searchTavily): void {
   const english = host.settings.settingsLanguage === "en";
   const label = (zh: string, en: string) => english ? en : zh;
-  const card = createSettingsSection(parent, { title: label("Tavily 联网搜索", "Tavily web search"), surface: "group",
-    description: label("为当前对话搜索网页，由你选择的模型阅读结果并回答。只发送搜索词。", "Search the web for this conversation. Your selected model reads the results and answers. Only the search query is sent.") });
+  const aligned = parent.closest(".echoink-settings-aligned") !== null;
+  const section = createSettingsSection(parent, aligned ? { title: label("联网搜索", "Web search"), surface: "flat" } : {
+    title: label("Tavily 联网搜索", "Tavily web search"), surface: "group",
+    description: label("为当前对话搜索网页，由你选择的模型阅读结果并回答。只发送搜索词。", "Search the web for this conversation. Your selected model reads the results and answers. Only the search query is sent.")
+  });
+  const card = aligned ? createSettingsGroup(section) : section;
   card.addClass("echoink-tavily-card");
   const links = card.createDiv({ cls: "echoink-tavily-links settings-note" });
   links.createEl("a", { text: label("官网 / 获取 API Key", "Website / Get an API key"), href: "https://app.tavily.com", attr: { target: "_blank", rel: "noopener noreferrer" } });
   links.createSpan({ text: label("每月免费 1000 积分；basic 搜索每次 1 积分。", "1,000 free credits per month; basic search uses 1 credit.") });
   links.createEl("a", { text: label("以官方政策为准", "See current official pricing"), href: "https://docs.tavily.com/documentation/api-credits", attr: { target: "_blank", rel: "noopener noreferrer" } });
-  const keyLabel = card.createEl("label", { text: "API Key", cls: "echoink-tavily-key-label" });
+  const keyLabel = card.createEl("label", { cls: "echoink-tavily-key-label" });
+  const keyCopy = aligned ? keyLabel.createDiv({ cls: "echoink-tavily-key-copy" }) : keyLabel;
+  keyCopy.createSpan({ text: "API Key" });
+  if (aligned) keyCopy.appendChild(links);
   const control = keyLabel.createDiv({ cls: "echoink-tavily-key-control" });
   const input = createOriginInput(control, { attr: { type: "password", autocomplete: "new-password", "aria-label": "Tavily API Key", placeholder: "tvly-…" } });
   input.value = host.settings.tavily.apiKey;
@@ -34,14 +41,16 @@ export function renderTavilySettings(parent: HTMLElement, host: {
   const test = createOriginButton(actions, { text: label("测试连接", "Test connection") });
   applyAmicroButton(test, { variant: "secondary" });
   actions.createSpan({ cls: "settings-note", text: label("执行一次搜索，消耗 1 积分", "Runs one search and uses 1 credit") });
+  if (aligned) control.appendChild(actions);
   const state = card.createDiv({ cls: "echoink-tavily-state" });
   const show = (text: string, tone: "error" | "success" | "neutral" = "neutral") => { state.empty(); createSettingsState(state, text, tone); };
-  const row = createSettingsGroup(card).createDiv({ cls: "setting-item echoink-settings-row setting-row" });
+  const row = (aligned ? card : createSettingsGroup(card)).createDiv({ cls: "setting-item echoink-settings-row setting-row" });
   const copy = row.createDiv({ cls: "setting-item-info setting-copy" });
-  copy.createDiv({ cls: "setting-item-name", text: label("联网搜索", "Web search") });
-  copy.createDiv({ cls: "setting-item-description", text: label("开启后，模型可按需搜索网页；关闭后从下一轮移除搜索工具。", "Allow the model to search when needed. Turning this off removes search from the next turn.") });
+  copy.createDiv({ cls: "setting-item-name", text: aligned ? label("Tavily 联网搜索", "Tavily web search") : label("联网搜索", "Web search") });
+  copy.createDiv({ cls: "setting-item-description", text: aligned ? label("开启后模型可按需搜索网页，只发送搜索词；关闭后从下一轮移除搜索工具。", "The model can search the web when needed; only the search query is sent. Turning this off removes search from the next turn.") : label("开启后，模型可按需搜索网页；关闭后从下一轮移除搜索工具。", "Allow the model to search when needed. Turning this off removes search from the next turn.") });
   const toggle = createOriginSwitch(row.createDiv({ cls: "setting-item-control setting-controls" }), { attr: { "aria-label": label("联网搜索", "Web search") } });
   toggle.checked = host.settings.tavily.enabled;
+  if (aligned) card.prepend(row);
   let generation = 0;
   let pending: AbortController | null = null;
   const save = () => { void host.saveSettings().catch(() => show(label("保存失败，请重试。", "Could not save settings. Try again."), "error")); };

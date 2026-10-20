@@ -4,11 +4,14 @@ import type { CapabilityAccess } from "../membership/types";
 import { PaperGuideController } from "../plugin/paper-guide-controller";
 import {
   advanceEchoInkOnboardingTutorial,
+  dismissEchoInkOnboardingTutorial,
   ECHOINK_ONBOARDING_STEPS,
   prepareEchoInkOnboardingTutorial
 } from "../settings/onboarding";
 import { normalizeSettingsData } from "../settings/settings";
 import { PaperGuideModal } from "./paper-guide-modal-shim";
+import { TaskNavigationState } from "../ui/codex-view/task-navigation-state";
+import type { AgentModuleId } from "../agents/types";
 
 function deferred() {
   let resolve!: () => void;
@@ -54,6 +57,7 @@ function fixture(input: { paid?: boolean; enabled?: boolean; saved?: unknown; la
   let paid = input.paid ?? true;
   let requested = false;
   const listeners = new Set<() => void>();
+  const registryListeners = new Set<() => void>();
   const access: CapabilityAccess = {
     checkCapability: () => paid,
     requireCapability: () => { if (!paid) throw new Error("PRO_REQUIRED"); },
@@ -65,17 +69,25 @@ function fixture(input: { paid?: boolean; enabled?: boolean; saved?: unknown; la
     englishDiary: { enabled: input.enabled ?? true },
     lifestyle: { finance: { enabled: input.enabled ?? true } }
   }).settings;
+  for (const [module, id, name] of [["english-diary", "english-owner", "英语同事"], ["finance", "finance-owner", "财务同事"], ["knowledge-base", "knowledge-owner", "知识同事"]] as const) {
+    if (!settings.agentRegistry.agents.some(agent => agent.id === id)) settings.agentRegistry.agents.push({ ...structuredClone(settings.agentRegistry.agents[0]), id, name });
+    settings.agentRegistry.moduleOwners[module] = id;
+  }
   const events: string[] = [];
+  const listCalls: unknown[][] = [];
+  const executionCalls: string[] = [];
+  const forbidden = (name: string) => async () => { executionCalls.push(name); throw new Error(`Prefill invoked ${name}`); };
   const state = {
     saved: undefined as unknown,
     saves: 0,
     saveError: false,
     saveGate: null as ReturnType<typeof deferred> | null,
-    enableError: false,
+    listError: false,
     saveArguments: [] as unknown[][]
   };
   const plugin = {
-    app: {}, settings, accountService: access as CapabilityAccess | null,
+    app: { vault: { create: forbidden("vault:create"), modify: forbidden("vault:modify") } }, settings, accountService: access as CapabilityAccess | null,
+    onAgentRegistryChanged: (listener: () => void) => { registryListeners.add(listener); return () => { registryListeners.delete(listener); }; },
     isEchoInkOnboardingRequested: () => requested,
     async saveSettings(...args: unknown[]) {
       events.push("save:start"); state.saves++; state.saveArguments.push(args);
@@ -84,25 +96,19 @@ function fixture(input: { paid?: boolean; enabled?: boolean; saved?: unknown; la
       state.saved = structuredClone(plugin.settings);
       events.push("save:done");
     },
-    englishDiary: {
-      async setEnabled(enabled: boolean) {
-        events.push("english:enable");
-        if (state.enableError) throw new Error("ENABLE_FAILED");
-        plugin.settings.englishDiary.enabled = enabled;
-      },
-      async openToday() { events.push("english:open"); }
+    async openAgentTaskList(...args: [agentId: string, text?: string]) {
+      listCalls.push(args); events.push(`tasks:${args[0]}`);
+      if (state.listError) throw new Error("TASK_LIST_FAILED");
+      navigation.navigate({ kind: "list", agentId: args[0] });
+      return args[1] === undefined || navigation.prefill(args[0], args[1]);
     },
-    lifestyle: {
-      async setEnabled(kind: string, enabled: boolean) {
-        assert.equal(kind, "finance"); events.push("finance:enable");
-        if (state.enableError) throw new Error("ENABLE_FAILED");
-        plugin.settings.lifestyle.finance.enabled = enabled;
-      },
-      async open(kind: string) { assert.equal(kind, "finance"); events.push("finance:open"); }
-    },
-    async openEchoInkKnowledgeSettings() { events.push("knowledge:open"); },
-    async openEchoInkAccountSettings() { events.push("account:open"); }
+    englishDiary: { setEnabled: forbidden("english:enable"), openToday: forbidden("english:openToday"), generate: forbidden("english:generate") },
+    lifestyle: { setEnabled: forbidden("finance:enable"), open: forbidden("finance:open"), record: forbidden("finance:record") },
+    openEchoInkKnowledgeSettings: forbidden("knowledge:settings"), openEchoInkAccountSettings: forbidden("account:settings"),
+    activateKnowledgeView: forbidden("knowledge:open"), createPiConversation: forbidden("task:create"),
+    submitPiTurn: forbidden("turn:send"), ensurePiRuntimeBundle: forbidden("Provider"), resumeTaskAndOpenDetail: forbidden("run:start")
   };
+  const navigation = new TaskNavigationState(() => plugin.settings.taskWorkspace);
   const controllers: PaperGuideController[] = [];
   const newController = () => {
     const controller = new PaperGuideController(plugin as unknown as CodexForObsidianPlugin, () => activeHome as HTMLElement | null);
@@ -112,7 +118,8 @@ function fixture(input: { paid?: boolean; enabled?: boolean; saved?: unknown; la
   const controller = newController();
   const initialInstances = PaperGuideModal.instances.length;
   return {
-    frames, document, home, plugin, state, events, listeners, controller, newController,
+    frames, document, home, plugin, state, events, listeners, registryListeners, controller, newController, navigation, listCalls, executionCalls,
+    setOwner(module: AgentModuleId, id: string) { plugin.settings.agentRegistry.moduleOwners[module] = id; for (const listener of registryListeners) listener(); },
     setPaid(value: boolean) { paid = value; for (const listener of listeners) listener(); },
     requestOnboarding(value: boolean) { requested = value; },
     leaveHome() { activeHome = null; },
@@ -151,8 +158,9 @@ async function timingAndCancellation(): Promise<void> {
   assert.equal(f.instances().length, 1);
   await f.controller.showAfterOnboarding(); assert.equal(f.instances().length, 1);
   assert.equal(f.listeners.size, 1);
+  assert.equal(f.registryListeners.size, 1);
   f.dispose();
-  assert.equal(f.listeners.size, 0); assert.equal(f.instances()[0].disposed, true);
+  assert.equal(f.listeners.size, 0); assert.equal(f.registryListeners.size, 0); assert.equal(f.instances()[0].disposed, true);
   assert.equal(f.state.saves, 0, "unloading an open guide does not mark it completed");
 
   for (const cancel of [
@@ -186,15 +194,17 @@ async function persistenceAndNavigation(): Promise<void> {
     await assert.rejects(invoke(), /SAVE_FAILED/);
     assert.equal(f.plugin.settings.setup.paperGuideDismissedAt, 0, "failed persistence rolls back memory");
     assert.equal(f.state.saved, undefined); assert.equal(modal.closed, false);
-    assert.ok(!f.events.includes("knowledge:open"));
+    assert.equal(f.listCalls.length, 0);
     f.state.saveError = false;
     const next = await invoke();
     assert.ok(f.plugin.settings.setup.paperGuideDismissedAt > 0);
-    assert.ok(!f.events.includes("knowledge:open"), "selection returns navigation without running it");
+    assert.equal(f.listCalls.length, 0, "selection returns navigation without running it");
     modal.close();
     if (typeof next === "function") await next();
-    assert.equal(f.events.includes("knowledge:open"), action === "choose");
+    assert.equal(f.listCalls.length, action === "choose" ? 1 : 0);
+    assert.equal(f.executionCalls.length, 0);
     assert.equal(f.listeners.size, 0);
+    assert.equal(f.registryListeners.size, 0);
     assert.deepEqual(f.state.saveArguments.at(-1), [true, { flushConversationStore: false }]);
     f.dispose();
     f.plugin.settings = normalizeSettingsData(f.state.saved).settings;
@@ -214,7 +224,7 @@ async function persistenceAndNavigation(): Promise<void> {
   assert.deepEqual(f.events, ["save:start", "save:done"]);
   modal.close(); f.dispose();
   if (typeof next === "function") await next();
-  assert.ok(!f.events.includes("knowledge:open"), "unloading cancels deferred navigation");
+  assert.equal(f.listCalls.length, 0, "unloading cancels deferred navigation");
 
   const legacy = normalizeSettingsData({ setup: { completedAt: 5 } }).settings;
   assert.equal(legacy.setup.paperGuideDismissedAt, 0);
@@ -235,7 +245,7 @@ async function repeatedOnboardingCompletion(): Promise<void> {
           await f.controller.showAfterOnboarding();
           assert.equal(f.instances().length, round - 1, "an unfinished tutorial cannot reopen the guide");
           const result = advanceEchoInkOnboardingTutorial(setup, step, Date.now() + round);
-          assert.equal(result.completed, step === "personality");
+          assert.equal(result.completed, step === ECHOINK_ONBOARDING_STEPS.at(-1));
         }
       }
       const modal = await f.open();
@@ -252,61 +262,106 @@ async function repeatedOnboardingCompletion(): Promise<void> {
       assert.equal(f.frames.pending, 0);
       assert.equal(f.listeners.size, 0);
     }
-    assert.equal(f.events.filter(event => event === "knowledge:open").length, action === "choose" ? 3 : 0);
+    assert.equal(f.listCalls.length, action === "choose" ? 3 : 0);
+    assert.equal(f.executionCalls.length, 0);
     f.dispose();
   }
 }
 
 async function scenarioRouting(): Promise<void> {
-  for (const scene of ["english", "finance"] as const) for (const paid of [false, true]) for (const enabled of [false, true]) {
-    const f = fixture({ paid, enabled }); const modal = await f.open();
-    const item = modal.scenes.find(item => item.id === scene)!;
-    assert.equal(modal.scenes.length, 3);
-    assert.equal(item.badge, "PRO");
-    if (!paid) assert.equal(item.description, enabled ? "查看已有记录" : "查看 PRO 权益");
-    else if (!enabled) assert.equal(item.description, "启用后开始使用");
-    const next = await modal.options.onChoose(scene);
-    assert.equal(typeof next, "function");
-    assert.deepEqual(f.events, ["save:start", "save:done"]);
-    modal.close(); if (typeof next === "function") await next();
-    const expected = !paid && !enabled ? ["account:open"]
-      : enabled ? [`${scene}:open`] : [`${scene}:enable`, `${scene}:open`];
-    assert.deepEqual(f.events.slice(2), expected, `${scene}: paid=${paid}, enabled=${enabled}`);
-    f.dispose();
-  }
-  for (const scene of ["english", "finance"] as const) {
-    const f = fixture({ paid: true, enabled: false }); const modal = await f.open();
-    f.setPaid(false);
-    assert.equal(modal.updates, 1);
-    assert.equal(modal.scenes.find(item => item.id === scene)?.description, "查看 PRO 权益");
-    f.setPaid(true);
-    assert.equal(modal.scenes.find(item => item.id === scene)?.description, "启用后开始使用");
-    const next = await modal.options.onChoose(scene);
-    modal.close(); f.setPaid(false);
-    if (typeof next === "function") await next();
-    assert.deepEqual(f.events.slice(2), ["account:open"], "navigation rechecks access after choice and close");
-    f.dispose();
+  const targets = [
+    ["english", "english-diary", "english-owner", "英语同事", "我想用日记练习英语，先帮我看看今天的日记。", "I'd like to practice English with my diary. First, help me look at today's entry."],
+    ["finance", "finance", "finance-owner", "财务同事", "帮我看看本月的收支和预算，先告诉我有哪些值得留意的地方。", "Help me review this month's spending, income and budget. First, tell me what deserves attention."],
+    ["knowledge", "knowledge-base", "knowledge-owner", "知识同事", "帮我看看有哪些笔记适合整理，先给我一个方案。", "Help me find notes that would benefit from organizing. Give me a plan first."]
+  ] as const;
+  for (const [scene, module, ownerId, ownerName, prompt, englishPrompt] of targets) {
+    const conditions = scene === "knowledge" ? [{ paid: false, enabled: false }]
+      : [false, true].flatMap(paid => [false, true].map(enabled => ({ paid, enabled })));
+    for (const condition of conditions) {
+      const f = fixture(condition); const modal = await f.open();
+      const item = modal.scenes.find(item => item.id === scene)!;
+      const before = structuredClone({ english: f.plugin.settings.englishDiary, lifestyle: f.plugin.settings.lifestyle, agents: f.plugin.settings.agentRegistry, sessions: f.plugin.settings.sessions });
+      assert.equal(modal.scenes.length, 3); assert.ok(item.description.includes(ownerName));
+      assert.ok(item.description.includes("仅预填")); assert.doesNotMatch(item.description, /进入.*工作区|启用后开始使用/u);
+      assert.equal(item.badge, scene === "knowledge" ? undefined : "PRO");
+      if (scene !== "knowledge") {
+        assert.equal(item.description.includes("需要 PRO"), !condition.paid);
+        assert.equal(item.description.includes(scene === "english" ? "需先启用英文日记" : "需先启用财务"), !condition.enabled);
+        if (condition.paid && !condition.enabled) assert.equal(item.description,
+          `交给 ${ownerName}，仅预填 · ${scene === "english" ? "需先启用英文日记" : "需先启用财务"}`,
+          "an existing PRO member with a disabled module only needs the enablement reminder");
+      }
+      const next = await modal.options.onChoose(scene);
+      assert.equal(typeof next, "function"); assert.deepEqual(f.events, ["save:start", "save:done"]);
+      assert.equal(f.listCalls.length, 0, "no navigation before persisted dismissal and native close");
+      modal.close(); if (typeof next === "function") await next();
+      assert.deepEqual(f.listCalls, [[ownerId, prompt]], `${scene}: only the actual owner and approved text reach the launcher`);
+      assert.deepEqual(f.navigation.page, { kind: "list", agentId: ownerId });
+      assert.deepEqual(f.navigation.draft(), { text: prompt, attachments: [] }, "real task navigation stores only an editable prefill");
+      assert.deepEqual({ english: f.plugin.settings.englishDiary, lifestyle: f.plugin.settings.lifestyle, agents: f.plugin.settings.agentRegistry, sessions: f.plugin.settings.sessions }, before, "selection cannot enable modules, alter rights, create tasks or write source content");
+      assert.deepEqual(f.executionCalls, []); f.dispose();
+    }
 
-    const failure = fixture({ paid: true, enabled: false }); const failedModal = await failure.open();
-    failure.state.enableError = true;
-    const failedNext = await failedModal.options.onChoose(scene);
-    failedModal.close(); assert.equal(typeof failedNext, "function");
-    if (typeof failedNext === "function") await assert.rejects(failedNext(), /ENABLE_FAILED/);
-    assert.ok(!failure.events.includes(`${scene}:open`), "failed enabling never opens the module");
-    failure.dispose();
+    for (const change of ["reassigned", "deleted"] as const) {
+      const f = fixture({ enabled: false, paid: false }); const modal = await f.open();
+      if (change === "reassigned") {
+        f.setOwner(module, "sol");
+        assert.equal(modal.updates, 1);
+        assert.ok(modal.scenes.find(item => item.id === scene)?.description.includes("总助"), "visible owner updates from the real registry event");
+      }
+      const next = await modal.options.onChoose(scene); modal.close();
+      if (change === "reassigned") {
+        f.plugin.settings.agentRegistry.agents.push({ ...structuredClone(f.plugin.settings.agentRegistry.agents[0]), id: "late-owner", name: "最后换的同事" });
+        f.setOwner(module, "late-owner");
+      } else f.plugin.settings.agentRegistry.agents = f.plugin.settings.agentRegistry.agents.filter(agent => agent.id !== ownerId);
+      if (typeof next === "function") await next();
+      assert.deepEqual(f.listCalls, [[change === "reassigned" ? "late-owner" : "sol", prompt]], "the action reads the latest owner after closing; deleted owners fall back to Sol");
+      assert.deepEqual(f.executionCalls, []); assert.equal(f.registryListeners.size, 0); f.dispose();
+    }
+
+    const protectedDraft = fixture();
+    protectedDraft.navigation.navigate({ kind: "list", agentId: ownerId });
+    protectedDraft.navigation.save({ text: "尚未发送的原内容", attachments: [{ type: "file", name: "合成.md", path: "合成.md" }], noteMentions: [{ vaultRelativePath: "引用.md", fileName: "引用.md" }] });
+    const original = protectedDraft.navigation.draft();
+    const protectedModal = await protectedDraft.open(); const protectedNext = await protectedModal.options.onChoose(scene); protectedModal.close();
+    if (typeof protectedNext === "function") await protectedNext();
+    assert.deepEqual(protectedDraft.navigation.draft(), original, `${scene}: the real P3 draft boundary preserves unsent text and references`);
+    assert.deepEqual(protectedDraft.executionCalls, []); protectedDraft.dispose();
+
+    const english = fixture({ language: "en", enabled: false, paid: false });
+    const englishModal = await english.open(); assert.equal(englishModal.options.language, "en");
+    const description = englishModal.scenes.find(item => item.id === scene)!.description;
+    assert.ok(description.includes(`Prepare a draft for ${ownerName}`));
+    if (scene !== "knowledge") { assert.ok(description.includes("PRO required")); assert.ok(description.includes("first")); }
+    const englishNext = await englishModal.options.onChoose(scene); englishModal.close();
+    if (typeof englishNext === "function") await englishNext();
+    assert.deepEqual(english.listCalls, [[ownerId, englishPrompt]]); assert.deepEqual(english.executionCalls, []); english.dispose();
   }
-  for (const scene of ["knowledge", "english"] as const) {
-    const f = fixture({ enabled: false }); f.plugin.accountService = null;
-    const modal = await f.open(); const next = await modal.options.onChoose(scene);
-    modal.close(); if (typeof next === "function") await next();
-    assert.deepEqual(f.events.slice(2), [scene === "knowledge" ? "knowledge:open" : "account:open"]);
-    assert.equal(f.listeners.size, 0); f.dispose();
-  }
-  const english = fixture({ language: "en", enabled: false, paid: false });
-  const modal = await english.open();
-  assert.equal(modal.options.language, "en");
-  assert.equal(modal.scenes.find(item => item.id === "english")?.description, "View PRO access");
-  english.dispose();
+
+  const live = fixture({ enabled: false, paid: true }); const liveModal = await live.open();
+  live.setPaid(false); assert.ok(liveModal.scenes.find(item => item.id === "english")?.description.includes("需要 PRO"));
+  live.setPaid(true); assert.equal(liveModal.scenes.find(item => item.id === "english")?.description.includes("需要 PRO"), false);
+  assert.ok(liveModal.scenes.find(item => item.id === "english")?.description.includes("需先启用英文日记")); live.dispose();
+  const missingAccount = fixture({ enabled: false }); missingAccount.plugin.accountService = null;
+  const missingModal = await missingAccount.open(); assert.ok(missingModal.scenes.find(item => item.id === "finance")?.description.includes("需要 PRO"));
+  const missingNext = await missingModal.options.onChoose("finance"); missingModal.close(); if (typeof missingNext === "function") await missingNext();
+  assert.equal(missingAccount.listCalls[0]?.[0], "finance-owner"); assert.deepEqual(missingAccount.executionCalls, []); missingAccount.dispose();
+  const failed = fixture(); const failedModal = await failed.open(); failed.state.listError = true;
+  const failedNext = await failedModal.options.onChoose("knowledge"); failedModal.close();
+  if (typeof failedNext === "function") await assert.rejects(failedNext(), /TASK_LIST_FAILED/);
+  assert.ok(failed.plugin.settings.setup.paperGuideDismissedAt > 0); assert.deepEqual(failed.executionCalls, []); failed.dispose();
+}
+
+async function ordinaryHomeAndSkip(): Promise<void> {
+  const f = fixture();
+  for (let round = 0; round < 3; round++) { f.frames.paint(); await Promise.resolve(); }
+  assert.equal(f.instances().length, 0, "a controller on ordinary Home does not register an automatic guide trigger");
+  assert.equal(f.frames.pending, 0); assert.equal(f.listeners.size, 0); assert.equal(f.registryListeners.size, 0);
+  assert.ok(prepareEchoInkOnboardingTutorial(f.plugin.settings.setup, { forceRestart: true }));
+  dismissEchoInkOnboardingTutorial(f.plugin.settings.setup);
+  await f.controller.showAfterOnboarding();
+  assert.equal(f.instances().length, 0, "skipping an unfinished tutorial cannot show Paper Guide");
+  assert.equal(f.state.saves, 0); assert.deepEqual(f.listCalls, []); assert.deepEqual(f.executionCalls, []); f.dispose();
 }
 
 interface CompletionOptions {
@@ -356,5 +411,6 @@ export async function runPaperGuideTests(): Promise<void> {
   await persistenceAndNavigation();
   await repeatedOnboardingCompletion();
   await scenarioRouting();
-  console.log("PASS paper guide controller: paint timing, single instance, cancellation, persisted dismissal, repeated tutorial completion, rollback, 8 access routes and live authorization");
+  await ordinaryHomeAndSkip();
+  console.log("PASS paper guide controller: paint timing, persisted dismissal/rollback, repeated completion, three latest-owner prefills, real draft protection, zero execution, live requirement copy and ordinary Home/skip silence");
 }

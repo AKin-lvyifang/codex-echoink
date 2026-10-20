@@ -1,9 +1,11 @@
+import type { ConversationTaskMetadata } from "../agents/task-metadata";
+
 /** Stable settings projection used by the current Pi Conversation UI. */
 export interface EchoInkConversationSessionShell<
   TMessage,
   TContextLedger = unknown,
   TTokenUsage = unknown
-> {
+> extends ConversationTaskMetadata {
   id: string;
   title: string;
   piSessionId?: string;

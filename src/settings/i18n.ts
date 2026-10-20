@@ -51,12 +51,6 @@ const ZH_CN = {
     defaultMode: "默认模式",
     autoOpen: "启动时自动打开侧栏",
     autoOpenHome: "启动时自动打开首页",
-    customWelcome: "自定义加载欢迎语",
-    customWelcomeDesc: "开启后可修改空会话里的标题和问候语；关闭时使用默认文案。不会写入对话，也不占用模型 Token。",
-    welcomeTitle: "欢迎标题",
-    welcomeTitleDesc: "空会话中显示的大标题；留空时使用默认标题。",
-    welcomeGreeting: "问候语",
-    welcomeGreetingDesc: "标题下方的小字；留空时使用默认问候语。",
     languageOptions: {
       "zh-CN": "中文",
       en: "English"
@@ -310,12 +304,6 @@ const EN: SettingsCopy = {
     defaultMode: "Default mode",
     autoOpen: "Open sidebar on startup",
     autoOpenHome: "Open homepage on startup",
-    customWelcome: "Customize welcome message",
-    customWelcomeDesc: "Turn this on to edit the empty-chat title and greeting. When off, EchoInk uses the default copy. It is never added to the conversation or model tokens.",
-    welcomeTitle: "Welcome title",
-    welcomeTitleDesc: "The large heading shown in an empty conversation. Leave blank to use the default.",
-    welcomeGreeting: "Greeting",
-    welcomeGreetingDesc: "The smaller line below the title. Leave blank to use the default.",
     languageOptions: {
       "zh-CN": "中文",
       en: "English"
@@ -586,6 +574,11 @@ export interface ConversationCopy {
     toolCount: (count: number) => string;
   }>;
   readonly process: Readonly<{
+    searching: string;
+    memoryChecking: string;
+    knowledgeResult: (candidates: number, returned: number) => string;
+    memoryUsed: (count: number) => string;
+    waitingSeconds: (seconds: number) => string;
     reasoningTitle: string;
     providerReasoningRunning: string;
     providerReasoningEnded: string;
@@ -938,6 +931,11 @@ const ZH_CONVERSATION_COPY: ConversationCopy = {
     toolCount: (count) => `${count} 个工具`
   },
   process: {
+    searching: "查找中…",
+    memoryChecking: "查看中…",
+    knowledgeResult: (candidates, returned) => `${candidates} 篇相关，读了前 ${returned} 篇`,
+    memoryUsed: (count) => `用上 ${count} 条`,
+    waitingSeconds: (seconds) => `${seconds} 秒`,
     reasoningTitle: "模型推理",
     providerReasoningRunning: "思考中",
     providerReasoningEnded: "思考完成",
@@ -963,21 +961,21 @@ const ZH_CONVERSATION_COPY: ConversationCopy = {
     fallbackTitle: (kind) => ({
       task: "更新任务",
       retrieval: "检索资料",
-      diff: "文件改动",
+      diff: "修改笔记",
       artifact: "生成产物",
       tool: "执行工具",
-      interaction: "等待用户操作",
-      process: "处理上下文"
-    }[kind] ?? "处理上下文"),
+      interaction: "等你确认",
+      process: "整理对话"
+    }[kind] ?? "整理对话"),
     activityTitle: (kind, name) => kind === "knowledge"
-      ? "检索本地知识"
+      ? "检索知识库"
       : kind === "memory"
-        ? "核对个人记忆"
+        ? "查看个人记忆"
         : kind === "task"
           ? "推进任务"
           : kind === "tool"
             ? name ? `调用 ${name}` : "调用工具"
-            : "连接模型",
+            : "等待模型响应",
     activityCompleted: (count) => `已完成 ${count}`,
     activityStage: (stage) => ({
       requesting: "请求模型",
@@ -991,8 +989,8 @@ const ZH_CONVERSATION_COPY: ConversationCopy = {
       loading: "加载中",
       catalog: "读取目录",
       matching: "匹配中",
-      budgeting: "分配上下文",
-      assembling: "组装上下文",
+      budgeting: "查看个人记忆",
+      assembling: "查看个人记忆",
       pending: "等待开始",
       in_progress: "进行中",
       paused: "已暂停",
@@ -1188,9 +1186,9 @@ const ZH_CONVERSATION_COPY: ConversationCopy = {
   sources: {
     usedDocuments: (count) => `使用了 ${count} 个文档`,
     noEvidence: "知识库没有找到可引用依据。",
-    personalMemoryCount: (count) => count > 0 ? `${count} 条 Personal Memory` : "Personal Memory 来源",
-    noPersonalMemory: "未记录可展示的 Personal Memory 来源。",
-    noVaultPath: "Personal Memory 没有 Vault 路径，无法打开",
+    personalMemoryCount: (count) => count > 0 ? `${count} 条个人记忆` : "个人记忆",
+    noPersonalMemory: "未记录可展示的个人记忆。",
+    noVaultPath: "个人记忆不能作为笔记打开",
     openNote: (label) => `打开笔记 ${label}`,
     openInObsidian: (path) => `在 Obsidian 中打开 ${path}`,
     missingInVault: (path) => `当前 Vault 中找不到 ${path}，无法打开`,
@@ -1289,7 +1287,7 @@ const ZH_CONVERSATION_COPY: ConversationCopy = {
     thinking: "思考中",
     thinkingProcess: "思考过程",
     thinkingComplete: "思考完成",
-    deriveConversation: "从这条回复新建会话",
+    deriveConversation: "从这里另开对话",
     copyMessage: "复制消息",
     copyAnswer: "复制回答",
     messageCopied: "消息已复制",
@@ -1329,6 +1327,11 @@ const EN_CONVERSATION_COPY: ConversationCopy = {
     toolCount: (count) => `${count} ${count === 1 ? "tool" : "tools"}`
   },
   process: {
+    searching: "Searching…",
+    memoryChecking: "Checking…",
+    knowledgeResult: (candidates, returned) => `${candidates} relevant notes, read the first ${returned}`,
+    memoryUsed: (count) => `Used ${count}`,
+    waitingSeconds: (seconds) => `${seconds}s`,
     reasoningTitle: "Reasoning",
     providerReasoningRunning: "Thinking",
     providerReasoningEnded: "Thinking complete",
@@ -1368,7 +1371,7 @@ const EN_CONVERSATION_COPY: ConversationCopy = {
           ? "Advance task"
           : kind === "tool"
             ? name ? `Call ${name}` : "Call tool"
-            : "Connect to model",
+            : "Wait for model response",
     activityCompleted: (count) => `${count} completed`,
     activityStage: (stage) => ({
       requesting: "Requesting model",

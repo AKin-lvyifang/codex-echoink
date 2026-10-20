@@ -6,18 +6,25 @@ import {
   type SettingsTab
 } from "./settings";
 
-export const ECHOINK_ONBOARDING_VERSION = "onboarding-v2";
+export const ECHOINK_ONBOARDING_VERSION = "onboarding-v3";
 
 export type EchoInkOnboardingStep =
   | "sidebar"
   | "settings"
   | "provider"
   | "knowledge"
-  | "personality";
+  | "personality"
+  | "colleague";
 
-export const ECHOINK_ONBOARDING_STEPS = [
-  "sidebar", "settings", "provider", "knowledge", "personality"
-] as const satisfies readonly EchoInkOnboardingStep[];
+export const ECHOINK_ONBOARDING_STEPS: readonly EchoInkOnboardingStep[] = [
+  "sidebar", "provider", "knowledge", "personality", "colleague"
+];
+
+function currentOnboardingStep(value: unknown): EchoInkOnboardingStep {
+  return ECHOINK_ONBOARDING_STEPS.includes(value as EchoInkOnboardingStep)
+    ? value as EchoInkOnboardingStep
+    : "sidebar";
+}
 
 export interface EchoInkOnboardingTruth {
   readonly providerComplete: boolean;
@@ -67,21 +74,25 @@ export interface EchoInkOnboardingAdvanceResult {
 export function shouldAutoStartEchoInkOnboarding(
   _emptyData: boolean,
   setup: Readonly<SetupSettings>,
-  enabledAfterLayoutReady = false
+  _enabledAfterLayoutReady = false
 ): boolean {
-  if (enabledAfterLayoutReady) return true;
-  // dismissedVersion also acts as the last-seen tutorial version. Bumping the
-  // onboarding version therefore shows the guide once after an update, while
-  // the same version never reopens it in an existing Vault.
-  return setup.dismissedVersion !== ECHOINK_ONBOARDING_VERSION;
+  // Completion and an explicit skip survive both version changes and enabling
+  // the plugin after layout-ready. Only a user-requested replay resets them.
+  return setup.completedAt <= 0 && !setup.dismissedVersion.trim();
 }
 
 export function prepareEchoInkOnboardingTutorial(
   setup: SetupSettings,
   options: Readonly<{ forceRestart: boolean }>
 ): boolean {
-  const newVersion = setup.tutorialVersion !== ECHOINK_ONBOARDING_VERSION;
-  if (!options.forceRestart && !newVersion) return false;
+  if (!options.forceRestart) {
+    if (!shouldAutoStartEchoInkOnboarding(false, setup)) return false;
+    const step = currentOnboardingStep(setup.tutorialStep);
+    if (setup.tutorialVersion === ECHOINK_ONBOARDING_VERSION && setup.tutorialStep === step) return false;
+    setup.tutorialVersion = ECHOINK_ONBOARDING_VERSION;
+    setup.tutorialStep = step;
+    return true;
+  }
   setup.completedAt = 0;
   setup.dismissedVersion = "";
   setup.tutorialVersion = ECHOINK_ONBOARDING_VERSION;
@@ -100,21 +111,16 @@ export function advanceEchoInkOnboardingTutorial(
   expectedStep: EchoInkOnboardingStep,
   now: number
 ): Readonly<EchoInkOnboardingAdvanceResult> {
-  if (setup.tutorialStep !== expectedStep) {
+  const index = ECHOINK_ONBOARDING_STEPS.indexOf(expectedStep);
+  if (setup.tutorialStep !== expectedStep || index < 0) {
     return Object.freeze({
       changed: false,
       completed: false,
-      nextStep: setup.tutorialStep
+      nextStep: currentOnboardingStep(setup.tutorialStep)
     });
   }
-  if (expectedStep !== "personality") {
-    const nextStep: EchoInkOnboardingStep = expectedStep === "sidebar"
-      ? "settings"
-      : expectedStep === "settings"
-        ? "provider"
-        : expectedStep === "provider"
-          ? "knowledge"
-          : "personality";
+  if (index < ECHOINK_ONBOARDING_STEPS.length - 1) {
+    const nextStep = ECHOINK_ONBOARDING_STEPS[index + 1];
     setup.tutorialStep = nextStep;
     return Object.freeze({ changed: true, completed: false, nextStep });
   }
@@ -134,30 +140,31 @@ export function selectEchoInkOnboardingStep(
   expectedStep: EchoInkOnboardingStep,
   nextStep: EchoInkOnboardingStep
 ): boolean {
-  if (setup.tutorialStep !== expectedStep || nextStep === expectedStep) return false;
+  if (setup.tutorialStep !== expectedStep || nextStep === expectedStep || !ECHOINK_ONBOARDING_STEPS.includes(expectedStep) || !ECHOINK_ONBOARDING_STEPS.includes(nextStep)) return false;
   setup.tutorialStep = nextStep;
   return true;
 }
 
 const ONBOARDING_COPY = {
+  "colleague": { icon: "sparkles", tone: "purple", title: ["再请一位同事", "Invite a colleague"], description: ["从预设开始，也可以自己填写。什么都不填时，会按整理员创建。", "Start with a preset or fill in your own details. An untouched form creates an Organizer."], tip: ["", ""], action: ["创建并完成", "Create and finish"] },
   "sidebar": {
     "icon": "sparkles",
     "tone": "purple",
     "title": [
-      "先认识你的 Agent",
-      "Meet your Agent"
+      "认识工作台和你的 Agent",
+      "Meet your workspace and Agent"
     ],
     "description": [
-      "点击左侧的对话图标，打开 EchoInk。右侧是你和 Agent 交流的地方，中间仍然留给笔记。",
-      "Open EchoInk from the left ribbon. Talk with your Agent on the right while your notes stay in the center."
+      "中间看事情，右边点头像找同事；在列表里交代新事，在详情里接着聊。",
+      "See your work in the center and choose a colleague by their avatar on the right. Start something in their task list and continue the conversation in its details."
     ],
     "tip": [
-      "首页随时可以切回，打开新笔记也不会打断对话。",
-      "Open a note or return home whenever you like. Your conversation stays beside you."
+      "打开页面、切换头像和查看任务都不会执行任务。",
+      "Opening a page, switching avatars, or viewing tasks does not start any work."
     ],
     "action": [
-      "打开 EchoInk",
-      "Open EchoInk"
+      "下一步",
+      "Next"
     ]
   },
   "settings": {
@@ -188,8 +195,8 @@ const ONBOARDING_COPY = {
       "Connect a model"
     ],
     "description": [
-      "添加你使用的模型服务，填好连接信息，再选择模型。连接完成，EchoInk 就能和你对话。",
-      "Add a model provider, enter its connection details, and choose a model. Once connected, EchoInk is ready to chat."
+      "添加你使用的模型服务，保存后就能开始对话。",
+      "Add your model provider and save it to start chatting."
     ],
     "tip": [
       "你可以添加多个服务，之后随时切换。",
@@ -202,18 +209,18 @@ const ONBOARDING_COPY = {
   },
   "knowledge": {
     "icon": "book-open-check",
-    "tone": "green",
+    "tone": "purple",
     "title": [
-      "给笔记一个归处",
+      "给知识库安个家",
       "Give your notes a home"
     ],
     "description": [
-      "默认方案会先保留原始资料，再逐步提炼为 Wiki。想自己安排时，按目录搜索、多选笔记就好。",
-      "The default plan preserves your source material and gradually builds a Wiki. Choose the custom plan to search and assign notes by folder."
+      "先选文件夹，再核对将新建和移动的内容。确认前不会动文件。",
+      "Choose folders, then review what will be created or moved. Nothing changes before you confirm."
     ],
     "tip": [
-      "先看分配预览，再决定开始。引导不会替你移动笔记。",
-      "Review your assignments before starting. This guide does not move any notes."
+      "",
+      ""
     ],
     "action": [
       "下一步",
@@ -222,27 +229,28 @@ const ONBOARDING_COPY = {
   },
   "personality": {
     "icon": "sparkles",
-    "tone": "gold",
+    "tone": "purple",
     "title": [
-      "选择一种相处方式",
-      "Choose how you work together"
+      "认识总助",
+      "Meet your general assistant"
     ],
     "description": [
-      "选一个起始风格，给 Agent 取名字、换头像。随着一次次对话，它会逐渐理解你的偏好。",
-      "Choose a starting style, a name, and an avatar. Through your conversations, your Agent gradually learns how you like to work."
+      "给你的总助挑个头像和风格。",
+      "Choose an avatar and a style for your general assistant."
     ],
     "tip": [
       "这只是起点，之后可以随时调整。",
       "This is only a starting point. You can change it whenever you like."
     ],
     "action": [
-      "开始积累",
-      "Start exploring"
+      "下一步",
+      "Next"
     ]
   }
 } as const;
 
 export function onboardingCoachmarkCopy(step: EchoInkOnboardingStep, zh: boolean) {
+  step = currentOnboardingStep(step);
   const index = ECHOINK_ONBOARDING_STEPS.indexOf(step);
   const language = zh ? 0 : 1;
   const copy = ONBOARDING_COPY[step];

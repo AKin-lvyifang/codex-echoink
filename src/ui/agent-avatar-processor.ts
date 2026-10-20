@@ -1,4 +1,4 @@
-import type { AgentAvatarState } from "../harness/memory/agent-identity-state";
+import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
 
 export const AGENT_AVATAR_SOURCE_MAX_BYTES = 4 * 1024 * 1024;
 export const AGENT_AVATAR_SOURCE_MAX_EDGE = 4096;

@@ -28,6 +28,11 @@ export function knowledgeSearchPathKind(relativePath: string, bindings?: Knowled
     .filter(root => relativePath === root || relativePath.startsWith(`${root}/`)).map(root => ({ role, root }))) : [];
   matches.sort((a, b) => b.root.length - a.root.length || (a.role === "raw" ? -1 : b.role === "raw" ? 1 : a.role.localeCompare(b.role)));
   let role = matches[0]?.role ?? (!bindings ? knowledgeRootRole(relativePath) : null);
+  if (role === "inbox" && bindings && (!bindings.roles.inbox.enabled || bindings.roles.inbox.searchEnabled === false)) {
+    const shared = matches.find(match => match.root === matches[0].root && match.role !== "inbox" && match.role !== "templates" && match.role !== "assets"
+      && bindings.roles[match.role].enabled && bindings.roles[match.role].searchEnabled !== false);
+    if (shared) role = shared.role;
+  }
   if (!role && bindings && parts.length === 1) {
     if (bindings.roles.journal.native && !bindings.roles.journal.readPaths.length && /^\d{4}-\d{2}-\d{2}\.(?:md|markdown)$/u.test(relativePath)) role = "journal";
     else if (bindings.roles.templates.native && !bindings.roles.templates.readPaths.length) role = "templates";

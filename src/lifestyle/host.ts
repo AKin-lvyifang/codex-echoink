@@ -1,3 +1,4 @@
+import type { AgentDefinition, AgentModuleId } from "../agents/types";
 import type { App, EventRef } from "obsidian";
 import type { CodexForObsidianSettings } from "../settings/settings";
 import type { CapabilityAccess } from "../membership/types";
@@ -18,6 +19,9 @@ export interface LifestylePluginHost {
   readEchoInkBuiltinSkill(id: string): Promise<{ fileStatus: string; content: string }>;
   generateLifestyleText(system: string, user: string, maxTokens: number, signal: AbortSignal): Promise<string>;
   openLifestyleSettings(kind: LifestyleKind): Promise<void>;
+  activateHomeView?(options?: { keepRightSidebar?: boolean }): Promise<void>;
+  getWorkbenchModuleOwner?(moduleId: AgentModuleId): AgentDefinition;
+  prefillWorkbenchModule?(moduleId: AgentModuleId, text: string): Promise<boolean>;
   saveFinanceCsv?(name: string, content: string): Promise<string>;
 }
 export interface LifestyleViewPort { contentEl?: HTMLElement; render(): void; releaseResources(): void }

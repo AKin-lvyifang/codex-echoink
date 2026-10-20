@@ -125,10 +125,10 @@ export async function runHomeTodoTests(): Promise<void> {
     await history.store.toggleDone(today, true);
     assert.equal(history.store.completionStatistics().total, 2);
     assert.equal(history.store.completionStatistics().today, 1);
-    await history.store.updateTodo(today, { title: "Edited title" });
+    await history.store.updateTodo(history.store.snapshot().find(record => record.id === "today")!, { title: "Edited title" });
     await history.store.reload();
     assert.equal(history.store.completionStatistics().total, 2);
-    await history.store.toggleDone(today, false);
+    await history.store.toggleDone(history.store.snapshot().find(record => record.id === "today")!, false);
     assert.equal(history.store.completionStatistics().total, 1);
     history.externalEdit(history.content().replace("- [ ] Edited title", "- [x] Edited title"));
     await history.store.reload();
@@ -178,6 +178,8 @@ export async function runHomeTodoTests(): Promise<void> {
     assert.match(times.content(), /自定义：保持原文/);
     assert.equal(times.store.snapshot()[0].dueTime, "15:45");
     times.externalEdit(times.content().replace("15:45", "16:20"));
+    await assert.rejects(times.store.updateTodo(times.store.snapshot()[0], { title: "编辑标题" }), /待办.*(?:变化|修改)|changed/u);
+    await times.store.reload();
     await times.store.updateTodo(times.store.snapshot()[0], { title: "编辑标题" });
     assert.equal(times.store.snapshot()[0].dueTime, "16:20", "latest handwritten time survives unrelated UI writes");
     await times.store.updateTodo(times.store.snapshot()[0], { dueTime: "" });

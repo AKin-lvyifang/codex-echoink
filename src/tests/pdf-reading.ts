@@ -12,8 +12,10 @@ import { splitMessageTableRow } from "../ui/render-message";
 import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
 import { piWorkspaceAllowsTool } from "../harness/pi-native/pi-workspace-access";
 import { PiPdfReadingSecurity } from "../harness/pi-native/pi-pdf-reading-tools";
-import { Modal } from "obsidian";
-import { JSDOM } from "jsdom";
+import { FileApprovalTicketStore } from "../harness/pi-native/tool-authorization";
+import { FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
+import { paidTestAccess } from "./membership-access";
+import { createHash } from "node:crypto";
 import { isPdfReadingIntent } from "../pdf-reading/intent";
 import { pdfLanguage, pdfSourceLanguage } from "../pdf-reading/language";
 import { buildPiDocumentContextMessage, buildPiDocumentProviderContext } from "../harness/pi-native/pi-document-context";
@@ -208,16 +210,22 @@ async function assertActivePdfRenameKeepsGeneratedChunks(): Promise<void> {
 }
 
 async function runPdfSecurityTests(base: PdfJob): Promise<void> {
-  const dom = new JSDOM(); const previousDocument = globalThis.document, originalOpen = Modal.prototype.open;
-  globalThis.document = dom.window.document;
+  const storeRoot = `${process.env.ECHOINK_PDF_TEST_ROOT}/security`;
+  const approvals = new FileApprovalTicketStore({ storageRootPath: storeRoot, vaultId: "pdf-security" });
+  const receipts = new FileDomainReceiptStore({ storageRootPath: storeRoot, vaultId: "pdf-security" });
+  await approvals.initialize(); await receipts.initialize();
   let permission = "write", mode = "chat", approved = true, afterConfirm = () => {}, confirmation = "", executions = 0, readFails = false, missingArtifact = false;
   let current = structuredClone(base);
-  // Drive the real confirmation boundary with an explicit user-decision fixture.
-  Modal.prototype.open = function () { const modal = this as unknown as { bodyText: string; done(value: boolean): void }; confirmation = modal.bodyText; afterConfirm(); modal.done(approved); };
+  // Drive the official Ticket/receipt boundary with an explicit user decision.
+  const fingerprint = createHash("sha256").update(pdf).digest("hex");
   const security = new PiPdfReadingSecurity({ host: () => ({ plugin: { app: {}, settings: { pdfReading: { engine: "local", translationLanguage: "中文" } } },
-    api: { files: { exists: async () => true, read: async () => "# saved" }, load: async () => current, history: async () => [current], resume: async () => { executions++; return current; }, actualArtifacts: async () => { if (readFails) throw new Error("readback failed"); return missingArtifact ? current.artifacts.filter(a => a.kind !== "translation") : current.artifacts; } },
+    api: { deps: { access: paidTestAccess, enabled: () => true }, files: { listJobs: async () => [current.id], exists: async () => true, read: async () => "# saved", readBinary: async () => new Uint8Array(pdf) },
+      prepareStartIntent: async (name: string, _bytes: Uint8Array, options: PdfOptions, id: string) => ({ id, name, options, sourceFingerprint: fingerprint, byteLength: pdf.length, rawDirectory: "Raw" }),
+      start: async () => { executions++; return current; }, load: async () => current, history: async () => [current], resume: async () => { executions++; return current; }, actualArtifacts: async () => { if (readFails) throw new Error("readback failed"); return missingArtifact ? current.artifacts.filter(a => a.kind !== "translation") : current.artifacts; } },
     processVault: async () => { executions++; return current; }
-  }) as never, access: () => ({ permission, mode }) as never, identity: () => "run", intentId: () => "intent", documents: () => [], consume: () => null, bindSources: () => {}, wikiPaths: async () => [] });
+  }) as never, approvals, receipts, userId: "user", deviceId: "device", currentRunIdentity: () => ({ vaultId: "pdf-security", conversationId: "conversation", piSessionId: "session", productRunId: "run" }),
+    confirmation: { confirm: async input => { confirmation = JSON.stringify(input.preview); afterConfirm(); return approved; } },
+    access: () => ({ permission, mode }) as never, identity: () => "run", intentId: () => "intent", documents: () => [], consume: () => null, bindSources: () => {}, wikiPaths: async () => [] });
   let sequence = 0;
   const call = (input: object, name = "pdf_reading_process") => ({ type: "tool_call", toolCallId: `case-${++sequence}`, toolName: name, input });
   const receipt = (event: ReturnType<typeof call>) => security.handleToolResult(event as never);
@@ -272,7 +280,7 @@ async function runPdfSecurityTests(base: PdfJob): Promise<void> {
     }
     assert.equal(delivered, expectedReading, "secured tool pages deliver complete Chinese reading including surrogate pairs");
     console.log("PASS Agent terminal status, historical recipient confirmation, permission rechecks, single consumption, readback failure and truncation metadata");
-  } finally { Modal.prototype.open = originalOpen; globalThis.document = previousDocument; dom.window.close(); }
+  } finally { await rm(storeRoot, { recursive: true, force: true }); }
 }
 
 async function runPdfAttachmentTests(): Promise<void> {

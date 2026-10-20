@@ -1,6 +1,7 @@
 import { constants as fsConstants } from "node:fs";
 import { resolveKnowledgeRoleTarget, getKnowledgeFolderBindings } from "./root-paths";
 import { resolveKnowledgePath } from "./root-paths";
+import { knowledgeCollectionDirectory } from "./folder-bindings";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
@@ -155,19 +156,35 @@ export class KnowledgeBaseCaptureService {
 
   private async captureWeChatUrl(url: string): Promise<string[]> {
     const vaultPath = this.plugin.getVaultPath();
-    const dest = this.captureDirectory(vaultPath, "articles/微信公众号");
-    await fsp.mkdir(dest, { recursive: true });
-    return [await this.captureHtmlLikePage(url, dest, "微信公众号")];
+    const dest = await this.collectionDirectory(vaultPath, "wechat");
+    return [await this.captureHtmlLikePage(url, dest, "微信公众号", "", "wechat")];
   }
 
   private async captureWebUrl(url: string, originalInput = ""): Promise<string[]> {
     const vaultPath = this.plugin.getVaultPath();
-    const dest = this.captureDirectory(vaultPath, "articles/网页收藏");
-    await fsp.mkdir(dest, { recursive: true });
-    return [await this.captureHtmlLikePage(url, dest, "web", originalInput)];
+    const dest = await this.collectionDirectory(vaultPath, "web");
+    return [await this.captureHtmlLikePage(url, dest, "web", originalInput, "web")];
   }
 
-  private async captureHtmlLikePage(url: string, dest: string, source: string, originalInput = ""): Promise<string> {
+  private async collectionDirectory(vaultPath: string, kind: "web" | "wechat"): Promise<string> {
+    const config = getKnowledgeFolderBindings(vaultPath);
+    if (!config) {
+      const legacy = this.captureDirectory(vaultPath, kind === "web" ? "articles/网页收藏" : "articles/微信公众号");
+      await fsp.mkdir(legacy, { recursive: true });
+      return legacy;
+    }
+    const relative = knowledgeCollectionDirectory(config, kind);
+    if (!relative) throw new Error("收藏位置尚未选择或已失效，请在知识库设置中重新选择资料来源。");
+    let current = await fsp.realpath(vaultPath);
+    for (const segment of relative.split("/")) {
+      current = path.join(current, segment);
+      const stat = await fsp.lstat(current).catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; });
+      if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error("原收藏目录已失效，请在知识库设置中重新选择资料来源。");
+    }
+    return current;
+  }
+
+  private async captureHtmlLikePage(url: string, dest: string, source: string, originalInput: string, kind: "web" | "wechat"): Promise<string> {
     const vaultPath = this.plugin.getVaultPath();
     const response = await requestUrl({
       url,
@@ -203,6 +220,7 @@ export class KnowledgeBaseCaptureService {
       article.markdown || "正文提取失败，仅保留来源链接。",
       ""
     ].filter((line) => line !== "").join("\n");
+    if (await this.collectionDirectory(vaultPath, kind) !== dest) throw new Error("收藏位置已更改，请重新收藏。");
     await fsp.writeFile(absolute, body, "utf8");
     return normalizePath(path.relative(vaultPath, absolute));
   }

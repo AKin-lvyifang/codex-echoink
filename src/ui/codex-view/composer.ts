@@ -1,4 +1,5 @@
-import { setIcon } from "obsidian";
+import { Platform, setIcon } from "obsidian";
+import { applyDeleteButton } from "../../settings/amicro-buttons";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import {
   renderProviderBrandIcon,
@@ -114,6 +115,7 @@ export interface ComposerResourcePanelCallbacks {
 
 export interface ComposerToolbarCallbacks {
   onOpenAddMenu: (event: MouseEvent) => void;
+  onMentionNote: () => void;
   onEnhancePrompt: () => void;
   onCaptureKnowledgeSource: () => void;
   onPermissionChange: (value: PermissionMode) => void;
@@ -386,6 +388,7 @@ export function renderComposerToolbar(
 ): ComposerToolbarRefs {
   const language = state.language ?? "zh-CN";
   container.empty();
+  container.toggleClass("is-desktop-composer", Platform.isDesktopApp);
   workspaceContainer.empty();
   workspaceContainer.addClass("is-visible");
   addWorkspaceButton(workspaceContainer, state, callbacks, language);
@@ -402,6 +405,17 @@ export function renderComposerToolbar(
   addButton.setAttribute("aria-expanded", "false");
   addButton.dataset.composerAddButton = "true";
   addButton.onclick = callbacks.onOpenAddMenu;
+
+  if (Platform.isDesktopApp) {
+    const mentionButton = createComposerIconButton(left, "at-sign", conversationUiText(language, "关联笔记", "Mention a note"));
+    mentionButton.addClass("codex-composer-mention-button");
+    mentionButton.setAttribute("aria-haspopup", "listbox");
+    mentionButton.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      callbacks.onMentionNote();
+    };
+  }
 
   const refs: ComposerToolbarRefs = { addButtonEl: addButton };
   const captureButton = createComposerIconButton(left, "bookmark-plus", conversationUiText(language, "收藏到知识库", "Save to Knowledge"));
@@ -503,7 +517,13 @@ export function renderComposerToolbar(
     sendButton.setAttribute("aria-label", conversationUiText(language, "另一个会话正在运行", "Another conversation is running"));
     sendButton.setAttribute("title", conversationUiText(language, "切回运行中的会话后可停止", "Switch to the running conversation to stop it"));
   }
-  if (action === "send") {
+  if (action === "send" && Platform.isDesktopApp) {
+    const sendIconWrap = sendButton.createSpan({
+      cls: "codex-composer-send-icon-wrap",
+      attr: { "aria-hidden": "true" }
+    });
+    setIcon(sendIconWrap, "arrow-up");
+  } else if (action === "send") {
     renderAnimateIcon(sendButton, "send-horizontal");
   } else if (action === "stop-turn" || action === "cancel-knowledge-task") {
     renderAnimateIcon(sendButton, "circle-stop");
@@ -1021,6 +1041,7 @@ function renderPiConversationDrafts(
     });
     remove.disabled = !state.canManagePiSupport;
     setIcon(remove, "x");
+    applyDeleteButton(remove, { iconOnly: true });
     remove.onclick = () => callbacks.onRemovePiDraft(draft.draftId);
   }
 }
@@ -1313,6 +1334,7 @@ function renderQueuedTurnItem(
     }
   });
   setIcon(remove, "x");
+  applyDeleteButton(remove, { iconOnly: true });
   remove.onclick = (event) => {
     event.preventDefault();
     event.stopPropagation();

@@ -68,7 +68,19 @@ const pdfReadingSource = await readFile(path.join(rootDir, "src/styles/pdf-readi
 const paperGuideSource = await readFile(path.join(rootDir, "src/ui/paper-guide.css"), "utf8");
 const boundarySource = await readFile(path.join(rootDir, "src/styles/theme-boundary.css"), "utf8");
 const selectionAskSource = await readFile(path.join(rootDir, "src/styles/selection-ask.css"), "utf8");
-const settingsGenerated = [settingsStart, selectionAskSource.trim(), settingsSource.trim(), originSource.trim(), boundarySource.trim(), paperGuideSource.trim(), pdfReadingSource.trim(), settingsEnd].join("\n");
+const moduleSettingsSource = await readFile(path.join(rootDir, "src/styles/desktop-module-settings.css"), "utf8");
+const knowledgeSettingsSource = await readFile(path.join(rootDir, "src/styles/desktop-knowledge-settings.css"), "utf8");
+const accountSettingsSource = await readFile(path.join(rootDir, "src/styles/desktop-account-settings.css"), "utf8");
+const alignedSettingsSource = await readFile(path.join(rootDir, "src/styles/settings-demo-align.css"), "utf8");
+const alignedFormsSource = await readFile(path.join(rootDir, "src/styles/settings-demo-forms.css"), "utf8");
+const alignedModulesSource = await readFile(path.join(rootDir, "src/styles/settings-demo-modules.css"), "utf8");
+const settingsGenerated = [settingsStart, selectionAskSource.trim(), settingsSource.trim(), originSource.trim(), boundarySource.trim(), paperGuideSource.trim(), pdfReadingSource.trim(), moduleSettingsSource.trim(), knowledgeSettingsSource.trim(), accountSettingsSource.trim(), alignedSettingsSource.trim(), alignedFormsSource.trim(), alignedModulesSource.trim(), settingsEnd].join("\n");
+const agentStart = "/* ECHOINK_AGENT_WORKBENCH_CSS_START */";
+const agentEnd = "/* ECHOINK_AGENT_WORKBENCH_CSS_END */";
+const agentCss = await Promise.all(["agent-tasks.css", "agent-editor.css", "agent-approval.css", "workbench.css", "journal-page.css", "todo-page.css", "knowledge-page.css", "english-diary-page.css", "pdf-reading-page.css", "module-navigation.css", "agent-settings.css", "user-profile-settings.css"].map(name => readFile(path.join(rootDir, "src/styles", name), "utf8")));
+const agentGenerated = `${agentStart}\n${agentCss.map(css => css.trim()).join("\n\n")}\n${agentEnd}`;
+const agentIndex = styles.indexOf(agentStart);
+const agentCurrent = agentIndex < 0 ? "" : styles.slice(agentIndex, styles.indexOf(agentEnd, agentIndex) + agentEnd.length);
 const settingsIndex = styles.indexOf(settingsStart);
 const settingsCurrent = settingsIndex < 0 ? "" : styles.slice(settingsIndex, styles.indexOf(settingsEnd, settingsIndex) + settingsEnd.length);
 const diaryStart = "/* ECHOINK_ENGLISH_DIARY_CSS_START */";
@@ -79,6 +91,7 @@ const diaryIndex = styles.indexOf(diaryStart);
 const diaryCurrent = diaryIndex < 0 ? "" : styles.slice(diaryIndex, styles.indexOf(diaryEnd, diaryIndex) + diaryEnd.length);
 
 if (checkOnly) {
+  if (agentCurrent !== agentGenerated) throw new Error("Generated Agent workbench CSS is stale");
   if (diaryCurrent !== diaryGenerated) throw new Error("Generated English Diary CSS is stale. Run node scripts/build-home-magic-ui-css.mjs");
   if (current !== generated) throw new Error("Generated Magic UI CSS is stale. Run node scripts/build-home-magic-ui-css.mjs");
   if (settingsCurrent !== settingsGenerated) throw new Error("Generated workspace settings CSS is stale");
@@ -87,6 +100,7 @@ if (checkOnly) {
   let next = styles.replace(current, generated);
   next = diaryCurrent ? next.replace(diaryCurrent, diaryGenerated) : `${next.trimEnd()}\n\n${diaryGenerated}\n`;
   next = settingsCurrent ? next.replace(settingsCurrent, settingsGenerated) : `${next.trimEnd()}\n\n${settingsGenerated}\n`;
+  next = agentCurrent ? next.replace(agentCurrent, agentGenerated) : `${next.trimEnd()}\n\n${agentGenerated}\n`;
   if (next !== styles) await writeFile(stylesPath, next, "utf8");
   console.log("Home Magic UI CSS: updated");
 }

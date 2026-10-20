@@ -1,11 +1,9 @@
 import type { App, Component } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import {
-  resolveEchoInkWelcomeCopy,
   type ChatMessage,
   type StoredSession
 } from "../../settings/settings";
-import { swallowError } from "../../core/error-handling";
 import { settleStaleRunningMessages } from "../../core/message-state";
 import { SessionMessageStore, type SessionMessageInput } from "./session-message-store";
 import { CodexMessageListRenderer } from "./message-list";
@@ -94,7 +92,8 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     messagesEl: host.messagesEl,
     virtualListEl: host.virtualListEl,
     sessionId: session.id,
-    welcomeCopy: resolveEchoInkWelcomeCopy(host.plugin.settings),
+    conversationTitle: session.title,
+    getKnowledgeFolderBindings: () => host.plugin.settings.knowledgeBase.folderBindings,
     settingsLanguage: host.plugin.settings.settingsLanguage,
     agentIdentity: host.plugin.getEchoInkAgentIdentityView(),
     messages,
@@ -117,11 +116,6 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
         productRunId,
         toolCallId
       });
-    },
-    onSuggestionSelect: (text) => {
-      host.inputEl.value = text;
-      host.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
-      host.inputEl.focus();
     },
     ...(session.bodyAuthority === "pi_session_only"
       ? {
@@ -212,18 +206,11 @@ export function addMessageToSession(host: CodexMessageHost, session: StoredSessi
 }
 
 export function scheduleSessionSave(host: CodexMessageHost): void {
-  if (host.sessionSaveTimer) return;
-  host.sessionSaveTimer = window.setTimeout(() => {
-    host.sessionSaveTimer = null;
-    void host.plugin.saveSettings(true).catch(swallowError("scheduled session save failed"));
-  }, CHAT_SESSION_SAVE_DEBOUNCE_MS);
+  host.plugin.getConversationRunService().scheduleSave();
 }
 
 export async function flushSessionSave(host: CodexMessageHost): Promise<void> {
-  if (!host.sessionSaveTimer) return;
-  window.clearTimeout(host.sessionSaveTimer);
-  host.sessionSaveTimer = null;
-  await host.plugin.saveSettings(true);
+  await host.plugin.getConversationRunService().flushSave();
 }
 
 export function moveMessageToEnd(host: CodexMessageHost, session: StoredSession, messageId: string): void {

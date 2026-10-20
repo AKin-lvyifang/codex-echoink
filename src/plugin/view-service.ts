@@ -1,8 +1,15 @@
-import { Notice } from "obsidian";
+import { PdfReadingPageView, PDF_READING_PAGE_VIEW_TYPE } from "../home/pdf-reading-page";
+import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/english-diary-page";
+import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
+import { TodoPageView, TODO_PAGE_VIEW_TYPE } from "../home/todo-page";
+import { EchoInkJournalView, VIEW_TYPE_ECHOINK_JOURNAL } from "../home/journal-page";
+import { Notice, Platform } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ResourceManagementTab } from "../settings/settings";
 import type { SettingsTab } from "../settings/settings";
+import { resolveDesktopSettingsRoute } from "../settings/desktop-settings-route";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
+import { EchoInkWorkbenchView } from "../home/workbench-view";
 import { openObsidianGraphLeaf } from "../home/open-native-graph";
 import { isReviewHtmlPath } from "../review/schedule";
 import { ReviewPreviewView, VIEW_TYPE_REVIEW_PREVIEW } from "../review/preview-view";
@@ -28,7 +35,59 @@ export class EchoInkViewService {
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
     // onOpen and Vault events own data loading. Native journal settings can
     // change while away, but merely revealing an unchanged home is free.
-    if (leaf.view instanceof EchoInkHomeView) leaf.view.refreshIfSettingsChanged();
+    if (leaf.view instanceof EchoInkHomeView || leaf.view instanceof EchoInkWorkbenchView) leaf.view.refreshIfSettingsChanged();
+  }
+
+  async activateJournalView(): Promise<void> {
+    if (!Platform.isDesktopApp) return this.activateHomeView();
+    let leaf = this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL)[0];
+    if (!leaf) {
+      leaf = this.plugin.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: VIEW_TYPE_ECHOINK_JOURNAL, active: true });
+    }
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (leaf.view instanceof EchoInkJournalView) leaf.view.refreshIfSettingsChanged();
+  }
+
+  async activatePdfReadingPage(): Promise<void> {
+    if (!Platform.isDesktopApp) return;
+    let leaf = this.plugin.app.workspace.getLeavesOfType(PDF_READING_PAGE_VIEW_TYPE)[0];
+    if (!leaf) { leaf = this.plugin.app.workspace.getLeaf("tab"); await leaf.setViewState({ type: PDF_READING_PAGE_VIEW_TYPE, active: true }); }
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (leaf.view instanceof PdfReadingPageView) leaf.view.refreshIfSettingsChanged();
+  }
+
+  async activateEnglishDiaryPage(page: "diary" | "expressions" = "diary", expressionId?: string): Promise<void> {
+    if (!Platform.isDesktopApp) { if (page === "expressions") await this.plugin.englishDiary?.openLibrary(expressionId); else await this.plugin.englishDiary?.openToday(); return; }
+    let leaf = this.plugin.app.workspace.getLeavesOfType(ENGLISH_DIARY_PAGE_VIEW_TYPE)[0];
+    if (!leaf) { leaf = this.plugin.app.workspace.getLeaf("tab"); await leaf.setViewState({ type: ENGLISH_DIARY_PAGE_VIEW_TYPE, active: true }); }
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (leaf.view instanceof EnglishDiaryPageView) { leaf.view.openPage(page, expressionId); leaf.view.refreshIfSettingsChanged(); }
+  }
+
+  async activateKnowledgeView(page: "overview" | "health" | "history" = "overview"): Promise<void> {
+    if (!Platform.isDesktopApp) return this.plugin.openEchoInkKnowledgeSettings();
+    let leaf = this.plugin.app.workspace.getLeavesOfType(KNOWLEDGE_PAGE_VIEW_TYPE)[0];
+    if (!leaf) {
+      leaf = this.plugin.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: KNOWLEDGE_PAGE_VIEW_TYPE, active: true });
+    }
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (leaf.view instanceof KnowledgePageView) {
+      await leaf.view.openPage(page);
+      leaf.view.refreshIfSettingsChanged();
+    }
+  }
+
+  async activateTodoView(): Promise<void> {
+    if (!Platform.isDesktopApp) return this.activateHomeView();
+    let leaf = this.plugin.app.workspace.getLeavesOfType(TODO_PAGE_VIEW_TYPE)[0];
+    if (!leaf) {
+      leaf = this.plugin.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: TODO_PAGE_VIEW_TYPE, active: true });
+    }
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (leaf.view instanceof TodoPageView) leaf.view.refreshIfSettingsChanged();
   }
 
   async activateView(options: { focusInput?: boolean } = {}): Promise<void> {
@@ -69,8 +128,8 @@ export class EchoInkViewService {
 
   refreshKnowledgeBaseSurfaces(): void {
     this.getCodexView()?.refreshKnowledgeBaseDashboard();
-    for (const leaf of this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) {
-      if (leaf.view instanceof EchoInkHomeView) {
+    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home"), ...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL), ...this.plugin.app.workspace.getLeavesOfType(TODO_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(KNOWLEDGE_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(ENGLISH_DIARY_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(PDF_READING_PAGE_VIEW_TYPE)]) {
+      if (leaf.view instanceof EchoInkHomeView || leaf.view instanceof EchoInkWorkbenchView || leaf.view instanceof EchoInkJournalView || leaf.view instanceof TodoPageView || leaf.view instanceof KnowledgePageView || leaf.view instanceof EnglishDiaryPageView || leaf.view instanceof PdfReadingPageView) {
         void leaf.view.refresh().catch((error) => console.warn("EchoInk 首页刷新失败", error));
       }
     }
@@ -81,9 +140,9 @@ export class EchoInkViewService {
     for (const leaf of this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX)) {
       if (leaf.view instanceof CodexView) leaf.view.refreshLanguage();
     }
-    for (const leaf of this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME)) {
-      if (!(leaf.view instanceof EchoInkHomeView)) continue;
-      refreshes.push(leaf.view.refreshLanguage().catch((error) => {
+    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home"), ...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL), ...this.plugin.app.workspace.getLeavesOfType(TODO_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(KNOWLEDGE_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(ENGLISH_DIARY_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(PDF_READING_PAGE_VIEW_TYPE)]) {
+      if (!(leaf.view instanceof EchoInkHomeView) && !(leaf.view instanceof EchoInkWorkbenchView) && !(leaf.view instanceof EchoInkJournalView) && !(leaf.view instanceof TodoPageView) && !(leaf.view instanceof KnowledgePageView) && !(leaf.view instanceof EnglishDiaryPageView) && !(leaf.view instanceof PdfReadingPageView)) continue;
+      refreshes.push(Promise.resolve(leaf.view.refreshLanguage()).catch((error) => {
         console.warn("EchoInk 首页语言刷新失败", error);
       }));
     }
@@ -94,6 +153,7 @@ export class EchoInkViewService {
     this.plugin.settings.settingsTab = "resources";
     this.plugin.settings.resourceManagementTab = tab;
     await this.plugin.saveSettings(true);
+    this.plugin.prepareDesktopSettingsRoute(resolveDesktopSettingsRoute("resources", { resourceTab: tab }));
     const setting = (this.plugin.app as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
     if (!setting?.open || !setting?.openTabById) {
       new Notice("无法打开插件设置页");
@@ -103,9 +163,10 @@ export class EchoInkViewService {
     setting.openTabById(this.plugin.manifest.id);
   }
 
-  async openEchoInkSettings(tab: SettingsTab): Promise<void> {
+  async openEchoInkSettings(tab: SettingsTab, focus?: string): Promise<void> {
     this.plugin.settings.settingsTab = tab;
     await this.plugin.saveSettings(true);
+    this.plugin.prepareDesktopSettingsRoute(resolveDesktopSettingsRoute(tab, { focus }));
     const setting = (this.plugin.app as {
       setting?: { open?: () => void; openTabById?: (id: string) => void };
     }).setting;

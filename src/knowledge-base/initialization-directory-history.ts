@@ -6,9 +6,19 @@ import { knowledgeErrorDetail } from "./initialization-error";
 
 interface Position { original: string; current: string; identity: string }
 interface FolderPosition { original: string; current: string }
+export interface DirectoryModuleSettings {
+  journal?: string;
+  nativeJournal?: { folder?: string };
+  review?: string;
+  english?: { directory: string; mode?: "role" | "custom"; legacyDirectories?: string[] };
+  expressions?: { directory: string; mode?: "role" | "custom"; legacyDirectories?: string[] };
+  pdfOriginal?: { directory?: string };
+}
 interface DirectoryHistory {
   bindings?: KnowledgeFolderBindings;
   appliedBindings?: KnowledgeFolderBindings;
+  moduleSettings?: DirectoryModuleSettings;
+  appliedModuleSettings?: DirectoryModuleSettings;
   version: 1;
   createdAt: number;
   jobId: string;
@@ -32,6 +42,8 @@ export interface DirectoryHistoryHost {
   restoreBindings?(from: string, to: string, keepCurrent: boolean, originalBindings?: KnowledgeFolderBindings): Promise<void>;
   currentBindings?(): KnowledgeFolderBindings | null | undefined;
   restorePlanBindings?(original: KnowledgeFolderBindings | undefined, applied: KnowledgeFolderBindings): Promise<void>;
+  restoreModuleSettings?(original: DirectoryModuleSettings, applied: DirectoryModuleSettings): Promise<void>;
+  currentModuleDirectories?(): readonly string[];
 }
 
 /** Position journal, never a content backup. Callers serialize all mutations. */
@@ -66,6 +78,24 @@ export class InitializationDirectoryHistory {
       if (value.folderRenames !== undefined && !Array.isArray(value.folderRenames)) throw new Error("初始化目录改名索引损坏");
       for (const folder of value.folderRenames ?? []) { this.absolute(folder.original); this.absolute(folder.current); }
       if (value.pending) { this.absolute(value.pending.from); this.absolute(value.pending.to); if (value.pending.folderOriginal) this.absolute(value.pending.folderOriginal); }
+      for (const modules of [value.moduleSettings, value.appliedModuleSettings]) {
+        if (modules === undefined) continue;
+        if (!modules || typeof modules !== "object" || Array.isArray(modules)) throw new Error("初始化模块目录记录损坏");
+        const relative = (directory: unknown, optional = false) => {
+          if (optional && directory === undefined) return;
+          if (typeof directory !== "string" || directory.startsWith("/") || /^[a-z]:/iu.test(directory)
+            || directory.replace(/\\/gu, "/").split("/").some(part => part === "." || part === "..") || /[\0\r\n]/u.test(directory)) throw new Error("初始化模块目录记录损坏");
+        };
+        relative(modules.journal, true); relative(modules.review, true);
+        if (modules.nativeJournal) relative(modules.nativeJournal.folder, true);
+        if (modules.pdfOriginal) relative(modules.pdfOriginal.directory, true);
+        for (const entry of [modules.english, modules.expressions]) if (entry) {
+          relative(entry.directory);
+          if (entry.mode !== undefined && entry.mode !== "role" && entry.mode !== "custom") throw new Error("初始化模块目录模式损坏");
+          if (entry.legacyDirectories !== undefined && !Array.isArray(entry.legacyDirectories)) throw new Error("初始化模块旧目录记录损坏");
+          entry.legacyDirectories?.forEach(directory => relative(directory));
+        }
+      }
       return value;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -123,6 +153,15 @@ export class InitializationDirectoryHistory {
     const record = await this.read();
     if (!record) return;
     record.appliedBindings = structuredClone(bindings);
+    await this.save(record);
+  }
+
+  /** Record intended settings before their first write; keep the first original. */
+  async recordModuleSettings(original: DirectoryModuleSettings, applied: DirectoryModuleSettings): Promise<void> {
+    const record = await this.read();
+    if (!record) throw new Error("初始化前目录记录缺失，未保存模块目录。 ");
+    record.moduleSettings = { ...structuredClone(original), ...record.moduleSettings };
+    record.appliedModuleSettings = { ...record.appliedModuleSettings, ...structuredClone(applied) };
     await this.save(record);
   }
 
@@ -243,8 +282,12 @@ export class InitializationDirectoryHistory {
       const children = await fs.readdir(this.absolute(position.current)).catch(() => []);
       await this.host.restoreBindings?.(position.current, position.original, children.length > 0, record.bindings);
     }
+    // Restore settings before removing empty setup folders. If persistence fails,
+    // leave those folders present so no module is left pointing at a removed path.
+    if (record.moduleSettings && record.appliedModuleSettings) await this.host.restoreModuleSettings?.(record.moduleSettings, record.appliedModuleSettings);
     for (const folder of [...record.createdFolders].sort((a, b) => b.split("/").length - a.split("/").length)) {
       if (record.folders.includes(folder)) continue;
+      if (this.host.currentModuleDirectories?.().some(directory => directory === folder || directory.startsWith(`${folder}/`))) continue;
       const children = await fs.readdir(this.absolute(folder)).catch(() => null);
       if (children?.length === 0) {
         const original = record.folderRenames?.find((item) => item.current === folder)?.original;

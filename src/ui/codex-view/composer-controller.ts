@@ -113,6 +113,7 @@ export interface CodexComposerHost {
   ensureSession(): StoredSession;
   currentEchoInkResourceCatalog(): EchoInkResource[];
   effectiveModel(): string;
+  onInputChanged(): void;
   renderToolbar(): void;
   renderMessages(options?: {
     forceBottom?: boolean;
@@ -180,6 +181,7 @@ export function renderToolbar(host: CodexComposerHost): void {
     },
     {
       onOpenAddMenu: (event) => openAddMenu(host, event),
+      onMentionNote: () => openNoteMentionPicker(host),
       onEnhancePrompt: () => host.enhancePrompt(),
       onCaptureKnowledgeSource: () => {
         void host.runKnowledgeBaseShortcut(
@@ -873,6 +875,20 @@ function saveComposerSettings(
       ? `Could not save ${label}: ${error instanceof Error ? error.message : String(error)}`
       : `${label}保存失败：${error instanceof Error ? error.message : String(error)}`);
   });
+}
+
+export function openNoteMentionPicker(host: Pick<CodexComposerHost, "inputEl" | "onInputChanged">): void {
+  const input = host.inputEl;
+  if (input.disabled || input.readOnly) return;
+  if (!noteMentionQueryAtCursor(input.value, input.selectionStart)) {
+    const cursor = input.selectionStart ?? input.value.length;
+    const prefix = cursor > 0 && !/\s/u.test(input.value[cursor - 1] ?? "") ? " @" : "@";
+    // Insert at the caret without replacing selected draft text.
+    input.value = input.value.slice(0, cursor) + prefix + input.value.slice(cursor);
+    input.setSelectionRange(cursor + prefix.length, cursor + prefix.length);
+  }
+  input.focus();
+  host.onInputChanged();
 }
 
 export function onInputChanged(host: CodexComposerHost): void {

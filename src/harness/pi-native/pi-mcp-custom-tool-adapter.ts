@@ -50,6 +50,8 @@ export interface PiMcpCustomToolAdapterOptions {
   ): Promise<unknown[]>;
   /** Domain/Broker invocation. A side effect is called once; Readback is separate. */
   callTool(input: PiMcpDomainToolCallInput): Promise<unknown>;
+  /** Every broker invocation, including hidden readback, rechecks current policy. */
+  assertInvocationAllowed?(input: PiMcpDomainToolCallInput): Promise<void>;
   /** Re-read for every execute() so a previous Conversation is never captured. */
   currentExecutionContext(): Readonly<PiMcpExecutionContext>;
   /** Shares the sole Pi Extension preflight with the Tool wrapper. */
@@ -97,6 +99,7 @@ export interface PiMcpToolSecurityDescriptor {
   readonly destructive: boolean;
   readonly approvalToolId: McpApprovalToolId;
   readonly contractFingerprint: string;
+  readonly inputSchema?: Readonly<Record<string, unknown>>;
   readonly readback?: EchoInkMcpToolReadbackContract;
 }
 
@@ -146,6 +149,7 @@ export class PiMcpCustomToolAdapter {
           toolName: tool.toolName,
           readOnly: tool.readOnly,
           destructive: tool.destructive,
+          inputSchema: Object.freeze(structuredClone(tool.inputSchema)),
           approvalToolId: createMcpApprovalToolId(tool),
           contractFingerprint: mcpToolContractFingerprint({
             ...tool,
@@ -208,7 +212,7 @@ export class PiMcpCustomToolAdapter {
             executionContext
           });
           throwIfAborted(executionSignal);
-          const result = await this.options.callTool({
+          const result = await this.invokeTool({
             resourceId: descriptor.resourceId,
             resourceName: descriptor.resourceName,
             backend: "pi-native",
@@ -271,7 +275,7 @@ export class PiMcpCustomToolAdapter {
     if (!contract) return Object.freeze({ required: true, verified: false });
     const readbackArgs = buildPiMcpReadbackArguments(contract, input.args);
     try {
-      const result = await this.options.callTool({
+      const result = await this.invokeTool({
         resourceId: input.descriptor.resourceId,
         resourceName: input.descriptor.resourceName,
         backend: "pi-native",
@@ -289,6 +293,11 @@ export class PiMcpCustomToolAdapter {
     } catch {
       return Object.freeze({ required: true, verified: false });
     }
+  }
+
+  private async invokeTool(input: PiMcpDomainToolCallInput): Promise<unknown> {
+    await this.options.assertInvocationAllowed?.(input);
+    return await this.options.callTool(input);
   }
 }
 

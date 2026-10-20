@@ -1,11 +1,23 @@
 import { spawnSync } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../../", import.meta.url));
-const outputDir = path.join(rootDir, ".tmp");
+const testRoot = process.env.ECHOINK_MEMORY_TEST_ROOT;
+if (!testRoot) throw new Error("Set ECHOINK_MEMORY_TEST_ROOT to the registered task directory under ~/EchoInk-TestVaults/90-任务临时");
+const allowedRoot = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
+const outputRoot = await realpath(testRoot);
+const relative = path.relative(allowedRoot, outputRoot);
+if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Memory test root must be a child of 90-任务临时");
+if (await realpath(process.env.TMPDIR || "") !== outputRoot) throw new Error("TMPDIR must match ECHOINK_MEMORY_TEST_ROOT");
+const outputDir = path.join(outputRoot, "runtime-local-checks");
+const runtimeDependencyPlugin = { name: "runtime-test-dependencies", setup(build) {
+  build.onResolve({ filter: /^(?:@earendil-works\/pi-(?:agent-core|ai|coding-agent)(?:\/.*)?|yaml)$/ }, (args) => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true }));
+  build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(rootDir, "src/tests/obsidian-shim.ts") }));
+} };
 const outputFile = path.join(outputDir, "personal-memory-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
 const focusedRecall = process.argv.includes("--recall");
@@ -46,7 +58,7 @@ await esbuild.build({
         "await runDreamLedgerScenarios();",
         "await withPersonalMemoryFixture(async (fixture) => {",
         "  const fixed = await fixture.repository.loadFixedContext({ memoryMode: 'normal' });",
-        "  assert.ok(fixed.agent && fixed.user && fixed.memory);",
+        "  assert.equal(fixed.agent, ''); assert.ok(fixed.user && fixed.memory);",
         "  assert.match(fixture.repository.layout.agent, /AGENT\\.md$/u);",
         "  assert.match(fixture.repository.layout.user, /USER\\.md$/u);",
         "  assert.match(fixture.repository.layout.memory, /MEMORY\\.md$/u);",
@@ -75,7 +87,7 @@ await esbuild.build({
   platform: "node",
   target: "node22",
   format: "esm",
-  plugins: [{
+  plugins: [runtimeDependencyPlugin, {
     name: "personal-memory-obsidian-stub",
     setup(build) {
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: obsidianShimPath }));

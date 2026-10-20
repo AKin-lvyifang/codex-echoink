@@ -4,10 +4,11 @@ import { createHash } from "node:crypto";
 import { DEFAULT_ENGLISH_DIRECTORY, DEFAULT_EXPRESSION_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY, LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_ENGLISH_DIRECTORY } from "./types";
 import type {
   DiaryFilePort, DiaryGenerationDay, DiaryPrivacy, DiaryRecord, DiaryRepository, DiaryResult, DiarySource,
-  ExpressionEntry, ExpressionOccurrence
+  ExpressionEntry, ExpressionOccurrence, SavedDiaryEntry, SavedDiaryList
 } from "./types";
 import { diaryWikiLink, expressionIdentity, migrateExpressionMarkdown, parseExpressionMarkdown, patchExpressionMarkdown, renderDiaryMarkdown, renderExpressionMarkdown } from "./markdown";
 import { filterExpressions, normalizedExpressionKey as normalizedKey, pathsOverlap } from "./expression-search";
+import { splitDiaryBlocks } from "./model";
 
 export type EnglishDiaryRepositoryErrorCode =
   | "INVALID_PATH" | "INVALID_STATE" | "FILE_MODIFIED" | "CONFLICT"
@@ -123,6 +124,47 @@ function generationEvents(state: StoredRecord): GenerationEvent[] {
     && !!item.operationId && validGenerationDay(item.date) && Number.isSafeInteger(item.expressionCount) && item.expressionCount >= 0);
 }
 
+/** Only the English body is previewed; managed source links and expression notes stay out. */
+function diaryPreview(markdown: string): string {
+  let body = markdown.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trimStart();
+  body = body.split(/^## 本篇表达收获\s*$/m, 1)[0]
+    .replace(/^# [^\r\n]* · 英文\s*\r?\n/, "")
+    .replace(/^原稿：\[\[[^\r\n]*\]\][^\r\n]*(?:\r?\n|$)/gm, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/!\[\[[^\]]*\]\]|!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
+    .replace(/\[\[([^\]]+)\]\]/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^\s*(?:#{1,6}\s+|>\s*|[-+*]\s+|\d+[.)]\s+)/gm, "")
+    .replace(/[`*_~]/g, "")
+    .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/g, (entity) => ({ "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" })[entity]!)
+    .replace(/\s+/g, " ").trim();
+  const characters = Array.from(body);
+  if (characters.length > 180) body = `${characters.slice(0, 180).join("")}…`;
+  return body;
+}
+
+/** Excluded source text remains in the local file, but never belongs in navigation. */
+function savedDiaryPreview(state: StoredRecord, source: string | null, english: string | null): string {
+  if (english === null) return "";
+  const privacy = state.privacy;
+  if (!privacy) return diaryPreview(english);
+  if (privacy.sourceFingerprint !== state.result?.sourceFingerprint || !Array.isArray(privacy.rules)
+    || privacy.rules.some(rule => !rule || typeof rule.blockId !== "string" || !["translate", "preserve", "exclude"].includes(rule.mode))) return "";
+  const excluded = privacy.rules.filter(rule => rule.mode === "exclude");
+  if (!excluded.length) return diaryPreview(english);
+  if (source === null || fingerprint(source) !== privacy.sourceFingerprint || fingerprint(english) !== state.savedFileFingerprint) return "";
+  const blocks = new Map(splitDiaryBlocks(source).map(block => [block.id, block.text]));
+  for (const rule of excluded) {
+    const text = blocks.get(rule.blockId);
+    if (text === undefined) return "";
+    english = english.replaceAll(text, "");
+  }
+  return diaryPreview(english);
+}
+
 /** Normalize Windows-style separators without accepting absolute paths or traversal. */
 export function normalizeDiaryPath(value: string): string {
   const path = value.replace(/\\/g, "/").replace(/\/$/, "");
@@ -210,6 +252,13 @@ export class EnglishDiaryRepository implements DiaryRepository {
       return result;
     };
     const next = this.queue.then(run, run);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
+  /** Serialize navigation reads without entering the mutation/recovery prelude. */
+  private readOnly<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(operation, operation);
     this.queue = next.catch(() => {});
     return next;
   }
@@ -323,26 +372,39 @@ export class EnglishDiaryRepository implements DiaryRepository {
     return { value, raw };
   }
 
+  /** Match the saved path (including renamed sources), or compute an unsaved identity. */
+  private async stateIdentity(source: DiarySource): Promise<{ value: StoredRecord; raw: string | null }> {
+    const sourcePath = normalizeDiaryPath(source.path);
+    const found = (await this.states()).find((state) => state.value.sourcePath === sourcePath);
+    if (found) return found;
+    let salt = 0;
+    let id = fingerprint(sourcePath).slice(0, 24);
+    while (await this.files.read(this.statePath(id)) !== null) id = fingerprint(`${sourcePath}:${++salt}`).slice(0, 24);
+    const basename = `${filePart(source.date || source.title)}-${id.slice(0, 8)}`;
+    let englishPath = `${this.options.englishDirectory}/${basename}.md`;
+    let suffix = 0;
+    while (englishPath === sourcePath || await this.files.read(englishPath) !== null) {
+      englishPath = `${this.options.englishDirectory}/${basename}-${++suffix}.md`;
+    }
+    return { value: {
+      schema: 1, id, sourcePath, englishPath, result: null,
+      savedFileFingerprint: null, privacy: null, pending: null, transaction: null, generationActivity: []
+    }, raw: null };
+  }
+
+  /** Confirmation and recovery inspection must not publish or repair anything. */
+  async inspect(source: DiarySource): Promise<DiaryRecord> {
+    return this.readOnly(async () => this.describe((await this.stateIdentity(source)).value));
+  }
+
   async get(source: DiarySource): Promise<DiaryRecord> {
     return this.exclusive(async () => {
-      const sourcePath = normalizeDiaryPath(source.path);
-      const found = (await this.states()).find((state) => state.value.sourcePath === sourcePath);
-      if (found) return this.describe((await this.recover(found)).value);
-      let salt = 0;
-      let id = fingerprint(sourcePath).slice(0, 24);
-      while (await this.files.read(this.statePath(id)) !== null) id = fingerprint(`${sourcePath}:${++salt}`).slice(0, 24);
-      const basename = `${filePart(source.date || source.title)}-${id.slice(0, 8)}`;
-      let englishPath = `${this.options.englishDirectory}/${basename}.md`;
-      let suffix = 0;
-      while (englishPath === sourcePath || await this.files.read(englishPath) !== null) {
-        englishPath = `${this.options.englishDirectory}/${basename}-${++suffix}.md`;
+      const state = await this.stateIdentity(source);
+      if (state.raw !== null) return this.describe((await this.recover({ value: state.value, raw: state.raw })).value);
+      if (this.storageWritable() && getProPluginAccess(this.access, true).canWrite) {
+        await this.writeChecked(this.statePath(state.value.id), serialize(state.value), null);
       }
-      const value: StoredRecord = {
-        schema: 1, id, sourcePath, englishPath, result: null,
-        savedFileFingerprint: null, privacy: null, pending: null, transaction: null, generationActivity: []
-      };
-      if (this.storageWritable() && getProPluginAccess(this.access, true).canWrite) await this.writeChecked(this.statePath(id), serialize(value), null);
-      return this.describe(value);
+      return this.describe(state.value);
     });
   }
 
@@ -479,20 +541,24 @@ export class EnglishDiaryRepository implements DiaryRepository {
     return { raw, state };
   }
 
-  private async *expressionMarkdownFiles() {
+  private async *expressionMarkdownFiles(readOnly = false) {
     const seen = new Set<string>();
-    for (const directory of [this.options.expressionDirectory, ...(!this.migrationsEnabled() ? this.options.legacyExpressionDirectories ?? [] : [])]) {
+    for (const directory of [this.options.expressionDirectory, ...(readOnly || !this.migrationsEnabled() ? this.options.legacyExpressionDirectories ?? [] : [])]) {
       for await (const file of this.markdownFiles(directory)) { if (!seen.has(file.path)) { seen.add(file.path); yield file; } }
     }
   }
 
-  private async entryFiles(): Promise<EntryFile[]> {
+  private async entryFiles(readOnly = false): Promise<EntryFile[]> {
     // A library-first reopen must recover the same journal as reopening its diary.
-    for (const state of await this.states()) if (state.value.transaction) await this.recover(state);
-    await this.migrateEntries();
+    if (readOnly && await this.files.read(this.operationPath()) !== null) fail("SAVE_FAILED", "表达保存尚未完成，请在原表达库核对后重试。");
+    for (const state of await this.states()) if (state.value.transaction) {
+      if (readOnly) fail("SAVE_FAILED", "日记保存尚未完成，请在原英文日记核对后重试。");
+      await this.recover(state);
+    }
+    if (!readOnly) await this.migrateEntries();
     const entries: EntryFile[] = [];
     const seen = new Set<string>();
-    for await (const file of this.expressionMarkdownFiles()) {
+    for await (const file of this.expressionMarkdownFiles(readOnly)) {
       const normalized = file.path;
       let content = file.content;
       const { legacy, id } = expressionMetadata(content, normalized);
@@ -506,7 +572,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
       const data = await this.entryData(id, legacy, content, normalized);
       let stateRaw = data.raw;
       if (legacy) {
-        if (stateRaw === null && this.storageWritable()) {
+        if (!readOnly && stateRaw === null && this.storageWritable()) {
           stateRaw = serialize(data.state);
           // Keep the original payload until its private copy has been durably written.
           await this.writeChecked(statePath, stateRaw, null);
@@ -514,7 +580,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
         let migrated: string;
         try { migrated = migrateExpressionMarkdown(content, id); }
         catch { return inconsistentExpression(normalized); }
-        if (this.migrationsEnabled()) { await this.writeChecked(normalized, migrated, content); content = migrated; }
+        if (!readOnly && this.migrationsEnabled()) { await this.writeChecked(normalized, migrated, content); content = migrated; }
       }
       if (stateRaw === null && !legacy) return invalidExpression(normalized);
       const state = data.state, entry = state.entry;
@@ -526,13 +592,13 @@ export class EnglishDiaryRepository implements DiaryRepository {
       }
       entries.push({ entry, previous, content, stateRaw, managedFingerprint: state.managedFingerprint });
     }
-    await this.pruneHistoricalOccurrences(entries);
+    await this.pruneHistoricalOccurrences(entries, readOnly);
     return entries;
   }
 
   /** Saved successful results prove stale history; missing records never authorize deletion. */
-  private async pruneHistoricalOccurrences(files: EntryFile[]): Promise<void> {
-    if (!this.storageWritable()) return;
+  private async pruneHistoricalOccurrences(files: EntryFile[], readOnly = false): Promise<void> {
+    if (!readOnly && !this.storageWritable()) return;
     const results = new Map((await this.states()).filter(({ value }) => {
       const result = value.result;
       return result?.journalId === value.id && /^[a-f0-9]{64}$/.test(result.sourceFingerprint)
@@ -553,6 +619,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
       });
       if (occurrences.length === file.entry.occurrences.length) continue;
       const next = { ...file.entry, occurrences };
+      if (readOnly) { file.entry = next; continue; }
       const backup = `${this.options.stateDirectory}/expression-history-backup/${file.entry.id}-${fingerprint(file.content).slice(0, 8)}.md`;
       const existingBackup = await this.files.read(backup);
       if (existingBackup !== null && existingBackup !== file.content) return migrationConflict(backup);
@@ -857,14 +924,74 @@ export class EnglishDiaryRepository implements DiaryRepository {
     }, true);
   }
 
-  async listGenerationActivity(): Promise<DiaryGenerationDay[]> {
-    return this.exclusive(async () => {
+  /** Existing committed associations only: no get(), recovery, migration or writes. */
+  async listSavedDiaries(): Promise<SavedDiaryList> {
+    return this.readOnly(async () => {
+      const entries = new Map<string, SavedDiaryEntry>(), errors: string[] = [];
+      let paths: string[];
+      try { paths = [...new Set(await this.files.list(this.options.stateDirectory))].sort(); }
+      catch { return { entries: [], errors: ["英文日记关联暂时读不到，请重试。"] }; }
+      for (const [index, path] of paths.entries()) {
+        try {
+          const normalized = this.assertUnder(path, this.options.stateDirectory);
+          const name = normalized.slice(this.options.stateDirectory.length + 1);
+          if (!/^[a-f0-9]{24}\.json$/.test(name)) continue;
+          const { value } = await this.loadState(name.slice(0, -5));
+          if (value.transaction) fail("SAVE_FAILED", "日记保存尚未完成，请在原英文日记核对后重试。");
+          const result = value.result;
+          if (!result) continue; // A draft/pending result is not a saved success.
+          if (result.journalId !== value.id || normalizeDiaryPath(result.sourcePath) !== value.sourcePath
+            || typeof result.operationId !== "string" || !result.operationId
+            || typeof result.sourceTitle !== "string" || result.date != null && typeof result.date !== "string"
+            || typeof result.generatedAt !== "string" || typeof result.english !== "string"
+            || !/^[a-f0-9]{64}$/.test(result.sourceFingerprint)
+            || !/^[a-f0-9]{64}$/.test(value.savedFileFingerprint ?? "")
+            || !Array.isArray(result.expressions) || result.expressions.some((item) => !item || !["phrase", "sentence"].includes(item.type))) {
+            fail("INVALID_STATE", "已保存的英文日记关联不完整，请保留文件后核对。");
+          }
+          const [source, english] = await Promise.all([
+            this.files.readSource ? this.files.readSource(value.sourcePath) : this.files.read(value.sourcePath),
+            this.files.read(value.englishPath)
+          ]);
+          entries.set(value.id, {
+            id: value.id, sourcePath: value.sourcePath, englishPath: value.englishPath,
+            title: result.sourceTitle || value.sourcePath.split("/").at(-1)!.replace(/\.md$/i, ""),
+            date: validGenerationDay(result.date) ? result.date : "", generatedAt: result.generatedAt,
+            preview: savedDiaryPreview(value, source, english), expressionCount: result.expressions.length,
+            missingSource: source === null, missingEnglish: english === null,
+            sourceChanged: source !== null && fingerprint(source) !== result.sourceFingerprint,
+            englishModified: english !== null && fingerprint(english) !== value.savedFileFingerprint
+          });
+        } catch (error) {
+          const reason = error instanceof EnglishDiaryRepositoryError ? error.message : "文件暂时读不到，请重试。";
+          errors.push(`第 ${index + 1} 条日记关联：${reason}`);
+        }
+      }
+      const time = (entry: SavedDiaryEntry) => Date.parse(entry.date || entry.generatedAt) || 0;
+      return { entries: [...entries.values()].sort((a, b) => time(b) - time(a)
+        || a.title.localeCompare(b.title) || a.sourcePath.localeCompare(b.sourcePath)), errors };
+    });
+  }
+
+  async listGenerationActivity(options: { readOnly?: boolean } = {}): Promise<DiaryGenerationDay[]> {
+    const collect = async () => {
       const days = new Map<string, DiaryGenerationDay>(), seen = new Set<string>();
       for (const loaded of await this.states()) {
-        const state = await this.recover(loaded);
+        if (options.readOnly && loaded.value.transaction) fail("SAVE_FAILED", "日记保存尚未完成，请在原英文日记核对后重试。");
+        const state = options.readOnly ? loaded : await this.recover(loaded);
+        if (options.readOnly && (state.value.generationActivity !== undefined && !Array.isArray(state.value.generationActivity)
+          || state.value.generationActivity === undefined && state.value.result && !Array.isArray(state.value.result.expressions))) {
+          fail("INVALID_STATE", "日记生成活动不完整，请保留关联数据后核对。");
+        }
         const events = generationEvents(state.value);
+        if (options.readOnly && (state.value.generationActivity === undefined
+          ? !!state.value.result && events.length !== 1
+          : !Array.isArray(state.value.generationActivity) || events.length !== state.value.generationActivity.length
+            || !!state.value.result && events.length === 0)) {
+          fail("INVALID_STATE", "日记生成活动不完整，请保留关联数据后核对。");
+        }
         // Fix the local day once, including the single provable legacy event.
-        if (state.value.generationActivity === undefined && this.storageWritable()) {
+        if (!options.readOnly && state.value.generationActivity === undefined && this.storageWritable()) {
           await this.writeChecked(this.statePath(state.value.id), serialize({ ...state.value, generationActivity: events }), state.raw);
         }
         for (const event of events) {
@@ -877,13 +1004,13 @@ export class EnglishDiaryRepository implements DiaryRepository {
         }
       }
       return [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
-    });
+    };
+    return options.readOnly ? this.readOnly(collect) : this.exclusive(collect);
   }
 
-  async listExpressions(query = "", category?: string): Promise<ExpressionEntry[]> {
-    return this.exclusive(async () => {
-      return filterExpressions((await this.entryFiles()).map((file) => file.entry), query, category);
-    });
+  async listExpressions(query = "", category?: string, options: { readOnly?: boolean } = {}): Promise<ExpressionEntry[]> {
+    const collect = async () => filterExpressions((await this.entryFiles(options.readOnly)).map((file) => file.entry), query, category);
+    return options.readOnly ? this.readOnly(collect) : this.exclusive(collect);
   }
 
   async updateExpression(id: string, changes: { category: string; note: string }): Promise<ExpressionEntry> {

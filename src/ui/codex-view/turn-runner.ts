@@ -1,4 +1,5 @@
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
+import { freezeWorkbenchTaskSource } from "../../home/workbench-context";
 import { isPdfReadingIntent } from "../../pdf-reading/intent";
 import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
 import { composerSelectionAnnotations } from "../../selection-ask/draft";
@@ -257,7 +258,7 @@ export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<
     if (access?.permission === item.turnOptions.permission && access.mode === item.turnOptions.mode) {
       try {
         await view.plugin.followUpPiConversation(session.id, item.text.trim());
-        view.clearComposerDraft();
+        clearComposerAfterPiAcceptance(view, item, "composer");
         view.renderQueue();
         view.renderToolbar();
         showNotice(view, "已加入当前 Pi 任务的后续消息", "Added to the current Pi task as a follow-up.");
@@ -268,14 +269,14 @@ export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<
     }
     // Pi's text-only followUp cannot change access inside the active ProductRun.
     view.turnQueue.enqueue(item);
-    view.clearComposerDraft();
+    clearComposerAfterPiAcceptance(view, item, "composer");
     view.renderQueue();
     view.renderToolbar();
     showNotice(view, "已加入队列", "Added to the queue.");
     return;
   }
   view.turnQueue.enqueue(item);
-  view.clearComposerDraft();
+  clearComposerAfterPiAcceptance(view, item, "composer");
   view.renderQueue();
   view.renderToolbar();
   showNotice(view, "已加入队列", "Added to the queue.");
@@ -317,9 +318,13 @@ export async function steerPiChatFromComposer(
     await enqueueComposerDraft(view);
     return;
   }
+  const acceptedDraft: QueuedTurnItem = {
+    id: newId("steering-draft"), sessionId: session.id, text, composerTextSnapshot: view.inputEl.value,
+    attachments: [], skill: null, turnOptions: { ...options }, kind: "chat", createdAt: Date.now()
+  };
   try {
     await view.plugin.steerPiConversation(session.id, text);
-    view.clearComposerDraft();
+    clearComposerAfterPiAcceptance(view, acceptedDraft, "composer");
     view.renderQueue();
     view.renderToolbar();
     showNotice(view, "已调整当前 Pi 任务方向", "Updated the direction of the current Pi task.");
@@ -515,7 +520,7 @@ export async function startNextQueuedTurn(view: CodexViewTurnContext, sessionId:
   }
 }
 
-export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, options: { allowLocalKnowledgeCommands: boolean }): Promise<QueuedTurnItem | null> {
+export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, options: { allowLocalKnowledgeCommands: boolean; onError?: (message: string) => void }): Promise<QueuedTurnItem | null> {
   const session = view.ensureSession();
   const turnOptions = view.currentTurnOptions(session);
   const text = view.inputEl.value.trim();
@@ -525,15 +530,20 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
   const selectedNoteMentions = composerNoteMentionSelections(view.inputEl);
   const selectionAnnotations = composerSelectionAnnotations(view.inputEl);
   if (selectionAnnotations.length && !text) {
+    options.onError?.(uiText(view, "请先输入问题，再发送注释。", "Enter a question before sending annotations."));
     showNotice(view, "请先输入问题，再发送注释。", "Enter a question before sending annotations."); return null;
   }
   if (!text && !attachments.length && !selectedNoteMentions.length && !skill) return null;
   const workspaceReady = await view.ensureChatWorkspaceSelected(session);
-  if (!workspaceReady || view.lifecycleSignal?.aborted) return null;
+  if (!workspaceReady || view.lifecycleSignal?.aborted) {
+    options.onError?.(uiText(view, "工作区尚未就绪，本次没有发送。文字和附件已保留。", "The workspace is not ready. The draft and attachments were kept."));
+    return null;
+  }
   let noteMentions: Awaited<ReturnType<typeof snapshotComposerNoteMentions>>;
   try {
     noteMentions = await snapshotComposerNoteMentions(view.app, view.inputEl, selectedNoteMentions);
   } catch (error) {
+    options.onError?.(localizedPiChatErrorMessage(view, error));
     new Notice(localizedPiChatErrorMessage(view, error));
     return null;
   }
@@ -545,6 +555,7 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
     view.plugin.settings,
     turnOptions
   )) {
+    options.onError?.(uiText(view, "当前 Provider、模型或思考强度已失效，请重新选择后发送。", "The current Provider, model, or reasoning level is unavailable. Select it again before sending."));
     showNotice(
       view,
       "当前 Provider、模型或思考强度已失效，本轮没有入队；请重新选择后发送。",
@@ -570,6 +581,7 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
       (candidate) => candidate.id === turnOptions.providerSettingsId
     );
     if (!provider) {
+      options.onError?.(uiText(view, "当前 Provider 已不可用，请重新选择后发送。", "The current Provider is unavailable. Select it again before sending."));
       showNotice(
         view,
         "当前 Provider 已不可用，本轮文档没有入队；请重新选择后发送。",
@@ -590,6 +602,7 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
       });
       preparedDocuments = prepared.documents;
     } catch (error) {
+      options.onError?.(localizedPiChatErrorMessage(view, error));
       new Notice(localizedPiChatErrorMessage(view, error));
       return null;
     }
@@ -615,7 +628,8 @@ export async function startQueuedTurnItem(view: CodexViewTurnContext, item: Queu
   const ownsStart = !view.queueStartInProgress;
   if (ownsStart) view.queueStartInProgress = true;
   try {
-    if (!await prepareTurnProviderModel(view, item, false)) return "failed";
+    const retainQueueHead = source === "queue" && view.turnQueue.itemsForSession(item.sessionId).some(queued => queued.id === item.id);
+    if (!await prepareTurnProviderModel(view, item, retainQueueHead)) return "failed";
     return await startPreparedQueuedTurnItem(view, item, source);
   } finally {
     if (ownsStart) view.queueStartInProgress = false;
@@ -657,6 +671,18 @@ async function startPreparedQueuedTurnItemSafely(
     new Notice(uiText(view, `任务收口失败：${message}`, `Task finalization failed: ${message}`));
     return "failed";
   }
+}
+
+/** Shared preflight for a list draft before creating its durable Conversation. */
+export async function validateTaskTurnBeforeCreation(view: CodexViewTurnContext, item: QueuedTurnItem): Promise<boolean> {
+  if (item.englishDiarySourcePath) {
+    try {
+      if (item.turnOptions.mode === "plan" || item.turnOptions.permission === "read-only") throw new Error("生成英文日记需要可写工作区和 Agent 模式。");
+      if (item.attachments.length || item.noteMentions?.length || item.selectionAnnotations?.length || item.skill) throw new Error("英文日记沿已确认的发送范围处理，请移除额外附件、引用和 Skill。");
+      await view.plugin.validateEnglishDiaryTaskSource(item.englishDiarySourcePath);
+    } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); return false; }
+  }
+  return await prepareTurnProviderModel(view, item, false);
 }
 
 async function prepareTurnProviderModel(
@@ -904,8 +930,9 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   let terminalObserved = false;
   let finalizingProjectionError: unknown = null;
   let finalizingProjectionFlight: Promise<void> = Promise.resolve();
+  let acceptedTaskMetadataFailed = false;
 
-  view.running = true;
+  if (!item.resumeContext) view.running = true;
   let accessByConversation = submittedPiAccess.get(view.plugin);
   if (!accessByConversation) {
     accessByConversation = new Map();
@@ -923,7 +950,12 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   view.applyStatus();
   try {
     const submittedAt = Date.now();
+    const workbenchSource = freezeWorkbenchTaskSource(item.prefillSource);
     handle = await view.plugin.submitPiChat({
+      ...(workbenchSource ? { workbenchSource } : {}),
+      ...(item.pdfTaskRequest ? { pdfTaskRequest: item.pdfTaskRequest } : {}),
+      ...(item.englishDiarySourcePath ? { englishDiarySourcePath: item.englishDiarySourcePath } : {}),
+      ...(item.resumeContext ? { resumeContext: item.resumeContext } : {}),
       signal: submissionSignal,
       conversationId: session.id,
       text: submittedText,
@@ -948,6 +980,21 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       ...(item.noteMentions?.length ? { noteMentions: item.noteMentions } : {})
     });
     item.piUserEntryAccepted = true;
+    view.running = true;
+    if (source === "queue") {
+      view.turnQueue.acceptPiUserEntry(session.id, item.id);
+      view.renderQueue();
+    }
+    clearComposerAfterPiAcceptance(view, item, source);
+    try {
+      await view.plugin.setPiConversationTaskMetadata(session.id, {
+        taskStatus: "running", taskStartedAt: submittedAt,
+        taskCompletedAt: undefined, taskInterruptedAt: undefined, pendingResponse: undefined
+      });
+    } catch (error) {
+      acceptedTaskMetadataFailed = true;
+      throw error;
+    }
     if (preparedImages.length) {
       recordPiImageAttachmentsForEntry(
         session,
@@ -985,6 +1032,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     view.activeRunKind = "chat";
     view.activeRunSessionId = session.id;
     view.activeTurnId = handle.productRunId;
+    await view.onPiRunAccepted?.(item);
     liveProjection = piChatLiveProjectionFromSession(
       session,
       handle,
@@ -1159,9 +1207,14 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     }
     return queuedTurnOutcomeForPiTerminal(settledEvent.terminalState);
   } catch (error) {
-    if (piUserEntryWasAccepted(error)) {
+    view.onPiRunFailure?.(localizedPiChatErrorMessage(view, error));
+    if (item.piUserEntryAccepted || piUserEntryWasAccepted(error)) {
       item.piUserEntryAccepted = true;
-      const acceptedEntryId = piAcceptedUserEntryId(error);
+      if (source === "queue") {
+        view.turnQueue.acceptPiUserEntry(session.id, item.id);
+        view.renderQueue();
+      }
+      const acceptedEntryId = handle?.userEntryId ?? piAcceptedUserEntryId(error);
       if (acceptedEntryId) {
         if (preparedImages.length) {
           recordPiImageAttachmentsForEntry(
@@ -1208,7 +1261,13 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     const rawMessage = normalizePiChatError(error).message;
     const message = localizedPiChatErrorMessage(view, error);
     new Notice(
-      rawMessage === PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE
+      acceptedTaskMetadataFailed
+        ? uiText(
+          view,
+          `消息已受理，但状态保存失败，本轮已停止：${message}`,
+          `The message was accepted, but its status could not be saved. This turn was stopped: ${message}`
+        )
+        : rawMessage === PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE
         ? message
         : uiText(
           view,
@@ -1273,7 +1332,7 @@ function stableSkillIdForResource(skill: Readonly<EchoInkResource>): string {
   return resourceId || skill.id.trim();
 }
 
-function frozenTurnReasoningSelectionIsValid(
+export function frozenTurnReasoningSelectionIsValid(
   settings: CodexViewTurnContext["plugin"]["settings"],
   selection: Pick<
     TurnOptions,
@@ -1341,25 +1400,17 @@ export async function markUnreadCompletedAnswerIfBackground(
 ): Promise<void> {
   const unreadAnswerAt = piConversationUnreadAnswerAt({
     sessionId: session.id,
-    activeSessionId: view.plugin.settings.activeSessionId,
+    activeSessionId: view.plugin.getConversationRunService?.().isTaskVisible(session.id)
+      ? view.plugin.settings.activeSessionId : "",
     event,
     run,
     projection
   });
   if (unreadAnswerAt === undefined) return;
 
-  const previousUnreadAnswerAt = session.unreadAnswerAt;
-  session.unreadAnswerAt = unreadAnswerAt;
   try {
-    await view.plugin.persistPiNativeSettings();
+    await view.plugin.setPiConversationTaskMetadata(session.id, { unreadAnswerAt });
   } catch (error) {
-    if (session.unreadAnswerAt === unreadAnswerAt) {
-      if (previousUnreadAnswerAt === undefined) {
-        delete session.unreadAnswerAt;
-      } else {
-        session.unreadAnswerAt = previousUnreadAnswerAt;
-      }
-    }
     console.error("Unread Pi answer persistence failed", error);
   }
 }
@@ -1430,12 +1481,44 @@ function applyPiChatLiveProjection(
   );
   view.setPendingInteraction(
     session.id,
-    projection.pendingInteraction ?? null,
+    piChatPendingInteraction(view, session, projection),
     projection.productRunId
   );
   return changedEvent
     ? changedPiChatMessageForRuntimeEvent(session.messages, changedEvent)
     : undefined;
+}
+
+/** The live approval broker is authoritative; a durable pending Ticket can outlive its decision. */
+function piChatPendingInteraction(
+  view: CodexViewTurnContext,
+  session: StoredSession,
+  projection: Readonly<PiChatUiViewModel>
+): Readonly<import("../../types/conversation-turn").EchoInkTurnInteraction> | null {
+  const runId = projection.productRunId;
+  const projected = projection.pendingInteraction;
+  if (projected && (projected.status === "pending" || projected.status === "submitting")) return projected;
+  // Approval readback rebuilds from the durable Branch. Retain a simultaneous
+  // structured Question only while its actual one-shot broker still accepts it.
+  const current = view.plugin.getConversationRunService?.().pendingInteractions?.get(session.id);
+  if (current?.kind === "question" && current.turnId === runId && (current.status === "pending" || current.status === "submitting")
+    && view.plugin.piTurnInteractionBinding?.({ conversationId: session.id, piSessionId: projection.piSessionId,
+      productRunId: current.turnId, interactionId: current.interactionId })) return current;
+  if (runId && view.plugin.piAgentApprovalBinding) {
+    for (const message of projection.messages.slice().reverse()) {
+      if (message.runId !== runId) continue;
+      const toolCallId = piToolCallIdFromProjectedMessageId(message.id);
+      if (!toolCallId) continue;
+      const binding = view.plugin.piAgentApprovalBinding({ conversationId: session.id, piSessionId: projection.piSessionId, productRunId: runId, toolCallId });
+      if (!binding) continue;
+      return { kind: "confirmation", interactionId: `pi-agent-approval:${encodeURIComponent(toolCallId)}`,
+        conversationId: session.id, piSessionId: projection.piSessionId, turnId: runId, toolCallId,
+        status: "pending", createdAt: message.createdAt, updatedAt: projection.updatedAt,
+        // The real parameters remain exclusively in the existing approval binding/card.
+        preview: uiText(view, "是否批准本次操作？", "Approve this operation?") };
+    }
+  }
+  return projected ?? null;
 }
 
 function changedPiChatMessageForRuntimeEvent(

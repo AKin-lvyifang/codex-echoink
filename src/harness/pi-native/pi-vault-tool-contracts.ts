@@ -186,6 +186,7 @@ export interface CreatePiVaultToolDefinitionsOptions {
   readonly domainService: VaultDomainService;
   readonly security: PiVaultToolExecutionSecurityPort;
   readonly writeExecution: PiVaultToolWriteExecutionPort;
+  readonly assertToolAllowed?: (toolName: string, args: Readonly<Record<string, unknown>>) => Promise<void>;
 }
 
 export const PI_VAULT_TOOL_POLICIES: Readonly<
@@ -347,6 +348,7 @@ async function executeVaultTool(
   onUpdate: AgentToolUpdateCallback<PiVaultToolResultDetails> | undefined
 ): Promise<AgentToolResult<PiVaultToolResultDetails>> {
   const args = normalizePiVaultToolArguments(toolId, rawArguments);
+  await options.assertToolAllowed?.(toolId, args);
   const policy = PI_VAULT_TOOL_POLICIES[toolId];
   const authorization = options.security.consumeAuthorization({
     toolCallId,
@@ -439,7 +441,14 @@ async function executeControlledWrite(
         args,
         authorization,
         signal,
-        beforeSideEffect
+        async () => {
+          // Domain has now resolved both move endpoints and checked versions.
+          // Revalidate current Agent/global/PRO rights around the existing
+          // receipt/folder preflight, immediately before its actual mutation.
+          await options.assertToolAllowed?.(toolId, args);
+          await beforeSideEffect();
+          await options.assertToolAllowed?.(toolId, args);
+        }
       );
       return requireVaultOperationResult(value, authorization.operationIdentity);
     }

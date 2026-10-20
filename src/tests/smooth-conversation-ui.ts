@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { Platform, TFile } from "obsidian";
+import { Platform, TFile, TFolder } from "obsidian";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { ChatMessage, SettingsLanguage, StoredSession } from "../settings/settings";
 import { conversationCopy, settingsCopy } from "../settings/i18n";
 import { extractProcessFileRefs, stableHashedIdentity } from "../core/mapping";
@@ -43,6 +44,9 @@ import {
 } from "../ui/codex-view/task-plan-dock";
 import type { EchoInkTaskPlanSnapshot } from "../types/task-plan";
 import type { EchoInkQuestionInteraction } from "../types/conversation-turn";
+import type { EchoInkReasoningActivity } from "../types/reasoning-summary";
+import type { KnowledgeReference } from "../knowledge-base/types";
+import { sourceLineRangeLabel, sourceLineRanges } from "../ui/codex-view/source-line-ranges";
 import { InteractionDockController } from "../ui/codex-view/interaction-dock";
 import { renderCodexTabs } from "../ui/codex-view/tabs";
 import { CodexView } from "../ui/codex-view";
@@ -64,6 +68,12 @@ interface TestActivationEvent {
 export class FakeElement {
   readonly attributes = new Map<string, string>();
   readonly dataset: Record<string, string> = {};
+  readonly classList = {
+    add: (...names: string[]) => names.forEach(name => this.addClass(name)),
+    remove: (...names: string[]) => names.forEach(name => this.removeClass(name)),
+    contains: (name: string) => this.hasClass(name),
+    toggle: (name: string, force?: boolean) => { const active = force ?? !this.hasClass(name); this.toggleClass(name, active); return active; }
+  };
   readonly listeners = new Map<string, TestEventHandler>();
   children: FakeElement[] = [];
   content: Array<string | FakeElement> = [];
@@ -109,6 +119,16 @@ export class FakeElement {
   ontoggle: ((event: { readonly isTrusted: boolean }) => unknown) | null = null;
 
   constructor(readonly tag: string) {}
+
+  get firstChild(): FakeElement | null { return this.children[0] ?? null; }
+
+  insertBefore(child: FakeElement, reference: FakeElement | null): FakeElement {
+    child.remove(); child.parent = this;
+    const index = reference ? this.children.indexOf(reference) : -1;
+    if (index < 0) { this.children.push(child); this.content.push(child); }
+    else { this.children.splice(index, 0, child); this.content.splice(this.content.indexOf(reference!), 0, child); }
+    return child;
+  }
 
   get childElementCount(): number {
     return this.children.length;
@@ -215,6 +235,10 @@ export class FakeElement {
 
   getAttribute(name: string): string | null {
     return this.attributes.get(name) ?? null;
+  }
+
+  hasAttribute(name: string): boolean {
+    return this.attributes.has(name);
   }
 
   removeAttribute(name: string): void {
@@ -412,7 +436,6 @@ function bindRenderer(
     messagesEl: new FakeElement("div"),
     virtualListEl: new FakeElement("div"),
     sessionId: "smooth-ui-test",
-    welcomeCopy: { title: "EchoInk", subtitle: "从一个问题开始" },
     settingsLanguage,
     messages: [],
     vaultPath: "/test-vault",
@@ -422,6 +445,248 @@ function bindRenderer(
     onScheduleRunProgress: () => undefined,
     options: {}
   };
+}
+
+async function assertAnswerSaveUiContracts(): Promise<void> {
+  const context = createTestContext();
+  const entries = new Map<string, TFile | TFolder>();
+  const output = Object.assign(new TFolder(), { path: "成果", name: "成果" });
+  entries.set("成果", output);
+  const writes: { path: string; markdown: string }[] = [];
+  let releaseWrite: (() => void) | undefined;
+  Object.assign(context.app.vault, {
+    getAbstractFileByPath: (path: string) => entries.get(path) ?? null,
+    createFolder: async (path: string) => {
+      const folder = Object.assign(new TFolder(), { path }); entries.set(path, folder); return folder;
+    },
+    create: async (path: string, markdown: string) => {
+      writes.push({ path, markdown });
+      await new Promise<void>((resolve) => { releaseWrite = resolve; });
+      const file = new TFile(path); entries.set(path, file); return file;
+    }
+  });
+  const renderer = new CodexMessageListRenderer();
+  bindRenderer(renderer, context);
+  const env = (renderer as unknown as { env: Record<string, unknown> }).env;
+  const answer: ChatMessage = { id: "manual-save-answer", role: "assistant", status: "completed", text: "原样 **回答**。", runId: "save-run", createdAt: 2 };
+  env.messages = [{ id: "manual-save-question", role: "user", text: "怎么整理知识？", createdAt: 1 }, answer];
+  env.readRawMessageText = async () => { throw new Error("no raw body expected"); };
+  const renderButton = () => {
+    const surface = new FakeElement("div");
+    (renderer as unknown as { renderAnswerSaveAction(host: unknown, message: ChatMessage): void }).renderAnswerSaveAction(surface, answer);
+    return surface.findByClass("codex-answer-save")!;
+  };
+  const activate = async (button: FakeElement) => await button.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+  const unbound = renderButton();
+  await activate(unbound);
+  assert.equal(writes.length, 0, "unbound outputs do not write a note");
+  assert.equal(unbound.disabled, false, "a failed save remains available for a deliberate retry");
+  assert.match(unbound.attributes.get("aria-label")!, /设置 › 知识库/u);
+  const bindings = emptyKnowledgeFolderBindings();
+  Object.assign(bindings.roles.outputs, { enabled: true, readPaths: ["成果"], writePath: "成果" });
+  (renderer as unknown as { env: Record<string, unknown> }).env.knowledgeFolderBindings = bindings;
+  const retry = renderButton();
+  const saving = activate(retry);
+  for (let count = 0; count < 12 && !releaseWrite; count++) await Promise.resolve();
+  assert.equal(retry.disabled, true);
+  assert.equal(retry.findByClass("codex-message-action-icon")?.dataset.icon, "loader-circle");
+  await activate(renderButton());
+  assert.equal(writes.length, 1, "a re-rendered pending button cannot create a second note");
+  releaseWrite!();
+  await saving;
+  const saved = renderButton();
+  assert.equal(saved.findByClass("codex-message-action-icon")?.dataset.icon, "file-check");
+  assert.match(writes[0].markdown, /原样 \*\*回答\*\*。/u);
+  await activate(saved);
+  assert.deepEqual(context.openedPaths, [writes[0].path], "the next click opens the same saved note");
+  entries.delete(writes[0].path);
+  await activate(saved);
+  assert.equal(writes.length, 1, "moving or deleting the saved note never creates a replacement");
+  assert.equal(context.openedPaths.length, 1, "a missing saved note is not opened");
+  (renderer as unknown as { env: Record<string, unknown> }).env.sessionId = "another-conversation";
+  assert.equal(renderButton().findByClass("codex-message-action-icon")?.dataset.icon, "file-plus", "save states do not cross conversations");
+  let currentBindings: typeof bindings | undefined = bindings;
+  (renderer as unknown as { env: Record<string, unknown> }).env.getKnowledgeFolderBindings = () => currentBindings;
+  const beforeUnbinding = renderButton();
+  currentBindings = undefined;
+  await activate(beforeUnbinding);
+  assert.equal(writes.length, 1, "unbinding after the button rendered never falls back to its stale static binding");
+  assert.match(beforeUnbinding.attributes.get("aria-label")!, /设置 › 知识库/u);
+  const beforeReplacement = renderButton();
+  currentBindings = emptyKnowledgeFolderBindings();
+  Object.assign(currentBindings.roles.outputs, { enabled: true, readPaths: ["新的成果"], writePath: "新的成果" });
+  entries.set("新的成果", Object.assign(new TFolder(), { path: "新的成果", name: "新的成果" }));
+  releaseWrite = undefined;
+  const replacementSave = activate(beforeReplacement);
+  for (let count = 0; count < 12 && !releaseWrite; count++) await Promise.resolve();
+  assert.equal(writes.length, 2);
+  assert.match(writes[1].path, /^新的成果\/摘录\//u, "a binding replaced after render is read at the user's save click");
+  releaseWrite!();
+  await replacementSave;
+  renderer.dispose();
+}
+
+function assertWorkRecordProjectionContracts(): void {
+  const project = (activity: EchoInkReasoningActivity) => {
+    const messages: ChatMessage[] = [{ id: "record-user", role: "user", text: "问题", createdAt: 1 }, {
+      id: "record-process", role: "assistant", itemType: "reasoning", text: "", status: activity.status === "active" ? "running" : "completed",
+      runId: "record-run", createdAt: 1,
+      reasoningSummary: { schemaVersion: 1, conversationId: "record", piSessionId: "pi-record", productRunId: "record-run",
+        status: activity.status === "active" ? "running" : "completed", startedAt: 1, updatedAt: activity.updatedAt, activities: [activity] }
+    }];
+    const projection = buildAgentTurnProjection(messages)[1];
+    assert.equal(projection?.kind, "assistantTurn");
+    return projection.kind === "assistantTurn" ? projection.turn : assert.fail("missing turn");
+  };
+  const base: EchoInkReasoningActivity = { id: "knowledge:retrieval", kind: "knowledge", status: "completed", total: 26, current: 6, completed: 6, startedAt: 1, updatedAt: 100 };
+  assert.equal(project(base).processNodes[0]?.summary, "26 篇相关，读了前 6 篇");
+  assert.equal(project({ ...base, id: "memory:recall", kind: "memory", completed: 0, current: 0 }).processNodes.length, 0);
+  assert.equal(project({ ...base, id: "memory:recall", kind: "memory", status: "active" }).processNodes[0]?.summary, "查看中…");
+  assert.equal(project({ ...base, id: "memory:recall", kind: "memory", completed: 2 }).processNodes[0]?.summary, "用上 2 条");
+  assert.equal(project({ ...base, id: "provider", kind: "provider" }).processNodes.length, 0);
+  assert.equal(project({ ...base, id: "provider", kind: "provider", status: "active", updatedAt: 5001 }).processNodes.length, 0);
+  const waiting = project({ ...base, id: "provider", kind: "provider", status: "active", updatedAt: 6001 });
+  assert.equal(waiting.processNodes[0]?.title, "等待模型响应");
+  assert.equal(waiting.processNodes[0]?.summary, "6 秒");
+  assert.equal(project({ ...base, id: "provider", kind: "provider", status: "failed" }).processNodes[0]?.status, "failed");
+}
+
+function assertSourceLineRangeContracts(): void {
+  const ref = (start: number, end: number, totalLines?: number, revision = "a"): KnowledgeReference => ({
+    referenceId: `${revision}:${start}:${end}`, vaultRelativePath: "projects/Alpha.md", title: "Alpha", excerpt: "",
+    contentRevision: `sha256:${revision.repeat(64)}`, lineStart: start, lineEnd: end, ...(totalLines === undefined ? {} : { totalLines })
+  });
+  const first = ref(13, 16);
+  const partial = sourceLineRanges([ref(28, 43), ref(1, 60, 60), first]);
+  assert.equal(sourceLineRangeLabel(partial, "zh-CN"), "第 13–16、28–43 行");
+  assert.equal(sourceLineRangeLabel(partial, "en"), "Lines 13–16, 28–43");
+  assert.equal(partial[0].reference, first, "the sorted first range keeps its original revision-bearing reference");
+  assert.deepEqual(sourceLineRanges([ref(1, 60, 60)]), [], "a whole-file read has no redundant line label");
+  assert.deepEqual(sourceLineRanges([ref(1, 10, 20), ref(11, 20, 20)]), [], "adjacent ranges that cover the whole file also omit line labels");
+  assert.deepEqual(sourceLineRanges([ref(20, 22), ref(4, 6), ref(5, 7), ref(8, 10), ref(4, 6), ref(14, 15)])
+    .map((range) => [range.lineStart, range.lineEnd]), [[4, 10], [14, 15], [20, 22]], "ranges sort, deduplicate, and merge overlaps and adjacency");
+  assert.equal(sourceLineRangeLabel(sourceLineRanges([ref(5, 5)]), "zh-CN"), "第 5 行");
+  assert.equal(sourceLineRanges([ref(1, 60)])[0]?.lineEnd, 60, "an unknown total is never guessed");
+  assert.equal(sourceLineRanges([ref(1, 60, 60), ref(1, 60, undefined, "b")])[0]?.reference.contentRevision,
+    `sha256:${"b".repeat(64)}`, "whole-file metadata from another revision does not hide an old range");
+}
+
+function reasoningVisibilityFixture(explicit: boolean, durationMs: number, text: string, status: "completed" | "running" = "completed", summaryOnly = false): AgentTurnView {
+  const provider = { reasoningId: "visibility", source: "provider_public" as const, text, status, startedAt: 0, updatedAt: durationMs, durationMs };
+  const messages: ChatMessage[] = [{ id: "visibility-user", role: "user", text: "问题", createdAt: 0 }, {
+    id: "visibility-carrier", role: "assistant", itemType: "reasoning", text: "思考完成 · 1 秒", status,
+    runId: "visibility-run", createdAt: 0,
+    reasoningSummary: { schemaVersion: 1, conversationId: "visibility", piSessionId: "visibility-pi", productRunId: "visibility-run",
+      status, startedAt: 0, updatedAt: durationMs, activities: [] },
+    assistantTurn: { viewVersion: 1, turnId: "visibility-run", status, startedAt: 0, updatedAt: durationMs,
+      processNodes: explicit ? [{ nodeId: "provider-reasoning:visibility", kind: "reasoning", status, title: "思考", summary: "思考了 1 秒",
+        startedAt: 0, updatedAt: durationMs, sourceMessageId: "visibility-carrier" }] : [],
+      providerReasoningSegments: summaryOnly ? [] : [provider], interactionRecords: [] }
+  }];
+  const projection = buildAgentTurnProjection(messages)[1];
+  assert.equal(projection?.kind, "assistantTurn");
+  return (projection as { turn: AgentTurnView }).turn;
+}
+
+function assertReasoningVisibilityContracts(): void {
+  for (const explicit of [false, true]) {
+    assert.equal(reasoningVisibilityFixture(explicit, 1_999, " \n ").processNodes.length, 0, "short ended empty reasoning is hidden in either projection path");
+    assert.equal(reasoningVisibilityFixture(explicit, 2_000, "").processNodes.length, 1, "the two-second boundary remains visible");
+    assert.equal(reasoningVisibilityFixture(explicit, 1, "真实公开思考").processNodes.length, 1, "real short public text remains visible");
+    assert.equal(reasoningVisibilityFixture(explicit, 0, "", "running").processNodes.length, 1, "running reasoning always remains visible");
+  }
+  assert.equal(reasoningVisibilityFixture(true, 1_000, "", "completed", true).processNodes.length, 0,
+    "explicit summary and message status copy do not pretend to be public reasoning");
+  assert.equal(reasoningVisibilityFixture(true, 0, "", "running", true).processNodes.length, 1,
+    "an explicit running placeholder also stays visible without a completed public segment");
+}
+
+async function assertInlineApprovalDockIntegration(): Promise<void> {
+  const broker = new PiAgentApprovalBroker();
+  const identity = { conversationId: "inline-session", piSessionId: "inline-pi", productRunId: "inline-run", toolCallId: "inline-tool" };
+  const decision = broker.waitForDecision({ ...identity, requestId: "inline-request", target: "写入 Foo.md", preview: "一次写入" });
+  const tool: ChatMessage = { id: "pi:inline-pi:leaf:leaf:tool:inline-tool", role: "tool", itemType: "dynamicToolCall", processKind: "edit",
+    title: "修改笔记", text: "", status: "waiting_approval", runId: "inline-run", createdAt: 2,
+    approval: { target: "写入 Foo.md", preview: "一次写入" } };
+  const session = { id: "inline-session", piSessionId: "inline-pi", bodyAuthority: "pi_session_only", messages: [
+    { id: "inline-user", role: "user", text: "改笔记", createdAt: 1 }, tool
+  ] } as StoredSession;
+  const context = createTestContext();
+  const renderer = new CodexMessageListRenderer();
+  const messagesEl = new FakeElement("div");
+  const virtualListEl = messagesEl.createDiv();
+  const dockEl = new FakeElement("div");
+  const input = { app: context.app, component: context.component, messagesEl, virtualListEl, sessionId: session.id,
+    settingsLanguage: "zh-CN", messages: session.messages, vaultPath: "/test-vault", readRawMessageText: async () => "",
+    resolveApprovalDecision: () => broker.bindingFor(identity), onScheduleMeasure() {}, onScheduleRunProgress() {} };
+  renderer.render(input as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  const view = Object.assign({}, {
+    renderInteractionDock: (CodexView.prototype as unknown as { renderInteractionDock(session: StoredSession): void }).renderInteractionDock,
+    pendingApprovalBinding: (CodexView.prototype as unknown as { pendingApprovalBinding(session: StoredSession): unknown }).pendingApprovalBinding,
+    plugin: { settings: { settingsLanguage: "zh-CN" }, piAgentApprovalBinding: () => broker.bindingFor(identity) },
+    pendingInteractionsBySession: new Map(), messagesEl, interactionDockEl: dockEl,
+    interactionDock: new InteractionDockController(), scheduleMeasureVirtualRows() {}
+  });
+  view.renderInteractionDock(session);
+  const inline = messagesEl.findByClass("codex-smooth-ai-approval-card")!;
+  assert.ok(inline);
+  assert.equal(messagesEl.findAllByClass("is-approve").length, 1);
+  assert.equal(dockEl.findAllByClass("is-approve").length, 0, "an inline live approval suppresses its duplicate dock controls");
+  inline.hidden = true;
+  view.renderInteractionDock(session);
+  assert.equal(dockEl.findAllByClass("is-approve").length, 1, "a hidden or virtualized-away record retains the dock fallback");
+  inline.hidden = false;
+  view.renderInteractionDock(session);
+  assert.equal(dockEl.findAllByClass("is-approve").length, 0);
+  await inline.findByClass("is-approve")!.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+  assert.equal(await decision, true, "inline confirmation reaches the existing approval broker");
+  tool.status = "completed";
+  tool.completedAt = 3;
+  renderer.render(input as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  view.renderInteractionDock(session);
+  assert.equal(messagesEl.findAllByClass("codex-smooth-ai-approval-card").length, 0, "settled work removes the previous live approval card");
+  assert.equal(dockEl.findAllByClass("is-approve").length, 0);
+  renderer.dispose(); view.interactionDock.dispose(); broker.dispose();
+}
+
+function assertReasoningTransitionRendererContracts(): void {
+  const context = createTestContext();
+  const renderer = new CodexMessageListRenderer();
+  const messagesEl = new FakeElement("div");
+  const virtualListEl = messagesEl.createDiv();
+  const running = reasoningVisibilityFixture(false, 0, "", "running");
+  const carrier: ChatMessage = { ...running.messages[0], assistantTurn: { ...running.messages[0].assistantTurn!,
+    providerReasoningSegments: [...running.providerReasoningSegments, {
+      reasoningId: "other-public", source: "provider_public", status: "completed", text: "其他公开内容",
+      startedAt: 0, updatedAt: 500, durationMs: 500
+    }] } };
+  const input = { app: context.app, component: context.component, messagesEl, virtualListEl, sessionId: "visibility-transitions",
+    settingsLanguage: "zh-CN", messages: [carrier], vaultPath: "/test-vault", readRawMessageText: async () => "", onScheduleMeasure() {}, onScheduleRunProgress() {} };
+  renderer.render(input as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  assert.equal(virtualListEl.findAllByClass("codex-assistant-turn-reasoning-node").length, 2,
+    "a short empty running segment stays visible next to real public content");
+  const completed: ChatMessage = { ...carrier, assistantTurn: { ...carrier.assistantTurn!, updatedAt: 1_999,
+    providerReasoningSegments: carrier.assistantTurn!.providerReasoningSegments!.map((segment) => segment.reasoningId === "visibility"
+      ? { ...segment, status: "completed", updatedAt: 1_999, completedAt: 1_999, durationMs: 1_999 } : segment) } };
+  assert.equal(renderer.tryUpdateMessage(completed, [completed]), false, "ending short empty reasoning requires one topology rebuild");
+  renderer.render({ ...input, messages: [completed] } as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  const surviving = virtualListEl.findByClass("codex-assistant-turn-reasoning-node")!;
+  assert.equal(virtualListEl.findAllByClass("codex-assistant-turn-reasoning-node").length, 1);
+  assert.match(renderedText(surviving), /其他公开内容/u);
+  const renderCount = virtualListEl.emptyCallCount;
+  const later: ChatMessage = { ...completed, assistantTurn: { ...completed.assistantTurn!, updatedAt: 2_100,
+    providerReasoningSegments: completed.assistantTurn!.providerReasoningSegments!.map((segment) => segment.reasoningId === "other-public"
+      ? { ...segment, text: `${segment.text}，新增内容`, updatedAt: 2_100 } : segment) } };
+  assert.equal(renderer.tryUpdateMessage(later, [later]), true, "the hidden ended segment does not force repeated rebuilds");
+  assert.equal(virtualListEl.emptyCallCount, renderCount);
+  assert.equal(virtualListEl.findByClass("codex-assistant-turn-reasoning-node"), surviving);
+  assert.match(renderedText(surviving), /新增内容/u);
+  const emptyTurn = reasoningVisibilityFixture(false, 1_999, "");
+  const guarded = new FakeElement("div");
+  (renderer as unknown as { renderProviderReasoningNode(host: unknown, turn: AgentTurnView, node: unknown): void })
+    .renderProviderReasoningNode(guarded, emptyTurn, { nodeId: "provider-reasoning:visibility", kind: "reasoning", status: "completed" });
+  assert.equal(guarded.childElementCount, 0, "the renderer itself rejects an empty short summary shell even if projection is bypassed");
+  renderer.dispose();
 }
 
 function renderMessage(
@@ -545,7 +810,7 @@ async function assertMaintenanceLinkingResultVisibleFromPiProjection(): Promise<
     assert.equal(linking.closest(".codex-assistant-turn-resource"), null,
       `${mode}: linking results do not need a nested artifact disclosure`);
     assert.equal(surface.findByClass("codex-ai-elements-chain-of-thought")?.hidden, true,
-      `${mode}: the successful work record remains folded`);
+      `${mode}: the successful work record remains folded; status=${row.turn.status}; nodes=${row.turn.processNodes.map(node => node.kind).join(",")}; answer=${row.turn.finalAnswer?.id}`);
     assert.ok(surface.findByClass("codex-kb-maintain-card")?.closest(".codex-assistant-turn-resource"),
       `${mode}: the existing maintenance report retains its previous location`);
     assert.equal(surface.findAllByClass("codex-kb-maintain-linking").length, 1,
@@ -602,7 +867,7 @@ function assertSessionSummaryTooltipLifecycle(): void {
   const testGlobal = globalThis as unknown as Record<string, unknown>;
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const originalHTMLElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-  const testDocument: { activeElement: FakeElement | null } = { activeElement: null };
+  const testDocument = { activeElement: null as FakeElement | null, body: new FakeElement("body"), createElement: (tag: string) => new FakeElement(tag) };
   Object.defineProperty(testGlobal, "document", {
     configurable: true,
     value: testDocument
@@ -746,7 +1011,7 @@ function assertSessionPickerArchiveActions(): void {
   const testGlobal = globalThis as unknown as Record<string, unknown>;
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const originalHTMLElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-  const testDocument: { activeElement: FakeElement | null } = { activeElement: null };
+  const testDocument = { activeElement: null as FakeElement | null, body: new FakeElement("body"), createElement: (tag: string) => new FakeElement(tag) };
   Object.defineProperty(testGlobal, "document", {
     configurable: true,
     value: testDocument
@@ -1175,6 +1440,9 @@ function taskPlanMessage(
 }
 
 export async function runSmoothConversationUiTests(): Promise<void> {
+  assertSourceLineRangeContracts();
+  assertReasoningVisibilityContracts();
+  assertWorkRecordProjectionContracts();
   assert.equal(answerReadingSpacer(800, 50), 350, "short answers begin at viewport midpoint");
   assert.equal(answerReadingSpacer(800, 250), 200, "growing answers keep a quarter viewport free");
   assert.equal(answerReadingSpacer(400, 1000), 100, "long answers retain space in short windows");
@@ -1699,29 +1967,22 @@ export async function runSmoothConversationUiTests(): Promise<void> {
 
   const emptyMessages = new FakeElement("div");
   const emptyVirtualList = new FakeElement("div");
-  const selectedSuggestions: string[] = [];
   new CodexMessageListRenderer().render({
     app: {} as never,
     component: {} as never,
     messagesEl: emptyMessages as unknown as HTMLElement,
     virtualListEl: emptyVirtualList as unknown as HTMLElement,
     sessionId: "empty-conversation",
-    welcomeCopy: { title: "EchoInk", subtitle: "从一个问题开始" },
     settingsLanguage: "zh-CN",
     messages: [],
     vaultPath: "/test-vault",
     readRawMessageText: async () => "",
-    onSuggestionSelect: (text) => selectedSuggestions.push(text),
     onScheduleMeasure: () => undefined,
     onScheduleRunProgress: () => undefined
   });
-  const suggestionButtons = emptyVirtualList.findAllByClass("codex-smooth-ai-suggestion");
-  assert.deepEqual(
-    suggestionButtons.map((button) => button.textContent),
-    ["整理知识库", "总结当前笔记", "从知识库找答案"]
-  );
-  suggestionButtons[1].onclick?.({} as never);
-  assert.deepEqual(selectedSuggestions, ["总结当前笔记"], "suggestion click only selects its exact visible text");
+  assert.equal(emptyVirtualList.findByClass("codex-welcome"), null);
+  assert.equal(emptyVirtualList.findAllByClass("codex-smooth-ai-suggestion").length, 0,
+    "empty task navigation belongs to TaskPages, with no legacy message suggestions");
 
   const englishEmptyMessages = new FakeElement("div");
   const englishEmptyVirtualList = new FakeElement("div");
@@ -1731,7 +1992,6 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     messagesEl: englishEmptyMessages as unknown as HTMLElement,
     virtualListEl: englishEmptyVirtualList as unknown as HTMLElement,
     sessionId: "empty-conversation-en",
-    welcomeCopy: { title: "EchoInk", subtitle: "Start with a question" },
     settingsLanguage: "en",
     messages: [],
     vaultPath: "/test-vault",
@@ -1739,16 +1999,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     onScheduleMeasure: () => undefined,
     onScheduleRunProgress: () => undefined
   });
-  assert.equal(
-    englishEmptyVirtualList.findByClass("codex-smooth-ai-suggestions")?.attributes.get("aria-label"),
-    "Suggested questions"
-  );
-  assert.deepEqual(
-    englishEmptyVirtualList
-      .findAllByClass("codex-smooth-ai-suggestion")
-      .map((button) => button.textContent),
-    ["Organize knowledge", "Summarize current note", "Search knowledge"]
-  );
+  assert.equal(englishEmptyVirtualList.findByClass("codex-welcome"), null);
+  assert.equal(englishEmptyVirtualList.findByClass("codex-smooth-ai-suggestions"), null);
 
   assert.deepEqual(
     extractProcessFileRefs("读取 Foo.md 后继续", "/test-vault").map((file) => file.path),
@@ -2006,6 +2258,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     configurable: true,
     value: {
       body: imageOverlayBody,
+      createElement: (tag: string) => new FakeElement(tag),
+      createDocumentFragment: () => new FakeElement("fragment"),
       createElementNS: (_namespace: string, tag: string) => new FakeElement(tag)
     }
   });
@@ -2043,6 +2297,9 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     }
   });
   try {
+    assertReasoningTransitionRendererContracts();
+    await assertInlineApprovalDockIntegration();
+    await assertAnswerSaveUiContracts();
     await assertMaintenanceLinkingResultVisibleFromPiProjection();
     const answer = renderMessage(renderer, {
       id: "smooth:entry:answer-1",
@@ -2636,7 +2893,6 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       messagesEl: conversationMessages as unknown as HTMLElement,
       virtualListEl: conversationVirtualList as unknown as HTMLElement,
       sessionId: "reasoning-loader-suppression",
-      welcomeCopy: { title: "EchoInk", subtitle: "从一个问题开始" },
       settingsLanguage: "zh",
       messages: [structuredRunning, sameRunEmptyAnswer, otherRunEmptyAnswer],
       vaultPath: "/test-vault",
@@ -2656,8 +2912,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.equal(
       conversationVirtualList.findAllByClass("codex-assistant-turn-node-title")
         .filter((title) => title.textContent === "思考中").length,
-      1,
-      "legacy reasoningSummary creates one Process node, not fake Provider Reasoning"
+      0,
+      "empty legacy reasoning summaries have no informational process node"
     );
     assert.equal(
       conversationVirtualList.findAllByClass("codex-assistant-turn-summary-copy").length,
@@ -2682,7 +2938,6 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       messagesEl: conversationMessages as unknown as HTMLElement,
       virtualListEl: conversationVirtualList as unknown as HTMLElement,
       sessionId: "reasoning-loader-suppression",
-      welcomeCopy: { title: "EchoInk", subtitle: "从一个问题开始" },
       settingsLanguage: "zh",
       messages: [
         structuredRunning,
@@ -2721,7 +2976,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       app: context.app as never, component: context.component as never,
       messagesEl: new FakeElement("div") as unknown as HTMLElement,
       virtualListEl: foldList as unknown as HTMLElement, sessionId: "fold-session",
-      welcomeCopy: { title: "EchoInk", subtitle: "" }, settingsLanguage: "zh-CN" as SettingsLanguage,
+      settingsLanguage: "zh-CN" as SettingsLanguage,
       messages: [foldProcess, foldAnswer], vaultPath: "/test-vault",
       readRawMessageText: async () => "", onScheduleMeasure: () => undefined,
       onScheduleRunProgress: () => undefined, shouldFollowBottom: () => !foldPaused,
@@ -3255,8 +3510,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.equal(unifiedTurn!.currentNodeId, undefined);
     assert.deepEqual(
       unifiedTurn!.processNodes.map((node) => node.kind),
-      ["process", "reasoning", "tool", "task", "retrieval", "artifact", "diff", "interaction", "reasoning"],
-      "multiple Reasoning segments, Tool, Task, Sources, Artifact, Diff, and interaction retain chronological order"
+      ["reasoning", "tool", "task", "artifact", "diff", "interaction", "reasoning"],
+      "successful connection and source count nodes are omitted while useful work retains chronological order"
     );
 
     const uniqueToolCallId = "call:read/Foo.md";
@@ -3638,8 +3893,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       "local documents never populate SmoothUI webpage Sources");
     assert.equal(
       localSourcesRoot!.findByClass("codex-ai-elements-sources-label")?.textContent,
-      "使用了 5 个文档",
-      "count uses unique citations, references, and Memory ids but excludes produced paths"
+      undefined,
+      "answer references have no repeated heading or count"
     );
     const localRows = localSourcesRoot!.findAllByClass("codex-ai-elements-source");
     assert.equal(localRows.length, 5);
@@ -3657,12 +3912,12 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.equal(localSourcesRoot!.findAllByClass("codex-ai-elements-source-icon").length, 5);
     assert.equal(localSourcesRoot!.findAllByClass("is-disabled").length, 3,
       "missing Vault path and Personal Memory stay non-clickable");
-    assert.equal(localSourcesRoot!.findAllByTag("button").length, 2,
-      "only currently resolvable Vault files render navigation buttons");
-    assert.match(renderedText(localSourcesRoot!), /Alpha citation excerpt/u);
-    assert.match(renderedText(localSourcesRoot!), /Alpha reference excerpt/u);
-    assert.match(renderedText(localSourcesRoot!), /第 2-3 行/u);
-    assert.match(renderedText(localSourcesRoot!), /强证据/u);
+    assert.equal(localSourcesRoot!.findAllByTag("button").length, 4,
+      "existing notes have separate name and line-range buttons");
+    assert.doesNotMatch(renderedText(localSourcesRoot!), /Alpha citation excerpt/u);
+    assert.doesNotMatch(renderedText(localSourcesRoot!), /Alpha reference excerpt/u);
+    assert.match(renderedText(localSourcesRoot!), /第 2–3 行/u);
+    assert.doesNotMatch(renderedText(localSourcesRoot!), /强证据/u);
     const producedSources = localSourcesMessage.findByClass("codex-ai-elements-artifact-sources");
     assert.ok(producedSources, "generated paths remain a separate Sources-style surface");
     assert.equal(producedSources!.findAllByClass("codex-smooth-ai-artifact").length, 0,
@@ -3685,6 +3940,73 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       stopPropagation: () => undefined
     } as never);
     await Promise.resolve();
+    const originalGetLeaf = context.app.workspace.getLeaf;
+    const lineStarts: Array<number | undefined> = [];
+    Object.assign(context.app.workspace, {
+      getLeaf: () => ({ view: {}, openFile: async (_file: TFile, options?: { eState?: { line: number } }) => { lineStarts.push(options?.eState?.line); } })
+    });
+    for (const link of localSourcesRoot!.findAllByClass("codex-source-line-link")) {
+      await link.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+    }
+    assert.deepEqual(lineStarts, [1, 4], "each source range navigates to its own zero-based first line");
+    lineStarts.length = 0;
+    await localSourcesRoot!.findAllByTag("button")[0].onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+    assert.deepEqual(lineStarts, [undefined], "the note name opens the note without selecting a line range");
+    const renderCompactAnswer = (message: ChatMessage) => {
+      const projected = buildAgentTurnProjection([{ ...message, runId: "compact-source-answer" }])[0] as { turn: AgentTurnView };
+      const surface = new FakeElement("div");
+      (renderer as unknown as { renderAssistantTurn(host: unknown, turn: AgentTurnView, showAgentHeader: boolean): void })
+        .renderAssistantTurn(surface, projected.turn, false);
+      return surface;
+    };
+    const sourceBase = localSourceMessage.knowledgeReferences![0];
+    const wholeReference = { ...sourceBase, referenceId: "alpha-whole", lineStart: 1, lineEnd: 60, totalLines: 60 };
+    const mergedSourceMessage = { ...localSourceMessage, id: "merged-source-answer", citations: undefined, personalMemorySources: [], knowledgeProducedPaths: [],
+      knowledgeReferences: [wholeReference, { ...sourceBase, referenceId: "alpha-later", lineStart: 28, lineEnd: 43 },
+        { ...sourceBase, referenceId: "alpha-first", lineStart: 13, lineEnd: 16 }] };
+    const mergedSource = renderCompactAnswer(mergedSourceMessage);
+    const mergedLineLink = mergedSource.findByClass("codex-source-line-link")!;
+    assert.equal(mergedSource.findAllByClass("codex-source-line-link").length, 1);
+    assert.equal(mergedLineLink.textContent, "第 13–16、28–43 行");
+    const navigation = renderer as unknown as { openKnowledgeReference(reference: KnowledgeReference): Promise<void> };
+    const originalOpenReference = navigation.openKnowledgeReference;
+    let openedReference: KnowledgeReference | undefined;
+    navigation.openKnowledgeReference = async (reference) => { openedReference = reference; await originalOpenReference.call(renderer, reference); };
+    lineStarts.length = 0;
+    await mergedLineLink.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+    assert.deepEqual(lineStarts, [12], "a combined range navigates to its first original start line");
+    assert.equal(openedReference?.referenceId, "alpha-first");
+    assert.equal(openedReference?.contentRevision, sourceBase.contentRevision, "navigation retains the original source revision authority");
+    navigation.openKnowledgeReference = originalOpenReference;
+    const wholeOnly = renderCompactAnswer({ ...mergedSourceMessage, id: "whole-source-answer", knowledgeReferences: [wholeReference] });
+    assert.equal(wholeOnly.findAllByClass("codex-source-line-link").length, 0);
+    assert.ok(wholeOnly.findByClass("codex-ai-elements-source-title"), "whole-file suppression retains the note name");
+    const wholeReadProjection = buildAgentTurnProjection([{
+      id: "whole-read-tool", role: "tool", itemType: "dynamicToolCall", processKind: "view", title: "读取笔记", text: "Alpha",
+      status: "completed", runId: "whole-read-turn", createdAt: 1, knowledgeReferences: [wholeReference]
+    }, { ...mergedSourceMessage, id: "whole-read-answer", runId: "whole-read-turn", knowledgeReferences: [wholeReference] }])[0] as { turn: AgentTurnView };
+    const wholeReadSurface = new FakeElement("div");
+    (renderer as unknown as { renderAssistantTurn(host: unknown, turn: AgentTurnView, showAgentHeader: boolean): void })
+      .renderAssistantTurn(wholeReadSurface, wholeReadProjection.turn, false);
+    const wholeReadAction = wholeReadSurface.findByClass("codex-assistant-turn-action-node")!;
+    wholeReadAction.open = true;
+    wholeReadAction.ontoggle?.({ isTrusted: true });
+    assert.equal(wholeReadAction.findByClass("codex-source-line-link")?.textContent, "第 1–60 行",
+      "the identical whole-file reference retains line navigation in work records");
+    assert.equal(wholeReadSurface.findByClass("codex-assistant-turn-final")?.findAllByClass("codex-source-line-link").length, 0);
+    const longName = "很长的来源笔记名称".repeat(12);
+    const longPath = `projects/${longName}.md`;
+    const originalGetFile = context.app.vault.getAbstractFileByPath;
+    context.app.vault.getAbstractFileByPath = (path) => path === longPath ? new TFile(path) : originalGetFile(path);
+    const longSource = renderCompactAnswer({ ...mergedSourceMessage, id: "long-source-answer",
+      knowledgeReferences: [{ ...sourceBase, referenceId: "long-source", vaultRelativePath: longPath, lineStart: 13, lineEnd: 16 }] });
+    const longTitle = longSource.findByClass("codex-ai-elements-source-title")!;
+    assert.equal(longTitle.textContent, longName, "ellipsis styling never truncates the stored note name");
+    assert.equal(longTitle.attributes.get("aria-label"), `打开笔记 ${longName}`);
+    assert.match(longTitle.attributes.get("title")!, new RegExp(longName, "u"));
+    assert.equal(longSource.findByClass("codex-source-line-link")?.textContent, "第 13–16 行", "long titles keep their full independent range label");
+    context.app.vault.getAbstractFileByPath = originalGetFile;
+    context.app.workspace.getLeaf = originalGetLeaf;
 
     const citationOnlyMessage = renderMessage(renderer, {
       ...localSourceMessage,
@@ -3713,6 +4035,86 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.match(renderedText(emptyAttributionMessage), /知识库没有找到可引用依据/u);
     assert.doesNotMatch(renderedText(emptyAttributionMessage), /Personal Memory|个人记忆|不会显示伪来源/u);
     assert.doesNotMatch(renderedText(emptyAttributionMessage), /使用了 0 个文档/u);
+
+    const retrievalReferences = ["projects/Alpha.md", "outputs/Result.md", "wiki/Third.md", "journal/Fourth.md"].map((vaultRelativePath, index) => ({
+      referenceId: `initial-retrieval-${index}`, vaultRelativePath, title: `笔记 ${index + 1}`, excerpt: "SOURCE_EXCERPT_MUST_NOT_APPEAR",
+      contentRevision: `sha256:${"a".repeat(64)}`, lineStart: index + 1, lineEnd: index + 2, ...(index === 0 ? { totalLines: 2 } : {})
+    }));
+    const retrievalProjection = buildAgentTurnProjection([{
+      id: "initial-retrieval-user", role: "user", text: "查四篇笔记", createdAt: 1
+    }, {
+      id: "initial-retrieval-process", role: "assistant", itemType: "reasoning", status: "completed", text: "", runId: "initial-retrieval", createdAt: 2,
+      reasoningSummary: { schemaVersion: 1, conversationId: "retrieval", piSessionId: "retrieval-pi", productRunId: "initial-retrieval",
+        status: "completed", startedAt: 1, updatedAt: 3,
+        activities: [{ id: "knowledge:retrieval", kind: "knowledge", status: "completed", startedAt: 1, updatedAt: 3, total: 4, current: 4, completed: 4 }] }
+    }, {
+      id: "initial-retrieval-answer", role: "assistant", text: "回答", status: "completed", runId: "initial-retrieval", createdAt: 4,
+      knowledgeReferences: retrievalReferences
+    }]);
+    const retrievalSurface = new FakeElement("div");
+    const retrievalTurn = (retrievalProjection[1] as { turn: AgentTurnView }).turn;
+    (renderer as unknown as { renderAssistantTurn(container: unknown, turn: AgentTurnView, showAgentHeader: boolean): void })
+      .renderAssistantTurn(retrievalSurface, retrievalTurn, false);
+    const retrievalWorkSources = retrievalSurface.findByClass("codex-work-record-sources")!;
+    assert.ok(retrievalWorkSources);
+    retrievalSurface.findByClass("codex-assistant-turn-process-toggle")!.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+    assert.equal(retrievalSurface.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false);
+    const retrievalSummary = retrievalWorkSources.findByClass("codex-assistant-turn-resource-summary")!;
+    assert.equal(retrievalWorkSources.tag, "details");
+    assert.equal(retrievalWorkSources.open, false, "read notes retain the existing default-closed disclosure");
+    assert.equal(retrievalSummary.attributes.get("aria-expanded"), "false");
+    assert.ok(retrievalSummary.attributes.get("aria-controls"));
+    assert.equal(retrievalSummary.findByClass("codex-action-item-caret")?.dataset.icon, "chevron-right",
+      "the closed source list has an explicit expand affordance");
+    retrievalWorkSources.open = true;
+    retrievalWorkSources.ontoggle?.({ isTrusted: true });
+    assert.equal(retrievalSummary.attributes.get("aria-expanded"), "true");
+    assert.equal(retrievalSummary.findByClass("codex-action-item-caret")?.dataset.icon, "chevron-down");
+    assert.equal(retrievalWorkSources.findAllByClass("codex-ai-elements-source").length, 4,
+      "expanding the source disclosure exposes all four read notes");
+    assert.equal(retrievalWorkSources.findByClass("codex-source-line-link")?.textContent, "第 1–2 行",
+      "retrieval work records retain a whole-file range as well");
+    assert.match(renderedText(retrievalWorkSources), /本轮读到的笔记/u);
+    assert.doesNotMatch(renderedText(retrievalWorkSources), /SOURCE_EXCERPT_MUST_NOT_APPEAR/u);
+
+    const renderMemoryCountTurn = (used: number | undefined, titles: Array<{ id: string; title: string }> = [], existingAnswer?: FakeElement) => {
+      const projection = buildAgentTurnProjection([{
+        id: "memory-count-user", role: "user", text: "用记忆回答", createdAt: 1
+      }, {
+        id: "memory-count-process", role: "assistant", itemType: "reasoning", status: "completed", text: "", runId: "memory-count-run", createdAt: 2,
+        reasoningSummary: { schemaVersion: 1, conversationId: "memory-count", piSessionId: "memory-count-pi", productRunId: "memory-count-run",
+          status: "completed", startedAt: 1, updatedAt: 3,
+          activities: [{ id: "memory:recall", kind: "memory", status: "completed", startedAt: 1, updatedAt: 3, total: 26,
+            ...(used === undefined ? {} : { current: used, completed: used }) }] }
+      }, {
+        id: "memory-count-answer", role: "assistant", text: "回答", status: "completed", runId: "memory-count-run", createdAt: 4,
+        askSourceAttribution: true, personalMemorySources: titles
+      }]);
+      assert.equal(projection[1]?.kind, "assistantTurn");
+      if (existingAnswer) {
+        (renderer as unknown as { renderAnswerSources(container: unknown, turn: AgentTurnView): void })
+          .renderAnswerSources(existingAnswer, (projection[1] as { turn: AgentTurnView }).turn);
+        return existingAnswer;
+      }
+      const surface = new FakeElement("div");
+      (renderer as unknown as { renderAssistantTurn(container: unknown, turn: AgentTurnView, showAgentHeader: boolean): void })
+        .renderAssistantTurn(surface, (projection[1] as { turn: AgentTurnView }).turn, false);
+      return surface.findByClass("codex-assistant-turn-final")!;
+    };
+    const countOnlyAnswer = renderMemoryCountTurn(3);
+    assert.match(renderedText(countOnlyAnswer.findByClass("codex-answer-memory-count")!), /个人记忆：用上 3 条/u,
+      "filtered-away titles fall back to the actual injected memory count below the answer");
+    assert.doesNotMatch(renderedText(countOnlyAnswer), /26/u, "candidate totals never claim to be used memories");
+    assert.equal(renderMemoryCountTurn(undefined).findByClass("codex-answer-memory-count"), null,
+      "unknown used counts are not guessed from candidates");
+    const initiallyUnknownMemory = renderMemoryCountTurn(undefined);
+    renderMemoryCountTurn(3, [], initiallyUnknownMemory);
+    assert.match(renderedText(initiallyUnknownMemory.findByClass("codex-answer-memory-count")!), /用上 3 条/u,
+      "a later injected count refreshes the cached empty source host");
+    assert.equal(renderMemoryCountTurn(2, [{ id: "memory-a", title: "已有记忆甲" }, { id: "memory-b", title: "已有记忆乙" }])
+      .findByClass("codex-answer-memory-count"), null, "titled memories are not counted a second time");
+    assert.match(renderedText(renderMemoryCountTurn(3, [{ id: "memory-a", title: "已有记忆甲" }, { id: "memory-b", title: "已有记忆乙" }])
+      .findByClass("codex-answer-memory-count")!), /用上 1 条/u, "partial metadata counts only the remaining untitled memories");
 
     const diffMessage = renderMessage(renderer, {
       id: "file-change-diff",
@@ -3827,7 +4229,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       assistantTurnRoot.findAllByClass("codex-assistant-turn-section-secondary")
         .map((label) => label.textContent)
     );
-    assert.deepEqual(primaryLabels, new Set(["最终回答"]));
+    assert.deepEqual(primaryLabels, new Set());
     assert.deepEqual(secondaryLabels, new Set());
     assert.doesNotMatch(renderedText(assistantTurnRoot), /处理过程|模型推理|执行动作/u,
       "event rows omit repeated category prefixes");
@@ -3949,8 +4351,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
         assistantTurnRoot.findAllByClass("codex-assistant-turn-node-icon")
           .map((icon) => icon.dataset.icon)
       ),
-      new Set(["dot", "search", "image"]),
-      "ordinary Steps retain only the frozen semantic Dot, Search, and Image icons"
+      new Set(["list-checks", "file-text", "hand"]),
+      "task, artifact, and interaction steps use their own action icons"
     );
     const providerReasoningText = providerReasoningDom.map((element) => renderedText(element)).join("\n");
     assert.match(renderedText(providerReasoningDom[0]), new RegExp(siblingCanaries.publicReasoning, "u"));
@@ -4109,13 +4511,12 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       "a local Tool status patch does not restore the removed action prefix");
     assert.equal(
       toolRowBefore.findByClass("codex-ai-elements-tool-status")?.dataset.icon,
-      "search",
-      "a local Tool status patch preserves its semantic icon"
+      "loader-circle",
+      "a running Tool patch uses the shared progress icon"
     );
 
     const visibleTurnCanaries = [
       siblingCanaries.answer,
-      siblingCanaries.sourceData,
       siblingCanaries.diffContent,
       siblingCanaries.publicReasoning,
       siblingCanaries.publicReasoningAfterTool
@@ -4188,8 +4589,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     const approvalTurnRoot = approvalTurnSurface.findByClass(
       "codex-message-type-assistantTurn"
     )!;
-    assert.equal(approvalTurnRoot.findAllByClass("codex-smooth-ai-approval-card").length, 0,
-      "Approval preview remains inside its Tool Action instead of a sibling card");
+    assert.equal(approvalTurnRoot.findAllByClass("codex-smooth-ai-approval-card").length, 1,
+      "waiting approval keeps its existing action buttons below the work record");
     assert.equal(
       approvalTurnRoot.findAllByClass("codex-assistant-turn-action-ledger-summary").length,
       0
@@ -4358,7 +4759,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.deepEqual(
       ledgerRoot.findAllByClass("codex-action-item-duration")
         .map((duration) => duration.textContent.trim()),
-      ["1.3s", "1s", "500ms"]
+      ["1.3s", "1s"]
     );
     const readAction = ledgerActions.find((action) =>
       action.dataset.messageId === "ledger-read"
@@ -4375,10 +4776,10 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       action.dataset.messageId === "ledger-failed-tool"
     )!;
     assert.equal(failedAction.open, false);
-    assert.doesNotMatch(renderedText(failedAction), new RegExp(failedToolError, "u"),
-      "the collapsed failed row does not repeat its error as a second title");
-    assert.equal(renderedText(failedAction).match(/失败/gu)?.length, 1,
-      "the failed state is expressed once in the collapsed action copy");
+    assert.match(renderedText(failedAction), new RegExp(failedToolError, "u"),
+      "failed work exposes its cause without requiring expansion");
+    assert.equal(failedAction.findByClass("codex-action-item-icon")?.dataset.icon, "triangle-alert",
+      "failure is expressed with a warning triangle");
     failedAction.open = true;
     failedAction.ontoggle?.({ isTrusted: false });
     assert.match(renderedText(failedAction), new RegExp(failedToolError, "u"),
@@ -4469,7 +4870,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
         })
       }
     }, semanticById.get("semantic-move")!, semanticById.get("semantic-delete")!,
-    semanticById.get("semantic-command")!, semanticById.get("semantic-unknown")!, {
+    semanticById.get("semantic-command")!, semanticById.get("semantic-unknown")!,
+    semanticTool("semantic-web", "网页搜索 · Tavily", JSON.stringify({ query: "EchoInk" }), "", "dynamicToolCall", "search"), {
       ...semanticTool(
         "semantic-failure",
         "third_party_tool",
@@ -4513,12 +4915,14 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     const commandAction = userFacingAction("semantic-command");
     const unknownAction = userFacingAction("semantic-unknown");
     const semanticFailure = userFacingAction("semantic-failure");
+    assert.equal(userFacingAction("semantic-web").findByClass("codex-action-item-icon")?.dataset.icon, "globe",
+      "the Chinese webpage-search title uses the online-search globe");
     assert.equal(readOnlyAction.hasClass("codex-action-item-expandable"), false,
       "a successful read with no extra user value has no disclosure or Chevron");
     assert.equal(readOnlyAction.findAllByClass("codex-action-item-caret").length, 0);
     assert.equal(renderedText(semanticFailure).match(/失败/gu)?.length, 1,
       "the collapsed failed Tool shows one failure state");
-    assert.doesNotMatch(renderedText(semanticFailure), /明确失败原因/u);
+    assert.match(renderedText(semanticFailure), /明确失败原因.*回答没用上这一步/u);
     for (const action of [
       searchAction,
       createAction,
@@ -4653,7 +5057,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
         englishRoot.findAllByClass("codex-assistant-turn-section-primary")
           .map((label) => label.textContent)
       ),
-      new Set(["Final Answer"])
+      new Set()
     );
     assert.deepEqual(
       new Set(
@@ -4662,11 +5066,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       ),
       new Set()
     );
-    assert.ok(
-      englishRoot.findAllByClass("codex-ai-elements-sources-label")
-        .some((label) => label.textContent === "Used 1 document"),
-      "English source chrome uses the Turn's single-source count"
-    );
+    assert.equal(englishRoot.findAllByClass("codex-ai-elements-sources-label").length, 0,
+      "English references also omit the repeated source count");
     assert.match(renderedText(englishRoot), /Thought for 2s/u);
     assert.doesNotMatch(renderedText(englishRoot), /Searched/u,
       "English ChainOfThought rows also omit action verb prefixes");

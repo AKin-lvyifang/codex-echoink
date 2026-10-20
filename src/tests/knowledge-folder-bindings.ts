@@ -2,14 +2,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { emptyKnowledgeFolderBindings, migrateKnowledgeFolderBindings, classifyKnowledgePath, knowledgeFolderIssues } from "../knowledge-base/folder-bindings";
-import { registerKnowledgeFolderBindings, registerKnowledgePrivateRoot, knowledgeRoleRoots, resolveKnowledgeRoleTarget, resolveKnowledgePath, knowledgePathRole } from "../knowledge-base/root-paths";
+import { emptyKnowledgeFolderBindings, migrateKnowledgeFolderBindings, classifyKnowledgePath, knowledgeFolderIssues, normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, getKnowledgeFolderBindings, knowledgePathPolicy, registerKnowledgeFolderBindings, registerKnowledgePrivateRoot, knowledgeRoleRoots, resolveKnowledgeRoleTarget, resolveKnowledgePath, knowledgePathRole } from "../knowledge-base/root-paths";
 import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
 import { buildKnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import { DEFAULT_SETTINGS, normalizeSettingsData } from "../settings/settings";
 import { isHomeRecentNotePath } from "../home/home-workbench-model";
 import CodexForObsidianPlugin from "../main";
-import { CodexSettingTab } from "../settings/settings-tab";
 import { privateMaintenanceSourceScope, FilePhase3MaintenanceStateStore, rebasePrivateMaintenanceRecords, readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
 import { readRawDigestRegistry, writeRawDigestRegistry, rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
@@ -68,6 +67,7 @@ async function runCaptureSourceBindingTests(): Promise<void> {
 }
 
 export async function runKnowledgeFolderBindingsTests(): Promise<void> {
+  await assertDesktopRoleProjection();
   await runCaptureSourceBindingTests();
   const vault = await mkdtemp(path.join(tmpdir(), "echoink-bindings-"));
   const config = emptyKnowledgeFolderBindings();
@@ -173,30 +173,15 @@ export async function runKnowledgeFolderBindingsTests(): Promise<void> {
       folderObjects.set(relative, Object.assign(new TFolder(), { path: relative }));
       createdDirectories.push(relative);
     };
-    await surface.applyDirectoryPlan(buildPlan);
-    assert.deepEqual(createdDirectories, buildPlan.create, "application creates exactly the reviewed directories");
+    await assert.rejects(surface.applyDirectoryPlan(buildPlan), /重新预览/u, "changing write permission invalidates the earlier read-only preview");
+    const reviewedBuildPlan = await surface.previewDirectoryPlan(buildConfig, ["资料备选/验收收件箱"]);
+    await surface.applyDirectoryPlan(reviewedBuildPlan);
+    assert.deepEqual(createdDirectories, reviewedBuildPlan.create, "application creates exactly the reviewed directories");
     assert.equal(config.roles.inbox.writePath, "资料备选/验收收件箱");
     assert.equal(optimizations, 0, "directory creation does not call the model");
     const ask = await new KnowledgeRetriever(vault, { agentIndex: index }).retrieve({ question: "BINDING_TOKEN", explicitPaths: ["阅读/文献/a.md"], includeUnrefined: true });
     assert.equal(ask.status, "ready", "read-only binding of existing sources permits local Ask retrieval");
     assert.equal(await import("node:fs/promises").then(fs => fs.readFile(path.join(vault, "阅读/文献/a.md"), "utf8")), "# A\nBINDING_TOKEN\n", "source text remains unchanged");
-    const settingsTab = Object.create(CodexSettingTab.prototype) as any;
-    const revealedSources: string[] = [];
-    const explorer = { view: { revealInFolder: async (folder: TFolder) => { revealedSources.push(folder.path); } } };
-    plugin.app.workspace = { getLeavesOfType: () => [explorer], revealLeaf: async () => {} };
-    plugin.app.setting = { close: () => {} };
-    Object.assign(settingsTab, { plugin, app: plugin.app });
-    const originalSourceBinding = structuredClone(config.roles.raw);
-    config.roles.raw.writePath = "工作/调研";
-    await settingsTab.openKnowledgeRawFolder();
-    assert.deepEqual(revealedSources, ["工作/调研"], "the settings dashboard opens the selected source default, not a literal raw folder");
-    folderObjects.set("raw", Object.assign(new TFolder(), { path: "raw" }));
-    config.roles.raw.enabled = false;
-    await settingsTab.openKnowledgeRawFolder();
-    Object.assign(config.roles.raw, { enabled: true, readPaths: ["失效来源"], writePath: "失效来源" });
-    await settingsTab.openKnowledgeRawFolder();
-    assert.deepEqual(revealedSources, ["工作/调研"], "disabled or missing source bindings never fall back to an unbound raw folder");
-    config.roles.raw = originalSourceBinding;
     const privateRoot = await realpath(path.join(vault, "private"));
     const recordStore = new FilePhase3MaintenanceStateStore({ storageRootPath: privateRoot, vaultId: "folder-binding-tests" });
     const recordId = `maintenance-${"e".repeat(32)}`;
@@ -236,4 +221,47 @@ export async function runKnowledgeFolderBindingsTests(): Promise<void> {
     assert.deepEqual(migrateKnowledgeFolderBindings([]).roles.raw.readPaths, []);
   } finally { release(); await rm(vault, { recursive: true, force: true }); }
   console.log("Knowledge folder bindings: PASS");
+}
+
+async function assertDesktopRoleProjection(): Promise<void> {
+  const vault = await mkdtemp(path.join(tmpdir(), "echoink-desktop-roles-"));
+  const saved = emptyKnowledgeFolderBindings();
+  for (const [role, directory] of [["raw", "来源"], ["wiki", "成果"], ["inbox", "随手记"], ["projects", "项目/研究"], ["work", "来源/旧工作"], ["archive", "历史存档"]] as const) {
+    Object.assign(saved.roles[role], { enabled: true, readPaths: [directory], writePath: directory, autoOrganizePaths: [directory], allowedSubdirectories: ["旧分类"] });
+    await mkdir(path.join(vault, directory), { recursive: true });
+    await writeFile(path.join(vault, directory, "keep.md"), `${role}\nROLE_PROJECTION_TOKEN`);
+  }
+  const normalized = normalizeKnowledgeFolderBindings(saved)!;
+  const settings = normalizeSettingsData({ ...structuredClone(DEFAULT_SETTINGS), knowledgeBase: { ...DEFAULT_SETTINGS.knowledgeBase, folderBindings: normalized } }).settings;
+  const roundtrip = normalizeSettingsData(JSON.parse(JSON.stringify(settings))).settings;
+  assert.deepEqual(roundtrip.knowledgeBase.folderBindings?.roles, normalized.roles, "all ten roles survive shared settings normalization and JSON save/load");
+  const index = new KnowledgeAgentIndex({ vaultPath: vault, storageRootPath: path.join(vault, ".projection-index") });
+  const search = () => index.search({ query: "ROLE_PROJECTION_TOKEN", kinds: ["raw", "wiki", "projects"], limit: 50 });
+  const shared = registerKnowledgeFolderBindings(vault, () => normalized);
+  let originalCandidates: string[];
+  try { originalCandidates = (await search()).hits.map(hit => hit.vaultRelativePath).sort(); }
+  finally { shared(); }
+  assert.equal(originalCandidates.length, 3);
+  const desktop = registerKnowledgeFolderBindings(vault, () => normalized, DESKTOP_KNOWLEDGE_ROOT_ROLES);
+  try {
+    assert.deepEqual((await search()).hits.map(hit => hit.vaultRelativePath).sort(), originalCandidates, "desktop role retirement preserves actual Raw/Wiki/Projects search candidates");
+    assert.equal(getKnowledgeFolderBindings(vault), normalized, "consumption scope never replaces the saved object");
+    for (const role of ["raw", "wiki", "inbox", "projects"] as const) {
+      assert.deepEqual(knowledgeRoleRoots(vault, role), normalized.roles[role].readPaths);
+      assert.equal(knowledgePathRole(vault, `${normalized.roles[role].writePath}/keep.md`), role);
+    }
+    for (const role of ["work", "archive"] as const) {
+      const directory = normalized.roles[role].writePath!;
+      assert.equal(knowledgePathRole(vault, `${directory}/keep.md`), null);
+      assert.equal(knowledgePathPolicy(vault, `${directory}/keep.md`), `unbound:${directory}/keep.md`);
+      assert.deepEqual(knowledgeRoleRoots(vault, role), []);
+      assert.throws(() => resolveKnowledgeRoleTarget(vault, role), /未启用/u);
+      assert.equal(await readFile(path.join(vault, directory, "keep.md"), "utf8"), `${role}\nROLE_PROJECTION_TOKEN`);
+    }
+    assert.equal(classifyKnowledgePath(normalized, "来源/旧工作/keep.md"), "work", "shared/mobile classification retains its original owner");
+    assert.equal(classifyKnowledgePath(normalized, "来源/旧工作/keep.md", DESKTOP_KNOWLEDGE_ROOT_ROLES), null, "retired nested roots do not expand existing Raw scope");
+  } finally { desktop(); }
+  const mobile = registerKnowledgeFolderBindings(vault, () => normalized);
+  try { assert.equal(knowledgePathRole(vault, "来源/旧工作/keep.md"), "work"); }
+  finally { mobile(); await rm(vault, { recursive: true, force: true }); }
 }

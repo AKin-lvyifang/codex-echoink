@@ -93,7 +93,8 @@ export interface CreateProductionPiKnowledgeMaintenanceOptions {
   readonly knowledgeAgentIndex?: Pick<
     KnowledgeAgentIndex,
     "readReliableKnowledgeForRaw"
-  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments">>;
+  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh">>;
+  readonly automaticLinkingEnabled?: () => boolean;
   readonly now?: () => number;
   readonly createPreviewId?: () => string;
   readonly dateKey?: () => string;
@@ -104,7 +105,8 @@ export interface CreateProductionPiKnowledgeMaintenanceOptions {
   readonly onCommitted?: (
     producedPaths: readonly string[],
     linkingTargets?: readonly string[],
-    taskId?: string
+    taskId?: string,
+    originConversationId?: string
   ) => void | string | Promise<void | string>;
   /** Opt in only when onCommitted schedules the shared outbound/reverse linking job. */
   readonly linkingOwnsDraftLinks?: boolean;
@@ -131,7 +133,8 @@ implements PiKnowledgeMaintenanceToolPort {
   private readonly knowledgeAgentIndex?: Pick<
     KnowledgeAgentIndex,
     "readReliableKnowledgeForRaw"
-  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments">>;
+  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh">>;
+  private readonly automaticLinkingEnabled: () => boolean;
   private readonly sources: FilePhase3MaintenanceSourceSnapshotPort;
   private readonly tracker: Phase3MaintenanceTrackerPort;
   private readonly now: () => number;
@@ -143,7 +146,8 @@ implements PiKnowledgeMaintenanceToolPort {
   private readonly onCommitted?: (
     producedPaths: readonly string[],
     linkingTargets?: readonly string[],
-    taskId?: string
+    taskId?: string,
+    originConversationId?: string
   ) => void | string | Promise<void | string>;
   private readonly linkingOwnsDraftLinks: boolean;
 
@@ -160,6 +164,7 @@ implements PiKnowledgeMaintenanceToolPort {
     this.deviceId = requireNonEmpty(options.deviceId, "deviceId");
     this.domainService = options.domainService;
     this.knowledgeAgentIndex = options.knowledgeAgentIndex;
+    this.automaticLinkingEnabled = options.automaticLinkingEnabled ?? (() => true);
     this.now = options.now ?? Date.now;
     this.createPreviewId = options.createPreviewId ?? randomUUID;
     this.dateKey = options.dateKey ?? localDateKey;
@@ -226,8 +231,10 @@ implements PiKnowledgeMaintenanceToolPort {
     const sources = pending.sourcePaths.filter(source => successful.has(source));
     const targets = pending.targetPaths.filter(target => successful.has(target));
     try {
+      await this.knowledgeAgentIndex?.refresh?.();
+      if (!this.automaticLinkingEnabled()) return record;
       if (!this.onCommitted) throw new Error("当前环境未接入后台关联调度器。");
-      const taskId = await this.onCommitted(sources, targets, pending.taskId);
+      const taskId = await this.onCommitted(sources, targets, pending.taskId, record.originConversationId);
       if (!taskId) throw new Error("调度器未返回任务。");
       await this.faultInjector?.("after-linking-enqueue");
       await this.state.updateLinkingMetadata(record.recordId, createKnowledgeMaintenanceResultEnvelope({ ...record.result,
@@ -235,6 +242,7 @@ implements PiKnowledgeMaintenanceToolPort {
         issues: record.result.issues.filter(issue => issue.code !== "linking_start_failed")
       }), LINKING_BACKGROUND_RECEIPT);
     } catch (error) {
+      if (!this.automaticLinkingEnabled()) return record;
       await this.state.updateLinkingMetadata(record.recordId, createKnowledgeMaintenanceResultEnvelope({ ...record.result,
         issues: [...record.result.issues.filter(issue => issue.code !== "linking_start_failed"), { code: "linking_start_failed", message: `知识已写入，关联补全待恢复：${knowledgeErrorDetail(error)}` }]
       }), "知识已写入；关联补全待恢复，原稿保留。");
@@ -266,7 +274,7 @@ implements PiKnowledgeMaintenanceToolPort {
     const runId = `${request.productRunId}:natural`;
     const at = this.now();
     const result = createKnowledgeMaintenanceResultEnvelope({ status: request.terminalState !== "completed" ? "failed" : issues.length ? "partial" : "noop", issues });
-    const record: KnowledgeMaintenanceRecord = { schemaVersion: 1, recordId: `maintenance-${sha256(runId).slice(0, 32)}`, runId, at, date: this.dateKey(), result, cancelled: request.terminalState === "cancelled", sources, summary: request.terminalState === "completed" ? issues.length ? "已读资料无需新增；另有来源待处理" : "本轮无需新增知识笔记" : "本轮未完成，来源保留待处理" };
+    const record: KnowledgeMaintenanceRecord = { schemaVersion: 1, originConversationId: request.conversationId, recordId: `maintenance-${sha256(runId).slice(0, 32)}`, runId, at, date: this.dateKey(), result, cancelled: request.terminalState === "cancelled", sources, summary: request.terminalState === "completed" ? issues.length ? "已读资料无需新增；另有来源待处理" : "本轮无需新增知识笔记" : "本轮未完成，来源保留待处理" };
     const input = { vaultId: request.vaultId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: "natural", mode: "maintain" as const, request: "" };
     await this.state.queueTerminalRecord(input, record);
     await this.createService(new UnavailableMaintenanceProposalPort()).recoverPendingOrThrow(this.vaultId);
@@ -285,7 +293,7 @@ implements PiKnowledgeMaintenanceToolPort {
       const processed = Boolean(fingerprint && result.maintenanceResult?.status === "noop");
       sources.push({ path: relative, fingerprint: fingerprint ?? "", status: processed ? "processed" : fingerprint ? "failed" : "unread", evidencePaths: [] });
     }
-    await this.state.queueTerminalRecord(input, { schemaVersion: 1, recordId, runId: `${input.productRunId}:${input.toolCallId}`, at, date: this.dateKey(), cancelled: result.status === "cancelled", result: result.maintenanceResult ?? createKnowledgeMaintenanceResultEnvelope({ status: "failed", issues: [{ code: result.errorCode ?? "cancelled", message: result.message }] }), sources, summary: result.message });
+    await this.state.queueTerminalRecord(input, { schemaVersion: 1, originConversationId: input.conversationId, recordId, runId: `${input.productRunId}:${input.toolCallId}`, at, date: this.dateKey(), cancelled: result.status === "cancelled", result: result.maintenanceResult ?? createKnowledgeMaintenanceResultEnvelope({ status: "failed", issues: [{ code: result.errorCode ?? "cancelled", message: result.message }] }), sources, summary: result.message });
     await this.createService(new UnavailableMaintenanceProposalPort()).recoverPendingOrThrow(this.vaultId);
     if (result.maintenanceResult) await this.state.updateLinkingMetadata(recordId, result.maintenanceResult, result.message);
   }
@@ -452,8 +460,10 @@ implements PiKnowledgeMaintenanceToolPort {
             issues.push(...linked.result.issues.filter(issue => issue.code === "linking_start_failed"));
           }
         } else {
-          try { linkingTaskId = await this.onCommitted(committed.appliedPaths, committed.appliedPaths.filter(item => automaticTargets.has(item))) || undefined; }
-          catch (error) { issues.push({ code: "linking_start_failed", message: `知识已写入，关联补全未启动：${knowledgeErrorDetail(error)}` }); }
+          try {
+            await this.knowledgeAgentIndex?.refresh?.();
+            if (this.automaticLinkingEnabled()) linkingTaskId = await this.onCommitted(committed.appliedPaths, committed.appliedPaths.filter(item => automaticTargets.has(item)), undefined, input.conversationId) || undefined;
+          } catch (error) { if (this.automaticLinkingEnabled()) issues.push({ code: "linking_start_failed", message: `知识已写入，关联补全未启动：${knowledgeErrorDetail(error)}` }); }
         }
       }
       return Object.freeze({
@@ -833,7 +843,7 @@ implements Phase3MaintenanceStateStore {
   }
 
   async finalizeRecord(wal: Readonly<Phase3MaintenanceWalRecord>): Promise<void> {
-    if (wal.terminalRecord) { await this.saveRecord(wal.terminalRecord); return; }
+    if (wal.terminalRecord) { await this.saveRecord({ ...wal.terminalRecord, originConversationId: wal.terminalRecord.originConversationId ?? wal.authorization.contract.conversationId }); return; }
     const runId = `${wal.authorization.contract.productRunId}:${wal.authorization.contract.toolCallId}`;
     const recordId = `maintenance-${sha256(runId).slice(0, 32)}`;
     const notes = wal.actions.filter((entry) => entry.status === "completed" && (entry.action.purpose === "knowledge" || (this.vaultRootPath ? ["wiki", "projects"].includes(knowledgePathRole(this.vaultRootPath, entry.action.targetPath) ?? "") : /^(wiki|projects)\//u.test(knowledgeRolePath(entry.action.targetPath)))))
@@ -853,7 +863,7 @@ implements Phase3MaintenanceStateStore {
     const pendingLinking = linkingTargets !== undefined && notes.length
       ? { taskId: recordId, sourcePaths: notes.map(note => note.path), targetPaths: linkingTargets.filter(target => notes.some(note => note.path === target)) }
       : undefined;
-    await this.saveRecord({ schemaVersion: 1, recordId, runId, at, date: wal.preview.dateKey, result, sources, ...(pendingLinking ? { pendingLinking } : {}), summary: issues.length ? "本轮有未完成项" : notes.length ? `已保存 ${notes.length} 篇知识笔记` : "本轮无需新增知识笔记" });
+    await this.saveRecord({ schemaVersion: 1, originConversationId: wal.authorization.contract.conversationId, recordId, runId, at, date: wal.preview.dateKey, result, sources, ...(pendingLinking ? { pendingLinking } : {}), summary: issues.length ? "本轮有未完成项" : notes.length ? `已保存 ${notes.length} 篇知识笔记` : "本轮无需新增知识笔记" });
   }
 
   async pendingLinkingRecords(): Promise<KnowledgeMaintenanceRecord[]> {
@@ -865,9 +875,26 @@ implements Phase3MaintenanceStateStore {
       if (seen.has(recordId)) continue;
       seen.add(recordId);
       const record = await readPrivateMaintenanceRecord(this.rootPath, recordId, this.vaultId);
-      if (record?.pendingLinking) records.push(record);
+      if (record?.pendingLinking) {
+        // Legacy pending records may recover only from their exact durable WAL
+        // contract; the runId display string is never an identity parser.
+        if (!record.originConversationId) {
+          record.originConversationId = wal.authorization.contract.conversationId;
+          await this.attachRecordOrigin(record.recordId, record.originConversationId);
+        }
+        records.push(record);
+      }
     }
     return records;
+  }
+
+  private async attachRecordOrigin(recordId: string, originConversationId: string): Promise<void> {
+    await serializePiNativeFileWrite(this.rootPath, async () => {
+      const recordPath = path.join(await ensurePrivateStateDirectory(this.rootPath, ["records"]), `${requireControlId(recordId)}.json`);
+      const previous = await readControlEnvelope(recordPath, this.vaultId, "record") as KnowledgeMaintenanceRecord | null;
+      if (!previous || previous.originConversationId && previous.originConversationId !== originConversationId) throw new Error("维护记录来源冲突");
+      if (!previous.originConversationId) await writeControlEnvelope(recordPath, this.vaultId, "record", { ...previous, originConversationId });
+    });
   }
 
   async saveRecord(record: KnowledgeMaintenanceRecord): Promise<void> {
@@ -997,6 +1024,7 @@ async function readPrivateMaintenanceRecord(rootPath: string, recordId: string, 
     || payload.schemaVersion !== 1
     || payload.recordId !== recordId
     || typeof payload.runId !== "string"
+    || payload.originConversationId !== undefined && (typeof payload.originConversationId !== "string" || !payload.originConversationId.trim() || /[\0\r\n]/u.test(payload.originConversationId))
     || typeof payload.at !== "number" || !Number.isFinite(payload.at)
     || typeof payload.date !== "string"
     || typeof payload.summary !== "string"

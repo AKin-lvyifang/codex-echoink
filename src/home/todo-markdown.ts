@@ -22,12 +22,16 @@ export interface ParsedTodoRecord {
   dueTime?: string;
   /** Category associated by display name; "" means uncategorized. */
   categoryName: string;
+  /** Project display name, or Vault-relative path when names collide. */
+  project?: string;
   done: boolean;
   /** 0-based inclusive line range of the whole block in the source file. */
   lineStart: number;
   lineEnd: number;
   /** Indented sub-lines we do not understand; preserved verbatim on rewrite. */
   extraMetaLines: string[];
+  /** Original block for conflict detection and preserving handwritten layout. */
+  sourceBlock?: string;
 }
 
 export interface ParsedTodoMarkdown {
@@ -39,7 +43,7 @@ export interface ParsedTodoMarkdown {
 export const TODO_ID_COMMENT = "echoink-todo-id";
 
 const TASK_LINE = /^[-*]\s+\[([ xX])\]\s*(.*)$/;
-const META_LINE = /^\s+[-*]\s+(相关人员|截止日期|截止时间|分类)[：:]\s*(.*)$/;
+const META_LINE = /^\s+[-*]\s+(相关人员|截止日期|截止时间|分类|项目)[：:]\s*(.*)$/;
 const INDENTED_LINE = /^\s+\S/;
 const ID_COMMENT = new RegExp(`<!--\\s*${TODO_ID_COMMENT}:\\s*([^>]+?)\\s*-->`, "u");
 const DATE_VALUE = /^\d{4}-\d{2}-\d{2}$/;
@@ -88,13 +92,19 @@ export function parseTodoMarkdown(content: string): ParsedTodoMarkdown {
         if (meta[1] === "相关人员") record.people = value;
         else if (meta[1] === "截止日期") record.dueDate = DATE_VALUE.test(value) ? value : "";
         else if (meta[1] === "截止时间") record.dueTime = value;
-        else record.categoryName = value;
+        else if (meta[1] === "分类") record.categoryName = value;
+        else {
+          record.project = value;
+          // Keep the compatibility carrier used by older field-whitelist editors.
+          record.extraMetaLines.push(sub);
+        }
       } else {
         record.extraMetaLines.push(sub);
       }
       record.lineEnd = index;
       index++;
     }
+    record.sourceBlock = lines.slice(record.lineStart, record.lineEnd + 1).join("\n");
     records.push(record);
   }
   // Task-like but malformed top-level lines (e.g. `- [!] foo`) surface as warnings.
@@ -105,14 +115,47 @@ export function parseTodoMarkdown(content: string): ParsedTodoMarkdown {
   return { records, warnings };
 }
 
+const PROJECT_META = /^\s+[-*]\s+项目[：:]\s*(.*)$/u;
+
 export function serializeTodoRecord(record: ParsedTodoRecord): string {
+  const legacyProject = record.extraMetaLines.find(line => PROJECT_META.test(line));
+  const project = record.project ?? (legacyProject ? PROJECT_META.exec(legacyProject)?.[1].trim() : undefined);
+  if (record.sourceBlock !== undefined) {
+    const original = parseTodoMarkdown(record.sourceBlock).records[0];
+    if (original) {
+      const values: Record<string, string | undefined> = { 相关人员: record.people, 截止日期: record.dueDate,
+        截止时间: record.dueTime, 分类: record.categoryName, 项目: project };
+      const oldValues: Record<string, string | undefined> = { 相关人员: original.people, 截止日期: original.dueDate,
+        截止时间: original.dueTime, 分类: original.categoryName, 项目: original.project };
+      const lines = record.sourceBlock.split("\n");
+      if (record.title !== original.title || record.done !== original.done || record.id !== original.id) {
+        const idComment = record.id ? ` <!-- ${TODO_ID_COMMENT}: ${record.id} -->` : "";
+        const prefix = /^([-*]\s+\[)[ xX](\]\s*)/u.exec(lines[0]);
+        lines[0] = `${prefix?.[1] ?? "- ["}${record.done ? "x" : " "}${prefix?.[2] ?? "] "}${record.title}${idComment}`;
+      }
+      const seen = new Set<string>();
+      const result = [lines[0]];
+      for (const line of lines.slice(1)) {
+        const meta = /^(\s+[-*]\s+)(相关人员|截止日期|截止时间|分类|项目)([：:]\s*)(.*)$/u.exec(line);
+        if (!meta) { result.push(line); continue; }
+        const key = meta[2]; seen.add(key);
+        if (values[key] === oldValues[key]) result.push(line);
+        else if (values[key]) result.push(`${meta[1]}${key}${meta[3]}${values[key]}`);
+      }
+      for (const [key, value] of Object.entries(values)) {
+        if (value && !seen.has(key)) result.push(`  - ${key}：${value}`);
+      }
+      return result.join("\n");
+    }
+  }
   const idComment = record.id ? ` <!-- ${TODO_ID_COMMENT}: ${record.id} -->` : "";
   const lines = [`- [${record.done ? "x" : " "}] ${record.title}${idComment}`];
   if (record.people) lines.push(`  - 相关人员：${record.people}`);
   if (record.dueDate) lines.push(`  - 截止日期：${record.dueDate}`);
   if (record.dueTime) lines.push(`  - 截止时间：${record.dueTime}`);
   if (record.categoryName) lines.push(`  - 分类：${record.categoryName}`);
-  lines.push(...record.extraMetaLines);
+  if (project) lines.push(`  - 项目：${project}`);
+  lines.push(...record.extraMetaLines.filter(line => !PROJECT_META.test(line)));
   return lines.join("\n");
 }
 
@@ -142,7 +185,7 @@ export function locateRecord(
 ): ParsedTodoRecord | null {
   if (target.id) {
     const byId = parsed.find((record) => record.id === target.id);
-    if (byId) return byId;
+    return byId ?? null;
   }
   const byRange = parsed.find(
     (record) => record.lineStart === target.lineStart && record.title === target.title

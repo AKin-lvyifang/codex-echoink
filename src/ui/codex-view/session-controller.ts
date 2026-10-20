@@ -1,4 +1,5 @@
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
+import { applyConversationTaskMetadata, normalizeConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
 import { emptySelectionDraft, restoreSelectionDraft } from "../../selection-ask/draft";
 import { Notice, type App } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
@@ -46,7 +47,7 @@ export interface CodexSessionHost {
   createSession(title?: string, options?: CreateSessionOptions): Promise<StoredSession>;
 }
 
-export interface CreateSessionOptions {
+export interface CreateSessionOptions extends ConversationTaskMetadata {
   readonly defaultSkillId?: string;
   readonly journalDirectory?: string;
 }
@@ -149,11 +150,12 @@ export async function resetSessionNativeCache(host: CodexSessionHost, session: S
 }
 
 export async function refreshPiConversationShells(
-  host: CodexSessionHost
+  host: CodexSessionHost,
+  options: { createIfEmpty?: boolean } = {}
 ): Promise<void> {
   const before = conversationShellFingerprint(host);
   let catalogEntries = await host.plugin.listPiConversations(["active"]);
-  if (catalogEntries.length === 0) {
+  if (catalogEntries.length === 0 && options.createIfEmpty !== false) {
     catalogEntries = [await host.plugin.createPiConversation({
       conversationId: newId("conversation"),
       title: conversationUiText(host.plugin.settings.settingsLanguage, "新会话", "New conversation"),
@@ -205,10 +207,6 @@ type ConversationSelectionOutcome =
   | Readonly<{
       status: "selected";
       error?: unknown;
-      clearedUnread?: Readonly<{
-        session: StoredSession;
-        unreadAnswerAt: number;
-      }>;
     }>;
 
 async function completeSessionActivation(
@@ -217,18 +215,7 @@ async function completeSessionActivation(
 ): Promise<void> {
   const outcome = await selection;
   if (outcome.status === "stale") return;
-  try {
-    await persistPiConversationShells(host);
-  } catch (error) {
-    if (
-      outcome.clearedUnread
-      && outcome.clearedUnread.session.unreadAnswerAt === undefined
-    ) {
-      outcome.clearedUnread.session.unreadAnswerAt =
-        outcome.clearedUnread.unreadAnswerAt;
-    }
-    throw error;
-  }
+  await persistPiConversationShells(host);
   if ("error" in outcome) throw outcome.error;
 }
 
@@ -259,16 +246,13 @@ async function activateSessionInTransitionLane(
     host.switchComposerDraft?.(session.id);
     host.plugin.settings.activeSessionId = session.id;
     const unreadAnswerAt = session.unreadAnswerAt;
-    if (unreadAnswerAt !== undefined) delete session.unreadAnswerAt;
     releaseInactiveConversationBodies(host);
     host.updateInputPlaceholder();
     renderConversationShellChange(host);
-    return {
-      status: "selected",
-      ...(unreadAnswerAt === undefined
-        ? {}
-        : { clearedUnread: { session, unreadAnswerAt } })
-    };
+    // The durable projection was read and rendered before marking this task read.
+    // A later data.json failure cannot roll back the Catalog commit through a shell.
+    if (unreadAnswerAt !== undefined) await host.plugin.setPiConversationTaskMetadata(session.id, { unreadAnswerAt: undefined, lastReadAt: Date.now() }, { markReadThrough: unreadAnswerAt });
+    return { status: "selected" };
   } catch (error) {
     if (!isCurrentConversationSelection(host, generation)) {
       return { status: "stale" };
@@ -703,7 +687,8 @@ function defaultRecordMutationConfirm(
       title,
       body,
       acceptText,
-      declineText
+      declineText,
+      { deleteAction: true }
     );
 }
 
@@ -795,6 +780,7 @@ async function createSessionForSelection(
     const catalogEntry = await host.plugin.createPiConversation({
       conversationId,
       title,
+      ...normalizeConversationTaskMetadata(options),
       cwd: host.plugin.getVaultPath(),
       defaultMemoryMode: "normal",
       ...(options.defaultSkillId
@@ -928,7 +914,7 @@ export function activeRunSession(host: CodexSessionHost): StoredSession {
   return active ?? ensureSession(host);
 }
 
-function createPiConversationShell(
+export function createPiConversationShell(
   host: CodexSessionHost,
   catalogEntry: Readonly<PiConversationCatalogEntry>
 ): StoredSession {
@@ -946,6 +932,17 @@ function applyPiCatalogEntryToShell(
   shell: StoredSession,
   catalogEntry: Readonly<PiConversationCatalogEntry>
 ): StoredSession {
+  // Old catalogs lack a metadata revision. Retain their existing settings-only
+  // projection until the plugin imports it; stamped catalogs own all task fields.
+  if (catalogEntry.taskMetadataUpdatedAt !== undefined) {
+    // On the same revision, the shell may carry edits made during an awaited
+    // save. Preserve them for the next sync; a late older projection cannot win.
+    if (shell.taskMetadataUpdatedAt === undefined || catalogEntry.taskMetadataUpdatedAt > shell.taskMetadataUpdatedAt) {
+      applyConversationTaskMetadata(shell, catalogEntry);
+    }
+  } else {
+    applyConversationTaskMetadata(shell, { ...catalogEntry, ...shell });
+  }
   shell.title = catalogEntry.title;
   shell.piSessionId = catalogEntry.piSessionId;
   shell.defaultMemoryMode = catalogEntry.defaultMemoryMode;
@@ -965,7 +962,7 @@ function applyPiCatalogEntryToShell(
   return shell;
 }
 
-function applyPiConversationProjectionToShell(
+export function applyPiConversationProjectionToShell(
   host: CodexSessionHost,
   shell: StoredSession,
   projection: Readonly<PiConversationProjection>
@@ -1046,6 +1043,7 @@ function conversationShellFingerprint(host: CodexSessionHost): string {
     activeSessionId: host.plugin.settings.activeSessionId,
     sessions: host.plugin.settings.sessions.map((session) => ({
       id: session.id,
+      ...normalizeConversationTaskMetadata(session),
       title: session.title,
       piSessionId: session.piSessionId,
       defaultMemoryMode: session.defaultMemoryMode,

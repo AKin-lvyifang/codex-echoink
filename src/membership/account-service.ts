@@ -242,7 +242,12 @@ export class AccountService implements CapabilityAccess {
     }
     ++this.generation;
     this.claims = null;
-    this.state = { token: result.token };
+    // Password rotation is still the same identity; preserve the profile while
+    // refreshing the new token so subscribers do not observe a fake sign-out.
+    // Authorization is deliberately rebuilt: no old claims, rights or lease.
+    const account = this.state.account?.email.toLowerCase() === input.email.trim().toLowerCase()
+      ? this.state.account : undefined;
+    this.state = { token: result.token, ...(account ? { account } : {}) };
     await this.persist();
     await this.refresh();
   }

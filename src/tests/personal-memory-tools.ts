@@ -1489,17 +1489,12 @@ async function scenarioRepositoryDisposeStopsExternalWatchers(): Promise<void> {
         readFile(repository.layout.audit, "utf8"),
         readFile(repository.layout.searchIndex, "utf8")
       ]);
-      await writeFile(repository.layout.agent, `# 卸载后的 AGENT 外部编辑 ${index}\n`, "utf8");
       await writeFile(repository.layout.user, `# 卸载后的 USER 外部编辑 ${index}\n`, "utf8");
       await writeRecordBody(
         path.join(repository.layout.root, created.record!.file),
         `卸载后的一级 Memory 外部编辑 ${index}。`
       );
       await Promise.all([
-        repository.handleExternalChange({
-          event: "change",
-          relativePath: "agents/echoink/AGENT.md"
-        }),
         repository.handleExternalChange({
           event: "change",
           relativePath: "shared-user/USER.md"

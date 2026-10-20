@@ -6,8 +6,9 @@ import type { HomeActivityCore } from "./home-activity-core";
 import type { EchoInkTodoStore } from "./todo-store";
 
 export interface TodoHost {
+  settingsKnowledgeBindings?(): import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;
   app: App;
-  settings: Pick<CodexForObsidianSettings, "settingsLanguage" | "todos" | "todoCategories" | "todoCompletions">;
+  settings: Pick<CodexForObsidianSettings, "settingsLanguage" | "todos" | "todoCategories" | "todoCompletions"> & { knowledgeBase?: CodexForObsidianSettings["knowledgeBase"] };
   registerEvent(event: EventRef): void;
   saveSettings(): Promise<void>;
   getTodoStore(): EchoInkTodoStore;

@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import {readFile, realpath, mkdtemp, rm} from 'node:fs/promises';
+import {pathToFileURL, fileURLToPath} from 'node:url';
+import path from 'node:path';
+import os from 'node:os';
+import ts from 'typescript';
+import esbuild from 'esbuild';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const allowed=await realpath(path.join(os.homedir(),'EchoInk-TestVaults/90-任务临时'));
+const fixture=await realpath(process.env.ECHOINK_AGENTS_TEST_ROOT||'');
+assert(fixture.startsWith(allowed+path.sep),'Explicit disposable fixture root required');
+const run=await mkdtemp(path.join(fixture,'agent-persistence-'));
+try {
+ const source=ts.createSourceFile('main.ts',await readFile(path.join(root,'src/main.ts'),'utf8'),ts.ScriptTarget.Latest,true);
+ const cls=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='CodexForObsidianPlugin');
+ const names=['agentRegistryWriteTail','agentRegistryListeners','writeAgentRegistry','onAgentRegistryChanged','saveAgentDefinition','setAgentModuleOwner'];
+ const code=names.map(name=>cls.members.find(m=>m.name?.getText(source)===name).getText(source)).join('\n');
+ const output=path.join(run,'test.mjs');
+ await esbuild.build({stdin:{contents:`import {normalizeAgentRegistry,setModuleOwner} from './src/agents/registry'; import {AGENT_MODULE_IDS,GENERAL_ASSISTANT_ID} from './src/agents/types'; export class Host { constructor(){this.settings={agentRegistry:normalizeAgentRegistry(null)}; this.disk=null;this.saveCount=0;this.fail=false;} getCodexView(){return null;} async saveSettings(immediate){if(!immediate)throw Error('not durable');this.saveCount++; if(this.gate){const g=this.gate;this.gate=null;await g;}if(this.fail){this.fail=false;throw Error('disk failed');}this.disk=structuredClone(this.settings.agentRegistry);} ${code} }`,resolveDir:root,loader:'ts'},outfile:output,bundle:true,platform:'node',format:'esm',logLevel:'silent'});
+ const {Host}=await import(pathToFileURL(output).href); const h=new Host();let notices=0;h.onAgentRegistryChanged(()=>notices++);
+ const first={id:'fixture-one',name:'First',avatar:{kind:'default'},position:'Research',styleId:'analysis',capabilityIds:['knowledge']};
+ const second={...first,id:'fixture-two',name:'Second'};
+ await h.saveAgentDefinition(first,[]);await h.saveAgentDefinition(second,[]);
+ let release;h.gate=new Promise(r=>release=r);h.fail=true;
+ const failed=h.setAgentModuleOwner('knowledge-base',first.id);const succeeded=h.setAgentModuleOwner('journal',second.id); release();
+ await assert.rejects(failed,/disk failed/);await succeeded;
+ assert.equal(h.disk.moduleOwners['knowledge-base'],'sol');assert.equal(h.disk.moduleOwners.journal,second.id);assert.equal(notices,3);
+ await Promise.all([h.saveAgentDefinition({...first,name:'Renamed'},['knowledge-base'],{agent:structuredClone(h.settings.agentRegistry.agents.find(a=>a.id===first.id)),moduleIds:[]}),h.setAgentModuleOwner('review',second.id)]);
+ assert.equal(h.disk.agents.find(a=>a.id===first.id).name,'Renamed');assert.equal(h.disk.moduleOwners['knowledge-base'],first.id);assert.equal(h.disk.moduleOwners.journal,second.id);assert.equal(h.disk.moduleOwners.review,second.id);
+ await assert.rejects(h.saveAgentDefinition({...first,name:'Duplicate new'},[]),/already created|已经创建/);
+ const baseline={agent:structuredClone(h.settings.agentRegistry.agents.find(a=>a.id===first.id)),moduleIds:['knowledge-base']};
+ await h.setAgentModuleOwner('knowledge-base',second.id);
+ await h.saveAgentDefinition({...baseline.agent,name:'Safe rename'},baseline.moduleIds,baseline);
+ assert.equal(h.disk.moduleOwners['knowledge-base'],second.id,'unmodified old assignment must not overwrite newer owner');
+ await assert.rejects(h.saveAgentDefinition({...baseline.agent,name:'Stale identity'},baseline.moduleIds,baseline),/changed elsewhere|别处修改/);
+ const deletedBaseline={agent:structuredClone(h.settings.agentRegistry.agents.find(a=>a.id===first.id)),moduleIds:[]};
+ h.settings.agentRegistry.agents=h.settings.agentRegistry.agents.filter(a=>a.id!==first.id);
+ await assert.rejects(h.saveAgentDefinition({...deletedBaseline.agent,name:'Resurrected'},[],deletedBaseline),/deleted|已被删除/);
+ assert(!h.settings.agentRegistry.agents.some(a=>a.id===first.id),'stale editor cannot recreate deleted Agent');
+ console.log('PASS production registry writes: target-only owner, failure rollback, interleaved Agent edit, old-owner preservation, stale identity rejection and no deleted-Agent resurrection');
+
+} finally {await rm(run,{recursive:true,force:true});}

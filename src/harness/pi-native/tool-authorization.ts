@@ -32,7 +32,8 @@ export const APPROVAL_TOOL_IDS = [
   ...APPROVAL_WRITE_TOOL_IDS,
   KNOWLEDGE_MAINTENANCE_APPROVAL_TOOL_ID,
   "obsidian_cli",
-  "finance_record", "finance_budget", "finance_bill"
+  "finance_record", "finance_budget", "finance_bill",
+  "todo_add", "todo_update", "todo_complete", "english_diary_generate", "pdf_reading_process"
 ] as const;
 
 export type McpApprovalToolId = `echoink_mcp_${string}`;
@@ -43,7 +44,7 @@ export const AUTO_ALLOWED_READ_TOOL_IDS = [
 ] as const;
 
 export type ApprovalWriteToolId = typeof APPROVAL_WRITE_TOOL_IDS[number];
-export type SideEffectApprovalToolId = ApprovalWriteToolId | McpApprovalToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill";
+export type SideEffectApprovalToolId = ApprovalWriteToolId | McpApprovalToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill" | "todo_add" | "todo_update" | "todo_complete" | "english_diary_generate" | "pdf_reading_process";
 export type ApprovalToolId = typeof APPROVAL_TOOL_IDS[number] | McpApprovalToolId;
 export type AutoAllowedReadToolId = typeof AUTO_ALLOWED_READ_TOOL_IDS[number];
 export type AuthorizedVaultToolId =
@@ -351,6 +352,20 @@ export class FileApprovalTicketStore {
   async listViews(
     options: Readonly<ApprovalTicketListOptions> = {}
   ): Promise<Readonly<ApprovalTicketState>[]> {
+    return await this.listStoredViews(options, false);
+  }
+
+  /** History/card inspection must not expire or otherwise rewrite a Ticket. */
+  async listReadOnlyViews(
+    options: Readonly<ApprovalTicketListOptions> = {}
+  ): Promise<Readonly<ApprovalTicketState>[]> {
+    return await this.listStoredViews(options, true);
+  }
+
+  private async listStoredViews(
+    options: Readonly<ApprovalTicketListOptions>,
+    readOnly: boolean
+  ): Promise<Readonly<ApprovalTicketState>[]> {
     const conversationId = options.conversationId === undefined
       ? undefined
       : requireNonEmptyString(options.conversationId, "conversationId");
@@ -390,12 +405,13 @@ export class FileApprovalTicketStore {
               `Approval Ticket view ${name} 的文件名与身份不匹配`
             );
           }
-          const state = await this.expireIfNeeded({
+          const storedState: ApprovalTicketState = {
             ticket: document.ticket,
             status: document.status,
             resolvedAt: document.resolvedAt,
             consumedAt: document.consumedAt
-          });
+          };
+          const state = readOnly ? storedState : await this.expireIfNeeded(storedState);
           if (
             (conversationId === undefined
               || state.ticket.conversationId === conversationId)
@@ -660,6 +676,7 @@ export function isSideEffectApprovalToolId(value: unknown): value is SideEffectA
   return (typeof value === "string" && APPROVAL_WRITE_TOOL_IDS.includes(value as ApprovalWriteToolId))
     || value === "obsidian_cli"
     || value === "finance_record" || value === "finance_budget" || value === "finance_bill"
+    || value === "todo_add" || value === "todo_update" || value === "todo_complete" || value === "english_diary_generate" || value === "pdf_reading_process"
     || isMcpApprovalToolId(value);
 }
 

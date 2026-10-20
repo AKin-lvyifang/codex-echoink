@@ -52,7 +52,7 @@ export class MobileProfileProtocol {
     const parsed = raw[1] === null ? null : parseAgentCurrentSelf(raw[1]);
     if (parsed && parsed.kind !== "ok") throw invalid();
     const metadata = raw[2] === null ? emptyAgentSelfMetadata() : parseAgentSelfMetadata(object(raw[2]));
-    if (!metadata || (!parsed && (raw[2] !== null || raw[3] !== null))) throw invalid();
+    if (!metadata || (!parsed && raw[2] !== null)) throw invalid();
     let templateId = metadata.templateId;
     if (parsed && raw[2] === null) {
       const label = /我的初始风格来自「([^」]+)」/u.exec(raw[1]!)?.[1];
@@ -60,6 +60,9 @@ export class MobileProfileProtocol {
       if (!template && label !== "尚未选择") throw invalid();
       templateId = template?.id ?? null;
     }
+    // Desktop P16 no longer reads legacy Self. An empty hash is its retired
+    // placeholder; this adapter still validates every present legacy file and
+    // seals the real Agent hash on the next explicit mobile save.
     let manifest: Manifest | null = null;
     if (raw[3] !== null) {
       const value = object(raw[3]);
@@ -68,7 +71,7 @@ export class MobileProfileProtocol {
         || !Number.isSafeInteger(value.revision) || (value.revision as number) < 0
         || !Array.isArray(value.records) || !Array.isArray(value.tombstones)
         || !hashes || !/^[a-f0-9]{64}$/u.test(hashes.agent) || !/^[a-f0-9]{64}$/u.test(hashes.user)
-        || hashes.agent !== sha256Hex(raw[1]!)) throw invalid();
+        || (hashes.agent !== sha256Hex("") && hashes.agent !== sha256Hex(raw[1] ?? ""))) throw invalid();
       manifest = value as Manifest;
     }
     return { raw, identity, metadata: { ...metadata, templateId }, manifest,

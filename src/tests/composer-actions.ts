@@ -26,6 +26,7 @@ import {
 import {
   composerModelMenuState,
   composerProviderModelOptions,
+  openNoteMentionPicker,
   selectComposerModel,
   selectComposerReasoning
 } from "../ui/codex-view/composer-controller";
@@ -54,6 +55,53 @@ export async function runComposerActionTests(): Promise<void> {
   (globalThis as unknown as { MutationObserver: unknown }).MutationObserver =
     ComposerTestMutationObserver;
   try {
+    const desktop = Platform.isDesktopApp;
+    try {
+      Platform.isDesktopApp = true;
+      const toolbar = renderAction();
+      assert.ok(toolbar.mention, "desktop exposes the note picker shortcut");
+      let mentionClickStopped = false;
+      toolbar.mention.onclick?.({ preventDefault() {}, stopPropagation() { mentionClickStopped = true; } });
+      assert.equal(mentionClickStopped, true, "the outside-click listener cannot close the picker after toolbar redraw");
+      assert.equal(toolbar.calls.mention, 1);
+      assert.equal(toolbar.primary.querySelector(".echoink-animate-icon-send-horizontal"), null);
+      assert.ok(toolbar.primary.querySelector(".codex-composer-send-icon-wrap"));
+      toolbar.primary.click();
+      assert.equal(toolbar.calls.send, 1);
+      const desktopStop = renderAction({ running: true, hasDraft: false });
+      desktopStop.primary.click();
+      assert.equal(desktopStop.calls.stop, 1);
+      assert.ok(desktopStop.primary.querySelector(".echoink-animate-icon-circle-stop"));
+      const desktopDisabled = renderAction({ promptEnhancerRunning: true });
+      desktopDisabled.primary.click();
+      assert.equal(desktopDisabled.calls.send, 0);
+      const desktopQueue = renderAction({ running: true, hasDraft: true });
+      desktopQueue.primary.click();
+      assert.equal(desktopQueue.calls.enqueue, 1);
+      Platform.isDesktopApp = false;
+      assert.equal(renderAction().mention, null, "mobile retains its existing toolbar");
+    } finally { Platform.isDesktopApp = desktop; }
+    let draftChanges = 0;
+    let focused = false;
+    const pickerInput = {
+      value: "前文后文", selectionStart: 2, disabled: false, readOnly: false,
+      setSelectionRange(start: number) { this.selectionStart = start; },
+      focus() { focused = true; }
+    };
+    const pickerHost = {
+      inputEl: pickerInput as unknown as HTMLTextAreaElement,
+      onInputChanged() { draftChanges += 1; }
+    };
+    openNoteMentionPicker(pickerHost);
+    assert.equal(pickerInput.value, "前文 @后文", "opening preserves text on both sides of the caret");
+    assert.equal(pickerInput.selectionStart, 4);
+    assert.equal(focused, true);
+    assert.equal(draftChanges, 1, "uses the normal draft and autocomplete change path");
+    openNoteMentionPicker(pickerHost);
+    assert.equal(pickerInput.value, "前文 @后文", "an existing query is reopened without another @");
+    pickerInput.disabled = true;
+    openNoteMentionPicker(pickerHost);
+    assert.equal(draftChanges, 2, "disabled input stays unchanged");
     const send = renderAction();
     assert.equal(send.context.getAttribute("aria-label"), "查看上下文用量");
     assert.equal(send.context.hasClass("is-hidden"), false);
@@ -934,9 +982,10 @@ async function assertExactComposerProviderModelSelection(): Promise<void> {
 }
 
 function renderAction(overrides: Partial<ComposerToolbarState> = {}) {
-  const calls = { send: 0, mic: 0, context: 0, enqueue: 0, stop: 0, resume: 0, cancelKnowledge: 0 };
+  const calls = { send: 0, mention: 0, mic: 0, context: 0, enqueue: 0, stop: 0, resume: 0, cancelKnowledge: 0 };
   const callbacks: ComposerToolbarCallbacks = {
     onOpenAddMenu: () => undefined,
+    onMentionNote: () => { calls.mention += 1; },
     onEnhancePrompt: () => undefined,
     onCaptureKnowledgeSource: () => undefined,
     onPermissionChange: () => undefined,
@@ -978,6 +1027,7 @@ function renderAction(overrides: Partial<ComposerToolbarState> = {}) {
   renderComposerToolbar(container as unknown as HTMLElement, workspace as unknown as HTMLElement, state, callbacks);
   return {
     calls,
+    mention: container.querySelector(".codex-composer-mention-button"),
     context: container.querySelector(".codex-context-meter")!,
     primary: container.querySelector(".codex-composer-send-button")!,
     mic: container.querySelector(".codex-composer-mic-button")!

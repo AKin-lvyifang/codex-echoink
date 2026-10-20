@@ -1,0 +1,547 @@
+.echoink-desktop-account-settings {
+  container: desktop-account / inline-size;
+  min-width: 0;
+  width: 100%;
+}
+
+.echoink-desktop-account-settings .echoink-account {
+  --card: var(--bg);
+  --raised: var(--soft);
+  --active: var(--soft);
+  --account-primary-bg: var(--accent);
+  --account-primary-text: var(--text-on-accent);
+  --f15: calc(var(--font-text-size, 16px) * .9375);
+  --f17: calc(var(--font-text-size, 16px) * 1.0625);
+  --f22: calc(var(--font-text-size, 16px) * 1.375);
+  --f26: calc(var(--font-text-size, 16px) * 1.625);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.echoink-desktop-account-settings .desktop-account-detail .desktop-account-form {
+  padding-top: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .echoink-origin-control[data-slot=button] {
+  min-height: 32px;
+  padding: 7px 10px;
+  font-size: var(--f12);
+  white-space: normal;
+}
+
+.echoink-desktop-account-settings .echoink-account input.echoink-origin-control[data-slot=input] {
+  min-height: 32px;
+  padding: 7px 10px;
+  font-size: var(--f12);
+}
+
+.echoink-desktop-account-settings .echoink-account .primary.echoink-origin-control[data-slot=button] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.echoink-desktop-account-settings .echoink-account .primary.echoink-origin-control[data-slot=button]:focus-visible {
+  background: var(--soft) !important;
+  border-color: var(--line);
+  color: var(--text);
+  filter: none;
+}
+
+.echoink-desktop-account-settings .echoink-account :is(.desktop-account-header, .desktop-account-usage, .desktop-account-benefits) {
+  margin: 0 0 30px;
+}
+
+.echoink-desktop-account-settings .echoink-account .section-heading {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0 0 13px;
+}
+
+.echoink-desktop-account-settings .echoink-account .section-heading > h2 {
+  font-size: var(--f15);
+  font-weight: 550;
+  line-height: 1.6;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-header.profile-section {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 2px 0 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .profile-copy {
+  flex: 1;
+  min-width: 0;
+  gap: 14px;
+}
+
+.echoink-desktop-account-settings .echoink-account .avatar {
+  width: 48px;
+  height: 48px;
+  font-size: var(--f22);
+}
+
+.echoink-desktop-account-settings .echoink-account .profile-copy h2 {
+  font-size: var(--f17);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.echoink-desktop-account-settings .echoink-account .name-line {
+  gap: 8px;
+}
+
+.echoink-desktop-account-settings .echoink-account .name-line .echoink-plugin-edition-badge.is-pro {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: var(--f11);
+  font-weight: 600;
+}
+
+.echoink-desktop-account-settings .echoink-account .echoink-plugin-edition-icon > svg {
+  width: 1em;
+  height: 1em;
+}
+
+.echoink-desktop-account-settings .echoink-account :is(.profile-copy p, .desktop-account-authorization) {
+  color: var(--secondary);
+  font-size: var(--f12);
+  overflow-wrap: anywhere;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-authorization {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-authorization.is-compact {
+  flex-basis: auto;
+  margin-top: 3px;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-authorization.is-compact .membership-copy p {
+  margin: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-membership-line {
+  color: var(--secondary);
+  font-size: var(--f12);
+  line-height: 1.7;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-header .membership-footer {
+  display: block;
+  flex-basis: 100%;
+  width: 100%;
+  padding: 0;
+  border: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .profile-actions {
+  flex-direction: row;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.echoink-desktop-account-settings .echoink-account .scope {
+  max-width: 100%;
+  font-size: var(--f12);
+}
+
+.echoink-desktop-account-settings .echoink-account .metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.echoink-desktop-account-settings .echoink-account .metrics > div {
+  min-width: 0;
+  padding: 18px 21px;
+  gap: 5px;
+  border: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(odd) {
+  border-right: 1px solid var(--line);
+}
+
+.echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(-n+2) {
+  border-bottom: 1px solid var(--line);
+}
+
+.echoink-desktop-account-settings .echoink-account .metric-label {
+  color: var(--secondary);
+  font-size: var(--f13);
+  font-weight: 500;
+}
+
+.echoink-desktop-account-settings .echoink-account .metrics strong {
+  font-size: var(--f22);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.echoink-desktop-account-settings .echoink-account .metrics strong .unit {
+  font-size: var(--f12);
+  font-weight: 400;
+  margin-left: 5px;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: var(--f13);
+  text-align: left;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table :is(th, td) {
+  border: 0;
+  overflow-wrap: anywhere;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table :is(th, td):first-child {
+  text-align: left;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table th {
+  padding: 9px 18px;
+  background: var(--soft);
+  color: var(--secondary);
+  font-size: var(--f12);
+  font-weight: 500;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table td {
+  padding: 10px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table :is(th, td):nth-child(n+2) {
+  width: 90px;
+  text-align: center;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table .benefits-group > td {
+  padding: 22px 18px 8px;
+  border: 0;
+  color: var(--text);
+  font-size: var(--f13);
+  font-weight: 600;
+  text-align: left;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table .benefits-group + tr > td {
+  border-top-color: var(--text);
+}
+
+.echoink-desktop-account-settings .echoink-account .benefit-description {
+  display: inline;
+  margin-left: 10px;
+  color: var(--secondary);
+  font-size: var(--f12);
+  font-weight: 400;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-group .echoink-plugin-edition-badge {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan {
+  min-width: 0;
+  padding: 18px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--bg);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan.is-early {
+  background: var(--gold-bg);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan .plan-title {
+  font-size: var(--f13);
+  font-weight: 500;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan .price {
+  font-size: var(--f26);
+  font-weight: 550;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .price-amount {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.echoink-desktop-account-settings .echoink-account .price-currency {
+  font-size: var(--f15);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan .price small {
+  color: var(--secondary);
+  font-size: var(--f11);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan-daily {
+  font-size: var(--f13);
+}
+
+.echoink-desktop-account-settings .echoink-account :is(.plan-offer, .plan-comparison) {
+  font-size: var(--f12);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan-saving {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--plan-saving);
+  font-weight: 600;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan-saving-amount {
+  font-size: var(--f13);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan-saving-percent {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--plan-saving);
+  color: var(--plan-saving-on);
+  font-size: var(--f12);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan button.echoink-origin-control[data-slot=button] {
+  width: 100%;
+  margin-top: auto;
+  white-space: normal;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan button.is-current:disabled {
+  opacity: 1;
+}
+
+.echoink-desktop-account-settings .echoink-account :is(.desktop-account-more-usage, .plan-scope) {
+  margin-top: 18px;
+}
+
+.echoink-desktop-account-settings .echoink-account :is(.desktop-account-more-usage, .plan-scope) > summary {
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: var(--f12);
+  cursor: pointer;
+}
+
+.echoink-desktop-account-settings .echoink-account :is(.desktop-account-more-usage, .plan-scope) > summary:is(:hover, :focus-visible) {
+  background: var(--soft);
+}
+
+.echoink-desktop-account-settings .desktop-account-more-usage > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  list-style: none;
+}
+.echoink-desktop-account-settings .desktop-account-more-usage > summary::-webkit-details-marker { display: none; }
+.echoink-desktop-account-settings .desktop-account-disclosure-icon { flex: none; transition: transform 160ms ease; }
+.echoink-desktop-account-settings .desktop-account-more-usage[open] > summary .desktop-account-disclosure-icon { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .echoink-desktop-account-settings .desktop-account-disclosure-icon { transition: none; }
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-more-usage .model-rank-card {
+  padding: 12px 10px 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .rank-title {
+  overflow-wrap: anywhere;
+}
+
+.echoink-desktop-account-settings .echoink-account .rank-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keep Origin's generic button rules from stacking navigation content. */
+.echoink-desktop-account-settings .echoink-account button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  white-space: normal;
+}
+
+.echoink-desktop-account-settings .echoink-account .echoink-settings-navigation-copy {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .echoink-settings-navigation-trailing {
+  grid-column: 2;
+  grid-row: 1;
+  width: max-content;
+  min-width: max-content;
+  max-width: none;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  align-self: center;
+  justify-content: flex-end;
+}
+
+.echoink-desktop-account-settings .echoink-account .echoink-settings-navigation-value {
+  flex: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.echoink-desktop-account-settings .echoink-account .echoink-settings-navigation-icon {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.echoink-desktop-account-settings .desktop-account-detail .settings-back.echoink-origin-control[data-slot=button] {
+  display: inline-flex;
+  width: auto;
+  min-height: 30px;
+  padding: 6px 0;
+  justify-content: flex-start;
+  font-size: calc(var(--font-text-size, 16px) * .75);
+  white-space: normal;
+}
+
+.echoink-desktop-account-settings .echoink-account :is(.form-field, .device-row > div, .desktop-account-redemption, .membership-copy) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.echoink-desktop-account-settings .echoink-account .form-field :is(input, textarea) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.echoink-desktop-account-settings .echoink-account :is(.dialog-actions, .device-actions, .avatar-edit-actions) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.echoink-desktop-account-settings .echoink-account .device-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.echoink-desktop-account-settings .echoink-account .device-row > button {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.echoink-desktop-account-settings .echoink-account .device-row > button:last-of-type {
+  grid-column: 3;
+}
+
+.echoink-desktop-account-settings .echoink-account .device-row > form {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .echoink-settings-inline-confirm {
+  grid-column: 1 / -1;
+  flex-basis: 100%;
+}
+
+.echoink-desktop-account-settings .desktop-account-header > .activation-feedback {
+  flex-basis: 100%;
+}
+
+.echoink-desktop-account-settings .echoink-account .activation-feedback {
+  overflow-wrap: anywhere;
+}
+
+@container desktop-account (min-width: 360px) {
+  .echoink-desktop-account-settings .echoink-account .plan-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container desktop-account (min-width: 600px) {
+  .echoink-desktop-account-settings .echoink-account .plan-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@container desktop-account (min-width: 901px) {
+  .echoink-desktop-account-settings .echoink-account .metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(n) {
+    border: 0;
+  }
+  .echoink-desktop-account-settings .echoink-account .metrics > div:not(:last-child) {
+    border-right: 1px solid var(--line);
+  }
+}
+
+@container desktop-account (max-width: 520px) {
+  .echoink-desktop-account-settings .echoink-account .profile-actions {
+    flex-basis: 100%;
+  }
+  .echoink-desktop-account-settings .echoink-account .device-row .dialog-actions {
+    flex-direction: row;
+    margin: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .echoink-desktop-account-settings .echoink-account :is(.registration-gift-tag, .account-action-spinner svg) {
+    animation: none;
+  }
+}

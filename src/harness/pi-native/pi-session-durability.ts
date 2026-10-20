@@ -809,26 +809,8 @@ export function restorePiActiveLeaf(input: {
 }): string | null {
   const root = resolveSessionRoot(input.sessionRoot, false);
   const header = requireManagerHeader(input.sessionManager);
-  const metadataPath = activeLeafMetadataPath(root, header.id);
-  if (!existsSync(metadataPath)) return input.sessionManager.getLeafId();
-
-  assertRegularOwnedFile(metadataPath);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(metadataPath, "utf8"));
-  } catch (error) {
-    throw durabilityError(
-      "pi_session_active_leaf_invalid",
-      "The Pi Session active-leaf metadata is malformed",
-      error
-    );
-  }
-  if (!isActiveLeafMetadata(parsed)) {
-    throw durabilityError(
-      "pi_session_active_leaf_invalid",
-      "The Pi Session active-leaf metadata shape/version is incompatible"
-    );
-  }
+  const parsed = readPiActiveLeafCheckpoint({ sessionRoot: root.realPath, piSessionId: header.id });
+  if (!parsed) return input.sessionManager.getLeafId();
 
   if (parsed.activeLeafId === null) {
     input.sessionManager.resetLeaf();
@@ -848,6 +830,37 @@ export function restorePiActiveLeaf(input: {
     );
   }
   return parsed.activeLeafId;
+}
+
+/** Read the selected Branch cursor without opening an AgentSession or changing it. */
+export function readPiActiveLeafCheckpoint(input: {
+  sessionRoot: string;
+  piSessionId: string;
+}): Readonly<{ activeLeafId: string | null; modifiedAt: number }> | null {
+  const root = resolveSessionRoot(input.sessionRoot, false);
+  const metadataPath = activeLeafMetadataPath(root, input.piSessionId);
+  if (!existsSync(metadataPath)) return null;
+
+  const identity = assertRegularOwnedFile(metadataPath);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(metadataPath, "utf8"));
+  } catch (error) {
+    throw durabilityError(
+      "pi_session_active_leaf_invalid",
+      "The Pi Session active-leaf metadata is malformed",
+      error
+    );
+  }
+  if (!isActiveLeafMetadata(parsed)) {
+    throw durabilityError(
+      "pi_session_active_leaf_invalid",
+      "The Pi Session active-leaf metadata shape/version is incompatible"
+    );
+  }
+
+  assertStableFileSnapshot(metadataPath, identity, identity.size);
+  return Object.freeze({ activeLeafId: parsed.activeLeafId, modifiedAt: identity.mtimeMs });
 }
 
 /** Read-only strict inspection. It never asks Pi to parse or mutate the file. */

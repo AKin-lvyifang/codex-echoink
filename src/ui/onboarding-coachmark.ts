@@ -27,7 +27,7 @@ export interface EchoInkOnboardingCoachmarkOptions {
   readonly onAction?: () => void | Promise<void>;
   readonly onPrevious?: () => void | Promise<void>;
   readonly onStep?: (step: EchoInkOnboardingStep) => void | Promise<void>;
-  readonly onDismiss?: () => void | Promise<void>;
+  readonly onDismiss?: () => void | boolean | Promise<void | boolean>;
   readonly onActionError?: (error: unknown) => void;
 }
 
@@ -39,6 +39,7 @@ export interface EchoInkOnboardingCoachmarkHandle {
 // A removed card leaves only a short-lived geometry snapshot, never an orphan
 // overlay or listener. The next step can animate from it in the same window.
 const previousSpotlights = new WeakMap<Document, { rect: DOMRect; time: number }>();
+const previousGuideSteps = new WeakMap<Document, string>();
 
 /** One guide in the target's own window; callbacks retain product navigation. */
 export function mountEchoInkOnboardingCoachmark(
@@ -48,6 +49,14 @@ export function mountEchoInkOnboardingCoachmark(
   const highlightAnchor = options.highlightAnchor ?? anchor;
   const ownerDocument = anchor.ownerDocument;
   const ownerWindow = ownerDocument.defaultView ?? window;
+  // Protect the whole form, not just its title. The slot lives beside that
+  // surface so an Agent preset can repaint the editor without deleting it.
+  // The card stays on body, outside settings' descendant button rules.
+  const protectedSurface = highlightAnchor.closest<HTMLElement>(".echoink-settings-page")
+    ?? highlightAnchor.closest<HTMLElement>(".echoink-agent-editor")
+    ?? highlightAnchor.closest<HTMLElement>(".echoink-agent-tasks");
+  let currentHighlight = highlightAnchor;
+  let reservedSpace: HTMLElement | null = null;
   const active = ownerDocument.activeElement;
   const restoreFocusEl = options.restoreFocusEl
     ?? (active instanceof (ownerWindow.HTMLElement ?? HTMLElement) ? active : null);
@@ -68,6 +77,8 @@ export function mountEchoInkOnboardingCoachmark(
     attr: { role: "dialog", "aria-modal": "false", "aria-label": options.title, tabindex: "-1" }
   });
   coachmark.dataset.tone = options.tone ?? "purple";
+  coachmark.toggleClass("is-repaint", previousGuideSteps.get(ownerDocument) === options.stepClass);
+  previousGuideSteps.set(ownerDocument, options.stepClass);
   coachmark.toggleClass("is-complete", Boolean(options.complete));
   if (spotlight) highlightAnchor.addClass("is-echoink-onboarding-target");
   let destroyed = false;
@@ -104,7 +115,7 @@ export function mountEchoInkOnboardingCoachmark(
     return element;
   };
   const dismiss = async () => {
-    await options.onDismiss?.();
+    if (await options.onDismiss?.() === false) return;
     destroy(true);
   };
   const top = options.complete ? coachmark : coachmark.createDiv({ cls: "echoink-onboarding-topline" });
@@ -150,17 +161,48 @@ export function mountEchoInkOnboardingCoachmark(
     : null;
   if (action) {
     action.createSpan({ cls: "echoink-onboarding-action-label", text: options.actionLabel ?? "" });
-    icon(action, options.stepClass === "personality" ? "check" : "arrow-right", "echoink-onboarding-action-icon");
+    icon(action, "arrow-right", "echoink-onboarding-action-icon");
   }
 
+  const releaseReservedSpace = () => {
+    if (!reservedSpace) return;
+    reservedSpace.remove(); reservedSpace = null;
+    coachmark.removeClass("is-reserved");
+    coachmark.style.removeProperty("max-height");
+    coachmark.style.removeProperty("clip-path");
+  };
   const position = () => {
     if (destroyed) return;
-    positionOnboardingCoachmark(coachmark, spotlight, highlightAnchor, ownerWindow);
+    if (protectedSurface && !protectedSurface.isConnected) { destroy(); return; }
+    if (!currentHighlight.isConnected && protectedSurface) {
+      const replacement = protectedSurface.querySelector<HTMLElement>(".echoink-agent-editor-header");
+      if (replacement) {
+        observer?.unobserve(currentHighlight); currentHighlight.removeClass("is-echoink-onboarding-target");
+        currentHighlight = replacement; currentHighlight.addClass("is-echoink-onboarding-target"); observer?.observe(currentHighlight);
+      }
+    }
+    const bounds = protectedSurface?.getBoundingClientRect();
+    const width = Math.min(ownerWindow.innerWidth <= 650 ? ownerWindow.innerWidth - 24 : 348, ownerWindow.innerWidth - 24);
+    const fitsBeside = !bounds || bounds.right + width + 26 <= ownerWindow.innerWidth || bounds.left - width - 26 >= 0;
+    if (spotlight && protectedSurface?.parentElement && !fitsBeside) {
+      if (!reservedSpace) {
+        reservedSpace = ownerDocument.createElement("div"); reservedSpace.className = "echoink-onboarding-space";
+        protectedSurface.parentElement.insertBefore(reservedSpace, protectedSurface);
+        coachmark.addClass("is-reserved");
+      }
+      const availableHeight = protectedSurface.parentElement.getBoundingClientRect().height || ownerWindow.innerHeight;
+      const editor = protectedSurface.matches(".echoink-agent-editor, .echoink-agent-tasks");
+      coachmark.style.maxHeight = `${Math.max(80, Math.min(ownerWindow.innerHeight - 24, availableHeight - (editor ? 220 : 24)))}px`;
+    } else releaseReservedSpace();
+    positionOnboardingCoachmark(coachmark, spotlight, currentHighlight, ownerWindow, protectedSurface, reservedSpace);
   };
   const observer = typeof ownerWindow.ResizeObserver === "undefined"
     ? null : new ownerWindow.ResizeObserver(position);
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== "Escape") return;
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    const openOverlay = Array.from(ownerDocument.querySelectorAll<HTMLElement>("[role=listbox], [role=menu], [data-state=open][role=dialog], .echoink-settings-inline-confirm"))
+      .some(element => element.getClientRects().length > 0 && ownerWindow.getComputedStyle(element).visibility !== "hidden");
+    if (openOverlay) return;
     event.preventDefault();
     // Obsidian's settings Escape handler must not also close the host before
     // the tutorial's dismissal has been saved (or reported as failed).
@@ -177,7 +219,7 @@ export function mountEchoInkOnboardingCoachmark(
     escapeScope = new Scope(options.app.scope);
     escapeScope.register(null, "Escape", (event) => {
       onKeyDown(event);
-      return false;
+      return event.defaultPrevented ? false : undefined;
     });
     options.app.keymap.pushScope(escapeScope);
   };
@@ -193,15 +235,17 @@ export function mountEchoInkOnboardingCoachmark(
     ownerWindow.removeEventListener("resize", position);
     ownerDocument.removeEventListener("scroll", position, true);
     ownerDocument.removeEventListener("keydown", onKeyDown, true);
-    if (spotlight) highlightAnchor.removeClass("is-echoink-onboarding-target");
+    if (spotlight) currentHighlight.removeClass("is-echoink-onboarding-target");
     if (spotlight && !restoreFocus) {
       previousSpotlights.set(ownerDocument, { rect: spotlight.getBoundingClientRect(), time: Date.now() });
     } else previousSpotlights.delete(ownerDocument);
     spotlight?.remove();
     coachmark.remove();
+    reservedSpace?.remove(); reservedSpace = null;
     if (restoreFocus && restoreFocusEl?.isConnected) restoreFocusEl.focus({ preventScroll: true });
   };
   if (spotlight) observer?.observe(highlightAnchor);
+  if (protectedSurface) observer?.observe(protectedSurface);
   observer?.observe(coachmark);
   ownerWindow.addEventListener("resize", position);
   ownerWindow.addEventListener("focus", activateEscapeScope);
@@ -210,8 +254,9 @@ export function mountEchoInkOnboardingCoachmark(
   // Settings restores scroll after render; settle two layout frames before
   // considering the target revealed. Destroy cancels any outstanding frames.
   const revealAnchor = () => {
-    if (destroyed || !anchor.isConnected) return;
-    if (spotlight) highlightAnchor.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+    if (destroyed || !anchor.isConnected && !protectedSurface?.isConnected) return;
+    position();
+    if (spotlight) (reservedSpace ?? currentHighlight).scrollIntoView({ behavior: "auto", block: reservedSpace ? "nearest" : "center", inline: "nearest" });
     position();
   };
   revealAnchor();
@@ -229,14 +274,18 @@ function positionOnboardingCoachmark(
   coachmark: HTMLElement,
   spotlight: HTMLElement | null,
   anchor: HTMLElement,
-  ownerWindow: Window
+  ownerWindow: Window,
+  protectedSurface: HTMLElement | null,
+  reservedSpace: HTMLElement | null
 ): void {
   const margin = 12;
   const viewportWidth = ownerWindow.innerWidth;
   const viewportHeight = ownerWindow.innerHeight;
   const width = Math.min(viewportWidth <= 650 ? viewportWidth - 24 : 348, viewportWidth - 24);
-  coachmark.style.width = `${width}px`;
+  const slot = reservedSpace?.getBoundingClientRect();
+  coachmark.style.width = `${slot ? Math.max(0, Math.min(348, slot.width - 24, viewportWidth - 24)) : width}px`;
   const height = coachmark.getBoundingClientRect().height;
+  if (reservedSpace) reservedSpace.style.height = `${height + 24}px`;
   if (!spotlight) {
     coachmark.setCssStyles({ left: `${Math.max(margin, (viewportWidth - width) / 2)}px`, top: `${Math.max(margin, (viewportHeight - height) / 2)}px` });
     return;
@@ -247,6 +296,25 @@ function positionOnboardingCoachmark(
     right: Math.min(viewportWidth - 4, rect.right + 5), bottom: Math.min(viewportHeight - 4, rect.bottom + 5)
   };
   spotlight.setCssStyles({ left: `${r.left}px`, top: `${r.top}px`, width: `${Math.max(0, r.right - r.left)}px`, height: `${Math.max(0, r.bottom - r.top)}px` });
+  if (reservedSpace && slot) {
+    const left = slot.left + 12, top = slot.top + 12;
+    let clipTop = 0, clipBottom = viewportHeight, clipLeft = 0, clipRight = viewportWidth;
+    for (let parent = reservedSpace.parentElement; parent; parent = parent.parentElement) {
+      const style = ownerWindow.getComputedStyle(parent), bounds = parent.getBoundingClientRect();
+      if (/(auto|scroll|hidden|clip)/.test(`${style.overflow} ${style.overflowY}`)) { clipTop = Math.max(clipTop, bounds.top); clipBottom = Math.min(clipBottom, bounds.bottom); }
+      if (/(auto|scroll|hidden|clip)/.test(`${style.overflow} ${style.overflowX}`)) { clipLeft = Math.max(clipLeft, bounds.left); clipRight = Math.min(clipRight, bounds.right); }
+    }
+    coachmark.setCssStyles({ left: `${left}px`, top: `${top}px`, clipPath: `inset(${Math.max(0, clipTop - top)}px ${Math.max(0, left + coachmark.getBoundingClientRect().width - clipRight)}px ${Math.max(0, top + height - clipBottom)}px ${Math.max(0, clipLeft - left)}px)` });
+    coachmark.dataset.placement = "reserved";
+    return;
+  }
+  if (protectedSurface) {
+    const surface = protectedSurface.getBoundingClientRect();
+    const right = surface.right + width + 26 <= viewportWidth;
+    coachmark.setCssStyles({ left: `${right ? surface.right + 14 : surface.left - width - 14}px`, top: `${Math.max(margin, Math.min(r.top, viewportHeight - height - margin))}px` });
+    coachmark.dataset.placement = right ? "right" : "left";
+    return;
+  }
   const candidates = [
     { x: r.right + 14, y: r.top, placement: "right" },
     { x: r.left - width - 14, y: r.top, placement: "left" },

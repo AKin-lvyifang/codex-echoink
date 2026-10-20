@@ -14,6 +14,8 @@ export function renderAppearancePicker(container: HTMLElement, host: AppearanceH
   host.applyAppearanceTheme(doc);
   const picker = doc.createElement("div");
   picker.className = "echoink-theme-picker";
+  const textSegments = container.closest(".echoink-settings-aligned") !== null;
+  picker.classList.toggle("is-text-segments", textSegments);
   const options = doc.createElement("fieldset");
   options.className = "echoink-theme-options";
   const legend = doc.createElement("legend");
@@ -44,6 +46,12 @@ export function renderAppearancePicker(container: HTMLElement, host: AppearanceH
     swatch.setAttribute("aria-hidden", "true");
     setIcon(swatch, "check");
     label.append(input, swatch);
+    if (textSegments) {
+      const title = doc.createElement("span");
+      title.className = "echoink-theme-choice-title";
+      title.textContent = theme.title;
+      label.appendChild(title);
+    }
     options.appendChild(label);
     inputs.push(input);
     input.addEventListener("change", () => {

@@ -1,8 +1,9 @@
-import { Notice } from "obsidian";
+import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { TodoReminderStatus } from "../home/todo-reminder-service";
 import { OriginSetting } from "./origin-setting";
-import { applySettingsRow, createSettingsGroup, createSettingsSection } from "./settings-v2";
+import { applySettingsRow, attachSettingsTooltip, createSettingsGroup, createSettingsSection } from "./settings-v2";
+import { createOriginCheck } from "./origin-controls";
 
 export function todoReminderStatusText(status: TodoReminderStatus, english: boolean): string {
   const permission = {
@@ -24,19 +25,27 @@ export function todoReminderStatusText(status: TodoReminderStatus, english: bool
 }
 
 /** Reuses standard settings rows and Origin controls; owns only its subscription. */
-export function renderTodoReminderSettings(page: HTMLElement, plugin: CodexForObsidianPlugin): () => void {
+export function renderTodoReminderSettings(page: HTMLElement, plugin: CodexForObsidianPlugin, options: { embedded?: boolean } = {}): () => void {
   const service = plugin.getTodoReminderService();
   const english = plugin.settings.settingsLanguage === "en";
-  const section = createSettingsSection(page, { title: english ? "Desktop reminders" : "桌面提醒", surface: "group" });
+  const section = createSettingsSection(page, { title: options.embedded ? undefined : english ? "Desktop reminders" : "桌面提醒", surface: options.embedded ? "flat" : "group" });
   const group = createSettingsGroup(section);
   let disposed = false;
   let refreshToggle = () => {};
   let refreshButton = () => {};
   const name = english ? "Remind me when to-dos are due" : "待办到期提醒";
-  applySettingsRow(new OriginSetting(group).setName(name).setDesc(english
+  const description = english
     ? "Remind unfinished to-dos while Obsidian is running. A date without a time uses 09:00 locally. Missed reminders are combined on return; quitting Obsidian stops reminders."
-    : "Obsidian 运行时提醒未完成的到期事项。仅填日期按本地 09:00 提醒，重新启动或恢复运行时合并漏报；完全退出后不提醒。")
-    .addOriginToggle((toggle) => {
+    : "Obsidian 运行时提醒未完成的到期事项。仅填日期按本地 09:00 提醒，重新启动或恢复运行时合并漏报；完全退出后不提醒。";
+  const reminder = new OriginSetting(group).setName(name);
+  if (options.embedded) {
+    const wrapper = reminder.nameEl.createSpan({ cls: "echoink-settings-help" });
+    const help = wrapper.createEl("button", { cls: "echoink-settings-help-trigger", attr: { type: "button", "aria-label": english ? "Reminder information" : "到期提醒说明" } });
+    setIcon(help, "circle-alert"); attachSettingsTooltip(help, description, wrapper);
+    const check = createOriginCheck(reminder.controlEl, { attr: { "aria-label": name, "data-todo-reminder-toggle": "true" } });
+    refreshToggle = () => { const status = service.status(); check.checked = status.enabled; check.disabled = status.busy || (status.permission === "unavailable" && !status.enabled); };
+    check.onchange = () => { void service.setEnabled(check.checked).then(result => { if (!disposed && !result.ok && !result.cancelled) new Notice(todoReminderStatusText(service.status(), english)); }); };
+  } else reminder.setDesc(description).addOriginToggle((toggle) => {
       toggle.toggleEl.setAttribute("aria-label", name);
       toggle.toggleEl.setAttribute("data-todo-reminder-toggle", "true");
       refreshToggle = () => {
@@ -48,7 +57,8 @@ export function renderTodoReminderSettings(page: HTMLElement, plugin: CodexForOb
           if (!disposed && !result.ok && !result.cancelled) new Notice(todoReminderStatusText(service.status(), english));
         });
       });
-    }));
+    });
+  applySettingsRow(reminder);
   const statusRow = applySettingsRow(new OriginSetting(group).setName(english ? "Notification permission" : "通知权限"));
   statusRow.descEl.setAttribute("aria-live", "polite");
   statusRow.descEl.setAttribute("data-todo-reminder-status", "true");

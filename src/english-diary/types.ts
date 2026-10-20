@@ -141,22 +141,43 @@ export interface ExpressionEntry {
 /** Relative Vault paths only. Implementations compare expected content before mutation. */
 export interface DiaryFilePort {
   read(path: string): Promise<string | null>;
+  /** Read an already-associated original without granting mutation access to its directory. */
+  readSource?(path: string): Promise<string | null>;
   write(path: string, content: string, expected: string | null): Promise<void>;
   list(directory: string): Promise<string[]>;
   move(from: string, to: string, expected?: string): Promise<void>;
   remove(path: string, expected: string): Promise<void>;
 }
 export interface DiaryGenerationDay { date: string; expressionCount: number; generationCount: number }
+/** Local navigation projection; it never creates a record or exposes source paragraphs. */
+export interface SavedDiaryEntry {
+  id: string;
+  sourcePath: string;
+  englishPath: string;
+  title: string;
+  date: string;
+  preview: string;
+  expressionCount: number;
+  generatedAt: string;
+  missingSource: boolean;
+  missingEnglish: boolean;
+  sourceChanged: boolean;
+  englishModified: boolean;
+}
+export interface SavedDiaryList { entries: SavedDiaryEntry[]; errors: string[] }
 export interface DiaryRepository {
   subscribe?(listener: () => void): () => void;
   affectsExpressions?(path: string): boolean;
-  listGenerationActivity(): Promise<DiaryGenerationDay[]>;
+  listGenerationActivity(options?: { readOnly?: boolean }): Promise<DiaryGenerationDay[]>;
+  listSavedDiaries?(): Promise<SavedDiaryList>;
   get(source: DiarySource): Promise<DiaryRecord>;
+  /** Inspect the prospective/current record without recovery, migration, or persistence. */
+  inspect?(source: DiarySource): Promise<DiaryRecord>;
   acquireExpressionPermit?(operationId: string): object;
   publish(record: DiaryRecord, result: DiaryResult, options: { expressionPermit?: object; overwriteModified?: boolean; signal?: AbortSignal; sourceUnchanged: () => Promise<boolean> }): Promise<DiaryRecord>;
   savePrivacy(record: DiaryRecord, privacy: DiaryPrivacy): Promise<void>;
   restore(record: DiaryRecord): Promise<DiaryRecord>;
-  listExpressions(query?: string, category?: string): Promise<ExpressionEntry[]>;
+  listExpressions(query?: string, category?: string, options?: { readOnly?: boolean }): Promise<ExpressionEntry[]>;
   updateExpression(id: string, changes: { category: string; note: string }): Promise<ExpressionEntry>;
   removeOccurrence(entryId: string, occurrenceId: string): Promise<void>;
   markExpression(record: DiaryRecord, expressionId: string, status: "verified" | "needs-review", reason?: string): Promise<DiaryRecord>;
@@ -168,6 +189,13 @@ export interface DiaryGenerator {
   providerLabel(): string;
 }
 export interface GenerateDiaryOptions {
+  /** Agent runs own their cancellation independently of legacy workspace panels. */
+  owner?: "workspace" | "agent";
+  /** The run-scoped adapter uses the same configured English model without entering a second activity. */
+  generator?: DiaryGenerator;
+  operationId?: string;
+  /** Recheck the accepted run's permissions before each durable publication step. */
+  assertCanPublish?: () => Promise<void>;
   /** Generate a fresh result even when the original or a pending result matches. */
   force?: boolean;
   privacy?: DiaryPrivacy;
@@ -181,9 +209,9 @@ export interface EnglishDiaryApi {
   readSource(path: string): Promise<DiarySource>;
   load(path: string): Promise<DiaryRecord>;
   generate(path: string, options?: GenerateDiaryOptions): Promise<DiaryRecord>;
-  cancel(path: string): void;
+  cancel(path: string, owner?: "workspace" | "agent"): void;
   cancelAll(): void;
-  isGenerating(path: string): boolean;
+  isGenerating(path: string, owner?: "workspace" | "agent"): boolean;
   savePrivacy(path: string, privacy: DiaryPrivacy): Promise<void>;
   restore(path: string): Promise<DiaryRecord>;
   repository: DiaryRepository;

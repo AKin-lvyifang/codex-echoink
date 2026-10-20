@@ -42,8 +42,11 @@ export interface ObsidianNativePort {
 interface RunIdentity { vaultId: string; conversationId: string; piSessionId: string; productRunId: string }
 export interface ObsidianApprovalInput extends RunIdentity {
   requestId: string; toolCallId: string; toolId: "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill"; target: JsonValue; preview: JsonValue; signal: AbortSignal | undefined;
+  /** Live presentation only; never part of the authorization Ticket. */
+  deleteAction?: boolean;
 }
 export interface PiObsidianSecurityOptions {
+  assertToolAllowed?(toolName: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown): Promise<void>;
   currentAccess?: () => PiWorkspaceAccess | null | undefined;
   currentRunIdentity?: () => RunIdentity;
   currentUserEntry?: () => { entryId: string; text: string };
@@ -93,6 +96,7 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
     try {
       if (signal?.aborted) throw new Error("approval_cancelled");
       const input = argumentsFor(event.toolName, event.input);
+      await this.options.assertToolAllowed?.(event.toolName, input);
       const request = event.toolName === "obsidian_cli" ? normalizeObsidianCliRequest(input) : undefined;
       const financeTool = isFinanceTool(event.toolName) ? event.toolName : undefined;
       const financeRequest = financeTool ? normalizeFinanceToolRequest(financeTool, input) : undefined;
@@ -116,6 +120,7 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
           } }
           : await this.port.prepareFinance!(financeTool!, input, `${identityForSeed?.conversationId}:${entry?.entryId}:${event.toolCallId}`, signal);
         if (effect !== call.prepared.effect) throw new Error("authorization_failed");
+        await this.options.assertToolAllowed?.(event.toolName, input, call.prepared.target);
         if (!call.prepared.unavailable && (effect === "note_write" || effect === "plugin_write")) {
           const { approvals, receipts, confirmation, currentRunIdentity, userId, deviceId } = this.options;
           if (!approvals || !receipts || !confirmation || !currentRunIdentity || !userId || !deviceId) throw new Error("authorization_failed");
@@ -148,7 +153,8 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
           let accepted: boolean;
           try {
             accepted = !!(financeTool && entry?.entryId && hasDirectFinanceIntent(financeTool, financeRequest!, entry.text))
-              || await confirmation.confirm({ ...identity, toolId: contract.toolId as ObsidianApprovalInput["toolId"], requestId: ticket.ticketId, toolCallId: event.toolCallId, target: ticket.resolvedTarget, preview: ticket.preview, signal });
+              || await confirmation.confirm({ ...identity, toolId: contract.toolId as ObsidianApprovalInput["toolId"], requestId: ticket.ticketId, toolCallId: event.toolCallId, target: ticket.resolvedTarget, preview: ticket.preview,
+                ...(request?.command === "plugin:uninstall" || financeTool === "finance_record" && financeRequest?.action === "delete" ? { deleteAction: true } : {}), signal });
           } catch {
             await approvals.resolve({ ticketId: ticket.ticketId, productRunId: identity.productRunId, toolCallId: event.toolCallId, resolution: "cancelled" });
             throw new Error("approval_cancelled");
@@ -178,6 +184,8 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
     return call;
   }
   async execute(id: string, tool: PiObsidianToolId, input: unknown, signal?: AbortSignal): Promise<void> {
+    const pending = this.calls.get(id);
+    await this.options.assertToolAllowed?.(tool, argumentsFor(tool, input), pending?.prepared?.target);
     const call = this.consume(id, tool, input);
     let started = false;
     let result: unknown;
@@ -187,6 +195,7 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
       else if (tool === "obsidian_plugin_search") result = await this.port!.pluginSearch(String(call.input.query), Number(call.input.limit), signal);
       else result = await call.prepared!.execute(signal, async () => {
         if (signal?.aborted) throw new Error("obsidian_cli_cancelled");
+        await this.options.assertToolAllowed?.(tool, call.input, call.prepared?.target);
         if (call.authorization) await this.options.receipts!.markEffectStarted(call.authorization.operationIdentity);
         started = true;
       });

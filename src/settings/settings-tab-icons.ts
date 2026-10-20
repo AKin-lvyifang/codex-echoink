@@ -11,3 +11,8 @@ export const SETTINGS_TAB_ICONS = {
   todos: "list-todo",
   account: "feather"
 } as const satisfies Record<string, AnimatedSettingsTabIconName>;
+
+/** Desktop-only routes do not alter the persisted mobile navigation. */
+export const DESKTOP_SETTINGS_TAB_ICONS = {
+  general: "settings", models: "key-round", agent: "bot", capabilities: "layout-list", modules: "blocks", account: "feather"
+} as const satisfies Record<string, AnimatedSettingsTabIconName>;

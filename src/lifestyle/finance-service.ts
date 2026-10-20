@@ -21,6 +21,14 @@ import { financeBudgetSnapshot, financeValueVersion, type FinanceBudgetPatch, ty
 
 export const FINANCE_ANALYSIS_PROMPT_VERSION = "finance-analysis-v23";
 
+export interface FinanceImportCompletionOptions {
+  signal?: AbortSignal;
+  organization?: FinanceOrganizationResult;
+  suggestions?: { applied: number; skipped: number };
+  /** Includes account-catalog completion errors and other failures after the write. */
+  failed?: boolean;
+}
+
 export class LifestyleFinanceService {
   readonly ledger: FinanceLedger;
   readonly analysisArchive: FinanceAnalysisArchive;
@@ -31,6 +39,10 @@ export class LifestyleFinanceService {
   private suggestionPermits = new WeakMap<readonly FinanceImportRow[], readonly CreatedFinanceRow[]>();
   private settingsQueue: Promise<void> = Promise.resolve();
   private importedIds = new Set<string>();
+  private importCompletions = new WeakMap<FinanceImportResult, {
+    expected: { source: FinanceEntry["source"]; sourceId: string; status: FinanceEntry["status"] }[];
+    rowCount: number; signal?: AbortSignal; completion?: Promise<boolean>;
+  }>();
   private listeners = new Set<() => void>();
   constructor(private readonly service: LifestyleHost, readonly access: CapabilityAccess = service.plugin.accountService ?? unavailableCapabilityAccess) {
     this.ledger = new FinanceLedger(service.plugin.app, service.store);
@@ -329,6 +341,7 @@ export class LifestyleFinanceService {
     if (!Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) throw new Error("金额无效");
     this.validateBillPlanId(entry.billPlanId);
     const created: FinanceEntry = { ...entry, merchant: entry.merchant.trim(), account: entry.account.trim(), id: identity?.id ?? lifeId("entry"), source: "manual", sourceId: identity?.sourceId ?? lifeId("manual") };
+    delete created.classificationPending;
     let consumed = false;
     return { entry: Object.freeze(created), relativePath: this.ledger.pathForNewEntry(created.id), create: async () => {
       if (consumed) throw new Error("finance_manual_operation_already_consumed");
@@ -372,7 +385,7 @@ export class LifestyleFinanceService {
     } catch (error) {
       if (signal.aborted) throw error;
       return { rows: rows.map((row) => ({ ...row, review: "智能整理未完成，基础账目已保存" })),
-        warnings: [`智能整理未完成，基础账目已保存：${error instanceof Error ? error.message : String(error)}`], aiCandidates: 0 };
+        warnings: [`智能整理未完成，基础账目已保存：${error instanceof Error ? error.message : String(error)}`], aiCandidates: 0, incomplete: true };
     }
   }
 
@@ -384,7 +397,33 @@ export class LifestyleFinanceService {
       ...options,
       onSaved: (entry, kind) => { this.importedIds.add(entry.id); options.onSaved?.(entry, kind); }
     });
+    this.importCompletions.set(result, { rowCount: rows.length, signal: options.signal,
+      expected: rows.flatMap(row => row.entry ? [{ source: row.entry.source, sourceId: row.entry.sourceId, status: row.entry.status }] : []) });
     return result;
+  }
+
+  /** Called after organization, suggestion writes and account-catalog completion, including explicit duplicate-only reconciliation. */
+  completeImport(result: FinanceImportResult, options: FinanceImportCompletionOptions = {}): Promise<boolean> {
+    const pending = this.importCompletions.get(result);
+    if (!pending) return Promise.resolve(false);
+    if (pending.completion) return pending.completion;
+    const cancelled = () => pending.signal?.aborted || options.signal?.aborted;
+    if (cancelled() || options.failed || result.writeError || result.invalid || !pending.rowCount
+      || result.added + result.updated + result.duplicates !== pending.rowCount) return Promise.resolve(false);
+    if (result.created.length && (!options.organization || !options.suggestions || options.suggestions.skipped
+      || options.organization.incomplete || options.organization.warnings.some(warning => warning !== "智能整理未启用，基础账目已入库"))) return Promise.resolve(false);
+    const run = async (): Promise<boolean> => {
+      // The existing import/suggestion/catalog steps already reload the real ledger.
+      const known = new Map(this.ledger.entries().map(entry => [`${entry.source}:${entry.sourceId}`, entry]));
+      if (cancelled() || pending.expected.some(entry => known.get(`${entry.source}:${entry.sourceId}`)?.status !== entry.status)) return false;
+      await this.service.store.updateFresh(draft => {
+        if (cancelled()) throw new DOMException("已取消导入", "AbortError");
+        draft.lastSuccessfulImportAt = Date.now();
+      });
+      return true;
+    };
+    pending.completion = run();
+    return pending.completion;
   }
 
   /** Add only final account names from notes actually written by this import. */

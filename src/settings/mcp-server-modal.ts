@@ -1,11 +1,12 @@
 import { createOriginInput, createOriginButton, createOriginCheck, createOriginSelect, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
-import { App, Modal } from "obsidian";
+import { App, Modal, setIcon } from "obsidian";
 import type { EchoInkMcpServerDraft } from "../plugin/mcp-settings-service";
 import type {
   EchoInkMcpConnectionRecord,
   EchoInkResource
 } from "../resources/types";
 import { applyAmicroButton } from "./amicro-buttons";
+import { attachSettingsTooltip, createSettingsGroup, createSettingsSection } from "./settings-v2";
 
 export interface McpServerModalOptions {
   readonly app: App;
@@ -32,6 +33,7 @@ export class McpServerModal extends Modal {
   private credentialSecret = "";
   private clearCredential = false;
   private saving = false;
+  private closed = true;
   private errorMessage = "";
   private fieldErrors: Record<string, string> = {};
 
@@ -60,11 +62,14 @@ export class McpServerModal extends Modal {
   }
 
   onOpen(): void {
+    this.closed = false;
     this.modalEl.addClass("codex-mcp-server-modal");
     this.render();
   }
 
   onClose(): void {
+    this.closed = true;
+    this.credentialSecret = "";
     this.titleEl.empty();
     disposeOriginControls(this.contentEl);
     this.contentEl.empty();
@@ -80,6 +85,7 @@ export class McpServerModal extends Modal {
   }
 
   private render(): void {
+    const aligned = this.modalEl.closest(".echoink-settings-aligned") !== null;
     this.titleEl.empty();
     this.titleEl.setText(this.editing
       ? this.label("编辑 MCP Server", "Edit MCP server")
@@ -91,8 +97,9 @@ export class McpServerModal extends Modal {
       attr: { "aria-busy": String(this.saving) }
     });
 
-    const basic = form.createDiv({ cls: "codex-mcp-form-card is-basic" });
-    basic.createEl("h3", { text: this.label("基本信息", "Basic information") });
+    const basic = aligned ? createSettingsGroup(createSettingsSection(form, { title: this.label("基本信息", "Basic information") })) : form.createDiv();
+    basic.addClass("codex-mcp-form-card", "is-basic");
+    if (!aligned) basic.createEl("h3", { text: this.label("基本信息", "Basic information") });
     this.renderTextField(basic, {
       key: "name",
       label: this.label("名称", "Name"),
@@ -137,8 +144,10 @@ export class McpServerModal extends Modal {
       this.focus("endpoint");
     };
 
-    const connection = form.createDiv({ cls: "codex-mcp-form-card is-connection" });
-    connection.createEl("h3", { text: this.transport === "http" ? this.label("HTTP 连接", "HTTP connection") : this.label("本地进程", "Local process") });
+    const connectionTitle = this.transport === "http" ? this.label("HTTP 连接", "HTTP connection") : this.label("本地进程", "Local process");
+    const connection = aligned ? createSettingsGroup(createSettingsSection(form, { title: connectionTitle })) : form.createDiv();
+    connection.addClass("codex-mcp-form-card", "is-connection");
+    if (!aligned) connection.createEl("h3", { text: connectionTitle });
     if (this.transport === "http") {
       this.renderTextField(connection, {
         key: "endpoint",
@@ -194,11 +203,9 @@ export class McpServerModal extends Modal {
       });
     }
 
-    const credential = form.createDiv({ cls: "codex-mcp-credential-section codex-mcp-form-card" });
-    credential.createDiv({
-      cls: "codex-mcp-credential-title",
-      text: this.label("Credential", "Credential")
-    });
+    const credential = aligned ? createSettingsGroup(createSettingsSection(form, { title: "Credential" })) : form.createDiv();
+    credential.addClass("codex-mcp-credential-section", "codex-mcp-form-card");
+    if (!aligned) credential.createDiv({ cls: "codex-mcp-credential-title", text: "Credential" });
     credential.createDiv({
       cls: "codex-mcp-credential-description",
       text: this.label(
@@ -310,7 +317,13 @@ export class McpServerModal extends Modal {
       text: label,
       attr: { for: this.controlId(key) }
     });
-    labelEl.createSpan({ cls: "codex-mcp-server-field-description", text: description });
+    const optional = ["name", "description", "transport", "cwd", "args", "credential-target", "credential-prefix"].includes(key)
+      || key === "endpoint" && this.transport === "stdio";
+    if (optional && this.modalEl.closest(".echoink-settings-aligned")) {
+      const help = createOriginButton(labelEl, { cls: "echoink-settings-help-trigger echoink-mcp-form-help", attr: { type: "button", "aria-label": this.zh ? `${label}说明` : `${label} information` } });
+      setIcon(help, "info");
+      attachSettingsTooltip(help, description, help, { interactive: false });
+    } else labelEl.createSpan({ cls: "codex-mcp-server-field-description", text: description });
     return field;
   }
 
@@ -409,8 +422,9 @@ export class McpServerModal extends Modal {
     this.render();
     try {
       await this.options.save(draft);
-      this.close();
+      if (!this.closed) this.close();
     } catch (error) {
+      if (this.closed) return;
       this.saving = false;
       const fieldKey = this.fieldKeyForError(error);
       if (fieldKey) {

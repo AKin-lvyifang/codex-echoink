@@ -26,14 +26,19 @@ const visibility = { isHomeNotePath: () => true };
 const { HomeSearchService } = await production('src/home/home-search.ts', { './home-note-visibility': visibility });
 const i18n = await production('src/home/home-i18n.ts');
 const dateKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const photoCalendar = await production('src/home/photo-calendar.ts', {
+  './home-workbench-model': { dateKey }, './home-i18n': i18n
+});
 const { EchoInkHomeView } = await production('src/home/home-view.ts', {
-  './home-workbench-model': { dateKey }, './home-i18n': i18n, './home-note-visibility': visibility
+  './home-workbench-model': { dateKey }, './home-i18n': i18n, './home-note-visibility': visibility,
+  './native-journal': { readNativeJournalSettings: () => ({ available: true, folder: 'Daily', format: 'YYYY-MM-DD' }) },
+  './photo-calendar': photoCalendar
 });
 const activityCore = await production('src/home/home-activity-core.ts');
 const { HomeActivityService } = await production('src/home/home-activity-service.ts', { './home-activity-core': activityCore });
 const { ForegroundView } = await production('src/ui/foreground-view.ts');
 const filters = await production('src/english-diary/expression-search.ts');
-const { EnglishExpressionView } = await production('src/english-diary/expression-view.ts', { './expression-search': filters });
+const { EnglishExpressionBrowser } = await production('src/english-diary/expression-view.ts', { './expression-search': filters });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 try {
   let files = Array.from({ length: 1000 }, (_, i) => ({ path: `notes/${i}.md`, basename: `note-${i}`, stat: { mtime: i + 1 } }));
@@ -91,7 +96,7 @@ try {
   calendar.contentEl.innerHTML = '<div data-home="month-label"></div><div class="calendar-weekdays"></div><div data-home="calendar-days"></div><div data-home="month-record-count"></div><div data-home="journal-label"></div><div data-home="journal-hint"></div>';
   calendar.renderCalendar();
   assert.equal(snapshots, 1); assert.equal(calendar.contentEl.querySelectorAll('button').length, 42);
-  assert.equal(calendar.field('month-record-count').textContent, '本月 31 天');
+  assert.equal(calendar.field('month-record-count').textContent, '本月 31 天 · 0 天有图');
   assert.match(calendar.contentEl.querySelector('[data-date="2026-03-01"]').getAttribute('aria-label'), / · 323$/);
 
   let focused = true, visible = true;
@@ -121,6 +126,7 @@ try {
   const home = Object.assign(Object.create(EchoInkHomeView.prototype), {
     closed: false, contentEl: doc.createElement('div'), foreground: { isActive: () => active }, refreshTimer: null, refreshPending: false,
     refreshRunning: false, refreshVersion: 1, searchTimer: null, searchService: { clear() {} }, searchOpen: false,
+    plugin: { settings: { englishDiary: { enabled: false } } }, dailyRepository: null, dailyTimer: null,
     scheduleShortNavigation() {}, async refresh() { this.refreshPending = false; builds++; }
   });
   for (let i = 0; i < 5; i++) home.scheduleRefresh(0);
@@ -134,8 +140,8 @@ try {
   for (const query of ['独有备注', '腾出空间', '场景', '原因', '原稿', 'Daily/a.md', '2026-10-11']) assert.equal(filters.filterExpressions([entry], query).length, 1);
   assert.equal(filters.filterExpressions([entry], '', '其他').length, 0);
   let lists = 0, renders = 0;
-  const expression = Object.assign(Object.create(EnglishExpressionView.prototype), {
-    closed: false, foreground: { isActive: () => active }, contentEl: doc.createElement('div'), timer: null, refreshSequence: 0,
+  const expression = Object.assign(Object.create(EnglishExpressionBrowser.prototype), {
+    closed: false, active: false, options: {}, releases: [], subscribe() {}, contentEl: doc.createElement('div'), timer: null, refreshSequence: 0, pageNumber: 1,
     sourcePaths: new Set(['Daily/a.md']), query: '独有备注', category: '工作', selectedId: 'one',
     draft: { id: 'one', category: '工作', note: '尚未保存', initialCategory: '工作', initialNote: '独有备注' },
     host: { api: { repository: { affectsExpressions: path => filters.pathsOverlap(path, 'Expressions'), listExpressions: async () => { lists++; return [entry]; }, listGenerationActivity: async () => [] } } },
@@ -145,12 +151,12 @@ try {
   for (const path of ['Expressions/a.md', 'Expressions', 'Daily/a.md', 'Daily']) assert(expression.affectsExpressions(path));
   for (let i = 0; i < 5; i++) expression.scheduleRefresh(0);
   await sleep(5); assert.equal(lists, 0);
-  active = true; expression.foregroundChanged(true); await sleep(5);
+  active = true; expression.setActive(true); await sleep(5);
   assert.equal(lists, 1); assert.equal(renders, 1); assert.equal(expression.draft.note, '尚未保存');
   expression.query = 'Make'; expression.filterLoadedEntries(); assert.equal(lists, 1);
   let resolveList;
   expression.host.api.repository.listExpressions = () => new Promise(resolve => { resolveList = resolve; });
-  const refreshing = expression.refresh(); active = false; expression.foregroundChanged(false); resolveList([]); await refreshing;
+  const refreshing = expression.refresh(); active = false; expression.setActive(false); resolveList([]); await refreshing;
   assert.equal(expression.allEntries.length, 1, 'hidden late result is discarded');
   assert.equal(expression.refreshPending, true);
   console.log(JSON.stringify({ search: { files: 1000, retainedCharacters: retained, afterClose: 0 }, calendar: { events: 10000, snapshots, cells: 42 }, hiddenHomeBuilds: 0, resumeHomeBuilds: builds, expressionReadsPerRefresh: lists, result: 'PASS' }));

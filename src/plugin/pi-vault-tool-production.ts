@@ -77,9 +77,11 @@ export interface PiVaultApprovalConfirmationInput {
   readonly piSessionId: string;
   readonly productRunId: string;
   readonly toolCallId: string;
-  readonly toolId: PiVaultToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill";
+  readonly toolId: PiVaultToolId | "obsidian_cli" | "finance_record" | "finance_budget" | "finance_bill" | "todo_add" | "todo_update" | "todo_complete";
   readonly target: JsonValue;
   readonly preview: JsonValue;
+  /** Live presentation only; never part of the authorization Ticket. */
+  readonly deleteAction?: boolean;
   readonly signal: AbortSignal | undefined;
 }
 
@@ -104,6 +106,7 @@ export interface CreatePiVaultProductionWriteExecutionOptions {
   readonly domainService: VaultDomainService;
   /** Production rechecks folder consent immediately before invoking the domain. */
   readonly adapter?: VaultDomainAdapter;
+  readonly assertToolAllowed?: (toolName: string, args: Readonly<Record<string, unknown>>, resolvedTarget: unknown, authorization: Readonly<WriteToolAuthorizationContext>) => Promise<void>;
   readonly finance?: LifestyleFinanceService;
   readonly now?: () => number;
   readonly failureInjection?: (
@@ -122,7 +125,7 @@ export function createObsidianPiVaultApprovalConfirmation(
         formatApprovalBody(input.target, input.preview),
         "确认执行",
         "拒绝",
-        { signal: input.signal, preformatted: true }
+        { signal: input.signal, preformatted: true, ...(input.deleteAction === true ? { deleteAction: true } : {}) }
       );
     }
   });
@@ -224,6 +227,7 @@ export function createPiVaultProductionAuthorizationPort(
           toolId: input.toolId,
           target: target.resolvedTarget,
           preview: target.preview,
+          ...(input.toolId === "note_delete" ? { deleteAction: true } : {}),
           signal: input.signal
         });
       } catch {
@@ -259,8 +263,10 @@ export function createPiVaultProductionWriteExecutionPort(
       await options.receipts.beginAuthorizedOperation(input.authorization);
       let result: Readonly<VaultOperationResult>;
       try {
+        await options.assertToolAllowed?.(input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>, input.authorization.resolvedTarget, input.authorization);
         if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>);
         result = await invokeDomainOnce(async () => {
+          await options.assertToolAllowed?.(input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>, input.authorization.resolvedTarget, input.authorization);
           if (options.adapter) await assertProductionFolderPolicy(options.adapter, input.toolId, input.arguments as unknown as Readonly<Record<string, unknown>>);
           await options.receipts.markEffectStarted(
             input.authorization.operationIdentity
@@ -498,7 +504,7 @@ async function assertProductionFolderPolicy(
     for (let depth = 1; depth <= segments.length; depth++) {
       const directory = segments.slice(0, depth).join("/");
       const parent = await resolver.resolve({ vaultId: adapter.vaultId, relativePath: directory, mustExist: false, allowMissingParentDirectories: true, expectedKind: "directory" });
-      if (!parent.exists && !knowledgeMayCreateCategoryDirectory(config, directory)) throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+      if (!parent.exists && !knowledgeMayCreateCategoryDirectory(config, directory, { allowAgentSubfolders: toolId === "note_create" })) throw new PiVaultToolAuthorizationError("tool_policy_blocked");
     }
   }
   if (toolId === "note_update") {

@@ -18,6 +18,19 @@ export const QUICK_JOURNAL_TEMPLATE = [
   "## 想记住的一点", "", ""
 ].join("\n");
 
+const preparedJournalTemplates = new WeakMap<App, Map<string, string>>();
+export function prepareNativeJournalTemplate(app: App, targetPath: string, content: string): void {
+  const pending = preparedJournalTemplates.get(app) ?? new Map<string, string>();
+  pending.set(targetPath, content);
+  preparedJournalTemplates.set(app, pending);
+}
+/** A prepared context is only a candidate; callers must observe and read back an actual creation. */
+export function takePreparedNativeJournalTemplate(app: App, targetPath: string): string | undefined {
+  const pending = preparedJournalTemplates.get(app), content = pending?.get(targetPath);
+  pending?.delete(targetPath);
+  return content;
+}
+
 interface NativeCoreInstance {
   options?: Record<string, unknown>;
   plugin?: NativeCorePlugin;
@@ -161,6 +174,8 @@ export async function readNativeJournalContext(
   }
   const templateSource = source ?? QUICK_JOURNAL_TEMPLATE;
   const title = targetPath.slice(targetPath.lastIndexOf("/") + 1, -3);
+  const templateContent = renderNativeJournalTemplate(templateSource, now, title, settings);
+  if (!target) prepareNativeJournalTemplate(app, targetPath, templateContent);
   return Object.freeze({
     ...settings,
     date: moment(now).format("YYYY-MM-DD"),
@@ -168,7 +183,7 @@ export async function readNativeJournalContext(
     targetPath,
     exists: target instanceof TFile,
     templateExists: source !== null,
-    templateContent: renderNativeJournalTemplate(templateSource, now, title, settings)
+    templateContent
   });
 }
 
@@ -233,5 +248,5 @@ export async function initializeNativeJournal(app: App, legacyDirectory?: string
 }
 
 export async function saveNativeJournalFolder(app: App, folder: string): Promise<void> {
-  await updateCoreOptions(app, "daily-notes", { folder: relativePath(folder) }, false);
+  await updateCoreOptions(app, "daily-notes", { folder: folder.trim() === "" ? "" : relativePath(folder) }, false);
 }

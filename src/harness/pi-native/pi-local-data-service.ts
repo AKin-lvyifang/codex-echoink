@@ -1,4 +1,5 @@
 import type { FileConversationCatalog } from "./file-conversation-catalog";
+import { normalizeConversationTaskMetadata } from "../../agents/task-metadata";
 import {
   createDurablePiSession,
   type PiSessionManagerApi
@@ -34,6 +35,8 @@ export async function createPiLocalConversation(
     piSessionId: durable.piSessionId,
     vaultId: store.catalog.vaultId,
     title: input.title,
+    ...normalizeConversationTaskMetadata(input),
+    taskMetadataUpdatedAt: createdAt,
     status: "active",
     defaultMemoryMode: input.defaultMemoryMode ?? "normal",
     ...(input.defaultSkillId ? { defaultSkillId: input.defaultSkillId } : {}),

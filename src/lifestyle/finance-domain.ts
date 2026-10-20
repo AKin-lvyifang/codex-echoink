@@ -296,7 +296,7 @@ export async function readFinanceBill(bytes: Uint8Array, fileName: string, sourc
       const sourceId = rawId || `${date}|${merchant}|${amountCents}|${kind}|${description}`;
       results.push({ entry: {
         id: lifeId("entry"), source, sourceId, date, merchant,
-        description, category: "其他", kind,
+        description, category: "其他", classificationPending: true, kind,
         amountCents, status, account: paymentMethod || (source === "wechat" ? "微信" : "支付宝"),
         currency: "CNY", note
       }, error: "", raw: row, sourceFields,

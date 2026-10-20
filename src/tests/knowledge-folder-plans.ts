@@ -3,14 +3,14 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { TFolder } from "obsidian";
-import { emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeMaintenanceFolderIssues, normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeMaintenanceFolderIssues, normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { previewKnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
-import { registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import CodexForObsidianPlugin from "../main";
 import { echoInkKnowledgeMaintenanceProtocolPrompt } from "../knowledge-base/knowledge-maintenance-protocol";
-import { knowledgeMayCreateCategoryDirectory } from "../knowledge-base/folder-organization";
+import { knowledgeMayCreateCategoryDirectory, knowledgeMayOrganizeMove, knowledgeOrganizationBinding } from "../knowledge-base/folder-organization";
 
 function buildBindings() {
   const bindings = emptyKnowledgeFolderBindings();
@@ -43,6 +43,39 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
   assert.match(prompt, /允许 Agent 自动整理的实际目录：\["资料\/知识"\]/u);
   assert(!prompt.includes("不创建分类树"), "the production maintenance command does not contradict saved consent");
   assert(echoInkKnowledgeMaintenanceProtocolPrompt(promptBindings).includes('允许 Agent 自动整理的实际目录：["资料/知识"]'));
+  for (const [role, directory] of [["work", "旧工作"], ["archive", "旧存档"], ["projects", "项目/研究"]] as const) {
+    Object.assign(promptBindings.roles[role], { enabled: true, readPaths: [directory], writePath: directory, autoOrganizePaths: [directory] });
+  }
+  const desktopPrompt = echoInkKnowledgeMaintenanceProtocolPrompt(promptBindings, DESKTOP_KNOWLEDGE_ROOT_ROLES);
+  assert(!desktopPrompt.includes('"work"') && !desktopPrompt.includes('"archive"') && !desktopPrompt.includes("旧工作") && !desktopPrompt.includes("旧存档"));
+  assert(desktopPrompt.includes("项目/研究"));
+  assert(echoInkKnowledgeMaintenanceProtocolPrompt(promptBindings).includes("旧工作"), "shared protocol default retains mobile-compatible role data");
+  assert(!knowledgeMayCreateCategoryDirectory(promptBindings, "旧工作/新分类"));
+  assert(!knowledgeMayOrganizeMove(promptBindings, "旧存档/a.md", "旧存档/新分类/a.md"));
+  assert(knowledgeMayCreateCategoryDirectory(promptBindings, "项目/研究/新分类"));
+  assert(knowledgeMayOrganizeMove(promptBindings, "项目/研究/a.md", "项目/研究/新分类/a.md"));
+  for (const parentRole of ["wiki", "projects"] as const) for (const retiredRole of ["work", "archive"] as const) {
+    const nested = emptyKnowledgeFolderBindings();
+    const parent = parentRole === "wiki" ? "Knowledge" : "Projects";
+    const retired = `${parent}/${retiredRole === "archive" ? "Archive" : "Work"}`;
+    Object.assign(nested.roles[parentRole], { enabled: true, readPaths: [parent], writePath: parent, autoOrganizePaths: [parent] });
+    Object.assign(nested.roles[retiredRole], { enabled: true, readPaths: [retired], writePath: retired, autoOrganizePaths: [] });
+    nested.allowAgentSubfolders = true;
+    assert.equal(classifyKnowledgePath(nested, `${retired}/a.md`, DESKTOP_KNOWLEDGE_ROOT_ROLES), null);
+    assert.deepEqual({
+      owner: knowledgeOrganizationBinding(nested, `${retired}/a.md`)?.role ?? null,
+      create: knowledgeMayCreateCategoryDirectory(nested, `${retired}/new`),
+      move: knowledgeMayOrganizeMove(nested, `${retired}/a.md`, `${retired}/b.md`)
+    }, { owner: null, create: false, move: false }, `${retiredRole} nested in ${parentRole} cannot inherit ancestor organization authority`);
+    assert(knowledgeMayCreateCategoryDirectory(nested, `${parent}/Current/new`));
+    assert(knowledgeMayOrganizeMove(nested, `${parent}/Current/a.md`, `${parent}/Current/b.md`));
+  }
+  const desktopPlan = await previewKnowledgeDirectoryPlan({ baseRevision: 1, baseline: promptBindings, bindings: buildBindings(), roleScope: DESKTOP_KNOWLEDGE_ROOT_ROLES,
+    createPaths: ["旧工作", "旧存档"], sourcePaths: [], kind: async () => "folder" });
+  assert.deepEqual(desktopPlan.bindings.roles.work, promptBindings.roles.work, "desktop plans preserve compatibility fields absent from the draft");
+  assert.deepEqual(desktopPlan.bindings.roles.archive, promptBindings.roles.archive);
+  assert(!desktopPlan.changes.some(change => change.role === "work" || change.role === "archive"));
+  assert(!desktopPlan.reuse.includes("旧工作") && !desktopPlan.reuse.includes("旧存档"));
 
   const baseline = emptyKnowledgeFolderBindings();
   Object.assign(baseline.roles.raw, { enabled: true, readPaths: ["旧来源"], writePath: "旧来源" });
@@ -56,7 +89,7 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
   assert(pure.create.includes("资料/原文/课程"));
   assert.deepEqual(pure.sources, ["资料/原文/旧来源/原笔记.md", "资料/原文/课程/材料.md"].sort());
 
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "echoink-folder-plan-v2-")));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(process.env.ECHOINK_MODULES_TEST_ROOT ?? os.tmpdir(), "echoink-folder-plan-v2-")));
   try {
     await assertPlanApplication(path.join(root, "success"));
     await assertRestoreNativeEmptyDirectoryCleanup(path.join(root, "restore-native-api"));
@@ -66,8 +99,33 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
     await assertRestoreKeepsNewContent(path.join(root, "restore-retained"));
     await assertRenamedLegacyConsentRestores(path.join(root, "restore-legacy"));
     await assertRootNativeJournalProtection(path.join(root, "native-root"));
+    await assertRetiredBindingsSurviveDesktopEdits(path.join(root, "retired-roles"));
   } finally { await fs.rm(root, { recursive: true, force: true }); }
   console.log("Knowledge directory plans, relocation and recovery: PASS");
+}
+
+async function assertRetiredBindingsSurviveDesktopEdits(root: string): Promise<void> {
+  const fixture = await fixtureAt(root);
+  try {
+    await fixture.write("原工作/keep.md", "WORK"); await fixture.write("原存档/keep.md", "ARCHIVE");
+    const saved = fixture.plugin.settings.knowledgeBase.folderBindings;
+    Object.assign(saved.roles.work, { enabled: true, readPaths: ["原工作"], writePath: null, autoOrganizePaths: ["原工作"], allowedSubdirectories: ["旧分类"] });
+    Object.assign(saved.roles.archive, { enabled: true, readPaths: ["原存档", "暂缺存档"], writePath: null, autoOrganizePaths: ["原存档"], compatibilityReadScopes: true });
+    const retired = structuredClone({ work: saved.roles.work, archive: saved.roles.archive });
+    const before = knowledgeFolderBindingsSignature(saved);
+    const plan = await fixture.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
+    assert.deepEqual(plan.issues, [], "missing retired roots do not block a current desktop plan");
+    assert.deepEqual(plan.moves, [], "existing retired files remain in place");
+    assert.equal(knowledgeFolderBindingsSignature(fixture.plugin.settings.knowledgeBase.folderBindings), before, "preview cannot save bindings");
+    assert.equal(await fs.stat(path.join(root, "资料")).catch(() => null), null, "preview cannot create planned roots");
+    assert.deepEqual(fixture.service.folderNameScopes(), [], "retired roots are absent from desktop naming scopes");
+    await fixture.service.applyDirectoryPlan(plan);
+    assert.deepEqual({ work: fixture.plugin.settings.knowledgeBase.folderBindings.roles.work, archive: fixture.plugin.settings.knowledgeBase.folderBindings.roles.archive }, retired);
+    await fixture.service.saveDirectoryBindings({ ...emptyKnowledgeFolderBindings(), revision: fixture.plugin.settings.knowledgeBase.folderBindings.revision });
+    assert.deepEqual({ work: fixture.plugin.settings.knowledgeBase.folderBindings.roles.work, archive: fixture.plugin.settings.knowledgeBase.folderBindings.roles.archive }, retired, "immediate desktop saves retain untouched mobile fields");
+    assert.equal(await fs.readFile(path.join(root, "原工作/keep.md"), "utf8"), "WORK");
+    assert.equal(await fs.readFile(path.join(root, "原存档/keep.md"), "utf8"), "ARCHIVE");
+  } finally { fixture.release(); }
 }
 
 async function fixtureAt(root: string) {

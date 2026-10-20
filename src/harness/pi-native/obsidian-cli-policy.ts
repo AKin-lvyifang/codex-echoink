@@ -55,6 +55,21 @@ export function obsidianCliEffect(request: ObsidianCliRequest): ObsidianCliEffec
   if (["open", "search:open", "tab:open", "history:open"].includes(request.command)) return "ui";
   return "read";
 }
+/** Command semantics only; actual file/active/daily selectors are checked after native resolution. */
+export function obsidianCliCapabilityScope(request: ObsidianCliRequest): {
+  capability: string; write: boolean; exactTarget: boolean; broad: boolean;
+} {
+  const command = request.command;
+  const write = ["note_write", "plugin_write"].includes(obsidianCliEffect(request));
+  const capability = command === "version" ? "conversation"
+    : command.startsWith("plugin") ? "obsidian-plugins"
+      : command === "daily" || command.startsWith("daily:") || request.daily ? "journal"
+        : request.finance ? "finance"
+          : command === "task" || command === "tasks" ? "todos" : "knowledge";
+  return { capability, write,
+    exactTarget: FILE_COMMANDS.has(command) || ["folder", "base:views", "tab:open", "task"].includes(command) || request.active === true,
+    broad: ["files", "folders", "search", "search:context", "search:open", "unresolved", "orphans", "deadends", "tags", "tag", "aliases", "properties", "tasks", "templates", "bases", "history:list"].includes(command) && !request.daily };
+}
 export function normalizeObsidianCliRequest(args: Record<string, unknown>): ObsidianCliRequest {
   const command = args.command;
   if (typeof command !== "string" || !Object.hasOwn(OBSIDIAN_CLI_FIELDS, command)) throw new Error("obsidian_cli_command_not_allowed");

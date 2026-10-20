@@ -1,4 +1,6 @@
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
+import { showSettingsInlineConfirmation } from "../settings/settings-v2";
+import { applyDeleteButton } from "../settings/amicro-buttons";
 import { App, Modal, Setting } from "obsidian";
 
 export function confirmModal(
@@ -7,7 +9,7 @@ export function confirmModal(
   body: string,
   acceptText = "允许",
   declineText = "拒绝",
-  options: { signal?: AbortSignal; preformatted?: boolean; originControls?: boolean } = {}
+  options: { signal?: AbortSignal; preformatted?: boolean; originControls?: boolean; deleteAction?: boolean } = {}
 ): Promise<boolean> {
   if (options.signal?.aborted) return Promise.resolve(false);
   return new Promise((resolve) => {
@@ -31,7 +33,8 @@ export function confirmModal(
       declineText,
       options.preformatted === true,
       finish,
-      options.originControls === true
+      options.originControls === true,
+      options.deleteAction === true
     );
     options.signal?.addEventListener("abort", abort, { once: true });
     if (options.signal?.aborted) {
@@ -125,7 +128,8 @@ class ConfirmModal extends Modal {
     private readonly declineText: string,
     private readonly preformatted: boolean,
     private readonly done: (accepted: boolean) => void,
-    private readonly originControls = false
+    private readonly originControls = false,
+    private readonly deleteAction = false
   ) {
     super(app);
   }
@@ -148,6 +152,7 @@ class ConfirmModal extends Modal {
       const actions = new Setting(contentEl).controlEl;
       const decline = createOriginButton(actions, { text: this.declineText });
       const accept = createOriginButton(actions, { text: this.acceptText, cls: "mod-cta" });
+      if (this.deleteAction) applyDeleteButton(accept);
       decline.onclick = () => { this.finish(false); this.close(); };
       accept.onclick = () => { this.finish(true); this.close(); };
       return;
@@ -159,15 +164,16 @@ class ConfirmModal extends Modal {
           this.close();
         })
       )
-      .addButton((button) =>
+      .addButton((button) => {
         button
           .setButtonText(this.acceptText)
           .setCta()
           .onClick(() => {
             this.finish(true);
             this.close();
-          })
-      );
+          });
+        if (this.deleteAction) applyDeleteButton(button.buttonEl);
+      });
   }
 
   onClose(): void {
@@ -243,6 +249,17 @@ class TextInputModal extends Modal {
 }
 
 export class MemoryCorrectionModal extends Modal {
+  private static inlineSequence = 0;
+  private readonly inlineInputId = `echoink-memory-correction-inline-${++MemoryCorrectionModal.inlineSequence}`;
+  private embedded = false;
+  private inlineEl: HTMLElement | null = null;
+  private pendingInlineLeave: (() => void) | null = null;
+  private inlineOptions: { onCancel?: () => void; onConflict?: () => void } = {};
+  private inlineExitButton: HTMLButtonElement | null = null;
+  private inlineConflict = false;
+  private completed = false;
+  private statusMessage = "";
+  private statusError = false;
   private correction = "";
   private settled = false;
   private disposed = false;
@@ -271,36 +288,71 @@ export class MemoryCorrectionModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("echoink-theme-boundary");
-    const zh = this.language !== "en";
-    const { contentEl } = this;
     this.modalEl.addClass("echoink-memory-correction-modal");
-    contentEl.empty();
-    contentEl.createEl("h2", {
-      text: zh
-        ? `修正${this.record.memoryType}记忆`
-        : `Correct ${this.record.memoryType} memory`
-    });
-    contentEl.createEl("p", {
-      cls: "echoink-memory-correction-intro",
-      text: zh
-        ? "说明哪里不准确，以及正确内容是什么"
-        : "Explain what is inaccurate and what the correct information is"
-    });
+    this.renderContent(this.contentEl);
+  }
 
-    const current = contentEl.createDiv({
-      cls: "echoink-memory-correction-card echoink-memory-correction-current"
+  get hasDraft(): boolean { return !this.completed && (!!this.correction.trim() || this.preview !== null); }
+  get submitting(): boolean { return this.saving || this.state === "generating"; }
+  mountInline(container: HTMLElement, options?: { onCancel?: () => void; onConflict?: () => void }): void {
+    this.suspend(); this.embedded = true; this.disposed = false; if (options) this.inlineOptions = options;
+    this.inlineEl = container.createDiv({ cls: "echoink-memory-correction-inline" });
+    this.renderContent(this.inlineEl);
+    if (this.pendingInlineLeave) {
+      const done = this.pendingInlineLeave; this.pendingInlineLeave = null;
+      this.requestLeave(done);
+    }
+  }
+  requestLeave(done: () => void): void {
+    if (this.submitting) return;
+    if (!this.hasDraft) { done(); return; }
+    if (!this.inlineEl) { this.pendingInlineLeave = done; return; }
+    showSettingsInlineConfirmation(this.inlineEl, this.inlineExitButton ?? this.cancelButton, {
+      message: this.language !== "en" ? "还有未保存的修正，要放弃吗？" : "Discard this unsaved correction?",
+      confirmLabel: this.language !== "en" ? "放弃修改" : "Discard", cancelLabel: this.language !== "en" ? "继续编辑" : "Keep editing",
+      onConfirm: async () => { this.correction = ""; this.preview = null; this.inlineConflict = false; this.state = "editing"; this.finish("cancelled"); done(); }
     });
-    current.createDiv({
-      cls: "echoink-memory-correction-card-title",
-      text: zh ? "原记忆" : "Original memory"
-    });
-    this.addReadOnlyField(current, zh ? "标题" : "Title", this.record.title);
-    this.addReadOnlyField(current, zh ? "正文" : "Content", this.record.content);
-    this.addReadOnlyField(
-      current,
-      zh ? "何时可能想起" : "When it may be recalled",
-      this.record.recallWhen
-    );
+    const panel = this.inlineEl.querySelector<HTMLElement>(".echoink-settings-inline-confirm");
+    this.inlineEl.ownerDocument.defaultView?.requestAnimationFrame(() => { if (panel?.isConnected) panel.scrollIntoView?.({ block: "nearest" }); });
+  }
+  suspend(): void {
+    if (this.inlineEl) { disposeOriginControls(this.inlineEl); this.inlineEl.remove(); this.inlineEl = null; }
+    this.inlineExitButton = null;
+  }
+  private exitInline(): void {
+    this.requestLeave(() => { this.finish("cancelled"); this.suspend(); this.inlineOptions.onCancel?.(); });
+  }
+  private renderContent(contentEl: HTMLElement): void {
+    const zh = this.language !== "en";
+    contentEl.empty();
+    if (!this.embedded) {
+      contentEl.createEl("h2", {
+        text: zh
+          ? `修正${this.record.memoryType}记忆`
+          : `Correct ${this.record.memoryType} memory`
+      });
+      contentEl.createEl("p", {
+        cls: "echoink-memory-correction-intro",
+        text: zh
+          ? "说明哪里不准确，以及正确内容是什么"
+          : "Explain what is inaccurate and what the correct information is"
+      });
+
+      const current = contentEl.createDiv({
+        cls: "echoink-memory-correction-card echoink-memory-correction-current"
+      });
+      current.createDiv({
+        cls: "echoink-memory-correction-card-title",
+        text: zh ? "原记忆" : "Original memory"
+      });
+      this.addReadOnlyField(current, zh ? "标题" : "Title", this.record.title);
+      this.addReadOnlyField(current, zh ? "正文" : "Content", this.record.content);
+      this.addReadOnlyField(
+        current,
+        zh ? "何时可能想起" : "When it may be recalled",
+        this.record.recallWhen
+      );
+    }
 
     const editor = contentEl.createDiv({ cls: "echoink-memory-correction-card echoink-memory-correction-editor" });
     editor.createDiv({ cls: "echoink-memory-correction-card-title", text: zh ? "你的修正" : "Your correction" });
@@ -318,8 +370,9 @@ export class MemoryCorrectionModal extends Modal {
         "aria-label": zh ? "修正说明" : "Correction"
       }
     });
-    label.setAttribute("for", "echoink-memory-correction-input");
-    this.textarea.id = "echoink-memory-correction-input";
+    this.textarea.id = this.embedded ? this.inlineInputId : "echoink-memory-correction-input";
+    label.setAttribute("for", this.textarea.id);
+    this.textarea.value = this.correction;
     this.previewEl = contentEl.createDiv({
       cls: "echoink-memory-correction-card echoink-memory-correction-preview is-hidden",
       attr: { role: "region", "aria-label": zh ? "修正后预览" : "Corrected preview" }
@@ -335,6 +388,11 @@ export class MemoryCorrectionModal extends Modal {
     });
 
     const actions = editor.createDiv({ cls: "echoink-memory-correction-actions" });
+    if (this.embedded) {
+      this.inlineExitButton = createOriginButton(actions, { text: zh ? "取消" : "Cancel", attr: { type: "button" } });
+      this.inlineExitButton.onclick = () => this.exitInline();
+      contentEl.onkeydown = event => { if (event.key === "Escape" && !event.isComposing) { event.preventDefault(); event.stopPropagation(); this.exitInline(); } };
+    }
     this.correctButton = createOriginButton(actions, {
       cls: "mod-cta",
       text: zh ? "生成预览" : "Generate preview",
@@ -342,7 +400,7 @@ export class MemoryCorrectionModal extends Modal {
     });
     const previewActions = this.previewEl.createDiv({ cls: "echoink-memory-correction-actions" });
     this.cancelButton = createOriginButton(previewActions, { text: zh ? "取消" : "Cancel", attr: { type: "button" } });
-    this.cancelButton.onclick = () => { if (!this.saving) this.close(); };
+    this.cancelButton.onclick = () => { if (!this.saving) { if (this.embedded) this.exitInline(); else this.close(); } };
     this.saveButton = createOriginButton(previewActions, {
       cls: "mod-cta",
       text: zh ? "确认保存" : "Confirm save",
@@ -375,6 +433,7 @@ export class MemoryCorrectionModal extends Modal {
       if (this.saving || !this.preview) return;
       void this.savePreview();
     };
+    this.setStatus(this.statusMessage, this.statusError);
     this.renderState();
     this.textarea.focus();
   }
@@ -397,6 +456,7 @@ export class MemoryCorrectionModal extends Modal {
     this.generation = generation;
     this.generationController = controller;
     this.preview = null;
+    this.inlineConflict = false;
     this.state = "generating";
     this.setStatus(this.language !== "en"
       ? "正在生成修正后预览…"
@@ -452,10 +512,16 @@ export class MemoryCorrectionModal extends Modal {
     this.renderState();
     try {
       await this.actions.save(preview, this.correction.trim());
+      if (this.embedded) { this.completed = true; this.correction = ""; this.preview = null; this.state = "editing"; this.setStatus(this.language !== "en" ? "已保存新版本。" : "New version saved."); }
       this.finish("saved");
-      if (!this.disposed) this.close();
+      if (!this.disposed && !this.embedded) this.close();
     } catch (error) {
       if (isMemoryCorrectionRevisionConflict(error)) {
+        if (this.embedded) {
+          this.inlineConflict = true; this.state = "preview";
+          this.setStatus(this.language !== "en" ? "记忆已变化，你的输入已保留；请重新核对后生成预览。" : "Memory changed. Your input is retained; review it and generate a new preview.", true);
+          this.inlineOptions.onConflict?.(); return;
+        }
         this.finish("conflict");
         if (!this.disposed) this.close();
         return;
@@ -475,15 +541,17 @@ export class MemoryCorrectionModal extends Modal {
   }
 
   private renderState(): void {
+    if (this.embedded && !this.inlineEl) return;
     const zh = this.language !== "en";
     const generating = this.state === "generating";
-    this.textarea.disabled = generating || this.saving;
+    this.textarea.disabled = generating || this.saving || this.completed;
+    if (this.inlineExitButton) this.inlineExitButton.disabled = this.submitting;
     this.cancelButton.disabled = this.saving;
-    this.correctButton.disabled = this.saving
+    this.correctButton.disabled = this.saving || this.completed
       || (!generating && !this.correction.trim());
     this.saveButton.disabled = this.saving
       || this.state !== "preview"
-      || !this.preview;
+      || !this.preview || this.inlineConflict || this.completed;
     this.correctButton.empty();
     if (generating) {
       this.correctButton.createSpan({
@@ -497,6 +565,7 @@ export class MemoryCorrectionModal extends Modal {
     this.saveButton.setText(this.saving
       ? (zh ? "保存中…" : "Saving…")
       : (zh ? "确认保存" : "Confirm save"));
+    if (this.embedded) this.correctButton.toggleClass("mod-cta", !this.preview);
     this.modalEl.toggleClass("is-generating", generating);
     this.modalEl.toggleClass("is-saving", this.saving);
     this.renderPreview();
@@ -522,6 +591,8 @@ export class MemoryCorrectionModal extends Modal {
   }
 
   private setStatus(message: string, error = false): void {
+    this.statusMessage = message; this.statusError = error;
+    if (this.embedded && !this.inlineEl) return;
     this.statusEl.setText(message);
     this.statusEl.toggleClass("is-error", error);
   }

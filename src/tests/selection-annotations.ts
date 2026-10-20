@@ -1,4 +1,5 @@
 import { Scope, type App } from "obsidian";
+import { attachTestConversationRunService } from "./conversation-run-host";
 import { EchoInkViewService } from "../plugin/view-service";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { piProjectedEntryMessageId } from "../harness/pi-native/pi-chat-ui-projector";
@@ -364,8 +365,15 @@ async function relayedEscapeKeepsQuickWindowFocus(main: Window & typeof globalTh
   }
 }
 
+const draftPlugins = new WeakMap<object, any>();
 function createView(doc: Document, settings: any): any {
-  const view: any = new CodexView({} as never, { settings } as never);
+  let plugin = draftPlugins.get(settings);
+  if (!plugin) {
+    plugin = { settings };
+    attachTestConversationRunService(plugin);
+    draftPlugins.set(settings, plugin);
+  }
+  const view: any = new CodexView({} as never, plugin);
   Object.assign(view, { inputEl: doc.createElement("textarea"), attachments: [], selectedSkill: null, renderAttachments() {}, renderQueue() {}, renderTabs() {}, renderMessages() {}, renderToolbar() {}, applyStatus() {}, resetVirtualWindow() {}, updateInputPlaceholder() {}, closeComposerMenus() {}, sessionById: () => null, clearComposerDraft() { this.inputEl.value = ""; clearSelectionDraft(this.inputEl); this.attachments = []; } });
   return view;
 }
@@ -422,7 +430,7 @@ async function summaryFocusIsNotStolenByViewActivation(): Promise<void> {
 async function settingsBehavior(win: Window & typeof globalThis): Promise<void> {
   assert.equal(visibleCharacters("👨‍👩‍👧‍👦é中文").length, 4);
   const normalized = normalizeSelectionAskSettings({ enabled: false, actions: [{ id: "default", name: "改名", template: "解释" }, { id: "a", name: "第二", template: "" }, { id: "b", name: "第二", template: "" }, { id: "c", name: "第四" }] });
-  assert.equal(normalized.actions.length, 3); assert.equal(normalized.actions[0].name, "提问"); assert.equal(normalized.actions[2].name, "选项3");
+  assert.equal(normalized.actions.length, 4); assert.equal(normalized.actions[0].name, "提问"); assert.equal(normalized.actions[2].name, "选项3");
   assert.deepEqual(normalizeSettingsData({ ...structuredClone(DEFAULT_SETTINGS), selectionAsk: normalized }).settings.selectionAsk, normalized, "settings whitelist retains normalized free actions");
   let fail = true; const saved: any[] = [];
   const plugin: any = { settings: structuredClone(DEFAULT_SETTINGS), async saveSettings() { if (fail) throw new Error("disk failure"); saved.push(structuredClone(this.settings.selectionAsk)); } };

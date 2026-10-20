@@ -1,4 +1,7 @@
-import { Notice } from "obsidian";
+import { Notice, Platform } from "obsidian";
+import path from "node:path";
+import { migrateLegacyAgentRegistry, synchronizeLegacyAgentIdentity } from "../agents/migration";
+import { pluginDataDir } from "./plugin-data-paths";
 import type CodexForObsidianPlugin from "../main";
 import { prepareRawMessage, readRawText, writeRawText } from "../core/raw-message-store";
 import {
@@ -17,7 +20,7 @@ import {
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { ResourceMutationError } from "./resource-mutation-authority";
 import { isEmptyEchoInkPluginData } from "../settings/onboarding";
-import { knowledgeRootEntries, migrateKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, knowledgeRootEntries, migrateKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 export { ResourceMutationError, resourceMutationRollbackIsSafe } from "./resource-mutation-authority";
 
 export interface SettingsSaveOptions {
@@ -93,6 +96,23 @@ export class EchoInkSettingsStore {
     const emptyData = isEmptyEchoInkPluginData(data);
     const normalized = normalizeSettingsData(data);
     this.plugin.settings = normalized.settings;
+    let agentsMigrated = false;
+    try {
+      let migratedRegistry = await migrateLegacyAgentRegistry(
+        this.plugin.settings.agentRegistry,
+        path.join(
+          pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()),
+          "pi-agent-product-v1", ".echoink"
+        )
+      );
+      if (!Platform.isMobile) migratedRegistry = await synchronizeLegacyAgentIdentity(migratedRegistry,
+        path.join(pluginDataDir(this.plugin.getVaultPath(), this.plugin.getPluginDataDirName()), "pi-agent-product-v1", ".echoink"));
+      agentsMigrated = migratedRegistry !== this.plugin.settings.agentRegistry;
+      this.plugin.settings.agentRegistry = migratedRegistry;
+    } catch (error) {
+      // Keep normalized defaults and migrationVersion=0 so the next load retries.
+      console.warn("EchoInk Agent identity migration could not complete; it will retry on the next load.", error);
+    }
     let bindingsMigrated = false;
     if (!this.plugin.settings.knowledgeBase.folderBindings) {
       const mobilePaths = (data as { mobileUi?: { knowledgePaths?: Partial<Record<"raw" | "wiki" | "inbox", string>> } } | null)?.mobileUi?.knowledgePaths;
@@ -100,11 +120,11 @@ export class EchoInkSettingsStore {
       bindingsMigrated = true;
     }
     // Registered before local runtimes and feature controllers are constructed; reloads read live settings.
-    registerKnowledgeFolderBindings(this.plugin.getVaultPath(), () => this.plugin.settings.knowledgeBase.folderBindings);
+    registerKnowledgeFolderBindings(this.plugin.getVaultPath(), () => this.plugin.settings.knowledgeBase.folderBindings, DESKTOP_KNOWLEDGE_ROOT_ROLES);
     this.settingsPersistenceRecoveryError = null;
     this.resourceMutationRecoveryError = null;
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
-    if (normalized.changed || knowledgeStatusRecovered || bindingsMigrated) {
+    if (normalized.changed || knowledgeStatusRecovered || bindingsMigrated || agentsMigrated) {
       await this.saveSettings(true, {
         flushConversationStore: false
       });
@@ -330,6 +350,11 @@ export class EchoInkSettingsStore {
       this.assertNoSettingsPersistenceRecoveryConflict();
       if (options.flushRawWrites !== false) {
         await this.flushRawWrites();
+      }
+      try {
+        await this.plugin.syncPiConversationTaskMetadata?.();
+      } catch (error) {
+        console.warn("EchoInk task metadata could not sync; saving the settings projection for a later retry.", error);
       }
       const prepared = await this.prepareCanonicalSettingsCandidate();
       await this.persistSettingsDataCandidate(

@@ -57,15 +57,16 @@ export interface KnowledgeMaintenanceSourceEvidence {
   readonly revision: string;
 }
 
-import { knowledgeFolderOrganizationPrompt } from "./folder-bindings";
+import { knowledgeFolderOrganizationPrompt, projectedKnowledgeFolderRoles } from "./folder-bindings";
+import type { KnowledgeRootRole } from "./root-paths-core";
 
-export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./folder-bindings").KnowledgeFolderBindings | null): string {
+export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./folder-bindings").KnowledgeFolderBindings | null, roleScope?: readonly KnowledgeRootRole[]): string {
   if (bindings) return [
     `固定协议版本：${ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION}`,
-    `已确认目录用途：${JSON.stringify(bindings.roles)}`,
+    `已确认目录用途：${JSON.stringify(projectedKnowledgeFolderRoles(bindings, roleScope))}`,
     "只读取本轮已选资料来源；未启用或失效用途不可写。候选必须使用真实路径，只写已绑定的知识成果或项目位置，保护来源正文和附件。",
     "来源父目录中的成果子目录不属于来源。先理解资料、检查质量并对照已有知识，避免重复。允许直接平铺，沿用已有子目录；不新建未确认的分类树，不改名目录。",
-    knowledgeFolderOrganizationPrompt(bindings),
+    knowledgeFolderOrganizationPrompt(bindings, roleScope),
     KNOWLEDGE_LINKING_INSTRUCTION,
     "有候选时通过 knowledge_maintain 提交；携带已读目标版本或明确不存在的目标。不改 Raw 正文，程序补齐已采用的来源与版本。",
     "维护记录和内部状态由插件私有保存；无需读取或生成 Tracker、Raw index、报告或指南。",
@@ -161,7 +162,7 @@ export function validateKnowledgeMaintenanceCandidateSources(input: Readonly<{
   return Object.freeze(evidence);
 }
 
-function extractMachineSourceMarkers(content: string): Map<string, string> {
+export function extractMachineSourceMarkers(content: string): Map<string, string> {
   const markers = new Map<string, string>();
   const markerLikeCount = [...content.matchAll(/echoink-source/giu)].length;
   let parsedCount = 0;

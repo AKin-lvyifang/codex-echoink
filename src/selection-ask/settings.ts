@@ -14,7 +14,9 @@ export function normalizeSelectionAskSettings(input: unknown): SelectionAskSetti
   const defaultItem = raw.find((value) => value && value.id === "default");
   const actions: SelectionAskAction[] = [{ id: "default", name: "提问", template: typeof defaultItem?.template === "string" ? defaultItem.template : "" }];
   for (const value of raw) {
-    if (actions.length === 3) break;
+    // Desktop supports the fixed question plus three custom actions. Keep all
+    // persisted actions when any shared/mobile settings save is normalized.
+    if (actions.length === 4) break;
     if (!value || typeof value.id !== "string" || !value.id.trim() || actions.some((action) => action.id === value.id)) continue;
     let name = typeof value.name === "string" ? visibleCharacters(value.name.trim()).slice(0, 4).join("") : "";
     if (selectionActionNameError(name, actions, value.id)) name = `选项${actions.length + 1}`;

@@ -1,15 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { buildKnowledgeLinkingTargets, scanKnowledgeLinkingMentions, buildKnowledgeLinkingPatch, selectKnowledgeLinkingMentions } from "../knowledge-base/knowledge-linking";
-import type { KnowledgeLinkingDocument, KnowledgeLinkingMention, KnowledgeLinkingProposal, KnowledgeLinkingTarget, KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
+import type { KnowledgeLinkingDocument, KnowledgeLinkingMention, KnowledgeLinkingProposal, KnowledgeLinkingTarget, KnowledgeLinkingTask, KnowledgeLinkingOrigin } from "../knowledge-base/knowledge-linking-types";
 import type { KnowledgeLinkingStateStore } from "../knowledge-base/knowledge-linking-state";
 
 export interface KnowledgeLinkingHost {
-  documents(): AsyncIterable<KnowledgeLinkingDocument>;
-  judge(input: { taskId: string; documents: KnowledgeLinkingDocument[]; targets: KnowledgeLinkingTarget[]; candidates: Array<KnowledgeLinkingMention & { path: string }>; allowAliases: boolean; signal: AbortSignal }): Promise<KnowledgeLinkingProposal[]>;
-  read(path: string): Promise<string>;
-  write(path: string, before: string, after: string): Promise<void>;
+  automaticEnabled?(): boolean;
+  documents(origin?: Readonly<KnowledgeLinkingOrigin>): AsyncIterable<KnowledgeLinkingDocument>;
+  judge(input: KnowledgeLinkingOrigin & { taskId: string; documents: KnowledgeLinkingDocument[]; targets: KnowledgeLinkingTarget[]; candidates: Array<KnowledgeLinkingMention & { path: string }>; allowAliases: boolean; signal: AbortSignal }): Promise<KnowledgeLinkingProposal[]>;
+  read(path: string, origin?: Readonly<KnowledgeLinkingOrigin>): Promise<string>;
+  write(path: string, before: string, after: string, origin?: Readonly<KnowledgeLinkingOrigin>, signal?: AbortSignal): Promise<void>;
   bindingSignature(): string;
-  canWrite(): boolean;
+  canWrite(origin?: Readonly<KnowledgeLinkingOrigin>): boolean | Promise<boolean>;
   release?(): Promise<void>;
   completed?(task: KnowledgeLinkingTask): void;
 }
@@ -26,6 +27,8 @@ export class KnowledgeLinkingService {
   private disposed = false;
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
   private starts: Promise<void> = Promise.resolve();
+  private handoffStops = 0;
+  private readonly blockedOrigins = new Set<string>();
   private automaticQueue: NonNullable<KnowledgeLinkingTask["queuedAutomatic"]> = [];
   readonly ready: Promise<void>;
   constructor(private readonly host: KnowledgeLinkingHost, private readonly store: Pick<KnowledgeLinkingStateStore, "load" | "save"> & Partial<Pick<KnowledgeLinkingStateStore, "loadTask" | "saveRecord">>) {
@@ -39,7 +42,10 @@ export class KnowledgeLinkingService {
   }
   private async restore(): Promise<void> {
     this.task = await this.store.load();
+    if (this.task) this.restoreOrigin(this.task);
     this.automaticQueue = this.task?.queuedAutomatic ?? [];
+    for (const queued of this.automaticQueue) this.restoreOrigin(queued);
+    for (const item of [this.task, ...this.automaticQueue]) if (item?.pausedForHandoff && item.originConversationId) this.blockedOrigins.add(item.originConversationId);
     if (this.task && ["scanning", "judging", "writing"].includes(this.task.phase)) {
       this.task.phase = "interrupted";
       await this.persist();
@@ -47,14 +53,20 @@ export class KnowledgeLinkingService {
     this.notify();
     this.advanceQueue();
   }
-  async start(mode: "manual" | "automatic" = "manual", targetPaths?: string[], queuedId?: string, sourcePaths?: string[]): Promise<KnowledgeLinkingTask> {
-    const next = this.starts.then(() => this.startScoped(mode, targetPaths, queuedId, sourcePaths));
+  async start(mode: "manual" | "automatic" = "manual", targetPaths?: string[], queuedId?: string, sourcePaths?: string[], originConversationId?: string): Promise<KnowledgeLinkingTask> {
+    const next = this.starts.then(() => this.startScoped(mode, targetPaths, queuedId, sourcePaths, originConversationId));
     this.starts = next.then(() => undefined, () => undefined);
-    return await next;
+    const task = await next;
+    this.advanceQueue();
+    return task;
   }
-  private async startScoped(mode: "manual" | "automatic", targetPaths?: string[], queuedId?: string, sourcePaths?: string[]): Promise<KnowledgeLinkingTask> {
+  private async startScoped(mode: "manual" | "automatic", targetPaths?: string[], queuedId?: string, sourcePaths?: string[], originConversationId?: string): Promise<KnowledgeLinkingTask> {
     await this.ready;
     if (this.disposed) throw new Error("知识关联服务已关闭。");
+    if (mode === "automatic" && this.host.automaticEnabled?.() === false) throw new Error("自动补链已关闭，待处理关联保留。");
+    const origin: KnowledgeLinkingOrigin = originConversationId
+      ? { originConversationId, authorizationSource: "conversation" }
+      : { authorizationSource: mode === "manual" ? "manual-user" : "unknown" };
     if (queuedId) {
       if (this.task?.id === queuedId) return this.snapshot()!;
       const queued = this.automaticQueue.find(item => item.id === queuedId);
@@ -64,15 +76,16 @@ export class KnowledgeLinkingService {
     }
     if (running(this.task)) {
       if (mode === "automatic") {
-        const queued = { id: queuedId ?? randomUUID(), paths: [...new Set(targetPaths ?? [])], ...(sourcePaths ? { sourcePaths: [...new Set(sourcePaths)] } : {}), at: Date.now() };
+        const queued = { ...origin, ...(originConversationId && this.blockedOrigins.has(originConversationId) ? { pausedForHandoff: true } : {}), id: queuedId ?? randomUUID(), paths: [...new Set(targetPaths ?? [])], ...(sourcePaths ? { sourcePaths: [...new Set(sourcePaths)] } : {}), at: Date.now() };
         this.automaticQueue.push(queued); this.task!.queuedAutomatic = this.automaticQueue;
         await this.persist(); const snapshot = this.queuedTask(queued); await this.store.saveRecord?.(snapshot); return snapshot;
       }
       return this.snapshot()!;
     }
     const at = Date.now();
-    this.task = { schemaVersion: 1, id: queuedId ?? randomUUID(), mode, queuedAutomatic: this.automaticQueue, phase: "scanning", bindingSignature: this.host.bindingSignature(), createdAt: at, updatedAt: at, processed: 0, total: null, proposals: [], patches: [], results: [], ...(targetPaths ? { targetPaths: [...new Set(targetPaths)] } : {}), ...(sourcePaths ? { sourcePaths: [...new Set(sourcePaths)] } : {}) };
+    this.task = { ...origin, ...(originConversationId && this.blockedOrigins.has(originConversationId) ? { pausedForHandoff: true } : {}), schemaVersion: 1, id: queuedId ?? randomUUID(), mode, queuedAutomatic: this.automaticQueue, phase: "scanning", bindingSignature: this.host.bindingSignature(), createdAt: at, updatedAt: at, processed: 0, total: null, proposals: [], patches: [], results: [], ...(targetPaths ? { targetPaths: [...new Set(targetPaths)] } : {}), ...(sourcePaths ? { sourcePaths: [...new Set(sourcePaths)] } : {}) };
     const created = this.task;
+    if (created.pausedForHandoff) created.phase = "interrupted";
     await this.persist();
     if (!this.disposed && this.task === created && created.phase === "scanning") this.launch(signal => this.scan(signal));
     return this.snapshot()!;
@@ -80,8 +93,8 @@ export class KnowledgeLinkingService {
   async confirm(): Promise<void> {
     await this.ready;
     const task = this.task;
-    if (this.disposed || task?.phase !== "awaiting-confirmation" || this.flight) return;
-    if (!this.host.canWrite()) throw new Error("当前权限只允许读取，不能补全关联。");
+    if (this.disposed || this.handoffStops || task?.pausedForHandoff || task?.phase !== "awaiting-confirmation" || this.flight) return;
+    if (!await this.host.canWrite(task)) throw new Error("当前权限只允许读取，不能补全关联。");
     // Confirmation preflight belongs to the same cancellable operation as
     // writing. Closing or cancelling during an awaited read cannot revive it.
     this.launch(async signal => {
@@ -89,12 +102,12 @@ export class KnowledgeLinkingService {
       if (!active()) return;
       if (task.bindingSignature !== this.host.bindingSignature()) return await this.regenerate(signal);
       for (const patch of task.patches) {
-        const content = await this.host.read(patch.path).catch(() => null);
+        const content = await this.host.read(patch.path, task).catch(() => null);
         if (!active() || task.phase !== "awaiting-confirmation") return;
         if (content !== patch.before) return await this.regenerate(signal);
       }
       for (const targetPath of new Set(task.patches.flatMap(patch => patch.mentions.map(mention => mention.targetPath)))) {
-        const content = await this.host.read(targetPath).catch(() => null);
+        const content = await this.host.read(targetPath, task).catch(() => null);
         if (!active() || task.phase !== "awaiting-confirmation") return;
         if (content === null || !this.targetCurrent(task, targetPath, content)) return await this.regenerate(signal);
       }
@@ -104,8 +117,28 @@ export class KnowledgeLinkingService {
       if (active() && task.phase === "writing") await this.write(signal);
     });
   }
-  async resume(): Promise<void> {
+  async resume(taskId?: string): Promise<void> {
     await this.ready;
+    if (this.handoffStops) throw new Error("知识关联正在等待归属转交。");
+    if (this.disposed || this.flight) return;
+    if (taskId && this.task?.id !== taskId) {
+      if (this.flight || this.task && running(this.task) && !this.task.pausedForHandoff) throw new Error("知识关联任务正在运行。");
+      const index = this.automaticQueue.findIndex(item => item.id === taskId);
+      if (index < 0) {
+        const saved = await this.store.loadTask?.(taskId);
+        if (!saved || saved.phase !== "interrupted") return;
+        this.restoreOrigin(saved);
+        this.task = { ...saved, queuedAutomatic: this.automaticQueue };
+      } else {
+        const queued = this.automaticQueue.splice(index, 1)[0];
+        this.task = { ...this.queuedTask(queued), phase: "interrupted", queuedAutomatic: this.automaticQueue };
+      }
+    }
+    if (this.task?.pausedForHandoff) {
+      if (this.task.originConversationId) this.blockedOrigins.delete(this.task.originConversationId);
+      delete this.task.pausedForHandoff;
+      await this.persist();
+    }
     if (this.disposed || !this.task || this.flight || this.task.phase !== "interrupted") return;
     if (this.task.bindingSignature !== this.host.bindingSignature()) return await this.regenerate();
     if (this.task.patches.length) {
@@ -122,6 +155,37 @@ export class KnowledgeLinkingService {
     await this.persist();
     if (this.disposed || signal?.aborted) return;
     if (signal) await this.scan(signal); else this.launch(nextSignal => this.scan(nextSignal));
+  }
+  private originOf(value: KnowledgeLinkingOrigin): KnowledgeLinkingOrigin {
+    return { ...(value.originConversationId ? { originConversationId: value.originConversationId } : {}), authorizationSource: value.authorizationSource ?? "unknown" };
+  }
+  private restoreOrigin(value: KnowledgeLinkingOrigin): void {
+    if (value.originConversationId !== undefined && (typeof value.originConversationId !== "string" || !value.originConversationId.trim() || /[\0\r\n]/u.test(value.originConversationId))) throw new Error("知识关联来源无效。");
+    value.authorizationSource = value.originConversationId ? "conversation" : value.authorizationSource === "manual-user" ? "manual-user" : "unknown";
+  }
+  /** Pause matching work durably before Catalog handoff; wait for any write/readback already in flight. */
+  async stopForOrigins(originConversationIds: readonly string[]): Promise<void> {
+    const origins = new Set(originConversationIds);
+    for (const id of origins) this.blockedOrigins.add(id);
+    this.handoffStops++;
+    try {
+      await this.ready;
+      await this.starts;
+      const current = this.task;
+      const ownsCurrent = !!current?.originConversationId && origins.has(current.originConversationId);
+      for (const queued of this.automaticQueue) if (queued.originConversationId && origins.has(queued.originConversationId)) {
+        queued.pausedForHandoff = true;
+        await this.store.saveRecord?.(this.queuedTask(queued));
+      }
+      if (ownsCurrent) {
+        current!.pausedForHandoff = true;
+        this.controller?.abort();
+        await this.flight;
+        if (this.task === current && !["completed", "partial", "cancelled"].includes(current!.phase)) current!.phase = "interrupted";
+        await this.host.release?.();
+      }
+      await this.persist();
+    } finally { this.handoffStops--; }
   }
   async cancel(): Promise<void> {
     await this.ready;
@@ -150,18 +214,26 @@ export class KnowledgeLinkingService {
     });
   }
   private queuedTask(queued: NonNullable<KnowledgeLinkingTask["queuedAutomatic"]>[number]): KnowledgeLinkingTask {
-    return { schemaVersion: 1, id: queued.id, mode: "automatic", phase: "queued", bindingSignature: this.host.bindingSignature(), createdAt: queued.at, updatedAt: queued.at, processed: 0, total: null, proposals: [], patches: [], results: [], targetPaths: queued.paths, ...(queued.sourcePaths ? { sourcePaths: queued.sourcePaths } : {}) };
+    return { schemaVersion: 1, id: queued.id, ...this.originOf(queued), ...(queued.pausedForHandoff ? { pausedForHandoff: true } : {}), mode: "automatic", phase: queued.pausedForHandoff ? "interrupted" : "queued", bindingSignature: this.host.bindingSignature(), createdAt: queued.at, updatedAt: queued.at, processed: 0, total: null, proposals: [], patches: [], results: [], targetPaths: queued.paths, ...(queued.sourcePaths ? { sourcePaths: queued.sourcePaths } : {}) };
   }
   private advanceQueue(): void {
-    if (this.disposed || this.flight || running(this.task) || !this.automaticQueue.length) return;
-    const queued = this.automaticQueue.shift()!;
-    void this.start("automatic", queued.paths, queued.id, queued.sourcePaths);
+    if (this.disposed || this.host.automaticEnabled?.() === false || this.handoffStops || this.flight || running(this.task) || !this.automaticQueue.length) return;
+    const index = this.automaticQueue.findIndex(item => !item.pausedForHandoff && !(item.originConversationId && this.blockedOrigins.has(item.originConversationId)));
+    if (index < 0) return;
+    const queued = this.automaticQueue.splice(index, 1)[0];
+    void this.start("automatic", queued.paths, queued.id, queued.sourcePaths, queued.originConversationId).catch(async error => {
+      // The setting may change after dequeue but before the serialized start.
+      if (!this.automaticQueue.some(item => item.id === queued.id)) this.automaticQueue.splice(index, 0, queued);
+      if (this.task) this.task.queuedAutomatic = this.automaticQueue;
+      if (!this.disposed) await this.persist();
+      if (this.host.automaticEnabled?.() !== false) console.error("EchoInk automatic linking queue could not start", error);
+    });
   }
   private async scan(signal: AbortSignal): Promise<void> {
     const task = this.task!; task.phase = "scanning"; task.processed = 0; task.total = null;
     task.proposals = []; task.patches = []; task.results = [];
     const documents: KnowledgeLinkingDocument[] = [];
-    for await (const document of this.host.documents()) {
+    for await (const document of this.host.documents(task)) {
       if (signal.aborted) return;
       documents.push(document); task.processed++; this.notify();
       if (documents.length % 32 === 0) await yieldUI();
@@ -175,7 +247,7 @@ export class KnowledgeLinkingService {
         if (signal.aborted) return;
         if (document.aliases.length) { task.processed++; continue; }
         try {
-          const proposals = await this.host.judge({ taskId: task.id, documents: [document], targets: [], candidates: [], allowAliases: true, signal });
+          const proposals = await this.host.judge({ ...this.originOf(task), taskId: task.id, documents: [document], targets: [], candidates: [], allowAliases: true, signal });
           const proposal = proposals.find(item => item.path === document.path);
           if (proposal?.aliases?.length) merged.set(document.path, { path: document.path, version: document.version, mentions: [], aliases: proposal.aliases });
         } catch (error) { task.results.push({ path: document.path, status: "failed", links: 0, aliases: 0, message: `别名判断：${error instanceof Error ? error.message : String(error)}` }); }
@@ -200,7 +272,7 @@ export class KnowledgeLinkingService {
     for (const batch of batches) {
       if (signal.aborted) return;
       try {
-        const proposals = await this.host.judge({ taskId: task.id, ...batch, allowAliases: false, signal });
+        const proposals = await this.host.judge({ ...this.originOf(task), taskId: task.id, ...batch, allowAliases: false, signal });
         for (const proposal of proposals) {
           const document = batch.documents.find(doc => doc.path === proposal.path);
           if (!document) throw new Error("模型返回了本批范围之外的笔记。");
@@ -235,25 +307,25 @@ export class KnowledgeLinkingService {
   }
   private async write(signal: AbortSignal): Promise<void> {
     const task = this.task!;
-    if (!this.host.canWrite()) throw new Error("当前权限只允许读取，不能补全关联。");
+    if (!await this.host.canWrite(task)) throw new Error("当前权限只允许读取，不能补全关联。");
     for (const patch of task.patches) {
       if (signal.aborted) return;
       if (task.results.some(result => result.path === patch.path && result.status === "written")) continue;
       try {
-        if (!this.host.canWrite()) throw new Error("当前权限只允许读取，保留尚未写入的笔记。");
+        if (!await this.host.canWrite(task)) throw new Error("当前权限只允许读取，保留尚未写入的笔记。");
         if (task.bindingSignature !== this.host.bindingSignature()) throw new Error("目录已变化，请重新扫描并确认。");
-        const current = await this.host.read(patch.path);
+        const current = await this.host.read(patch.path, task);
         if (signal.aborted || this.disposed || this.task !== task) return;
         for (const targetPath of new Set(patch.mentions.map(mention => mention.targetPath))) {
-          const targetContent = await this.host.read(targetPath);
+          const targetContent = await this.host.read(targetPath, task);
           if (signal.aborted || this.disposed || this.task !== task) return;
           if (!this.targetCurrent(task, targetPath, targetContent)) throw new Error("关联目标已变化，保留原文，请重新扫描。");
         }
         if (current !== patch.after) {
           if (current !== patch.before) throw new Error("笔记已变化，保留当前内容，请重新扫描。");
-          await this.host.write(patch.path, patch.before, patch.after);
+          await this.host.write(patch.path, patch.before, patch.after, task, signal);
         }
-        if (await this.host.read(patch.path) !== patch.after) throw new Error("写后核对失败，请查看笔记。");
+        if (await this.host.read(patch.path, task) !== patch.after) throw new Error("写后核对失败，请查看笔记。");
         task.results.push({ path: patch.path, status: "written", links: patch.mentions.length, aliases: patch.addedAliases.length });
       } catch (error) { task.results.push({ path: patch.path, status: "failed", links: 0, aliases: 0, message: error instanceof Error ? error.message : String(error) }); }
       task.processed++; await this.persist(); await yieldUI();

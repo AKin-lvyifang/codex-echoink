@@ -14,6 +14,8 @@ export interface FinanceEntry {
   account: string; description: string; currency: string; note: string;
   icon?: string;
   billPlanId?: string;
+  /** Only new imports without a reliable category carry this marker. */
+  classificationPending?: boolean;
 }
 export interface FinanceBillPlan { id: string; name: string; budgetCents: number; allocations?: Record<string, number> }
 
@@ -53,6 +55,7 @@ export interface LifestyleData {
   reports: LifeReport[];
   financeAnalysisArchives?: FinanceAnalysisArchiveRecord[];
   financeAnalysisPending?: FinanceAnalysisArchiveDraft[];
+  lastSuccessfulImportAt?: number;
   /** Unowned fields survive finance writes without loading another plugin. */
   [key: string]: unknown;
 }
@@ -76,13 +79,19 @@ function normalizeData(raw: unknown): LifestyleData {
       ? Object.fromEntries(Object.entries(raw.allocations).filter(([name,amount])=>name.trim() && Number.isSafeInteger(amount) && amount>=0)) : undefined;
     plans.set(raw.id, { ...raw, id: raw.id, name: raw.name.trim(), budgetCents: raw.budgetCents, ...(allocations?{allocations}:{}) });
   }
-  return {
+  const normalized: LifestyleData = {
     ...value,
     version: 1,
     financeDefaultBudget: value.financeDefaultBudget as FinanceDefaultBudget | null ?? null,
-    financeEntries: list("financeEntries"), budgets: list("budgets"), financePlans: list("financePlans"),
+    financeEntries: list<FinanceEntry>("financeEntries").map(entry => {
+      if (!entry || typeof entry !== "object") return entry;
+      const { classificationPending, ...rest } = entry;
+      return classificationPending === true ? { ...rest, classificationPending: true } : rest;
+    }), budgets: list("budgets"), financePlans: list("financePlans"),
     financeBillPlans: [...plans.values()], financeGoals: list("financeGoals"), reports: list("reports")
   };
+  if (typeof value.lastSuccessfulImportAt !== "number" || !Number.isFinite(value.lastSuccessfulImportAt) || value.lastSuccessfulImportAt <= 0) delete normalized.lastSuccessfulImportAt;
+  return normalized;
 }
 
 export class LifestyleStoreCore {

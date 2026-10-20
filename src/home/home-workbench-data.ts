@@ -4,7 +4,7 @@ import type { SettingsLanguage } from "../settings/settings";
 import type { HomeActivityCore } from "./home-activity-core";
 import { homeCopy } from "./home-i18n";
 import { isHomeNotePath, type HomeNoteVisibility } from "./home-note-visibility";
-import { nativeJournalPathForDate, readNativeJournalContext, readNativeJournalSettings } from "./native-journal";
+import { nativeJournalPathForDate, prepareNativeJournalTemplate, readNativeJournalContext, readNativeJournalSettings } from "./native-journal";
 import {
   DEFAULT_JOURNAL_DIRECTORY,
 } from "./journal-directory";
@@ -80,6 +80,18 @@ export class HomeWorkbenchDataService {
 
   getJournalDirectory(): string {
     return readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings()).folder;
+  }
+
+  /** Metadata only: the journal page reads bodies solely for its visible rows. */
+  async buildJournalRecords() {
+    const settings = readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings());
+    if (settings.available && settings.folder && !(this.app.vault.getAbstractFileByPath(settings.folder) instanceof TFolder)) {
+      throw new Error("日记位置不存在或已被文件占用，请检查日记设置。");
+    }
+    const records = settings.available ? this.app.vault.getMarkdownFiles()
+      .filter(file => this.includeNotePath(file.path) && journalDateFromPath(file.path, settings.folder, settings.format))
+      .map(file => this.recordForFile(file, settings.folder, settings.format)) : [];
+    return { settings, records };
   }
 
   journalPathForDate(date: Date): string {
@@ -164,6 +176,7 @@ export class HomeWorkbenchDataService {
     const slash = path.lastIndexOf("/");
     if (slash > 0) await this.ensureFolder(path.slice(0, slash), language);
     try {
+      prepareNativeJournalTemplate(this.app, path, content);
       const file = await this.app.vault.create(path, content);
       return { file, created: true };
     } catch (error) {

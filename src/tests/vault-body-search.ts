@@ -7,13 +7,156 @@ import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vaul
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
 import { KnowledgeReferenceBuilder, KnowledgeRetriever, formatKnowledgeReferencesForPrompt } from "../knowledge-base/query";
-import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime } from "../plugin/pi-production-runtime-composition";
+import { bindKnowledgeIndexToVault, createProductionPiKnowledgeRuntime, createProductionPiKnowledgeToolRetriever } from "../plugin/pi-production-runtime-composition";
 import { PiKnowledgeReadToolSecurity, createPiKnowledgeReadToolDefinitions } from "../harness/pi-native/pi-knowledge-read-tools";
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import { knowledgeReferenceEntryDetails } from "../knowledge-base/usage";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { searchBodyDocuments } from "../knowledge-base/search/body-search";
 import { sha256Hex } from "../utils/sha256";
+
+export async function runVaultBodySearchWorkflowNavigationTests(root: string): Promise<void> {
+  await mkdir(root, { recursive: true });
+  const sourcePath = "知识/来源A.md", secondPath = "知识/来源B.md", allowedTarget = "知识/允许.md";
+  const notesTarget = "普通笔记/隐含.md", inboxTarget = "收件箱/隐含.md";
+  const notesVia = "普通笔记/共同来源.md", inboxVia = "收件箱/共同来源.md";
+  const links = `[[${allowedTarget}#允许标题]] [[${notesTarget}#范围外标题]] [[${inboxTarget}#旧收件标题]]`;
+  const source = (title: string, tokens: string) => [`# ${title}`, tokens, "", ...Array.from({ length: 65 }, () => "Background without query terms."), "", links].join("\n");
+  const bodies = new Map([
+    [sourcePath, source("来源A", "POLICY_NAV_TOKEN VIA_NOTES_TOKEN VIA_INBOX_TOKEN")],
+    [secondPath, source("来源B", "POLICY_NAV_TOKEN")],
+    [allowedTarget, "# 允许标题\nALLOWED_UNREAD_BODY"], [notesTarget, "# 范围外标题\nNOTES_UNREAD_BODY"], [inboxTarget, "# 旧收件标题\nINBOX_UNREAD_BODY"],
+    [notesVia, `# 普通共同来源\nVIA_NOTES_TOKEN\n\n${"Long background without query terms.\n".repeat(200)}\n[[${allowedTarget}]]`],
+    [inboxVia, `# 收件共同来源\nVIA_INBOX_TOKEN\n\n${"Long background without query terms.\n".repeat(200)}\n[[${allowedTarget}]]`]
+  ]);
+  const bindings = emptyKnowledgeFolderBindings();
+  for (const [role, folder] of [["wiki", "知识"], ["inbox", "收件箱"]] as const) {
+    Object.assign(bindings.roles[role], { enabled: true, searchEnabled: true, readPaths: [folder], writePath: folder });
+  }
+  let unavailableNotesTarget = false;
+  const file = (name: string) => ({ path: name, basename: path.basename(name, ".md"), extension: "md", stat: { mtime: 1, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file),
+    getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
+    read: async (entry: TFile) => {
+      if (unavailableNotesTarget && entry.path === notesTarget) throw new Error("synthetic target read failure");
+      return bodies.get(entry.path)!;
+    } }, metadataCache: { getFileCache: () => null },
+    workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } } as unknown as App;
+  const release = registerKnowledgeFolderBindings(root, () => bindings);
+  const port = new VaultBodySearch(app, () => bindings);
+  const index = new KnowledgeAgentIndex({ vaultPath: root, storageRootPath: path.join(root, ".index"), bodySearch: port });
+  index.refresh = async () => { assert.fail("workflow navigation never initializes the maintenance index"); };
+  const unscoped = new KnowledgeRetriever(root, { agentIndex: index });
+  const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: root, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
+  let workflow: "chat" | "ask" | "maintain" = "ask";
+  const tools = createProductionPiKnowledgeToolRetriever(root, index, () => workflow);
+  const policy = { kinds: ["wiki", "projects", "raw"] as const };
+  const request = (question: string, explicitPaths: string[] = []) => ({ conversationId: "workflow-navigation", question, explicitPaths, includeUnrefined: false });
+  type Navigation = { related?: import("../knowledge-base/knowledge-relations").KnowledgeRelationPage; linkCues?: readonly import("../knowledge-base/search/contracts").KnowledgeLinkCue[] };
+  const navigation = (value: Navigation) => ({ related: value.related, linkCues: value.linkCues });
+  const bodyOnly = <T extends Navigation>({ related: _related, linkCues: _linkCues, ...body }: T) => body;
+  const failures: string[] = [];
+  const check = (label: string, verify: () => void) => {
+    try { verify(); console.log(`Workflow navigation ${label}: PASS`); }
+    catch (error) { failures.push(label); console.error(`Workflow navigation ${label}: FAIL ${error instanceof Error ? error.message : error}`); }
+  };
+  const assertNavigation = (values: readonly Navigation[], denied: readonly string[], allowed: readonly string[]) => {
+    // Source context is already authorized prose and remains byte-for-byte
+    // intact; these checks cover newly resolved target/via metadata only.
+    const paths = values.flatMap(value => [
+      ...(value.related?.items.flatMap(item => [item.source.vaultRelativePath, item.target?.vaultRelativePath,
+        item.anchorLocation?.vaultRelativePath, ...(item.candidates?.map(candidate => candidate.vaultRelativePath) ?? [])]) ?? []),
+      ...(value.linkCues?.flatMap(cue => [cue.vaultRelativePath, ...cue.via.map(source => source.vaultRelativePath)]) ?? [])
+    ]);
+    for (const target of denied) assert.ok(!paths.includes(target), `automatic navigation leaked ${target}`);
+    for (const target of allowed) assert.ok(paths.includes(target), `allowed navigation disappeared: ${target}`);
+    assert.ok(values.filter(value => value.related).length <= 3, "the first-three navigation source budget is retained");
+    for (const value of values) if (value.related) assert.ok(value.related.returned <= 4, "the per-source navigation budget is retained");
+  };
+  try {
+    const baseline = await index.search({ query: "POLICY_NAV_TOKEN", limit: 6 });
+    assert.equal(baseline.hits.length, 2);
+    assert.ok(baseline.hits.some(hit => hit.related?.items.some(item => item.target?.vaultRelativePath === notesTarget && item.anchorLocation?.status === "located")));
+    assert.ok(baseline.hits.some(hit => hit.linkCues?.some(cue => cue.vaultRelativePath === notesTarget)));
+    const scopedBaseline = await index.search({ query: "POLICY_NAV_TOKEN", kinds: [...policy.kinds], limit: 6 });
+    const baselineReferences = (await unscoped.retrieve({ question: "POLICY_NAV_TOKEN", limit: 6 })).references;
+    for (const restricted of ["ask", "maintain"] as const) {
+      workflow = restricted;
+      const searched = await tools.searchAgentIndex({ query: "POLICY_NAV_TOKEN", limit: 6 });
+      check(`${restricted} search targets and body`, () => {
+        assertNavigation(searched.hits, [notesTarget, inboxTarget], [allowedTarget]);
+        assert.deepEqual(searched.hits.map(bodyOnly), scopedBaseline.hits.map(bodyOnly));
+        assert.deepEqual(searched.hits.flatMap(hit => hit.linkCues ?? []), scopedBaseline.hits.flatMap(hit => hit.linkCues?.filter(cue => cue.vaultRelativePath === allowedTarget) ?? []));
+        assert.deepEqual(searched.hits.flatMap(hit => hit.related?.items ?? []), scopedBaseline.hits.flatMap(hit => hit.related?.items.filter(item => item.target?.vaultRelativePath === allowedTarget) ?? []),
+          "allowed navigation retains its original context, titles, anchors, revisions and unread fields");
+      });
+      const references = (await unscoped.retrieve({ question: "POLICY_NAV_TOKEN", limit: 6 }, policy)).references;
+      check(`${restricted} preflight targets and body`, () => {
+        assertNavigation(references, [notesTarget, inboxTarget], [allowedTarget]);
+        assert.deepEqual(references.map(bodyOnly), baselineReferences.map(bodyOnly));
+        assert.equal((knowledgeReferenceEntryDetails(references).references[0].related?.items[0].anchorLocation?.readStatus), "unread");
+      });
+      const via = await index.search({ query: "VIA_NOTES_TOKEN", limit: 6 });
+      assert.ok(via.hits.find(hit => hit.vaultRelativePath === sourcePath)?.linkCues?.some(cue => cue.via.some(item => item.vaultRelativePath === notesVia)), "the allowed owner must carry a cue supported by a disallowed ordinary note");
+      const viaSearch = await tools.searchAgentIndex({ query: "VIA_NOTES_TOKEN", limit: 6 });
+      const viaReferences = (await unscoped.retrieve({ question: "VIA_NOTES_TOKEN", limit: 6 }, policy)).references;
+      check(`${restricted} cue supporters`, () => {
+        assert.ok(viaSearch.hits.every(hit => !hit.linkCues), "a cue cannot expose an out-of-workflow via source");
+        assert.ok(viaReferences.every(reference => !reference.linkCues), "preflight applies the same via policy");
+      });
+    }
+    const explicitBaseline = (await unscoped.retrieve({ question: sourcePath, explicitPaths: [sourcePath], limit: 1 })).references;
+    const explicit = (await unscoped.retrieve({ question: sourcePath, explicitPaths: [sourcePath], limit: 1 }, policy)).references;
+    check("ask explicit-source automatic anchors", () => {
+      assertNavigation(explicit, [notesTarget, inboxTarget], [allowedTarget]);
+      assert.deepEqual(explicit.map(bodyOnly), explicitBaseline.map(bodyOnly));
+    });
+    const ask = await runtime.retrieveAsk(request("POLICY_NAV_TOKEN") as never);
+    check("ask Provider and storage parity", () => {
+      assertNavigation(ask.references, [notesTarget, inboxTarget], [allowedTarget]);
+      assert.deepEqual(JSON.parse(ask.providerResourceText).sources.map(navigation), ask.references.map(navigation));
+      assert.deepEqual(knowledgeReferenceEntryDetails(ask.references).references.map(navigation), ask.references.map(navigation));
+      assert.doesNotMatch(ask.providerResourceText, /ALLOWED_UNREAD_BODY|NOTES_UNREAD_BODY|INBOX_UNREAD_BODY/u);
+    });
+    unavailableNotesTarget = true; port.invalidate(notesTarget);
+    const unavailablePage = (await port.search({ mode: "related", vaultRelativePath: sourcePath, limit: 4 })).related!;
+    assert.ok(unavailablePage.items.some(item => !item.target && item.anchorLocation?.vaultRelativePath === notesTarget), "read failure must exercise anchorLocation without a resolved target");
+    const unavailable = await runtime.retrieveAsk(request(sourcePath, [sourcePath]) as never);
+    check("ask unavailable target anchor path", () => assertNavigation(unavailable.references, [notesTarget, inboxTarget], [allowedTarget]));
+    unavailableNotesTarget = false; port.invalidate(notesTarget);
+
+    bindings.roles.inbox.enabled = false; bindings.roles.inbox.readPaths = []; bindings.roles.inbox.writePath = null;
+    bindings.inboxRecallExclusions = ["收件箱"];
+    workflow = "chat";
+    const chatSearch = await tools.searchAgentIndex({ query: "POLICY_NAV_TOKEN", limit: 6 });
+    const chat = await runtime.retrieveChat!(request("POLICY_NAV_TOKEN") as never);
+    const chatExplicit = await runtime.retrieveChat!(request(sourcePath, [sourcePath]) as never);
+    check("chat unbound Inbox search and references", () => {
+      assertNavigation(chatSearch.hits, [inboxTarget], [allowedTarget, notesTarget]);
+      assertNavigation(chat.references, [inboxTarget], [allowedTarget, notesTarget]);
+      assertNavigation(chatExplicit.references, [inboxTarget], [allowedTarget, notesTarget]);
+      assert.deepEqual(JSON.parse(chat.providerResourceText).sources.map(navigation), chat.references.map(navigation));
+      assert.deepEqual(chat.references.map(bodyOnly), baselineReferences.map(bodyOnly));
+    });
+    const inboxCue = await index.search({ query: "VIA_INBOX_TOKEN", limit: 6 });
+    assert.ok(inboxCue.hits.find(hit => hit.vaultRelativePath === sourcePath)?.linkCues?.some(cue => cue.via.some(item => item.vaultRelativePath === inboxVia)), "the allowed owner must carry the unbound Inbox via path from the shared adapter");
+    const chatVia = await tools.searchAgentIndex({ query: "VIA_INBOX_TOKEN", limit: 6 });
+    const chatViaPreflight = await runtime.retrieveChat!(request("VIA_INBOX_TOKEN") as never);
+    check("chat unbound Inbox cue supporters", () => {
+      assert.ok(chatVia.hits.every(hit => !hit.linkCues));
+      assert.ok(chatViaPreflight.references.every(reference => !reference.linkCues));
+    });
+    const manual = await runtime.retrieveChat!(request(inboxTarget, [inboxTarget]) as never);
+    const manualBaseline = await unscoped.retrieve({ question: inboxTarget, explicitPaths: [inboxTarget], limit: 1 });
+    const manualRead = await tools.readAgentIndex({ vaultRelativePath: inboxTarget });
+    check("chat manual public reads remain authorized", () => {
+      assert.equal(manual.references[0].vaultRelativePath, inboxTarget);
+      assert.deepEqual(manual.references.map(bodyOnly), manualBaseline.references.map(bodyOnly));
+      assert.match(manualRead.content, /INBOX_UNREAD_BODY/u);
+    });
+    assert.deepEqual(failures, [], "workflow candidate policy must filter nested navigation at every delivery boundary");
+  } finally { release(); port.dispose(); }
+}
 
 export async function runVaultBodySearchPrivateBoundaryTests(): Promise<void> {
   const privatePaths = ["私有记忆/偏好草稿.md", ".obsidian/plugins/echoink/偏好缓存.md"];
@@ -303,10 +446,14 @@ export async function runVaultBodySearchExplicitAnchorTests(): Promise<void> {
     assert.deepEqual(knowledgeReferenceEntryDetails([reference]).references[0].related, related);
     assert.doesNotMatch(formatKnowledgeReferencesForPrompt([reference]), /UNREAD_PACKING_BODY/u);
     const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: index.vaultPath, knowledgeAgentIndex: index, knowledgePreferences: {} as never, usage: {} as never });
-    for (const delivered of [await runtime.retrieveChat!({ question, explicitPaths: [sourcePath], includeUnrefined: false } as never),
-      await runtime.retrieveAsk({ question, explicitPaths: [sourcePath], includeUnrefined: false } as never)]) {
+    for (const [workflow, delivered] of [["chat", await runtime.retrieveChat!({ question, explicitPaths: [sourcePath], includeUnrefined: false } as never)],
+      ["ask", await runtime.retrieveAsk({ question, explicitPaths: [sourcePath], includeUnrefined: false } as never)]] as const) {
       assert.deepEqual(JSON.parse(delivered.providerResourceText).sources[0].related, delivered.references[0].related);
-      assert.deepEqual(delivered.references[0].related, related);
+      if (workflow === "chat") assert.deepEqual(delivered.references[0].related, related);
+      else {
+        assert.deepEqual(delivered.references[0].related?.items, [], "/ask never decorates an allowed explicit source with automatic ordinary-note navigation");
+        assert.equal(delivered.references[0].related?.returned, 0);
+      }
       assert.equal(delivered.references[0].referenceId, baseline.referenceId);
     }
     bodies.set(targetPath, `New preface.\n\n${target}`);

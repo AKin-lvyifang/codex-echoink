@@ -17,6 +17,7 @@ import {
 import type { EchoInkReasoningActivity } from "../../types/reasoning-summary";
 import { stableHashedIdentity } from "../../core/mapping";
 import { piToolCallIdFromProjectedMessageId } from "../../harness/pi-native/pi-chat-ui-projector";
+import { shouldDisplayReasoning } from "./reasoning-visibility";
 
 const ACTIVE_STATUSES = new Set([
   "running",
@@ -345,12 +346,26 @@ function buildProcessNodes(
   explicitNodes: readonly Readonly<EchoInkTurnProcessNode>[],
   copy: ConversationCopy
 ): Readonly<EchoInkTurnProcessNode>[] {
-  const nodes: EchoInkTurnProcessNode[] = explicitNodes.map((node) => ({ ...node }));
+  const explicitTurn = latestExplicitTurn(messages);
+  const reasoningSegments = explicitTurn ? echoInkProviderReasoningSegments(explicitTurn) : [];
+  const nodes: EchoInkTurnProcessNode[] = explicitNodes
+    .filter((node) => !node.nodeId.startsWith("sources:"))
+    .filter((node) => {
+      if (node.kind !== "reasoning") return true;
+      const segment = reasoningSegments.find((candidate) => node.nodeId === `provider-reasoning:${candidate.reasoningId}`);
+      const source = messages.find((message) => message.id === node.sourceMessageId);
+      const readableText = segment?.text ?? (source?.itemType === "reasoning" && !source.reasoningSummary ? source.text : "");
+      return shouldDisplayReasoning(segment ?? node, readableText);
+    })
+    .map((node) => ({ ...node }));
   const nodeIds = new Set(nodes.map((node) => node.nodeId));
   const representedMessageIds = new Set(nodes.flatMap((node) =>
     node.sourceMessageId ? [node.sourceMessageId] : []
   ));
   const representedToolActivityIds = new Set<string>();
+  const responseHasStarted = messages.some((message) =>
+    (isAgentAnswerMessage(message) && message.text.trim()) || isToolMessage(message))
+    || (explicitTurn ? echoInkProviderReasoningSegments(explicitTurn).some((segment) => segment.text.trim()) : false);
   for (const node of explicitNodes) {
     if (node.toolCallId) {
       representedToolActivityIds.add(reasoningToolActivityId(node.toolCallId));
@@ -364,24 +379,21 @@ function buildProcessNodes(
   for (const message of messages) {
     if (message.reasoningSummary && !representedMessageIds.has(message.id)) {
       for (const activity of message.reasoningSummary.activities) {
+        if (activity.kind === "provider" && activity.status === "active" && responseHasStarted) continue;
         if (
           activity.kind === "tool"
           && representedToolActivityIds.has(activity.id)
         ) continue;
         const node = nodeForReasoningActivity(message, activity, copy);
+        if (!node) continue;
         if (!nodeIds.has(node.nodeId)) {
           nodes.push(node);
           nodeIds.add(node.nodeId);
         }
       }
-      if (!message.reasoningSummary.activities.length) {
-        const node = nodeForMessage(message, copy);
-        if (node && !nodeIds.has(node.nodeId)) {
-          nodes.push(node);
-          nodeIds.add(node.nodeId);
-        }
-      }
-    } else if (!representedMessageIds.has(message.id)) {
+    } else if (!representedMessageIds.has(message.id)
+      && !(message.itemType === "thinking" && messages.some((candidate) =>
+        candidate.reasoningSummary || isToolMessage(candidate)))) {
       const node = nodeForMessage(message, copy);
       if (node && !nodeIds.has(node.nodeId)) {
         nodes.push(node);
@@ -397,10 +409,10 @@ function buildProcessNodes(
     }
   }
 
-  const explicitTurn = latestExplicitTurn(messages);
   for (const reasoning of explicitTurn
     ? echoInkProviderReasoningSegments(explicitTurn)
     : []) {
+    if (!shouldDisplayReasoning(reasoning, reasoning.text)) continue;
     const nodeId = `provider-reasoning:${reasoning.reasoningId}`;
     if (!nodeIds.has(nodeId)) {
       nodes.push({
@@ -489,31 +501,6 @@ function knowledgeNodesForMessage(
 ): EchoInkTurnProcessNode[] {
   const usage = knowledgeUsageMessageData(message);
   const nodes: EchoInkTurnProcessNode[] = [];
-  const sourceKeys = new Set<string>();
-  for (const citation of message.citations?.citations ?? []) {
-    sourceKeys.add(`vault:${citation.path}`);
-  }
-  for (const reference of usage.references) {
-    sourceKeys.add(`vault:${reference.vaultRelativePath}`);
-  }
-  for (const source of usage.personalMemorySources) {
-    sourceKeys.add(`memory:${source.id}`);
-  }
-  const sourceCount = sourceKeys.size;
-  if (sourceCount > 0 || message.citations || usage.askSourceAttribution) {
-    nodes.push({
-      nodeId: `sources:${message.id}`,
-      kind: "retrieval",
-      status: processNodeStatus(message.status),
-      title: copy.process.sourcesTitle,
-      summary: sourceCount > 0
-        ? copy.process.verifiableSources(sourceCount)
-        : copy.process.noDisplayableSources,
-      startedAt: finiteTimestamp(message.createdAt) ?? 0,
-      updatedAt: finiteTimestamp(message.completedAt) ?? finiteTimestamp(message.createdAt) ?? 0,
-      sourceMessageId: message.id
-    });
-  }
   if (usage.producedPaths.length) {
     nodes.push({
       nodeId: `artifacts:${message.id}`,
@@ -533,7 +520,12 @@ function nodeForReasoningActivity(
   message: ChatMessage,
   activity: Readonly<EchoInkReasoningActivity>,
   copy: ConversationCopy
-): EchoInkTurnProcessNode {
+): EchoInkTurnProcessNode | null {
+  const elapsed = Math.max(0, activity.updatedAt - activity.startedAt);
+  if (activity.kind === "provider"
+    && (activity.status === "completed" || (activity.status === "active" && elapsed <= 5_000))) return null;
+  if (activity.kind === "memory" && activity.status === "completed"
+    && !(activity.completed ?? activity.current ?? 0)) return null;
   const kind = reasoningActivityNodeKind(activity.kind);
   const summary = reasoningActivitySummary(activity, copy);
   return {
@@ -672,6 +664,19 @@ function reasoningActivitySummary(
   activity: Readonly<EchoInkReasoningActivity>,
   copy: ConversationCopy
 ): string {
+  if (activity.kind === "knowledge") {
+    if (activity.status === "active") return copy.process.searching;
+    if (activity.total === undefined) return activity.completed === undefined && activity.current === undefined
+      ? copy.process.activityStage("completed") : copy.process.activityCompleted(activity.completed ?? activity.current ?? 0);
+    return copy.process.knowledgeResult(activity.total ?? 0, activity.completed ?? activity.current ?? 0);
+  }
+  if (activity.kind === "memory") {
+    if (activity.status === "active") return copy.process.memoryChecking;
+    return copy.process.memoryUsed(activity.completed ?? activity.current ?? 0);
+  }
+  if (activity.kind === "provider" && activity.status === "active") {
+    return copy.process.waitingSeconds(Math.floor((activity.updatedAt - activity.startedAt) / 1000));
+  }
   const count = typeof activity.current === "number" && typeof activity.total === "number"
     ? `${activity.current}/${activity.total}`
     : typeof activity.completed === "number"

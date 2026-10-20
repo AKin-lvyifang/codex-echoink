@@ -62,6 +62,9 @@ export interface ControlledVaultResourceLoaderOptions {
   appendSystemPrompt?: readonly string[];
   /** The sole product-owned Inline Extension; no file discovery is performed. */
   inlineExtension?: InlineExtension;
+  /** Current Agent/global policy; the path has already passed Vault containment. */
+  assertSkillAllowed?(skillPath: string): Promise<void>;
+  assertBeforeAgentStart?(): Promise<void>;
 }
 
 interface ControlledResourceExtensionPaths {
@@ -148,6 +151,7 @@ export class ControlledVaultResourceLoader implements ResourceLoader {
       );
     }
     const blocks = await Promise.all(this.skills.map(async (skill) => {
+      await this.options.assertSkillAllowed?.(skill.filePath);
       const text = await fsp.readFile(skill.filePath, "utf8");
       const body = stripSkillFrontmatter(text).trim();
       return [
@@ -202,6 +206,7 @@ export class ControlledVaultResourceLoader implements ResourceLoader {
       vaultRoot,
       this.options.skillPaths ?? []
     );
+    for (const skillPath of skillPaths) await this.options.assertSkillAllowed?.(skillPath);
     const loaded = loadSkills({
       cwd: vaultRoot,
       agentDir: vaultRoot,
@@ -222,7 +227,7 @@ export class ControlledVaultResourceLoader implements ResourceLoader {
     this.skillDiagnostics = loaded.diagnostics;
     this.extensions = this.options.inlineExtension
       ? [await materializeControlledInlineExtension(
-        this.options.inlineExtension
+        this.options.inlineExtension, this.options.assertBeforeAgentStart
       )]
       : [];
   }
@@ -258,7 +263,8 @@ export type ControlledPiToolRegistration = Pick<
  * An explicit allowlist prevents Pi's default read/bash/edit/write activation.
  */
 export function createControlledPiToolRegistration(
-  customTools: readonly ToolDefinition[] = []
+  customTools: readonly ToolDefinition[] = [],
+  assertToolAllowed?: (toolName: string, args: Readonly<Record<string, unknown>>) => Promise<void>
 ): ControlledPiToolRegistration {
   const names = new Set<string>();
   for (const tool of customTools) {
@@ -280,7 +286,12 @@ export function createControlledPiToolRegistration(
   return {
     noTools: "all",
     tools: [...names],
-    customTools: [...customTools]
+    customTools: customTools.map(tool => !assertToolAllowed ? tool : ({ ...tool,
+      execute: async (id, args, signal, onUpdate, ctx) => {
+        await assertToolAllowed(tool.name, args as Record<string, unknown>);
+        return await tool.execute(id, args, signal, onUpdate, ctx);
+      }
+    }))
   };
 }
 
@@ -342,7 +353,8 @@ export function createControlledPiKnowledgeToolRegistration(
 }
 
 async function materializeControlledInlineExtension(
-  inline: InlineExtension
+  inline: InlineExtension,
+  assertBeforeAgentStart?: () => Promise<void>
 ): Promise<Extension> {
   const name = typeof inline === "function" ? "echoink-controlled" : inline.name;
   const factory = typeof inline === "function" ? inline : inline.factory;
@@ -365,7 +377,10 @@ async function materializeControlledInlineExtension(
         "Controlled Inline Extension may register at most one handler for each allowed event."
       );
     }
-    handlers.set(event, [handler as (...args: never[]) => unknown]);
+    const registered = handler as (...args: never[]) => unknown;
+    handlers.set(event, [event === "before_agent_start" && assertBeforeAgentStart
+      ? async (...args: never[]) => { await assertBeforeAgentStart(); return await registered(...args); }
+      : registered]);
   };
   const api = new Proxy(Object.create(null) as ExtensionAPI, {
     get(_target, property) {
@@ -377,6 +392,7 @@ async function materializeControlledInlineExtension(
     }
   });
   await factory(api);
+  if (assertBeforeAgentStart && !handlers.has("before_agent_start")) handlers.set("before_agent_start", [assertBeforeAgentStart]);
   if (!handlers.has("tool_call") || !handlers.has("tool_result")) {
     throw new ControlledVaultResourceError(
       "inline_extension_invalid",

@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
-const outputDir = path.join(rootDir, ".tmp");
+const outputDir = process.env.ECHOINK_SETTINGS_TEST_ROOT
+  ? path.join(path.resolve(process.env.ECHOINK_SETTINGS_TEST_ROOT), "provider-settings")
+  : path.join(rootDir, ".tmp");
 const outputFile = path.join(outputDir, "provider-settings-tests.mjs");
 const obsidianShimPath = path.join(
   rootDir,
@@ -271,16 +273,11 @@ await esbuild.build({
   platform: "node",
   target: "node22",
   format: "esm",
-  banner: { js: 'import { createRequire as createSettingsTestRequire } from "node:module"; const require = createSettingsTestRequire(import.meta.url);' },
-  external: [
-    "@earendil-works/pi-agent-core",
-    "@earendil-works/pi-ai",
-    "@earendil-works/pi-coding-agent",
-    "yaml"
-  ],
+  banner: { js: `import { createRequire as createSettingsTestRequire } from "node:module"; const require = createSettingsTestRequire(${JSON.stringify(path.join(rootDir, "package.json"))});` },
   plugins: [{
     name: "provider-settings-test-shims",
     setup(build) {
+      build.onResolve({ filter: /^(@earendil-works\/pi-(agent-core|ai|coding-agent)(\/|$)|yaml$)/ }, args => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true }));
       build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, () => ({ path: path.join(rootDir, "src/tests/origin-controls-shim.ts") }));
       build.onResolve({ filter: /(?:^|\/)origin-setting$/ }, () => ({ path: path.join(rootDir, "src/tests/origin-setting-shim.ts") }));
       build.onResolve({ filter: /^obsidian$/ }, () => ({
@@ -296,6 +293,8 @@ const result = spawnSync(process.execPath, [outputFile], {
   cwd: rootDir,
   env: {
     ...process.env,
+    ...(process.env.ECHOINK_SETTINGS_TEST_ROOT ? { TMPDIR: outputDir } : {}),
+    ECHOINK_SETTINGS_TEST_OUTPUT: outputDir,
     ECHOINK_DISABLE_ACP: "1",
     PI_OFFLINE: "1"
   },

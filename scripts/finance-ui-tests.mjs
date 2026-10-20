@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
+import os from "node:os";
 import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const directory = path.join(root, ".tmp/finance-ui-tests");
+const requestedTestRoot = process.env.ECHOINK_FINANCE_UI_TEST_ROOT;
+let taskTestRoot;
+if (requestedTestRoot !== undefined) {
+  if (!requestedTestRoot.trim()) throw new Error("ECHOINK_FINANCE_UI_TEST_ROOT must not be empty");
+  const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults", "90-任务临时"));
+  taskTestRoot = await realpath(path.resolve(requestedTestRoot));
+  if (!taskTestRoot.startsWith(allowed + path.sep)) throw new Error("Finance UI fixtures must stay in 90-任务临时");
+}
 const require = createRequire(import.meta.url);
 const { JSDOM } = require(process.env.ECHOINK_JSDOM_PATH || "jsdom");
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://finance-fixture.invalid" });
@@ -42,10 +50,18 @@ const create = function(tag, options = {}) { if (typeof options === "string") op
 Object.assign(win.Element.prototype, { createEl: create, createDiv(options) { return create.call(this, "div", options); }, createSpan(options) { return create.call(this, "span", options); }, empty() { this.replaceChildren(); }, addClass(...names) { this.classList.add(...names); }, removeClass(...names) { this.classList.remove(...names); }, setText(text) { this.textContent = text; }, setAttr(key, value) { this.setAttribute(key, value); }, toggleClass(key, value) { this.classList.toggle(key, value); }, hasClass(key) { return this.classList.contains(key); }, scrollIntoView() {} });
 globalThis.getComputedStyle = win.getComputedStyle.bind(win);
 const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
+const directory = taskTestRoot ? await mkdtemp(path.join(taskTestRoot, ".finance-ui-run-")) : path.join(root, ".tmp/finance-ui-tests");
 await mkdir(directory, { recursive: true });
 try {
   const target = path.join(directory, "test.mjs");
-  await esbuild.build({ stdin: { contents: `export { financeEntryCsv } from "./src/lifestyle/finance-domain"; export { getProPluginAccess } from "./src/membership/access"; export { paidTestAccess } from "./src/tests/membership-access"; export { openTestModals } from "./src/tests/obsidian-shim"; export { applyFinanceBudgetChanges } from "./src/lifestyle/finance-budget"; export { FinanceWorkspace } from "./src/lifestyle/finance-view"; export { FinanceNumbers } from "./src/lifestyle/finance-number"; export { financePage, fitFinanceList } from "./src/lifestyle/finance-pagination"; export { paginationItems } from "./src/ui/components/origin/pagination"; export { financeCategoryDonut } from "./src/lifestyle/finance-category-donut"; export { financeBillPlanStats } from "./src/lifestyle/finance-bill-plan"; export { EMPTY_LIFESTYLE_DATA } from "./src/lifestyle/store"; export { DEFAULT_LIFESTYLE_SETTINGS } from "./src/lifestyle/settings"; export { createOriginPagination, disposeOriginControls } from "./src/settings/origin-controls";`, resolveDir: root, loader: "ts" }, bundle: true, platform: "node", target: "node22", format: "esm", outfile: target, external: ["read-excel-file/universal", "yaml", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"], loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" }, banner: { js: 'import {createRequire} from "node:module"; const require = createRequire(import.meta.url);' }, alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") } });
+  const externalPackages = ["read-excel-file/universal", "yaml", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"];
+  const externalOptions = taskTestRoot ? { plugins: [{ name: "finance-ui-fixture-externals", setup(build) {
+    build.onResolve({ filter: /^[^./]/ }, args => {
+      if (!externalPackages.includes(args.path)) return;
+      return { path: fileURLToPath(import.meta.resolve(args.path)), external: true };
+    });
+  } }] } : { external: externalPackages };
+  await esbuild.build({ stdin: { contents: `export { financeEntryCsv } from "./src/lifestyle/finance-domain"; export { getProPluginAccess } from "./src/membership/access"; export { paidTestAccess } from "./src/tests/membership-access"; export { openTestModals } from "./src/tests/obsidian-shim"; export { applyFinanceBudgetChanges } from "./src/lifestyle/finance-budget"; export { FinanceWorkspace } from "./src/lifestyle/finance-view"; export { FinanceNumbers } from "./src/lifestyle/finance-number"; export { financePage, fitFinanceList } from "./src/lifestyle/finance-pagination"; export { paginationItems } from "./src/ui/components/origin/pagination"; export { financeCategoryDonut } from "./src/lifestyle/finance-category-donut"; export { financeBillPlanStats } from "./src/lifestyle/finance-bill-plan"; export { EMPTY_LIFESTYLE_DATA } from "./src/lifestyle/store"; export { DEFAULT_LIFESTYLE_SETTINGS } from "./src/lifestyle/settings"; export { createOriginPagination, disposeOriginControls } from "./src/settings/origin-controls";`, resolveDir: root, loader: "ts" }, bundle: true, platform: "node", target: "node22", format: "esm", outfile: target, ...externalOptions, loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" }, banner: { js: 'import {createRequire} from "node:module"; const require = createRequire(import.meta.url);' }, alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") } });
   const api = await import(pathToFileURL(target).href);
   for (const [count, pages, last] of [[0,1,0],[20,1,20],[21,2,1],[40,2,20],[41,3,1]]) { const result = api.financePage(Array.from({ length: count }), 99); assert.equal(result.pages, pages); assert.equal(result.page, pages); assert.equal(result.items.length, last); }
   assert.deepEqual(api.paginationItems(3, 7), [1,2,3,4,5,6,7]); assert.deepEqual(api.paginationItems(5, 10), [1,"ellipsis",4,5,6,"ellipsis",10]);

@@ -10,10 +10,16 @@ export type QueueSettlement = "continue" | "paused" | "idle";
 import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
 
 export interface QueuedTurnItem {
+  resumeContext?: import("../agents/task-resume").TaskResumeContext;
   id: string;
   sessionId: string;
   text: string;
   composerTextSnapshot?: string;
+  /** Local workbench intent, carried to the Catalog only after Pi accepts the turn. */
+  prefillSource?: string;
+  /** Exact source chosen locally; the original is never a Composer attachment. */
+  englishDiarySourcePath?: string;
+  pdfTaskRequest?: import("../pdf-reading/types").PdfTaskRequest;
   attachments: StoredAttachment[];
   /** Document bytes/text/transport frozen before this turn enters the queue. */
   preparedDocuments?: readonly Readonly<PiChatPreparedDocument>[];
@@ -193,9 +199,11 @@ function clampIndex(index: number, maxInclusive: number): number {
   return Math.max(0, Math.min(Math.trunc(index), maxInclusive));
 }
 
-function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
+export function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
   return {
     ...item,
+    ...(item.pdfTaskRequest ? { pdfTaskRequest: structuredClone(item.pdfTaskRequest) } : {}),
+    ...(item.resumeContext ? { resumeContext: structuredClone(item.resumeContext) } : {}),
     attachments: item.attachments.map((attachment) => ({ ...attachment })),
     ...(item.preparedDocuments
       ? {

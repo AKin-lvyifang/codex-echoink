@@ -8,18 +8,20 @@ export const KNOWLEDGE_ROOT_NAMES = Object.freeze({
 });
 export type KnowledgeRootRole = keyof typeof KNOWLEDGE_ROOT_NAMES;
 export const KNOWLEDGE_ROOT_ROLES = Object.freeze(Object.keys(KNOWLEDGE_ROOT_NAMES) as KnowledgeRootRole[]);
+/** Desktop consumers retire these purposes without changing shared saved bindings. */
+export const DESKTOP_KNOWLEDGE_ROOT_ROLES: readonly KnowledgeRootRole[] = Object.freeze(KNOWLEDGE_ROOT_ROLES.filter(role => role !== "work" && role !== "archive"));
 
-export function knowledgeRootRole(relativePath: string, bindings?: KnowledgeFolderBindings | null): KnowledgeRootRole | null {
-  if (bindings) return classifyKnowledgePath(bindings, relativePath);
+export function knowledgeRootRole(relativePath: string, bindings?: KnowledgeFolderBindings | null, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): KnowledgeRootRole | null {
+  if (bindings) return classifyKnowledgePath(bindings, relativePath, roleScope);
   const root = relativePath.replace(/\\/gu, "/").split("/")[0] ?? "";
   const id = (/^[^（）]+（([a-z]+)）$/u.exec(root)?.[1] ?? root).toLowerCase();
-  return Object.hasOwn(KNOWLEDGE_ROOT_NAMES, id) ? id as KnowledgeRootRole : null;
+  return roleScope.includes(id as KnowledgeRootRole) ? id as KnowledgeRootRole : null;
 }
 
 /** For policy comparisons only. Never use this role path for filesystem IO. */
-export function knowledgeRolePath(relativePath: string, bindings?: KnowledgeFolderBindings | null): string {
+export function knowledgeRolePath(relativePath: string, bindings?: KnowledgeFolderBindings | null, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): string {
   relativePath = relativePath.replace(/\\/gu, "/");
-  const role = knowledgeRootRole(relativePath, bindings);
+  const role = knowledgeRootRole(relativePath, bindings, roleScope);
   if (bindings) {
     if (!role) return `unbound:${relativePath}`;
     const directory = bindings.roles[role].readPaths.filter((value) => relativePath === value || relativePath.startsWith(`${value}/`)).sort((a, b) => b.length - a.length)[0];
@@ -29,10 +31,10 @@ export function knowledgeRolePath(relativePath: string, bindings?: KnowledgeFold
   return role ? role + (slash < 0 ? "" : relativePath.slice(slash)) : relativePath;
 }
 
-export function resolveKnowledgePathFromRoots(relativePath: string, roots: readonly string[], preferBilingual = true): string {
+export function resolveKnowledgePathFromRoots(relativePath: string, roots: readonly string[], preferBilingual = true, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): string {
   const first = relativePath.split("/")[0];
   if (roots.includes(first)) return relativePath; // Explicit existing root always wins, including conflicts.
-  const role = knowledgeRootRole(relativePath);
+  const role = knowledgeRootRole(relativePath, undefined, roleScope);
   if (!role) return relativePath;
   const matches = roots.filter((root) => knowledgeRootRole(root) === role);
   const root = matches.includes(role) ? role : matches.includes(KNOWLEDGE_ROOT_NAMES[role])

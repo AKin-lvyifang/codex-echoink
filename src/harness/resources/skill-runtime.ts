@@ -371,10 +371,11 @@ export class SkillRuntimeCoordinator {
     });
   }
 
-  async resolveById(skillId: string): Promise<SelectedRuntimeSkill> {
+  async resolveById(skillId: string, isSkillAllowed?: (id: string) => boolean | Promise<boolean>): Promise<SelectedRuntimeSkill> {
     return await this.withStateMutation(async (state) => {
       const id = skillId.trim();
       if (!SAFE_SKILL_ID.test(id)) throw new Error("skill_runtime_id_invalid");
+      if (isSkillAllowed && !await isSkillAllowed(id)) throw new Error("agent_capability_skill_denied");
       let changed = false;
       const builtin = getBuiltinSkillDefinition(id);
       if (builtin) {
@@ -562,6 +563,7 @@ export class SkillRuntimeCoordinator {
     text: string;
     preferredSkillIds?: readonly string[];
     excludedSkillIds?: readonly string[];
+    isSkillAllowed?: (id: string) => boolean | Promise<boolean>;
   }>): Promise<SelectedRuntimeSkill | null> {
     return await this.withStateMutation(async (state) => {
       const text = normalizeTaskText(input.text);
@@ -579,6 +581,7 @@ export class SkillRuntimeCoordinator {
     }> = [];
     for (const record of Object.values(state.records)) {
       if (input.excludedSkillIds?.includes(record.id)) continue;
+      if (input.isSkillAllowed && !await input.isSkillAllowed(record.id)) continue;
       if (record.status !== "active" && record.status !== "downranked") continue;
       const trigger = record.origin === "builtin"
         ? builtinTrigger(record.id as BuiltinSkillId, text)
@@ -610,6 +613,7 @@ export class SkillRuntimeCoordinator {
     });
     let stateChanged = false;
     const loadedSkills = await Promise.all(selectedCandidates.map(async (candidate) => {
+      if (input.isSkillAllowed && !await input.isSkillAllowed(candidate.id)) throw new Error("agent_capability_skill_denied");
       const loaded = await loadVaultSkill({
         vaultPath: this.vaultPath,
         skillId: candidate.id,

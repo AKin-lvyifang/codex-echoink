@@ -1,8 +1,10 @@
 import { setIcon } from "obsidian";
+import { applyDeleteButton } from "../settings/amicro-buttons";
 import type { SettingsLanguage } from "../settings/settings";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { parsePeopleNames, personColorIndex, personInitial, TODO_AVATAR_PALETTE_SIZE } from "./todo-people";
 import { todoDueState, type EchoInkTodoDueState } from "./home-todos";
+import { resolveTodoProject, type TodoProject } from "./todo-projects";
 
 export interface TodoTableCallbacks {
   onToggle(record: ParsedTodoRecord, done: boolean): void;
@@ -13,6 +15,7 @@ export interface TodoTableCallbacks {
 export interface TodoTableCopy {
   doneHead: string;
   titleHead: string;
+  projectHead: string;
   peopleHead: string;
   dueHead: string;
   categoryHead: string;
@@ -29,6 +32,7 @@ export function todoTableCopy(language: SettingsLanguage): TodoTableCopy {
   return {
     doneHead: zh ? "完成" : "Done",
     titleHead: zh ? "事项" : "Item",
+    projectHead: zh ? "项目" : "Project",
     peopleHead: zh ? "相关人员" : "People",
     dueHead: zh ? "截止日期" : "Due",
     categoryHead: zh ? "分类" : "Category",
@@ -52,7 +56,8 @@ export function renderTodoTable(
   host: HTMLElement,
   records: readonly ParsedTodoRecord[],
   copy: TodoTableCopy,
-  callbacks: TodoTableCallbacks
+  callbacks: TodoTableCallbacks,
+  projects?: readonly TodoProject[]
 ): void {
   host.empty();
   const wrap = host.createDiv({ cls: "echoink-todo-table-wrap" });
@@ -60,12 +65,13 @@ export function renderTodoTable(
   // Explicit column plan: fixed leading checkbox column, fluid item column,
   // and min-widths for the trailing four so they never collapse.
   const colgroup = table.createEl("colgroup");
-  for (let index = 0; index < 6; index += 1) colgroup.createEl("col");
+  for (let index = 0; index < (projects ? 7 : 6); index += 1) colgroup.createEl("col");
   const thead = table.createEl("thead", { cls: "echoink-todo-table-head" });
   const headRow = thead.createEl("tr");
   for (const head of [
     copy.doneHead,
     copy.titleHead,
+    ...(projects ? [copy.projectHead] : []),
     copy.peopleHead,
     copy.dueHead,
     copy.categoryHead,
@@ -76,20 +82,28 @@ export function renderTodoTable(
   const tbody = table.createEl("tbody", { cls: "echoink-todo-table-body" });
   if (!records.length) {
     const row = tbody.createEl("tr", { cls: "echoink-todo-table-empty" });
-    const cell = row.createEl("td", { attr: { colspan: "6" } });
+    const cell = row.createEl("td", { attr: { colspan: projects ? "7" : "6" } });
     cell.setText(copy.empty);
     return;
   }
-  for (const record of records) tbody.appendChild(renderRow(record, copy, callbacks));
+  for (const record of records) {
+    const row = renderRow(record, copy, callbacks, host.ownerDocument, projects);
+    tbody.appendChild(row);
+    const deleteButton = row.querySelector<HTMLButtonElement>(".echoink-todo-action-delete");
+    if (deleteButton) applyDeleteButton(deleteButton, { iconOnly: true });
+  }
 }
 
 function renderRow(
   record: ParsedTodoRecord,
   copy: TodoTableCopy,
-  callbacks: TodoTableCallbacks
+  callbacks: TodoTableCallbacks,
+  ownerDocument: Document,
+  projects?: readonly TodoProject[]
 ): HTMLTableRowElement {
-  const row = document.createElement("tr");
+  const row = ownerDocument.createElement("tr");
   row.className = record.done ? "is-done" : "";
+  row.dataset.todoId = record.id;
 
   const checkCell = row.createEl("td", { cls: "echoink-todo-check" });
   const checkbox = checkCell.createEl("input", {
@@ -100,6 +114,19 @@ function renderRow(
 
   const titleCell = row.createEl("td", { cls: "echoink-todo-title" });
   titleCell.createEl("span", { text: record.title });
+
+  if (projects) {
+    const cell = row.createEl("td", { cls: "echoink-todo-project" });
+    const resolved = resolveTodoProject(record.project, projects);
+    if (resolved.status === "none") cell.createSpan({ text: "—", cls: "echoink-todo-none" });
+    else {
+      setIcon(cell.createSpan({ cls: "echoink-todo-project-icon", attr: { "aria-hidden": "true" } }), "folder");
+      const zh = copy.projectHead === "项目";
+      cell.createSpan({ text: resolved.status === "resolved" ? resolved.label
+        : resolved.status === "ambiguous" ? (zh ? "有同名项目，请重新选择" : "Duplicate project names; select again")
+        : (zh ? "项目已不存在" : "Project no longer exists"), attr: { title: record.project ?? "" } });
+    }
+  }
 
   const peopleCell = row.createEl("td", { cls: "echoink-todo-people" });
   renderPeopleAvatars(peopleCell, parsePeopleNames(record.people));

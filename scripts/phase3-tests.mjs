@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
-const outputDir = path.join(rootDir, ".tmp");
+const outputDir = process.env.ECHOINK_KNOWLEDGE_TEST_ROOT
+  ? path.join(path.resolve(process.env.ECHOINK_KNOWLEDGE_TEST_ROOT), "knowledge")
+  : path.join(rootDir, ".tmp");
 const outputFile = path.join(outputDir, "knowledge-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
 const homeWorkbenchOnly = process.argv.includes("--home-workbench");
@@ -281,6 +283,7 @@ await esbuild.build({
   platform: "node",
   target: "node22",
   format: "esm",
+  banner: { js: `import { createRequire as createKnowledgeTestRequire } from "node:module"; const require = createKnowledgeTestRequire(${JSON.stringify(path.join(rootDir, "package.json"))});` },
   external: [
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",
@@ -291,6 +294,9 @@ await esbuild.build({
   plugins: [{
     name: "knowledge-test-shims",
     setup(build) {
+      build.onResolve({ filter: /^(?:@earendil-works\/pi-(?:agent-core|ai|coding-agent)(?:\/.*)?|yaml|jsdom)$/ }, args => ({
+        path: fileURLToPath(import.meta.resolve(args.path)), external: true
+      }));
       if (process.argv.includes("--submission-cancellation")) build.onResolve({ filter: /provider-brand-icons$/ }, () => ({
         path: path.join(rootDir, "src", "tests", "composer-provider-brand-shim.ts")
       }));

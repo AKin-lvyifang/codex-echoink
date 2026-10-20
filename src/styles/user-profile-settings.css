@@ -1,0 +1,20 @@
+.echoink-user-profile-settings { container-type: inline-size; }
+.echoink-user-profile-settings .echoink-profile-count { margin-inline-start: 12px; color: var(--text-muted); font-size: calc(var(--font-text-size, 16px) * .75); font-variant-numeric: tabular-nums; font-weight: 400; }
+.echoink-user-profile-settings .echoink-profile-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; padding-block: 13px; }
+.echoink-user-profile-settings .echoink-profile-copy { min-width: 0; display: grid; gap: 5px; }
+.echoink-user-profile-settings .echoink-profile-name { font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 500; }
+.echoink-user-profile-settings .echoink-profile-value { white-space: pre-wrap; overflow-wrap: anywhere; font-size: calc(var(--font-text-size, 16px) * .8125); line-height: 1.9; }
+.echoink-user-profile-settings .echoink-profile-source { color: var(--text-muted); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.85; }
+.echoink-user-profile-settings .echoink-profile-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.echoink-user-profile-settings .echoink-profile-edit { grid-column: 1 / -1; display: grid; gap: 12px; min-width: 0; }
+.echoink-user-profile-settings .echoink-profile-row > .echoink-settings-inline-confirm { grid-column: 1 / -1; }
+.echoink-user-profile-settings .echoink-profile-edit textarea { width: 100%; max-width: 100%; min-height: 90px; resize: vertical; padding: 7px 10px; border: 1px solid var(--background-modifier-border); border-radius: 6px; font: inherit; font-size: calc(var(--font-text-size, 16px) * .8125); line-height: 1.9; }
+.echoink-user-profile-settings .echoink-profile-empty > summary { cursor: pointer; padding-block: 10px; color: var(--text-muted); }
+.echoink-user-profile-settings :is(button, summary, textarea):focus-visible { outline: none; box-shadow: none; background-color: var(--background-modifier-hover); }
+.echoink-user-profile-settings textarea:focus { outline: none; box-shadow: none; border-color: var(--background-modifier-border); background-color: var(--background-modifier-hover); }
+@container (max-width: 520px) { .echoink-user-profile-settings .echoink-profile-row { grid-template-columns: minmax(0, 1fr); } .echoink-user-profile-settings .echoink-profile-actions { justify-self: end; } }
+.echoink-memory-correction-inline { min-width: 0; }
+.echoink-memory-correction-inline .echoink-memory-correction-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.echoink-memory-correction-inline :is(.echoink-memory-correction-textarea, .echoink-memory-correction-field-value) { width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.echoink-memory-correction-inline :is(button, textarea):focus-visible { outline: none; box-shadow: none; background-color: var(--background-modifier-hover); }
+.echoink-memory-correction-inline textarea:focus { outline: none; box-shadow: none; border-color: var(--background-modifier-border); background-color: var(--background-modifier-hover); }

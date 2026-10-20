@@ -2,6 +2,7 @@ import type {
   ToolCallEvent,
   ToolResultEvent
 } from "@earendil-works/pi-coding-agent";
+import { Type, validateToolArguments } from "@earendil-works/pi-ai";
 import type { FileDomainReceiptStore } from "./domain-receipt-store";
 import {
   type PiMcpExecutionContext,
@@ -78,7 +79,7 @@ implements PiVaultAdditionalToolSecurityPort, PiMcpExecutionSecurityPort {
   private readonly seenToolCallIds = new Set<string>();
   private readonly currentExecutionContext: () => Readonly<PiMcpExecutionContext>;
   private readonly isToolAllowed: (
-    descriptor: Readonly<PiMcpToolSecurityDescriptor>
+    descriptor: Readonly<PiMcpToolSecurityDescriptor>, args: Readonly<Record<string, unknown>>
   ) => Promise<boolean>;
   private readonly approvals?: FileApprovalTicketStore;
   private readonly receipts?: FileDomainReceiptStore;
@@ -93,7 +94,7 @@ implements PiVaultAdditionalToolSecurityPort, PiMcpExecutionSecurityPort {
     readonly currentExecutionContext: () => Readonly<PiMcpExecutionContext>;
     /** Rechecks current Vault/scope/Server/Tool admission at call time. */
     readonly isToolAllowed: (
-      descriptor: Readonly<PiMcpToolSecurityDescriptor>
+      descriptor: Readonly<PiMcpToolSecurityDescriptor>, args: Readonly<Record<string, unknown>>
     ) => Promise<boolean>;
     readonly approvals?: FileApprovalTicketStore;
     readonly receipts?: FileDomainReceiptStore;
@@ -135,12 +136,18 @@ implements PiVaultAdditionalToolSecurityPort, PiMcpExecutionSecurityPort {
       return block("tool_policy_blocked");
     }
     this.seenToolCallIds.add(event.toolCallId);
-    const argumentsValue = normalizeMcpToolInput(event.input);
+    let argumentsValue = normalizeMcpToolInput(event.input);
     if (!argumentsValue) return block("tool_policy_blocked");
+    if (descriptor.inputSchema) {
+      try {
+        argumentsValue = normalizeMcpToolInput(validateToolArguments({ name: descriptor.name, description: "", parameters: Type.Unsafe({ ...descriptor.inputSchema }) }, { type: "toolCall", id: event.toolCallId, name: descriptor.name, arguments: argumentsValue }));
+        if (!argumentsValue) return block("tool_policy_blocked");
+      } catch { return block("tool_policy_blocked"); }
+    }
 
     let executionContext: Readonly<PiMcpExecutionContext>;
     try {
-      if (!await this.isToolAllowed(descriptor)) {
+      if (!await this.isToolAllowed(descriptor, argumentsValue)) {
         return this.rememberBlocked(
           event.toolCallId,
           descriptor,
@@ -213,6 +220,7 @@ implements PiVaultAdditionalToolSecurityPort, PiMcpExecutionSecurityPort {
     ) {
       throw codedError("authorization_failed");
     }
+    if (!await this.isToolAllowed(call.descriptor, input.arguments)) throw codedError("tool_policy_blocked");
     if (call.authorization) {
       await this.requireReceipts().markEffectStarted(
         call.authorization.operationIdentity

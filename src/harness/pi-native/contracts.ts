@@ -1,5 +1,7 @@
 export type { KnowledgeLinkingProposal as PiKnowledgeLinkingProposal, KnowledgeLinkingFileResult as PiKnowledgeLinkingResult } from "../../knowledge-base/knowledge-linking-types";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ConversationTaskMetadata } from "../../agents/task-metadata";
+import type { AgentRunSnapshot } from "../../agents/types";
 import type { PiPreparedInlineImage } from "../pi/contracts";
 import type { PiContextLedger } from "./pi-context-budget";
 import type {
@@ -29,7 +31,7 @@ export type PiConversationCatalogStatus = "active" | "archived" | "deleted";
 export const PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE =
   "当前模型不支持图片输入，请切换支持图片的模型。";
 
-export interface PiConversationCatalogEntry {
+export interface PiConversationCatalogEntry extends ConversationTaskMetadata {
   conversationId: string;
   piSessionId: string;
   vaultId: string;
@@ -135,6 +137,8 @@ export interface PiKnowledgeMaintenanceOutcome {
 }
 
 export interface PiProductRunRecord {
+  interruption?: import("../../agents/task-resume").TaskInterruptionRecord;
+  agentSnapshot?: AgentRunSnapshot;
   productRunId: string;
   conversationId: string;
   piSessionId: string;
@@ -391,6 +395,13 @@ export interface PiKnowledgeMaintenanceToolPort {
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface PiChatSubmitRequest {
+  /** Locally selected English generation source; never contains source body. */
+  englishDiarySourcePath?: string;
+  pdfTaskRequest?: Readonly<import("../../pdf-reading/types").PdfTaskRequest>;
+  /** User-sent local reminder scope; contextual data, never write authority. */
+  workbenchSource?: Readonly<import("../../home/workbench-types").WorkbenchTaskSource>;
+  /** Trusted product recovery facts, scoped to this explicit resumed turn. */
+  resumeContext?: import("../../agents/task-resume").TaskResumeContext;
   /** This turn's lifecycle, including initialization before a run handle exists. */
   signal?: AbortSignal;
   conversationId: string;
