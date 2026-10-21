@@ -803,10 +803,23 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
     },
     async resolveMaintenanceScope(request) {
       if (!request.trim()) return Object.freeze({ mode: "global" as const, ...await privateMaintenanceSourceScope(input.vaultRootPath, { processedSources: input.processedSources?.() }) });
+      const explicitPaths = [...request.matchAll(/(?:\[\[|`)?([^\s`\[\]<>|，。；]+\/[^\s`\[\]<>|，。；]+\.(?:markdown|md))(?![a-z0-9_.-])(?:\]\]|`)?/giu)].map(match => match[1]);
+      if (explicitPaths.length) {
+        const roles = explicitPaths.map(relative => ({ relative, role: knowledgePathRole(input.vaultRootPath, relative) }));
+        const paths = [...new Set(roles.filter(item => item.role === "raw").map(item => item.relative))];
+        if (!paths.length || paths.length > 20 || paths.some(relative => !isRawMarkdownPath(relative))
+          || roles.some(item => item.role !== "raw" && item.role !== "wiki" && item.role !== "projects")) throw new Error("请说明要维护哪些资料；指定来源不在当前资料目录中。");
+        return Object.freeze({ mode: "batch" as const, sourcePaths: Object.freeze(paths), folderBindingsRevision: getKnowledgeFolderBindings(input.vaultRootPath)?.revision });
+      }
       const result = await input.knowledgeAgentIndex.search({ query: request, kinds: ["raw"], limit: 50 });
       const candidatePaths = result.hits.map((hit) => hit.vaultRelativePath).filter(isRawMarkdownPath).slice(0, 12);
-      if (!candidatePaths.length) throw new Error("没有找到可可靠匹配的 Raw 笔记；本轮不会回退到全局维护。");
+      if (!candidatePaths.length) throw new Error("请说明要维护哪些资料；没有找到可可靠匹配的 Raw 笔记，本轮不会扩大维护范围。");
       return Object.freeze({ mode: "query" as const, candidatePaths: Object.freeze(candidatePaths) });
+    },
+    async pendingMaintenanceSourcePaths(sourcePaths) {
+      const current = await privateMaintenanceSourceScope(input.vaultRootPath, { limit: Infinity, processedSources: input.processedSources?.() });
+      const pending = new Set(current.sourcePaths);
+      return Object.freeze(sourcePaths.filter(source => pending.has(source)));
     },
     async prepareMaintenancePreferences() {
       const snapshot = await input.knowledgePreferences.read();
@@ -2319,9 +2332,12 @@ async function createProductionAgentSession(input: {
   );
   const maintenanceTool = createPiKnowledgeMaintenanceToolDefinition({
     port: { execute: async (request) => {
-      await assertToolAllowed("knowledge_maintain", request);
+      // The recovery guard compares tool arguments as JSON; product-owned
+      // AbortSignal and execution identity are not model arguments.
+      await assertToolAllowed("knowledge_maintain", { sourcePaths: request.sourcePaths ?? [], candidateActions: request.candidateActions ?? [], assessments: request.assessments ?? [] });
       const turn = input.input.currentKnowledgeTurnContext();
-      const result = await input.knowledgeMaintenance.execute({ ...request, folderBindingsRevision: turn?.kind === "maintain" ? turn.command.folderBindingsRevision : undefined, globalSourcePaths: turn?.kind === "maintain" && turn.command.scope.mode === "global" ? turn.command.scope.sourcePaths : undefined, sourceBodyFingerprints: { ...sourceBodyFingerprints } });
+      const command = await input.input.currentMaintenanceCommand?.() ?? (turn?.kind === "maintain" ? turn.command : undefined);
+      const result = await input.knowledgeMaintenance.execute({ ...request, folderBindingsRevision: command?.folderBindingsRevision, globalSourcePaths: command?.scope.mode === "global" ? command.scope.sourcePaths : undefined, sourceBodyFingerprints: { ...sourceBodyFingerprints } });
       Object.assign(sourceBodyFingerprints, result.refreshedSources ?? {});
       return result;
     } },

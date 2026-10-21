@@ -108,6 +108,7 @@ import { PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE } from "./contracts";
 import { normalizePiChatNoteMentions } from "./pi-note-mentions";
 import { normalizeSelectionAnnotations } from "./pi-selection-annotations";
 import { freezeWorkbenchTaskSource, workbenchTaskSourceFromEntries } from "../../home/workbench-context";
+import { MAINTENANCE_SCOPE_CONTEXT_TYPE, MAINTENANCE_SCOPE_REQUIRED_MESSAGE, freezeMaintenanceScopeContext, isMaintenanceScopeConfirmation, isNewMaintenanceScopeRequest, maintenanceScopeContextFromEntries, maintenanceScopePaths, type MaintenanceScopeContext } from "./maintenance-scope-context";
 import type { WorkbenchTaskSource } from "../../home/workbench-types";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 import {
@@ -746,6 +747,9 @@ interface ActiveProductRun {
   memoryMode: PiConversationMemoryMode;
   permission: PiWorkspaceAccess["permission"];
   maintenanceScope?: PiChatSubmitRequest["maintenanceScope"];
+  maintenanceCommand?: Readonly<PiKnowledgeMaintenanceCommandContext>;
+  maintenanceScopePersisted?: boolean;
+  maintenanceScopeError?: unknown;
   noteMentions: readonly Readonly<PiChatNoteMention>[];
   selectionAnnotations: readonly SelectionAnnotation[];
   documents: readonly Readonly<PiChatPreparedDocument>[];
@@ -1635,6 +1639,19 @@ export class PiNativeConversationRuntime {
         summary: cloneReasoningSummary(execution.reasoningSummary)
       });
       this.configureToolsForTurn(active, knowledgeCommand, mode, memoryMode);
+      if (knowledgeCommand.kind === "chat" && !execution.maintenanceScope && !execution.generation && !englishDiarySourcePath && !pdfTaskRequest
+        && isNewMaintenanceScopeRequest(request.text)) {
+        // Selection facts are independent of the chat/maintenance workflow.
+        // A suggestion-only turn must still replace the previous selection.
+        try {
+          execution.maintenanceScope = await this.options.knowledge?.resolveMaintenanceScope?.(request.text);
+        } catch (error) {
+          assertPiSubmissionActive(execution.knowledgeAbort.signal);
+          // Advice remains ordinary chat. Its durable user message is still
+          // a new-selection boundary, so later confirmation cannot revive A.
+          execution.maintenanceScopeError = error;
+        }
+      }
       if (execution.generation) {
         if (!this.options.generation || mode === "plan" || permission === "read-only" || englishDiarySourcePath || pdfTaskRequest || noteMentions.length || documents.length || promptImages.length || request.skillPath) throw new Error("生成需要独立的资料选择、Agent 模式和可写权限。");
         active.knowledgeTurnContext = null;
@@ -1761,10 +1778,10 @@ export class PiNativeConversationRuntime {
           throw new PiNativeConversationRuntimeError("agent_session_invalid", "目录配置已变化，停止剩余批次；已完成的整理保留。");
         }
         if (suppliedScope?.mode === "global" && knowledgeCommand.request.trim()) normalizePiKnowledgeMaintenanceScope(suppliedScope, knowledgeCommand.request);
-        const frozenScope = !suppliedScope || (suppliedScope.mode === "global" && !suppliedScope.sourcePaths)
-          ? await this.options.knowledge?.resolveMaintenanceScope?.(knowledgeCommand.request) ?? suppliedScope
-          : suppliedScope;
-        const resolvedCommand = maintenanceCommandContext(knowledgeCommand, preference, frozenScope);
+        const selection = !suppliedScope || (suppliedScope.mode === "global" && !suppliedScope.sourcePaths)
+          ? await this.resolveMaintenanceSelection(active, execution, knowledgeCommand.request)
+          : { scope: suppliedScope, request: knowledgeCommand.request };
+        const resolvedCommand = maintenanceCommandContext({ ...knowledgeCommand, request: selection.request }, preference, selection.scope);
         const structureResult = await this.options.knowledge?.prepareMaintenanceStructure?.({
           initialization: request.maintenanceScope?.mode === "batch",
           assertActive: () => { if (execution.abortRequested) throw new DOMException("维护已取消", "AbortError"); }
@@ -1796,6 +1813,7 @@ export class PiNativeConversationRuntime {
           command
         });
       }
+      if (execution.maintenanceScope) this.persistMaintenanceScope(active, execution, execution.knowledgeWorkflow?.kind === "maintain" ? execution.knowledgeWorkflow.command.request : request.text);
       assertPiSubmissionActive(execution.knowledgeAbort.signal);
     } catch (error) {
       this.abandonUnstartedProductRun(active, execution);
@@ -2034,6 +2052,50 @@ export class PiNativeConversationRuntime {
   private generationIdentity(active: ActiveConversation, execution: ActiveProductRun): GenerationExecutionIdentity {
     return { conversationId: active.catalog.conversationId, piSessionId: active.catalog.piSessionId, productRunId: execution.productRunId,
       vaultId: active.catalog.vaultId, access: { permission: execution.permission, mode: execution.mode, memoryMode: "no_memory" }, signal: execution.knowledgeAbort.signal };
+  }
+  private persistMaintenanceScope(active: ActiveConversation, run: ActiveProductRun, request: string): void {
+    if (run.maintenanceScopePersisted || !run.maintenanceScope) return;
+    const context = freezeMaintenanceScopeContext({ productRunId: run.productRunId, request, scope: run.maintenanceScope,
+      folderBindingsRevision: (run.maintenanceScope.mode === "batch" || run.maintenanceScope.mode === "global" ? run.maintenanceScope.folderBindingsRevision : undefined)
+        ?? getKnowledgeFolderBindings(active.cwd)?.revision });
+    if (!context) return;
+    const id = active.sessionManager.appendCustomEntry(MAINTENANCE_SCOPE_CONTEXT_TYPE, context);
+    assertPiSessionAppendsDurable({ sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager, expectedEntryIds: [id] });
+    this.checkpointConversationLeaf(active);
+    run.maintenanceScopePersisted = true;
+  }
+
+  private async resolveMaintenanceSelection(active: ActiveConversation, run: ActiveProductRun, request: string): Promise<{ scope: PiKnowledgeMaintenanceScope | undefined; request: string }> {
+    if (run.maintenanceScope) {
+      const revision = run.maintenanceScope.mode === "batch" || run.maintenanceScope.mode === "global" ? run.maintenanceScope.folderBindingsRevision : undefined;
+      if (revision !== undefined && revision !== getKnowledgeFolderBindings(active.cwd)?.revision) throw new Error("目录配置已变化，请重新说明要维护哪些资料。");
+      return { scope: run.maintenanceScope, request };
+    }
+    const resume = run.resumeContext;
+    const confirmation = isMaintenanceScopeConfirmation(request);
+    // A new explicit source/query wins even on a resumed turn. The product's
+    // generic resume instruction is recovery context, never a Raw query.
+    const resumeNewScope = !!resume && isNewMaintenanceScopeRequest(request);
+    if (confirmation || resume && !resumeNewScope) {
+      const runs = (await this.productRuns.listReadOnly(active.catalog.conversationId)).filter(prior => prior.piSessionId === active.catalog.piSessionId);
+      const saved = maintenanceScopeContextFromEntries(active.sessionManager.getBranch(), runs, {
+        excludeProductRunId: run.productRunId,
+        ...(resume ? { throughProductRunId: resume.safety.interruptedRunId } : {})
+      });
+      const recoveryScope = freezeMaintenanceScopeContext(resume?.safety.maintenanceContext);
+      if (resume && recoveryScope && (!saved || JSON.stringify(saved) !== JSON.stringify(recoveryScope))) throw new Error("无法确认原任务的维护范围，请说明要维护哪些资料。");
+      const inherited: MaintenanceScopeContext | null = recoveryScope ?? saved;
+      if (!inherited) throw new Error(MAINTENANCE_SCOPE_REQUIRED_MESSAGE);
+      if (inherited.folderBindingsRevision !== undefined && inherited.folderBindingsRevision !== getKnowledgeFolderBindings(active.cwd)?.revision) throw new Error("目录配置已变化，请重新说明要维护哪些资料。");
+      const paths = maintenanceScopePaths(inherited.scope);
+      if (paths.some(relative => knowledgePathRole(active.cwd, relative) !== "raw")) throw new Error("原维护范围不在当前资料目录中，请说明要维护哪些资料。");
+      const pending = await this.options.knowledge?.pendingMaintenanceSourcePaths?.(paths) ?? paths;
+      if (!pending.length) throw new Error(MAINTENANCE_SCOPE_REQUIRED_MESSAGE);
+      // Pending state decides whether this task can continue. Keep the whole
+      // frozen batch so a model using its original sourcePaths remains valid.
+      return { scope: inherited.scope, request: inherited.request };
+    }
+    return { scope: await this.options.knowledge?.resolveMaintenanceScope?.(request), request };
   }
   private async setGenerationStage(active: ActiveConversation, execution: ActiveProductRun, stage?: GenerationStage, finalStatus: "completed" | "failed" | "cancelled" = "completed"): Promise<void> {
     const generation = execution.generation; if (!generation) return;
@@ -2856,18 +2918,22 @@ export class PiNativeConversationRuntime {
         };
       },
       currentMaintenanceCommand: async () => {
-        const run = holder.active?.currentRun;
-        if (!run) throw new Error("knowledge_maintenance_command_unavailable");
+        const active = holder.active, run = active?.currentRun;
+        if (!active || !run) throw new Error(MAINTENANCE_SCOPE_REQUIRED_MESSAGE);
         await this.options.assertAgentActionAllowed?.({ catalog: holder.active?.catalog ?? catalog, action: "knowledge-write", access: { permission: run.permission, mode: run.mode, memoryMode: run.memoryMode } });
         if (run.knowledgeWorkflow?.kind === "maintain") return run.knowledgeWorkflow.command;
+        if (run.maintenanceCommand) return run.maintenanceCommand;
+        if (run.maintenanceScopeError) throw run.maintenanceScopeError;
         const preference = await this.options.knowledge?.prepareMaintenancePreferences?.();
         if (!preference) throw new Error("knowledge_maintenance_preferences_unavailable");
         const routed = routeKnowledgeConversationCommand(run.requestText);
-        const request = routed.kind === "ask" ? routed.question : run.requestText;
-        const scope = run.maintenanceScope ?? await this.options.knowledge?.resolveMaintenanceScope?.(request);
-        return maintenanceCommandContext({
-          kind: "maintain", originalText: run.requestText, request
-        }, preference, scope);
+        const request = routed.kind === "ask" ? routed.question : routed.kind === "maintain" ? routed.request : run.requestText;
+        const selection = await this.resolveMaintenanceSelection(active, run, request);
+        const command = maintenanceCommandContext({ kind: "maintain", originalText: run.requestText, request: selection.request }, preference, selection.scope);
+        if (maintenanceScopePaths(command.scope).some(relative => knowledgePathRole(active.cwd, relative) !== "raw")) throw new Error("维护范围不在当前资料目录中，请说明要维护哪些资料。");
+        run.maintenanceScope = command.scope;
+        this.persistMaintenanceScope(active, run, selection.request);
+        return run.maintenanceCommand = Object.freeze({ ...command, folderBindingsRevision: getKnowledgeFolderBindings(active.cwd)?.revision });
       },
       currentWorkspaceAccess: () => {
         const run = holder.active?.currentRun;

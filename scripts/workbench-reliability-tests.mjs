@@ -12,7 +12,9 @@ await mkdir(fixtureRoot, { recursive: true });
 const output = path.join(fixtureRoot, "workbench-reliability-tests.mjs");
 const chain = process.argv.includes("--production-chain");
 await esbuild.build({
-  stdin: { contents: process.argv.includes("--all")
+  stdin: { contents: process.argv.includes("--followup-scope")
+    ? `import { runWorkbenchMaintenanceFollowupTests } from "./src/tests/workbench-maintenance-followup"; await runWorkbenchMaintenanceFollowupTests(${JSON.stringify(fixtureRoot)});`
+    : process.argv.includes("--all")
     ? `import { runWorkbenchToolDiagnosticTests } from "./src/tests/workbench-tool-diagnostics";
        import { runWorkbenchMaintenanceSourceTests } from "./src/tests/workbench-maintenance-sources";
        import { runWorkbenchMaintenanceChain } from "./src/tests/workbench-maintenance-chain";

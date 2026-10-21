@@ -9,6 +9,7 @@ import { inspectPiSessionJsonl } from "../harness/pi-native/pi-session-durabilit
 import type { PiPdfResumeOperation } from "../harness/pi-native/pi-pdf-reading-tools";
 import { canonicalJsonStringify, type FileApprovalTicketStore, type JsonValue } from "../harness/pi-native/tool-authorization";
 import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
+import { maintenanceScopeContextFromEntries, type MaintenanceScopeContext } from "../harness/pi-native/maintenance-scope-context";
 
 export interface TaskResumeOperation {
   readonly operationIdentity: string;
@@ -48,6 +49,7 @@ export interface TaskResumeSafetySnapshot {
   readonly fileConflicts: readonly TaskResumeFileConflict[];
   readonly pdfOperations: readonly PiPdfResumeOperation[];
   readonly recoveryInstructions: string;
+  readonly maintenanceContext?: Readonly<MaintenanceScopeContext>;
 }
 export interface TaskResumeSafetyInput {
   readonly receipts: FileDomainReceiptStore;
@@ -120,6 +122,16 @@ export async function readTaskResumeSafety(input: TaskResumeSafetyInput): Promis
   const fileConflicts = await inspectFileConflicts(input.vaultRootPath, fileVersions);
   const pdfOperations = catalog.sessionFile ? readPdfOperations(input.catalog.sessionRootPath, catalog.sessionFile, catalog.piSessionId,
     catalog.conversationId, runs.slice(start, end + 1).map(run => run.userEntryId)) : [];
+  let maintenanceContext: Readonly<MaintenanceScopeContext> | null = null;
+  if (catalog.sessionFile) {
+    const inspection = inspectPiSessionJsonl({ sessionRoot: input.catalog.sessionRootPath, sessionFile: catalog.sessionFile });
+    if (!inspection.valid || inspection.header.id !== catalog.piSessionId) throw new Error("task_resume_session_unverified");
+    const entries = new Map(inspection.entries.map(entry => [entry.id, entry]));
+    const branch: typeof inspection.entries[number][] = [];
+    let cursor = (interrupted.activeLeafId ? entries.get(interrupted.activeLeafId) : undefined) ?? entries.get(interrupted.userEntryId);
+    while (cursor) { branch.unshift(cursor); cursor = cursor.parentId ? entries.get(cursor.parentId) : undefined; }
+    maintenanceContext = maintenanceScopeContextFromEntries(branch, runs, { throughProductRunId: interrupted.productRunId });
+  }
   for (const operation of operations) {
     if (operation.toolName !== "pdf_reading_process") continue;
     const target = record(operation.resolvedTarget), args = record(operation.arguments);
@@ -135,6 +147,7 @@ export async function readTaskResumeSafety(input: TaskResumeSafetyInput): Promis
     operations: Object.freeze(operations), pendingActions: Object.freeze(operations.filter(operation => operation.status === "not_started" || operation.status === "uncertain")),
     fileVersions: Object.freeze(fileVersions), fileConflicts: Object.freeze(fileConflicts),
     pdfOperations: Object.freeze(pdfOperations),
+    ...(maintenanceContext ? { maintenanceContext } : {}),
     recoveryInstructions: recoveryInstructions(operations, fileConflicts)
   });
 }

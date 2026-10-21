@@ -132,7 +132,7 @@ export async function runWorkbenchMaintenanceChain(root: string, bound: boolean,
       replies.push({ role: "assistant", content: null, tool_calls: [toolCall("note_read", { relativePath: source2 }, "read-source2"), toolCall("note_read", { relativePath: wiki }, "reread-wiki")] });
       replies.push({ role: "assistant", content: null, tool_calls: [toolCall("knowledge_maintain", nextCandidate, "maintain-second")] });
       replies.push({ role: "assistant", content: "第二轮按真实回执结束。" });
-      const second = await bundle.runtime.submit({ conversationId: conversation.conversationId, text: "都按你推荐的去做",
+      const second = await bundle.runtime.submit({ conversationId: conversation.conversationId, text: `请维护 ${source2}`,
         permission: "workspace-write", submittedAt: Date.now(), runtimeProviderId: provider.runtimeProviderId, modelId: provider.models[0].id,
         reasoning: "none", memoryMode: "no_memory" });
       const secondResult = await second.result;

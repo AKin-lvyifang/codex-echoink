@@ -273,6 +273,8 @@ export interface PiKnowledgeMaintenanceSettlement {
 export interface PiKnowledgeRuntimePort {
   prepareMaintenanceStructure?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   resolveMaintenanceScope?(request: string): Promise<PiKnowledgeMaintenanceScope>;
+  /** Recheck only this frozen selection against current private source state. */
+  pendingMaintenanceSourcePaths?(sourcePaths: readonly string[]): Promise<readonly string[]>;
   prepareMaintenancePreferences?(): Promise<Readonly<{
     profileVersion: string;
     state: "default" | "custom";
