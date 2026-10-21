@@ -99,6 +99,11 @@ OLDER RELEASE CONTENT
   reject("English title wrong version", fixture().replace(englishTitle, "9.12.2 · A new workbench"), /Release title must/u);
   reject("English title must be translated", fixture().replace(englishTitle, title), /English translation/u);
   reject("missing hero", fixture().replace(hero, ""), /one hero image/u);
+  reject("improve release still needs hero", fixture("improve", "体验改进", "Improved").replace(hero, ""), /one hero image/u);
+  const fixWithoutHero = accept("fix release without hero", fixture("fix", "修复", "Fixes").replace(`${hero}\n`, ""));
+  assert.equal(fixWithoutHero.heroPath, "");
+  assert.ok(!fixWithoutHero.body.includes("!["));
+  reject("fix release with duplicate hero", fixture("fix", "修复", "Fixes").replace(hero, `${hero}\n${hero}`), /one hero image/u);
   reject("duplicate hero", fixture().replace(hero, `${hero}\n${hero}`), /one hero image/u);
   reject("hero after language heading", fixture().replace(hero, "").replace("工作台可以", `${hero}\n\n工作台可以`), /one hero image/u);
   reject("hero from another repository", fixture().replace("example/plugin/", "other/plugin/"), /release repository/u);

@@ -38,8 +38,11 @@ export function compileReleaseNotes(source, { version, repository, isTrackedFile
   const zhIndex = zh[0].index;
   const enIndex = en[0].index;
   const images = located.filter(({ line, index }) => index < zhIndex && /^!\[/u.test(line));
-  requireContract(images.length === 1, "Release notes must contain one hero image before the Chinese section.");
-  const heroPath = validateHero(images[0].line, repository, isTrackedFile);
+  // Fix releases may ship without a hero; feat/improve (and historical) still require exactly one.
+  const heroOptional = !historical && /^<!-- release-type: fix -->$/mu.test(section.body);
+  requireContract(images.length === 1 || (heroOptional && images.length === 0),
+    "Release notes must contain one hero image before the Chinese section.");
+  const heroPath = images.length ? validateHero(images[0].line, repository, isTrackedFile) : "";
 
   // Historical dispatch only rebuilds and attests existing assets. Its older
   // CHANGELOG format must not acquire new title/type requirements or edits.
@@ -59,7 +62,7 @@ export function compileReleaseNotes(source, { version, repository, isTrackedFile
   validateTitle(theme.line.slice(4), version, true);
   const title = theme.line.slice(4);
   const firstVisible = located.find(({ line, index }) => line.trim() && index !== marker.index);
-  requireContract(firstVisible.index === theme.index && theme.index < images[0].index,
+  requireContract(firstVisible.index === theme.index && (!images.length || theme.index < images[0].index),
     "The release theme must be the first visible heading, followed by the hero image.");
 
   const chineseTypes = located.filter(({ line }) => /^类型\s*[:：]/u.test(line));
