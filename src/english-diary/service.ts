@@ -1,6 +1,5 @@
 import { requireProPlugin, unavailableCapabilityAccess } from "../membership/access";
 import type { CapabilityAccess } from "../membership/types";
-import { randomUUID } from "node:crypto";
 import { DiaryServiceError, fingerprint, normalizePrivacy, splitDiaryBlocks } from "./model";
 import { buildDiaryPrompt, parseDiaryGeneration } from "./prompt";
 import type {
@@ -105,7 +104,7 @@ export class EnglishDiaryService implements EnglishDiaryApi {
     assertActive(signal);
     await this.repository.savePrivacy(record, privacy);
     const translatable = new Set(privacy.rules.filter((rule) => rule.mode === "translate").map((rule) => rule.blockId));
-    const operationId = options.operationId ?? randomUUID();
+    const operationId = options.operationId ?? crypto.randomUUID();
     const generator = options.generator ?? this.generator;
     const expressionPermit = this.repository.acquireExpressionPermit?.(operationId);
     let parsed: ReturnType<typeof parseDiaryGeneration>;

@@ -5,7 +5,7 @@ import {
   rawDigestRecordIsTrusted,
   type RawDigestFrontmatterRecord,
   type RawDigestRegistryEntry
-} from "./raw-digest";
+} from "./raw-digest-core";
 import type { KnowledgeBaseRawDigestState } from "./types";
 
 export function rawDigestStateForRecord(input: {

@@ -5,7 +5,7 @@ import { effectiveFinanceEntries } from "../lifestyle/finance-domain";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import type { PdfJob } from "../pdf-reading/types";
 import type { WorkbenchJournalDay } from "./workbench-journal";
-import { localWorkbenchDate, validWorkbenchDate, workbenchWeekKey } from "./workbench-records";
+import { localWorkbenchDate, validWorkbenchDate, workbenchWeekKey } from "./workbench-source";
 import type { WorkbenchSignal, WorkbenchSignalId } from "./workbench-types";
 
 export interface WorkbenchSourceFile { path: string; fingerprint: string; enteredAt?: number }

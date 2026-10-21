@@ -24,8 +24,8 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
     seen.add(id);
     agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, position: text(agent.position), ...(agent.identityEdited === true ? { identityEdited: true } : {}), styleId: normalizeAgentStyleId(agent.styleId),
       ...(id === GENERAL_ASSISTANT_ID
-        ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds) }
-        : { capabilityIds: normalizeCapabilityIds(agent.capabilityIds) }) });
+        ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds), ...(Array.isArray(agent.capabilityIds) ? { capabilityIds: normalizeCapabilityIds(agent.capabilityIds) } : {}) }
+        : { capabilityIds: normalizeCapabilityIds(agent.capabilityIds), ...(Array.isArray(agent.disabledCapabilityIds) ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds) } : {}) }) });
   }
   if (!seen.has(GENERAL_ASSISTANT_ID)) agents.unshift(fallback.agents[0]);
   const owners = record(raw.moduleOwners);

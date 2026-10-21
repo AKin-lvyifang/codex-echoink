@@ -91,7 +91,23 @@ const diaryGenerated = `${diaryStart}\n${diaryCss.map((css) => css.trim()).join(
 const diaryIndex = styles.indexOf(diaryStart);
 const diaryCurrent = diaryIndex < 0 ? "" : styles.slice(diaryIndex, styles.indexOf(diaryEnd, diaryIndex) + diaryEnd.length);
 
+const iphoneStart = "/* ECHOINK_IPHONE_PAGES_START */";
+const iphoneEnd = "/* ECHOINK_IPHONE_PAGES_END */";
+const iphoneCss = await Promise.all(["shell.css", "workbench.css", "task-detail.css", "integration.css", "settings.css", "capability-pages.css", "agent-settings-pages.css", "account-pages.css", "modules.css", "knowledge-settings-pages.css", "knowledge-pages.css", "english-diary-pages.css"].map(name => readFile(path.join(rootDir, "src/ui/iphone", name), "utf8")));
+const iphoneGenerated = `${iphoneStart}\n${iphoneCss.map(css => css.trim()).join("\n\n")}\n${iphoneEnd}`;
+const iphoneIndex = styles.indexOf(iphoneStart);
+const iphoneCurrent = iphoneIndex < 0 ? "" : styles.slice(iphoneIndex, styles.indexOf(iphoneEnd, iphoneIndex) + iphoneEnd.length);
+
+const ipadStart = "/* ECHOINK_IPAD_PAGES_START */";
+const ipadEnd = "/* ECHOINK_IPAD_PAGES_END */";
+const ipadCss = await Promise.all(["shell.css", "workbench.css", "task-detail.css", "agent-pane.css", "integration.css", "settings.css", "capability-pages.css", "agent-settings-pages.css", "account-pages.css", "modules.css", "knowledge-settings-pages.css", "knowledge-pages.css", "english-diary-pages.css"].map(name => readFile(path.join(rootDir, "src/ui/ipad", name), "utf8")));
+const ipadGenerated = `${ipadStart}\n${ipadCss.map(css => css.trim()).join("\n\n")}\n${ipadEnd}`;
+const ipadIndex = styles.indexOf(ipadStart);
+const ipadCurrent = ipadIndex < 0 ? "" : styles.slice(ipadIndex, styles.indexOf(ipadEnd, ipadIndex) + ipadEnd.length);
+
 if (checkOnly) {
+  if (ipadCurrent !== ipadGenerated) throw new Error("Generated iPad pages CSS is stale");
+  if (iphoneCurrent !== iphoneGenerated) throw new Error("Generated iPhone pages CSS is stale");
   if (agentCurrent !== agentGenerated) throw new Error("Generated Agent workbench CSS is stale");
   if (diaryCurrent !== diaryGenerated) throw new Error("Generated English Diary CSS is stale. Run node scripts/build-home-magic-ui-css.mjs");
   if (current !== generated) throw new Error("Generated Magic UI CSS is stale. Run node scripts/build-home-magic-ui-css.mjs");
@@ -102,6 +118,8 @@ if (checkOnly) {
   next = diaryCurrent ? next.replace(diaryCurrent, diaryGenerated) : `${next.trimEnd()}\n\n${diaryGenerated}\n`;
   next = settingsCurrent ? next.replace(settingsCurrent, settingsGenerated) : `${next.trimEnd()}\n\n${settingsGenerated}\n`;
   next = agentCurrent ? next.replace(agentCurrent, agentGenerated) : `${next.trimEnd()}\n\n${agentGenerated}\n`;
+  next = iphoneCurrent ? next.replace(iphoneCurrent, iphoneGenerated) : `${next.trimEnd()}\n\n${iphoneGenerated}\n`;
+  next = ipadCurrent ? next.replace(ipadCurrent, ipadGenerated) : `${next.trimEnd()}\n\n${ipadGenerated}\n`;
   if (next !== styles) await writeFile(stylesPath, next, "utf8");
   console.log("Home Magic UI CSS: updated");
 }

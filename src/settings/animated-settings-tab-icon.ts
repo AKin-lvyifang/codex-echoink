@@ -30,6 +30,11 @@ export const ANIMATED_SETTINGS_TAB_ICON_NAMES = [
 export type AnimatedSettingsTabIconName =
   typeof ANIMATED_SETTINGS_TAB_ICON_NAMES[number];
 
+/** Static DOM consumers share the exact desktop vector without host icon aliases. */
+export function createStaticSettingsTabIcon(doc: Document, iconName: AnimatedSettingsTabIconName): SVGSVGElement {
+  return ICON_RENDERERS[iconName](doc);
+}
+
 export function renderAnimatedSettingsTabIcon(
   container: HTMLElement,
   iconName: AnimatedSettingsTabIconName,

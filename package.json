@@ -1,6 +1,6 @@
 {
   "name": "echoink-agent",
-  "version": "2.8.0",
+  "version": "2.8.1",
   "description": "A personal knowledge agent for Obsidian that builds editable memory and grows to understand you better.",
   "main": "dist/main.js",
   "scripts": {
@@ -8,6 +8,14 @@
     "build:home-magic-ui-css": "node scripts/build-home-magic-ui-css.mjs",
     "check:bundle": "node scripts/check-built-bundle.mjs",
     "test:mobile": "node scripts/mobile-tests.mjs",
+    "test:mobile-storage": "node scripts/mobile-storage-tests.mjs",
+    "test:mobile-agents": "node scripts/mobile-agent-tests.mjs",
+    "test:mobile-tasks": "node scripts/mobile-task-tests.mjs",
+    "test:mobile-resume": "node scripts/mobile-resume-tests.mjs",
+    "test:mobile-recovery": "node scripts/mobile-recovery-tests.mjs",
+    "test:mobile-task-ui": "node scripts/mobile-task-ui-tests.mjs",
+    "test:mobile-capabilities": "node scripts/mobile-capability-tests.mjs",
+    "test:mobile-shells": "npm run build && node scripts/mobile-shell-tests.mjs",
     "check:phase1-obsidian-runtime": "node scripts/check-phase1-obsidian-runtime.mjs",
     "check:public": "node scripts/check-public-files.mjs",
     "check:release": "node scripts/check-release-contract.mjs",

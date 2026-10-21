@@ -7,6 +7,8 @@ export interface PhotoCalendarOptions {
   records: readonly HomeVaultFileRecord[]; folder: string; format: string;
   language: SettingsLanguage; activity?: ReadonlyMap<string, number>;
   onSelect?: (date: string) => void;
+  /** Mobile month grids leave adjacent-month cells empty; desktop defaults stay visible. */
+  showOutsideDays?: boolean;
 }
 
 /** Shared with the original home: selecting a date never opens or creates a file. */
@@ -25,22 +27,23 @@ export function renderPhotoCalendar(options: PhotoCalendarOptions): { recordDays
   const cells = Math.ceil((new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate() + offset) / 7) * 7;
   for (let index = 0; index < cells; index++) {
     const date = new Date(first.getFullYear(), first.getMonth(), index - offset + 1), key = dateKey(date);
-    const outside = date.getMonth() !== first.getMonth(), photo = !outside && photos.get(key);
+    const outside = date.getMonth() !== first.getMonth(), photo = !outside && photos.get(key), blank = outside && options.showOutsideDays === false;
     const count = options.activity?.get(key) ?? 0;
     const day = days.ownerDocument.createElement("button");
     day.type = "button"; day.dataset.date = key; day.setAttribute("aria-pressed", String(key === selected));
     day.setAttribute("aria-label", `${formatHomeFullDate(date, language)} · ${count}${photo ? language === "en" ? " · With photo" : " · 含照片" : ""}`);
+    if (blank) { day.disabled = true; day.tabIndex = -1; day.setAttribute("aria-hidden", "true"); }
     days.appendChild(day);
     for (const [name, active] of [["outside", outside], ["today", key === dateKey(new Date())], ["selected", key === selected], ["has-record", count > 0 || dates.has(key)], ["has-photo", Boolean(photo)]] as const) day.classList.toggle(name, active);
     if (key === dateKey(new Date())) day.setAttribute("aria-current", "date");
-    const number = day.ownerDocument.createElement("span"); number.className = "calendar-day-number"; number.textContent = String(date.getDate()); day.appendChild(number);
+    const number = day.ownerDocument.createElement("span"); number.className = "calendar-day-number"; number.textContent = blank ? "" : String(date.getDate()); day.appendChild(number);
     if (photo) {
       const image = day.ownerDocument.createElement("img");
       image.className = "echoink-calendar-photo"; image.alt = ""; image.loading = "lazy";
       image.addEventListener("error", () => { image.remove(); day.classList.remove("has-photo"); }, { once: true });
       image.src = photo; day.prepend(image);
     }
-    if (options.onSelect) day.onclick = () => options.onSelect!(key);
+    if (options.onSelect && !blank) day.onclick = () => options.onSelect!(key);
   }
   const prefix = dateKey(first).slice(0, 7);
   return { recordDays: [...new Set([...(options.activity?.keys() ?? []), ...dates])].filter(date => date.startsWith(prefix)).length,

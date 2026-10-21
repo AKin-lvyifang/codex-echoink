@@ -1,0 +1,64 @@
+.echoink-ipad.pd-agent-pane { display: flex; flex-direction: column; padding: 0; }
+.echoink-ipad .pd-agent-shell { flex: 1 1 auto; min-height: 0; height: auto; }
+.echoink-ipad .pd-agent-shell > .echoink-ipad-pages { flex: 1 1 auto; min-height: 0; }
+.echoink-ipad .pd-agent-shell .echoink-ipad-footer { margin: 0; }
+.echoink-ipad .pd-agent-shell .echoink-ipad-header { border-bottom: 1px solid var(--background-modifier-border); }
+.echoink-ipad .pd-agent-shell .echoink-ipad-page:has(.pd-agent-page) > .echoink-ipad-content { overflow: hidden; }
+.echoink-ipad .pd-agent-strip { flex: 0 0 auto; gap: 0; margin: 0; padding: 2px 6px; border-bottom: 1px solid var(--background-modifier-border); }
+.echoink-ipad button.pd-agent-avatar,
+.echoink-ipad button.pd-agent-add,
+.echoink-ipad button.pd-agent-edit {
+  appearance: none; position: relative; display: inline-grid; place-items: center; flex: 0 0 44px;
+  width: 44px; min-width: 44px; height: 44px; min-height: 44px; margin: 0; padding: 0; border: 0;
+  border-radius: 10px; box-shadow: none; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.echoink-ipad button.pd-agent-avatar::before,
+.echoink-ipad button.pd-agent-avatar::after,
+.echoink-ipad button.pd-agent-add::before,
+.echoink-ipad button.pd-agent-add::after,
+.echoink-ipad button.pd-agent-edit::before,
+.echoink-ipad button.pd-agent-edit::after { content: none; }
+.echoink-ipad button.pd-agent-avatar.is-selected { background: var(--background-modifier-hover); }
+.echoink-ipad button.pd-agent-avatar:active,
+.echoink-ipad button.pd-agent-add:active,
+.echoink-ipad button.pd-agent-edit:active { opacity: .65; }
+.echoink-ipad button.pd-agent-avatar:focus-visible,
+.echoink-ipad button.pd-agent-add:focus-visible,
+.echoink-ipad button.pd-agent-edit:focus-visible { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.echoink-ipad button.pd-agent-avatar:disabled,
+.echoink-ipad button.pd-agent-add:disabled,
+.echoink-ipad button.pd-agent-edit:disabled { opacity: .45; cursor: default; }
+.echoink-ipad .pd-agent-avatar > .pd-avatar { width: 30px; height: 30px; }
+.echoink-ipad .pd-agent-badge { right: 2px; bottom: 2px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; font-size: .6rem; line-height: 14px; }
+.echoink-ipad .pd-agent-badge.is-running svg { width: 12px; height: 12px; }
+.echoink-ipad .pd-agent-badge.is-unread { right: 6px; bottom: 6px; min-width: 7px; width: 7px; height: 7px; padding: 0; }
+.echoink-ipad .pd-agent-page { display: flex; flex-direction: column; min-height: 0; height: 100%; font-size: .9375em; }
+.echoink-ipad .pd-agent-identity { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; padding: 10px 6px 4px 14px; }
+.echoink-ipad .pd-agent-identity > .pd-avatar { width: 30px; height: 30px; }
+.echoink-ipad .pd-agent-identity-copy { flex: 1 1 auto; min-width: 0; }
+.echoink-ipad .pd-agent-name { font-weight: 600; overflow-wrap: anywhere; }
+.echoink-ipad .pd-agent-position { color: var(--text-muted); font-size: .8em; overflow-wrap: anywhere; }
+.echoink-ipad .pd-agent-count { flex: 0 0 auto; color: var(--text-muted); font-size: .8em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.echoink-ipad .pd-agent-edit .pd-icon svg { width: 18px; height: 18px; }
+.echoink-ipad .pd-agent-tasks { flex: 1 1 auto; min-height: 0; padding: 0 14px 20px; overflow: auto; overscroll-behavior: contain; }
+.echoink-ipad .pd-agent-task-group { min-width: 0; }
+.echoink-ipad .pd-agent-tasks .pd-task-group-label { margin: 14px 2px 6px; font-weight: 400; }
+.echoink-ipad .pd-agent-tasks button.pd-list-task { padding: 9px 12px; margin-bottom: 6px; border-radius: 10px; }
+.echoink-ipad .pd-task-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-ipad .pd-agent-form { padding-bottom: 12px; font-size: .9375em; }
+.echoink-ipad .pd-agent-form > .pd-empty { margin-top: 12px; }
+.echoink-ipad .pd-form-actbar { padding: 2px 14px 14px; }
+.echoink-ipad .pd-form-fields input[type="text"] { font-size: max(16px, 1em); }
+.echoink-ipad .pd-agent-shell .pd-composer-wrap { padding: 0 10px 18px; }
+.echoink-ipad .pd-agent-shell .pd-composer { margin-top: 6px; padding: 8px 6px 2px 12px; border-radius: 16px; }
+.echoink-ipad .pd-composer-bar { flex-wrap: wrap; }
+@media (hover: hover) {
+  .echoink-ipad button.pd-agent-avatar:hover,
+  .echoink-ipad button.pd-agent-add:hover,
+  .echoink-ipad button.pd-agent-edit:hover { background: var(--background-modifier-hover); }
+}
+
+.echoink-ipad .pd-agent-shell .pd-task-detail { font-size: .9375em; }
+/* Override the base shell input floor without cancelling the user's text scale. */
+.echoink-ipad .pd-agent-shell textarea.pd-composer-input { font-size: max(16px, 1em); }

@@ -125,7 +125,7 @@ export class LifestyleFinanceService {
     const active = new Set(this.service.plugin.settings.lifestyle.finance.categories.filter(c => c.active).map(c => c.name));
     for (const name of names) if (!active.has(name)) throw new Error(`finance_unknown_category:${name}`);
   }
-  async patchConversationRecord(id: string, version: string, patch: FinanceRecordPatch) {
+  async patchConversationRecord(id: string, version: string, patch: FinanceRecordPatch, guard: () => void = () => {}) {
     this.requireEnabled(); requireProPlugin(this.access);
     if (patch.category !== undefined) this.requireExistingCategories([patch.category]);
     if (patch.billPlanId !== undefined) {
@@ -133,16 +133,17 @@ export class LifestyleFinanceService {
       const data = await this.service.store.readFresh();
       if (patch.billPlanId !== null && !data.financeBillPlans.some(b => b.id === patch.billPlanId)) throw new Error("finance_bill_not_found");
     }
-    return this.ledger.patchRecord(id, version, structuredClone(patch));
+    return this.ledger.patchRecord(id, version, structuredClone(patch), () => { guard(); this.requireEnabled(); requireProPlugin(this.access); });
   }
-  async deleteConversationRecord(id: string, version: string) {
+  async deleteConversationRecord(id: string, version: string, guard: () => void = () => {}) {
     this.requireEnabled(); requireProPlugin(this.access);
-    return this.ledger.deleteRecord(id, version);
+    return this.ledger.deleteRecord(id, version, () => { guard(); this.requireEnabled(); requireProPlugin(this.access); });
   }
-  async patchConversationBudget(scope: string, version: string, patch: FinanceBudgetPatch) {
+  async patchConversationBudget(scope: string, version: string, patch: FinanceBudgetPatch, guard: () => void = () => {}) {
     this.requireEnabled(); requireProPlugin(this.access);
     const frozen = structuredClone(patch);
     const result = await this.service.store.updateFresh(draft => {
+      guard(); this.requireEnabled(); requireProPlugin(this.access);
       const before = financeBudgetSnapshot(draft, scope);
       if (before.version !== version) throw new Error("finance_version_conflict");
       if (!before.budget && frozen.totalCents === undefined) throw new Error("finance_budget_total_unset");
@@ -171,10 +172,11 @@ export class LifestyleFinanceService {
     if (observed.version !== result.after.version) throw new Error("finance_readback_failed");
     return { ...result, after: observed };
   }
-  async writeConversationBill(action: "create" | "update", id: string, version: string, patch: { name?: string; budgetCents?: number; allocations?: Record<string, number> }) {
+  async writeConversationBill(action: "create" | "update", id: string, version: string, patch: { name?: string; budgetCents?: number; allocations?: Record<string, number> }, guard: () => void = () => {}) {
     this.requireEnabled(); this.access.requireCapability("finance.bill_plan.write");
     const frozen = structuredClone(patch);
     const result = await this.service.store.updateFresh(draft => {
+      guard(); this.requireEnabled(); this.access.requireCapability("finance.bill_plan.write");
       const index = draft.financeBillPlans.findIndex(b => b.id === id);
       const before = index < 0 ? null : draft.financeBillPlans[index];
       if (action === "create" && before) throw new Error("finance_bill_already_exists");
@@ -333,7 +335,7 @@ export class LifestyleFinanceService {
   }
 
   /** Prepare the real service-generated identity before conversation approval. No write here. */
-  prepareManual(entry: Omit<FinanceEntry, "id" | "source" | "sourceId">, identity?: Pick<FinanceEntry, "id" | "sourceId">) {
+  prepareManual(entry: Omit<FinanceEntry, "id" | "source" | "sourceId">, identity?: Pick<FinanceEntry, "id" | "sourceId">, guard: () => void = () => {}) {
     requireProPlugin(this.access);
     if (entry.billPlanId != null) this.access.requireCapability("finance.bill_plan.write");
     if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(entry.date)) throw new Error("交易日期无效");
@@ -349,8 +351,8 @@ export class LifestyleFinanceService {
       requireProPlugin(this.access);
       if (created.billPlanId != null) this.access.requireCapability("finance.bill_plan.write");
       this.validateBillPlanId(created.billPlanId);
-      await this.initialize();
-      await this.ledger.add(created);
+      guard(); await this.initialize();
+      await this.ledger.add(created, () => { guard(); this.requireEnabled(); requireProPlugin(this.access); if (created.billPlanId != null) this.access.requireCapability("finance.bill_plan.write"); });
       return created;
     } };
   }

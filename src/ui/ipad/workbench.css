@@ -1,0 +1,190 @@
+.echoink-ipad {
+  --pd-ui-font: var(--font-text-size, 16px);
+  --pd-bg: var(--background-primary);
+  --pd-ink: var(--text-normal);
+  --pd-secondary: var(--text-muted);
+  --pd-muted: var(--text-faint, var(--text-muted));
+  --pd-line: var(--background-modifier-border);
+  --pd-soft: var(--echoink-theme-hover, var(--background-modifier-hover));
+  --pd-accent: var(--echoink-theme-accent, var(--em-green, var(--interactive-accent)));
+  --pd-on-accent: var(--echoink-theme-on-accent, var(--text-on-accent));
+  --pd-warning: var(--echoink-theme-warn, var(--text-warning, var(--text-error)));
+}
+.echoink-ipad.em-large-text { --pd-ui-font: calc(var(--font-text-size, 16px) * 1.125); }
+.echoink-ipad .pd-workbench,
+.echoink-ipad .pd-agent-page,
+.echoink-ipad .pd-agent-form { min-width: 0; font-size: .9375em; line-height: 1.5; }
+.echoink-ipad .pd-workbench { width: 100%; max-width: 860px; margin: 0 auto; padding: 24px 32px 40px; container: pd-workbench / inline-size; }
+.echoink-ipad .pd-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.echoink-ipad .pd-icon svg { width: 18px; height: 18px; stroke-width: 1.7; }
+.echoink-ipad .pd-grow { display: block; flex: 1 1 auto; min-width: 0; }
+.echoink-ipad .pd-sub { display: block; font-size: calc(var(--pd-ui-font) * 0.8125); color: var(--pd-secondary); }
+.echoink-ipad .pd-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-ipad .pd-empty { padding: 32px 0; text-align: center; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * 0.875); }
+.echoink-ipad .pd-error { margin-top: 12px; color: var(--text-error); white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-ipad .pd-error[hidden],
+.echoink-ipad .pd-agent-form [hidden] { display: none; }
+.echoink-ipad button.pd-button {
+  appearance: none; display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 44px; min-height: 44px;
+  max-width: 100%; height: auto; padding: 8px 0; margin: 0; border: 0; border-radius: 7px;
+  box-shadow: none; background: transparent; color: var(--pd-ink); font: inherit; text-align: left;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.echoink-ipad button.pd-button::before,
+.echoink-ipad button.pd-button::after { content: none; }
+.echoink-ipad .pd-button-visible {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; width: 100%;
+  padding: 3px 12px; border: 1px solid var(--pd-line); border-radius: 7px; font-size: calc(var(--pd-ui-font) * 0.875); line-height: 20px;
+}
+.echoink-ipad .pd-button-visible .pd-icon svg { width: 16px; height: 16px; }
+.echoink-ipad button.pd-button:hover:not(:disabled) .pd-button-visible { background: var(--pd-soft); }
+.echoink-ipad button.pd-button:active:not(:disabled) { opacity: .65; }
+.echoink-ipad button.pd-button:disabled { opacity: .45; cursor: default; }
+.echoink-ipad button.pd-button.is-primary .pd-button-visible { color: var(--pd-on-accent); background: var(--pd-accent); border-color: var(--pd-accent); }
+.echoink-ipad button.pd-button.is-danger .pd-button-visible { color: var(--text-on-accent); background: var(--text-error); border-color: var(--text-error); }
+.echoink-ipad button.pd-button.is-text { color: var(--pd-secondary); }
+.echoink-ipad button.pd-button.is-text .pd-button-visible { border: 0; padding: 0 4px; font-size: calc(var(--pd-ui-font) * 0.8125); }
+.echoink-ipad button.pd-button:focus-visible,
+.echoink-ipad button.pd-agent-avatar:focus-visible,
+.echoink-ipad .pd-module-nav > button.pd-module-button:focus-visible,
+.echoink-ipad button.pd-list-task:focus-visible,
+.echoink-ipad button.pd-completed-row:focus-visible,
+.echoink-ipad button.pd-preset:focus-visible,
+.echoink-ipad button.pd-avatar-option:focus-visible,
+.echoink-ipad .pd-task-card:focus-visible { outline: 2px solid var(--pd-secondary); outline-offset: -2px; background: var(--pd-soft); }
+.echoink-ipad .pd-workbench-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.echoink-ipad .pd-workbench-heading > .pd-grow { flex-basis: 100px; }
+.echoink-ipad .pd-workbench-heading h1 { margin: 0; font-size: calc(var(--pd-ui-font) * 1.375); font-weight: 600; line-height: 1.5; }
+.echoink-ipad .pd-home-date { color: var(--pd-muted); font-size: calc(var(--pd-ui-font) * 0.8125); }
+.echoink-ipad .pd-agent-strip { display: flex; align-items: center; gap: 2px; overflow-x: auto; margin: 6px -16px 0; padding: 0 12px; scrollbar-width: none; }
+.echoink-ipad .pd-agent-strip::-webkit-scrollbar,
+.echoink-ipad .pd-module-nav::-webkit-scrollbar,
+.echoink-ipad .pd-presets::-webkit-scrollbar { display: none; }
+.echoink-ipad button.pd-agent-avatar {
+  appearance: none; position: relative; display: grid; place-items: center; width: 48px; height: 48px; min-width: 48px; min-height: 48px;
+  margin: 0; padding: 0; border: 0; border-radius: 12px; box-shadow: none; background: transparent; flex: 0 0 auto; cursor: pointer;
+}
+.echoink-ipad button.pd-agent-avatar::before,
+.echoink-ipad button.pd-agent-avatar::after { content: none; }
+.echoink-ipad button.pd-agent-avatar:hover,
+.echoink-ipad button.pd-agent-avatar.is-selected { background: var(--pd-soft); }
+.echoink-ipad .pd-avatar { display: block; width: 22px; height: 22px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; background: var(--pd-soft); }
+.echoink-ipad .pd-agent-avatar > .pd-avatar { width: 34px; height: 34px; }
+.echoink-ipad .pd-avatar-default { display: grid; place-items: center; color: var(--pd-accent); }
+.echoink-ipad .pd-agent-badge { box-sizing: content-box; position: absolute; right: 3px; bottom: 3px; min-width: 16px; height: 16px; padding: 0 4px; border: 2px solid var(--pd-bg); border-radius: 8px; font-size: calc(var(--pd-ui-font) * 0.625); line-height: 16px; text-align: center; font-weight: 600; }
+.echoink-ipad .pd-agent-badge.is-waiting,
+.echoink-ipad .pd-agent-badge.is-interrupted { background: var(--pd-warning); color: var(--pd-bg); }
+.echoink-ipad .pd-agent-badge.is-running { display: grid; place-items: center; padding: 0; background: var(--pd-bg); color: var(--pd-accent); }
+.echoink-ipad .pd-agent-badge.is-running svg { width: 13px; height: 13px; }
+.echoink-ipad .pd-agent-badge.is-unread { right: 7px; bottom: 7px; min-width: 8px; width: 8px; height: 8px; padding: 0; background: var(--pd-accent); }
+.echoink-ipad .pd-module-nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px; margin: 10px 0 0 -10px; padding: 0 0 10px; border-bottom: 1px solid var(--pd-line); }
+.echoink-ipad .pd-module-nav > button.pd-module-button { appearance: none; position: relative; isolation: isolate; display: flex; align-items: center; gap: 6px; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 0 10px; border: 0; border-radius: 6px; box-shadow: none; background: transparent; color: var(--pd-secondary); font: inherit; font-size: calc(var(--pd-ui-font) * 0.875); white-space: normal; flex: 0 0 auto; cursor: pointer; }
+.echoink-ipad .pd-module-nav > button.pd-module-button::before { position: absolute; z-index: -1; inset: 8px 0; border-radius: 6px; content: ""; }
+.echoink-ipad .pd-module-nav > button.pd-module-button::after { content: none; }
+.echoink-ipad .pd-module-nav > button.pd-module-button:hover,
+.echoink-ipad .pd-module-nav > button.pd-module-button:active { color: var(--pd-ink); background: transparent; }
+.echoink-ipad .pd-module-nav > button.pd-module-button:is(:hover, :focus-visible)::before { background: var(--pd-soft); }
+.echoink-ipad .pd-module-nav > button.pd-module-button:active { opacity: .65; }
+.echoink-ipad .pd-module-button svg { width: 16px; height: 16px; }
+.echoink-ipad .pd-section { margin: 24px 0 0; }
+.echoink-ipad .pd-section-heading { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }
+.echoink-ipad .pd-section-heading h2 { margin: 0; font-size: calc(var(--pd-ui-font) * 0.8125); font-weight: 600; }
+.echoink-ipad .pd-count { color: var(--pd-muted); font-size: calc(var(--pd-ui-font) * 0.75); font-variant-numeric: tabular-nums; }
+.echoink-ipad .pd-section-more { margin-left: auto !important; }
+.echoink-ipad .pd-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); align-items: start; gap: 10px; }
+.echoink-ipad .pd-task-card { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--pd-line); border-radius: 12px; cursor: pointer; }
+.echoink-ipad .pd-task-card:hover,
+.echoink-ipad .pd-task-card:active,
+.echoink-ipad .pd-task-card.is-selected { background: var(--pd-soft); }
+.echoink-ipad .pd-task-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.echoink-ipad .pd-task-agent { min-width: 0; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * 0.8125); overflow-wrap: anywhere; }
+.echoink-ipad .pd-status { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; color: var(--pd-muted); font-size: calc(var(--pd-ui-font) * 0.75); font-variant-numeric: tabular-nums; white-space: nowrap; flex: 0 0 auto; }
+.echoink-ipad .pd-status .pd-icon svg { width: 14px; height: 14px; }
+.echoink-ipad .pd-status.is-waiting,
+.echoink-ipad .pd-status.is-interrupted { color: var(--pd-warning); }
+.echoink-ipad .pd-status.is-running svg,
+.echoink-ipad .pd-agent-badge.is-running svg { animation: pd-workbench-spin 1.2s linear infinite; }
+@keyframes pd-workbench-spin { to { transform: rotate(360deg); } }
+.echoink-ipad .pd-task-title { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.echoink-ipad .pd-task-step { color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * 0.875); overflow-wrap: anywhere; }
+.echoink-ipad .pd-card-actions { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }
+.echoink-ipad .pd-card-actions > .pd-grow { flex-basis: 120px; }
+.echoink-ipad .pd-task-card > .pd-inline-question { padding-top: 8px; border-top: 1px solid var(--pd-line); }
+.echoink-ipad .pd-rows { overflow: hidden; border: 1px solid var(--pd-line); border-radius: 12px; }
+.echoink-ipad .pd-row { display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 6px 12px 6px 14px; }
+.echoink-ipad .pd-row + .pd-row { border-top: 1px solid var(--pd-line); }
+.echoink-ipad button.pd-completed-row { appearance: none; width: 100%; height: auto; margin: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; color: var(--pd-ink); font: inherit; text-align: left; cursor: pointer; }
+.echoink-ipad button.pd-completed-row + .pd-completed-row { border-top: 1px solid var(--pd-line); }
+.echoink-ipad button.pd-completed-row:hover,
+.echoink-ipad button.pd-completed-row:active,
+.echoink-ipad button.pd-completed-row.is-selected { background: var(--pd-soft); }
+.echoink-ipad .pd-row-title { display: block; overflow-wrap: anywhere; }
+.echoink-ipad .pd-completed-row .pd-sub { overflow-wrap: anywhere; }
+.echoink-ipad .pd-time { color: var(--pd-muted); font-size: calc(var(--pd-ui-font) * 0.75); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.echoink-ipad .pd-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pd-accent); flex: 0 0 auto; }
+.echoink-ipad .pd-signal-row { flex-wrap: wrap; }
+.echoink-ipad .pd-signal-row > .pd-grow { flex-basis: 110px; }
+.echoink-ipad .pd-signal-row > .pd-icon { color: var(--pd-secondary); width: 24px; }
+.echoink-ipad .pd-signal-row > .pd-confirm { flex-basis: 100%; }
+.echoink-ipad .pd-todo-row { flex-wrap: wrap; gap: 0 10px; padding-left: 4px; }
+.echoink-ipad .pd-todo-row > .pd-grow { flex-basis: 100px; }
+.echoink-ipad .pd-todo-detail { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 10px; min-width: 0; max-width: 100%; }
+.echoink-ipad .pd-todo-check { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 auto; }
+.echoink-ipad .pd-todo-check input[type=checkbox] { appearance: none; display: block; width: 18px; height: 18px; margin: 0; padding: 0; border: 1.5px solid var(--pd-secondary); border-radius: 5px; background: transparent; box-shadow: none; }
+.echoink-ipad .pd-todo-check input:checked { background: var(--pd-accent); border-color: var(--pd-accent); }
+.echoink-ipad .pd-project { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; padding: 1px 7px; border-radius: 5px; background: var(--pd-soft); color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * 0.75); overflow-wrap: anywhere; }
+.echoink-ipad .pd-project svg { width: 12px; height: 12px; }
+.echoink-ipad .pd-due { color: var(--pd-warning); font-size: calc(var(--pd-ui-font) * 0.75); white-space: nowrap; }
+.echoink-ipad .pd-task-group-label { margin: 16px 2px 6px; color: var(--pd-muted); font-size: calc(var(--pd-ui-font) * 0.75); }
+.echoink-ipad button.pd-list-task { appearance: none; display: block; width: 100%; min-width: 0; min-height: 44px; height: auto; padding: 10px 12px; margin: 0 0 8px; border: 1px solid var(--pd-line); border-radius: 12px; box-shadow: none; background: transparent; color: var(--pd-ink); font: inherit; text-align: left; cursor: pointer; }
+.echoink-ipad button.pd-list-task:hover,
+.echoink-ipad button.pd-list-task:active { background: var(--pd-soft); }
+.echoink-ipad .pd-list-task-top { display: flex; align-items: center; gap: 8px; }
+.echoink-ipad .pd-list-task-title { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-ipad .pd-list-task > .pd-sub { margin-top: 2px; }
+.echoink-ipad .pd-form-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.echoink-ipad .echoink-ipad-page:has(> .echoink-ipad-content > .pd-agent-form) > .echoink-ipad-header { border-bottom: 1px solid var(--pd-line); }
+.echoink-ipad .pd-form-field { display: block; min-width: 0; margin-top: 16px; }
+.echoink-ipad .pd-field-label { display: block; margin: 0 0 8px; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * 0.8125); font-weight: 500; }
+.echoink-ipad input.pd-input { appearance: none; width: 100%; min-height: 44px; padding: 9px 12px; border: 1px solid var(--pd-line); border-radius: 9px; box-shadow: none; background: var(--pd-bg); color: var(--pd-ink); font: inherit; font-size: max(16px, 1em); line-height: 1.5; }
+.echoink-ipad input.pd-input:focus { outline: none; border-color: var(--pd-secondary); box-shadow: none; }
+.echoink-ipad .pd-presets { display: flex; flex-wrap: wrap; gap: 0 6px; margin: 0; padding: 0; }
+.echoink-ipad button.pd-preset { appearance: none; display: inline-flex; align-items: center; min-height: 44px; margin: 0; padding: 0; border: 0; border-radius: 999px; box-shadow: none; background: transparent; color: var(--pd-ink); font: inherit; flex: 0 0 auto; cursor: pointer; }
+.echoink-ipad .pd-preset-visible { display: flex; align-items: center; gap: 6px; padding: 3px 11px 3px 3px; border: 1px solid var(--pd-line); border-radius: 999px; font-size: calc(var(--pd-ui-font) * 0.875); white-space: nowrap; }
+.echoink-ipad .pd-preset-visible > .pd-avatar { width: 24px; height: 24px; }
+.echoink-ipad button.pd-preset.is-selected .pd-preset-visible,
+.echoink-ipad button.pd-preset:hover .pd-preset-visible { background: var(--pd-soft); }
+.echoink-ipad .pd-avatar-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 2px; }
+.echoink-ipad button.pd-avatar-option { appearance: none; display: grid; place-items: center; min-width: 44px; min-height: 52px; margin: 0; padding: 0; border: 0; border-radius: 12px; box-shadow: none; background: transparent; cursor: pointer; }
+.echoink-ipad .pd-avatar-option > .pd-avatar { width: 38px; height: 38px; }
+.echoink-ipad button.pd-avatar-option.is-selected,
+.echoink-ipad button.pd-avatar-option:hover { background: var(--pd-soft); }
+.echoink-ipad .pd-choices { overflow: hidden; border: 1px solid var(--pd-line); border-radius: 12px; }
+.echoink-ipad .pd-choice { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 46px; padding: 8px 12px; cursor: pointer; }
+.echoink-ipad .pd-choice + .pd-choice { border-top: 1px solid var(--pd-line); }
+.echoink-ipad .pd-choice input[type=checkbox] { flex: 0 0 auto; width: 20px; height: 20px; margin: 0; accent-color: var(--pd-accent); }
+.echoink-ipad .pd-choice-name { min-width: 0; overflow-wrap: anywhere; }
+.echoink-ipad .pd-choice-hint { margin-left: auto; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * 0.75); text-align: right; overflow-wrap: anywhere; }
+.echoink-ipad .pd-capability-group-label { margin: 12px 2px 6px; color: var(--pd-muted); font-size: calc(var(--pd-ui-font) * 0.75); }
+.echoink-ipad .pd-form-empty { padding: 10px 2px; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * 0.8125); }
+.echoink-ipad .pd-styles { display: flex; flex-direction: column; gap: 8px; }
+.echoink-ipad .pd-style-choice { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 12px 14px; border: 1px solid var(--pd-line); border-radius: 12px; cursor: pointer; }
+.echoink-ipad .pd-style-choice:hover,
+.echoink-ipad .pd-style-choice:has(input:checked) { background: var(--pd-soft); }
+.echoink-ipad .pd-style-choice input[type=radio] { appearance: none; width: 20px; height: 20px; margin: 1px 0 0; flex: 0 0 auto; border: 1.5px solid var(--pd-muted); border-radius: 50%; background: transparent; }
+.echoink-ipad .pd-style-choice input[type=radio]:checked { border-color: var(--pd-accent); background: radial-gradient(circle, var(--pd-accent) 0 4px, transparent 4.5px); }
+.echoink-ipad .pd-style-copy { min-width: 0; }
+.echoink-ipad .pd-style-name { display: block; font-weight: 500; }
+.echoink-ipad .pd-form-actbar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0 8px; padding: 2px 16px 4px; border-top: 1px solid var(--pd-line); background: var(--pd-bg); }
+.echoink-ipad .pd-danger-zone { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--pd-line); }
+.echoink-ipad .pd-confirm { margin-top: 6px; padding: 12px; border: 1px solid var(--pd-line); border-radius: 10px; font-size: calc(var(--pd-ui-font) * 0.875); line-height: 1.7; }
+.echoink-ipad .pd-confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0 8px; }
+.echoink-ipad .pd-leave-confirm:not(:empty) { padding: 0 16px 8px; }
+@container pd-workbench (max-width: 520px) {
+  .echoink-ipad .pd-task-who { flex-wrap: wrap; }
+  .echoink-ipad .pd-task-agent { flex: 1 1 80px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .echoink-ipad .pd-status.is-running svg,
+  .echoink-ipad .pd-agent-badge.is-running svg { animation: none; }
+}

@@ -1,0 +1,243 @@
+/* Test host + synthetic page slots only. Product shell geometry comes exclusively
+   from src/ui/iphone/shell.css and src/ui/ipad/shell.css. */
+body.fixture-host {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 100vh;
+  margin: 0;
+  padding: 14px 20px 28px;
+  overflow: auto;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  --font-interface: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+  --font-text-size: 16px;
+  --view-bottom-spacing: 0px;
+}
+/* The fixture establishes the four Demo palettes as a test host theme. These
+   variables do not ship in styles.css and do not style product shell elements. */
+html[data-palette="green"][data-mode="light"] body.fixture-host {
+  color-scheme: light;
+  --background-primary: #fff; --background-secondary: #f7f8f5;
+  --text-normal: #303b38; --text-muted: #646e68; --text-faint: #68736b;
+  --background-modifier-border: #e8ebe7; --background-modifier-hover: #f1f3ef;
+  --interactive-accent: #2e7569; --text-on-accent: #fff; --text-warning: #97573a;
+}
+html[data-palette="green"][data-mode="dark"] body.fixture-host {
+  color-scheme: dark;
+  --background-primary: #191919; --background-secondary: #242424;
+  --text-normal: #eee; --text-muted: #b7b7b7; --text-faint: #999;
+  --background-modifier-border: #414141; --background-modifier-hover: #2a2a2a;
+  --interactive-accent: #dedee3; --text-on-accent: #212123; --text-warning: #d9a083;
+}
+html[data-palette="violet"][data-mode="light"] body.fixture-host {
+  color-scheme: light;
+  --background-primary: #f7f7fa; --background-secondary: #f0f0f5;
+  --text-normal: #2d2b34; --text-muted: #6d6979; --text-faint: #6d6979;
+  --background-modifier-border: #dedde6; --background-modifier-hover: #eaeaf1;
+  --interactive-accent: #725aa8; --text-on-accent: #fff; --text-warning: #93573e;
+}
+html[data-palette="violet"][data-mode="dark"] body.fixture-host {
+  color-scheme: dark;
+  --background-primary: #17171b; --background-secondary: #202025;
+  --text-normal: #eeeef2; --text-muted: #aeb0bc; --text-faint: #92929f;
+  --background-modifier-border: #373740; --background-modifier-hover: #27272e;
+  --interactive-accent: #b5a8ec; --text-on-accent: #211c30; --text-warning: #dba58f;
+}
+body.fixture-host { --background-modifier-cover: #0004; --em-green: var(--interactive-accent); --text-error: var(--text-warning); }
+.fixture-caption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0 0 8px; }
+.fixture-caption strong { font-size: 14px; font-weight: 600; }
+.fixture-caption > span { color: var(--text-muted); font-size: 12px; }
+.fixture-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.fixture-controls > button, .fixture-controls > select {
+  min-height: 32px; height: auto; padding: 4px 10px; border: 1px solid var(--background-modifier-border);
+  border-radius: 6px; color: var(--text-normal); background: var(--background-primary); box-shadow: none; font: inherit;
+}
+.fixture-controls > button { cursor: pointer; }
+.fixture-error-control, .fixture-size-control { display: inline-flex; align-items: center; gap: 6px; margin: 0 8px; }
+.fixture-error-control input { margin: 0; }
+.fixture-size-control input { width: 140px; }
+.fixture-status { margin-bottom: 10px; color: var(--text-muted); font-size: 12px; }
+.fixture-status[data-error="true"] { color: var(--text-error); }
+main.fixture {
+  position: relative; display: flex; flex-direction: column; flex: none;
+  width: var(--fixture-width); height: var(--fixture-height); min-width: 0; min-height: 0;
+  margin: 0 auto; padding: 0; overflow: hidden;
+  border: 0; border-radius: 0;
+  color: var(--text-normal); background: var(--background-primary);
+  --fx-line: var(--background-modifier-border); --fx-soft: var(--background-modifier-hover);
+  --fx-muted: var(--text-muted); --fx-faint: var(--text-faint);
+}
+main.fixture.fixture-short { height: min(var(--fixture-height), 520px); }
+.fixture-host-status {
+  display: flex; align-items: center; justify-content: space-between; flex: none;
+  height: 24px; padding: 0 20px; background: var(--background-secondary); font-size: 12px; font-weight: 600;
+}
+.fixture-phone .fixture-host-status { height: 47px; padding: 0 28px 8px 34px; align-items: flex-end; font-size: 15px; background: var(--background-primary); }
+.fixture-host-indicators { display: flex; align-items: center; gap: 5px; }
+.fixture-host-indicators svg { display: block; width: 16px; height: 16px; }
+.fixture-host-top {
+  display: flex; align-items: center; gap: 2px; flex: none; height: 44px; padding: 0 6px;
+  border-bottom: 1px solid var(--fx-line); background: var(--background-secondary); color: var(--fx-muted);
+}
+.fixture-host-top > .fx-icon { margin: 0 8px; }
+.fixture-phone .fixture-host-top { height: 40px; justify-content: space-between; padding: 0 10px; background: var(--background-primary); font-size: 14px; }
+.fixture-host-tab {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; min-height: 36px; height: auto;
+  margin: 0; padding: 4px 12px; border: 0; border-radius: 9px 9px 0 0;
+  color: var(--fx-muted); background: transparent; box-shadow: none; font: inherit; cursor: pointer;
+}
+.fixture-host-tab[aria-selected="true"] { color: var(--text-normal); background: var(--background-primary); }
+.fixture-host-tab:hover, .fixture-host-tab:focus-visible { color: var(--text-normal); background: var(--fx-soft); box-shadow: none; }
+.fixture-work { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.fixture-shell-root { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.fixture-host-bottom {
+  display: flex; flex: none; align-items: flex-start; justify-content: space-around; height: 74px; padding: 18px 20px;
+  color: var(--fx-muted); background: var(--background-secondary); border-top: 1px solid var(--fx-line);
+}
+.fixture-center, .fixture-settings-root { position: relative; flex: 1; min-width: 0; min-height: 0; }
+.fixture-side { display: flex; flex-direction: column; position: relative; flex: 0 0 360px; width: 360px; min-width: 0; min-height: 0; border-left: 1px solid var(--fx-line); background: var(--background-primary); }
+.fixture-side-root { flex: 1; min-width: 0; min-height: 0; }
+.fixture-side-tabs { display: flex; flex: none; align-items: center; flex-wrap: wrap; min-height: 40px; border-bottom: 1px solid var(--fx-line); }
+.fixture-side-tabs > button {
+  display: grid; place-items: center; width: 44px; height: 44px; margin: 0; padding: 0; border: 0; border-radius: 0;
+  background: transparent; box-shadow: none; color: var(--fx-muted); cursor: pointer;
+}
+.fixture-side-tabs > button svg { width: 18px; height: 18px; }
+.fixture-side-avatar-strip { display: flex; flex: 0 0 100%; padding: 2px 6px; border-top: 1px solid var(--fx-line); overflow-x: auto; }
+.fixture-portrait .fixture-side { position: absolute; z-index: 5; right: 0; top: 0; bottom: 0; width: min(360px, 100%); }
+.fixture button.fixture-drawer-backdrop { position: absolute; z-index: 4; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: var(--background-modifier-cover); box-shadow: none; cursor: pointer; }
+.fixture [hidden] { display: none !important; }
+
+/* Synthetic slot content, copied in structure and local spacing from the two
+   approved Demos. The source shell supplies scrolling, headers and footers. */
+.fixture .fx-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; color: inherit; }
+.fixture .fx-icon svg { display: block; width: 18px; height: 18px; stroke-width: 1.7; }
+.fixture .fx-grow { flex: 1; min-width: 0; }
+.fixture .fx-sub { color: var(--fx-muted); font-size: 13px; line-height: 1.5; }
+.fixture .fx-avatar { display: block; width: 22px; height: 22px; flex: none; border-radius: 50%; background: var(--fx-soft); object-fit: cover; }
+.fixture .fx-avatar.large { width: 40px; height: 40px; }
+.fixture .fx-avatar.strip { width: 34px; height: 34px; }
+.fixture .fx-avatar-button {
+  display: grid; place-items: center; flex: none; width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+  margin: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; box-shadow: none; cursor: pointer;
+}
+.fixture .fx-avatar-button:hover, .fixture .fx-avatar-button:focus-visible { background: var(--fx-soft); box-shadow: none; }
+.fixture .fx-avatar-strip { display: flex; align-items: center; gap: 2px; overflow-x: auto; margin: 6px -16px 0; padding: 0 12px; }
+.fixture .fx-avatar-strip .fx-avatar-button { width: 48px; height: 48px; }
+.fixture .fx-board { font-size: 15px; }
+.fixture .fx-ipad-board { max-width: 860px; margin: 0 auto; padding: 24px 32px 40px; }
+.fixture .fx-phone-board { padding-top: 10px; }
+.fixture .fx-board-head { display: flex; align-items: flex-start; gap: 4px; }
+.fixture .fx-board-head h1 { margin: 0; font-size: 22px; line-height: 1.5; font-weight: 600; }
+.fixture .fx-date { color: var(--fx-faint); font-size: 13px; }
+.fixture .fx-module-nav { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; margin: 10px 0 0 -10px; padding-bottom: 10px; border-bottom: 1px solid var(--fx-line); }
+.fixture .fx-module-nav button {
+  display: flex; align-items: center; justify-content: flex-start; gap: 6px; min-height: 44px; height: auto;
+  margin: 0; padding: 0 10px; border: 0; border-radius: 10px; color: var(--fx-muted); background: transparent;
+  box-shadow: none; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer;
+}
+.fixture .fx-module-nav button:hover { background: var(--fx-soft); }
+.fixture-phone .fx-module-nav { flex-wrap: nowrap; overflow-x: auto; margin: 2px -16px 0; padding: 0 10px 8px; }
+.fixture .fx-module-nav svg { width: 16px; height: 16px; }
+.fixture .fx-section { margin: 24px 0 0; }
+.fixture-phone .fx-section { margin-top: 22px; }
+.fixture .fx-section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; min-height: 24px; }
+.fixture .fx-section-head h2 { margin: 0; color: var(--text-normal); font-size: 13px; line-height: 1.5; font-weight: 600; }
+.fixture .fx-count { color: var(--fx-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.fixture .fx-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 10px; }
+.fixture-phone .fx-card-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.fixture .fx-work-card {
+  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 8px; width: 100%; height: auto;
+  margin: 0; padding: 12px 14px; border: 1px solid var(--fx-line); border-radius: 12px;
+  color: var(--text-normal); background: transparent; box-shadow: none; font: inherit; text-align: left; white-space: normal; cursor: pointer;
+}
+.fixture .fx-work-card:hover { background: var(--fx-soft); }
+.fixture .fx-work-card strong { font-weight: 600; line-height: 1.4; }
+.fixture .fx-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.fixture .fx-card-status { margin-left: auto; font-size: 12px; color: var(--fx-muted); }
+.fixture .fx-step { color: var(--fx-muted); font-size: 14px; }
+.fixture .fx-group { overflow: hidden; border: 1px solid var(--fx-line); border-radius: 12px; }
+.fixture .fx-group-label { margin: 22px 12px 8px; color: var(--fx-muted); font-size: 12px; font-weight: 500; }
+.fixture .fx-settings-root { padding-top: 16px; }
+.fixture .fx-row {
+  display: flex; align-items: center; justify-content: flex-start; gap: 12px; width: 100%; min-height: 50px; height: auto;
+  margin: 0; padding: 6px 12px; border: 0; border-radius: 0; color: var(--text-normal); background: transparent;
+  box-shadow: none; font: inherit; font-size: 15px; line-height: 1.5; text-align: left; white-space: normal;
+}
+.fixture-phone .fx-row { min-height: 52px; padding: 8px 12px; }
+.fixture .fx-row + .fx-row { border-top: 1px solid var(--fx-line); }
+.fixture button.fx-row { cursor: pointer; }
+.fixture button.fx-row:hover, .fixture button.fx-row:focus-visible { background: var(--fx-soft); box-shadow: none; }
+.fixture .fx-row > .fx-icon:last-child { color: var(--fx-faint); }
+.fixture .fx-row > .fx-icon:last-child svg { width: 16px; height: 16px; }
+.fixture .fx-value { display: inline-flex; align-items: center; flex: none; color: var(--fx-muted); font-size: 14px; }
+.fixture .fx-segments { display: flex; flex: none; padding: 2px; border-radius: 8px; background: var(--fx-soft); }
+.fixture .fx-segments button { min-height: 32px; height: auto; margin: 0; padding: 0 10px; border: 0; border-radius: 6px; box-shadow: none; color: var(--fx-muted); background: transparent; font: inherit; font-size: 13px; cursor: pointer; }
+.fixture .fx-segments button[aria-pressed="true"] { color: var(--text-normal); background: var(--background-primary); }
+.fixture .fx-row > input[type="checkbox"] { flex: none; width: 20px; height: 20px; accent-color: var(--interactive-accent); }
+.fixture .fx-todo-done > .fx-grow { color: var(--fx-faint); text-decoration: line-through; }
+.fixture .fx-field { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; color: var(--fx-muted); font-size: 13px; font-weight: 500; }
+.fixture .fx-field > input, .fixture .fx-field > textarea {
+  display: block; width: 100%; height: auto; min-height: 44px; margin: 0; padding: 9px 12px;
+  border: 1px solid var(--fx-line); border-radius: 9px; outline: none; box-shadow: none;
+  color: var(--text-normal); background: var(--background-primary); font: inherit; font-size: 16px; font-weight: 400; line-height: 1.5;
+}
+.fixture .fx-field > textarea { min-height: 220px; resize: vertical; }
+.fixture .fx-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 2px 16px 4px; border-top: 1px solid var(--fx-line); }
+.fixture-ipad .fx-form-actions { padding-right: 0; padding-left: 0; }
+.fixture .fx-feedback { min-height: 20px; margin-top: 12px; color: var(--fx-muted); font-size: 13px; }
+.fixture .fx-feedback[data-error="true"] { color: var(--text-error); }
+.fixture .fx-identity { display: flex; align-items: center; gap: 10px; padding: 12px 0 4px; }
+.fixture .fx-agent-name { font-size: 17px; font-weight: 600; }
+.fixture .fx-task-group { margin: 16px 2px 6px; color: var(--fx-faint); font-size: 12px; }
+.fixture .fx-task-card {
+  display: block; width: 100%; height: auto; margin: 0 0 8px; padding: 10px 12px;
+  border: 1px solid var(--fx-line); border-radius: 12px; color: var(--text-normal); background: transparent; box-shadow: none;
+  font: inherit; font-size: 15px; text-align: left; white-space: normal; cursor: pointer;
+}
+.fixture .fx-task-card:hover { background: var(--fx-soft); }
+.fixture .fx-task-card strong { font-weight: 600; }
+.fixture .fx-task-card .fx-sub { margin-top: 2px; }
+.fixture .fx-stream { display: flex; flex-direction: column; gap: 12px; padding-top: 12px; }
+.fixture .fx-user-message { align-self: flex-end; max-width: 85%; margin: 12px 0; padding: 9px 13px; border-radius: 16px; background: var(--fx-soft); font-size: 15px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fixture .fx-answer { margin: 12px 0; font-size: 15px; line-height: 1.8; white-space: pre-wrap; }
+.fixture .fx-composer { margin: 0; padding: 8px 6px 2px 12px; border: 1px solid var(--fx-line); border-radius: 16px; background: var(--background-primary); }
+.fixture-phone .fx-composer { margin: 6px 12px 8px; border-radius: 18px; }
+.fixture .fx-composer textarea {
+  display: block; width: 100%; height: 48px; min-height: 48px; margin: 0; padding: 2px 0;
+  border: 0; border-radius: 0; outline: 0; resize: none; box-shadow: none;
+  color: var(--text-normal); background: transparent; font: inherit; font-size: 16px; line-height: 1.5;
+}
+.fixture .fx-composer-bar { display: flex; align-items: center; min-width: 0; margin-left: -10px; color: var(--fx-muted); }
+.fixture .fx-model-button {
+  display: flex; align-items: center; justify-content: flex-start; gap: 4px; flex: 1; min-width: 0; min-height: 44px; height: auto;
+  margin: 0 2px 0 auto; padding: 0 6px; border: 0; border-radius: 8px; color: var(--fx-muted); background: transparent;
+  box-shadow: none; font: inherit; font-size: 13px; cursor: pointer;
+}
+.fixture .fx-model-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fixture .fx-model-button:hover { background: var(--fx-soft); }
+.fixture .fx-brand { display: grid; place-items: center; flex: none; width: 18px; height: 18px; }
+.fixture .fx-brand svg { display: block; width: 16px; height: 16px; }
+.fixture .fx-send {
+  display: grid; place-items: center; flex: none; width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+  margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; cursor: pointer;
+}
+.fixture .fx-send > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: var(--text-on-accent); background: var(--interactive-accent); }
+.fixture-phone .fx-send > span { width: 32px; height: 32px; }
+.fixture .fx-send:disabled > span { opacity: .45; }
+.fixture .fx-send:disabled { cursor: default; }
+.fixture .fx-send svg { width: 17px; height: 17px; }
+.fixture .fx-model-heading { display: flex; align-items: center; gap: 8px; margin: 14px 2px 6px; color: var(--fx-muted); font-size: 12px; font-weight: 500; }
+.fixture .fx-model-list .fx-row { min-height: 54px; }
+.fixture .fx-model-list .fx-row[aria-pressed="true"] { background: var(--fx-soft); }
+.fixture .fx-sheet-actions { display: flex; justify-content: flex-end; }
+.fixture .fx-sheet-copy { margin: 0; padding: 8px 0; font-size: 15px; line-height: 1.8; }
+.fixture .fx-note { max-width: 720px; margin: 0 auto; padding: 32px 40px; font-size: 16px; line-height: 1.85; }
+.fixture .fx-note h1 { margin: 0 0 12px; font-size: 26px; }
+.fixture .fx-note p { margin: 0 0 16px; }
+@media (max-width: 820px) { body.fixture-host { padding: 10px 0 20px; } .fixture-caption, .fixture-controls, .fixture-status { padding-left: 10px; padding-right: 10px; } }
+@media (prefers-reduced-motion: reduce) { .fixture .fx-composer *, .fixture .fx-board * { transition: none; animation: none; } }

@@ -1,0 +1,10 @@
+export { MobileMemoryService } from "../../src/mobile/memory-service";
+export { MobileMemoryRepository } from "../../src/mobile/memory-repository";
+export { MobileStore } from "../../src/mobile/store";
+export { loadMobileSettings, mobileProvider, mobileModel } from "../../src/mobile/settings";
+export { MobileCapabilityPolicy } from "../../src/mobile/capability-policy";
+export { mobileTools } from "../../src/mobile/tools";
+export { inspectMobileTaskResume } from "../../src/mobile/task-recovery";
+export { USER_PROFILE_SLOTS, applyDreamProfileUpdate } from "../../src/harness/memory/user-profile-core";
+export { parseCanonicalMemoryRecord, serializeCanonicalMemoryRecord } from "../../src/harness/memory/personal-memory-core";
+export { indexChecksum } from "../../src/harness/memory/search-index-core";

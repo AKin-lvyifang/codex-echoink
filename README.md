@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.0 — a new workbench and multi-agent tasks" src="assets/releases/echoink-agent-2.8.0-release.png">
+    <img width="1024" alt="EchoInk 2.8.1 — generate from notes and work from phone or tablet" src="assets/releases/echoink-agent-2.8.1-release.png">
   </a>
 </p>
 
@@ -11,14 +11,14 @@
 <p align="center">
   <a href="https://echoink.cn">Official website</a> ·
   <a href="https://echoink.cn/install">Download &amp; installation</a> ·
-  <a href="#whats-new-in-280">What's new</a> ·
+  <a href="#whats-new-in-281">What's new</a> ·
   <a href="#privacy-and-data">Privacy</a> ·
   <a href="README_CN.md">中文</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="Desktop and Mobile Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.0"><img src="https://img.shields.io/badge/version-2.8.0-0EA5E9?style=flat-square" alt="Version 2.8.0"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.1"><img src="https://img.shields.io/badge/version-2.8.1-0EA5E9?style=flat-square" alt="Version 2.8.1"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT base + Commercial PRO — see LICENSE"></a>
 </p>
 
@@ -26,7 +26,9 @@
 
 EchoInk is a personal knowledge agent that lives in Obsidian. Chat with your notes, organize knowledge, keep visible and editable long-term memory, and record everyday life. Your notes stay in your vault; connect your own supported model service for AI features. Normal installation does not require Codex CLI.
 
-## What's new in 2.8.0
+## What's new in 2.8.1
+
+**Generate from notes and work from phone or tablet.** On desktop, generate reports and Canvas mind maps from selected notes with built-in or custom templates, then follow source links back to your notes.
 
 **A new workbench and multi-agent tasks.** The desktop Home gathers work that needs your response, running tasks, and completed results. Reminders for to-dos, sources, and PDFs can start an Agent task with the relevant content.
 
@@ -45,7 +47,7 @@ Visit [echoink.cn](https://echoink.cn) for [installation](https://echoink.cn/ins
 
 Requires **Obsidian 1.11.4 or later**. **Make a complete backup of your vault, plugin settings, and data before upgrading.** For manual upgrades, replace only the official `main.js`, `manifest.json`, and `styles.css`, keep your existing settings and data files, and re-enable the plugin. To roll back, restore the complete pre-upgrade backup together with the matching older plugin; replacing only the plugin files with an older version is not a supported downgrade.
 
-Mobile Beta supports text chat, Markdown note reading and creation, local memory, accounts, Finance, and phone/tablet layouts. English Diary generation, attachments, CLI, financial operations in chat, and desktop background knowledge/memory tasks are not yet available. You can view, enable, and select Skills, but they use only the available mobile tools; MCP currently saves configuration only. The new desktop workbench and multi-agent tasks are not available on mobile. Validation on physical iOS, iPadOS, and Android devices and native Windows and Linux environments is still incomplete.
+Mobile Beta adds separately designed iPhone and iPad workbenches, multi-Agent tasks, six settings groups, and pages for journals, to-dos, finance, knowledge, and English diaries; interrupted tasks continue when you choose, and handing something to an Agent only prepares the text. Note generation, generation-template settings, and PDF close reading are desktop-only; tasks do not sync across devices. Attachments, CLI, and desktop background knowledge tasks are not yet available; Skills use only the available mobile tools, and MCP currently saves configuration only. Validation on iPhone, Android, some native iPad flows, and native Windows and Linux environments remains incomplete.
 
 The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or update the plugin independently on each device through the official download or Community Plugins; do not rely on Sync Standard to transfer this file.
 

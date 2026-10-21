@@ -70,10 +70,14 @@ export async function profileScenarios(api, test, settings) {
   });
   function seed() {
     const agent = renderAgentMarkdown({ identity, styleName: getAgentTemplate("advisor").labelZh, self: agentSelfFromTemplate(getAgentTemplate("advisor"), habits) }) + "\n额外既有正文必须保留。\n";
-    const records = [{ id:"existing-memory",kind:"fact",status:"current",title:"旧记忆独有证据",date:"2026-10-11",basis:"explicit" }];
+    const memoryRecord = id => ({ schema: "echoink.memory.v1", id, kind: "fact", status: "current", title: "旧记忆独有证据", date: "2026-10-11", basis: "explicit", source: "fixture://profile-seed", recallWhen: "核对旧记忆", revision: 12, file: `shared-user/memory/facts/${id}.md` });
+    const record = memoryRecord("existing-memory"), records = [{ ...record, contentHash: hash("旧记忆独有证据") }];
+    const recordText = value => ["---", ...Object.entries({ schema: value.schema, id: value.id, kind: value.kind, status: value.status, date: value.date, source: value.source, basis: value.basis, title: value.title, recall_when: value.recallWhen, revision: value.revision }).map(([key, field]) => `${key}: ${JSON.stringify(field)}`), "---", "", "旧记忆独有证据", ""].join("\n");
+    const forgottenPath = "shared-user/.runtime/backups/forgets/forgotten-memory-42.md";
     const user = "用户画像独有证据", memory = renderPersonalMemoryOverview({revision:12}, records);
     return { [identityPath]: JSON.stringify(identity), [agentPath]: agent, [metaPath]: JSON.stringify({ ...emptyAgentSelfMetadata(42), revision: 3, templateId: "advisor" }),
-      [manifestPath]: JSON.stringify({ schemaVersion: 1, vaultId: "fixture-vault", revision: 12, records, tombstones: [{ recordId: "forgotten-memory" }], fixedFileHashes: { agent: hash(agent), user: hash(user) }, updatedAt: 42, unknownFutureField: "preserved" }),
+      [manifestPath]: JSON.stringify({ schemaVersion: 1, vaultId: "fixture-vault", revision: 12, records, tombstones: [{ recordId: "forgotten-memory", forgottenAt: 42, reason: "fixture", backupFile: forgottenPath, source: "ui://personal-memory-control" }], fixedFileHashes: { agent: hash(agent), user: hash(user) }, updatedAt: 42, unknownFutureField: "preserved" }),
+      [root + record.file]: recordText(record), [root + forgottenPath]: recordText(memoryRecord("forgotten-memory")),
       [root + "shared-user/USER.md"]: user, [root + "shared-user/MEMORY.md"]: memory, [root + "shared-user/.runtime/audit.jsonl"]: '{"type":"initialized","revision":12}\n',
       [root + "agents/echoink/dream-state.json"]: "dream-progress-must-stay", [root + "shared-user/.runtime/search-index.json"]: '{"schemaVersion":3,"revision":12,"checksum":"original"}' };
   }
@@ -127,20 +131,21 @@ export async function profileScenarios(api, test, settings) {
     await assert.rejects(protocol.save({ templateId: "executor" }, saved.version), /injected/u); assert.deepEqual([...host.files].sort(), [...before].sort());
     assert.equal((await protocol.profile()).version, saved.version);
   });
-  await test("actual mobile send reads current identity/style; memory off excludes habits and long-term profiles", async () => {
-    const host = createHost(seed()), store = new MobileStore(host.adapter, "plugin/mobile"); await store.load();
+  await test("actual mobile send reads Registry identity/four-style mapping; memory gate preserves legacy source", async () => {
+    const original = seed(), host = createHost(original), store = new MobileStore(host.adapter, "plugin/mobile", "fixture-instance"); await store.load();
     const config = settings(); let services, payload;
-    const runtime = new MobileRuntime(host.app, store, () => config, async request => { payload = JSON.parse(request.body); return answer("openai-completions", "ok"); }, () => services.context());
+    const runtime = new MobileRuntime(host.app, store, () => config, async request => { payload = JSON.parse(request.body); return answer("openai-completions", "ok"); }, (id, turn) => services.context(id, turn));
     services = new MobileServices({ app: host.app, settings: config, store, runtime, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile");
-    await services.initialize(); store.state.memoryEnabled = false;
+    await services.initialize(); await store.setMemoryEnabled(false);
     const originalRead = host.adapter.read.bind(host.adapter), reads = [];
     host.adapter.read = async path => { reads.push(path); return originalRead(path); };
     await runtime.send("off"); const off = payload.messages.find(item => item.role === "system").content;
-    assert.ok(off.includes("墨墨")); assert.ok(off.includes(getAgentTemplate("advisor").tone)); assert.ok(!off.includes("Nova"));
+    assert.ok(off.includes("墨墨")); assert.ok(off.includes("先核对前提、证据和遗漏")); assert.ok(!off.includes("Nova"));
     for (const text of [habits[0].text, "用户画像独有证据", "旧记忆独有证据"]) assert.ok(!off.includes(text));
     assert.ok(!reads.some(path => /shared-user\/(USER|MEMORY)\.md$/u.test(path)));
-    store.state.memoryEnabled = true; await runtime.send("on"); const on = payload.messages.find(item => item.role === "system").content;
-    for (const text of [habits[0].text, "用户画像独有证据", "旧记忆独有证据"]) assert.ok(on.includes(text));
+    await store.setMemoryEnabled(true); await runtime.send("on"); const on = payload.messages.find(item => item.role === "system").content;
+    for (const text of ["用户画像独有证据", "旧记忆独有证据"]) assert.ok(on.includes(text));
+    assert.ok(!on.includes(habits[0].text)); assert.equal(host.files.get(agentPath), original[agentPath]);
     await services.dispose();
   });
   await test("own interrupted journal recovers; foreign owner and external writes remain untouched", async () => {

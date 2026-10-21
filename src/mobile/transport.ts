@@ -1,15 +1,64 @@
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import type { Api, AssistantMessage, Context, Message, Model, Usage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Context, Message, Model, ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { RequestUrlParam } from "obsidian";
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
 import { apiProviderRequestUrl } from "../settings/provider-presets";
+import { applyEchoInkProviderReasoningWirePolicy, resolveEchoInkProviderReasoningWirePolicy, withEchoInkProviderReasoningWirePolicy } from "../harness/pi/provider-reasoning-wire-policy";
+import { observeUsageStream, type ObserveUsageOptions, type UsageSource } from "../harness/usage/usage-stream";
+import { countTextTokens, estimateTokenValue } from "../harness/usage/token-estimator";
 
 export type MobileRequest = (request: RequestUrlParam) => Promise<{ status: number; json: unknown }>;
+export type MobileUsageObserver = Pick<ObserveUsageOptions, "recordUsage" | "onRecordError">;
 type StoredAssistant = AssistantMessage & { mobileReasoning?: string; mobileResponseItems?: unknown[] };
+type MobilePiModel = Model<Api> & { mobileReasoningLevel: ModelThinkingLevel };
 const textContent = (message: Message) => typeof message.content === "string" ? message.content : message.content.filter(c => c.type === "text").map(c => c.text).join("\n");
-export function piModel(provider: ApiProviderConfig, model: ApiProviderModelConfig): Model<Api> {
-  return { id: model.id, name: model.displayName, api: provider.apiProtocol, provider: provider.runtimeProviderId || provider.id, baseUrl: provider.baseUrl, reasoning: model.reasoningEnabled, input: ["text"], contextWindow: model.contextWindow, maxTokens: model.maxOutputTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+export function piModel(provider: ApiProviderConfig, model: ApiProviderModelConfig): MobilePiModel {
+  const runtimeProviderId = provider.runtimeProviderId || provider.providerId || provider.id;
+  const policy = resolveEchoInkProviderReasoningWirePolicy(runtimeProviderId, model.id);
+  const level = model.reasoningEffort ?? model.discovery?.defaultReasoningEffort ?? policy?.defaultLevel ?? "medium";
+  return {
+    ...withEchoInkProviderReasoningWirePolicy({ id: model.id, name: model.displayName, api: provider.apiProtocol, provider: runtimeProviderId, baseUrl: provider.baseUrl, reasoning: model.reasoning, input: [...model.input], contextWindow: model.contextWindow, maxTokens: model.maxOutputTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+    mobileReasoningLevel: model.reasoning && model.reasoningEnabled && level !== "none" ? level : "off"
+  };
+}
+
+/** Mirror the known desktop wire formats without importing its model catalog. */
+function applyMobileReasoning(body: Record<string, unknown>, provider: ApiProviderConfig, model: Model<Api>, requested?: ModelThinkingLevel): void {
+  const level = (model as Partial<MobilePiModel>).mobileReasoningLevel ?? requested ?? "off";
+  const enabled = model.reasoning && level !== "off";
+  const mapped = enabled ? model.thinkingLevelMap?.[level] : model.thinkingLevelMap?.off;
+  const effort = mapped === null ? undefined : mapped ?? (enabled ? level : undefined);
+  const identities = [provider.providerId, model.provider];
+  const host = new URL(provider.baseUrl).hostname;
+  const isHost = (domain: string) => host === domain || host.endsWith(`.${domain}`);
+  const deepseek = identities.includes("deepseek") || isHost("deepseek.com");
+  const glm = identities.some(id => id === "glm" || id === "zai" || id === "zai-coding-cn") || isHost("z.ai") || isHost("bigmodel.cn");
+  const qwen = identities.some(id => id === "qwen" || id === "qwen-token-plan" || id === "qwen-token-plan-cn") || isHost("dashscope.aliyuncs.com") || isHost("maas.aliyuncs.com");
+  const kimi = identities.some(id => id === "kimi" || id === "moonshotai" || id === "moonshotai-cn") || isHost("moonshot.cn") || isHost("moonshot.ai");
+  const openai = identities.includes("openai") || host === "api.openai.com";
+  if (provider.apiProtocol === "openai-responses") {
+    if (!model.reasoning || !openai) return;
+    // O-series models have no real off state; leave their provider default alone.
+    if (!enabled && (mapped === null || /^o[1-9](?:-|$)/u.test(model.id))) return;
+    if (effort || !enabled) body.reasoning = { effort: effort ?? "none" };
+    return;
+  }
+  if (provider.apiProtocol !== "openai-completions") return;
+  if (deepseek || (qwen && /^deepseek-v4-/u.test(model.id))) {
+    body.thinking = { type: enabled ? "enabled" : "disabled" };
+    if (effort) body.reasoning_effort = /^deepseek-v4-/u.test(model.id) ? (effort === "max" || effort === "xhigh" ? "max" : "high") : effort;
+  } else if (glm) {
+    body.thinking = enabled ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
+  } else if (qwen) {
+    if (!model.reasoning && !/^qwen3(?:[.-]|$)/u.test(model.id)) return;
+    const policyBody = applyEchoInkProviderReasoningWirePolicy(body, model, level);
+    if (policyBody !== body) Object.assign(body, policyBody);
+    else body.enable_thinking = enabled;
+  } else if (kimi && (model.reasoning || /^kimi-k2\.[56](?:-|$)/u.test(model.id)) && /^kimi-k2/u.test(model.id)) {
+    if (!enabled && (/^kimi-k2\.7-code/u.test(model.id) || mapped === null)) return;
+    body.thinking = { type: enabled ? "enabled" : "disabled" };
+  } else if (openai && model.reasoning && effort) body.reasoning_effort = effort;
 }
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -17,6 +66,34 @@ function record(value: unknown): Record<string, unknown> {
 function records(value: unknown): Record<string, unknown>[] {
   const items: unknown[] = Array.isArray(value) ? value : [];
   return items.map(record);
+}
+function visibleReasoningTokens(item: Record<string, unknown>): number {
+  if (item.type !== "reasoning") return 0;
+  return [...records(item.summary).filter(part => part.type === "summary_text"),
+    ...records(item.content).filter(part => part.type === "reasoning_text")]
+    .reduce((total, part) => total + (typeof part.text === "string" ? countTextTokens(part.text) : 0), 0);
+}
+function transcriptReasoningTokens(context: Context, responses: boolean): number {
+  return transcript(context, responses).reduce<number>((total, value) => {
+    const item = record(value);
+    return total + (responses ? visibleReasoningTokens(item) : typeof item.reasoning_content === "string" ? countTextTokens(item.reasoning_content) : 0);
+  }, 0);
+}
+function returnedToolTokens(name: unknown, args: unknown): number {
+  if (typeof name !== "string" || !name) return 0;
+  try { return estimateTokenValue({ name, arguments: toolArguments(args) }); }
+  catch { return countTextTokens(name) + (typeof args === "string" ? countTextTokens(args) : 0); }
+}
+/** Numeric snapshot only: parsing failure must not erase already-returned text. */
+function returnedOutputTokens(data: Record<string, unknown>, responses: boolean): number {
+  if (responses) return records(data.output).reduce((total, item) => total + visibleReasoningTokens(item)
+    + (item.type === "message" ? records(item.content).reduce((sum, part) => sum
+      + (part.type === "output_text" && typeof part.text === "string" ? countTextTokens(part.text) : 0)
+      + (part.type === "refusal" && typeof part.refusal === "string" ? countTextTokens(part.refusal) : 0), 0) : 0)
+    + (item.type === "function_call" ? returnedToolTokens(item.name, item.arguments) : 0), 0);
+  const content = record(records(data.choices)[0]?.message);
+  return [content.content, content.reasoning_content, content.refusal].reduce<number>((total, value) => total + (typeof value === "string" ? countTextTokens(value) : 0), 0)
+    + records(content.tool_calls).reduce((total, call) => { const fn = record(call.function); return total + returnedToolTokens(fn.name, fn.arguments); }, 0);
 }
 function usage(value: unknown, responses: boolean): Usage {
   const data = record(value);
@@ -54,7 +131,7 @@ function transcript(context: Context, responses: boolean): unknown[] {
   }
   return result;
 }
-export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api>, context: Context): RequestUrlParam {
+export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api>, context: Context, reasoning?: ModelThinkingLevel): RequestUrlParam {
   const responses = provider.apiProtocol === "openai-responses";
   const tools = context.tools?.map(tool => responses
     ? { type: "function", name: tool.name, description: tool.description, parameters: tool.parameters, strict: false }
@@ -68,6 +145,7 @@ export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api
     body.max_tokens = model.maxTokens;
     delete body.max_completion_tokens;
   }
+  applyMobileReasoning(body, provider, model, reasoning);
   const url = new URL(apiProviderRequestUrl(provider.baseUrl, provider.apiProtocol));
   for (const [key, value] of Object.entries(provider.queryParams ?? {})) url.searchParams.set(key, value);
   return { url: url.toString(), method: "POST", contentType: "application/json", headers: provider.apiKey.trim() ? { Authorization: `Bearer ${provider.apiKey.trim()}` } : {}, body: JSON.stringify(body), throw: false };
@@ -81,22 +159,24 @@ function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
     pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
 }
-export function mobileStream(provider: ApiProviderConfig, request: MobileRequest): StreamFn {
+export function mobileStream(provider: ApiProviderConfig, request: MobileRequest, observer?: MobileUsageObserver, source: UsageSource = "conversation"): StreamFn {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
+    let outputTokens = 0;
     const message: StoredAssistant = { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id, usage: usage(null, false), stopReason: "stop", timestamp: Date.now() };
     void (async () => {
       try {
         if (options?.signal?.aborted) throw new Error("已停止");
         stream.push({ type: "start", partial: message });
-        const response = await abortable(request(buildMobileRequest(provider, model, context)), options?.signal);
+        const response = await abortable(request(buildMobileRequest(provider, model, context, options?.reasoning)), options?.signal);
         if (options?.signal?.aborted) throw new Error("已停止");
         const data = record(response.json);
+        const responses = provider.apiProtocol === "openai-responses";
+        if (observer) outputTokens = returnedOutputTokens(data, responses);
         if (response.status < 200 || response.status >= 300 || data.error || data.status === "failed") {
           const providerError = record(data.error).message;
           throw new Error(`Provider 请求失败（${response.status}）：${typeof providerError === "string" && providerError || "请检查模型、接口地址和 API Key"}`);
         }
-        const responses = provider.apiProtocol === "openai-responses";
         message.usage = usage(data.usage, responses);
         message.responseId = typeof data.id === "string" ? data.id : undefined;
         message.responseModel = typeof data.model === "string" ? data.model : undefined;
@@ -140,15 +220,16 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
         stream.push({ type: "error", reason: message.stopReason, error: message });
       } finally { stream.end(message); }
     })();
-    return stream;
+    return observer ? observeUsageStream(stream, { ...observer, context, provider: model.provider, model: model.id, source,
+      additionalInputTokens: transcriptReasoningTokens(context, provider.apiProtocol === "openai-responses"), estimateOutputTokens: () => outputTokens }) : stream;
   };
 }
 
 /** Independent one-shot inference: no conversation state or tools are involved. */
 export async function mobileGenerateText(provider: ApiProviderConfig, model: ApiProviderModelConfig, request: MobileRequest,
-  systemPrompt: string, user: string, maxTokens: number, signal: AbortSignal): Promise<string> {
+  systemPrompt: string, user: string, maxTokens: number, signal: AbortSignal, observer?: MobileUsageObserver, source: UsageSource = "background"): Promise<string> {
   const selected = { ...piModel(provider, model), maxTokens: Math.min(model.maxOutputTokens, maxTokens) };
-  const stream = await mobileStream(provider, request)(selected, { systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal });
+  const stream = await mobileStream(provider, request, observer, source)(selected, { systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal });
   const result = await stream.result();
   if (signal.aborted || result.stopReason === "aborted") throw new Error("已停止");
   if (result.stopReason === "error") throw new Error(result.errorMessage || "模型请求失败");

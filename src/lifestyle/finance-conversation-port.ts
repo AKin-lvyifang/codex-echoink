@@ -5,11 +5,11 @@ import { financeBudgetSnapshot, financeValueVersion } from "./finance-operation-
 import type { LifestyleFinanceService } from "./finance-service";
 import type { FinanceBillPlan } from "./store-core";
 import { budgetPatch, financeToolEffect, normalizeFinanceToolRequest, type PiFinanceToolId } from "../harness/pi-native/finance-tool-policy";
-import { normalizeJsonValue } from "../harness/pi-native/tool-authorization";
+import { normalizeJsonValue } from "../harness/pi-native/json-value-core";
 import type { PreparedObsidianOperation, ObsidianCliResult } from "../harness/pi-native/pi-obsidian-tools";
 
 /** Uses the existing ledger/store; this port never invokes the official CLI. */
-export function financeConversationPort(finance?: LifestyleFinanceService) {
+export function financeConversationPort(finance?: LifestyleFinanceService, guard: () => void = () => {}) {
   const json = (value: unknown) => normalizeJsonValue(JSON.parse(JSON.stringify(value)));
   return async (tool: PiFinanceToolId, args: unknown, operationSeed: string, signal?: AbortSignal): Promise<PreparedObsidianOperation> => {
     if (!finance) throw new Error("finance_service_unavailable");
@@ -44,7 +44,7 @@ export function financeConversationPort(finance?: LifestyleFinanceService) {
       if (!state.categories.some(c => c.active && c.name === category)) throw new Error("finance_existing_category_required");
       const token = sha256Hex(operationSeed);
       const prepared = finance.prepareManual({ date: r.date ?? localDate(), merchant: r.merchant ?? "", account: r.account ?? "", description: r.description ?? "", category,
-        amountCents: r.amountCents!, kind: r.kind ?? "expense", status: "completed", currency: "CNY", note: r.note ?? "", icon: r.icon ?? "auto", ...(r.billPlanId ? { billPlanId: r.billPlanId } : {}) }, { id: `entry-${token}`, sourceId: `manual-${token}` });
+        amountCents: r.amountCents!, kind: r.kind ?? "expense", status: "completed", currency: "CNY", note: r.note ?? "", icon: r.icon ?? "auto", ...(r.billPlanId ? { billPlanId: r.billPlanId } : {}) }, { id: `entry-${token}`, sourceId: `manual-${token}` }, guard);
       target = { domain: "finance", recordId: prepared.entry.id, path: prepared.relativePath };
       targetVersion = { absent: true, expectedEntry: prepared.entry, kind: "record-create", recordId: prepared.entry.id };
       preview = { action: "create", record: prepared.entry, path: prepared.relativePath };
@@ -83,8 +83,9 @@ export function financeConversationPort(finance?: LifestyleFinanceService) {
               const current = (await finance.readForConversation()).data.financeBillPlans.find(b => b.id === input.id);
               if (financeValueVersion(current ?? null) !== input.expectedVersion) throw new Error("finance_version_conflict");
             }
-            if (input.action === "delete") results.push({ status: "completed", deletion: await finance.deleteConversationRecord(record.entry.id, record.version) });
-            else results.push({ status: "completed", record: recordView(await finance.patchConversationRecord(record.entry.id, record.version, patch!)) });
+            guard();
+            if (input.action === "delete") results.push({ status: "completed", deletion: await finance.deleteConversationRecord(record.entry.id, record.version, guard) });
+            else results.push({ status: "completed", record: recordView(await finance.patchConversationRecord(record.entry.id, record.version, patch!, guard)) });
           } catch (error) {
             const reason = error instanceof Error ? error.message : "finance_write_failed";
             results.push({ id: record.entry.id, status: reason === "finance_version_conflict" || reason === "finance_record_not_found" ? "failed" : "uncertain", reason });
@@ -108,7 +109,7 @@ export function financeConversationPort(finance?: LifestyleFinanceService) {
       target = { domain: "finance", budgetScope: scope }; targetVersion = { kind: "budget", scope, beforeVersion: before.version, expectedBudget: afterBudget };
       preview = { action: "update", before, patch };
       business = { action: "update", scope, patch };
-      apply = () => finance.patchConversationBudget(scope, before.version, patch);
+      apply = () => finance.patchConversationBudget(scope, before.version, patch, guard);
     } else {
       const id = input.action === "create" ? `bill-${sha256Hex(operationSeed)}` : input.id!;
       const before = state.data.financeBillPlans.find(b => b.id === id) ?? null;
@@ -121,7 +122,7 @@ export function financeConversationPort(finance?: LifestyleFinanceService) {
       catch (error) { throw new Error(`finance_bill_invalid:${error instanceof Error ? error.message : error}`); }
       target = { domain: "finance", billId: id }; targetVersion = { kind: "bill", billId: id, beforeVersion: version, expectedBill: { ...before, ...patch, id, allocations: { ...before?.allocations, ...patch.allocations } } }; preview = { action: input.action, before, patch, id };
       business = { action: input.action, ...(input.action === "update" ? { id } : {}), ...patch, ...(input.action === "create" ? { allocations: patch.allocations ?? {} } : {}) };
-      apply = () => finance.writeConversationBill(input.action as "create" | "update", id, version, patch);
+      apply = () => finance.writeConversationBill(input.action as "create" | "update", id, version, patch, guard);
     }
     return { effect, target: json(target), targetVersion: json(targetVersion), preview: json(preview), effectArgumentsSha256: financeValueVersion(business),
       execute: async (executionSignal, onEffectStarted): Promise<ObsidianCliResult> => {
@@ -130,6 +131,7 @@ export function financeConversationPort(finance?: LifestyleFinanceService) {
         if (effect === "read") return { available: true, engine: "echoink-finance-service", command, status: "completed", data: json(read) };
         await onEffectStarted?.();
         try {
+          guard();
           const data = await apply!();
           const results = (data as { results?: { status: string }[] }).results;
           const verified = !results || results.every(r => r.status === "completed");

@@ -1,0 +1,54 @@
+.echoink-ipad.pd-settings .pd-agent-settings { width: 100%; min-width: 0; max-width: 720px; container-type: inline-size; }
+.echoink-ipad.pd-settings .pd-agent-settings-body { min-width: 0; margin: 0; padding: 0; border: 0; }
+.echoink-ipad.pd-settings .pd-agent-owner-avatar { flex: none; width: 20px; height: 20px; margin-right: -4px; }
+.echoink-ipad.pd-settings .pd-agent-dream { min-width: 0; padding: 0 12px 10px; border-bottom: 1px solid var(--pd-settings-line); }
+.echoink-ipad.pd-settings .pd-agent-dream .pd-settings-field { margin: 8px 0; }
+.echoink-ipad.pd-settings .pd-agent-dream .pd-settings-actions { justify-content: flex-end; }
+.echoink-ipad.pd-settings .pd-agent-status { margin-top: 8px; color: var(--text-muted); font-size: .8em; line-height: 1.5; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-agent-count { margin-left: 10px; color: var(--text-muted); font-size: inherit; font-variant-numeric: tabular-nums; }
+.echoink-ipad.pd-settings .pd-agent-profile-row { min-width: 0; margin: 0; padding: 12px; border-bottom: 1px solid var(--pd-settings-line); }
+.echoink-ipad.pd-settings .pd-agent-profile-row:last-child { border-bottom: 0; }
+.echoink-ipad.pd-settings .pd-agent-profile-title { color: var(--text-normal); font-size: .92em; font-weight: 500; }
+.echoink-ipad.pd-settings .pd-agent-profile-value { margin-top: 5px; font-size: 1em; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-agent-source { margin-top: 5px; color: var(--text-muted); font-size: .76em; line-height: 1.5; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-agent-sources > summary,
+.echoink-ipad.pd-settings .pd-agent-unfilled > summary,
+.echoink-ipad.pd-settings .pd-agent-forgotten > summary { display: flex; align-items: center; min-height: 44px; color: var(--text-muted); font-size: .8em; cursor: pointer; }
+.echoink-ipad.pd-settings .pd-agent-unfilled > summary { padding: 0 12px; }
+.echoink-ipad.pd-settings .pd-agent-sources > summary:focus-visible,
+.echoink-ipad.pd-settings .pd-agent-unfilled > summary:focus-visible,
+.echoink-ipad.pd-settings .pd-agent-forgotten > summary:focus-visible { outline: none; background: var(--pd-settings-soft); }
+.echoink-ipad.pd-settings .pd-agent-source-entry { padding: 8px 0; }
+.echoink-ipad.pd-settings .pd-agent-source-entry + .pd-agent-source-entry { border-top: 1px solid var(--pd-settings-line); }
+.echoink-ipad.pd-settings .pd-agent-sources { max-width: 100%; }
+.echoink-ipad.pd-settings .pd-agent-sources[open] { max-height: 320px; overflow: auto; }
+.echoink-ipad.pd-settings textarea.pd-agent-memory-editor { display: block; width: 100%; min-width: 0; min-height: 260px; margin: 0; padding: 10px; border: 1px solid var(--pd-settings-line); border-radius: 9px; background: var(--background-primary); color: var(--text-normal); font: inherit; font-size: max(16px, 1em); line-height: 1.8; resize: vertical; box-shadow: none; }
+.echoink-ipad.pd-settings textarea.pd-agent-memory-editor:focus { border-color: var(--pd-settings-line); outline: none; box-shadow: none; }
+.echoink-ipad.pd-settings .pd-agent-danger { color: var(--text-error); }
+.echoink-ipad.pd-settings .pd-agent-inline-confirm:empty,
+.echoink-ipad.pd-settings .pd-agent-leave:empty,
+.echoink-ipad.pd-settings .pd-agent-export:empty { display: none; }
+.echoink-ipad.pd-settings .pd-agent-search .pd-settings-field { margin-top: 0; }
+.echoink-ipad.pd-settings .pd-agent-memory-record { min-width: 0; margin: 0; }
+.echoink-ipad.pd-settings .pd-agent-memory-title { margin: 0 0 12px; font-size: 1.5em; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-agent-prose { max-width: 100%; overflow: auto; font-size: 1em; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-agent-prose pre,
+.echoink-ipad.pd-settings .pd-agent-prose table { max-width: 100%; overflow: auto; }
+.echoink-ipad.pd-settings .pd-agent-recall { margin: 8px 0; color: var(--text-muted); font-size: .9em; line-height: 1.85; overflow-wrap: anywhere; }
+.echoink-ipad.pd-settings .pd-agent-correction-before,
+.echoink-ipad.pd-settings .pd-agent-correction-after { padding: 12px 0; border-bottom: 1px solid var(--pd-settings-line); }
+.echoink-ipad.pd-settings .pd-agent-correction-after { margin-bottom: 8px; }
+.echoink-ipad.pd-settings .pd-agent-archive-message { margin: 0; padding: 14px 0; border-bottom: 1px solid var(--pd-settings-line); }
+.echoink-ipad.pd-settings .pd-agent-archive-message:last-child { border-bottom: 0; }
+@container (max-width: 520px) {
+  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-actions { flex-wrap: wrap; }
+  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row { flex-wrap: wrap; }
+  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row > .pd-settings-copy { flex-basis: 45%; }
+}
+
+.echoink-ipad.pd-settings .pd-agent-dream-row { padding-top: 0; padding-bottom: 0; }
+.echoink-ipad.pd-settings button.pd-agent-dream-link { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; flex: 1; min-width: 0; min-height: 48px; margin: 0; padding: 6px 0; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-align: left; box-shadow: none; cursor: pointer; }
+.echoink-ipad.pd-settings button.pd-agent-dream-link:focus-visible { outline: none; background: var(--pd-settings-soft); }
+.echoink-ipad.pd-settings button.pd-agent-dream-link:disabled { opacity: 1; cursor: default; }
+.echoink-ipad.pd-settings button.pd-agent-dream-link::after { content: none; }
+.echoink-ipad.pd-settings .pd-agent-dream[hidden] { display: none; }

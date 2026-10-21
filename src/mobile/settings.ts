@@ -7,10 +7,22 @@ import { normalizeLifestyleSettings } from "../lifestyle/settings";
 import { defaultHomeModuleVisibility } from "../home/home-modules";
 import { normalizeTodoCompletions } from "../home/todo-completions";
 import type { TodoHost, HomeHost } from "../home/home-host";
+import { normalizeAgentRegistry } from "../agents/registry";
+import type { AgentRegistry } from "../agents/types";
+import { normalizeTavilySettings, type TavilySettings } from "../tools/tavily-settings";
+
+// Input provenance only: normalization must not make a fresh default look persisted.
+const registrySources = new WeakMap<MobileSettings, "missing" | "existing" | "invalid">();
+export function mobileAgentRegistrySource(settings: MobileSettings): "missing" | "existing" | "invalid" {
+  return registrySources.get(settings) ?? "existing";
+}
 
 export interface MobileAppearance {
+  todoSourcePath?: string;
   appearance: "system" | "light" | "dark";
   largeText: boolean;
+  /** Mobile-only opt-outs; absence preserves the existing enabled behavior. */
+  moduleEnabled?: Partial<Record<"knowledge-base" | "journal" | "review" | "todos", boolean>>;
   knowledgePaths: Record<"wiki" | "raw" | "inbox", string>;
   reports: Record<"agent" | "knowledge", { period: "7d" | "last-week" | "30d"; schedule: "manual" | "weekly" | "monthly" }>;
 }
@@ -20,25 +32,40 @@ export interface MobileSettings extends Record<string, unknown>, MobileHomeSetti
   apiProviders: ApiProviderConfig[];
   activeApiProviderId: string;
   defaultModel: string;
+  autoOpenHome: boolean;
   mobileUi: MobileAppearance;
+  agentRegistry: AgentRegistry;
+  tavily: TavilySettings;
+  mobileMemory: { dreamEnabled: boolean; dreamRunsPerDay: number; autoArchive: boolean };
 }
 export const MOBILE_DEFAULT_WELCOME = {
   title: "让想法，慢慢清晰。",
   subtitle: "聊聊此刻的思考，读一篇笔记，或把今天写下来。"
 } as const;
-export const mobilePresets = API_PROVIDER_PRESETS.filter(p => p.authMode === "api-key" && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses"));
+export const mobilePresets = API_PROVIDER_PRESETS.filter(p => ["glm", "kimi", "deepseek", "qwen", "qwen-token-plan", "custom"].includes(p.id));
 export function supportedProvider(p: ApiProviderConfig): boolean {
-  return p.authMode !== "oauth" && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses");
+  return p.authMode === "api-key" && !["openai-codex", "anthropic", "minimax", "ollama"].includes(p.providerId ?? "")
+    && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses");
 }
 export function loadMobileSettings(value: unknown): MobileSettings {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
   const saved = (raw?.mobileUi ?? {}) as Partial<MobileAppearance>;
-  return {
+  const savedMemory = (raw?.mobileMemory ?? {}) as { dreamEnabled?: unknown; dreamRunsPerDay?: unknown; autoArchive?: unknown };
+  const settings: MobileSettings = {
     ...raw,
     // Both desktop and mobile persist the same provider configuration schema.
     apiProviders: Array.isArray(raw?.apiProviders) ? raw.apiProviders as ApiProviderConfig[] : [],
     activeApiProviderId: typeof raw?.activeApiProviderId === "string" ? raw.activeApiProviderId : "",
     defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "",
+    autoOpenHome: raw?.autoOpenHome === true,
+    agentRegistry: normalizeAgentRegistry(raw?.agentRegistry),
+    tavily: { ...(raw?.tavily as object), ...normalizeTavilySettings(raw?.tavily) },
+    mobileMemory: {
+      ...savedMemory, dreamEnabled: savedMemory.dreamEnabled !== false,
+      dreamRunsPerDay: typeof savedMemory.dreamRunsPerDay === "number" && Number.isFinite(savedMemory.dreamRunsPerDay)
+        ? Math.max(1, Math.min(6, Math.trunc(savedMemory.dreamRunsPerDay))) : 1,
+      autoArchive: savedMemory.autoArchive === true
+    },
     customWelcomeEnabled: raw?.customWelcomeEnabled === true,
     customWelcomeTitle: typeof raw?.customWelcomeTitle === "string" ? raw.customWelcomeTitle : "",
     customWelcomeSubtitle: typeof raw?.customWelcomeSubtitle === "string" ? raw.customWelcomeSubtitle : "",
@@ -53,10 +80,15 @@ export function loadMobileSettings(value: unknown): MobileSettings {
     resources: { catalog: [], importedFrom: {}, mcpConnections: {}, lastScannedAt: 0, lastError: "", ...(raw?.resources as object) },
     knowledgeBase: { lastRunAt: 0, lastRunStatus: "idle", lastReportPath: "", lastError: "", lastSummary: "", lastCompletion: "", lastPendingSources: [], lastWarnings: [], initialization: { status: "not-started", initializedAt: 0, templateVersion: "", lastPreviewSummary: "" }, processedSources: {}, healthHistory: [], maintenanceHistory: [], ...(raw?.knowledgeBase as object), folderBindings: normalizeKnowledgeFolderBindings((raw?.knowledgeBase as { folderBindings?: unknown } | undefined)?.folderBindings) },
     review: { enabled: false, knowledgeBaseEnabled: true, agentChatEnabled: true, scheduleTime: "21:00", catchUpOnStartup: true, outputDir: "outputs/reviews", rangeMode: "previous-week", openHtmlAfterRun: false, reports: { knowledgeBase: { lastRangeKey: "" }, agentChat: { lastRangeKey: "" } }, ...(raw?.review as object) },
-    mobileUi: { appearance: saved.appearance === "light" || saved.appearance === "dark" ? saved.appearance : "system", largeText: saved.largeText === true,
+    mobileUi: { ...saved, todoSourcePath: typeof saved.todoSourcePath === "string" && /\.md$/iu.test(saved.todoSourcePath) && !saved.todoSourcePath.startsWith("/") && !saved.todoSourcePath.split("/").some(part => !part || part === "." || part === "..") && !/[\\:]/u.test(saved.todoSourcePath) && ![...saved.todoSourcePath].some(character => character.charCodeAt(0) < 32) ? saved.todoSourcePath : undefined, appearance: saved.appearance === "light" || saved.appearance === "dark" ? saved.appearance : "system", largeText: saved.largeText === true,
       knowledgePaths: { wiki: "wiki", raw: "raw", inbox: "inbox", ...saved.knowledgePaths },
-      reports: { agent: { period: "7d", schedule: "manual", ...saved.reports?.agent }, knowledge: { period: "7d", schedule: "manual", ...saved.reports?.knowledge } } }
+      reports: { ...saved.reports, agent: { period: "7d", schedule: "manual", ...saved.reports?.agent }, knowledge: { period: "7d", schedule: "manual", ...saved.reports?.knowledge } } }
   };
+  const registry = raw?.agentRegistry;
+  registrySources.set(settings, registry === undefined ? "missing"
+    : registry && typeof registry === "object" && !Array.isArray(registry)
+      && (registry as Record<string, unknown>).schemaVersion === 1 ? "existing" : "invalid");
+  return settings;
 }
 export function mobileModel(id: string, existing?: ApiProviderModelConfig): ApiProviderModelConfig {
   return { input: ["text"], toolCalling: true, reasoning: false, reasoningEnabled: false, contextWindow: 128000, modelMaxTokens: 8192, maxOutputTokens: 4096, metadataSource: "manual", ...existing, id, displayName: existing?.displayName || id };

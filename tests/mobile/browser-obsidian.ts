@@ -16,18 +16,58 @@ const paths: Record<string, string> = {
   brain: '<path d="M12 5c-4-6-11 1-7 5-6 2-3 11 3 9 1 4 4 2 4-1V5Zm0 0c4-6 11 1 7 5 6 2 3 11-3 9-1 4-4 2-4-1"/>',
   ellipsis: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
 };
+type IconNode = [string, Record<string, string | number>, IconNode[]?];
+type LucideWindow = Window & { lucide?: { icons: Record<string, IconNode> } };
+function fixtureIcon(doc: Document, name: string): SVGElement | null {
+  const canonical = name.replace(/^lucide-/, "");
+  const key = canonical.split("-").map(part => part.charAt(0).toUpperCase() + part.slice(1)).join("");
+  const icons = (doc.defaultView as LucideWindow | null)?.lucide?.icons;
+  const source = icons?.[key];
+  let svg: SVGElement;
+  if (source) {
+    const create = ([tag, attributes, children = []]: IconNode): SVGElement => {
+      const node = doc.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [attribute, value] of Object.entries(attributes)) node.setAttribute(attribute, String(value));
+      for (const child of children) node.append(create(child));
+      return node;
+    };
+    svg = create(source);
+  } else {
+    if (icons) return null;
+    // JSDOM tests without the browser asset retain their original lightweight paths.
+    const parsed = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${paths[canonical] ?? '<circle cx="12" cy="12" r="8"/>'}</svg>`, "image/svg+xml");
+    svg = doc.importNode(parsed.documentElement, true) as unknown as SVGElement;
+  }
+  svg.classList.add("svg-icon"); svg.setAttribute("data-icon", name); svg.setAttribute("aria-hidden", "true");
+  return svg;
+}
+export function getIcon(name: string): SVGElement | null { return fixtureIcon(document, name); }
 export function setIcon(element: HTMLElement, name: string) {
-  const parsed = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? '<circle cx="12" cy="12" r="8"/>'}</svg>`, "image/svg+xml");
-  const svg = document.importNode(parsed.documentElement, true); svg.setAttribute("data-icon", name); element.replaceChildren(svg);
+  const svg = fixtureIcon(element.ownerDocument, name);
+  if (!svg) throw new Error(`Missing bundled Lucide icon: ${name}`);
+  element.replaceChildren(svg);
 }
 
 export { FixtureTFile as TFile } from "./host.mjs";
-export class TFolder { path = ""; name = ""; children: unknown[] = []; }
+export { parse as parseYaml } from "yaml";
+export class TFolder {
+  path = ""; name = ""; children: unknown[] = [];
+  static [Symbol.hasInstance](value: unknown): boolean {
+    if (!value || typeof value !== "object") return false;
+    const folder = value as { path?: unknown; children?: unknown; extension?: unknown };
+    return typeof folder.path === "string" && Array.isArray(folder.children) && folder.extension === undefined;
+  }
+}
 export class Component { addChild() {} removeChild() {} register() {} load() {} unload() {} }
 export class Plugin extends Component {
+  private domEvents: (() => void)[] = [];
   constructor(public app: any, public manifest: any) { super(); }
   registerView(type: string, factory: unknown) { this.app.workspace.registerView(type, factory); }
   async saveData(_data: unknown) {}
+  registerDomEvent(target: Document | Window, name: string, listener: EventListener) {
+    target.addEventListener(name, listener); this.domEvents.push(() => target.removeEventListener(name, listener));
+  }
+  unload() { this.domEvents.forEach(remove => remove()); this.domEvents = []; }
 }
 export class ItemView {
   app: any; containerEl: HTMLElement; contentEl: HTMLElement;
@@ -78,3 +118,6 @@ export class Setting {
   setDesc(text: string) { this.settingEl.createSpan({text}); return this; }
   addButton(callback: (button: any) => void) { const element = this.settingEl.createEl("button"); const button = { buttonEl: element, setButtonText(text: string) { element.textContent = text; return this; }, setCta() { element.classList.add("mod-cta"); return this; }, onClick(fn: () => void) { element.onclick = fn; return this; } }; callback(button); return this; }
 }
+
+/** Native editor type boundary; browser preview does not emulate a real editor. */
+export class MarkdownView {}

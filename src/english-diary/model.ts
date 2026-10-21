@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../utils/sha256";
 import type { DiaryBlock, DiaryPrivacy, ProcessingMode } from "./types";
 
 export class DiaryServiceError extends Error {
@@ -9,7 +9,7 @@ export class DiaryServiceError extends Error {
 }
 
 export function fingerprint(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
+  return sha256Hex(text);
 }
 
 /** Offsets address the unmodified input. Separators remain outside the blocks. */

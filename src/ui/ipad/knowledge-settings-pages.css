@@ -1,0 +1,28 @@
+.echoink-ipad .pd-knowledge-settings { width: 100%; max-width: 720px; min-width: 0; margin: 0 auto; container-type: inline-size; }
+.echoink-ipad .pd-knowledge-body { min-width: 0; margin: 0; padding: 0; border: 0; }
+.echoink-ipad .pd-knowledge-settings .pd-settings-row { flex-wrap: nowrap; }
+.echoink-ipad .pd-knowledge-settings .pd-settings-copy, .echoink-ipad .pd-knowledge-settings .pd-settings-label { min-width: 0; flex: 1 1 0; overflow-wrap: anywhere; }
+.echoink-ipad .pd-knowledge-settings .pd-settings-value { flex: 0 1 auto; min-width: 0; max-width: 50%; overflow-wrap: anywhere; }
+.echoink-ipad .pd-knowledge-settings .pd-settings-row > .pd-icon { flex: none; }
+.echoink-ipad .pd-knowledge-body input, .echoink-ipad .pd-knowledge-body select { font-size: max(16px, 1em); }
+.echoink-ipad .pd-knowledge-body .pd-settings-field { padding: 0 12px; }
+.echoink-ipad .pd-knowledge-choice { min-height: 44px; cursor: pointer; }
+.echoink-ipad .pd-knowledge-choice input:not([role="switch"]) { flex: 0 0 20px; width: 20px; height: 20px; margin: 0; accent-color: var(--em-green, var(--interactive-accent)); }
+.echoink-ipad .pd-knowledge-folder-list { min-width: 0; max-height: 55vh; overflow: auto; border-bottom: 1px solid var(--background-modifier-border); }
+.echoink-ipad .pd-knowledge-default:empty { display: none; }
+.echoink-ipad .pd-knowledge-routes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.echoink-ipad .pd-knowledge-route { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; padding: 14px 12px; border: 1px solid var(--background-modifier-border); border-radius: 12px; cursor: pointer; }
+.echoink-ipad .pd-knowledge-route:has(:checked) { background: var(--background-modifier-hover); }
+.echoink-ipad .pd-knowledge-route input { flex: 0 0 20px; width: 20px; height: 20px; margin: 3px 0 0; accent-color: var(--em-green, var(--interactive-accent)); }
+.echoink-ipad .pd-knowledge-route > span { min-width: 0; }
+.echoink-ipad .pd-knowledge-route-title { display: block; font-size: .92em; font-weight: 500; }
+.echoink-ipad .pd-knowledge-route-detail { display: block; margin-top: 5px; color: var(--text-muted); font-size: .76em; line-height: 1.5; overflow-wrap: anywhere; }
+.echoink-ipad .pd-knowledge-effects { min-width: 0; margin-top: 18px; font-size: .88em; line-height: 1.7; overflow-wrap: anywhere; }
+.echoink-ipad .pd-knowledge-issue { color: var(--text-error); }
+.echoink-ipad .pd-knowledge-empty { padding: 18px 12px; color: var(--text-muted); text-align: center; font-size: .88em; }
+.echoink-ipad .pd-knowledge-details summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
+.echoink-ipad .pd-knowledge-details p { margin: 8px 0; }
+.echoink-ipad .pd-knowledge-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.echoink-ipad .pd-knowledge-footer [hidden] { display: none; }
+.echoink-ipad .pd-knowledge-footer .pd-button-visible { min-height: 28px; }
+@container (max-width: 520px) { .echoink-ipad .pd-knowledge-routes { grid-template-columns: minmax(0, 1fr); } }

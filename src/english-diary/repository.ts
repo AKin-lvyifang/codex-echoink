@@ -1,6 +1,5 @@
 import { getProPluginAccess, requireProPlugin, unavailableCapabilityAccess } from "../membership/access";
 import type { CapabilityAccess } from "../membership/types";
-import { createHash } from "node:crypto";
 import { DEFAULT_ENGLISH_DIRECTORY, DEFAULT_EXPRESSION_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY, LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_ENGLISH_DIRECTORY } from "./types";
 import type {
   DiaryFilePort, DiaryGenerationDay, DiaryPrivacy, DiaryRecord, DiaryRepository, DiaryResult, DiarySource,
@@ -8,7 +7,7 @@ import type {
 } from "./types";
 import { diaryWikiLink, expressionIdentity, migrateExpressionMarkdown, parseExpressionMarkdown, patchExpressionMarkdown, renderDiaryMarkdown, renderExpressionMarkdown } from "./markdown";
 import { filterExpressions, normalizedExpressionKey as normalizedKey, pathsOverlap } from "./expression-search";
-import { splitDiaryBlocks } from "./model";
+import { fingerprint, splitDiaryBlocks } from "./model";
 
 export type EnglishDiaryRepositoryErrorCode =
   | "INVALID_PATH" | "INVALID_STATE" | "FILE_MODIFIED" | "CONFLICT"
@@ -22,6 +21,8 @@ export class EnglishDiaryRepositoryError extends Error {
 }
 
 interface RepositoryOptions {
+  /** Mobile surfaces stop on an interrupted transaction; desktop retains explicit recovery. */
+  recoverInterrupted?: boolean;
   migrateLegacy?: boolean;
   /** Defer migration and expose existing assets read-only until target folders are approved. */
   canMigrate?: () => boolean;
@@ -68,7 +69,6 @@ interface PublishOptions {
   signal?: AbortSignal;
   sourceUnchanged: () => Promise<boolean>;
 }
-const fingerprint = (content: string): string => createHash("sha256").update(content, "utf8").digest("hex");
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const serialize = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 const fail = (code: EnglishDiaryRepositoryErrorCode, message: string): never => { throw new EnglishDiaryRepositoryError(code, message); };
@@ -199,7 +199,7 @@ export class EnglishDiaryRepository implements DiaryRepository {
 
   constructor(private readonly files: DiaryFilePort, options: RepositoryOptions, private readonly access: CapabilityAccess = unavailableCapabilityAccess) {
     this.options = {
-      migrateLegacy: options.migrateLegacy, canMigrate: options.canMigrate, flatExpressions: true,
+      recoverInterrupted: options.recoverInterrupted, migrateLegacy: options.migrateLegacy, canMigrate: options.canMigrate, flatExpressions: true,
       stateDirectory: normalizeDiaryPath(options.stateDirectory),
       englishDirectory: normalizeDiaryPath(options.englishDirectory),
       expressionDirectory: normalizeDiaryPath(options.expressionDirectory),
@@ -243,7 +243,11 @@ export class EnglishDiaryRepository implements DiaryRepository {
 
   private exclusive<T>(operation: () => Promise<T>, notify: boolean | (() => boolean) = false): Promise<T> {
     const run = async () => {
-      await this.recoverOperation();
+      if (this.options.recoverInterrupted === false) {
+        if (await this.files.read(this.operationPath()) !== null || (await this.states()).some(state => state.value.transaction)) {
+          fail("SAVE_FAILED", "上次保存结果尚未确认，请先核对已有文件；本次没有恢复或重放写入。");
+        }
+      } else await this.recoverOperation();
       await this.migrateEnglish();
       const result = await operation();
       if (typeof notify === "function" ? notify() : notify) for (const listener of this.listeners) {
@@ -395,6 +399,15 @@ export class EnglishDiaryRepository implements DiaryRepository {
   /** Confirmation and recovery inspection must not publish or repair anything. */
   async inspect(source: DiarySource): Promise<DiaryRecord> {
     return this.readOnly(async () => this.describe((await this.stateIdentity(source)).value));
+  }
+
+  /** Read one committed association without requiring the original or recovering a transaction. */
+  async inspectSaved(id: string): Promise<DiaryRecord> {
+    return this.readOnly(async () => {
+      const state = await this.loadState(id);
+      if (state.value.transaction) fail("SAVE_FAILED", "上次保存尚未确认，请保留文件后核对；没有自动恢复。");
+      return this.describe(state.value);
+    });
   }
 
   async get(source: DiarySource): Promise<DiaryRecord> {
@@ -1013,12 +1026,24 @@ export class EnglishDiaryRepository implements DiaryRepository {
     return options.readOnly ? this.readOnly(collect) : this.exclusive(collect);
   }
 
-  async updateExpression(id: string, changes: { category: string; note: string }): Promise<ExpressionEntry> {
+  private expressionVersion(file: EntryFile): string {
+    return fingerprint(serialize({ entry: file.entry, markdown: file.content, state: file.stateRaw }));
+  }
+
+  async readExpressionsWithVersions(): Promise<{ entries: ExpressionEntry[]; versions: Record<string, string> }> {
+    return this.readOnly(async () => {
+      const files = await this.entryFiles(true);
+      return { entries: files.map(file => clone(file.entry)), versions: Object.fromEntries(files.map(file => [file.entry.id, this.expressionVersion(file)])) };
+    });
+  }
+
+  async updateExpression(id: string, changes: { category: string; note: string }, expectedVersion?: string): Promise<ExpressionEntry> {
     this.requireStorageWrite();
     return this.exclusive(async () => {
       this.access.requireCapability("diary.expression.write");
       const file = (await this.entryFiles()).find((item) => item.entry.id === id);
       if (!file) return fail("NOT_FOUND", "找不到这条表达。");
+      if (expectedVersion !== undefined && this.expressionVersion(file) !== expectedVersion) fail("CONFLICT", "表达内容已变化，已保留当前文件和你的草稿，请重新读取后再保存。");
       const category = changes.category.trim() || "未分类";
       const path = category === file.entry.category
         ? file.entry.path : this.entryPath(file.entry.term, category, id);

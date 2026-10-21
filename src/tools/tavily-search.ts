@@ -1,6 +1,8 @@
 import { requestUrl } from "obsidian";
+import type { TavilySettings } from "./tavily-settings";
+export { normalizeTavilySettings } from "./tavily-settings";
+export type { TavilySettings } from "./tavily-settings";
 
-export interface TavilySettings { enabled: boolean; apiKey: string }
 export interface WebSearchResult { title: string; url: string; summary: string; publishedDate?: string }
 export type TavilyErrorCode = "key_missing" | "key_invalid" | "quota" | "rate_limit" | "network" | "timeout" | "cancelled" | "invalid_response";
 export class TavilyError extends Error {
@@ -8,11 +10,6 @@ export class TavilyError extends Error {
 }
 export type TavilyTransport = (request: { url: string; method: string; headers: Record<string, string>; body: string; throw: boolean }) => Promise<{ status: number; json: unknown }>;
 export function tavilyAvailable(settings: TavilySettings): boolean { return settings.enabled && Boolean(settings.apiKey.trim()); }
-export function normalizeTavilySettings(value: unknown): TavilySettings {
-  const record = value && typeof value === "object" ? value as Partial<TavilySettings> : {};
-  const apiKey = typeof record.apiKey === "string" ? record.apiKey.trim() : "";
-  return { enabled: record.enabled === true && Boolean(apiKey), apiKey };
-}
 
 /** Obsidian's cross-platform transport avoids browser CORS and never logs credentials. */
 export async function searchTavily(input: {

@@ -1,3 +1,4 @@
+import { formatMobileDateTime } from "../../mobile/date-display";
 import { defaultAgentIdentityState } from "../../harness/memory/agent-identity-model";
 import { AgentIdentityModal } from "../agent-identity-modal";
 import { resolveAgentAvatarUrl } from "../agent-avatar-presets";
@@ -23,7 +24,7 @@ import { FinanceCatalogPanel, type CatalogKind } from "../../lifestyle/finance-c
 type MobileFinanceCatalogPage = "finance-merchants" | "finance-accounts" | "finance-categories";
 const financeCatalogKinds: Record<MobileFinanceCatalogPage, CatalogKind> = { "finance-merchants": "merchants", "finance-accounts": "accounts", "finance-categories": "categories" };
 export type MobileSettingsPage = "basic" | "layout" | "resources" | "knowledge" | "review" | "todos-settings" | "todos" | "profile-agent" | "profile-user" | "archives" | "account" | "finance-settings" | MobileFinanceCatalogPage;
-export type MobileSettingsRoute = MobileSettingsPage | "settings" | "providers";
+export type MobileSettingsRoute = MobileSettingsPage | "settings" | "providers" | "memories" | "english-diary-settings";
 interface Controls {
   go(page: MobileSettingsPage | "memories" | "providers" | "chat"): void;
   back(): void;
@@ -176,7 +177,9 @@ export class MobileSettingsPages {
         }
       } else {
         const skills = this.services.skills(); const group = skills.length ? this.group(panel) : panel;
-        for (const skill of skills) this.ui.row(group, skill.name, skill.enabled ? skill.description : "已停用", "sparkles", () => this.ui.sheet(skill.name, part => {
+        for (const skill of skills) this.ui.row(group, skill.name, skill.enabled ? skill.description : "已停用", "sparkles", () => {
+          const sessionId = this.host.store.session.id;
+          this.ui.sheet(skill.name, part => {
           this.help(part, skill.description);
           this.toggle(this.group(part), "启用 Skill", skill.enabled, async enabled => {
             const settings = this.host.settings(); const saved = settings.resources.catalog.find(item => item.id === skill.id);
@@ -185,10 +188,15 @@ export class MobileSettingsPages {
           });
           this.ui.button(part, "查看 Skill", async () => { const content = await this.services.requireAvailableEchoInkSkill(skill.id); const article = node(part, "article", "em-memory-content markdown-rendered"); this.host.renderMarkdown(content, article); }, "file-text", "em-wide-action");
           this.ui.button(part, "在对话中使用", async () => {
-            if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
-            await this.services.requireAvailableEchoInkSkill(skill.id); this.host.store.session.skillId = skill.id; await this.host.store.save(); this.ui.go("chat");
+            await this.services.requireAvailableEchoInkSkill(skill.id);
+            await this.host.store.updateSession(sessionId, session => {
+              session.skillId = skill.id;
+              if (session.draftContext) delete session.draftContext.selectedSkill;
+            });
+            this.ui.go("chat");
           }, "message-circle", "em-primary em-wide-action");
-        }));
+          });
+        });
       }
     };
     for (const [id, title] of [["plugins", "插件"], ["mcp", "MCP"], ["skills", "Skills"]]) {
@@ -269,7 +277,7 @@ export class MobileSettingsPages {
       if (!files[kind].length) node(part, "p", "em-empty", "没有笔记");
       for (const file of files[kind]) this.ui.row(part, file.basename, file.path, "file-text", () => this.host.openNote(file.path));
     });
-    const title = node(body, "div", "kb-title-row"); node(title, "span", "em-help", `更新于 ${today.toLocaleTimeString()}`); this.ui.button(title, "", () => this.ui.go("knowledge"), "refresh-cw", "kb-icon-button").setAttribute("aria-label", "刷新状态");
+    const title = node(body, "div", "kb-title-row"); node(title, "span", "em-help", `更新于 ${formatMobileDateTime(today)}`); this.ui.button(title, "", () => this.ui.go("knowledge"), "refresh-cw", "kb-icon-button").setAttribute("aria-label", "刷新状态");
     const latestCheck = checks.filter(check => check.status === "success" && Number.isFinite(check.at)).sort((a, b) => b.at - a.at)[0];
     const latestMaintenance = logs.filter(log => Number.isFinite(log.at)).sort((a, b) => b.at - a.at)[0];
     const health = node(body, "section", "kb-health");
@@ -304,7 +312,7 @@ export class MobileSettingsPages {
       const nav = node(calendar, "div", "kb-month-nav"); this.ui.button(nav, "", () => { this.knowledgeMonth = new Date(year, month - 1, 1); drawCalendar(); }, "chevron-left", "kb-icon-button").setAttribute("aria-label", "上个月"); node(nav, "strong", "", `${year} 年 ${month + 1} 月`).setAttribute("aria-live", "polite"); const next = this.ui.button(nav, "", () => { this.knowledgeMonth = new Date(year, month + 1, 1); drawCalendar(); }, "chevron-right", "kb-icon-button"); next.setAttribute("aria-label", "下个月"); next.disabled = year === today.getFullYear() && month === today.getMonth();
       const week = node(calendar, "div", "kb-weekdays"); for (const label of ["一", "二", "三", "四", "五", "六", "日"]) node(week, "span", "", label);
       const grid = node(calendar, "div", "kb-calendar-grid"); for (let i = 0; i < (new Date(year, month, 1).getDay() + 6) % 7; i++) node(grid, "span", "kb-day kb-day-empty");
-      for (let day = 1; day <= new Date(year, month + 1, 0).getDate(); day++) { const key = dayKey(new Date(year, month, day)); const record = records.find(check => check.date === key); const cell = record ? this.ui.button(grid, "", () => this.ui.sheet("体检记录", part => { this.help(part, `${record.date} · ${record.status}`); this.help(part, new Date(record.at).toLocaleString()); }), undefined, `kb-day kb-day-${record.status === "success" ? "success" : "failed"}`) : node(grid, "span", `kb-day ${key === dayKey(today) ? "kb-day-today" : ""}`); node(cell, "span", "", String(day)); cell.setAttribute("aria-label", `${month + 1} 月 ${day} 日，${record ? record.status : "无体检记录"}`); if (record) node(cell, "b"); if (key === dayKey(today)) cell.setAttribute("aria-current", "date"); }
+      for (let day = 1; day <= new Date(year, month + 1, 0).getDate(); day++) { const key = dayKey(new Date(year, month, day)); const record = records.find(check => check.date === key); const cell = record ? this.ui.button(grid, "", () => this.ui.sheet("体检记录", part => { this.help(part, `${record.date} · ${record.status}`); this.help(part, formatMobileDateTime(record.at)); }), undefined, `kb-day kb-day-${record.status === "success" ? "success" : "failed"}`) : node(grid, "span", `kb-day ${key === dayKey(today) ? "kb-day-today" : ""}`); node(cell, "span", "", String(day)); cell.setAttribute("aria-label", `${month + 1} 月 ${day} 日，${record ? record.status : "无体检记录"}`); if (record) node(cell, "b"); if (key === dayKey(today)) cell.setAttribute("aria-current", "date"); }
       const legend = node(calendar, "div", "kb-calendar-legend"); node(legend, "span", "", `成功 ${records.filter(record => record.status === "success").length}`); node(legend, "span", "", `失败 ${records.filter(record => record.status !== "success").length}`); this.ui.button(legend, "本月", () => { this.knowledgeMonth = new Date(today.getFullYear(), today.getMonth(), 1); drawCalendar(); });
     }; drawCalendar();
     const model = this.group(section("模型")); this.ui.row(model, "EchoInk 当前模型", "选择模型", "server", () => this.ui.go("providers"));
@@ -471,8 +479,9 @@ export class MobileSettingsPages {
     this.heading(body, "管理"); const manage = this.group(body);
     this.ui.row(manage, "已归档会话", "", "history", () => this.ui.go("archives")); this.ui.row(manage, "记忆修正", "", "brain", () => this.ui.go("memories"));
     this.ui.button(body, "归档当前会话", async () => {
-      if (this.host.runtime.busy) throw new Error("请先停止当前回答。");
-      this.host.store.session.archivedAt = Date.now(); await this.host.store.createSession(); this.host.runtime.onChange(); this.ui.go("archives");
+      const sessionId = this.host.store.session.id;
+      await this.host.runtime.stopTask(sessionId);
+      await this.host.store.archiveAndCreateSession(sessionId); this.host.runtime.onChange(); this.ui.go("archives");
     }, "archive", "em-wide-action");
   }
   private reportConfig(kind: "agent" | "knowledge") {
@@ -501,9 +510,9 @@ export class MobileSettingsPages {
           if (!("content" in message) || message.role === "toolResult") continue;
           const content = typeof message.content === "string" ? message.content : message.content.filter(item => item.type === "text").map(item => item.text).join("\n");
           const bubble = node(article, "div", message.role === "user" ? "em-user-message" : "em-answer markdown-rendered");
-          if (message.role === "user") bubble.textContent = content; else this.host.renderMarkdown(content, bubble);
+          if (message.role === "user") bubble.textContent = content; else this.host.renderMarkdown(content, bubble, session.notePath);
         }
-        this.ui.button(article, "恢复会话", async () => { if (this.host.runtime.busy) throw new Error("请先停止当前回答。"); delete session.archivedAt; this.host.store.state.activeSessionId = session.id; await this.host.store.save(); this.host.runtime.onChange(); this.ui.go("chat"); }, "rotate-ccw", "em-wide-action");
+        this.ui.button(article, "恢复会话", async () => { const sessionId = session.id; await this.host.store.restoreSession(sessionId); this.host.runtime.onChange(); this.ui.go("chat"); }, "rotate-ccw", "em-wide-action");
       });
     }
   }

@@ -1,3 +1,5 @@
+import { workbenchWeekKey, validWorkbenchDate } from "./workbench-source";
+export { localWorkbenchDate, workbenchWeekKey, validWorkbenchDate } from "./workbench-source";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
@@ -67,21 +69,6 @@ export function workbenchStoreForApp(app: App): WorkbenchRecordStore | null {
   const adapter = app.vault.adapter as unknown as { getBasePath?(): string };
   const root = adapter.getBasePath?.();
   return root ? getWorkbenchRecordStore(root) : null;
-}
-
-export function localWorkbenchDate(value: Date | number): string {
-  const date = value instanceof Date ? value : new Date(value);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-export function workbenchWeekKey(value: Date | number): string {
-  const start = value instanceof Date ? new Date(value) : new Date(value);
-  start.setDate(start.getDate() - (start.getDay() + 6) % 7);
-  return localWorkbenchDate(start);
-}
-export function validWorkbenchDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false;
-  const [year, month, day] = value.split("-").map(Number);
-  return localWorkbenchDate(new Date(year, month - 1, day)) === value;
 }
 
 export async function recordWorkbenchReviewSaved(

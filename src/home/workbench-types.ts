@@ -29,6 +29,8 @@ export interface WorkbenchSnapshot {
   generatedAt: number;
   signals: WorkbenchSignal[];
   todayTodos: readonly ParsedTodoRecord[];
+  /** Frozen source identity and bytes corresponding to todayTodos. */
+  todoSource?: { path: string; version: string | null };
   modules: AgentModuleId[];
   /** Visible enabled modules whose data and actions still require PRO. */
   lockedModules?: AgentModuleId[];

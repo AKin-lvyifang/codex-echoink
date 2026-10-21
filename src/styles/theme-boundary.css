@@ -128,3 +128,10 @@
    these selectors, as are images belonging to the host or another plugin. */
 :where(body:not(.is-mobile)) :is(.echoink-finance-icon-art,.echoink-agent-avatar-option,.echoink-agent-profile-avatar,.codex-agent-avatar) img {box-shadow:none}
 :where(body:not(.is-mobile)) :is(.echoink-finance-icon-art,.echoink-agent-profile-avatar) img {border-radius:0}
+
+/* The approved PRO identity is black/gold on both mobile page roots. */
+:is(.echoink-iphone, .echoink-ipad) {
+  --echoink-pro-badge-text: #f3d995;
+  --echoink-pro-badge-background: #1f1b13;
+  --echoink-pro-badge-border: #786334;
+}

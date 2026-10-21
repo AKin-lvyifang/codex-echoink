@@ -1,0 +1,67 @@
+.echoink-iphone .ip-account-settings { --ip-account-gold: var(--gold, var(--text-warning)); --ip-account-edition-ink: var(--echoink-pro-badge-text, var(--ip-account-gold)); --ip-account-edition-bg: var(--echoink-pro-badge-background, var(--background-primary-alt)); --ip-account-edition-line: var(--echoink-pro-badge-border, var(--ip-account-gold)); }
+.echoink-iphone .ip-account-head { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+.echoink-iphone .ip-account-avatar { display: flex; align-items: center; justify-content: center; flex: 0 0 48px; width: 48px; height: 48px; border-radius: 50%; background: var(--text-warning); color: var(--ip-on-accent); object-fit: cover; font-size: 1.125em; font-weight: 600; }
+.echoink-iphone .ip-account-avatar.is-anonymous { background: var(--background-modifier-hover); color: var(--ip-secondary); }
+.echoink-iphone .ip-account-name { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 1.0625em; font-weight: 600; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-settings .echoink-plugin-edition-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border: 1px solid var(--ip-account-edition-line); border-radius: 16px; color: var(--ip-account-edition-ink); background: var(--ip-account-edition-bg); font-size: .6875rem; font-weight: 600; letter-spacing: .04em; }
+.echoink-iphone .ip-account-settings .echoink-plugin-edition-icon { display: inline-flex; }
+.echoink-iphone .ip-account-settings .echoink-plugin-edition-icon svg { width: 11px; height: 11px; }
+.echoink-iphone .ip-account-sub { margin-top: 2px; color: var(--ip-secondary); font-size: .8125em; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-login-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.echoink-iphone .ip-account-gift { padding: 3px 7px; border-radius: 16px; background: color-mix(in srgb, var(--text-warning) 14%, transparent); color: var(--text-warning); font-size: .75em; line-height: 1.55; }
+.echoink-iphone .ip-account-free { padding: 2px 8px; border-radius: 16px; background: var(--background-modifier-hover); color: var(--ip-secondary); font-size: .6875em; font-weight: 500; }
+.echoink-iphone .ip-account-links .ip-settings-group { margin-top: 14px; }
+.echoink-iphone .ip-account-section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 24px 2px 8px; }
+.echoink-iphone .ip-account-section-head h2 { margin: 0; font-size: .8125em; font-weight: 600; }
+.echoink-iphone .ip-account-caption { color: var(--ip-secondary); font-size: .8125em; }
+.echoink-iphone .ip-account-usage { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--ip-line); border-radius: 12px; background: var(--ip-line); }
+.echoink-iphone .ip-account-stat { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 14px 16px; background: var(--ip-bg); }
+.echoink-iphone .ip-account-stat > span { color: var(--ip-secondary); font-size: .8125em; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-stat strong { font-size: 1.375em; font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-stat small { margin-left: 4px; color: var(--ip-secondary); font-size: .55em; font-weight: 400; }
+.echoink-iphone .ip-account-benefits-scroll { max-width: 100%; overflow-x: auto; }
+.echoink-iphone .ip-account-benefits { width: 100%; border-collapse: collapse; font-size: .875em; }
+.echoink-iphone .ip-account-benefits th { padding: 8px 12px; background: var(--background-modifier-hover); color: var(--ip-secondary); font-size: .86em; font-weight: 500; text-align: left; }
+.echoink-iphone .ip-account-benefits td { padding: 9px 12px; border-top: 1px solid var(--ip-line); vertical-align: middle; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-benefits th + th, .echoink-iphone .ip-account-benefits td + td { width: 56px; min-width: 44px; padding-left: 0; padding-right: 0; text-align: center; }
+.echoink-iphone .ip-account-benefit-group td { padding: 16px 12px 6px; font-size: .93em; font-weight: 600; }
+.echoink-iphone .ip-account-benefit-group .echoink-plugin-edition-badge { margin-left: 6px; }
+.echoink-iphone .ip-account-feature-description { display: block; margin-top: 1px; color: var(--ip-secondary); font-size: .86em; }
+.echoink-iphone .ip-account-benefits :is(.is-included,.is-excluded) .ip-icon { display: inline-flex; }
+.echoink-iphone .ip-account-benefits .ip-icon svg { width: 16px; height: 16px; }
+.echoink-iphone .ip-account-benefits .is-included { color: var(--ip-accent); }
+.echoink-iphone .ip-account-benefits .is-excluded { color: var(--ip-secondary); }
+.echoink-iphone .ip-account-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.echoink-iphone .ip-account-plans { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.echoink-iphone .ip-account-plan { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 12px 14px 4px; border: 1px solid var(--ip-line); border-radius: 12px; }
+.echoink-iphone .ip-account-plan.is-early { background: color-mix(in srgb, var(--text-warning) 8%, var(--ip-bg)); border-color: color-mix(in srgb, var(--text-warning) 35%, var(--ip-line)); }
+.echoink-iphone .ip-account-plan-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: .92em; font-weight: 500; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-current-plan { padding: 1px 6px; border-radius: 4px; color: var(--ip-accent); background: var(--ip-soft); font-size: .75em; font-weight: 600; }
+.echoink-iphone .ip-account-price { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px; font-size: 1.5em; font-weight: 550; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-currency { margin-right: 2px; font-size: .5833em; }
+.echoink-iphone .ip-account-savings { align-self: center; margin-left: 6px; padding: 1px 6px; border-radius: 4px; background: var(--ip-accent); color: var(--ip-on-accent); font-size: .5em; font-weight: 600; }
+.echoink-iphone .ip-account-plan-detail { color: var(--ip-secondary); font-size: .75em; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-plan .ip-button { align-self: stretch; width: 100%; margin-top: auto; }
+.echoink-iphone .ip-account-plan .ip-button-visible { flex: 1; justify-content: center; }
+.echoink-iphone .ip-account-scope { margin-top: 8px; font-size: .875em; }
+.echoink-iphone .ip-account-scope summary { min-height: 44px; padding: 10px 0; cursor: pointer; }
+.echoink-iphone .ip-account-scope > div { padding-bottom: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-redeem-fields { display: flex; align-items: flex-end; gap: 8px; }
+.echoink-iphone .ip-account-redeem-fields > label { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+.echoink-iphone .ip-account-redemption { margin-bottom: 10px; }
+.echoink-iphone .ip-account-segments { position: relative; display: flex; align-items: stretch; min-width: 0; padding: 0 2px; border-radius: 8px; background: var(--background-modifier-hover); isolation: isolate; }
+.echoink-iphone .ip-account-segment-slider { position: absolute; z-index: -1; inset: 6px auto 6px 2px; width: calc(50% - 2px); border-radius: 6px; background: var(--ip-bg); transition: transform 180ms ease; }
+.echoink-iphone .ip-account-segments[data-selected="password"] .ip-account-segment-slider { transform: translateX(100%); }
+.echoink-iphone .ip-account-segments .ip-account-segment { flex: 1 1 0; min-width: 0; }
+.echoink-iphone .ip-account-segments .ip-button-visible { justify-content: center; flex: 1; border: 0; background: transparent; color: var(--ip-secondary); }
+.echoink-iphone .ip-account-segments .ip-account-segment[aria-pressed="true"] .ip-button-visible { color: var(--ip-ink); font-weight: 600; }
+.echoink-iphone .ip-account-segments .ip-button:hover .ip-button-visible { background: transparent; }
+.echoink-iphone .ip-account-credentials { margin-top: 6px; }
+.echoink-iphone .ip-account-code-area > label { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.echoink-iphone .ip-account-code-area .ip-settings-field-label { grid-column: 1 / -1; }
+.echoink-iphone .ip-account-feedback { margin-top: 8px; color: var(--ip-secondary); font-size: .8125em; overflow-wrap: anywhere; }
+.echoink-iphone .ip-account-feedback:empty, .echoink-iphone .ip-account-actions:empty { display: none; }
+.echoink-iphone .ip-account-current-device { margin-left: 6px; padding: 1px 6px; border-radius: 4px; background: var(--background-modifier-hover); color: var(--ip-secondary); font-size: .73em; }
+.echoink-iphone .ip-account-empty { padding: 18px 12px; color: var(--ip-secondary); text-align: center; font-size: .88em; }
+.echoink-iphone .ip-account-settings summary:focus-visible { outline: none; box-shadow: none; background: var(--background-modifier-hover); }
+@media (prefers-reduced-motion: reduce) { .echoink-iphone .ip-account-segment-slider { transition: none; } }
