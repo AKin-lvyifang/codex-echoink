@@ -30,9 +30,54 @@ function control(modal: ProviderModelModal, focusKey: string): HTMLInputElement 
 }
 type InspectModal = { draft: ApiProviderConfig; selectProvider(id: string): void; discoverModels(): Promise<void>; setModelEnabled(id: string, enabled: boolean): void };
 
+async function assertLongModelListScroll(): Promise<void> {
+  for (const providerId of ["custom", "deepseek"] as const) {
+    const provider = createApiProviderConfig(providerId, `scroll-${providerId}`);
+    provider.apiKey = key;
+    provider.baseUrl = "https://fixture.invalid/v1";
+    const models = Array.from({ length: 120 }, (_, index) => ({ id: `scroll-model-${index}` }));
+    const modal = new ProviderModelModal({ app: new App(), draft: provider, editing: false, language: "zh-CN", copy: settingsCopy("zh-CN"),
+      preflight: { listModels: async () => ({ status: "available", source: "remote", models }), testConnection: async () => ({ status: "available" }) },
+      save: async () => ({ saved: true }) });
+    modal.open();
+    const inspect = modal as unknown as InspectModal;
+    await inspect.discoverModels();
+    assert.equal(modal.contentEl.querySelectorAll(".codex-provider-model-choice").length, 120);
+    const host = modal.contentEl.ownerDocument.createElement("div");
+    host.appendChild(modal.modalEl);
+    modal.contentEl.ownerDocument.body.appendChild(host);
+    Object.assign(host, { scrollTop: 5200, scrollLeft: 0, scrollHeight: 11612, clientHeight: 670 });
+    // Model the native host clamping its offset while the old form is removed.
+    const empty = modal.contentEl.empty.bind(modal.contentEl);
+    modal.contentEl.empty = () => { host.scrollTop = 0; empty(); };
+    try {
+      await inspect.discoverModels();
+      assert.equal(host.scrollTop, 5200, `${providerId}: refreshing models retains the host position`);
+      const status = modal.contentEl.querySelector<HTMLElement>(".codex-provider-model-status")!;
+      const emptyStatus = status.empty.bind(status);
+      // A wrapped status line above the viewport also moves the browser's scroll anchor.
+      status.empty = () => { host.scrollTop += 12; emptyStatus(); };
+      inspect.setModelEnabled(models[54]!.id, true);
+      assert.equal(host.scrollTop, 5200, `${providerId}: enabling a model retains the host position`);
+      inspect.setModelEnabled(models[55]!.id, true);
+      const radio = control(modal, `model-default:${models[55]!.id}`);
+      radio.checked = true;
+      radio.onchange?.(new Event("change"));
+      assert.equal(inspect.draft.defaultModelId, models[55]!.id);
+      assert.equal(host.scrollTop, 5200, `${providerId}: changing the default retains the host position`);
+    } finally {
+      modal.contentEl.empty = empty;
+      modal.close();
+      host.remove();
+    }
+  }
+  console.log("PASS discovery: 120-model custom/DeepSeek refresh, enable and default preserve the scroll host through form collapse");
+}
+
 export async function runProviderModelDiscoveryRegression(installDom: () => void): Promise<void> {
   assert.equal(normalizeDiscoveredProviderModel({ id: "fixture-model", displayName: "模\0型\u007f名称\u0085" })?.displayName, "模型名称");
   installDom();
+  await assertLongModelListScroll();
   const provider = createApiProviderConfig("deepseek", "discovery-fixture");
   provider.apiKey = key;
   let response: unknown = deepSeekModelListFixture;
