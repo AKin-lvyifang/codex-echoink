@@ -36,6 +36,12 @@ function textNode(canvas: GenerationCanvasDocument, id: string): GenerationCanva
   return node;
 }
 
+function canvasNode(canvas: GenerationCanvasDocument, id: string) {
+  const node = canvas.nodes.find(node => node.id === id);
+  assert(node);
+  return node;
+}
+
 function sources(...paths: string[]): GenerationSource[] {
   return paths.map(path => ({ path, content: "资料正文", bytes: 12 }));
 }
@@ -371,10 +377,11 @@ export function runGenerationCanvasTests(): void {
       title: "  自由布局\r\n主题  ",
       canvas: {
         nodes: [
-          { id: "group", type: "group", x: -30, y: -30, width: 240, height: 130, label: "资料分组", color: "6" },
-          { id: "text", type: "text", text: "  第一行\r\n第二行  ", sourcePaths: ["资料/原文.md", "资料/原文.md"], x: -10, y: 0, width: 40, height: 60 },
-          { id: "file", type: "file", file: "资料/原文.md", subpath: "#^block", x: 50, y: 0, width: 50, height: 60 },
-          { id: "url", type: "link", url: "https://example.com/guide?q=1#intro", x: 120, y: 0, width: 50, height: 60 }
+          { id: "group", type: "group", x: -30, y: -30, width: 600, height: 330, label: "资料分组", color: "6" },
+          // This geometry-preservation fixture already fits both body lines and the appended source.
+          { id: "text", type: "text", text: "  第一行\r\n第二行  ", sourcePaths: ["资料/原文.md", "资料/原文.md"], x: -10, y: 0, width: 240, height: 200 },
+          { id: "file", type: "file", file: "资料/原文.md", subpath: "#^block", x: 260, y: 0, width: 100, height: 60 },
+          { id: "url", type: "link", url: "https://example.com/guide?q=1#intro", x: 390, y: 0, width: 100, height: 60 }
         ],
         edges: [{ id: "flow", fromNode: "text", fromSide: "bottom", fromEnd: "none", toNode: "file", toSide: "top", toEnd: "arrow", color: "#AABBCC", label: "参考" }]
       }
@@ -547,6 +554,178 @@ export function runGenerationCanvasTests(): void {
     assert.throws(() => parseGenerationCanvas({ title: "校验分层", canvas }, []), /不在所选资料/u);
     canvas.nodes.shift();
     assert.throws(() => parseGenerationCanvas({ title: "校验分层", canvas }, []), /未出现在/u);
+  });
+
+  test("final text including appended sources grows and shifts every lower node kind once", () => {
+    const available = sources("资料/原文.md");
+    available[0].content = "https://example.com/source";
+    const input = { title: "补高", canvas: { nodes: [
+      { id: "text", type: "text", text: "正文", sourcePaths: ["资料/原文.md"], x: 0, y: 0, width: 240, height: 58 },
+      { id: "lower-text", type: "text", text: "下方", x: 0, y: 80, width: 240, height: 80 },
+      { id: "file", type: "file", file: "资料/原文.md", x: 260, y: 80, width: 100, height: 80 },
+      { id: "link", type: "link", url: "https://example.com/source", x: 380, y: 80, width: 100, height: 80 },
+      { id: "group", type: "group", x: 500, y: 80, width: 300, height: 160, label: "下方分组" },
+      { id: "child", type: "text", text: "组内", x: 520, y: 100, width: 240, height: 80 }
+    ], edges: [{ id: "edge", fromNode: "text", toNode: "file", label: "来源", toEnd: "arrow" }] } };
+    const before = clone(input);
+    const output = parseGenerationCanvas(input, available);
+    const expanded = textNode(output.canvas, "text");
+    assert.equal(expanded.text, "正文\n\n[[资料/原文.md|原文]]");
+    assert.equal(expanded.height, 98, "the appended source adds a visible paragraph");
+    for (const id of ["lower-text", "file", "link", "group"]) assert.equal(canvasNode(output.canvas, id).y, 120, id);
+    assert.equal(canvasNode(output.canvas, "child").y, 140);
+    assert.equal(canvasNode(output.canvas, "group").height, 160, "a group starting below the cut moves without growing");
+    assert.deepEqual(output.canvas.edges, input.canvas.edges);
+    assert.deepEqual(output.canvas.nodes.map(node => node.id), input.canvas.nodes.map(node => node.id));
+    assert.deepEqual(input, before);
+    assert.deepEqual(parseGenerationCanvas(output, available), output, "parsing the final output is idempotent");
+    validateGenerationCanvas(output.canvas);
+  });
+
+  test("nested containing groups and ancestors grow while lower groups and children translate once", () => {
+    const canvas: GenerationCanvasDocument = { nodes: [
+      { id: "outer", type: "group", x: 0, y: 0, width: 700, height: 300 },
+      { id: "inner", type: "group", x: 20, y: 20, width: 300, height: 200 },
+      { id: "text", type: "text", text: "两行\n文本", x: 40, y: 40, width: 240, height: 20 },
+      { id: "sibling", type: "text", text: "同组下方", x: 40, y: 100, width: 240, height: 60 },
+      { id: "lower-group", type: "group", x: 0, y: 340, width: 300, height: 160 },
+      { id: "lower-child", type: "text", text: "下一组", x: 20, y: 360, width: 240, height: 60 },
+      { id: "outside", type: "text", text: "外部下方", x: 350, y: 500, width: 240, height: 60 }
+    ], edges: [] };
+    const output = parseGenerationCanvas({ title: "嵌套分组", canvas }, []).canvas;
+    assert.equal(textNode(output, "text").height, 82);
+    assert.equal(canvasNode(output, "outer").height, 362);
+    assert.equal(canvasNode(output, "inner").height, 262);
+    assert.equal(canvasNode(output, "outer").y, 0);
+    assert.equal(canvasNode(output, "inner").y, 20);
+    assert.equal(canvasNode(output, "sibling").y, 162);
+    assert.equal(canvasNode(output, "lower-group").y, 402);
+    assert.equal(canvasNode(output, "lower-group").height, 160);
+    assert.equal(canvasNode(output, "lower-child").y, 422);
+    assert.equal(canvasNode(output, "outside").y, 562, "text, inner-group and ancestor thresholds must not add multiple translations");
+    validateGenerationCanvas(output);
+  });
+
+  test("parallel and nested groups crossing the insertion line keep lower cards contained", () => {
+    const canvas: GenerationCanvasDocument = { nodes: [
+      { id: "text", type: "text", text: "补高", x: 0, y: 0, width: 240, height: 20 },
+      { id: "peer-outer", type: "group", x: 300, y: -20, width: 600, height: 260 },
+      { id: "peer-inner", type: "group", x: 320, y: -10, width: 260, height: 200 },
+      { id: "above", type: "file", file: "资料/原文.md", x: 340, y: -5, width: 220, height: 20 },
+      { id: "below", type: "text", text: "跨线组内下方", x: 340, y: 80, width: 220, height: 60 },
+      { id: "ending-at-cut", type: "group", x: 1000, y: -20, width: 100, height: 40 },
+      { id: "starting-at-cut", type: "group", x: 1000, y: 20, width: 100, height: 100 },
+      { id: "outside", type: "file", file: "资料/原文.md", x: 0, y: 300, width: 240, height: 60 }
+    ], edges: [] };
+    const output = parseGenerationCanvas({ title: "并列分组", canvas }, sources("资料/原文.md")).canvas;
+    assert.equal(canvasNode(output, "peer-outer").height, 298);
+    assert.equal(canvasNode(output, "peer-inner").height, 238);
+    assert.equal(canvasNode(output, "peer-outer").y, -20);
+    assert.equal(canvasNode(output, "peer-inner").y, -10);
+    assert.equal(canvasNode(output, "above").y, -5);
+    assert.equal(canvasNode(output, "below").y, 118);
+    assert.deepEqual(canvasNode(output, "ending-at-cut"), canvasNode(canvas, "ending-at-cut"));
+    assert.equal(canvasNode(output, "starting-at-cut").y, 58);
+    assert.equal(canvasNode(output, "starting-at-cut").height, 100);
+    assert.equal(canvasNode(output, "outside").y, 338);
+    validateGenerationCanvas(output);
+  });
+
+  test("a containing group ending at the text bottom still grows and never shrinks", () => {
+    const canvas: GenerationCanvasDocument = { nodes: [
+      { id: "group", type: "group", x: -10, y: -10, width: 260, height: 30 },
+      { id: "text", type: "text", text: "正文", x: 0, y: 0, width: 240, height: 20 }
+    ], edges: [] };
+    const output = parseGenerationCanvas({ title: "底边相接", canvas }, []).canvas;
+    assert.equal(canvasNode(output, "group").height, 68);
+    assert.equal(canvasNode(output, "group").y, -10);
+    assert.equal(canvasNode(output, "text").height, 58);
+    const roomy = clone(output);
+    canvasNode(roomy, "text").height = 160;
+    canvasNode(roomy, "group").height = 200;
+    assert.deepEqual(parseGenerationCanvas({ title: "已有足够高度", canvas: roomy }, []).canvas, roomy);
+  });
+
+  test("original y then x order is independent of array order and preserves node z-order", () => {
+    const nodes: GenerationCanvasDocument["nodes"] = [
+      { id: "a", type: "text", text: "左侧", x: 0, y: 0, width: 240, height: 20 },
+      { id: "b", type: "text", text: "右侧\n两行", x: 300, y: 0, width: 240, height: 40 },
+      { id: "middle", type: "file", file: "资料/原文.md", x: 600, y: 30, width: 100, height: 10 }
+    ];
+    const parse = (order: typeof nodes) => parseGenerationCanvas({ title: "顺序", canvas: { nodes: order, edges: [] } }, sources("资料/原文.md")).canvas;
+    const first = parse(nodes);
+    const reversed = parse([...nodes].reverse());
+    assert.deepEqual(first.nodes.map(node => node.id), ["a", "b", "middle"]);
+    assert.deepEqual(reversed.nodes.map(node => node.id), ["middle", "b", "a"]);
+    assert.deepEqual([...first.nodes].sort((a, b) => a.id.localeCompare(b.id)), [...reversed.nodes].sort((a, b) => a.id.localeCompare(b.id)));
+    assert.equal(canvasNode(first, "middle").y, 110, "left text expands before the right text despite reversed input order");
+    assert.equal(canvasNode(first, "a").height, 58);
+    assert.equal(canvasNode(first, "b").height, 82);
+  });
+
+  test("multiple text expansions accumulate from each current bounds snapshot", () => {
+    const canvas: GenerationCanvasDocument = { nodes: [
+      { id: "c", type: "text", text: "尾", x: 0, y: 100, width: 240, height: 20 },
+      { id: "file", type: "file", file: "资料/原文.md", x: 0, y: 200, width: 240, height: 60 },
+      { id: "b", type: "text", text: "二\n行", x: 0, y: 40, width: 240, height: 20 },
+      { id: "a", type: "text", text: "首", x: 0, y: 0, width: 240, height: 20 }
+    ], edges: [] };
+    const input = { title: "累计补高", canvas };
+    const before = clone(input);
+    const output = parseGenerationCanvas(input, sources("资料/原文.md"));
+    assert.equal(textNode(output.canvas, "a").y, 0);
+    assert.equal(textNode(output.canvas, "b").y, 78);
+    assert.equal(textNode(output.canvas, "c").y, 200);
+    assert.equal(canvasNode(output.canvas, "file").y, 338);
+    assert.deepEqual(output.canvas.nodes.map(node => node.id), canvas.nodes.map(node => node.id));
+    assert.deepEqual(input, before);
+    assert.deepEqual(parseGenerationCanvas(output, sources("资料/原文.md")), output);
+    validateGenerationCanvas(output.canvas);
+  });
+
+  test("remaining overlaps and original equal rectangles still reject after height repair", () => {
+    const overlap: GenerationCanvasDocument = { nodes: [
+      { id: "text", type: "text", text: "较长内容", x: 0, y: 0, width: 240, height: 20 },
+      { id: "file", type: "file", file: "资料/原文.md", x: 0, y: 10, width: 240, height: 20 }
+    ], edges: [] };
+    assert.throws(() => parseGenerationCanvas({ title: "仍然重叠", canvas: overlap }, sources("资料/原文.md")), /导图结构无效：节点重叠/u);
+    // Without the equality precheck, the first text's insertion could grow the group
+    // and turn its originally identical text rectangle into a seemingly valid child.
+    const equal: GenerationCanvasDocument = { nodes: [
+      { id: "first", type: "text", text: "触发插入", x: 500, y: 0, width: 240, height: 20 },
+      { id: "group", type: "group", x: 0, y: 0, width: 240, height: 40 },
+      { id: "child", type: "text", text: "原本同框", x: 0, y: 0, width: 240, height: 40 }
+    ], edges: [] };
+    for (const nodes of [equal.nodes, [...equal.nodes].reverse()]) {
+      assert.throws(() => parseGenerationCanvas({ title: "原同框", canvas: { nodes, edges: [] } }, []), /节点重叠/u);
+    }
+    // Tied original y/x values are processed by ID, but ordinary text cards may
+    // never share that top-left corner in the final accepted geometry.
+    equal.nodes = [
+      { id: "b", type: "text", text: "乙", x: 0, y: 0, width: 240, height: 20 },
+      { id: "a", type: "text", text: "甲", x: 0, y: 0, width: 260, height: 40 }
+    ];
+    for (const nodes of [equal.nodes, [...equal.nodes].reverse()]) {
+      assert.throws(() => parseGenerationCanvas({ title: "相同起点", canvas: { nodes, edges: [] } }, []), /节点重叠/u);
+    }
+  });
+
+  test("height repair never turns invalid dimensions or IDs into accepted geometry", () => {
+    const valid: GenerationCanvasDocument = { nodes: [{ id: "text", type: "text", text: "补高", x: 0, y: 0, width: 240, height: 20 }], edges: [] };
+    for (const change of [
+      (canvas: any) => { canvas.nodes[0].height = 0; },
+      (canvas: any) => { canvas.nodes[0].height = -10; },
+      (canvas: any) => { canvas.nodes[0].height = NaN; },
+      (canvas: any) => { canvas.nodes[0].width = Infinity; },
+      (canvas: any) => { canvas.nodes[0].y = Infinity; },
+      (canvas: any) => { canvas.nodes[0].id = ""; },
+      (canvas: any) => { canvas.nodes.push({ ...canvas.nodes[0], x: 300 }); }
+    ]) {
+      const canvas = clone(valid); change(canvas);
+      assert.throws(() => parseGenerationCanvas({ title: "先校验", canvas }, []), /导图结构无效/u);
+    }
+    validateGenerationCanvas(valid);
+    assert.equal(valid.nodes[0].height, 20, "standalone validation remains a pure check");
   });
 
   console.log(`generation-canvas: ${passed} tests passed`);

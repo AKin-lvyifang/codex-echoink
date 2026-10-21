@@ -191,8 +191,17 @@ function httpUrl(value: unknown): string {
   return invalid("链接网址必须是完整的 http 或 https URL。");
 }
 
-/** Validate structure and geometry only; source authorization belongs to the parser. */
-export function validateGenerationCanvas(value: unknown): asserts value is GenerationCanvasDocument {
+interface CanvasBounds { x: number; y: number; right: number; bottom: number }
+
+function sameBounds(a: CanvasBounds, b: CanvasBounds): boolean {
+  return a.x === b.x && a.y === b.y && a.right === b.right && a.bottom === b.bottom;
+}
+
+function containsBounds(outer: CanvasBounds, inner: CanvasBounds): boolean {
+  return !sameBounds(outer, inner) && outer.x <= inner.x && outer.y <= inner.y && outer.right >= inner.right && outer.bottom >= inner.bottom;
+}
+
+function validateCanvas(value: unknown, checkOverlaps: boolean): asserts value is GenerationCanvasDocument {
   const document = record(value, "Canvas");
   onlyKeys(document, ["nodes", "edges"], "Canvas");
   if (!Array.isArray(document.nodes) || document.nodes.length === 0 || !Array.isArray(document.edges)) {
@@ -200,7 +209,7 @@ export function validateGenerationCanvas(value: unknown): asserts value is Gener
   }
   const ids = new Set<string>();
   const nodeIds = new Set<string>();
-  const bounds: Array<{ id: string; group: boolean; x: number; y: number; right: number; bottom: number }> = [];
+  const bounds: Array<CanvasBounds & { id: string; group: boolean }> = [];
   for (const value of document.nodes) {
     const node = record(value, "节点");
     const common = ["id", "type", "x", "y", "width", "height", "color"];
@@ -262,15 +271,44 @@ export function validateGenerationCanvas(value: unknown): asserts value is Gener
     const a = bounds[index];
     for (let next = index + 1; next < bounds.length; next++) {
       const b = bounds[next];
-      if (a.x < b.right && b.x < a.right && a.y < b.bottom && b.y < a.bottom) {
-        // Equal rectangles are overlapping peers, not a group nesting relation.
-        const equal = a.x === b.x && a.y === b.y && a.right === b.right && a.bottom === b.bottom;
-        const aContainsB = a.group && a.x <= b.x && a.y <= b.y && a.right >= b.right && a.bottom >= b.bottom;
-        const bContainsA = b.group && b.x <= a.x && b.y <= a.y && b.right >= a.right && b.bottom >= a.bottom;
-        if (!equal && (aContainsB || bContainsA)) continue;
+      if (sameBounds(a, b)) invalid(`节点重叠：${a.id}、${b.id}`);
+      if (checkOverlaps && a.x < b.right && b.x < a.right && a.y < b.bottom && b.y < a.bottom) {
+        if ((a.group && containsBounds(a, b)) || (b.group && containsBounds(b, a))) continue;
         invalid(`节点重叠：${a.id}、${b.id}`);
       }
     }
+  }
+}
+
+/** Validate structure and geometry only; source authorization belongs to the parser. */
+export function validateGenerationCanvas(value: unknown): asserts value is GenerationCanvasDocument {
+  validateCanvas(value, true);
+}
+
+function expandCanvasText(canvas: GenerationCanvasDocument): void {
+  // Sort a separate list before changing geometry; preserve the model's z-order array.
+  const texts = canvas.nodes.filter(node => node.type === "text").sort((a, b) =>
+    a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const node of texts) {
+    const height = textHeight(node.text, node.width);
+    if (height <= node.height) continue;
+    const delta = height - node.height;
+    const snapshot = canvas.nodes.map(node => ({ node, x: node.x, y: node.y, right: node.x + node.width, bottom: node.y + node.height }));
+    const previous = snapshot.find(bounds => bounds.node === node)!;
+    const growing = new Set<GenerationCanvasNode>();
+    const shifted = new Set<GenerationCanvasNode>();
+    for (const bounds of snapshot) {
+      if (bounds.node.type === "group" && (containsBounds(bounds, previous) ||
+          (bounds.y < previous.bottom && previous.bottom < bounds.bottom))) {
+        growing.add(bounds.node);
+      }
+      if (bounds.node !== node && bounds.y >= previous.bottom) shifted.add(bounds.node);
+    }
+    node.height = height;
+    // Insert space across the canvas: groups crossing the cut keep their lower children inside.
+    for (const group of growing) group.height += delta;
+    // A moved group and each descendant receive the same single translation.
+    for (const affected of shifted) affected.y += delta;
   }
 }
 
@@ -366,13 +404,15 @@ export function parseGenerationCanvas(value: unknown, sources: readonly Generati
       point.sourcePaths = [...new Set(sourcePaths.map(path => selectedSource(path, allowedSources)))];
     }
     copy.text = pointText(point);
-    checkTextSources(copy.text as string, allowedSources);
     return copy;
   });
   const canvas: unknown = { nodes, edges: input.edges.map(value => ({ ...record(value, "连线") })) };
+  validateCanvas(canvas, false);
+  expandCanvasText(canvas);
   validateGenerationCanvas(canvas);
   const allowedUrls = sourceUrls(sources);
   for (const node of canvas.nodes) {
+    if (node.type === "text") checkTextSources(node.text, allowedSources);
     if (node.type === "file") selectedSource(node.file, allowedSources);
     if (node.type === "link" && !allowedUrls.has(node.url)) invalid(`链接网址未出现在所选资料正文中：${node.url}`);
   }
