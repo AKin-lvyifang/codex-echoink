@@ -3302,7 +3302,14 @@ export class PiNativeConversationRuntime {
               await active.session.waitForIdle().catch(error => { promptError ??= error; });
               await active.eventLane;
               await active.queuePersistenceLane;
-              if (execution.eventError !== null) throw execution.eventError;
+              const eventError = execution.eventError as unknown;
+              if (eventError !== null) {
+                throw eventError instanceof Error
+                  ? eventError
+                  : new Error("Pi runtime event handling failed", {
+                    cause: eventError
+                  });
+              }
               if (!execution.agentSettledSeen) promptError ??= new Error("Pi AgentSession stopped without native agent_settled");
               entries = active.sessionManager.getEntries();
               runEntries = entries.filter(entry => !execution.baselineEntryIds.has(entry.id));

@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.8.2 - 2026-10-20
+<!-- release-type: improve -->
+### 2.8.2 · Canvas 按内容自由排版
+
+![EchoInk 2.8.2：Canvas 按内容自由排版](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.8.2/assets/releases/echoink-agent-2.8.2-release.png)
+
+### 中文
+
+类型：体验改进
+
+#### 桌面端更新内容
+
+- **Canvas 按资料关系排版。** 不再固定为三列，可按内容组织为流程、时间线、对比等布局。
+- **文字较多时自动留出空间。** 卡片会随文字增高，后续内容相应下移，减少内容被裁切的情况。
+- **内置思维导图模板自动更新。** 未修改过的内置模板会自动更新；你修改过的模板会保留原样。
+
+#### 如何使用
+
+仍从原有的资料生成入口选择“思维导图”模板来创建 Canvas；无需新增设置。生成结果会按资料关系组织，请按原始资料核对重要内容。
+
+#### 下载与升级
+
+需要 **Obsidian 1.11.4 及以上**。升级前请备份 Vault 与插件数据。前往[官网下载安装](https://echoink.cn/install)，或从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.2) 下载 **main.js、manifest.json、styles.css**，放入 `.obsidian/plugins/codex-echoink/` 后重新启用插件。
+
+### English
+
+**2.8.2 · Canvas layouts that follow the content**
+
+Type: Improved
+
+#### What's new on desktop
+
+- **Canvas layouts follow source relationships.** Layouts are no longer fixed to three columns; content can be arranged as flows, timelines, comparisons, and more.
+- **More room for longer text.** Cards grow with their text and later content shifts down, reducing clipping.
+- **The built-in Mind Map template updates automatically.** The built-in template updates if it has not been edited; your edited template stays as it is.
+
+#### How to use
+
+Choose the existing **Mind Map** template from the note-generation flow to create a Canvas. No new settings are needed. Check important content against the source notes.
+
+#### Download and upgrade
+
+Requires **Obsidian 1.11.4 or later**. Back up your vault and plugin data before upgrading. Install from the [website](https://echoink.cn/install), or download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.2) into `.obsidian/plugins/codex-echoink/`, then re-enable the plugin.
+
 ## 2.8.1 - 2026-10-20
 <!-- release-type: improve -->
 ### 2.8.1 · 从资料生成与手机平板新工作台

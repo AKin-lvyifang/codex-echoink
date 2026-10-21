@@ -181,7 +181,8 @@ function color(value: unknown): void {
 }
 
 function httpUrl(value: unknown): string {
-  if (typeof value !== "string" || !/^https?:\/\//iu.test(value) || /\s|[\u0000-\u001f\u007f]/u.test(value)) {
+  if (typeof value !== "string" || !/^https?:\/\//iu.test(value) || /\s/u.test(value)
+    || Array.from(value).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
     invalid("链接网址必须是完整的 http 或 https URL。");
   }
   try {

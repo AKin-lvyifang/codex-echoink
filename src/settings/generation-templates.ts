@@ -40,7 +40,7 @@ export function normalizeGenerationTemplates(value: unknown): GenerationTemplate
   const saved = Array.isArray(value) ? value.map(value => {
     const item = readTemplate(value);
     // Even whitespace edits belong to the user and must survive subsequent loads.
-    const legacy = value && typeof value === "object" && !Array.isArray(value)
+    const legacy = value !== null && typeof value === "object" && !Array.isArray(value)
       && LEGACY_MIND_TEMPLATES.some(template => Object.entries(template).every(([key, expected]) => (value as Record<string, unknown>)[key] === expected));
     return legacy ? defaults.find(template => template.id === "mind")! : item;
   }).filter((item): item is GenerationTemplate => Boolean(item)) : [];
