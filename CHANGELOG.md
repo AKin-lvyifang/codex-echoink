@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.8.3 - 2026-10-21
+<!-- release-type: fix -->
+### 2.8.3 · 模型设置页滚动修复
+
+### 中文
+
+类型：修复
+
+#### 桌面端更新内容
+
+- **模型较多时页面不再跳回顶部。** 在设置中添加或编辑提供商（包括“自定义”）时，获取到大量模型后，勾选模型、设为默认或重新获取，页面都会停在原来的位置，可以正常滚动到底部保存。感谢 [@Junwu-Git](https://github.com/Junwu-Git) 在 [#7](https://github.com/AKin-lvyifang/codex-echoink/issues/7) 中反馈。
+
+#### 下载与升级
+
+需要 **Obsidian 1.11.4 及以上**。升级前请备份 Vault 与插件数据。前往[官网下载安装](https://echoink.cn/install)，或从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.3) 下载 **main.js、manifest.json、styles.css**，放入 `.obsidian/plugins/codex-echoink/` 后重新启用插件。
+
+### English
+
+**2.8.3 · Model settings scroll fix**
+
+Type: Fixes
+
+#### What's new on desktop
+
+- **The page no longer jumps back to the top with long model lists.** When adding or editing a provider (including Custom), selecting a model, setting the default, or refreshing the list keeps your scroll position, so you can scroll down and save. Thanks to [@Junwu-Git](https://github.com/Junwu-Git) for reporting it in [#7](https://github.com/AKin-lvyifang/codex-echoink/issues/7).
+
+#### Download and upgrade
+
+Requires **Obsidian 1.11.4 or later**. Back up your vault and plugin data before upgrading. Install from the [website](https://echoink.cn/install), or download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.3) into `.obsidian/plugins/codex-echoink/`, then re-enable the plugin.
+
 ## 2.8.2 - 2026-10-20
 <!-- release-type: improve -->
 ### 2.8.2 · Canvas 按内容自由排版
