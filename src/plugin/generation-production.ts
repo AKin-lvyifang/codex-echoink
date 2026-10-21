@@ -3,9 +3,8 @@ import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings"
 import type { GenerationRuntimePort, GenerationExecutionIdentity } from "../generation/runtime";
 import type { GenerationRequest, GenerationResult } from "../generation/types";
 import { assertGenerationPathSafe, readGenerationSources } from "../generation/sources";
-import { freezeGenerationRequest, parseGenerationModelJson } from "../generation/request";
-import { generationFileStem, generationReportMarkdown } from "../generation/output";
-import { parseGenerationMapHierarchy, serializeGenerationCanvas } from "../generation/canvas";
+import { freezeGenerationRequest } from "../generation/request";
+import { generationFileStem, prepareGenerationOutput } from "../generation/output";
 import type { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { PI_VAULT_TOOL_POLICIES, PI_VAULT_TOOL_VERSION, PI_VAULT_TOOL_POLICY_VERSION, type PiVaultToolWriteExecutionPort } from "../harness/pi-native/pi-vault-tool-contracts";
 import type { PiVaultToolAuthorizationPort } from "../harness/pi-native/pi-vault-tool-security-extension";
@@ -37,22 +36,21 @@ export function createGenerationRuntimePort(options: GenerationProductionOptions
       if (assessment.error) throw new Error(assessment.error);
       return assessment;
     },
-    async finish(request, assessment, modelText, identity, onStage) {
+    async assertContinuation(request, identity) {
+      identity.signal.throwIfAborted();
+      if (identity.access.mode === "plan" || identity.access.permission === "read-only") throw new Error("生成需要 Agent 模式和可写权限。");
+      assertBinding(options, request);
+      for (const source of request.sourcePaths) await options.assertRead(source, identity);
+      await options.assertWrite(`${request.outputDirectory}/生成成果.${request.outputKind === "canvas" ? "canvas" : "md"}`, identity);
+      identity.signal.throwIfAborted();
+    },
+    async finish(request, assessment, modelText, identity, onStage, attempt) {
       const result: GenerationResult = { requestId: request.id, outputKind: request.outputKind, writeState: "not_written", readFailures: assessment.readFailures, sourcePaths: assessment.sources.map(source => source.path) };
       try {
         if (!modelText || identity.signal.aborted) { result.error = identity.signal.aborted ? "已取消，尚未写入文件。" : "生成未完成，尚未写入文件。"; return result; }
-        const value = parseGenerationModelJson(modelText);
-        let title: string, content: string;
-        if (request.outputKind === "canvas") {
-          await onStage("layout");
-          const hierarchy = parseGenerationMapHierarchy(value, assessment.sources.map(source => source.path));
-          title = hierarchy.title; result.branchCount = hierarchy.branches.length; content = serializeGenerationCanvas(hierarchy);
-        } else {
-          if (!value || typeof value !== "object" || typeof (value as Record<string, unknown>).title !== "string" || typeof (value as Record<string, unknown>).markdown !== "string") throw new Error("报告格式无效，尚未写入文件。");
-          const report = value as { title: string; markdown: string };
-          title = report.title; content = generationReportMarkdown(request, report.markdown, assessment.sources.map(source => source.path)); result.characterCount = Array.from(report.markdown).length;
-        }
-        result.title = title;
+        if (request.outputKind === "canvas") await onStage("layout");
+        const { title, content, branchCount, characterCount } = prepareGenerationOutput(request, assessment.sources, modelText, attempt);
+        Object.assign(result, { title, ...(branchCount === undefined ? {} : { branchCount }), ...(characterCount === undefined ? {} : { characterCount }) });
         identity.signal.throwIfAborted(); assertBinding(options, request);
         await assertGenerationPathSafe(options.vaultRoot, request.outputRoot);
         await options.assertWrite(`${request.outputDirectory}/生成成果.${request.outputKind === "canvas" ? "canvas" : "md"}`, identity);

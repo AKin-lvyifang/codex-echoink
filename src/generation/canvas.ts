@@ -2,8 +2,10 @@ import type {
   GenerationCanvasDocument,
   GenerationCanvasEdge,
   GenerationCanvasNode,
+  GenerationCanvasOutput,
   GenerationMapHierarchy,
-  GenerationMapPoint
+  GenerationMapPoint,
+  GenerationSource
 } from "./types";
 
 const CENTER_WIDTH = 220;
@@ -172,8 +174,34 @@ function identifier(value: unknown): string {
   return value;
 }
 
-/** Validate the generated text-only Canvas before it can reach the write layer. */
-export function validateGenerationCanvas(value: unknown): asserts value is GenerationCanvasDocument {
+function color(value: unknown): void {
+  if (value !== undefined && (typeof value !== "string" || !/^(?:[1-6]|#[0-9a-f]{6})$/iu.test(value))) {
+    invalid("颜色必须是 Canvas 预设色或十六进制颜色。");
+  }
+}
+
+function httpUrl(value: unknown): string {
+  if (typeof value !== "string" || !/^https?:\/\//iu.test(value) || /\s|[\u0000-\u001f\u007f]/u.test(value)) {
+    invalid("链接网址必须是完整的 http 或 https URL。");
+  }
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") return value;
+  } catch { /* Report the same validation error for malformed URLs. */ }
+  return invalid("链接网址必须是完整的 http 或 https URL。");
+}
+
+interface CanvasBounds { x: number; y: number; right: number; bottom: number }
+
+function sameBounds(a: CanvasBounds, b: CanvasBounds): boolean {
+  return a.x === b.x && a.y === b.y && a.right === b.right && a.bottom === b.bottom;
+}
+
+function containsBounds(outer: CanvasBounds, inner: CanvasBounds): boolean {
+  return !sameBounds(outer, inner) && outer.x <= inner.x && outer.y <= inner.y && outer.right >= inner.right && outer.bottom >= inner.bottom;
+}
+
+function validateCanvas(value: unknown, checkOverlaps: boolean): asserts value is GenerationCanvasDocument {
   const document = record(value, "Canvas");
   onlyKeys(document, ["nodes", "edges"], "Canvas");
   if (!Array.isArray(document.nodes) || document.nodes.length === 0 || !Array.isArray(document.edges)) {
@@ -181,16 +209,37 @@ export function validateGenerationCanvas(value: unknown): asserts value is Gener
   }
   const ids = new Set<string>();
   const nodeIds = new Set<string>();
-  const bounds: Array<{ id: string; x: number; y: number; right: number; bottom: number }> = [];
+  const bounds: Array<CanvasBounds & { id: string; group: boolean }> = [];
   for (const value of document.nodes) {
     const node = record(value, "节点");
-    onlyKeys(node, ["id", "type", "text", "x", "y", "width", "height", "color"], "节点");
+    const common = ["id", "type", "x", "y", "width", "height", "color"];
+    switch (node.type) {
+      case "text":
+        onlyKeys(node, [...common, "text"], "文本节点");
+        text(node.text, "节点内容");
+        break;
+      case "file":
+        onlyKeys(node, [...common, "file", "subpath"], "文件节点");
+        sourcePath(node.file);
+        if (node.subpath !== undefined && (typeof node.subpath !== "string" || !node.subpath.startsWith("#"))) {
+          invalid("文件节点的 subpath 必须以 # 开头。");
+        }
+        break;
+      case "link":
+        onlyKeys(node, [...common, "url"], "链接节点");
+        httpUrl(node.url);
+        break;
+      case "group":
+        onlyKeys(node, [...common, "label"], "分组节点");
+        if (node.label !== undefined && typeof node.label !== "string") invalid("分组标签必须是文本。");
+        break;
+      default:
+        invalid("节点类型必须是 text、file、link 或 group。");
+    }
     const id = identifier(node.id);
     if (ids.has(id)) invalid(`ID 重复：${id}`);
     ids.add(id);
     nodeIds.add(id);
-    if (node.type !== "text") invalid("只支持文本节点。");
-    text(node.text, "节点内容");
     for (const key of ["x", "y", "width", "height"] as const) {
       if (typeof node[key] !== "number" || !Number.isFinite(node[key])) invalid("节点坐标和尺寸必须是有限数值。");
     }
@@ -198,30 +247,176 @@ export function validateGenerationCanvas(value: unknown): asserts value is Gener
     if (width <= 0 || height <= 0 || !Number.isFinite(x + width) || !Number.isFinite(y + height)) {
       invalid("节点尺寸必须大于零，边界必须是有限数值。");
     }
-    if (node.color !== undefined && (typeof node.color !== "string" || !/^(?:[1-6]|#[0-9a-f]{6})$/iu.test(node.color))) {
-      invalid("节点颜色必须是 Canvas 预设色或十六进制颜色。");
-    }
-    bounds.push({ id, x, y, right: x + width, bottom: y + height });
+    color(node.color);
+    bounds.push({ id, group: node.type === "group", x, y, right: x + width, bottom: y + height });
   }
   for (const value of document.edges) {
     const edge = record(value, "连线");
-    onlyKeys(edge, ["id", "fromNode", "fromSide", "toNode", "toSide"], "连线");
+    onlyKeys(edge, ["id", "fromNode", "fromSide", "fromEnd", "toNode", "toSide", "toEnd", "color", "label"], "连线");
     const id = identifier(edge.id);
     if (ids.has(id)) invalid(`ID 重复：${id}`);
     ids.add(id);
     if (typeof edge.fromNode !== "string" || typeof edge.toNode !== "string" ||
         !nodeIds.has(edge.fromNode) || !nodeIds.has(edge.toNode)) invalid("连线必须指向存在的节点。");
-    if (edge.fromSide !== "right" || edge.toSide !== "left") invalid("连线必须从父节点右侧连接子节点左侧。");
+    for (const side of [edge.fromSide, edge.toSide]) {
+      if (side !== undefined && !["top", "right", "bottom", "left"].includes(side as string)) invalid("连线方向必须是 top、right、bottom 或 left。");
+    }
+    for (const end of [edge.fromEnd, edge.toEnd]) {
+      if (end !== undefined && end !== "none" && end !== "arrow") invalid("连线箭头必须是 none 或 arrow。");
+    }
+    color(edge.color);
+    if (edge.label !== undefined && typeof edge.label !== "string") invalid("连线标签必须是文本。");
   }
   for (let index = 0; index < bounds.length; index++) {
     const a = bounds[index];
     for (let next = index + 1; next < bounds.length; next++) {
       const b = bounds[next];
-      if (a.x < b.right && b.x < a.right && a.y < b.bottom && b.y < a.bottom) {
+      if (sameBounds(a, b)) invalid(`节点重叠：${a.id}、${b.id}`);
+      if (checkOverlaps && a.x < b.right && b.x < a.right && a.y < b.bottom && b.y < a.bottom) {
+        if ((a.group && containsBounds(a, b)) || (b.group && containsBounds(b, a))) continue;
         invalid(`节点重叠：${a.id}、${b.id}`);
       }
     }
   }
+}
+
+/** Validate structure and geometry only; source authorization belongs to the parser. */
+export function validateGenerationCanvas(value: unknown): asserts value is GenerationCanvasDocument {
+  validateCanvas(value, true);
+}
+
+function expandCanvasText(canvas: GenerationCanvasDocument): void {
+  // Sort a separate list before changing geometry; preserve the model's z-order array.
+  const texts = canvas.nodes.filter(node => node.type === "text").sort((a, b) =>
+    a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const node of texts) {
+    const height = textHeight(node.text, node.width);
+    if (height <= node.height) continue;
+    const delta = height - node.height;
+    const snapshot = canvas.nodes.map(node => ({ node, x: node.x, y: node.y, right: node.x + node.width, bottom: node.y + node.height }));
+    const previous = snapshot.find(bounds => bounds.node === node)!;
+    const growing = new Set<GenerationCanvasNode>();
+    const shifted = new Set<GenerationCanvasNode>();
+    for (const bounds of snapshot) {
+      if (bounds.node.type === "group" && (containsBounds(bounds, previous) ||
+          (bounds.y < previous.bottom && previous.bottom < bounds.bottom))) {
+        growing.add(bounds.node);
+      }
+      if (bounds.node !== node && bounds.y >= previous.bottom) shifted.add(bounds.node);
+    }
+    node.height = height;
+    // Insert space across the canvas: groups crossing the cut keep their lower children inside.
+    for (const group of growing) group.height += delta;
+    // A moved group and each descendant receive the same single translation.
+    for (const affected of shifted) affected.y += delta;
+  }
+}
+
+function selectedSource(value: unknown, allowedSources: ReadonlySet<string>): string {
+  const path = sourcePath(value);
+  if (!allowedSources.has(path)) invalid(`来源不在所选资料中：${path}`);
+  return path;
+}
+
+function checkTextSources(content: string, allowedSources: ReadonlySet<string>): void {
+  const checkTarget = (target: string, markdown: boolean) => {
+    if (markdown && /^https?:\/\//iu.test(target)) return;
+    if (target.startsWith("#")) return;
+    let path = target.split("#", 1)[0];
+    if (markdown) {
+      path = path.replace(/\\([\\`*{}[\]()#+\-.!_>])/gu, "$1");
+      try { path = decodeURIComponent(path); } catch { /* Literal percent filenames are valid. */ }
+    }
+    selectedSource(path, allowedSources);
+  };
+  for (const match of content.matchAll(/\[\[([^\]\r\n]+)\]\]/gu)) {
+    checkTarget(match[1].split("|", 1)[0], false);
+  }
+  // Read balanced destinations so parentheses in Markdown filenames cannot hide a link.
+  for (const match of content.matchAll(/\]\(\s*/gu)) {
+    let index = match.index + match[0].length;
+    const start = index;
+    if (content[index] === "<") {
+      const end = content.indexOf(">", index + 1);
+      if (end !== -1) checkTarget(content.slice(index + 1, end), true);
+      continue;
+    }
+    let depth = 0;
+    while (index < content.length) {
+      const character = content[index];
+      if (character === "\\") { index += 2; continue; }
+      if (character === "(") depth++;
+      else if (character === ")") {
+        if (depth === 0) break;
+        depth--;
+      } else if (/\s/u.test(character) && depth === 0) break;
+      index++;
+    }
+    checkTarget(content.slice(start, index), true);
+  }
+  // Reference-style links and images resolve through these destinations as well.
+  for (const match of content.matchAll(/^ {0,3}\[[^\]\r\n]+\]:\s*(?:<([^>\r\n]+)>|([^\s]+))/gmu)) {
+    checkTarget(match[1] ?? match[2], true);
+  }
+}
+
+function sourceUrls(sources: readonly GenerationSource[]): ReadonlySet<string> {
+  const urls = new Set<string>();
+  for (const source of sources) {
+    for (const match of source.content.matchAll(/\bhttps?:\/\//giu)) {
+      const start = match.index;
+      let end = start;
+      const closing: string[] = [];
+      // Keep balanced URL parentheses, IPv6 hosts and array query parameters.
+      // An unmatched closing delimiter belongs to the surrounding Markdown.
+      while (end < source.content.length) {
+        const character = source.content[end];
+        if (/[\s<>"'`，。；：！？、（）]/u.test(character)) break;
+        if (character === "(") closing.push(")");
+        else if (character === "[") closing.push("]");
+        else if (character === "{") closing.push("}");
+        else if ([")", "]", "}"].includes(character) && closing.pop() !== character) break;
+        end++;
+      }
+      urls.add(source.content.slice(start, end).replace(/[.,;:!?]+$/u, ""));
+    }
+  }
+  return urls;
+}
+
+/** Parse model-owned layout against the exact successful source snapshot. */
+export function parseGenerationCanvas(value: unknown, sources: readonly GenerationSource[]): GenerationCanvasOutput {
+  const root = record(value, "生成结果");
+  onlyKeys(root, ["title", "canvas"], "生成结果");
+  const title = text(root.title, "主题标题");
+  const input = record(root.canvas, "Canvas");
+  onlyKeys(input, ["nodes", "edges"], "Canvas");
+  if (!Array.isArray(input.nodes) || !Array.isArray(input.edges)) invalid("Canvas 需要节点列表和连线列表。");
+  const allowedSources = new Set(sources.map(source => source.path));
+  const nodes = input.nodes.map(value => {
+    const node = record(value, "节点");
+    if (node.type !== "text") return { ...node };
+    const { sourcePaths, ...copy } = node;
+    const content = text(copy.text, "节点内容");
+    const point: GenerationMapPoint = { text: content };
+    if (sourcePaths !== undefined) {
+      if (!Array.isArray(sourcePaths)) invalid("文本节点来源必须是路径列表。");
+      point.sourcePaths = [...new Set(sourcePaths.map(path => selectedSource(path, allowedSources)))];
+    }
+    copy.text = pointText(point);
+    return copy;
+  });
+  const canvas: unknown = { nodes, edges: input.edges.map(value => ({ ...record(value, "连线") })) };
+  validateCanvas(canvas, false);
+  expandCanvasText(canvas);
+  validateGenerationCanvas(canvas);
+  const allowedUrls = sourceUrls(sources);
+  for (const node of canvas.nodes) {
+    if (node.type === "text") checkTextSources(node.text, allowedSources);
+    if (node.type === "file") selectedSource(node.file, allowedSources);
+    if (node.type === "link" && !allowedUrls.has(node.url)) invalid(`链接网址未出现在所选资料正文中：${node.url}`);
+  }
+  return { title, canvas };
 }
 
 export function serializeGenerationCanvas(hierarchy: GenerationMapHierarchy): string {

@@ -2,7 +2,7 @@ import { TFolder } from "obsidian";
 import { createGenerationRuntimePort } from "../../plugin/generation-production";
 import type { GenerationRuntimePort } from "../../generation/runtime";
 import type { GenerationProductionOptions } from "../../plugin/generation-production";
-import { createGenerationRequest, generationRequestSummary } from "../../generation/request";
+import { createGenerationRequest, generationModelPrompt, generationRequestSummary } from "../../generation/request";
 import { annotationFixture } from "../selection-annotations";
 import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
@@ -5784,6 +5784,7 @@ interface RuntimeFixture {
   currentKnowledgeTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
   currentMaintenanceCommand: NonNullable<PiNativeAgentSessionFactoryInput["currentMaintenanceCommand"]>;
   currentSkillTurn(): Readonly<PiNativeSkillTurnContext> | null;
+  currentGenerationContext(): ReturnType<NonNullable<PiNativeAgentSessionFactoryInput["currentGenerationContext"]>>;
   currentDocumentTurn(): Readonly<PiNativeDocumentTurnContext> | null;
   currentSelectionAnnotations(): readonly SelectionAnnotation[];
   currentToolExecution(): ReturnType<
@@ -5827,6 +5828,7 @@ async function withFixture(
   let currentMaintenanceCommandReader: PiNativeAgentSessionFactoryInput["currentMaintenanceCommand"];
   let currentSkillTurnReader:
     (() => Readonly<PiNativeSkillTurnContext> | null) | null = null;
+  let currentGenerationReader: PiNativeAgentSessionFactoryInput["currentGenerationContext"];
   let currentSelectionAnnotationsReader: PiNativeAgentSessionFactoryInput["currentSelectionAnnotationTurnContext"];
   let currentDocumentTurnReader:
     (() => Readonly<PiNativeDocumentTurnContext> | null) | null = null;
@@ -5870,6 +5872,7 @@ async function withFixture(
       currentKnowledgeTurnReader = input.currentKnowledgeTurnContext ?? null;
       currentMaintenanceCommandReader = input.currentMaintenanceCommand;
       currentSkillTurnReader = input.currentSkillTurnContext ?? null;
+      currentGenerationReader = input.currentGenerationContext;
       currentDocumentTurnReader = input.currentDocumentTurnContext ?? null;
       currentSelectionAnnotationsReader = input.currentSelectionAnnotationTurnContext;
       currentToolExecutionReader = input.currentToolExecutionContext;
@@ -5958,6 +5961,7 @@ async function withFixture(
         return await currentMaintenanceCommandReader();
       },
       currentSkillTurn: () => currentSkillTurnReader?.() ?? null,
+      currentGenerationContext: () => currentGenerationReader?.() ?? null,
       currentDocumentTurn: () => currentDocumentTurnReader?.() ?? null,
       currentSelectionAnnotations: () => currentSelectionAnnotationsReader?.() ?? [],
       currentToolExecution: () => {
@@ -6627,6 +6631,7 @@ export async function runGenerationRuntimeTests(): Promise<void> {
       fixture.latestSession().enableRuntimeMessageTimestampDrift();
       const handle = await fixture.submit({ conversationId: `generation-${writeState}`, text: generationRequestSummary(request), generationRequest: request, memoryMode: "normal", submittedAt: 1 });
       const session = fixture.latestSession(); assert.deepEqual(session.activeToolSelections.at(-1), []); assert.deepEqual(compactionChoices, [false]);
+      assert.equal(session.promptTexts[0], generationRequestSummary(request), "Markdown keeps its original model-facing text");
       const initialProjection = await fixture.runtime.readProjection(handle.conversationId);
       assert.equal(initialProjection.messages.find(message => message.role === "user")?.generationRequest?.id, request.id, JSON.stringify(initialProjection.messages.map(message => ({ id: message.id, role: message.role, runId: message.runId, generation: message.generationRequest?.id }))));
       const events: PiChatRuntimeEvent[] = [];
@@ -6685,4 +6690,97 @@ export async function runGenerationRuntimeTests(): Promise<void> {
   }
   console.log("PASS generation: actual deleted-source/read-denied/rebound/budget preflight failures call neither prompt nor Provider and reopen with no running generation");
   console.log("PASS generation: formal durable runtime disables retrieval/memory/skills/tools, hides model JSON, and reopens verified/uncertain results");
+  await assertCanvasGenerationAttempts();
+}
+
+async function assertCanvasGenerationAttempts(): Promise<void> {
+  for (const mode of ["first", "repair", "fallback", "exhausted", "cancel", "permission", "write_denied", "provider", "budget", "uncertain"] as const) {
+    let port: GenerationRuntimePort, prepared = 0, writes = 0, finishes = 0;
+    const id = `canvas-attempts-${mode}`;
+    await withFixture([id], async fixture => {
+      await mkdir(path.join(fixture.root, "资料")); await mkdir(path.join(fixture.root, "输出"));
+      await writeFile(path.join(fixture.root, "资料/原文.md"), "本轮快照 https://example.com/source");
+      const files = new Map<string, unknown>([["输出", new TFolder()]]);
+      port = createGenerationRuntimePort({
+        app: { vault: { getAbstractFileByPath: (name: string) => files.get(name), createFolder: async (name: string) => { await mkdir(path.join(fixture.root, name)); files.set(name, new TFolder()); } } } as never,
+        vaultRoot: fixture.root, bindings: () => ({ roles: { outputs: { enabled: true, writePath: "输出", readPaths: ["输出"] } } }) as never,
+        assertRead: async () => { if (mode === "permission" && prepared) throw new Error("重试读取权限已撤销"); },
+        assertWrite: async () => { if (mode === "write_denied") throw new Error("写入权限已撤销"); },
+        authorization: () => ({ authorize: async () => ({ authorizationKind: "approval_ticket", effectType: "user_write", operationIdentity: "op" }) as never }),
+        domain: { noteCreate: async (input: any) => {
+          await input.beforeSideEffect(); writes++;
+          const canvas = JSON.parse(input.content);
+          assert.deepEqual(Object.keys(canvas).sort(), ["edges", "nodes"], "outer title must not reach the Canvas file");
+          if (mode === "fallback") assert.equal(canvas.nodes[0].id, "generation-center");
+          else assert.equal(canvas.nodes[0].id, "model-node");
+          return { operationIdentity: "op", operation: "note_create", status: mode === "uncertain" ? "uncertain" : "completed", readbackVerified: mode !== "uncertain", sideEffectStarted: true } as VaultOperationResult;
+        } } as never,
+        writeExecution: { execute: async (_input, invoke) => invoke(async () => undefined) }
+      });
+      await fixture.runtime.createConversation({ conversationId: id, title: "Canvas", cwd: fixture.root });
+      await fixture.runtime.activateConversation(id);
+      const session = fixture.latestSession();
+      if (mode === "budget") { session.model.contextWindow = 65_536; session.model.maxTokens = 32_768; }
+      const request = createGenerationRequest({ id: "mind", name: "思维导图", description: "结构", instructions: "按资料选择结构", outputKind: "canvas" }, ["资料/原文.md"], "输出");
+      const handle = await fixture.submit({ conversationId: id, text: generationRequestSummary(request), generationRequest: request, submittedAt: 1 });
+      const full = JSON.stringify({ title: "模型主题", canvas: { nodes: [{ id: "model-node", type: "text", text: "完整结构", sourcePaths: ["资料/原文.md"], x: -200, y: 0, width: 300, height: 180 }], edges: [] } });
+      const fallback = JSON.stringify({ title: "旧层级主题", branches: Array.from({ length: 3 }, (_, index) => ({ title: `分支${index}`, points: [{ text: "要点一" }, { text: "要点二", sourcePaths: ["资料/原文.md"] }] })) });
+      const immediate = ["first", "uncertain", "write_denied"].includes(mode);
+      if (mode === "provider") session.finishFailed("Provider unavailable");
+      // Spaces keep tokenization linear while a possible 30K-token response
+      // still exceeds the next request's input budget once repair context is added.
+      else session.finishSuccessful(immediate ? full : mode === "budget" ? "INVALID ".repeat(30_000) : '{"title":"INVALID_FIRST"}');
+      if (["repair", "fallback", "exhausted", "cancel"].includes(mode)) {
+        await waitForTestCondition(() => session.promptTexts.length === 2);
+        const context = fixture.currentGenerationContext()!;
+        assert.equal(context.attempt?.kind, "repair");
+        if (context.attempt?.kind === "repair") { assert.match(context.attempt.failedOutput, /INVALID_FIRST/u); assert.ok(context.attempt.validationError); }
+        assert.equal(context.assessment.sources[0].content, "本轮快照 https://example.com/source");
+        await writeFile(path.join(fixture.root, "资料/原文.md"), "此后修改不得重新读取");
+        if (mode === "cancel") await fixture.runtime.abort(id);
+        else session.finishSuccessful(mode === "repair" ? full : '{"title":"INVALID_SECOND"}');
+      }
+      if (mode === "fallback" || mode === "exhausted") {
+        await waitForTestCondition(() => session.promptTexts.length === 3);
+        assert.equal(fixture.currentGenerationContext()!.attempt?.kind, "fallback");
+        assert.equal(fixture.currentGenerationContext()!.assessment.sources[0].content, "本轮快照 https://example.com/source");
+        session.finishSuccessful(mode === "fallback" ? fallback : '{"title":"INVALID_THIRD"}');
+      }
+      const settled = await handle.result;
+      const projection = await fixture.runtime.readProjection(id);
+      const result = projection.messages.find(message => message.generationResult)?.generationResult;
+      assert.ok(result, `${mode}: final result persisted`);
+      const expectedAttempts = mode === "fallback" || mode === "exhausted" ? 3 : mode === "repair" || mode === "cancel" ? 2 : 1;
+      assert.equal(session.promptTexts.length, expectedAttempts, `${mode}: bounded prompt requests`);
+      assert.ok(session.promptTexts.every(text => text === generationModelPrompt(request) && !text.includes("思维导图")), `${mode}: every actual Canvas attempt uses the neutral model prompt`);
+      assert.equal(result.modelAttempts, expectedAttempts);
+      assert.equal(result.canvasFallback, expectedAttempts === 3);
+      assert.equal(result.canvasValidationErrors?.length, mode === "exhausted" ? 3 : mode === "fallback" ? 2 : ["repair", "cancel", "permission", "budget"].includes(mode) ? 1 : 0);
+      assert.equal(prepared, 1, `${mode}: successful read snapshot prepared once`);
+      assert.equal(finishes, 1, `${mode}: write path entered once`);
+      const success = ["first", "repair", "fallback"].includes(mode);
+      assert.equal(settled.terminalState, success ? "completed" : mode === "cancel" ? "cancelled" : "failed");
+      assert.equal(writes, success || mode === "uncertain" ? 1 : 0);
+      if (success && mode !== "fallback") { assert.equal(result.title, "模型主题"); assert.equal(result.branchCount, undefined); }
+      if (mode === "fallback") assert.equal(result.branchCount, 3);
+      if (mode === "permission") assert.match(result.error!, /权限已撤销/u);
+      if (mode === "budget") assert.match(result.error!, /本轮预算/u);
+      if (mode === "uncertain") assert.equal(result.writeState, "unconfirmed");
+      assert.equal(projection.messages.filter(message => message.role === "user" && message.generationRequest).length, 1);
+      assert.equal(projection.messages.filter(message => message.generationResult).length, 1);
+      assert.equal(projection.messages.some(message => /INVALID_FIRST|INVALID_SECOND|INVALID_THIRD|model-node/u.test(message.text)), false,
+        JSON.stringify({ generationRun: handle.productRunId, leaked: projection.messages.filter(message => /INVALID_FIRST|INVALID_SECOND|INVALID_THIRD|model-node/u.test(message.text))
+          .map(message => ({ id: message.id, role: message.role, runId: message.runId, turnId: message.turnId, processKind: message.processKind, itemType: message.itemType, text: message.text.slice(0, 160) })) }));
+      assert.deepEqual(session.activeToolSelections.at(-1), []);
+      await fixture.runtime.shutdown();
+      const cold = await readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId: id, resolveConversationCwd: () => fixture.root });
+      assert.equal(cold.messages.filter(message => message.generationResult).length, 1);
+      assert.deepEqual(cold.messages.find(message => message.generationResult)!.generationResult, result);
+      console.log(`PASS generation Canvas attempts: ${mode}; prompts=${expectedAttempts}, writes=${writes}, fallback=${result.canvasFallback}`);
+    }, { generation: {
+      prepare: async (...args) => { const result = await port.prepare(...args); prepared++; return result; },
+      assertContinuation: (...args) => port.assertContinuation!(...args),
+      finish: (...args) => { finishes++; return port.finish(...args); }
+    } });
+  }
 }

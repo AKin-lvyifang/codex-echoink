@@ -33,29 +33,47 @@ export interface GenerationResult {
   title?: string;
   characterCount?: number;
   branchCount?: number;
+  modelAttempts?: number;
+  canvasFallback?: boolean;
+  canvasValidationErrors?: string[];
   readFailures: GenerationReadFailure[];
   sourcePaths?: string[];
   error?: string;
 }
-/** The model supplies hierarchy only. Coordinates and identifiers are program-owned. */
+/** The fixed hierarchy remains the last-attempt compatibility fallback. */
 export interface GenerationMapPoint { text: string; sourcePaths?: string[] }
 export interface GenerationMapBranch { title: string; points: GenerationMapPoint[] }
 export interface GenerationMapHierarchy { title: string; branches: GenerationMapBranch[] }
-export interface GenerationCanvasNode {
+export type GenerationAttempt =
+  | { kind: "initial" }
+  | { kind: "repair"; failedOutput: string; validationError: string }
+  | { kind: "fallback" };
+export interface GenerationCanvasNodeBase {
   id: string;
-  type: "text";
-  text: string;
   x: number;
   y: number;
   width: number;
   height: number;
   color?: string;
 }
+export interface GenerationCanvasTextNode extends GenerationCanvasNodeBase { type: "text"; text: string }
+export interface GenerationCanvasFileNode extends GenerationCanvasNodeBase { type: "file"; file: string; subpath?: string }
+export interface GenerationCanvasLinkNode extends GenerationCanvasNodeBase { type: "link"; url: string }
+export interface GenerationCanvasGroupNode extends GenerationCanvasNodeBase { type: "group"; label?: string }
+export type GenerationCanvasNode = GenerationCanvasTextNode | GenerationCanvasFileNode | GenerationCanvasLinkNode | GenerationCanvasGroupNode;
+export type GenerationCanvasSide = "top" | "right" | "bottom" | "left";
 export interface GenerationCanvasEdge {
   id: string;
   fromNode: string;
-  fromSide: "right";
+  fromSide?: GenerationCanvasSide;
+  fromEnd?: "none" | "arrow";
   toNode: string;
-  toSide: "left";
+  toSide?: GenerationCanvasSide;
+  toEnd?: "none" | "arrow";
+  color?: string;
+  label?: string;
 }
 export interface GenerationCanvasDocument { nodes: GenerationCanvasNode[]; edges: GenerationCanvasEdge[] }
+export interface GenerationCanvasOutput { title: string; canvas: GenerationCanvasDocument }
+/** Parsed entirely before entering authorization or write execution. */
+export interface GenerationPreparedOutput { title: string; content: string; branchCount?: number; characterCount?: number }
