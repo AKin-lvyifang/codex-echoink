@@ -49,6 +49,7 @@ import {
 } from "./provider-preflight";
 import { applyAmicroButton, applyDeleteButton } from "./amicro-buttons";
 import { attachSettingsTooltip, showSettingsInlineConfirmation } from "./settings-v2";
+import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "./settings-scroll";
 
 type ProviderFormField =
   | "name"
@@ -298,6 +299,8 @@ export class ProviderModelModal extends Modal {
   }
 
   private render(): void {
+    // Releasing controls can collapse the inline form and clamp its Settings host's scroll offset.
+    const scrollSnapshot = captureSettingsScrollSnapshot(this.contentEl);
     this.dismissProviderUrlTooltips();
     this.captureFocusIntent();
     for (const panel of Array.from(this.contentEl.querySelectorAll<HTMLElement>("[data-model-advanced-key]"))) {
@@ -497,6 +500,7 @@ export class ProviderModelModal extends Modal {
     };
     if (this.focusIntent) this.restoreFocusIntent();
     else if (focusedTriggerId) this.restoreComboboxTriggerFocus(focusedTriggerId);
+    restoreSettingsScrollSnapshot(scrollSnapshot);
   }
 
   private renderProviderPicker(
@@ -1625,6 +1629,7 @@ export class ProviderModelModal extends Modal {
   }
 
   private refreshPreflightStatus(): void {
+    const scrollSnapshot = captureSettingsScrollSnapshot(this.contentEl);
     this.contentEl.querySelector<HTMLElement>(".codex-provider-modal-form")
       ?.setAttr("aria-busy", String(
         this.saving || this.preflight.state.status === "loading"
@@ -1646,6 +1651,7 @@ export class ProviderModelModal extends Modal {
     }
     const test = this.contentEl.querySelector<HTMLButtonElement>('[data-modal-focus-key="provider-test-connection"]');
     if (test) test.disabled = !this.canTestConnection() || this.preflight.state.status === "loading" || this.saving;
+    restoreSettingsScrollSnapshot(scrollSnapshot);
   }
 
   private discoveredModelConfig(modelId: string): ApiProviderModelConfig {
