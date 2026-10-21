@@ -2,6 +2,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { PiKnowledgeMaintenanceScope, PiProductRunRecord } from "./contracts";
 import { isRawMarkdownPath } from "../../knowledge-base/raw-digest";
 import { workbenchTaskSourceFromEntries } from "../../home/workbench-context";
+import { knowledgePathRole } from "../../knowledge-base/root-paths";
 
 export const MAINTENANCE_SCOPE_CONTEXT_TYPE = "echoink-maintenance-scope-v1";
 export const MAINTENANCE_SCOPE_REQUIRED_MESSAGE = "请说明要维护哪些资料；当前没有可继续的未完成维护范围。";
@@ -44,17 +45,25 @@ export function isMaintenanceScopeConfirmation(text: string): boolean {
 }
 
 /** Capture a new selection even when the Agent only gives advice this turn. */
-export function isNewMaintenanceScopeRequest(text: string): boolean {
+export function isNewMaintenanceScopeRequest(text: string, vaultRootPath?: string): boolean {
   if (isMaintenanceScopeConfirmation(text)) return false;
   const value = text.trim();
+  const explicitPath = /[^\s`\[\]<>|，。；]+\/[^\s`\[\]<>|，。；]+\.(?:markdown|md)(?![a-z0-9_.-])/giu;
+  const paths = [...value.matchAll(explicitPath)].map(match => match[0]);
+  // A Raw selection need not start with an imperative. Wiki/Projects paths
+  // describe targets; unknown paths still go through the resolver's rejection.
+  if (paths.length) {
+    if (!vaultRootPath || paths.some(relative => !["wiki", "projects"].includes(knowledgePathRole(vaultRootPath, relative) ?? ""))) return true;
+    return false;
+  }
   return /^(?:(?:请|帮我|这次|本次|现在|先|只|麻烦|给我|我要|我想)[，,\s]*)*(?:改为|改成|换成)?(?:维护|整理|处理)/u.test(value)
     && /(?:资料|笔记|知识库|\.(?:markdown|md)(?![a-z0-9_.-]))/iu.test(value);
 }
 
 /** Explicit task changes end inheritance; clarification and failed turns do not. */
-function maintenanceTopicBoundary(text: string): boolean {
+function maintenanceTopicBoundary(text: string, vaultRootPath?: string): boolean {
   if (isMaintenanceScopeConfirmation(text)) return false;
-  return isNewMaintenanceScopeRequest(text) || /^\s*\/(?:ask|maintain|dream|skill:)/iu.test(text)
+  return isNewMaintenanceScopeRequest(text, vaultRootPath) || /^\s*\/(?:ask|maintain|dream|skill:)/iu.test(text)
     || /(?:换(?:个|一个)?话题|另(?:一个|外的?)问题|接下来(?:聊|谈)|(?:不要|不再|停止|取消|暂停)(?:继续)?(?:整理|维护|处理)(?:这些|这批)?(?:资料|笔记|知识库)?)/u.test(text);
 }
 
@@ -62,7 +71,7 @@ function maintenanceTopicBoundary(text: string): boolean {
 export function maintenanceScopeContextFromEntries(
   entries: readonly SessionEntry[],
   runs: readonly Readonly<PiProductRunRecord>[],
-  options: Readonly<{ excludeProductRunId?: string; throughProductRunId?: string }> = {}
+  options: Readonly<{ excludeProductRunId?: string; throughProductRunId?: string; vaultRootPath?: string }> = {}
 ): Readonly<MaintenanceScopeContext> | null {
   const positions = new Map(entries.map((entry, index) => [entry.id, index]));
   const through = options.throughProductRunId ? runs.find(run => run.productRunId === options.throughProductRunId) : undefined;
@@ -98,7 +107,7 @@ export function maintenanceScopeContextFromEntries(
   if (!latest) return null;
   const position = positions.get(runById.get(latest.productRunId)!.userEntryId)!;
   const end = throughPosition === undefined ? entries.length : throughPosition + 1;
-  if (entries.slice(position + 1, end).some(entry => entry.type === "message" && entry.message.role === "user" && maintenanceTopicBoundary(messageText(entry.message)))) return null;
+  if (entries.slice(position + 1, end).some(entry => entry.type === "message" && entry.message.role === "user" && maintenanceTopicBoundary(messageText(entry.message), options.vaultRootPath))) return null;
   return latest;
 }
 

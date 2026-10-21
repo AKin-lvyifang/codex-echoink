@@ -130,7 +130,7 @@ export async function readTaskResumeSafety(input: TaskResumeSafetyInput): Promis
     const branch: typeof inspection.entries[number][] = [];
     let cursor = (interrupted.activeLeafId ? entries.get(interrupted.activeLeafId) : undefined) ?? entries.get(interrupted.userEntryId);
     while (cursor) { branch.unshift(cursor); cursor = cursor.parentId ? entries.get(cursor.parentId) : undefined; }
-    maintenanceContext = maintenanceScopeContextFromEntries(branch, runs, { throughProductRunId: interrupted.productRunId });
+    maintenanceContext = maintenanceScopeContextFromEntries(branch, runs, { throughProductRunId: interrupted.productRunId, vaultRootPath: input.vaultRootPath });
   }
   for (const operation of operations) {
     if (operation.toolName !== "pdf_reading_process") continue;

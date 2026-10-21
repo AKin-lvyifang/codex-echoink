@@ -51,6 +51,19 @@ export async function runWorkbenchMaintenanceFollowupTests(root: string): Promis
     assert.equal(followed.tool?.isError ?? false, false, "a clarification does not discard the latest unfinished parsed scope");
     assert.match(await f.wiki(), /星系专题/u);
   });
+  for (const [name, text] of [["non-whitelist-do-all", "好的，都做吧"], ["non-whitelist-second-plan", "那就执行你推荐的第二个方案吧"]]) {
+    await scenario(name, async f => {
+      await f.run("请先给出这篇资料的两种整理建议，等我确认。", { maintenanceScope: { mode: "batch", sourcePaths: [source] } });
+      await f.setDecoyText(text);
+      await f.reopen();
+      const searchCount = f.rawQueries.length;
+      const followed = await f.run(text, {}, source);
+      assert.equal(f.rawQueries.length, searchCount, "an unfinished frozen selection is inherited before attempting any new Raw query");
+      assert.equal(followed.tool?.isError, false, "non-whitelisted follow-up wording keeps the selected source A");
+      assert.match(await f.wiki(), /星系专题/u);
+      assert.doesNotMatch(await f.wiki(), /第二范围/u);
+    });
+  }
   await scenario("legacy-signal7-partial-batch", async f => {
     const paths = [source, other, third];
     await f.run("请给出这批资料的整理建议，等我确认。", {
@@ -93,6 +106,34 @@ export async function runWorkbenchMaintenanceFollowupTests(root: string): Promis
     assert.equal(followed.tool?.isError ?? false, false, "the third turn inherits B selected by the advice-only second turn");
     assert.match(await f.wiki(), /第二范围/u);
     assert.doesNotMatch(await f.wiki(), /星系专题/u);
+  });
+  await scenario("bare-path-advice-overrides-saved-scope", async f => {
+    await f.run("/maintain 星系专题");
+    await f.run(`就这篇 ${other}，先给建议`);
+    assert.doesNotMatch(await f.wiki(), /第二范围/u);
+    await f.reopen();
+    const searchCount = f.rawQueries.length;
+    const followed = await f.run("好的，都做吧", {}, other);
+    assert.equal(f.rawQueries.length, searchCount);
+    assert.equal(followed.tool?.isError, false);
+    assert.match(await f.wiki(), /第二范围/u);
+    assert.doesNotMatch(await f.wiki(), /星系专题/u);
+  });
+  await scenario("wiki-target-followup-keeps-source-scope", async f => {
+    await f.run("/maintain 星系专题");
+    const queryCount = f.rawQueries.length;
+    await f.run(`按建议更新 ${wiki}，先给建议`);
+    const advised = await f.run(`请维护 ${wiki} 这篇笔记，先给建议`);
+    assert.equal(f.rawQueries.length, queryCount, "target-only advice must not resolve a new Raw selection regardless of the leading verb");
+    const safety = await prepareTaskResumeSafety({ catalog: f.catalog, productRuns: f.productRuns, receipts: f.receipts, approvals: f.approvals,
+      vaultRootPath: f.vault, conversationId: "followup", interruptedRunId: advised.result.productRunId });
+    assert.ok(JSON.stringify(safety.maintenanceContext).includes(source), "recovery and live runtime use the same source/target role boundary");
+    await f.reopen();
+    const searchCount = f.rawQueries.length;
+    const followed = await f.run(`请维护 ${wiki} 这篇笔记`, {}, source);
+    assert.equal(f.rawQueries.length, searchCount, "a Wiki target cannot replace the selected Raw source with a new query");
+    assert.equal(followed.tool?.isError, false);
+    assert.match(await f.wiki(), /星系专题/u);
   });
   await scenario("advice-empty-raw", async f => {
     const before = f.bodies.length;
@@ -246,11 +287,22 @@ async function fixture(root: string, name: string, emptyRaw = false) {
     roots: devicePiCanonicalStoreRoots(pluginRoot), catalog, productRuns, approvals, receipts, knowledgeUsageStore, personalMemory,
     sessionApi: { codingAgentVersion: VERSION, currentSessionVersion: CURRENT_SESSION_VERSION, open: (file: string, directory: string, cwd: string) => SessionManager.open(file, directory, cwd) } } as never;
   let bundle = await createPiProductionRuntimeBundle(plugin, localData);
+  const rawQueries: string[] = [];
+  const observeRawQueries = () => {
+    const index = bundle.knowledgeAgentIndex;
+    const search = index.search.bind(index);
+    index.search = async request => {
+      if (request.kinds?.length === 1 && request.kinds[0] === "raw") rawQueries.push(request.query);
+      return await search(request);
+    };
+  };
+  observeRawQueries();
   const createConversation = (conversationId: string) => bundle.runtime.createConversation({ conversationId, title: "维护跟进", cwd: vault });
   await createConversation("followup");
-  return { vault, catalog, productRuns, approvals, receipts, bodies, runs, createConversation, runtime: () => bundle.runtime,
+  return { vault, catalog, productRuns, approvals, receipts, bodies, runs, rawQueries, createConversation, runtime: () => bundle.runtime,
     wiki: () => fs.readFile(path.join(vault, wiki), "utf8"),
-    reopen: async () => { await bundle.runtime.shutdown(); bundle = await createPiProductionRuntimeBundle(plugin, localData); },
+    setDecoyText: (text: string) => fs.writeFile(path.join(vault, other), `# 第二范围\n${text}。这篇不相关资料专门检测确认语被拿去检索。\n`),
+    reopen: async () => { await bundle.runtime.shutdown(); bundle = await createPiProductionRuntimeBundle(plugin, localData); observeRawQueries(); },
     close: async () => { await bundle.runtime.shutdown(); unbind(); await new Promise<void>(resolve => server.close(() => resolve())); },
     interruptConfirmation: async () => {
       const start = bodies.length;

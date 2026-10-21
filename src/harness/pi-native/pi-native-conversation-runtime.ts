@@ -1640,7 +1640,7 @@ export class PiNativeConversationRuntime {
       });
       this.configureToolsForTurn(active, knowledgeCommand, mode, memoryMode);
       if (knowledgeCommand.kind === "chat" && !execution.maintenanceScope && !execution.generation && !englishDiarySourcePath && !pdfTaskRequest
-        && isNewMaintenanceScopeRequest(request.text)) {
+        && isNewMaintenanceScopeRequest(request.text, active.cwd)) {
         // Selection facts are independent of the chat/maintenance workflow.
         // A suggestion-only turn must still replace the previous selection.
         try {
@@ -2075,25 +2075,29 @@ export class PiNativeConversationRuntime {
     const confirmation = isMaintenanceScopeConfirmation(request);
     // A new explicit source/query wins even on a resumed turn. The product's
     // generic resume instruction is recovery context, never a Raw query.
-    const resumeNewScope = !!resume && isNewMaintenanceScopeRequest(request);
-    if (confirmation || resume && !resumeNewScope) {
+    const newScope = isNewMaintenanceScopeRequest(request, active.cwd)
+      || run.commandKind === "maintain" && !!request.trim() && !confirmation;
+    if (!newScope) {
       const runs = (await this.productRuns.listReadOnly(active.catalog.conversationId)).filter(prior => prior.piSessionId === active.catalog.piSessionId);
       const saved = maintenanceScopeContextFromEntries(active.sessionManager.getBranch(), runs, {
         excludeProductRunId: run.productRunId,
+        vaultRootPath: active.cwd,
         ...(resume ? { throughProductRunId: resume.safety.interruptedRunId } : {})
       });
       const recoveryScope = freezeMaintenanceScopeContext(resume?.safety.maintenanceContext);
       if (resume && recoveryScope && (!saved || JSON.stringify(saved) !== JSON.stringify(recoveryScope))) throw new Error("无法确认原任务的维护范围，请说明要维护哪些资料。");
       const inherited: MaintenanceScopeContext | null = recoveryScope ?? saved;
-      if (!inherited) throw new Error(MAINTENANCE_SCOPE_REQUIRED_MESSAGE);
-      if (inherited.folderBindingsRevision !== undefined && inherited.folderBindingsRevision !== getKnowledgeFolderBindings(active.cwd)?.revision) throw new Error("目录配置已变化，请重新说明要维护哪些资料。");
-      const paths = maintenanceScopePaths(inherited.scope);
-      if (paths.some(relative => knowledgePathRole(active.cwd, relative) !== "raw")) throw new Error("原维护范围不在当前资料目录中，请说明要维护哪些资料。");
-      const pending = await this.options.knowledge?.pendingMaintenanceSourcePaths?.(paths) ?? paths;
-      if (!pending.length) throw new Error(MAINTENANCE_SCOPE_REQUIRED_MESSAGE);
-      // Pending state decides whether this task can continue. Keep the whole
-      // frozen batch so a model using its original sourcePaths remains valid.
-      return { scope: inherited.scope, request: inherited.request };
+      if (inherited) {
+        if (inherited.folderBindingsRevision !== undefined && inherited.folderBindingsRevision !== getKnowledgeFolderBindings(active.cwd)?.revision) throw new Error("目录配置已变化，请重新说明要维护哪些资料。");
+        const paths = maintenanceScopePaths(inherited.scope);
+        if (paths.some(relative => knowledgePathRole(active.cwd, relative) !== "raw")) throw new Error("原维护范围不在当前资料目录中，请说明要维护哪些资料。");
+        const pending = await this.options.knowledge?.pendingMaintenanceSourcePaths?.(paths) ?? paths;
+        if (!pending.length) throw new Error(MAINTENANCE_SCOPE_REQUIRED_MESSAGE);
+        // Pending state decides whether this task can continue. Keep the whole
+        // frozen batch so a model using its original sourcePaths remains valid.
+        return { scope: inherited.scope, request: inherited.request };
+      }
+      if (confirmation || resume) throw new Error(MAINTENANCE_SCOPE_REQUIRED_MESSAGE);
     }
     return { scope: await this.options.knowledge?.resolveMaintenanceScope?.(request), request };
   }
