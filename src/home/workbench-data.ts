@@ -6,8 +6,9 @@ import type { AgentModuleId } from "../agents/types";
 import { hasProPluginAccess } from "../membership/access";
 import { classifyKnowledgePath, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeLinkHealthService, validWorkbenchBindingRoots, type KnowledgeLinkHealth } from "../knowledge-base/link-health";
-import { rawDigestFingerprint, rawDigestRecordFromMarkdown, readRawDigestRegistry, type RawDigestFrontmatterRecord } from "../knowledge-base/raw-digest";
+import { isKnowledgeMaintenanceSourcePath, rawDigestFingerprint, rawDigestRecordFromMarkdown, readRawDigestRegistry, type RawDigestFrontmatterRecord } from "../knowledge-base/raw-digest";
 import { rawDigestStateForRecord } from "../knowledge-base/digest-status";
+import { latestMaintenanceSourceStates } from "../knowledge-base/maintenance-record";
 import type { DomainReceipt } from "../harness/pi-native/domain-receipt-store";
 import { parseTodoMarkdown } from "./todo-markdown";
 import { nativeJournalPathForDate, readNativeJournalSettings, takePreparedNativeJournalTemplate } from "./native-journal";
@@ -21,7 +22,6 @@ type WorkbenchHost = Pick<CodexForObsidianPlugin, "app" | "settings" | "manifest
 };
 const instances = new WeakMap<object, WorkbenchDataService>();
 const visiblePath = (target: string): boolean => !target.split("/").some(part => part.startsWith("."));
-const sourceExtension = /\.(?:md|markdown|txt|pdf|docx|png|jpe?g|webp|gif)$/iu;
 const safeRelativePath = (value: unknown): value is string => typeof value === "string" && !!value && !value.startsWith("/") && !value.includes("\\") && !value.split("/").some(part => part === "." || part === ".." || !part);
 const scopeKey = (roots: readonly string[]): string => workbenchFingerprint([...roots].sort().join("\n")).slice(0, 24);
 interface CachedSourceContent {
@@ -289,21 +289,18 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     const bindings = this.bindings, roots = this.roots("raw");
     if (!bindings || !roots.length) return [];
     const registry = await readRawDigestRegistry(this.plugin.getVaultPath(), true);
-    const maintenance = await this.plugin.getKnowledgeSurfaceService()?.getMaintenanceRecords() ?? [];
-    const sources = new Map<string, { fingerprint: string; status: string }>();
-    for (const record of [...maintenance].sort((a, b) => b.at - a.at)) for (const source of record.sources) if (!sources.has(source.path)) sources.set(source.path, source);
+    const latest = latestMaintenanceSourceStates(await this.plugin.getKnowledgeSurfaceService()?.getMaintenanceRecords() ?? []);
     const result: WorkbenchSourceFile[] = [];
     let batch = 0;
     for (const file of this.plugin.app.vault.getFiles()) {
-      if (!visiblePath(file.path) || !sourceExtension.test(file.path) || /(?:^|\/)index\.(?:md|markdown)$/iu.test(file.path) || /\.base\.md$/iu.test(file.path)
+      if (!isKnowledgeMaintenanceSourcePath(file.path)
         || classifyKnowledgePath(bindings, file.path) !== "raw" || !roots.some(root => file.path.startsWith(`${root}/`))
         || bindings.roles.assets.readPaths.some(root => file.path.startsWith(`${root}/`))) continue;
       try {
         const content = await this.readSourceContent(file), fingerprint = content.rawFingerprint;
         const state = rawDigestStateForRecord({ fingerprint, frontmatter: content.rawDigest,
-          previous: this.plugin.settings.knowledgeBase.processedSources[file.path], registry: registry.entries[file.path], hasTrackerHint: false });
-        const latest = sources.get(file.path), same = latest?.fingerprint === fingerprint;
-        if (same ? latest.status !== "processed" : state !== "digested") result.push({ path: file.path, fingerprint });
+          previous: this.plugin.settings.knowledgeBase.processedSources[file.path], registry: registry.entries[file.path], hasTrackerHint: false, maintenance: latest.get(file.path) });
+        if (state !== "digested") result.push({ path: file.path, fingerprint });
       } catch (error) { issues.push(`来源暂不可读取：${file.path}：${message(error)}`); }
       if (++batch % 32 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
     }

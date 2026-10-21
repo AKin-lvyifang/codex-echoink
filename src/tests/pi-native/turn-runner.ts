@@ -1,3 +1,5 @@
+import { knowledgeMaintenanceBatchPrompt } from "../../knowledge-base/initializer";
+import { Platform } from "obsidian";
 import { annotationFixture } from "../selection-annotations";
 import { attachTestConversationRunService } from "../conversation-run-host";
 import { applyConversationTaskMetadata, patchConversationTaskMetadata, type ConversationTaskMetadataPatch } from "../../agents/task-metadata";
@@ -27,6 +29,7 @@ import {
 import {
   createQueuedTurnFromComposer,
   enqueueComposerDraft,
+  insertQueuedTurnIntoActiveRun,
   markUnreadCompletedAnswerIfBackground,
   piChatMemoryModeForGlobalSetting,
   piConversationUnreadAnswerAt,
@@ -62,6 +65,7 @@ import {
 } from "../../ui/codex-view/session-controller";
 import {
   RuntimeTurnQueue,
+  canInsertQueuedTurn,
   type QueuedTurnItem
 } from "../../ui/turn-queue";
 import {
@@ -285,7 +289,7 @@ async function concurrentViewRunsRemainIndependent(): Promise<void> {
     providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId,
     model: "concurrent-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false
   });
-  for (const method of ["renderTabs", "renderToolbar", "renderMessages", "renderMessagesIfActive", "renderQueue", "renderInteractionDock", "renderTaskPlanDock", "applyStatus", "clearKnowledgeBaseRunProgressTimer", "flushSessionSave", "clearHomeAttentionFrame"]) {
+  for (const method of ["renderTabs", "renderToolbar", "renderMessages", "renderMessagesIfActive", "renderQueue", "renderInteractionDock", "renderTaskPlanDock", "renderAttachments", "applyStatus", "clearKnowledgeBaseRunProgressTimer", "flushSessionSave", "clearHomeAttentionFrame"]) {
     view[method] = () => undefined;
   }
   view.clearComposerDraft = () => { view.inputEl.value = ""; };
@@ -414,7 +418,9 @@ async function concurrentViewRunsRemainIndependent(): Promise<void> {
     await view.stopTurn();
     assert.equal(pendingSignal?.aborted, true, "stop reaches the submit signal before activeRunId exists");
     await pending;
-    assert.equal(openTestNoticeMessages.length, noticesBeforeStop, "user cancellation is not reported as a send failure");
+    assert.equal(openTestNoticeMessages.length, noticesBeforeStop + 1);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /发送已停止/);
+    assert.doesNotMatch(openTestNoticeMessages.at(-1) ?? "", /发送失败/, "user cancellation is not reported as a send failure");
     assert.equal(view.inputEl.value, "pending preflight draft", "unaccepted cancelled drafts keep ordinary Composer semantics");
     assert.equal(view.runningSessionIds.has("C"), false);
   } finally {
@@ -976,7 +982,7 @@ function imageMetadataProjectsAndCopiesByPiEntryIdentity(): void {
 async function activeRunImagesUseTheNormalQueue(): Promise<void> {
   const session = piSessionShell("conversation-active-image-queue");
   const queue = new RuntimeTurnQueue();
-  const item = queuedImageTurn(session.id, "/fixture/queued-image.png");
+  const item = { ...queuedImageTurn(session.id, "/fixture/queued-image.png"), composerDraftTransferred: true };
   let followUpCalls = 0;
   let composerClearCalls = 0;
   const view: any = {
@@ -984,6 +990,8 @@ async function activeRunImagesUseTheNormalQueue(): Promise<void> {
       followUpPiConversation: async () => { followUpCalls += 1; }
     },
     running: true,
+    composerStateForSession: () => ({ viewRunning: true }),
+    ensureSession: () => session,
     activeRunKind: "chat",
     activeRunSessionId: session.id,
     turnQueue: queue,
@@ -1001,13 +1009,13 @@ async function activeRunImagesUseTheNormalQueue(): Promise<void> {
   assert.deepEqual(queue.itemsForSession(session.id)[0]?.attachments, item.attachments);
   assert.equal(queue.itemsForSession(session.id)[0]?.piUserEntryAccepted, undefined);
   assert.equal(
-    queue.itemsForSession(session.id)[0]?.clearComposerAfterPiAcceptance,
+    queue.itemsForSession(session.id)[0]?.composerDraftTransferred,
     true
   );
   assert.equal(
     composerClearCalls,
     0,
-    "Pi must durably accept the queued image turn before Composer clears"
+    "the production snapshot hook already cleared this draft"
   );
 
   await enqueueComposerDraft(view);
@@ -1025,6 +1033,7 @@ async function activeRunNoteMentionsUseTheNormalQueue(): Promise<void> {
   const item: QueuedTurnItem = {
     ...queuedImageTurn(session.id, "/fixture/unused.png"),
     id: "queued-note-mention",
+    composerDraftTransferred: true,
     text: "总结提及笔记",
     attachments: [],
     noteMentions: [{
@@ -1039,6 +1048,8 @@ async function activeRunNoteMentionsUseTheNormalQueue(): Promise<void> {
       followUpPiConversation: async () => { followUpCalls += 1; }
     },
     running: true,
+    composerStateForSession: () => ({ viewRunning: true }),
+    ensureSession: () => session,
     activeRunKind: "chat",
     activeRunSessionId: session.id,
     turnQueue: queue,
@@ -1053,7 +1064,7 @@ async function activeRunNoteMentionsUseTheNormalQueue(): Promise<void> {
   assert.equal(followUpCalls, 0, "note mentions must not use text-only follow-up");
   assert.equal(queue.itemsForSession(session.id).length, 1);
   assert.deepEqual(queue.peekNext(session.id)?.noteMentions, item.noteMentions);
-  assert.equal(queue.peekNext(session.id)?.clearComposerAfterPiAcceptance, true);
+  assert.equal(queue.peekNext(session.id)?.composerDraftTransferred, true);
 
   await enqueueComposerDraft(view);
   assert.equal(queue.itemsForSession(session.id).length, 1,
@@ -1144,8 +1155,9 @@ async function inFlightComposerImageTransferCannotDuplicate(): Promise<void> {
       queue.settleSessionQueue(id, succeeded);
     },
     createQueuedTurnFromComposer: async () =>
-      queuedImageTurn(session.id, "/fixture/in-flight.png"),
-    sessionById: () => session,
+      ({ ...queuedImageTurn(session.id, "/fixture/in-flight.png"), composerDraftTransferred: true }),
+    ensureSession: () => session,
+    composerStateForSession: () => ({ viewRunning: running }),
     clearComposerDraft: () => undefined
   };
 
@@ -2666,20 +2678,22 @@ Promise<void> {
   await waitFor(() => listener !== null);
   assert.equal(capturedPermission, "read-only", "switching conversations cannot replace the submitted permission");
   view.ensureSession = () => runningSession;
+  view.composerStateForSession = () => ({ viewRunning: running });
   view.sessionById = () => runningSession;
   view.turnQueue = new RuntimeTurnQueue();
   view.renderQueue = () => undefined;
-  const nextMessage = { ...item, id: "same-access-followup", text: "same access", turnOptions: { ...item.turnOptions } };
+  const nextMessage = { ...item, id: "same-access-followup", text: "same access", composerDraftTransferred: true, turnOptions: { ...item.turnOptions } };
   view.createQueuedTurnFromComposer = async () => nextMessage;
   await enqueueComposerDraft(view);
-  assert.deepEqual(followUps, ["same access"], "matching access keeps Pi follow-up");
+  assert.deepEqual(followUps, [], "matching access is queued until explicit insertion");
+  assert.equal(view.turnQueue.itemsForSession(runningSession.id)[0]?.text, "same access");
   nextMessage.id = "different-access-queued";
   nextMessage.text = "write in next turn";
   nextMessage.turnOptions.permission = "danger-full-access";
   await enqueueComposerDraft(view);
   nextMessage.turnOptions.permission = "read-only";
-  assert.deepEqual(followUps, ["same access"]);
-  assert.equal(view.turnQueue.itemsForSession(runningSession.id)[0]?.turnOptions.permission, "danger-full-access", "different access queues an independent frozen snapshot");
+  assert.deepEqual(followUps, []);
+  assert.equal(view.turnQueue.itemsForSession(runningSession.id).find((value: QueuedTurnItem) => value.id === "different-access-queued")?.turnOptions.permission, "danger-full-access", "different access queues an independent frozen snapshot");
   view.inputEl = { value: "same access steering" };
   view.attachments = [];
   view.currentTurnOptions = () => nextMessage.turnOptions;
@@ -2691,7 +2705,7 @@ Promise<void> {
   await steerPiChatFromComposer(view);
   nextMessage.turnOptions.mode = "agent";
   assert.deepEqual(steers, ["same access steering"], "steering cannot change the active run's access");
-  assert.equal(view.turnQueue.itemsForSession(runningSession.id)[1]?.turnOptions.mode, "plan");
+  assert.equal(view.turnQueue.itemsForSession(runningSession.id).find((value: QueuedTurnItem) => value.id === "different-mode-steering")?.turnOptions.mode, "plan");
   await emit(listener, runtimeEvent({
     type: "message_start",
     messageKey: "assistant-pending",
@@ -3392,4 +3406,208 @@ if (process.env.ECHOINK_RUN_PI_TURN_RUNNER_TESTS === "1") {
     console.error(error);
     process.exitCode = 1;
   });
+}
+
+
+/** Focused B/C regression: uses production transfer handlers and queue, never a Provider. */
+export async function runWorkbenchComposerTests(): Promise<void> {
+  for (const newDraft of [false, true]) {
+    const session = piSessionShell(`workbench-transfer-${newDraft}`);
+    const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+    const plugin: any = { settings, getVaultPath: () => "/fixture", getKnowledgeSurfaceService: () => null,
+      persistPiNativeSettings: async () => undefined, abortPiConversation: async () => undefined };
+    attachTestConversationRunService(plugin);
+    const view: any = new CodexView({} as any, plugin);
+    view.inputEl = { value: "原输入" }; view.composerDraftOwner = session.id;
+    view.attachments = [{ id: "image", type: "image", name: "图.png", path: "/fixture/original.png" }];
+    const originalAttachments = structuredClone(view.attachments);
+    for (const method of ["renderToolbar", "renderQueue", "renderAttachments", "renderComposerTransfers"]) view[method] = () => undefined;
+    view.clearComposerDraft = () => { view.inputEl.value = ""; view.attachments = []; view.selectedSkill = null; };
+    const ready = deferred<boolean>(); view.ensureChatWorkspaceSelected = () => ready.promise;
+    view.currentTurnOptions = () => ({ providerSettingsId: settings.apiProviders[0].id, model: "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false });
+    const context = view.createTurnRunnerContext(session.id);
+    const flight = createQueuedTurnFromComposer(context, { allowLocalKnowledgeCommands: false });
+    assert.equal(view.inputEl.value, "", "the draft clears before workspace IO returns");
+    assert.deepEqual(view.attachments, [], "attachments move with the frozen draft");
+    assert.equal(view.composerTransfers.size, 1);
+    if (newDraft) view.inputEl.value = "新的草稿";
+    ready.resolve(false); assert.equal(await flight, null);
+    assert.equal(view.composerTransfers.size, 0);
+    assert.equal(view.inputEl.value, newDraft ? "新的草稿" : "原输入");
+    if (newDraft) {
+      const retained = view.turnQueue.itemsForSession(session.id);
+      assert.equal(retained.length, 1); assert.equal(retained[0].text, "原输入");
+      assert.deepEqual(retained[0].attachments, originalAttachments);
+      assert.equal(retained[0].composerPreparationRequired, true);
+      assert.equal(view.turnQueue.isSessionQueuePaused(session.id), true);
+    } else assert.deepEqual(view.attachments, originalAttachments);
+  }
+  {
+    const session = piSessionShell("workbench-cancel-pending");
+    const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+    const plugin: any = { settings, getVaultPath: () => "/fixture", getKnowledgeSurfaceService: () => null,
+      persistPiNativeSettings: async () => undefined, abortPiConversation: async () => undefined };
+    attachTestConversationRunService(plugin);
+    const view: any = new CodexView({} as any, plugin); view.inputEl = { value: "取消前输入" }; view.composerDraftOwner = session.id;
+    for (const method of ["renderToolbar", "renderQueue", "renderAttachments", "renderComposerTransfers"]) view[method] = () => undefined;
+    view.clearComposerDraft = () => { view.inputEl.value = ""; view.attachments = []; };
+    const ready = deferred<boolean>(); view.ensureChatWorkspaceSelected = () => ready.promise;
+    view.currentTurnOptions = () => ({ providerSettingsId: settings.apiProviders[0].id, model: "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false });
+    const flight = createQueuedTurnFromComposer(view.createTurnRunnerContext(session.id), { allowLocalKnowledgeCommands: false });
+    await view.stopTurn(); ready.resolve(true); assert.equal(await flight, null);
+    assert.equal(view.inputEl.value, "取消前输入"); assert.equal(view.turnQueue.isSessionQueuePaused(session.id), true);
+  }
+  const queue = new RuntimeTurnQueue();
+  const plain: QueuedTurnItem = { id: "plain", sessionId: "insert", text: "补充文字", attachments: [], skill: null,
+    kind: "chat", createdAt: 1, turnOptions: { providerSettingsId: "fixture", runtimeProviderId: "fixture", model: "test", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false } };
+  assert.equal(canInsertQueuedTurn(plain), true);
+  for (const extra of [{ attachments: [{ type: "image" }] }, { preparedDocuments: [{}] }, { noteMentions: [{}] },
+    { selectionAnnotations: [{}] }, { skill: {} }, { generationRequest: {} }, { pdfTaskRequest: {} },
+    { maintenanceScope: { mode: "batch", sourcePaths: ["raw/a.md"] } }, { prefillSource: "{}" }]) {
+    assert.equal(canInsertQueuedTurn({ ...plain, ...extra } as QueuedTurnItem), false);
+  }
+  queue.pauseSessionQueue(plain.sessionId); queue.enqueue(plain);
+  assert.equal(queue.settleSessionQueue(plain.sessionId, true), "paused", "late preparation cannot restart a stopped queue");
+  const sent = { ...plain, composerDraftTransferred: true };
+  const sameNewDraft: any = { inputEl: { value: plain.text }, removeComposerTransfer() {} };
+  CodexView.prototype.clearAcceptedComposerDraft.call(sameNewDraft, sent);
+  assert.equal(sameNewDraft.inputEl.value, plain.text, "acceptance cannot erase a newly typed identical draft");
+  await activeRunImagesUseTheNormalQueue(); await activeRunNoteMentionsUseTheNormalQueue();
+  await acceptedMetadataFailureConsumesDraftAndQueue();
+  await workbenchListComposerOwnership();
+  await workbenchMaintenanceBatches();
+  console.log("Workbench Composer: PASS immediate transfer, concurrent drafts, attachments, cancellation, list ownership handoff, insertion success/failure/deduplication, 23-source serial batches, paused queues and accepted-entry deduplication");
+}
+
+async function workbenchListComposerOwnership(): Promise<void> {
+  for (const outcome of ["running", "failed", "cancelled"] as const) {
+    const settings = createQueueImageProviderSettings(); settings.activeSessionId = "old-task";
+    settings.sessions = [piSessionShell("old-task")];
+    settings.taskWorkspace = { page: { kind: "list", agentId: "sol" }, newTaskDrafts: {}, replyDrafts: {} };
+    let creations = 0; const creation = deferred<any>(), acceptance = deferred<"running" | "failed" | "cancelled">();
+    const stopped: string[] = [];
+    const plugin: any = { settings, getVaultPath: () => "/fixture", getKnowledgeSurfaceService: () => null,
+      persistPiNativeSettings: async () => undefined, createPiConversation: async () => { creations++; return await creation.promise; },
+      setPiConversationStatus: async () => undefined };
+    const service = attachTestConversationRunService(plugin);
+    service.start = async () => await acceptance.promise;
+    service.stopTask = async id => { stopped.push(id); };
+    const view: any = new CodexView({} as any, plugin);
+    view.taskUiMounted = true; view.composerDraftOwner = "agent:sol"; view.inputEl = { value: "第一件事" };
+    view.composerConversationTargets.set("agent:sol", "old-task");
+    for (const method of ["renderToolbar", "renderQueue", "renderAttachments", "renderComposerTransfers", "saveTaskComposerDraft", "scheduleTaskCatalogRefresh", "reloadTaskCatalog", "showTaskError"]) view[method] = () => undefined;
+    view.openTaskDetail = async () => undefined;
+    view.clearComposerDraft = () => { view.inputEl.value = ""; view.attachments = []; };
+    view.ensureChatWorkspaceSelected = async () => true;
+    view.currentTurnOptions = () => ({ providerSettingsId: settings.apiProviders[0].id, runtimeProviderId: settings.apiProviders[0].runtimeProviderId,
+      model: "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false });
+    const first = view.sendMessage(); await waitFor(() => creations === 1);
+    assert.equal(view.inputEl.value, "");
+    view.inputEl.value = "创建期间的第二条";
+    await view.sendMessage();
+    assert.equal(view.inputEl.value, "", "a second Enter freezes the next payload during Conversation creation");
+    assert.equal(creations, 1, "the second Enter never creates a second Conversation");
+    assert.equal(view.turnQueue.itemsForSession("agent:sol").length, 1, "a previous accepted task cannot capture a new pending payload");
+    assert.equal(view.turnQueue.itemsForSession("old-task").length, 0);
+    if (outcome === "cancelled") await view.stopTurn();
+    creation.resolve({ conversationId: `created-${outcome}`, piSessionId: `pi-created-${outcome}`, title: "第一件事", agentId: "sol", status: "active", defaultMemoryMode: "normal", createdAt: 1, updatedAt: 1 });
+    if (outcome !== "cancelled") await waitFor(() => view.composerConversationTargets.has("agent:sol"));
+    acceptance.resolve(outcome); await first;
+    const target = outcome === "running" ? `created-${outcome}` : "agent:sol";
+    const queued = view.turnQueue.itemsForSession(target);
+    assert.equal(queued.length, 1); assert.equal(queued[0].text, "创建期间的第二条");
+    assert.equal(queued[0].sessionId, target); assert.equal(view.turnQueue.itemsForSession("old-task").length, 0);
+    if (outcome !== "running") assert.equal(view.turnQueue.isSessionQueuePaused(target), true);
+    if (outcome === "cancelled") assert.deepEqual(stopped, ["agent:sol"]);
+  }
+}
+
+async function workbenchMaintenanceBatches(): Promise<void> {
+  const wasDesktop = Platform.isDesktopApp; Platform.isDesktopApp = false;
+  try {
+    for (const terminal of ["completed", "failed", "cancelled"] as const) {
+      const session = piSessionShell(`workbench-batches-${terminal}`); session.agentId = "sol";
+      const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+      const sourcePaths = Array.from({ length: 23 }, (_, i) => `raw/articles/${i}.md`);
+      const source = { version: 1, signalId: 7, businessKey: "raw-23", moduleId: "knowledge-base", objects: sourcePaths,
+        versions: Object.fromEntries(sourcePaths.map(path => [path, "frozen"])), prompt: "整理资料", capturedAt: 1 };
+      const requests: PiChatSubmitRequest[] = []; const results: ReturnType<typeof deferred<Readonly<PiProductRunRecord>>>[] = [];
+      const listeners = new Map<string, PiChatRuntimeEventListener>();
+      let prepareCalls = 0; let genericScopeCalls = 0; let service: ReturnType<typeof attachTestConversationRunService>;
+      const plugin: any = { settings, getVaultPath: () => "/fixture", persistPiNativeSettings: async () => undefined,
+        getKnowledgeSurfaceService: () => ({ prepareWorkbenchMaintenance: async () => { prepareCalls++; return [sourcePaths.slice(0, 20), sourcePaths.slice(20)].map((paths, i) => ({ text: knowledgeMaintenanceBatchPrompt({ sourcePaths: paths, batchIndex: i, expectedBatches: 2, origin: "workbench", request: "整理这23篇" }), maintenanceScope: { mode: "batch", sourcePaths: paths, folderBindingsRevision: 2 } })); } }),
+        prepareEchoInkKnowledgeMaintenanceScope: async () => { genericScopeCalls++; throw new Error("frozen workbench batches must never be re-resolved"); },
+        submitPiChat: async (request: PiChatSubmitRequest) => {
+          assert.equal(service.turnQueue.itemsForSession(session.id).length, requests.length ? 1 : 0, "later batches enter the queue only after durable acceptance");
+          requests.push(request); const result = deferred<Readonly<PiProductRunRecord>>(); results.push(result);
+          return { productRunId: `batch-${requests.length}`, conversationId: session.id, piSessionId: session.piSessionId!, userEntryId: `entry-${requests.length}`, result: result.promise };
+        },
+        subscribePiRun: (id: string, listener: PiChatRuntimeEventListener) => { listeners.set(id, listener); return { unsubscribe() { listeners.delete(id); } }; }, subscribePiAgentApproval: () => ({ unsubscribe() {} }),
+        isPiProductionRun: () => true, releasePiProductionRun() {}, releasePiConversationIfInactive: async () => false,
+        readPiConversationProjection: async () => durableProjection(session, "completed"),
+        abortPiConversation: async () => { await settle(requests.length - 1, "cancelled"); }
+      };
+      service = attachTestConversationRunService(plugin);
+      const record = (state: "completed" | "failed" | "cancelled", index: number): Readonly<PiProductRunRecord> => ({
+        productRunId: `batch-${index + 1}`, conversationId: session.id, piSessionId: session.piSessionId!, userEntryId: `entry-${index + 1}`,
+        assistantEntryId: "answer", toolCallIds: [], memoryMode: "normal", state: "product_run_settled", terminalState: state,
+        activeLeafId: "answer", createdAt: 1, updatedAt: 2, agentSettledAt: 2, settledAt: 2
+      });
+      async function settle(index: number, state: "completed" | "failed" | "cancelled"): Promise<void> {
+        const id = `batch-${index + 1}`; await waitFor(() => listeners.has(id));
+        const identity = { productRunId: id, conversationId: session.id, piSessionId: session.piSessionId!, activeLeafId: "answer" };
+        await emit(listeners.get(id)!, { ...runtimeEvent({ type: "agent_settled" }), ...identity });
+        await emit(listeners.get(id)!, { ...runtimeEvent({ type: "product_run_settled", terminalState: state, assistantEntryId: "answer" }), ...identity });
+        results[index].resolve(record(state, index));
+      }
+      const provider = settings.apiProviders[0];
+      const item: QueuedTurnItem = { id: "first-maintenance", sessionId: session.id, text: "整理这23篇", attachments: [], skill: null, kind: "chat", createdAt: 1, prefillSource: JSON.stringify(source),
+        turnOptions: { providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: "queue-image-model", reasoning: "none", permission: "workspace-write", mode: "agent", mcpEnabled: false } };
+      assert.equal(await service.start(item, "composer"), "running");
+      assert.equal(prepareCalls, 1); assert.equal(requests.length, 1);
+      assert.match(requests[0].text, /^\/maintain /u);
+      assert.deepEqual(requests[0].maintenanceScope, { mode: "batch", sourcePaths: sourcePaths.slice(0, 20), folderBindingsRevision: 2 });
+      assert.equal(genericScopeCalls, 0);
+      assert.deepEqual(requests[0].workbenchSource?.objects, sourcePaths.slice(0, 20));
+      const next = service.turnQueue.itemsForSession(session.id); assert.equal(next.length, 1);
+      assert.deepEqual(next[0].turnOptions, { ...item.turnOptions, writableRoots: undefined, workspaceResources: undefined }); assert.equal(next[0].sessionId, session.id);
+      assert.deepEqual(JSON.parse(next[0].prefillSource!).objects, sourcePaths.slice(20));
+      if (terminal === "completed") {
+        const insertion = { ...item, id: "plain-insertion", text: "只补一句", prefillSource: undefined, composerDraftTransferred: true };
+        service.turnQueue.enqueue(insertion);
+        let steerCalls = 0; const gate = deferred<void>();
+        plugin.steerPiConversation = async () => { steerCalls++; await gate.promise; };
+        const host: any = { plugin, turnQueue: service.turnQueue, running: true, activeRunSessionId: session.id,
+          renderQueue() {}, renderToolbar() {} };
+        const inserting = insertQueuedTurnIntoActiveRun(host, session.id, insertion.id);
+        await insertQueuedTurnIntoActiveRun(host, session.id, insertion.id);
+        assert.equal(steerCalls, 1, "repeated insert clicks share the same lease");
+        assert.equal(service.turnQueue.itemsForSession(session.id).some(value => value.id === insertion.id), true, "insertion stays queued until the runtime accepts it");
+        gate.resolve(); await inserting;
+        assert.equal(service.turnQueue.itemsForSession(session.id).some(value => value.id === insertion.id), false);
+        service.turnQueue.enqueue(insertion);
+        plugin.steerPiConversation = async () => { throw new Error("offline insertion rejected"); };
+        await insertQueuedTurnIntoActiveRun(host, session.id, insertion.id);
+        assert.equal(service.turnQueue.itemsForSession(session.id).some(value => value.id === insertion.id), true, "failed insertion preserves the queued payload");
+        assert.match(openTestNoticeMessages.at(-1) ?? "", /插入失败/);
+        service.turnQueue.removeQueuedItem(session.id, insertion.id);
+      }
+      if (terminal === "cancelled") await service.stopTask(session.id);
+      else await settle(0, terminal);
+      if (terminal === "completed") {
+        await waitFor(() => requests.length === 2);
+        assert.equal(prepareCalls, 1, "later batches do not expand or restart the original scope");
+        assert.match(requests[1].text, /^\/maintain /u);
+        assert.deepEqual(requests[1].maintenanceScope, { mode: "batch", sourcePaths: sourcePaths.slice(20), folderBindingsRevision: 2 });
+        assert.equal(genericScopeCalls, 0);
+        assert.equal(requests[1].conversationId, requests[0].conversationId);
+        await settle(1, "completed"); await waitFor(() => !service.runs.get(session.id)?.flight);
+        assert.equal(service.turnQueue.itemsForSession(session.id).length, 0);
+      } else {
+        await waitFor(() => !service.runs.get(session.id)?.flight);
+        assert.equal(requests.length, 1); assert.equal(service.turnQueue.itemsForSession(session.id).length, 1);
+        assert.equal(service.turnQueue.isSessionQueuePaused(session.id), true);
+      }
+    }
+  } finally { Platform.isDesktopApp = wasDesktop; }
 }

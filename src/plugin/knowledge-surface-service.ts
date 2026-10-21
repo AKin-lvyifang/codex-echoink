@@ -5,7 +5,9 @@ import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type Kn
 import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
-import { readPrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
+import { readPrivateMaintenanceRecords, privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
+import type { WorkbenchTaskSource } from "../home/workbench-types";
+import type { PiKnowledgeMaintenanceScope } from "../harness/pi-native/contracts";
 import type { PiTurnInteractionIdentity } from "./pi-turn-interaction-broker";
 import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { resolveKnowledgePath, knowledgeRootRole, rebaseKnowledgePath, rebaseKnowledgePathRecords } from "../knowledge-base/root-paths";
@@ -38,6 +40,8 @@ import {
 import type { ReasoningEffort } from "../types/app-server";
 import {
   KnowledgeBaseInitializer,
+  knowledgeMaintenanceBatchPrompt,
+  splitKnowledgeMaintenanceSources,
   knowledgeInitializationParentFolder,
   knowledgeInitializationPathExists,
   type KnowledgeBaseStructureRepairProgress,
@@ -499,6 +503,21 @@ export class EchoInkKnowledgeSurfaceService {
   async getInitializationState(): Promise<Readonly<KnowledgeInitializationJob> | null> {
     await this.initializerReady;
     return this.initializer.snapshot();
+  }
+
+  /** Recheck the reminder's exact objects; the existing Conversation queue owns execution and cancellation. */
+  async prepareWorkbenchMaintenance(source: Readonly<WorkbenchTaskSource>, request = ""): Promise<readonly Readonly<{
+    text: string; maintenanceScope: Extract<PiKnowledgeMaintenanceScope, { mode: "batch" }>;
+  }>[]> {
+    if (source.signalId !== 7 || source.moduleId !== "knowledge-base") throw new Error("这条提醒不属于资料维护。");
+    const pending = await privateMaintenanceSourceScope(this.plugin.getVaultPath(), { limit: Infinity, processedSources: this.plugin.settings.knowledgeBase.processedSources });
+    const selected = new Set(source.objects);
+    const batches = splitKnowledgeMaintenanceSources(pending.sourcePaths.filter(relative => selected.has(relative)));
+    if (!batches.length) throw new Error("这批资料已处理或不再属于维护范围，请刷新工作台。");
+    return Object.freeze(batches.map((paths, batchIndex) => Object.freeze({
+      text: knowledgeMaintenanceBatchPrompt({ sourcePaths: paths, batchIndex, expectedBatches: batches.length, origin: "workbench", request }),
+      maintenanceScope: Object.freeze({ mode: "batch" as const, sourcePaths: paths, folderBindingsRevision: pending.folderBindingsRevision })
+    })));
   }
 
   async getKnowledgeBaseStructure() {
@@ -1064,7 +1083,7 @@ export function createKnowledgeInitializationHost(
       );
       const handle = await plugin.submitPiChat({
         conversationId: input.conversationId,
-        text: `/maintain 用户已确认知识库初始化，本批 ${input.batchIndex + 1}/${input.expectedBatches}。请只阅读并处理以下指定来源，复用已有知识，按需提炼；无需新增可自然说明。未读或失败来源单列待处理。沿用当前工作区权限；执行受当前权限约束，不需要再次询问是否执行本批，也不要扩展为全库勘查。\n本批来源：\n${input.sourcePaths.map((source) => JSON.stringify(source)).join("\n")}`,
+        text: knowledgeMaintenanceBatchPrompt(input),
         permission: plugin.settings.defaultPermission,
         submittedAt: Date.now(),
         ...modelSnapshot,

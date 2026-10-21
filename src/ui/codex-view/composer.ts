@@ -1,4 +1,5 @@
 import { Platform, setIcon } from "obsidian";
+import { createOriginButton } from "../../settings/origin-controls";
 import { applyDeleteButton } from "../../settings/amicro-buttons";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import {
@@ -24,7 +25,7 @@ import type {
 import type { PermissionMode, ReasoningEffort, UiMode } from "../../types/app-server";
 import { composerPrimaryActionForState, composerStateForRuntimeState } from "../composer-state";
 import { handleKnowledgeCommandMenuKeyDown } from "../knowledge-command-menu";
-import type { QueuedTurnItem } from "../turn-queue";
+import { canInsertQueuedTurn, type QueuedTurnItem } from "../turn-queue";
 import { renderAnimateIcon } from "../animate-icon";
 import type { EchoInkAttachmentResourceResolver } from "./attachment-resource";
 import { renderFileCard } from "./file-card";
@@ -138,6 +139,7 @@ export interface TurnQueueState {
   items: QueuedTurnItem[];
   paused: boolean;
   canResume: boolean;
+  canInsert?: boolean;
   recoveryRequired: boolean;
   canRecover: boolean;
   draggedItemId: string;
@@ -148,6 +150,7 @@ export interface TurnQueueState {
 
 export interface TurnQueueCallbacks {
   onResume: () => void;
+  onInsert?: (sessionId: string, itemId: string) => void;
   onRecover: () => void;
   onDragStart: (itemId: string) => void;
   onDragEnd: () => void;
@@ -480,26 +483,6 @@ export function renderComposerToolbar(
     hasQueuedItems: state.hasQueuedItems
   });
   const action = composerPrimaryActionForState(composerState);
-  if (shouldShowPiSteerAction(state)) {
-    const steerButton = row.createEl("button", {
-      cls: "codex-composer-steer-button",
-      attr: {
-        type: "button",
-        title: conversationUiText(language, "立即调整当前 Pi 任务方向", "Steer the current Pi task now"),
-        "aria-label": conversationUiText(language, "调整方向", "Steer task")
-      }
-    });
-    const steerIcon = steerButton.createSpan({
-      cls: "codex-composer-steer-icon",
-      attr: { "aria-hidden": "true" }
-    });
-    setIcon(steerIcon, "git-branch");
-    steerButton.createSpan({
-      cls: "codex-composer-steer-label",
-      text: conversationUiText(language, "调整方向", "Steer task")
-    });
-    steerButton.onclick = callbacks.onSteerPiChat;
-  }
   const sendButtonView = composerActionButtonView(action, language);
   const sendButton = row.createEl("button", {
     cls: "codex-send-button codex-composer-send-button",
@@ -510,7 +493,8 @@ export function renderComposerToolbar(
   sendButton.toggleClass("is-stop-action", action === "stop-turn" || action === "cancel-knowledge-task");
   const anotherConversationOwnsStop = action === "stop-turn"
     && Boolean(state.activeRunSessionId)
-    && state.activeRunSessionId !== state.session.id;
+    && state.activeRunSessionId !== state.session.id
+    && !state.session.id.startsWith("agent:");
   sendButton.disabled = state.promptEnhancerRunning || anotherConversationOwnsStop;
   if (state.promptEnhancerRunning) {
     sendButton.setAttribute("aria-label", conversationUiText(language, "提示词增强中", "Enhancing prompt"));
@@ -808,7 +792,7 @@ export function shouldShowPiSteerAction(
     | "hasTextDraft"
   >
 ): boolean {
-  return Boolean(
+  return false && Boolean(
     state.session.bodyAuthority === "pi_session_only"
     && state.running
     && !state.promptEnhancerRunning
@@ -867,8 +851,8 @@ export function renderTurnQueue(container: HTMLElement, state: TurnQueueState, c
         ? `Local records need recovery${state.items.length ? ` · Queue ${state.items.length}` : ""}`
         : `本地记录待恢复${state.items.length ? ` · 队列 ${state.items.length}` : ""}`
       : state.paused
-        ? conversationUiText(language, `队列已暂停 · ${state.items.length}`, `Queue paused · ${state.items.length}`)
-        : conversationUiText(language, `队列 · ${state.items.length}`, `Queue · ${state.items.length}`)
+        ? conversationUiText(language, `待发送 · ${state.items.length} · 已暂停`, `Queue paused · ${state.items.length}`)
+        : conversationUiText(language, `待发送 · ${state.items.length}`, `Queue · ${state.items.length}`)
   });
 
   if (state.recoveryRequired && state.canRecover) {
@@ -1328,6 +1312,11 @@ function renderQueuedTurnItem(
   body.createDiv({ cls: "codex-turn-queue-preview", text: queuedTurnPreview(item, language) });
   body.createDiv({ cls: "codex-turn-queue-meta", text: queuedTurnMeta(item, language) });
 
+  if (state.canInsert && callbacks.onInsert && canInsertQueuedTurn(item)) {
+    row.addClass("has-insert");
+    const insert = createOriginButton(row, { cls: "codex-turn-queue-insert", text: conversationUiText(language, "立即插入", "Insert now"), attr: { type: "button" } });
+    insert.onclick = event => { event.preventDefault(); event.stopPropagation(); callbacks.onInsert?.(item.sessionId, item.id); };
+  }
   const remove = row.createEl("button", {
     cls: "codex-turn-queue-remove",
     attr: {

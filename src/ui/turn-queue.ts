@@ -10,6 +10,10 @@ export type QueueSettlement = "continue" | "paused" | "idle";
 import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
 
 export interface QueuedTurnItem {
+  maintenanceScope?: import("../harness/pi-native/contracts").PiKnowledgeMaintenanceScope;
+  /** Retry preparation from this frozen draft before submitting it. */
+  composerPreparationRequired?: boolean;
+  composerDraftTransferred?: boolean;
   generationRequest?: import("../generation/types").GenerationRequest;
   resumeContext?: import("../agents/task-resume").TaskResumeContext;
   id: string;
@@ -60,6 +64,8 @@ export class RuntimeTurnQueue {
 
   enqueue(item: QueuedTurnItem): QueuedTurnItem {
     const queue = this.ensureSessionQueue(item.sessionId);
+    const existing = queue.items.find(value => value.id === item.id);
+    if (existing) return cloneQueuedTurnItem(existing);
     const snapshot = cloneQueuedTurnItem(item);
     queue.items.push(snapshot);
     return cloneQueuedTurnItem(snapshot);
@@ -133,8 +139,7 @@ export class RuntimeTurnQueue {
   }
 
   pauseSessionQueue(sessionId: string): void {
-    const queue = this.sessions.get(sessionId);
-    if (queue?.items.length) queue.paused = true;
+    this.ensureSessionQueue(sessionId).paused = true;
   }
 
   resumeSessionQueue(sessionId: string): void {
@@ -144,6 +149,7 @@ export class RuntimeTurnQueue {
 
   settleSessionQueue(sessionId: string, succeeded: boolean): QueueSettlement {
     if (this.isSessionRecoveryRequired(sessionId)) return "paused";
+    if (this.isSessionQueuePaused(sessionId)) return this.hasQueuedItems(sessionId) ? "paused" : "idle";
     if (succeeded) return this.hasQueuedItems(sessionId) ? "continue" : "idle";
     if (!this.hasQueuedItems(sessionId)) return "idle";
     this.pauseSessionQueue(sessionId);
@@ -203,6 +209,7 @@ function clampIndex(index: number, maxInclusive: number): number {
 export function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
   return {
     ...item,
+    ...(item.maintenanceScope ? { maintenanceScope: structuredClone(item.maintenanceScope) } : {}),
     ...(item.pdfTaskRequest ? { pdfTaskRequest: structuredClone(item.pdfTaskRequest) } : {}),
     ...(item.resumeContext ? { resumeContext: structuredClone(item.resumeContext) } : {}),
     attachments: item.attachments.map((attachment) => ({ ...attachment })),
@@ -237,4 +244,11 @@ function cloneTurnOptions(options: TurnOptions): TurnOptions {
       }
       : undefined
   };
+}
+
+/** Pi steering can accept only an unadorned text payload. */
+export function canInsertQueuedTurn(item: Readonly<QueuedTurnItem>): boolean {
+  return Boolean(item.text.trim()) && !item.attachments.length && !item.preparedDocuments?.length
+    && !item.noteMentions?.length && !item.selectionAnnotations?.length && !item.skill
+    && !item.prefillSource && !item.generationRequest && !item.pdfTaskRequest && !item.maintenanceScope && !item.resumeContext;
 }

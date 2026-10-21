@@ -72,3 +72,13 @@ body:not(.is-mobile) .tooltip.echoink-task-card-tooltip { max-width: min(480px, 
 .codex-generation-result .codex-generation-open { min-height: 28px; height: auto; padding: 3px 8px; border-radius: var(--echoink-conversation-radius-sm, 6px); font-size: var(--echoink-conversation-font-label-primary, 13px); line-height: 1.4; white-space: normal; box-shadow: none; }
 .codex-generation-result .codex-generation-open:focus-visible { outline: none; box-shadow: none; background: var(--background-modifier-hover); }
 .codex-generation-result.is-missing .codex-generation-result-missing { color: var(--echoink-theme-warn, var(--text-warning)); }
+
+/* Pending input stays outside the persisted conversation projection. */
+.codex-composer-pending { align-self: flex-end; max-width: 100%; padding: 10px 12px; color: var(--text-normal); font-size: 14px; line-height: 1.68; overflow-wrap: anywhere; }
+.codex-composer-pending-text { white-space: pre-wrap; }
+.codex-composer-pending-status { color: var(--text-muted); font-size: var(--echoink-conversation-font-status, 13px); line-height: 1.4; }
+.codex-turn-queue-item.has-insert { grid-template-columns: 18px minmax(0, 1fr) auto 24px; }
+.codex-turn-queue-body { min-width: 0; }
+.codex-turn-queue-preview, .codex-turn-queue-meta { white-space: normal; overflow-wrap: anywhere; }
+.codex-turn-queue-item > .codex-turn-queue-insert { min-width: 0; max-width: 12ch; height: auto; min-height: 26px; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; padding: 3px 6px; font-size: var(--echoink-conversation-font-label-secondary, 12px); color: var(--text-muted); background: transparent; border-color: transparent; box-shadow: none; }
+.codex-turn-queue-insert:is(:hover, :focus-visible) { color: var(--text-normal); background: var(--background-modifier-hover); outline: none; box-shadow: none; }

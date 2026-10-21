@@ -104,9 +104,11 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(view.getViewType(), VIEW_TYPE_ECHOINK_WORKBENCH);
     await view.onOpen();
     assert.match(content.textContent ?? "", /正在读取任务/);
+    assert.equal(content.querySelectorAll('[data-wb-group][data-state="loading"]').length, 6);
+    assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0, "unread groups never claim zero");
     await tick();
-    assert.match(content.textContent ?? "", /暂时没有待处理的事/);
-    assert.equal(content.querySelectorAll("[data-wb-group]").length, 0);
+    assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 6);
+    assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 6);
     assert.equal(content.querySelector("time")?.getAttribute("datetime"), localDate(new Date()));
     await click("new-task"); assert.deepEqual(calls.at(-1), ["list", GENERAL_ASSISTANT_ID]);
     await click("settings"); assert.deepEqual(calls.at(-1), ["settings"]);
@@ -166,7 +168,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     await view.refresh();
     assert.equal(projectionReads.get("done"), 2, "a changed Catalog revision reloads the result");
     assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /更新后的真实结果/);
-    assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>("[data-wb-group]")).map(node => node.dataset.wbGroup), ["interrupted", "waiting", "running", "signals", "completed"]);
+    assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>("[data-wb-group]")).map(node => node.dataset.wbGroup), ["interrupted", "waiting", "running", "signals", "completed", "todos"]);
     assert.match(content.textContent ?? "", /被你停止/);
     assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 5);
     const retained = button("signal-signal-0");
@@ -204,7 +206,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     snapshot = { ...snapshot, issues: [], todayTodos: [todo] }; await view.refresh();
     todoFailure = true; await click("todo-today"); assert.equal(snapshot.todayTodos.length, 1);
     assert.ok(button("todo-today")); todoFailure = false; await click("todo-today"); await view.refresh();
-    assert.equal(content.querySelector('[data-wb-group="todos"]'), null);
+    assert.equal(content.querySelector('[data-wb-group="todos"]')?.getAttribute("data-state"), "empty");
 
     await click("search-trigger"); await new Promise(resolve => setTimeout(resolve, 120)); await tick();
     assert.equal(content.querySelectorAll('[role="option"]').length, 6);
@@ -239,8 +241,17 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.match(content.querySelector('[data-task="cold-1"] .wb-secondary')?.textContent ?? "", /真正结果/);
     assert.equal(calls.some(call => call[0] === "metadata-write" || call[0] === "provider"), false);
     tasks = []; snapshot = { ...snapshot, signals: [], todayTodos: [] }; await view.refresh();
-    assert.equal(content.querySelectorAll('[data-wb-group]').length, 0);
-    assert.equal(content.querySelector('[data-wb="empty"]')?.hasAttribute("hidden"), false);
+    assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 6);
+    snapshot = { ...snapshot, issues: ["待办读取失败：合成错误"] }; await view.refresh();
+    assert.equal(content.querySelector('[data-wb-group="signals"]')?.getAttribute("data-state"), "unconfirmed");
+    assert.equal(content.querySelector('[data-wb-group="todos"]')?.getAttribute("data-state"), "unconfirmed");
+    assert.equal(content.querySelector('[data-wb-group="todos"] .wb-count')?.hasAttribute("hidden"), true);
+    assert.doesNotMatch(content.querySelector('[data-wb-group="todos"]')?.textContent ?? "", /今天没有待办/);
+    snapshot = { ...snapshot, issues: ["财务：合成错误"] }; await view.refresh();
+    assert.equal(content.querySelector('[data-wb-group="todos"]')?.getAttribute("data-state"), "empty", "unrelated finance errors do not hide verified to-dos");
+    failTasks = failData = true; await view.refresh();
+    assert.equal(content.querySelectorAll('[data-wb-group][data-state="error"]').length, 6);
+    assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0);
     console.log("Workbench UI passed: task groups, cold-shell result projections and revision cache, no duplicate summaries after redraw, bounded read concurrency and retry, local date, real routes, valid question binding, prefill, collapse and focus, stale errors, to-do success/failure, search keyboard, foreground lifecycle.");
   } finally {
     await view.onClose(); for (const cleanup of cleanups.reverse()) cleanup(); container.remove();

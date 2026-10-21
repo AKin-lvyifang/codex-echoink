@@ -93,8 +93,8 @@ export function mobileNoteUpdateTool(app: App, store: MobileStore, taskId: strin
         if (sources.length) {
           const role = roleAt(path); if (role !== "wiki" && role !== "projects") fail("来源修复只用于已绑定的知识成果或项目笔记。");
           const host = mobileKnowledgeSourcesHost(bindings());
-          content = completeKnowledgeMaintenanceCandidateSources({ targetPath: path, content, selectedSources: sources }, host);
-          evidence = validateKnowledgeMaintenanceCandidateSources({ targetPath: path, content, selectedSources: sources }, host);
+          content = completeKnowledgeMaintenanceCandidateSources({ targetPath: path, content, selectedSources: sources, baselineContent: before }, host);
+          evidence = validateKnowledgeMaintenanceCandidateSources({ targetPath: path, content, selectedSources: sources, baselineContent: before }, host);
         } else if (markers(content) !== markers(before) || /echoink-source/iu.test(content.replace(/<!--\s*echoink-source[^\n]*?-->/gu, ""))) fail("不能自行改写来源标记；请指定真实资料来源后再更新。");
         sourceGuard(); const afterHash = sha256Hex(content), semanticKey = mobileNoteUpdateKey(path, expectedBefore, sha256Hex(args.content)), at = Date.now();
         await assertMobileResumeObservations(app, store, execution.resume, signal, finance); sourceGuard();

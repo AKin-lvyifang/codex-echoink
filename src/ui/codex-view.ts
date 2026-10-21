@@ -1,3 +1,4 @@
+import { setTurnWatchdogWaiting } from "./turn-watchdog";
 import type { PdfNavigationStart } from "../pdf-reading/types";
 import { GenerationModal } from "../generation/modal";
 import { getGenerationService } from "../generation/service";
@@ -433,18 +434,21 @@ export class CodexView extends ItemView {
     if (this.taskSubmitting.has(key) || this.plugin.isTaskResuming(taskId)) return;
     this.taskSubmitting.add(key); this.taskResumeErrors.delete(taskId);
     this.saveTaskComposerDraft(); this.renderTaskInterruptionCard();
+    let item: QueuedTurnItem | null = null;
+    let outcome: "running" | "completed" | "failed" | "cancelled" = "failed";
     try {
-      let item: QueuedTurnItem | null = null;
       if (withComposer) {
         item = await createQueuedTurnFromComposerRunner(this.createTurnRunnerContext(taskId), { allowLocalKnowledgeCommands: true,
           onError: message => this.taskResumeErrors.set(taskId, message) });
         if (!item || this.viewLifecycleAbortController.signal.aborted) return;
         item.clearComposerAfterPiAcceptance = true;
       }
-      await this.plugin.resumeTask(taskId, item?.text, item ?? undefined);
+      if (item && this.isComposerTransferCancelled(item.id)) return;
+      outcome = await this.plugin.resumeTask(taskId, item?.text, item ?? undefined);
     } catch (error) {
       this.taskResumeErrors.set(taskId, error instanceof Error ? error.message : String(error));
     } finally {
+      if (item) this.onComposerTransferFinished(item, outcome);
       this.taskSubmitting.delete(key);
       if (!this.viewLifecycleAbortController.signal.aborted) { await this.reloadTaskCatalog(); this.renderToolbar(); }
     }
@@ -462,7 +466,7 @@ export class CodexView extends ItemView {
     const ready = page.kind === "detail" && this.taskDetailLoaded && !this.taskEditor && !this.taskDerivationInProgress;
     this.messagesEl.parentElement!.hidden = !ready;
     this.taskPlanDockEl.hidden = !ready || interrupted; this.interactionDockEl.hidden = !ready || interrupted;
-    this.queueEl.hidden = page.kind !== "detail";
+    this.queueEl.hidden = !!this.taskEditor;
     const loading = this.taskDerivationInProgress || page.kind === "detail" && !this.taskDetailLoaded && !this.taskLoadError;
     disposeOriginControls(this.taskErrorEl); this.taskErrorEl.empty(); this.taskErrorEl.hidden = !this.taskLoadError && !loading;
     this.taskErrorEl.style.color = loading ? "var(--text-muted)" : "";
@@ -487,6 +491,7 @@ export class CodexView extends ItemView {
       this.taskDetailHeaderEl!.createDiv({ cls: "echoink-task-detail-header", text: this.taskText("任务详情", "Task details") });
     }
     this.updateInputPlaceholder();
+    this.renderComposerTransfers();
   }
   private taskSummaryText(entry: TaskEntry): string | undefined {
     const pending = this.plugin.getConversationRunService().pendingInteractions.get(entry.conversationId);
@@ -648,46 +653,144 @@ export class CodexView extends ItemView {
     if (page.kind !== "list" || this.taskEditor) return;
     const key = this.taskNavigation.draftKey, token = this.taskNavigation.token;
     if (this.taskSubmitting.has(key)) return;
+    this.composerConversationTargets.delete(key);
     this.taskSubmitting.add(key); this.saveTaskComposerDraft();
     const { prefillSource, englishDiarySourcePath } = this.taskNavigation.draft(page);
     let created: StoredSession | undefined, item: QueuedTurnItem | null = null;
+    let submissionOutcome: "running" | "failed" = "failed";
     try {
       // This data-only Composer adapter prepares files and references before a Conversation exists.
-      const context = this as unknown as CodexViewTurnContext;
+      const context = this.createTurnRunnerContext(key);
       item = await createQueuedTurnFromComposerRunner(context, { allowLocalKnowledgeCommands: true });
       if (item) item.englishDiarySourcePath = englishDiarySourcePath;
-      if (!item || !await validateTaskTurnBeforeCreation(context, item) || this.viewLifecycleAbortController.signal.aborted) return;
+      if (!item || !await validateTaskTurnBeforeCreation(context, item) || this.viewLifecycleAbortController.signal.aborted || this.isComposerTransferCancelled(item.id)) return;
       item.prefillSource = prefillSource;
       const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: item.text.trim().slice(0, 64) || item.attachments[0]?.name || this.taskText("新任务", "New task"),
         agentId: page.agentId, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
       created = createPiConversationShell(this.sessionHost(), entry); this.plugin.settings.sessions.push(created);
       item.sessionId = created.id; item.clearComposerAfterPiAcceptance = true;
+      this.composerConversationTargets.set(key, created.id); this.rehomeComposerQueue(key, created.id);
+      const transfer = this.composerTransfers.get(item.id); if (transfer) transfer.snapshot.sessionId = created.id;
+      if (this.isComposerTransferCancelled(item.id)) throw new Error(this.taskText("发送已停止", "Sending stopped"));
       this.taskDraftOrigins.set(item.id, key);
       const outcome = await this.plugin.getConversationRunService().start(item, "composer");
       if (outcome === "running") item.piUserEntryAccepted = true;
       if (item.piUserEntryAccepted) {
-        consumeAcceptedTaskDraft(this.plugin.settings.taskWorkspace, key, item);
+        submissionOutcome = "running";
+        if (!item.composerDraftTransferred) consumeAcceptedTaskDraft(this.plugin.settings.taskWorkspace, key, item);
         this.plugin.getConversationRunService().scheduleSave();
         await this.reloadTaskCatalog();
         if (token === this.taskNavigation.token && !this.viewLifecycleAbortController.signal.aborted) await this.openTaskDetail(created.id);
       } else {
+        this.rehomeComposerQueue(created.id, key); this.composerConversationTargets.delete(key);
         await this.plugin.setPiConversationStatus(created.id, "deleted");
         this.plugin.settings.sessions = this.plugin.settings.sessions.filter(session => session.id !== created!.id);
         if (outcome === "failed") this.showTaskError(this.taskText("消息尚未发送，请检查输入区提示后重试。", "The message was not sent. Check the Composer notice and try again."));
       }
     } catch (error) {
       if (created && !item?.piUserEntryAccepted) {
+        this.rehomeComposerQueue(created.id, key); this.composerConversationTargets.delete(key);
         await this.plugin.setPiConversationStatus(created.id, "deleted").catch(cleanupError => console.error("Unaccepted task cleanup failed", cleanupError));
         this.plugin.settings.sessions = this.plugin.settings.sessions.filter(session => session.id !== created!.id);
       }
       this.showTaskError(`${item?.piUserEntryAccepted ? this.taskText("消息已发送，状态刷新失败", "Message sent, but its status could not refresh") : this.taskText("发送失败", "Could not send")}：${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      if (item) this.taskDraftOrigins.delete(item.id);
+      if (item) { this.onComposerTransferFinished(item, submissionOutcome); this.taskDraftOrigins.delete(item.id); }
       this.taskSubmitting.delete(key); this.scheduleTaskCatalogRefresh();
     }
   }
 
   private composerDraftOwner = "";
+  private readonly composerConversationTargets = new Map<string, string>();
+  private rehomeComposerQueue(from: string, to: string): void {
+    const paused = this.turnQueue.isSessionQueuePaused(from);
+    for (const item of this.turnQueue.itemsForSession(from)) { this.turnQueue.enqueue({ ...item, sessionId: to }); this.turnQueue.removeQueuedItem(from, item.id); }
+    if (paused) this.turnQueue.pauseSessionQueue(to);
+  }
+  private readonly composerTransfers = new Map<string, { owner: string; snapshot: QueuedTurnItem; draft: ComposerSessionDraft; cancelled: boolean }>();
+  private readonly cancelledComposerTransfers = new Set<string>();
+  private activeComposerTransfer(): boolean {
+    const owner = this.composerDraftOwner || this.plugin.settings.activeSessionId;
+    return [...this.composerTransfers.values()].some(transfer => transfer.owner === owner);
+  }
+  isComposerTransferCancelled(id: string): boolean { return this.cancelledComposerTransfers.has(id); }
+  onComposerTransferStarted(item: Readonly<QueuedTurnItem>): void {
+    const owner = this.composerDraftOwner || item.sessionId;
+    if (this.taskUiMounted) {
+      const draft = this.taskNavigation.draft();
+      Object.assign(item, { prefillSource: draft.prefillSource, englishDiarySourcePath: draft.englishDiarySourcePath });
+    }
+    this.composerTransfers.set(item.id, { owner, snapshot: { ...item }, cancelled: false, draft: {
+      text: this.inputEl.value, annotations: snapshotSelectionDraft(this.inputEl),
+      attachments: this.attachments.map(value => ({ ...value })), noteMentions: composerNoteMentionSelections(this.inputEl), selectedSkill: this.selectedSkill
+    } });
+    this.clearComposerDraft();
+    if (this.taskUiMounted) this.saveTaskComposerDraft();
+    this.renderAttachments(); this.renderToolbar(); this.renderComposerTransfers();
+  }
+  private removeComposerTransfer(id: string): void {
+    this.composerTransfers.delete(id);
+    this.rootEl?.querySelectorAll<HTMLElement>("[data-composer-transfer]").forEach(node => { if (node.dataset.composerTransfer === id) node.remove(); });
+  }
+  onComposerTransferFinished(item: Readonly<QueuedTurnItem>, outcome: "running" | "completed" | "failed" | "cancelled" | "queued"): void {
+    const transfer = this.composerTransfers.get(item.id);
+    if (!transfer) return;
+    this.removeComposerTransfer(item.id);
+    const target = this.composerConversationTargets.get(transfer.owner);
+    if (outcome === "queued" && target && target !== item.sessionId) {
+      this.rehomeComposerQueue(item.sessionId, target); Object.assign(item, { sessionId: target });
+    }
+    if (!item.piUserEntryAccepted && outcome !== "queued" && outcome !== "running" && outcome !== "completed") {
+      this.turnQueue.pauseSessionQueue(target ?? transfer.owner);
+      const active = transfer.owner === (this.composerDraftOwner || this.plugin.settings.activeSessionId);
+      const otherTransfer = [...this.composerTransfers.values()].some(value => value.owner === transfer.owner);
+      const newer = otherTransfer || (active ? Boolean(this.inputEl.value.trim() || this.attachments.length || this.selectedSkill
+        || composerNoteMentionSelections(this.inputEl).length || composerSelectionAnnotations(this.inputEl).length)
+        : Boolean(this.composerSessionDrafts.get(transfer.owner)?.text.trim() || this.composerSessionDrafts.get(transfer.owner)?.attachments.length
+          || this.composerSessionDrafts.get(transfer.owner)?.selectedSkill || this.composerSessionDrafts.get(transfer.owner)?.noteMentions.length
+          || this.composerSessionDrafts.get(transfer.owner)?.annotations.annotations.length));
+      if (!newer) {
+        this.composerSessionDrafts.set(transfer.owner, transfer.draft);
+        if (active) {
+          this.inputEl.value = transfer.draft.text; this.attachments = transfer.draft.attachments;
+          this.selectedSkill = transfer.draft.selectedSkill; restoreSelectionDraft(this.inputEl, transfer.draft.annotations);
+          clearComposerNoteMentions(this.inputEl);
+          for (const mention of transfer.draft.noteMentions) addComposerNoteMentionSelection(this.inputEl, mention);
+          this.renderAttachments(); if (this.taskUiMounted) {
+            this.taskNavigation.save({ text: transfer.draft.text, attachments: transfer.draft.attachments,
+              prefillSource: transfer.snapshot.prefillSource, englishDiarySourcePath: transfer.snapshot.englishDiarySourcePath });
+            this.saveTaskComposerDraft();
+          }
+        } else if (this.taskUiMounted) {
+          const page: TaskPage = transfer.owner.startsWith("agent:") ? { kind: "list", agentId: transfer.owner.slice(6) } : { kind: "detail", taskId: transfer.owner };
+          this.taskNavigation.save({ text: transfer.draft.text, attachments: transfer.draft.attachments,
+            prefillSource: transfer.snapshot.prefillSource, englishDiarySourcePath: transfer.snapshot.englishDiarySourcePath,
+            annotations: transfer.draft.annotations.annotations, noteMentions: [...transfer.draft.noteMentions], selectedSkill: transfer.draft.selectedSkill }, page);
+        }
+      } else {
+        const retained = { ...item, prefillSource: item.prefillSource ?? transfer.snapshot.prefillSource, englishDiarySourcePath: item.englishDiarySourcePath ?? transfer.snapshot.englishDiarySourcePath, sessionId: transfer.owner.startsWith("agent:") ? transfer.owner : item.sessionId };
+        if (!this.turnQueue.itemsForSession(retained.sessionId).some(value => value.id === item.id)) this.turnQueue.enqueueFront(retained);
+        this.turnQueue.pauseSessionQueue(retained.sessionId);
+      }
+      new Notice(this.taskText(transfer.cancelled ? "发送已停止，输入已保留" : "发送失败，输入已保留", transfer.cancelled ? "Sending stopped. Your input was kept." : "Sending failed. Your input was kept."));
+    }
+    this.cancelledComposerTransfers.delete(item.id); this.renderToolbar(); this.renderQueue();
+  }
+  private renderComposerTransfers(): void {
+    if (!this.rootEl) return;
+    this.rootEl.querySelectorAll("[data-composer-transfer]").forEach(node => node.remove());
+    const owner = this.composerDraftOwner || this.plugin.settings.activeSessionId;
+    const host = this.taskUiMounted && this.taskNavigation.page.kind === "list" ? this.taskListEl : this.messagesEl;
+    if (!host) return;
+    for (const [id, transfer] of this.composerTransfers) {
+      if (transfer.owner !== owner) continue;
+      const session = this.sessionById(transfer.snapshot.sessionId);
+      if (session?.messages.some(message => message.role === "user" && message.createdAt >= transfer.snapshot.createdAt)) continue;
+      const bubble = host.createDiv({ cls: "codex-message codex-message-user codex-composer-pending", attr: { "data-composer-transfer": id, role: "status", "aria-live": "polite" } });
+      bubble.createDiv({ cls: "codex-message-content codex-composer-pending-text", text: transfer.snapshot.text || transfer.snapshot.attachments.map(value => value.name).join("、") });
+      bubble.createDiv({ cls: "codex-composer-pending-status", text: this.taskText("发送中", "Sending") });
+    }
+  }
   private readonly composerSessionDrafts = new Map<string, ComposerSessionDraft>();
   switchComposerDraft(sessionId: string): void {
     if (!this.inputEl || this.composerDraftOwner === sessionId) return;
@@ -704,6 +807,7 @@ export class CodexView extends ItemView {
     this.renderAttachments();
   }
   clearAcceptedComposerDraft(item: Readonly<QueuedTurnItem>): void {
+    if (item.composerDraftTransferred) { this.removeComposerTransfer(item.id); return; }
     if (this.taskUiMounted && this.viewLifecycleAbortController.signal.aborted) {
       consumeAcceptedTaskDraft(this.plugin.settings.taskWorkspace, this.taskDraftOrigins.get(item.id) ?? item.sessionId, item);
       this.plugin.getConversationRunService().scheduleSave(); return;
@@ -783,11 +887,16 @@ export class CodexView extends ItemView {
   private get conversationRuns(): Map<string, ConversationRunState> { return this.plugin.getConversationRunService().runs; }
   private runSubscriptionDispose?: () => void;
   private get currentConversationRun(): ConversationRunState | undefined {
-    if (this.taskUiMounted && (this.taskNavigation.page.kind === "list" || this.taskEditor)) return undefined;
+    if (this.taskUiMounted && this.taskEditor) return undefined;
+    if (this.taskUiMounted && this.taskNavigation.page.kind === "list") {
+      const key = this.taskNavigation.draftKey;
+      const target = this.taskSubmitting.has(key) ? this.composerConversationTargets.get(key) : undefined;
+      return target ? this.conversationRuns.get(target) : undefined;
+    }
     return this.conversationRuns.get(this.plugin.settings.activeSessionId);
   }
   private get running(): boolean {
-    return Boolean(this.currentConversationRun?.running || this.currentConversationRun?.queueStartInProgress);
+    return Boolean(this.currentConversationRun?.running || this.currentConversationRun?.queueStartInProgress || this.activeComposerTransfer());
   }
   private get activeRunId(): string { return this.currentConversationRun?.activeRunId ?? ""; }
   private get activeRunKind(): "chat" | "" { return this.currentConversationRun?.activeRunKind ?? ""; }
@@ -853,6 +962,7 @@ export class CodexView extends ItemView {
     const view = this;
     const state = this.conversationRun(sessionId);
     const host: CodexTurnLifecycleHost = {
+      turnWatchdogOwner: state,
       get plugin() { return view.plugin; },
       get running() { return state.running; }, set running(value) { state.running = value; },
       get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; },
@@ -885,7 +995,10 @@ export class CodexView extends ItemView {
     const context: CodexViewTurnContext = {
       get lifecycleSignal() { return view.viewLifecycleAbortController.signal; }, get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return state.running; }, set running(value) { state.running = value; }, get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; }, get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; }, get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; }, get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
       get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return state.queueStartInProgress; }, set queueStartInProgress(value) { state.queueStartInProgress = value; if (!value && !state.running) view.clearConversationRun(sessionId, state); }, get turnStartedAt() { return state.turnStartedAt; }, set turnStartedAt(value) { state.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get selectedProviderSettingsId() { return view.selectedProviderSettingsId; }, set selectedProviderSettingsId(value) { view.selectedProviderSettingsId = value; }, get selectedModel() { return view.selectedModel; }, set selectedModel(value) { view.selectedModel = value; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
-      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => armTurnWatchdogAction(lifecycle, timeoutMs, timeoutText), clearTurnWatchdog: () => clearTurnWatchdogAction(lifecycle), clearActiveRun: () => view.clearConversationRun(sessionId, state), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.sessionById(sessionId) ?? view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => enqueueComposerDraftRunner(context), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.plugin.getConversationRunService().stopTask(sessionId), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
+      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => armTurnWatchdogAction(lifecycle, timeoutMs, timeoutText), clearTurnWatchdog: () => clearTurnWatchdogAction(lifecycle), clearActiveRun: () => view.clearConversationRun(sessionId, state), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.sessionById(sessionId) ?? view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => enqueueComposerDraftRunner(context), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
+      onComposerTransferStarted: item => view.onComposerTransferStarted(item),
+      onComposerTransferFinished: (item, outcome) => view.onComposerTransferFinished(item, outcome),
+      isComposerTransferCancelled: id => view.isComposerTransferCancelled(id),
       clearAcceptedComposerDraft: (item) => view.clearAcceptedComposerDraft(item),
       createQueuedTurnFromComposer: (options) => createQueuedTurnFromComposerRunner(context, options), startQueuedTurnItem: (item, source) => view.startQueuedTurnItem(item, source), startQueuedTurnItemSafely: (item, source) => view.startQueuedTurnItemSafely(item, source), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), startNextQueuedTurn: (sessionId) => view.startNextQueuedTurn(sessionId), startChatTurn: (session, item, source) => view.startChatTurn(session, item, source), clearComposerDraft: () => { if (!view.viewLifecycleAbortController.signal.aborted && (view.composerDraftOwner || view.plugin.settings.activeSessionId) === sessionId) view.clearComposerDraft(); },
       ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session, updatedMessage) => view.renderMessagesIfActive(session, updatedMessage), setPendingInteraction: (sessionId, interaction, expectedTurnId) => view.setPendingInteraction(sessionId, interaction, expectedTurnId), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), dismissThinkingMessage: (session) => view.dismissThinkingMessage(session), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command)
@@ -1428,6 +1541,7 @@ export class CodexView extends ItemView {
     if (this.taskUiMounted) this.renderTaskInterruptionCard();
     renderMessagesAction(this.messageHost(), options);
     this.turnNavigator?.handleRender();
+    this.renderComposerTransfers();
   }
   private renderTaskPlanDock(session: StoredSession): void {
     this.taskPlanDock.render(this.taskPlanDockEl, {
@@ -1529,6 +1643,10 @@ export class CodexView extends ItemView {
     } else if (!expectedTurnId || current?.turnId === expectedTurnId) {
       this.pendingInteractionsBySession.delete(sessionId);
     }
+    const state = this.conversationRuns.get(sessionId);
+    const pending = this.pendingInteractionsBySession.get(sessionId);
+    if (state) setTurnWatchdogWaiting(state, Boolean(pending && pending.turnId === state.activeTurnId
+      && (pending.status === "pending" || pending.status === "submitting")));
     if (this.plugin.settings.activeSessionId === sessionId) {
       const session = this.sessionById(sessionId);
       if (session) this.renderInteractionDock(session);
@@ -1536,7 +1654,16 @@ export class CodexView extends ItemView {
   }
   private renderToolbar(): void { renderToolbarAction(this.composerHost()); }
   private enhancePrompt(): void { void enhanceChatInputRunner(this.promptEnhancerRunnerContext); }
-  private renderQueue(): void { if (this.taskUiMounted && this.taskNavigation.page.kind !== "detail") { if (this.queueEl) this.queueEl.empty(); return; } renderQueueAction(this.composerHost()); }
+  private renderQueue(): void {
+    const host = this.composerHost();
+    const target = this.taskUiMounted && this.taskNavigation.page.kind === "list"
+      && (this.taskSubmitting.has(this.taskNavigation.draftKey) || this.activeComposerTransfer()) ? this.composerConversationTargets.get(this.taskNavigation.draftKey) : undefined;
+    const session = target ? this.sessionById(target) : null;
+    if (!session) { renderQueueAction(host); return; }
+    const adapter = Object.create(host) as CodexComposerHost;
+    Object.defineProperty(adapter, "ensureSession", { value: () => session });
+    renderQueueAction(adapter);
+  }
   private renderAttachments(): void { renderAttachmentsView(this.attachmentHost()); }
   private closeComposerMenus(): void { closeComposerMenusAction(this.composerHost()); }
   private openWorkspaceMenu(event: MouseEvent, session: StoredSession): void { openWorkspaceMenuAction(this.workspaceHost(), event, session); }
@@ -1651,6 +1778,10 @@ export class CodexView extends ItemView {
 
   private async sendMessage(): Promise<void> {
     if (this.taskDerivationInProgress) return;
+    if (this.running && (this.inputEl.value.trim() || this.attachments.length || this.selectedSkill
+      || composerNoteMentionSelections(this.inputEl).length || composerSelectionAnnotations(this.inputEl).length)) {
+      await this.enqueueComposerDraft(); return;
+    }
     if (this.promptEnhancerRunning) {
       new Notice(conversationUiText(this.plugin.settings.settingsLanguage, "提示词正在增强，请稍候", "The prompt is being enhanced. Please wait."));
       return;
@@ -1659,7 +1790,7 @@ export class CodexView extends ItemView {
       if (this.taskEditor) return;
       if (this.taskNavigation.page.kind === "list") { await this.sendNewAgentTask(); return; }
       const taskId = this.taskNavigation.page.taskId, token = this.taskNavigation.token;
-      const entry = await this.plugin.readPiConversationCatalogEntry(taskId);
+      const entry = this.currentTaskEntry();
       if (token !== this.taskNavigation.token) return;
       if (!entry || !isUserTask(entry)) return;
       if (entry.taskStatus === "interrupted") { await this.resumeInterruptedTask(taskId, true); return; }
@@ -1671,7 +1802,12 @@ export class CodexView extends ItemView {
 
   private async enqueueComposerDraft(): Promise<void> {
     if (this.taskDerivationInProgress) return;
-    if (this.taskUiMounted && this.taskNavigation.page.kind === "list") { await this.sendNewAgentTask(); return; }
+    if (this.taskUiMounted && this.taskNavigation.page.kind === "list") {
+      if (this.taskSubmitting.has(this.taskNavigation.draftKey) || this.activeComposerTransfer()) {
+        await enqueueComposerDraftRunner(this.createTurnRunnerContext(this.taskNavigation.draftKey));
+      } else await this.sendNewAgentTask();
+      return;
+    }
     if (this.taskUiMounted && this.currentTaskEntry()?.taskStatus === "interrupted") { await this.resumeInterruptedTask(this.currentTaskEntry()!.conversationId, true); return; }
     if (this.promptEnhancerRunning) {
       new Notice(conversationUiText(this.plugin.settings.settingsLanguage, "提示词正在增强，请稍候", "The prompt is being enhanced. Please wait."));
@@ -1709,7 +1845,16 @@ export class CodexView extends ItemView {
     this.focusInput();
   }
   private async resumeQueuedTurns(sessionId: string): Promise<void> {
-    try { await this.plugin.getConversationRunService().resumeQueuedTurns(sessionId); }
+    try {
+      if (sessionId.startsWith("agent:")) {
+        const items = this.turnQueue.itemsForSession(sessionId);
+        if (!items.length) return;
+        const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: items[0].text.trim().slice(0, 64) || items[0].attachments[0]?.name || this.taskText("新任务", "New task"), agentId: sessionId.slice(6), cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
+        const session = createPiConversationShell(this.sessionHost(), entry); this.plugin.settings.sessions.push(session);
+        for (const item of items) { this.turnQueue.enqueue({ ...item, sessionId: session.id }); this.turnQueue.removeQueuedItem(sessionId, item.id); }
+        this.turnQueue.resumeSessionQueue(sessionId);
+        await this.openTaskDetail(session.id); sessionId = session.id;
+      } await this.plugin.getConversationRunService().resumeQueuedTurns(sessionId); }
     catch (error) {
       if (this.viewLifecycleAbortController.signal.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
@@ -1723,7 +1868,7 @@ export class CodexView extends ItemView {
   private async startQueuedTurnItem(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> {
     const outcome = await this.plugin.getConversationRunService().start(item, source);
     if (outcome === "running") item.piUserEntryAccepted = true;
-    if (this.taskUiMounted && item.piUserEntryAccepted && (source === "composer" || item.clearComposerAfterPiAcceptance)) {
+    if (this.taskUiMounted && !item.composerDraftTransferred && item.piUserEntryAccepted && (source === "composer" || item.clearComposerAfterPiAcceptance)) {
       consumeAcceptedTaskDraft(this.plugin.settings.taskWorkspace, this.taskDraftOrigins.get(item.id) ?? item.sessionId, item);
       this.plugin.getConversationRunService().scheduleSave();
     }
@@ -1732,7 +1877,15 @@ export class CodexView extends ItemView {
   private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await this.startQueuedTurnItem(item, source); }
   private async startChatTurn(_session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await this.startQueuedTurnItem(item, source); }
   private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> { await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner); }
-  private async stopTurn(): Promise<void> { await this.plugin.getConversationRunService().stopTask(this.plugin.settings.activeSessionId); }
+  private async stopTurn(): Promise<void> {
+    const owner = this.composerDraftOwner || this.plugin.settings.activeSessionId;
+    for (const [id, transfer] of this.composerTransfers) if (transfer.owner === owner) {
+      transfer.cancelled = true; this.cancelledComposerTransfers.add(id);
+      this.turnQueue.pauseSessionQueue(transfer.snapshot.sessionId); this.turnQueue.pauseSessionQueue(owner);
+    }
+    const transfer = [...this.composerTransfers.values()].find(value => value.owner === owner);
+    await this.plugin.getConversationRunService().stopTask(transfer?.snapshot.sessionId ?? (owner.startsWith("agent:") ? owner : this.plugin.settings.activeSessionId));
+  }
   private settleStaleMessages(session: StoredSession): void { settleStaleMessagesAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost, session); }
   private armTurnWatchdog(timeoutMs?: number, timeoutText?: string): void { armTurnWatchdogAction(this.turnLifecycleHost(), timeoutMs, timeoutText); }
   private clearTurnWatchdog(): void { clearTurnWatchdogAction(this.turnLifecycleHost()); }
@@ -1792,6 +1945,7 @@ export class CodexView extends ItemView {
   private renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void {
     if (this.taskUiMounted && (this.taskDerivationInProgress || this.taskNavigation.page.kind !== "detail" || !this.taskDetailLoaded || this.taskEditor)) return;
     renderMessagesIfActiveAction(this.messageHost(), session, updatedMessage);
+    this.renderComposerTransfers();
   }
   private handleMessagesScroll(): void {
     handleMessagesScrollAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost);

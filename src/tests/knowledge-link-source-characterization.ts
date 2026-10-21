@@ -17,7 +17,7 @@ import {
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { setRequestUrlForTests } from "./obsidian-shim";
 
-// Characterization of the current implementation, not the proposed backlink feature.
+// Regression coverage for preserving server-authenticated prior source evidence.
 // The only simulated boundary is Obsidian host I/O; production source validation,
 // planning, WAL, VaultDomainService writes, readback, and private records run here.
 const TARGET = "wiki/AI.md";
@@ -40,13 +40,12 @@ type Scenario = Readonly<{
   evidence?: readonly RawPath[];
 }>;
 
-const OUTSIDE = "来源不在本次范围：raw/old-a.md";
 const AMBIGUOUS = "来源关系不明确：请注明本候选采用的 Raw；程序不会编造多来源关系。";
 const SCENARIOS: readonly Scenario[] = [
-  { id: "old-single-marker_selected-single", old: ["raw/old-a.md"], selected: ["raw/current-a.md"], markers: "retained", rejection: OUTSIDE },
-  { id: "old-multiple-markers_selected-single", old: ["raw/old-a.md", "raw/old-b.md"], selected: ["raw/current-a.md"], markers: "retained", rejection: OUTSIDE },
-  { id: "old-single-marker_selected-multiple", old: ["raw/old-a.md"], selected: ["raw/current-a.md", "raw/current-b.md"], markers: "retained", rejection: OUTSIDE },
-  { id: "old-multiple-markers_selected-multiple", old: ["raw/old-a.md", "raw/old-b.md"], selected: ["raw/current-a.md", "raw/current-b.md"], markers: "retained", rejection: OUTSIDE },
+  { id: "old-single-marker_selected-single", old: ["raw/old-a.md"], selected: ["raw/current-a.md"], markers: "retained", evidence: ["raw/current-a.md"] },
+  { id: "old-multiple-markers_selected-single", old: ["raw/old-a.md", "raw/old-b.md"], selected: ["raw/current-a.md"], markers: "retained", evidence: ["raw/current-a.md"] },
+  { id: "old-single-marker_selected-multiple", old: ["raw/old-a.md"], selected: ["raw/current-a.md", "raw/current-b.md"], markers: "retained", rejection: AMBIGUOUS },
+  { id: "old-multiple-markers_selected-multiple", old: ["raw/old-a.md", "raw/old-b.md"], selected: ["raw/current-a.md", "raw/current-b.md"], markers: "retained", rejection: AMBIGUOUS },
   { id: "old-visible-link-only_selected-single", old: ["raw/old-a.md"], selected: ["raw/current-a.md"], markers: "omitted", evidence: ["raw/current-a.md"] },
   { id: "old-evidence-dropped_selected-single", old: ["raw/old-a.md"], selected: ["raw/current-a.md"], markers: "all-evidence-omitted", evidence: ["raw/current-a.md"] },
   { id: "old-visible-link-only_selected-multiple", old: ["raw/old-a.md"], selected: ["raw/current-a.md", "raw/current-b.md"], markers: "omitted", rejection: AMBIGUOUS },
@@ -69,32 +68,32 @@ export async function runKnowledgeLinkSourceCharacterizationTests(): Promise<voi
       const before = originalNote(scenario.old);
       const candidate = candidateNote(scenario, before);
       const selectedSources = bindings(scenario.selected);
-      const directValidation = validationOutcome(candidate, scenario.selected);
-      if (scenario.evidence && scenario.markers === "retained") {
-        assert.deepEqual(directValidation, { evidence: scenario.evidence });
+      const directValidation = validationOutcome(candidate, scenario.selected, before);
+      if (scenario.selected.includes("raw/old-a.md") && scenario.markers === "retained") {
+        assert.deepEqual(directValidation, { evidence: ["raw/old-a.md"] });
       } else {
         assert.deepEqual(directValidation, { error: "knowledge_candidate_source_missing" });
       }
 
       let completed: string | undefined;
       if (scenario.rejection) {
-        assert.throws(() => completeKnowledgeMaintenanceCandidateSources({ targetPath: TARGET, content: candidate, selectedSources }),
+        assert.throws(() => completeKnowledgeMaintenanceCandidateSources({ targetPath: TARGET, content: candidate, selectedSources, baselineContent: before }),
           (error: unknown) => error instanceof Error && error.message === scenario.rejection);
       } else {
-        completed = completeKnowledgeMaintenanceCandidateSources({ targetPath: TARGET, content: candidate, selectedSources });
-        assert.deepEqual(validationOutcome(completed, scenario.selected), { evidence: scenario.evidence });
+        completed = completeKnowledgeMaintenanceCandidateSources({ targetPath: TARGET, content: candidate, selectedSources, baselineContent: before });
+        assert.deepEqual(validationOutcome(completed, scenario.selected, before), { evidence: scenario.evidence });
         assert.equal(Buffer.from(undoConceptLink(completed)).equals(Buffer.from(before)), false,
           "successful completion changes more than the proposed concept link");
         assert.equal(frontmatter(completed), frontmatter(before), "this completion leaves the fixture frontmatter alone");
         if (scenario.markers === "omitted") {
           assert.ok(completed.includes("[[raw/old-a.md|旧材料 1]]"), "unselected visible Raw link survives");
-          assert.equal(sourceMarkers(completed).some(marker => marker.path === "raw/old-a.md"), false,
-            "the surviving unselected visible link does not participate in validation");
+          assert.equal(sourceMarkers(completed).some(marker => marker.path === "raw/old-a.md"), true,
+            "an omitted marker can be restored from authenticated target bytes");
         }
         if (scenario.markers === "retained") {
           assert.equal(completed.includes(originalMarker("raw/old-a.md")), false, "old marker formatting is removed and rebuilt");
           assert.equal(count(completed, "[[raw/old-a.md|"), 2, "completion appends another readable source link");
-          assert.equal(sourceMarkers(completed).length, 1, "the original valid marker is replaced, not retained twice");
+          assert.equal(sourceMarkers(completed).length, new Set([...scenario.old, ...scenario.evidence!]).size, "prior and current source revisions coexist without duplicates");
         }
       }
 
@@ -104,9 +103,8 @@ export async function runKnowledgeLinkSourceCharacterizationTests(): Promise<voi
     }
     assert.equal(networkAttempts, 0);
     console.log(`PASS: ${SCENARIOS.length} characterization scenarios; elapsedMs=${Math.round(performance.now() - startedAt)}; networkAttempts=0.`);
-    console.log("Boundary: retained out-of-snapshot JSON markers reject before knowledge WAL/writes; failure bookkeeping still creates a terminal-only WAL.");
-    console.log("Boundary: with old markers absent, a single selected source can be bound and written; multiple selected sources with no recognized evidence reject.");
-    console.log("Boundary: an in-snapshot old source is accepted, but completion rewrites its marker/adds a visible source link, violating link-only byte preservation.");
+    console.log("Boundary: prior sources survive only with server-authenticated expectedTarget baseline; adopted evidence contains this batch's sources only.");
+    console.log("Boundary: multiple selected sources still require an explicit relation to current evidence; old provenance alone cannot select a current source.");
     console.log("Not verified: real Obsidian UI, real model tendency to omit markers, custom folder bindings, or the proposed backlink implementation.");
   } finally {
     globalThis.fetch = originalFetch;
@@ -192,7 +190,7 @@ async function runProductionScenario(root: string, scenario: Scenario, before: s
     assert.equal(knowledgeWals[0].status, "completed");
     assert.equal(knowledgeWals[0].actions.length, 1);
     assert.equal(knowledgeWals[0].actions[0].status, "completed");
-    assert.deepEqual(validationOutcome(knowledgeWals[0].preview.actions[0].content, scenario.selected), { evidence: scenario.evidence });
+    assert.deepEqual(validationOutcome(knowledgeWals[0].preview.actions[0].content, scenario.selected, before), { evidence: scenario.evidence });
     assert.ok(events.indexOf("knowledge-wal") < events.indexOf("after-wal-before-first-write"));
     assert.ok(events.indexOf("after-wal-before-first-write") < events.indexOf(`write:${TARGET}`));
     assert.deepEqual(result.producedPaths, [TARGET]);
@@ -243,7 +241,7 @@ function count(content: string, needle: string): number { return content.split(n
 function sourceMarkers(content: string): { path: string; revision: string }[] {
   return [...content.matchAll(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu)].map(match => JSON.parse(match[1]));
 }
-function validationOutcome(content: string, selected: readonly RawPath[]): { evidence: readonly string[] } | { error: string } {
-  try { return { evidence: validateKnowledgeMaintenanceCandidateSources({ targetPath: TARGET, content, selectedSources: bindings(selected) }).map(source => source.relativePath) }; }
+function validationOutcome(content: string, selected: readonly RawPath[], baselineContent?: string): { evidence: readonly string[] } | { error: string } {
+  try { return { evidence: validateKnowledgeMaintenanceCandidateSources({ targetPath: TARGET, content, selectedSources: bindings(selected), baselineContent }).map(source => source.relativePath) }; }
   catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
 }

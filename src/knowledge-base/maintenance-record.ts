@@ -15,3 +15,11 @@ export interface KnowledgeMaintenanceRecord {
   /** Only new maintenance WALs that explicitly delegated linking can carry this intent. */
   pendingLinking?: { taskId: string; sourcePaths: string[]; targetPaths: string[] };
 }
+
+export function latestMaintenanceSourceStates(records: readonly Readonly<KnowledgeMaintenanceRecord>[]): ReadonlyMap<string, KnowledgeMaintenanceRecord["sources"][number]> {
+  const latest = new Map<string, KnowledgeMaintenanceRecord["sources"][number]>();
+  for (const record of [...records].sort((left, right) => right.at - left.at)) {
+    for (const source of record.sources) if (!latest.has(source.path)) latest.set(source.path, source);
+  }
+  return latest;
+}

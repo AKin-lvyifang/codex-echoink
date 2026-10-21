@@ -166,7 +166,11 @@ async function queueOnlyAnnotations(doc: Document): Promise<void> {
   const queue = new RuntimeTurnQueue(); let followUp = 0;
   const session = { id: "A", kind: "chat", bodyAuthority: "pi_session_only", piSessionId: "p" };
   const item: any = { id: "q", sessionId: "A", text: "question", selectionAnnotations: [annotationFixture()], attachments: [], noteMentions: [], skill: null, turnOptions: {}, kind: "chat", createdAt: 1 };
-  const view: any = { plugin: { followUpPiConversation: async () => { followUp++; } }, running: true, activeRunKind: "chat", activeRunSessionId: "A", turnQueue: queue, createQueuedTurnFromComposer: async () => item, sessionById: () => session, clearComposerDraft() {}, renderQueue() {}, renderToolbar() {} };
+  let draftAvailable = true;
+  const view: any = { plugin: { settings: { ...DEFAULT_SETTINGS, activeSessionId: "A" }, followUpPiConversation: async () => { followUp++; } }, running: true, activeRunKind: "chat", activeRunSessionId: "A", turnQueue: queue,
+    createQueuedTurnFromComposer: async () => draftAvailable ? item : null,
+    ensureSession: () => session, composerStateForSession: () => ({ viewRunning: true }),
+    sessionById: () => session, clearAcceptedComposerDraft() { draftAvailable = false; }, clearComposerDraft() {}, renderQueue() {}, renderToolbar() {} };
   await enqueueComposerDraft(view); await enqueueComposerDraft(view);
   assert.equal(followUp, 0); assert.equal(queue.itemsForSession("A").length, 1);
   assert.deepEqual(queue.peekNext("A")!.selectionAnnotations, item.selectionAnnotations);

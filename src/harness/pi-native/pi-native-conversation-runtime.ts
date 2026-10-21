@@ -1456,7 +1456,7 @@ export class PiNativeConversationRuntime {
     const selectedRuntimeSkill = !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath && !request.skillPath
       ? catalog.defaultSkillId
         ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId, catalog)
-        : mode !== "plan"
+        : mode !== "plan" && knowledgeCommand.kind !== "maintain"
           ? await this.options.skills?.selectForTask({ text: request.text, catalog }) ?? null
           : null
       : null;
@@ -1756,6 +1756,10 @@ export class PiNativeConversationRuntime {
           );
         }
         const suppliedScope = request.maintenanceScope;
+        if (suppliedScope?.mode === "batch" && suppliedScope.folderBindingsRevision !== undefined
+          && suppliedScope.folderBindingsRevision !== getKnowledgeFolderBindings(active.cwd)?.revision) {
+          throw new PiNativeConversationRuntimeError("agent_session_invalid", "目录配置已变化，停止剩余批次；已完成的整理保留。");
+        }
         if (suppliedScope?.mode === "global" && knowledgeCommand.request.trim()) normalizePiKnowledgeMaintenanceScope(suppliedScope, knowledgeCommand.request);
         const frozenScope = !suppliedScope || (suppliedScope.mode === "global" && !suppliedScope.sourcePaths)
           ? await this.options.knowledge?.resolveMaintenanceScope?.(knowledgeCommand.request) ?? suppliedScope
@@ -6784,6 +6788,7 @@ function normalizePiKnowledgeMaintenanceScope(
     }
     return Object.freeze({
       mode: "batch" as const,
+      ...(value.folderBindingsRevision !== undefined ? { folderBindingsRevision: value.folderBindingsRevision } : {}),
       sourcePaths: Object.freeze(sourcePaths)
     });
   }

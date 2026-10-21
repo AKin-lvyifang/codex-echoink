@@ -40,6 +40,8 @@ import type {
 } from "../../harness/pi-native/vault-domain-service";
 import {
   ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION,
+  completeKnowledgeMaintenanceCandidateSources,
+  validateKnowledgeMaintenanceCandidateSources,
   echoInkKnowledgeMaintenanceProtocolPrompt
 } from "../../knowledge-base/knowledge-maintenance-protocol";
 import {
@@ -69,6 +71,7 @@ const PREFERENCE = Object.freeze({
  * fixture as the only filesystem acceptance Vault.
  */
 export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void> {
+  await runPreservedMaintenanceSourceTests();
   await runMaintenanceReadFingerprintTests();
   assertProtocolAllowsNaturalCompletion();
   assertProtocolDelegatesPlacementToBackground();
@@ -96,6 +99,36 @@ export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void>
   await assertStaleUnwrittenWalDoesNotBlockCorrection();
   await assertCompletedCheckpointFailureIsWriteUncertainAndRecoveredFirst();
   await assertRecoveredWalContinuesWithCurrentTargets();
+}
+
+export async function runPreservedMaintenanceSourceTests(): Promise<void> {
+  const targetPath = "wiki/phase3-summary.md", prior = "raw/previous.md", current = "raw/current.md", outside = "raw/forged.md";
+  const baselineContent = `# Existing\n[[${prior}|原始材料]]\n${sourceMarker(prior, "a".repeat(64))}\n`;
+  const selectedSources = [{ relativePath: current, contentSha256: "b".repeat(64) }];
+  const content = `${baselineContent}\nNew claim [[${current}|原始材料]]\n`;
+  const completed = completeKnowledgeMaintenanceCandidateSources({ targetPath, content, baselineContent, selectedSources });
+  const adopted = validateKnowledgeMaintenanceCandidateSources({ targetPath, content: completed, baselineContent, selectedSources });
+  assert.deepEqual(adopted.map(source => source.relativePath), [current], "retained previous sources are not processed by this batch");
+  assert.match(completed, new RegExp(`"revision":"sha256:${"a".repeat(64)}"`, "u"));
+  for (const extra of [`\n[[${outside}|新越界来源]]\n`, `\n[[${outside}]]\n${sourceMarker(outside, "c".repeat(64))}\n`]) {
+    assert.throws(() => completeKnowledgeMaintenanceCandidateSources({ targetPath, content: content + extra, baselineContent, selectedSources }), /来源不在本次范围/u);
+  }
+  assert.throws(() => completeKnowledgeMaintenanceCandidateSources({ targetPath, content: content.replace("a".repeat(64), "c".repeat(64)), baselineContent, selectedSources }), /旧来源标记已变化/u);
+  const customRole = (relative: string) => relative.startsWith("Sources/") ? `raw/${relative.slice("Sources/".length)}` : relative;
+  const customBaseline = baselineContent.replaceAll("raw/", "Sources/");
+  assert.throws(() => completeKnowledgeMaintenanceCandidateSources({ targetPath: "Wiki/summary.md", content: content.replaceAll("raw/", "Sources/") + "\n[[Sources/third.md]]\n", baselineContent: customBaseline,
+    selectedSources: [{ relativePath: "Sources/current.md", contentSha256: "b".repeat(64) }] }, customRole), /来源不在本次范围/u);
+  const fixture = createFixture({ trackerPaths: [current], proposalFactory: input => {
+    const proposal = defaultProposal(input);
+    return { ...proposal, actions: proposal.actions.map(action => action.targetPath !== targetPath ? action : { ...action,
+      expectedTarget: { kind: "file" as const, contentRevision: `sha256:${sha256(baselineContent)}` },
+      baselineContent: baselineContent + `\n[[${outside}]]\n${sourceMarker(outside, "c".repeat(64))}\n`,
+      content: completed }) };
+  } });
+  fixture.domain.seed(current, "current raw"); fixture.domain.seed(PHASE3_MAINTENANCE_TRACKER_PATH, "tracker"); fixture.domain.seed(targetPath, baselineContent);
+  await assert.rejects(fixture.service.execute({ vaultId: VAULT_ID, dateKey: DATE_KEY, preference: PREFERENCE, toolCall: toolCallFor("forged-baseline") }), phase3Error("preview_stale"));
+  assert.equal(fixture.domain.formalWrites.length, 0, "a self-reported baseline cannot grant source preservation");
+  console.log("PASS preserved sources: server-bound baseline, retained revisions, current-batch evidence only, new source/forged marker/forged baseline refusal");
 }
 
 export async function runMaintenanceReadFingerprintTests(): Promise<void> {

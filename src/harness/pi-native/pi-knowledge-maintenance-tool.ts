@@ -134,7 +134,7 @@ implements PiVaultAdditionalToolSecurityPort {
       return block("authorization_failed");
     }
     let identity: Readonly<PiKnowledgeRunIdentity>;
-    let command: Readonly<PiKnowledgeMaintenanceCommandContext>;
+    let command: Readonly<PiKnowledgeMaintenanceCommandContext> | undefined;
     let candidateActions: readonly Readonly<KnowledgeMaintenanceCandidateAction>[];
     let sourcePaths: readonly string[];
     let assessments: readonly Readonly<KnowledgeMaintenanceAssessment>[];
@@ -154,7 +154,13 @@ implements PiVaultAdditionalToolSecurityPort {
       assessments = normalized.assessments;
       normalizedArguments = normalized.arguments;
     } catch (error) {
-      return block(`维护参数未通过：${knowledgeErrorDetail(error)}；请修正本次参数后重试。`);
+      const detail = knowledgeErrorDetail(error);
+      const scope = command?.scope;
+      const scopeHint = detail === "knowledge_maintenance_source_scope_invalid" && scope
+        ? scope.mode === "global" ? "；本轮为 global，不能提供 sourcePaths"
+          : `；本轮 ${scope.mode} 只可使用 ${JSON.stringify(scope.mode === "query" ? scope.candidatePaths : scope.sourcePaths)}`
+        : "";
+      return block(`维护参数未通过：${detail}${scopeHint}；请修正本次参数后重试。`);
     }
     this.seenToolCallIds.add(event.toolCallId);
     this.executions.set(event.toolCallId, {
@@ -656,6 +662,7 @@ function freezeCommand(
         : scope.mode === "batch"
           ? Object.freeze({
               mode: "batch" as const,
+              ...(scope.folderBindingsRevision !== undefined ? { folderBindingsRevision: scope.folderBindingsRevision } : {}),
               sourcePaths: Object.freeze(scope.sourcePaths.map(
                 normalizeMaintenanceRawPath
               ))

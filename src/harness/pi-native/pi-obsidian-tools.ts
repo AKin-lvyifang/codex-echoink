@@ -3,7 +3,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolCallEvent, type ToolResultEvent, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { PiVaultAdditionalToolSecurityPort } from "./pi-vault-tool-security-extension";
 import { secureVaultToolResult, EchoInkVaultToolEgressPolicy } from "./vault-tool-result-safety";
-import { normalizeJsonValue, canonicalJsonStringify, type JsonValue, type ApprovalOperationContract, type FileApprovalTicketStore, type WriteToolAuthorizationContext } from "./tool-authorization";
+import { normalizeJsonValue, canonicalJsonStringify, confirmAndConsumeApprovalTicket, type JsonValue, type ApprovalOperationContract, type FileApprovalTicketStore, type WriteToolAuthorizationContext } from "./tool-authorization";
 import type { FileDomainReceiptStore } from "./domain-receipt-store";
 import type { PiWorkspaceAccess } from "./pi-workspace-access";
 import { OBSIDIAN_CLI_COMMANDS, normalizeObsidianCliRequest, obsidianCliEffect, type ObsidianCliRequest, type ObsidianCliEffect } from "./obsidian-cli-policy";
@@ -53,6 +53,7 @@ export interface PiObsidianSecurityOptions {
   approvals?: FileApprovalTicketStore;
   receipts?: FileDomainReceiptStore;
   confirmation?: { confirm(input: ObsidianApprovalInput): Promise<boolean> };
+  onApprovalExpired?(): void;
   userId?: string; deviceId?: string;
 }
 interface NativeCall {
@@ -148,23 +149,14 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
             targetVersion: financeTool ? normalizeJsonValue({ domainVersion: call.prepared.targetVersion, intentEntryId: entry?.entryId ?? null, argumentsSha256: call.prepared.effectArgumentsSha256 ?? financeValueVersion(input) }) : call.prepared.targetVersion,
             preview: call.prepared.preview
           };
-          const issuedAt = Date.now();
-          const ticket = await approvals.issue({ ...contract, issuedAt, expiresAt: issuedAt + 300_000 });
-          let accepted: boolean;
-          try {
-            accepted = !!(financeTool && entry?.entryId && hasDirectFinanceIntent(financeTool, financeRequest!, entry.text))
+          let renewed = false;
+          call.authorization = await confirmAndConsumeApprovalTicket({
+            approvals, contract, signal,
+            onExpired: () => { renewed = true; this.options.onApprovalExpired?.(); },
+            confirm: async ticket => !renewed && !!(financeTool && entry?.entryId && hasDirectFinanceIntent(financeTool, financeRequest!, entry.text))
               || await confirmation.confirm({ ...identity, toolId: contract.toolId as ObsidianApprovalInput["toolId"], requestId: ticket.ticketId, toolCallId: event.toolCallId, target: ticket.resolvedTarget, preview: ticket.preview,
-                ...(request?.command === "plugin:uninstall" || financeTool === "finance_record" && financeRequest?.action === "delete" ? { deleteAction: true } : {}), signal });
-          } catch {
-            await approvals.resolve({ ticketId: ticket.ticketId, productRunId: identity.productRunId, toolCallId: event.toolCallId, resolution: "cancelled" });
-            throw new Error("approval_cancelled");
-          }
-          if (!accepted || signal?.aborted) {
-            const status = signal?.aborted ? "cancelled" : "denied";
-            await approvals.resolve({ ticketId: ticket.ticketId, productRunId: identity.productRunId, toolCallId: event.toolCallId, resolution: status });
-            throw new Error(status === "cancelled" ? "approval_cancelled" : "approval_denied");
-          }
-          call.authorization = await approvals.consume({ ticketId: ticket.ticketId, operationIdentity: ticket.operationIdentity, contract });
+                ...(request?.command === "plugin:uninstall" || financeTool === "finance_record" && financeRequest?.action === "delete" ? { deleteAction: true } : {}), signal })
+          });
           await receipts.beginAuthorizedOperation(call.authorization);
         }
       }

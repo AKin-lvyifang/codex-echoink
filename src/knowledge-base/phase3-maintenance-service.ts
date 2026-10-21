@@ -93,6 +93,8 @@ export interface Phase3MaintenanceTrackerSnapshot {
 export interface Phase3MaintenanceProposalAction {
   targetPath: string;
   content: string;
+  /** Internal baseline bytes; authenticated against server readback before authorizing retained sources. */
+  baselineContent?: string;
   expectedTarget?: Readonly<
     | { kind: "missing" }
     | { kind: "file"; contentRevision: string }
@@ -1092,6 +1094,7 @@ export class Phase3KnowledgeMaintenanceService {
       return {
         targetPath,
         content: requireString(draft.content, "action.content"),
+        ...(draft.baselineContent !== undefined ? { baselineContent: requireString(draft.baselineContent, "action.baselineContent") } : {}),
         ...(draft.expectedTarget
           ? { expectedTarget: draft.expectedTarget }
           : {})
@@ -1109,15 +1112,25 @@ export class Phase3KnowledgeMaintenanceService {
             draft.targetPath
           );
         }
+        let baselineContent: string | undefined;
+        if (draft.baselineContent !== undefined) {
+          const current = await this.readTargetBinding(input.vaultId, draft.targetPath);
+          if (current.kind !== "file" || !agentExpectedTargetMatches(current, draft.expectedTarget)
+            || sha256(draft.baselineContent) !== current.contentSha256) {
+            throw phase3Error("preview_stale", `Knowledge target baseline changed: ${draft.targetPath}`, draft.targetPath);
+          }
+          baselineContent = draft.baselineContent;
+        }
         try {
           validateKnowledgeMaintenanceCandidateSources({
             targetPath: draft.targetPath,
             content: draft.content,
+            baselineContent,
             selectedSources: input.selectedSources.map((source) => ({
               relativePath: source.raw.relativePath,
               contentSha256: source.raw.contentSha256
             }))
-          });
+          }, this.pathPolicy);
         } catch (error) {
           throw phase3Error(
             "proposal_invalid",
@@ -1447,7 +1460,7 @@ function normalizeProposalAction(
   const keys = Object.keys(record);
   if (
     !keys.every((key) =>
-      key === "targetPath" || key === "content" || key === "expectedTarget"
+      key === "targetPath" || key === "content" || key === "expectedTarget" || key === "baselineContent"
     )
   ) {
     throw phase3Error("proposal_invalid", "Maintenance action is invalid");
@@ -1455,6 +1468,7 @@ function normalizeProposalAction(
   return Object.freeze({
     targetPath: requireNonEmpty(record.targetPath, "action.targetPath"),
     content: requireString(record.content, "action.content"),
+    ...(record.baselineContent !== undefined ? { baselineContent: requireString(record.baselineContent, "action.baselineContent") } : {}),
     ...(record.expectedTarget === undefined
       ? {}
       : { expectedTarget: normalizeAgentExpectedTarget(record.expectedTarget) })

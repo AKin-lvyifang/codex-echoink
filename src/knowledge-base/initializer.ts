@@ -227,7 +227,25 @@ const JOB_FILE = "job.json";
 const PLAN_DIR = "plans";
 const INDEX_MARKER_START = "<!-- echoink-onboarding-kb-init:start -->";
 const INDEX_MARKER_END = "<!-- echoink-onboarding-kb-init:end -->";
-const EXTRACTION_BATCH_SIZE = 20;
+export const KNOWLEDGE_MAINTENANCE_BATCH_SIZE = 20;
+const EXTRACTION_BATCH_SIZE = KNOWLEDGE_MAINTENANCE_BATCH_SIZE;
+
+export function knowledgeMaintenanceBatchAt(sourcePaths: readonly string[], cursor = 0): readonly string[] {
+  return Object.freeze(sourcePaths.slice(cursor, cursor + KNOWLEDGE_MAINTENANCE_BATCH_SIZE));
+}
+
+export function splitKnowledgeMaintenanceSources(sourcePaths: readonly string[]): readonly (readonly string[])[] {
+  const unique = [...new Set(sourcePaths)], batches: (readonly string[])[] = [];
+  for (let cursor = 0; cursor < unique.length; cursor += KNOWLEDGE_MAINTENANCE_BATCH_SIZE) batches.push(knowledgeMaintenanceBatchAt(unique, cursor));
+  return Object.freeze(batches);
+}
+
+export function knowledgeMaintenanceBatchPrompt(input: Readonly<{
+  sourcePaths: readonly string[]; batchIndex: number; expectedBatches: number; origin?: "workbench"; request?: string;
+}>): string {
+  if (!input.sourcePaths.length || input.sourcePaths.length > KNOWLEDGE_MAINTENANCE_BATCH_SIZE) throw new Error("知识维护每批必须为1–20篇资料。");
+  return `/maintain 用户已确认${input.origin === "workbench" ? "从工作台整理资料" : "知识库初始化"}，本批 ${input.batchIndex + 1}/${input.expectedBatches}。请只阅读并处理以下指定来源，复用已有知识，按需提炼；无需新增可自然说明。未读或失败来源单列待处理。沿用当前工作区权限；执行受当前权限约束，不需要再次询问是否执行本批，也不要扩展为全库勘查。${input.request ? `\n用户本次要求：${input.request}` : ""}\n本批来源：\n${input.sourcePaths.map(source => JSON.stringify(source)).join("\n")}`;
+}
 const MAX_PROVIDER_ATTEMPTS = 1;
 const FIXED_ROOTS = new Set<string>(KNOWLEDGE_INITIALIZATION_ROOTS);
 // Legacy user files are protected from initialization moves, but EchoInk no longer
@@ -829,7 +847,7 @@ export class KnowledgeBaseInitializer {
       if (job.folderBindingsRevision !== undefined && job.folderBindingsRevision !== this.host.folderBindingsRevision?.()) throw new Error("目录配置已变化，停止剩余批次。");
       assertNotCancelled(signal);
       job.provider = this.host.currentProvider();
-      const queued = job.extractionQueue.slice(job.extractionCursor, job.extractionCursor + EXTRACTION_BATCH_SIZE);
+      const queued = knowledgeMaintenanceBatchAt(job.extractionQueue, job.extractionCursor);
       const batch: string[] = [];
       for (const sourcePath of queued) {
         if (job.analyzedSourcePaths?.includes(sourcePath)) continue;

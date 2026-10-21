@@ -20,7 +20,7 @@ import {
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { ResourceMutationError } from "./resource-mutation-authority";
 import { isEmptyEchoInkPluginData } from "../settings/onboarding";
-import { DESKTOP_KNOWLEDGE_ROOT_ROLES, knowledgeRootEntries, migrateKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, knowledgeRootDirectories, migrateKnowledgeFolderBindings, preferExistingBilingualKnowledgeDefaults, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 export { ResourceMutationError, resourceMutationRollbackIsSafe } from "./resource-mutation-authority";
 
 export interface SettingsSaveOptions {
@@ -116,8 +116,15 @@ export class EchoInkSettingsStore {
     let bindingsMigrated = false;
     if (!this.plugin.settings.knowledgeBase.folderBindings) {
       const mobilePaths = (data as { mobileUi?: { knowledgePaths?: Partial<Record<"raw" | "wiki" | "inbox", string>> } } | null)?.mobileUi?.knowledgePaths;
-      this.plugin.settings.knowledgeBase.folderBindings = migrateKnowledgeFolderBindings(knowledgeRootEntries(this.plugin.getVaultPath()), mobilePaths);
+      this.plugin.settings.knowledgeBase.folderBindings = migrateKnowledgeFolderBindings(knowledgeRootDirectories(this.plugin.getVaultPath()), mobilePaths);
       bindingsMigrated = true;
+    } else {
+      const previous = this.plugin.settings.knowledgeBase.folderBindings;
+      const corrected = preferExistingBilingualKnowledgeDefaults(previous, knowledgeRootDirectories(this.plugin.getVaultPath()));
+      if (corrected !== previous) {
+        this.plugin.settings.knowledgeBase.folderBindings = corrected;
+        bindingsMigrated = true;
+      }
     }
     // Registered before local runtimes and feature controllers are constructed; reloads read live settings.
     registerKnowledgeFolderBindings(this.plugin.getVaultPath(), () => this.plugin.settings.knowledgeBase.folderBindings, DESKTOP_KNOWLEDGE_ROOT_ROLES);

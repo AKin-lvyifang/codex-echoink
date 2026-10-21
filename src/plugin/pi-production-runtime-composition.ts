@@ -33,7 +33,7 @@ import { KNOWLEDGE_ASK_PROTOCOL, knowledgeReadingState } from "../harness/pi-nat
 import { knowledgeRolePath } from "../knowledge-base/root-paths";
 import { recordProductionMaintenanceTerminal } from "./knowledge-maintenance-history";
 import { isRawMarkdownPath } from "../knowledge-base/raw-digest";
-import { piWorkspaceAllowsTool, piWorkspaceAccessPrompt, type PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
+import { piWorkspaceToolDecision, piToolAccessFailure, piWorkspaceAccessPrompt, type PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
@@ -523,6 +523,7 @@ export async function createPiProductionRuntimeBundle(
     vaultRootPath,
     knowledgeAgentIndex,
     knowledgePreferences,
+    processedSources: () => plugin.settings.knowledgeBase.processedSources,
     isConversationKnowledgeAllowed: async (id, write) => checkAgentCapability(await currentAgentCapabilityContext(plugin, catalog, id), "knowledge", write ? "resource" : "read").allowed,
     prepareStructure: (initialization) => plugin.prepareWikiFolderNamesForMaintenance?.(initialization) ?? Promise.resolve(""),
     usage: new KnowledgeUsageBridge(knowledgeUsageStore),
@@ -783,6 +784,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
   vaultRootPath: string;
   knowledgeAgentIndex: KnowledgeAgentIndex;
   knowledgePreferences: KnowledgeMaintenancePreferenceRepository;
+  processedSources?: () => Readonly<Record<string, { fingerprint?: string }>>;
   onNaturalMaintenance?: (request: Parameters<NonNullable<PiKnowledgeRuntimePort["finalizeMaintenance"]>>[0]) => Promise<void | Readonly<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceSettlement>>;
   prepareStructure?: (input: { initialization: boolean; assertActive(): void }) => Promise<string>;
   usage: KnowledgeUsageBridge;
@@ -800,7 +802,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       return result;
     },
     async resolveMaintenanceScope(request) {
-      if (!request.trim()) return Object.freeze({ mode: "global" as const, ...await privateMaintenanceSourceScope(input.vaultRootPath) });
+      if (!request.trim()) return Object.freeze({ mode: "global" as const, ...await privateMaintenanceSourceScope(input.vaultRootPath, { processedSources: input.processedSources?.() }) });
       const result = await input.knowledgeAgentIndex.search({ query: request, kinds: ["raw"], limit: 50 });
       const candidatePaths = result.hits.map((hit) => hit.vaultRelativePath).filter(isRawMarkdownPath).slice(0, 12);
       if (!candidatePaths.length) throw new Error("没有找到可可靠匹配的 Raw 笔记；本轮不会回退到全局维护。");
@@ -2030,6 +2032,14 @@ async function createProductionAgentSession(input: {
     if (input.input.currentEnglishDiaryRequest?.() && name !== "english_diary_generate") throw new Error("english_diary_task_scope_required");
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
     const context = await liveCapabilityContext();
+    const access = context.access;
+    if (!access) throw new Error("agent_capability_workspace_unavailable");
+    const workspaceDecision = piWorkspaceToolDecision({ ...access, toolName: name, toolArguments: { ...args },
+      planToolNames: linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : planToolNames,
+      memoryMode: context.settings.memory.useLongTermMemory === false ? "no_memory" : access.memoryMode,
+      memoryToolNames: PI_PERSONAL_MEMORY_TOOL_IDS,
+      externalReadToolNames: [WEB_SEARCH_TOOL_NAME, ...(linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : []), ...mcpSnapshot.toolSecurity.filter(tool => tool.readOnly).map(tool => tool.name)] });
+    if (!workspaceDecision.allowed) throw new Error(workspaceDecision.reason);
     const pdfRequest = name === "pdf_reading_process" ? input.input.currentPdfTaskRequest?.() : undefined;
     const capabilityTarget = resolvedTarget ?? (pdfRequest ? { options: pdfRequest.options } : undefined);
     requireAgentCapability(checkAgentTool(context, name, args, capabilityTarget, descriptor ? {
@@ -2040,12 +2050,7 @@ async function createProductionAgentSession(input: {
     if (resume) await assertTaskResumeToolAllowed({ snapshot: resume.safety, receipts: input.receipts, approvals: input.approvals,
       vaultRootPath: input.plugin.getVaultPath(), toolName: descriptor?.approvalToolId ?? name, arguments: args,
       resolvedTarget: resolvedTarget ?? (descriptor ? { resourceId: descriptor.resourceId, toolName: descriptor.toolName } : undefined), currentOperation });
-    const access = context.access;
-    if (!access || !configured.toolCalling && PI_PERSONAL_MEMORY_TOOL_IDS.some(tool => tool === name)
-      || !piWorkspaceAllowsTool({ ...access, toolName: name, toolArguments: { ...args }, planToolNames: linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : planToolNames,
-        memoryMode: context.settings.memory.useLongTermMemory === false ? "no_memory" : access.memoryMode,
-        memoryToolNames: PI_PERSONAL_MEMORY_TOOL_IDS,
-        externalReadToolNames: [WEB_SEARCH_TOOL_NAME, ...(linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : []), ...mcpSnapshot.toolSecurity.filter(tool => tool.readOnly).map(tool => tool.name)] })) throw new Error("agent_capability_workspace_blocked");
+    if (!configured.toolCalling && PI_PERSONAL_MEMORY_TOOL_IDS.some(tool => tool === name)) throw new Error("agent_capability_memory_tool_calling_disabled");
   };
   const vaultModalConfirmation = createObsidianPiVaultApprovalConfirmation(
     input.plugin.app
@@ -2145,6 +2150,7 @@ async function createProductionAgentSession(input: {
   const userQuestionSecurity = new PiUserQuestionToolSecurity();
   const obsidianSecurity = new PiObsidianToolSecurity({
     assertToolAllowed,
+    onApprovalExpired: () => { new Notice("本次审批已过期，请重新确认；尚未执行操作。"); },
     currentUserEntry: () => { const context = input.input.currentToolExecutionContext(); return { entryId: context.userEntryId, text: context.userEntryText }; },
     currentAccess: () => input.input.currentWorkspaceAccess?.(),
     currentRunIdentity: () => {
@@ -2262,12 +2268,12 @@ async function createProductionAgentSession(input: {
   const webSearchSecurity = new PiWebSearchSecurity(() => input.plugin.settings.tavily, async () => await assertToolAllowed(WEB_SEARCH_TOOL_NAME, {}));
   const security = createPiVaultToolSecurityAdapter({
     isToolAllowed: async (toolName, args) => {
-      try { await assertToolAllowed(toolName, args ?? {}); } catch { return false; }
+      try { await assertToolAllowed(toolName, args ?? {}); } catch (error) { return piToolAccessFailure(error); }
       const access = input.input.currentWorkspaceAccess?.();
-      if (!access) return false;
-      if (toolName === WEB_SEARCH_TOOL_NAME && !webSearchSecurity.available()) return false;
-      if (!configured.toolCalling && PI_PERSONAL_MEMORY_TOOL_IDS.some((name) => name === toolName)) return false;
-      return piWorkspaceAllowsTool({
+      if (!access) return piToolAccessFailure(new Error("agent_capability_workspace_unavailable"));
+      if (toolName === WEB_SEARCH_TOOL_NAME && !webSearchSecurity.available()) return piToolAccessFailure(new Error("web_search_unavailable"));
+      if (!configured.toolCalling && PI_PERSONAL_MEMORY_TOOL_IDS.some((name) => name === toolName)) return piToolAccessFailure(new Error("agent_capability_memory_tool_calling_disabled"));
+      return piWorkspaceToolDecision({
         ...access,
         // A disabled Memory switch and current MCP admission remain authoritative.
         memoryMode: input.plugin.settings.memory?.useLongTermMemory === false ? "no_memory" : access.memoryMode,

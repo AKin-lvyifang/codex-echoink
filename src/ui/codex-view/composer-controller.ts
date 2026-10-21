@@ -1,3 +1,4 @@
+import { insertQueuedTurnIntoActiveRun } from "./turn-runner";
 import { composerSelectionAnnotations, clearSelectionDraft } from "../../selection-ask/draft";
 import { Notice, Platform, type App } from "obsidian";
 import { normalizeGenerationTemplates } from "../../settings/generation-templates";
@@ -321,6 +322,8 @@ export function renderQueue(host: CodexComposerHost): void {
       items: host.turnQueue.itemsForSession(session.id),
       paused: host.turnQueue.isSessionQueuePaused(session.id)
         || host.turnQueue.isSessionRecoveryRequired(session.id),
+      canInsert: host.running && host.activeRunSessionId === session.id && !host.promptEnhancerRunning
+        && !host.turnQueue.isSessionQueuePaused(session.id) && !host.turnQueue.isSessionRecoveryRequired(session.id),
       canResume: !host.running
         && !host.promptEnhancerRunning
         && !knowledgeManager?.isRunning
@@ -343,6 +346,7 @@ export function renderQueue(host: CodexComposerHost): void {
     },
     {
       onResume: () => void host.resumeQueuedTurns(session.id),
+      onInsert: (sessionId, itemId) => { void insertQueuedTurnIntoActiveRun(host, sessionId, itemId); },
       onRecover: () => undefined,
       onDragStart: (itemId) => {
         host.draggedQueueItemId = itemId;

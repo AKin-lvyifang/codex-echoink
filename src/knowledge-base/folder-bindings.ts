@@ -1,4 +1,4 @@
-import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole, rebaseKnowledgePath, type KnowledgeRootRole } from "./root-paths-core";
+import { KNOWLEDGE_ROOT_NAMES, KNOWLEDGE_ROOT_ROLES, knowledgeRootRole, rebaseKnowledgePath, type KnowledgeRootRole } from "./root-paths-core";
 
 export interface KnowledgeFolderBinding {
   enabled: boolean;
@@ -157,7 +157,35 @@ export function migrateKnowledgeFolderBindings(directories: readonly string[], m
     result.migrationIssues.push(`raw：与 ${role} 位置冲突`, `${role}：与资料来源位置冲突`);
   }
   for (const role of KNOWLEDGE_ROOT_ROLES) if (result.migrationIssues.some((issue) => issue.startsWith(`${role}：`))) result.roles[role].writePath = null;
-  return result;
+  return preferExistingBilingualKnowledgeDefaults(result, directories);
+}
+
+/** Correct exact legacy default paths using observed folders only; custom destinations remain literal. */
+export function preferExistingBilingualKnowledgeDefaults(config: KnowledgeFolderBindings, directories: readonly string[]): KnowledgeFolderBindings {
+  const next = structuredClone(config);
+  let changed = false;
+  for (const role of KNOWLEDGE_ROOT_ROLES) {
+    const binding = next.roles[role], chinese = KNOWLEDGE_ROOT_NAMES[role];
+    const anotherPurpose = KNOWLEDGE_ROOT_ROLES.some(other => other !== role &&
+      [...config.roles[other].readPaths, ...(config.roles[other].writePath ? [config.roles[other].writePath!] : [])]
+        .some(directory => pathInKnowledgeDirectory(chinese, directory) || pathInKnowledgeDirectory(directory, chinese)));
+    if (!binding.enabled || binding.native || !directories.includes(chinese)
+      || anotherPurpose
+      || binding.writePath !== role || binding.readPaths.some(directory => directory !== role && directory !== chinese)
+      || binding.autoOrganizePaths?.length || binding.allowedSubdirectories.length
+      || (role === "wiki" || role === "projects") && config.allowAgentSubfolders === true
+      || next.migrationIssues.some(issue => issue.startsWith(`${role}：`))) continue;
+    binding.readPaths = [...new Set([...binding.readPaths, chinese])];
+    binding.writePath = chinese;
+    binding.compatibilityReadScopes = binding.readPaths.length > 1;
+    if (role === "raw" && next.collectionTargets) for (const kind of ["web", "wechat"] as const) {
+      if (next.collectionTargets[kind] === role) next.collectionTargets[kind] = chinese;
+    }
+    changed = true;
+  }
+  if (!changed) return config;
+  next.revision++;
+  return next;
 }
 export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, from: string, to: string): KnowledgeFolderBindings {
   const next = structuredClone(config);

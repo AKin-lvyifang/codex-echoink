@@ -7,7 +7,7 @@ import vm from "node:vm";
 import esbuild from "esbuild";
 import { createHost } from "../tests/mobile/host.mjs";
 import { mobileBuildOptions } from "./mobile-build.mjs";
-const registered = path.join(homedir(), "EchoInk-TestVaults/90-任务临时/移动端改版-M13-20261019");
+const registered = process.env.ECHOINK_MOBILE_NOTE_UPDATE_TEST_ROOT || path.join(homedir(), "EchoInk-TestVaults/90-任务临时/移动端改版-M13-20261019");
 await fs.mkdir(registered, { recursive: true });
 const root = await fs.mkdtemp(path.join(registered, "note-updates-"));
 const built = await esbuild.build({ ...mobileBuildOptions("tests/mobile-note-update/entry.ts"), metafile: true });

@@ -14,8 +14,12 @@ export function rawDigestStateForRecord(input: {
   previous?: { fingerprint?: string };
   registry?: RawDigestRegistryEntry;
   hasTrackerHint: boolean;
+  maintenance?: Readonly<{ fingerprint: string; status: "processed" | "unread" | "failed" }>;
 }): KnowledgeBaseRawDigestState {
   if (!input.fingerprint) return "pending";
+  if (input.maintenance?.fingerprint === input.fingerprint) {
+    return input.maintenance.status === "processed" ? "digested" : input.maintenance.status === "failed" ? "failed" : "pending";
+  }
   if (input.frontmatter?.status === RAW_DIGEST_STATUS_FAILED) return "failed";
   if (rawDigestRecordIsTrusted(input.frontmatter, input.fingerprint)) return "digested";
   if (input.registry?.fingerprint === input.fingerprint || input.previous?.fingerprint === input.fingerprint) return "digested";

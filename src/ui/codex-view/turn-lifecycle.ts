@@ -1,7 +1,7 @@
 import type CodexForObsidianPlugin from "../../main";
 import type { StoredSession } from "../../settings/settings";
 import type { SessionMessageInput } from "./session-message-store";
-import { CHAT_TURN_WATCHDOG_MS, turnWatchdogTimeoutText } from "../turn-watchdog";
+import { armPausableTurnWatchdog, clearPausableTurnWatchdog, CHAT_TURN_WATCHDOG_MS, type TurnWatchdogOwner } from "../turn-watchdog";
 
 export interface CodexTurnLifecycleHost {
   readonly plugin: CodexForObsidianPlugin;
@@ -11,6 +11,8 @@ export interface CodexTurnLifecycleHost {
   activeRunSessionId: string;
   activeTurnId: string;
   turnWatchdog: number | null;
+  /** Stable run state when this host is a short-lived View adapter. */
+  readonly turnWatchdogOwner?: TurnWatchdogOwner;
   cancelPendingTurn?(): void;
   clearTurnWatchdog(): void;
   clearActiveRun(): void;
@@ -36,9 +38,7 @@ export async function stopTurn(host: CodexTurnLifecycleHost): Promise<void> {
 }
 
 export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_TURN_WATCHDOG_MS, timeoutText?: string): void {
-  host.clearTurnWatchdog();
-  host.turnWatchdog = window.setTimeout(() => {
-    host.turnWatchdog = null;
+  armPausableTurnWatchdog(host.turnWatchdogOwner ?? host, () => {
     if (!host.running) return;
     const session = host.activeRunSession();
     const runId = host.activeRunId;
@@ -53,9 +53,7 @@ export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_T
 }
 
 export function clearTurnWatchdog(host: CodexTurnLifecycleHost): void {
-  if (!host.turnWatchdog) return;
-  window.clearTimeout(host.turnWatchdog);
-  host.turnWatchdog = null;
+  clearPausableTurnWatchdog(host.turnWatchdogOwner ?? host);
 }
 
 export function clearActiveRun(host: CodexTurnLifecycleHost, clearMessageStoreActiveRun: () => void): void {

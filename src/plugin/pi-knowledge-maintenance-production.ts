@@ -2,13 +2,14 @@ import { knowledgeBodyLinkSpans } from "../knowledge-base/knowledge-relations";
 import { readKnowledgeLinkingDocument, buildKnowledgeLinkingTargets, deferKnowledgeLinkingNewLinks, validateKnowledgeLinkingNewLinks } from "../knowledge-base/knowledge-linking";
 import type { KnowledgeLinkingDocument } from "../knowledge-base/knowledge-linking-types";
 import { rebaseKnowledgePathRecords } from "../knowledge-base/root-paths-core";
-import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import { latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import { knowledgeMaintenanceNoteFromReadback } from "../knowledge-base/knowledge-maintenance-result";
 import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base/raw-digest";
-import { registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
+import { registerKnowledgePrivateRoot, knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { knowledgePathPolicy, knowledgePathRole, getKnowledgeFolderBindings, knowledgeRolePath, resolveKnowledgePath } from "../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
-import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isRawMarkdownPath } from "../knowledge-base/raw-digest";
+import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isRawMarkdownPath, isKnowledgeMaintenanceSourcePath, rawDigestRecordFromMarkdown } from "../knowledge-base/raw-digest";
+import { rawDigestStateForRecord } from "../knowledge-base/digest-status";
 import { isBilingualWikiFolder, wikiFolderEnglishId } from "../knowledge-base/wiki-folder-names";
 import { knowledgeMayCreateCategoryDirectory } from "../knowledge-base/folder-organization";
 import { createHash, randomUUID } from "node:crypto";
@@ -1063,20 +1064,31 @@ export async function readPrivateMaintenanceRecords(rootPath: string, options: R
   return records.sort((a, b) => b.at - a.at);
 }
 
-export async function privateMaintenanceSourceScope(vaultRoot: string) {
+export async function privateMaintenanceSourceScope(vaultRoot: string, options: Readonly<{
+  limit?: number; processedSources?: Readonly<Record<string, { fingerprint?: string }>>; readMaintenanceHistory?: boolean;
+}> = {}) {
   const index = await import("../knowledge-base/incremental-index");
   const registry = await readRawDigestRegistry(vaultRoot, true);
   const refreshed = await index.refreshKnowledgeBaseIndex(vaultRoot, { roots: ["raw"], validateRawSafety: true });
-  return { folderBindingsRevision: getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0, sourcePaths: Object.values(refreshed.index.entries).filter((entry) => entry.root === "raw" && isRawMarkdownPath(entry.path) && (!registry.entries[entry.path] || registry.entries[entry.path].fingerprint !== entry.fingerprint)).map((entry) => entry.path).sort().slice(0, 20) };
+  const privateRoot = knowledgePrivateRoot(vaultRoot);
+  const latest = latestMaintenanceSourceStates(privateRoot && options.readMaintenanceHistory !== false ? await readPrivateMaintenanceRecords(privateRoot) : []);
+  const sourcePaths: string[] = [];
+  for (const entry of Object.values(refreshed.index.entries).sort((left, right) => left.path.localeCompare(right.path))) {
+    if (entry.root !== "raw" || !isKnowledgeMaintenanceSourcePath(entry.path) || knowledgePathRole(vaultRoot, entry.path) !== "raw") continue;
+    const bytes = await readFile(path.join(vaultRoot, entry.path));
+    const fingerprint = rawDigestFingerprint(entry.path, bytes);
+    const state = rawDigestStateForRecord({ fingerprint, frontmatter: rawDigestRecordFromMarkdown(bytes), previous: options.processedSources?.[entry.path], registry: registry.entries[entry.path], hasTrackerHint: false, maintenance: latest.get(entry.path) });
+    if (state !== "digested") sourcePaths.push(entry.path);
+  }
+  return { folderBindingsRevision: getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0, sourcePaths: sourcePaths.slice(0, options.limit ?? 20) };
 }
 
 class PrivateMaintenanceTrackerPort implements Phase3MaintenanceTrackerPort {
   constructor(private readonly vaultRoot: string) {}
   async snapshot(): Promise<Readonly<Phase3MaintenanceTrackerSnapshot>> {
-    const index = await import("../knowledge-base/incremental-index");
-    const registry = await readRawDigestRegistry(this.vaultRoot, true);
-    const sources = (await index.refreshKnowledgeBaseIndex(this.vaultRoot, { roots: ["raw"], validateRawSafety: true })).index;
-    return { binding: { kind: "missing" }, changedRawPaths: Object.values(sources.entries).filter((entry) => entry.root === "raw" && (!registry.entries[entry.path] || registry.entries[entry.path].fingerprint !== entry.fingerprint)).map((entry) => entry.path) };
+    // Execution checks its own durable record only; unrelated history cannot
+    // become a prerequisite for committing an explicitly selected source.
+    return { binding: { kind: "missing" }, changedRawPaths: (await privateMaintenanceSourceScope(this.vaultRoot, { limit: Infinity, readMaintenanceHistory: false })).sourcePaths };
   }
 }
 
@@ -1179,18 +1191,24 @@ implements Phase3MaintenanceProposalPort {
       this.privateKnowledgeRootPath,
       ["shadow", previewId]
     );
-    const knowledgeActions: { targetPath: string; content: string; expectedTarget: NonNullable<Phase3MaintenanceProposal["actions"][number]["expectedTarget"]> }[] = [];
+    const knowledgeActions: { targetPath: string; content: string; baselineContent?: string; expectedTarget: NonNullable<Phase3MaintenanceProposal["actions"][number]["expectedTarget"]> }[] = [];
     for (const action of this.options.candidateActions) {
       try {
+        const current = await readImmutableFileIfPresent(this.vaultRootPath, action.targetPath);
+        if (action.expectedTarget.kind === "missing" ? current !== null : !current || `sha256:${current.sha256}` !== action.expectedTarget.contentRevision) {
+          throw new Error("目标已变化，请重新读取目标后调整候选。");
+        }
+        const baselineContent = current ? UTF8_DECODER.decode(current.bytes) : undefined;
         const content = completeKnowledgeMaintenanceCandidateSources({
           targetPath: action.targetPath, content: action.content,
+          baselineContent,
           resolvePath: (value) => resolveKnowledgePath(this.vaultRootPath, value),
           selectedSources: input.selectedSources.map((source) => ({ relativePath: source.raw.relativePath, contentSha256: source.raw.contentSha256 }))
-        });
-        const adopted = validateKnowledgeMaintenanceCandidateSources({ targetPath: action.targetPath, content,
-          selectedSources: input.selectedSources.map((source) => ({ relativePath: source.raw.relativePath, contentSha256: source.raw.contentSha256 })) });
+        }, relative => knowledgePathPolicy(this.vaultRootPath, relative));
+        const adopted = validateKnowledgeMaintenanceCandidateSources({ targetPath: action.targetPath, content, baselineContent,
+          selectedSources: input.selectedSources.map((source) => ({ relativePath: source.raw.relativePath, contentSha256: source.raw.contentSha256 })) }, relative => knowledgePathPolicy(this.vaultRootPath, relative));
         for (const source of adopted) this.usedSourcePaths.add(source.relativePath);
-        knowledgeActions.push({ ...action, content });
+        knowledgeActions.push({ ...action, content, ...(baselineContent !== undefined ? { baselineContent } : {}) });
       } catch (error) { for (const source of candidateSourcePaths(action.content, input.selectedSources.map((source) => source.raw.relativePath))) this.options.failedSourcePaths.add(source); this.options.issues.push({ code: "candidate_skipped", path: action.targetPath, message: `处理候选 ${action.targetPath}：${knowledgeErrorDetail(error)}` }); }
     }
     if (this.options.candidateActions.length && !knowledgeActions.length) throw new Phase3MaintenanceError("proposal_invalid", this.options.issues.map((issue) => issue.message).join("\n"));
@@ -1214,6 +1232,7 @@ implements Phase3MaintenanceProposalPort {
         Object.freeze({
           targetPath: action.targetPath,
           content: action.content,
+          ...(action.baselineContent !== undefined ? { baselineContent: action.baselineContent } : {}),
           ...(action.expectedTarget
             ? { expectedTarget: action.expectedTarget }
             : {})

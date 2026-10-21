@@ -2,7 +2,7 @@ import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { freezeWorkbenchTaskSource } from "../../home/workbench-context";
 import { isPdfReadingIntent } from "../../pdf-reading/intent";
 import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
-import { composerSelectionAnnotations } from "../../selection-ask/draft";
+import { composerSelectionAnnotations, restoreSelectionDraft, emptySelectionDraft } from "../../selection-ask/draft";
 import { cloneSelectionAnnotations, selectionAnnotationsMatch, type SelectionAnnotation } from "../../types/selection-annotations";
 import { Notice } from "obsidian";
 import type {
@@ -41,7 +41,7 @@ import {
   validateApiProvider
 } from "../../settings/settings";
 import { composerPrimaryActionForState } from "../composer-state";
-import { canStartQueuedTurn, type QueuedTurnItem } from "../turn-queue";
+import { canStartQueuedTurn, canInsertQueuedTurn, type QueuedTurnItem } from "../turn-queue";
 import { enabledSkillResources } from "../../resources/registry";
 import type { EchoInkResource } from "../../resources/types";
 import type { CodexViewTurnContext, MessageRenderFollowContext, QueuedTurnOutcome, QueuedTurnSource } from "./runner-context";
@@ -81,6 +81,7 @@ import {
 } from "../../settings/pi-model-catalog";
 import type { TurnOptions } from "../turn-options";
 import {
+  addComposerNoteMentionSelection,
   composerNoteMentionSelections,
   snapshotComposerNoteMentions
 } from "./note-mentions";
@@ -176,6 +177,7 @@ export async function sendMessage(view: CodexViewTurnContext): Promise<void> {
     outcome = await view.startQueuedTurnItemSafely(item, "composer");
   } finally {
     view.queueStartInProgress = false;
+    if (item) view.onComposerTransferFinished?.(item, outcome);
     view.renderToolbar();
   }
   if (item && outcome !== "running") {
@@ -190,103 +192,40 @@ export function piChatMemoryModeForGlobalSetting(
 }
 
 export async function enqueueComposerDraft(view: CodexViewTurnContext): Promise<void> {
-  if (view.lifecycleSignal?.aborted || (view.queueStartInProgress && !view.activeRunId)) return;
+  if (view.lifecycleSignal?.aborted) return;
   const item = await view.createQueuedTurnFromComposer({ allowLocalKnowledgeCommands: false });
   if (!item) return;
-  const session = view.sessionById(item.sessionId);
-  if (isActivePiChatRun(view, session)) {
-    if (
-      routeKnowledgeConversationCommand(item.text.trim()).kind === "maintain"
-      && item.attachments.length
-    ) {
-      showNotice(
-        view,
-        "运行中的 Pi Follow-up 只支持文字；附件或 Skill 请留到下一轮发送。",
-        "A running Pi follow-up supports text only. Send attachments or a Skill in the next turn."
-      );
-      return;
-    }
-    if (item.noteMentions?.length || item.selectionAnnotations?.length) {
-      if (hasMatchingQueuedComposerTransfer(view, item)) {
-        showNotice(
-          view,
-          "这条笔记提及消息已在队列中，等待当前 Pi 任务结束后发送",
-          "This note-mention message is already queued and will send after the current Pi task ends."
-        );
-        return;
-      }
-      item.clearComposerAfterPiAcceptance = true;
-      view.turnQueue.enqueue(item);
-      view.renderQueue();
-      view.renderToolbar();
-      showNotice(
-        view,
-        "含笔记提及的消息已加入队列，将在当前 Pi 任务结束后发送",
-        "The message with note mentions was queued and will send after the current Pi task ends."
-      );
-      return;
-    }
-    if (item.attachments.length) {
-      if (hasMatchingQueuedComposerTransfer(view, item)) {
-        showNotice(
-          view,
-          "这条图片消息已在队列中，等待当前 Pi 任务结束后发送",
-          "This attachment message is already queued and will send after the current Pi task ends."
-        );
-        return;
-      }
-      item.clearComposerAfterPiAcceptance = true;
-      view.turnQueue.enqueue(item);
-      view.renderQueue();
-      view.renderToolbar();
-      showNotice(
-        view,
-        "附件消息已加入队列，将在当前 Pi 任务结束后发送",
-        "The attachment message was queued and will send after the current Pi task ends."
-      );
-      return;
-    }
-    if (!item.text.trim() || item.skill) {
-      showNotice(
-        view,
-        "运行中的 Pi Follow-up 只支持文字；附件或 Skill 请留到下一轮发送。",
-        "A running Pi follow-up supports text only. Send attachments or a Skill in the next turn."
-      );
-      return;
-    }
-    const access = submittedPiAccess.get(view.plugin)?.get(session.id);
-    if (access?.permission === item.turnOptions.permission && access.mode === item.turnOptions.mode) {
-      try {
-        await view.plugin.followUpPiConversation(session.id, item.text.trim());
-        clearComposerAfterPiAcceptance(view, item, "composer");
-        view.renderQueue();
-        view.renderToolbar();
-        showNotice(view, "已加入当前 Pi 任务的后续消息", "Added to the current Pi task as a follow-up.");
-      } catch (error) {
-        new Notice(localizedPiChatErrorMessage(view, error));
-      }
-      return;
-    }
-    // Pi's text-only followUp cannot change access inside the active ProductRun.
-    view.turnQueue.enqueue(item);
-    clearComposerAfterPiAcceptance(view, item, "composer");
-    view.renderQueue();
-    view.renderToolbar();
-    showNotice(view, "已加入队列", "Added to the queue.");
-    return;
-  }
   view.turnQueue.enqueue(item);
+  // Enter always freezes a complete next turn. Insertion is an explicit queue action.
   clearComposerAfterPiAcceptance(view, item, "composer");
+  view.onComposerTransferFinished?.(item, "queued");
   view.renderQueue();
   view.renderToolbar();
-  showNotice(view, "已加入队列", "Added to the queue.");
-  if (
-    !view.running
-    && !view.turnQueue.isSessionQueuePaused(item.sessionId)
-    && !view.turnQueue.isSessionRecoveryRequired(item.sessionId)
-  ) {
+  if (!view.composerStateForSession(view.ensureSession()).viewRunning && !view.turnQueue.isSessionQueuePaused(item.sessionId)
+    && !view.turnQueue.isSessionRecoveryRequired(item.sessionId)) {
     void view.startNextQueuedTurn(item.sessionId);
   }
+}
+
+const insertingQueuedTurns = new Set<string>();
+export async function insertQueuedTurnIntoActiveRun(
+  view: Pick<CodexViewTurnContext, "plugin" | "turnQueue" | "running" | "activeRunSessionId" | "renderQueue" | "renderToolbar">,
+  sessionId: string, itemId: string
+): Promise<void> {
+  const item = view.turnQueue.itemsForSession(sessionId).find(value => value.id === itemId);
+  if (!item || !canInsertQueuedTurn(item) || !view.running || view.activeRunSessionId !== sessionId
+    || view.turnQueue.isSessionQueuePaused(sessionId) || view.turnQueue.isSessionRecoveryRequired(sessionId) || insertingQueuedTurns.has(itemId)) return;
+  const access = submittedPiAccess.get(view.plugin)?.get(sessionId);
+  if (!access || access.permission !== item.turnOptions.permission || access.mode !== item.turnOptions.mode) {
+    showNotice(view, "这条消息的权限或模式与当前任务不同，已保留待发送。", "This message uses different access or mode settings and was kept in the queue."); return;
+  }
+  insertingQueuedTurns.add(itemId);
+  try {
+    await view.plugin.steerPiConversation(sessionId, item.text);
+    view.turnQueue.removeQueuedItem(sessionId, itemId);
+  } catch (error) {
+    new Notice(uiText(view, `插入失败：${localizedPiChatErrorMessage(view, error)}`, `Could not insert: ${localizedPiChatErrorMessage(view, error)}`));
+  } finally { insertingQueuedTurns.delete(itemId); view.renderQueue(); view.renderToolbar(); }
 }
 
 export async function steerPiChatFromComposer(
@@ -534,6 +473,18 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
     showNotice(view, "请先输入问题，再发送注释。", "Enter a question before sending annotations."); return null;
   }
   if (!text && !attachments.length && !selectedNoteMentions.length && !skill) return null;
+  const piDraftId = session.bodyAuthority === "pi_session_only"
+    ? selectedPiConversationDraftId(view.plugin, session.id)
+    : undefined;
+  const snapshot: QueuedTurnItem = {
+    id: newId("queued-turn"), sessionId: session.id, text, composerTextSnapshot,
+    attachments, skill, turnOptions, kind: "chat", createdAt: Date.now(),
+    noteMentions: selectedNoteMentions.map(mention => ({ ...mention, content: "" })),
+    selectionAnnotations, composerPreparationRequired: true, ...(piDraftId ? { piDraftId } : {})
+  };
+  if (view.onComposerTransferStarted) { snapshot.composerDraftTransferred = true; view.onComposerTransferStarted(snapshot); }
+  let prepared = false;
+  try {
   const workspaceReady = await view.ensureChatWorkspaceSelected(session);
   if (!workspaceReady || view.lifecycleSignal?.aborted) {
     options.onError?.(uiText(view, "工作区尚未就绪，本次没有发送。文字和附件已保留。", "The workspace is not ready. The draft and attachments were kept."));
@@ -548,9 +499,6 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
     return null;
   }
   if (session.cwd) turnOptions.cwd = session.cwd;
-  const piDraftId = session.bodyAuthority === "pi_session_only"
-    ? selectedPiConversationDraftId(view.plugin, session.id)
-    : undefined;
   if (!frozenTurnReasoningSelectionIsValid(
     view.plugin.settings,
     turnOptions
@@ -607,8 +555,11 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
       return null;
     }
   }
+  if (view.isComposerTransferCancelled?.(snapshot.id) || view.lifecycleSignal?.aborted) return null;
+  prepared = true;
   return {
-    id: newId("queued-turn"),
+    ...snapshot,
+    composerPreparationRequired: false,
     sessionId: session.id,
     text,
     composerTextSnapshot,
@@ -622,9 +573,27 @@ export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, o
     createdAt: Date.now(),
     ...(piDraftId ? { piDraftId } : {})
   };
+  } finally {
+    if (!prepared) view.onComposerTransferFinished?.(snapshot, "failed");
+  }
 }
 
 export async function startQueuedTurnItem(view: CodexViewTurnContext, item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome> {
+  if (item.composerPreparationRequired) {
+    // This data-only input keeps retries independent from whichever draft is visible now.
+    const input = { value: item.composerTextSnapshot ?? item.text } as HTMLTextAreaElement;
+    restoreSelectionDraft(input, { ...emptySelectionDraft(input.value), annotations: cloneSelectionAnnotations(item.selectionAnnotations ?? []) });
+    for (const mention of item.noteMentions ?? []) addComposerNoteMentionSelection(input, mention);
+    const adapter = Object.create(view) as CodexViewTurnContext;
+    Object.defineProperties(adapter, {
+      inputEl: { value: input }, attachments: { value: item.attachments }, selectedSkill: { value: item.skill },
+      ensureSession: { value: () => view.sessionById(item.sessionId)! }, currentTurnOptions: { value: () => item.turnOptions },
+      onComposerTransferStarted: { value: undefined }, onComposerTransferFinished: { value: undefined }, isComposerTransferCancelled: { value: undefined }
+    });
+    const prepared = await createQueuedTurnFromComposer(adapter, { allowLocalKnowledgeCommands: false });
+    if (!prepared) return "failed";
+    Object.assign(item, prepared, { id: item.id, composerDraftTransferred: true });
+  }
   const ownsStart = !view.queueStartInProgress;
   if (ownsStart) view.queueStartInProgress = true;
   try {
@@ -744,6 +713,26 @@ async function prepareTurnProviderModel(
 }
 
 export async function startChatTurn(view: CodexViewTurnContext, session: StoredSession, item: QueuedTurnItem, source: QueuedTurnSource): Promise<QueuedTurnOutcome> {
+  const additionalMaintenanceItems: QueuedTurnItem[] = [];
+  const sourceSnapshot = freezeWorkbenchTaskSource(item.prefillSource);
+  if (sourceSnapshot?.signalId === 7 && !item.maintenanceScope
+    && item.turnOptions.mode !== "plan" && item.turnOptions.permission !== "read-only") {
+    try {
+      const manager = view.plugin.getKnowledgeSurfaceService();
+      if (!manager) throw new Error("知识库维护尚未就绪，请重试。");
+      const batches = await manager.prepareWorkbenchMaintenance(sourceSnapshot, item.text);
+      const batchItem = (batch: typeof batches[number], index: number): QueuedTurnItem => {
+        const objects = [...batch.maintenanceScope.sourcePaths];
+        return { ...item, id: index ? newId("queued-turn") : item.id, text: batch.text,
+          maintenanceScope: structuredClone(batch.maintenanceScope), composerDraftTransferred: true,
+          ...(index ? { piDraftId: undefined, piUserEntryAccepted: undefined, clearComposerAfterPiAcceptance: undefined } : {}),
+          prefillSource: JSON.stringify({ ...sourceSnapshot, objects,
+            ...(sourceSnapshot.versions ? { versions: Object.fromEntries(Object.entries(sourceSnapshot.versions).filter(([path]) => objects.includes(path))) } : {}) }) };
+      };
+      Object.assign(item, batchItem(batches[0], 0));
+      additionalMaintenanceItems.push(...batches.slice(1).map((batch, index) => batchItem(batch, index + 1)));
+    } catch (error) { new Notice(localizedPiChatErrorMessage(view, error)); return "failed"; }
+  }
   const submittedText = item.text.trim()
     || (item.noteMentions?.length
       ? "请结合我提及的笔记继续。"
@@ -753,7 +742,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
   const knowledgeCommand = routeKnowledgeConversationCommand(submittedText);
   let maintenanceScope: Awaited<
     ReturnType<CodexViewTurnContext["plugin"]["prepareEchoInkKnowledgeMaintenanceScope"]>
-  > | undefined;
+  > | undefined = item.maintenanceScope;
   let preparedImages: Awaited<ReturnType<typeof preparePiChatImages>> = [];
   let preparedDocumentSet: Readonly<PiChatPreparedDocumentSet> = Object.freeze({
     documents: Object.freeze((item.preparedDocuments ?? []).map((document) => Object.freeze({
@@ -778,7 +767,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       return "failed";
     }
     try {
-      if (item.turnOptions.permission !== "read-only") {
+      if (!maintenanceScope && item.turnOptions.permission !== "read-only") {
         maintenanceScope = await view.plugin.prepareEchoInkKnowledgeMaintenanceScope({
           request: knowledgeCommand.request,
           attachmentPaths: item.attachments.map((attachment) => attachment.path)
@@ -981,6 +970,9 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       ...(item.noteMentions?.length ? { noteMentions: item.noteMentions } : {})
     });
     item.piUserEntryAccepted = true;
+    // Remaining batches become eligible only after this first Pi entry is durable.
+    for (const batch of [...additionalMaintenanceItems].reverse()) view.turnQueue.enqueueFront(batch);
+    if (additionalMaintenanceItems.length) view.renderQueue();
     view.running = true;
     if (source === "queue") {
       view.turnQueue.acceptPiUserEntry(session.id, item.id);
@@ -1591,7 +1583,7 @@ function piChatLiveProjectionFromSession(
   generationRequest?: import("../../generation/types").GenerationRequest
 ): PiChatUiViewModel {
   const messages = clonePiChatMessages(session.messages);
-  if (preparedImages.length || preparedDocuments.length || noteMentions.length || selectionAnnotations.length || generationRequest) {
+  {
     const acceptedUserMessage: ChatMessage = {
       id: piProjectedEntryMessageId(
         handle.piSessionId,
@@ -1922,24 +1914,10 @@ function clearComposerAfterPiAcceptance(
   item: Readonly<QueuedTurnItem>,
   source: QueuedTurnSource
 ): void {
+  if (item.composerDraftTransferred) return;
   if (source !== "composer" && item.clearComposerAfterPiAcceptance !== true) return;
   if (view.clearAcceptedComposerDraft) view.clearAcceptedComposerDraft(item);
   else if (composerStillMatchesQueuedTurn(view, item)) view.clearComposerDraft();
-}
-
-function hasMatchingQueuedComposerTransfer(
-  view: CodexViewTurnContext,
-  item: Readonly<QueuedTurnItem>
-): boolean {
-  const active = activeComposerTransfers.get(view);
-  return Boolean(
-    active
-    && active.sessionId === item.sessionId
-    && queuedTurnDraftsMatch(active, item)
-  ) || view.turnQueue.itemsForSession(item.sessionId).some((queued) =>
-    queued.clearComposerAfterPiAcceptance === true
-    && queuedTurnDraftsMatch(queued, item)
-  );
 }
 
 function composerStillMatchesQueuedTurn(
@@ -1955,18 +1933,6 @@ function composerStillMatchesQueuedTurn(
       item.noteMentions ?? []
     )
     && (view.selectedSkill?.id ?? null) === (item.skill?.id ?? null);
-}
-
-function queuedTurnDraftsMatch(
-  left: Readonly<QueuedTurnItem>,
-  right: Readonly<QueuedTurnItem>
-): boolean {
-  return left.text === right.text
-    && left.composerTextSnapshot === right.composerTextSnapshot
-    && selectionAnnotationsMatch(left.selectionAnnotations ?? [], right.selectionAnnotations ?? [])
-    && attachmentListsMatch(left.attachments, right.attachments)
-    && noteMentionPathsMatch(left.noteMentions ?? [], right.noteMentions ?? [])
-    && (left.skill?.id ?? null) === (right.skill?.id ?? null);
 }
 
 function noteMentionPathsMatch(

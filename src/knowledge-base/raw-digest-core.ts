@@ -75,6 +75,15 @@ export function isRawMarkdownPath(relativePath: string): boolean {
   return /\.(?:md|markdown)$/i.test(relativePath);
 }
 
+/** The formal maintenance tool accepts Markdown sources, not their attachments or generated indexes. */
+export function isKnowledgeMaintenanceSourcePath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/gu, "/");
+  return isRawMarkdownPath(normalized)
+    && !normalized.split("/").some(segment => !segment || segment.startsWith(".") || /\.assets$/iu.test(segment))
+    && !/(?:^|\/)index\.(?:md|markdown)$/iu.test(normalized)
+    && !/\.base\.md$/iu.test(normalized);
+}
+
 export function rawDigestRecordFromText(content: string): RawDigestFrontmatterRecord | null {
   const parsed = splitFrontmatter(content);
   if (!parsed.hasFrontmatter) return null;

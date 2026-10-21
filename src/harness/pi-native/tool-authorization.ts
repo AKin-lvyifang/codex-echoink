@@ -230,8 +230,8 @@ const READ_AUTHORIZATION_CONTEXT_KEYS = [
  *
  * The file key is the ProductRun/Tool Call pair, so there can be only one
  * current Ticket for that pair. Re-issuing an unconsumed preview replaces the
- * file atomically and makes the former ticketId unusable. A consumed Ticket is
- * never replaceable.
+ * file atomically and makes the former ticketId unusable. Expired, unconsumed
+ * Tickets may request fresh confirmation; consumed or rejected Tickets cannot.
  */
 export class FileApprovalTicketStore {
   readonly storageRootPath: string;
@@ -300,7 +300,7 @@ export class FileApprovalTicketStore {
         const existing = existingValue
           ? await this.expireIfNeeded(existingValue)
           : null;
-        if (existing && existing.status !== "pending") {
+        if (existing && existing.status !== "pending" && existing.status !== "expired") {
           throw new PiNativeFileStoreError(
             "invalid-transition",
             `Tool Call ${candidate.toolCallId} 的 Approval Ticket 已进入 ${existing.status}，不能替换`
@@ -454,27 +454,15 @@ export class FileApprovalTicketStore {
         if (current.ticket.ticketId !== normalized.ticketId) {
           throw approvalMismatch("ticketId 已失效或已被新预览替换");
         }
-        if (current.status !== "pending") {
+        if (current.status !== "pending" && current.status !== "expired") {
           throw new PiNativeFileStoreError(
             "invalid-transition",
             `Approval Ticket ${current.ticket.ticketId} 已进入 ${current.status}`
           );
         }
         const resolvedAt = requireTimestamp(this.now(), "approval.resolvedAt");
-        if (resolvedAt >= current.ticket.expiresAt) {
-          await this.writeDocument({
-            schemaVersion: PI_NATIVE_FILE_SCHEMA_VERSION,
-            vaultId: this.vaultId,
-            ticket: current.ticket,
-            status: "expired",
-            resolvedAt,
-            consumedAt: null
-          });
-          throw new PiNativeFileStoreError(
-            "invalid-transition",
-            `Approval Ticket ${current.ticket.ticketId} 已过期`
-          );
-        }
+        // A refusal/cancellation remains authoritative after TTL. This API
+        // cannot approve; consume() still rejects expired positive decisions.
         const document = await this.writeDocument({
           schemaVersion: PI_NATIVE_FILE_SCHEMA_VERSION,
           vaultId: this.vaultId,
@@ -641,6 +629,53 @@ export class FileApprovalTicketStore {
       );
     }
     return readback;
+  }
+}
+
+/** Renew only an expired approval, and always obtain a fresh explicit decision. */
+export async function confirmAndConsumeApprovalTicket(input: Readonly<{
+  approvals: FileApprovalTicketStore;
+  contract: ApprovalOperationContract;
+  confirm(ticket: Readonly<EchoInkApprovalTicket>): Promise<boolean>;
+  signal?: AbortSignal;
+  now?: () => number;
+  ttlMs?: number;
+  onExpired?(): void;
+}>): Promise<Readonly<WriteToolAuthorizationContext>> {
+  const now = input.now ?? Date.now;
+  const ttlMs = input.ttlMs ?? 5 * 60 * 1000;
+  if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) throw new TypeError("approval_ttl_invalid");
+  for (;;) {
+    if (input.signal?.aborted) throw new Error("approval_cancelled");
+    const issuedAt = now();
+    const ticket = await input.approvals.issue({ ...input.contract, issuedAt, expiresAt: issuedAt + ttlMs });
+    let accepted: boolean;
+    try {
+      accepted = await input.confirm(ticket);
+    } catch {
+      await resolveDecision("cancelled", ticket);
+      throw new Error("approval_cancelled");
+    }
+    if (!accepted || input.signal?.aborted) {
+      const resolution = input.signal?.aborted ? "cancelled" : "denied";
+      await resolveDecision(resolution, ticket);
+      throw new Error(resolution === "cancelled" ? "approval_cancelled" : "approval_denied");
+    }
+    try {
+      return await input.approvals.consume({ ticketId: ticket.ticketId, operationIdentity: ticket.operationIdentity, contract: input.contract });
+    } catch (error) {
+      if (!await isExpired(ticket)) throw error;
+      input.onExpired?.();
+    }
+  }
+
+  async function isExpired(ticket: Readonly<EchoInkApprovalTicket>): Promise<boolean> {
+    const state = await input.approvals.get(ticket.productRunId, ticket.toolCallId);
+    return state?.ticket.ticketId === ticket.ticketId && state.status === "expired";
+  }
+
+  async function resolveDecision(resolution: "denied" | "cancelled", ticket: Readonly<EchoInkApprovalTicket>): Promise<void> {
+    await input.approvals.resolve({ ticketId: ticket.ticketId, productRunId: ticket.productRunId, toolCallId: ticket.toolCallId, resolution });
   }
 }
 
@@ -1082,12 +1117,6 @@ function validateApprovalTicketState(
   }
   if (status === "expired" && resolvedAt < ticket.expiresAt) {
     throw new Error("expired Ticket 的 resolvedAt 不能早于 expiresAt");
-  }
-  if (
-    (status === "denied" || status === "cancelled")
-    && resolvedAt >= ticket.expiresAt
-  ) {
-    throw new Error(`${status} Ticket 不能在过期后结算`);
   }
 }
 

@@ -77,7 +77,8 @@ export async function runComposerActionTests(): Promise<void> {
       assert.equal(desktopDisabled.calls.send, 0);
       const desktopQueue = renderAction({ running: true, hasDraft: true });
       desktopQueue.primary.click();
-      assert.equal(desktopQueue.calls.enqueue, 1);
+      assert.equal(desktopQueue.calls.stop, 1);
+      assert.equal(desktopQueue.calls.enqueue, 0);
       Platform.isDesktopApp = false;
       assert.equal(renderAction().mention, null, "mobile retains its existing toolbar");
     } finally { Platform.isDesktopApp = desktop; }
@@ -127,10 +128,11 @@ export async function runComposerActionTests(): Promise<void> {
     assert.equal(send.mic.querySelector("rect")?.getAttribute("rx"), "3");
 
     const enqueue = renderAction({ running: true, hasDraft: true });
-    assert.equal(enqueue.primary.hasClass("is-queue-action"), true);
+    assert.equal(enqueue.primary.hasClass("is-stop-action"), true);
     assert.equal(enqueue.primary.querySelector(".echoink-animate-icon-send-horizontal"), null);
     enqueue.primary.click();
-    assert.equal(enqueue.calls.enqueue, 1);
+    assert.equal(enqueue.calls.stop, 1);
+    assert.equal(enqueue.calls.enqueue, 0);
 
     const stop = renderAction({ running: true, hasDraft: false });
     assert.equal(stop.primary.hasClass("is-stop-action"), true);
@@ -141,9 +143,10 @@ export async function runComposerActionTests(): Promise<void> {
     assert.equal(stop.calls.stop, 1);
 
     const resume = renderAction({ hasQueuedItems: true, hasDraft: false });
-    assert.equal(resume.primary.getAttribute("aria-label"), "继续队列");
+    assert.equal(resume.primary.getAttribute("aria-label"), "发送");
     resume.primary.click();
-    assert.equal(resume.calls.resume, 1);
+    assert.equal(resume.calls.send, 1);
+    assert.equal(resume.calls.resume, 0);
 
     const cancelKnowledge = renderAction({ knowledgeTaskRunning: true });
     cancelKnowledge.primary.click();

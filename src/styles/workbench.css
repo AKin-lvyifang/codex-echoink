@@ -141,3 +141,6 @@
 .echoink-workbench .wb-todo-project { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 8px; font-size: calc(var(--font-text-size,16px)*.75); color: var(--secondary); overflow-wrap: anywhere; }
 .echoink-workbench .wb-todo-project svg { width: 12px; height: 12px; }
 .echoink-workbench .wb-todo-project > span { order: -1; }
+
+.echoink-workbench .wb-group-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-muted); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.echoink-workbench .wb-group-status[hidden], .echoink-workbench .wb-count[hidden], .echoink-workbench .wb-grid.is-empty, .echoink-workbench .wb-rows.is-empty { display: none; }

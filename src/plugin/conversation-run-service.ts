@@ -11,7 +11,7 @@ import { startQueuedTurnItemSafely, startQueuedTurnItem, startChatTurn } from ".
 import { SessionMessageStore } from "../ui/codex-view/session-message-store";
 import type { ChatMessage, StoredSession } from "../settings/settings";
 import { cloneEchoInkTurnInteraction, type EchoInkTurnInteraction } from "../types/conversation-turn";
-import { CHAT_TURN_WATCHDOG_MS } from "../ui/turn-watchdog";
+import { armPausableTurnWatchdog, clearPausableTurnWatchdog, setTurnWatchdogWaiting, CHAT_TURN_WATCHDOG_MS } from "../ui/turn-watchdog";
 
 export interface ConversationRunState {
   running: boolean;
@@ -279,8 +279,7 @@ export class ConversationRunService {
     await this.plugin.saveSettings(true);
   }
   private clearWatchdog(state: ConversationRunState): void {
-    if (state.turnWatchdog !== null) window.clearTimeout(state.turnWatchdog);
-    state.turnWatchdog = null;
+    clearPausableTurnWatchdog(state);
   }
   private createHost(state: ConversationRunState, item: QueuedTurnItem, onAccepted?: () => void): CodexViewTurnContext {
     const plugin = this.plugin;
@@ -327,9 +326,7 @@ export class ConversationRunService {
       renderMessagesIfActive: (_session, message) => refresh(message),
       clearActiveRun: () => { store.clearActiveRun(); this.clearActiveRun(id, state); },
       armTurnWatchdog: (timeout = CHAT_TURN_WATCHDOG_MS) => {
-        this.clearWatchdog(state);
-        state.turnWatchdog = window.setTimeout(() => {
-          state.turnWatchdog = null;
+        armPausableTurnWatchdog(state, () => {
           if (state.running) void this.stopTask(id, "watchdog").catch(error => console.error("Conversation timeout cancellation failed", error));
         }, timeout);
       }, clearTurnWatchdog: () => this.clearWatchdog(state),
@@ -366,6 +363,7 @@ export class ConversationRunService {
         }
         const pending = this.pendingInteractions.get(taskId);
         const waiting = pending && (pending.status === "pending" || pending.status === "submitting");
+        if (taskState) setTurnWatchdogWaiting(taskState, !!waiting && pending.turnId === taskState.activeTurnId);
         const patch: ConversationTaskMetadataPatch = waiting
           ? { taskStatus: "waiting", pendingResponse: { runId: pending.turnId,
               questionId: pending.kind === "question" ? pending.questions[pending.activeQuestionIndex ?? 0]?.questionId ?? pending.interactionId : pending.interactionId,

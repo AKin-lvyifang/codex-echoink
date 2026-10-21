@@ -21,18 +21,23 @@ export function completeKnowledgeMaintenanceCandidateSources(input: Readonly<{
   content: string;
   selectedSources: readonly Readonly<KnowledgeMaintenanceRawBinding>[];
   resolvePath?: (value: string) => string;
+  /** Trusted current target bytes, authenticated by the host against expectedTarget. */
+  baselineContent?: string;
 }>, host: KnowledgeMaintenanceSourcesHost): string {
   const allowed = new Map(input.selectedSources.map((source) => [source.relativePath, source.contentSha256]));
-  const links = extractReadableRawLinks(input.content, input.targetPath, host, new Set(allowed.keys()));
-  for (const match of input.content.matchAll(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu)) {
-    try { const value = JSON.parse(match[1]) as { path?: string }; if (value.path) links.add(value.path); } catch { /* obsolete optional marker is replaced below */ }
+  const baseline = baselineSources(input.baselineContent, input.targetPath, host);
+  const markers = extractMachineSourceMarkers(input.content, host);
+  const links = readableSourceLinks(input.content, input.targetPath, host, new Set([...allowed.keys(), ...baseline.links]));
+  for (const [source, revision] of markers) {
+    if (!allowed.has(source) && (!baseline.links.has(source) || baseline.markers.get(source) !== revision)) throw new Error(`来源不在本次范围或旧来源标记已变化：${source}`);
+    links.add(source);
   }
   if (input.resolvePath) {
     for (const source of [...links]) { links.delete(source); links.add(input.resolvePath(source)); }
   }
-  if (!links.size && allowed.size === 1) links.add([...allowed.keys()][0]);
-  if (!links.size) throw new Error("来源关系不明确：请注明本候选采用的 Raw；程序不会编造多来源关系。");
-  for (const source of links) if (!allowed.has(source)) throw new Error(`来源不在本次范围：${source}`);
+  if (![...links].some(source => allowed.has(source)) && allowed.size === 1) links.add([...allowed.keys()][0]);
+  if (![...links].some(source => allowed.has(source))) throw new Error("来源关系不明确：请注明本候选采用的 Raw；程序不会编造多来源关系。");
+  for (const source of links) if (!allowed.has(source) && !baseline.links.has(source)) throw new Error(`来源不在本次范围：${source}`);
   const body = input.content
     .replace(/\[\[([^\]|#\r\n]+)([^\]\r\n]*)\]\]/gu, (match, target: string, suffix: string) => input.resolvePath && host.rolePath(target).startsWith("raw/") ? `[[${input.resolvePath(target)}${suffix}]]` : match)
     .replace(/\[([^\]\r\n]*)\]\(([^)\r\n]+)\)/gu, (match, label: string, target: string) => {
@@ -40,9 +45,10 @@ export function completeKnowledgeMaintenanceCandidateSources(input: Readonly<{
       return input.resolvePath && source ? `[${label}](${input.resolvePath(source)})` : match;
     })
     .replace(/<!--\s*echoink-source[^\n]*?-->/gu, "").trimEnd();
-  return body + "\n\n" + [...links].map((source) =>
-    `[[${source}|原始材料]]\n<!-- echoink-source: ${JSON.stringify({ path: source, revision: `sha256:${allowed.get(source)}` })} -->`
-  ).join("\n") + "\n";
+  return body + "\n\n" + [...links].flatMap(source => {
+    const revision = allowed.has(source) ? `sha256:${allowed.get(source)}` : baseline.markers.get(source);
+    return revision ? [`[[${source}|原始材料]]\n<!-- echoink-source: ${JSON.stringify({ path: source, revision })} -->`] : [];
+  }).join("\n") + "\n";
 }
 
 /**
@@ -54,21 +60,21 @@ export function validateKnowledgeMaintenanceCandidateSources(input: Readonly<{
   targetPath: string;
   content: string;
   selectedSources: readonly Readonly<KnowledgeMaintenanceRawBinding>[];
+  baselineContent?: string;
 }>, host: KnowledgeMaintenanceSourcesHost): readonly Readonly<KnowledgeMaintenanceSourceEvidence>[] {
   const targetPath = host.normalizePath(input.targetPath);
   const allowed = new Map(input.selectedSources.map((source) => [
     normalizeRawPath(source.relativePath, host),
     normalizeDigest(source.contentSha256)
   ]));
-  const links = extractReadableRawLinks(input.content, targetPath, host, new Set(allowed.keys()));
+  const baseline = baselineSources(input.baselineContent, targetPath, host);
+  const links = readableSourceLinks(input.content, targetPath, host, new Set([...allowed.keys(), ...baseline.links]));
   const markers = extractMachineSourceMarkers(input.content, host);
   if (links.size === 0 || markers.size === 0) {
     throw new Error("knowledge_candidate_source_missing");
   }
   if (
-    links.size !== markers.size
-    || [...links].some((relativePath) => !markers.has(relativePath))
-    || [...markers.keys()].some((relativePath) => !links.has(relativePath))
+    [...markers.keys()].some((relativePath) => !links.has(relativePath))
   ) {
     throw new Error("knowledge_candidate_source_mismatch");
   }
@@ -78,7 +84,12 @@ export function validateKnowledgeMaintenanceCandidateSources(input: Readonly<{
   )) {
     const expectedDigest = allowed.get(relativePath);
     const revision = markers.get(relativePath);
-    if (!expectedDigest || !revision) {
+    if (!expectedDigest) {
+      if (!baseline.links.has(relativePath)) throw new Error("knowledge_candidate_source_outside_snapshot");
+      if (revision !== baseline.markers.get(relativePath)) throw new Error("knowledge_candidate_source_revision_mismatch");
+      continue;
+    }
+    if (!revision) {
       throw new Error("knowledge_candidate_source_outside_snapshot");
     }
     if (revision !== `sha256:${expectedDigest}`) {
@@ -86,7 +97,18 @@ export function validateKnowledgeMaintenanceCandidateSources(input: Readonly<{
     }
     evidence.push(Object.freeze({ relativePath, revision }));
   }
+  if (!evidence.length) throw new Error("knowledge_candidate_source_missing");
   return Object.freeze(evidence);
+}
+
+function baselineSources(content: string | undefined, targetPath: string, host: KnowledgeMaintenanceSourcesHost) {
+  const markers = extractMachineSourceMarkers(content ?? "", host);
+  const links = readableSourceLinks(content ?? "", targetPath, host, new Set(markers.keys()));
+  return { links, markers };
+}
+
+function readableSourceLinks(content: string, targetPath: string, host: KnowledgeMaintenanceSourcesHost, allowed: ReadonlySet<string>): Set<string> {
+  return new Set([...extractReadableRawLinks(content, targetPath, host, allowed), ...extractReadableRawLinks(content, targetPath, host)]);
 }
 
 export function extractMachineSourceMarkers(content: string, host: KnowledgeMaintenanceSourcesHost): Map<string, string> {
@@ -167,6 +189,7 @@ function resolveRawLink(value: string, knowledgePath: string, host: KnowledgeMai
       ));
   try {
     if (allowed && !allowed.has(candidate)) return null;
+    if (!allowed && !host.rolePath(candidate).toLowerCase().startsWith("raw/")) return null;
     return normalizeRawPath(candidate, host);
   } catch {
     return null;

@@ -125,7 +125,7 @@ export function renderSettingsKnowledgeDashboard(
   wiki.closest(".data-panel")?.createEl("p", { cls: "table-note", text: t("占比以知识成果一级分类目录内的文件为分母；入口页等根目录文件只计入总数。", "Shares use files inside first-level knowledge category folders. Root-level files such as index.md count toward the total only.") });
   const queues = table(panels, t("资料来源 / 收件箱状态", "Sources / Inbox status"), snapshot.raw.fileCount + snapshot.inbox.fileCount, [t("区域", "Area"), t("总数", "Total"), t("今日新增", "Added today"), t("待处理", "Pending"), t("待校准", "Calibration")]);
   const raw = cells(queues, [t("资料来源", "Sources"), String(snapshot.raw.fileCount), String(snapshot.raw.todayCount), "", ""]);
-  for (const [index, count] of [[3, snapshot.raw.digestStatus.pending + snapshot.raw.digestStatus.changed], [4, snapshot.raw.digestStatus.calibration]]) {
+  for (const [index, count] of [[3, snapshot.raw.changedCount], [4, snapshot.raw.digestStatus.calibration]]) {
     const open = (raw.children[index] as HTMLElement).createEl("button", { cls: "queue-count", text: String(count), attr: {
       type: "button", title: t("在文件列表中打开资料来源目录", "Open source folders in the file explorer"),
       "aria-label": t(`${index === 3 ? "待处理" : "待校准"} ${count} 项，打开资料来源目录`, `${count} ${index === 3 ? "pending" : "needing calibration"}; open source folders`)

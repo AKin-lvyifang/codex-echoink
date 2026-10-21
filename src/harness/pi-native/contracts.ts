@@ -480,7 +480,7 @@ export type PiKnowledgeMaintenanceScope = Readonly<
   | { mode: "global"; sourcePaths?: readonly string[]; folderBindingsRevision?: number }
   | { mode: "exact"; sourcePaths: readonly [string] }
   /** Explicit source list is authoritative; /maintain may also carry batch instructions. */
-  | { mode: "batch"; sourcePaths: readonly string[] }
+  | { mode: "batch"; sourcePaths: readonly string[]; folderBindingsRevision?: number }
   | { mode: "query"; candidatePaths: readonly string[] }
 >;
 

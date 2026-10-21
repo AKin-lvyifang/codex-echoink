@@ -172,7 +172,7 @@ export function createPiUserQuestionToolDefinition(input: Readonly<{
     prompt: Type.String({ minLength: 1, maxLength: 1_000 }),
     selection: Type.Union([Type.Literal("single"), Type.Literal("multiple")]),
     options: Type.Array(optionSchema, { minItems: 2, maxItems: 8 }),
-    allowSupplement: Type.Boolean()
+    allowSupplement: Type.Optional(Type.Boolean({ default: true }))
   }, { additionalProperties: false });
 
   return defineTool({
@@ -180,7 +180,7 @@ export function createPiUserQuestionToolDefinition(input: Readonly<{
     label: "向用户提问",
     description: [
       "当继续执行确实需要用户选择时，发送一到三个结构化问题。",
-      "每个问题必须提供二到八个明确选项，并声明单选或多选；需要自由补充时开启 allowSupplement。",
+      "每个问题必须提供二到八个明确选项，并声明单选或多选；默认允许自由补充，可用 allowSupplement=false 关闭。",
       "不要用普通回答文本或问号替代此 Tool，也不要重复询问已经得到的答案。"
     ].join(""),
     parameters: Type.Object({

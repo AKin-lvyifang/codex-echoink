@@ -83,11 +83,11 @@ export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./f
 const sourceHost: sources.KnowledgeMaintenanceSourcesHost = {
   normalizePath: normalizeVaultRelativePath, rolePath: knowledgeRolePath, path: path.posix
 };
-export function completeKnowledgeMaintenanceCandidateSources(input: Parameters<typeof sources.completeKnowledgeMaintenanceCandidateSources>[0]): string {
-  return sources.completeKnowledgeMaintenanceCandidateSources(input, sourceHost);
+export function completeKnowledgeMaintenanceCandidateSources(input: Parameters<typeof sources.completeKnowledgeMaintenanceCandidateSources>[0], rolePath = sourceHost.rolePath): string {
+  return sources.completeKnowledgeMaintenanceCandidateSources(input, { ...sourceHost, rolePath });
 }
-export function validateKnowledgeMaintenanceCandidateSources(input: Parameters<typeof sources.validateKnowledgeMaintenanceCandidateSources>[0]): ReturnType<typeof sources.validateKnowledgeMaintenanceCandidateSources> {
-  return sources.validateKnowledgeMaintenanceCandidateSources(input, sourceHost);
+export function validateKnowledgeMaintenanceCandidateSources(input: Parameters<typeof sources.validateKnowledgeMaintenanceCandidateSources>[0], rolePath = sourceHost.rolePath): ReturnType<typeof sources.validateKnowledgeMaintenanceCandidateSources> {
+  return sources.validateKnowledgeMaintenanceCandidateSources(input, { ...sourceHost, rolePath });
 }
 export function extractMachineSourceMarkers(content: string): Map<string, string> {
   return sources.extractMachineSourceMarkers(content, sourceHost);

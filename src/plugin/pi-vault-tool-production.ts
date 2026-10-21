@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { App } from "obsidian";
+import { Notice, type App } from "obsidian";
 import {
   TEST_UNCERTAIN,
   TestUncertainInjectionError,
@@ -26,6 +26,7 @@ import {
 } from "../harness/pi-native/pi-vault-tool-security-extension";
 import {
   canonicalJsonStringify,
+  confirmAndConsumeApprovalTicket,
   createReadToolAuthorizationContext,
   isMcpApprovalToolId,
   normalizeJsonValue,
@@ -197,7 +198,6 @@ export function createPiVaultProductionAuthorizationPort(
       if (input.signal?.aborted) {
         throw new PiVaultToolAuthorizationError("approval_cancelled");
       }
-      const issuedAt = now();
       const contract: ApprovalOperationContract = {
         ...identity,
         toolCallId: input.toolCallId,
@@ -211,45 +211,29 @@ export function createPiVaultProductionAuthorizationPort(
         targetVersion: target.targetVersion,
         preview: target.preview
       };
-      const ticket = await options.approvals.issue({
-        ...contract,
-        issuedAt,
-        expiresAt: issuedAt + ttlMs
-      });
-      let accepted = false;
       try {
-        accepted = await options.confirmation.confirm({
-          requestId: ticket.ticketId,
-          conversationId: ticket.conversationId,
-          piSessionId: ticket.piSessionId,
-          productRunId: ticket.productRunId,
-          toolCallId: ticket.toolCallId,
-          toolId: input.toolId,
-          target: target.resolvedTarget,
-          preview: target.preview,
-          ...(input.toolId === "note_delete" ? { deleteAction: true } : {}),
-          signal: input.signal
+        return await confirmAndConsumeApprovalTicket({
+          approvals: options.approvals, contract, now, ttlMs, signal: input.signal,
+          onExpired: () => { new Notice("本次审批已过期，请重新确认；尚未执行操作。"); },
+          confirm: ticket => options.confirmation.confirm({
+            requestId: ticket.ticketId,
+            conversationId: ticket.conversationId,
+            piSessionId: ticket.piSessionId,
+            productRunId: ticket.productRunId,
+            toolCallId: ticket.toolCallId,
+            toolId: input.toolId,
+            target: target.resolvedTarget,
+            preview: target.preview,
+            ...(input.toolId === "note_delete" ? { deleteAction: true } : {}),
+            signal: input.signal
+          })
         });
-      } catch {
-        await resolvePendingTicket(
-          options.approvals,
-          ticket,
-          "cancelled"
-        );
-        throw new PiVaultToolAuthorizationError("approval_cancelled");
+      } catch (error) {
+        if (error instanceof Error && (error.message === "approval_cancelled" || error.message === "approval_denied")) {
+          throw new PiVaultToolAuthorizationError(error.message);
+        }
+        throw error;
       }
-      if (!accepted || input.signal?.aborted) {
-        const resolution = input.signal?.aborted ? "cancelled" : "denied";
-        await resolvePendingTicket(options.approvals, ticket, resolution);
-        throw new PiVaultToolAuthorizationError(
-          resolution === "cancelled" ? "approval_cancelled" : "approval_denied"
-        );
-      }
-      return await options.approvals.consume({
-        ticketId: ticket.ticketId,
-        operationIdentity: ticket.operationIdentity,
-        contract
-      });
     }
   });
 }
@@ -985,19 +969,6 @@ function receiptUiView(view: Readonly<DomainReceiptUiView>): PiChatUiToolReceipt
           updatedAt: view.receipt.recordedAt
         }
       : {})
-  });
-}
-
-async function resolvePendingTicket(
-  approvals: FileApprovalTicketStore,
-  ticket: Readonly<{ productRunId: string; toolCallId: string; ticketId: string }>,
-  resolution: "denied" | "cancelled"
-): Promise<void> {
-  await approvals.resolve({
-    productRunId: ticket.productRunId,
-    toolCallId: ticket.toolCallId,
-    ticketId: ticket.ticketId,
-    resolution
   });
 }
 

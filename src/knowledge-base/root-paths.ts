@@ -68,6 +68,14 @@ export function knowledgeRootEntries(vaultRoot: string): string[] {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
 }
 
+/** Settings migration accepts an existing directory, never a same-name file or symlink. */
+export function knowledgeRootDirectories(vaultRoot: string): string[] {
+  return knowledgeRootEntries(vaultRoot).filter(name => {
+    try { const stat = lstatSync(path.join(vaultRoot, name)); return stat.isDirectory() && !stat.isSymbolicLink(); }
+    catch { return false; }
+  });
+}
+
 export function resolveKnowledgePath(vaultRoot: string, relativePath: string, preferBilingual = true): string {
   if (getKnowledgeFolderBindings(vaultRoot)) {
     // Explicit real paths always stay literal. Logical role callers use resolveKnowledgeRoleTarget.

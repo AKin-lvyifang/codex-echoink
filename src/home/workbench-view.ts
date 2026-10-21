@@ -351,16 +351,42 @@ export class EchoInkWorkbenchView extends ItemView {
   private group(key: string, title: string, count: number, list: boolean): HTMLElement | null {
     const host = this.field("groups");
     let section = Array.from(host.children).find(node => (node as HTMLElement).dataset.wbGroup === key) as HTMLElement | undefined;
-    if (!count) { if (section) { disposeOriginControls(section); section.remove(); } return null; }
     if (!section) {
       section = host.createEl("section", { cls: "wb-section", attr: { "data-wb-group": key } });
       const heading = section.createDiv({ cls: "wb-section-heading" });
       heading.createEl("h2", { attr: { tabindex: "-1" } });
       heading.createSpan({ cls: "wb-count" });
+      section.createDiv({ cls: "wb-group-status", attr: { role: "status", "aria-live": "polite" } });
       section.createDiv({ cls: list ? "wb-rows" : "wb-grid" });
     }
     section.querySelector("h2")!.textContent = title;
-    section.querySelector(".wb-count")!.textContent = String(count);
+    const taskGroup = !["signals", "todos"].includes(key);
+    const available = taskGroup ? this.entries !== null : this.snapshot !== null;
+    const error = taskGroup ? this.taskError : this.dataError;
+    const uncertain = !taskGroup && !!this.snapshot?.issues.some(issue => key === "signals" || /待办|工作区仍在加载/u.test(issue));
+    const status = error ? "error" : !available ? "loading" : uncertain ? "unconfirmed" : count ? "ready" : "empty";
+    section.dataset.state = status;
+    const counter = section.querySelector<HTMLElement>(".wb-count")!;
+    counter.hidden = status === "loading" || status === "error" || status === "unconfirmed";
+    counter.textContent = counter.hidden ? "" : String(count);
+    const feedback = section.querySelector<HTMLElement>(".wb-group-status")!;
+    disposeOriginControls(feedback); feedback.empty();
+    feedback.hidden = status === "ready";
+    feedback.setAttribute("aria-busy", String(status === "loading"));
+    if (status === "loading") feedback.createSpan({ text: this.t("正在读取…", "Reading…") });
+    else if (status === "error") {
+      feedback.createSpan({ text: available ? this.t("读取失败，尚未更新", "Could not refresh; showing previous items") : this.t("读取失败", "Could not read items") });
+      this.button(feedback, this.t("重试", "Retry"), `retry-${key}`, () => this.refresh(), "tertiary");
+    } else if (status === "unconfirmed") feedback.createSpan({ text: this.t("部分事项尚未确认", "Some items have not been checked") });
+    else if (status === "empty") {
+      const emptyCopy: Record<string, [string, string]> = {
+        interrupted: ["暂无中断的任务", "No interrupted tasks"], waiting: ["暂无需要回应的事项", "Nothing waiting for you"],
+        running: ["暂无进行中的任务", "No tasks in progress"], signals: ["暂无可交给 Agent 的事项", "Nothing ready for an Agent"],
+        completed: ["今天还没有完成的任务", "No tasks completed today"], todos: ["今天没有待办", "No to-dos today"]
+      };
+      feedback.createSpan({ text: this.t(...emptyCopy[key]) });
+    }
+    section.lastElementChild?.classList.toggle("is-empty", !count);
     // Reorder only when a group appears; retained rows and focused controls stay put.
     const order = ["interrupted", "waiting", "running", "signals", "completed", "todos"];
     const next = Array.from(host.children).find(node => order.indexOf((node as HTMLElement).dataset.wbGroup!) > order.indexOf(key));

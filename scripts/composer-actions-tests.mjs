@@ -29,15 +29,18 @@ if (process.argv.includes("--dom")) {
   await writeFile(path.join(directory, "index.html"), '<!doctype html><meta charset="utf-8"><title>Production composer menu regression</title><link rel="stylesheet" href="styles.css"><style>body{padding:24px;font:14px sans-serif}h2{font-size:16px}button{margin:8px}output{display:block}iframe{width:100%;height:440px;border:1px solid #ddd}#report{white-space:pre-wrap;line-height:1.6}</style><h2>主文档</h2><main id="fixture"></main><h2>独立 ownerDocument</h2><iframe id="independent" title="独立窗口菜单"></iframe><pre id="report">Running…</pre><script type="module" src="regression.js"></script>');
   console.log(`Open ${directory}/index.html; #report[data-result=passed] is the browser result.`);
 } else {
-  const outfile = path.join(rootDir, ".tmp/composer-actions-tests.mjs");
+  const directory = path.join(process.env.ECHOINK_WORKBENCH_TEST_ROOT || path.join(process.env.HOME, "EchoInk-TestVaults/90-任务临时/工作台可靠性-20261021"), "composer-actions");
+  await mkdir(directory, { recursive: true });
+  const outfile = path.join(directory, "composer-actions-tests.mjs");
   await esbuild.build({
     stdin: { contents: 'import {runComposerActionTests} from "./src/tests/composer-actions"; await runComposerActionTests(); console.log("Composer actions: PASS");', resolveDir: rootDir, loader: "ts" },
     bundle: true, platform: "node", target: "node22", format: "esm", outfile,
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
-    external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml"],
+
     plugins: [{ name: "composer-host-services", setup(build) {
       build.onResolve({ filter: /provider-brand-icons$/ }, () => ({ path: path.join(rootDir, "src/tests/composer-provider-brand-shim.ts") }));
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(rootDir, "src/tests/obsidian-shim.ts") }));
+      build.onResolve({ filter: /^[^./]/ }, args => { const resolved = import.meta.resolve(args.path); return { path: resolved.startsWith("node:") ? resolved : fileURLToPath(resolved), external: true }; });
     } }], logLevel: "silent"
   });
   const result = spawnSync(process.execPath, [outfile], { cwd: rootDir, env: { ...process.env, PI_OFFLINE: "1" }, stdio: "inherit" });

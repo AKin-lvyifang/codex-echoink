@@ -293,9 +293,8 @@ export function normalizeEchoInkQuestionPrompts(
       "questionId",
       "prompt",
       "selection",
-      "options",
-      "allowSupplement"
-    ], "turn_question_invalid");
+      "options"
+    ], "turn_question_invalid", ["allowSupplement"]);
     const questionId = interactionIdentity(record.questionId, "questionId");
     if (questionIds.has(questionId)) throw new TypeError("turn_question_duplicate");
     questionIds.add(questionId);
@@ -325,7 +324,7 @@ export function normalizeEchoInkQuestionPrompts(
         ...(description ? { description } : {})
       });
     }));
-    if (typeof record.allowSupplement !== "boolean") {
+    if (record.allowSupplement !== undefined && typeof record.allowSupplement !== "boolean") {
       throw new TypeError("turn_question_supplement_invalid");
     }
     return Object.freeze({
@@ -333,7 +332,7 @@ export function normalizeEchoInkQuestionPrompts(
       prompt,
       selection: record.selection,
       options,
-      allowSupplement: record.allowSupplement
+      allowSupplement: record.allowSupplement ?? true
     });
   }));
 }

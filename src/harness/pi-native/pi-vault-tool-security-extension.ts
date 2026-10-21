@@ -7,6 +7,7 @@ import {
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { PiKnowledgeReference } from "./contracts";
+import { piToolAccessFailure, type PiToolAccessDecision } from "./pi-workspace-access";
 import {
   isWriteToolAuthorizationContext,
   normalizeToolAuthorizationContext,
@@ -87,7 +88,7 @@ export interface PiVaultToolResultCorrectionPort {
 
 export interface CreatePiVaultToolSecurityAdapterOptions {
   /** Same ProductRun policy used to publish the active tool list. Checked before dispatch. */
-  readonly isToolAllowed?: (toolName: string, args?: Readonly<Record<string, unknown>>) => boolean | Promise<boolean>;
+  readonly isToolAllowed?: (toolName: string, args?: Readonly<Record<string, unknown>>) => boolean | PiToolAccessDecision | Promise<boolean | PiToolAccessDecision>;
   /** Required fail-closed port; there is no allow-all authorization default. */
   readonly authorization: PiVaultToolAuthorizationPort;
   /** Required fail-closed port; there is no unsanitized result default. */
@@ -136,6 +137,7 @@ implements PiVaultToolExecutionSecurityPort {
 
   private readonly records = new Map<string, AuthorizedExecutionRecord>();
   private readonly seenToolCallIds = new Set<string>();
+  private readonly blockedCalls = new Map<string, string>();
   private readonly additionalToolSecurities: readonly PiVaultAdditionalToolSecurityPort[];
 
   constructor(
@@ -202,12 +204,22 @@ implements PiVaultToolExecutionSecurityPort {
   private async handleToolCall(
     event: ToolCallEvent,
     signal: AbortSignal | undefined
-  ): Promise<Readonly<{ block: true; reason: PiVaultToolBlockReason }> | void> {
+  ): Promise<Readonly<{ block: true; reason: string }> | void> {
+    const deny = (reason: string) => {
+      const decision = piToolAccessFailure(new Error(reason));
+      const detail = decision.reason;
+      this.blockedCalls.set(event.toolCallId, detail);
+      return block(detail);
+    };
     if (this.options.isToolAllowed) {
       try {
-        if (!await this.options.isToolAllowed(event.toolName, event.input)) return block("tool_policy_blocked");
-      } catch {
-        return block("authorization_failed");
+        const decision = await this.options.isToolAllowed(event.toolName, event.input);
+        if (decision !== true && !(decision && typeof decision === "object" && decision.allowed)) {
+          return deny(decision && typeof decision === "object" ? decision.reason : "tool_policy_blocked");
+        }
+      } catch (error) {
+        const decision = piToolAccessFailure(error);
+        return deny(decision.reason);
       }
     }
     if (!isPiVaultToolId(event.toolName)) {
@@ -219,15 +231,13 @@ implements PiVaultToolExecutionSecurityPort {
           signal
         );
         return result?.block
-          ? block(isBlockReason(result.reason)
-            ? result.reason
-            : "tool_policy_blocked")
+          ? deny(result.reason)
           : undefined;
       }
-      return block("tool_policy_blocked");
+      return deny("tool_policy_blocked");
     }
     if (this.seenToolCallIds.has(event.toolCallId)) {
-      return block("authorization_failed");
+      return deny("authorization_failed");
     }
     this.seenToolCallIds.add(event.toolCallId);
     let normalizedArguments: Readonly<Record<string, unknown>>;
@@ -237,7 +247,7 @@ implements PiVaultToolExecutionSecurityPort {
         event.input
       );
     } catch {
-      return block("tool_policy_blocked");
+      return deny("tool_policy_blocked");
     }
     const policy = policyFor(event.toolName);
     try {
@@ -265,7 +275,7 @@ implements PiVaultToolExecutionSecurityPort {
         state: "authorized"
       });
     } catch (error) {
-      return block(authorizationBlockReason(error));
+      return deny(authorizationBlockReason(error));
     }
   }
 
@@ -274,6 +284,11 @@ implements PiVaultToolExecutionSecurityPort {
     details: Readonly<PiVaultToolResultDetails> | Readonly<Record<string, unknown>>;
     isError: boolean;
   }> | void> {
+    const blockedReason = this.blockedCalls.get(event.toolCallId);
+    if (blockedReason) {
+      this.blockedCalls.delete(event.toolCallId);
+      return rejectedResult(event.toolCallId, blockedReason);
+    }
     if (!isPiVaultToolId(event.toolName)) {
       const additionalSecurity = this.additionalToolSecurities.find((security) =>
         additionalToolSecurityHandles(security, event.toolName));
@@ -519,9 +534,9 @@ function isBlockReason(value: string): value is PiVaultToolBlockReason {
     || value === "authorization_failed";
 }
 
-function block(reason: PiVaultToolBlockReason): Readonly<{
+function block(reason: string): Readonly<{
   block: true;
-  reason: PiVaultToolBlockReason;
+  reason: string;
 }> {
   return Object.freeze({ block: true, reason });
 }

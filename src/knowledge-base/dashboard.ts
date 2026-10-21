@@ -1,5 +1,6 @@
 import { buildKnowledgeStructureHealth } from "./health-core";
-import { getKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleStatus, knowledgeRolePath, resolveKnowledgePath, knowledgeRoleRoots, type KnowledgeRootRole } from "./root-paths";
+import { getKnowledgeFolderBindings, knowledgePrivateRoot, knowledgePathRole, knowledgeRoleStatus, knowledgeRolePath, resolveKnowledgePath, knowledgeRoleRoots, type KnowledgeRootRole } from "./root-paths";
+import { latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "./maintenance-record";
 import { wikiCategoryLabel } from "./wiki-folder-names";
 import * as fs from "fs";
 import * as fsp from "fs/promises";
@@ -8,7 +9,7 @@ import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseMaintenanceMode, KnowledgeBaseSettings } from "../settings/settings";
 import { rawDigestStateForRecord, rawDigestStateLabel } from "./digest-status";
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type KnowledgeBaseIoBudget } from "./io-budget";
-import { isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
+import { isKnowledgeMaintenanceSourcePath, isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import type { KnowledgeBaseRawDigestState, KnowledgeBaseRawDigestStatus, KnowledgeBaseRunCompletion } from "./types";
 import { isMissingPathError, exists, normalizeSlashes, walkFiles } from "./utils";
@@ -179,7 +180,6 @@ export interface KnowledgeBaseDashboardOptions {
 const MAX_DASHBOARD_FILES = 3000;
 const RECENT_FILE_LIMIT = 18;
 const RECOMMENDATION_PREVIEW_LIMIT = 96;
-const RAW_PROCESSING_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
 export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, settings: KnowledgeBaseSettings, options: KnowledgeBaseDashboardOptions = {}): Promise<KnowledgeBaseDashboardSnapshot> {
   const generatedAt = Date.now();
@@ -225,11 +225,13 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     readErrors.push(trackerPath);
     return { paths: new Set<string>(), updatedAt: 0 };
   });
-  const rawDigestStatus = buildRawDigestStatus(rawContentFiles, processedSources, registry.entries, trackerHints.paths);
+  const privateRoot = knowledgePrivateRoot(vaultPath);
+  const latestSources = latestMaintenanceSourceStates(privateRoot ? await (await import("../plugin/pi-knowledge-maintenance-production")).readPrivateMaintenanceRecords(privateRoot) : []);
+  const rawDigestStatus = buildRawDigestStatus(rawContentFiles, processedSources, registry.entries, trackerHints.paths, latestSources);
   const mergedProcessedSources = authoritativeProcessedSources(rawContentFiles, processedSources, registry.entries);
   const reportFindings = await readReportFindings(vaultPath, reportPath);
   const maintenanceHistory = normalizeMaintenanceHistory(settings.maintenanceHistory ?? [], settings.healthHistory ?? []);
-  const rawChangedCount = rawDigestStatus.pending + rawDigestStatus.changed;
+  const rawChangedCount = rawDigestStatus.pending + rawDigestStatus.changed + rawDigestStatus.failed + rawDigestStatus.calibration;
   const wikiGroups = buildWikiGroups(wiki.files, generatedAt, vaultPath);
   const rawTodayCount = countFilesChangedToday(rawContentFiles, generatedAt);
   const inboxTodayCount = countFilesChangedToday(inbox.files, generatedAt);
@@ -499,7 +501,8 @@ function buildRawDigestStatus(
   files: KnowledgeBaseDashboardFile[],
   processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
   registryEntries: Record<string, RawDigestRegistryEntry>,
-  trackerHints: Set<string>
+  trackerHints: Set<string>,
+  maintenance: ReadonlyMap<string, KnowledgeMaintenanceRecord["sources"][number]>
 ): KnowledgeBaseRawDigestStatus {
   const status: KnowledgeBaseRawDigestStatus = { digested: 0, pending: 0, changed: 0, calibration: 0, failed: 0 };
   for (const file of files) {
@@ -508,7 +511,8 @@ function buildRawDigestStatus(
       frontmatter: file.rawDigest ?? null,
       previous: processed[file.path],
       registry: registryEntries[file.path],
-      hasTrackerHint: trackerHints.has(file.path)
+      hasTrackerHint: trackerHints.has(file.path),
+      maintenance: maintenance.get(file.path)
     });
     status[state] += 1;
   }
@@ -1062,11 +1066,7 @@ function formatLocalDateKey(value: number): string {
 }
 
 function isRawProcessingSource(file: KnowledgeBaseDashboardFile): boolean {
-  if (knowledgeRolePath(file.path) === "raw/index.md") return false;
-  const lower = file.path.toLowerCase();
-  if (lower.endsWith(".base") || lower.endsWith(".base.md")) return false;
-  if (lower.includes(".assets/")) return false;
-  return RAW_PROCESSING_EXTENSIONS.has(path.extname(lower));
+  return isKnowledgeMaintenanceSourcePath(file.path);
 }
 
 function buildWarnings(input: { rawExists: boolean; wikiExists: boolean; trackerExists: boolean; lastError: string; scanLimited: boolean }): string[] {
