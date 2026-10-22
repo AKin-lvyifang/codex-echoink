@@ -100,7 +100,7 @@ export async function runEvaluation(options) {
   const code = {
     git_commit: git(sourceRoot, ['rev-parse', 'HEAD']),
     retrieval_baseline_commit: baselineCommit,
-    retrieval_matches_baseline: git(sourceRoot, ['diff', baselineCommit, '--', 'src']) === '',
+    retrieval_matches_baseline: git(sourceRoot, ['diff', '--name-only', baselineCommit, '--', 'src']) === '',
     evaluator_version: 'knowledge-recall-eval-v1',
     evaluator_git_commit: git(path.resolve(here, '../..'), ['rev-parse', 'HEAD']),
     evaluator_files: await Promise.all((await readdir(here)).filter(name => /\.(?:mjs|ts)$/u.test(name)).sort().map(async name => ({ path: name, sha256: createHash('sha256').update(await readFile(path.join(here, name))).digest('hex') }))),

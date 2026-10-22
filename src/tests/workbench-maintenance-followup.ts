@@ -32,6 +32,24 @@ const confirmation = "都按你推荐的去做";
 export async function runWorkbenchMaintenanceFollowupTests(root: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const report: object[] = [];
+  for (const stages of ["omitted-root-source-paths", "narrowed-write-root"] as const) await scenario(`sdk-${stages}-frozen-batch`,async f=>{
+    const idea="inbox/并列的第二来源.md",paths=[source,idea];
+    await f.write(idea,"# 并列第二来源\n本篇保留独立证据，在计划阶段汇总为同一页。\n");
+    const beforeWiki=await f.wiki();
+    const result=await f.run("/maintain 按冻结批次整理两篇资料",{maintenanceScope:{mode:"batch",sourcePaths:paths}},paths,stages);
+    const run=await f.productRuns.read(result.result.productRunId);
+    if(stages==="omitted-root-source-paths"){
+      assert.equal(result.result.terminalState,"completed");assert.equal(result.tool?.isError,false,result.tool?.content);
+      assert.deepEqual(run?.maintenance?.processedSourcePaths,paths);assert.deepEqual(run?.maintenance?.pendingSourcePaths,[]);
+      for(const selected of paths)assert.ok((await f.wiki()).includes(selected),"omitting every tool root sourcePaths still inherits the whole frozen Raw+Inbox batch");
+    }else{
+      assert.equal(result.result.terminalState,"failed");assert.equal(result.tool?.isError,true);
+      assert.match(result.tool?.content??"",/knowledge_maintenance_source_scope_invalid/u);
+      for(const selected of paths)assert.ok(result.tool?.content.includes(selected),"root narrowing still prints both authorized paths");
+      assert.deepEqual(run?.maintenance?.processedSourcePaths,[]);assert.deepEqual(run?.maintenance?.pendingSourcePaths,paths);
+      assert.equal(await f.wiki(),beforeWiki,"a single-page root cannot authorize a write outside the frozen batch contract");
+    }
+  });
   for (const stage of ["bad-decompose", "bad-plan"] as const) await scenario(`sdk-${stage}-aggregated-bounded-diagnostics`, async f => {
     const before = await f.maintenanceSnapshot();
     const result = await f.run("/maintain 检查工具多处错误", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source, stage);
@@ -455,9 +473,14 @@ async function fixture(root: string, name: string, emptyRaw = false) {
       await bundle.runtime.abort("followup");
       const result = await handle.result; runs.push({ text: confirmation, result }); return result;
     },
-    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "plan" | "resume" | "invalid-write" | "inspect" | "resume-only" | "bad-decompose" | "bad-plan" | "omitted-aliases" = "all") => {
+    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "plan" | "resume" | "invalid-write" | "inspect" | "resume-only" | "bad-decompose" | "bad-plan" | "omitted-aliases" | "omitted-root-source-paths" | "narrowed-write-root" = "all") => {
       const requestStart = bodies.length;
-      const toolCall = (name: string, args: object) => ({ id: `v9-${++callNumber}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
+      const toolCall = (name: string, args: object) => {
+        let parameters=args;
+        if(name==="knowledge_maintain"&&stages==="omitted-root-source-paths")parameters=Object.fromEntries(Object.entries(args).filter(([key])=>key!=="sourcePaths"));
+        if(name==="knowledge_maintain"&&stages==="narrowed-write-root"&&(args as {stage?:string}).stage==="write")parameters={...args,sourcePaths:[typeof maintainSource==="string"?maintainSource:maintainSource![0]]};
+        return { id: `v9-${++callNumber}`, type: "function", function: { name, arguments: JSON.stringify(parameters) } };
+      };
       let maintenanceCallId: string | undefined;
       if (maintainSource) {
         const paths = typeof maintainSource === "string" ? [maintainSource] : maintainSource;

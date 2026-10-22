@@ -507,7 +507,7 @@ function newPageBody(body: string) {
 /** Fill only deterministic metadata/title gaps; all other content still passes strict validation. */
 export function prepareMaintenanceNewPage(content: string, units: readonly MaintenanceKnowledgeUnit[], targetPath: string): string {
   const unitAliases = checkedNewPageUnits(content, units);
-  const { parsed, document, aliases, aliasesRepairable } = newPageMetadata(content);
+  const { parsed, document, pair, aliases, aliasesRepairable } = newPageMetadata(content);
   const title = targetPageTitle(targetPath);
   const combinedAliases = [...(aliases ?? [])];
   const aliasSet = new Set(combinedAliases.map(normalizedAlias));
@@ -519,6 +519,9 @@ export function prepareMaintenanceNewPage(content: string, units: readonly Maint
   }
   const aliasesChanged = aliasesRepairable && (aliases === undefined || aliases.length !== combinedAliases.length);
   if (aliasesChanged) document.set("aliases", combinedAliases);
+  const pendingChanged = units.some((unit) => unit.typePendingConfirmation === true) && !pair("类型待确认");
+  if (pendingChanged) document.set("类型待确认", true);
+  const metadataChanged = aliasesChanged || pendingChanged;
   let body = parsed.body;
   const { headings } = newPageBody(body);
   const h1 = headings.filter((heading) => heading.level === 1);
@@ -528,7 +531,7 @@ export function prepareMaintenanceNewPage(content: string, units: readonly Maint
     const originalTitle = body.slice(h1[0].start, h1[0].end).replace(/^ {0,3}#[ \t]+/u, "").replace(/[ \t]+#+[ \t]*$/u, "");
     body = `${body.slice(0, h1[0].start)}# ${title}${newline}${newline}${originalTitle}${body.slice(h1[0].end)}`;
   }
-  if (!aliasesChanged) return content.slice(0, parsed.bodyStart) + body;
+  if (!metadataChanged) return content.slice(0, parsed.bodyStart) + body;
   const newline = /\r\n|\n|\r/u.exec(content)?.[0] ?? "\n";
   const yaml = document.toString().replace(/\r\n|\n|\r/gu, newline);
   return `${content.startsWith("\uFEFF") ? "\uFEFF" : ""}---${newline}${yaml}---${newline}${body}`;

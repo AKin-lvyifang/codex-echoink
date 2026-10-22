@@ -112,6 +112,7 @@ export function runMaintenanceKnowledgeQualityTests(): void {
   assert.throws(() => validateMaintenanceNewPage("# 标题\n导语\n## 小节\n正文", [valid]), /YAML/u);
   assert.throws(() => validateMaintenanceNewPage("---\n类型: 概念\naliases: []\n# 未关闭", [valid]), /closed/u);
   assertNewPagePreparation(first);
+  assertPendingTypePreparation(first);
   assertNewPageFailureAggregation(first);
   assertUnitFailureAggregation(first);
   assertQuoteGrounding();
@@ -154,6 +155,43 @@ function assertNewPagePreparation(first: MaintenanceKnowledgeSource): void {
     assert.throws(() => prepareMaintenanceNewPage(page("概念", "aliases: []", body), units, path), /one H1/u);
   const onlyComment = page("概念", "aliases: []", "# 间隔复习\n\n导语。\n\n## 小节\n\n<!-- 注释不是知识正文 -->\n");
   assert.throws(() => validateMaintenanceNewPage(onlyComment, [unit(first)], path), /knowledge content beyond/u);
+}
+
+function assertPendingTypePreparation(first: MaintenanceKnowledgeSource): void {
+  const path = "Wiki/间隔复习.md";
+  const units = groundMaintenanceKnowledgeUnits([unit(first), unit(first, { id: "pending-unit", typePendingConfirmation: true })], [first]);
+  const before = structuredClone(units);
+  const prepared = prepareMaintenanceNewPage(page(), units, path);
+  assert.ok(prepared.includes("类型待确认: true"), "a pending non-primary unit also requires the page marker");
+  validateMaintenanceNewPage(prepared, units, path);
+  assert.equal(prepareMaintenanceNewPage(prepared, units, path), prepared, "adding the missing marker is idempotent");
+  assert.deepEqual(units, before, "preparation cannot change units or evidence");
+  const combined = prepareMaintenanceNewPage(page("概念", "摘要: 保留"), units, path);
+  assert.ok(combined.includes("aliases: []"));
+  assert.ok(combined.includes("类型待确认: true"));
+  validateMaintenanceNewPage(combined, units, path);
+  for (const value of ["false", '"true"', "null", "&pending true", "!!bool true"]) {
+    const original = page("概念", `aliases: []\n类型待确认: ${value}`);
+    const result = prepareMaintenanceNewPage(original, units, path);
+    assert.equal(result, original, "an existing marker is never overwritten, even when invalid");
+    assert.throws(() => validateMaintenanceNewPage(result, units, path), /field=类型待确认/u);
+  }
+  const noPending = [unit(first, { typePendingConfirmation: false })];
+  assert.equal(prepareMaintenanceNewPage(page(), noPending, path), page(), "confirmed units do not create a page marker");
+  assert.equal(prepareMaintenanceNewPage(page(), [unit(first)], path), page(), "units without the optional flag do not create it");
+  const body = "# 间隔复习\n\n## 小节\n\n";
+  const otherErrors = prepareMaintenanceNewPage(page("第八类", "aliases: null", body), units, path);
+  assert.ok(otherErrors.includes("类型待确认: true"));
+  assert.ok(otherErrors.includes("类型: 第八类"), "preparation does not guess a type");
+  assert.ok(otherErrors.includes("aliases: null"));
+  assert.ok(otherErrors.endsWith(body), "the content remains unchanged");
+  assert.throws(() => validateMaintenanceNewPage(otherErrors, units, path), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /共4项错误/u);
+    for (const field of ["类型", "aliases", "body.lead", "body.sections"]) assert.ok(error.message.includes(`field=${field}:`), field);
+    assert.equal(error.message.includes("field=类型待确认:"), false);
+    return true;
+  });
 }
 
 function assertNewPageFailureAggregation(first: MaintenanceKnowledgeSource): void {

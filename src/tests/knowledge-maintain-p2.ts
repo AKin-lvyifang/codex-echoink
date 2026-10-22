@@ -64,10 +64,10 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
   });
   await scenario("new-page-final-basename-h1-and-verified-aliases",async f=>{
     const source="raw/sqlite.md",target="wiki/SQLite.md",title="SQLite：理解嵌入式数据库的事务边界";
-    await f.write(source,"# SQLite原文\nSQLite把数据库引擎嵌入应用进程。\n");const unit=await f.unit("sqlite",source,title,"工具 / 产品");unit.aliases=["SQLite3"];
+    await f.write(source,"# SQLite原文\nSQLite把数据库引擎嵌入应用进程。\n");const unit=await f.unit("sqlite",source,title,"工具 / 产品");unit.aliases=["SQLite3"];unit.typePendingConfirmation=true;
     f.ok(await f.decompose([source],[unit]));f.ok(await f.call({stage:"plan",writingPlan:[f.item("sqlite",target,[source],[unit.id])]},[source]));
     f.ok(await f.call({stage:"write",pageId:"sqlite",content:page(title,"工具 / 产品").replace("aliases: []\n","")},[source]));
-    const after=await f.read(target);assert.match(after,/# SQLite\n/u);assert.ok(after.includes(title),"descriptive article title remains in the lead");assert.ok(after.includes("SQLite3"));const map=await f.read("wiki/工程工具索引.md");assert.ok(map.includes("[SQLite](<SQLite.md>)"));assert.ok(!map.includes(`[${title}](`));
+    const after=await f.read(target);assert.match(after,/# SQLite\n/u);assert.ok(after.includes(title),"descriptive article title remains in the lead");assert.ok(after.includes("SQLite3"));assert.ok(after.includes("类型待确认: true"),"a missing field is supplied from the verified pending unit in the production write chain");const map=await f.read("wiki/工程工具索引.md");assert.ok(map.includes("[SQLite](<SQLite.md>)"));assert.ok(!map.includes(`[${title}](`));
   });
   await scenario("unselected-handwritten-eof-survives-new-managed-sections",async f=>{
     const source="raw/eof.md",target="wiki/保留留白.md",related="wiki/关联页.md";
