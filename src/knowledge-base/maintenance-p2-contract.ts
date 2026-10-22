@@ -5,6 +5,14 @@ export interface MaintenanceKnowledgeEvidence {
   /** Exact full-file sha256 returned by the real note_read at decomposition time. */
   sourceRevision: string;
   quote: string;
+  /** Program-derived full-file offsets; never trusted from model arguments. */
+  quoteLocation?: {
+    start: number;
+    end: number;
+    unit: "utf16";
+    match: "literal" | "whitespace";
+    submittedQuote: string;
+  };
 }
 export interface MaintenanceKnowledgeUnit {
   id: string;

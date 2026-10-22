@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import type { MaintenanceKnowledgeSource, MaintenanceKnowledgeUnit } from "../knowledge-base/maintenance-p2-contract";
-import { validateMaintenanceKnowledgeUnits, validateMaintenanceNewPage } from "../knowledge-base/maintenance-knowledge-quality";
+import { groundMaintenanceKnowledgeUnits, validateMaintenanceKnowledgeUnits, validateMaintenanceNewPage } from "../knowledge-base/maintenance-knowledge-quality";
 import { MAINTENANCE_KNOWLEDGE_TYPES, MAINTENANCE_KNOWLEDGE_WRITING_TEMPLATES, maintenanceKnowledgeTypePrompt } from "../knowledge-base/maintenance-knowledge-types";
 
 function source(path: string, content: string): MaintenanceKnowledgeSource {
@@ -52,7 +52,7 @@ export function runMaintenanceKnowledgeQualityTests(): void {
   const multiline = source("raw/multiline.md", "# 原句包含换行\n\n第一行保留条件，\n第二行说明结果。\n");
   const multilineEvidence = { sourcePath: multiline.path, sourceRevision: multiline.contentRevision, quote: "第一行保留条件，\n第二行说明结果。" };
   validateMaintenanceKnowledgeUnits([unit(multiline, { id: nativeUnit.id, evidence: [multilineEvidence] })], [multiline]);
-  assert.throws(() => validateMaintenanceKnowledgeUnits([unit(multiline, { id: nativeUnit.id, evidence: [{ ...multilineEvidence, quote: multilineEvidence.quote.replace(/\n/gu, "") }] })], [multiline]), failureAt(multiline.path, /quote 不是连续正文原句.*保留原文换行/u));
+  validateMaintenanceKnowledgeUnits([unit(multiline, { id: nativeUnit.id, evidence: [{ ...multilineEvidence, quote: multilineEvidence.quote.replace(/\n/gu, " ") }] })], [multiline]);
   validateMaintenanceKnowledgeUnits([], []);
   validateMaintenanceKnowledgeUnits([unit(first, { evidence: [...valid.evidence, { sourcePath: second.path, sourceRevision: second.contentRevision, quote: "长期效果仍需要验证。" }] })], [first, second]);
   const crlf = source("raw/crlf.md", "\uFEFF---\r\n摘要: 原始属性\r\n---\r\n复习间隔应随掌握情况调整。\r\n");
@@ -111,5 +111,118 @@ export function runMaintenanceKnowledgeQualityTests(): void {
   validateMaintenanceNewPage(page("概念", "aliases: []", "# 标题\n\n有导语。\n\n## 来源\n\n[[raw/source.md]]\n\n## 我为什么这样组织复习\n\n掌握程度变化后应重新安排复习间隔。\n\n## 相关条目\n\n[[wiki/related.md]]\n"), [valid]);
   assert.throws(() => validateMaintenanceNewPage("# 标题\n导语\n## 小节\n正文", [valid]), /YAML/u);
   assert.throws(() => validateMaintenanceNewPage("---\n类型: 概念\naliases: []\n# 未关闭", [valid]), /closed/u);
+  assertQuoteGrounding();
   console.log("Maintenance knowledge quality: seven-type templates, exact evidence/version checks and flexible new-page structure passed.");
+}
+
+function assertQuoteGrounding(): void {
+  const text = "\uFEFF---\r\n摘要: This is one paragraph.\r\n---\r\n# 📖 Title\r\n\r\n😀 intro. This  is\r\none\tparagraph.\r\n\r\nThis  is\r\none\tparagraph.\r\n";
+  const originalSource = source("raw/grounding.md", text);
+  const submitted = "  This is one paragraph. \n";
+  const originalUnit = unit(originalSource, { evidence: [{ sourcePath: originalSource.path, sourceRevision: originalSource.contentRevision.slice(7).toUpperCase(), quote: submitted, quoteLocation: { start: 0, end: 1, unit: "utf16", match: "literal", submittedQuote: "caller position is untrusted" } }] });
+  const before = structuredClone({ originalUnit, originalSource });
+  Object.freeze(originalSource);
+  Object.freeze(originalUnit.evidence[0].quoteLocation);
+  Object.freeze(originalUnit.evidence[0]);
+  Object.freeze(originalUnit.evidence);
+  Object.freeze(originalUnit.aliases);
+  Object.freeze(originalUnit.points);
+  Object.freeze(originalUnit);
+  const [grounded] = groundMaintenanceKnowledgeUnits([originalUnit], [originalSource]);
+  assert.deepEqual({ originalUnit, originalSource }, before, "grounding must not mutate Raw, units, evidence or supplied positions");
+  assert.notEqual(grounded, originalUnit);
+  assert.notEqual(grounded.evidence, originalUnit.evidence);
+  assert.equal(grounded.evidence[0].sourceRevision, originalSource.contentRevision);
+  assert.equal(grounded.evidence[0].quote, "This  is\r\none\tparagraph.");
+  const location = grounded.evidence[0].quoteLocation!;
+  assert.deepEqual(location, { start: text.indexOf("This  is"), end: text.indexOf("This  is") + grounded.evidence[0].quote.length, unit: "utf16", match: "whitespace", submittedQuote: submitted });
+  assert.equal(text.slice(location.start, location.end), grounded.evidence[0].quote);
+  const firstMatch = text.indexOf("This  is");
+  assert.ok(firstMatch > [...text.slice(0, firstMatch)].length, "offsets include UTF-16 surrogate pairs before the quote");
+
+  const check = (content: string, quote: string, match: "literal" | "whitespace" = "whitespace") => {
+    const item = source("raw/range.md", content);
+    const [result] = groundMaintenanceKnowledgeUnits([unit(item, { evidence: [{ sourcePath: item.path, sourceRevision: item.contentRevision, quote }] })], [item]);
+    const evidence = result.evidence[0];
+    assert.equal(evidence.quoteLocation?.match, match);
+    assert.equal(evidence.quoteLocation?.submittedQuote, quote);
+    assert.equal(item.content.slice(evidence.quoteLocation!.start, evidence.quoteLocation!.end), evidence.quote);
+    return evidence;
+  };
+  check("\uFEFF😀  First\r\nline is here.", "😀 First line is here.");
+  check("Same\nparagraph has    spaces.", "Same paragraph has spaces.");
+  check("alpha\tbeta\rnext line", "alpha beta next line");
+  check("Before   words `token   code` after   words.", "Before words");
+  check("Before   words `token   code` after   words.", "after words.");
+  check("A code example `<div>` stays inline.\n\nA  normal\nparagraph follows.", "A normal paragraph follows.");
+  check("- One  item\n  continues here.\n- Another  item.", "One item continues here.");
+  const literalPriority = check("alpha   beta\n\nalpha beta\n\nalpha beta", "alpha beta", "literal");
+  assert.equal(literalPriority.quoteLocation?.start, "alpha   beta\n\n".length, "literal match takes priority, then earliest literal occurrence");
+  check("# Header\n\n```js\nconst   VALUE = 1;\n```\n", "const   VALUE = 1;", "literal");
+  check("first paragraph.\n\nsecond paragraph.", "first paragraph.\n\nsecond paragraph.", "literal");
+
+  const rejects = (content: string, quote: string) => {
+    const item = source("raw/reject.md", content);
+    assert.throws(() => groundMaintenanceKnowledgeUnits([unit(item, { evidence: [{ sourcePath: item.path, sourceRevision: item.contentRevision, quote }] })], [item]), /quote 不是连续正文原句/u);
+  };
+  rejects("first  paragraph.\n\nsecond  paragraph.", "first paragraph. second paragraph.");
+  rejects("first  paragraph.\n## A heading\nsecond  paragraph.", "first paragraph. second paragraph.");
+  rejects("# Some  heading\n\nA real paragraph.", "Some heading");
+  rejects("Some  heading\n===\n\nA real paragraph.", "Some heading");
+  rejects("- First  item.\n- Second  item.", "First item. - Second item.");
+  rejects("before  code\n```\ninside\n```\nafter  code", "before code after code");
+  rejects("```js\nconst   VALUE = 1;\n```", "const VALUE = 1;");
+  rejects("~~~\nconst   VALUE = 1;\n~~~", "const VALUE = 1;");
+  rejects("    const   VALUE = 1;\n", "const VALUE = 1;");
+  rejects("  \tconst   VALUE = 1;\n", "const VALUE = 1;");
+  rejects("- ```js\n  const   VALUE = 1;\n  ```", "const VALUE = 1;");
+  rejects("Before `token   code` after.", "token code");
+  rejects("Before ``token\n   code`` after.", "token code");
+  rejects("Before  words `token` after  words.", "Before words token after words.");
+  rejects("<pre>\nSome   code\n</pre>", "Some code");
+  rejects("<div>\n<div>\ninside  HTML\n</div>\n\nstill  HTML\n</div>", "still HTML");
+  rejects("<div>\n<!-- </div> -->\nstill  HTML\n</div>", "still HTML");
+  rejects("Before <span>inline   HTML</span> after.", "inline HTML");
+  rejects("<!--\ncomment   text\n-->", "comment text");
+  const nasa = "The answer could be found in the lessons learned from Apollo 1; a major redesign was undertaken.";
+  rejects(nasa, nasa.replace(/^The/u, "the")); // NASA diagnosis: case change, not an invented fact.
+  rejects(nasa, nasa.replace("redesign", "replacement"));
+  rejects(nasa, nasa.replace(";", ","));
+
+  const aggregateSource = source("raw/aggregate.md", "Actual evidence exists here.");
+  const badEvidence = (quote: string) => ({ sourcePath: aggregateSource.path, sourceRevision: aggregateSource.contentRevision, quote });
+  const aggregateUnits = [unit(aggregateSource, { id: "first-id", evidence: [badEvidence("wrong one"), badEvidence("wrong two")] }), unit(aggregateSource, { id: "second-id", evidence: [badEvidence("wrong three")] })];
+  assert.throws(() => groundMaintenanceKnowledgeUnits(aggregateUnits, [aggregateSource]), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /共3条/u);
+    assert.match(error.message, /知识点ID可沿用.*重发完整批次/u);
+    assert.ok(error.message.includes('unit.id="first-id"'));
+    assert.ok(error.message.includes('unit.id="second-id"'));
+    assert.ok(error.message.includes('sourcePath="raw/aggregate.md"'));
+    assert.match(error.message, /quoteIndex=0（从0起始）/u);
+    assert.match(error.message, /quoteIndex=1（从0起始）/u);
+    for (const quote of ["wrong one", "wrong two", "wrong three"]) assert.ok(error.message.includes(`收到的quote="${quote}"`));
+    assert.match(error.message, /已列出3条，遗漏0条/u);
+    return true;
+  });
+  const manyFailures = unit(aggregateSource, { evidence: Array.from({ length: 20 }, (_, index) => badEvidence(`missing quote ${index}`)) });
+  assert.throws(() => groundMaintenanceKnowledgeUnits([manyFailures], [aggregateSource]), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /共20条/u);
+    assert.match(error.message, /已列出12条，遗漏8条/u);
+    assert.equal((error.message.match(/quoteIndex=/gu) ?? []).length, 12);
+    assert.ok(Buffer.byteLength(error.message, "utf8") <= 6500);
+    return true;
+  });
+  const hugeFailures = unit(aggregateSource, { evidence: Array.from({ length: 20 }, () => badEvidence("😀不存在的引文\n".repeat(2000))) });
+  assert.throws(() => groundMaintenanceKnowledgeUnits([hugeFailures], [aggregateSource]), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.ok(Buffer.byteLength(error.message, "utf8") <= 6500);
+    assert.match(error.message, /收到的quote已截短/u);
+    const counts = /已列出(\d+)条，遗漏(\d+)条/u.exec(error.message)!;
+    assert.equal(Number(counts[1]) + Number(counts[2]), 20);
+    assert.ok(Number(counts[1]) > 0 && Number(counts[1]) < 12, "byte cap also limits displayed entries");
+    assert.equal(error.message.includes("\uFFFD"), false, "UTF-8 truncation must not split emoji");
+    return true;
+  });
 }

@@ -10,7 +10,7 @@ import { createMaintenanceSectionSnapshot, applyMaintenanceSectionPatches } from
 import { patchMaintenanceSourceFrontmatter } from "./maintenance-source-frontmatter";
 import { rawDigestFingerprint } from "./raw-digest";
 import { holdMaintenancePages, releaseMaintenancePages, serializeMaintenancePage } from "./maintenance-page-lock";
-import { validateMaintenanceKnowledgeUnits, validateMaintenanceNewPage } from "./maintenance-knowledge-quality";
+import { groundMaintenanceKnowledgeUnits, validateMaintenanceNewPage } from "./maintenance-knowledge-quality";
 import { applyMaintenanceRelatedEntries, maintenancePlanRelations, maintenanceVisibleClassification, validateMaintenanceP2Plan } from "./maintenance-p2-planning";
 import type { MaintenanceDomainMapDraft, MaintenanceDomainMapEntry, MaintenanceKnowledgeSource, MaintenanceKnowledgeUnit, MaintenanceUnitCandidates } from "./maintenance-p2-contract";
 
@@ -72,11 +72,12 @@ export class MaintenanceP1Workflow {
         fingerprints[d.sourcePath] = fingerprint;
         sourceTexts.push({ path: d.sourcePath, content: text, contentRevision: revision(text) });
       }
-      const units = decompositions.flatMap(d => d.units) as MaintenanceKnowledgeUnit[];
-      validateMaintenanceKnowledgeUnits(units, sourceTexts);
+      const units = groundMaintenanceKnowledgeUnits(decompositions.flatMap(d => d.units) as MaintenanceKnowledgeUnit[], sourceTexts);
+      const grounded = new Map(units.map(unit => [unit.id, unit]));
+      const groundedDecompositions = decompositions.map(decomposition => ({ ...decomposition, units: decomposition.units.map(unit => grounded.get((unit as MaintenanceKnowledgeUnit).id)!) }));
       const candidates = await this.host.candidates(units);
       const at = this.host.now(), id = `maintenance-${hash(`${input.productRunId}:${input.toolCallId}:p1`).slice(0, 32)}`;
-      record = { schemaVersion: 1, recordId: id, runId: `${input.productRunId}:${input.toolCallId}`, originConversationId: input.conversationId, at, date: this.host.date(), summary: "拆解已保存，尚未提炼完成", sources: selected.map(p => ({ path: p, fingerprint: fingerprints[p], status: "failed", evidencePaths: [] })), result: createKnowledgeMaintenanceResultEnvelope({ status: "partial", issues: [{ code: "p1_pending", message: "维护阶段尚未完成" }] }), p1: { version: 1, phase: "plan", sourceFingerprints: fingerprints, folderBindingsRevision: input.folderBindingsRevision, decompositions: JSON.parse(JSON.stringify(decompositions)), writingPlan: [], drafts: {}, committedPages: {}, finalizedSources: [] } };
+      record = { schemaVersion: 1, recordId: id, runId: `${input.productRunId}:${input.toolCallId}`, originConversationId: input.conversationId, at, date: this.host.date(), summary: "拆解已保存，尚未提炼完成", sources: selected.map(p => ({ path: p, fingerprint: fingerprints[p], status: "failed", evidencePaths: [] })), result: createKnowledgeMaintenanceResultEnvelope({ status: "partial", issues: [{ code: "p1_pending", message: "维护阶段尚未完成" }] }), p1: { version: 1, phase: "plan", sourceFingerprints: fingerprints, folderBindingsRevision: input.folderBindingsRevision, decompositions: groundedDecompositions, writingPlan: [], drafts: {}, committedPages: {}, finalizedSources: [] } };
       record.p1!.p2 = { version: 2, candidates, finalization: [], committedFinalization: {}, templateNotice: await this.host.templateNotice?.() };
       await this.host.save(record);
       return this.receipt(record, "拆解与Wiki候选已保存；候选不等于同知识点。先读候选，再stage=plan提交判断和写作清单。");
@@ -288,14 +289,19 @@ export class MaintenanceP1Workflow {
       if (state.finalizedSources.includes(source.path)) continue;
       const pages = state.writingPlan.filter(p => p.sourcePaths.includes(source.path));
       if (pages.some(p => !state.committedPages[p.id])) continue;
+      const relationships = state.p2?.finalization.filter(item => item.kind === "relationship" && item.sourcePaths.includes(source.path)) ?? [];
+      // A relation-only old page also acquires this Raw source. Its confirmed
+      // readback is a prerequisite to the Raw's matching reverse link.
+      if (relationships.some(item => !state.p2!.committedFinalization[item.id])) continue;
+      const targetPaths = [...new Set([...pages.map(p => p.targetPath), ...relationships.map(item => item.targetPath)])];
       await this.assertSources(record);
       const before = await this.host.read(source.path);
       if (before === null) throw new Error("原文暂不可读，反链待恢复。");
-      const fields: MaintenanceSourceFields = { status: "已提炼", summary: state.decompositions.find(d => d.sourcePath === source.path)!.summary, targetPaths: pages.map(p => p.targetPath) };
+      const fields: MaintenanceSourceFields = { status: "已提炼", summary: state.decompositions.find(d => d.sourcePath === source.path)!.summary, targetPaths };
       const content = patchMaintenanceSourceFrontmatter(before, fields);
       if (content !== before && !await this.host.commit({ ...input, p1RecordId: record.recordId, toolCallId: `${record.recordId}:source:${hash(source.path).slice(0, 16)}` }, { id: "source", targetPath: source.path, sourcePaths: [source.path], expectedTarget: { kind: "file", contentRevision: revision(before) } }, content, fields)) throw new Error(`知识页已保存，原文反链待恢复：${source.path}；resume只补原文。`);
       if (await this.host.read(source.path) !== content) throw new Error(`原文反链回读失败：${source.path}`);
-      state.finalizedSources.push(source.path); source.status = "processed"; source.evidencePaths = pages.map(p => p.targetPath);
+      state.finalizedSources.push(source.path); source.status = "processed"; source.evidencePaths = targetPaths;
       await this.host.save(record);
     }
     if (record.sources.every(s => state.finalizedSources.includes(s.path))) { state.phase = "completed"; }

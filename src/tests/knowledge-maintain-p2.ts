@@ -1,3 +1,4 @@
+import { canonicalRawMarkdownForDigest } from "../knowledge-base/raw-digest";
 import { createPiKnowledgeMaintenanceToolSecurity } from "../harness/pi-native/pi-knowledge-maintenance-tool";
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import type { PiKnowledgeMaintenanceToolResult } from "../harness/pi-native/contracts";
@@ -108,6 +109,7 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
       const current = await f.observe(target), snapshot = createMaintenanceSectionSnapshot(current);
       const region = snapshot.regions.find(region=>region.title === "证据")!;
       const item = f.item("existing",target,sources,units.map(unit=>unit.id),current);
+      if(item.expectedTarget.kind==="file")item.expectedTarget.contentRevision=item.expectedTarget.contentRevision.slice("sha256:".length);
       f.ok(await f.call({stage:"plan",writingPlan:[item]},sources));
       f.ok(await f.call({stage:"sections",targetPath:target},sources));
       f.ok(await f.call({stage:"write",pageId:"existing",sectionPatches:[{regionId:region.id,operation:"append",content:sources.map(source=>`${source}的新证据。`).join("\n")}]},sources));
@@ -148,6 +150,27 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     f.ok(await f.call({stage:"write",pageId:"latency",content:page(latency.title)},["raw/latency.md"]));
     assert.ok(await f.read("wiki/工具调用等待时间.md"));
   });
+  await scenario("relationship-source-backlinks-and-dependencies", async f => {
+    const old="wiki/协议.md", a="raw/relation-a.md", b="raw/relation-b.md", primaryA="wiki/工具协议.md", primaryB="wiki/排队延迟.md";
+    const originalA="# 关系原文A\n工具协议约束模型与工具之间的请求格式。\n",originalB="# 独立原文B\n排队延迟取决于请求到达与处理速度。\n";
+    await f.write(old,"# 协议\n参与者共同遵循的交互约定。\n\n## 手写\n用户原有内容。  \n");await f.write(a,originalA);await f.write(b,originalB);
+    const ua=await f.unit("relation-a",a,"工具协议"),ub=await f.unit("relation-b",b,"排队延迟");ua.aliases=["协议"];
+    f.ok(await f.decompose([a,b],[ua,ub]));await f.observe(old);
+    const ia=f.item("relation-a",primaryA,[a],[ua.id]);ia.knowledge={...ia.knowledge!,decision:{kind:"uncertain",reason:"保留专门工具场景，待确认概念粒度",candidatePath:old},related:[{targetPath:old,reason:"协议是工具协议的上位概念",reverseReason:"工具协议是协议在模型工具场景中的专门形式"}]};
+    f.ok(await f.call({stage:"plan",writingPlan:[ia,f.item("relation-b",primaryB,[b],[ub.id])]},[a,b]));
+    f.ok(await f.call({stage:"write",pageId:ia.id,content:page(ua.title,"概念",["协议"])},[a,b]));
+    assert.equal(await f.read(a),originalA,"a primary page alone cannot finalize Raw while its relation dependency is pending");
+    f.fail(old);const failed=await f.call({stage:"write",pageId:"relation-b",content:page(ub.title)},[a,b]);assert.equal(failed.status,"failed");
+    assert.equal(await f.read(a),originalA);assert.equal(await f.read(b),originalB);const counts=[f.writes.filter(p=>p===primaryA).length,f.writes.filter(p=>p===primaryB).length];
+    const pending=(await readPrivateMaintenanceRecords(f.privateRoot))[0];assert.ok(pending.p1!.p2!.finalization.some(item=>item.kind==="relationship"&&item.sourcePaths.includes(a)));assert.equal(pending.p1!.finalizedSources.includes(a),false);
+    f.fail(null);await f.restart();f.ok(await f.call({stage:"resume"},[a,b]));
+    assert.deepEqual([f.writes.filter(p=>p===primaryA).length,f.writes.filter(p=>p===primaryB).length],counts,"relationship recovery does not rewrite successful primary pages");
+    const record=(await readPrivateMaintenanceRecords(f.privateRoot))[0],maps=record.p1!.p2!.finalization.filter(item=>item.kind==="map").map(item=>item.targetPath);
+    assert.deepEqual(record.sources.find(source=>source.path===a)!.evidencePaths,[primaryA,old]);assert.deepEqual(record.sources.find(source=>source.path===b)!.evidencePaths,[primaryB]);
+    for(const target of [primaryA,old])assert.ok((await f.read(a)).includes(`[[${target}]]`));assert.ok(!(await f.read(b)).includes(`[[${old}]]`));
+    for(const map of maps){assert.ok(!(await f.read(a)).includes(`[[${map}]]`));assert.ok(!(await f.read(b)).includes(`[[${map}]]`));}
+    assert.ok((await f.read(old)).includes(`[[${a}|关系原文A]]`));assert.equal(canonicalRawMarkdownForDigest(await f.read(a)),canonicalRawMarkdownForDigest(originalA));assert.equal(canonicalRawMarkdownForDigest(await f.read(b)),canonicalRawMarkdownForDigest(originalB));
+  });
   await scenario("managed-map-failure-cold-resume-and-cas", async f => {
     const mapPath = "wiki/工程工具索引.md", handwritten = "---\ncustom: keep # exact\n---\n# 工程工具索引\n手写导语。  \n\n## 手写清单\n保留这一行。  \n\n";
     await f.write(mapPath,handwritten); await f.write("raw/map.md","# 地图原文\n同一知识点应维护一张页面。\n");
@@ -172,17 +195,19 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
   console.log(`P2 production maintenance: PASS (${report.length} scenarios; seven types, quotes, aggregation, real note_read, 20+1, mutual relations, maps/CAS/cold resume)`);
 }
 
-export async function runMaintenanceReceiptBudgetTests(root: string, replay?: { action: MaintenanceP1Action; contents: Record<string,string>; quoteRepairs: readonly { unitId: string; evidenceIndex: number; quote: string }[] }): Promise<void> {
+export async function runMaintenanceReceiptBudgetTests(root: string, replay?: { action: MaintenanceP1Action; contents: Record<string,string>; quoteRepairs: readonly { unitId: string; evidenceIndex: number; quote: string }[]; expectedQuoteFailures?: readonly string[]; minimumWhitespaceMatches?: number }): Promise<void> {
   const results: unknown[] = [];
   async function budget(name: string, real?: typeof replay) {
     const f = await fixture(path.join(root,name));
-    let action: MaintenanceP1Action, paths: string[];
+    let action: MaintenanceP1Action, paths: string[], initialQuoteDiagnostic: string | undefined;
     if (real) {
       action = structuredClone(real.action); paths = action.decompositions!.map(d=>d.sourcePath);
       for (const source of paths) await f.write(source,real.contents[source]);
       for (const [relative,content] of Object.entries(real.contents)) if (relative.startsWith("wiki/")) await f.write(relative,content);
-      const rejected = await f.call(action,paths); assert.equal(rejected.status,"failed");
-      assert.ok(rejected.message.includes(real.quoteRepairs[0].unitId)); assert.match(rejected.message,/quote|原句/u);
+      const unchangedInput = JSON.stringify(action);
+      const checked = await f.call(action,paths); if(checked.status==="failed")initialQuoteDiagnostic=checked.message; assert.equal(JSON.stringify(action),unchangedInput,"grounding must not rewrite the model input object");
+      if(real.expectedQuoteFailures?.length){assert.equal(checked.status,"failed");for(const unitId of real.expectedQuoteFailures)assert.ok(checked.message.includes(unitId));assert.match(checked.message,/quote|原句/u);}
+      else f.ok(checked);
       // Apply explicit diagnosed quote repairs only to this test copy. Native evidence remains untouched.
       for (const repair of real.quoteRepairs) {
         const unit = action.decompositions!.flatMap(d=>d.units).find(unit=>typeof unit!=="string"&&unit.id===repair.unitId) as MaintenanceKnowledgeUnit;
@@ -198,6 +223,7 @@ export async function runMaintenanceReceiptBudgetTests(root: string, replay?: { 
       }
       action={stage:"decompose",decompositions:paths.map((sourcePath,i)=>({sourcePath,summary:"二十篇规模预算夹具",units:[units[i]]}))};
     }
+    const sourceSnapshots=new Map(await Promise.all(paths.map(async source=>[source,await f.read(source)] as const)));
     const rowCounts: Record<string,number>={}, bytes:number[]=[];
     async function visible(result:PiKnowledgeMaintenanceToolResult,args:MaintenanceP1Action) {
       f.ok(result);const id=`budget-${bytes.length}`;
@@ -210,6 +236,10 @@ export async function runMaintenanceReceiptBudgetTests(root: string, replay?: { 
       const line=text.split("\n").find(line=>line.startsWith("{"))!;const parsed=JSON.parse(line);assert.ok(parsed.inspection);return parsed.inspection;
     }
     let result=await f.call(action,paths);let inspect=await visible(result,action);
+    const saved=(await readPrivateMaintenanceRecords(f.privateRoot))[0],evidence=saved.p1!.decompositions.flatMap(d=>d.units).flatMap(unit=>typeof unit==="string"?[]:unit.evidence);
+    let whitespaceMatches=0;
+    for(const item of evidence){const source=await f.read(item.sourcePath),location=item.quoteLocation;assert.ok(location,"each grounded quote keeps its original snapshot position");assert.equal(source.slice(location.start,location.end),item.quote);assert.equal(location.unit,"utf16");if(location.match==="whitespace")whitespaceMatches++;}
+    if(real?.minimumWhitespaceMatches)assert.ok(whitespaceMatches>=real.minimumWhitespaceMatches,"real line-wrap-only differences are accepted without changing source words");
     for(const view of ["candidates","units"] as const) {
       let page = view==="candidates" ? inspect : await visible(await f.call({stage:"inspect",view,offset:0},paths),{stage:"inspect",view,offset:0});let count=0;
       while(true){count+=page.items.length;if(page.nextOffset===null)break;const next=page.nextOffset;page=await visible(await f.call({stage:"inspect",view,offset:next},paths),{stage:"inspect",view,offset:next});}
@@ -217,12 +247,13 @@ export async function runMaintenanceReceiptBudgetTests(root: string, replay?: { 
     }
     if(!real) {
       const plan:MaintenanceWritingItem[]=[];
-      for(const [i,source]of paths.entries()){const target=`wiki/预算候选${i}.md`,before=await f.observe(target);plan.push(f.item(`budget-${i}`,target,[source],[`budget-${i}`],before));}
+      for(const [i,source]of paths.entries()){const target=`wiki/预算候选${i}.md`,before=await f.observe(target),item=f.item(`budget-${i}`,target,[source],[`budget-${i}`],before);if(i===0&&item.expectedTarget.kind==="file")item.expectedTarget.contentRevision=item.expectedTarget.contentRevision.slice("sha256:".length);plan.push(item);}
       inspect=await visible(await f.call({stage:"plan",writingPlan:plan},paths),{stage:"plan",writingPlan:plan});let count=0;
       while(true){count+=inspect.items.length;if(inspect.nextOffset===null)break;const offset=inspect.nextOffset;inspect=await visible(await f.call({stage:"inspect",view:"pages",offset},paths),{stage:"inspect",view:"pages",offset});}
       assert.equal(count,20);rowCounts.pages=count;
     }
-    results.push({name,sources:paths.length,inputBytes:Buffer.byteLength(JSON.stringify(action)),responses:bytes.length,maxResponseBytes:Math.max(...bytes),rowCounts,sourceOrWikiWrites:f.writes.length});assert.equal(f.writes.length,0,"inspection never writes sources or Wiki");f.release();
+    for(const [source,content]of sourceSnapshots)assert.equal(await f.read(source),content,"decomposition/inspection keeps every Raw byte unchanged");
+    results.push({name,sources:paths.length,inputBytes:Buffer.byteLength(JSON.stringify(action)),responses:bytes.length,maxResponseBytes:Math.max(...bytes),rowCounts,initialQuoteDiagnostic,groundedQuotes:evidence.length,whitespaceMatches,sourceOrWikiWrites:f.writes.length});assert.equal(f.writes.length,0,"inspection never writes sources or Wiki");f.release();
   }
   await budget("twenty-source-budget");if(replay)await budget("real-twelve-source-budget",replay);
   await fs.writeFile(path.join(root,"receipt-budget-report.json"),JSON.stringify(results,null,2));console.log("Maintenance receipt budget: PASS (real Tool security/egress, valid JSON, explicit complete pagination, <=8000 bytes)",JSON.stringify(results));
