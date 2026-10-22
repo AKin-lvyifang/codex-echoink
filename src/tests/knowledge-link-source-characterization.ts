@@ -161,8 +161,8 @@ async function runProductionScenario(root: string, scenario: Scenario, before: s
     assert.equal(undoConceptLink(withoutSources(afterBytes.toString("utf8"))), withoutSources(before), "only the requested concept link and the independent source region may change; all other paragraphs/whitespace are byte exact");
     assert.ok(afterBytes.includes(Buffer.from(AGENT_LINK)), "requested concept patch is persisted");
     assert.deepEqual(validationOutcome(afterBytes.toString("utf8"), scenario.selected, before), { evidence: scenario.evidence });
-    assert.deepEqual(writes.filter(relative => relative.startsWith("wiki/")), [TARGET]);
-    assert.equal(knowledgeWals.length, 1); assert.equal(terminalWals.length, 0, "P1 settles the existing parent record instead of creating duplicate terminal WAL records");
+    assert.deepEqual(writes.filter(relative => relative.startsWith("wiki/")), [TARGET, "wiki/合成回归索引.md"], "P2 adds one managed domain map after the content page");
+    assert.equal(knowledgeWals.length, 2, "content and managed map both have ordinary WAL/readback"); assert.equal(terminalWals.length, 0, "P1 settles the existing parent record instead of creating duplicate terminal WAL records");
     assert.equal(knowledgeWals[0].status, "completed"); assert.equal(knowledgeWals[0].actions[0].status, "completed");
     assert.ok(events.indexOf("knowledge-wal") < events.indexOf("after-wal-before-first-write")); assert.ok(events.indexOf("after-wal-before-first-write") < events.indexOf(`write:${TARGET}`));
     assert.deepEqual(result.producedPaths, [TARGET]); assert.deepEqual([...result.processedSourcePaths ?? []].sort(), [...scenario.selected].sort());

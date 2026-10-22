@@ -11,12 +11,15 @@ import {
 import * as path from "node:path";
 import { TextDecoder } from "node:util";
 import { serializePiNativeFileWrite } from "../harness/pi-native/file-store-utils";
+import { MAINTENANCE_KNOWLEDGE_TYPES, maintenanceKnowledgeTypePrompt } from "./maintenance-knowledge-types";
 
 export const ECHOINK_KNOWLEDGE_PREFERENCE_PROFILE_VERSION =
   "echoink-knowledge-preference-profile-v1" as const;
 export const ECHOINK_KNOWLEDGE_PREFERENCES_FILE = "preferences.md" as const;
 
-export const ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES = [
+export const ECHOINK_KNOWLEDGE_PREFERENCES_LEGACY_BACKUP_PREFIX = "preferences.legacy-default-" as const;
+
+export const ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES = [
   "# EchoInk 知识提炼偏好",
   "",
   "## 关注维度",
@@ -45,6 +48,13 @@ export const ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES = [
   ""
 ].join("\n");
 
+export const ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES = [
+  ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES.trimEnd(),
+  "",
+  maintenanceKnowledgeTypePrompt(),
+  ""
+].join("\n");
+
 const MAX_PREFERENCES_BYTES = 64 * 1024;
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
@@ -55,6 +65,7 @@ export interface KnowledgeMaintenancePreferenceSnapshot {
   readonly state: KnowledgeMaintenancePreferenceState;
   readonly revision: string;
   readonly content: string;
+  readonly templateNotice?: string;
 }
 
 export interface KnowledgeMaintenancePreferenceSaveInput {
@@ -86,7 +97,8 @@ export class KnowledgeMaintenancePreferenceError extends Error {
 
 /**
  * Plugin-private user preferences. The missing-file state deliberately uses
- * the built-in default without creating a file; only an explicit save writes.
+ * the built-in default without creating a file. An existing legacy default is
+ * upgraded only after its exact original bytes are backed up in the same root.
  */
 export class KnowledgeMaintenancePreferenceRepository {
   readonly rootPath: string;
@@ -101,6 +113,11 @@ export class KnowledgeMaintenancePreferenceRepository {
   }
 
   async read(): Promise<Readonly<KnowledgeMaintenancePreferenceSnapshot>> {
+    return await serializePiNativeFileWrite(this.rootPath, () => this.readUnlocked(true));
+  }
+
+  /** Call only while holding this root's queue; public read/save must not nest. */
+  private async readUnlocked(migrateLegacy: boolean): Promise<Readonly<KnowledgeMaintenancePreferenceSnapshot>> {
     const root = await inspectStorageRoot(this.rootPath, false);
     if (root === null) return defaultSnapshot();
     await assertPreferenceFileSafe(this.filePath, root);
@@ -131,7 +148,17 @@ export class KnowledgeMaintenancePreferenceRepository {
         { cause: error }
       );
     }
-    return snapshotFromContent(normalizePreferenceContent(content));
+    const normalized = normalizePreferenceContent(content);
+    if (migrateLegacy && isLegacyDefault(normalized)) {
+      await backupLegacyDefault(this.rootPath, bytes);
+      await assertPreferenceFileSafe(this.filePath, root);
+      if (!(await readFile(this.filePath)).equals(bytes)) {
+        throw new KnowledgeMaintenancePreferenceError("revision_conflict", "Knowledge maintenance preferences changed before their default upgrade.");
+      }
+      await atomicWritePreference(this.filePath, ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES);
+      return defaultSnapshot();
+    }
+    return snapshotFromContent(normalized);
   }
 
   async save(
@@ -140,7 +167,7 @@ export class KnowledgeMaintenancePreferenceRepository {
     const content = normalizePreferenceContent(input.content);
     const expectedRevision = requireRevision(input.expectedRevision);
     return await serializePiNativeFileWrite(this.rootPath, async () => {
-      const current = await this.read();
+      const current = await this.readUnlocked(true);
       if (current.revision !== expectedRevision) {
         throw new KnowledgeMaintenancePreferenceError(
           "revision_conflict",
@@ -156,7 +183,7 @@ export class KnowledgeMaintenancePreferenceRepository {
       }
       await assertPreferenceFileSafe(this.filePath, root);
       await atomicWritePreference(this.filePath, content);
-      const saved = await this.read();
+      const saved = await this.readUnlocked(false);
       if (saved.content !== content) {
         throw new KnowledgeMaintenancePreferenceError(
           "write_failed",
@@ -199,14 +226,59 @@ function snapshotFromContent(
   content: string
 ): Readonly<KnowledgeMaintenancePreferenceSnapshot> {
   const normalized = normalizePreferenceContent(content);
+  const isDefault = normalized === ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
   return Object.freeze({
     profileVersion: ECHOINK_KNOWLEDGE_PREFERENCE_PROFILE_VERSION,
-    state: normalized === ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES
+    state: isDefault
       ? "default" as const
       : "custom" as const,
     revision: preferenceRevision(normalized),
-    content: normalized
+    content: normalized,
+    ...(!isDefault && !hasSevenTypeTemplates(normalized) ? {
+      templateNotice: "七类新模板可用，可在现有偏好编辑器恢复默认后查看；当前自定义保持不变。"
+    } : {})
   });
+}
+
+/** Ignore presentation only; any added, removed or changed wording stays custom. */
+function legacyDefaultMeaning(content: string): string {
+  return content.split(/\r\n|\n|\r/u).map((line) => line.trim()
+    .replace(/^#{1,6}[ \t]+/u, "")
+    .replace(/^(?:[-+*]|\d+[.)、])[ \t]+/u, ""))
+    .join("").replace(/\s/gu, "");
+}
+
+function isLegacyDefault(content: string): boolean {
+  return legacyDefaultMeaning(content) === legacyDefaultMeaning(ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES);
+}
+
+function hasSevenTypeTemplates(content: string): boolean {
+  const compact = content.replace(/\s/gu, "");
+  return MAINTENANCE_KNOWLEDGE_TYPES.every((type) => compact.includes(type.replace(/\s/gu, "")));
+}
+
+async function backupLegacyDefault(rootPath: string, bytes: Buffer): Promise<void> {
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const backupPath = path.join(rootPath, `${ECHOINK_KNOWLEDGE_PREFERENCES_LEGACY_BACKUP_PREFIX}${digest}.md`);
+  await assertPreferenceFileSafe(backupPath, rootPath);
+  let created = false;
+  try {
+    const handle = await open(backupPath, "wx", 0o600).catch((error) => {
+      if (isNodeErrorWithCode(error, "EEXIST")) return null;
+      throw error;
+    });
+    if (handle) {
+      created = true;
+      try { await handle.writeFile(bytes); await handle.sync(); }
+      finally { await handle.close(); }
+    }
+    await assertPreferenceFileSafe(backupPath, rootPath);
+    if (!(await readFile(backupPath)).equals(bytes)) throw new Error("Legacy default backup does not match its original bytes.");
+  } catch (error) {
+    if (created) await unlink(backupPath).catch(() => undefined);
+    if (error instanceof KnowledgeMaintenancePreferenceError) throw error;
+    throw new KnowledgeMaintenancePreferenceError("write_failed", "The legacy default could not be backed up; preferences were not upgraded.", { cause: error });
+  }
 }
 
 function normalizePreferenceContent(value: unknown): string {

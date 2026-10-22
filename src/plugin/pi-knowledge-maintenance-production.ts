@@ -1,4 +1,9 @@
 import { MaintenanceP1Workflow } from "../knowledge-base/maintenance-p1-workflow";
+import { collectMaintenanceCandidates } from "../knowledge-base/maintenance-dedup";
+import { planMaintenanceDomainMaps } from "../knowledge-base/maintenance-domain-map";
+import { KnowledgeMaintenancePreferenceRepository } from "../knowledge-base/knowledge-maintenance-preferences";
+import type { MaintenanceDomainMapEntry, MaintenanceKnowledgeUnit, MaintenanceWikiDocument } from "../knowledge-base/maintenance-p2-contract";
+import { maintenanceVisibleClassification } from "../knowledge-base/maintenance-p2-planning";
 import { isMaintenanceSourceProcessed } from "../knowledge-base/maintenance-source-state";
 import type { MaintenanceWritingItem, MaintenanceSourceFields } from "../knowledge-base/maintenance-p1-contract";
 import { knowledgeBodyLinkSpans } from "../knowledge-base/knowledge-relations";
@@ -71,9 +76,9 @@ import {
   createKnowledgeMaintenanceResultEnvelope,
   parseKnowledgeMaintenanceResultEnvelope
 } from "../knowledge-base/knowledge-maintenance-result";
-import type {
+import {
   KnowledgeAgentIndex,
-  KnowledgeAgentReliableRawKnowledge
+  type KnowledgeAgentReliableRawKnowledge
 } from "../knowledge-base/knowledge-agent-index";
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -97,7 +102,7 @@ export interface CreateProductionPiKnowledgeMaintenanceOptions {
   readonly knowledgeAgentIndex?: Pick<
     KnowledgeAgentIndex,
     "readReliableKnowledgeForRaw"
-  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh">>;
+  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh" | "search">>;
   readonly automaticLinkingEnabled?: () => boolean;
   readonly now?: () => number;
   readonly createPreviewId?: () => string;
@@ -127,6 +132,7 @@ export class ProductionPiKnowledgeMaintenanceToolPort
 implements PiKnowledgeMaintenanceToolPort {
   readonly state: FilePhase3MaintenanceStateStore;
   private readonly p1: MaintenanceP1Workflow;
+  private readonly maintenanceIndex: Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "search" | "refresh">;
 
   private readonly onTerminal?: CreateProductionPiKnowledgeMaintenanceOptions["onTerminal"];
   private readonly vaultRootPath: string;
@@ -138,7 +144,7 @@ implements PiKnowledgeMaintenanceToolPort {
   private readonly knowledgeAgentIndex?: Pick<
     KnowledgeAgentIndex,
     "readReliableKnowledgeForRaw"
-  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh">>;
+  > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh" | "search">>;
   private readonly automaticLinkingEnabled: () => boolean;
   private readonly sources: FilePhase3MaintenanceSourceSnapshotPort;
   private readonly tracker: Phase3MaintenanceTrackerPort;
@@ -169,6 +175,9 @@ implements PiKnowledgeMaintenanceToolPort {
     this.deviceId = requireNonEmpty(options.deviceId, "deviceId");
     this.domainService = options.domainService;
     this.knowledgeAgentIndex = options.knowledgeAgentIndex;
+    this.maintenanceIndex = options.knowledgeAgentIndex?.scanLinkingDocuments && options.knowledgeAgentIndex?.search && options.knowledgeAgentIndex?.refresh
+      ? options.knowledgeAgentIndex as Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "search" | "refresh">
+      : new KnowledgeAgentIndex({ vaultPath: this.vaultRootPath, storageRootPath: this.privateKnowledgeRootPath });
     this.automaticLinkingEnabled = options.automaticLinkingEnabled ?? (() => true);
     this.now = options.now ?? Date.now;
     this.createPreviewId = options.createPreviewId ?? randomUUID;
@@ -196,6 +205,10 @@ implements PiKnowledgeMaintenanceToolPort {
       sourcePath: relative => { const actual = resolveKnowledgePath(this.vaultRootPath, normalizeVaultRelativePath(relative), false); if (!["raw", "inbox"].includes(knowledgePathRole(this.vaultRootPath, actual) ?? "") || !isKnowledgeMaintenanceSourcePath(actual)) throw new Error("来源不在Raw/Inbox范围"); return actual; },
       targetPath: async relative => { const actual = await this.normalizeCandidateTarget(relative); if (knowledgePathRole(this.vaultRootPath, actual) !== "wiki") throw new Error("P1只写Wiki"); return actual; },
       preparePageContent: (item, content, baseline) => this.prepareP1PageContent(item, content, baseline),
+      candidates: units => this.maintenanceCandidates(units),
+      planMaps: entries => this.maintenanceMaps(entries),
+      refresh: async () => { await this.maintenanceIndex.refresh(); },
+      templateNotice: async () => (await new KnowledgeMaintenancePreferenceRepository(this.privateKnowledgeRootPath).read()).templateNotice,
       commit: (input, item, content, fields) => this.commitP1Action(input, item, content, fields),
       now: this.now, date: this.dateKey
     });
@@ -232,6 +245,49 @@ implements PiKnowledgeMaintenanceToolPort {
       }
     }
     return result;
+  }
+
+  private async maintenanceWikiDocuments(): Promise<MaintenanceWikiDocument[]> {
+    const documents: MaintenanceWikiDocument[] = [];
+    for await (const doc of this.maintenanceIndex.scanLinkingDocuments()) if (knowledgePathRole(this.vaultRootPath, doc.path) === "wiki") documents.push({ path: doc.path, title: doc.title, aliases: doc.aliases, contentRevision: doc.version, content: doc.content });
+    return documents;
+  }
+  private async maintenanceCandidates(units: readonly MaintenanceKnowledgeUnit[]) {
+    // Refresh on each batch, independently of optional background linking.
+    await this.maintenanceIndex.refresh();
+    const documents = (await this.maintenanceWikiDocuments()).filter(doc => !doc.content.includes("<!-- echoink-domain-map:BEGIN"));
+    const byPath = new Map(documents.map(doc => [doc.path, doc]));
+    return collectMaintenanceCandidates(units, {
+      listWiki: async () => documents,
+      searchWiki: async query => {
+        const result = await this.maintenanceIndex.search({ query: query.slice(0, 256), kinds: ["wiki"], limit: 50 });
+        return result.hits.flatMap(hit => { const doc = byPath.get(hit.vaultRelativePath); return doc ? [doc] : []; });
+      }
+    });
+  }
+  private async maintenanceMaps(entries: readonly MaintenanceDomainMapEntry[]) {
+    if (!entries.length) return [];
+    const existing = await this.maintenanceWikiDocuments(), domains = new Set(entries.map(entry => entry.domain));
+    const all = new Map<string, MaintenanceDomainMapEntry>(), historical = new Map<string, MaintenanceDomainMapEntry>();
+    // Latest successful receipts fill missing fields; current visible attributes remain authoritative.
+    for (const record of (await readPrivateMaintenanceRecords(this.privateKnowledgeRootPath, { vaultId: this.vaultId })).sort((a,b) => b.at - a.at)) if (record.p1?.p2) {
+      for (const item of record.p1.writingPlan) {
+        const unit = record.p1.decompositions.flatMap(d => d.units).find(unit => typeof unit !== "string" && item.knowledge?.unitIds.includes(unit.id));
+        if (unit && typeof unit !== "string" && record.p1.committedPages[item.id] && !historical.has(item.targetPath)) historical.set(item.targetPath, { path: item.targetPath, title: unit.title, domain: item.knowledge?.domain ?? unit.domain, type: item.knowledge?.type ?? unit.type });
+      }
+    }
+    for (const doc of existing) {
+      if (doc.content.includes("<!-- echoink-domain-map:BEGIN")) continue;
+      const visible = maintenanceVisibleClassification(doc.content), prior = historical.get(doc.path);
+      const type = visible.type ?? prior?.type, domain = visible.domain ?? prior?.domain;
+      if (type && domain && domains.has(domain)) all.set(doc.path, { path: doc.path, title: doc.title, type, domain });
+    }
+    for (const entry of entries) {
+      const doc = existing.find(doc => doc.path === entry.path), visible = doc ? maintenanceVisibleClassification(doc.content) : {};
+      all.set(entry.path, { ...entry, type: visible.type ?? entry.type, domain: visible.domain ?? entry.domain });
+    }
+    const wikiRoot = getKnowledgeFolderBindings(this.vaultRootPath)?.roles.wiki.writePath ?? "wiki";
+    return planMaintenanceDomainMaps({ wikiRoot, entries: [...all.values()], existing });
   }
 
   /** Preserve the existing new-link safety/defer boundary without touching retained links. */

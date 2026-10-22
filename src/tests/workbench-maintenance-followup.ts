@@ -1,3 +1,4 @@
+import { fixtureKnowledgeUnit } from "./maintenance-staged-fixture";
 import { createMaintenanceSectionSnapshot } from "../knowledge-base/maintenance-section-patch";
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
@@ -350,8 +351,9 @@ async function fixture(root: string, name: string, emptyRaw = false) {
         const paths = typeof maintainSource === "string" ? [maintainSource] : maintainSource;
         const before = await fs.readFile(path.join(vault, wiki), "utf8");
         replies.push({ role: "assistant", content: null, tool_calls: [...paths.map(relativePath => toolCall("note_read", { relativePath })), toolCall("note_read", { relativePath: wiki })] });
-        const decomposition = toolCall("knowledge_maintain", { stage: "decompose", sourcePaths: paths, decompositions: paths.map(sourcePath => ({ sourcePath, summary: `合成摘要 ${sourcePath}`, units: ["合成知识点"] })) });
-        const plan = toolCall("knowledge_maintain", { stage: "plan", sourcePaths: paths, writingPlan: [{ id: "summary", targetPath: wiki, sourcePaths: paths, expectedTarget: { kind: "file", contentRevision: `sha256:${createHash("sha256").update(before).digest("hex")}` } }] });
+        const units = await Promise.all(paths.map(async (sourcePath, index) => fixtureKnowledgeUnit(`source-${index}`, sourcePath, await fs.readFile(path.join(vault, sourcePath), "utf8").catch(() => ""), before.match(/^#\s+(.+)$/mu)?.[1] ?? "合成知识点")));
+        const decomposition = toolCall("knowledge_maintain", { stage: "decompose", sourcePaths: paths, decompositions: paths.map((sourcePath, index) => ({ sourcePath, summary: `合成摘要 ${sourcePath}`, units: [units[index]] })) });
+        const plan = toolCall("knowledge_maintain", { stage: "plan", sourcePaths: paths, writingPlan: [{ id: "summary", targetPath: wiki, sourcePaths: paths, knowledge: { unitIds: units.map(unit => unit.id), decision: { kind: "same_point", reason: "合成夹具：维护同一主题原有页以验证范围继承", candidatePath: wiki } }, expectedTarget: { kind: "file", contentRevision: `sha256:${createHash("sha256").update(before).digest("hex")}` } }] });
         const snapshot = createMaintenanceSectionSnapshot(before), intro = snapshot.regions.find(region => region.kind === "introduction")!;
         const sections = toolCall("knowledge_maintain", { stage: "sections", sourcePaths: paths, targetPath: wiki });
         const maintenance = toolCall("knowledge_maintain", { stage: "write", sourcePaths: paths, pageId: "summary", sectionPatches: [{ regionId: stages === "invalid-write" ? "invalid-region" : intro.id, operation: "replace", content: paths.map(selected => `已整理 [[${selected}|原始资料]]。`).join("\n") + "\n\n" }] });

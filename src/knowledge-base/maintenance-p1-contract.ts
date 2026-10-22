@@ -1,4 +1,5 @@
-/** P1 contracts shared by pure source/section helpers and the existing maintain port. */
+import type { MaintenanceKnowledgeUnit, MaintenanceP2PageFields, MaintenanceP2State } from "./maintenance-p2-contract";
+/** Durable P1 contracts remain readable; new decompositions use P2 structured units. */
 export type MaintenanceRefinementStatus = "未提炼" | "已提炼";
 export interface MaintenanceSourceFields {
   status: MaintenanceRefinementStatus;
@@ -43,26 +44,30 @@ export interface MaintenanceSectionPatch {
 export interface MaintenanceDecomposition {
   sourcePath: string;
   summary: string;
-  /** P1 only needs simple source-grounded units, not the P2 seven templates. */
-  units: readonly string[];
+  /** Strings are retained only for already persisted P1 records. */
+  units: readonly (string | MaintenanceKnowledgeUnit)[];
 }
 export interface MaintenanceWritingItem {
   id: string;
   targetPath: string;
   sourcePaths: readonly string[];
   expectedTarget: { kind: "missing" } | { kind: "file"; contentRevision: string };
+  knowledge?: MaintenanceP2PageFields;
 }
 export interface MaintenanceP1Action {
-  stage: "decompose" | "plan" | "write" | "resume" | "sections";
+  stage: "decompose" | "plan" | "write" | "resume" | "sections" | "inspect";
   decompositions?: readonly MaintenanceDecomposition[];
   writingPlan?: readonly MaintenanceWritingItem[];
   pageId?: string;
   content?: string;
   sectionPatches?: readonly MaintenanceSectionPatch[];
   targetPath?: string;
+  view?: import("./maintenance-p2-receipt").MaintenanceInspectionView;
+  offset?: number;
 }
 export interface MaintenanceP1State {
   version: 1;
+  p2?: MaintenanceP2State;
   phase: "decompose" | "plan" | "write" | "finalize" | "completed";
   sourceFingerprints: Record<string, string>;
   decompositions: readonly MaintenanceDecomposition[];

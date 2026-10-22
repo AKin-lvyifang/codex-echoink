@@ -43,6 +43,7 @@
     "test:developer-mode": "node scripts/developer-mode-tests.mjs",
     "test:skill-runtime": "node src/tests/skill-runtime-tests.mjs",
     "test:knowledge-linking": "node scripts/knowledge-linking-tests.mjs",
+    "test:knowledge-maintain-p2": "node scripts/knowledge-maintain-p2-tests.mjs",
     "test:knowledge-maintain-p1": "node scripts/knowledge-maintain-p1-tests.mjs",
     "test:knowledge": "node scripts/phase3-tests.mjs",
     "test:mcp-vault": "node scripts/mcp-vault-tests.mjs",

@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   lstat,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   symlink,
   writeFile
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
   ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES,
+  ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES,
+  ECHOINK_KNOWLEDGE_PREFERENCES_LEGACY_BACKUP_PREFIX,
   ECHOINK_KNOWLEDGE_PREFERENCE_PROFILE_VERSION,
   KnowledgeMaintenancePreferenceError,
   KnowledgeMaintenancePreferenceRepository
@@ -37,16 +40,23 @@ import {
   restoreDefaultKnowledgeMaintenancePreference
 } from "../settings/knowledge-maintenance-preference-editor";
 
-export async function runKnowledgeMaintenancePreferenceTests(): Promise<void> {
-  await assertRepositoryDefaultSaveCasAndRestore();
-  await assertRepositoryRejectsInvalidAndLinkedPaths();
-  await assertWalReloadRetainsRunPreferenceRevision();
+export async function runKnowledgeMaintenancePreferenceTests(testRootPath = process.env.ECHOINK_KNOWLEDGE_TEST_ROOT): Promise<void> {
+  if (!testRootPath) throw new Error("Select an explicit disposable ECHOINK_KNOWLEDGE_TEST_ROOT for preference tests.");
+  const root = path.join(path.resolve(testRootPath), "quality-templates");
+  await mkdir(root, { recursive: true });
+  await assertRepositoryDefaultSaveCasAndRestore(root);
+  await assertRepositoryRejectsInvalidAndLinkedPaths(root);
+  await assertLegacyDefaultMigrationAndCustomPreservation(root);
+  await assertMigrationBackupFailurePreservesOriginal(root);
+  await assertReadSaveSerialization(root);
+  await assertWalReloadRetainsRunPreferenceRevision(root);
   assertPreferenceEditorStates();
+  console.log("Knowledge maintenance preferences: default migration/backup, custom preservation, notices, serialization and existing editor/WAL checks passed.");
 }
 
-async function assertRepositoryDefaultSaveCasAndRestore(): Promise<void> {
+async function assertRepositoryDefaultSaveCasAndRestore(testRoot: string): Promise<void> {
   const parent = await realpath(await mkdtemp(path.join(
-    tmpdir(),
+    testRoot,
     "echoink-knowledge-preferences-"
   )));
   const rootPath = path.join(parent, "knowledge");
@@ -54,6 +64,7 @@ async function assertRepositoryDefaultSaveCasAndRestore(): Promise<void> {
     const repository = new KnowledgeMaintenancePreferenceRepository(rootPath);
     const initial = await repository.read();
     assert.equal(initial.state, "default");
+    assert.equal(initial.templateNotice, undefined);
     assert.equal(
       initial.profileVersion,
       ECHOINK_KNOWLEDGE_PREFERENCE_PROFILE_VERSION
@@ -70,6 +81,7 @@ async function assertRepositoryDefaultSaveCasAndRestore(): Promise<void> {
       expectedRevision: initial.revision
     });
     assert.equal(custom.state, "custom");
+    assert.match(custom.templateNotice ?? "", /七类新模板可用.*现有偏好编辑器恢复默认.*当前自定义保持/u);
     assert.equal(custom.content, customContent);
     assert.notEqual(custom.revision, initial.revision);
     assert.equal(await readFile(repository.filePath, "utf8"), customContent);
@@ -101,9 +113,9 @@ async function assertRepositoryDefaultSaveCasAndRestore(): Promise<void> {
   }
 }
 
-async function assertRepositoryRejectsInvalidAndLinkedPaths(): Promise<void> {
+async function assertRepositoryRejectsInvalidAndLinkedPaths(testRoot: string): Promise<void> {
   const parent = await realpath(await mkdtemp(path.join(
-    tmpdir(),
+    testRoot,
     "echoink-knowledge-preferences-unsafe-"
   )));
   try {
@@ -144,10 +156,113 @@ async function assertRepositoryRejectsInvalidAndLinkedPaths(): Promise<void> {
   }
 }
 
-async function assertWalReloadRetainsRunPreferenceRevision():
+async function assertLegacyDefaultMigrationAndCustomPreservation(testRoot: string): Promise<void> {
+  const parent = await realpath(await mkdtemp(path.join(testRoot, "legacy-default-")));
+  const legacy = ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
+  const equivalent = `\uFEFF${legacy.replace(/^- /gmu, "  1.  ").replace(/^## /gmu, "###  ").replace(/。/gu, "。  ").replace(/\n/gu, "\r\n")}\r\n  \r\n`;
+  try {
+    for (const [index, original] of [legacy, equivalent].entries()) {
+      const root = path.join(parent, `default-${index}`);
+      await mkdir(root);
+      const repository = new KnowledgeMaintenancePreferenceRepository(root);
+      await writeFile(repository.filePath, original, "utf8");
+      const [first, concurrent] = await Promise.all([repository.read(), new KnowledgeMaintenancePreferenceRepository(root).read()]);
+      assert.equal(first.state, "default");
+      assert.deepEqual(first, concurrent);
+      assert.equal(first.content, ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES);
+      assert.equal(first.templateNotice, undefined);
+      assert.equal(await readFile(repository.filePath, "utf8"), first.content);
+      const backups = (await readdir(root)).filter((name) => name.startsWith(ECHOINK_KNOWLEDGE_PREFERENCES_LEGACY_BACKUP_PREFIX));
+      assert.equal(backups.length, 1);
+      assert.equal(await readFile(path.join(root, backups[0]), "utf8"), original, "backup preserves exact BOM, CRLF, list markers and whitespace");
+      assert.equal((await lstat(path.join(root, backups[0]))).mode & 0o077, 0);
+      assert.deepEqual(await repository.read(), first);
+      assert.deepEqual((await readdir(root)).sort(), [backups[0], "preferences.md"].sort());
+    }
+    const customVariants = [
+      `${legacy}\n优先保留产品决策。\r\n  `,
+      legacy.replace("先提取", "不提取"),
+      legacy.replace("## 关注维度", "## 我的关注维度"),
+      "# 我的偏好\r\n\r\n只关注反例与行动。\r\n  "
+    ];
+    for (const [index, original] of customVariants.entries()) {
+      const root = path.join(parent, `custom-${index}`);
+      await mkdir(root);
+      const repository = new KnowledgeMaintenancePreferenceRepository(root);
+      await writeFile(repository.filePath, original, "utf8");
+      const first = await repository.read();
+      assert.equal(first.state, "custom");
+      assert.match(first.templateNotice ?? "", /七类新模板可用/u);
+      assert.deepEqual(await repository.read(), first);
+      assert.equal(await readFile(repository.filePath, "utf8"), original, "custom file is never rewritten by read");
+      assert.deepEqual(await readdir(root), ["preferences.md"]);
+    }
+    const root = path.join(parent, "new-custom");
+    const repository = new KnowledgeMaintenancePreferenceRepository(root);
+    const initial = await repository.read();
+    const custom = await repository.save({ content: `${initial.content}\n额外关注：保留关键决策。\n`, expectedRevision: initial.revision });
+    assert.equal(custom.state, "custom");
+    assert.equal(custom.templateNotice, undefined, "custom preferences already containing the seven types need no upgrade notice");
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+}
+
+async function assertMigrationBackupFailurePreservesOriginal(testRoot: string): Promise<void> {
+  const parent = await realpath(await mkdtemp(path.join(testRoot, "backup-failure-")));
+  const original = ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
+  const digest = createHash("sha256").update(original, "utf8").digest("hex");
+  try {
+    const root = path.join(parent, "knowledge");
+    await mkdir(root);
+    const repository = new KnowledgeMaintenancePreferenceRepository(root);
+    await writeFile(repository.filePath, original, "utf8");
+    const backup = path.join(root, `${ECHOINK_KNOWLEDGE_PREFERENCES_LEGACY_BACKUP_PREFIX}${digest}.md`);
+    const outside = path.join(parent, "outside.md");
+    await writeFile(outside, "私有原文不能被链接覆盖。\n", "utf8");
+    await symlink(outside, backup, "file");
+    await assert.rejects(repository.read(), preferenceError("unsafe_path"));
+    assert.equal(await readFile(repository.filePath, "utf8"), original);
+    assert.equal(await readFile(outside, "utf8"), "私有原文不能被链接覆盖。\n");
+    await rm(backup);
+    await writeFile(backup, "已有备份不能覆盖。\n", "utf8");
+    await assert.rejects(repository.read(), preferenceError("write_failed"));
+    assert.equal(await readFile(repository.filePath, "utf8"), original);
+    assert.equal(await readFile(backup, "utf8"), "已有备份不能覆盖。\n");
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+}
+
+async function assertReadSaveSerialization(testRoot: string): Promise<void> {
+  const parent = await realpath(await mkdtemp(path.join(testRoot, "read-save-")));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const repository = new KnowledgeMaintenancePreferenceRepository(path.join(parent, "knowledge"));
+    const initial = await repository.read();
+    const operation = async () => {
+      const results = await Promise.allSettled([
+        repository.save({ content: "# 自定义 A\n", expectedRevision: initial.revision }),
+        new KnowledgeMaintenancePreferenceRepository(repository.rootPath).save({ content: "# 自定义 B\n", expectedRevision: initial.revision }),
+        repository.read()
+      ]);
+      assert.equal(results[0].status, "fulfilled");
+      assert.equal(results[1].status, "rejected");
+      if (results[1].status === "rejected") assert.ok(preferenceError("revision_conflict")(results[1].reason));
+      assert.equal(results[2].status, "fulfilled");
+      if (results[2].status === "fulfilled") assert.equal(results[2].value.content, "# 自定义 A\n");
+    };
+    await Promise.race([operation(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Preference read/save queue deadlocked.")), 5_000); })]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    await rm(parent, { recursive: true, force: true });
+  }
+}
+
+async function assertWalReloadRetainsRunPreferenceRevision(testRoot: string):
 Promise<void> {
   const rootPath = await realpath(await mkdtemp(path.join(
-    tmpdir(),
+    testRoot,
     "echoink-knowledge-wal-reload-"
   )));
   const vaultId = "preference-reload-vault";

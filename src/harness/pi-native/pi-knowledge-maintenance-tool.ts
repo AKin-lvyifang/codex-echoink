@@ -1,3 +1,4 @@
+import { MAINTENANCE_KNOWLEDGE_TYPES } from "../../knowledge-base/maintenance-knowledge-types";
 import type { MaintenanceP1Action } from "../../knowledge-base/maintenance-p1-contract";
 import { knowledgeRolePath, knowledgePathRole } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
@@ -323,12 +324,13 @@ export function createPiKnowledgeMaintenanceToolDefinition(
   return defineTool({
     name: PI_KNOWLEDGE_MAINTAIN_TOOL_ID,
     label: "维护知识库",
-    description: "仅在显式 /maintain 范围内串行维护。必须 decompose（全批摘要与知识点）→plan（固定逐页写作清单）→write（每次一页），成功页不重写；失败后 resume 仅补未完成。新页提供content；已有页先sections取得完整快照regionId，再sectionPatches只追加/替换选中区域。来源/相关条目为独立区，错误编号重新sections，不猜不整页覆盖。只有全部页与原文三个字段成功才已提炼。",
+    description: "仅在显式 /maintain 范围内串行维护。必须 decompose（全批摘要与七类结构化知识点/原句版本证据，返回Wiki候选）→plan（knowledge.unitIds、同知识点decision/理由与related关系，固定逐页写作清单）→write（每次一页），成功页不重写；失败后 resume 仅补未完成。新页提供content；已有页先sections取得完整快照regionId，再sectionPatches只追加/替换选中区域。来源/相关条目为独立区，错误编号重新sections，不猜不整页覆盖。只有全部页与原文三个字段成功才已提炼。",
     parameters: Type.Object({
-      stage: Type.Union(["decompose", "plan", "write", "resume", "sections"].map(value => Type.Literal(value))),
+      stage: Type.Union(["decompose", "plan", "write", "resume", "sections", "inspect"].map(value => Type.Literal(value))),
       sourcePaths: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 20 })),
-      decompositions: Type.Optional(Type.Array(Type.Object({ sourcePath: Type.String(), summary: Type.String(), units: Type.Array(Type.String()) }, { additionalProperties: false }), { maxItems: 20 })),
-      writingPlan: Type.Optional(Type.Array(Type.Object({ id: Type.String(), targetPath: Type.String(), sourcePaths: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }), expectedTarget: Type.Union([Type.Object({ kind: Type.Literal("missing") }), Type.Object({ kind: Type.Literal("file"), contentRevision: Type.String() })]) }, { additionalProperties: false }), { maxItems: 100 })),
+      decompositions: Type.Optional(Type.Array(Type.Object({ sourcePath: Type.String(), summary: Type.String(), units: Type.Array(Type.Object({ id: Type.String(), type: Type.Union(MAINTENANCE_KNOWLEDGE_TYPES.map(value => Type.Literal(value))), typePendingConfirmation: Type.Optional(Type.Boolean()), domain: Type.String(), title: Type.String(), aliases: Type.Array(Type.String()), points: Type.Array(Type.String(), { minItems: 1 }), evidence: Type.Array(Type.Object({ sourcePath: Type.String(), sourceRevision: Type.String(), quote: Type.String() }, { additionalProperties: false }), { minItems: 1 }) }, { additionalProperties: false })) }, { additionalProperties: false }), { maxItems: 20 })),
+      writingPlan: Type.Optional(Type.Array(Type.Object({ id: Type.String(), targetPath: Type.String(), sourcePaths: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }), expectedTarget: Type.Union([Type.Object({ kind: Type.Literal("missing") }), Type.Object({ kind: Type.Literal("file"), contentRevision: Type.String() })]), knowledge: Type.Object({ unitIds: Type.Array(Type.String(), { minItems: 1 }), decision: Type.Object({ kind: Type.Union([Type.Literal("new"), Type.Literal("same_point"), Type.Literal("uncertain")]), reason: Type.String(), candidatePath: Type.Optional(Type.String()) }, { additionalProperties: false }), related: Type.Optional(Type.Array(Type.Object({ targetPath: Type.String(), reason: Type.String(), reverseReason: Type.Optional(Type.String()) }, { additionalProperties: false }))), type: Type.Optional(Type.Union(MAINTENANCE_KNOWLEDGE_TYPES.map(value => Type.Literal(value)))), domain: Type.Optional(Type.String()) }, { additionalProperties: false }) }, { additionalProperties: false }), { maxItems: 100 })),
+      view: Type.Optional(Type.Union([Type.Literal("candidates"), Type.Literal("units"), Type.Literal("pages")])), offset: Type.Optional(Type.Integer({ minimum: 0 })),
       pageId: Type.Optional(Type.String()), targetPath: Type.Optional(Type.String()), content: Type.Optional(Type.String()),
       sectionPatches: Type.Optional(Type.Array(Type.Object({ regionId: Type.String(), operation: Type.Union([Type.Literal("append"), Type.Literal("replace")]), content: Type.String() }, { additionalProperties: false }), { maxItems: 100 }))
     }, { additionalProperties: false }),
@@ -389,7 +391,7 @@ function normalizeArguments(
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record);
   const p1 = normalizeP1(value);
-  const allowedKeys = new Set(["stage", "sourcePaths", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches"]);
+  const allowedKeys = new Set(["stage", "sourcePaths", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches", "view", "offset"]);
   if (
     keys.some((key) => !allowedKeys.has(key))
     || (record.candidateActions !== undefined && (!Array.isArray(record.candidateActions) || record.candidateActions.length > 100))
@@ -670,7 +672,9 @@ function rejectedResult(
 function normalizeP1(value: unknown): Readonly<MaintenanceP1Action> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("knowledge_maintenance_stage_required");
   const r = value as Record<string, unknown>;
-  if (!["decompose", "plan", "write", "resume", "sections"].includes(String(r.stage))) throw new TypeError("knowledge_maintenance_stage_required: decompose -> plan -> write; resume 补未完");
+  if (!["decompose", "plan", "write", "resume", "sections", "inspect"].includes(String(r.stage))) throw new TypeError("knowledge_maintenance_stage_required: decompose -> plan -> write; resume 补未完");
+  if (r.view !== undefined && !["candidates", "units", "pages"].includes(String(r.view))) throw new TypeError("knowledge_maintenance_arguments_invalid");
+  if (r.offset !== undefined && (!Number.isSafeInteger(r.offset) || Number(r.offset) < 0)) throw new TypeError("knowledge_maintenance_arguments_invalid");
   for (const key of ["decompositions", "writingPlan", "sectionPatches"]) if (r[key] !== undefined && (!Array.isArray(r[key]) || (r[key] as unknown[]).length > 100)) throw new TypeError("knowledge_maintenance_arguments_invalid");
   for (const key of ["content", "pageId", "targetPath"]) if (r[key] !== undefined && typeof r[key] !== "string") throw new TypeError("knowledge_maintenance_arguments_invalid");
   return Object.freeze(JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(r).filter(([key]) => key !== "sourcePaths")))) as MaintenanceP1Action);

@@ -1,3 +1,5 @@
+import { fixtureKnowledgeUnit } from "./maintenance-staged-fixture";
+import type { MaintenanceKnowledgeUnit } from "../knowledge-base/maintenance-p2-contract";
 import { KnowledgeLinkingService } from "../plugin/knowledge-linking-service";
 import { readKnowledgeLinkingDocument } from "../knowledge-base/knowledge-linking";
 import assert from "node:assert/strict";
@@ -48,7 +50,7 @@ export async function runKnowledgeMaintainP1Tests(root: string): Promise<void> {
     assert.equal(written.status, "completed", written.message);
     assert.deepEqual(written.processedSourcePaths, paths);
     const content = await f.read("wiki/间隔复习.md");
-    for (const p of paths) { assert.ok(content.includes(`[[${p}|原始材料]]`)); assert.match(await f.read(p), /提炼到:.*"\[\[wiki\/间隔复习.md\]\]"/u); }
+    for (const p of paths) { assert.ok(content.includes(`[[${p}|${p === source ? "Synthetic source" : "Inbox source"}]]`)); assert.match(await f.read(p), /提炼到:.*"\[\[wiki\/间隔复习.md\]\]"/u); }
     const after = await f.read(source);
     assert.equal(after.slice(after.indexOf("---\n", 4) + 4), original.slice(original.indexOf("---\n", 4) + 4), "source body byte exact");
     assert.ok(after.includes("# Keep this comment\ntags: [fixture]\naliases: [native]\nother: 0021\n"));
@@ -59,7 +61,7 @@ export async function runKnowledgeMaintainP1Tests(root: string): Promise<void> {
     const beforeCounts = [...f.writes]; await f.call({ stage: "resume" }, paths); assert.deepEqual(f.writes, beforeCounts);
   });
   await scenario("three-pages-second-fails", async f => {
-    await f.decompose([source]);
+    await f.decompose([source], ["first", "second", "third"]);
     const items = ["first", "second", "third"].map(id => f.item(id, `wiki/${id}.md`, [source]));
     await f.call({ stage: "plan", writingPlan: items });
     let result = await f.call({ stage: "write", pageId: "first", content: newPage });
@@ -189,7 +191,9 @@ async function fixture(vault: string) {
     await port.initialize();
   }
   await restart();
+  let fixtureUnits: MaintenanceKnowledgeUnit[] = [];
   async function call(p1: MaintenanceP1Action, paths = [source]) {
+    if (p1.stage === "plan") p1 = { ...p1, writingPlan: p1.writingPlan?.map((item, index, all) => ({ ...item, knowledge: { unitIds: fixtureUnits.filter(unit => item.sourcePaths.includes(unit.evidence[0].sourcePath) && (all.length === 1 || unit.id.endsWith(`-p${index}`))).map(unit => unit.id), decision: { kind: item.expectedTarget.kind === "file" ? "same_point" : "new", reason: "合成同知识点，保留原安全验证", ...(item.expectedTarget.kind === "file" ? { candidatePath: item.targetPath } : {}) } } })) };
     const fingerprints: Record<string, string> = {};
     for (const p of paths) { const read = await domain.noteRead({ vaultId: "p1-vault", relativePath: p }); fingerprints[p] = read.snapshot.bodyFingerprint!; }
     return await port.execute({ vaultId: "p1-vault", conversationId: "conversation", piSessionId: "session", productRunId: `turn-${++seq}`, toolCallId: `call-${seq}`, mode: "maintain", request: "", sourcePaths: paths, sourceBodyFingerprints: fingerprints, observedTargetRevisions: targets, preferenceSnapshot: pref, folderBindingsRevision: config.revision, p1 });
@@ -197,7 +201,14 @@ async function fixture(vault: string) {
   return { vault, privateRoot, fixture: f, config, release, restart, call, writes, failPath: (p: string | null) => { failed = p; }, read: (p: string) => fs.readFile(path.join(vault, p), "utf8"), write: f.write,
     observeTarget: async (p: string) => { const read = await domain.noteRead({ vaultId: "p1-vault", relativePath: p }); targets[p] = `sha256:${read.snapshot.contentSha256}`; },
     item: (id: string, targetPath: string, sourcePaths: string[]): MaintenanceWritingItem => ({ id, targetPath, sourcePaths, expectedTarget: { kind: "missing" } }),
-    decompose: async (paths = [source], units = ["spaced repetition"]) => { const r = await call({ stage: "decompose", decompositions: paths.map(sourcePath => ({ sourcePath, summary: "合成摘要", units })) }, paths); assert.equal(r.status, "completed", r.message); assert.deepEqual(r.processedSourcePaths, []); }
+    decompose: async (paths = [source], names = ["间隔复习"]) => {
+      const old = await fs.readdir(path.join(vault, "wiki")).catch(() => [] as string[]);
+      const existing = old.find(name => name.endsWith(".md") && !name.endsWith("索引.md"));
+      const title = existing ? (await fs.readFile(path.join(vault, "wiki", existing), "utf8")).match(/^#\s+(.+)$/mu)?.[1] : undefined;
+      fixtureUnits = (await Promise.all(paths.map(async (sourcePath, sourceIndex) => names.map((name, index) => fixtureKnowledgeUnit(`s${sourceIndex}-p${index}`, sourcePath, "", title ?? name))))).flat();
+      for (const unit of fixtureUnits) Object.assign(unit, fixtureKnowledgeUnit(unit.id, unit.evidence[0].sourcePath, await fs.readFile(path.join(vault, unit.evidence[0].sourcePath), "utf8"), unit.title));
+      const r = await call({ stage: "decompose", decompositions: paths.map(sourcePath => ({ sourcePath, summary: "合成摘要", units: fixtureUnits.filter(unit => unit.evidence[0].sourcePath === sourcePath) })) }, paths); assert.equal(r.status, "completed", r.message); assert.deepEqual(r.processedSourcePaths, []);
+    }
   };
 }
 async function assertToolStageSecurity() {

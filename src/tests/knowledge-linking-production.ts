@@ -432,7 +432,7 @@ async function assertMaintenanceDraftLinking(root: string): Promise<void> {
       const after = await readFile(path.join(root, `wiki/${name}.md`), "utf8");
       assert.match(after, /Agent 是\[\[wiki\/AI.md\|人工智能\]\]系统。AI 中文是人工智能。/u);
       assert.equal((after.match(/\[\[wiki\/AI.md\|/gu) ?? []).length, 1);
-      assert.match(after, /\[\[raw\/source.md\|原始材料\]\]/u);
+      assert.match(after, /\[\[raw\/source.md\|Source\]\]/u);
     }
     // Ordinary maintenance has its own relative-Markdown normalization. Exact
     // Markdown preservation is tested at the defer boundary, not promised here.
