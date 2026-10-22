@@ -110,11 +110,18 @@ export async function runKnowledgeMaintainP1Tests(root: string): Promise<void> {
     assert.equal(snapshot.regions.filter((r: any) => r.title === "重名").length, 2); assert.equal(snapshot.regions.some((r: any) => r.title === "假标题"), false);
     result = await f.call({ stage: "write", pageId: "edit", sectionPatches: [{ regionId: "wrong", operation: "replace", content: "误改" }] });
     assert.equal(result.status, "failed"); assert.match(result.message, /当前目录/u); assert.equal(await f.read(target), before);
-    const intro = snapshot.regions.find((r: any) => r.kind === "introduction");
-    result = await f.call({ stage: "write", pageId: "edit", sectionPatches: [{ regionId: intro.id, operation: "replace", content: "新导语。\n\n" }] });
+    const intro = snapshot.regions.find((r: any) => r.title === "导语");
+    assert.ok(intro, "select the H1 lead, not the empty pre-H1 introduction region");
+    assert.equal(before.slice(intro.contentStart, intro.end), "旧导语。\n\n");
+    const replacement = "新导语。\n\n";
+    result = await f.call({ stage: "write", pageId: "edit", sectionPatches: [{ regionId: intro.id, operation: "replace", content: replacement }] });
     assert.equal(result.status, "completed", result.message);
-    const after = await f.read(target), suffix = before.slice(intro.end);
-    assert.ok(after.startsWith(before.slice(0, intro.contentStart))); assert.ok(after.includes(suffix), "all untouched sections and EOF spaces stay byte exact, sources appended independently");
+    const after = await f.read(target);
+    assert.ok(after.includes(replacement), "the new H1 lead is present");
+    assert.ok(!after.includes("旧导语。"), "the previous H1 lead was actually replaced");
+    const expectedPageBeforeSources = before.slice(0, intro.contentStart) + replacement + before.slice(intro.end);
+    assert.equal(after.slice(0, expectedPageBeforeSources.length), expectedPageBeforeSources, "frontmatter, H1, every unselected region and EOF spaces stay byte exact");
+    assert.ok(after.slice(expectedPageBeforeSources.length).startsWith("\n\n## 来源\n"), "program-managed sources are appended independently");
     assert.equal(after.match(/echoink-source/g)?.length, 1);
   });
   await scenario("concurrent-target", async f => {
