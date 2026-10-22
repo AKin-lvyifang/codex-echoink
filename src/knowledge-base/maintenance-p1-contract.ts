@@ -25,7 +25,7 @@ export interface MaintenanceSourceMigrationPlan {
 export interface MaintenanceSectionRegion {
   id: string;
   title: string;
-  kind: "introduction" | "section" | "sources" | "related";
+  kind: "introduction" | "section" | "sources" | "related" | "new-section";
   /** UTF-16 offsets into the original snapshot; boundary includes section heading. */
   start: number;
   end: number;
@@ -34,6 +34,8 @@ export interface MaintenanceSectionRegion {
 }
 export interface MaintenanceSectionSnapshot {
   revision: string;
+  /** Declared in the durable writing plan; IDs are bound to this exact revision. */
+  newSections?: readonly string[];
   regions: readonly MaintenanceSectionRegion[];
 }
 export interface MaintenanceSectionPatch {
@@ -53,6 +55,8 @@ export interface MaintenanceWritingItem {
   sourcePaths: readonly string[];
   expectedTarget: { kind: "missing" } | { kind: "file"; contentRevision: string };
   knowledge?: MaintenanceP2PageFields;
+  /** Missing semantic H2s only; existing corresponding sections use their real IDs. */
+  newSections?: readonly string[];
 }
 export interface MaintenanceP1Action {
   stage: "decompose" | "plan" | "write" | "resume" | "sections" | "inspect";

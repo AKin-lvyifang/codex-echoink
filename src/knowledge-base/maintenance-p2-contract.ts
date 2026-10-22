@@ -10,7 +10,7 @@ export interface MaintenanceKnowledgeEvidence {
     start: number;
     end: number;
     unit: "utf16";
-    match: "literal" | "whitespace";
+    match: "literal" | "whitespace" | "typography";
     submittedQuote: string;
   };
 }

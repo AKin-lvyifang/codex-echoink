@@ -32,6 +32,22 @@ const confirmation = "都按你推荐的去做";
 export async function runWorkbenchMaintenanceFollowupTests(root: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const report: object[] = [];
+  for (const stage of ["bad-decompose", "bad-plan"] as const) await scenario(`sdk-${stage}-aggregated-bounded-diagnostics`, async f => {
+    const before = await f.maintenanceSnapshot();
+    const result = await f.run("/maintain 检查工具多处错误", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source, stage);
+    assert.equal(result.result.terminalState, "failed");
+    assert.equal(result.tool?.isError, true);
+    assert.match(result.tool?.content ?? "", /共\d+项错误/u, "the real SDK session must reach bounded diagnostics instead of AJV's unbounded argument echo");
+    assert.match(result.tool?.content ?? "", stage === "bad-plan" ? /knowledge\.unitIds/u : /decompositions\[0\]/u);
+    assert.doesNotMatch(result.tool?.content ?? "", /Received arguments|DO_NOT_ECHO_THIS_BODY/u);
+    assert.ok(Buffer.byteLength(result.tool?.content ?? "") < 8_000);
+    assert.deepEqual(await f.maintenanceSnapshot(), before, "rejected arguments cannot create a maintenance record or modify content");
+  });
+  await scenario("sdk-omitted-unit-aliases-safe-default", async f => {
+    const result = await f.run("/maintain 整理来源", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source, "omitted-aliases");
+    assert.equal(result.result.terminalState, "completed");
+    assert.equal(result.tool?.isError, false, result.tool?.content);
+  });
   await scenario("processed-batch-new-conversation-readonly-noop", async f => {
     const paths = [source, other];
     const first = await f.run("/maintain 整理这批资料", { maintenanceScope: { mode: "batch", sourcePaths: paths } }, paths);
@@ -439,7 +455,7 @@ async function fixture(root: string, name: string, emptyRaw = false) {
       await bundle.runtime.abort("followup");
       const result = await handle.result; runs.push({ text: confirmation, result }); return result;
     },
-    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "plan" | "resume" | "invalid-write" | "inspect" | "resume-only" = "all") => {
+    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "plan" | "resume" | "invalid-write" | "inspect" | "resume-only" | "bad-decompose" | "bad-plan" | "omitted-aliases" = "all") => {
       const requestStart = bodies.length;
       const toolCall = (name: string, args: object) => ({ id: `v9-${++callNumber}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
       let maintenanceCallId: string | undefined;
@@ -448,14 +464,16 @@ async function fixture(root: string, name: string, emptyRaw = false) {
         const before = await fs.readFile(path.join(vault, wiki), "utf8");
         replies.push({ role: "assistant", content: null, tool_calls: [...paths.map(relativePath => toolCall("note_read", { relativePath })), toolCall("note_read", { relativePath: wiki })] });
         const units = await Promise.all(paths.map(async (sourcePath, index) => fixtureKnowledgeUnit(`source-${index}`, sourcePath, await fs.readFile(path.join(vault, sourcePath), "utf8").catch(() => ""), before.match(/^#\s+(.+)$/mu)?.[1] ?? "合成知识点")));
-        const decomposition = toolCall("knowledge_maintain", { stage: "decompose", sourcePaths: paths, decompositions: paths.map((sourcePath, index) => ({ sourcePath, summary: `合成摘要 ${sourcePath}`, units: [units[index]] })) });
+        const decomposition = toolCall("knowledge_maintain", { stage: "decompose", sourcePaths: paths, decompositions: paths.map((sourcePath, index) => ({ sourcePath, summary: `合成摘要 ${sourcePath}`, units: [stages === "omitted-aliases" ? Object.fromEntries(Object.entries(units[index]).filter(([key]) => key !== "aliases")) : units[index]] })) });
         const plan = toolCall("knowledge_maintain", { stage: "plan", sourcePaths: paths, writingPlan: [{ id: "summary", targetPath: wiki, sourcePaths: paths, knowledge: { unitIds: units.map(unit => unit.id), decision: { kind: "same_point", reason: "合成夹具：维护同一主题原有页以验证范围继承", candidatePath: wiki } }, expectedTarget: { kind: "file", contentRevision: `sha256:${createHash("sha256").update(before).digest("hex")}` } }] });
         const snapshot = createMaintenanceSectionSnapshot(before), intro = snapshot.regions.find(region => region.kind === "introduction")!;
         const sections = toolCall("knowledge_maintain", { stage: "sections", sourcePaths: paths, targetPath: wiki });
         const maintenance = toolCall("knowledge_maintain", { stage: "write", sourcePaths: paths, pageId: "summary", sectionPatches: [{ regionId: stages === "invalid-write" ? "invalid-region" : intro.id, operation: "replace", content: paths.map(selected => `已整理 [[${selected}|原始资料]]。`).join("\n") + "\n\n" }] });
         const resume = toolCall("knowledge_maintain", { stage: "resume", sourcePaths: paths });
         const inspect = toolCall("knowledge_maintain", { stage: "inspect", sourcePaths: paths, view: "pages" });
-        const ordered = stages === "inspect" ? [inspect] : stages === "resume-only" ? [resume] : stages === "plan" ? [decomposition, plan] : stages === "resume" ? [resume, sections, maintenance] : [decomposition, plan, sections, maintenance];
+        const badDecompose = toolCall("knowledge_maintain", { stage: "decompose", sourcePaths: paths, debugPayload: "DO_NOT_ECHO_THIS_BODY".repeat(5_000), decompositions: [{ sourcePath: paths[0], summary: 123, units: [{ id: 1, type: "unknown", title: null, domain: "", aliases: null, points: [], evidence: [{ sourcePath: 1, sourceRevision: 5, quote: [] }] }, "old string"] }] });
+        const badPlan = toolCall("knowledge_maintain", { stage: "plan", sourcePaths: paths, extra: "DO_NOT_ECHO_THIS_BODY".repeat(5_000), writingPlan: [{ id: "p1", targetPath: wiki, sourcePaths: paths, summary: "unknown extra", unitIds: ["source-0"], expectedTarget: { kind: "file" }, knowledge: { unitIds: [], decision: null } }] });
+        const ordered = stages === "bad-decompose" ? [badDecompose] : stages === "bad-plan" ? [badPlan] : stages === "inspect" ? [inspect] : stages === "resume-only" ? [resume] : stages === "plan" ? [decomposition, plan] : stages === "resume" ? [resume, sections, maintenance] : [decomposition, plan, sections, maintenance];
         maintenanceCallId = ordered.at(-1)!.id;
         for (const stage of ordered) replies.push({ role: "assistant", content: null, tool_calls: [stage] });
       }

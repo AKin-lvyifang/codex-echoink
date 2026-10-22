@@ -17,6 +17,8 @@ import { applyMaintenanceRelatedEntries } from "../knowledge-base/maintenance-p2
 import { isMaintenanceSourceProcessed } from "../knowledge-base/maintenance-source-state";
 import { releaseMaintenancePages } from "../knowledge-base/maintenance-page-lock";
 import { createKnowledgeMaintenanceResultEnvelope } from "../knowledge-base/knowledge-maintenance-result";
+import { appendMaintenanceAliases } from "../knowledge-base/maintenance-page-metadata";
+import { parseDocument } from "yaml";
 import type { MaintenanceKnowledgeType, MaintenanceKnowledgeUnit } from "../knowledge-base/maintenance-p2-contract";
 import type { MaintenanceP1Action, MaintenanceWritingItem } from "../knowledge-base/maintenance-p1-contract";
 const revision = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
@@ -31,6 +33,57 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     try { await run(f); report.push({ name, passed: true, vault: f.vault }); }
     finally { for (const record of await readPrivateMaintenanceRecords(f.privateRoot)) releaseMaintenancePages(record.recordId); f.release(); }
   }
+  for (const aliases of ["aliases: ['First', Old] # keep comment\n", "aliases: [First, ] # trailing comma\n", "aliases:\n  - 'First' # first comment\n  - Old # old comment\n", "aliases: [\n  'First', # first comment\n  Old # old comment\n] # outer comment\n"]) {
+    const before = `\uFEFF---\r\n${aliases.replace(/\n/gu,"\r\n")}custom: 0021 # keep\r\n---\r\n# 用户标题\r\n\r\n正文。  \r\n\r\n\r\n手写段落。\r\n`;
+    const result = appendMaintenanceAliases(before,["First","Old","NEW","新别名"]);
+    const yaml = result.slice(6,result.indexOf("---",6));
+    const current = parseDocument(yaml).toJS().aliases as string[];
+    assert.deepEqual(current,["First","Old","NEW","新别名"]);
+    assert.ok(result.includes("# keep comment") === before.includes("# keep comment"));
+    for (const comment of ["# first comment","# old comment","# outer comment","# trailing comma"]) if (before.includes(comment)) assert.ok(result.includes(comment));
+    assert.equal(result.slice(result.indexOf("custom:")),before.slice(before.indexOf("custom:")),"other properties and handwritten body stay verbatim");
+    assert.equal(appendMaintenanceAliases(result,["First","Old","NEW","新别名"]),result);
+  }
+  assert.throws(()=>appendMaintenanceAliases("---\naliases:\n  - >-\n    complex\ncustom: keep\n---\n# 标题\n",["new"]),/复杂标量/u);
+  await scenario("controlled-new-h2-aliases-cold-resume-and-real-map-title",async f=>{
+    const target="wiki/旧存储名.md", source="raw/spaced.md";
+    const before="\uFEFF---\r\naliases: ['Spaced repetition'] # keep comment\r\n类型: 概念\r\n领域: 学习方法\r\ncustom: 0021 # preserve\r\n---\r\n# 间隔复习\r\n\r\n旧导语。\r\n\r\n## 用户手写\r\n保留这行。  \r\n\r\n\r\n用户多空行。\r\n\r\n## 来源\r\n用户手写来源说明。\r\n";
+    await f.write(target,before);await f.write(source,"# 复习原文\n先按学习表现调整下一次复习间隔。\n");
+    const unit=await f.unit("spaced",source,"间隔复习");unit.domain="学习方法";unit.aliases=["复习间隔","Spaced repetition"];
+    f.ok(await f.decompose([source],[unit]));const observed=await f.observe(target);
+    const item={...f.item("spaced",target,[source],[unit.id],observed),newSections:["应用步骤"]};
+    f.ok(await f.call({stage:"plan",writingPlan:[item]},[source]));
+    const listed=await f.call({stage:"sections",targetPath:target},[source]);f.ok(listed);
+    const snapshot=JSON.parse(listed.message).snapshot;const region=snapshot.regions.find((region:{kind:string})=>region.kind==="new-section");assert.ok(region);
+    f.fail(target);const failed=await f.call({stage:"write",pageId:"spaced",sectionPatches:[{regionId:region.id,operation:"append",content:"\n\n先判断掌握情况。\n\n\n再调整间隔。\n"}]},[source]);assert.equal(failed.status,"failed");assert.equal(await f.read(target),before);
+    f.fail(null);await f.restart();f.ok(await f.call({stage:"resume"},[source]));
+    const after=await f.read(target);assert.match(after,/## 应用步骤\r\n\r\n先判断掌握情况。\r\n\r\n再调整间隔。\r\n\r\n## 来源/u);
+    assert.ok(after.includes("## 用户手写\r\n保留这行。  \r\n\r\n\r\n用户多空行。\r\n\r\n"));assert.ok(after.includes("# 间隔复习\r\n"));assert.ok(after.includes("custom: 0021 # preserve\r\n"));assert.ok(after.includes("aliases: ['Spaced repetition', '复习间隔'] # keep comment"));
+    const map=await f.read("wiki/学习方法索引.md");assert.ok(map.includes(`[间隔复习](<${encodeURIComponent("旧存储名.md")}>)`));assert.ok(!map.includes("[旧存储名]("));
+    const beforeRepeat=after;f.ok(await f.call({stage:"resume"},[source]));assert.equal(await f.read(target),beforeRepeat);assert.equal(f.writes.filter(path=>path===target).length,1);
+  });
+  await scenario("new-page-final-basename-h1-and-verified-aliases",async f=>{
+    const source="raw/sqlite.md",target="wiki/SQLite.md",title="SQLite：理解嵌入式数据库的事务边界";
+    await f.write(source,"# SQLite原文\nSQLite把数据库引擎嵌入应用进程。\n");const unit=await f.unit("sqlite",source,title,"工具 / 产品");unit.aliases=["SQLite3"];
+    f.ok(await f.decompose([source],[unit]));f.ok(await f.call({stage:"plan",writingPlan:[f.item("sqlite",target,[source],[unit.id])]},[source]));
+    f.ok(await f.call({stage:"write",pageId:"sqlite",content:page(title,"工具 / 产品").replace("aliases: []\n","")},[source]));
+    const after=await f.read(target);assert.match(after,/# SQLite\n/u);assert.ok(after.includes(title),"descriptive article title remains in the lead");assert.ok(after.includes("SQLite3"));const map=await f.read("wiki/工程工具索引.md");assert.ok(map.includes("[SQLite](<SQLite.md>)"));assert.ok(!map.includes(`[${title}](`));
+  });
+  await scenario("unselected-handwritten-eof-survives-new-managed-sections",async f=>{
+    const source="raw/eof.md",target="wiki/保留留白.md",related="wiki/关联页.md";
+    const suffix="## 手写末尾\r\n用户行尾空格。  \r\n\r\n\r\n\r\n";
+    const before="---\r\naliases: [Old] # preserve\r\ncustom: keep\r\n---\r\n# 保留留白\r\n\r\n导语。\r\n\r\n## 可补充\r\n旧事实。\r\n\r\n"+suffix;
+    await f.write(source,"# 留白原文\n新增事实应放到对应小节。\n");await f.write(target,before);await f.write(related,"# 关联页\n明确相关的已有条目。\n");
+    const unit=await f.unit("eof",source,"保留留白");unit.aliases=["New"];
+    f.ok(await f.decompose([source],[unit]));const current=await f.observe(target);await f.observe(related);
+    const item=f.item("eof",target,[source],[unit.id],current);item.knowledge!.related=[{targetPath:related,reason:"已有条目提供事实的使用场景"}];
+    f.ok(await f.call({stage:"plan",writingPlan:[item]},[source]));
+    const listed=await f.call({stage:"sections",targetPath:target},[source]);const snapshot=JSON.parse(listed.message).snapshot;
+    const region=snapshot.regions.find((region:{title:string})=>region.title==="可补充");
+    f.ok(await f.call({stage:"write",pageId:"eof",sectionPatches:[{regionId:region.id,operation:"append",content:"新事实。"}]},[source]));
+    const after=await f.read(target);assert.ok(after.includes(suffix+"## 相关条目"),"adding related/sources never trims the unselected handwritten EOF suffix");assert.ok(after.includes("## 来源\r\n\r\n"));assert.ok(after.includes("aliases: [Old, New] # preserve"));assert.ok(after.includes("custom: keep\r\n"));
+    const once=after;f.ok(await f.call({stage:"resume"},[source]));assert.equal(await f.read(target),once);
+  });
   await scenario("readonly-noop-uses-shared-source-state-precedence", async f => {
     const cases: { id: string; property?: string; registry?: boolean; privateStatus?: "processed" | "failed"; stale?: boolean; setting?: boolean; complete: boolean }[] = [
       { id: "new-complete", property: "已提炼", privateStatus: "failed", stale: true, complete: true },
@@ -122,7 +175,7 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     const item = f.item("first",target,sources.slice(0,20),firstUnits.map(unit=>unit.id)); item.knowledge!.domain = "最终领域";
     f.ok(await f.call({stage:"plan",writingPlan:[item]},sources.slice(0,20))); f.ok(await f.call({stage:"write",pageId:"first",content:page(title)},sources.slice(0,20)));
     const update = async(conversation:string, source:string) => {
-      f.conversation(conversation); const unit = await f.unit("later",source,title); unit.domain = "最终领域";
+      f.conversation(conversation); const unit = await f.unit("later",source,title); unit.domain = "最终领域"; unit.aliases = ["Cross batch identity"];
       const result = await f.decompose([source],[unit]); f.ok(result); assert.ok(result.message.includes(target));
       const current = await f.observe(target), snapshot = createMaintenanceSectionSnapshot(current), body = snapshot.regions.find(region=>region.title === "自定义知识正文")!;
       const proposed = f.item("later",target,[source],[unit.id],current); proposed.knowledge!.domain = "最终领域";
@@ -130,6 +183,7 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
       f.ok(await f.call({stage:"write",pageId:"later",sectionPatches:[{regionId:body.id,operation:"append",content:`${source}补充的同点证据。`}]},[source]));
     };
     await update("source-21",sources[20]); await update("rerun-same-batch",sources[20]);
+    assert.equal((await f.read(target)).split('"Cross batch identity"').length-1,1,"the 21st source contributes its synonym once to existing aliases");
     assert.equal((await f.read(target)).split(`[[${sources[20]}|`).length-1,1,"rerun refreshes the selected source link instead of duplicating it");
     assert.equal((await fs.readdir(path.join(f.vault,"wiki"))).filter(name=>name === `${title}.md`).length,1);
     await f.write(target,(await f.read(target)).replace("类型: 概念","类型: 方法 / 流程"));

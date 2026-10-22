@@ -6,11 +6,13 @@ import type { PiKnowledgeMaintenanceToolInput, PiKnowledgeMaintenanceToolResult 
 import type { KnowledgeMaintenanceRecord } from "./maintenance-record";
 import type { MaintenanceP1State, MaintenanceSectionSnapshot, MaintenanceSourceFields, MaintenanceWritingItem } from "./maintenance-p1-contract";
 import { createKnowledgeMaintenanceResultEnvelope, knowledgeMaintenanceNoteFromReadback } from "./knowledge-maintenance-result";
-import { createMaintenanceSectionSnapshot, applyMaintenanceSectionPatches } from "./maintenance-section-patch";
+import { createMaintenanceSectionSnapshot, applyMaintenanceSectionPatches, appendMaintenanceBlock } from "./maintenance-section-patch";
+import { appendMaintenanceAliases, maintenancePageTitle } from "./maintenance-page-metadata";
+import { boundedMaintenanceMessage, throwMaintenanceDiagnostics } from "./maintenance-diagnostics";
 import { patchMaintenanceSourceFrontmatter } from "./maintenance-source-frontmatter";
 import { rawDigestFingerprint } from "./raw-digest";
 import { holdMaintenancePages, releaseMaintenancePages, serializeMaintenancePage } from "./maintenance-page-lock";
-import { groundMaintenanceKnowledgeUnits, validateMaintenanceNewPage } from "./maintenance-knowledge-quality";
+import { groundMaintenanceKnowledgeUnits, prepareMaintenanceNewPage, validateMaintenanceNewPage } from "./maintenance-knowledge-quality";
 import { applyMaintenanceRelatedEntries, maintenancePlanRelations, maintenanceVisibleClassification, validateMaintenanceP2Plan } from "./maintenance-p2-planning";
 import type { MaintenanceDomainMapDraft, MaintenanceDomainMapEntry, MaintenanceKnowledgeSource, MaintenanceKnowledgeUnit, MaintenanceUnitCandidates } from "./maintenance-p2-contract";
 
@@ -42,7 +44,7 @@ export class MaintenanceP1Workflow {
   }
   async execute(input: Readonly<PiKnowledgeMaintenanceToolInput>): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     try { return await this.run(input); }
-    catch (error) { return { status: "failed", processedSourcePaths: [], errorCode: error instanceof Phase3MaintenanceError ? error.code : "proposal_invalid", message: `${error instanceof Error ? error.message : String(error)}${error && typeof error === "object" && "currentSnapshot" in error ? `\n请重新sections，当前目录：${JSON.stringify(error.currentSnapshot)}` : ""}` }; }
+    catch (error) { return { status: "failed", processedSourcePaths: [], errorCode: error instanceof Phase3MaintenanceError ? error.code : "proposal_invalid", message: boundedMaintenanceMessage(`${error instanceof Error ? error.message : String(error)}${error && typeof error === "object" && "currentSnapshot" in error ? "\n请重新sections读取完整当前目录，不猜编号。" : ""}`) }; }
   }
   private async run(input: Readonly<PiKnowledgeMaintenanceToolInput>): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     const action = input.p1;
@@ -104,20 +106,26 @@ export class MaintenanceP1Workflow {
       if (!Array.isArray(action.writingPlan) || action.writingPlan.length > 100) throw new Error("需要明确的writingPlan数组。");
       const ids = new Set<string>(), targets = new Set<string>();
       const plan: MaintenanceWritingItem[] = [];
-      for (const item of action.writingPlan) {
+      const errors: string[] = [];
+      for (const [index,item] of action.writingPlan.entries()) { try {
         if (!item || !/^[A-Za-z0-9_-]{1,80}$/u.test(item.id) || ids.has(item.id) || !Array.isArray(item.sourcePaths) || !item.sourcePaths.length || new Set(item.sourcePaths).size !== item.sourcePaths.length || item.sourcePaths.some(p => !record!.sources.some(s => s.path === p))) throw new Error("清单ID、来源或条目无效。");
         const targetPath = await this.host.targetPath(item.targetPath);
         if (targets.has(targetPath)) throw new Error("同一目标只安排一页；先聚合重复知识点。");
         const before = await this.host.read(targetPath);
+        if (item.newSections?.length) {
+          if (before === null) throw new Error("新页用完整content声明结构；newSections只用于已有页缺失的语义H2。");
+          createMaintenanceSectionSnapshot(before, item.newSections);
+        }
         const expectedTarget = item.expectedTarget?.kind === "file" ? { kind: "file" as const, contentRevision: /^[a-f0-9]{64}$/iu.test(item.expectedTarget.contentRevision) ? `sha256:${item.expectedTarget.contentRevision.toLowerCase()}` : item.expectedTarget.contentRevision } : item.expectedTarget;
         if (!expectedTarget || (expectedTarget.kind === "missing" ? before !== null : expectedTarget.kind !== "file" || before === null || revision(before) !== expectedTarget.contentRevision)) throw new Error(`目标版本已变化，请重新note_read：${targetPath}`);
         if (before !== null && input.observedTargetRevisions?.[targetPath] !== revision(before)) throw new Error(`已有页必须先note_read当前版本：${targetPath}`);
         const knowledge = item.knowledge ? { ...item.knowledge, ...(item.knowledge.decision ? { decision: { ...item.knowledge.decision, ...(item.knowledge.decision.candidatePath ? { candidatePath: await this.host.targetPath(item.knowledge.decision.candidatePath) } : {}) } } : {}), ...(item.knowledge.related ? { related: await Promise.all(item.knowledge.related.map(async relation => ({ ...relation, targetPath: await this.host.targetPath(relation.targetPath) }))) } : {}) } : undefined;
         ids.add(item.id); targets.add(targetPath); plan.push({ ...item, expectedTarget, targetPath, sourcePaths: [...item.sourcePaths], ...(knowledge ? { knowledge } : {}) });
-      }
-      for (const d of state.decompositions) if (d.units.length && !plan.some(p => p.sourcePaths.includes(d.sourcePath))) throw new Error(`有知识点的来源未安排任何页：${d.sourcePath}`);
+      } catch (error) { errors.push(`writingPlan[${index}]: ${error instanceof Error ? error.message : String(error)}`); } }
+      for (const d of state.decompositions) if (d.units.length && !plan.some(p => p.sourcePaths.includes(d.sourcePath))) errors.push(`有知识点的来源未安排任何页：${d.sourcePath}`);
+      if (state.p2) try { validateMaintenanceP2Plan(plan, this.units(record), state.p2.candidates); } catch(error) { errors.push(error instanceof Error ? error.message : String(error)); }
+      throwMaintenanceDiagnostics(errors, "写作清单");
       if (state.p2) {
-        validateMaintenanceP2Plan(plan, this.units(record), state.p2.candidates);
         await this.planFinalization(input, record, plan);
       }
       state.writingPlan = plan; state.phase = "write";
@@ -131,7 +139,7 @@ export class MaintenanceP1Workflow {
       if (!item || item.expectedTarget.kind !== "file") throw new Error("sections只能读取本清单内已有页。");
       const before = await this.host.read(item.targetPath);
       if (before === null || revision(before) !== item.expectedTarget.contentRevision) throw new Error("目标已变化，停止该清单；重新读取目标并在未提交前修订目标版本。");
-      const snapshot = createMaintenanceSectionSnapshot(before);
+      const snapshot = createMaintenanceSectionSnapshot(before, item.newSections ?? []);
       state.sectionSnapshots ??= {};
       state.sectionSnapshots[item.targetPath] = snapshot;
       await this.host.save(record);
@@ -162,9 +170,11 @@ export class MaintenanceP1Workflow {
           }
         }
         const baseline = item.expectedTarget.kind === "file" ? (await this.host.read(item.targetPath)) ?? undefined : undefined;
+        const own = this.units(record).filter(unit => item.knowledge?.unitIds.includes(unit.id)).map(unit => ({ ...unit, type: item.knowledge!.type ?? unit.type, domain: item.knowledge!.domain ?? unit.domain }));
+        if (state.p2) content = baseline === undefined ? prepareMaintenanceNewPage(content, own, item.targetPath) : appendMaintenanceAliases(content, own.flatMap(unit => [...unit.aliases, ...([maintenancePageTitle(baseline,item.targetPath), item.targetPath.split("/").at(-1)!.replace(/\.(?:md|markdown)$/iu, "")].includes(unit.title) ? [] : [unit.title])]));
         content = await this.host.preparePageContent?.(item, content, baseline) ?? content;
         if (state.p2) {
-          if (baseline === undefined) validateMaintenanceNewPage(content, this.units(record).filter(unit => item.knowledge!.unitIds.includes(unit.id)).map(unit => ({ ...unit, type: item.knowledge!.type ?? unit.type, domain: item.knowledge!.domain ?? unit.domain })));
+          if (baseline === undefined) validateMaintenanceNewPage(content, own, item.targetPath);
           content = applyMaintenanceRelatedEntries(content, maintenancePlanRelations(state.writingPlan).get(item.targetPath) ?? [], baseline);
         }
         content = await this.withSources(content, item, record, baseline);
@@ -213,8 +223,9 @@ export class MaintenanceP1Workflow {
     }
     const entries = await Promise.all(plan.map(async item => {
       const unit = units.find(unit => item.knowledge!.unitIds.includes(unit.id))!;
-      const visible = item.expectedTarget.kind === "file" ? maintenanceVisibleClassification(await this.host.read(item.targetPath) ?? "") : {};
-      return { path: item.targetPath, title: unit.title, type: visible.type ?? item.knowledge!.type ?? unit.type, domain: visible.domain ?? item.knowledge!.domain ?? unit.domain };
+      const before = item.expectedTarget.kind === "file" ? await this.host.read(item.targetPath) ?? "" : "";
+      const visible = maintenanceVisibleClassification(before);
+      return { path: item.targetPath, title: maintenancePageTitle(before, item.targetPath), type: visible.type ?? item.knowledge!.type ?? unit.type, domain: visible.domain ?? item.knowledge!.domain ?? unit.domain };
     }));
     for (const draft of await this.host.planMaps(entries)) {
       const targetPath = await this.host.targetPath(draft.targetPath);
@@ -261,13 +272,15 @@ export class MaintenanceP1Workflow {
     const retained = [...extractMachineSourceMarkers(baseline ?? "")].filter(([source]) => !item.sourcePaths.includes(source) && !currentMarkers.has(source));
     const preserved = retained.map(([source, revision]) => { const label = (baseline ?? "").split(`[[${source}|`)[1]?.split("]]", 1)[0] || source.split("/").at(-1)!.replace(/\.md$/iu, ""); return `[[${source}|${label}]]${eol}<!-- echoink-source: ${JSON.stringify({ path: source, revision })} -->`; }).join(eol);
     const links = (preserved ? preserved + eol : "") + await this.sourceLinks(record, item.sourcePaths, eol);
-    if (!region) return content + `${eol}${eol}## 来源${eol}${links}${eol}`;
+    if (!region) return appendMaintenanceBlock(content, `## 来源${eol}${eol}${links}${eol}`, eol);
     // This is the only program-managed area; all other bytes stay verbatim.
     let sourceContent = content.slice(region.contentStart, region.end);
+    sourceContent = sourceContent.replace(/^\[\[([^\r\n]+)\]\][ \t]*(?:\r\n|\n|\r)<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->[ \t]*(?:\r\n|\n|\r|$)/gmu, (pair, _link: string, json: string) => { try { return item.sourcePaths.includes(JSON.parse(json).path) ? "" : pair; } catch { return pair; } });
     for (const p of item.sourcePaths) sourceContent = sourceContent.replace(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu, (marker, json: string) => { try { return JSON.parse(json).path === p ? "" : marker; } catch { return marker; } });
     const selected = new Set(item.sourcePaths.flatMap(p => [p, p.replace(/\.(?:md|markdown)$/iu, "")]));
     sourceContent = sourceContent.replace(/\[\[([^\]|#\r\n]+)(?:\|[^\]\r\n]*)?\]\]/gu, (link, target: string) => selected.has(target) ? "" : link);
-    return content.slice(0, region.contentStart) + sourceContent + `${eol}${links}${eol}` + content.slice(region.end);
+    if (sourceContent && !/^[\r\n]/u.test(sourceContent)) sourceContent = eol + sourceContent;
+    return appendMaintenanceBlock(content.slice(0, region.contentStart) + sourceContent, `${links}${eol}${region.end < content.length ? eol : ""}`, eol) + content.slice(region.end);
   }
   private async writePage(input: Readonly<PiKnowledgeMaintenanceToolInput>, item: MaintenanceWritingItem, record: KnowledgeMaintenanceRecord): Promise<void> {
     const state = record.p1!, draft = state.drafts[item.id];

@@ -1,5 +1,6 @@
 import { isMap, parseDocument } from "yaml";
-import { createMaintenanceSectionSnapshot } from "./maintenance-section-patch";
+import { throwMaintenanceDiagnostics } from "./maintenance-diagnostics";
+import { appendMaintenanceBlock, createMaintenanceSectionSnapshot } from "./maintenance-section-patch";
 import type { MaintenanceWritingItem } from "./maintenance-p1-contract";
 import type { MaintenanceKnowledgeType, MaintenanceKnowledgeUnit, MaintenanceRelatedEntry, MaintenanceUnitCandidates } from "./maintenance-p2-contract";
 import { MAINTENANCE_KNOWLEDGE_TYPES } from "./maintenance-knowledge-types";
@@ -18,7 +19,8 @@ export function validateMaintenanceP2Plan(plan: readonly MaintenanceWritingItem[
   const byId = new Map(units.map(unit => [unit.id, unit]));
   const used = new Set<string>();
   const pageByUnit = new Map<string, MaintenanceWritingItem>();
-  for (const item of plan) {
+  const errors: string[] = [];
+  for (const [index,item] of plan.entries()) { try {
     const fields = item.knowledge;
     if (!fields || !Array.isArray(fields.unitIds) || !fields.unitIds.length || new Set(fields.unitIds).size !== fields.unitIds.length || !fields.decision || !["new", "same_point", "uncertain"].includes(fields.decision.kind) || typeof fields.decision.reason !== "string" || !fields.decision.reason.trim()) throw new Error("P2清单必须声明knowledge.unitIds与同知识点判断decision及理由。");
     const own: MaintenanceKnowledgeUnit[] = [];
@@ -43,12 +45,13 @@ export function validateMaintenanceP2Plan(plan: readonly MaintenanceWritingItem[
     for (const relation of fields.related ?? []) if (!relation || typeof relation.targetPath !== "string" || relation.targetPath === item.targetPath || typeof relation.reason !== "string" || !relation.reason.trim() || /[\r\n\[\]<>]/u.test(relation.reason)) throw new Error("相关条目需有效目标与单行关系说明，不能是自链或指令。");
     for (const relation of fields.related ?? []) if (relation.reverseReason !== undefined && (typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n\[\]<>]/u.test(relation.reverseReason))) throw new Error("显式reverseReason须为非空单行关系说明，不能含[]<>；未提供时保持单向。");
     if (fields.decision.kind === "uncertain" && fields.related?.some(relation => typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n\[\]<>]/u.test(relation.reverseReason))) throw new Error("不确定条目的互链须分别声明reason/reverseReason，写清两个方向的关系。");
-  }
-  for (const unit of units) if (!used.has(unit.id)) throw new Error(`知识点未安排：${unit.id}`);
+  } catch(error) { errors.push(`writingPlan[${index}]: ${error instanceof Error ? error.message : String(error)}`); } }
+  for (const unit of units) if (!used.has(unit.id)) errors.push(`知识点未安排：${unit.id}`);
   for (const candidate of candidates) for (const other of candidate.batchUnitIds) {
     const a = pageByUnit.get(candidate.unitId), b = pageByUnit.get(other);
-    if (a && b && a !== b && (!a.knowledge?.related?.some(relation => relation.targetPath === b.targetPath) || !b.knowledge?.related?.some(relation => relation.targetPath === a.targetPath) || a.knowledge.decision.kind !== "uncertain" || b.knowledge.decision.kind !== "uncertain")) throw new Error("批内标题/别名重合应聚合为一页；不确定分开时双方须声明关系和uncertain理由。");
+    if (a && b && a !== b && (!a.knowledge?.related?.some(relation => relation.targetPath === b.targetPath) || !b.knowledge?.related?.some(relation => relation.targetPath === a.targetPath) || a.knowledge.decision.kind !== "uncertain" || b.knowledge.decision.kind !== "uncertain")) errors.push("批内标题/别名重合应聚合为一页；不确定分开时双方须声明关系和uncertain理由。");
   }
+  throwMaintenanceDiagnostics(errors, "候选与知识点判断");
 }
 
 export function maintenancePlanRelations(plan: readonly MaintenanceWritingItem[]): Map<string, MaintenanceRelatedEntry[]> {
@@ -105,6 +108,6 @@ export function applyMaintenanceRelatedEntries(content: string, relations: reado
   for (const relation of relations) retained.set(relation.targetPath, `- [[${relation.targetPath}|${relation.targetPath.split("/").at(-1)!.replace(/\.(?:md|markdown)$/iu, "")}]] — ${relation.reason}`);
   const block = `${BEGIN}${eol}${[...retained].sort(([a],[b]) => a.localeCompare(b)).map(([,line]) => line).join(eol)}${eol}${END}`;
   if (range) return content.slice(0, range.start) + block + content.slice(range.end + END.length);
-  if (!related) return content + `${eol}${eol}## 相关条目${eol}${block}${eol}`;
-  return content.slice(0, related.end) + `${eol}${block}${eol}` + content.slice(related.end);
+  if (!related) return appendMaintenanceBlock(content, `## 相关条目${eol}${eol}${block}${eol}`,eol);
+  return appendMaintenanceBlock(content.slice(0, related.end), `${block}${eol}${related.end < content.length ? eol : ""}`,eol) + content.slice(related.end);
 }

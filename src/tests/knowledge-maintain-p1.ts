@@ -121,9 +121,9 @@ export async function runKnowledgeMaintainP1Tests(root: string): Promise<void> {
     const after = await f.read(target);
     assert.ok(after.includes(replacement), "the new H1 lead is present");
     assert.ok(!after.includes("旧导语。"), "the previous H1 lead was actually replaced");
-    const expectedPageBeforeSources = before.slice(0, intro.contentStart) + replacement + before.slice(intro.end);
+    const expectedPageBeforeSources = before.slice(0, intro.contentStart) + "\n" + replacement + before.slice(intro.end);
     assert.equal(after.slice(0, expectedPageBeforeSources.length), expectedPageBeforeSources, "frontmatter, H1, every unselected region and EOF spaces stay byte exact");
-    assert.ok(after.slice(expectedPageBeforeSources.length).startsWith("\n\n## 来源\n"), "program-managed sources are appended independently");
+    assert.ok(after.slice(expectedPageBeforeSources.length).startsWith("## 来源\n\n"), "program-managed sources reuse the existing blank boundary instead of accumulating empty lines");
     assert.equal(after.match(/echoink-source/g)?.length, 1);
   });
   await scenario("concurrent-target", async f => {

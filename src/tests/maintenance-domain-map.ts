@@ -27,6 +27,17 @@ export async function runMaintenanceDomainMapTests(): Promise<void> {
   assert.ok(fresh[0].content.includes("[标题0](<%E9%A2%86%E5%9F%9F/%E6%9D%A1%E7%9B%AE0.md>)"));
   assert.deepEqual(planMaintenanceDomainMaps({ wikiRoot: root, entries: [...entries].reverse(), existing: [] }), fresh);
 
+  const sparse = planMaintenanceDomainMaps({
+    wikiRoot: root,
+    entries: [entry(`${root}/领域/实际文件名.md`, "传入的真实标题", "计算机", "概念")],
+    existing: []
+  })[0].content;
+  assert.ok(sparse.includes("### 概念\n- [传入的真实标题](<%E9%A2%86%E5%9F%9F/%E5%AE%9E%E9%99%85%E6%96%87%E4%BB%B6%E5%90%8D.md>)"), "display uses the supplied entry title rather than the basename");
+  for (const type of MAINTENANCE_DOMAIN_MAP_TYPES.filter(type => type !== "概念")) {
+    assert.ok(!sparse.includes(`### ${type}`), `empty type ${type} has no heading`);
+  }
+  assert.ok(!sparse.includes("暂无条目"), "empty types have no placeholder");
+
   const prefix = "\uFEFF---\r\ntitle: 原属性\r\nunknown: |\r\n  不得改动\r\n---\r\n手写段落😀  \r\n\r\n";
   const suffix = "\r\n \r\n## 手写尾部\r\n空白与结尾都保留  ";
   const oldBlock = [begin("计算机"), "旧受管内容", end("计算机")].join("\r\n");

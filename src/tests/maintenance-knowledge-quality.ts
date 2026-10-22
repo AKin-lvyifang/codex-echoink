@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import type { MaintenanceKnowledgeSource, MaintenanceKnowledgeUnit } from "../knowledge-base/maintenance-p2-contract";
-import { groundMaintenanceKnowledgeUnits, validateMaintenanceKnowledgeUnits, validateMaintenanceNewPage } from "../knowledge-base/maintenance-knowledge-quality";
+import { groundMaintenanceKnowledgeUnits, prepareMaintenanceNewPage, validateMaintenanceKnowledgeUnits, validateMaintenanceNewPage } from "../knowledge-base/maintenance-knowledge-quality";
 import { MAINTENANCE_KNOWLEDGE_TYPES, MAINTENANCE_KNOWLEDGE_WRITING_TEMPLATES, maintenanceKnowledgeTypePrompt } from "../knowledge-base/maintenance-knowledge-types";
 
 function source(path: string, content: string): MaintenanceKnowledgeSource {
@@ -59,7 +59,7 @@ export function runMaintenanceKnowledgeQualityTests(): void {
   validateMaintenanceKnowledgeUnits([unit(crlf)], [crlf]);
   for (const patch of [
     { id: " " }, { type: "未分类" }, { domain: "" }, { title: "\n" },
-    { aliases: undefined }, { aliases: "别名" }, { aliases: [1] }, { aliases: [""] },
+    { aliases: null }, { aliases: "别名" }, { aliases: [1] }, { aliases: [""] },
     { points: [] }, { points: [" "] }, { evidence: [] }, { typePendingConfirmation: "true" }
   ]) {
     assert.throws(() => validateMaintenanceKnowledgeUnits([{ ...valid, ...patch } as unknown as MaintenanceKnowledgeUnit], [first]));
@@ -111,8 +111,133 @@ export function runMaintenanceKnowledgeQualityTests(): void {
   validateMaintenanceNewPage(page("概念", "aliases: []", "# 标题\n\n有导语。\n\n## 来源\n\n[[raw/source.md]]\n\n## 我为什么这样组织复习\n\n掌握程度变化后应重新安排复习间隔。\n\n## 相关条目\n\n[[wiki/related.md]]\n"), [valid]);
   assert.throws(() => validateMaintenanceNewPage("# 标题\n导语\n## 小节\n正文", [valid]), /YAML/u);
   assert.throws(() => validateMaintenanceNewPage("---\n类型: 概念\naliases: []\n# 未关闭", [valid]), /closed/u);
+  assertNewPagePreparation(first);
+  assertNewPageFailureAggregation(first);
+  assertUnitFailureAggregation(first);
   assertQuoteGrounding();
-  console.log("Maintenance knowledge quality: seven-type templates, exact evidence/version checks and flexible new-page structure passed.");
+  console.log("Maintenance knowledge quality: seven-type templates, bounded aggregate validation, deterministic page preparation and grounded typography/UTF-16 offsets passed.");
+}
+
+function assertNewPagePreparation(first: MaintenanceKnowledgeSource): void {
+  const units = [unit(first, { aliases: ["Spaced Repetition", "间隔效应"] }), unit(first, { id: "unit-2", aliases: ["spaced repetition", "复习间隔"] })];
+  const path = "Wiki/学习/间隔复习.md";
+  const original = page("概念", 'aliases: ["已有别名", "spaced repetition"]', "# 根据掌握情况逐渐拉长复习间隔\n\n安排下一次复习。\n\n## 适用方法\n\n先确认当前掌握程度。\n");
+  const prepared = prepareMaintenanceNewPage(original, units, path);
+  assert.ok(prepared.includes("# 间隔复习\n\n根据掌握情况逐渐拉长复习间隔\n\n安排下一次复习。"), "descriptive H1 is preserved in the lead");
+  for (const alias of ["已有别名", "spaced repetition", "间隔效应", "复习间隔"]) assert.ok(prepared.includes(alias));
+  assert.equal(prepared.includes("Spaced Repetition"), false, "existing equivalent spelling is retained without adding a duplicate");
+  validateMaintenanceNewPage(prepared, units, path);
+  assert.equal(prepareMaintenanceNewPage(prepared, units, path), prepared, "preparation is deterministic and idempotent");
+  assert.throws(() => validateMaintenanceNewPage(original, units, path), /preserve all/u);
+  assert.throws(() => validateMaintenanceNewPage(page(), [unit(first)], "Wiki/别的文件名.md"), /H1.*targetPath basename/u);
+  validateMaintenanceNewPage(page(), [unit(first)]); // Old two-argument calls do not enforce a filename.
+  const missingAliases = prepareMaintenanceNewPage(page("概念", "摘要: 应保留其他属性"), units, path);
+  assert.ok(missingAliases.includes("摘要: 应保留其他属性"));
+  validateMaintenanceNewPage(missingAliases, units, path);
+  const empty = prepareMaintenanceNewPage(page("概念", "摘要: 无别名"), [unit(first)], path);
+  assert.ok(empty.includes("aliases: []"));
+  validateMaintenanceNewPage(empty, [unit(first)], path);
+  assert.equal(prepareMaintenanceNewPage(page(), [unit(first)], path), page(), "a correct page remains byte-for-byte unchanged");
+  const crlf = `\uFEFF${page("概念", "摘要: 保留", "# 描述性标题\n\n导语。\n\n## 小节\n\n知识正文。\n").replace(/\n/gu, "\r\n")}`;
+  const preparedCrlf = prepareMaintenanceNewPage(crlf, units, path);
+  assert.ok(preparedCrlf.startsWith("\uFEFF---\r\n"));
+  assert.equal(preparedCrlf.replace(/\r\n/gu, "").includes("\n"), false);
+  validateMaintenanceNewPage(preparedCrlf, units, path);
+  const comment = page("概念", "aliases: []", "<!-- 😀 注释\n# 不是真标题\n-->\n# 描述性标题\n\n导语。\n\n## 小节\n\n知识正文。\n");
+  const preparedComment = prepareMaintenanceNewPage(comment, [unit(first)], path);
+  assert.ok(preparedComment.includes("<!-- 😀 注释\n# 不是真标题\n-->\n# 间隔复习\n\n描述性标题"));
+  validateMaintenanceNewPage(preparedComment, [unit(first)], path);
+  for (const metadata of ["aliases:", "aliases: null", "aliases: 别名", "aliases: [null]", "aliases: [1]", 'aliases: [""]', "aliases: {name: 别名}", "aliases: &shared [别名]", "aliases: []\naliases: []", "别名: [间隔效应]"]) {
+    assert.throws(() => validateMaintenanceNewPage(prepareMaintenanceNewPage(page("概念", metadata), units, path), units, path), /aliases|unambiguous/u, "explicit invalid aliases cannot be silently repaired in the prepare/validate chain");
+  }
+  for (const body of ["只有正文。\n\n## 小节\n知识正文。", "# 一个标题\n\n# 另一个标题\n\n## 小节\n知识正文。", "## 在前的小节\n\n# 标题\n导语。\n\n## 小节\n知识正文。"])
+    assert.throws(() => prepareMaintenanceNewPage(page("概念", "aliases: []", body), units, path), /one H1/u);
+  const onlyComment = page("概念", "aliases: []", "# 间隔复习\n\n导语。\n\n## 小节\n\n<!-- 注释不是知识正文 -->\n");
+  assert.throws(() => validateMaintenanceNewPage(onlyComment, [unit(first)], path), /knowledge content beyond/u);
+}
+
+function assertNewPageFailureAggregation(first: MaintenanceKnowledgeSource): void {
+  const units = [unit(first, { aliases: ["必须保留的别名"], typePendingConfirmation: true })];
+  const secret = "😀不应回显的完整页面内容".repeat(3000);
+  const content = page("第八类", `aliases: null\n别名: [旧字段]\n类型待确认: "true"\n摘要: ${secret}`, `# 间隔复习\n\n## 来源\n\n${secret}\n`);
+  const check = (count: number, includesH1: boolean) => (error: unknown): boolean => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, new RegExp(`共${count}项错误`, "u"));
+    for (const field of ["类型", "aliases", "别名", "类型待确认", "body.lead", "body.sections", ...(includesH1 ? ["body.H1"] : [])]) assert.ok(error.message.includes(`field=${field}:`), field);
+    assert.match(error.message, /修复/u);
+    assert.equal(error.message.includes("不应回显"), false, "diagnostics identify fields without echoing the page or large metadata values");
+    assert.ok(Buffer.byteLength(error.message, "utf8") < 6500);
+    return true;
+  };
+  assert.throws(() => validateMaintenanceNewPage(content, units, "Wiki/最终标题.md"), check(7, true));
+  const path = "Wiki/间隔复习.md";
+  const prepared = prepareMaintenanceNewPage(content, units, path);
+  assert.equal(prepared, content, "prepare must preserve explicit invalid aliases instead of replacing them");
+  assert.throws(() => validateMaintenanceNewPage(prepared, units, path), check(6, false));
+  const renamed = prepareMaintenanceNewPage(content, units, "Wiki/最终标题.md");
+  assert.ok(renamed.includes("aliases: null"));
+  assert.ok(renamed.includes("# 最终标题\n\n间隔复习"), "safe H1 repair proceeds independently of invalid aliases");
+  assert.throws(() => validateMaintenanceNewPage(renamed, units, "Wiki/最终标题.md"), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    for (const field of ["类型", "aliases", "别名", "类型待确认", "body.sections"]) assert.ok(error.message.includes(`field=${field}:`), field);
+    assert.equal(error.message.includes("field=body.H1:"), false);
+    assert.equal(error.message.includes("field=body.lead:"), false, "preserved descriptive H1 now supplies a real lead");
+    return true;
+  });
+  const missingAlias = page("第八类", "aliases: []\n类型待确认: false", "# 间隔复习\n\n## 小节\n\n");
+  assert.throws(() => validateMaintenanceNewPage(missingAlias, units, path), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /preserve all/u);
+    for (const field of ["类型", "aliases", "类型待确认", "body.lead", "body.sections"]) assert.ok(error.message.includes(`field=${field}:`), field);
+    return true;
+  });
+}
+
+function assertUnitFailureAggregation(first: MaintenanceKnowledgeSource): void {
+  const missingAliases = unit(first, { aliases: undefined });
+  const before = structuredClone(missingAliases);
+  const [fixed] = groundMaintenanceKnowledgeUnits([missingAliases], [first]);
+  assert.deepEqual(fixed.aliases, []);
+  assert.deepEqual(missingAliases, before, "safe defaulting does not mutate the caller's unit");
+  const invalid = [
+    { ...unit(first), id: "bad-first", type: "未知", domain: "", aliases: null, points: ["", 1], evidence: [{ ...unit(first).evidence[0], sourceRevision: "bad", quote: "不存在的引文" }] },
+    { ...unit(first), id: "bad-second", title: "", aliases: [1, ""], typePendingConfirmation: "true", evidence: [] }
+  ] as unknown as MaintenanceKnowledgeUnit[];
+  assert.throws(() => groundMaintenanceKnowledgeUnits(invalid, [first]), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /共12条（字段\/结构11条，引文1条）/u);
+    for (const field of ["type", "domain", "aliases", "points[0]", "points[1]", "evidence[0].sourceRevision", "title", "aliases[0]", "aliases[1]", "typePendingConfirmation", "evidence", "evidence[0].quote"]) assert.ok(error.message.includes(`field=${field}:`) || error.message.includes(`field=${field},`), field);
+    assert.ok(error.message.includes('units[0] [unit.id="bad-first"'));
+    assert.ok(error.message.includes('units[1] [unit.id="bad-second"'));
+    assert.match(error.message, /修复/u);
+    assert.ok(Buffer.byteLength(error.message, "utf8") < 6500);
+    return true;
+  });
+  const hugeId = "😀不应完整回显".repeat(3000);
+  const many = Array.from({ length: 20 }, (_, index) => ({ ...unit(first), id: `${hugeId}-${index}`, aliases: null, points: [""], evidence: [] })) as unknown as MaintenanceKnowledgeUnit[];
+  assert.throws(() => groundMaintenanceKnowledgeUnits(many, [first]), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /共60条/u);
+    assert.equal(error.message.includes(hugeId), false);
+    assert.ok(Buffer.byteLength(error.message, "utf8") < 6500);
+    assert.equal(error.message.includes("\uFFFD"), false);
+    const counts = /已列出(\d+)条，遗漏(\d+)条/u.exec(error.message)!;
+    assert.equal(Number(counts[1]) + Number(counts[2]), 60);
+    return true;
+  });
+  const circular: Record<string, unknown> = { secretPayload: "invalid objects must not be serialized" };
+  circular.self = circular;
+  for (const quote of [circular, 1n, ["not a quote"]]) {
+    const malformed = unit(first, { evidence: [{ sourcePath: "", sourceRevision: "bad", quote }] as unknown as MaintenanceKnowledgeUnit["evidence"] });
+    assert.throws(() => groundMaintenanceKnowledgeUnits([malformed], [first]), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /共3条/u);
+      for (const field of ["sourcePath", "sourceRevision", "quote"]) assert.ok(error.message.includes(`field=evidence[0].${field}`));
+      assert.equal(error.message.includes("secretPayload"), false);
+      assert.ok(Buffer.byteLength(error.message, "utf8") < 6500);
+      return true;
+    });
+  }
 }
 
 function assertQuoteGrounding(): void {
@@ -140,7 +265,7 @@ function assertQuoteGrounding(): void {
   const firstMatch = text.indexOf("This  is");
   assert.ok(firstMatch > [...text.slice(0, firstMatch)].length, "offsets include UTF-16 surrogate pairs before the quote");
 
-  const check = (content: string, quote: string, match: "literal" | "whitespace" = "whitespace") => {
+  const check = (content: string, quote: string, match: "literal" | "whitespace" | "typography" = "whitespace") => {
     const item = source("raw/range.md", content);
     const [result] = groundMaintenanceKnowledgeUnits([unit(item, { evidence: [{ sourcePath: item.path, sourceRevision: item.contentRevision, quote }] })], [item]);
     const evidence = result.evidence[0];
@@ -160,6 +285,38 @@ function assertQuoteGrounding(): void {
   assert.equal(literalPriority.quoteLocation?.start, "alpha   beta\n\n".length, "literal match takes priority, then earliest literal occurrence");
   check("# Header\n\n```js\nconst   VALUE = 1;\n```\n", "const   VALUE = 1;", "literal");
   check("first paragraph.\n\nsecond paragraph.", "first paragraph.\n\nsecond paragraph.", "literal");
+  const punctuation = check("\uFEFF---\r\n摘要: 属性。\r\n---\r\n# 😀 标题\r\n\r\n😀 原句：“学习，\r\n需要耐心；复习（每天一次）。”\r\n", '原句:"学习, 需要耐心;复习(每天一次)."', "typography");
+  assert.equal(punctuation.quote, "原句：“学习，\r\n需要耐心；复习（每天一次）。”");
+  check("He said, ``Keep  the\noriginal words.'' Then left.", 'He said, "Keep the original words."', "typography");
+  const legacy = check("😀 Earlier. He said, ``Keep  the original words.''", '"Keep the original words."', "typography");
+  assert.equal(legacy.quote, "``Keep  the original words.''", "both two-character legacy delimiters belong to the original slice");
+  check('He said, "Keep the original words."', "He said, ``Keep the original words.''", "typography");
+  const mixedLegacy = check('They said that ``brute force" search was used.', 'They said that "brute force" search was used.', "typography");
+  assert.equal(mixedLegacy.quote, 'They said that ``brute force" search was used.');
+  // Minimal Sutton regression: one unmatched legacy opener cannot hide later source sentences.
+  const laterSentences = [
+    "The two methods that seem to scale arbitrarily in this way\nare search and learning.",
+    "AI researchers have often\ntried to build knowledge into their agents",
+    "we should build in only the\nmeta-methods that can find and capture this arbitrary complexity",
+    "This is a big lesson. As a field, we still have not thoroughly learned\nit, as we are continuing to make the same kind of mistakes."
+  ];
+  const unmatchedLegacyParagraph = `😀 They said that \`\`brute force" search was used.\n${laterSentences.join("\n")}`;
+  for (const sentence of laterSentences) {
+    const submitted = sentence.replace(/\n/gu, " ");
+    const grounded = check(unmatchedLegacyParagraph, submitted, "whitespace");
+    assert.equal(grounded.quote, sentence);
+    assert.equal(grounded.quoteLocation?.start, unmatchedLegacyParagraph.indexOf(sentence));
+    assert.equal(grounded.quoteLocation?.end, unmatchedLegacyParagraph.indexOf(sentence) + sentence.length);
+  }
+  check("An unmatched ` marker stays literal. Later  words\nremain visible.", "Later words remain visible.");
+  check("An unmatched `` marker stays literal. Later  words\nremain visible.", "Later words remain visible.");
+  check("An unmatched `` marker before HTML.\n<div>\nHTML is excluded.\n</div>\n\nLater  words\nremain visible.", "Later words remain visible.");
+  check("Use ［x］，then ［y］！", "Use [x],then [y]!", "typography");
+  check("Use ‘exact’ words.", "Use 'exact' words.", "typography");
+  const typographyLiteral = check('Curly “words”.\n\nPlain "words".', '"words"', "literal");
+  assert.equal(typographyLiteral.quoteLocation?.start, 'Curly “words”.\n\nPlain '.length);
+  const whitespaceBeforeTypography = check('First “a”.\n\nThen "a"  b.', '"a" b.', "whitespace");
+  assert.equal(whitespaceBeforeTypography.quote, '"a"  b.');
 
   const rejects = (content: string, quote: string) => {
     const item = source("raw/reject.md", content);
@@ -188,6 +345,20 @@ function assertQuoteGrounding(): void {
   rejects(nasa, nasa.replace(/^The/u, "the")); // NASA diagnosis: case change, not an invented fact.
   rejects(nasa, nasa.replace("redesign", "replacement"));
   rejects(nasa, nasa.replace(";", ","));
+  rejects("Ａlpha is fullwidth.", "Alpha is fullwidth.");
+  rejects("Step １ stays distinct.", "Step 1 stays distinct.");
+  rejects("Café remains unchanged.", "Cafe remains unchanged.");
+  rejects("“First  paragraph.”\n\n“Second  paragraph.”", '"First paragraph." "Second paragraph."');
+  rejects("Before “words” `token` after “words”.", 'Before "words" token after "words".');
+  rejects("```text\n“Some   code.”\n```", '"Some code."');
+  rejects("Before ``token   code'' remains code`` after.", '"token code"');
+  rejects('Before ``mixed  quote" remains code`` after.', '"mixed quote"');
+  rejects("An unmatched ` precedes ``token   code`` after.", "token code");
+  rejects("An unmatched `` marker before HTML.\n<div>\nHidden  HTML\n</div>", "Hidden HTML");
+  rejects('They said ``mixed" in one paragraph.\n\nLater  text.', '"mixed" in one paragraph. Later text.');
+  rejects("- “First  item.”\n- “Second  item.”", '"First item." - "Second item."');
+  rejects("He said, `Keep  words.'", 'He said, "Keep words."');
+  rejects("He said, ``Keep  words.\n\nMore words.''", 'He said, "Keep words. More words."');
 
   const aggregateSource = source("raw/aggregate.md", "Actual evidence exists here.");
   const badEvidence = (quote: string) => ({ sourcePath: aggregateSource.path, sourceRevision: aggregateSource.contentRevision, quote });

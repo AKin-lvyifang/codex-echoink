@@ -47,7 +47,7 @@ interface Heading {
  * The document's sole leading H1 keeps its heading bytes and exposes its body as
  * 导语; any text before that H1 remains a separate 前言 region.
  */
-export function createMaintenanceSectionSnapshot(markdown: string): MaintenanceSectionSnapshot {
+export function createMaintenanceSectionSnapshot(markdown: string, newSections: readonly string[] = []): MaintenanceSectionSnapshot {
   const revision = `sha256:${sha256Hex(markdown)}`;
   const bodyStart = frontmatterEnd(markdown);
   const headings = readHeadings(markdown, bodyStart);
@@ -71,7 +71,15 @@ export function createMaintenanceSectionSnapshot(markdown: string): MaintenanceS
       end: headings[index + 1]?.start ?? markdown.length
     });
   });
-  return { revision, regions };
+  if (!Array.isArray(newSections) || newSections.length > 20) throw new Error("newSections须为最多20个新H2标题的数组。");
+  const titles = new Set(regions.map(region => region.title.normalize("NFKC").toLowerCase()));
+  const insertion = regions.find(region => region.kind === "sources" || region.kind === "related")?.start ?? markdown.length;
+  for (const [index, title] of newSections.entries()) {
+    if (typeof title !== "string" || !title.trim() || title !== title.trim() || title.length > 120 || /[\r\n#`*_[\]<>]/u.test(title) || regionKind(title) !== "section" || titles.has(title.normalize("NFKC").toLowerCase())) throw new Error(`newSections[${index}]须是尚不存在的普通语义H2标题；已有对应小节用真实编号，来源/相关条目由程序管理。`);
+    titles.add(title.normalize("NFKC").toLowerCase());
+    regions.push({ id: `section:${revision.slice(7)}:new:${index + 1}`, title, kind: "new-section", start: insertion, contentStart: insertion, end: insertion });
+  }
+  return { revision, regions, ...(newSections.length ? { newSections: [...newSections] } : {}) };
 }
 
 /**
@@ -85,7 +93,9 @@ export function applyMaintenanceSectionPatches(
   snapshot: MaintenanceSectionSnapshot,
   patches: readonly MaintenanceSectionPatch[]
 ): string {
-  const current = createMaintenanceSectionSnapshot(markdown);
+  const plain = createMaintenanceSectionSnapshot(markdown);
+  if (snapshot?.revision !== plain.revision) throw new MaintenanceSectionPatchError("STALE_SNAPSHOT", "文档已变化，区域快照已过期，未应用修改。", plain);
+  const current = createMaintenanceSectionSnapshot(markdown, snapshot.newSections ?? []);
   const fail: (code: MaintenanceSectionPatchErrorCode, message: string) => never = (code, message) => {
     throw new MaintenanceSectionPatchError(code, message, current);
   };
@@ -95,6 +105,7 @@ export function applyMaintenanceSectionPatches(
 
   const byId = new Map(current.regions.map(region => [region.id, region]));
   const replacements = new Map<string, string>();
+  const additions = new Map<string, string>();
   const lineEnding = markdown.match(/\r\n|\n|\r/u)?.[0] ?? "\n";
   for (const patch of patches) {
     if (!patch || typeof patch.regionId !== "string" || typeof patch.content !== "string"
@@ -103,42 +114,57 @@ export function applyMaintenanceSectionPatches(
     }
     const region = byId.get(patch.regionId);
     if (!region) fail("UNKNOWN_REGION", `区域编号 ${JSON.stringify(patch.regionId)} 不属于当前快照，未应用修改。`);
-    if (replacements.has(region.id)) fail("DUPLICATE_REGION_PATCH", "同一区域不能在一批补丁中修改两次，未应用修改。");
-    if (patch.operation === "replace" && current.regions.length === 1) {
+    if (replacements.has(region.id) || additions.has(region.id)) fail("DUPLICATE_REGION_PATCH", "同一区域不能在一批补丁中修改两次，未应用修改。");
+    if (patch.operation === "replace" && current.regions.filter(region => region.kind !== "new-section").length === 1) {
       fail("WHOLE_PAGE_REPLACE", "无标题文档不能整页替换，请先明确分区；本次未应用修改。");
     }
     // Reject even code-like/indented variants conservatively. Region editing is
     // content maintenance, not a way to create, remove, or rename headings.
-    if (hasBoundarySyntax(patch.content)) {
-      fail("BOUNDARY_CHANGE", "补丁正文不能包含新标题、Setext 标题线或代码围栏，未应用修改。");
+    if (hasBoundarySyntax(patch.content) || /^\s*(?:\*\*[^*]+\*\*|__[^_]+__)\s*[:：]?\s*$/mu.test(patch.content)) {
+      fail("BOUNDARY_CHANGE", "补丁正文不能塞标题、加粗伪标题或代码围栏；缺少语义小节须在plan.newSections声明，再用sections给出的新编号。");
     }
-
+    const fragment = normalizeMaintenanceFragment(patch.content, lineEnding);
+    if (region.kind === "new-section") {
+      if (patch.operation !== "append" || !fragment) fail("INVALID_PATCH", "新H2虚拟区域只接受非空append正文，由程序生成标题。");
+      additions.set(region.id, fragment);
+      continue;
+    }
     const previous = markdown.slice(region.contentStart, region.end);
-    let content = patch.operation === "replace" ? patch.content : appendContent(previous, patch.content, lineEnding);
-    if (content && region.contentStart > 0 && !(region.contentStart === 1 && markdown.startsWith("\uFEFF"))
+    let content = patch.operation === "replace" ? fragment : appendContent(previous, fragment, lineEnding);
+    if (content && patch.operation === "replace" && region.start < region.contentStart) {
+      const heading = markdown.slice(region.start, region.contentStart);
+      content = lineEnding.repeat(/[\r\n]$/u.test(heading) ? 1 : 2) + content;
+    } else if (content && region.contentStart > 0 && !(region.contentStart === 1 && markdown.startsWith("\uFEFF"))
       && !/[\r\n]$/u.test(markdown.slice(0, region.contentStart))) {
       content = lineEnding + content;
     }
     if (content && region.end < markdown.length) {
-      const next = current.regions.find(candidate => candidate.start === region.end);
+      const next = current.regions.find(candidate => candidate.start === region.end && candidate.start < candidate.contentStart);
       const nextHeading = next && markdown.slice(next.start, next.contentStart);
       // Setext headings can absorb the preceding paragraph without a blank line.
-      const requiredEndings = nextHeading && !/^ {0,3}#{1,6}(?:[ \t]|[\r\n]|$)/u.test(nextHeading) ? 2 : 1;
-      content = terminateContent(content, lineEnding, requiredEndings);
+      const requiredEndings = nextHeading ? 2 : 1;
+      content = content.replace(/(?:\r\n|\n|\r)+$/u, "") + lineEnding.repeat(requiredEndings);
     }
     replacements.set(region.id, content);
   }
 
   let result = markdown;
-  for (const region of [...current.regions].reverse()) {
+  for (const region of [...current.regions].filter(region => region.kind !== "new-section").reverse()) {
     const content = replacements.get(region.id);
     if (content !== undefined) result = result.slice(0, region.contentStart) + content + result.slice(region.end);
+  }
+  const insertedTitles = new Set<string>();
+  if (additions.size) {
+    const at = createMaintenanceSectionSnapshot(result).regions.find(region => region.kind === "sources" || region.kind === "related")?.start ?? result.length;
+    const block = current.regions.filter(region => additions.has(region.id)).map(region => { insertedTitles.add(region.title); return `## ${region.title}${lineEnding}${lineEnding}${additions.get(region.id)}`; }).join(lineEnding.repeat(2));
+    result = appendMaintenanceBlock(result.slice(0, at), block + lineEnding.repeat(2) + result.slice(at), lineEnding);
   }
   // Also catch context changes, e.g. an unclosed HTML comment hiding an existing
   // heading, or Setext syntax spanning a content/heading boundary.
   const after = createMaintenanceSectionSnapshot(result);
-  if (after.regions.length !== current.regions.length || current.regions.some((region, index) => {
-    const updated = after.regions[index];
+  const existing = current.regions.filter(region => region.kind !== "new-section"), updatedExisting = after.regions.filter(region => !insertedTitles.has(region.title));
+  if (after.regions.length !== existing.length + additions.size || updatedExisting.length !== existing.length || existing.some((region, index) => {
+    const updated = updatedExisting[index];
     const heading = markdown.slice(region.start, region.contentStart);
     const updatedHeading = result.slice(updated.start, updated.contentStart);
     const insertedFirstLineEnding = region.contentStart === markdown.length && heading && !/[\r\n]$/u.test(heading)
@@ -147,6 +173,16 @@ export function applyMaintenanceSectionPatches(
       || (heading !== updatedHeading && !insertedFirstLineEnding);
   })) fail("BOUNDARY_CHANGE", "补丁会改变已有标题边界，未应用修改。");
   return result;
+}
+
+/** Only newly supplied prose is normalized; the page's untouched text is never compressed. */
+export function normalizeMaintenanceFragment(content: string, eol = "\n"): string {
+  return content.replace(/\r\n|\r|\n/gu, "\n").replace(/^(?:[ \t]*\n)+|(?:\n[ \t]*)+$/gu, "").replace(/\n(?:[ \t]*\n){2,}/gu, "\n\n").replace(/\n/gu, eol);
+}
+
+/** Appending a managed block must not trim an unselected user's trailing bytes. */
+export function appendMaintenanceBlock(prefix: string, block: string, eol = "\n"): string {
+  return terminateContent(prefix,eol,2) + block;
 }
 
 function regionId(revision: string, index: number): string {
@@ -171,7 +207,7 @@ function sameSnapshot(left: MaintenanceSectionSnapshot, right: MaintenanceSectio
 function appendContent(previous: string, addition: string, lineEnding: string): string {
   if (!addition) return previous;
   if (!previous) return addition;
-  return terminateContent(previous, lineEnding, 2) + addition;
+  return previous.replace(/(?:\r\n|\n|\r)+$/u, "") + lineEnding.repeat(2) + addition;
 }
 
 function hasBoundarySyntax(content: string): boolean {

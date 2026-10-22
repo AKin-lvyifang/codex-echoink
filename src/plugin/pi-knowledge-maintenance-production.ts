@@ -4,6 +4,7 @@ import { planMaintenanceDomainMaps } from "../knowledge-base/maintenance-domain-
 import { KnowledgeMaintenancePreferenceRepository } from "../knowledge-base/knowledge-maintenance-preferences";
 import type { MaintenanceDomainMapEntry, MaintenanceKnowledgeUnit, MaintenanceWikiDocument } from "../knowledge-base/maintenance-p2-contract";
 import { maintenanceVisibleClassification } from "../knowledge-base/maintenance-p2-planning";
+import { maintenancePageTitle } from "../knowledge-base/maintenance-page-metadata";
 import { isMaintenanceSourceProcessed } from "../knowledge-base/maintenance-source-state";
 import type { MaintenanceWritingItem, MaintenanceSourceFields } from "../knowledge-base/maintenance-p1-contract";
 import { knowledgeBodyLinkSpans } from "../knowledge-base/knowledge-relations";
@@ -284,11 +285,11 @@ implements PiKnowledgeMaintenanceToolPort {
       if (doc.content.includes("<!-- echoink-domain-map:BEGIN")) continue;
       const visible = maintenanceVisibleClassification(doc.content), prior = historical.get(doc.path);
       const type = visible.type ?? prior?.type, domain = visible.domain ?? prior?.domain;
-      if (type && domain && domains.has(domain)) all.set(doc.path, { path: doc.path, title: doc.title, type, domain });
+      if (type && domain && domains.has(domain)) all.set(doc.path, { path: doc.path, title: maintenancePageTitle(doc.content,doc.path), type, domain });
     }
     for (const entry of entries) {
       const doc = existing.find(doc => doc.path === entry.path), visible = doc ? maintenanceVisibleClassification(doc.content) : {};
-      all.set(entry.path, { ...entry, type: visible.type ?? entry.type, domain: visible.domain ?? entry.domain });
+      all.set(entry.path, { ...entry, title: doc ? maintenancePageTitle(doc.content,doc.path) : entry.title, type: visible.type ?? entry.type, domain: visible.domain ?? entry.domain });
     }
     const wikiRoot = getKnowledgeFolderBindings(this.vaultRootPath)?.roles.wiki.writePath ?? "wiki";
     return planMaintenanceDomainMaps({ wikiRoot, entries: [...all.values()], existing });

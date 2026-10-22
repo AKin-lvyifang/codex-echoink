@@ -179,12 +179,12 @@ async function assertMaintenanceCategoryPolicy(input: {
   assert.equal(existing.status, "completed", existing.message);
   assert.deepEqual(existing.processedSourcePaths, [SOURCE], "closed organization still extracts and saves knowledge to an existing category");
   config.roles.wiki.autoOrganizePaths = ["成果"];
-  const allowed = await maintain("成果/维护新分类/子类/允许.md");
+  const allowed = await maintain("成果/维护新分类/子类/新授权保存.md");
   assert.equal(allowed.status, "completed", allowed.message);
   assert.equal(canonicalRawMarkdownForDigest(await readFile(path.join(vault, SOURCE), "utf8")), canonicalRawMarkdownForDigest(BODY));
   config.roles.wiki.autoOrganizePaths = [];
   config.roles.wiki.allowedSubdirectories = ["旧维护/子类"];
-  const legacy = await maintain("成果/旧维护/子类/允许.md");
+  const legacy = await maintain("成果/旧维护/子类/旧批准保存.md");
   assert.equal(legacy.status, "completed", legacy.message);
   const tooDeep = await maintain("成果/旧维护/子类/未批准/拒绝.md");
   assert.equal(tooDeep.status, "failed", tooDeep.message);

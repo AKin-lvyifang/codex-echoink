@@ -37,8 +37,8 @@ export async function runMaintenanceSectionPatchTests(): Promise<void> {
     { regionId: snapshot.regions[1].id, operation: "append", content: "导语新增段落" }
   ]);
   const updatedSnapshot = createMaintenanceSectionSnapshot(updated);
-  assert.equal(contentOf(updated, updatedSnapshot.regions[4]), "仅替换第二处😀\r\n");
-  assert.equal(contentOf(updated, updatedSnapshot.regions[1]), "\r\n导语原文😀\r\n\r\n导语新增段落\r\n");
+  assert.equal(contentOf(updated, updatedSnapshot.regions[4]), "\r\n仅替换第二处😀\r\n\r\n");
+  assert.equal(contentOf(updated, updatedSnapshot.regions[1]), "\r\n导语原文😀\r\n\r\n导语新增段落\r\n\r\n");
   assertUntouched(markdown, snapshot, updated, updatedSnapshot, [1, 4]);
   assert.equal(updated.slice(0, updatedSnapshot.regions[0].start), markdown.slice(0, snapshot.regions[0].start), "frontmatter stays byte-for-byte identical");
   assert.equal(contentOf(updated, updatedSnapshot.regions[2]), contentOf(markdown, duplicateHeadings[0]), "same-name headings are never guessed");
@@ -85,16 +85,16 @@ export async function runMaintenanceSectionPatchTests(): Promise<void> {
   assert.equal(setext.slice(setextSnapshot.regions[2].start, setextSnapshot.regions[2].contentStart), "两行\r\n标题\r\n---\r\n");
   const setextUpdated = applyMaintenanceSectionPatches(setext, setextSnapshot, [{ regionId: setextSnapshot.regions[1].id, operation: "replace", content: "新导语" }]);
   const setextAfter = createMaintenanceSectionSnapshot(setextUpdated);
-  assert.equal(contentOf(setextUpdated, setextAfter.regions[1]), "新导语\r\n\r\n", "Setext boundaries retain a paragraph break");
+  assert.equal(contentOf(setextUpdated, setextAfter.regions[1]), "\r\n新导语\r\n\r\n", "Setext boundaries retain a paragraph break");
   assertUntouched(setext, setextSnapshot, setextUpdated, setextAfter, [1]);
 
   const endHeading = "# 页面标题";
   const endSnapshot = createMaintenanceSectionSnapshot(endHeading);
-  assert.equal(applyMaintenanceSectionPatches(endHeading, endSnapshot, [{ regionId: endSnapshot.regions[1].id, operation: "replace", content: "新增导语" }]), "# 页面标题\n新增导语");
+  assert.equal(applyMaintenanceSectionPatches(endHeading, endSnapshot, [{ regionId: endSnapshot.regions[1].id, operation: "replace", content: "新增导语" }]), "# 页面标题\n\n新增导语");
   const emptyIntro = createMaintenanceSectionSnapshot("## 正文\n原文");
-  assert.equal(applyMaintenanceSectionPatches("## 正文\n原文", emptyIntro, [{ regionId: emptyIntro.regions[0].id, operation: "replace", content: "首段" }]), "首段\n## 正文\n原文");
+  assert.equal(applyMaintenanceSectionPatches("## 正文\n原文", emptyIntro, [{ regionId: emptyIntro.regions[0].id, operation: "replace", content: "首段" }]), "首段\n\n## 正文\n原文");
   const bomIntro = createMaintenanceSectionSnapshot("\uFEFF## 正文\n原文");
-  assert.equal(applyMaintenanceSectionPatches("\uFEFF## 正文\n原文", bomIntro, [{ regionId: bomIntro.regions[0].id, operation: "replace", content: "首段" }]), "\uFEFF首段\n## 正文\n原文");
+  assert.equal(applyMaintenanceSectionPatches("\uFEFF## 正文\n原文", bomIntro, [{ regionId: bomIntro.regions[0].id, operation: "replace", content: "首段" }]), "\uFEFF首段\n\n## 正文\n原文");
   assert.equal(applyMaintenanceSectionPatches(markdown, snapshot, []), markdown);
   assert.equal(applyMaintenanceSectionPatches(markdown, snapshot, [{ regionId: duplicateHeadings[0].id, operation: "append", content: "" }]), markdown);
 
@@ -115,6 +115,30 @@ export async function runMaintenanceSectionPatchTests(): Promise<void> {
   expectError(() => applyMaintenanceSectionPatches(unheaded, unheadedSnapshot, [{ regionId: unheadedSnapshot.regions[0].id, operation: "replace", content: "整页替换" }]), "WHOLE_PAGE_REPLACE", unheadedSnapshot);
   assert.equal(applyMaintenanceSectionPatches(unheaded, unheadedSnapshot, [{ regionId: unheadedSnapshot.regions[0].id, operation: "append", content: "补充" }]), unheaded + "\n\n补充");
   assert.equal(applyMaintenanceSectionPatches("", createMaintenanceSectionSnapshot(""), []), "");
+  const declared = createMaintenanceSectionSnapshot(markdown, ["适用边界", "操作步骤"]);
+  const virtual = declared.regions.filter(region => region.kind === "new-section");
+  assert.equal(virtual.length, 2);
+  const inserted = applyMaintenanceSectionPatches(markdown, declared, virtual.map(region => ({ regionId: region.id, operation: "append" as const, content: "\n\n新增正文。\n\n\n新段落。\n\n" })));
+  assert.ok(inserted.includes("## 适用边界\r\n\r\n新增正文。\r\n\r\n新段落。\r\n\r\n## 操作步骤"));
+  assert.ok(inserted.indexOf("## 操作步骤") < inserted.indexOf("## 来源"));
+  assert.equal(inserted.slice(inserted.indexOf("## 来源")), markdown.slice(markdown.indexOf("## 来源")), "unselected managed and handwritten regions remain verbatim");
+  assert.ok(inserted.startsWith(markdown.slice(0,markdown.indexOf("## 来源"))), "all preceding handwritten text stays byte-identical when already separated");
+  const protectedSnapshot = createMaintenanceSectionSnapshot(unheaded, ["新语义小节"]);
+  expectError(() => applyMaintenanceSectionPatches(unheaded, protectedSnapshot, [{ regionId: protectedSnapshot.regions[0].id, operation: "replace", content: "整页替换" }]), "WHOLE_PAGE_REPLACE", protectedSnapshot);
+  expectError(() => applyMaintenanceSectionPatches(markdown, declared, [{ regionId: virtual[0].id, operation: "append", content: "**加粗伪标题**\n正文" }]), "BOUNDARY_CHANGE", declared);
+  expectError(() => applyMaintenanceSectionPatches(markdown, declared, [{ regionId: virtual[0].id, operation: "replace", content: "正文" }]), "INVALID_PATCH", declared);
+  assert.throws(() => createMaintenanceSectionSnapshot(markdown,["同名"]), /已有对应小节/u);
+  assert.throws(() => createMaintenanceSectionSnapshot(markdown,["来源"]), /程序管理/u);
+  const spaced = "# 旧标题\n\n原有段落。\n\n\n\n## 保留\n用户多空行。\n\n\n\n末段。\n";
+  const spacedSnapshot = createMaintenanceSectionSnapshot(spaced);
+  const spacedAfter = applyMaintenanceSectionPatches(spaced, spacedSnapshot, [{regionId:spacedSnapshot.regions[1].id,operation:"append",content:"\n\n新片段。\n\n\n新片段二。\n"}]);
+  assert.ok(spacedAfter.includes("原有段落。\n\n新片段。\n\n新片段二。\n\n## 保留"));
+  assert.equal(spacedAfter.slice(spacedAfter.indexOf("## 保留")),spaced.slice(spaced.indexOf("## 保留")));
+  const padded = "# 旧页\n\n## 手写\n原文。\n\n\n\n## 来源\n用户来源。\n";
+  const paddedSnapshot = createMaintenanceSectionSnapshot(padded,["新增语义节"]), paddedRegion = paddedSnapshot.regions.find(region=>region.kind==="new-section")!;
+  const paddedAfter = applyMaintenanceSectionPatches(padded,paddedSnapshot,[{regionId:paddedRegion.id,operation:"append",content:"新增正文。"}]);
+  assert.ok(paddedAfter.includes("## 手写\n原文。\n\n\n\n## 新增语义节"),"new H2 insertion preserves the unselected prefix's four trailing line endings");
+  assert.ok(paddedAfter.endsWith(padded.slice(padded.indexOf("## 来源"))));
   console.log("Maintenance section patches: PASS (snapshot IDs, disjoint regions, introductions, fenced/indented code, Setext, byte preservation, stale/invalid IDs, boundary rejection)");
 }
 

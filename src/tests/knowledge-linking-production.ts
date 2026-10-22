@@ -442,11 +442,12 @@ async function assertMaintenanceDraftLinking(root: string): Promise<void> {
     const updated = previous + "Agent 是人工智能系统，后文再提[[wiki/AI.md|人工智能]]。\r\n";
     const result = await executeStagedMaintenanceFixture(port, options.domainService, request("Existing", updated, previous));
     assert.equal(result.status, "completed", result.message);
-    assert.equal(committed.get("wiki/Existing.md")!.slice(0, previous.length), previous, "existing valid links retain their exact syntax/counts before background linking");
+    const expectedFormattedPrefix = previous.replace("# Existing\r\n", "# Existing\r\n\r\n");
+    assert.equal(committed.get("wiki/Existing.md")!.slice(0, expectedFormattedPrefix.length), expectedFormattedPrefix, "replaced lead adds the required blank boundary; YAML and original link syntax/counts stay exact");
     assert.equal(committed.get("wiki/Existing.md")!.includes("[[wiki/AI.md|"), false, "only the newly added knowledge link is deferred");
     await service.waitForIdle();
     const after = await readFile(path.join(root, "wiki/Existing.md"), "utf8");
-    assert.ok(after.startsWith(previous));
+    assert.ok(after.startsWith(expectedFormattedPrefix));
     assert.equal((after.match(/\[\[wiki\/Kept\|原来的写法\]\]/gu) ?? []).length, 1);
     assert.equal((after.match(/\[\[wiki\/Kept.md\]\]/gu) ?? []).length, 1);
     assert.match(after, /Agent 是\[\[wiki\/AI.md\|人工智能\]\]系统，后文再提人工智能。/u);

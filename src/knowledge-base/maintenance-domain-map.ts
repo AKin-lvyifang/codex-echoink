@@ -197,10 +197,9 @@ export function planMaintenanceDomainMaps(input: MaintenanceDomainMapInput): Mai
       const token = encodeURIComponent(plan.domain);
       const lines = [`<!-- echoink-domain-map:BEGIN ${token} -->`, `## ${markdownText(plan.domain)}领域地图`, ""];
       for (const type of MAINTENANCE_DOMAIN_MAP_TYPES) {
-        lines.push(`### ${type}`);
         const items = plan.entries.filter(entry => entry.type === type && !targets.has(identity(entry.path)) && !knownMaps.has(entry.path))
           .sort((a, b) => compare(a.path, b.path));
-        lines.push(...(items.length ? items.map(entry => `- [${markdownText(entry.title)}](<${relativeLink(path, entry.path)}>)`) : ["暂无条目。"]), "");
+        if (items.length) lines.push(`### ${type}`, ...items.map(entry => `- [${markdownText(entry.title)}](<${relativeLink(path, entry.path)}>)`), "");
       }
       if (update === sourcesOwner) lines.push(MAINTENANCE_DOMAIN_MAP_SOURCES_PLACEHOLDER);
       lines.push(`<!-- echoink-domain-map:END ${token} -->`);

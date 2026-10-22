@@ -18,7 +18,7 @@ export function maintenanceInspection(state: MaintenanceP1State, view: Maintenan
   ]);
   else rows = state.writingPlan.filter(page => !state.committedPages[page.id]).map(page => {
     const own = units.filter(unit => page.knowledge?.unitIds.includes(unit.id));
-    return { id: page.id, targetPath: page.targetPath, sourcePaths: page.sourcePaths, expectedTarget: page.expectedTarget, unitIds: page.knowledge?.unitIds, type: page.knowledge?.type ?? own[0]?.type, domain: page.knowledge?.domain ?? own[0]?.domain, aliases: [...new Set(own.flatMap(unit => unit.aliases))], hasDraft: !!state.drafts[page.id] };
+    return { id: page.id, targetPath: page.targetPath, sourcePaths: page.sourcePaths, expectedTarget: page.expectedTarget, newSections: page.newSections, unitIds: page.knowledge?.unitIds, type: page.knowledge?.type ?? own[0]?.type, domain: page.knowledge?.domain ?? own[0]?.domain, aliases: [...new Set(own.flatMap(unit => unit.aliases))], hasDraft: !!state.drafts[page.id] };
   });
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > rows.length) throw new Error("inspect.offset不在当前分页范围内；从0开始，沿nextOffset继续。");
   const items: unknown[] = [];
