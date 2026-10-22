@@ -279,6 +279,7 @@ import {
 } from "../resources/mcp-connections";
 
 export interface PiProductionPluginHost {
+  getKnowledgeSurfaceService?(): { activity: import("./knowledge-activity-service").KnowledgeActivityService } | null;
   verifyPdfTaskDelivery?(request: Readonly<PdfTaskRequest> | string, noNewSourcePaths: readonly string[]): Promise<void>;
   englishDiary?: { api: import("../english-diary/types").EnglishDiaryApi } | null;
   createEnglishDiaryTaskGenerator?(): import("../english-diary/types").DiaryGenerator;
@@ -527,7 +528,8 @@ export async function createPiProductionRuntimeBundle(
     isConversationKnowledgeAllowed: async (id, write) => checkAgentCapability(await currentAgentCapabilityContext(plugin, catalog, id), "knowledge", write ? "resource" : "read").allowed,
     prepareStructure: (initialization) => plugin.prepareWikiFolderNamesForMaintenance?.(initialization) ?? Promise.resolve(""),
     usage: new KnowledgeUsageBridge(knowledgeUsageStore),
-    onNaturalMaintenance: (request) => knowledgeMaintenance.finalizeNatural(request)
+    onNaturalMaintenance: (request) => knowledgeMaintenance.finalizeNatural(request),
+    onMaintenanceActivity: event => knowledgeMaintenance.maintenanceActivity(event)
   });
   const vaultDomainService = new VaultDomainService(vaultAdapter, { allowMissingParentDirectories: true });
   const maintenanceVaultDomainService = new VaultDomainService(
@@ -544,6 +546,7 @@ export async function createPiProductionRuntimeBundle(
     userId: localPiVaultUserId(deviceScope.deviceIdDigest),
     deviceId: deviceScope.deviceIdDigest,
     domainService: maintenanceVaultDomainService,
+    productRuns, activitySource: plugin.getKnowledgeSurfaceService?.()?.activity, notice: message => new Notice(message),
     knowledgeAgentIndex,
     linkingOwnsDraftLinks: typeof plugin.queueKnowledgeLinking === "function",
     automaticLinkingEnabled: () => plugin.settings.knowledgeBase.autoLinkEnabled !== false,
@@ -577,7 +580,7 @@ export async function createPiProductionRuntimeBundle(
   const settingsBeforeCutover = snapshotPiConversationShellSettings(
     plugin.settings
   );
-  const approvalBroker = new PiAgentApprovalBroker();
+  const approvalBroker = new PiAgentApprovalBroker((input, waiting) => knowledgeMaintenance.maintenanceActivity({ type: "waiting", conversationId: input.conversationId, productRunId: input.productRunId, reason: `approval:${input.requestId}`, waiting }));
   const interactionBroker = new PiTurnInteractionBroker();
   const dreamExperienceInbox = new DreamExperienceInboxStore(personalMemory.layout.root);
   const skillRuntime = plugin.getSkillRuntimeCoordinator?.()
@@ -706,7 +709,8 @@ export async function createPiProductionRuntimeBundle(
           conversationId: state.conversationId,
           productRunId: state.productRunId
         }),
-      disposeRuntimeResources: () => {
+      disposeRuntimeResources: async () => {
+        await knowledgeMaintenance.dispose();
         releaseKnowledgeIndexEvents();
         interactionBroker.dispose();
         approvalBroker.dispose();
@@ -740,6 +744,7 @@ export async function createPiProductionRuntimeBundle(
     );
     if (runtime) await runtime.shutdown().catch(() => undefined);
     else {
+      await knowledgeMaintenance.dispose();
       releaseKnowledgeIndexEvents();
       interactionBroker.dispose();
       approvalBroker.dispose();
@@ -782,6 +787,7 @@ export function createProductionPiKnowledgeToolRetriever(vaultRootPath: string, 
 }
 
 export function createProductionPiKnowledgeRuntime(input: Readonly<{
+  onMaintenanceActivity?: PiKnowledgeRuntimePort["maintenanceActivity"];
   vaultRootPath: string;
   knowledgeAgentIndex: KnowledgeAgentIndex;
   knowledgePreferences: KnowledgeMaintenancePreferenceRepository;
@@ -796,6 +802,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
   });
   const egress = new EchoInkVaultToolEgressPolicy();
   const runtime: PiKnowledgeRuntimePort = {
+    maintenanceActivity: input.onMaintenanceActivity,
     async prepareMaintenanceStructure(initialization) {
       const result = await input.prepareStructure?.(initialization) ?? "";
       input.knowledgeAgentIndex.invalidate();
@@ -2237,9 +2244,17 @@ async function createProductionAgentSession(input: {
   });
   const observedTargetRevisions: Record<string, string> = {};
   const sourceBodyFingerprints = maintenanceSourceFingerprintsFromEntries(input.input.sessionManager.getBranch(), input.plugin.getVaultPath());
+  const reportMaintenanceReadProgress = (relativePath: string) => {
+    if (!["raw", "inbox"].includes(knowledgePathRole(input.vaultRootPath, relativePath) ?? "")) return;
+    const identity = input.input.currentToolExecutionContext();
+    void input.knowledgeMaintenance.maintenanceActivity?.({ type: "stage", conversationId: identity.conversationId, productRunId: identity.productRunId, stage: "decompose", currentPath: relativePath }).catch(error => console.error("Maintenance read progress failed", error));
+  };
   const knowledgeReadSecurity = new PiKnowledgeReadToolSecurity({
     currentRunIdentity: () => input.input.currentToolExecutionContext(),
-    onSourceRead: (reference, bodyFingerprint) => recordMaintenanceSourceBodyFingerprint(sourceBodyFingerprints, reference.vaultRelativePath, bodyFingerprint, input.plugin.getVaultPath()),
+    onSourceRead: (reference, bodyFingerprint) => {
+      recordMaintenanceSourceBodyFingerprint(sourceBodyFingerprints, reference.vaultRelativePath, bodyFingerprint, input.plugin.getVaultPath());
+      reportMaintenanceReadProgress(reference.vaultRelativePath);
+    },
     currentWorkflow: () => {
       const turn = input.input.currentKnowledgeTurnContext();
       return turn?.kind ?? "none";
@@ -2304,7 +2319,10 @@ async function createProductionAgentSession(input: {
     onSuccessfulNoteRead: (value) => {
       const snapshot = (value as { snapshot?: { relativePath?: string; bodyFingerprint?: string; contentSha256?: string; truncated?: boolean } })?.snapshot;
       if (snapshot?.relativePath && snapshot.contentSha256 && snapshot.truncated === false) observedTargetRevisions[snapshot.relativePath] = `sha256:${snapshot.contentSha256}`;
-      if (snapshot?.relativePath && snapshot.truncated === false) recordMaintenanceSourceBodyFingerprint(sourceBodyFingerprints, snapshot.relativePath, snapshot.bodyFingerprint, input.plugin.getVaultPath());
+      if (snapshot?.relativePath && snapshot.truncated === false) {
+        recordMaintenanceSourceBodyFingerprint(sourceBodyFingerprints, snapshot.relativePath, snapshot.bodyFingerprint, input.plugin.getVaultPath());
+        reportMaintenanceReadProgress(snapshot.relativePath);
+      }
     },
     additionalToolSecurity: maintenanceSecurity,
     additionalToolSecurities: [

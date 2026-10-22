@@ -11,6 +11,7 @@ import { isKnowledgeMaintenanceSourcePath, rawDigestFingerprint, rawDigestRecord
 import { rawDigestStateForRecord } from "../knowledge-base/digest-status";
 import { latestMaintenanceSourceStates } from "../knowledge-base/maintenance-record";
 import type { DomainReceipt } from "../harness/pi-native/domain-receipt-store";
+import type { KnowledgeActivitySource } from "../knowledge-base/maintenance-activity";
 import { parseTodoMarkdown } from "./todo-markdown";
 import { nativeJournalPathForDate, readNativeJournalSettings, takePreparedNativeJournalTemplate } from "./native-journal";
 import { journalContentLines, readWorkbenchJournalDay, recordWorkbenchJournalTemplate, type WorkbenchJournalDay } from "./workbench-journal";
@@ -19,6 +20,7 @@ import { getWorkbenchRecordStore, localWorkbenchDate, validWorkbenchDate, workbe
 import type { WorkbenchDataPort, WorkbenchSnapshot, WorkbenchTaskSource } from "./workbench-types";
 
 type WorkbenchHost = Pick<CodexForObsidianPlugin, "app" | "settings" | "manifest" | "accountService" | "lifestyle" | "pdfReading" | "getVaultPath" | "getPluginDataDirName" | "listPiConversations" | "readPiConversationCatalogEntry" | "getKnowledgeSurfaceService"> & {
+  getKnowledgeActivitySource?(): KnowledgeActivitySource | undefined;
   readWorkbenchTaskReceipts?(taskId: string): Promise<readonly DomainReceipt[]>;
 };
 const instances = new WeakMap<object, WorkbenchDataService>();
@@ -151,6 +153,8 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     bind(this.plugin.lifestyle?.store, () => this.plugin.lifestyle.store.subscribe(this.changed));
     bind(this.plugin.lifestyle?.finance, () => this.plugin.lifestyle.finance.subscribeEntries(this.changed));
     bind(this.plugin.pdfReading?.api, () => this.plugin.pdfReading!.api.subscribe(this.changed));
+    const knowledge = this.plugin.getKnowledgeActivitySource?.();
+    bind(knowledge, () => knowledge!.subscribe(this.changed));
   }
   private async observeInbox(now: number): Promise<WorkbenchSourceFile[]> {
     if (!this.plugin.app.workspace.layoutReady) return [];
@@ -246,7 +250,8 @@ export class WorkbenchDataService implements WorkbenchDataPort {
       const file = this.plugin.app.vault.getAbstractFileByPath("EchoInk/待办.md");
       return file instanceof TFile ? parseTodoMarkdown(await this.plugin.app.vault.read(file)).records : [];
     });
-    const facts: WorkbenchFacts = { now, modules: authorizedModules, tasks, todos, journals: [], englishMissing: null, inbox: [],
+    const facts: WorkbenchFacts = { now, modules: authorizedModules, tasks, maintenance: this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance,
+      todos, journals: [], englishMissing: null, inbox: [],
       inboxScope: scopeKey(this.roots("inbox")), raw: [], rawScope: scopeKey(this.roots("raw")), pdfJobs: [], reviewComplete: null,
       isolated: null, knowledgeScope: scopeKey([...this.roots("wiki"), ...this.roots("projects")]), language: this.plugin.settings.settingsLanguage };
     if (authorizedModules.includes("finance") && this.plugin.app.workspace.layoutReady) facts.finance = await attempt("财务读取失败", undefined, async () => {

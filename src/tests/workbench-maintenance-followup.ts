@@ -27,11 +27,42 @@ const third = "raw/articles/第三来源.md";
 const markdownSource = "raw/articles/扩展名资料.markdown";
 const wiki = "知识库（wiki）/维护成果.md";
 const confirmation = "都按你推荐的去做";
+const checklistContinuation = "/maintain 继续当前这批14篇来源的原维护清单，从已经写好7/12页的进度继续，不重写成功页。请先使用user_question问我是否继续，收到继续后完成剩余页面和地图收尾。";
 
 /** The actual production runtime, durable session, security and maintenance service. */
 export async function runWorkbenchMaintenanceFollowupTests(root: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const report: object[] = [];
+  for (const polluted of [false, true]) await scenario(`original-checklist-continuation-${polluted ? "legacy-query" : "fresh"}`, async f => {
+    const paths = [source, other, third];
+    const first = await f.run("/maintain 整理这批资料", { maintenanceScope: { mode: "batch", sourcePaths: paths } }, paths, "plan");
+    assert.equal(first.tool?.isError, false);
+    if (polluted) {
+      // Reproduce the old composer preflight's durable, incorrectly narrowed query.
+      await f.run(checklistContinuation, { maintenanceScope: { mode: "query", candidatePaths: [other] } });
+      await f.reopen();
+    }
+    const searches = f.rawQueries.length;
+    const followed = await f.run(checklistContinuation, {}, paths, "resume");
+    assert.equal(f.rawQueries.length, searches, "continuing the original checklist must not search execution instructions");
+    assert.equal(followed.tool?.isError, false, followed.tool?.content);
+    assert.deepEqual((await f.productRuns.read(followed.result.productRunId))?.maintenance?.processedSourcePaths, paths);
+  });
+  await scenario("checklist-continuation-explicit-replacement-wins", async f => {
+    await f.run("/maintain 星系专题");
+    const followed = await f.run(`/maintain 继续原维护清单，但改为整理 ${other} 这篇资料`, {}, other);
+    assert.equal(followed.tool?.isError, false, followed.tool?.content);
+    assert.match(await f.wiki(), /第二范围/u);
+    assert.doesNotMatch(await f.wiki(), /星系专题/u);
+  });
+  await scenario("checklist-continuation-new-query-wins", async f => {
+    await f.run("/maintain 星系专题");
+    const searches = f.rawQueries.length;
+    const before = await f.wiki();
+    await assert.rejects(f.run("/maintain 继续原维护清单，但改为整理第二范围这篇资料", {}, other), /没有找到可可靠匹配/u);
+    assert.ok(f.rawQueries.length > searches, "an explicit replacement query still resolves a fresh selection");
+    assert.equal(await f.wiki(), before, "an unmatched new query fails closed instead of silently inheriting the old source");
+  });
   for (const stages of ["omitted-root-source-paths", "narrowed-write-root"] as const) await scenario(`sdk-${stages}-frozen-batch`,async f=>{
     const idea="inbox/并列的第二来源.md",paths=[source,idea];
     await f.write(idea,"# 并列第二来源\n本篇保留独立证据，在计划阶段汇总为同一页。\n");
@@ -39,7 +70,7 @@ export async function runWorkbenchMaintenanceFollowupTests(root: string): Promis
     const result=await f.run("/maintain 按冻结批次整理两篇资料",{maintenanceScope:{mode:"batch",sourcePaths:paths}},paths,stages);
     const run=await f.productRuns.read(result.result.productRunId);
     if(stages==="omitted-root-source-paths"){
-      assert.equal(result.result.terminalState,"completed");assert.equal(result.tool?.isError,false,result.tool?.content);
+      assert.equal(result.result.terminalState,"completed", JSON.stringify(result));assert.equal(result.tool?.isError,false,result.tool?.content);
       assert.deepEqual(run?.maintenance?.processedSourcePaths,paths);assert.deepEqual(run?.maintenance?.pendingSourcePaths,[]);
       for(const selected of paths)assert.ok((await f.wiki()).includes(selected),"omitting every tool root sourcePaths still inherits the whole frozen Raw+Inbox batch");
     }else{

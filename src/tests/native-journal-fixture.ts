@@ -110,6 +110,7 @@ export async function nativeJournalFixture(root: string) {
     settings: structuredClone(DEFAULT_SETTINGS),
     getVaultPath: () => root,
     getPluginDataDirName: () => "codex-echoink",
+    async readKnowledgeInitialActivities() { return []; },
     async saveSettings() {}, refreshKnowledgeBaseSurfaces() {},
     async submitPiChat() { providerCalls += 1; throw new Error("No Provider expected"); }
   };

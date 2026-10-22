@@ -1,3 +1,7 @@
+import { MaintenanceActivityController } from "./maintenance-activity-controller";
+import type { KnowledgeActivityService } from "./knowledge-activity-service";
+import type { FileProductRunStore } from "../harness/pi-native/file-product-run-store";
+import type { MaintenanceActivityLifecycle } from "../knowledge-base/maintenance-activity";
 import { MaintenanceP1Workflow } from "../knowledge-base/maintenance-p1-workflow";
 import { collectMaintenanceCandidates } from "../knowledge-base/maintenance-dedup";
 import { planMaintenanceDomainMaps } from "../knowledge-base/maintenance-domain-map";
@@ -93,6 +97,9 @@ export interface KnowledgeMaintenanceTerminalEvent {
 }
 
 export interface CreateProductionPiKnowledgeMaintenanceOptions {
+  readonly productRuns?: Pick<FileProductRunStore, "read" | "setMaintenanceActivity" | "list">;
+  readonly activitySource?: KnowledgeActivityService;
+  readonly notice?: (message: string) => void;
   readonly onTerminal?: (event: KnowledgeMaintenanceTerminalEvent) => void | Promise<void>;
   readonly vaultRootPath: string;
   readonly privateKnowledgeRootPath: string;
@@ -134,6 +141,7 @@ export class ProductionPiKnowledgeMaintenanceToolPort
 implements PiKnowledgeMaintenanceToolPort {
   readonly state: FilePhase3MaintenanceStateStore;
   private readonly p1: MaintenanceP1Workflow;
+  readonly activity: MaintenanceActivityController;
   private readonly maintenanceIndex: Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "search" | "refresh">;
 
   private readonly onTerminal?: CreateProductionPiKnowledgeMaintenanceOptions["onTerminal"];
@@ -196,6 +204,14 @@ implements PiKnowledgeMaintenanceToolPort {
       vaultRootPath: this.vaultRootPath,
       walFileId: options.walFileId
     });
+    this.activity = new MaintenanceActivityController({
+      state: this.state, records: () => readPrivateMaintenanceRecords(this.privateKnowledgeRootPath, { vaultId: this.vaultId }),
+      runs: options.productRuns, now: this.now, notice: options.notice, liveCheckpoint: Boolean(options.productRuns || options.activitySource),
+      onRecord: (record, hold) => { options.activitySource?.bind(record); options.activitySource?.update(record, hold); },
+      onInitial: activity => options.activitySource?.updateInitial(activity),
+      onSettled: recordId => options.activitySource?.settle(recordId),
+      onInitialSettled: id => options.activitySource?.dropInitial(id)
+    });
     this.sources = new FilePhase3MaintenanceSourceSnapshotPort({
       vaultRootPath: this.vaultRootPath,
       vaultId: this.vaultId
@@ -205,7 +221,8 @@ implements PiKnowledgeMaintenanceToolPort {
       vaultRootPath: this.vaultRootPath,
       records: () => readPrivateMaintenanceRecords(this.privateKnowledgeRootPath, { vaultId: this.vaultId }),
       processedSources: (paths, records) => readProcessedMaintenanceSources(this.vaultRootPath, paths, records, this.processedSources?.()),
-      save: record => this.state.saveP1Record(record),
+      save: record => this.activity.save(record),
+      current: (input, stage, currentPath) => this.activity.lifecycle({ type: "stage", conversationId: input.conversationId, productRunId: input.productRunId, stage, currentPath }),
       read: async relative => { const file = await readImmutableFileIfPresent(this.vaultRootPath, relative); return file ? UTF8_DECODER.decode(file.bytes) : null; },
       sourcePath: relative => { const actual = resolveKnowledgePath(this.vaultRootPath, normalizeVaultRelativePath(relative), false); if (!["raw", "inbox"].includes(knowledgePathRole(this.vaultRootPath, actual) ?? "") || !isKnowledgeMaintenanceSourcePath(actual)) throw new Error("来源不在Raw/Inbox范围"); return actual; },
       targetPath: async relative => { const actual = await this.normalizeCandidateTarget(relative); if (knowledgePathRole(this.vaultRootPath, actual) !== "wiki") throw new Error("P1只写Wiki"); return actual; },
@@ -226,6 +243,7 @@ implements PiKnowledgeMaintenanceToolPort {
       new UnavailableMaintenanceProposalPort()
     ).recoverPendingOrThrow(this.vaultId);
     await this.p1.restoreHolds();
+    await this.activity.initialize();
     // Only WALs carrying this feature's explicit intent can schedule work.
     // Starting persists a task but never waits for its runtime/judge flight.
     for (const record of await this.state.pendingLinkingRecords()) await this.ensurePendingLinking(record);
@@ -236,7 +254,9 @@ implements PiKnowledgeMaintenanceToolPort {
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     this.assertIdentity(input);
     if (input.folderBindingsRevision !== undefined && input.folderBindingsRevision !== (getKnowledgeFolderBindings(this.vaultRootPath)?.revision ?? 0)) return { status: "failed", errorCode: "preview_stale", processedSourcePaths: [], message: "知识库目录已变化，请重新读取。" };
+    await this.activity.beforeTool(input);
     let result = await this.p1.execute(input);
+    await this.activity.afterTool(input, result.status === "failed", result.message);
     if (result.maintenanceResult && result.recordId) {
       try { await this.onTerminal?.({ input, result, at: this.now() }); } catch (error) { console.error("EchoInk maintenance history could not be saved", knowledgeErrorDetail(error)); }
       if (result.producedPaths?.length && this.onCommitted && result.recordId && input.p1?.stage !== "decompose") {
@@ -249,8 +269,13 @@ implements PiKnowledgeMaintenanceToolPort {
         }
       }
     }
+    if (!result.recordId && result.maintenanceResult?.status === "noop") await this.activity.noop(input.conversationId, input.productRunId);
+    if (result.recordId && result.maintenanceStage === "completed") await this.activity.complete(result.recordId, input.productRunId);
     return result;
   }
+
+  async maintenanceActivity(event: Readonly<MaintenanceActivityLifecycle>): Promise<void> { await this.activity.lifecycle(event); }
+  async dispose(): Promise<void> { await this.activity.dispose(); }
 
   private async maintenanceWikiDocuments(): Promise<MaintenanceWikiDocument[]> {
     const documents: MaintenanceWikiDocument[] = [];
@@ -738,12 +763,24 @@ implements Phase3MaintenanceStateStore {
     });
   }
 
-  async saveP1Record(record: KnowledgeMaintenanceRecord): Promise<void> {
+  async saveP1Record(record: KnowledgeMaintenanceRecord, progress?: (record: KnowledgeMaintenanceRecord, previous?: import("../knowledge-base/maintenance-activity").MaintenanceActivityProgress) => import("../knowledge-base/maintenance-activity").MaintenanceActivityProgress): Promise<void> {
     await serializePiNativeFileWrite(this.rootPath, async () => {
       const directory = await ensurePrivateStateDirectory(this.rootPath, ["records"]);
       const previous = await readPrivateMaintenanceRecord(this.rootPath, record.recordId, this.vaultId);
       if (previous && (!previous.p1 || previous.originConversationId !== record.originConversationId || previous.runId !== record.runId)) throw new Error("维护清单归属冲突");
+      record.progress = progress ? progress(record, previous?.progress) : previous?.progress ?? record.progress;
       await writeControlEnvelope(path.join(directory, `${requireControlId(record.recordId)}.json`), this.vaultId, "record", record);
+    });
+  }
+
+  async updateP1Progress(recordId: string, update: (record: KnowledgeMaintenanceRecord) => void): Promise<KnowledgeMaintenanceRecord | null> {
+    return serializePiNativeFileWrite(this.rootPath, async () => {
+      const record = await readPrivateMaintenanceRecord(this.rootPath, recordId, this.vaultId);
+      if (!record?.p1) return null;
+      update(record);
+      const directory = await ensurePrivateStateDirectory(this.rootPath, ["records"]);
+      await writeControlEnvelope(path.join(directory, `${requireControlId(recordId)}.json`), this.vaultId, "record", record);
+      return record;
     });
   }
 

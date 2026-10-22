@@ -186,11 +186,13 @@ export class ConversationRunService {
         if (frozen.piUserEntryAccepted) {
           const pending = this.pendingInteractions.get(session.id);
           const waiting = pending && (pending.status === "pending" || pending.status === "submitting");
-          await this.plugin.setPiConversationTaskMetadata(session.id, outcome === "completed" && !waiting
-            ? { taskStatus: "completed", taskCompletedAt: Date.now(), taskInterruptedAt: undefined, pendingResponse: undefined, taskStage: undefined }
+          const maintenance = this.plugin.getKnowledgeActivitySource()?.snapshot().maintenance.filter(activity => activity.originConversationId === session.id && (activity.status !== "completed" || (activity.completedAt ?? 0) >= state.turnStartedAt)).sort((a,b) => b.updatedAt - a.updatedAt)[0];
+          const businessComplete = !maintenance || maintenance.status === "completed";
+          await this.plugin.setPiConversationTaskMetadata(session.id, outcome === "completed" && !waiting && businessComplete
+            ? { taskStatus: "completed", taskCompletedAt: maintenance?.completedAt ?? Date.now(), taskInterruptedAt: undefined, pendingResponse: undefined, taskStage: undefined }
             : waiting ? { taskStatus: "waiting" }
               : { taskStatus: "interrupted", taskInterruptedAt: Date.now(), taskCompletedAt: undefined });
-          if (Platform.isDesktopApp && outcome === "completed" && !waiting && session.businessKey) {
+          if (Platform.isDesktopApp && outcome === "completed" && !waiting && businessComplete && session.businessKey) {
             await getWorkbenchDataService(this.plugin).recordTaskCompleted(session.id).catch(error => {
               console.warn("EchoInk workbench could not record the task result.", error);
               new Notice("任务已完成，但工作台事项尚未更新，请稍后重试。");

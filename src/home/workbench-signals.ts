@@ -7,12 +7,14 @@ import type { PdfJob } from "../pdf-reading/types";
 import type { WorkbenchJournalDay } from "./workbench-journal";
 import { localWorkbenchDate, validWorkbenchDate, workbenchWeekKey } from "./workbench-source";
 import type { WorkbenchSignal, WorkbenchSignalId } from "./workbench-types";
+import type { MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 
 export interface WorkbenchSourceFile { path: string; fingerprint: string; enteredAt?: number }
 export interface WorkbenchFacts {
   now: number;
   modules: readonly AgentModuleId[];
-  tasks: readonly { businessKey?: string; taskStatus?: string; pendingResponse?: unknown; status?: string }[];
+  tasks: readonly { conversationId?: string; businessKey?: string; taskStatus?: string; pendingResponse?: unknown; status?: string }[];
+  maintenance?: readonly Readonly<Pick<MaintenanceActivity, "originConversationId" | "sourcePaths" | "status" | "updatedAt">>[];
   todos: readonly ParsedTodoRecord[];
   finance?: { entries: readonly FinanceEntry[]; data: Readonly<LifestyleData> };
   journals: readonly WorkbenchJournalDay[];
@@ -51,13 +53,23 @@ export function latestFailedPdfRequests(jobs: readonly PdfJob[]): PdfJob[] {
 export function calculateWorkbenchSignals(facts: WorkbenchFacts): WorkbenchSignal[] {
   const { now } = facts, date = new Date(now), today = localWorkbenchDate(date), month = today.slice(0, 7);
   const enabled = new Set(facts.modules), signals: WorkbenchSignal[] = [], english = facts.language === "en";
-  const busy = new Set(facts.tasks.filter(task => task.status !== "deleted" && (task.pendingResponse || task.taskStatus === "waiting" || task.taskStatus === "running"))
-    .map(task => task.businessKey).filter(Boolean));
+  const busyTasks = facts.tasks.filter(task => task.status !== "deleted" && (task.pendingResponse || task.taskStatus === "waiting" || task.taskStatus === "running"));
+  const busy = new Set(busyTasks.map(task => task.businessKey).filter(Boolean));
+  const maintenance = new Map<string, NonNullable<WorkbenchFacts["maintenance"]>[number]>();
+  for (const activity of facts.maintenance ?? []) {
+    const previous = maintenance.get(activity.originConversationId);
+    if (!previous || activity.updatedAt > previous.updatedAt) maintenance.set(activity.originConversationId, activity);
+  }
+  const scopedMaintenance = new Set([...maintenance.values()].filter(activity => activity.status !== "completed"
+    && activity.sourcePaths.length > 0 && activity.sourcePaths.every(path => typeof path === "string" && path.trim()))
+    .map(activity => activity.originConversationId));
+  // A known maintenance scope is subtracted by the view; unrelated busy work still owns its key.
+  const rawBusy = new Set(busyTasks.filter(task => !scopedMaintenance.has(task.conversationId ?? "")).map(task => task.businessKey).filter(Boolean));
   const add = (id: WorkbenchSignalId, moduleId: AgentModuleId, scene: string, scope: string,
     icon: string, description: string, prompt: string, objects: readonly string[] = [], versions?: Record<string, string>) => {
     if (!enabled.has(moduleId)) return;
     const key = `workbench:${moduleId}:${scene}:${scope}`;
-    if (busy.has(key)) return;
+    if ((id === 7 ? rawBusy : busy).has(key)) return;
     signals.push({ id, key, moduleId, icon, description, prompt, source: {
       version: 1, signalId: id, businessKey: key, moduleId, objects: [...objects], ...(versions ? { versions } : {}), prompt, capturedAt: now
     } });

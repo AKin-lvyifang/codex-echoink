@@ -11,7 +11,7 @@ import {
 import * as path from "node:path";
 import { TextDecoder } from "node:util";
 import { serializePiNativeFileWrite } from "../harness/pi-native/file-store-utils";
-import { MAINTENANCE_KNOWLEDGE_TYPES, maintenanceKnowledgeTypePrompt } from "./maintenance-knowledge-types";
+import { MAINTENANCE_KNOWLEDGE_TYPES, MAINTENANCE_QUOTE_HARD_RULE, maintenanceKnowledgeTypePrompt } from "./maintenance-knowledge-types";
 
 export const ECHOINK_KNOWLEDGE_PREFERENCE_PROFILE_VERSION =
   "echoink-knowledge-preference-profile-v1" as const;
@@ -54,6 +54,8 @@ export const ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES = [
   maintenanceKnowledgeTypePrompt(),
   ""
 ].join("\n");
+
+const PREVIOUS_P2_DEFAULT = ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES.replace(`${MAINTENANCE_QUOTE_HARD_RULE}\n`, "");
 
 const MAX_PREFERENCES_BYTES = 64 * 1024;
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
@@ -249,7 +251,7 @@ function legacyDefaultMeaning(content: string): string {
 }
 
 function isLegacyDefault(content: string): boolean {
-  return legacyDefaultMeaning(content) === legacyDefaultMeaning(ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES);
+  return content === PREVIOUS_P2_DEFAULT || legacyDefaultMeaning(content) === legacyDefaultMeaning(ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES);
 }
 
 function hasSevenTypeTemplates(content: string): boolean {

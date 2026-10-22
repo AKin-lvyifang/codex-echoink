@@ -88,8 +88,10 @@ import {
 } from "../../harness/pi-native/pi-task-plan";
 import {
   PI_USER_QUESTION_TOOL_ID,
-  PiUserQuestionToolSecurity
+  PiUserQuestionToolSecurity,
+  createPiUserQuestionToolDefinition
 } from "../../harness/pi-native/pi-user-question-tool";
+import { PiTurnInteractionBroker } from "../../plugin/pi-turn-interaction-broker";
 import {
   createPiVaultToolSecurityAdapter,
   PiVaultToolAuthorizationError
@@ -1834,7 +1836,7 @@ async function assertVaultWritesUseExistingApproval(): Promise<void> {
   );
 }
 
-async function assertUserQuestionUsesCentralFailClosedSecurity(): Promise<void> {
+export async function assertUserQuestionUsesCentralFailClosedSecurity(): Promise<void> {
   const questionSecurity = new PiUserQuestionToolSecurity();
   const adapter = createPiVaultToolSecurityAdapter({
     authorization: {
@@ -1918,6 +1920,25 @@ async function assertUserQuestionUsesCentralFailClosedSecurity(): Promise<void> 
   });
   assert.equal(corrected.isError, false);
   assert.doesNotMatch(JSON.stringify(corrected), /UNTRUSTED/u);
+
+  const abort = new AbortController(), records: unknown[] = [];
+  const broker = new PiTurnInteractionBroker();
+  const cancelledId = "user-question-cancelled";
+  assert.equal(await handleToolCall({ toolName: PI_USER_QUESTION_TOOL_ID, toolCallId: cancelledId, input: argumentsValue }, { signal: abort.signal }), undefined);
+  const question = createPiUserQuestionToolDefinition({
+    sessionManager: { getSessionId: () => "question-session", appendCustomEntry: (_type: string, data: unknown) => { records.push(data); return "cancelled-entry"; } } as never,
+    broker, security: questionSecurity,
+    currentRun: () => ({ conversationId: "question-conversation", piSessionId: "question-session", productRunId: "question-run" }),
+    reportRequested: async () => { abort.abort(); }, reportResolved: async () => {}
+  });
+  await assert.rejects(question.execute(cancelledId, argumentsValue, abort.signal, undefined, {} as never), /用户取消了本次结构化问题/u);
+  const cancelled = await handleToolResult({ toolName: PI_USER_QUESTION_TOOL_ID, toolCallId: cancelledId, content: [], details: {}, isError: true }) as { content: { text: string }[]; details: Record<string, unknown>; isError: boolean };
+  assert.equal(cancelled.isError, true);
+  assert.equal(cancelled.details.outcome, "cancelled");
+  assert.match(cancelled.content[0]!.text, /用户取消/u);
+  assert.doesNotMatch(JSON.stringify(cancelled), /authorization_failed/u);
+  assert.equal((records[0] as { record: { outcome: string } }).record.outcome, "cancelled");
+  broker.dispose();
 
   assert.deepEqual(await handleToolCall({
     toolName: PI_USER_QUESTION_TOOL_ID,

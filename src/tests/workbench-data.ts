@@ -18,6 +18,7 @@ import { ReviewManager } from "../review/manager";
 import type { DomainReceipt } from "../harness/pi-native/domain-receipt-store";
 import { preparePluginDataRoot } from "../plugin/plugin-data-paths";
 import { readNativeJournalContext } from "../home/native-journal";
+import type { WorkbenchFacts } from "../home/workbench-signals";
 
 function events() {
   const listeners = new Map<string, Set<(a?: any, b?: any) => void>>();
@@ -67,6 +68,11 @@ async function fixture(root: string) {
   plugin.readPiConversationCatalogEntry = async (id: string) => tasks.find(task => task.conversationId === id) ?? null;
   plugin.readWorkbenchTaskReceipts = async (id: string) => receipts.get(id) ?? [];
   plugin.getKnowledgeSurfaceService = () => ({ async getMaintenanceRecords() { return maintenance; }, async getDashboardSnapshot() { return null; } });
+  let maintenanceActivities: NonNullable<WorkbenchFacts["maintenance"]> = [];
+  const maintenanceListeners = new Set<(snapshot: unknown) => void>();
+  const activitySource = { ready: Promise.resolve(), snapshot: () => ({ primary: null, other: null, maintenance: maintenanceActivities }),
+    subscribe(listener: (snapshot: unknown) => void) { maintenanceListeners.add(listener); return () => { maintenanceListeners.delete(listener); }; } };
+  plugin.getKnowledgeActivitySource = () => activitySource;
   const store = new LifestyleStore(path.join(root, ".obsidian/plugins/codex-echoink/lifestyle.json")); await store.initialize();
   const finance = new LifestyleFinanceService({ plugin, store, refresh() {} } as any, paidTestAccess);
   plugin.lifestyle = { store, finance };
@@ -81,6 +87,8 @@ async function fixture(root: string) {
   plugin.pdfReading = { api: pdf };
   const write = async (target: string, content: string) => { const existed = app.vault.getAbstractFileByPath(target); const file = await f.write(target, content); vaultEvents.emit(existed ? "modify" : "create", file); return file; };
   return { ...f, root, app, plugin, bindings, tasks, receipts, maintenance, store, finance, pdfRoot, write,
+    setMaintenanceActivities(activities: NonNullable<WorkbenchFacts["maintenance"]>) { maintenanceActivities = activities; for (const listener of maintenanceListeners) listener(activitySource.snapshot()); },
+    maintenanceSubscriptions: () => maintenanceListeners.size,
     resolveLinks(graph: Record<string, Record<string, number>> = {}) { cacheReady = true; app.metadataCache.resolvedLinks = Object.fromEntries(app.vault.getMarkdownFiles().map((file: TFile) => [file.path, graph[file.path] ?? {}])); cacheEvents.emit("resolved"); },
     invalidateLinks() { cacheEvents.emit("changed"); },
     async move(from: string, to: string) { await fsp.mkdir(path.dirname(path.join(root, to)), { recursive: true }); await app.fileManager.renameFile(app.vault.getAbstractFileByPath(from), to); vaultEvents.emit("rename", app.vault.getAbstractFileByPath(to), from); },
@@ -313,5 +321,32 @@ export async function runWorkbenchDataTests(root: string): Promise<void> {
   assert.ok(refreshed.signals.find(signal => signal.id === 7)!.source.objects.includes("raw/renamed.md"));
   assert.ok(!refreshed.signals.find(signal => signal.id === 7)!.source.objects.includes("raw/3.md"));
   refreshService.dispose(); refresh.unregister();
+  const mixed = await fixture(path.join(root, "maintenance-busy"));
+  const mixedPaths = Array.from({ length: 15 }, (_, index) => `raw/mixed-${String(index).padStart(2, "0")}.md`);
+  for (const target of mixedPaths) await mixed.write(target, `未处理合成资料 ${target}`);
+  await mixed.write("EchoInk/待办.md", `- [ ] 保留其他待办\n  - 截止日期：${today}\n`);
+  const mixedService = new WorkbenchDataService(mixed.plugin);
+  const initialMixed = await mixedService.load(now), mixedSignal = initialMixed.signals.find(signal => signal.id === 7)!;
+  mixed.tasks.push({ conversationId: "mixed-maintenance", taskStatus: "running", status: "active", businessKey: mixedSignal.key });
+  assert.ok(!(await mixedService.load(now)).signals.some(signal => signal.id === 7), "data service keeps same-key busy suppression until maintenance scope is known");
+  let maintenanceRefreshes = 0;
+  const stopMixedRefresh = mixedService.subscribe(() => { maintenanceRefreshes++; });
+  const knownActivity = { originConversationId: "mixed-maintenance", status: "running" as const, sourcePaths: mixedPaths.slice(0, 12), updatedAt: now };
+  mixed.setMaintenanceActivities([knownActivity]);
+  assert.ok(maintenanceRefreshes > 0, "maintenance source changes refresh the data projection");
+  const knownMixed = await mixedService.load(now), knownSignal = knownMixed.signals.find(signal => signal.id === 7)!;
+  assert.ok(knownSignal, "same-key known maintenance leaves the full candidate signal for remaining-scope display and action");
+  assert.deepEqual(knownSignal.source.objects, mixedPaths);
+  assert.deepEqual(knownSignal.source.objects.filter(target => !knownActivity.sourcePaths.includes(target)), mixedPaths.slice(12), "15 candidates minus 12 real maintenance sources leaves exactly 3 candidates");
+  assert.equal(knownMixed.todayTodos[0].title, "保留其他待办");
+  mixed.tasks.push({ conversationId: "ordinary-busy", taskStatus: "running", status: "active", businessKey: mixedSignal.key });
+  assert.ok(!(await mixedService.load(now)).signals.some(signal => signal.id === 7), "data service does not exempt another ordinary same-key busy task");
+  mixed.tasks.pop(); mixed.setMaintenanceActivities([{ ...knownActivity, sourcePaths: [], updatedAt: now + 1 }]);
+  assert.ok(!(await mixedService.load(now)).signals.some(signal => signal.id === 7));
+  mixed.setMaintenanceActivities([{ ...knownActivity, status: "completed", updatedAt: now + 2 }]);
+  assert.ok(!(await mixedService.load(now)).signals.some(signal => signal.id === 7));
+  stopMixedRefresh(); mixedService.dispose();
+  assert.equal(mixed.maintenanceSubscriptions(), 0, "data disposal releases the shared maintenance subscription");
+  mixed.unregister();
   console.log("Workbench real data: disk-backed Todo/Finance/Raw/Review/English, journal templates/images/unknowns, Inbox observation/partial success/reload, full-Vault links and zero Provider calls passed");
 }

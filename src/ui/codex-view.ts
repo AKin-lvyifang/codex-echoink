@@ -149,7 +149,7 @@ import {
   stopTurn as stopTurnAction,
   type CodexTurnLifecycleHost
 } from "./codex-view/turn-lifecycle";
-import { refreshViewShellCopy, renderViewShell, type CodexViewShellHost } from "./codex-view/view-shell";
+import { refreshViewShellCopy, renderViewShell, moveKnowledgeProgressToTaskDetail, type CodexViewShellHost } from "./codex-view/view-shell";
 import { TurnNavigator } from "./codex-view/turn-navigator";
 import { conversationUiText } from "./codex-view/ui-i18n";
 import { TaskPlanDockController } from "./codex-view/task-plan-dock";
@@ -274,6 +274,7 @@ export class CodexView extends ItemView {
     this.rootEl.insertBefore(this.taskEditorEl, shell);
     this.rootEl.insertBefore(this.taskDetailEl, shell);
     this.taskDetailHeaderEl = this.taskDetailEl.createDiv();
+    moveKnowledgeProgressToTaskDetail(shell, this.taskDetailEl);
     this.taskDetailEl.append(shell, this.taskPlanDockEl, this.interactionDockEl);
     this.taskInterruptionEl = this.messagesEl.createDiv({ cls: "echoink-task-interruption" });
     this.taskInterruptionEl.dataset.messageTail = "interruption";

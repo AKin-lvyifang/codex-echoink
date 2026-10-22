@@ -1,3 +1,5 @@
+import { maintenanceActivityText, maintenanceStatusBarText, projectMaintenanceInitialActivity } from "./knowledge-base/maintenance-activity";
+import { knowledgeLinkingProgressText } from "./ui/codex-view/knowledge-linking-progress";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES } from "./knowledge-base/root-paths-core";
 import { assertPdfTaskDelivery, pdfKnowledgeSection } from "./pdf-reading/delivery";
 import type { PdfNavigationStart, PdfNavigationArtifact, PdfOptions, PdfTaskRequest } from "./pdf-reading/types";
@@ -315,6 +317,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.register(this.accountService.subscribe(() => this.notifyHomeSurfacesChanged()));
     const controllers = registerEchoInkPluginFeatures(this);
     this.knowledgeBase = controllers.knowledgeBase;
+    this.initializeKnowledgeActivityStatusBar();
     this.review = controllers.review;
     this.selectionAskController = controllers.selectionAsk;
     registerEchoInkStartupTasks(this);
@@ -1936,6 +1939,37 @@ export default class CodexForObsidianPlugin extends Plugin {
   async externalizeMessageText(message: ChatMessage, fullText: string): Promise<void> { return this.getSettingsStore().externalizeMessageText(message, fullText); }
   async readRawMessageText(rawRef: string): Promise<string> { return this.getSettingsStore().readRawMessageText(rawRef); }
   getKnowledgeSurfaceService(): EchoInkKnowledgeSurfaceService | null { return this.knowledgeBase; }
+  async readKnowledgeInitialActivities(): Promise<import("./knowledge-base/maintenance-activity").MaintenanceActivity[]> {
+    const local = await this.ensurePiLocalData();
+    const visible = new Set((await local.catalog.list({ statuses: ["active"] })).map(entry => entry.conversationId));
+    return (await local.productRuns.list()).filter(run => visible.has(run.conversationId) && run.maintenanceActivity && !run.maintenanceActivity.recordId && run.maintenanceActivity.progress.status !== "completed")
+      .map(run => projectMaintenanceInitialActivity(run.maintenanceActivity!, run.conversationId, run.productRunId));
+  }
+  private initializeKnowledgeActivityStatusBar(): void {
+    if (!Platform.isDesktopApp) return;
+    const source = this.getKnowledgeActivitySource();
+    if (!source) return;
+    const item = this.addStatusBarItem();
+    item.classList.add("mod-clickable"); item.setAttribute("role", "button"); item.tabIndex = 0;
+    let current: import("./knowledge-base/maintenance-activity").KnowledgeActivity | null = null;
+    const open = () => {
+      if (current?.originConversationId) void this.openTaskDetail(current.originConversationId);
+      else if (current?.kind === "linking") void this.openKnowledgeLinkingDetails(current.id);
+    };
+    this.registerDomEvent(item, "click", open);
+    this.registerDomEvent(item, "keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } });
+    this.register(source.subscribe(snapshot => {
+      current = snapshot.primary;
+      item.hidden = !current;
+      if (!current) { item.textContent = ""; return; }
+      const english = this.settings.settingsLanguage === "en";
+      item.textContent = current.kind === "maintenance" ? maintenanceStatusBarText(current, english)
+        : `EchoInk ${english ? "Knowledge links" : "知识关联"}${current.task.total === null ? "" : ` ${current.task.processed}/${current.task.total}`}`;
+      const detail = current.kind === "maintenance" ? maintenanceActivityText(current, english) : knowledgeLinkingProgressText(current.task, english);
+      item.setAttribute("aria-label", detail); item.title = detail;
+    }));
+  }
+  getKnowledgeActivitySource(): import("./knowledge-base/maintenance-activity").KnowledgeActivitySource | undefined { return this.knowledgeBase?.activity; }
   async getKnowledgeLinkingIndex() { return (await this.ensurePiProductionRuntime()).knowledgeAgentIndex; }
   async queueKnowledgeLinking(targetPaths: readonly string[], sourcePaths: readonly string[] = [], taskId?: string, originConversationId?: string) { return await this.requireKnowledgeSurfaceService().linking.start("automatic", [...targetPaths], taskId, [...sourcePaths], originConversationId); }
   private pendingKnowledgeLinkingFocus = false;

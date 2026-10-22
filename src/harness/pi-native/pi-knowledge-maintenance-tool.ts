@@ -325,7 +325,7 @@ export function createPiKnowledgeMaintenanceToolDefinition(
   return defineTool({
     name: PI_KNOWLEDGE_MAINTAIN_TOOL_ID,
     label: "维护知识库",
-    description: "仅在显式 /maintain 范围内串行维护。必须 decompose（全批摘要与七类结构化知识点/原句版本证据，返回Wiki候选）→plan（knowledge.unitIds、同知识点decision/理由与related关系，固定逐页写作清单）→write（每次一页），成功页不重写；失败后 resume 仅补未完成。新页提供content；已有页先sections取得完整快照regionId，再sectionPatches只追加/替换选中区域。来源/相关条目为独立区，错误编号重新sections，不猜不整页覆盖。只有全部页与原文三个字段成功才已提炼。\n" + MAINTENANCE_TOOL_PARAMETER_EXAMPLES,
+    description: "仅在显式 /maintain 范围内串行维护。必须 decompose（每篇摘要与七类结构化知识点/原句版本证据，可逐篇检查点，全批齐备后返回Wiki候选）→plan（knowledge.unitIds、同知识点decision/理由与related关系，固定逐页写作清单）→write（每次一页），成功页不重写；失败后 resume 仅补未完成。新页提供content；已有页先sections取得完整快照regionId，再sectionPatches只追加/替换选中区域。来源/相关条目为独立区，错误编号重新sections，不猜不整页覆盖。禁止生成关键原句小节，已有同名用户小节逐字保留。只有全部页与原文三个字段成功才已提炼。\n" + MAINTENANCE_TOOL_PARAMETER_EXAMPLES,
     parameters: diagnosticParameters(Type.Object({
       stage: Type.Union(["decompose", "plan", "write", "resume", "sections", "inspect"].map(value => Type.Literal(value))),
       sourcePaths: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 20 })),

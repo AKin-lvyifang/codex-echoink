@@ -50,12 +50,15 @@ export const MAINTENANCE_KNOWLEDGE_WRITING_TEMPLATES: Readonly<Record<Maintenanc
   ].join("\n")
 });
 
+export const MAINTENANCE_QUOTE_HARD_RULE = "硬规则高于模板与用户内容偏好：核对原句只用于内部证据，不输出关键原句小节，也不把核对引文导出到笔记正文。新建与更新都遵守；已有用户同名小节及其子节逐字保留，不删除、不追加、不改写。";
+
 export function maintenanceKnowledgeTypePrompt(): string {
   return [
     "## 七类知识与默认写作模板",
     "每个知识单元只选一个最贴近的主类型：" + MAINTENANCE_KNOWLEDGE_TYPES.join("、") + "。类型拿不准时仍选最近的一类，并设 typePendingConfirmation: true；新页 YAML 同时写 类型待确认: true，不新增第八类。",
     "新页 YAML 必须有 类型（上述七类之一）与 aliases（标准字符串列表，无别名时为 []）。正文包含一个 H1 标题、紧随其后的非空导语和有内容的小节。",
     "以下模板用于组织材料，可按用户偏好改小节标题、调整顺序；没有材料的小节直接省略，不为凑模板编造信息。来源与相关条目按正式协议补充，原句存在与版本校验不能证明语义支持。",
+    MAINTENANCE_QUOTE_HARD_RULE,
     ...MAINTENANCE_KNOWLEDGE_TYPES.map((type) => [
       "", `### ${type}`, "```markdown", MAINTENANCE_KNOWLEDGE_WRITING_TEMPLATES[type], "```"
     ].join("\n"))

@@ -1,4 +1,5 @@
 import { createProductionKnowledgeLinkingService } from "./knowledge-linking-production";
+import { KnowledgeActivityService } from "./knowledge-activity-service";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
@@ -74,6 +75,7 @@ import { resolveKnowledgeMaintenanceSubmitSnapshot } from "../settings/knowledge
 /** Current Knowledge dashboard and capture surfaces. Pi owns agent execution. */
 export class EchoInkKnowledgeSurfaceService {
   readonly linking: ReturnType<typeof createProductionKnowledgeLinkingService>;
+  readonly activity: KnowledgeActivityService;
   private readonly captureService: KnowledgeBaseCaptureService;
   private readonly directoryHistory: InitializationDirectoryHistory;
   private restoring = false;
@@ -102,6 +104,8 @@ export class EchoInkKnowledgeSurfaceService {
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     this.linking = createProductionKnowledgeLinkingService(plugin);
+    this.activity = new KnowledgeActivityService(this.linking, () => readPrivateMaintenanceRecords(path.join(pluginDataDir(plugin.getVaultPath(), plugin.getPluginDataDirName()), "pi-agent-product-v1", "knowledge")), () => plugin.readKnowledgeInitialActivities());
+    void this.activity.ready.catch(error => console.error("EchoInk maintenance progress recovery failed", error));
     void this.linking.ready.catch(error => console.error("EchoInk knowledge linking recovery failed", error));
     this.captureService = new KnowledgeBaseCaptureService(plugin);
     const host = createKnowledgeInitializationHost(plugin, (identity) => { this.initializationInteraction = identity; });
@@ -918,7 +922,7 @@ export class EchoInkKnowledgeSurfaceService {
     return await this.captureService.captureExternalFiles(files);
   }
 
-  async unload(): Promise<void> { await this.linking.dispose(); }
+  async unload(): Promise<void> { this.activity.dispose(); await this.linking.dispose(); }
 }
 
 export function createKnowledgeInitializationHost(

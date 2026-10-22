@@ -1,3 +1,4 @@
+import { parseMaintenanceInitialActivity } from "../../knowledge-base/maintenance-activity";
 import { TASK_INTERRUPTION_REASONS, type TaskInterruptionRecord } from "../../agents/task-resume";
 import type { AgentRunSnapshot } from "../../agents/types";
 import { normalizePiWorkspacePermission } from "./pi-workspace-access";
@@ -108,6 +109,7 @@ export type PiProductRunUpdate = Partial<Pick<
   | "memoryRecall"
   | "knowledge"
   | "maintenance"
+  | "maintenanceActivity"
   | "interruption"
 >> & {
   updatedAt?: number;
@@ -252,6 +254,19 @@ export class FileProductRunStore {
         return cloneProductRun(readback);
       }
     );
+  }
+
+  /** Initial maintenance activity shares this run; its own clock never advances run lifecycle time. */
+  async setMaintenanceActivity(productRunId: string, activity: NonNullable<PiProductRunRecord["maintenanceActivity"]>): Promise<void> {
+    await this.ensureMetadataIndex();
+    const id = requireNonEmptyString(productRunId, "productRunId");
+    const normalized = parseMaintenanceInitialActivity(activity);
+    await serializePiNativeFileWrite(this.storageRootPath, async () => {
+      const existing = await this.read(id);
+      if (!existing || existing.state === "product_run_settled") return;
+      await this.requireCatalogBinding(existing);
+      await this.writeRun(normalizeProductRun({ ...cloneProductRun(existing), maintenanceActivity: normalized }));
+    });
   }
 
   async read(
@@ -653,6 +668,7 @@ function normalizeProductRun(value: unknown): PiProductRunRecord {
       "memoryRecall",
       "knowledge",
       "maintenance",
+      "maintenanceActivity",
       "agentSnapshot",
       "interruption"
     ],
@@ -783,6 +799,7 @@ function normalizeProductRun(value: unknown): PiProductRunRecord {
     ...(error ? { error } : {}),
     ...(memoryRecall ? { memoryRecall } : {}),
     ...(knowledge ? { knowledge } : {}),
+    ...(object.maintenanceActivity === undefined ? {} : { maintenanceActivity: parseMaintenanceInitialActivity(object.maintenanceActivity) }),
     ...(object.maintenance === undefined ? {} : { maintenance: requireMaintenanceOutcome(object.maintenance) }),
     ...(object.interruption === undefined ? {} : { interruption: requireInterruption(object.interruption) }),
     createdAt,
@@ -806,6 +823,7 @@ function definedUpdate(update: Readonly<PiProductRunUpdate>): PiProductRunUpdate
   if (update.memoryRecall !== undefined) {
     output.memoryRecall = { ...update.memoryRecall };
   }
+  if (update.maintenanceActivity !== undefined) output.maintenanceActivity = parseMaintenanceInitialActivity(update.maintenanceActivity);
   if (update.maintenance !== undefined) output.maintenance = requireMaintenanceOutcome(update.maintenance);
   if (update.knowledge !== undefined) {
     output.knowledge = { ...update.knowledge };
@@ -826,6 +844,7 @@ function assertUpdateKeys(update: Readonly<PiProductRunUpdate>): void {
     "memoryRecall",
     "knowledge",
     "maintenance",
+    "maintenanceActivity",
     "interruption",
     "updatedAt"
   ]);
@@ -1132,6 +1151,7 @@ function cloneProductRun(run: Readonly<PiProductRunRecord>): PiProductRunRecord 
     ...(run.error ? { error: run.error } : {}),
     ...(run.memoryRecall ? { memoryRecall: { ...run.memoryRecall } } : {}),
     ...(run.knowledge ? { knowledge: { ...run.knowledge } } : {}),
+    ...(run.maintenanceActivity ? { maintenanceActivity: parseMaintenanceInitialActivity(run.maintenanceActivity) } : {}),
     ...(run.maintenance ? { maintenance: requireMaintenanceOutcome(run.maintenance) } : {}),
     ...(run.interruption ? { interruption: requireInterruption(run.interruption) } : {}),
     createdAt: run.createdAt,

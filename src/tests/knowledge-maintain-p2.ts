@@ -383,7 +383,7 @@ export async function runMaintenanceReceiptBudgetTests(root: string, replay?: { 
   await fs.writeFile(path.join(root,"receipt-budget-report.json"),JSON.stringify(results,null,2));console.log("Maintenance receipt budget: PASS (real Tool security/egress, valid JSON, explicit complete pagination, <=8000 bytes)",JSON.stringify(results));
 }
 
-async function fixture(vault: string) {
+export async function fixture(vault: string, options: Partial<import("../plugin/pi-knowledge-maintenance-production").CreateProductionPiKnowledgeMaintenanceOptions> = {}) {
   const f = await nativeJournalFixture(vault), privateRoot = path.join(vault,".obsidian/plugins/echoink/knowledge");
   const config = emptyKnowledgeFolderBindings();
   for (const role of ["raw","inbox","wiki"] as const) { Object.assign(config.roles[role],{enabled:true,readPaths:[role],writePath:role}); await fs.mkdir(path.join(vault,role),{recursive:true}); }
@@ -394,7 +394,7 @@ async function fixture(vault: string) {
     const adapter = new ObsidianVaultDomainAdapter(f.app,"p2-vault",vault);
     for (const method of ["createFile","updateFile"] as const) { const original = adapter[method].bind(adapter); (adapter as any)[method] = async (target: any,...args: any[]) => { if (target.relativePath === failed) throw new Error("Synthetic map failure"); const result = await (original as any)(target,...args); writes.push(target.relativePath); return result; }; }
     domain = new VaultDomainService(adapter,{allowMissingParentDirectories:true});
-    port = new ProductionPiKnowledgeMaintenanceToolPort({vaultRootPath:vault,privateKnowledgeRootPath:privateRoot,vaultId:"p2-vault",userId:"fixture",deviceId:"fixture",domainService:domain,processedSources:()=>previous,automaticLinkingEnabled:()=>false,linkingOwnsDraftLinks:true,onCommitted:async()=>"test-background",dateKey:()=>"2026-10-22"}); await port.initialize();
+    port = new ProductionPiKnowledgeMaintenanceToolPort({vaultRootPath:vault,privateKnowledgeRootPath:privateRoot,vaultId:"p2-vault",userId:"fixture",deviceId:"fixture",domainService:domain,processedSources:()=>previous,automaticLinkingEnabled:()=>false,linkingOwnsDraftLinks:true,onCommitted:async()=>"test-background",dateKey:()=>"2026-10-22", ...options}); await port.initialize();
   }
   await restart();
   async function call(p1:MaintenanceP1Action,sourcePaths:string[],readSources=true) {
@@ -406,7 +406,7 @@ async function fixture(vault: string) {
     const content = await fs.readFile(path.join(vault,sourcePath),"utf8"), quote = content.trim().split(/\r?\n/u).at(-1)!;
     return {id,type,domain:"工程工具",title,aliases:[],points:[quote],evidence:[{sourcePath,sourceRevision:revision(content),quote}]};
   }
-  return {vault,privateRoot,release,restart,call,unit,writes,previous,write:f.write,read:(relative:string)=>fs.readFile(path.join(vault,relative),"utf8"),fail:(relative:string|null)=>{failed=relative;},conversation:(id:string)=>{conversation=id;},ok:(result:{status:string;message:string})=>assert.equal(result.status,"completed",result.message),
+  return {vault,privateRoot,release,restart,call,unit,writes,previous,get port(){return port;},get productRunId(){return `turn-${sequence}`;},write:f.write,read:(relative:string)=>fs.readFile(path.join(vault,relative),"utf8"),fail:(relative:string|null)=>{failed=relative;},conversation:(id:string)=>{conversation=id;},ok:(result:{status:string;message:string})=>assert.equal(result.status,"completed",result.message),
     observe:async(relativePath:string)=>{const read=await domain.noteRead({vaultId:"p2-vault",relativePath});observed[relativePath]=`sha256:${read.snapshot.contentSha256}`;return read.snapshot.content;},
     item:(id:string,targetPath:string,sourcePaths:string[],unitIds:string[],before?:string):MaintenanceWritingItem=>({id,targetPath,sourcePaths,expectedTarget:before===undefined?{kind:"missing"}:{kind:"file",contentRevision:revision(before)},knowledge:{unitIds,decision:before===undefined?{kind:"new",reason:"独立知识点，未确认现有同点"}:{kind:"same_point",reason:"已读现有正文，确认是同一知识点的新证据",candidatePath:targetPath}}}),
     decompose:(sources:string[],units:MaintenanceKnowledgeUnit[])=>call({stage:"decompose",decompositions:sources.map(sourcePath=>({sourcePath,summary:"原文摘要",units:units.filter(unit=>unit.evidence.some(evidence=>evidence.sourcePath===sourcePath))}))},sources)

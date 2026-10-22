@@ -13,30 +13,65 @@ import { HomeSearchService, type HomeSearchMatch } from "./home-search";
 import { isHomeNotePath } from "./home-note-visibility";
 import { formatHomeRelativeTime } from "./home-i18n";
 import { getWorkbenchDataService } from "./workbench-data";
-import type { WorkbenchDataPort, WorkbenchSnapshot } from "./workbench-types";
+import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchSnapshot } from "./workbench-types";
 import { answerWorkbenchQuestion, launchWorkbenchSignal } from "./task-launcher";
 import { openWorkbenchModule, WORKBENCH_MODULES } from "./module-navigation";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
 import { isProWorkbenchModule, renderWorkbenchModuleLock, workbenchHasPro, workbenchProModuleEnabled, type ProWorkbenchModuleId } from "./workbench-module-lock";
+import { maintenanceActivityText, type KnowledgeActivitySource, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
 export const VIEW_TYPE_ECHOINK_WORKBENCH = "codex-echoink-home";
 type TaskGroups = Record<"interrupted" | "waiting" | "running" | "completed", TaskEntry[]>;
 let viewId = 0;
 
-export function groupWorkbenchTasks(entries: readonly TaskEntry[], now = Date.now()): TaskGroups {
+function latestMaintenanceActivities(activities: readonly Readonly<MaintenanceActivity>[], entries: readonly TaskEntry[] = []): Map<string, Readonly<MaintenanceActivity>> {
+  const latest = new Map<string, Readonly<MaintenanceActivity>>();
+  for (const activity of activities) {
+    const previous = latest.get(activity.originConversationId);
+    if (!previous || activity.updatedAt > previous.updatedAt) latest.set(activity.originConversationId, activity);
+  }
+  const tasks = new Map(entries.map(entry => [entry.conversationId, entry]));
+  for (const [id, activity] of latest) {
+    // A completed maintenance describes its own turn, not a later follow-up.
+    if (activity.status === "completed" && (activity.completedAt === undefined || (tasks.get(id)?.taskStartedAt ?? 0) > activity.completedAt)) latest.delete(id);
+  }
+  return latest;
+}
+function maintenanceTaskState(activity: Readonly<MaintenanceActivity>): keyof TaskGroups {
+  return activity.status === "completed" ? "completed" : activity.status === "waiting" ? "waiting" : activity.status === "running" ? "running" : "interrupted";
+}
+export function groupWorkbenchTasks(entries: readonly TaskEntry[], now = Date.now(), maintenance: readonly Readonly<MaintenanceActivity>[] = []): TaskGroups {
   const groups: TaskGroups = { interrupted: [], waiting: [], running: [], completed: [] };
+  const activities = latestMaintenanceActivities(maintenance, entries);
+  const completedAt = (entry: TaskEntry) => activities.has(entry.conversationId) ? activities.get(entry.conversationId)!.completedAt : entry.taskCompletedAt ?? entry.updatedAt;
   for (const entry of entries) {
     if (entry.status !== "active" || !isUserTask(entry)) continue;
-    const state = taskState(entry);
-    if (state !== "completed" || sameDay(entry.taskCompletedAt ?? entry.updatedAt, now)) groups[state].push(entry);
+    const activity = activities.get(entry.conversationId), state = activity ? maintenanceTaskState(activity) : taskState(entry);
+    const at = completedAt(entry);
+    if (state !== "completed" || at !== undefined && sameDay(at, now)) groups[state].push(entry);
   }
-  groups.interrupted.sort((a, b) => (b.taskInterruptedAt ?? b.updatedAt) - (a.taskInterruptedAt ?? a.updatedAt));
-  groups.waiting.sort((a, b) => a.updatedAt - b.updatedAt);
+  groups.interrupted.sort((a, b) => (activities.get(b.conversationId)?.updatedAt ?? b.taskInterruptedAt ?? b.updatedAt) - (activities.get(a.conversationId)?.updatedAt ?? a.taskInterruptedAt ?? a.updatedAt));
+  groups.waiting.sort((a, b) => (activities.get(a.conversationId)?.updatedAt ?? a.updatedAt) - (activities.get(b.conversationId)?.updatedAt ?? b.updatedAt));
   groups.running.sort((a, b) => (a.taskStartedAt ?? a.updatedAt) - (b.taskStartedAt ?? b.updatedAt));
-  groups.completed.sort((a, b) => (b.taskCompletedAt ?? b.updatedAt) - (a.taskCompletedAt ?? a.updatedAt));
+  groups.completed.sort((a, b) => (completedAt(b) ?? 0) - (completedAt(a) ?? 0));
   return groups;
+}
+
+/** One remaining source set supplies both the reminder count and its draft scope. */
+export function workbenchSignalsWithoutActiveMaintenance(signals: readonly WorkbenchSignal[], covered: ReadonlySet<string>, english = false): WorkbenchSignal[] {
+  return signals.flatMap(signal => {
+    if (signal.id !== 7 || signal.moduleId !== "knowledge-base") return [signal];
+    const objects = signal.source.objects.filter(path => !covered.has(path));
+    if (objects.length === signal.source.objects.length) return [signal];
+    if (!objects.length) return [];
+    return [{ ...signal, description: english ? `${objects.length} sources to organize` : `${objects.length} 份资料待整理`,
+      source: { ...signal.source, objects, ...(signal.source.versions ? {
+        versions: Object.fromEntries(Object.entries(signal.source.versions).filter(([path]) => objects.includes(path)))
+      } : {}) } }];
+  });
 }
 
 /** Only a current, single-choice question can be answered from the overview. */
@@ -64,6 +99,10 @@ export class EchoInkWorkbenchView extends ItemView {
   private refreshFlight: Promise<void> | null = null;
   private entries: readonly TaskEntry[] | null = null;
   private snapshot: WorkbenchSnapshot | null = null;
+  private knowledgeSource?: KnowledgeActivitySource;
+  private knowledgeUnsubscribe?: () => void;
+  private maintenanceActivities: readonly Readonly<MaintenanceActivity>[] = [];
+  private maintenance = new Map<string, Readonly<MaintenanceActivity>>();
   private interruptions = new Map<string, TaskInterruptionInfo | null>();
   private interruptionRevisions = new Map<string, string>();
   private interruptionErrors = new Set<string>();
@@ -99,6 +138,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.contentEl.addClass("echoink-workbench");
     this.contentEl.tabIndex = -1;
     this.renderShell();
+    this.observeKnowledgeActivity();
     this.foreground = new ForegroundView(this, active => this.foregroundChanged(active));
     const service = this.plugin.getConversationRunService();
     this.unsubscribers.push(this.port.subscribe(() => this.scheduleRefresh()));
@@ -124,6 +164,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.closed = true; this.refreshVersion++;
     this.foreground?.dispose(); this.foreground = null;
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
+    this.knowledgeUnsubscribe?.(); this.knowledgeUnsubscribe = undefined; this.knowledgeSource = undefined; this.maintenanceActivities = []; this.maintenance.clear();
     this.clearTimers(); this.stopSearchWork();
     disposeOriginControls(this.contentEl); this.contentEl.empty(); this.contentEl.removeClass("echoink-workbench");
   }
@@ -150,20 +191,42 @@ export class EchoInkWorkbenchView extends ItemView {
     if (this.refreshTimer !== null) win?.clearTimeout(this.refreshTimer);
     this.refreshTimer = win?.setTimeout(() => { this.refreshTimer = null; void this.refresh(); }, delay) ?? null;
   }
+  private observeKnowledgeActivity(): void {
+    const source = this.plugin.getKnowledgeActivitySource?.();
+    if (source === this.knowledgeSource) return;
+    this.knowledgeUnsubscribe?.(); this.knowledgeUnsubscribe = undefined; this.knowledgeSource = source;
+    this.maintenanceActivities = source?.snapshot().maintenance ?? [];
+    this.maintenance = latestMaintenanceActivities(this.maintenanceActivities, this.entries ?? []);
+    if (source) this.knowledgeUnsubscribe = source.subscribe(snapshot => {
+      this.maintenanceActivities = snapshot.maintenance;
+      this.maintenance = latestMaintenanceActivities(this.maintenanceActivities, this.entries ?? []);
+      if (this.active()) this.render(); else this.refreshPending = true;
+    });
+  }
+  private taskGroups(now: number): TaskGroups { return groupWorkbenchTasks(this.entries ?? [], now, [...this.maintenance.values()]); }
+  private taskState(entry: TaskEntry): keyof TaskGroups {
+    const activity = this.maintenance.get(entry.conversationId);
+    return activity ? maintenanceTaskState(activity) : taskState(entry);
+  }
   async refresh(): Promise<void> {
     if (!this.active()) { this.refreshPending = true; return; }
     if (this.refreshFlight) { this.refreshPending = true; return this.refreshFlight; }
     this.refreshPending = false;
     const version = ++this.refreshVersion;
+    this.observeKnowledgeActivity();
     const now = Date.now();
     this.refreshFlight = (async () => {
       const [tasks, snapshot] = await Promise.allSettled([this.plugin.listAgentTaskEntries(), this.port.load(now)]);
       if (!this.active() || version !== this.refreshVersion) return;
-      if (tasks.status === "fulfilled") { this.entries = tasks.value; this.taskError = ""; }
+      if (tasks.status === "fulfilled") {
+        this.entries = tasks.value;
+        this.maintenance = latestMaintenanceActivities(this.maintenanceActivities, this.entries);
+        this.taskError = "";
+      }
       else this.taskError = message(tasks.reason);
       if (snapshot.status === "fulfilled") { this.snapshot = snapshot.value; this.dataError = ""; }
       else this.dataError = message(snapshot.reason);
-      const groups = tasks.status === "fulfilled" ? groupWorkbenchTasks(tasks.value, now) : undefined;
+      const groups = tasks.status === "fulfilled" ? this.taskGroups(now) : undefined;
       const interrupted = groups?.interrupted ?? [];
       const unread = interrupted.filter(entry => {
         const changed = this.interruptionRevisions.get(entry.conversationId) !== this.interruptionRevision(entry) || this.interruptionErrors.has(entry.conversationId);
@@ -220,7 +283,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const evening = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 18).getTime();
     if (evening > now) targets.push(evening);
     if (this.snapshot?.nextRefreshAt && this.snapshot.nextRefreshAt > now) targets.push(this.snapshot.nextRefreshAt);
-    if (this.entries?.some(entry => entry.status === "active" && taskState(entry) === "running")) targets.push(now + 60_000);
+    if (this.entries?.some(entry => entry.status === "active" && !this.maintenance.has(entry.conversationId) && taskState(entry) === "running")) targets.push(now + 60_000);
     this.clockTimer = win?.setTimeout(() => { this.clockTimer = null; this.scheduleRefresh(0); }, Math.max(1, Math.min(...targets) - now + 25)) ?? null;
   }
 
@@ -304,11 +367,13 @@ export class EchoInkWorkbenchView extends ItemView {
     });
     if (this.lockedModule && (workbenchHasPro(this.plugin) || !workbenchProModuleEnabled(this.plugin, this.lockedModule))) this.closeModuleLock();
     this.renderStatus();
-    const groups = groupWorkbenchTasks(this.entries ?? [], now);
+    const groups = this.taskGroups(now);
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));
     for (const [state, zh, en] of [["interrupted", "上次中断", "Interrupted"], ["waiting", "等你回应", "Waiting for you"], ["running", "正在进行", "In progress"]] as const) {
-      this.taskGroup(state, this.t(zh, en), groups[state], now);
+      const maintenance = groups[state].some(entry => this.maintenance.has(entry.conversationId));
+      const title = maintenance && state === "interrupted" ? this.t("可继续", "Ready to resume") : maintenance && state === "waiting" ? this.t("等你确认", "Waiting for you") : this.t(zh, en);
+      this.taskGroup(state, title, groups[state], now);
     }
     this.renderSignals();
     this.taskGroup("completed", this.t("今天完成", "Completed today"), groups.completed, now);
@@ -412,7 +477,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (!section) return;
     const host = section.lastElementChild as HTMLElement;
     this.syncRows(host, entries, entry => entry.conversationId,
-      entry => JSON.stringify([this.language, entry, this.agent(entry), this.summary(entry), this.pending(entry), this.interruptions.get(entry.conversationId), this.interruptionErrors.has(entry.conversationId), !!this.taskError]),
+      entry => JSON.stringify([this.language, entry, this.maintenance.get(entry.conversationId), this.agent(entry), this.summary(entry), this.pending(entry), this.interruptions.get(entry.conversationId), this.interruptionErrors.has(entry.conversationId), !!this.taskError]),
       entry => state === "completed" ? this.completedRow(entry) : this.taskCard(entry));
     host.querySelectorAll<HTMLElement>("[data-started-at]").forEach(time => { time.textContent = this.elapsed(Number(time.dataset.startedAt), now); });
   }
@@ -422,6 +487,8 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private pending(entry: TaskEntry): Readonly<EchoInkTurnInteraction> | undefined { return this.plugin.getConversationRunService().pendingInteractions.get(entry.conversationId); }
   private summary(entry: TaskEntry): string {
+    const activity = this.maintenance.get(entry.conversationId);
+    if (activity) return maintenanceActivityText(activity, this.language === "en");
     const session = this.plugin.settings.sessions.find(session => session.id === entry.conversationId);
     if (taskState(entry) === "completed" && !session?.messages.some(item => item.role === "assistant" && item.text.trim())) {
       const preview = this.completedPreviews.get(entry.conversationId);
@@ -433,7 +500,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private completedPreviewRevision(entry: TaskEntry): string { return JSON.stringify([entry.piSessionId, entry.updatedAt, entry.taskCompletedAt, entry.taskMetadataUpdatedAt]); }
   /** Same read-only projection as P3; retain only today's plain-text summaries. */
   private async loadCompletedPreviews(entries: readonly TaskEntry[], version: number, now: number): Promise<void> {
-    const missing = entries.filter(entry => !this.plugin.settings.sessions.find(session => session.id === entry.conversationId)?.messages.some(item => item.role === "assistant" && item.text.trim())
+    const missing = entries.filter(entry => !this.maintenance.has(entry.conversationId) && !this.plugin.settings.sessions.find(session => session.id === entry.conversationId)?.messages.some(item => item.role === "assistant" && item.text.trim())
       && this.completedPreviews.get(entry.conversationId)?.revision !== this.completedPreviewRevision(entry));
     let next = 0;
     const worker = async () => {
@@ -455,7 +522,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private taskCard(entry: TaskEntry): HTMLElement {
     const card = this.contentEl.ownerDocument.createElement("article"); card.className = "wb-task"; card.dataset.task = entry.conversationId;
-    const state = taskState(entry), agent = this.agent(entry);
+    const activity = this.maintenance.get(entry.conversationId), state = this.taskState(entry), agent = this.agent(entry);
     const body = this.button(card, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary");
     body.classList.add("wb-task-body");
     setTooltip(body, `${entry.title}\n${taskCardHintSummary(this.summary(entry))}`, { classes: ["echoink-task-card-tooltip"] });
@@ -465,17 +532,22 @@ export class EchoInkWorkbenchView extends ItemView {
     if (state === "running") {
       const spinner = status.createSpan({ cls: "wb-spinner", attr: { "aria-hidden": "true" } }); setIcon(spinner, "loader-circle");
       status.createSpan({ text: this.t("进行中", "Running") });
-      const started = this.plugin.getConversationRunService().runs.get(entry.conversationId)?.turnStartedAt || entry.taskStartedAt;
+      const started = !activity && (this.plugin.getConversationRunService().runs.get(entry.conversationId)?.turnStartedAt || entry.taskStartedAt);
       if (started) status.createSpan({ attr: { "data-started-at": String(started) } });
-    } else { setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: state === "waiting" ? this.t("等你回应", "Waiting for you") : this.t("已中断", "Interrupted") }); }
+    } else { setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: state === "waiting" ? activity ? this.t("等你确认", "Waiting for you") : this.t("等你回应", "Waiting for you") : activity ? this.t("可继续", "Ready to resume") : this.t("已中断", "Interrupted") }); }
     body.createSpan({ cls: "wb-task-title", text: entry.title });
     const inline = state === "waiting" ? workbenchInlineQuestion(entry, this.pending(entry)) : undefined;
-    const step = inline ? entry.taskStage : this.summary(entry);
-    if (step && !(state === "interrupted" && step === this.t("已中断", "Interrupted"))) body.createSpan({ cls: "wb-task-step", text: state === "interrupted" ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
+    const step = activity ? this.summary(entry) : inline ? entry.taskStage : this.summary(entry);
+    if (step && !(state === "interrupted" && step === this.t("已中断", "Interrupted"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
+    if (activity) renderMaintenanceProgressBar(body, activity);
+    if (activity?.failures.length) {
+      const failures = card.createEl("ul", { cls: "wb-maintenance-failures" });
+      for (const failure of activity.failures) failures.createEl("li", { text: failure.message });
+    }
     if (state === "interrupted") {
       const footer = card.createDiv({ cls: "wb-task-footer" });
       const info = this.interruptions.get(entry.conversationId);
-      footer.createSpan({ cls: "wb-interruption wb-grow", text: this.interruptionText(entry, info) });
+      footer.createSpan({ cls: "wb-interruption wb-grow", text: activity ? activity.currentPath || this.t("从未完成的步骤继续", "Resume unfinished steps") : this.interruptionText(entry, info) });
       const key = `resume-${entry.conversationId}`;
       const resume = this.button(footer, this.busy.has(key) ? this.t("正在核对…", "Checking…") : this.t("继续", "Continue"), key,
         () => this.runAction(key, async () => { this.selectedTask = entry.conversationId; await this.plugin.resumeTaskAndOpenDetail(entry.conversationId); }), "secondary", "play");
@@ -523,12 +595,20 @@ export class EchoInkWorkbenchView extends ItemView {
     const agent = this.agent(entry); renderTaskAvatar(button, agent);
     const copy = button.createSpan({ cls: "wb-grow" }); copy.createSpan({ cls: "wb-row-title", text: entry.title });
     copy.createSpan({ cls: "wb-secondary", text: `${agent.name} · ${this.summary(entry)}` });
+    const activity = this.maintenance.get(entry.conversationId);
+    if (activity) { copy.classList.add("wb-maintenance-completed"); renderMaintenanceProgressBar(copy, activity); }
     if (entry.unreadAnswerAt !== undefined) { button.createSpan({ cls: "wb-unread", attr: { "aria-hidden": "true" } }); button.setAttribute("aria-label", `${entry.title}，${this.t("有新结果", "New result")}`); }
-    button.createEl("time", { cls: "wb-time", text: localTaskTime(entry.taskCompletedAt ?? entry.updatedAt), attr: { datetime: new Date(entry.taskCompletedAt ?? entry.updatedAt).toISOString() } });
+    const completedAt = activity?.completedAt ?? entry.taskCompletedAt ?? entry.updatedAt;
+    button.createEl("time", { cls: "wb-time", text: localTaskTime(completedAt), attr: { datetime: new Date(completedAt).toISOString() } });
     return row;
   }
+  private remainingSignals(signals: readonly WorkbenchSignal[]): WorkbenchSignal[] {
+    const activeIds = new Set((this.entries ?? []).filter(entry => entry.status === "active" && isUserTask(entry)).map(entry => entry.conversationId));
+    const covered = new Set([...this.maintenance.values()].filter(activity => activeIds.has(activity.originConversationId) && activity.status !== "completed").flatMap(activity => activity.sourcePaths));
+    return workbenchSignalsWithoutActiveMaintenance(signals, covered, this.language === "en");
+  }
   private renderSignals(): void {
-    const signals = this.snapshot?.signals ?? [];
+    const signals = this.remainingSignals(this.snapshot?.signals ?? []);
     const section = this.group("signals", this.t("可以交给 Agent", "Ready for an Agent"), signals.length, true);
     if (!section) return;
     const heading = section.firstElementChild as HTMLElement;
@@ -552,7 +632,12 @@ export class EchoInkWorkbenchView extends ItemView {
         const owner = registry.agents.find(agent => agent.id === registry.moduleOwners[signal.moduleId]) ?? registry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)!;
         const key = `signal-${signal.key}`;
         const button = this.button(row, this.t(`交给 ${owner.name}`, `Assign to ${owner.name}`), key,
-          () => this.runAction(key, async () => { await launchWorkbenchSignal(this.plugin, signal); }), "secondary");
+          () => this.runAction(key, async () => {
+            await launchWorkbenchSignal(this.plugin, signal, { load: async now => {
+              const current = await this.port.load(now);
+              return { ...current, signals: this.remainingSignals(current.signals) };
+            } });
+          }), "secondary");
         button.classList.add("is-small"); button.disabled = !!this.dataError || this.busy.has(key); setAmicroButtonPending(button, this.busy.has(key));
         button.dataset.wbBusy = key; button.dataset.wbSource = "data";
         return row;

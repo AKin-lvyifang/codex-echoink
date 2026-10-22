@@ -1,6 +1,6 @@
 import { isMap, parseDocument } from "yaml";
 import { throwMaintenanceDiagnostics } from "./maintenance-diagnostics";
-import { appendMaintenanceBlock, createMaintenanceSectionSnapshot } from "./maintenance-section-patch";
+import { appendMaintenanceBlock, appendMaintenanceManagedBlock, createMaintenanceSectionSnapshot } from "./maintenance-section-patch";
 import type { MaintenanceWritingItem } from "./maintenance-p1-contract";
 import type { MaintenanceKnowledgeType, MaintenanceKnowledgeUnit, MaintenanceRelatedEntry, MaintenanceUnitCandidates } from "./maintenance-p2-contract";
 import { MAINTENANCE_KNOWLEDGE_TYPES } from "./maintenance-knowledge-types";
@@ -108,6 +108,6 @@ export function applyMaintenanceRelatedEntries(content: string, relations: reado
   for (const relation of relations) retained.set(relation.targetPath, `- [[${relation.targetPath}|${relation.targetPath.split("/").at(-1)!.replace(/\.(?:md|markdown)$/iu, "")}]] — ${relation.reason}`);
   const block = `${BEGIN}${eol}${[...retained].sort(([a],[b]) => a.localeCompare(b)).map(([,line]) => line).join(eol)}${eol}${END}`;
   if (range) return content.slice(0, range.start) + block + content.slice(range.end + END.length);
-  if (!related) return appendMaintenanceBlock(content, `## 相关条目${eol}${eol}${block}${eol}`,eol);
+  if (!related) return appendMaintenanceManagedBlock(content, `## 相关条目${eol}${eol}${block}${eol}`,eol);
   return appendMaintenanceBlock(content.slice(0, related.end), `${block}${eol}${related.end < content.length ? eol : ""}`,eol) + content.slice(related.end);
 }

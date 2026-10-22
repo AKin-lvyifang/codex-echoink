@@ -2017,6 +2017,11 @@ export class PiNativeConversationRuntime {
         userEntry.id
       );
     }
+    if (execution.knowledgeWorkflow?.kind === "maintain") {
+      await this.options.knowledge?.maintenanceActivity?.({ type: "start", conversationId: catalog.conversationId, productRunId,
+        sourcePaths: execution.maintenanceScope ? maintenanceScopePaths(execution.maintenanceScope) : undefined,
+        request: execution.knowledgeWorkflow.command.request });
+    }
     if (execution.generation) {
       // Local preflight/auth may fail before a formal run exists. Keep its
       // phases transient until the user Entry and ProductRun are both durable.
@@ -2447,6 +2452,7 @@ export class PiNativeConversationRuntime {
     if (!active?.currentRun) return;
     const execution = active.currentRun;
     execution.abortRequested = true;
+    await this.options.knowledge?.maintenanceActivity?.({ type: "stop", conversationId, productRunId: execution.productRunId });
     this.finishProviderWait(execution, "cancelled");
     execution.knowledgeAbort.abort();
     const abortErrors: unknown[] = [];
@@ -3148,6 +3154,7 @@ export class PiNativeConversationRuntime {
             "Question request identity does not match the active ProductRun"
           );
         }
+        await this.options.knowledge?.maintenanceActivity?.({ type: "waiting", conversationId: catalog.conversationId, productRunId: run.productRunId, reason: `question:${interaction.interactionId}`, waiting: true });
         await this.emitRuntimeEvent(active, run, {
           type: "interaction_requested",
           interaction
@@ -3162,6 +3169,7 @@ export class PiNativeConversationRuntime {
             "Question result has no bound ProductRun"
           );
         }
+        await this.options.knowledge?.maintenanceActivity?.({ type: "waiting", conversationId: catalog.conversationId, productRunId: run.productRunId, reason: `question:${record.interactionId}`, waiting: false });
         await this.emitRuntimeEvent(active, run, {
           type: "interaction_resolved",
           record
@@ -3726,6 +3734,7 @@ export class PiNativeConversationRuntime {
         this.now()
       );
       const settledAt = Math.max(agentSettledAt, this.now());
+      await this.options.knowledge?.maintenanceActivity?.({ type: "settled", conversationId: active.catalog.conversationId, productRunId: execution.productRunId, failed: terminalState === "failed" });
       const settled = await this.productRuns.update(
         execution.productRunId,
         {
@@ -6274,7 +6283,7 @@ function classifyKnowledgeMaintenanceResult(
     const details = safeRecord(result.details);
     if (!envelope) {
       if (result.isError) pending = false;
-      if (!result.isError && details?.source === "echoink-knowledge-maintenance" && details.status === "completed" && /^maintenance-[a-f0-9]{32}$/u.test(String(details.recordId)) && ["plan", "write", "finalize", "sections"].includes(String(details.maintenanceStage))) pending = true;
+      if (!result.isError && details?.source === "echoink-knowledge-maintenance" && details.status === "completed" && /^maintenance-[a-f0-9]{32}$/u.test(String(details.recordId)) && ["decompose", "plan", "write", "finalize", "sections"].includes(String(details.maintenanceStage))) pending = true;
       continue; // A blocked attempt may be corrected; durable stages are a paused job, never source completion.
     }
     if (envelope.status === "write_uncertain") return Object.freeze({ kind: "trusted_failure", toolCallIds: affectedToolCallIds });
