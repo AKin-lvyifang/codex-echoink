@@ -104,6 +104,7 @@ export interface CreateProductionPiKnowledgeMaintenanceOptions {
     "readReliableKnowledgeForRaw"
   > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh" | "search">>;
   readonly automaticLinkingEnabled?: () => boolean;
+  readonly processedSources?: () => Readonly<Record<string, { fingerprint?: string }>>;
   readonly now?: () => number;
   readonly createPreviewId?: () => string;
   readonly dateKey?: () => string;
@@ -146,6 +147,7 @@ implements PiKnowledgeMaintenanceToolPort {
     "readReliableKnowledgeForRaw"
   > & Partial<Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "refresh" | "search">>;
   private readonly automaticLinkingEnabled: () => boolean;
+  private readonly processedSources?: CreateProductionPiKnowledgeMaintenanceOptions["processedSources"];
   private readonly sources: FilePhase3MaintenanceSourceSnapshotPort;
   private readonly tracker: Phase3MaintenanceTrackerPort;
   private readonly now: () => number;
@@ -179,6 +181,7 @@ implements PiKnowledgeMaintenanceToolPort {
       ? options.knowledgeAgentIndex as Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "search" | "refresh">
       : new KnowledgeAgentIndex({ vaultPath: this.vaultRootPath, storageRootPath: this.privateKnowledgeRootPath });
     this.automaticLinkingEnabled = options.automaticLinkingEnabled ?? (() => true);
+    this.processedSources = options.processedSources;
     this.now = options.now ?? Date.now;
     this.createPreviewId = options.createPreviewId ?? randomUUID;
     this.dateKey = options.dateKey ?? localDateKey;
@@ -200,6 +203,7 @@ implements PiKnowledgeMaintenanceToolPort {
     this.p1 = new MaintenanceP1Workflow({
       vaultRootPath: this.vaultRootPath,
       records: () => readPrivateMaintenanceRecords(this.privateKnowledgeRootPath, { vaultId: this.vaultId }),
+      processedSources: (paths, records) => readProcessedMaintenanceSources(this.vaultRootPath, paths, records, this.processedSources?.()),
       save: record => this.state.saveP1Record(record),
       read: async relative => { const file = await readImmutableFileIfPresent(this.vaultRootPath, relative); return file ? UTF8_DECODER.decode(file.bytes) : null; },
       sourcePath: relative => { const actual = resolveKnowledgePath(this.vaultRootPath, normalizeVaultRelativePath(relative), false); if (!["raw", "inbox"].includes(knowledgePathRole(this.vaultRootPath, actual) ?? "") || !isKnowledgeMaintenanceSourcePath(actual)) throw new Error("来源不在Raw/Inbox范围"); return actual; },
@@ -232,7 +236,7 @@ implements PiKnowledgeMaintenanceToolPort {
     this.assertIdentity(input);
     if (input.folderBindingsRevision !== undefined && input.folderBindingsRevision !== (getKnowledgeFolderBindings(this.vaultRootPath)?.revision ?? 0)) return { status: "failed", errorCode: "preview_stale", processedSourcePaths: [], message: "知识库目录已变化，请重新读取。" };
     let result = await this.p1.execute(input);
-    if (result.maintenanceResult) {
+    if (result.maintenanceResult && result.recordId) {
       try { await this.onTerminal?.({ input, result, at: this.now() }); } catch (error) { console.error("EchoInk maintenance history could not be saved", knowledgeErrorDetail(error)); }
       if (result.producedPaths?.length && this.onCommitted && result.recordId && input.p1?.stage !== "decompose") {
         const record = await readPrivateMaintenanceRecord(this.privateKnowledgeRootPath, result.recordId, this.vaultId);
@@ -353,11 +357,27 @@ implements PiKnowledgeMaintenanceToolPort {
   }
 
   async finalizeNatural(request: Parameters<NonNullable<import("../harness/pi-native/contracts").PiKnowledgeRuntimePort["finalizeMaintenance"]>>[0]): Promise<Readonly<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceSettlement>> {
-    const staged = (await readPrivateMaintenanceRecords(this.privateKnowledgeRootPath, { vaultId: this.vaultId })).find(record => record.originConversationId === request.conversationId && record.p1);
-    if (staged?.p1) return { processedSourcePaths: staged.sources.filter(source => source.status === "processed").map(source => source.path), pendingSourcePaths: staged.sources.filter(source => source.status !== "processed").map(source => source.path), warnings: staged.p1.phase === "completed" ? [] : ["维护清单尚未完成，继续原清单；来源保持待处理。"] };
+    const records = await readPrivateMaintenanceRecords(this.privateKnowledgeRootPath, { vaultId: this.vaultId });
     const scope = request.scope;
     const paths = scope?.mode === "global" ? scope.sourcePaths ?? request.noteReadPaths : scope?.mode === "exact" || scope?.mode === "batch" ? scope.sourcePaths : scope?.mode === "query" ? scope.candidatePaths : request.noteReadPaths;
-    return { processedSourcePaths: [], pendingSourcePaths: [...new Set(paths)].filter(relative => ["raw", "inbox"].includes(knowledgePathRole(this.vaultRootPath, relative) ?? "")), warnings: ["尚未通过拆解、汇总与收尾门禁，来源保持待处理。"] };
+    const selected = [...new Set(paths)].filter(relative => ["raw", "inbox"].includes(knowledgePathRole(this.vaultRootPath, relative) ?? ""));
+    // A no-record success must come from the production Tool's verified read-only
+    // receipt in this turn, never merely from a completed assistant response.
+    const noop = request.terminalState === "completed" && selected.length > 0 && (request.turnEntries ?? []).some(entry => {
+      if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== "knowledge_maintain" || entry.message.isError) return false;
+      const details = entry.message.details as Record<string, unknown> | undefined;
+      return details?.source === "echoink-knowledge-maintenance" && details.status === "completed" && parseKnowledgeMaintenanceResultEnvelope(details.maintenanceResult)?.status === "noop" && Array.isArray(details.processedSourcePaths) && selected.every(relative => (details.processedSourcePaths as unknown[]).includes(relative));
+    });
+    const unfinished = records.find(record => record.p1 && record.p1.phase !== "completed" && record.sources.some(source => selected.includes(source.path)));
+    if (noop && !unfinished) return { processedSourcePaths: selected, pendingSourcePaths: [], warnings: [] };
+    const staged = unfinished?.originConversationId === request.conversationId ? unfinished : records.find(record => record.originConversationId === request.conversationId && record.p1 && record.sources.some(source => selected.includes(source.path)));
+    if (unfinished && staged?.p1?.phase === "completed") return { processedSourcePaths: [], pendingSourcePaths: selected, warnings: ["这些来源仍有历史未完成清单，请回到原会话继续。"] };
+    if (staged?.p1) {
+      const recorded = staged.sources.filter(source => source.status === "processed" && selected.includes(source.path)).map(source => source.path);
+      const processedSourcePaths = staged.p1.phase === "completed" ? request.terminalState === "completed" ? await readProcessedMaintenanceSources(this.vaultRootPath, recorded, records, this.processedSources?.()) : [] : recorded;
+      return { processedSourcePaths, pendingSourcePaths: selected.filter(relative => !processedSourcePaths.includes(relative)), warnings: staged.p1.phase === "completed" ? [] : ["维护清单尚未完成，继续原清单；来源保持待处理。"] };
+    }
+    return { processedSourcePaths: [], pendingSourcePaths: selected, warnings: ["尚未通过拆解、汇总与收尾门禁，来源保持待处理。"] };
   }
 
 
@@ -892,6 +912,20 @@ export async function readPrivateMaintenanceRecords(rootPath: string, options: R
   return records.sort((a, b) => b.at - a.at);
 }
 
+/** Same source-state precedence as scanning, restricted to the supplied paths. */
+async function readProcessedMaintenanceSources(vaultRoot: string, paths: readonly string[], records: readonly KnowledgeMaintenanceRecord[], previous?: Readonly<Record<string, { fingerprint?: string }>>): Promise<string[]> {
+  const registry = await readRawDigestRegistry(vaultRoot, true);
+  const latest = latestMaintenanceSourceStates(records);
+  const processed: string[] = [];
+  for (const relative of paths) {
+    const file = await readImmutableFileIfPresent(vaultRoot, relative);
+    if (!file) continue;
+    const markdown = UTF8_DECODER.decode(file.bytes);
+    if (isMaintenanceSourceProcessed(markdown, { fingerprint: () => rawDigestFingerprint(relative, file.bytes), registry: registry.entries[relative], maintenance: latest.get(relative), previous: previous?.[relative] })) processed.push(relative);
+  }
+  return processed;
+}
+
 export async function privateMaintenanceSourceScope(vaultRoot: string, options: Readonly<{
   limit?: number; processedSources?: Readonly<Record<string, { fingerprint?: string }>>; readMaintenanceHistory?: boolean;
 }> = {}) {
@@ -915,14 +949,10 @@ export async function privateMaintenanceSourceScope(vaultRoot: string, options: 
     }
   };
   for (const root of new Set(roots)) await walk(root);
-  const registry = await readRawDigestRegistry(vaultRoot, true);
   const privateRoot = knowledgePrivateRoot(vaultRoot);
-  const latest = latestMaintenanceSourceStates(privateRoot && options.readMaintenanceHistory !== false ? await readPrivateMaintenanceRecords(privateRoot) : []);
-  const sourcePaths: string[] = [];
-  for (const relative of [...candidates].sort()) {
-    const markdown = await readFile(await resolveRegularFile(vaultRoot, relative), "utf8");
-    if (!isMaintenanceSourceProcessed(markdown, { fingerprint: () => rawDigestFingerprint(relative, Buffer.from(markdown)), registry: registry.entries[relative], maintenance: latest.get(relative), previous: options.processedSources?.[relative] })) sourcePaths.push(relative);
-  }
+  const sorted = [...candidates].sort();
+  const processed = new Set(await readProcessedMaintenanceSources(vaultRoot, sorted, privateRoot && options.readMaintenanceHistory !== false ? await readPrivateMaintenanceRecords(privateRoot) : [], options.processedSources));
+  const sourcePaths = sorted.filter(relative => !processed.has(relative));
   return { folderBindingsRevision: bindings?.revision ?? 0, sourcePaths: sourcePaths.slice(0, options.limit ?? 20) };
 }
 

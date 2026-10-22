@@ -19,6 +19,7 @@ const revision = (s: string) => `sha256:${hash(s)}`;
 export interface MaintenanceP1Host {
   vaultRootPath: string;
   records(): Promise<KnowledgeMaintenanceRecord[]>;
+  processedSources(paths: readonly string[], records: readonly KnowledgeMaintenanceRecord[]): Promise<readonly string[]>;
   save(record: KnowledgeMaintenanceRecord): Promise<void>;
   read(path: string): Promise<string | null>;
   sourcePath(path: string): string;
@@ -83,8 +84,15 @@ export class MaintenanceP1Workflow {
       return this.receipt(record, "拆解与Wiki候选已保存；候选不等于同知识点。先读候选，再stage=plan提交判断和写作清单。");
     }
     if (!record) {
-      const complete = records.find(r => r.originConversationId === input.conversationId && r.p1?.phase === "completed" && (!selected.length || selected.every(p => r.sources.some(s => s.path === p))));
-      if (complete && action.stage === "resume") return this.receipt(complete, "该清单已完成，成功页没有重写。");
+      if ((action.stage === "inspect" || action.stage === "resume") && selected.length > 0 && selected.length <= 20) {
+        if (records.some(r => r.p1 && r.p1.phase !== "completed" && r.sources.some(source => selected.includes(source.path)))) throw new Error("这些来源有历史未完成清单；请回到原会话使用stage=resume继续，不能当作已完成。");
+        const processed = new Set(await this.host.processedSources(selected, records));
+        if (selected.every(relative => processed.has(relative))) return {
+          status: "completed", maintenanceStage: "completed", processedSourcePaths: selected, producedPaths: [],
+          maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "noop" }),
+          message: "当前选定来源均已提炼，无需继续维护；本次只读核对，没有新建清单或写入来源、Wiki、关系和地图。"
+        };
+      }
       throw new Error("没有未完成清单；先stage=decompose。");
     }
     const state = record.p1!;

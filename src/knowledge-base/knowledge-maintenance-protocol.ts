@@ -57,6 +57,7 @@ export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./f
     `固定协议版本：${ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION}`,
     bindings ? `真实绑定：${JSON.stringify(projectedKnowledgeFolderRoles(bindings, roleScope))}` : "使用当前真实 Raw/Inbox 与 Wiki 路径。",
     "本轮只处理已选 Raw 与 Inbox Markdown，最多20篇，同一会话单模型串行。不得读取历史维护报告充当来源，不合并两张既有Wiki页。",
+    "同批选定来源均已提炼时，先用knowledge_maintain(stage=inspect,view=pages,sourcePaths=本批路径)取得只读无需再写的回执，不要重新decompose，也不要仅凭自然语言结束；有未完成清单则沿原清单继续。",
     "程序强制阶段：先完整note_read每篇来源，再knowledge_maintain(stage=decompose,decompositions:[{sourcePath,summary,units:[{id,type,typePendingConfirmation?,domain,title,aliases,points,evidence:[{sourcePath,sourceRevision,quote}]}]}])；id全批唯一，sourceRevision用真实note_read的contentSha256或contentRevision（64位全文hash或sha256:前缀），quote使用原文连续原句；程序仅可兼容同一普通段落内的排版空白差异并保存实际源片段和位置，不改大小写/字词/标点，不跨段落或代码边界。错误会列unit/source/quoteIndex和收到引文，修正quote后沿用ID重发完整批次，不必换ID或删来源。程序仅检查原句存在和版本，模型还须自检原句是否支持要点；只拆解不写。",
     "拆解回执先给Wiki标题/别名候选，再给现有要点正文检索候选与批内重合。逐项比对同一知识点，不能因同大主题合并；先note_read真实候选。再stage=plan,writingPlan:[{id,targetPath,sourcePaths,expectedTarget,knowledge:{unitIds,decision:{kind:new或same_point或uncertain,reason,candidatePath?},type?:最终七类型,domain?:最终领域,related:[{targetPath,reason,reverseReason?}]}}]。批内同知识点聚为一页，每个unit恰好一次；已有同知识点用same_point+candidatePath更新原页；不是同知识点可以new。拿不准用uncertain新建并声明候选及关系，须写reverseReason说明反向关系，程序补互链；批内精确重名分开时双方uncertain并互写related。相关旧页也必须先note_read。暂分类不一致的同知识点在knowledge.type/domain定最终分类，证据不变。无知识点可空清单但保存摘要。",
     "同一知识点的定义、边界和使用方式可以合写，不因来源文体或暂分类不同拆成重复概念页/方法页；真正独立可复用的子方法再单列。",

@@ -547,6 +547,7 @@ export async function createPiProductionRuntimeBundle(
     knowledgeAgentIndex,
     linkingOwnsDraftLinks: typeof plugin.queueKnowledgeLinking === "function",
     automaticLinkingEnabled: () => plugin.settings.knowledgeBase.autoLinkEnabled !== false,
+    processedSources: () => plugin.settings.knowledgeBase.processedSources,
     onCommitted: async (paths, targets, taskId, originConversationId) => {
       if (paths.length) return (await plugin.queueKnowledgeLinking?.(targets ?? [], paths, taskId, originConversationId))?.id;
     },

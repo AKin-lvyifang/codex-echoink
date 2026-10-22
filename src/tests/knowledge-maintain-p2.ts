@@ -1,4 +1,4 @@
-import { canonicalRawMarkdownForDigest } from "../knowledge-base/raw-digest";
+import { canonicalRawMarkdownForDigest, rawDigestFingerprint, writeRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { createPiKnowledgeMaintenanceToolSecurity } from "../harness/pi-native/pi-knowledge-maintenance-tool";
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
 import type { PiKnowledgeMaintenanceToolResult } from "../harness/pi-native/contracts";
@@ -9,13 +9,14 @@ import * as path from "node:path";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { ObsidianVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
 import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
-import { ProductionPiKnowledgeMaintenanceToolPort, readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
+import { FilePhase3MaintenanceStateStore, ProductionPiKnowledgeMaintenanceToolPort, readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
 import { emptyKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { createMaintenanceSectionSnapshot } from "../knowledge-base/maintenance-section-patch";
 import { MAINTENANCE_KNOWLEDGE_TYPES } from "../knowledge-base/maintenance-knowledge-types";
 import { applyMaintenanceRelatedEntries } from "../knowledge-base/maintenance-p2-planning";
 import { isMaintenanceSourceProcessed } from "../knowledge-base/maintenance-source-state";
 import { releaseMaintenancePages } from "../knowledge-base/maintenance-page-lock";
+import { createKnowledgeMaintenanceResultEnvelope } from "../knowledge-base/knowledge-maintenance-result";
 import type { MaintenanceKnowledgeType, MaintenanceKnowledgeUnit } from "../knowledge-base/maintenance-p2-contract";
 import type { MaintenanceP1Action, MaintenanceWritingItem } from "../knowledge-base/maintenance-p1-contract";
 const revision = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
@@ -30,6 +31,49 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     try { await run(f); report.push({ name, passed: true, vault: f.vault }); }
     finally { for (const record of await readPrivateMaintenanceRecords(f.privateRoot)) releaseMaintenancePages(record.recordId); f.release(); }
   }
+  await scenario("readonly-noop-uses-shared-source-state-precedence", async f => {
+    const cases: { id: string; property?: string; registry?: boolean; privateStatus?: "processed" | "failed"; stale?: boolean; setting?: boolean; complete: boolean }[] = [
+      { id: "new-complete", property: "已提炼", privateStatus: "failed", stale: true, complete: true },
+      { id: "registry-current", registry: true, complete: true },
+      { id: "private-current", privateStatus: "processed", complete: true },
+      { id: "setting-current", setting: true, complete: true },
+      { id: "new-pending", property: "未提炼", registry: true, complete: false },
+      { id: "new-null", property: "null", registry: true, complete: false },
+      { id: "new-invalid", property: "unknown", registry: true, complete: false },
+      { id: "private-stale-over-registry", registry: true, privateStatus: "processed", stale: true, complete: false },
+      { id: "private-failed-over-registry", registry: true, privateStatus: "failed", complete: false },
+      { id: "no-evidence", complete: false }
+    ];
+    const state = new FilePhase3MaintenanceStateStore({ storageRootPath: f.privateRoot, vaultId: "p2-vault" });
+    const recordsSnapshot = async () => Object.fromEntries(await Promise.all((await fs.readdir(path.join(f.privateRoot, "records")).catch(error => { if (error.code === "ENOENT") return []; throw error; })).sort().map(async name => [name, (await fs.readFile(path.join(f.privateRoot, "records", name))).toString("base64")])));
+    for (const [index, test] of cases.entries()) {
+      const source = `raw/${test.id}.md`, content = `${test.property === undefined ? "" : `---\n提炼状态: ${test.property}\n---\n`}# 状态证据\n只读核对当前来源。\n`;
+      await f.write(source, content);
+      const fingerprint = rawDigestFingerprint(source, Buffer.from(content));
+      if (test.registry) await writeRawDigestRegistry(f.vault, { schemaVersion: 1, updatedAt: "2026-10-22", entries: { [source]: { rawPath: source, fingerprint, size: Buffer.byteLength(content), mtime: 1, digestedAt: 1, runId: "legacy", reportPath: "", evidencePaths: [], confidence: "verified" } } });
+      if (test.setting) f.previous[source] = { fingerprint };
+      if (test.privateStatus) {
+        await state.saveRecord({ schemaVersion: 1, recordId: `maintenance-${index.toString(16).padStart(32, "0")}`, runId: test.id, originConversationId: "historical-completed-receipt", at: index + 1, date: "2026-10-22", result: createKnowledgeMaintenanceResultEnvelope({ status: test.privateStatus === "processed" ? "noop" : "failed" }), sources: [{ path: source, fingerprint: test.stale ? "outdated" : fingerprint, status: test.privateStatus, evidencePaths: [] }], summary: "旧版本证据" });
+        assert.ok((await readPrivateMaintenanceRecords(f.privateRoot)).some(record => record.runId === test.id), "the production reader accepts this private receipt");
+      }
+      const before = await recordsSnapshot();
+      f.conversation(test.id);
+      const result = await f.call({ stage: "inspect", view: "pages" }, [source]);
+      assert.equal(result.status, test.complete ? "completed" : "failed", `${test.id}: ${result.message}`);
+      assert.deepEqual(result.processedSourcePaths, test.complete ? [source] : []);
+      if (test.complete) { assert.equal(result.maintenanceResult?.status, "noop"); assert.deepEqual(result.maintenanceResult?.notes, []); assert.deepEqual(result.producedPaths, []); assert.equal(result.recordId, undefined); }
+      else assert.match(result.message, /先stage=decompose/u);
+      assert.equal(await f.read(source), content);
+      assert.deepEqual(await recordsSnapshot(), before, test.id);
+    }
+    const before = await recordsSnapshot();
+    await fs.writeFile(path.join(f.vault, "raw/unreadable.md"), Buffer.from([0xff]));
+    for (const source of ["raw/missing.md", "raw/unreadable.md"]) assert.equal((await f.call({ stage: "inspect" }, [source], false)).status, "failed", source);
+    assert.equal((await f.call({ stage: "invalid" } as unknown as MaintenanceP1Action, ["raw/new-complete.md"])).status, "failed");
+    assert.equal((await f.call({ stage: "inspect" }, [])).status, "failed", "empty scope cannot be a completed batch");
+    assert.equal(f.writes.length, 0);
+    assert.deepEqual(await recordsSnapshot(), before);
+  });
   await scenario("structured-evidence-and-seven-types", async f => {
     const paths: string[] = [], units: MaintenanceKnowledgeUnit[] = [];
     for (const [index, type] of MAINTENANCE_KNOWLEDGE_TYPES.entries()) {
@@ -290,24 +334,25 @@ async function fixture(vault: string) {
   const config = emptyKnowledgeFolderBindings();
   for (const role of ["raw","inbox","wiki"] as const) { Object.assign(config.roles[role],{enabled:true,readPaths:[role],writePath:role}); await fs.mkdir(path.join(vault,role),{recursive:true}); }
   const release = registerKnowledgeFolderBindings(vault,()=>config), observed: Record<string,string> = {}, writes: string[] = [];
+  const previous: Record<string, { fingerprint?: string }> = {};
   let port: ProductionPiKnowledgeMaintenanceToolPort, domain: VaultDomainService, failed: string | null = null, sequence = 0, conversation = "p2-fixture";
   async function restart() {
     const adapter = new ObsidianVaultDomainAdapter(f.app,"p2-vault",vault);
     for (const method of ["createFile","updateFile"] as const) { const original = adapter[method].bind(adapter); (adapter as any)[method] = async (target: any,...args: any[]) => { if (target.relativePath === failed) throw new Error("Synthetic map failure"); const result = await (original as any)(target,...args); writes.push(target.relativePath); return result; }; }
     domain = new VaultDomainService(adapter,{allowMissingParentDirectories:true});
-    port = new ProductionPiKnowledgeMaintenanceToolPort({vaultRootPath:vault,privateKnowledgeRootPath:privateRoot,vaultId:"p2-vault",userId:"fixture",deviceId:"fixture",domainService:domain,automaticLinkingEnabled:()=>false,linkingOwnsDraftLinks:true,onCommitted:async()=>"test-background",dateKey:()=>"2026-10-22"}); await port.initialize();
+    port = new ProductionPiKnowledgeMaintenanceToolPort({vaultRootPath:vault,privateKnowledgeRootPath:privateRoot,vaultId:"p2-vault",userId:"fixture",deviceId:"fixture",domainService:domain,processedSources:()=>previous,automaticLinkingEnabled:()=>false,linkingOwnsDraftLinks:true,onCommitted:async()=>"test-background",dateKey:()=>"2026-10-22"}); await port.initialize();
   }
   await restart();
-  async function call(p1:MaintenanceP1Action,sourcePaths:string[]) {
+  async function call(p1:MaintenanceP1Action,sourcePaths:string[],readSources=true) {
     const sourceBodyFingerprints: Record<string,string> = {};
-    for (const relativePath of sourcePaths) sourceBodyFingerprints[relativePath] = (await domain.noteRead({vaultId:"p2-vault",relativePath})).snapshot.bodyFingerprint!;
+    if (readSources) for (const relativePath of sourcePaths) sourceBodyFingerprints[relativePath] = (await domain.noteRead({vaultId:"p2-vault",relativePath})).snapshot.bodyFingerprint!;
     return port.execute({vaultId:"p2-vault",conversationId:conversation,piSessionId:"fixture",productRunId:`turn-${++sequence}`,toolCallId:`call-${sequence}`,mode:"maintain",request:"",sourcePaths,sourceBodyFingerprints,observedTargetRevisions:observed,folderBindingsRevision:config.revision,preferenceSnapshot:{profileVersion:"fixture",state:"default",revision:`sha256:${"a".repeat(64)}`},p1});
   }
   async function unit(id:string,sourcePath:string,title:string,type:MaintenanceKnowledgeType="概念"):Promise<MaintenanceKnowledgeUnit> {
     const content = await fs.readFile(path.join(vault,sourcePath),"utf8"), quote = content.trim().split(/\r?\n/u).at(-1)!;
     return {id,type,domain:"工程工具",title,aliases:[],points:[quote],evidence:[{sourcePath,sourceRevision:revision(content),quote}]};
   }
-  return {vault,privateRoot,release,restart,call,unit,writes,write:f.write,read:(relative:string)=>fs.readFile(path.join(vault,relative),"utf8"),fail:(relative:string|null)=>{failed=relative;},conversation:(id:string)=>{conversation=id;},ok:(result:{status:string;message:string})=>assert.equal(result.status,"completed",result.message),
+  return {vault,privateRoot,release,restart,call,unit,writes,previous,write:f.write,read:(relative:string)=>fs.readFile(path.join(vault,relative),"utf8"),fail:(relative:string|null)=>{failed=relative;},conversation:(id:string)=>{conversation=id;},ok:(result:{status:string;message:string})=>assert.equal(result.status,"completed",result.message),
     observe:async(relativePath:string)=>{const read=await domain.noteRead({vaultId:"p2-vault",relativePath});observed[relativePath]=`sha256:${read.snapshot.contentSha256}`;return read.snapshot.content;},
     item:(id:string,targetPath:string,sourcePaths:string[],unitIds:string[],before?:string):MaintenanceWritingItem=>({id,targetPath,sourcePaths,expectedTarget:before===undefined?{kind:"missing"}:{kind:"file",contentRevision:revision(before)},knowledge:{unitIds,decision:before===undefined?{kind:"new",reason:"独立知识点，未确认现有同点"}:{kind:"same_point",reason:"已读现有正文，确认是同一知识点的新证据",candidatePath:targetPath}}}),
     decompose:(sources:string[],units:MaintenanceKnowledgeUnit[])=>call({stage:"decompose",decompositions:sources.map(sourcePath=>({sourcePath,summary:"原文摘要",units:units.filter(unit=>unit.evidence.some(evidence=>evidence.sourcePath===sourcePath))}))},sources)
