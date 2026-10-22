@@ -273,7 +273,7 @@ interface BranchProjectionContext {
   readonly piSessionId: string;
   readonly vaultPath: string;
   readonly entryRuns: ReadonlyMap<string, string>;
-  readonly toolRuns: ReadonlyMap<string, string>;
+  readonly toolRuns: Map<string, string>;
   readonly privacySafeToolRuns: ReadonlySet<string>;
   readonly maintenanceRunIds: ReadonlySet<string>;
   currentRunId?: string;
@@ -886,6 +886,8 @@ export class PiChatUiProjector {
           || toolCall.toolName === PI_USER_QUESTION_TOOL_ID
         ) continue;
         const toolRunId = context.toolRuns.get(toolCall.toolCallId) ?? runId;
+        // Old ProductRuns may lack tool IDs; Session calls still carry their real entry/run owner.
+        if (toolRunId) context.toolRuns.set(toolCall.toolCallId, toolRunId);
         upsertMessage(messages, toolMessage({
           scope: context.scope,
           toolCallId: toolCall.toolCallId,
@@ -931,8 +933,8 @@ export class PiChatUiProjector {
       const resultText = textFromContent(message.content);
       const cancelled = isCancelledResult(message.details);
       const status = cancelled ? "interrupted" : message.isError ? "failed" : "completed";
-      const runId = context.toolRuns.get(toolCallId) ?? context.currentRunId;
       const existing = findByIdentity(messages, "tool", toolCallId);
+      const runId = context.toolRuns.get(toolCallId) ?? context.entryRuns.get(entry.id) ?? existing?.runId ?? context.currentRunId;
       const timing = this.toolExecutionTimes.get(this.toolTimeKey(context.piSessionId, toolCallId));
       const projected = toolMessage({
         scope: context.scope,
@@ -1842,7 +1844,7 @@ function toolMessage(input: {
       completedAt: input.completedAt
     };
   }
-  const privateCopy = input.privacySafe || input.status === "failed"
+  const privateCopy = input.privacySafe || input.maintenanceContext === true || input.status === "failed"
     ? privacySafeKnowledgeToolCopy(input.toolName, input.status, input.result, input.resultText)
     : null;
   if (privateCopy) {
@@ -2741,7 +2743,7 @@ function runtimeToolProgressStatus(
 
 function buildRunIdentityMaps(identities: readonly PiChatUiRunIdentity[]): {
   readonly entryRuns: ReadonlyMap<string, string>;
-  readonly toolRuns: ReadonlyMap<string, string>;
+  readonly toolRuns: Map<string, string>;
   readonly privacySafeToolRuns: ReadonlySet<string>;
   readonly maintenanceRunIds: ReadonlySet<string>;
 } {

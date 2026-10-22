@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { buildAgentTurns } from "../ui/codex-view/agent-turn-process";
-import { PiChatUiProjector } from "../harness/pi-native/pi-chat-ui-projector";
+import { PiChatUiProjector, type PiSessionBranchEntryView, type PiSessionMessageView } from "../harness/pi-native/pi-chat-ui-projector";
 import { maintenanceFailureText, maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -237,6 +237,7 @@ async function assertCoordinatorRestoreAndHandoff(root: string): Promise<void> {
 
 
 export function assertMaintenanceUserPresentation(): void {
+  assertMaintenanceColdReadPrivacy();
   for (const [status, label] of [["running", "进行中"], ["waiting", "等你回应"], ["interrupted", "没做完"], ["partial", "没做完"], ["failed", "没做完"], ["completed", "已完成"]] as const) assert.equal(maintenanceTaskStateLabel({ status }), label);
   const raw = 'pendingPageCount expectedTarget writingPlan decompositions sectionPatches contentRevision sourcePath sourcePaths targetPath regionId unitIds nextOffset resume stage revision CAS 清单 wiki/指数退避.md';
   assert.equal(maintenanceVisibleCopyIsSafe(raw), false);
@@ -280,4 +281,38 @@ export function assertMaintenanceUserPresentation(): void {
   assert.ok(!processTitles.some(title => title.includes('unregistered_internal_tool')));
   assert.equal(summary.activities[0].name, 'unregistered_internal_tool', 'the original registered tool identity stays internal');
   assert.equal(JSON.stringify(result), untouched, 'UI projection must preserve the full model-facing JSON and tool arguments');
+}
+
+function assertMaintenanceColdReadPrivacy(): void {
+  const entry = (id: string, message: PiSessionMessageView): PiSessionBranchEntryView => ({ type: "message", id, parentId: null, timestamp: new Date(1).toISOString(), message });
+  const raw = "sourcePath targetPath nextOffset contentRevision CAS writingPlan";
+  const details = { source: "echoink-knowledge", status: "completed", total: 1, returned: 1, references: [{ vaultRelativePath: "wiki/架构决策记录.md", lineStart: 1, lineEnd: 3 }], content: raw };
+  const call = (id: string, name: string) => ({ type: "toolCall", id, name, arguments: { sourcePath: "wiki/架构决策记录.md", query: raw } });
+  const result = (id: string, name: string) => ({ role: "toolResult", toolCallId: id, toolName: name, content: [{ type: "text", text: JSON.stringify(details) }], details });
+  const entries = [
+    entry("maintenance-user", { role: "user", content: [{ type: "text", text: "整理已选资料" }] }),
+    entry("maintenance-calls", { role: "assistant", content: [call("old-search", "knowledge_search"), call("old-read", "note_read"), call("late-read", "note_read")] }),
+    entry("old-search-result", result("old-search", "knowledge_search")),
+    entry("old-read-result", result("old-read", "note_read")),
+    entry("ordinary-user", { role: "user", content: [{ type: "text", text: "普通后续任务" }] }),
+    entry("ordinary-calls", { role: "assistant", content: [call("ordinary-read", "note_read")] }),
+    entry("ordinary-result", result("ordinary-read", "note_read")),
+    // An old tool result cannot acquire the next user's workflow just because it arrives later.
+    entry("late-read-result", result("late-read", "note_read"))
+  ];
+  const before = JSON.stringify(entries);
+  const view = new PiChatUiProjector().projectSessionBranch({ piSessionId: "cold-private-session", activeLeafId: null, productRunId: "ordinary-run", entries,
+    runIdentities: [{ productRunId: "old-maintenance-run", userEntryId: "maintenance-user", toolCallIds: [], knowledgeWorkflow: "maintain" }, { productRunId: "ordinary-run", userEntryId: "ordinary-user", toolCallIds: [] }] });
+  const tools = view.messages.filter(message => message.role === "tool");
+  for (const index of [0, 1, 2]) {
+    const message = tools[index];
+    assert.equal(message.runId, "old-maintenance-run", "Session assistant calls retain their actual run without persisted tool IDs");
+    assert.equal(message.processInput, undefined, "old maintenance tools must hide raw arguments on cold rebuild");
+    assert.ok([message.title, message.text, message.details, message.processOutput, ...(message.files ?? []).map(file => file.displayPath)].filter(Boolean).every(text => maintenanceVisibleCopyIsSafe(text!)), "old maintenance search/read results must use safe visible copy");
+    assert.equal(message.files?.[0]?.path, "wiki/架构决策记录.md", "real navigation payload is retained");
+  }
+  const ordinary = tools[3];
+  assert.equal(ordinary.runId, "ordinary-run");
+  assert.equal(ordinary.processOutput, JSON.stringify(details), "a later ordinary run keeps its existing tool presentation");
+  assert.equal(JSON.stringify(entries), before, "cold UI rebuilding never rewrites Session or full model-facing results");
 }
