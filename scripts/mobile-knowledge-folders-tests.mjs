@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import fs from "node:fs/promises";
@@ -12,7 +13,7 @@ import { mobileBuildOptions } from "./mobile-build.mjs";
 import { runFolderScenarios } from "../tests/mobile-knowledge-folders/scenarios.mjs";
 
 let project = fileURLToPath(new URL("../", import.meta.url));
-const registered = path.join(homedir(), "EchoInk-TestVaults/90-任务临时/移动端改版-M12-20261019");
+const registered = disposableTestRoot(path.join(homedir(), "EchoInk-TestVaults/90-任务临时/移动端改版-M12-20261019"));
 await fs.mkdir(registered, { recursive: true });
 const root = await fs.mkdtemp(path.join(registered, "knowledge-folders-"));
 try {

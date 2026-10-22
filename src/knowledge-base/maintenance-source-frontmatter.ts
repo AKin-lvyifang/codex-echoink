@@ -53,17 +53,23 @@ function parseSourceFrontmatter(markdown: string) {
   return { ...slice, document };
 }
 
-/** Reading malformed or ambiguous metadata never marks a source as processed. */
-export function readMaintenanceSourceStatus(markdown: string): unknown {
+/** Presence is separate from value: null/empty/invalid state must not revive legacy success. */
+export function readMaintenanceSourceStateProperty(markdown: string): { present: boolean; value?: unknown; error?: string } {
   try {
     const parsed = parseSourceFrontmatter(markdown);
-    if (!parsed || !isMap(parsed.document.contents)) return undefined;
+    if (!parsed || !isMap(parsed.document.contents)) return { present: false };
     const pair = parsed.document.contents.items.find((item) => isScalar(item.key) && item.key.value === "提炼状态");
-    const value = pair?.value;
-    return isScalar(value) && !value.anchor && !value.tag ? value.value : undefined;
+    if (!pair) return { present: false };
+    const value = pair.value;
+    return isScalar(value) && !value.anchor && !value.tag ? { present: true, value: value.value } : { present: true, error: "提炼状态不是明确的标量，保留待处理" };
   } catch {
-    return undefined;
+    return { present: true, error: "文件头无法明确解析，保留待处理" };
   }
+}
+
+/** Reading malformed or ambiguous metadata never marks a source as processed. */
+export function readMaintenanceSourceStatus(markdown: string): unknown {
+  return readMaintenanceSourceStateProperty(markdown).value;
 }
 
 function managedPairValue(pair: Pair, key: ManagedKey): string | null | string[] {

@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
@@ -6,8 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const fixture = path.resolve(process.env.ECHOINK_WORKBENCH_TEST_ROOT || path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台可靠性-20261021/composer"));
-if (!fixture.startsWith(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台可靠性-20261021") + path.sep)) throw new Error("Use this task's disposable fixture subdirectory");
+const fixture = disposableTestRoot(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台可靠性-20261021/composer"), ["ECHOINK_WORKBENCH_TEST_ROOT"]);
+
 await mkdir(fixture, { recursive: true });
 const output = path.join(fixture, "workbench-composer.mjs");
 await esbuild.build({ stdin: { contents: 'import { runWorkbenchComposerTests, runPiNativeTurnRunnerTests } from "./src/tests/pi-native/turn-runner"; await '+(process.argv.includes("--runner") ? 'runPiNativeTurnRunnerTests' : 'runWorkbenchComposerTests')+'();', resolveDir: root, loader: "ts" },

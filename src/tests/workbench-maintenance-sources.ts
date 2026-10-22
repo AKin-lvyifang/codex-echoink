@@ -1,3 +1,4 @@
+import { readRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { patchMaintenanceSourceFrontmatter } from "../knowledge-base/maintenance-source-frontmatter";
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
@@ -87,7 +88,37 @@ export async function runWorkbenchMaintenanceSourceTests(root: string): Promise<
     await state.saveRecord({ schemaVersion: 1, recordId: `maintenance-${"f".repeat(32)}`, runId: "failed-current-version", at: 2, date: "2026-10-21", summary: "Current version failed", result: createKnowledgeMaintenanceResultEnvelope({ status: "failed" }),
       sources: [{ path: completed, fingerprint: rawDigestFingerprint(completed, bytes), status: "failed", evidencePaths: [] }] });
     const failed = await read(); assert.equal(failed.formal.sourcePaths.length, 25); assert.equal(failed.dashboard.raw.digestStatus.failed, 0);
-    const report = { eligible: after.formal.sourcePaths, count: after.dashboard.raw.changedCount, batches: batches.map((batch: any) => batch.maintenanceScope), bindingsBefore: bindings, bindingsAfter: corrected, filesMoved: 0 };
+    const compatibilityMatrix: { id: string; state: string; pending: boolean }[] = [];
+    const transitionCases = [
+      { id: "registry-current", registry: "current", expected: "digested" },
+      { id: "registry-stale", registry: "old", expected: "changed" },
+      { id: "private-current", privateStatus: "processed", privateVersion: "current", expected: "digested" },
+      { id: "private-failed-over-registry", registry: "current", privateStatus: "failed", privateVersion: "current", expected: "failed" },
+      { id: "private-stale-over-registry", registry: "current", privateStatus: "processed", privateVersion: "old", expected: "changed" },
+      { id: "new-complete-over-stale", property: "已提炼", registry: "old", privateStatus: "failed", privateVersion: "old", expected: "digested" },
+      { id: "new-pending-over-complete", property: "未提炼", registry: "current", privateStatus: "processed", privateVersion: "current", expected: "pending" },
+      { id: "new-null", property: "null", registry: "current", expected: "pending" },
+      { id: "new-empty-quoted", property: "''", registry: "current", expected: "pending" },
+      { id: "new-empty", property: "", registry: "current", expected: "pending" },
+      { id: "new-unparseable", property: "[invalid", registry: "current", expected: "pending" }
+    ];
+    for (const [index, item] of transitionCases.entries()) {
+      const previous = await read(), relative = `raw/articles/transition-${item.id}.md`;
+      const text = (item.property === undefined ? "" : `---\n提炼状态: ${item.property}\n---\n`) + `# ${item.id}\n完整合成正文，过渡兼容不改文件。\n`;
+      await write(relative, text); const fingerprint = rawDigestFingerprint(relative, Buffer.from(text));
+      if (item.privateStatus) await state.saveRecord({ schemaVersion: 1, recordId: `maintenance-${(index + 1).toString(16).padStart(32, "0")}`, runId: item.id, at: 100 + index, date: "2026-10-22", summary: "Synthetic transition receipt", result: createKnowledgeMaintenanceResultEnvelope({ status: item.privateStatus === "processed" ? "noop" : "failed" }), sources: [{ path: relative, fingerprint: item.privateVersion === "current" ? fingerprint : "sha256:1:" + "b".repeat(64), status: item.privateStatus as "processed" | "failed", evidencePaths: [] }] });
+      if (item.registry) {
+        const registry = await readRawDigestRegistry(vault, true);
+        registry.entries[relative] = { rawPath: relative, fingerprint: item.registry === "current" ? fingerprint : "sha256:1:" + "c".repeat(64), size: Buffer.byteLength(text), mtime: 1, digestedAt: 1, runId: "older-registry", reportPath: "", evidencePaths: [], confidence: "verified" };
+        await writeRawDigestRegistry(vault, registry);
+      }
+      const current = await read(), pending = item.expected !== "digested";
+      assert.equal(current.formal.sourcePaths.includes(relative), pending, item.id);
+      assert.equal(current.dashboard.raw.digestStatus[item.expected as keyof typeof current.dashboard.raw.digestStatus], previous.dashboard.raw.digestStatus[item.expected as keyof typeof previous.dashboard.raw.digestStatus] + 1, item.id);
+      assert.equal(await fs.readFile(path.join(vault, relative), "utf8"), text, "legacy compatibility is read-only; never add state markers to make tests pass");
+      compatibilityMatrix.push({ id: item.id, state: item.expected, pending });
+    }
+    const report = { compatibilityMatrix, eligible: after.formal.sourcePaths, count: after.dashboard.raw.changedCount, batches: batches.map((batch: any) => batch.maintenanceScope), bindingsBefore: bindings, bindingsAfter: corrected, filesMoved: 0 };
     await fs.writeFile(path.join(root, "maintenance-sources.json"), JSON.stringify(report, null, 2));
     console.log("Workbench maintenance sources: PASS (configured defaults, custom preservation, legacy new source, dashboard equality, <=20 batches, Raw+Inbox scheme A)");
   } finally { unbind(); }

@@ -1,3 +1,4 @@
+import { executeStagedMaintenanceFixture } from "./maintenance-staged-fixture";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
@@ -165,8 +166,8 @@ async function assertMaintenanceCategoryPolicy(input: {
   const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: path.join(root, "maintenance-state"), vaultId: VAULT_ID, userId: "fixture", deviceId: "fixture", domainService: domain, dateKey: () => "2026-10-15" });
   await port.initialize();
   let sequence = 0;
-  const maintain = async (targetPath: string) => await port.execute({
-    vaultId: VAULT_ID, conversationId: "maintenance-conversation", piSessionId: "maintenance-session", productRunId: `maintenance-run-${++sequence}`, toolCallId: "maintain", mode: "maintain", request: "", sourcePaths: [SOURCE],
+  const maintain = async (targetPath: string) => await executeStagedMaintenanceFixture(port, domain, {
+    vaultId: VAULT_ID, conversationId: `maintenance-conversation-${sequence}`, piSessionId: "maintenance-session", productRunId: `maintenance-run-${++sequence}`, toolCallId: "maintain", mode: "maintain", request: "", sourcePaths: [SOURCE],
     sourceBodyFingerprints: { [SOURCE]: rawDigestFingerprint(SOURCE, Buffer.from(BODY)) },
     preferenceSnapshot: { profileVersion: "echoink-knowledge-preference-profile-v1", state: "default", revision: `sha256:${"a".repeat(64)}` },
     candidateActions: [{ targetPath, content: `# 整理成果\n来源：[[${SOURCE}]]\n`, expectedTarget: { kind: "missing" } }]
@@ -180,7 +181,7 @@ async function assertMaintenanceCategoryPolicy(input: {
   config.roles.wiki.autoOrganizePaths = ["成果"];
   const allowed = await maintain("成果/维护新分类/子类/允许.md");
   assert.equal(allowed.status, "completed", allowed.message);
-  assert.equal(await readFile(path.join(vault, SOURCE), "utf8"), BODY);
+  assert.equal(canonicalRawMarkdownForDigest(await readFile(path.join(vault, SOURCE), "utf8")), canonicalRawMarkdownForDigest(BODY));
   config.roles.wiki.autoOrganizePaths = [];
   config.roles.wiki.allowedSubdirectories = ["旧维护/子类"];
   const legacy = await maintain("成果/旧维护/子类/允许.md");
@@ -195,7 +196,7 @@ async function assertMaintenanceCategoryPolicy(input: {
   assert.equal(projectsClosed.status, "failed", projectsClosed.message);
   config.roles.projects.autoOrganizePaths = ["项目"];
   const projectsOpen = await maintain("项目/新分类/允许.md");
-  assert.equal(projectsOpen.status, "completed", projectsOpen.message);
+  assert.equal(projectsOpen.status, "failed", "staged maintenance is Wiki-only even when ordinary Projects folder organization is allowed");
 }
 
 function sha256(value: string): string { return createHash("sha256").update(value, "utf8").digest("hex"); }

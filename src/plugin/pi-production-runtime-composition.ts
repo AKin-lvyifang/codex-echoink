@@ -813,7 +813,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       }
       const result = await input.knowledgeAgentIndex.search({ query: request, kinds: ["raw", "inbox"], limit: 50 });
       const candidatePaths = result.hits.map((hit) => hit.vaultRelativePath).filter(isRawMarkdownPath).slice(0, 12);
-      if (!candidatePaths.length) throw new Error("请说明要维护哪些资料；没有找到可可靠匹配的 Raw 笔记，本轮不会扩大维护范围。");
+      if (!candidatePaths.length) throw new Error("请说明要维护哪些资料；没有找到可可靠匹配的 Raw/Inbox 笔记，不会回退到全局维护，也不会扩大维护范围。");
       return Object.freeze({ mode: "query" as const, candidatePaths: Object.freeze(candidatePaths) });
     },
     async pendingMaintenanceSourcePaths(sourcePaths) {

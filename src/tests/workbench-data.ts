@@ -160,12 +160,12 @@ export async function runWorkbenchDataTests(root: string): Promise<void> {
   await writeRawDigestRegistry(f.root, { schemaVersion: 1, updatedAt: new Date(now).toISOString(), entries: { [rawPath]: {
     rawPath, fingerprint, size: rawBytes.length, mtime: 0, digestedAt: now, runId: "synthetic", reportPath: "", evidencePaths: [], confidence: "verified"
   } } });
-  assert.ok(!(await reloaded.load(now)).signals.some(signal => signal.id === 7), "the actual digest registry closes a current version");
+  assert.ok(!(await (reloaded as any).readPendingRaw([])).some((file: { path: string }) => file.path === rawPath), "the actual digest registry closes its current version; unrelated Inbox sources may still meet the reminder threshold");
   await f.write(rawPath, "来源当前版本改过了"); assert.ok((await reloaded.load(now)).signals.some(signal => signal.id === 7));
   f.plugin.settings.knowledgeBase.processedSources[rawPath] = { size: 1, mtime: Date.now() };
   assert.ok((await reloaded.load(now)).signals.some(signal => signal.id === 7), "old mtime/boolean hints cannot prove processing");
   f.maintenance.push({ at: Date.now(), sources: [{ path: rawPath, fingerprint: rawDigestFingerprint(rawPath, Buffer.from("来源当前版本改过了")), status: "processed" }] });
-  assert.ok(!(await reloaded.load(now)).signals.some(signal => signal.id === 7), "a current-version reviewed source needs no new Wiki output");
+  assert.ok(!(await (reloaded as any).readPendingRaw([])).some((file: { path: string }) => file.path === rawPath), "a current-version reviewed source needs no new Wiki output");
 
   const journalData = new HomeWorkbenchDataService(f.app, () => "journal", null, undefined, () => f.bindings);
   const created = await journalData.createOrOpenJournal(defaultJournalTemplateChoice(), new Date(now)); assert.equal(created.created, true);

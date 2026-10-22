@@ -1,4 +1,4 @@
-import { isMaintenanceSourceProcessed } from "../knowledge-base/maintenance-source-state";
+import { resolveMaintenanceSourceState } from "../knowledge-base/maintenance-source-state";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { TFile, type EventRef } from "obsidian";
@@ -26,6 +26,7 @@ const visiblePath = (target: string): boolean => !target.split("/").some(part =>
 const safeRelativePath = (value: unknown): value is string => typeof value === "string" && !!value && !value.startsWith("/") && !value.includes("\\") && !value.split("/").some(part => part === "." || part === ".." || !part);
 const scopeKey = (roots: readonly string[]): string => workbenchFingerprint([...roots].sort().join("\n")).slice(0, 24);
 interface CachedSourceContent {
+  markdown: string;
   fingerprint: string;
   rawFingerprint: string;
   rawDigest: RawDigestFrontmatterRecord | null;
@@ -78,7 +79,8 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     if (previous?.mtime === mtime && previous.size === size) return previous.result;
     const result = this.plugin.app.vault.readBinary(file).then(content => {
       const bytes = Buffer.from(content);
-      return { fingerprint: workbenchFingerprint(bytes), rawFingerprint: rawDigestFingerprint(target, bytes),
+      let full: string | undefined, raw: string | undefined;
+      return { markdown: bytes.toString("utf8"), get fingerprint() { return full ??= workbenchFingerprint(bytes); }, get rawFingerprint() { return raw ??= rawDigestFingerprint(target, bytes); },
         rawDigest: /\.(?:md|markdown)$/iu.test(target) ? rawDigestRecordFromMarkdown(bytes) : null };
     });
     const cached = { mtime, size, result };
@@ -289,6 +291,8 @@ export class WorkbenchDataService implements WorkbenchDataPort {
   private async readPendingRaw(issues: string[]): Promise<WorkbenchSourceFile[]> {
     const bindings = this.bindings, roots = [...this.roots("raw"), ...this.roots("inbox")];
     if (!bindings || !roots.length) return [];
+    const registry = await readRawDigestRegistry(this.plugin.getVaultPath(), true);
+    const latest = latestMaintenanceSourceStates(await this.plugin.getKnowledgeSurfaceService()?.getMaintenanceRecords() ?? []);
     const result: WorkbenchSourceFile[] = [];
     let batch = 0;
     for (const file of this.plugin.app.vault.getFiles()) {
@@ -296,8 +300,9 @@ export class WorkbenchDataService implements WorkbenchDataPort {
         || !["raw", "inbox"].includes(classifyKnowledgePath(bindings, file.path) ?? "") || !roots.some(root => file.path.startsWith(`${root}/`))
         || bindings.roles.assets.readPaths.some(root => file.path.startsWith(`${root}/`))) continue;
       try {
-        const content = await this.plugin.app.vault.read(file);
-        if (!isMaintenanceSourceProcessed(content)) result.push({ path: file.path, fingerprint: `stat:${file.stat.mtime}:${file.stat.size}` });
+        const cached = await this.readSourceContent(file), content = cached.markdown;
+        const resolution = resolveMaintenanceSourceState(content, { fingerprint: () => cached.rawFingerprint, registry: registry.entries[file.path], maintenance: latest.get(file.path), previous: this.plugin.settings.knowledgeBase.processedSources[file.path] });
+        if (resolution.state !== "digested") result.push({ path: file.path, fingerprint: resolution.origin === "new" ? `stat:${file.stat.mtime}:${file.stat.size}` : cached.rawFingerprint });
       } catch (error) { issues.push(`来源暂不可读取：${file.path}：${message(error)}`); }
       if (++batch % 32 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
     }

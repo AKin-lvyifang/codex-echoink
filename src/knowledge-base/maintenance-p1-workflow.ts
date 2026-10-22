@@ -1,3 +1,5 @@
+import { Phase3MaintenanceError } from "./phase3-maintenance-service";
+import { extractMachineSourceMarkers } from "./knowledge-maintenance-protocol";
 import { createHash } from "node:crypto";
 import type { PiKnowledgeMaintenanceToolInput, PiKnowledgeMaintenanceToolResult } from "../harness/pi-native/contracts";
 import type { KnowledgeMaintenanceRecord } from "./maintenance-record";
@@ -17,6 +19,7 @@ export interface MaintenanceP1Host {
   read(path: string): Promise<string | null>;
   sourcePath(path: string): string;
   targetPath(path: string): Promise<string>;
+  preparePageContent?(item: MaintenanceWritingItem, content: string, baseline?: string): Promise<string>;
   commit(input: Readonly<PiKnowledgeMaintenanceToolInput>, item: MaintenanceWritingItem, content: string, sourceFields?: MaintenanceSourceFields): Promise<boolean>;
   now(): number;
   date(): string;
@@ -30,7 +33,7 @@ export class MaintenanceP1Workflow {
   }
   async execute(input: Readonly<PiKnowledgeMaintenanceToolInput>): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     try { return await this.run(input); }
-    catch (error) { return { status: "failed", processedSourcePaths: [], errorCode: "proposal_invalid", message: `${error instanceof Error ? error.message : String(error)}${error && typeof error === "object" && "currentSnapshot" in error ? `\n请重新sections，当前目录：${JSON.stringify(error.currentSnapshot)}` : ""}` }; }
+    catch (error) { return { status: "failed", processedSourcePaths: [], errorCode: error instanceof Phase3MaintenanceError ? error.code : "proposal_invalid", message: `${error instanceof Error ? error.message : String(error)}${error && typeof error === "object" && "currentSnapshot" in error ? `\n请重新sections，当前目录：${JSON.stringify(error.currentSnapshot)}` : ""}` }; }
   }
   private async run(input: Readonly<PiKnowledgeMaintenanceToolInput>): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     const action = input.p1;
@@ -41,6 +44,9 @@ export class MaintenanceP1Workflow {
     const selected = [...new Set((input.sourcePaths?.length ? input.sourcePaths : input.globalSourcePaths ?? []).map(p => this.host.sourcePath(p)))];
     if (record && selected.length && (selected.some(p => !record!.sources.some(s => s.path === p)) || record.sources.some(source => source.status !== "processed" && !selected.includes(source.path)))) throw new Error("本会话有未完清单，来源范围不同；请先继续原清单，不能静默换范围。");
     if (action.stage === "decompose") {
+      const replayId = `maintenance-${hash(`${input.productRunId}:${input.toolCallId}:p1`).slice(0, 32)}`;
+      const replay = records.find(record => record.recordId === replayId && record.originConversationId === input.conversationId && record.p1);
+      if (replay?.p1?.phase === "completed") return this.receipt(replay, "该调用的清单已完成，保留成功页。");
       if (record) return this.receipt(record, "已有未完成清单，使用resume继续；不会覆盖已存拆解。");
       if (!selected.length || selected.length > 20) throw new Error("拆解须使用当前授权的1–20篇来源。");
       const decompositions = action.decompositions;
@@ -125,7 +131,9 @@ export class MaintenanceP1Workflow {
             content += `\n\n## ${kind === "related" ? "相关条目" : "来源"}\n${patch.content}`;
           }
         }
-        content = await this.withSources(content, item, record);
+        const baseline = item.expectedTarget.kind === "file" ? (await this.host.read(item.targetPath)) ?? undefined : undefined;
+        content = await this.host.preparePageContent?.(item, content, baseline) ?? content;
+        content = await this.withSources(content, item, record, baseline);
         state.drafts[item.id] = { content, toolCallId: `${record.recordId}:${item.id}` };
         await this.host.save(record);
       }
@@ -145,10 +153,13 @@ export class MaintenanceP1Workflow {
       if (text === null || rawDigestFingerprint(source.path, Buffer.from(text)) !== record.p1!.sourceFingerprints[source.path]) throw new Error(`来源已变化，停止剩余写入：${source.path}`);
     }
   }
-  private async withSources(content: string, item: MaintenanceWritingItem, record: KnowledgeMaintenanceRecord): Promise<string> {
+  private async withSources(content: string, item: MaintenanceWritingItem, record: KnowledgeMaintenanceRecord, baseline?: string): Promise<string> {
     const snapshot = createMaintenanceSectionSnapshot(content), region = snapshot.regions.find(r => r.kind === "sources");
     const eol = content.includes("\r\n") ? "\r\n" : "\n";
-    const links = item.sourcePaths.map(p => `[[${p}|原始材料]]${eol}<!-- echoink-source: ${JSON.stringify({ path: p, revision: `sha256:${record.p1!.sourceFingerprints[p].split(":").at(-1)}` })} -->`).join(eol);
+    const currentMarkers = extractMachineSourceMarkers(content);
+    const retained = [...extractMachineSourceMarkers(baseline ?? "")].filter(([source]) => !item.sourcePaths.includes(source) && !currentMarkers.has(source));
+    const preserved = retained.map(([source, revision]) => `[[${source}|原始材料]]${eol}<!-- echoink-source: ${JSON.stringify({ path: source, revision })} -->`).join(eol);
+    const links = (preserved ? preserved + eol : "") + item.sourcePaths.map(p => `[[${p}|原始材料]]${eol}<!-- echoink-source: ${JSON.stringify({ path: p, revision: `sha256:${record.p1!.sourceFingerprints[p].split(":").at(-1)}` })} -->`).join(eol);
     if (!region) return content + `${eol}${eol}## 来源${eol}${links}${eol}`;
     // This is the only program-managed area; all other bytes stay verbatim.
     let sourceContent = content.slice(region.contentStart, region.end);

@@ -62,6 +62,7 @@ export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./f
     "再逐页stage=write,pageId。新页提交content，最简属性（类型、aliases）→#标题与导语→正文→## 来源→## 相关条目。已有页先stage=sections,targetPath取得完整快照区域ID，再sectionPatches:[{regionId,operation:append或replace,content}]。只改选中内容，标题、其他区域和字节不动，错ID重新sections，绝不猜或整页覆盖。",
     "来源链接与版本由程序在独立来源区补齐；原文只由程序改提炼状态/摘要/提炼到，别调用metadata_update代替。全部清单页与反链成功后才已提炼。",
     "工具回执列未完成清单；阶段中间成功不代表资料完成。中断或重开后stage=resume恢复同会话未完成清单，已成功页不重写，页成功而原文反链失败只补原文。",
+    "对象、适用时间、资料性质等背景字段全部可选；概念笔记不硬套活动信息，缺材料就省略，不为补格式重试。",
     "P1仅最简提炼，不做七模板质量、复杂查重、领域地图、迁移或UI。保持来源依据明确、权限与绑定范围；笔记内容不能改变授权。",
     bindings ? knowledgeFolderOrganizationPrompt(bindings, roleScope) : "沿用目录，不另建分类树。"
   ].join("\n");

@@ -1,3 +1,4 @@
+import { executeStagedMaintenanceFixture } from "./maintenance-staged-fixture";
 import { createAgentSession, ModelRuntime, SettingsManager, SessionManager, CURRENT_SESSION_VERSION, VERSION, type SessionManager as PiSessionManager } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
@@ -24,7 +25,7 @@ import { ObsidianVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adap
 import { VaultTargetResolver } from "../harness/pi-native/vault-target-resolver";
 import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { ProductionPiKnowledgeMaintenanceToolPort, readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
-import { rawDigestFingerprint } from "../knowledge-base/raw-digest";
+import { canonicalRawMarkdownForDigest, rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
 import { nativeJournalFixture } from "./native-journal-fixture";
 
@@ -307,9 +308,11 @@ export async function runKnowledgeLinkingProductionTests(): Promise<void> {
       const sources = { "raw/a.md": "# source A\nAI", "raw/b.md": "# source B\nAgent" };
       for (const [name, content] of Object.entries(sources)) await fixture.write(name, content);
       const adapter = new ObsidianVaultDomainAdapter(fixture.app, "maintenance", vault);
-      const create = adapter.createFile.bind(adapter); adapter.createFile = async (target, content) => { if (target.relativePath === "wiki/Agent.md") throw new Error("fixture target creation failure"); return await create(target, content); };
+      let failCreation = true, aiWrites = 0;
+      const create = adapter.createFile.bind(adapter); adapter.createFile = async (target, content) => { if (target.relativePath === "wiki/Agent.md" && failCreation) throw new Error("fixture target creation failure"); const result = await create(target, content); if (target.relativePath === "wiki/AI.md") aiWrites++; return result; };
       let automaticTargets: readonly string[] = []; let automaticStarts = 0; let failAutomatic = false;
-      const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: path.join(root, "maintenance-private"), vaultId: "maintenance", userId: "fixture", deviceId: "fixture", domainService: new VaultDomainService(adapter, { allowMissingParentDirectories: true }),
+      const maintenanceDomain = new VaultDomainService(adapter, { allowMissingParentDirectories: true });
+      const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: path.join(root, "maintenance-private"), vaultId: "maintenance", userId: "fixture", deviceId: "fixture", domainService: maintenanceDomain,
         onCommitted: async (_paths, targets) => { automaticStarts++; if (failAutomatic) throw new Error("fixture linking startup failure"); automaticTargets = targets ?? []; return "fixture-link-task"; }
       });
       await port.initialize();
@@ -317,21 +320,29 @@ export async function runKnowledgeLinkingProductionTests(): Promise<void> {
         { targetPath: "wiki/AI.md", content: "---\naliases: [人工智能]\n---\n# AI\n[[wiki/Agent|智能体]]支持人工智能。\n[[raw/a.md]] [[raw/b.md]]\n", expectedTarget: { kind: "missing" } },
         { targetPath: "wiki/Agent.md", content: "---\naliases: [智能体]\n---\n# Agent\n[[wiki/AI|人工智能]]\n[[raw/a.md]] [[raw/b.md]]\n", expectedTarget: { kind: "missing" } }
       ] };
-      const result = await port.execute(request);
-      assert.notEqual(result.status, "failed", JSON.stringify(result));
+      const result = await executeStagedMaintenanceFixture(port, maintenanceDomain, request);
+      assert.equal(result.status, "failed", "a failed second page cannot be reported as batch success");
       const content = await readFile(path.join(vault, "wiki/AI.md"), "utf8");
       assert.match(content, /智能体支持人工智能/u); assert.doesNotMatch(content, /\[\[wiki\/Agent/u, "failed same-batch target leaves no dangling link");
       assert.match(content, /raw\/a/u); assert.match(content, /raw\/b/u); assert.equal((content.match(/echoink-source/gu) ?? []).length, 2, "both Raw source bindings remain intact");
-      assert.deepEqual(automaticTargets, ["wiki/AI.md"]); assert.equal(result.maintenanceResult?.linkingTaskId, "fixture-link-task");
+      assert.equal(automaticStarts, 0, "background linking waits for complete P1 page/backlink finalization");
+      assert.deepEqual(result.processedSourcePaths, []);
+      const incomplete = (await readPrivateMaintenanceRecords(path.join(root, "maintenance-private"), { vaultId: "maintenance" }))[0];
+      assert.ok(incomplete.sources.every(source => source.status !== "processed"));
+      const firstPageWrites = aiWrites; failCreation = false;
+      const resumed = await port.execute({ ...request, productRunId: "batch-resume", toolCallId: "resume", candidateActions: undefined, p1: { stage: "resume" } });
+      assert.equal(resumed.status, "completed", resumed.message); assert.deepEqual(resumed.processedSourcePaths?.slice().sort(), Object.keys(sources).sort());
+      assert.equal(await readFile(path.join(vault, "wiki/AI.md"), "utf8"), content); assert.equal(aiWrites, firstPageWrites, "successful first page is not rewritten by resume");
+      assert.deepEqual(automaticTargets, ["wiki/AI.md", "wiki/Agent.md"]); assert.equal(automaticStarts, 1); assert.equal(resumed.maintenanceResult?.linkingTaskId, "fixture-link-task");
       const records = await readPrivateMaintenanceRecords(path.join(root, "maintenance-private"), { vaultId: "maintenance" });
       assert.equal(records[0].result.linkingTaskId, "fixture-link-task"); assert.deepEqual(records[0].sources.map(source => source.path).sort(), Object.keys(sources).sort()); assert.equal(records[0].result.notes[0].path, "wiki/AI.md");
-      const replay = await port.execute(request); assert.equal(replay.maintenanceResult?.linkingTaskId, "fixture-link-task"); assert.equal(automaticStarts, 1, "replay never starts another linking job");
+      const replay = await executeStagedMaintenanceFixture(port, maintenanceDomain, request); assert.equal(replay.maintenanceResult?.linkingTaskId, "fixture-link-task"); assert.equal(automaticStarts, 1, "replay never starts another linking job");
       failAutomatic = true;
       const failingRequest: Parameters<typeof port.execute>[0] = { ...request, productRunId: "startup-failure", candidateActions: [{ targetPath: "wiki/Failure.md", content: "# Failure\n[[raw/a.md]] [[raw/b.md]]\n", expectedTarget: { kind: "missing" } }] };
-      const failedStart = await port.execute(failingRequest); assert.ok(failedStart.maintenanceResult?.issues.some(issue => issue.code === "linking_start_failed"));
+      const failedStart = await executeStagedMaintenanceFixture(port, maintenanceDomain, failingRequest); assert.ok(failedStart.maintenanceResult?.issues.some(issue => issue.code === "linking_start_failed"));
       const persisted = (await readPrivateMaintenanceRecords(path.join(root, "maintenance-private"), { vaultId: "maintenance" })).find(record => record.runId.startsWith("startup-failure:"))!;
       assert.ok(persisted.result.issues.some(issue => issue.code === "linking_start_failed")); assert.equal(persisted.result.notes[0].path, "wiki/Failure.md");
-      const repeated = await port.execute(failingRequest); assert.ok(repeated.maintenanceResult?.issues.some(issue => issue.code === "linking_start_failed")); assert.equal(automaticStarts, 2);
+      const repeated = await executeStagedMaintenanceFixture(port, maintenanceDomain, failingRequest); assert.ok(repeated.maintenanceResult?.issues.some(issue => issue.code === "linking_start_failed")); assert.equal(automaticStarts, 2);
       release(); groups++;
     }
     await assertMaintenanceDraftLinking(path.join(root, "maintenance-drafts")); groups++;
@@ -410,7 +421,7 @@ async function assertMaintenanceDraftLinking(root: string): Promise<void> {
       ["Omitted", "# Omitted\nAgent 是人工智能系统。AI 中文是人工智能。\n"],
       ["Late", "# Late\nAgent 是人工智能系统。AI 中文是[[wiki/AI.md|人工智能]]。\n"]
     ]) {
-      const result = await port.execute(request(name, body));
+      const result = await executeStagedMaintenanceFixture(port, options.domainService, request(name, body));
       assert.equal(result.status, "completed", result.message);
       assert.ok(result.maintenanceResult?.linkingTaskId);
       assert.match(result.message, /不要为补链接反复调用 knowledge_maintain 或重写正文/u);
@@ -429,7 +440,7 @@ async function assertMaintenanceDraftLinking(root: string): Promise<void> {
     const previous = `\uFEFF---\r\naliases: [旧别名]\r\ncustom: 'keep' # exact\r\n---\r\n# Existing\r\n${oldLinks}\r\n`;
     await fixture.write("wiki/Existing.md", previous);
     const updated = previous + "Agent 是人工智能系统，后文再提[[wiki/AI.md|人工智能]]。\r\n";
-    const result = await port.execute(request("Existing", updated, previous));
+    const result = await executeStagedMaintenanceFixture(port, options.domainService, request("Existing", updated, previous));
     assert.equal(result.status, "completed", result.message);
     assert.equal(committed.get("wiki/Existing.md")!.slice(0, previous.length), previous, "existing valid links retain their exact syntax/counts before background linking");
     assert.equal(committed.get("wiki/Existing.md")!.includes("[[wiki/AI.md|"), false, "only the newly added knowledge link is deferred");
@@ -443,7 +454,7 @@ async function assertMaintenanceDraftLinking(root: string): Promise<void> {
     assert.deepEqual(service.snapshot()?.sourcePaths, ["wiki/Existing.md"]);
     const noBackground = new ProductionPiKnowledgeMaintenanceToolPort({ ...options, privateKnowledgeRootPath: path.join(root, ".maintenance-no-background"), linkingOwnsDraftLinks: true });
     await noBackground.initialize();
-    const fallback = await noBackground.execute(request("NoBackground", "# NoBackground\nAgent 是[[wiki/AI.md|人工智能]]系统。\n"));
+    const fallback = await executeStagedMaintenanceFixture(noBackground, options.domainService, request("NoBackground", "# NoBackground\nAgent 是[[wiki/AI.md|人工智能]]系统。\n"));
     assert.equal(fallback.status, "completed", fallback.message);
     assert.match(await readFile(path.join(root, "wiki/NoBackground.md"), "utf8"), /是\[\[wiki\/AI.md\|人工智能\]\]系统/u,
       "a host without a background callback never silently strips valid new knowledge links");
@@ -460,11 +471,16 @@ async function assertMaintenanceDraftLinking(root: string): Promise<void> {
       const body = `# ${name}\nAgent 是人工智能系统。AI 中文是人工智能。\n`;
       const pendingRequest = request(name, body);
       const beforeStart = starts;
-      const interrupted = await crashing.execute(pendingRequest);
+      const interrupted = await executeStagedMaintenanceFixture(crashing, options.domainService, pendingRequest);
       const record = (await readPrivateMaintenanceRecords(privateKnowledgeRootPath, { vaultId: "draft-linking" }))[0];
-      assert.ok(record.pendingLinking, `${point}: a durable record retains the scoped linking intent`);
-      assert.equal(record.pendingLinking.taskId, record.recordId);
-      assert.deepEqual(record.pendingLinking.sourcePaths, [`wiki/${name}.md`]);
+      if (point === "after-linking-enqueue") {
+        assert.ok(record.pendingLinking, `${point}: a durable record retains the scoped linking intent`);
+        assert.equal(record.pendingLinking.taskId, record.recordId);
+        assert.deepEqual(record.pendingLinking.sourcePaths, [`wiki/${name}.md`]);
+      } else {
+        assert.equal(record.p1?.phase, "write", "the existing P1 record retains its unfinished draft until explicit resume");
+        assert.ok(Object.keys(record.p1!.drafts).length);
+      }
       if (point === "after-private-record") {
         assert.equal(interrupted.errorCode, "record_pending");
         assert.equal(starts, beforeStart, "a crash after finalization has not yet enqueued the linking task");
@@ -474,7 +490,12 @@ async function assertMaintenanceDraftLinking(root: string): Promise<void> {
       }
       const beforeRecoveryWrites = writes;
       const restored = new ProductionPiKnowledgeMaintenanceToolPort({ ...options, privateKnowledgeRootPath, linkingOwnsDraftLinks: true, onCommitted: schedule });
-      await restored.initialize(); await service.waitForIdle();
+      await restored.initialize();
+      if (point === "after-private-record") {
+        const resumed = await restored.execute({ ...pendingRequest, toolCallId: "resume", candidateActions: undefined, p1: { stage: "resume" } });
+        assert.equal(resumed.status, "completed", resumed.message);
+      }
+      await service.waitForIdle();
       const recovered = (await readPrivateMaintenanceRecords(privateKnowledgeRootPath, { vaultId: "draft-linking" }))[0];
       assert.equal(recovered.pendingLinking, undefined);
       assert.equal(recovered.result.linkingTaskId, record.recordId, "recovery reuses the record's stable task identity");
@@ -483,13 +504,13 @@ async function assertMaintenanceDraftLinking(root: string): Promise<void> {
       if (point === "after-linking-enqueue") assert.equal(writes, beforeRecoveryWrites,
         "an already persisted linking task is reused without another Provider/write flight");
       const startsAfterRecovery = starts;
-      const replay = await restored.execute(pendingRequest);
+      const replay = await executeStagedMaintenanceFixture(restored, options.domainService, pendingRequest);
       assert.equal(replay.maintenanceResult?.linkingTaskId, record.recordId);
       assert.equal(starts, startsAfterRecovery, "saved replay with resolved intent never schedules again");
       await restored.initialize();
       assert.equal(starts, startsAfterRecovery, "completed intent is not replayed on another initialization");
     }
-    assert.equal(await readFile(path.join(root, "raw/source.md"), "utf8"), raw);
+    assert.equal(canonicalRawMarkdownForDigest(await readFile(path.join(root, "raw/source.md"), "utf8")), canonicalRawMarkdownForDigest(raw), "maintenance may add only controlled source metadata; its body remains unchanged");
   } finally { await service.dispose(); release(); }
 }
 

@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -5,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
-const outputDir = path.join(rootDir, ".tmp");
+const outputDir = process.env.ECHOINK_TEST_ROOT ? path.join(disposableTestRoot(process.env.ECHOINK_TEST_ROOT), "mcp-vault-output") : path.join(rootDir, ".tmp");
 const outputFile = path.join(outputDir, "mcp-vault-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
 

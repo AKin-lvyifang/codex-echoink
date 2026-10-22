@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { parse } from "yaml";
 import { patchMaintenanceSourceFrontmatter } from "../knowledge-base/maintenance-source-frontmatter";
-import { isMaintenanceSourceProcessed, planMaintenanceSourceMigration } from "../knowledge-base/maintenance-source-state";
+import { isMaintenanceSourceProcessed, maintenanceSourceState, resolveMaintenanceSourceState, planMaintenanceSourceMigration } from "../knowledge-base/maintenance-source-state";
 import type { MaintenanceSourceFields } from "../knowledge-base/maintenance-p1-contract";
 
 const fields: MaintenanceSourceFields = {
@@ -12,6 +12,7 @@ const fields: MaintenanceSourceFields = {
 
 export async function runMaintenanceSourceFieldsTests(): Promise<void> {
   assertCurrentStatusOnly();
+  assertReadOnlyLegacyTransition();
   assertMigrationPlans();
   assertExactBytePreservation();
   assertCreationAndEmptyValues();
@@ -203,4 +204,24 @@ function frontmatterValues(markdown: string): Record<string, any> {
   const end = lines.findIndex((line, index) => index > 0 && /^(?:---|\.\.\.)[ \t]*$/u.test(line));
   assert.ok(end > 0);
   return parse(lines.slice(1, end).join("\n"));
+}
+
+function assertReadOnlyLegacyTransition(): void {
+  const fingerprint = "sha256:5:" + "a".repeat(64);
+  const registry = { rawPath: "raw/a.md", fingerprint, size: 5, mtime: 1, digestedAt: 1, runId: "legacy-success", reportPath: "", evidencePaths: [], confidence: "verified" as const };
+  let hashes = 0; const current = () => { hashes++; return fingerprint; };
+  assert.equal(maintenanceSourceState("body", { fingerprint: current, registry }), "digested");
+  assert.equal(hashes, 1);
+  for (const value of ["已提炼", "未提炼", "null", "''", "", "[invalid"]) {
+    const result = resolveMaintenanceSourceState(`---\n提炼状态: ${value}\n---\nbody`, { fingerprint: current, registry });
+    assert.equal(result.state, value === "已提炼" ? "digested" : "pending", value);
+    assert.equal(result.origin, "new"); assert.ok(result.reason);
+  }
+  assert.equal(hashes, 1, "an existing new property never hashes the body, including null/empty/invalid values");
+  assert.equal(maintenanceSourceState("body", { fingerprint: () => "changed", registry }), "changed");
+  assert.equal(maintenanceSourceState("body", { fingerprint: current, registry, maintenance: { fingerprint, status: "failed" } }), "failed");
+  assert.equal(maintenanceSourceState("body", { fingerprint: current, registry, maintenance: { fingerprint, status: "unread" } }), "pending");
+  assert.equal(maintenanceSourceState("body", { fingerprint: current, registry, maintenance: { fingerprint: "old", status: "processed" } }), "changed");
+  assert.equal(maintenanceSourceState("body", { fingerprint: current, maintenance: { fingerprint, status: "processed" } }), "digested");
+  assert.equal(maintenanceSourceState("body", { fingerprint: current, previous: {} }), "calibration", "mtime/boolean hints cannot prove completion");
 }

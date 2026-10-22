@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "../disposable-test-root.mjs";
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
@@ -7,7 +8,7 @@ import { runPerformance, nearestRank } from './performance.mjs';
 
 process.env.PI_OFFLINE = '1';
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const temporary = path.join(os.homedir(), 'EchoInk-TestVaults/90-任务临时');
+const temporary = disposableTestRoot(path.join(os.homedir(), 'EchoInk-TestVaults/90-任务临时'));
 await fs.mkdir(temporary, { recursive: true });
 const fixture = await fs.mkdtemp(path.join(temporary, '知识库-召回评测-perf-smoke-'));
 const runId = `performance-selftest-${process.pid}-${Date.now()}`;
