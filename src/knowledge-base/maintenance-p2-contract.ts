@@ -88,6 +88,8 @@ export interface MaintenanceDomainMapInput {
 }
 export interface MaintenanceP2State {
   version: 2;
+  /** Absent only on plans frozen before the short-name policy; never rename history. */
+  titlePolicy?: import("./maintenance-title").MaintenanceTitlePolicy;
   candidates: readonly MaintenanceUnitCandidates[];
   /** Program-generated maps use the same per-page WAL/CAS/readback and durable parent record. */
   finalization: readonly MaintenanceP2Finalization[];

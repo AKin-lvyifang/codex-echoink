@@ -2,7 +2,7 @@ import { getTodoProjects, resolveTodoProject } from "./todo-projects";
 import { ItemView, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
-import { isUserTask, localDateLabel, localTaskTime, taskCardHintSummary, taskState, taskSummary, type TaskEntry } from "../agents/task-presentation";
+import { isUserTask, localDateLabel, localTaskTime, maintenanceActivityForTask, taskCardHintSummary, taskState, taskStateLabel, taskSummary, type TaskEntry } from "../agents/task-presentation";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import type { EchoInkQuestionPrompt, EchoInkTurnInteraction } from "../types/conversation-turn";
 import { createOriginButton, createOriginCheck, createOriginInput, disposeOriginControls } from "../settings/origin-controls";
@@ -19,7 +19,8 @@ import { openWorkbenchModule, WORKBENCH_MODULES } from "./module-navigation";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
 import { isProWorkbenchModule, renderWorkbenchModuleLock, workbenchHasPro, workbenchProModuleEnabled, type ProWorkbenchModuleId } from "./workbench-module-lock";
-import { maintenanceActivityText, type KnowledgeActivitySource, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import { maintenanceActivityText, maintenanceCompletionText, maintenanceTaskStatus, type KnowledgeActivitySource, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import { maintenanceFailureText } from "../knowledge-base/maintenance-user-copy";
 import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
@@ -33,15 +34,11 @@ function latestMaintenanceActivities(activities: readonly Readonly<MaintenanceAc
     const previous = latest.get(activity.originConversationId);
     if (!previous || activity.updatedAt > previous.updatedAt) latest.set(activity.originConversationId, activity);
   }
-  const tasks = new Map(entries.map(entry => [entry.conversationId, entry]));
-  for (const [id, activity] of latest) {
-    // A completed maintenance describes its own turn, not a later follow-up.
-    if (activity.status === "completed" && (activity.completedAt === undefined || (tasks.get(id)?.taskStartedAt ?? 0) > activity.completedAt)) latest.delete(id);
+  for (const entry of entries) {
+    const activity = maintenanceActivityForTask(entry, activities);
+    if (activity) latest.set(entry.conversationId, activity); else latest.delete(entry.conversationId);
   }
   return latest;
-}
-function maintenanceTaskState(activity: Readonly<MaintenanceActivity>): keyof TaskGroups {
-  return activity.status === "completed" ? "completed" : activity.status === "waiting" ? "waiting" : activity.status === "running" ? "running" : "interrupted";
 }
 export function groupWorkbenchTasks(entries: readonly TaskEntry[], now = Date.now(), maintenance: readonly Readonly<MaintenanceActivity>[] = []): TaskGroups {
   const groups: TaskGroups = { interrupted: [], waiting: [], running: [], completed: [] };
@@ -49,7 +46,7 @@ export function groupWorkbenchTasks(entries: readonly TaskEntry[], now = Date.no
   const completedAt = (entry: TaskEntry) => activities.has(entry.conversationId) ? activities.get(entry.conversationId)!.completedAt : entry.taskCompletedAt ?? entry.updatedAt;
   for (const entry of entries) {
     if (entry.status !== "active" || !isUserTask(entry)) continue;
-    const activity = activities.get(entry.conversationId), state = activity ? maintenanceTaskState(activity) : taskState(entry);
+    const activity = activities.get(entry.conversationId), state = activity ? maintenanceTaskStatus(activity) : taskState(entry);
     const at = completedAt(entry);
     if (state !== "completed" || at !== undefined && sameDay(at, now)) groups[state].push(entry);
   }
@@ -67,7 +64,7 @@ export function workbenchSignalsWithoutActiveMaintenance(signals: readonly Workb
     const objects = signal.source.objects.filter(path => !covered.has(path));
     if (objects.length === signal.source.objects.length) return [signal];
     if (!objects.length) return [];
-    return [{ ...signal, description: english ? `${objects.length} sources to organize` : `${objects.length} 份资料待整理`,
+    return [{ ...signal, description: english ? `${objects.length} sources to organize` : `${objects.length} 篇资料待整理`,
       source: { ...signal.source, objects, ...(signal.source.versions ? {
         versions: Object.fromEntries(Object.entries(signal.source.versions).filter(([path]) => objects.includes(path)))
       } : {}) } }];
@@ -206,7 +203,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private taskGroups(now: number): TaskGroups { return groupWorkbenchTasks(this.entries ?? [], now, [...this.maintenance.values()]); }
   private taskState(entry: TaskEntry): keyof TaskGroups {
     const activity = this.maintenance.get(entry.conversationId);
-    return activity ? maintenanceTaskState(activity) : taskState(entry);
+    return activity ? maintenanceTaskStatus(activity) : taskState(entry);
   }
   async refresh(): Promise<void> {
     if (!this.active()) { this.refreshPending = true; return; }
@@ -370,10 +367,8 @@ export class EchoInkWorkbenchView extends ItemView {
     const groups = this.taskGroups(now);
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));
-    for (const [state, zh, en] of [["interrupted", "上次中断", "Interrupted"], ["waiting", "等你回应", "Waiting for you"], ["running", "正在进行", "In progress"]] as const) {
-      const maintenance = groups[state].some(entry => this.maintenance.has(entry.conversationId));
-      const title = maintenance && state === "interrupted" ? this.t("可继续", "Ready to resume") : maintenance && state === "waiting" ? this.t("等你确认", "Waiting for you") : this.t(zh, en);
-      this.taskGroup(state, title, groups[state], now);
+    for (const [state, zh, en] of [["waiting", "等你回应", "Waiting for you"], ["running", "正在进行", "In progress"], ["interrupted", "没做完", "Not finished"]] as const) {
+      this.taskGroup(state, this.t(zh, en), groups[state], now);
     }
     this.renderSignals();
     this.taskGroup("completed", this.t("今天完成", "Completed today"), groups.completed, now);
@@ -445,7 +440,7 @@ export class EchoInkWorkbenchView extends ItemView {
     } else if (status === "unconfirmed") feedback.createSpan({ text: this.t("部分事项尚未确认", "Some items have not been checked") });
     else if (status === "empty") {
       const emptyCopy: Record<string, [string, string]> = {
-        interrupted: ["暂无中断的任务", "No interrupted tasks"], waiting: ["暂无需要回应的事项", "Nothing waiting for you"],
+        interrupted: ["暂无没做完的任务", "No unfinished tasks"], waiting: ["暂无需要回应的事项", "Nothing waiting for you"],
         running: ["暂无进行中的任务", "No tasks in progress"], signals: ["暂无可交给 Agent 的事项", "Nothing ready for an Agent"],
         completed: ["今天还没有完成的任务", "No tasks completed today"], todos: ["今天没有待办", "No to-dos today"]
       };
@@ -453,7 +448,7 @@ export class EchoInkWorkbenchView extends ItemView {
     }
     section.lastElementChild?.classList.toggle("is-empty", !count);
     // Reorder only when a group appears; retained rows and focused controls stay put.
-    const order = ["interrupted", "waiting", "running", "signals", "completed", "todos"];
+    const order = ["waiting", "running", "interrupted", "signals", "completed", "todos"];
     const next = Array.from(host.children).find(node => order.indexOf((node as HTMLElement).dataset.wbGroup!) > order.indexOf(key));
     if (next && section.nextElementSibling !== next) host.insertBefore(section, next);
     return section;
@@ -488,7 +483,9 @@ export class EchoInkWorkbenchView extends ItemView {
   private pending(entry: TaskEntry): Readonly<EchoInkTurnInteraction> | undefined { return this.plugin.getConversationRunService().pendingInteractions.get(entry.conversationId); }
   private summary(entry: TaskEntry): string {
     const activity = this.maintenance.get(entry.conversationId);
-    if (activity) return maintenanceActivityText(activity, this.language === "en");
+    if (activity) return activity.status === "completed" ? maintenanceCompletionText(activity, this.language === "en")
+      : maintenanceTaskStatus(activity) === "interrupted" ? maintenanceFailureText(activity.failures[0]?.message ?? "停止", activity.currentPath, this.language === "en")
+      : maintenanceActivityText(activity, this.language === "en");
     const session = this.plugin.settings.sessions.find(session => session.id === entry.conversationId);
     if (taskState(entry) === "completed" && !session?.messages.some(item => item.role === "assistant" && item.text.trim())) {
       const preview = this.completedPreviews.get(entry.conversationId);
@@ -522,6 +519,10 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private taskCard(entry: TaskEntry): HTMLElement {
     const card = this.contentEl.ownerDocument.createElement("article"); card.className = "wb-task"; card.dataset.task = entry.conversationId;
+    card.onclick = event => {
+      if ((event.target as Element).closest("button, input, textarea, select, label, a, summary")) return;
+      void this.openTask(entry.conversationId).catch(error => new Notice(message(error)));
+    };
     const activity = this.maintenance.get(entry.conversationId), state = this.taskState(entry), agent = this.agent(entry);
     const body = this.button(card, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary");
     body.classList.add("wb-task-body");
@@ -534,20 +535,16 @@ export class EchoInkWorkbenchView extends ItemView {
       status.createSpan({ text: this.t("进行中", "Running") });
       const started = !activity && (this.plugin.getConversationRunService().runs.get(entry.conversationId)?.turnStartedAt || entry.taskStartedAt);
       if (started) status.createSpan({ attr: { "data-started-at": String(started) } });
-    } else { setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: state === "waiting" ? activity ? this.t("等你确认", "Waiting for you") : this.t("等你回应", "Waiting for you") : activity ? this.t("可继续", "Ready to resume") : this.t("已中断", "Interrupted") }); }
+    } else { setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: taskStateLabel({ ...entry, taskStatus: state, ...(state !== "waiting" ? { pendingResponse: undefined } : {}) }, this.language) }); }
     body.createSpan({ cls: "wb-task-title", text: entry.title });
     const inline = state === "waiting" ? workbenchInlineQuestion(entry, this.pending(entry)) : undefined;
-    const step = activity ? this.summary(entry) : inline ? entry.taskStage : this.summary(entry);
-    if (step && !(state === "interrupted" && step === this.t("已中断", "Interrupted"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
+    const step = activity && state === "interrupted" ? undefined : activity ? this.summary(entry) : inline ? entry.taskStage : this.summary(entry);
+    if (step && !(state === "interrupted" && step === this.t("没做完", "Not finished"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
     if (activity) renderMaintenanceProgressBar(body, activity);
-    if (activity?.failures.length) {
-      const failures = card.createEl("ul", { cls: "wb-maintenance-failures" });
-      for (const failure of activity.failures) failures.createEl("li", { text: failure.message });
-    }
     if (state === "interrupted") {
       const footer = card.createDiv({ cls: "wb-task-footer" });
       const info = this.interruptions.get(entry.conversationId);
-      footer.createSpan({ cls: "wb-interruption wb-grow", text: activity ? activity.currentPath || this.t("从未完成的步骤继续", "Resume unfinished steps") : this.interruptionText(entry, info) });
+      footer.createSpan({ cls: "wb-interruption wb-grow", text: activity ? this.summary(entry) : this.interruptionText(entry, info) });
       const key = `resume-${entry.conversationId}`;
       const resume = this.button(footer, this.busy.has(key) ? this.t("正在核对…", "Checking…") : this.t("继续", "Continue"), key,
         () => this.runAction(key, async () => { this.selectedTask = entry.conversationId; await this.plugin.resumeTaskAndOpenDetail(entry.conversationId); }), "secondary", "play");
@@ -567,10 +564,9 @@ export class EchoInkWorkbenchView extends ItemView {
           button.disabled = !!this.taskError || this.busy.has(key); setAmicroButtonPending(button, this.busy.has(key));
           button.dataset.wbBusy = key; button.dataset.wbSource = "tasks";
         }
-        if (question.allowSupplement) this.button(options, this.t("查看并回答", "View and answer"), `detail-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary").classList.add("is-small");
-      } else {
+      } else if (entry.pendingResponse?.kind === "confirmation") {
         ask.createDiv({ cls: "wb-options" });
-        this.button(ask.lastElementChild as HTMLElement, entry.pendingResponse?.kind === "confirmation" ? this.t("查看并确认", "Review and confirm") : this.t("查看并回答", "View and answer"), `detail-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary").classList.add("is-small");
+        this.button(ask.lastElementChild as HTMLElement, this.t("查看并确认", "Review and confirm"), `detail-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary").classList.add("is-small");
       }
     }
     return card;

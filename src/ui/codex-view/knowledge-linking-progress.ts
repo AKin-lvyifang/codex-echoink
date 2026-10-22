@@ -1,5 +1,6 @@
 import type { KnowledgeLinkingTask } from "../../knowledge-base/knowledge-linking-types";
-import { maintenanceActivityText, maintenanceStageLabel, type KnowledgeActivity, type KnowledgeActivitySnapshot, type KnowledgeActivitySource, type MaintenanceActivity } from "../../knowledge-base/maintenance-activity";
+import { maintenanceActivityText, maintenanceStageLabel, maintenanceStepText, maintenanceTaskStateLabel, type KnowledgeActivity, type KnowledgeActivitySnapshot, type KnowledgeActivitySource, type MaintenanceActivity } from "../../knowledge-base/maintenance-activity";
+import { maintenanceFailureText, maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
 
 export interface KnowledgeLinkingProgressSource {
   subscribe(listener: (task: KnowledgeLinkingTask | null) => void): () => void;
@@ -119,14 +120,15 @@ export function mountKnowledgeActivityProgress(
         const count = document.createElement("span"); count.className = "echoink-knowledge-activity-step-status";
         const state = step.state === "completed" ? (english ? "Completed" : "已完成")
           : step.state === "pending" ? (english ? "Not started" : "待开始")
-          : current.status === "waiting" ? (english ? "Waiting for you" : "等你确认")
-          : ["interrupted", "partial", "failed"].includes(current.status) ? (english ? "Ready to resume" : "可继续") : (english ? "In progress" : "进行中");
-        count.textContent = `${state}${step.total === null ? "" : ` · ${step.completed} / ${step.total}`}`;
+          : maintenanceTaskStateLabel(current, english);
+        const progress = step.stage === "finalize" && step.state === "running" || step.total !== null && ["decompose", "write"].includes(step.stage)
+          ? maintenanceStepText(step, english) : "";
+        count.textContent = progress ? `${state} · ${progress}` : state;
         row.append(label, count); steps.append(row);
       }
       path.hidden = !current.currentPath;
-      path.textContent = current.currentPath ? `${english ? "Current" : "当前"}：${current.currentPath}` : "";
-      for (const failure of current.failures) { const row = document.createElement("li"); row.textContent = failure.message; failures.append(row); }
+      path.textContent = current.currentPath ? `${english ? "Current: " : "当前："}${maintenancePageLabel(current.currentPath)}` : "";
+      for (const failure of current.failures) { const row = document.createElement("li"); row.textContent = maintenanceFailureText(failure.message, current.currentPath, english); failures.append(row); }
       failures.hidden = !current.failures.length;
     } else {
       const task = current.task, progress = document.createElement("progress");

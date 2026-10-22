@@ -266,6 +266,7 @@ implements PiVaultAdditionalToolSecurityPort {
           productRunId: execution.identity.productRunId,
           piSessionId: execution.identity.piSessionId,
           status: execution.result.status,
+          ...(execution.result.userReceipt ? { userReceipt: execution.result.userReceipt } : {}),
           ...(execution.result.maintenanceStage ? { maintenanceStage: execution.result.maintenanceStage } : {}),
           ...(execution.result.protocolVersion
             ? { protocolVersion: execution.result.protocolVersion }

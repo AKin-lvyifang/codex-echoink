@@ -105,7 +105,7 @@ export function calculateWorkbenchSignals(facts: WorkbenchFacts): WorkbenchSigna
   const inbox = facts.inbox.filter(file => file.enteredAt !== undefined);
   if (inbox.length >= 3 || inbox.some(file => now - file.enteredAt! > 72 * 3_600_000)) add(6, "knowledge-base", "inbox", facts.inboxScope, "inbox",
     english ? `${inbox.length} new Inbox items to organize` : `Inbox 新增 ${inbox.length} 条待整理内容`, "请帮我逐条整理这些 Inbox 新增内容，保留不能确认完成的条目。", inbox.map(file => file.path), Object.fromEntries(inbox.map(file => [file.path, file.fingerprint])));
-  if (facts.raw.length >= 3) add(7, "knowledge-base", "raw", facts.rawScope, "library", english ? `${facts.raw.length} sources to organize` : `${facts.raw.length} 份资料待整理`,
+  if (facts.raw.length >= 3) add(7, "knowledge-base", "raw", facts.rawScope, "library", english ? `${facts.raw.length} sources to organize` : `${facts.raw.length} 篇资料待整理`,
     "请整理当前版本尚未处理、已改版、失败或待校准的资料，沿用现有知识库维护流程。", facts.raw.map(file => file.path), Object.fromEntries(facts.raw.map(file => [file.path, file.fingerprint])));
   const pdf = latestFailedPdfRequests(facts.pdfJobs);
   if (pdf.length) add(8, "pdf-reading", "unfinished", "history", "file-warning", english ? `${pdf.length} PDF requests unfinished` : `${pdf.length} 份 PDF 处理未完成`,

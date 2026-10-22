@@ -1,4 +1,5 @@
 import type { ChatMessage, SettingsLanguage } from "../../settings/settings";
+import { maintenanceToolTitle } from "../../knowledge-base/maintenance-user-copy";
 import {
   conversationCopy,
   type ConversationCopy
@@ -538,12 +539,13 @@ function nodeForReasoningActivity(
   if (activity.kind === "memory" && activity.status === "completed"
     && !(activity.completed ?? activity.current ?? 0)) return null;
   const kind = reasoningActivityNodeKind(activity.kind);
-  const summary = reasoningActivitySummary(activity, copy);
+  const maintenanceTool = message.title === "整理知识库" && activity.kind === "tool";
+  const summary = maintenanceTool ? "" : reasoningActivitySummary(activity, copy);
   return {
     nodeId: `process-activity:${message.id}:${activity.id}`,
     kind,
     status: reasoningActivityNodeStatus(activity.status),
-    title: reasoningActivityTitle(activity, copy),
+    title: maintenanceTool ? maintenanceToolTitle(activity.name, activity.status) : reasoningActivityTitle(activity, copy),
     ...(summary ? { summary } : {}),
     startedAt: activity.startedAt,
     updatedAt: activity.updatedAt,

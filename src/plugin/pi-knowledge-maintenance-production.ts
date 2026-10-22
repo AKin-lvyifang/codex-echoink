@@ -9,6 +9,7 @@ import { KnowledgeMaintenancePreferenceRepository } from "../knowledge-base/know
 import type { MaintenanceDomainMapEntry, MaintenanceKnowledgeUnit, MaintenanceWikiDocument } from "../knowledge-base/maintenance-p2-contract";
 import { maintenanceVisibleClassification } from "../knowledge-base/maintenance-p2-planning";
 import { maintenancePageTitle } from "../knowledge-base/maintenance-page-metadata";
+import { maintenanceFailureText } from "../knowledge-base/maintenance-user-copy";
 import { isMaintenanceSourceProcessed } from "../knowledge-base/maintenance-source-state";
 import type { MaintenanceWritingItem, MaintenanceSourceFields } from "../knowledge-base/maintenance-p1-contract";
 import { knowledgeBodyLinkSpans } from "../knowledge-base/knowledge-relations";
@@ -224,6 +225,8 @@ implements PiKnowledgeMaintenanceToolPort {
       save: record => this.activity.save(record),
       current: (input, stage, currentPath) => this.activity.lifecycle({ type: "stage", conversationId: input.conversationId, productRunId: input.productRunId, stage, currentPath }),
       read: async relative => { const file = await readImmutableFileIfPresent(this.vaultRootPath, relative); return file ? UTF8_DECODER.decode(file.bytes) : null; },
+      recoverBeforeRebase: async () => { await this.createService(new UnavailableMaintenanceProposalPort()).recoverPendingOrThrow(this.vaultId); },
+      committedPageReceipt: (record, item, draft) => this.committedP1PageReceipt(record, item, draft),
       sourcePath: relative => { const actual = resolveKnowledgePath(this.vaultRootPath, normalizeVaultRelativePath(relative), false); if (!["raw", "inbox"].includes(knowledgePathRole(this.vaultRootPath, actual) ?? "") || !isKnowledgeMaintenanceSourcePath(actual)) throw new Error("来源不在Raw/Inbox范围"); return actual; },
       targetPath: async relative => { const actual = await this.normalizeCandidateTarget(relative); if (knowledgePathRole(this.vaultRootPath, actual) !== "wiki") throw new Error("P1只写Wiki"); return actual; },
       preparePageContent: (item, content, baseline) => this.prepareP1PageContent(item, content, baseline),
@@ -253,7 +256,7 @@ implements PiKnowledgeMaintenanceToolPort {
     input: Readonly<PiKnowledgeMaintenanceToolInput>
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     this.assertIdentity(input);
-    if (input.folderBindingsRevision !== undefined && input.folderBindingsRevision !== (getKnowledgeFolderBindings(this.vaultRootPath)?.revision ?? 0)) return { status: "failed", errorCode: "preview_stale", processedSourcePaths: [], message: "知识库目录已变化，请重新读取。" };
+    if (input.folderBindingsRevision !== undefined && input.folderBindingsRevision !== (getKnowledgeFolderBindings(this.vaultRootPath)?.revision ?? 0)) return { status: "failed", errorCode: "preview_stale", processedSourcePaths: [], message: "知识库目录已变化，请重新读取。", userReceipt: { version: 1, text: maintenanceFailureText("知识库目录已变化，请重新读取。") } };
     await this.activity.beforeTool(input);
     let result = await this.p1.execute(input);
     await this.activity.afterTool(input, result.status === "failed", result.message);
@@ -354,6 +357,32 @@ implements PiKnowledgeMaintenanceToolPort {
     const result = await this.createService(proposal).execute({ vaultId: this.vaultId, dateKey: this.dateKey(), explicitRawPaths: sourcePaths, preference, toolCall: { productRunId: input.productRunId, toolCallId: input.toolCallId, conversationId: input.conversationId, piSessionId: input.piSessionId, vaultId: input.vaultId, userId: this.userId, deviceId: this.deviceId }, ...(input.signal ? { signal: input.signal } : {}) });
     if (result.issues.some(issue => issue.code === "record_pending")) throw new Phase3MaintenanceError("record_pending", "页面已写入，私有收尾待恢复；请resume，成功页不会重写。");
     return result.appliedPaths.includes(item.targetPath);
+  }
+
+  /** Completed WAL actions are historical readback proof; live bytes may now belong to the user. */
+  private async committedP1PageReceipt(record: KnowledgeMaintenanceRecord, item: MaintenanceWritingItem, draft: { content: string; toolCallId: string }): Promise<{ path: string; contentRevision: string } | null> {
+    const sources = new Set(item.sourcePaths), contentSha256 = sha256(draft.content);
+    const blocked = () => new Phase3MaintenanceError("recovery_blocked", `原草稿的WAL身份或成功回读凭据不明确，保留草稿与目标，不另起写入身份：${item.targetPath}`, item.targetPath);
+    for (const wal of await this.state.listRecoverableWals(this.vaultId)) {
+      const contract = wal.authorization.contract;
+      if (wal.preview.bookkeeping?.p1RecordId !== record.recordId || contract.toolCallId !== draft.toolCallId) continue;
+      if (wal.version !== 2 || wal.preview.vaultId !== this.vaultId || contract.vaultId !== this.vaultId || contract.conversationId !== record.originConversationId
+        || contract.userId !== this.userId || contract.deviceId !== this.deviceId || contract.previewId !== wal.preview.previewId || contract.previewDigest !== wal.preview.previewDigest
+        || stableJson(contract.orderedActions) !== stableJson(wal.preview.actions) || wal.actions.length !== 1 || wal.preview.actions.length !== 1) throw blocked();
+      const readPaths = wal.preview.bookkeeping.readSourcePaths;
+      if (wal.preview.selectedSources.length !== sources.size || new Set(wal.preview.selectedSources.map(source => source.raw.relativePath)).size !== sources.size
+        || wal.preview.selectedSources.some(source => !sources.has(source.raw.relativePath) || source.raw.revision !== record.p1?.sourceFingerprints[source.raw.relativePath])
+        || readPaths.length !== sources.size || new Set(readPaths).size !== sources.size || readPaths.some(source => !sources.has(source))) throw blocked();
+      const entry = wal.actions[0], action = entry.action;
+      if (stableJson(action) !== stableJson(wal.preview.actions[0]) || action.purpose !== "knowledge" || action.targetPath !== item.targetPath
+        || action.operation !== (item.expectedTarget.kind === "missing" ? "create" : "update") || action.content !== draft.content || action.contentSha256 !== contentSha256
+        || (item.expectedTarget.kind === "missing" ? action.expected.kind !== "missing" : action.expected.kind !== "file" || `sha256:${action.expected.contentSha256}` !== item.expectedTarget.contentRevision)) throw blocked();
+      if (wal.status !== "completed" || entry.status === "pending" || entry.status === "uncertain") throw blocked();
+      if (entry.status === "failed") continue;
+      if (entry.status !== "completed" || entry.domainStatus !== "completed") throw blocked();
+      return { path: action.targetPath, contentRevision: `sha256:${action.contentSha256}` };
+    }
+    return null;
   }
 
   private async ensurePendingLinking(record: KnowledgeMaintenanceRecord): Promise<KnowledgeMaintenanceRecord> {

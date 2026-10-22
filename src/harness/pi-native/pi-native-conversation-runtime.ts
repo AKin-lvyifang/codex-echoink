@@ -4042,7 +4042,7 @@ export class PiNativeConversationRuntime {
           messageKey: key,
           role: runtimeMessageRole(event.message),
           text,
-          status: runtimeMessageStatus(event.message)
+          status: execution.abortRequested && execution.commandKind === "maintain" ? "cancelled" : runtimeMessageStatus(event.message)
         });
         break;
       }
@@ -4918,6 +4918,7 @@ export class PiNativeConversationRuntime {
     }
     const runtimeEvent = {
       ...event,
+      ...(execution.commandKind === "maintain" || execution.knowledgeObservation?.workflow === "maintain" ? { maintenanceContext: true } : {}),
       productRunId: execution.productRunId,
       conversationId: active.catalog.conversationId,
       piSessionId: active.catalog.piSessionId,
@@ -4948,6 +4949,7 @@ export class PiNativeConversationRuntime {
     ) {
       await publish({
         type: "reasoning_summary",
+        ...(execution.commandKind === "maintain" || execution.knowledgeObservation?.workflow === "maintain" ? { maintenanceContext: true } : {}),
         productRunId: execution.productRunId,
         conversationId: active.catalog.conversationId,
         piSessionId: active.catalog.piSessionId,
@@ -7028,12 +7030,15 @@ function runtimeToolPayloadForProjection(
   }
   if (toolName === PI_KNOWLEDGE_MAINTAIN_TOOL_ID) {
     const maintenanceResult = knowledgeMaintenanceEnvelopeFromToolResult(payload);
+    const outer = safeRecord(payload), details = safeRecord(outer?.details) ?? outer;
     if (maintenanceResult) {
       return Object.freeze({
         status: isError ? "failed" : "completed",
-        maintenanceResult
+        maintenanceResult,
+        ...(details?.userReceipt ? { userReceipt: details.userReceipt } : {})
       });
     }
+    return Object.freeze({ status: isError ? "failed" : "completed", ...(details?.userReceipt ? { userReceipt: details.userReceipt } : {}) });
   }
   const metadata = piKnowledgeToolDisplayMetadata(toolName, payload);
   return Object.freeze({

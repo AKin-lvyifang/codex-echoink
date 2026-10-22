@@ -15,6 +15,9 @@ import { holdMaintenancePages, releaseMaintenancePages, serializeMaintenancePage
 import { groundMaintenanceKnowledgeUnits, prepareMaintenanceNewPage, validateMaintenanceNewPage } from "./maintenance-knowledge-quality";
 import { applyMaintenanceRelatedEntries, maintenancePlanRelations, maintenanceVisibleClassification, validateMaintenanceP2Plan } from "./maintenance-p2-planning";
 import type { MaintenanceDomainMapDraft, MaintenanceDomainMapEntry, MaintenanceKnowledgeSource, MaintenanceKnowledgeUnit, MaintenanceUnitCandidates } from "./maintenance-p2-contract";
+import { assertMaintenanceShortTitle, assertMaintenanceShortTarget, MAINTENANCE_SHORT_TITLE_POLICY } from "./maintenance-title";
+import { maintenanceReceiptForRecord } from "./maintenance-activity";
+import { maintenanceFailureText } from "./maintenance-user-copy";
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const revision = (s: string) => `sha256:${hash(s)}`;
@@ -25,6 +28,10 @@ export interface MaintenanceP1Host {
   save(record: KnowledgeMaintenanceRecord): Promise<void>;
   current?(input: Readonly<PiKnowledgeMaintenanceToolInput>, stage: import("./maintenance-activity").MaintenanceActivityStage, path: string): Promise<void>;
   read(path: string): Promise<string | null>;
+  /** Resolve/reject pending WALs before replacing the basis of an uncommitted page. */
+  recoverBeforeRebase(): Promise<void>;
+  /** Existing WAL/readback proof, independent of later user edits to the target. */
+  committedPageReceipt(record: KnowledgeMaintenanceRecord, item: MaintenanceWritingItem, draft: { content: string; toolCallId: string }): Promise<{ path: string; contentRevision: string } | null>;
   sourcePath(path: string): string;
   targetPath(path: string): Promise<string>;
   preparePageContent?(item: MaintenanceWritingItem, content: string, baseline?: string): Promise<string>;
@@ -45,12 +52,19 @@ export class MaintenanceP1Workflow {
   }
   async execute(input: Readonly<PiKnowledgeMaintenanceToolInput>): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     try { return await this.run(input); }
-    catch (error) { return { status: "failed", processedSourcePaths: [], errorCode: error instanceof Phase3MaintenanceError ? error.code : "proposal_invalid", message: boundedMaintenanceMessage(`${error instanceof Error ? error.message : String(error)}${error && typeof error === "object" && "currentSnapshot" in error ? "\n请重新sections读取完整当前目录，不猜编号。" : ""}`) }; }
+    catch (error) {
+      const diagnostic = boundedMaintenanceMessage(`${error instanceof Error ? error.message : String(error)}${error && typeof error === "object" && "currentSnapshot" in error ? "\n请重新sections读取完整当前目录，不猜编号。" : ""}`);
+      const record = (await this.host.records().catch((): KnowledgeMaintenanceRecord[] => [])).find(record => record.originConversationId === input.conversationId && record.p1 && record.p1.phase !== "completed");
+      const currentPath = input.p1?.targetPath ?? record?.p1?.writingPlan.find(item => item.id === input.p1?.pageId)?.targetPath;
+      const userReceipt = { ...(record ? maintenanceReceiptForRecord(record) : { version: 1 as const }), text: maintenanceFailureText(diagnostic, currentPath) };
+      const message = `${diagnostic}${record ? `\n${JSON.stringify({ userReceipt })}` : ""}`;
+      return { status: "failed", ...(record ? { recordId: record.recordId } : {}), processedSourcePaths: [], errorCode: error instanceof Phase3MaintenanceError ? error.code : "proposal_invalid", message, userReceipt };
+    }
   }
   private async run(input: Readonly<PiKnowledgeMaintenanceToolInput>): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     const action = input.p1;
     if (!action) throw new Error("请按 stage=decompose -> plan -> write 执行；旧candidateActions已停用。中断后用stage=resume。");
-    if (input.signal?.aborted) return { status: "cancelled", message: "维护已停止，清单保留。", processedSourcePaths: [] };
+    if (input.signal?.aborted) return { status: "cancelled", message: "维护已停止，清单保留。", processedSourcePaths: [], userReceipt: { version: 1, text: maintenanceFailureText("取消") } };
     const records = await this.host.records();
     let record = records.find(r => r.originConversationId === input.conversationId && r.p1?.phase !== "completed" && r.p1);
     const selected = [...new Set((input.sourcePaths?.length ? input.sourcePaths : input.globalSourcePaths ?? []).map(p => this.host.sourcePath(p)))];
@@ -82,6 +96,8 @@ export class MaintenanceP1Workflow {
           if (!selected.includes(sourcePath) || input.sourceBodyFingerprints?.[sourcePath] !== fingerprints[sourcePath]) throw new Error(`请先完整note_read当前来源再拆解：${sourcePath}`);
         }
         const existing = record?.p1!.decompositions.find(old => old.sourcePath === d.sourcePath);
+        // Inspect only newly submitted units; frozen decompositions are not migrated.
+        if (!existing) for (const unit of d.units) if (typeof unit !== "string") assertMaintenanceShortTitle(unit.title, `unit.id=${JSON.stringify(unit.id)}, sourcePath=${JSON.stringify(d.sourcePath)}`);
         const combined = [...(record?.p1!.decompositions.filter(old => old.sourcePath !== d.sourcePath) ?? []), d];
         const units = groundMaintenanceKnowledgeUnits(combined.flatMap(d => d.units) as MaintenanceKnowledgeUnit[], sourceTexts);
         const grounded = new Map(units.map(unit => [unit.id, unit]));
@@ -114,6 +130,7 @@ export class MaintenanceP1Workflow {
         if (selected.every(relative => processed.has(relative))) return {
           status: "completed", maintenanceStage: "completed", processedSourcePaths: selected, producedPaths: [],
           maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "noop" }),
+          userReceipt: { version: 1, text: "这批资料已整理过，没有新增或改写页面。", sourceCount: selected.length, pageCounts: { written: 0, created: 0, updated: 0 } },
           message: "当前选定来源均已提炼，无需继续维护；本次只读核对，没有新建清单或写入来源、Wiki、关系和地图。"
         };
       }
@@ -150,6 +167,7 @@ export class MaintenanceP1Workflow {
       throwMaintenanceDiagnostics(errors, "写作清单");
       if (state.p2) {
         await this.planFinalization(input, record, plan);
+        state.p2.titlePolicy = MAINTENANCE_SHORT_TITLE_POLICY;
       }
       state.writingPlan = plan; state.phase = "write";
       holdMaintenancePages(record.recordId, this.host.vaultRootPath, [...plan.map(p => p.targetPath), ...state.p2?.finalization.map(p => p.targetPath) ?? []]);
@@ -159,14 +177,35 @@ export class MaintenanceP1Workflow {
     }
     if (action.stage === "sections") {
       const item = state.writingPlan.find(p => p.targetPath === action.targetPath);
-      if (!item || item.expectedTarget.kind !== "file") throw new Error("sections只能读取本清单内已有页。");
-      const before = await this.host.read(item.targetPath);
-      if (before === null || revision(before) !== item.expectedTarget.contentRevision) throw new Error("目标已变化，停止该清单；重新读取目标并在未提交前修订目标版本。");
-      const snapshot = createMaintenanceSectionSnapshot(before, item.newSections ?? []);
-      state.sectionSnapshots ??= {};
-      state.sectionSnapshots[item.targetPath] = snapshot;
-      await this.host.save(record);
-      return { status: "completed", recordId: record.recordId, maintenanceStage: "sections", processedSourcePaths: [], message: JSON.stringify({ stage: "sections", targetPath: item.targetPath, snapshot, virtualRegions: { sources: `${snapshot.revision}:sources:new`, related: `${snapshot.revision}:related:new` } }) };
+      if (!item) throw new Error("sections只能读取本清单内目标页。");
+      if (state.committedPages[item.id]) return this.receipt(record, "这页已成功，保留原页，不重新生成草稿或写入。");
+      await this.host.recoverBeforeRebase();
+      return await serializeMaintenancePage(this.host.vaultRootPath, item.targetPath, async () => {
+        await this.assertSources(record);
+        if (await this.checkpointCommittedPage(record, item)) return this.receipt(record, "原写入已有持久日志与成功回读凭据；已补父检查点，保留用户后续修改。用resume只补剩余页与收尾。");
+        const before = await this.host.read(item.targetPath);
+        if (before === null) throw new Error(`目标不存在，不能刷新已有页区域：${item.targetPath}`);
+        const previousDraft = state.drafts[item.id];
+        if (previousDraft && before === previousDraft.content) {
+          throw new Phase3MaintenanceError("recovery_blocked", `目标字节命中草稿但没有对应成功WAL/readback，不能猜测成功或废弃旧稿：${item.targetPath}`);
+        }
+        const changed = item.expectedTarget.kind === "missing" || item.expectedTarget.contentRevision !== revision(before);
+        if (changed && input.observedTargetRevisions?.[item.targetPath] !== revision(before)) throw new Error(`目标并发变化；先完整note_read当前目标，再sections刷新区域与草稿，不能只替换版本重放旧稿：${item.targetPath}`);
+        const currentTitles = changed ? new Set(createMaintenanceSectionSnapshot(before).regions.map(region => region.title.normalize("NFKC").toLowerCase())) : undefined;
+        const newSections = (item.newSections ?? []).filter(title => !currentTitles?.has(title.normalize("NFKC").toLowerCase()));
+        const snapshot = createMaintenanceSectionSnapshot(before, newSections);
+        if (changed) {
+          if (item.newSections) item.newSections = newSections;
+          item.expectedTarget = { kind: "file", contentRevision: revision(before) };
+          state.draftGenerations ??= {};
+          state.draftGenerations[item.id] = (state.draftGenerations[item.id] ?? 0) + 1;
+          delete state.drafts[item.id];
+        }
+        state.sectionSnapshots ??= {};
+        state.sectionSnapshots[item.targetPath] = snapshot;
+        await this.host.save(record);
+        return { status: "completed", recordId: record.recordId, maintenanceStage: "sections", processedSourcePaths: [], userReceipt: maintenanceReceiptForRecord(record), message: JSON.stringify({ stage: "sections", targetPath: item.targetPath, snapshot, ...(changed ? { draftDiscarded: true, next: "必须按此新snapshot提交新sectionPatches；旧region与旧draft均不可重放。" } : {}), virtualRegions: { sources: `${snapshot.revision}:sources:new`, related: `${snapshot.revision}:related:new` } }) };
+      });
     }
     if (state.phase === "decompose") return this.receipt(record, "拆解尚未齐备；继续stage=decompose提交未完成来源。");
     if (state.phase === "plan") return this.receipt(record, "尚未汇总；请先stage=plan。");
@@ -177,6 +216,7 @@ export class MaintenanceP1Workflow {
       if (!state.drafts[item.id]) {
         let content: string;
         if (item.expectedTarget.kind === "missing") {
+          if (state.p2?.titlePolicy === MAINTENANCE_SHORT_TITLE_POLICY) assertMaintenanceShortTarget(item.targetPath);
           if (typeof action.content !== "string" || !action.content.trim() || action.sectionPatches) throw new Error("新页提供content，不使用小节patch。");
           content = action.content;
         } else {
@@ -198,12 +238,13 @@ export class MaintenanceP1Workflow {
         if (state.p2) content = baseline === undefined ? prepareMaintenanceNewPage(content, own, item.targetPath) : appendMaintenanceAliases(content, own.flatMap(unit => [...unit.aliases, ...([maintenancePageTitle(baseline,item.targetPath), item.targetPath.split("/").at(-1)!.replace(/\.(?:md|markdown)$/iu, "")].includes(unit.title) ? [] : [unit.title])]));
         content = await this.host.preparePageContent?.(item, content, baseline) ?? content;
         if (state.p2) {
-          if (baseline === undefined) validateMaintenanceNewPage(content, own, item.targetPath);
+          if (baseline === undefined) validateMaintenanceNewPage(content, own, item.targetPath, state.p2.titlePolicy);
           content = applyMaintenanceRelatedEntries(content, maintenancePlanRelations(state.writingPlan).get(item.targetPath) ?? [], baseline);
         }
         content = await this.withSources(content, item, record, baseline);
         assertMaintenanceQuoteSectionsPreserved(baseline, content);
-        state.drafts[item.id] = { content, toolCallId: `${record.recordId}:${item.id}` };
+        const generation = state.draftGenerations?.[item.id] ?? 0;
+        state.drafts[item.id] = { content, toolCallId: `${record.recordId}:${item.id}${generation ? `:r${generation}` : ""}` };
         await this.host.save(record);
       }
       await this.writePage(input, item, record);
@@ -313,21 +354,32 @@ export class MaintenanceP1Workflow {
   private async writePage(input: Readonly<PiKnowledgeMaintenanceToolInput>, item: MaintenanceWritingItem, record: KnowledgeMaintenanceRecord): Promise<void> {
     const state = record.p1!, draft = state.drafts[item.id];
     if (!draft || state.committedPages[item.id]) return;
+    if (item.expectedTarget.kind === "missing" && state.p2?.titlePolicy === MAINTENANCE_SHORT_TITLE_POLICY) assertMaintenanceShortTarget(item.targetPath);
     await this.host.current?.(input, "write", item.targetPath);
+    await this.host.recoverBeforeRebase();
     await serializeMaintenancePage(this.host.vaultRootPath, item.targetPath, async () => {
       await this.assertSources(record);
+      if (await this.checkpointCommittedPage(record, item)) return;
       const current = await this.host.read(item.targetPath);
-      // Crash after write before receipt: authenticate exact bytes, then checkpoint only.
-      if (current !== draft.content) {
-        if (item.expectedTarget.kind === "missing" ? current !== null : current === null || revision(current) !== item.expectedTarget.contentRevision) throw new Error(`目标并发编辑冲突：${item.targetPath}；请重新读取，保留当前内容。`);
-        if (!await this.host.commit({ ...input, p1RecordId: record.recordId, toolCallId: draft.toolCallId }, item, draft.content)) throw new Error(`页写入失败：${item.targetPath}；草稿与成功页已保留，可resume。`);
-      }
+      if (current === draft.content) throw new Phase3MaintenanceError("recovery_blocked", `目标字节命中草稿但没有对应成功WAL/readback，不能猜测成功或重复写入：${item.targetPath}`);
+      if (item.expectedTarget.kind === "missing" ? current !== null : current === null || revision(current) !== item.expectedTarget.contentRevision) throw new Error(`目标并发编辑冲突：${item.targetPath}；先完整note_read，再sections获取新区域并提交新patch；保留手写，禁止重放旧draft。`);
+      if (!await this.host.commit({ ...input, p1RecordId: record.recordId, toolCallId: draft.toolCallId }, item, draft.content)) throw new Error(`页写入失败：${item.targetPath}；草稿与成功页已保留，可resume。`);
       const readback = await this.host.read(item.targetPath);
       if (readback !== draft.content) throw new Error(`页回读不一致：${item.targetPath}`);
       state.committedPages[item.id] = { path: item.targetPath, contentRevision: revision(readback) };
       await this.host.save(record);
       await this.host.refresh?.();
     });
+  }
+  private async checkpointCommittedPage(record: KnowledgeMaintenanceRecord, item: MaintenanceWritingItem): Promise<boolean> {
+    const state = record.p1!, draft = state.drafts[item.id];
+    if (!draft) return false;
+    const receipt = await this.host.committedPageReceipt(record, item, draft);
+    if (!receipt) return false;
+    state.committedPages[item.id] = receipt;
+    await this.host.save(record);
+    await this.host.refresh?.();
+    return true;
   }
   private async finalize(input: Readonly<PiKnowledgeMaintenanceToolInput>, record: KnowledgeMaintenanceRecord): Promise<void> {
     const state = record.p1!;
@@ -367,8 +419,9 @@ export class MaintenanceP1Workflow {
     const state = record.p1!;
     const inspection = maintenanceInspection(state, view ?? (state.phase === "plan" ? "candidates" : "pages"), offset);
     const managed = state.p2?.finalization.filter(item => !state.p2!.committedFinalization[item.id]) ?? [];
-    const summary = { recordId: record.recordId, phase: state.phase, sourceCount: record.sources.length, unitCount: state.decompositions.reduce((count,d) => count + d.units.length,0), committedPageCount: Object.keys(state.committedPages).length, pendingPageCount: state.writingPlan.filter(page => !state.committedPages[page.id]).length, pendingFinalizationCount: record.sources.filter(source => !state.finalizedSources.includes(source.path)).length, pendingManagedFinalizationCount: managed.length, pendingManagedFinalization: managed.slice(0,3).map(item => ({ kind: item.kind, targetPath: item.targetPath })), inspection };
+    const userReceipt = maintenanceReceiptForRecord(record);
+    const summary = { recordId: record.recordId, phase: state.phase, sourceCount: record.sources.length, userReceipt, unitCount: state.decompositions.reduce((count,d) => count + d.units.length,0), committedPageCount: Object.keys(state.committedPages).length, pendingPageCount: state.writingPlan.filter(page => !state.committedPages[page.id]).length, pendingFinalizationCount: record.sources.filter(source => !state.finalizedSources.includes(source.path)).length, pendingManagedFinalizationCount: managed.length, pendingManagedFinalization: managed.slice(0,3).map(item => ({ kind: item.kind, targetPath: item.targetPath })), inspection };
     const notice = state.p2?.templateNotice ? `\n${state.p2.templateNotice}` : "";
-    return { status: "completed", recordId: record.recordId, maintenanceStage: state.phase, processedSourcePaths: record.sources.filter(s => s.status === "processed").map(s => s.path), ...(state.phase === "completed" ? { maintenanceResult: record.result, producedPaths: Object.values(state.committedPages).map(p => p.path) } : {}), message: `${message}${notice}\n${JSON.stringify(summary)}${inspection.nextOffset === null ? "" : `\n还有未返回的${inspection.view}，请用stage=inspect,view=${inspection.view},offset=${inspection.nextOffset}读取下一页。`}` };
+    return { status: "completed", recordId: record.recordId, maintenanceStage: state.phase, userReceipt, processedSourcePaths: record.sources.filter(s => s.status === "processed").map(s => s.path), ...(state.phase === "completed" ? { maintenanceResult: record.result, producedPaths: Object.values(state.committedPages).map(p => p.path) } : {}), message: `${message}${notice}\n${JSON.stringify(summary)}${inspection.nextOffset === null ? "" : `\n还有未返回的${inspection.view}，请用stage=inspect,view=${inspection.view},offset=${inspection.nextOffset}读取下一页。`}` };
   }
 }

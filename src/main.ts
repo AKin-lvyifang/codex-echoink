@@ -1,4 +1,4 @@
-import { maintenanceActivityText, maintenanceStatusBarText, projectMaintenanceInitialActivity } from "./knowledge-base/maintenance-activity";
+import { maintenanceActivityText, maintenanceStatusBarText, maintenanceTaskStateLabel, projectMaintenanceInitialActivity } from "./knowledge-base/maintenance-activity";
 import { knowledgeLinkingProgressText } from "./ui/codex-view/knowledge-linking-progress";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES } from "./knowledge-base/root-paths-core";
 import { assertPdfTaskDelivery, pdfKnowledgeSection } from "./pdf-reading/delivery";
@@ -1964,7 +1964,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       if (!current) { item.textContent = ""; return; }
       const english = this.settings.settingsLanguage === "en";
       item.textContent = current.kind === "maintenance" ? maintenanceStatusBarText(current, english)
-        : `EchoInk ${english ? "Knowledge links" : "知识关联"}${current.task.total === null ? "" : ` ${current.task.processed}/${current.task.total}`}`;
+        : `EchoInk ${english ? "Knowledge links" : "知识关联"}：${maintenanceTaskStateLabel(current, english)}${current.task.total === null ? "" : ` ${current.task.processed}/${current.task.total}${english ? " pages" : " 页"}`}`;
       const detail = current.kind === "maintenance" ? maintenanceActivityText(current, english) : knowledgeLinkingProgressText(current.task, english);
       item.setAttribute("aria-label", detail); item.title = detail;
     }));

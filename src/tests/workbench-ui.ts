@@ -12,6 +12,8 @@ import type { ParsedTodoRecord } from "../home/todo-markdown";
 import { DEFAULT_ENGLISH_DIARY_SETTINGS } from "../english-diary/types";
 import type { ChatMessage } from "../settings/settings";
 import { runDesktopModuleSettingsTests } from "./desktop-module-settings";
+import { MAINTENANCE_ACTIVITY_STAGES, maintenanceCompletionText, type KnowledgeActivitySnapshot, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
 
 const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const entry = (id: string, state: TaskEntry["taskStatus"], at = Date.now()): TaskEntry => ({ conversationId: id, piSessionId: `session-${id}`, vaultId: "fixture", title: `任务 ${id}`, status: "active", defaultMemoryMode: "normal", createdAt: at, updatedAt: at, agentId: "sol", taskStatus: state, taskStartedAt: at, taskCompletedAt: at, taskInterruptedAt: at });
@@ -39,6 +41,14 @@ export async function runWorkbenchUiTests(): Promise<void> {
   const projectionReads = new Map<string, number>(), projectionText = new Map<string, string>(), failedProjections = new Set<string>();
   let releaseResume: (() => void) | undefined;
   const pending = new Map([[waiting.conversationId, question]]);
+  let activitySnapshot: KnowledgeActivitySnapshot = { primary: null, other: null, maintenance: [] };
+  const activityListeners = new Set<(snapshot: Readonly<KnowledgeActivitySnapshot>) => void>();
+  const activitySource = { ready: Promise.resolve(), snapshot: () => activitySnapshot,
+    subscribe(listener: (snapshot: Readonly<KnowledgeActivitySnapshot>) => void) { activityListeners.add(listener); listener(activitySnapshot); return () => { activityListeners.delete(listener); }; } };
+  const publishActivities = (...activities: MaintenanceActivity[]) => {
+    activitySnapshot = { primary: activities[0] ?? null, other: null, maintenance: activities };
+    for (const listener of activityListeners) listener(activitySnapshot);
+  };
   let snapshot: WorkbenchSnapshot = { generatedAt: Date.now(), signals: [], todayTodos: [], modules: ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading"], issues: [] };
   const port: WorkbenchDataPort = {
     async load() { dataReads++; if (failData) throw new Error("本地事项读取失败"); return snapshot; },
@@ -56,6 +66,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     settings: { settingsLanguage: "zh-CN", lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
     accountService: { checkCapability: () => pro, subscribe: () => () => {} },
     getConversationRunService: () => ({ pendingInteractions: pending, runs: new Map(), subscribe(listener: ConversationRunSubscriber) { subscribers.add(listener); return () => { subscribers.delete(listener); }; } }),
+    getKnowledgeActivitySource: () => activitySource,
     async listAgentTaskEntries() { taskReads++; if (failTasks) throw new Error("任务读取失败"); return tasks; },
     async readPiConversationProjection(taskId: string) {
       projectionReads.set(taskId, (projectionReads.get(taskId) ?? 0) + 1);
@@ -168,7 +179,8 @@ export async function runWorkbenchUiTests(): Promise<void> {
     await view.refresh();
     assert.equal(projectionReads.get("done"), 2, "a changed Catalog revision reloads the result");
     assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /更新后的真实结果/);
-    assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>("[data-wb-group]")).map(node => node.dataset.wbGroup), ["interrupted", "waiting", "running", "signals", "completed", "todos"]);
+    assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>("[data-wb-group]")).map(node => node.dataset.wbGroup), ["waiting", "running", "interrupted", "signals", "completed", "todos"]);
+    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["等你回应", "正在进行", "没做完", "可以交给 Agent", "今天完成", "今日待办"]);
     assert.match(content.textContent ?? "", /被你停止/);
     assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 5);
     const retained = button("signal-signal-0");
@@ -188,7 +200,10 @@ export async function runWorkbenchUiTests(): Promise<void> {
     await click("answer-wait-b"); assert.equal(calls.filter(call => call[0] === "answer").length, answers + 1, "option meaning follows the schema rather than guessing from its label");
     pending.set(waiting.conversationId, { ...question, questions: [{ ...question.questions[0], allowSupplement: true }] }); await view.refresh();
     await click("answer-wait-a"); assert.equal(calls.filter(call => call[0] === "answer").length, answers + 2, "optional supplement still allows direct submission");
-    await click("detail-wait"); assert.deepEqual(calls.at(-1), ["detail", "wait"]);
+    assert.equal(button("detail-wait"), undefined, "supplement entry stays on the clickable card instead of adding a third option");
+    assert.deepEqual(Array.from(content.querySelectorAll('[data-task="wait"] .wb-options button')).map(node => node.textContent), ["选项 A", "其他"]);
+    content.querySelector<HTMLElement>('[data-task="wait"] .wb-question > div')!.click(); await tick();
+    assert.deepEqual(calls.at(-1), ["detail", "wait"], "the question card still opens the complete question and supplement");
     await click("signal-signal-0"); assert.equal(calls.at(-1)?.[0], "list"); assert.equal(snapshot.signals.length, 7, "prefill does not consume a signal");
     assert.ok([...subscribers].every(listener => listener.isTaskVisible("done") === false), "overview never marks all tasks read");
     assert.equal(content.querySelectorAll("button button").length, 0);
@@ -240,6 +255,29 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(projectionReads.get("cold-1"), failedReads! + 1);
     assert.match(content.querySelector('[data-task="cold-1"] .wb-secondary')?.textContent ?? "", /真正结果/);
     assert.equal(calls.some(call => call[0] === "metadata-write" || call[0] === "provider"), false);
+    const maintenanceTask = entry("maintenance", "running"); tasks = [maintenanceTask];
+    const activity: MaintenanceActivity = { kind: "maintenance", id: "maintenance-record", originConversationId: maintenanceTask.conversationId,
+      status: "running", stage: "write", sourceCount: 20, sourcePaths: ["Raw/合成资料.md"], batch: { index: 1, total: 1 },
+      activeElapsedMs: 1000, etaMs: null, updatedAt: Date.now(), currentPath: "Wiki/合成条目.md", pageCounts: { written: 14, created: 10, updated: 4 }, failures: [],
+      steps: MAINTENANCE_ACTIVITY_STAGES.map((stage, index) => ({ stage, completed: stage === "write" ? 7 : 0, total: stage === "write" ? 12 : null, state: index < 3 ? "completed" : index === 3 ? "running" : "pending" })) };
+    publishActivities(activity); await view.refresh();
+    assert.match(content.querySelector('[data-task="maintenance"]')?.textContent ?? "", /进行中.*已写好 7 页，还剩 5 页（共 12 页）/u);
+    const partial: MaintenanceActivity = { ...activity, status: "partial", updatedAt: activity.updatedAt + 1,
+      failures: [{ key: "write:internal", message: "CAS revision stage resume targetPath Wiki/合成条目.md 冲突", at: Date.now() }] };
+    publishActivities(partial);
+    const partialCard = content.querySelector<HTMLElement>('[data-task="maintenance"]')!;
+    assert.equal(partialCard.closest<HTMLElement>("[data-wb-group]")?.dataset.wbGroup, "interrupted");
+    assert.match(partialCard.textContent ?? "", /没做完.*《合成条目》.*不覆盖你的修改.*继续/u);
+    assert.equal(maintenanceVisibleCopyIsSafe(partialCard.textContent ?? ""), true);
+    assert.equal(maintenanceVisibleCopyIsSafe(button("task-maintenance").getAttribute("aria-label") ?? ""), true);
+    assert.equal(maintenanceTask.taskStatus, "running", "business display never rewrites the Catalog object");
+    assert.equal(content.querySelectorAll('[data-task="maintenance"]').length, 1);
+    publishActivities({ ...activity, status: "completed", completedAt: Date.now(), updatedAt: activity.updatedAt + 2 });
+    const completedCard = content.querySelector<HTMLElement>('[data-task="maintenance"]')!;
+    assert.equal(completedCard.closest<HTMLElement>("[data-wb-group]")?.dataset.wbGroup, "completed");
+    assert.ok(completedCard.textContent?.includes(maintenanceCompletionText(activity)));
+    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["等你回应", "正在进行", "没做完", "可以交给 Agent", "今天完成", "今日待办"], "maintenance never renames a group");
+    publishActivities();
     tasks = []; snapshot = { ...snapshot, signals: [], todayTodos: [] }; await view.refresh();
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 6);
     snapshot = { ...snapshot, issues: ["待办读取失败：合成错误"] }; await view.refresh();
@@ -255,7 +293,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     console.log("Workbench UI passed: task groups, cold-shell result projections and revision cache, no duplicate summaries after redraw, bounded read concurrency and retry, local date, real routes, valid question binding, prefill, collapse and focus, stale errors, to-do success/failure, search keyboard, foreground lifecycle.");
   } finally {
     await view.onClose(); for (const cleanup of cleanups.reverse()) cleanup(); container.remove();
-    assert.equal(subscribers.size, 0); assert.equal(dataSubscribers.size, 0);
+    assert.equal(subscribers.size, 0); assert.equal(dataSubscribers.size, 0); assert.equal(activityListeners.size, 0);
   }
   await runDesktopModuleSettingsTests();
 }

@@ -1,4 +1,4 @@
-import { MAINTENANCE_ACTIVITY_STAGES, maintenanceBatchContext, maintenanceRecordStage, newMaintenanceProgress, type MaintenanceActivity, type MaintenanceActivityLifecycle, type MaintenanceActivityProgress, type MaintenanceActivityStage, type MaintenanceInitialActivity } from "../knowledge-base/maintenance-activity";
+import { MAINTENANCE_ACTIVITY_STAGES, maintenanceBatchContext, maintenanceCompletionText, maintenancePageCounts, maintenanceRecordStage, newMaintenanceProgress, type MaintenanceActivity, type MaintenanceActivityLifecycle, type MaintenanceActivityProgress, type MaintenanceActivityStage, type MaintenanceInitialActivity } from "../knowledge-base/maintenance-activity";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import type { PiKnowledgeMaintenanceToolInput } from "../harness/pi-native/contracts";
 import type { FileProductRunStore } from "../harness/pi-native/file-product-run-store";
@@ -163,11 +163,11 @@ export class MaintenanceActivityController {
       const key = complete ? "completed" : `settled:${runId}`;
       if (progress.notified.includes(key)) return;
       progress.notified.push(key);
-      if (complete) { progress.status = "completed"; progress.completedAt ??= this.host.now(); notice = `知识库维护完成：${new Set(Object.values(record.p1!.committedPages).map(page => page.path)).size} 页 Wiki 已保存。`; }
+      if (complete) { progress.status = "completed"; progress.completedAt ??= this.host.now(); notice = maintenanceCompletionText({ sourceCount: new Set(record.sources.map(source => source.path)).size, pageCounts: maintenancePageCounts(record) }); }
       else {
         const count = Object.keys(record.p1!.committedPages).length;
         progress.status = count ? "partial" : failed ? "failed" : "interrupted";
-        notice = count ? `知识库维护部分完成：已保存 ${count} 页，可继续剩余内容。` : "知识库维护尚未完成，可继续原清单。";
+        notice = count ? `知识整理没做完：已写好 ${count} 页 Wiki，点继续会处理剩余内容。` : "知识整理没做完，点继续会接着处理。";
       }
     });
     if (record) this.host.onRecord?.(record);
@@ -178,7 +178,7 @@ export class MaintenanceActivityController {
     if (active.initial.progress.notified.includes(key)) return;
     active.initial.progress.notified.push(key);
     await this.persistInitial(conversationId, active);
-    this.host.notice?.("知识库维护未完成，可回到原任务继续。");
+    this.host.notice?.("知识整理没做完，可回到原任务继续。");
   }
   private advance(progress: MaintenanceActivityProgress, active?: ActiveMaintenance): MaintenanceActivityProgress {
     const now = this.host.now();

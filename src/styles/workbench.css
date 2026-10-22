@@ -80,6 +80,10 @@
 .echoink-workbench .wb-question { padding-top: 10px; border-top: 1px solid var(--wb-line); overflow-wrap: anywhere; }
 .echoink-workbench .wb-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .echoink-workbench .wb-options > button { text-align: left; }
+.echoink-task-detail .codex-interaction-option-control { margin-top: calc((var(--echoink-conversation-font-body, 14px) * var(--echoink-conversation-line-body, 1.55) - 16px) / 2); }
+/* Scroll a normal box so fieldset/legend content stays above the separate actions. */
+.codex-interaction-question-card > .codex-interaction-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scroll-padding-block: var(--echoink-conversation-space-2); }
+.codex-interaction-body > .codex-interaction-question { overflow: visible; }
 .echoink-workbench .wb-rows { border: 1px solid var(--wb-line); border-radius: 12px; overflow: clip; }
 .echoink-workbench .wb-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 14px; }
 .echoink-workbench .wb-row + .wb-row, .echoink-workbench .wb-completed + .wb-completed { border-top: 1px solid var(--wb-line); }

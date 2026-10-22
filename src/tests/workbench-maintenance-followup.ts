@@ -20,6 +20,7 @@ import { emptyKnowledgeFolderBindings, registerKnowledgeFolderBindings, register
 import { inspectPiSessionJsonl } from "../harness/pi-native/pi-session-durability";
 import { diskApp } from "./workbench-maintenance-chain";
 import type { PiChatSubmitRequest } from "../harness/pi-native/contracts";
+import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
 
 const source = "raw/articles/星系专题.md";
 const other = "raw/articles/第二范围.md";
@@ -206,6 +207,28 @@ export async function runWorkbenchMaintenanceFollowupTests(root: string): Promis
     assert.doesNotMatch(await f.wiki(), /星系专题/u);
     const run = await f.productRuns.read(result.result.productRunId);
     assert.deepEqual(run?.maintenance?.processedSourcePaths, []); assert.deepEqual(run?.maintenance?.pendingSourcePaths, [source]);
+  });
+  await scenario("sdk-concurrent-user-edit-cold-refresh-and-new-patch", async f => {
+    const failed = await f.run("/maintain 整理后保留我的编辑", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source, "concurrent-write");
+    assert.equal(failed.result.terminalState, "failed"); assert.equal(failed.tool?.isError, true);
+    const edited = await f.wiki(), editedStat = await fs.stat(path.join(f.vault, wiki));
+    assert.ok(edited.includes("用户并发手写决定，不能撤回。")); assert.ok(edited.includes("用户保留的关键原句。"));
+    assert.ok(failed.tool?.userReceipt, "the actual durable failed toolResult carries the trusted user channel");
+    assert.ok(maintenanceVisibleCopyIsSafe(failed.tool.userReceipt.text));
+    await f.reopen();
+    const unread = await f.run("继续，先核对这页", {}, source, "unread-sections");
+    assert.equal(unread.tool?.isError, true); assert.match(unread.tool?.content ?? "", /先完整note_read/u); assert.equal(await f.wiki(), edited);
+    const stale = await f.run("继续，重读后刷新区域", {}, source, "stale-region");
+    assert.equal(stale.tool?.isError, true); assert.equal(await f.wiki(), edited); assert.equal((await fs.stat(path.join(f.vault, wiki))).mtimeMs, editedStat.mtimeMs);
+    await f.reopen();
+    const complete = await f.run("继续完成，保留我的手写", {}, source, "resume");
+    assert.equal(complete.result.terminalState, "completed"); assert.equal(complete.tool?.isError, false, complete.tool?.content);
+    assert.ok((await f.wiki()).includes("用户并发手写决定，不能撤回。")); assert.ok((await f.wiki()).includes("用户保留的关键原句。  \n"));
+    assert.ok(complete.tool?.userReceipt); assert.ok(maintenanceVisibleCopyIsSafe(complete.tool.userReceipt.text));
+    assert.deepEqual(complete.tool.userReceipt.pageCounts, { written: 1, created: 0, updated: 1 });
+    const providerToolMessages = f.bodies.flatMap(body => body.messages).filter((message: any) => message.role === "tool").map((message: any) => String(message.content));
+    assert.ok(providerToolMessages.some((content: string) => content.includes('"inspection"') && content.includes('"nextOffset"')), "provider retains the full internal paging channel");
+    assert.ok(providerToolMessages.some((content: string) => content.includes('"snapshot"') && content.includes('"virtualRegions"')), "provider still receives real region IDs and snapshot JSON");
   });
   await scenario("signal7-reopen-completed", async f => {
     const first = await f.run("请先给出这批资料的整理建议，等我确认。", { maintenanceScope: { mode: "batch", sourcePaths: [source] },
@@ -417,13 +440,19 @@ async function fixture(root: string, name: string, emptyRaw = false) {
   }
   await fs.writeFile(path.join(vault, wiki), "# 维护成果\n尚未整理。\n");
   const replies: any[] = [], bodies: any[] = [], runs: any[] = [];
-  let responseNumber = 0, callNumber = 0, blockNextRequest = false;
+  let responseNumber = 0, callNumber = 0, blockNextRequest = false, injectUserEdit = false;
+  let conflictRegionId: string | undefined;
   const server = createServer(async (req, res) => {
     let body = ""; for await (const chunk of req) body += chunk;
     bodies.push(JSON.parse(body));
     if (blockNextRequest) { blockNextRequest = false; return; }
     const message = replies.shift();
     if (!message) { res.writeHead(500); res.end("Unexpected extra provider request"); return; }
+    if (injectUserEdit && message.tool_calls?.some((call: any) => call.function.name === "knowledge_maintain" && JSON.parse(call.function.arguments).stage === "write")) {
+      injectUserEdit = false;
+      const before = await fs.readFile(path.join(vault, wiki), "utf8");
+      await fs.writeFile(path.join(vault, wiki), `${before}\n## 用户区域\n用户并发手写决定，不能撤回。\n\n## 关键原句\n用户保留的关键原句。  \n`, "utf8");
+    }
     const delta = { ...message, ...(message.tool_calls ? { tool_calls: message.tool_calls.map((call: any, index: number) => ({ ...call, index })) } : {}) };
     const chunk = { id: `completion-${++responseNumber}`, object: "chat.completion.chunk", created: 1, model: "deepseek-chat", choices: [{ index: 0, delta, finish_reason: null }] };
     const done = { ...chunk, choices: [{ index: 0, delta: {}, finish_reason: message.tool_calls ? "tool_calls" : "stop" }] };
@@ -504,7 +533,7 @@ async function fixture(root: string, name: string, emptyRaw = false) {
       await bundle.runtime.abort("followup");
       const result = await handle.result; runs.push({ text: confirmation, result }); return result;
     },
-    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "plan" | "resume" | "invalid-write" | "inspect" | "resume-only" | "bad-decompose" | "bad-plan" | "omitted-aliases" | "omitted-root-source-paths" | "narrowed-write-root" = "all") => {
+    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "plan" | "resume" | "invalid-write" | "inspect" | "resume-only" | "bad-decompose" | "bad-plan" | "omitted-aliases" | "omitted-root-source-paths" | "narrowed-write-root" | "concurrent-write" | "unread-sections" | "stale-region" = "all") => {
       const requestStart = bodies.length;
       const toolCall = (name: string, args: object) => {
         let parameters=args;
@@ -516,18 +545,19 @@ async function fixture(root: string, name: string, emptyRaw = false) {
       if (maintainSource) {
         const paths = typeof maintainSource === "string" ? [maintainSource] : maintainSource;
         const before = await fs.readFile(path.join(vault, wiki), "utf8");
-        replies.push({ role: "assistant", content: null, tool_calls: [...paths.map(relativePath => toolCall("note_read", { relativePath })), toolCall("note_read", { relativePath: wiki })] });
+        replies.push({ role: "assistant", content: null, tool_calls: [...paths.map(relativePath => toolCall("note_read", { relativePath })), ...(stages === "unread-sections" ? [] : [toolCall("note_read", { relativePath: wiki })])] });
         const units = await Promise.all(paths.map(async (sourcePath, index) => fixtureKnowledgeUnit(`source-${index}`, sourcePath, await fs.readFile(path.join(vault, sourcePath), "utf8").catch(() => ""), before.match(/^#\s+(.+)$/mu)?.[1] ?? "合成知识点")));
         const decomposition = toolCall("knowledge_maintain", { stage: "decompose", sourcePaths: paths, decompositions: paths.map((sourcePath, index) => ({ sourcePath, summary: `合成摘要 ${sourcePath}`, units: [stages === "omitted-aliases" ? Object.fromEntries(Object.entries(units[index]).filter(([key]) => key !== "aliases")) : units[index]] })) });
         const plan = toolCall("knowledge_maintain", { stage: "plan", sourcePaths: paths, writingPlan: [{ id: "summary", targetPath: wiki, sourcePaths: paths, knowledge: { unitIds: units.map(unit => unit.id), decision: { kind: "same_point", reason: "合成夹具：维护同一主题原有页以验证范围继承", candidatePath: wiki } }, expectedTarget: { kind: "file", contentRevision: `sha256:${createHash("sha256").update(before).digest("hex")}` } }] });
         const snapshot = createMaintenanceSectionSnapshot(before), intro = snapshot.regions.find(region => region.kind === "introduction")!;
+        if (stages === "concurrent-write") { conflictRegionId = intro.id; injectUserEdit = true; }
         const sections = toolCall("knowledge_maintain", { stage: "sections", sourcePaths: paths, targetPath: wiki });
-        const maintenance = toolCall("knowledge_maintain", { stage: "write", sourcePaths: paths, pageId: "summary", sectionPatches: [{ regionId: stages === "invalid-write" ? "invalid-region" : intro.id, operation: "replace", content: paths.map(selected => `已整理 [[${selected}|原始资料]]。`).join("\n") + "\n\n" }] });
+        const maintenance = toolCall("knowledge_maintain", { stage: "write", sourcePaths: paths, pageId: "summary", sectionPatches: [{ regionId: stages === "invalid-write" ? "invalid-region" : stages === "stale-region" ? conflictRegionId! : intro.id, operation: "replace", content: paths.map(selected => `已整理 [[${selected}|原始资料]]。`).join("\n") + "\n\n" }] });
         const resume = toolCall("knowledge_maintain", { stage: "resume", sourcePaths: paths });
         const inspect = toolCall("knowledge_maintain", { stage: "inspect", sourcePaths: paths, view: "pages" });
         const badDecompose = toolCall("knowledge_maintain", { stage: "decompose", sourcePaths: paths, debugPayload: "DO_NOT_ECHO_THIS_BODY".repeat(5_000), decompositions: [{ sourcePath: paths[0], summary: 123, units: [{ id: 1, type: "unknown", title: null, domain: "", aliases: null, points: [], evidence: [{ sourcePath: 1, sourceRevision: 5, quote: [] }] }, "old string"] }] });
         const badPlan = toolCall("knowledge_maintain", { stage: "plan", sourcePaths: paths, extra: "DO_NOT_ECHO_THIS_BODY".repeat(5_000), writingPlan: [{ id: "p1", targetPath: wiki, sourcePaths: paths, summary: "unknown extra", unitIds: ["source-0"], expectedTarget: { kind: "file" }, knowledge: { unitIds: [], decision: null } }] });
-        const ordered = stages === "bad-decompose" ? [badDecompose] : stages === "bad-plan" ? [badPlan] : stages === "inspect" ? [inspect] : stages === "resume-only" ? [resume] : stages === "plan" ? [decomposition, plan] : stages === "resume" ? [resume, sections, maintenance] : [decomposition, plan, sections, maintenance];
+        const ordered = stages === "bad-decompose" ? [badDecompose] : stages === "bad-plan" ? [badPlan] : stages === "inspect" ? [inspect] : stages === "resume-only" ? [resume] : stages === "unread-sections" ? [sections] : stages === "plan" ? [decomposition, plan] : stages === "resume" || stages === "stale-region" ? [resume, sections, maintenance] : [decomposition, plan, sections, maintenance];
         maintenanceCallId = ordered.at(-1)!.id;
         for (const stage of ordered) replies.push({ role: "assistant", content: null, tool_calls: [stage] });
       }
@@ -545,6 +575,7 @@ async function fixture(root: string, name: string, emptyRaw = false) {
         const receipt = inspection.entries.find(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === maintenanceCallId);
         assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
         tool.isError = receipt.message.isError;
+        tool.userReceipt = (receipt.message.details as { userReceipt?: unknown } | undefined)?.userReceipt;
       }
       const outcome = { text, result, tool }; runs.push(outcome); return outcome;
     }

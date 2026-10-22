@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type { MaintenanceKnowledgeEvidence, MaintenanceKnowledgeSource, MaintenanceKnowledgeType, MaintenanceKnowledgeUnit } from "./maintenance-p2-contract";
 import { MAINTENANCE_KNOWLEDGE_TYPES } from "./maintenance-knowledge-types";
+import { assertMaintenanceShortTarget, MAINTENANCE_SHORT_TITLE_POLICY, type MaintenanceTitlePolicy } from "./maintenance-title";
 import { throwMaintenanceDiagnostics } from "./maintenance-diagnostics";
 
 function nonempty(value: unknown): value is string {
@@ -538,7 +539,8 @@ export function prepareMaintenanceNewPage(content: string, units: readonly Maint
 }
 
 /** Validate new pages only; existing-page metadata is deliberately outside this API. */
-export function validateMaintenanceNewPage(content: string, units: readonly MaintenanceKnowledgeUnit[], targetPath?: string): void {
+export function validateMaintenanceNewPage(content: string, units: readonly MaintenanceKnowledgeUnit[], targetPath?: string, titlePolicy?: MaintenanceTitlePolicy): void {
+  if (targetPath !== undefined && titlePolicy === MAINTENANCE_SHORT_TITLE_POLICY) assertMaintenanceShortTarget(targetPath);
   const unitAliases = checkedNewPageUnits(content, units);
   const { parsed, pair, field, plainKey, aliases } = newPageMetadata(content);
   const errors: string[] = [];

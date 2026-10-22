@@ -5,7 +5,7 @@ import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro
 /** The interruption card is UI-only; it never becomes a session message. */
 export function renderTaskInterruption(
   container: HTMLElement,
-  input: { info?: TaskInterruptionInfo | null; error?: string; pending: boolean; language: string; onResume(): void }
+  input: { info?: TaskInterruptionInfo | null; error?: string; userCopy?: string; buttonLabel?: string; pending: boolean; language: string; onResume(): void }
 ): void {
   disposeOriginControls(container);
   container.replaceChildren();
@@ -13,7 +13,8 @@ export function renderTaskInterruption(
   const text = (tag: string, className: string, value: string) => {
     const node = container.ownerDocument.createElement(tag); node.className = className; node.textContent = value; container.append(node); return node;
   };
-  if (info) {
+  if (input.userCopy) text("div", "echoink-task-interruption-copy", input.userCopy);
+  else if (info) {
     const time = new Date(info.at).toLocaleString(en ? "en-US" : "zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", ...(new Date(info.at).getFullYear() !== new Date().getFullYear() ? { year: "numeric" as const } : {}) });
     const reasons: Record<TaskInterruptionInfo["reason"], [string, string]> = {
       app_closed: ["关闭 Obsidian 时中断", "interrupted when Obsidian closed"],
@@ -40,12 +41,12 @@ export function renderTaskInterruption(
   } else if (!input.error) text("div", "echoink-task-interruption-copy", en ? "Reading interruption details…" : "正在读取中断记录…");
   if (input.error) text("div", "echoink-task-interruption-error", input.error).setAttribute("role", "alert");
   const actions = text("div", "echoink-task-interruption-actions", "");
-  const button = createOriginButton(actions, { text: input.pending ? (en ? "Checking…" : "正在核对…") : (en ? "Continue from here" : "从这里继续"), attr: { type: "button" } });
+  const button = createOriginButton(actions, { text: input.pending ? (en ? "Checking…" : "正在核对…") : input.buttonLabel ?? (en ? "Continue from here" : "从这里继续"), attr: { type: "button" } });
   applyAmicroButton(button, { variant: "secondary", icon: "play" });
   const icon = button.querySelector(".echoink-amicro-button-icon");
   if (icon) button.prepend(icon);
   setAmicroButtonPending(button, input.pending);
   button.dataset.action = "resume-task";
-  button.disabled = input.pending || !info && !input.error;
+  button.disabled = input.pending || !info && !input.error && !input.userCopy;
   button.onclick = event => { event.stopPropagation(); if (!button.disabled) input.onResume(); };
 }

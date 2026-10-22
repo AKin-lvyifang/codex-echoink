@@ -4,6 +4,7 @@ import { appendMaintenanceBlock, appendMaintenanceManagedBlock, createMaintenanc
 import type { MaintenanceWritingItem } from "./maintenance-p1-contract";
 import type { MaintenanceKnowledgeType, MaintenanceKnowledgeUnit, MaintenanceRelatedEntry, MaintenanceUnitCandidates } from "./maintenance-p2-contract";
 import { MAINTENANCE_KNOWLEDGE_TYPES } from "./maintenance-knowledge-types";
+import { assertMaintenanceShortTarget } from "./maintenance-title";
 
 /** Current unambiguous, valid visible properties win field by field. */
 export function maintenanceVisibleClassification(content: string): { type?: MaintenanceKnowledgeType; domain?: string } {
@@ -37,6 +38,7 @@ export function validateMaintenanceP2Plan(plan: readonly MaintenanceWritingItem[
     if (item.expectedTarget.kind === "file") {
       if (fields.decision.kind !== "same_point" || fields.decision.candidatePath !== item.targetPath || !recalled.some(candidate => candidate.path === item.targetPath)) throw new Error("已有页仅在候选中确认为同知识点后更新；不能合并两张旧页。");
     } else {
+      assertMaintenanceShortTarget(item.targetPath);
       if (fields.decision.kind === "same_point") throw new Error("same_point必须指向已读过的现有Wiki。");
       const exact = recalled.filter(candidate => candidate.matches.some(match => match === "title" || match === "alias"));
       if (exact.length && fields.decision.kind !== "uncertain") throw new Error("标题或别名已有候选；确认同知识点更新原页，拿不准新建并解释相关关系。");

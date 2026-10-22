@@ -366,6 +366,8 @@ export interface PiKnowledgeMaintenanceToolInput extends PiKnowledgeRunIdentity 
 }
 
 export interface PiKnowledgeMaintenanceToolResult {
+  /** Product-owned UI copy; message remains the full model-facing protocol. */
+  readonly userReceipt?: Readonly<import("../../knowledge-base/maintenance-activity").MaintenanceUserReceipt>;
   /** Trusted intermediate stage, never a terminal maintenance outcome. */
   readonly maintenanceStage?: "decompose" | "plan" | "write" | "finalize" | "sections" | "completed";
   readonly recordId?: string;
@@ -516,6 +518,8 @@ export interface PiChatRunHandle {
 }
 
 interface PiChatRuntimeEventBase {
+  /** User projection context only; full provider reasoning stays in Session. */
+  maintenanceContext?: boolean;
   productRunId: string;
   conversationId: string;
   piSessionId: string;

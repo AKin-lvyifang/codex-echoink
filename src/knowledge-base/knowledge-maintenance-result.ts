@@ -1,6 +1,7 @@
 import { knowledgeRolePath, resolveKnowledgePath } from "./root-paths";
 import { knowledgeErrorDetail } from "./initialization-error";
 import type { KnowledgeBaseMaintainReportPayload } from "./maintain-report-card";
+import { maintenanceFailureText, maintenancePageLabel, maintenanceUserReceiptFromResult, maintenanceVisibleCopyIsSafe } from "./maintenance-user-copy";
 
 export const KNOWLEDGE_MAINTENANCE_RESULT_SCHEMA =
   "echoink.knowledge-maintenance-result.v1" as const;
@@ -177,11 +178,12 @@ export function knowledgeMaintenanceReportPayloadFromToolResult(
 ): KnowledgeBaseMaintainReportPayload | null {
   const envelope = knowledgeMaintenanceEnvelopeFromToolResult(value);
   if (!envelope) return null;
+  const receipt = maintenanceUserReceiptFromResult(value);
   const success = envelope.status === "completed" || envelope.status === "noop";
   const noteItems = envelope.notes.map((note) => ({
-    title: note.title,
+    title: maintenancePageLabel(note.title),
     path: note.path,
-    description: `${note.operation === "created" ? "新建" : "更新"} · ${note.summary}`,
+    description: `${note.operation === "created" ? "新建" : "更新"}${maintenanceVisibleCopyIsSafe(note.summary) ? ` · ${note.summary}` : ""}`,
     tone: "success" as const
   }));
   return {
@@ -194,19 +196,19 @@ export function knowledgeMaintenanceReportPayloadFromToolResult(
         ? "noop"
         : undefined,
     title: envelope.status === "completed"
-      ? "知识维护完成"
+      ? "知识整理已完成"
       : envelope.status === "partial"
-        ? "知识维护部分完成"
+        ? "知识整理没做完"
         : envelope.status === "noop"
           ? "没有需要提炼的知识"
           : envelope.status === "write_uncertain"
             ? "知识写入状态不确定"
-            : "知识维护失败",
+            : "知识整理没做完",
     reportPath: "",
     ...(envelope.linkingTaskId ? { linkingTaskId: envelope.linkingTaskId } : {}),
     careItems: [
-      ...(noteItems.length ? [{ tone: "success" as const, text: `已回读验证 ${noteItems.length} 篇知识笔记。` }] : []),
-      ...envelope.issues.map((issue) => ({ tone: "warning" as const, text: issue.message }))
+      ...(receipt ? [{ tone: "success" as const, text: receipt.text }] : noteItems.length ? [{ tone: "success" as const, text: `已写好 ${noteItems.length} 页 Wiki。` }] : []),
+      ...envelope.issues.map((issue) => ({ tone: "warning" as const, text: maintenanceFailureText(issue.message, issue.path) }))
     ],
     sections: [
       {
@@ -222,9 +224,9 @@ export function knowledgeMaintenanceReportPayloadFromToolResult(
         count: envelope.issues.length,
         emptyText: "没有需要关注的问题。",
         items: envelope.issues.map((issue) => ({
-          title: issue.code,
+          title: issue.path ? maintenancePageLabel(issue.path) : "还有内容没做完",
           ...(issue.path ? { path: issue.path } : {}),
-          description: issue.message,
+          description: maintenanceFailureText(issue.message, issue.path),
           tone: "warning" as const
         }))
       }] : []),
@@ -235,7 +237,7 @@ export function knowledgeMaintenanceReportPayloadFromToolResult(
         emptyText: "没有需要判断的知识主张。",
         items: envelope.assessments.map((assessment) => ({
           title: assessment.claim,
-          description: `${assessmentLabel(assessment.status)} · ${assessment.asOf} · ${assessment.verification}`,
+          description: `${assessmentLabel(assessment.status)} · ${assessment.asOf} · ${assessment.verification === "local_verified" ? "已核对本地资料" : assessment.verification === "external_verified" ? "已核对外部资料" : "尚未核对"}`,
           tone: assessment.status === "valid" ? "success" as const : "warning" as const
         }))
       }] : [])

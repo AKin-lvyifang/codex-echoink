@@ -19,6 +19,8 @@ import { releaseMaintenancePages } from "../knowledge-base/maintenance-page-lock
 import { createKnowledgeMaintenanceResultEnvelope } from "../knowledge-base/knowledge-maintenance-result";
 import { appendMaintenanceAliases } from "../knowledge-base/maintenance-page-metadata";
 import { parseDocument } from "yaml";
+import { assertMaintenanceShortTitle, MAINTENANCE_SHORT_TITLE_POLICY } from "../knowledge-base/maintenance-title";
+import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
 import type { MaintenanceKnowledgeType, MaintenanceKnowledgeUnit } from "../knowledge-base/maintenance-p2-contract";
 import type { MaintenanceP1Action, MaintenanceWritingItem } from "../knowledge-base/maintenance-p1-contract";
 const revision = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
@@ -45,6 +47,173 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     assert.equal(appendMaintenanceAliases(result,["First","Old","NEW","新别名"]),result);
   }
   assert.throws(()=>appendMaintenanceAliases("---\naliases:\n  - >-\n    complex\ncustom: keep\n---\n# 标题\n",["new"]),/复杂标量/u);
+  for (const title of ["SQLite", "阿波罗13号", "SQLite事务边界", "适用场景", "有限理性与决策"]) assert.doesNotThrow(() => assertMaintenanceShortTitle(title, "fixture"));
+  for (const [index, title] of ["SQLite 的适用场景与限制", "阿波罗13号：成功的失败", "Apollo 13: A successful failure"].entries()) await scenario(`short-name-decomposition-before-checkpoint-${index}`, async f => {
+    const source = "raw/name.md"; await f.write(source, "# 原文\n程序只限制明确的文章式标题。\n");
+    const unit = await f.unit("same-id", source, title), raw = await f.read(source);
+    const rejected = await f.decompose([source], [unit]); assert.equal(rejected.status, "failed"); assert.match(rejected.message, /改短名.*导语.*ID可沿用/u);
+    assert.equal((await readPrivateMaintenanceRecords(f.privateRoot)).length, 0, "invalid new units never enter the immutable decomposition checkpoint");
+    assert.equal(await f.read(source), raw); assert.ok(rejected.userReceipt); assert.ok(maintenanceVisibleCopyIsSafe(rejected.userReceipt!.text));
+    f.ok(await f.decompose([source], [{ ...unit, title: index === 0 ? "SQLite" : "阿波罗13号" }]));
+    assert.equal((await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.decompositions[0].units.length, 1, "same unit ID can be corrected before its first checkpoint");
+  });
+  await scenario("short-name-plan-before-lock-and-frozen-history", async f => {
+    const source = "raw/name.md"; await f.write(source, "# 原文\n保留原有历史页面名，不迁移重命名。\n");
+    const unit = await f.unit("apollo", source, "阿波罗13号"); f.ok(await f.decompose([source], [unit]));
+    for (const title of ["SQLite 的适用场景与限制", "阿波罗13号：成功的失败"]) {
+      const rejected = await f.call({ stage: "plan", writingPlan: [f.item("one", `wiki/${title}.md`, [source], [unit.id])] }, [source]);
+      assert.equal(rejected.status, "failed"); assert.equal((await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.phase, "plan");
+    }
+    f.ok(await f.call({ stage: "plan", writingPlan: [f.item("one", "wiki/阿波罗13号.md", [source], [unit.id])] }, [source]));
+    const state = new FilePhase3MaintenanceStateStore({ storageRootPath: f.privateRoot, vaultId: "p2-vault" });
+    const frozen = (await readPrivateMaintenanceRecords(f.privateRoot))[0]; assert.equal(frozen.p1!.p2!.titlePolicy, MAINTENANCE_SHORT_TITLE_POLICY);
+    frozen.p1!.writingPlan[0].targetPath = "wiki/阿波罗13号：成功的失败.md";
+    await state.saveP1Record(frozen);
+    const writeRejected = await f.call({ stage: "write", pageId: "one", content: page("阿波罗13号：成功的失败") }, [source]); assert.equal(writeRejected.status, "failed"); assert.match(writeRejected.message, /改短名/u);
+    assert.equal(await fs.stat(path.join(f.vault, frozen.p1!.writingPlan[0].targetPath)).catch(() => null), null, "new-policy write gate also rejects before producing a draft/WAL");
+    // Represent a plan frozen by the older version, without retroactively migrating it.
+    delete frozen.p1!.p2!.titlePolicy; frozen.p1!.p2!.finalization = [];
+    frozen.p1!.writingPlan[0].targetPath = "wiki/阿波罗13号：成功的失败.md";
+    (frozen.p1!.decompositions[0].units[0] as MaintenanceKnowledgeUnit).title = "阿波罗13号：成功的失败";
+    await state.saveP1Record(frozen); await f.restart();
+    f.ok(await f.call({ stage: "write", pageId: "one", content: page("阿波罗13号：成功的失败") }, [source]));
+    assert.match(await f.read("wiki/阿波罗13号：成功的失败.md"), /# 阿波罗13号：成功的失败/u);
+    assert.equal(await fs.stat(path.join(f.vault, "wiki/阿波罗13号.md")).catch(() => null), null);
+  });
+  await scenario("old-decomposition-not-retroactively-shortened-by-new-source", async f => {
+    const old = "raw/old.md", added = "raw/added.md"; await f.write(old, "# 原有来源\n旧检查点须保持。\n"); await f.write(added, "# 新来源\n新增知识使用短名。\n");
+    const first = await f.unit("old-id", old, "SQLite"), next = await f.unit("new-id", added, "阿波罗13号");
+    f.ok(await f.call({ stage: "decompose", decompositions: [{ sourcePath: old, summary: "原有摘要", units: [first] }] }, [old, added]));
+    const stored = (await readPrivateMaintenanceRecords(f.privateRoot))[0]; (stored.p1!.decompositions[0].units[0] as MaintenanceKnowledgeUnit).title = "SQLite 的适用场景与限制";
+    const state = new FilePhase3MaintenanceStateStore({ storageRootPath: f.privateRoot, vaultId: "p2-vault" }); await state.saveP1Record(stored); await f.restart();
+    f.ok(await f.call({ stage: "decompose", decompositions: [{ sourcePath: added, summary: "新增摘要", units: [next] }] }, [old, added]));
+    const after = (await readPrivateMaintenanceRecords(f.privateRoot))[0]; assert.equal(after.p1!.phase, "plan"); assert.equal((after.p1!.decompositions[0].units[0] as MaintenanceKnowledgeUnit).title, "SQLite 的适用场景与限制");
+  });
+  await scenario("changed-target-fresh-read-new-sections-new-draft-cold-resume", async f => {
+    const source = "raw/change.md", done = "wiki/已保存知识.md", target = "wiki/间隔复习.md";
+    const protectedTail = "## 关键原句\r\n用户自己收藏的关键原句。  \r\n\r\n";
+    const before = "---\r\naliases: []\r\ncustom: 0021 # keep\r\n---\r\n# 间隔复习\r\n\r\n原有导语。\r\n\r\n## 方法\r\n原方法。\r\n\r\n## 用户区域\r\n手写不动。  \r\n\r\n" + protectedTail;
+    await f.write(source, "# 复习来源\n根据掌握情况安排下一次复习。\n"); await f.write(target, before);
+    const units = [await f.unit("done", source, "已保存知识"), await f.unit("spaced", source, "间隔复习")];
+    f.ok(await f.decompose([source], units)); const observed = await f.observe(target);
+    f.ok(await f.call({ stage: "plan", writingPlan: [f.item("done", done, [source], ["done"]), f.item("spaced", target, [source], ["spaced"], observed)] }, [source]));
+    f.ok(await f.call({ stage: "write", pageId: "done", content: page("已保存知识") }, [source]));
+    const doneBytes = await f.read(done), doneStat = await fs.stat(path.join(f.vault, done));
+    const listed = await f.call({ stage: "sections", targetPath: target }, [source]); f.ok(listed);
+    const oldRegion = JSON.parse(listed.message).snapshot.regions.find((region: { title: string }) => region.title === "方法");
+    f.fail(target);
+    const initial = await f.call({ stage: "write", pageId: "spaced", sectionPatches: [{ regionId: oldRegion.id, operation: "append", content: "旧稿补充。" }] }, [source]); assert.equal(initial.status, "failed");
+    f.fail(null);
+    const oldDraft = (await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.drafts.spaced;
+    const edited = before.replace("手写不动。", "用户在并发期间新增的手写决定。手写不动。"); await f.write(target, edited);
+    const conflict = await f.call({ stage: "resume" }, [source]); assert.equal(conflict.status, "failed"); assert.match(conflict.message, /并发编辑冲突/u); assert.equal(await f.read(target), edited);
+    assert.ok(conflict.userReceipt); assert.match(conflict.userReceipt!.text, /修改|改过/u); assert.ok(maintenanceVisibleCopyIsSafe(conflict.userReceipt!.text));
+    assert.deepEqual(JSON.parse(conflict.message.split("\n").find(line => line.startsWith("{"))!).userReceipt, conflict.userReceipt, "model failures receive the same trusted counts as the UI");
+    await f.restart();
+    const unread = await f.call({ stage: "sections", targetPath: target }, [source]); assert.equal(unread.status, "failed"); assert.match(unread.message, /先完整note_read/u);
+    assert.equal((await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.drafts.spaced.content, oldDraft.content);
+    await f.observe(target);
+    const refreshed = await f.call({ stage: "sections", targetPath: target }, [source]); f.ok(refreshed); assert.ok(refreshed.userReceipt);
+    const fresh = JSON.parse(refreshed.message); assert.equal(fresh.draftDiscarded, true); assert.notEqual(fresh.snapshot.revision, oldRegion.id.split(":").slice(0, 2).join(":"));
+    const saved = (await readPrivateMaintenanceRecords(f.privateRoot))[0]; assert.equal(saved.p1!.drafts.spaced, undefined); assert.equal(saved.p1!.draftGenerations!.spaced, 1);
+    assert.deepEqual(saved.p1!.writingPlan[1].expectedTarget, { kind: "file", contentRevision: revision(edited) });
+    const stale = await f.call({ stage: "write", pageId: "spaced", sectionPatches: [{ regionId: oldRegion.id, operation: "append", content: "不能复用旧编号。" }] }, [source]); assert.equal(stale.status, "failed"); assert.equal(await f.read(target), edited);
+    await f.restart();
+    const newRegion = fresh.snapshot.regions.find((region: { title: string }) => region.title === "方法");
+    const completed = await f.call({ stage: "write", pageId: "spaced", sectionPatches: [{ regionId: newRegion.id, operation: "append", content: "按最新手写决定补充的新知识。" }] }, [source]); f.ok(completed);
+    const final = await f.read(target); assert.ok(final.includes("用户在并发期间新增的手写决定。手写不动。")); assert.ok(final.includes(protectedTail)); assert.ok(final.includes("custom: 0021 # keep\r\n")); assert.ok(final.includes("按最新手写决定补充的新知识。")); assert.ok(!final.includes("旧稿补充。"));
+    const finalRecord = (await readPrivateMaintenanceRecords(f.privateRoot))[0]; assert.notEqual(finalRecord.p1!.drafts.spaced.toolCallId, oldDraft.toolCallId); assert.match(finalRecord.p1!.drafts.spaced.toolCallId, /:r1$/u);
+    assert.equal(await f.read(done), doneBytes); assert.equal((await fs.stat(path.join(f.vault, done))).mtimeMs, doneStat.mtimeMs); assert.equal(f.writes.filter(item => item === done).length, 1);
+    assert.deepEqual(completed.userReceipt?.pageCounts, { written: 2, created: 1, updated: 1 }); assert.ok(maintenanceVisibleCopyIsSafe(completed.userReceipt!.text));
+    assert.deepEqual(JSON.parse(completed.message.split("\n").find(line => line.startsWith("{"))!).userReceipt, completed.userReceipt, "model completion JSON carries the exact trusted page breakdown and wording");
+  });
+  for (const recovery of ["sections", "resume"] as const) await scenario(`completed-wal-parent-checkpoint-lost-user-edit-${recovery}`, async f => {
+    const source = "raw/checkpoint.md", target = "wiki/间隔复习.md";
+    await f.write(source, "# 复习来源\n来源原句保持可复核。\n");
+    if (recovery === "sections") await f.write(target, page("间隔复习"));
+    const unit = await f.unit("spaced", source, "间隔复习"); f.ok(await f.decompose([source], [unit]));
+    const baseline = recovery === "sections" ? await f.observe(target) : undefined;
+    f.ok(await f.call({ stage: "plan", writingPlan: [f.item("one", target, [source], [unit.id], baseline)] }, [source]));
+    const initialParent = (await readPrivateMaintenanceRecords(f.privateRoot))[0];
+    const activity = (f.port as unknown as { activity: { save(record: typeof initialParent): Promise<void> } }).activity;
+    const save = activity.save.bind(activity); let crashed = false;
+    activity.save = async record => {
+      if (!crashed && record.p1?.committedPages.one) { crashed = true; throw new Error("Synthetic crash after completed WAL before parent page checkpoint"); }
+      await save(record);
+    };
+    let write: MaintenanceP1Action;
+    if (baseline !== undefined) {
+      const listed = await f.call({ stage: "sections", targetPath: target }, [source]); f.ok(listed);
+      const region = JSON.parse(listed.message).snapshot.regions.find((item: { title: string }) => item.title === "自定义知识正文");
+      write = { stage: "write", pageId: "one", sectionPatches: [{ regionId: region.id, operation: "append", content: "已确认写入的知识。" }] };
+    } else write = { stage: "write", pageId: "one", content: page("间隔复习") };
+    const failed = await f.call(write, [source]); assert.equal(failed.status, "failed"); assert.match(failed.message, /Synthetic crash after completed WAL/u); assert.equal(crashed, true);
+    const persisted = (await readPrivateMaintenanceRecords(f.privateRoot))[0];
+    assert.equal(persisted.p1!.committedPages.one, undefined, "the parent checkpoint was genuinely never persisted");
+    const draft = structuredClone(persisted.p1!.drafts.one), written = await f.read(target);
+    const store = new FilePhase3MaintenanceStateStore({ storageRootPath: f.privateRoot, vaultId: "p2-vault" });
+    const wal = (await store.listRecoverableWals("p2-vault")).find(item => item.authorization.contract.toolCallId === draft.toolCallId)!;
+    assert.equal(wal.status, "completed"); assert.equal(wal.preview.bookkeeping?.p1RecordId, persisted.recordId);
+    assert.equal(wal.actions[0].status, "completed"); assert.equal(wal.actions[0].domainStatus, "completed"); assert.equal(wal.actions[0].action.content, written);
+    assert.equal(f.writes.filter(item => item === target).length, 1);
+    await f.restart();
+    const edited = written + "\n## 用户后续修改\n这段是在成功回读后手写的，恢复时不能重写。  \n";
+    await f.write(target, edited); const stat = await fs.stat(path.join(f.vault, target)); await f.observe(target);
+    const recovered = await f.call(recovery === "sections" ? { stage: "sections", targetPath: target } : { stage: "resume" }, [source]); f.ok(recovered);
+    const checkpoint = (await readPrivateMaintenanceRecords(f.privateRoot))[0];
+    assert.deepEqual(checkpoint.p1!.drafts.one, draft, "old draft and original WAL identity remain immutable after successful historical readback");
+    assert.equal(checkpoint.p1!.draftGenerations?.one, undefined, "a completed page must not receive a replacement identity");
+    assert.deepEqual(checkpoint.p1!.committedPages.one, { path: target, contentRevision: revision(written) }, "parent completion binds the durable historical readback, not later user bytes");
+    f.ok(await f.call({ stage: "resume" }, [source]));
+    assert.equal(await f.read(target), edited); assert.equal((await fs.stat(path.join(f.vault, target))).mtimeMs, stat.mtimeMs);
+    assert.equal(f.writes.filter(item => item === target).length, 1, "completed WAL recovery only checkpoints/finalizes, never writes the target again");
+    assert.equal(isMaintenanceSourceProcessed(await f.read(source)), true);
+  });
+  await scenario("missing-target-user-created-rebases-as-update", async f => {
+    const source = "raw/new.md", target = "wiki/SQLite.md"; await f.write(source, "# SQLite原文\nSQLite把引擎嵌入进程。\n");
+    const unit = await f.unit("sqlite", source, "SQLite"); f.ok(await f.decompose([source], [unit])); f.ok(await f.call({ stage: "plan", writingPlan: [f.item("sqlite", target, [source], [unit.id])] }, [source]));
+    const handmade = "# SQLite\n\n用户先创建这页。\n\n## 用户区域\n并发创建的手写内容。\n"; await f.write(target, handmade);
+    const conflict = await f.call({ stage: "write", pageId: "sqlite", content: page("SQLite") }, [source]); assert.equal(conflict.status, "failed"); assert.equal(await f.read(target), handmade);
+    await f.observe(target); const listed = await f.call({ stage: "sections", targetPath: target }, [source]); f.ok(listed);
+    const intro = JSON.parse(listed.message).snapshot.regions.find((region: { kind: string }) => region.kind === "introduction");
+    const result = await f.call({ stage: "write", pageId: "sqlite", sectionPatches: [{ regionId: intro.id, operation: "append", content: "依据来源补充SQLite定义。" }] }, [source]); f.ok(result);
+    assert.ok((await f.read(target)).includes("并发创建的手写内容。")); assert.deepEqual(result.userReceipt?.pageCounts, { written: 1, created: 0, updated: 1 });
+  });
+  await scenario("rebase-new-section-created-by-user-uses-real-region", async f => {
+    const source = "raw/section.md", target = "wiki/间隔复习.md", before = page("间隔复习");
+    await f.write(source, "# 复习来源\n根据掌握情况安排复习。\n"); await f.write(target, before);
+    const unit = await f.unit("spaced", source, "间隔复习"); f.ok(await f.decompose([source], [unit])); const seen = await f.observe(target);
+    f.ok(await f.call({ stage: "plan", writingPlan: [{ ...f.item("spaced", target, [source], [unit.id], seen), newSections: ["应用步骤"] }] }, [source]));
+    const initial = await f.call({ stage: "sections", targetPath: target }, [source]); f.ok(initial);
+    const oldRegion = JSON.parse(initial.message).snapshot.regions.find((region: { kind: string }) => region.kind === "new-section");
+    f.fail(target); assert.equal((await f.call({ stage: "write", pageId: "spaced", sectionPatches: [{ regionId: oldRegion.id, operation: "append", content: "旧稿不能重放。" }] }, [source])).status, "failed"); f.fail(null);
+    const handwritten = "## 应用步骤\n用户并发新增同名小节，保留本段。  \n\n";
+    await f.write(target, before.replace("## 相关条目", `${handwritten}## 相关条目`)); await f.observe(target);
+    const refreshed = await f.call({ stage: "sections", targetPath: target }, [source]); f.ok(refreshed);
+    const snapshot = JSON.parse(refreshed.message).snapshot, real = snapshot.regions.find((region: { title: string }) => region.title === "应用步骤");
+    assert.equal(real.kind, "section"); assert.equal(snapshot.regions.some((region: { kind: string }) => region.kind === "new-section"), false);
+    assert.deepEqual((await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.writingPlan[0].newSections, []);
+    await f.restart(); f.ok(await f.call({ stage: "write", pageId: "spaced", sectionPatches: [{ regionId: real.id, operation: "append", content: "程序依据新原文补充。" }] }, [source]));
+    const after = await f.read(target); assert.equal(after.split("## 应用步骤").length, 2); assert.ok(after.includes("用户并发新增同名小节，保留本段。  \n")); assert.ok(after.includes("程序依据新原文补充。")); assert.ok(!after.includes("旧稿不能重放。"));
+  });
+  await scenario("unresolved-wal-blocks-rebase-and-cold-recovery", async f => {
+    const source = "raw/uncertain.md", target = "wiki/间隔复习.md", before = page("间隔复习");
+    await f.write(source, "# 原文\n写入结果不确定时不能直接换稿。\n"); await f.write(target, before);
+    const unit = await f.unit("uncertain", source, "间隔复习"); f.ok(await f.decompose([source], [unit])); const seen = await f.observe(target);
+    f.ok(await f.call({ stage: "plan", writingPlan: [f.item("one", target, [source], [unit.id], seen)] }, [source]));
+    const listed = await f.call({ stage: "sections", targetPath: target }, [source]); f.ok(listed);
+    const region = JSON.parse(listed.message).snapshot.regions.find((item: { title: string }) => item.title === "自定义知识正文");
+    f.fail(target); const failed = await f.call({ stage: "write", pageId: "one", sectionPatches: [{ regionId: region.id, operation: "append", content: "旧稿正文。" }] }, [source]); assert.equal(failed.status, "failed"); f.fail(null);
+    const store = new FilePhase3MaintenanceStateStore({ storageRootPath: f.privateRoot, vaultId: "p2-vault" });
+    const wal = (await store.listRecoverableWals("p2-vault")).find(item => item.actions.some(action => action.action.targetPath === target))!;
+    // Fault fixture: an unresolved write is durable, rather than silently assumed failed.
+    await store.saveWal({ ...wal, status: "blocked", sequence: wal.sequence + 1, error: "Synthetic uncertain write awaiting verification", actions: wal.actions.map(action => ({ ...action, status: "uncertain", error: "Synthetic uncertain write" })) }, wal.sequence);
+    const edited = before + "\n用户在未知写入后编辑。\n"; await f.write(target, edited); await f.observe(target);
+    const oldDraft = (await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.drafts.one;
+    const blocked = await f.call({ stage: "sections", targetPath: target }, [source]); assert.equal(blocked.status, "failed"); assert.equal(blocked.errorCode, "recovery_blocked");
+    assert.equal(await f.read(target), edited); assert.deepEqual((await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.drafts.one, oldDraft);
+    await assert.rejects(f.restart(), /Synthetic uncertain write/u); assert.equal(await f.read(target), edited);
+  });
   await scenario("controlled-new-h2-aliases-cold-resume-and-real-map-title",async f=>{
     const target="wiki/旧存储名.md", source="raw/spaced.md";
     const before="\uFEFF---\r\naliases: ['Spaced repetition'] # keep comment\r\n类型: 概念\r\n领域: 学习方法\r\ncustom: 0021 # preserve\r\n---\r\n# 间隔复习\r\n\r\n旧导语。\r\n\r\n## 用户手写\r\n保留这行。  \r\n\r\n\r\n用户多空行。\r\n\r\n## 来源\r\n用户手写来源说明。\r\n";
@@ -64,7 +233,7 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
   });
   await scenario("new-page-final-basename-h1-and-verified-aliases",async f=>{
     const source="raw/sqlite.md",target="wiki/SQLite.md",title="SQLite：理解嵌入式数据库的事务边界";
-    await f.write(source,"# SQLite原文\nSQLite把数据库引擎嵌入应用进程。\n");const unit=await f.unit("sqlite",source,title,"工具 / 产品");unit.aliases=["SQLite3"];unit.typePendingConfirmation=true;
+    await f.write(source,"# SQLite原文\nSQLite把数据库引擎嵌入应用进程。\n");const unit=await f.unit("sqlite",source,"SQLite","工具 / 产品");unit.aliases=["SQLite3"];unit.typePendingConfirmation=true;
     f.ok(await f.decompose([source],[unit]));f.ok(await f.call({stage:"plan",writingPlan:[f.item("sqlite",target,[source],[unit.id])]},[source]));
     f.ok(await f.call({stage:"write",pageId:"sqlite",content:page(title,"工具 / 产品").replace("aliases: []\n","")},[source]));
     const after=await f.read(target);assert.match(after,/# SQLite\n/u);assert.ok(after.includes(title),"descriptive article title remains in the lead");assert.ok(after.includes("SQLite3"));assert.ok(after.includes("类型待确认: true"),"a missing field is supplied from the verified pending unit in the production write chain");const map=await f.read("wiki/工程工具索引.md");assert.ok(map.includes("[SQLite](<SQLite.md>)"));assert.ok(!map.includes(`[${title}](`));

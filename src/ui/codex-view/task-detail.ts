@@ -1,10 +1,12 @@
 import type { SettingsLanguage } from "../../settings/settings";
 import type { AgentDefinition } from "../../agents/types";
-import { localDateLabel, localTaskTime, taskState, taskStateLabel, type TaskEntry } from "../../agents/task-presentation";
+import { localDateLabel, localTaskTime, taskEntryWithMaintenance, taskState, taskStateLabel, type TaskEntry } from "../../agents/task-presentation";
+import type { MaintenanceActivity } from "../../knowledge-base/maintenance-activity";
 import { disposeOriginControls } from "../../settings/origin-controls";
 import { renderTaskAvatar, taskIconButton } from "./agent-roster";
 
-export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition, entry: TaskEntry, onBack: () => void, language: SettingsLanguage = "zh-CN"): void {
+export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition, original: TaskEntry, onBack: () => void, language: SettingsLanguage = "zh-CN", maintenance: readonly Readonly<MaintenanceActivity>[] = []): void {
+  const entry = taskEntryWithMaintenance(original, maintenance);
   disposeOriginControls(root); root.empty();
   const header = root.createDiv({ cls: "echoink-task-detail-header" });
   taskIconButton(header, language === "en" ? "Back to tasks" : "返回任务列表", "arrow-left", onBack);

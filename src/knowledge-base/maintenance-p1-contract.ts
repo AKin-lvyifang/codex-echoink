@@ -76,8 +76,10 @@ export interface MaintenanceP1State {
   sourceFingerprints: Record<string, string>;
   decompositions: readonly MaintenanceDecomposition[];
   writingPlan: readonly MaintenanceWritingItem[];
-  /** Exact final bytes locked before WAL submission; recover never asks the model to redraft. */
+  /** Version-bound regions. A changed, re-read uncommitted page may acquire a fresh snapshot. */
   sectionSnapshots?: Record<string, MaintenanceSectionSnapshot>;
+  /** Host-owned generation increases only when fresh sections discard a stale uncommitted draft. */
+  draftGenerations?: Record<string, number>;
   folderBindingsRevision?: number;
   drafts: Record<string, { content: string; toolCallId: string }>;
   committedPages: Record<string, { path: string; contentRevision: string }>;

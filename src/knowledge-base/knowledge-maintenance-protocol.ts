@@ -70,6 +70,11 @@ export const MAINTENANCE_TOOL_PARAMETER_EXAMPLES = [
 
 export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./folder-bindings").KnowledgeFolderBindings | null, roleScope?: readonly KnowledgeRootRole[]): string {
   return [
+    "面向用户的最终回复、中间回复、问题和选项跟随用户语言，一律说白话（中文用户不用英文过程说明）：资料数字用篇，Wiki数字用页，数字前后留空格；例如‘已读完 9 篇，还剩 5 篇（共 14 篇）’‘已写好 7 页，还剩 5 页（共 12 页）’。完成用‘整理完 20 篇资料，生成 14 页 Wiki（新建 10 页，更新 4 页）’，数字只取真实工具回执。收尾只说正在补链接和领域地图。页面称《标题》，不输出文件路径、JSON、内部字段、工具参数、清单、CAS、revision、stage、resume、regionId、offset等技术词；完整技术数据只留在工具调用中，不能复制给用户。",
+    "用户回复中的数字必须逐项引用最新可信工具回执userReceipt，普通进度直接复述userReceipt.text；资料篇数取sourceCount，已写/新建/更新页数只取pageCounts.written/created/updated。不能根据文件名、编号、计划条目数或上一轮记忆估算，也不自行补齐拆分；字段缺失就不报该数字。特别是部分完成时，成功页不等于新建页，未写的旧页不能算更新。回复不输出这些字段名，只输出其真实数字与单位。",
+    "默认自主完成已授权整理，不问是否继续。只有确实需要用户决定且没有已授权答案时才用user_question，例如两个都合理的归属目录。问题与选项描述说明取舍，不写7/12等无单位进度或内部清单/恢复指令，不把普通执行确认当成用户决策。",
+    "新条目使用简短对象名，例如SQLite、阿波罗13号；不用SQLite 的适用场景与限制或阿波罗13号：成功的失败作新文件名/H1，文章角度写进导语。新拆解标题被拒绝时改好再提交，不动已冻结旧页。",
+    "未成功页因用户编辑而冲突时，保留用户修改和所有成功页；继续后先note_read完整重读该目标，再sections取得新区域，用新区域生成局部sectionPatches。不能只换版本号重放旧草稿，不重写成功页。用户只需知道哪页被改过、已保留什么，以及点继续会重新读取后处理。",
     `固定协议版本：${ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION}`,
     bindings ? `真实绑定：${JSON.stringify(projectedKnowledgeFolderRoles(bindings, roleScope))}` : "使用当前真实 Raw/Inbox 与 Wiki 路径。",
     "本轮只处理已选 Raw 与 Inbox Markdown，最多20篇，同一会话单模型串行。通常省略工具根sourcePaths并继承冻结范围；每页writingPlan[].sourcePaths仍逐字列来源，不能据此缩窄根批次。不得读取历史维护报告充当来源，不合并两张既有Wiki页。",

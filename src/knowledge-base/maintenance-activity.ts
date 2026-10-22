@@ -1,5 +1,6 @@
 import type { KnowledgeMaintenanceRecord } from "./maintenance-record";
 import type { KnowledgeLinkingTask } from "./knowledge-linking-types";
+import { maintenanceFailureText } from "./maintenance-user-copy";
 
 export const MAINTENANCE_ACTIVITY_STAGES = ["scan", "decompose", "plan", "write", "finalize"] as const;
 export type MaintenanceActivityStage = typeof MAINTENANCE_ACTIVITY_STAGES[number];
@@ -39,6 +40,7 @@ export interface MaintenanceActivity {
   steps: readonly MaintenanceActivityStep[];
   sourceCount: number | null;
   sourcePaths: readonly string[];
+  pageCounts?: Readonly<MaintenancePageCounts>;
   batch: { index: number; total: number };
   currentPath?: string;
   activeElapsedMs: number;
@@ -111,7 +113,7 @@ export function projectMaintenanceActivity(record: Readonly<KnowledgeMaintenance
   const etaMs = status === "running" && current.completed >= 2 && current.total !== null && current.total > current.completed && elapsed > 0
     ? Math.round(elapsed / current.completed * (current.total - current.completed)) : null;
   return { kind: "maintenance", id: record.recordId, originConversationId: record.originConversationId, stage, status, steps,
-    sourceCount: record.sources.length, sourcePaths: record.sources.map(source => source.path), batch: progress?.batch ?? { index: 1, total: 1 }, ...(progress?.currentPath ? { currentPath: progress.currentPath } : {}),
+    sourceCount: record.sources.length, sourcePaths: record.sources.map(source => source.path), pageCounts: maintenancePageCounts(record), batch: progress?.batch ?? { index: 1, total: 1 }, ...(progress?.currentPath ? { currentPath: progress.currentPath } : {}),
     activeElapsedMs: Object.values(progress?.elapsedMs ?? {}).reduce((sum, value) => sum + value, 0), etaMs,
     failures: progress?.failures ?? [], updatedAt: progress?.updatedAt ?? record.at,
     ...(progress?.completedAt ? { completedAt: progress.completedAt } : {}) };
@@ -153,26 +155,58 @@ export function maintenanceStageLabel(stage: MaintenanceActivityStage, english =
   return (english ? { scan: "Scanning", decompose: "Extracting knowledge", plan: "Comparing knowledge", write: "Writing Wiki", finalize: "Finalizing" }
     : { scan: "扫描", decompose: "拆知识点", plan: "汇总查重", write: "写Wiki", finalize: "收尾" })[stage];
 }
-export function maintenanceActivityText(activity: Readonly<MaintenanceActivity>, english = false): string {
-  const status = activity.status === "waiting" ? (english ? "Waiting for you" : "等你确认")
-    : activity.status === "interrupted" ? (english ? "Ready to resume" : "可继续")
-    : activity.status === "failed" ? (english ? "Failed · Ready to resume" : "维护失败 · 可继续")
-    : activity.status === "partial" ? (english ? "Partially completed · Ready to resume" : "部分完成 · 可继续")
-    : activity.status === "completed" ? (english ? "Completed" : "已完成") : maintenanceStageLabel(activity.stage, english);
-  const step = activity.steps.find(s => s.stage === activity.stage);
-  const count = step?.total !== null && step?.total !== undefined ? ` ${step.completed} / ${step.total}` : "";
-  const eta = activity.status === "running" && activity.etaMs !== null ? (english ? ` · about ${Math.max(1, Math.ceil(activity.etaMs / 60_000))} min left` : ` · 约剩${Math.max(1, Math.ceil(activity.etaMs / 60_000))}分钟`) : "";
-  const stepNumber = MAINTENANCE_ACTIVITY_STAGES.indexOf(activity.stage) + 1;
-  const detail = activity.status === "waiting" ? `${maintenanceStageLabel(activity.stage, english)}${count} · ${status}` : `${status}${count}`;
-  return `${english ? `Batch ${activity.batch.index}/${activity.batch.total} · Step ${stepNumber}/5` : `第${activity.batch.index}/${activity.batch.total}批 · 第${stepNumber}/5步`} · ${detail}${eta}`;
+export interface MaintenancePageCounts { written: number; created: number; updated: number }
+export interface MaintenanceUserReceipt { version: 1; text: string; sourceCount?: number; pageCounts?: Readonly<MaintenancePageCounts> }
+export function maintenancePageCounts(record: Readonly<KnowledgeMaintenanceRecord>): MaintenancePageCounts {
+  const pages = new Map<string, "missing" | "file">();
+  for (const item of record.p1?.writingPlan ?? []) if (record.p1?.committedPages[item.id]) pages.set(item.targetPath, item.expectedTarget.kind);
+  return { written: pages.size, created: [...pages.values()].filter(kind => kind === "missing").length, updated: [...pages.values()].filter(kind => kind === "file").length };
 }
-
+export function maintenanceTaskStatus(activity: Pick<MaintenanceActivity, "status">): "running" | "waiting" | "interrupted" | "completed" {
+  return activity.status === "completed" ? "completed" : activity.status === "waiting" ? "waiting" : activity.status === "running" ? "running" : "interrupted";
+}
+export function maintenanceTaskStateLabel(activity: Pick<MaintenanceActivity, "status">, english = false): string {
+  return (english ? { running: "In progress", waiting: "Waiting for you", interrupted: "Not finished", completed: "Completed" }
+    : { running: "进行中", waiting: "等你回应", interrupted: "没做完", completed: "已完成" })[maintenanceTaskStatus(activity)];
+}
+export function maintenanceCompletionText(activity: Pick<MaintenanceActivity, "sourceCount" | "pageCounts">, english = false): string {
+  const { sourceCount, pageCounts } = activity;
+  if (sourceCount === null || !pageCounts) return english ? "Organizing completed." : "这次整理已完成。";
+  return english ? `Organized ${sourceCount} sources and produced ${pageCounts.written} Wiki pages (${pageCounts.created} new, ${pageCounts.updated} updated)`
+    : `整理完 ${sourceCount} 篇资料，生成 ${pageCounts.written} 页 Wiki（新建 ${pageCounts.created} 页，更新 ${pageCounts.updated} 页）`;
+}
+export function maintenanceStepText(step: Readonly<MaintenanceActivityStep>, english = false): string {
+  if (step.stage === "finalize") return english ? "Adding links and domain maps" : "正在补链接和领域地图";
+  const label = maintenanceStageLabel(step.stage, english);
+  if (step.total === null || !["decompose", "write"].includes(step.stage)) return label;
+  const remaining = Math.max(0, step.total - step.completed), unit = step.stage === "decompose" ? "篇" : "页";
+  return english ? `${step.stage === "decompose" ? "Read" : "Written"} ${step.completed} ${step.stage === "decompose" ? "sources" : "pages"}, ${remaining} left (${step.total} total)`
+    : `${step.stage === "decompose" ? "已读完" : "已写好"} ${step.completed} ${unit}，还剩 ${remaining} ${unit}（共 ${step.total} ${unit}）`;
+}
+export function maintenanceReceiptForRecord(record: Readonly<KnowledgeMaintenanceRecord>): MaintenanceUserReceipt {
+  const state = record.p1!, pageCounts = maintenancePageCounts(record), sourceCount = new Set(record.sources.map(source => source.path)).size;
+  const text = state.phase === "completed" ? maintenanceCompletionText({ sourceCount, pageCounts })
+    : state.phase === "decompose" ? maintenanceStepText({ stage: "decompose", completed: new Set(state.decompositions.map(d => d.sourcePath)).size, total: sourceCount, state: "running" })
+    : state.phase === "write" ? maintenanceStepText({ stage: "write", completed: pageCounts.written, total: new Set(state.writingPlan.map(item => item.targetPath)).size, state: "running" })
+    : state.phase === "finalize" ? "正在补链接和领域地图" : "正在汇总知识，核对已有内容。";
+  return { version: 1, text, sourceCount, pageCounts };
+}
+export function maintenanceActivityText(activity: Readonly<MaintenanceActivity>, english = false): string {
+  if (activity.status === "completed") return maintenanceCompletionText(activity, english);
+  const status = maintenanceTaskStateLabel(activity, english), step = activity.steps.find(step => step.stage === activity.stage);
+  const progress = step ? maintenanceStepText(step, english) : maintenanceStageLabel(activity.stage, english);
+  const eta = activity.status === "running" && activity.etaMs !== null ? (english ? ` · about ${Math.max(1, Math.ceil(activity.etaMs / 60_000))} min left` : ` · 约剩${Math.max(1, Math.ceil(activity.etaMs / 60_000))}分钟`) : "";
+  const reason = maintenanceTaskStatus(activity) === "interrupted" ? ` · ${activity.failures[0] ? maintenanceFailureText(activity.failures[0].message, activity.currentPath, english) : english ? "Stopped; saved work is preserved." : "这次整理已停下，已写好的内容会保留。"}` : "";
+  const stepNumber = MAINTENANCE_ACTIVITY_STAGES.indexOf(activity.stage) + 1;
+  const position = english ? `Batch ${activity.batch.index}/${activity.batch.total} · Step ${stepNumber}/5`
+    : `第 ${activity.batch.index} 批（共 ${activity.batch.total} 批）· 第 ${stepNumber} 步（共 5 步）`;
+  const stage = maintenanceStageLabel(activity.stage, english);
+  return `${position} · ${status} · ${stage}${progress === stage ? "" : ` · ${progress}`}${eta}${reason}`;
+}
 export function maintenanceStatusBarText(activity: Readonly<MaintenanceActivity>, english = false): string {
-  if (activity.status === "waiting") return english ? "EchoInk Waiting for you" : "EchoInk 等你确认";
-  const label = activity.status === "running" ? (english ? "Organizing knowledge" : "整理知识")
-    : activity.status === "partial" ? (english ? "Partially completed" : "部分完成")
-    : activity.status === "failed" ? (english ? "Maintenance failed" : "维护失败")
-    : activity.status === "completed" ? (english ? "Completed" : "整理完成") : (english ? "Ready to resume" : "可继续");
   const step = activity.steps.find(step => step.stage === activity.stage);
-  return `EchoInk ${label}${step?.total !== null && step?.total !== undefined ? ` ${step.completed}/${step.total}` : ""}`;
+  const count = step?.total !== null && step?.total !== undefined && ["decompose", "write"].includes(activity.stage)
+    ? ` ${step.completed}/${step.total}${english ? activity.stage === "decompose" ? " sources" : " pages" : activity.stage === "decompose" ? " 篇" : " 页"}` : "";
+  const stage = activity.stage === "finalize" ? english ? "Adding links and maps" : "补链接和领域地图" : maintenanceStageLabel(activity.stage, english);
+  return `EchoInk ${english ? "Organize knowledge" : "整理知识"}：${maintenanceTaskStateLabel(activity, english)} · ${stage}${count}`;
 }

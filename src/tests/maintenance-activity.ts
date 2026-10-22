@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { buildAgentTurns } from "../ui/codex-view/agent-turn-process";
+import { PiChatUiProjector } from "../harness/pi-native/pi-chat-ui-projector";
+import { maintenanceFailureText, maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fixture } from "./knowledge-maintain-p2";
@@ -6,7 +9,7 @@ import { KnowledgeActivityService } from "../plugin/knowledge-activity-service";
 import { PiAgentApprovalBroker } from "../plugin/pi-agent-approval-broker";
 import { MaintenanceActivityController } from "../plugin/maintenance-activity-controller";
 import { readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
-import { maintenanceActivityText, maintenanceBatchContext, maintenanceStatusBarText, newMaintenanceProgress, projectMaintenanceActivity, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import { maintenanceActivityText, maintenanceBatchContext, maintenanceCompletionText, maintenanceTaskStateLabel, maintenanceStatusBarText, newMaintenanceProgress, projectMaintenanceActivity, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 import { applyMaintenanceSectionPatches, assertMaintenanceQuoteSectionsPreserved, createMaintenanceSectionSnapshot } from "../knowledge-base/maintenance-section-patch";
 import { applyMaintenanceRelatedEntries } from "../knowledge-base/maintenance-p2-planning";
 import type { MaintenanceP1Action } from "../knowledge-base/maintenance-p1-contract";
@@ -23,6 +26,7 @@ function linkingSource() {
 const page = (title: string) => `---\n类型: 概念\naliases: []\n---\n# ${title}\n${title}的独立定义。\n\n## 要点\n说明适用边界与使用方式。\n`;
 
 export async function runMaintenanceActivityTests(root: string): Promise<void> {
+  assertMaintenanceUserPresentation();
   await fs.mkdir(root, { recursive: true });
   let now = 1_800_000_000_000;
   const links = linkingSource(), source = new KnowledgeActivityService(links, async () => []), notices: string[] = [];
@@ -60,8 +64,8 @@ export async function runMaintenanceActivityTests(root: string): Promise<void> {
     await wait("question:real-question-id", true);
     const elapsedBeforeWait = current().activeElapsedMs;
     assert.equal(current().status, "waiting"); assert.equal(current().etaMs, null);
-    assert.match(maintenanceActivityText(current()), /第2\/3批.*第2\/5步.*拆知识点.*等你确认/u);
-    assert.equal(maintenanceStatusBarText(current()), "EchoInk 等你确认");
+    assert.match(maintenanceActivityText(current()), /等你回应.*已读完 2 篇.*还剩 1 篇.*共 3 篇/u);
+    assert.equal(maintenanceStatusBarText(current()), "EchoInk 整理知识：等你回应 · 拆知识点 2/3 篇");
     const broker = new PiAgentApprovalBroker((input, waiting) => wait(`approval:${input.requestId}`, waiting));
     const approval = { requestId: "approve-1", conversationId: "p2-fixture", piSessionId: "fixture", productRunId: runId, toolCallId: "approval-call", target: "fixture", preview: "fixture" };
     const decision = broker.waitForDecision(approval);
@@ -80,6 +84,7 @@ export async function runMaintenanceActivityTests(root: string): Promise<void> {
     assert.equal(current().activeElapsedMs, stoppedElapsed, "offline and stopped time is never inferred from a timestamp");
     f.ok(await call({ stage: "decompose", decompositions: [{ sourcePath: paths[2], summary: "第三篇", units: [units[2]] }] }));
     assert.equal(current().stage, "plan"); assert.equal(current().steps.find(step => step.stage === "plan")!.total, null);
+    assert.doesNotMatch(maintenanceActivityText(current()), /汇总查重.*汇总查重/u);
     const items = paths.map((file, index) => f.item(`page-${index}`, `wiki/知识点${index + 1}.md`, [file], [units[index].id]));
     f.ok(await call({ stage: "plan", writingPlan: items }));
     f.ok(await call({ stage: "write", pageId: "page-0", content: page("知识点1") }));
@@ -97,6 +102,9 @@ export async function runMaintenanceActivityTests(root: string): Promise<void> {
     assert.equal(current().status, "completed"); assert.equal(count("write"), 3); assert.equal(current().completedAt, now);
     assert.equal(f.writes.filter(file => file === items[0].targetPath).length, firstWrites);
     assert.equal(notices.length, 1);
+    assert.deepEqual(current().pageCounts, { written: 3, created: 3, updated: 0 });
+    assert.equal(notices[0], maintenanceCompletionText(current()));
+    assert.equal(notices[0], "整理完 3 篇资料，生成 3 页 Wiki（新建 3 页，更新 0 页）");
     await f.port.maintenanceActivity({ type: "settled", conversationId: "p2-fixture", productRunId: runId });
     const unsub = source.subscribe(() => {}); unsub(); assert.equal(notices.length, 1, "settlement and remount cannot repeat the terminal Notice");
     const records = await readPrivateMaintenanceRecords(f.privateRoot);
@@ -225,4 +233,51 @@ async function assertCoordinatorRestoreAndHandoff(root: string): Promise<void> {
   await notification; assert.equal(trajectory.includes(null), false, "delayed subscriber publication cannot create an empty handoff frame");
   unsubscribe(); delayedService.dispose();
   await fs.writeFile(path.join(root, "p3-coordinator.json"), JSON.stringify({ passed: true, restoreOrders: 2, sameSource: true, noEmptyHandoff: true }));
+}
+
+
+export function assertMaintenanceUserPresentation(): void {
+  for (const [status, label] of [["running", "进行中"], ["waiting", "等你回应"], ["interrupted", "没做完"], ["partial", "没做完"], ["failed", "没做完"], ["completed", "已完成"]] as const) assert.equal(maintenanceTaskStateLabel({ status }), label);
+  const raw = 'pendingPageCount expectedTarget writingPlan decompositions sectionPatches contentRevision sourcePath sourcePaths targetPath regionId unitIds nextOffset resume stage revision CAS 清单 wiki/指数退避.md';
+  assert.equal(maintenanceVisibleCopyIsSafe(raw), false);
+  for (const token of ['recordId', 'toolCallId', 'productRunId', 'maintenanceStage', 'aliases', 'writingPlan', 'decompositions', 'sectionPatches', 'contentRevision', 'sourcePath', 'sourcePaths', 'targetPath', 'candidatePath', 'reverseReason', 'knowledge.decision', 'pendingPageCount', 'expectedTarget', 'regionId', 'unitIds', 'nextOffset', 'resume', 'stage', 'revision', 'CAS', '清单']) assert.equal(maintenanceVisibleCopyIsSafe(token), false, token);
+  const friendly = maintenanceFailureText('目标并发编辑冲突：wiki/指数退避.md；resume expectedTarget contentRevision');
+  assert.equal(friendly, '《指数退避》在整理时被改过。为了不覆盖你的修改，这一页先跳过了；点继续会重新读取后再写。');
+  assert.ok(maintenanceVisibleCopyIsSafe(friendly));
+  const visibleQuestion = { questionId: 'stage-internal-id', prompt: '放在哪个目录更合适？', options: [{ optionId: 'resume', label: '工程工具', description: '侧重实际使用。' }, { optionId: 'writingPlan', label: '软件架构', description: '侧重设计取舍。' }] };
+  assert.ok([visibleQuestion.prompt, ...visibleQuestion.options.flatMap(option => [option.label, option.description])].every(text => maintenanceVisibleCopyIsSafe(text, true)), 'machine option/question IDs are not visible copy');
+  assert.equal(maintenanceVisibleCopyIsSafe('继续原清单 7/12', true), false);
+  const projector = new PiChatUiProjector(), identity = { piSessionId: 'p31-session', productRunId: 'p31-run', conversationId: 'p31-task', activeLeafId: null };
+  let view = projector.createEmpty(identity);
+  view = projector.projectRuntimeEvent({ current: view, event: { ...identity, type: 'tool_execution_start', occurredAt: 1, toolCallId: 'p31-tool', toolName: 'knowledge_maintain', args: { stage: 'inspect', offset: 2, expectedTarget: raw } } });
+  assert.ok(view.messages.filter(message => message.role === 'tool').every(message => !message.processInput));
+  const result = { content: [{ type: 'text' as const, text: raw }], details: { source: 'echoink-knowledge-maintenance', status: 'completed', userReceipt: { version: 1, text: '已写好 7 页，还剩 5 页（共 12 页）' } } };
+  const untouched = JSON.stringify(result);
+  view.messages.find(message => message.role === 'tool')!.processInput = raw;
+  view = projector.projectRuntimeEvent({ current: view, event: { ...identity, type: 'tool_execution_end', occurredAt: 2, toolCallId: 'p31-tool', toolName: 'knowledge_maintain', result, isError: false } });
+  const check = (messages: typeof view.messages) => { const tool = messages.find(message => message.role === 'tool')!; assert.equal(tool.text, result.details.userReceipt.text); assert.equal(tool.processInput, undefined); assert.ok([tool.title, tool.text, tool.details, tool.processOutput].filter(Boolean).every(text => maintenanceVisibleCopyIsSafe(text!))); };
+  check(view.messages);
+  const cold = projector.projectSessionBranch({ ...identity, entries: [{ type: 'message', id: 'tool-call', parentId: null, timestamp: new Date(1).toISOString(), message: { role: 'assistant', content: [{ type: 'toolCall', id: 'p31-tool', name: 'knowledge_maintain', arguments: { stage: 'sections', regionId: raw } }] } }, { type: 'message', id: 'tool-result', parentId: 'tool-call', timestamp: new Date(2).toISOString(), message: { role: 'toolResult', toolCallId: 'p31-tool', toolName: 'knowledge_maintain', content: result.content, details: result.details, isError: false } }] });
+  check(cold.messages);
+  const thought = 'I will submit decompositions then knowledge.decision candidatePath reverseReason';
+  for (const event of [{ ...identity, maintenanceContext: true, type: 'provider_reasoning_start' as const, occurredAt: 3, messageKey: 'thinking', reasoningId: 'provider-thought' }, { ...identity, maintenanceContext: true, type: 'provider_reasoning_delta' as const, occurredAt: 4, messageKey: 'thinking', reasoningId: 'provider-thought', textDelta: thought }, { ...identity, maintenanceContext: true, type: 'provider_reasoning_end' as const, occurredAt: 5, messageKey: 'thinking', reasoningId: 'provider-thought', text: thought, status: 'completed' as const }]) view = projector.projectRuntimeEvent({ current: view, event });
+  const thinking = view.messages.flatMap(message => message.assistantTurn?.providerReasoningSegments ?? []);
+  assert.ok(thinking.length > 0); assert.ok(thinking.every(segment => segment.text === '正在理解资料并核对已有知识。'));
+  const storedThought = { type: 'message' as const, id: 'thought', parentId: null, timestamp: new Date(5).toISOString(), message: { role: 'assistant', content: [{ type: 'thinking', thinking: thought }] } };
+  const stopped = { type: 'message' as const, id: 'stopped', parentId: 'thought', timestamp: new Date(6).toISOString(), message: { role: 'assistant', stopReason: 'aborted', errorMessage: 'provider_request_failed', content: [] } };
+  const coldThought = projector.projectSessionBranch({ ...identity, entries: [storedThought, stopped], runIdentities: [{ productRunId: identity.productRunId, userEntryId: 'user', assistantEntryId: 'thought', knowledgeWorkflow: 'maintain' }] });
+  assert.ok(coldThought.messages.flatMap(message => message.assistantTurn?.providerReasoningSegments ?? []).every(segment => maintenanceVisibleCopyIsSafe(segment.text)));
+  assert.ok(coldThought.messages.some(message => message.text.includes('这次生成已停止')));
+  assert.ok(!coldThought.messages.some(message => message.text.includes('模型服务请求失败')));
+  assert.equal(storedThought.message.content[0].thinking, thought, 'full provider thinking stays untouched in Session');
+  view = projector.projectRuntimeEvent({ current: view, event: { ...identity, maintenanceContext: true, type: 'tool_execution_end', occurredAt: 7, toolCallId: 'cli', toolName: 'obsidian_cli', result: { error: raw }, isError: true } });
+  const cli = view.messages.find(message => message.title?.startsWith('检查笔记'))!;
+  assert.ok(cli); assert.ok(maintenanceVisibleCopyIsSafe(cli.text)); assert.equal(cli.processInput, undefined);
+  const summary = { schemaVersion: 1 as const, conversationId: identity.conversationId, piSessionId: identity.piSessionId, productRunId: identity.productRunId, status: 'running' as const, startedAt: 1, updatedAt: 8, activities: [{ id: 'unknown-tool', kind: 'tool' as const, name: 'unregistered_internal_tool', status: 'failed' as const, startedAt: 1, updatedAt: 8 }] };
+  view = projector.projectRuntimeEvent({ current: view, event: { ...identity, maintenanceContext: true, type: 'reasoning_summary', occurredAt: 8, summary } });
+  const processTitles = buildAgentTurns(view.messages).flatMap(turn => turn.processNodes.map(node => node.title));
+  assert.ok(processTitles.includes('这一步没完成'));
+  assert.ok(!processTitles.some(title => title.includes('unregistered_internal_tool')));
+  assert.equal(summary.activities[0].name, 'unregistered_internal_tool', 'the original registered tool identity stays internal');
+  assert.equal(JSON.stringify(result), untouched, 'UI projection must preserve the full model-facing JSON and tool arguments');
 }
