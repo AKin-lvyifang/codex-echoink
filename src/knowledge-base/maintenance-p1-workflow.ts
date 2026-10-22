@@ -196,7 +196,7 @@ export class MaintenanceP1Workflow {
       if (plan.some(item => item.targetPath === targetPath)) continue;
       const before = await this.host.read(targetPath);
       if (before === null || input.observedTargetRevisions?.[targetPath] !== revision(before)) throw new Error(`相关旧页也须先note_read当前版本，才能补互链：${targetPath}`);
-      const origins = plan.filter(item => item.knowledge?.decision.kind === "uncertain" && item.knowledge.related?.some(relation => relation.targetPath === targetPath));
+      const origins = plan.filter(item => item.knowledge?.related?.some(relation => relation.targetPath === targetPath && typeof relation.reverseReason === "string" && relation.reverseReason.trim()));
       const sourcePaths = [...new Set(origins.flatMap(item => item.sourcePaths))];
       if (!sourcePaths.length) throw new Error("相关条目缺少本批来源依据。");
       const item: MaintenanceWritingItem = { id: `relation-${hash(targetPath).slice(0,16)}`, targetPath, sourcePaths, expectedTarget: { kind: "file", contentRevision: revision(before) } };

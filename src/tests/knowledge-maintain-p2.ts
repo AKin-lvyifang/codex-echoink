@@ -171,6 +171,32 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     for(const map of maps){assert.ok(!(await f.read(a)).includes(`[[${map}]]`));assert.ok(!(await f.read(b)).includes(`[[${map}]]`));}
     assert.ok((await f.read(old)).includes(`[[${a}|关系原文A]]`));assert.equal(canonicalRawMarkdownForDigest(await f.read(a)),canonicalRawMarkdownForDigest(originalA));assert.equal(canonicalRawMarkdownForDigest(await f.read(b)),canonicalRawMarkdownForDigest(originalB));
   });
+  await scenario("new-explicit-reverse-reason-and-one-way-preservation", async f => {
+    const source="raw/learning-ledger.md",target="wiki/学习账本.md",archive="wiki/学习档案.md",oneWay="wiki/学习记录.md";
+    const before="\uFEFF---\r\n类型: 概念\r\n领域: 学习方法\r\naliases: [User archive]\r\ncustom: 0021 # preserve\r\n---\r\n# 学习档案\r\n用户写的完整导语。  \r\n\r\n## 手写正文\r\n保留这些段落与空白。  \r\n\r\n## 相关条目\r\n用户手写的关系说明。\r\n";
+    const oneWayBefore="# 学习记录\n用户的现有示例，只作正向参照。\n",rawBefore="# 学习账本原始材料\n学习账本与学习档案的边界尚未厘清，学习记录只作为字段示例。\n";
+    await f.write(archive,before);await f.write(oneWay,oneWayBefore);await f.write(source,rawBefore);
+    const unit=await f.unit("ledger",source,"学习账本","工具 / 产品");unit.domain="学习方法";unit.typePendingConfirmation=true;
+    f.ok(await f.decompose([source],[unit]));await f.observe(archive);
+    const item=f.item("ledger",target,[source],[unit.id]);item.knowledge={...item.knowledge!,decision:{kind:"new",reason:"现有学习档案不是同一对象，依据不足不能判同一点，因此新建并明确保留关系。"},related:[{targetPath:archive,reason:"两者边界尚未厘清，只保留参照关系。",reverseReason:"学习账本可能是学习档案的一种记录，也可能独立，关系待确认。"},{targetPath:oneWay,reason:"可相互参照的自然语言说明仍不构成反向写入指令。"}]};
+    for(const reverseReason of ["","  ","一行\n另一行","[非法]","<非法>"]){const invalid=structuredClone(item);invalid.knowledge!.related![0].reverseReason=reverseReason;const result=await f.call({stage:"plan",writingPlan:[invalid]},[source]);assert.equal(result.status,"failed");assert.match(result.message,/reverseReason/u);}
+    const missing=structuredClone(item);missing.knowledge!.decision={kind:"uncertain",candidatePath:archive,reason:"不确定时仍强制完整双向说明"};delete missing.knowledge!.related![0].reverseReason;const rejected=await f.call({stage:"plan",writingPlan:[missing]},[source]);assert.equal(rejected.status,"failed");assert.match(rejected.message,/reverseReason/u);assert.deepEqual(f.writes,[]);
+    f.ok(await f.call({stage:"plan",writingPlan:[item]},[source]));
+    const planned=(await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.p2!.finalization;
+    assert.deepEqual(planned.filter(draft=>draft.kind==="relationship").map(draft=>draft.targetPath),[archive],"new + explicit reverseReason schedules a reverse write; ordinary related stays one-way");
+    f.fail(archive);const first=await f.call({stage:"write",pageId:item.id,content:page(unit.title,unit.type).replace("aliases:","类型待确认: true\naliases:")},[source]);
+    assert.equal(first.status,"failed");assert.equal(await f.read(source),rawBefore);assert.equal(await f.read(archive),before);assert.equal(await f.read(oneWay),oneWayBefore);
+    const primary=await f.read(target),primaryWrites=f.writes.filter(path=>path===target).length;
+    assert.ok(primary.includes(`[[${archive}|学习档案]]`));assert.ok(primary.includes(`[[${oneWay}|学习记录]]`));
+    f.fail(null);await f.restart();f.ok(await f.call({stage:"resume"},[source]));
+    assert.equal(await f.read(target),primary);assert.equal(f.writes.filter(path=>path===target).length,primaryWrites);
+    const after=await f.read(archive);assert.ok(after.startsWith(before),"existing attributes and all handwritten content remain byte exact");assert.ok(after.includes(`[[${target}|学习账本]]`));assert.ok(after.includes(item.knowledge.related![0].reverseReason!));assert.equal(after.split(`[[${target}|`).length-1,1);
+    assert.equal(await f.read(oneWay),oneWayBefore);assert.equal(f.writes.includes(oneWay),false,"missing reverseReason never writes a reverse link");
+    const record=(await readPrivateMaintenanceRecords(f.privateRoot))[0],maps=record.p1!.p2!.finalization.filter(draft=>draft.kind==="map").map(draft=>draft.targetPath);
+    assert.deepEqual(record.sources[0].evidencePaths,[target,archive]);for(const path of [target,archive])assert.ok((await f.read(source)).includes(`[[${path}]]`));
+    assert.ok(!(await f.read(source)).includes(`[[${oneWay}]]`));for(const map of maps)assert.ok(!(await f.read(source)).includes(`[[${map}]]`));
+    const writes=[...f.writes],contents=await Promise.all([source,target,archive,oneWay,...maps].map(path=>f.read(path)));f.ok(await f.call({stage:"resume"},[source]));assert.deepEqual(f.writes,writes);assert.deepEqual(await Promise.all([source,target,archive,oneWay,...maps].map(path=>f.read(path))),contents,"completed resume adds no duplicate relation or source links");
+  });
   await scenario("managed-map-failure-cold-resume-and-cas", async f => {
     const mapPath = "wiki/工程工具索引.md", handwritten = "---\ncustom: keep # exact\n---\n# 工程工具索引\n手写导语。  \n\n## 手写清单\n保留这一行。  \n\n";
     await f.write(mapPath,handwritten); await f.write("raw/map.md","# 地图原文\n同一知识点应维护一张页面。\n");

@@ -41,6 +41,7 @@ export function validateMaintenanceP2Plan(plan: readonly MaintenanceWritingItem[
       if (fields.decision.kind === "uncertain" && (!fields.related?.length || (fields.decision.candidatePath && !fields.related.some(relation => relation.targetPath === fields.decision.candidatePath)))) throw new Error("不确定新建须声明相关条目及关系说明，程序会补互链。");
     }
     for (const relation of fields.related ?? []) if (!relation || typeof relation.targetPath !== "string" || relation.targetPath === item.targetPath || typeof relation.reason !== "string" || !relation.reason.trim() || /[\r\n\[\]<>]/u.test(relation.reason)) throw new Error("相关条目需有效目标与单行关系说明，不能是自链或指令。");
+    for (const relation of fields.related ?? []) if (relation.reverseReason !== undefined && (typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n\[\]<>]/u.test(relation.reverseReason))) throw new Error("显式reverseReason须为非空单行关系说明，不能含[]<>；未提供时保持单向。");
     if (fields.decision.kind === "uncertain" && fields.related?.some(relation => typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n\[\]<>]/u.test(relation.reverseReason))) throw new Error("不确定条目的互链须分别声明reason/reverseReason，写清两个方向的关系。");
   }
   for (const unit of units) if (!used.has(unit.id)) throw new Error(`知识点未安排：${unit.id}`);
@@ -59,8 +60,8 @@ export function maintenancePlanRelations(plan: readonly MaintenanceWritingItem[]
   };
   for (const item of plan) for (const relation of item.knowledge?.related ?? []) {
     add(item.targetPath, relation.targetPath, relation.reason);
-    // An uncertain split is explicitly represented on both sides, including existing pages.
-    if (item.knowledge?.decision.kind === "uncertain") add(relation.targetPath, item.targetPath, relation.reverseReason!);
+    // Explicit reverse prose requests both directions, independently of merge judgment.
+    if (typeof relation.reverseReason === "string" && relation.reverseReason.trim()) add(relation.targetPath, item.targetPath, relation.reverseReason);
   }
   return relations;
 }

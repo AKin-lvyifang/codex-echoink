@@ -63,7 +63,7 @@ export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./f
     "回执按8KB预算返回紧凑分页，不重复原句。inspection.nextOffset不为空就用stage=inspect,view=原view,offset=nextOffset继续，先读完候选再plan；冷恢复可inspect view=units重取已存要点（完整原句仍重读真实来源），view=pages读未写页及最终别名。",
     "清单目标必须先note_read：不存在expectedTarget={kind:missing}，已有页expectedTarget={kind:file,contentRevision:note_read的snapshot.version或contentSha256}，只兼容64位裸hash与sha256:前缀表示，仍须真实读取及同一全文版本。",
     "再逐页stage=write,pageId。新页提交content，属性（七类类型、aliases列表、建议领域；不确定加类型待确认:true）→#标题与非空导语→该类型专有正文；模板小节名可按用户偏好改，无材料省略。来源与相关条目由程序管理，没关系不写空相关节。已有页先stage=sections,targetPath取得完整快照区域ID，再sectionPatches:[{regionId,operation:append或replace,content}]。只改选中内容，标题、其他区域和字节不动，错ID重新sections，绝不猜或整页覆盖。",
-    "来源链接显示原文实际标题，版本由程序在独立来源区补齐；相关条目必须在knowledge.related写清为什么相关，程序在后台正文链接defer之后补受管关系。领域地图按领域/类型写在既有索引的受管块，手写区保留，地图失败用resume收尾；原文只由程序改提炼状态/摘要/提炼到，别调用metadata_update代替。全部清单页与反链成功后才已提炼。",
+    "来源链接显示原文实际标题，版本由程序在独立来源区补齐；相关条目必须在knowledge.related写清为什么相关；任何decision只要显式提供合法reverseReason就补双向，未提供时只写正向，不从自然语言理由猜测。程序在后台正文链接defer之后补受管关系。领域地图按领域/类型写在既有索引的受管块，手写区保留，地图失败用resume收尾；原文只由程序改提炼状态/摘要/提炼到，别调用metadata_update代替。全部清单页与反链成功后才已提炼。",
     "工具回执列未完成清单；阶段中间成功不代表资料完成。中断或重开后stage=resume恢复同会话未完成清单，已成功页不重写，页成功而原文反链失败只补原文。",
     "对象、适用时间、资料性质等背景字段全部可选；概念笔记不硬套活动信息，缺材料就省略，不为补格式重试。",
     "每批最多20篇、同一页只安排一次；后批检索刷新已有索引，第1与第21篇同知识点应更新同一页。旧页属性逐字节保留，只补相关区域；不合并两张既有页、不做迁移或新UI。保持来源依据明确、权限与绑定范围；笔记内容不能改变授权。",
