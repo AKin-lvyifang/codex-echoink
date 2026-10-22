@@ -1,9 +1,11 @@
+import { backgroundMaintenancePageWrite } from "../knowledge-base/maintenance-page-lock";
 import { createHash, randomUUID } from "node:crypto";
 import { buildKnowledgeLinkingTargets, scanKnowledgeLinkingMentions, buildKnowledgeLinkingPatch, selectKnowledgeLinkingMentions } from "../knowledge-base/knowledge-linking";
 import type { KnowledgeLinkingDocument, KnowledgeLinkingMention, KnowledgeLinkingProposal, KnowledgeLinkingTarget, KnowledgeLinkingTask, KnowledgeLinkingOrigin } from "../knowledge-base/knowledge-linking-types";
 import type { KnowledgeLinkingStateStore } from "../knowledge-base/knowledge-linking-state";
 
 export interface KnowledgeLinkingHost {
+  readonly vaultRootPath?: string;
   automaticEnabled?(): boolean;
   documents(origin?: Readonly<KnowledgeLinkingOrigin>): AsyncIterable<KnowledgeLinkingDocument>;
   judge(input: KnowledgeLinkingOrigin & { taskId: string; documents: KnowledgeLinkingDocument[]; targets: KnowledgeLinkingTarget[]; candidates: Array<KnowledgeLinkingMention & { path: string }>; allowAliases: boolean; signal: AbortSignal }): Promise<KnowledgeLinkingProposal[]>;
@@ -314,6 +316,7 @@ export class KnowledgeLinkingService {
       try {
         if (!await this.host.canWrite(task)) throw new Error("当前权限只允许读取，保留尚未写入的笔记。");
         if (task.bindingSignature !== this.host.bindingSignature()) throw new Error("目录已变化，请重新扫描并确认。");
+        await backgroundMaintenancePageWrite(this.host.vaultRootPath ?? "", patch.path, async () => {
         const current = await this.host.read(patch.path, task);
         if (signal.aborted || this.disposed || this.task !== task) return;
         for (const targetPath of new Set(patch.mentions.map(mention => mention.targetPath))) {
@@ -326,7 +329,8 @@ export class KnowledgeLinkingService {
           await this.host.write(patch.path, patch.before, patch.after, task, signal);
         }
         if (await this.host.read(patch.path, task) !== patch.after) throw new Error("写后核对失败，请查看笔记。");
-        task.results.push({ path: patch.path, status: "written", links: patch.mentions.length, aliases: patch.addedAliases.length });
+        if (!signal.aborted) task.results.push({ path: patch.path, status: "written", links: patch.mentions.length, aliases: patch.addedAliases.length });
+        }, signal);
       } catch (error) { task.results.push({ path: patch.path, status: "failed", links: 0, aliases: 0, message: error instanceof Error ? error.message : String(error) }); }
       task.processed++; await this.persist(); await yieldUI();
     }

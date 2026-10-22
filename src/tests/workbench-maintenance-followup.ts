@@ -1,3 +1,4 @@
+import { createMaintenanceSectionSnapshot } from "../knowledge-base/maintenance-section-patch";
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import path from "node:path";
@@ -30,6 +31,32 @@ const confirmation = "都按你推荐的去做";
 export async function runWorkbenchMaintenanceFollowupTests(root: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const report: object[] = [];
+  await scenario("p1-raw-inbox-plan-pause-cold-resume", async f => {
+    const idea = "inbox/间隔复习随手记.md", paths = [source, idea];
+    await f.write(idea, "# 收件箱想法\n间隔复习与星系专题需要定期回顾。\n");
+    const first = await f.run("/maintain 请先拆解并保存写作清单后停下，等下一轮继续。", { maintenanceScope: { mode: "batch", sourcePaths: paths } }, paths, "plan");
+    assert.equal(first.result.terminalState, "completed", "a durable stage pause is not a failed ProductRun");
+    const firstRun = await f.productRuns.read(first.result.productRunId);
+    assert.equal(firstRun?.knowledge?.workflow, "maintain");
+    assert.deepEqual(firstRun?.maintenance?.processedSourcePaths, []);
+    assert.deepEqual(firstRun?.maintenance?.pendingSourcePaths, paths);
+    assert.doesNotMatch(await f.wiki(), /星系专题/u, "decomposition and plan cannot write Wiki");
+    await f.reopen();
+    const resumed = await f.run("继续", {}, paths, "resume");
+    assert.equal(resumed.result.terminalState, "completed"); assert.equal(resumed.tool?.isError, false, resumed.tool?.content);
+    for (const selected of paths) assert.ok((await f.wiki()).includes(selected));
+    const completed = await f.productRuns.read(resumed.result.productRunId);
+    assert.equal(completed?.knowledge?.workflow, "maintain", "cold continuation updates execution and durable observation workflow together");
+    assert.deepEqual(completed?.maintenance?.processedSourcePaths, paths);
+  });
+  await scenario("p1-stage-success-then-write-failure", async f => {
+    const result = await f.run("/maintain 按清单整理", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source, "invalid-write");
+    assert.equal(result.result.terminalState, "failed", "earlier successful stages cannot hide an uncorrected page failure");
+    assert.equal(result.tool?.isError, true);
+    assert.doesNotMatch(await f.wiki(), /星系专题/u);
+    const run = await f.productRuns.read(result.result.productRunId);
+    assert.deepEqual(run?.maintenance?.processedSourcePaths, []); assert.deepEqual(run?.maintenance?.pendingSourcePaths, [source]);
+  });
   await scenario("signal7-reopen-completed", async f => {
     const first = await f.run("请先给出这批资料的整理建议，等我确认。", { maintenanceScope: { mode: "batch", sourcePaths: [source] },
       workbenchSource: { version: 1, signalId: 7, moduleId: "knowledge-base", businessKey: "v9:raw", objects: [source], capturedAt: Date.now(), prompt: "整理这些资料" } });
@@ -261,7 +288,7 @@ async function fixture(root: string, name: string, emptyRaw = false) {
   provider.baseUrl = `http://127.0.0.1:${address.port}/v1`; provider.apiKey = "synthetic-test-only";
   settings.apiProviders = [provider]; settings.activeApiProviderId = provider.id;
   const bindings = emptyKnowledgeFolderBindings();
-  for (const [role, directory] of [["raw", "raw"], ["wiki", "知识库（wiki）"]] as const) bindings.roles[role] = { enabled: true, readPaths: [directory], writePath: directory, allowedSubdirectories: [] };
+  for (const [role, directory] of [["raw", "raw"], ["inbox", "inbox"], ["wiki", "知识库（wiki）"]] as const) bindings.roles[role] = { enabled: true, readPaths: [directory], writePath: directory, allowedSubdirectories: [] };
   settings.knowledgeBase.folderBindings = bindings;
   const unbind = registerKnowledgeFolderBindings(vault, () => bindings);
   const pluginRoot = path.join(vault, ".obsidian/plugins/echoink"), storage = path.join(pluginRoot, "pi-agent-product-v1");
@@ -292,7 +319,7 @@ async function fixture(root: string, name: string, emptyRaw = false) {
     const index = bundle.knowledgeAgentIndex;
     const search = index.search.bind(index);
     index.search = async request => {
-      if (request.kinds?.length === 1 && request.kinds[0] === "raw") rawQueries.push(request.query);
+      if (request.kinds?.includes("raw")) rawQueries.push(request.query);
       return await search(request);
     };
   };
@@ -301,6 +328,7 @@ async function fixture(root: string, name: string, emptyRaw = false) {
   await createConversation("followup");
   return { vault, catalog, productRuns, approvals, receipts, bodies, runs, rawQueries, createConversation, runtime: () => bundle.runtime,
     wiki: () => fs.readFile(path.join(vault, wiki), "utf8"),
+    write: async (relative: string, text: string) => { await fs.mkdir(path.dirname(path.join(vault, relative)), { recursive: true }); await fs.writeFile(path.join(vault, relative), text); },
     setDecoyText: (text: string) => fs.writeFile(path.join(vault, other), `# 第二范围\n${text}。这篇不相关资料专门检测确认语被拿去检索。\n`),
     reopen: async () => { await bundle.runtime.shutdown(); bundle = await createPiProductionRuntimeBundle(plugin, localData); observeRawQueries(); },
     close: async () => { await bundle.runtime.shutdown(); unbind(); await new Promise<void>(resolve => server.close(() => resolve())); },
@@ -314,7 +342,7 @@ async function fixture(root: string, name: string, emptyRaw = false) {
       await bundle.runtime.abort("followup");
       const result = await handle.result; runs.push({ text: confirmation, result }); return result;
     },
-    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[]) => {
+    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "plan" | "resume" | "invalid-write" = "all") => {
       const requestStart = bodies.length;
       const toolCall = (name: string, args: object) => ({ id: `v9-${++callNumber}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
       let maintenanceCallId: string | undefined;
@@ -322,11 +350,15 @@ async function fixture(root: string, name: string, emptyRaw = false) {
         const paths = typeof maintainSource === "string" ? [maintainSource] : maintainSource;
         const before = await fs.readFile(path.join(vault, wiki), "utf8");
         replies.push({ role: "assistant", content: null, tool_calls: [...paths.map(relativePath => toolCall("note_read", { relativePath })), toolCall("note_read", { relativePath: wiki })] });
-        const maintenance = toolCall("knowledge_maintain", { sourcePaths: paths, candidateActions: [{ targetPath: wiki,
-          content: `# 维护成果\n${paths.map(selected => `已整理 [[${selected}|原始资料]]。`).join("\n")}\n`, expectedTarget: { kind: "file", contentRevision: `sha256:${createHash("sha256").update(before).digest("hex")}` } }],
-          assessments: [{ claim: "资料具有可追溯来源", status: "valid", evidence: paths, asOf: "2026-10-21", verification: "local_verified" }] });
-        maintenanceCallId = maintenance.id;
-        replies.push({ role: "assistant", content: null, tool_calls: [maintenance] });
+        const decomposition = toolCall("knowledge_maintain", { stage: "decompose", sourcePaths: paths, decompositions: paths.map(sourcePath => ({ sourcePath, summary: `合成摘要 ${sourcePath}`, units: ["合成知识点"] })) });
+        const plan = toolCall("knowledge_maintain", { stage: "plan", sourcePaths: paths, writingPlan: [{ id: "summary", targetPath: wiki, sourcePaths: paths, expectedTarget: { kind: "file", contentRevision: `sha256:${createHash("sha256").update(before).digest("hex")}` } }] });
+        const snapshot = createMaintenanceSectionSnapshot(before), intro = snapshot.regions.find(region => region.kind === "introduction")!;
+        const sections = toolCall("knowledge_maintain", { stage: "sections", sourcePaths: paths, targetPath: wiki });
+        const maintenance = toolCall("knowledge_maintain", { stage: "write", sourcePaths: paths, pageId: "summary", sectionPatches: [{ regionId: stages === "invalid-write" ? "invalid-region" : intro.id, operation: "replace", content: paths.map(selected => `已整理 [[${selected}|原始资料]]。`).join("\n") + "\n\n" }] });
+        const resume = toolCall("knowledge_maintain", { stage: "resume", sourcePaths: paths });
+        const ordered = stages === "plan" ? [decomposition, plan] : stages === "resume" ? [resume, sections, maintenance] : [decomposition, plan, sections, maintenance];
+        maintenanceCallId = ordered.at(-1)!.id;
+        for (const stage of ordered) replies.push({ role: "assistant", content: null, tool_calls: [stage] });
       }
       replies.push({ role: "assistant", content: maintainSource ? "本轮依据工具真实结果结束。" : "建议按现有知识库结构整理，等待确认后再执行。" });
       const handle = await bundle.runtime.submit({ conversationId: "followup", text, submittedAt: Date.now(), permission: "workspace-write",

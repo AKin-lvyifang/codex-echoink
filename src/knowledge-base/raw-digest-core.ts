@@ -115,8 +115,9 @@ export function canonicalRawMarkdownForDigest(text: string): string {
 }
 
 function splitFrontmatter(text: string): ParsedFrontmatter {
-  const normalized = text.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---\n")) return { hasFrontmatter: false, frontmatter: "", body: text };
+  const withoutBom = text.replace(/^\uFEFF/u, "");
+  const normalized = withoutBom.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("---\n")) return { hasFrontmatter: false, frontmatter: "", body: withoutBom };
   const lines = normalized.split("\n");
   for (let index = 1; index < lines.length; index += 1) {
     if (lines[index] === "---" || lines[index] === "...") {
@@ -127,7 +128,7 @@ function splitFrontmatter(text: string): ParsedFrontmatter {
       };
     }
   }
-  return { hasFrontmatter: false, frontmatter: "", body: text };
+  return { hasFrontmatter: false, frontmatter: "", body: withoutBom };
 }
 
 function readFrontmatterValues(frontmatter: string): Map<string, string> {

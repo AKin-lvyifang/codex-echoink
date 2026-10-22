@@ -1791,7 +1791,7 @@ export class PiNativeConversationRuntime {
           : resolvedCommand.scope.mode === "exact" ? { ...resolvedCommand.scope, sourcePaths: [resolveKnowledgePath(active.cwd, resolvedCommand.scope.sourcePaths[0], false)] as const }
           : { ...resolvedCommand.scope, sourcePaths: resolvedCommand.scope.sourcePaths.map((value) => resolveKnowledgePath(active.cwd, value, false)) };
         const scopedPaths = scope.mode === "query" ? scope.candidatePaths : scope.sourcePaths ?? [];
-        if (scopedPaths.some(relative => knowledgePathRole(active.cwd, relative) !== "raw")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "维护范围包含未绑定的资料来源，请重新选择。");
+        if (scopedPaths.some(relative => !["raw", "inbox"].includes(knowledgePathRole(active.cwd, relative) ?? ""))) throw new PiNativeConversationRuntimeError("agent_session_invalid", "维护范围包含未绑定的资料来源，请重新选择。");
         execution.maintenanceScope = scope;
         const command = Object.freeze({ ...resolvedCommand, scope, folderBindingsRevision: scope.mode === "global" ? scope.folderBindingsRevision ?? getKnowledgeFolderBindings(active.cwd)?.revision : getKnowledgeFolderBindings(active.cwd)?.revision, preference: Object.freeze({
           ...preference, providerResourceText: [structureResult, preference.providerResourceText].filter(Boolean).join("\n")
@@ -2090,7 +2090,7 @@ export class PiNativeConversationRuntime {
       if (inherited) {
         if (inherited.folderBindingsRevision !== undefined && inherited.folderBindingsRevision !== getKnowledgeFolderBindings(active.cwd)?.revision) throw new Error("目录配置已变化，请重新说明要维护哪些资料。");
         const paths = maintenanceScopePaths(inherited.scope);
-        if (paths.some(relative => knowledgePathRole(active.cwd, relative) !== "raw")) throw new Error("原维护范围不在当前资料目录中，请说明要维护哪些资料。");
+        if (paths.some(relative => !["raw", "inbox"].includes(knowledgePathRole(active.cwd, relative) ?? ""))) throw new Error("原维护范围不在当前资料目录中，请说明要维护哪些资料。");
         const pending = await this.options.knowledge?.pendingMaintenanceSourcePaths?.(paths) ?? paths;
         if (!pending.length) throw new Error(MAINTENANCE_SCOPE_REQUIRED_MESSAGE);
         // Pending state decides whether this task can continue. Keep the whole
@@ -2934,10 +2934,15 @@ export class PiNativeConversationRuntime {
         const request = routed.kind === "ask" ? routed.question : routed.kind === "maintain" ? routed.request : run.requestText;
         const selection = await this.resolveMaintenanceSelection(active, run, request);
         const command = maintenanceCommandContext({ kind: "maintain", originalText: run.requestText, request: selection.request }, preference, selection.scope);
-        if (maintenanceScopePaths(command.scope).some(relative => knowledgePathRole(active.cwd, relative) !== "raw")) throw new Error("维护范围不在当前资料目录中，请说明要维护哪些资料。");
+        if (maintenanceScopePaths(command.scope).some(relative => !["raw", "inbox"].includes(knowledgePathRole(active.cwd, relative) ?? ""))) throw new Error("维护范围不在当前资料目录中，请说明要维护哪些资料。");
         run.maintenanceScope = command.scope;
         this.persistMaintenanceScope(active, run, selection.request);
-        return run.maintenanceCommand = Object.freeze({ ...command, folderBindingsRevision: getKnowledgeFolderBindings(active.cwd)?.revision });
+        const frozen = Object.freeze({ ...command, folderBindingsRevision: getKnowledgeFolderBindings(active.cwd)?.revision });
+        run.commandKind = "maintain";
+        run.knowledgeWorkflow = { kind: "maintain", command: frozen };
+        run.knowledgeObservation = { ...(run.knowledgeObservation ?? createKnowledgeObservation("maintain", null, frozen)), workflow: "maintain", protocolVersion: ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION, preferenceProfileVersion: frozen.preference.profileVersion, preferenceState: frozen.preference.state };
+        active.knowledgeTurnContext = Object.freeze({ kind: "maintain", command: frozen });
+        return run.maintenanceCommand = frozen;
       },
       currentWorkspaceAccess: () => {
         const run = holder.active?.currentRun;
@@ -3419,7 +3424,7 @@ export class PiNativeConversationRuntime {
         ? execution.knowledgeWorkflow
         : null;
       const maintenanceResult = maintenance
-        ? classifyKnowledgeMaintenanceResult(runEntries, undefined, collectMaintenanceReadPaths(active.sessionManager.getBranch()).filter((source) => maintenance.command.scope.mode === "global" ? knowledgePathRole(active.cwd, source) === "raw" : (maintenance.command.scope.mode === "query" ? maintenance.command.scope.candidatePaths : maintenance.command.scope.sourcePaths).includes(source)))
+        ? classifyKnowledgeMaintenanceResult(runEntries, undefined, collectMaintenanceReadPaths(active.sessionManager.getBranch()).filter((source) => maintenance.command.scope.mode === "global" ? ["raw", "inbox"].includes(knowledgePathRole(active.cwd, source) ?? "") : (maintenance.command.scope.mode === "query" ? maintenance.command.scope.candidatePaths : maintenance.command.scope.sourcePaths).includes(source)))
         : null;
       const emptyGlobal = maintenance?.command.scope.mode === "global" && maintenance.command.scope.sourcePaths?.length === 0;
       const maintenanceResultInvalid = maintenanceResult?.kind === "invalid" && !emptyGlobal;
@@ -6226,7 +6231,7 @@ function collectKnowledgeMaintenanceProducedPaths(
 }
 
 type KnowledgeMaintenanceResultClassification = Readonly<{
-  kind: "invalid" | "natural_success" | "trusted_success" | "trusted_failure";
+  kind: "invalid" | "natural_success" | "trusted_pending" | "trusted_success" | "trusted_failure";
   toolCallIds: readonly string[];
 }>;
 
@@ -6263,14 +6268,19 @@ function classifyKnowledgeMaintenanceResult(
   if (new Set(toolCallIds).size !== toolCallIds.length || toolCallIds.some((id) => results.filter((result) => result.toolCallId === id).length !== 1) || results.some((result) => !toolCallIds.includes(result.toolCallId))) {
     return Object.freeze({ kind: "invalid", toolCallIds: affectedToolCallIds });
   }
-  let successful = false;
+  let successful = false, pending = false;
   for (const result of results) {
     const envelope = knowledgeMaintenanceEnvelopeFromToolResult(result);
-    if (!envelope) continue; // A blocked/invalid attempt can be corrected in a later call.
+    const details = safeRecord(result.details);
+    if (!envelope) {
+      if (result.isError) pending = false;
+      if (!result.isError && details?.source === "echoink-knowledge-maintenance" && details.status === "completed" && /^maintenance-[a-f0-9]{32}$/u.test(String(details.recordId)) && ["plan", "write", "finalize", "sections"].includes(String(details.maintenanceStage))) pending = true;
+      continue; // A blocked attempt may be corrected; durable stages are a paused job, never source completion.
+    }
     if (envelope.status === "write_uncertain") return Object.freeze({ kind: "trusted_failure", toolCallIds: affectedToolCallIds });
     if (!result.isError && ["completed", "noop", "partial"].includes(envelope.status)) successful = true;
   }
-  return Object.freeze({ kind: successful ? "trusted_success" : "trusted_failure", toolCallIds: affectedToolCallIds });
+  return Object.freeze({ kind: successful ? "trusted_success" : pending ? "trusted_pending" : "trusted_failure", toolCallIds: affectedToolCallIds });
 }
 
 function collectMaintenanceReadPaths(entries: readonly SessionEntry[]): string[] {
@@ -6328,9 +6338,9 @@ function maintenanceOutcome(execution: ActiveProductRun, entries: readonly Sessi
     })));
   }
   const scope = execution.maintenanceScope ?? (execution.knowledgeWorkflow?.kind === "maintain" ? execution.knowledgeWorkflow.command.scope : undefined);
-  const expected = scope?.mode === "query" ? scope.candidatePaths : scope && (scope.mode === "exact" || scope.mode === "batch" || (scope.mode === "global" && scope.sourcePaths)) ? scope.sourcePaths! : [...read].filter((value) => knowledgePathRole(vaultRoot, value) === "raw");
+  const expected = scope?.mode === "query" ? scope.candidatePaths : scope && (scope.mode === "exact" || scope.mode === "batch" || (scope.mode === "global" && scope.sourcePaths)) ? scope.sourcePaths! : [...read].filter((value) => ["raw", "inbox"].includes(knowledgePathRole(vaultRoot, value) ?? ""));
   const analysisOnly = execution.permission === "read-only" || execution.mode === "plan";
-  const processedSourcePaths = terminalState === "completed" ? expected.filter((source) => hasMaintenanceReceipt ? processedReceipts.has(source) : read.has(source)) : [];
+  const processedSourcePaths = terminalState === "completed" ? expected.filter((source) => hasMaintenanceReceipt && processedReceipts.has(source)) : [];
   return Object.freeze({ analysisOnly, processedSourcePaths, pendingSourcePaths: expected.filter((source) => !processedSourcePaths.includes(source)), warnings: [...new Set(issues.map((issue) => issue.message))] });
 }
 

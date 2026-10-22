@@ -806,12 +806,12 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       const explicitPaths = [...request.matchAll(/(?:\[\[|`)?([^\s`\[\]<>|，。；]+\/[^\s`\[\]<>|，。；]+\.(?:markdown|md))(?![a-z0-9_.-])(?:\]\]|`)?/giu)].map(match => match[1]);
       if (explicitPaths.length) {
         const roles = explicitPaths.map(relative => ({ relative, role: knowledgePathRole(input.vaultRootPath, relative) }));
-        const paths = [...new Set(roles.filter(item => item.role === "raw").map(item => item.relative))];
+        const paths = [...new Set(roles.filter(item => item.role === "raw" || item.role === "inbox").map(item => item.relative))];
         if (!paths.length || paths.length > 20 || paths.some(relative => !isRawMarkdownPath(relative))
-          || roles.some(item => item.role !== "raw" && item.role !== "wiki" && item.role !== "projects")) throw new Error("请说明要维护哪些资料；指定来源不在当前资料目录中。");
+          || roles.some(item => item.role !== "raw" && item.role !== "inbox" && item.role !== "wiki" && item.role !== "projects")) throw new Error("请说明要维护哪些资料；指定来源不在当前资料目录中。");
         return Object.freeze({ mode: "batch" as const, sourcePaths: Object.freeze(paths), folderBindingsRevision: getKnowledgeFolderBindings(input.vaultRootPath)?.revision });
       }
-      const result = await input.knowledgeAgentIndex.search({ query: request, kinds: ["raw"], limit: 50 });
+      const result = await input.knowledgeAgentIndex.search({ query: request, kinds: ["raw", "inbox"], limit: 50 });
       const candidatePaths = result.hits.map((hit) => hit.vaultRelativePath).filter(isRawMarkdownPath).slice(0, 12);
       if (!candidatePaths.length) throw new Error("请说明要维护哪些资料；没有找到可可靠匹配的 Raw 笔记，本轮不会扩大维护范围。");
       return Object.freeze({ mode: "query" as const, candidatePaths: Object.freeze(candidatePaths) });
@@ -1465,9 +1465,9 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
                 echoInkKnowledgeMaintenanceProtocolPrompt(input.knowledgeBindings?.(), DESKTOP_KNOWLEDGE_ROOT_ROLES),
                 command.preference.providerResourceText,
                 maintenanceScopeProviderPrompt(command.scope),
-                "由当前同一个 AgentSession 生成 candidateActions；无需新增可自然结束，有失败候选可修正后再提交；",
-                "candidateActions 只包含当前真实知识成果或项目位置的 Markdown 候选。",
-                "每个候选必须携带 expectedTarget：更新已有目标前先 note_read，并原样使用其 contentRevision；确认不存在时使用 kind=missing。",
+                "由当前同一个 AgentSession 串行调用 knowledge_maintain：stage=decompose提交本批每篇sourcePath/summary/units；stage=plan提交writingPlan（id/targetPath/sourcePaths/expectedTarget）；stage=write逐页提交pageId与content，新建页只写一次；失败后stage=resume补未完。零知识点也须通过空清单完成摘要写入；",
+                "writingPlan仅包含当前真实Wiki知识成果位置，不合并两张既有页。已有页先stage=sections(targetPath)列区域ID，再write(sectionPatches)，禁止整页覆盖。",
+                "每页清单必须携带expectedTarget：先note_read确认目标，已有页使用contentRevision，不存在使用kind=missing；来源或目标变更须重新读取，不复写成功页。",
                 "维护详情和处理记录由 EchoInk 私有保存，不生成普通目录运行文件。",
                 "权限可写且用户要求执行维护时，自检后按需分次调用 knowledge_maintain，工具会写入并回读；只读或用户要求先不写入时，只分析并给出建议。",
                 "对重要知识主张同时给出仍有效、需补充、已过时或存在冲突的结构化判断；记录来源与日期，无法联网核验时明确标为 unverified。",
@@ -2234,6 +2234,7 @@ async function createProductionAgentSession(input: {
       }
     }
   });
+  const observedTargetRevisions: Record<string, string> = {};
   const sourceBodyFingerprints = maintenanceSourceFingerprintsFromEntries(input.input.sessionManager.getBranch(), input.plugin.getVaultPath());
   const knowledgeReadSecurity = new PiKnowledgeReadToolSecurity({
     currentRunIdentity: () => input.input.currentToolExecutionContext(),
@@ -2300,7 +2301,8 @@ async function createProductionAgentSession(input: {
     authorization,
     includeNoteReadKnowledgeReferences: true,
     onSuccessfulNoteRead: (value) => {
-      const snapshot = (value as { snapshot?: { relativePath?: string; bodyFingerprint?: string; truncated?: boolean } })?.snapshot;
+      const snapshot = (value as { snapshot?: { relativePath?: string; bodyFingerprint?: string; contentSha256?: string; truncated?: boolean } })?.snapshot;
+      if (snapshot?.relativePath && snapshot.contentSha256 && snapshot.truncated === false) observedTargetRevisions[snapshot.relativePath] = `sha256:${snapshot.contentSha256}`;
       if (snapshot?.relativePath && snapshot.truncated === false) recordMaintenanceSourceBodyFingerprint(sourceBodyFingerprints, snapshot.relativePath, snapshot.bodyFingerprint, input.plugin.getVaultPath());
     },
     additionalToolSecurity: maintenanceSecurity,
@@ -2334,10 +2336,10 @@ async function createProductionAgentSession(input: {
     port: { execute: async (request) => {
       // The recovery guard compares tool arguments as JSON; product-owned
       // AbortSignal and execution identity are not model arguments.
-      await assertToolAllowed("knowledge_maintain", { sourcePaths: request.sourcePaths ?? [], candidateActions: request.candidateActions ?? [], assessments: request.assessments ?? [] });
+      await assertToolAllowed("knowledge_maintain", { sourcePaths: request.sourcePaths ?? [], ...request.p1 });
       const turn = input.input.currentKnowledgeTurnContext();
       const command = await input.input.currentMaintenanceCommand?.() ?? (turn?.kind === "maintain" ? turn.command : undefined);
-      const result = await input.knowledgeMaintenance.execute({ ...request, folderBindingsRevision: command?.folderBindingsRevision, globalSourcePaths: command?.scope.mode === "global" ? command.scope.sourcePaths : undefined, sourceBodyFingerprints: { ...sourceBodyFingerprints } });
+      const result = await input.knowledgeMaintenance.execute({ ...request, folderBindingsRevision: command?.folderBindingsRevision, globalSourcePaths: command?.scope.mode === "global" ? command.scope.sourcePaths : undefined, sourceBodyFingerprints: { ...sourceBodyFingerprints }, observedTargetRevisions: { ...observedTargetRevisions } });
       Object.assign(sourceBodyFingerprints, result.refreshedSources ?? {});
       return result;
     } },

@@ -43,6 +43,7 @@
     "test:developer-mode": "node scripts/developer-mode-tests.mjs",
     "test:skill-runtime": "node src/tests/skill-runtime-tests.mjs",
     "test:knowledge-linking": "node scripts/knowledge-linking-tests.mjs",
+    "test:knowledge-maintain-p1": "node scripts/knowledge-maintain-p1-tests.mjs",
     "test:knowledge": "node scripts/phase3-tests.mjs",
     "test:mcp-vault": "node scripts/mcp-vault-tests.mjs",
     "verify:obsidian": "npm run check:public && npm run lint && npm run test && npm run typecheck && npm run build && npm run check:bundle && npm run test:mobile",

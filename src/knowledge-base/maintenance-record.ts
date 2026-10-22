@@ -2,6 +2,8 @@ import type { KnowledgeMaintenanceResultEnvelope } from "./knowledge-maintenance
 
 export interface KnowledgeMaintenanceRecord {
   schemaVersion: 1;
+  /** Durable P1 writing list and unfinished source finalization, in the existing record. */
+  p1?: import("./maintenance-p1-contract").MaintenanceP1State;
   cancelled?: boolean;
   recordId: string;
   runId: string;

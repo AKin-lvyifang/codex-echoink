@@ -1,3 +1,4 @@
+import { isMaintenanceSourceProcessed } from "../knowledge-base/maintenance-source-state";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { TFile, type EventRef } from "obsidian";
@@ -286,21 +287,17 @@ export class WorkbenchDataService implements WorkbenchDataPort {
       modules, lockedModules, issues, nextRefreshAt: nextWorkbenchRefreshAt(facts) };
   }
   private async readPendingRaw(issues: string[]): Promise<WorkbenchSourceFile[]> {
-    const bindings = this.bindings, roots = this.roots("raw");
+    const bindings = this.bindings, roots = [...this.roots("raw"), ...this.roots("inbox")];
     if (!bindings || !roots.length) return [];
-    const registry = await readRawDigestRegistry(this.plugin.getVaultPath(), true);
-    const latest = latestMaintenanceSourceStates(await this.plugin.getKnowledgeSurfaceService()?.getMaintenanceRecords() ?? []);
     const result: WorkbenchSourceFile[] = [];
     let batch = 0;
     for (const file of this.plugin.app.vault.getFiles()) {
       if (!isKnowledgeMaintenanceSourcePath(file.path)
-        || classifyKnowledgePath(bindings, file.path) !== "raw" || !roots.some(root => file.path.startsWith(`${root}/`))
+        || !["raw", "inbox"].includes(classifyKnowledgePath(bindings, file.path) ?? "") || !roots.some(root => file.path.startsWith(`${root}/`))
         || bindings.roles.assets.readPaths.some(root => file.path.startsWith(`${root}/`))) continue;
       try {
-        const content = await this.readSourceContent(file), fingerprint = content.rawFingerprint;
-        const state = rawDigestStateForRecord({ fingerprint, frontmatter: content.rawDigest,
-          previous: this.plugin.settings.knowledgeBase.processedSources[file.path], registry: registry.entries[file.path], hasTrackerHint: false, maintenance: latest.get(file.path) });
-        if (state !== "digested") result.push({ path: file.path, fingerprint });
+        const content = await this.plugin.app.vault.read(file);
+        if (!isMaintenanceSourceProcessed(content)) result.push({ path: file.path, fingerprint: `stat:${file.stat.mtime}:${file.stat.size}` });
       } catch (error) { issues.push(`来源暂不可读取：${file.path}：${message(error)}`); }
       if (++batch % 32 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
     }

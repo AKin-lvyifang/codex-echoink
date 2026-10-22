@@ -1,3 +1,4 @@
+import { patchMaintenanceSourceFrontmatter } from "../knowledge-base/maintenance-source-frontmatter";
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import path from "node:path";
@@ -55,6 +56,7 @@ export async function runWorkbenchMaintenanceSourceTests(root: string): Promise<
   registerKnowledgePrivateRoot(vault, privateRoot);
   const completed = "raw/articles/来源00.md", bytes = await fs.readFile(path.join(vault, completed));
   await writeRawDigestRegistry(vault, { schemaVersion: 1, updatedAt: new Date().toISOString(), entries: { [completed]: { rawPath: completed, fingerprint: rawDigestFingerprint(completed, bytes), size: bytes.length, mtime: 1, digestedAt: 1, runId: "completed-fixture", reportPath: "", evidencePaths: [], confidence: "verified" } } });
+  await write(completed, patchMaintenanceSourceFrontmatter(bytes.toString("utf8"), { status: "已提炼", summary: "合成已完成来源", targetPaths: [] }));
   const settings = structuredClone(DEFAULT_SETTINGS); settings.knowledgeBase.folderBindings = corrected;
   try {
     const read = async () => {
@@ -69,24 +71,24 @@ export async function runWorkbenchMaintenanceSourceTests(root: string): Promise<
       assert.equal(dashboard.raw.changedCount, formal.sourcePaths.length);
       return { plugin, formal, dashboard };
     };
-    const before = await read(); assert.equal(before.formal.sourcePaths.length, 23);
-    assert.equal(before.dashboard.raw.fileCount, 24);
-    assert.deepEqual(splitKnowledgeMaintenanceSources(before.formal.sourcePaths).map(batch => batch.length), [20, 3]);
+    const before = await read(); assert.equal(before.formal.sourcePaths.length, 24);
+    assert.equal(before.dashboard.raw.fileCount, 25);
+    assert.deepEqual(splitKnowledgeMaintenanceSources(before.formal.sourcePaths).map(batch => batch.length), [20, 4]);
     await write("raw/articles/旧目录新采集.md");
-    const after = await read(); assert.equal(after.formal.sourcePaths.length, 24); assert.ok(after.formal.sourcePaths.includes("raw/articles/旧目录新采集.md"));
+    const after = await read(); assert.equal(after.formal.sourcePaths.length, 25); assert.ok(after.formal.sourcePaths.includes("raw/articles/旧目录新采集.md"));
     const service = Object.assign(Object.create(EchoInkKnowledgeSurfaceService.prototype), { plugin: after.plugin });
     const source = { version: 1, signalId: 7, moduleId: "knowledge-base", businessKey: "workbench:knowledge-base:raw:fixture", objects: after.formal.sourcePaths, capturedAt: 1, prompt: "整理这些" };
     const batches = await service.prepareWorkbenchMaintenance(source, "都按你推荐的去做");
-    assert.deepEqual(batches.map((batch: any) => batch.maintenanceScope.sourcePaths.length), [20, 4]);
+    assert.deepEqual(batches.map((batch: any) => batch.maintenanceScope.sourcePaths.length), [20, 5]);
     assert.ok(batches.every((batch: any) => batch.text.startsWith("/maintain ") && batch.maintenanceScope.folderBindingsRevision === corrected.revision));
-    assert.ok(batches.every((batch: any) => !batch.maintenanceScope.sourcePaths.some((relative: string) => relative.includes("inbox") || relative.includes("收件箱"))));
+    assert.ok(batches.some((batch: any) => batch.maintenanceScope.sourcePaths.some((relative: string) => relative.includes("inbox") || relative.includes("收件箱"))), "Inbox joins the same maintenance pipeline");
     await assert.rejects(service.prepareWorkbenchMaintenance({ ...source, signalId: 6 }), /不属于资料维护/u);
     const state = new FilePhase3MaintenanceStateStore({ storageRootPath: privateRoot, vaultId: "source-fixture" });
     await state.saveRecord({ schemaVersion: 1, recordId: `maintenance-${"f".repeat(32)}`, runId: "failed-current-version", at: 2, date: "2026-10-21", summary: "Current version failed", result: createKnowledgeMaintenanceResultEnvelope({ status: "failed" }),
       sources: [{ path: completed, fingerprint: rawDigestFingerprint(completed, bytes), status: "failed", evidencePaths: [] }] });
-    const failed = await read(); assert.equal(failed.formal.sourcePaths.length, 25); assert.equal(failed.dashboard.raw.digestStatus.failed, 1);
+    const failed = await read(); assert.equal(failed.formal.sourcePaths.length, 25); assert.equal(failed.dashboard.raw.digestStatus.failed, 0);
     const report = { eligible: after.formal.sourcePaths, count: after.dashboard.raw.changedCount, batches: batches.map((batch: any) => batch.maintenanceScope), bindingsBefore: bindings, bindingsAfter: corrected, filesMoved: 0 };
     await fs.writeFile(path.join(root, "maintenance-sources.json"), JSON.stringify(report, null, 2));
-    console.log("Workbench maintenance sources: PASS (configured defaults, custom preservation, legacy new source, dashboard equality, <=20 batches, Inbox isolation)");
+    console.log("Workbench maintenance sources: PASS (configured defaults, custom preservation, legacy new source, dashboard equality, <=20 batches, Raw+Inbox scheme A)");
   } finally { unbind(); }
 }

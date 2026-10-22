@@ -1,3 +1,4 @@
+import type { MaintenanceP1Action } from "../../knowledge-base/maintenance-p1-contract";
 import { knowledgeRolePath, knowledgePathRole } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { isDeepStrictEqual } from "node:util";
@@ -32,7 +33,7 @@ const RESULT_PENDING_SAFETY = "knowledge_maintain_result_pending_safety";
 
 /** File revisions identify citations; only an explicitly observed Raw body digest authorizes maintenance. */
 export function recordMaintenanceSourceBodyFingerprint(fingerprints: Record<string, string>, relativePath: string, fingerprint: string | undefined, vaultRoot = ""): void {
-  if (knowledgePathRole(vaultRoot, relativePath) === "raw" && typeof fingerprint === "string" && /^sha256:\d+:[a-f0-9]{64}$/u.test(fingerprint)) fingerprints[relativePath] = fingerprint;
+  if (["raw", "inbox"].includes(knowledgePathRole(vaultRoot, relativePath) ?? "") && typeof fingerprint === "string" && /^sha256:\d+:[a-f0-9]{64}$/u.test(fingerprint)) fingerprints[relativePath] = fingerprint;
 }
 
 /** Reuse source versions already delivered in this conversation after reopening. */
@@ -94,6 +95,7 @@ interface KnowledgeMaintenanceCandidateAction {
 interface AuthorizedMaintenanceExecution {
   readonly identity: Readonly<PiKnowledgeRunIdentity>;
   readonly command: Readonly<PiKnowledgeMaintenanceCommandContext>;
+  readonly p1: Readonly<MaintenanceP1Action>;
   readonly candidateActions: readonly Readonly<KnowledgeMaintenanceCandidateAction>[];
   readonly sourcePaths: readonly string[];
   readonly assessments: readonly Readonly<KnowledgeMaintenanceAssessment>[];
@@ -166,6 +168,7 @@ implements PiVaultAdditionalToolSecurityPort {
     this.executions.set(event.toolCallId, {
       identity,
       command,
+      p1: normalizeP1(event.input),
       candidateActions,
       sourcePaths,
       assessments,
@@ -181,6 +184,7 @@ implements PiVaultAdditionalToolSecurityPort {
   ): Readonly<{
     identity: Readonly<PiKnowledgeRunIdentity>;
     command: Readonly<PiKnowledgeMaintenanceCommandContext>;
+    p1: Readonly<MaintenanceP1Action>;
     candidateActions: readonly Readonly<KnowledgeMaintenanceCandidateAction>[];
     sourcePaths: readonly string[];
     assessments: readonly Readonly<KnowledgeMaintenanceAssessment>[];
@@ -201,6 +205,7 @@ implements PiVaultAdditionalToolSecurityPort {
     return Object.freeze({
       identity: execution.identity,
       command: execution.command,
+      p1: execution.p1,
       candidateActions: execution.candidateActions,
       sourcePaths: execution.sourcePaths,
       assessments: execution.assessments
@@ -259,6 +264,7 @@ implements PiVaultAdditionalToolSecurityPort {
           productRunId: execution.identity.productRunId,
           piSessionId: execution.identity.piSessionId,
           status: execution.result.status,
+          ...(execution.result.maintenanceStage ? { maintenanceStage: execution.result.maintenanceStage } : {}),
           ...(execution.result.protocolVersion
             ? { protocolVersion: execution.result.protocolVersion }
             : {}),
@@ -317,54 +323,14 @@ export function createPiKnowledgeMaintenanceToolDefinition(
   return defineTool({
     name: PI_KNOWLEDGE_MAINTAIN_TOOL_ID,
     label: "维护知识库",
-    description: [
-      "用户要求维护知识库时，提交当前已确认范围内的知识维护动作。",
-      "资料与目标均使用本轮上下文中提供的真实绑定路径；未启用用途不写入。",
-      "exact 范围只可使用已绑定单篇 Raw；batch 范围只可使用已绑定的 1-20 篇 Raw；query 范围必须从候选中选择唯一 sourcePaths；global 范围不得提供 sourcePaths。",
-      "只读取本轮已选真实来源；global 待处理范围由程序私有状态提供，不读取 Tracker 文件。candidateActions 只写当前绑定的知识成果或项目位置。",
-      "每个候选必须携带 expectedTarget。更新已有目标前先 note_read，并原样使用其 contentRevision；确认目标不存在时使用 kind=missing。",
-      "维护记录由 EchoInk 私有保存，不要把索引、Tracker 或报告放进 candidateActions。",
-      "候选完成自检后可分次提交或修正后重试；工具会安全写入并回读。Raw 属性和 Tag 使用 metadata_update，保持正文不变。",
-      "同时对重要知识主张给出 assessments：仍有效(valid)、需补充(needs_supplement)、已过时(outdated)或冲突(conflict)，并记录证据、日期和是否完成外部核验；assessments 可选；无法核验时使用 unverified。"
-    ].join(""),
+    description: "仅在显式 /maintain 范围内串行维护。必须 decompose（全批摘要与知识点）→plan（固定逐页写作清单）→write（每次一页），成功页不重写；失败后 resume 仅补未完成。新页提供content；已有页先sections取得完整快照regionId，再sectionPatches只追加/替换选中区域。来源/相关条目为独立区，错误编号重新sections，不猜不整页覆盖。只有全部页与原文三个字段成功才已提炼。",
     parameters: Type.Object({
-      sourcePaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
-        minItems: 1,
-        maxItems: 20
-      })),
-      candidateActions: Type.Optional(Type.Array(Type.Object({
-        targetPath: Type.String({ minLength: 1 }),
-        content: Type.String(),
-        expectedTarget: Type.Union([
-          Type.Object({
-            kind: Type.Literal("missing")
-          }, { additionalProperties: false }),
-          Type.Object({
-            kind: Type.Literal("file"),
-            contentRevision: Type.String({
-              pattern: "^sha256:[a-f0-9]{64}$"
-            })
-          }, { additionalProperties: false })
-        ])
-      }, { additionalProperties: true }))),
-      assessments: Type.Optional(Type.Array(Type.Object({
-        claim: Type.String({ minLength: 1, maxLength: 500 }),
-        status: Type.Union([
-          Type.Literal("valid"),
-          Type.Literal("needs_supplement"),
-          Type.Literal("outdated"),
-          Type.Literal("conflict")
-        ]),
-        evidence: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), {
-          maxItems: 20
-        }),
-        asOf: Type.String({ minLength: 1, maxLength: 100 }),
-        verification: Type.Union([
-          Type.Literal("local_verified"),
-          Type.Literal("external_verified"),
-          Type.Literal("unverified")
-        ])
-      }, { additionalProperties: false }), { maxItems: 100 }))
+      stage: Type.Union(["decompose", "plan", "write", "resume", "sections"].map(value => Type.Literal(value))),
+      sourcePaths: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 20 })),
+      decompositions: Type.Optional(Type.Array(Type.Object({ sourcePath: Type.String(), summary: Type.String(), units: Type.Array(Type.String()) }, { additionalProperties: false }), { maxItems: 20 })),
+      writingPlan: Type.Optional(Type.Array(Type.Object({ id: Type.String(), targetPath: Type.String(), sourcePaths: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }), expectedTarget: Type.Union([Type.Object({ kind: Type.Literal("missing") }), Type.Object({ kind: Type.Literal("file"), contentRevision: Type.String() })]) }, { additionalProperties: false }), { maxItems: 100 })),
+      pageId: Type.Optional(Type.String()), targetPath: Type.Optional(Type.String()), content: Type.Optional(Type.String()),
+      sectionPatches: Type.Optional(Type.Array(Type.Object({ regionId: Type.String(), operation: Type.Union([Type.Literal("append"), Type.Literal("replace")]), content: Type.String() }, { additionalProperties: false }), { maxItems: 100 }))
     }, { additionalProperties: false }),
     executionMode: "sequential",
     execute: async (toolCallId, rawArguments, signal) => {
@@ -374,6 +340,7 @@ export function createPiKnowledgeMaintenanceToolDefinition(
         toolCallId,
         mode: "maintain",
         request: authorized.command.request,
+        p1: authorized.p1,
         sourcePaths: authorized.sourcePaths,
         candidateActions: authorized.candidateActions,
         assessments: authorized.assessments,
@@ -421,7 +388,8 @@ function normalizeArguments(
   }
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record);
-  const allowedKeys = new Set(["candidateActions", "sourcePaths", "assessments"]);
+  const p1 = normalizeP1(value);
+  const allowedKeys = new Set(["stage", "sourcePaths", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches"]);
   if (
     keys.some((key) => !allowedKeys.has(key))
     || (record.candidateActions !== undefined && (!Array.isArray(record.candidateActions) || record.candidateActions.length > 100))
@@ -459,9 +427,8 @@ function normalizeArguments(
   );
   return Object.freeze({
     arguments: Object.freeze({
-      candidateActions,
-      ...(sourcePaths.length ? { sourcePaths } : {}),
-      assessments
+      ...p1,
+      ...(sourcePaths.length ? { sourcePaths } : {})
     }),
     candidateActions,
     sourcePaths,
@@ -698,4 +665,13 @@ function rejectedResult(
     }),
     isError: true
   });
+}
+
+function normalizeP1(value: unknown): Readonly<MaintenanceP1Action> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("knowledge_maintenance_stage_required");
+  const r = value as Record<string, unknown>;
+  if (!["decompose", "plan", "write", "resume", "sections"].includes(String(r.stage))) throw new TypeError("knowledge_maintenance_stage_required: decompose -> plan -> write; resume 补未完");
+  for (const key of ["decompositions", "writingPlan", "sectionPatches"]) if (r[key] !== undefined && (!Array.isArray(r[key]) || (r[key] as unknown[]).length > 100)) throw new TypeError("knowledge_maintenance_arguments_invalid");
+  for (const key of ["content", "pageId", "targetPath"]) if (r[key] !== undefined && typeof r[key] !== "string") throw new TypeError("knowledge_maintenance_arguments_invalid");
+  return Object.freeze(JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(r).filter(([key]) => key !== "sourcePaths")))) as MaintenanceP1Action);
 }

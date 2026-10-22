@@ -331,6 +331,10 @@ export interface PiKnowledgeRuntimePort {
 }
 
 export interface PiKnowledgeMaintenanceToolInput extends PiKnowledgeRunIdentity {
+  /** Internal parent record identity, not model-authored. */
+  readonly p1RecordId?: string;
+  readonly observedTargetRevisions?: Readonly<Record<string, string>>;
+  readonly p1?: Readonly<import("../../knowledge-base/maintenance-p1-contract").MaintenanceP1Action>;
   readonly folderBindingsRevision?: number;
   readonly globalSourcePaths?: readonly string[];
   readonly toolCallId: string;
@@ -359,6 +363,8 @@ export interface PiKnowledgeMaintenanceToolInput extends PiKnowledgeRunIdentity 
 }
 
 export interface PiKnowledgeMaintenanceToolResult {
+  /** Trusted intermediate stage, never a terminal maintenance outcome. */
+  readonly maintenanceStage?: "plan" | "write" | "finalize" | "sections" | "completed";
   readonly recordId?: string;
   readonly verifiedSourceFingerprints?: Readonly<Record<string, string>>;
   readonly status: "completed" | "failed" | "cancelled";
