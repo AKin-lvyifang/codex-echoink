@@ -243,7 +243,7 @@ export interface PiNativeAgentSessionFactoryInput {
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
-  currentMaintenanceCommand?(): Promise<Readonly<PiKnowledgeMaintenanceCommandContext>>;
+  currentMaintenanceCommand?(options?: Readonly<{ activateMaintenance?: boolean }>): Promise<Readonly<PiKnowledgeMaintenanceCommandContext>>;
   currentSkillTurnContext?(): Readonly<PiNativeSkillTurnContext> | null;
   currentMemoryTurnContext?(): Readonly<PiNativeMemoryTurnContext> | null;
   currentSelectionAnnotationTurnContext?(): readonly SelectionAnnotation[];
@@ -2452,9 +2452,9 @@ export class PiNativeConversationRuntime {
     if (!active?.currentRun) return;
     const execution = active.currentRun;
     execution.abortRequested = true;
-    await this.options.knowledge?.maintenanceActivity?.({ type: "stop", conversationId, productRunId: execution.productRunId });
     this.finishProviderWait(execution, "cancelled");
     execution.knowledgeAbort.abort();
+    await this.options.knowledge?.maintenanceActivity?.({ type: "stop", conversationId, productRunId: execution.productRunId });
     const abortErrors: unknown[] = [];
     try {
       await this.pauseTaskPlanForAbort(active, execution);
@@ -2927,28 +2927,33 @@ export class PiNativeConversationRuntime {
           userEntryText: publicMessageText(userEntry.message)
         };
       },
-      currentMaintenanceCommand: async () => {
+      currentMaintenanceCommand: async ({ activateMaintenance = false } = {}) => {
         const active = holder.active, run = active?.currentRun;
         if (!active || !run) throw new Error(MAINTENANCE_SCOPE_REQUIRED_MESSAGE);
         await this.options.assertAgentActionAllowed?.({ catalog: holder.active?.catalog ?? catalog, action: "knowledge-write", access: { permission: run.permission, mode: run.mode, memoryMode: run.memoryMode } });
         if (run.knowledgeWorkflow?.kind === "maintain") return run.knowledgeWorkflow.command;
-        if (run.maintenanceCommand) return run.maintenanceCommand;
-        if (run.maintenanceScopeError) throw run.maintenanceScopeError;
-        const preference = await this.options.knowledge?.prepareMaintenancePreferences?.();
-        if (!preference) throw new Error("knowledge_maintenance_preferences_unavailable");
-        const routed = routeKnowledgeConversationCommand(run.requestText);
-        const request = routed.kind === "ask" ? routed.question : routed.kind === "maintain" ? routed.request : run.requestText;
-        const selection = await this.resolveMaintenanceSelection(active, run, request);
-        const command = maintenanceCommandContext({ kind: "maintain", originalText: run.requestText, request: selection.request }, preference, selection.scope);
-        if (maintenanceScopePaths(command.scope).some(relative => !["raw", "inbox"].includes(knowledgePathRole(active.cwd, relative) ?? ""))) throw new Error("维护范围不在当前资料目录中，请说明要维护哪些资料。");
-        run.maintenanceScope = command.scope;
-        this.persistMaintenanceScope(active, run, selection.request);
-        const frozen = Object.freeze({ ...command, folderBindingsRevision: getKnowledgeFolderBindings(active.cwd)?.revision });
-        run.commandKind = "maintain";
-        run.knowledgeWorkflow = { kind: "maintain", command: frozen };
-        run.knowledgeObservation = { ...(run.knowledgeObservation ?? createKnowledgeObservation("maintain", null, frozen)), workflow: "maintain", protocolVersion: ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION, preferenceProfileVersion: frozen.preference.profileVersion, preferenceState: frozen.preference.state };
-        active.knowledgeTurnContext = Object.freeze({ kind: "maintain", command: frozen });
-        return run.maintenanceCommand = frozen;
+        if (!run.maintenanceCommand) {
+          if (run.maintenanceScopeError) throw run.maintenanceScopeError;
+          const preference = await this.options.knowledge?.prepareMaintenancePreferences?.();
+          if (!preference) throw new Error("knowledge_maintenance_preferences_unavailable");
+          const routed = routeKnowledgeConversationCommand(run.requestText);
+          const request = routed.kind === "ask" ? routed.question : routed.kind === "maintain" ? routed.request : run.requestText;
+          const selection = await this.resolveMaintenanceSelection(active, run, request);
+          const command = maintenanceCommandContext({ kind: "maintain", originalText: run.requestText, request: selection.request }, preference, selection.scope);
+          if (maintenanceScopePaths(command.scope).some(relative => !["raw", "inbox"].includes(knowledgePathRole(active.cwd, relative) ?? ""))) throw new Error("维护范围不在当前资料目录中，请说明要维护哪些资料。");
+          run.maintenanceScope = command.scope;
+          this.persistMaintenanceScope(active, run, selection.request);
+          run.maintenanceCommand = Object.freeze({ ...command, folderBindingsRevision: getKnowledgeFolderBindings(active.cwd)?.revision });
+        }
+        const command = run.maintenanceCommand;
+        // Scope/security lookups must not turn an answer into a maintenance run.
+        if (activateMaintenance) {
+          run.commandKind = "maintain";
+          run.knowledgeWorkflow = { kind: "maintain", command };
+          run.knowledgeObservation = { ...(run.knowledgeObservation ?? createKnowledgeObservation("maintain", null, command)), workflow: "maintain", protocolVersion: ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION, preferenceProfileVersion: command.preference.profileVersion, preferenceState: command.preference.state };
+          active.knowledgeTurnContext = Object.freeze({ kind: "maintain", command });
+        }
+        return command;
       },
       currentWorkspaceAccess: () => {
         const run = holder.active?.currentRun;

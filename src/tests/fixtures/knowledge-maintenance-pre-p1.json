@@ -1,0 +1,257 @@
+{
+  "generatedFrom": "01d7293f36fe35ef5068b69201878782c1b8c5b4",
+  "record": {
+    "schemaVersion": 1,
+    "originConversationId": "origin-task",
+    "recordId": "maintenance-3d4663dbf78d068813aea0a7d4d6824b",
+    "runId": "source-run-with:colon:maintain",
+    "at": 1792731073652,
+    "date": "2026-10-22",
+    "result": {
+      "schema": "echoink.knowledge-maintenance-result.v1",
+      "status": "partial",
+      "notes": [
+        {
+          "operation": "created",
+          "path": "知识库（wiki）/Concept.md",
+          "title": "Concept",
+          "summary": "A useful concept from the source."
+        }
+      ],
+      "issues": [
+        {
+          "code": "linking_start_failed",
+          "message": "知识已写入，关联补全待恢复：synthetic scheduler interruption"
+        }
+      ],
+      "systemPaths": [],
+      "assessments": []
+    },
+    "sources": [
+      {
+        "path": "raw/source.md",
+        "fingerprint": "sha256:43:d3beac8091e9ec470d4ac74b4d79cd6fb7d7b5080b02d10a9ef68d2950b4729e",
+        "status": "processed",
+        "evidencePaths": [
+          "知识库（wiki）/Concept.md"
+        ]
+      }
+    ],
+    "pendingLinking": {
+      "taskId": "maintenance-3d4663dbf78d068813aea0a7d4d6824b",
+      "sourcePaths": [
+        "知识库（wiki）/Concept.md"
+      ],
+      "targetPaths": [
+        "知识库（wiki）/Concept.md"
+      ]
+    },
+    "summary": "知识维护已安全写入并完成 Readback。\n知识已写入，关联补全待恢复：synthetic scheduler interruption\n- 知识库（wiki）/Concept.md"
+  },
+  "wal": {
+    "version": 2,
+    "preview": {
+      "bindingRevision": 0,
+      "bookkeeping": {
+        "readSourcePaths": [
+          "raw/source.md"
+        ],
+        "failedSourcePaths": [],
+        "linkingTargetPaths": [
+          "知识库（wiki）/Concept.md"
+        ],
+        "issues": []
+      },
+      "protocolVersion": "echoink-knowledge-maintenance-protocol-v1",
+      "preferenceProfileVersion": "echoink-knowledge-preference-profile-v1",
+      "preferenceState": "default",
+      "preferenceRevision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "previewId": "1c01f932-fa6b-4065-af9a-6aae7814dc3d",
+      "previewDigest": "sha256:fb0e806f8d7c657594842a0b4109640f1bc33bf49947e040c8646387a3d0f951",
+      "vaultId": "origin-maintenance",
+      "dateKey": "2026-10-22",
+      "sourceMode": "explicit",
+      "selectedSources": [
+        {
+          "raw": {
+            "kind": "file",
+            "relativePath": "raw/source.md",
+            "revision": "sha256:43:d3beac8091e9ec470d4ac74b4d79cd6fb7d7b5080b02d10a9ef68d2950b4729e",
+            "contentSha256": "d3beac8091e9ec470d4ac74b4d79cd6fb7d7b5080b02d10a9ef68d2950b4729e",
+            "byteLength": 43
+          },
+          "attachments": []
+        }
+      ],
+      "remainingRawPaths": [],
+      "tracker": {
+        "binding": {
+          "kind": "missing"
+        },
+        "changedRawPaths": [
+          "raw/source.md"
+        ]
+      },
+      "shadowId": "1c01f932-fa6b-4065-af9a-6aae7814dc3d",
+      "shadowRevision": "8561601a1d8d4a46e9cc1c3d7be0b1f6452013d11e45e8c3977b20c483b4eefa",
+      "reportPath": "",
+      "actions": [
+        {
+          "purpose": "knowledge",
+          "actionId": "1c01f932-fa6b-4065-af9a-6aae7814dc3d:001",
+          "operation": "create",
+          "targetPath": "知识库（wiki）/Concept.md",
+          "content": "# Concept\nA useful concept from the source.\n\n[[raw/source.md|原始材料]]\n<!-- echoink-source: {\"path\":\"raw/source.md\",\"revision\":\"sha256:d3beac8091e9ec470d4ac74b4d79cd6fb7d7b5080b02d10a9ef68d2950b4729e\"} -->\n",
+          "contentSha256": "bbd08164d45ae1817f404c2b907eac0da62af34644d796822c573d5d4a9e2c71",
+          "expected": {
+            "kind": "missing"
+          }
+        }
+      ],
+      "createdAt": 1792731073631
+    },
+    "authorization": {
+      "approvalId": "direct:maintain",
+      "operationIdentity": "knowledge-maintain:source-run-with:colon:maintain",
+      "consumedAt": 1792731073631,
+      "contract": {
+        "productRunId": "source-run-with:colon",
+        "toolCallId": "maintain",
+        "conversationId": "origin-task",
+        "piSessionId": "source-session",
+        "vaultId": "origin-maintenance",
+        "userId": "fixture",
+        "deviceId": "fixture",
+        "previewId": "1c01f932-fa6b-4065-af9a-6aae7814dc3d",
+        "previewDigest": "sha256:fb0e806f8d7c657594842a0b4109640f1bc33bf49947e040c8646387a3d0f951",
+        "preferenceProfileVersion": "echoink-knowledge-preference-profile-v1",
+        "preferenceState": "default",
+        "preferenceRevision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "orderedActions": [
+          {
+            "purpose": "knowledge",
+            "actionId": "1c01f932-fa6b-4065-af9a-6aae7814dc3d:001",
+            "operation": "create",
+            "targetPath": "知识库（wiki）/Concept.md",
+            "content": "# Concept\nA useful concept from the source.\n\n[[raw/source.md|原始材料]]\n<!-- echoink-source: {\"path\":\"raw/source.md\",\"revision\":\"sha256:d3beac8091e9ec470d4ac74b4d79cd6fb7d7b5080b02d10a9ef68d2950b4729e\"} -->\n",
+            "contentSha256": "bbd08164d45ae1817f404c2b907eac0da62af34644d796822c573d5d4a9e2c71",
+            "expected": {
+              "kind": "missing"
+            }
+          }
+        ]
+      }
+    },
+    "status": "completed",
+    "sequence": 3,
+    "actions": [
+      {
+        "action": {
+          "purpose": "knowledge",
+          "actionId": "1c01f932-fa6b-4065-af9a-6aae7814dc3d:001",
+          "operation": "create",
+          "targetPath": "知识库（wiki）/Concept.md",
+          "content": "# Concept\nA useful concept from the source.\n\n[[raw/source.md|原始材料]]\n<!-- echoink-source: {\"path\":\"raw/source.md\",\"revision\":\"sha256:d3beac8091e9ec470d4ac74b4d79cd6fb7d7b5080b02d10a9ef68d2950b4729e\"} -->\n",
+          "contentSha256": "bbd08164d45ae1817f404c2b907eac0da62af34644d796822c573d5d4a9e2c71",
+          "expected": {
+            "kind": "missing"
+          }
+        },
+        "status": "completed",
+        "domainStatus": "completed"
+      }
+    ],
+    "createdAt": 1792731073632,
+    "updatedAt": 1792731073670
+  },
+  "terminalWal": {
+    "version": 2,
+    "terminalRecord": {
+      "schemaVersion": 1,
+      "originConversationId": "origin-task",
+      "recordId": "maintenance-3d4663dbf78d068813aea0a7d4d6824b",
+      "runId": "source-run-with:colon:maintain",
+      "at": 1792731073691,
+      "date": "2026-10-22",
+      "cancelled": false,
+      "result": {
+        "schema": "echoink.knowledge-maintenance-result.v1",
+        "status": "partial",
+        "notes": [
+          {
+            "operation": "created",
+            "path": "知识库（wiki）/Concept.md",
+            "title": "Concept",
+            "summary": "A useful concept from the source."
+          }
+        ],
+        "issues": [
+          {
+            "code": "linking_start_failed",
+            "message": "知识已写入，关联补全待恢复：synthetic scheduler interruption"
+          }
+        ],
+        "systemPaths": [],
+        "assessments": []
+      },
+      "sources": [
+        {
+          "path": "raw/source.md",
+          "fingerprint": "sha256:43:d3beac8091e9ec470d4ac74b4d79cd6fb7d7b5080b02d10a9ef68d2950b4729e",
+          "status": "failed",
+          "evidencePaths": []
+        }
+      ],
+      "summary": "知识维护已安全写入并完成 Readback。\n知识已写入，关联补全待恢复：synthetic scheduler interruption\n- 知识库（wiki）/Concept.md"
+    },
+    "preview": {
+      "protocolVersion": "echoink-knowledge-maintenance-protocol-v1",
+      "preferenceProfileVersion": "echoink-knowledge-preference-profile-v1",
+      "preferenceState": "default",
+      "preferenceRevision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "previewId": "maintenance-3d4663dbf78d068813aea0a7d4d6824b",
+      "previewDigest": "sha256:6c8fcfaeba91e9262dc1441e344f9700ddd6791eb2c7e518f55fd4829252f0b3",
+      "vaultId": "origin-maintenance",
+      "dateKey": "2026-10-22",
+      "sourceMode": "explicit",
+      "selectedSources": [],
+      "remainingRawPaths": [],
+      "tracker": {
+        "binding": {
+          "kind": "missing"
+        },
+        "changedRawPaths": []
+      },
+      "shadowId": "maintenance-3d4663dbf78d068813aea0a7d4d6824b",
+      "shadowRevision": "sha256:6c8fcfaeba91e9262dc1441e344f9700ddd6791eb2c7e518f55fd4829252f0b3",
+      "reportPath": "",
+      "actions": [],
+      "createdAt": 1792731073691
+    },
+    "authorization": {
+      "approvalId": "terminal:maintain",
+      "operationIdentity": "source-run-with:colon:maintain",
+      "consumedAt": 1792731073691,
+      "contract": {
+        "productRunId": "source-run-with:colon",
+        "toolCallId": "maintain",
+        "conversationId": "origin-task",
+        "piSessionId": "source-session",
+        "vaultId": "origin-maintenance",
+        "userId": "private-bookkeeping",
+        "deviceId": "private-bookkeeping",
+        "previewId": "maintenance-3d4663dbf78d068813aea0a7d4d6824b",
+        "previewDigest": "sha256:6c8fcfaeba91e9262dc1441e344f9700ddd6791eb2c7e518f55fd4829252f0b3",
+        "preferenceProfileVersion": "echoink-knowledge-preference-profile-v1",
+        "preferenceState": "default",
+        "preferenceRevision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "orderedActions": []
+      }
+    },
+    "status": "completed",
+    "sequence": 2,
+    "actions": [],
+    "createdAt": 1792731073691,
+    "updatedAt": 1792731073710
+  }
+}

@@ -329,7 +329,8 @@ export class KnowledgeLinkingService {
           await this.host.write(patch.path, patch.before, patch.after, task, signal);
         }
         if (await this.host.read(patch.path, task) !== patch.after) throw new Error("写后核对失败，请查看笔记。");
-        if (!signal.aborted) task.results.push({ path: patch.path, status: "written", links: patch.mentions.length, aliases: patch.addedAliases.length });
+        // Stopping cannot erase a write that has already passed readback.
+        task.results.push({ path: patch.path, status: "written", links: patch.mentions.length, aliases: patch.addedAliases.length });
         }, signal);
       } catch (error) { task.results.push({ path: patch.path, status: "failed", links: 0, aliases: 0, message: error instanceof Error ? error.message : String(error) }); }
       task.processed++; await this.persist(); await yieldUI();

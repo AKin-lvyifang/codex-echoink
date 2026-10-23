@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import preP1MaintenanceSeed from "./fixtures/knowledge-maintenance-pre-p1.json";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -35,11 +36,12 @@ import { KnowledgeLinkingService } from "../plugin/knowledge-linking-service";
 import { KnowledgeLinkingStateStore } from "../knowledge-base/knowledge-linking-state";
 import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
 import { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
-import { ProductionPiKnowledgeMaintenanceToolPort, readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
+import { FilePhase3MaintenanceStateStore, ProductionPiKnowledgeMaintenanceToolPort, readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
 import { rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { createHash } from "node:crypto";
 import { createApiProviderConfig, createApiProviderModelConfig, activateApiProviderModel, DEFAULT_SETTINGS } from "../settings/settings";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 
 export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   runDesktopDirectoryCapabilityTests();
@@ -612,6 +614,10 @@ async function linkingWriteAndHandoffTests(root: string): Promise<void> {
   const maintenanceRoot = path.join(root, "maintenance");
   await mkdir(maintenanceRoot, { recursive: true });
   const mf = await nativeJournalFixture(maintenanceRoot);
+  await mkdir(path.join(maintenanceRoot, "wiki"), { recursive: true });
+  const maintenanceBindings = emptyKnowledgeFolderBindings();
+  for (const role of ["raw", "wiki"] as const) Object.assign(maintenanceBindings.roles[role], { enabled: true, readPaths: [role], writePath: role });
+  const releaseMaintenanceBindings = registerKnowledgeFolderBindings(maintenanceRoot, () => maintenanceBindings);
   const raw = "# Source\nA useful concept from the source.\n";
   await mf.write("raw/source.md", raw);
   const adapter = new ObsidianVaultDomainAdapter(mf.app, "origin-maintenance", maintenanceRoot);
@@ -622,20 +628,41 @@ async function linkingWriteAndHandoffTests(root: string): Promise<void> {
   const committedOrigins: Array<string | undefined> = [];
   const maintenance = new ProductionPiKnowledgeMaintenanceToolPort({ ...options, onCommitted: async (_paths, _targets, id, source) => { committedOrigins.push(source); if (fail) throw new Error("synthetic scheduler interruption"); return id; } });
   await maintenance.initialize();
-  await maintenance.execute({ vaultId: adapter.vaultId, conversationId: "origin-task", piSessionId: "source-session", productRunId: "source-run-with:colon", toolCallId: "maintain", mode: "maintain", request: "", sourcePaths: ["raw/source.md"], sourceBodyFingerprints: { "raw/source.md": rawDigestFingerprint("raw/source.md", Buffer.from(raw)) }, preferenceSnapshot: { profileVersion: "echoink-knowledge-preference-profile-v1", state: "default", revision: `sha256:${"a".repeat(64)}` }, candidateActions: [{ targetPath: "wiki/Concept.md", content: "# Concept\nA useful concept from the source.\n", expectedTarget: { kind: "missing" } }] });
-  const record = (await readPrivateMaintenanceRecords(options.privateKnowledgeRootPath, { vaultId: adapter.vaultId }))[0];
+  const maintenanceInput = { vaultId: adapter.vaultId, conversationId: "origin-task", piSessionId: "source-session", productRunId: "source-run-with:colon", mode: "maintain" as const, request: "", sourcePaths: ["raw/source.md"], sourceBodyFingerprints: { "raw/source.md": rawDigestFingerprint("raw/source.md", Buffer.from(raw)) }, preferenceSnapshot: { profileVersion: "echoink-knowledge-preference-profile-v1", state: "default" as const, revision: `sha256:${"a".repeat(64)}` } };
+  // Reach the same real write/enqueue boundary through the current P1 protocol.
+  const decomposition = await maintenance.execute({ ...maintenanceInput, toolCallId: "maintain-decompose", p1: { stage: "decompose", decompositions: [{ sourcePath: "raw/source.md", summary: "A useful concept from the source.", units: [{ id: "concept", type: "概念", domain: "知识维护", title: "Concept", aliases: [], points: ["A useful concept from the source."], evidence: [{ sourcePath: "raw/source.md", sourceRevision: `sha256:${createHash("sha256").update(raw).digest("hex")}`, quote: "A useful concept from the source." }] }] }] } });
+  assert.equal(decomposition.status, "completed", decomposition.message);
+  const planned = await maintenance.execute({ ...maintenanceInput, toolCallId: "maintain-plan", p1: { stage: "plan", writingPlan: [{ id: "concept-page", targetPath: "wiki/Concept.md", sourcePaths: ["raw/source.md"], expectedTarget: { kind: "missing" }, knowledge: { unitIds: ["concept"], decision: { kind: "new", reason: "独立知识点，没有已有同点候选。" } } }] } });
+  assert.equal(planned.status, "completed", planned.message);
+  const written = await maintenance.execute({ ...maintenanceInput, toolCallId: "maintain", p1: { stage: "write", pageId: "concept-page", content: "---\n类型: 概念\naliases: []\n---\n# Concept\nA useful concept from the source.\n\n## Definition\nA useful concept from the source.\n" } });
+  assert.equal(written.status, "completed", written.message);
+  const p1Record = (await readPrivateMaintenanceRecords(options.privateKnowledgeRootPath, { vaultId: adapter.vaultId })).find(record => record.p1 && record.originConversationId === "origin-task")!;
+  assert.ok(p1Record.pendingLinking); assert.equal(p1Record.originConversationId, "origin-task");
+
+  // Frozen output of main01d's real Production port: pre-P1 pending records
+  // recover from their exact WAL, while P1 records require their own owner.
+  const legacyOptions = { ...options, privateKnowledgeRootPath: path.join(maintenanceRoot, "legacy-state") };
+  const legacyState = new FilePhase3MaintenanceStateStore({ storageRootPath: legacyOptions.privateKnowledgeRootPath, vaultId: adapter.vaultId });
+  await legacyState.createWal(structuredClone(preP1MaintenanceSeed.wal) as unknown as Parameters<FilePhase3MaintenanceStateStore["createWal"]>[0]);
+  await legacyState.createWal(structuredClone(preP1MaintenanceSeed.terminalWal) as unknown as Parameters<FilePhase3MaintenanceStateStore["createWal"]>[0]);
+  await legacyState.saveRecord(structuredClone(preP1MaintenanceSeed.record) as unknown as Parameters<FilePhase3MaintenanceStateStore["saveRecord"]>[0]);
+  const record = (await readPrivateMaintenanceRecords(legacyOptions.privateKnowledgeRootPath, { vaultId: adapter.vaultId })).find(record => record.recordId === preP1MaintenanceSeed.record.recordId)!;
   assert.ok(record.pendingLinking); assert.equal(record.originConversationId, "origin-task");
+  assert.equal(record.recordId, `maintenance-${createHash("sha256").update(`${preP1MaintenanceSeed.wal.authorization.contract.productRunId}:${preP1MaintenanceSeed.wal.authorization.contract.toolCallId}`).digest("hex").slice(0, 32)}`);
   // Recreate the previous persisted schema; its exact WAL remains the sole
   // compatibility source for the new reference.
-  const recordPath = path.join(options.privateKnowledgeRootPath, "records", `${record.recordId}.json`);
+  const recordPath = path.join(legacyOptions.privateKnowledgeRootPath, "records", `${record.recordId}.json`);
   const legacy = JSON.parse(await readFile(recordPath, "utf8"));
   delete legacy.payload.originConversationId;
   legacy.payloadDigest = createHash("sha256").update(canonicalJsonStringify(legacy.payload)).digest("hex");
   await writeFile(recordPath, JSON.stringify(legacy));
   fail = false;
-  const restoredMaintenance = new ProductionPiKnowledgeMaintenanceToolPort({ ...options, onCommitted: async (_paths, _targets, id, source) => { committedOrigins.push(source); return id; } });
+  const legacyCommitted: Array<{ id: string; source: string | undefined; paths: readonly string[] }> = [];
+  const restoredMaintenance = new ProductionPiKnowledgeMaintenanceToolPort({ ...legacyOptions, onCommitted: async (paths, _targets, id, source) => { committedOrigins.push(source); legacyCommitted.push({ id, source, paths }); return id; } });
   await restoredMaintenance.initialize();
   assert.ok(committedOrigins.length >= 2); assert.ok(committedOrigins.every(value => value === "origin-task"), "recovery uses durable source reference even when productRunId contains colons");
-  assert.equal((await readPrivateMaintenanceRecords(options.privateKnowledgeRootPath, { vaultId: adapter.vaultId }))[0].originConversationId, "origin-task");
+  assert.equal((await readPrivateMaintenanceRecords(legacyOptions.privateKnowledgeRootPath, { vaultId: adapter.vaultId })).find(value => value.recordId === record.recordId)!.originConversationId, "origin-task");
+  assert.deepEqual(legacyCommitted, [{ id: record.recordId, source: "origin-task", paths: record.pendingLinking!.sourcePaths }], "the exact legacy record independently reaches enqueue after cold WAL-origin recovery");
+  releaseMaintenanceBindings();
   console.log("PASS actual maintenance WAL/record/enqueue recovery preserves origin Conversation without parsing runId");
 }

@@ -15,7 +15,11 @@ const entry = (rawPath: string, extra: Partial<RawDigestRegistryEntry> = {}): Ra
 const file = (p: string, role: MaintenanceUpgradeFile["role"], content: string): MaintenanceUpgradeFile => ({ path: p, role, content, revision: `sha256:${"b".repeat(64)}`, fingerprint });
 
 export async function runKnowledgeMaintainP4Tests(root: string): Promise<void> {
-  const allowed = path.join(homedir(), "EchoInk-TestVaults/90-任务临时/知识库维护P4-20261022/automatic");
+  const configuredRoot = process.env.ECHOINK_KNOWLEDGE_TEST_ROOT;
+  assert.ok(configuredRoot?.trim(), "P4 fixtures require the explicitly assigned test root");
+  const allowed = path.resolve(configuredRoot!);
+  const disposable = path.join(homedir(), "EchoInk-TestVaults/90-任务临时");
+  assert.ok(allowed.startsWith(disposable + path.sep), "P4 assigned root stays inside the disposable test tree");
   assert.ok(path.resolve(root).startsWith(allowed + path.sep), "P4 fixtures stay inside the assigned automatic root");
   await fs.mkdir(root, { recursive: true });
   testPriority();

@@ -2389,7 +2389,7 @@ async function createProductionAgentSession(input: {
       // AbortSignal and execution identity are not model arguments.
       await assertToolAllowed("knowledge_maintain", { sourcePaths: request.sourcePaths ?? [], ...request.p1 });
       const turn = input.input.currentKnowledgeTurnContext();
-      const command = await input.input.currentMaintenanceCommand?.() ?? (turn?.kind === "maintain" ? turn.command : undefined);
+      const command = await input.input.currentMaintenanceCommand?.({ activateMaintenance: true }) ?? (turn?.kind === "maintain" ? turn.command : undefined);
       const result = await input.knowledgeMaintenance.execute({ ...request, folderBindingsRevision: command?.folderBindingsRevision, globalSourcePaths: command?.scope.mode === "global" ? command.scope.sourcePaths : undefined, sourceBodyFingerprints: { ...sourceBodyFingerprints }, observedTargetRevisions: { ...observedTargetRevisions } });
       Object.assign(sourceBodyFingerprints, result.refreshedSources ?? {});
       return result;

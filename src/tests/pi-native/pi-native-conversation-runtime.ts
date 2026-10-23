@@ -5977,9 +5977,9 @@ async function withFixture(
       },
       currentMemoryTurn: () => currentMemoryTurnReader?.() ?? null,
       currentKnowledgeTurn: () => currentKnowledgeTurnReader?.() ?? null,
-      currentMaintenanceCommand: async () => {
+      currentMaintenanceCommand: async (options) => {
         assert.ok(currentMaintenanceCommandReader);
-        return await currentMaintenanceCommandReader();
+        return await currentMaintenanceCommandReader(options);
       },
       currentSkillTurn: () => currentSkillTurnReader?.() ?? null,
       currentGenerationContext: () => currentGenerationReader?.() ?? null,
@@ -6577,6 +6577,7 @@ async function assertWorkspacePermissionsAndLateSources(): Promise<void> {
       if (permission === "workspace-write") {
         const command = await fixture.currentMaintenanceCommand();
         assert.equal(command.request, "read then answer");
+        assert.equal(fixture.currentKnowledgeTurn()?.kind, "ask", "scope lookup must preserve the answer workflow");
         assert.deepEqual(command.scope, QUERY_MAINTENANCE_SCOPE);
         assert.deepEqual(maintenanceRequests, ["read then answer"], "writable ask lazily resolves the existing maintenance scope");
         session.finishTool("late-read", "knowledge_read", { details: { type: "echoink.knowledge-references.v1", schemaVersion: 1, references: [reference], status: "completed" } }, false);
@@ -6592,6 +6593,15 @@ async function assertWorkspacePermissionsAndLateSources(): Promise<void> {
     fixture.latestSession().finishSuccessful("只读下提供维护建议。");
     assert.equal((await readonlyMaintain.result).terminalState, "completed");
     assert.equal(finalized, 0, "read-only maintenance does not finalize any content writes");
+    const activated = await fixture.submit({ conversationId: "activated-maintain", permission: "workspace-write", text: "/ask read then answer", submittedAt: 5 });
+    const parsed = await fixture.currentMaintenanceCommand();
+    assert.equal(fixture.currentKnowledgeTurn()?.kind, "ask");
+    assert.equal(await fixture.currentMaintenanceCommand({ activateMaintenance: true }), parsed, "formal tool activation reuses the frozen scope");
+    assert.equal(fixture.currentKnowledgeTurn()?.kind, "maintain", "formal tool execution activates maintenance");
+    fixture.latestSession().finishTool("activated-noop", "knowledge_maintain", { details: { status: "completed", maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "noop" }) } }, false);
+    fixture.latestSession().finishSuccessful("没有需要提炼的知识。");
+    assert.equal((await activated.result).terminalState, "completed");
+    assert.equal(finalized, 1, "activated maintenance still settles through the existing finalizer");
   }, { knowledge });
 }
 

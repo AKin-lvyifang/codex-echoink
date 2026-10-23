@@ -528,8 +528,33 @@ await test("desktop legacy data root is selected without merging stores", async 
     assert.equal(financeOnly.files.get(`${currentRoot}/lifestyle.json`), "new-finance-preserved");
   }
 });
-await test("mobile default preferences match desktop literal", async () => {
-  const desktop = await fs.readFile("src/knowledge-base/knowledge-maintenance-preferences.ts", "utf8"); const mobile = await fs.readFile("src/core/knowledge-preferences-default.ts", "utf8"); const literal = text => text.slice(text.indexOf("export const ECHOINK_DEFAULT_"), text.indexOf('].join("\\n");') + 13).trim(); assert.ok(literal(desktop).length > 100); assert.equal(literal(desktop), literal(mobile));
+await test("mobile default preferences match the complete desktop runtime value and preserve custom content", async () => {
+  const desktopBuild = await esbuild.build({
+    stdin: { contents: 'export { ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES as default } from "./src/knowledge-base/knowledge-maintenance-preferences";', resolveDir: process.cwd(), loader: "ts" },
+    bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent"
+  });
+  const desktop = (await import(`data:text/javascript;base64,${Buffer.from(desktopBuild.outputFiles[0].text).toString("base64")}`)).default;
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+  const services = new MobileServices({ app: state.app, settings: state.config, store: state.store, runtime: state.runtime, navigation: {}, registerEvent() {}, async saveSettings() {}, async showPage() {} }, "plugin/mobile");
+  try {
+    await services.initialize();
+    const mobile = services.defaultPreferences;
+    assert.ok(desktop.length > 100); assert.ok(mobile.length > 100); assert.equal(desktop, mobile);
+    for (const type of ["概念", "方法 / 流程", "观点 / 论断", "工具 / 产品", "案例 / 事件", "人物 / 组织", "趋势 / 主题"]) {
+      assert.ok(mobile.includes("### " + type + "\n```markdown\n"), `missing writing template: ${type}`);
+    }
+    assert.ok(mobile.includes("硬规则高于模板与用户内容偏好：核对原句只用于内部证据，不输出关键原句小节，也不把核对引文导出到笔记正文。新建与更新都遵守；已有用户同名小节及其子节逐字保留，不删除、不追加、不改写。"));
+    assert.equal(await services.readPreferences(), null);
+    assert.ok((await services.context()).includes(mobile));
+    assert.equal(await services.readPreferences(), null, "reading the built-in default must not create a preference file");
+    const custom = "# 自定义偏好\n\n只保留材料明确支持的反例与决策边界。\n";
+    await services.savePreferences(custom, null);
+    const context = await services.context();
+    assert.ok(context.includes(custom));
+    assert.ok(!context.includes("## 七类知识与默认写作模板"), "the new default must not replace custom preferences");
+    assert.equal(await services.readPreferences(), custom);
+    assert.equal(state.files.get(services.preferencesPath), custom);
+  } finally { state.runtime.dispose(); await services.dispose(); }
 });
 
 await test("shared activity extraction preserves desktop history, rename, delete and persistence", async () => {
