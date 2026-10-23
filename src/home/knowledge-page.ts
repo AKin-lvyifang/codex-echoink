@@ -246,7 +246,7 @@ export class KnowledgePageView extends ItemView {
     const automatic = additions.length > 0 || !!upgrade.preview?.automatic.length || !!upgrade.preview?.rootAdditions.length;
     const text = ready ? additions.length ? this.t(`有 ${additions.join("，")}`, additions.join(", "))
       : upgrade.preview?.automatic.length ? this.t("有旧资料待补属性", "Legacy notes need properties")
-      : upgrade.preview?.rootAdditions.length ? this.t("有旧目录待登记", "Legacy folders need registering")
+      : upgrade.preview?.rootAdditions.length ? this.t("有旧文件夹需要接着使用", "Legacy folders are ready to reconnect")
       : this.t(`有 ${upgrade.preview?.issues.length ?? 0} 项旧资料需要核对`, `${upgrade.preview?.issues.length ?? 0} legacy items need review`)
       : upgrade.status === "completed" ? this.upgradeResult(upgrade) || this.t("旧知识升级已完成", "Legacy knowledge upgrade completed")
       : activity ? maintenanceActivityText(activity, this.plugin.settings.settingsLanguage === "en") : upgrade.message || this.t(upgrade.status === "running" ? "正在升级旧知识" : "旧知识升级没做完", upgrade.status === "running" ? "Upgrading legacy knowledge" : "Legacy upgrade is not finished");
@@ -314,7 +314,7 @@ export class KnowledgePageView extends ItemView {
     page.createEl("h1", { text: this.t("知识库升级检查", "Legacy knowledge upgrade") });
     const showingPreview = preview && (!upgrade || upgrade.status === "ready" || upgrade.status === "scanning" || upgrade.status === "failed" && !upgrade.recordId);
     if (showingPreview) {
-      page.createEl("p", { cls: "knowledge-upgrade-intro", text: this.t("确认后只补属性和原文指向 Wiki 的链接，正文、旧字段和旧报告都保留。", "Confirmation adds properties and source links to Wiki notes. Existing text, properties and reports are preserved.") });
+      page.createEl("p", { cls: "knowledge-upgrade-intro", text: this.t("确认后会补上资料状态、Wiki 类型和资料指向 Wiki 的链接。原文、已有属性和旧报告都不改。", "Confirmation adds source statuses, Wiki types and links from sources to Wiki notes. Original text, existing properties and old reports stay unchanged.") });
       const list = page.createDiv({ cls: "knowledge-upgrade-list", attr: { role: "region", "aria-label": this.t("升级预览清单", "Upgrade preview"), tabindex: "0" } });
       this.heading(list, this.t("会自动补的", "Automatic additions"));
       const rows = list.createDiv({ cls: "knowledge-upgrade-rows" });
@@ -329,7 +329,7 @@ export class KnowledgePageView extends ItemView {
       }
       if (!preview.automatic.length) rows.createDiv({ cls: "knowledge-empty", text: this.t("没有需要自动补的属性", "No properties need adding") });
       if (preview.rootAdditions.length) {
-        this.heading(list, this.t("将登记的旧目录", "Legacy folders to register"));
+        this.heading(list, this.t("会继续使用的旧文件夹", "Legacy folders to keep using"));
         const roots = list.createDiv({ cls: "knowledge-upgrade-rows" });
         for (const root of preview.rootAdditions) {
           const role = root.role === "outputs" ? this.t("旧维护报告", "Legacy reports") : this.roleLabel(root.role);
@@ -339,7 +339,6 @@ export class KnowledgePageView extends ItemView {
       this.heading(list, this.t("需要你看的清单", "Items to review"));
       for (const item of preview.issues) {
         const row = list.createDiv({ cls: "knowledge-upgrade-issue" });
-        if (item.kind === "optional-reingest") row.createDiv({ text: this.t("可选：重新提炼", "Optional: extract again") });
         row.createDiv({ text: `${item.title || item.path ? `${maintenancePageLabel(item.title || item.path!)}：` : ""}${item.message}` });
       }
       if (!preview.issues.length) list.createDiv({ cls: "knowledge-empty", text: this.t("没有需要你核对的项目", "No items need review") });
@@ -368,10 +367,9 @@ export class KnowledgePageView extends ItemView {
       if (reviewIssues.length) {
         const review = page.createEl("details", { cls: "knowledge-rules knowledge-upgrade-review" });
         review.createEl("summary", { text: this.t("需要你看的清单", "Items to review") });
-        review.createEl("p", { text: this.t("这些是原有资料中需要核对或可选重新提炼的项目，原文件保留，不属于补写失败。", "These existing notes need review or optional extraction. Their original files were preserved; these are not failed additions.") });
+        review.createEl("p", { text: this.t("下面这些资料请你再看一眼，也可以之后再整理。原文件都保留了，升级已补好的内容不受影响。", "You can review these notes now or organize them later. Original files are preserved, and completed additions are unaffected.") });
         for (const issue of reviewIssues) {
           const row = review.createDiv({ cls: "knowledge-upgrade-issue" });
-          if (issue.kind === "optional-reingest") row.createDiv({ text: this.t("可选：重新提炼", "Optional: extract again") });
           row.createDiv({ text: `${issue.title || issue.path ? `${maintenancePageLabel(issue.title || issue.path!)}：` : ""}${issue.message}` });
         }
       }

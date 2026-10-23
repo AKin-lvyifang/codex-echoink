@@ -84,11 +84,20 @@ export async function runKnowledgePageUiTests(): Promise<void> {
   await assert.rejects(view.handoffIssue("isolated")); assert.equal(prefills.length, 1);
   next = snapshot; await view.refresh(); view.contentEl.scrollTop = 135; view.openPage("history"); assert.equal(view.field("secondary").classList.contains("echoink-settings-demo"), true); view.openPage("health"); assert.equal(view.field("secondary").classList.contains("knowledge-legacy"), true); view.openPage("overview"); assert.equal(view.contentEl.scrollTop, 135);
   const counts = { sourceCount: 2, sourceStatusCount: 1, sourceLinkCount: 2, backlinkCount: 2, wikiCount: 3 };
+  const reingestMessage = "可选：重新提炼。这页在上次整理后改过，看不出改的是排版还是内容。原文不动；想更新的话，可以让 Agent 重新整理这页。";
+  const reviewMessage = "来源“同名资料”有 2 篇同名资料，分不清是哪一篇，原链接先保留。";
+  const assertReviewCopy = () => {
+    const rows = [...view.field("secondary").querySelectorAll(".knowledge-upgrade-issue")] as HTMLElement[];
+    assert.deepEqual(rows.map(row => row.textContent), [`《同名资料》：${reviewMessage}`, `《改名资料》：${reingestMessage}`], "preview, stopped and completed views show the full exact copy once");
+    assert.equal((rows[1].textContent!.match(/可选：重新提炼/gu) ?? []).length, 1);
+    assert.equal(rows[1].children.length, 1, "no extra optional-reingest label line");
+    assert.doesNotMatch(view.field("secondary").textContent, /指纹|记录|正文|唯一定位|旧字段|旧机器|非标准|readPaths|revision|preview-current/u);
+  };
   const preview: MaintenanceUpgradePreview = { id: "preview-current", createdAt: Date.now(), counts,
     automatic: [{ path: "Sources/旧资料.md", title: "旧资料", properties: ["提炼状态：已提炼", "提炼到：知识条目"] },
       { path: "Sources/归档/旧资料.md", title: "旧资料", properties: ["提炼状态：已提炼"] },
       { path: "Wiki/知识条目.md", title: "知识条目", properties: ["类型：确认后由当前模型判断"] }],
-    rootAdditions: [{ role: "wiki", path: "Legacy/Wiki" }], issues: [{ title: "同名资料", message: "同名资料有两篇，暂时不补链接。", kind: "review" }, { title: "改名资料", message: "缺少旧正文，暂时无法分辨改动。", kind: "optional-reingest" }] };
+    rootAdditions: [{ role: "wiki", path: "Legacy/Wiki" }], issues: [{ title: "同名资料", message: reviewMessage, kind: "review" }, { title: "改名资料", message: reingestMessage, kind: "optional-reingest" }] };
   let upgrade: MaintenanceUpgradeSnapshot = { status: "scanning", counts: { sourceCount: 0, sourceStatusCount: 0, sourceLinkCount: 0, backlinkCount: 0, wikiCount: 0 } };
   let scanFails = false;
   const upgradeCalls: string[] = [];
@@ -118,7 +127,9 @@ export async function runKnowledgePageUiTests(): Promise<void> {
   await view.openUpgradePreview(); assert.equal(view.field("secondary").querySelectorAll(".knowledge-upgrade-location").length, 2, "only same-title files expose their exact relative location");
   assert.equal(view.page, "upgrade"); assert.equal(view.field("secondary").classList.contains("knowledge-legacy"), false);
   assert.match(view.field("secondary").textContent, /《旧资料》.*提炼状态：已提炼.*《知识条目》.*确认后由当前模型判断/u);
-  assert.match(view.field("secondary").textContent, /将登记的旧目录.*Legacy\/Wiki.*可选：重新提炼/u);
+  assert.equal(view.field("secondary").querySelector(".knowledge-upgrade-intro")!.textContent, "确认后会补上资料状态、Wiki 类型和资料指向 Wiki 的链接。原文、已有属性和旧报告都不改。");
+  assert.ok([...view.field("secondary").querySelectorAll("h2")].some((heading: any) => heading.textContent === "会继续使用的旧文件夹"));
+  assertReviewCopy();
   assert.doesNotMatch(view.field("secondary").textContent, /readPaths|revision|preview-current/u);
   assert.equal(root.querySelectorAll('[data-knowledge="secondary"] .is-primary').length, 1);
   assert.equal(root.querySelector(".knowledge-upgrade-actions")?.lastElementChild?.textContent, "确认升级");
@@ -142,8 +153,8 @@ export async function runKnowledgePageUiTests(): Promise<void> {
   const interruptedActivity = { ...upgradeActivity, status: "interrupted" as const, failures: [{ key: "upgrade:review", message: upgradeReason, at: Date.now() }] };
   activitySnapshot = { primary: interruptedActivity, other: null, maintenance: [interruptedActivity] }; view.renderSecondary();
   assert.ok(view.field("secondary").textContent.includes(upgradeReason), "Upgrade reasons keep the actual unresolved property");
-  assert.match(view.field("secondary").querySelector(".knowledge-upgrade-review")!.textContent!, /同名资料.*可选：重新提炼.*缺少旧正文/u, "interrupted tasks retain the original review list");
-  assert.match(view.field("secondary").querySelector(".knowledge-upgrade-review")!.textContent!, /不属于补写失败/u);
+  assertReviewCopy();
+  assert.equal(view.field("secondary").querySelector(".knowledge-upgrade-review p")!.textContent, "下面这些资料请你再看一眼，也可以之后再整理。原文件都保留了，升级已补好的内容不受影响。");
   assert.doesNotMatch(view.field("secondary").querySelector(".knowledge-upgrade-review")!.textContent!, /失败页/u);
   assert.match(view.field("secondary").textContent, /《失败页》：类型判断未完成/u);
   activitySnapshot = { primary: null, other: null, maintenance: [] };
@@ -153,7 +164,7 @@ export async function runKnowledgePageUiTests(): Promise<void> {
     upgradeCounts: { sourceTotal: 2, sourceCompleted: 2, linkTotal: 4, linksCompleted: 4, wikiTotal: 3, wikiCompleted: 3 }, failures: [] };
   activitySnapshot = { primary: null, other: null, maintenance: [completedActivity] }; view.renderSecondary();
   assert.equal((view.field("secondary").textContent.match(/2 篇资料状态/gu) ?? []).length, 1, "completed counts are shown once");
-  assert.match(view.field("secondary").querySelector(".knowledge-upgrade-review")!.textContent!, /同名资料.*可选：重新提炼.*缺少旧正文/u, "completed tasks retain the original review list");
+  assertReviewCopy();
   view.openPage("overview"); upgrade = { status: "ready", counts: { sourceCount: 30, sourceStatusCount: 0, sourceLinkCount: 0, backlinkCount: 0, wikiCount: 0 } };
   await view.refreshUpgrade(); assert.equal(view.field("upgrade").hidden, true, "scanned source totals never create fictitious pending work");
   upgrade = { ...upgrade, preview: { ...preview, counts: upgrade.counts, automatic: [], rootAdditions: [] } };

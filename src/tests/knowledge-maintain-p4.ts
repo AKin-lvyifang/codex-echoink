@@ -33,7 +33,7 @@ export async function runKnowledgeMaintainP4Tests(root: string): Promise<void> {
 }
 
 function testCompletedSourceReview() {
-  const missingMessage = "没有找到能唯一确认的成果页，未补提炼到，状态仍已提炼。";
+  const missingMessage = "看不出这篇资料整理到了哪页 Wiki，先不补链接，仍算已提炼。";
   const completed = (p: string, properties = "") => file(p, "raw", `---\n提炼状态: 已提炼\n${properties}---\n# 已完成来源\n`);
   const changed = completed("Raw/只有标准状态和旧指纹.md", "提炼指纹: old\n");
   const noFingerprint = completed("Raw/没有旧指纹.md");
@@ -50,10 +50,10 @@ function testCompletedSourceReview() {
   const plan = buildMaintenanceUpgradePlan({ files, bindingRevision: 1, now: 1 });
   const missingResultPaths = plan.issues.filter(issue => issue.kind === "review" && issue.message === missingMessage).map(issue => issue.path).sort();
   assert.deepEqual(missingResultPaths, [changed.path, noFingerprint.path, emptyFingerprint.path, missingLinked.path, ...sameName.map(source => source.path)].sort(), "missing outcomes are reported for each completed source, including both ambiguous candidates and a stale target link");
-  assert.ok(plan.issues.some(issue => issue.path === missingLinked.path && issue.kind === "review" && /已删除\.md.*已不存在/u.test(issue.message)), "a syntactically valid link to an absent scanned Wiki page requires review");
+  assert.equal(plan.issues.find(issue => issue.path === missingLinked.path && issue.kind === "review" && issue.message.includes("已删除.md"))?.message, "“提炼到”里的 Wiki 页面“Wiki/已删除.md”找不到了，原链接先保留，请你核对。", "a syntactically valid link to an absent scanned Wiki page requires review");
   assert.equal(missingLinked.content, missingLinkedOriginal);
   assert.deepEqual(readMaintenanceFrontmatterProperty(missingLinked.content, "提炼到").value, ["[[Wiki/已删除.md]]"], "the old missing-page target remains byte-for-byte in place");
-  assert.ok(plan.issues.some(issue => issue.path === "Wiki/歧义来源.md" && /对应 2 篇/u.test(issue.message)));
+  assert.equal(plan.issues.find(issue => issue.path === "Wiki/歧义来源.md")?.message, "来源“同名”有 2 篇同名资料，分不清是哪一篇，原链接先保留。");
   const optionalReingestPaths = plan.issues.filter(issue => issue.kind === "optional-reingest").map(issue => issue.path);
   assert.deepEqual(optionalReingestPaths, [changed.path], "canonical completion plus a real old fingerprint is sufficient; absent or blank fingerprints create no optional issue");
   for (const source of [changed, noFingerprint, emptyFingerprint, existing, missingLinked, ...sameName]) assert.equal(resolveMaintenanceSourceState(source.content).state, "digested");
@@ -62,7 +62,7 @@ function testCompletedSourceReview() {
   assert.deepEqual(plan.sourceItems, [], "uncertain or absent outcomes never invent target links or rewrite completed sources");
   assert.equal(JSON.stringify(files), original);
   return { missingResultPaths, optionalReingestPaths, pendingMissingResultIssues: 0, proposedSourceWrites: plan.sourceItems.length,
-    missingPageReviewPaths: plan.issues.filter(issue => /已不存在/u.test(issue.message)).map(issue => issue.path),
+    missingPageReviewPaths: plan.issues.filter(issue => /找不到了/u.test(issue.message)).map(issue => issue.path),
     missingLinkedTargetsPreserved: readMaintenanceFrontmatterProperty(missingLinked.content, "提炼到").value };
 }
 
@@ -114,7 +114,7 @@ function testPriority(): void {
   const optional = buildMaintenanceUpgradePlan({ files: [canonicalOld], bindingRevision: 1, now: 1 });
   assert.equal(resolveMaintenanceSourceState(canonicalOld.content).state, "digested");
   assert.deepEqual(optional.sourceItems, []);
-  assert.ok(optional.issues.some(item => item.path === canonicalOld.path && item.kind === "optional-reingest" && /可选：重新提炼/u.test(item.message)), "canonical completion still receives the preview-only stale fingerprint option");
+  assert.equal(optional.issues.find(item => item.path === canonicalOld.path && item.kind === "optional-reingest")?.message, "可选：重新提炼。这页在上次整理后改过，看不出改的是排版还是内容。原文不动；想更新的话，可以让 Agent 重新整理这页。", "canonical completion still receives the preview-only stale fingerprint option");
 }
 
 function testBytePatches(): void {
@@ -183,14 +183,18 @@ function testPlan() {
   assert.ok(plan.wikiItems.some(item => item.path.endsWith("index.md")) && plan.wikiItems.some(item => item.path === "Wiki/地图.md"));
   assert.equal(plan.wikiItems.some(item => ["Wiki/标准.md", "Wiki/自定.md", "Wiki/坏头.md"].includes(item.path)), false);
   assert.deepEqual(plan.counts, { sourceCount: 7, sourceStatusCount: 5, sourceLinkCount: 2, backlinkCount: 5, wikiCount: 7 });
-  assert.ok(plan.issues.some(item => /对应 2 篇/u.test(item.message)));
-  assert.ok(plan.issues.some(item => /失踪资料/u.test(item.message)));
+  assert.equal(plan.issues.find(item => item.path === "Wiki/歧义.md" && item.message.includes("同名"))?.message, "来源“同名”有 2 篇同名资料，分不清是哪一篇，原链接先保留。");
+  assert.equal(plan.issues.find(item => item.message.includes("失踪资料"))?.message, "没有找到来源“失踪资料”对应的资料，原链接先保留，请你核对。");
+  assert.equal(plan.issues.find(item => item.path === "Wiki/歧义.md" && item.message.includes("不完整"))?.message, "这页有一处旧来源信息不完整，原文先保留，请你核对。");
+  assert.equal(plan.issues.find(item => item.path === "Wiki/自定.md")?.message, "这页的“类型”不在七种知识类型里，先保留，请你核对。");
+  assert.deepEqual(plan.issues.filter(item => item.path === "Raw/自定.md").map(item => item.message), ["这篇资料的“提炼状态”看不明白，先保留，请你核对。", "这篇资料的“提炼到”没写成 Wiki 链接列表，先保留，请你核对。"]);
+  for (const item of plan.issues) assert.doesNotMatch(item.message, /指纹|记录|正文|唯一定位|旧机器|非标准|原值|revision|fingerprint/u);
   assert.ok(plan.issues.some(item => item.kind === "optional-reingest"));
   assert.ok(plan.issues.some(item => item.path === "Wiki/坏头.md" && item.kind === "unavailable"));
   const preview = previewMaintenanceUpgradePlan(plan);
   assert.equal(preview.automatic.length, plan.sourceItems.length + plan.wikiItems.length);
   assert.equal(preview.rootAdditions[0].path, "Raw");
-  assert.ok(preview.automatic.find(item => item.path === "Wiki/地图.md")?.description?.includes("确认后"));
+  assert.equal(preview.automatic.find(item => item.path === "Wiki/地图.md")?.description, "确认后让 Agent 从七种知识类型中选择；拿不准时标上“类型待确认”。");
   const upgraded = files.map(source => {
     const sourceItem = plan.sourceItems.find(item => item.path === source.path), wikiItem = plan.wikiItems.find(item => item.path === source.path);
     const content = sourceItem ? patchMaintenanceUpgradeSourceFrontmatter(source.content, { status: sourceItem.addStatus, targetPaths: sourceItem.addTargetPaths })

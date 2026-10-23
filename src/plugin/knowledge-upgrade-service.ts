@@ -372,7 +372,7 @@ async function readUpgradeHistoryRoots(pluginRoot: string): Promise<MaintenanceU
   let value: { version?: number; bindings?: KnowledgeFolderBindings; appliedBindings?: KnowledgeFolderBindings; folders?: string[]; createdFolders?: string[]; folderRenames?: { original: string; current: string }[] };
   try { value = JSON.parse(await fs.readFile(index, "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
-  if (value.version !== 1) throw new Error("旧目录记录暂时无法识别。");
+  if (value.version !== 1) throw new Error("暂时看不出旧文件夹的位置，原文件先保留，请重试。");
   const roots = new Map<string, MaintenanceUpgradeRootAddition>();
   const add = (role: MaintenanceUpgradeRootAddition["role"], directory: string) => roots.set(`${role}\0${directory}`, { role, path: directory });
   for (const bindings of [value.bindings, value.appliedBindings]) if (bindings) {
