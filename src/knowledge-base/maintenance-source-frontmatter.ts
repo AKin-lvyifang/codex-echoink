@@ -16,7 +16,7 @@ interface FrontmatterSlice {
 /** Vault-relative note paths, without heading, alias, or traversal syntax. */
 export function isMaintenanceSourceTargetPath(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.trim() === value
-    && !/[\u0000-\u001f\u007f\\[\]|#^:*?"<>]/u.test(value)
+    && !/[\\[\]|#^:*?"<>]|(?=\p{ASCII})\p{Cc}/u.test(value)
     && !value.startsWith("/") && !value.startsWith("~/")
     && !value.split("/").some((part) => !part || part === "." || part === "..");
 }

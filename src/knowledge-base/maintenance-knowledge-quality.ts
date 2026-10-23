@@ -1,3 +1,4 @@
+import { isUnknownArray } from "../utils/unknown-array";
 import { createHash } from "node:crypto";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type { MaintenanceKnowledgeEvidence, MaintenanceKnowledgeSource, MaintenanceKnowledgeType, MaintenanceKnowledgeUnit } from "./maintenance-p2-contract";
@@ -330,7 +331,7 @@ function quoteFailureError(failures: readonly QuoteFailure[], quoteTotal: number
     ...unitFailures.map((failure) => `units[${failure.unitIndex}] ${evidenceLocation(failure.unitId, failure.sourcePath)}, field=${failure.field}: ${failure.message}`),
     ...failures.map((failure) => {
       const quote = typeof failure.quote === "string" ? utf8Preview(JSON.stringify(failure.quote), 700, "收到的quote")
-        : failure.quote === undefined ? "<missing>" : failure.quote === null ? "null" : `<${Array.isArray(failure.quote) ? "array" : typeof failure.quote}>`;
+        : failure.quote === undefined ? "<missing>" : failure.quote === null ? "null" : `<${isUnknownArray(failure.quote) ? "array" : typeof failure.quote}>`;
       return `units[${failure.unitIndex}] ${evidenceLocation(failure.unitId, failure.sourcePath)}, field=evidence[${failure.quoteIndex}].quote, quoteIndex=${failure.quoteIndex}（从0起始）, 收到的quote=${quote}；修复：使用该来源中连续的正文原句。`;
     })
   ];
@@ -359,12 +360,12 @@ export function groundMaintenanceKnowledgeUnits(
   units: readonly MaintenanceKnowledgeUnit[],
   sources: readonly MaintenanceKnowledgeSource[]
 ): MaintenanceKnowledgeUnit[] {
-  if (!Array.isArray(units) || !Array.isArray(sources)) throw new Error("Knowledge units and sources must be arrays.");
+  if (!isUnknownArray(units) || !isUnknownArray(sources)) throw new Error("Knowledge units and sources must be arrays.");
   const sourceByPath = new Map<string, GroundingSource>();
   for (const source of sources) {
     if (!source || !nonempty(source.path) || typeof source.content !== "string" || !nonempty(source.contentRevision)) throw new Error("Knowledge source requires a path, full content and contentRevision.");
     if (sourceByPath.has(source.path)) throw new Error("Knowledge source paths must be unique.");
-    const referencingUnits = units.filter((unit) => unit && Array.isArray(unit.evidence) && unit.evidence.some((evidence) => evidence?.sourcePath === source.path));
+    const referencingUnits = units.filter((unit) => unit && isUnknownArray(unit.evidence) && unit.evidence.some((evidence) => evidence?.sourcePath === source.path));
     const location = evidenceLocation(referencingUnits.map((unit) => unit.id).join(", ") || "<unreferenced>", source.path);
     if (!/^sha256:[a-f\d]{64}$/u.test(source.contentRevision)) throw new Error(`${location} 版本格式非法：host contentRevision must use sha256:<64 lowercase hex>.`);
     const actualRevision = `sha256:${createHash("sha256").update(source.content, "utf8").digest("hex")}`;
@@ -384,7 +385,7 @@ export function groundMaintenanceKnowledgeUnits(
       unitFailureCount += 1;
       if (unitFailures.length < MAX_QUOTE_FAILURES) unitFailures.push({ unitIndex, unitId, sourcePath, field, message });
     };
-    if (!unit || typeof unit !== "object" || Array.isArray(unit)) {
+    if (!unit || typeof unit !== "object" || isUnknownArray(unit)) {
       fail("unit", "Knowledge unit must be an object；修复：提供包含 id/type/domain/title/points/evidence 的知识单元。");
       continue;
     }
@@ -396,18 +397,18 @@ export function groundMaintenanceKnowledgeUnits(
     if (!nonempty(unit.title)) fail("title", "Knowledge unit title must be nonempty；修复：补充非空标题。");
     if (unit.typePendingConfirmation !== undefined && typeof unit.typePendingConfirmation !== "boolean") fail("typePendingConfirmation", "Knowledge typePendingConfirmation must be boolean；修复：使用 true/false 或省略该字段。");
     const aliases = unit.aliases === undefined ? [] : unit.aliases;
-    if (!Array.isArray(aliases)) fail("aliases", "Knowledge unit aliases must be a string list；修复：使用字符串数组，无别名时使用 []；null 不可作为缺省值。");
+    if (!isUnknownArray(aliases)) fail("aliases", "Knowledge unit aliases must be a string list；修复：使用字符串数组，无别名时使用 []；null 不可作为缺省值。");
     else for (const [index, alias] of aliases.entries()) if (!nonempty(alias)) fail(`aliases[${index}]`, "Knowledge unit aliases must contain nonempty strings；修复：删除空项或替换为非空别名。");
-    if (!Array.isArray(unit.points) || !unit.points.length) fail("points", "Knowledge unit points must be a nonempty string list；修复：补充至少一条非空知识主张。");
+    if (!isUnknownArray(unit.points) || !unit.points.length) fail("points", "Knowledge unit points must be a nonempty string list；修复：补充至少一条非空知识主张。");
     else for (const [index, point] of unit.points.entries()) if (!nonempty(point)) fail(`points[${index}]`, "Knowledge unit points must contain nonempty strings；修复：补充该条知识主张。");
-    if (!Array.isArray(unit.evidence) || !unit.evidence.length) {
+    if (!isUnknownArray(unit.evidence) || !unit.evidence.length) {
       fail("evidence", "Knowledge unit evidence must be nonempty；修复：补充至少一条本批来源的连续正文原句。");
       continue;
     }
     const groundedEvidence: MaintenanceKnowledgeEvidence[] = [];
     for (const [quoteIndex, evidence] of unit.evidence.entries()) {
       const location = evidenceLocation(unitId, evidence?.sourcePath);
-      if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
+      if (!evidence || typeof evidence !== "object" || isUnknownArray(evidence)) {
         fail(`evidence[${quoteIndex}]`, "Evidence must be an object；修复：提供 sourcePath/sourceRevision/quote。");
         continue;
       }
@@ -441,7 +442,7 @@ export function groundMaintenanceKnowledgeUnits(
       }
       groundedEvidence.push({ ...evidence, sourceRevision: source.revision, quote: source.content.slice(match.start, match.end), quoteLocation: { ...match, unit: "utf16", submittedQuote: evidence.quote } });
     }
-    groundedUnits.push({ ...unit, aliases: Array.isArray(aliases) ? [...aliases] : [], points: Array.isArray(unit.points) ? [...unit.points] : [], evidence: groundedEvidence });
+    groundedUnits.push({ ...unit, aliases: isUnknownArray(aliases) ? [...aliases] : [], points: isUnknownArray(unit.points) ? [...unit.points] : [], evidence: groundedEvidence });
   }
   if (failureCount || unitFailureCount) throw quoteFailureError(failures, failureCount, unitFailures, unitFailureCount);
   return groundedUnits;
@@ -469,10 +470,10 @@ function newPageMetadata(content: string) {
 }
 
 function checkedNewPageUnits(content: string, units: readonly MaintenanceKnowledgeUnit[]): readonly string[][] {
-  if (!nonempty(content) || !Array.isArray(units) || !units.length || !units.every((unit) => unit && knownType(unit.type))) throw new Error("New knowledge pages require content and typed knowledge units.");
+  if (!nonempty(content) || !isUnknownArray(units) || !units.length || !units.every((unit) => unit && knownType(unit.type))) throw new Error("New knowledge pages require content and typed knowledge units.");
   return units.map((unit, index) => {
     const aliases = unit.aliases === undefined ? [] : unit.aliases;
-    if (!Array.isArray(aliases) || !aliases.every(nonempty)) throw new Error(`units[${index}] ${evidenceLocation(typeof unit.id === "string" ? unit.id : "<missing>", undefined)}, field=aliases: Knowledge unit aliases must be a string list；修复：使用非空字符串数组，无别名时用 []。`);
+    if (!isUnknownArray(aliases) || !aliases.every(nonempty)) throw new Error(`units[${index}] ${evidenceLocation(typeof unit.id === "string" ? unit.id : "<missing>", undefined)}, field=aliases: Knowledge unit aliases must be a string list；修复：使用非空字符串数组，无别名时用 []。`);
     return [...aliases];
   });
 }

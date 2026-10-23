@@ -21,6 +21,7 @@ import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { ObsidianVaultDomainAdapter } from "./obsidian-vault-domain-adapter";
 import { confirmAndConsumeApprovalTicket, createOperationIdentity, type ApprovalOperationContract } from "../harness/pi-native/tool-authorization";
 import { classifyKnowledgeUpgradePage, KnowledgeUpgradeClassificationError } from "./pi-production-runtime-composition";
+import { isUnknownArray } from "../utils/unknown-array";
 
 const version = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 const localDateKey = (now: number) => {
@@ -62,10 +63,10 @@ export class KnowledgeUpgradeService {
     await this.ready;
     const record = this.record, upgrade = record?.upgrade;
     if (upgrade) {
-      const completed = upgradeCounts(record!);
+      const completed = upgradeCounts(record);
       return { status: upgrade.phase === "completed" ? "completed" : this.running ? "running" : "interrupted", counts: upgrade.plan.counts,
-        preview: this.preview(upgrade.plan), recordId: record!.recordId, taskId: record!.originConversationId,
-        completed, ...(record!.progress?.failures[0] ? { message: record!.progress!.failures[0].message } : {}) };
+        preview: this.preview(upgrade.plan), recordId: record.recordId, taskId: record.originConversationId,
+        completed, ...(record.progress?.failures[0] ? { message: record.progress.failures[0].message } : {}) };
     }
     return { status: this.error ? "failed" : this.plan ? "ready" : "scanning", counts: this.plan?.counts ?? countEmpty(),
       ...(this.plan ? { preview: previewMaintenanceUpgradePlan(this.plan) } : {}), ...(this.error ? { message: this.error } : {}) };
@@ -248,7 +249,7 @@ export class KnowledgeUpgradeService {
             write = state.writes[item.path] = { operationId: `${record.recordId}:${version(item.path).slice(0, 16)}`, path: item.path, role: source ? "source" : "wiki", expectedVersion: item.revision, content };
             await this.persist();
           }
-          const outcome = await serializeMaintenancePage(this.host.vaultRoot, item.path, () => this.host.write(write!, record, signal, retry));
+          const outcome = await serializeMaintenancePage(this.host.vaultRoot, item.path, () => this.host.write(write, record, signal, retry));
           if (outcome.done) { write.done = true; write.readbackRevision = outcome.revision; delete state.skipped[item.path]; }
           else {
             // A new user property may settle the action, but it never authorizes
@@ -369,20 +370,35 @@ export function createProductionKnowledgeUpgradeService(plugin: CodexForObsidian
 /** Read the existing initialization directory history; never move or restore it. */
 async function readUpgradeHistoryRoots(pluginRoot: string): Promise<MaintenanceUpgradeRootAddition[]> {
   const index = path.join(pluginRoot, "knowledge/initialization/original-directory-index.json");
-  let value: { version?: number; bindings?: KnowledgeFolderBindings; appliedBindings?: KnowledgeFolderBindings; folders?: string[]; createdFolders?: string[]; folderRenames?: { original: string; current: string }[] };
+  let value: unknown;
   try { value = JSON.parse(await fs.readFile(index, "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
-  if (value.version !== 1) throw new Error("暂时看不出旧文件夹的位置，原文件先保留，请重试。");
+  const invalidHistory = () => new Error("暂时看不出旧文件夹的位置，原文件先保留，请重试。");
+  const object = (input: unknown): Record<string, unknown> => {
+    if (!input || typeof input !== "object") throw invalidHistory();
+    return input as Record<string, unknown>;
+  };
+  const directories = (input: unknown): readonly string[] => {
+    if (!isUnknownArray(input) || !input.every((entry): entry is string => typeof entry === "string")) throw invalidHistory();
+    return input;
+  };
+  const history = object(value);
+  if (history.version !== 1) throw invalidHistory();
   const roots = new Map<string, MaintenanceUpgradeRootAddition>();
   const add = (role: MaintenanceUpgradeRootAddition["role"], directory: string) => roots.set(`${role}\0${directory}`, { role, path: directory });
-  for (const bindings of [value.bindings, value.appliedBindings]) if (bindings) {
-    for (const role of ["raw", "inbox", "wiki", "outputs"] as const) for (const directory of bindings.roles[role].readPaths) add(role, directory);
+  for (const bindings of [history.bindings, history.appliedBindings]) if (bindings) {
+    const roles = object(object(bindings).roles);
+    for (const role of ["raw", "inbox", "wiki", "outputs"] as const) for (const directory of directories(object(roles[role]).readPaths)) add(role, directory);
   }
-  for (const directory of [...value.folders ?? [], ...value.createdFolders ?? []]) {
+  for (const directory of [...directories(history.folders ?? []), ...directories(history.createdFolders ?? [])]) {
     const role = knowledgeRootRole(directory.split("/")[0]);
     if (role === "raw" || role === "inbox" || role === "wiki" || role === "outputs") add(role, directory.split("/")[0]);
   }
-  for (const renamed of value.folderRenames ?? []) {
+  const renames = history.folderRenames ?? [];
+  if (!isUnknownArray(renames)) throw invalidHistory();
+  for (const item of renames) {
+    const renamed = object(item);
+    if (typeof renamed.original !== "string" || typeof renamed.current !== "string") throw invalidHistory();
     const role = knowledgeRootRole(renamed.original.split("/")[0]);
     if (role === "raw" || role === "inbox" || role === "wiki" || role === "outputs") { add(role, renamed.original); add(role, renamed.current); }
   }

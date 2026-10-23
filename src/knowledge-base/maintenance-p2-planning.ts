@@ -1,3 +1,4 @@
+import { isUnknownArray } from "../utils/unknown-array";
 import { isMap, parseDocument } from "yaml";
 import { throwMaintenanceDiagnostics } from "./maintenance-diagnostics";
 import { appendMaintenanceBlock, appendMaintenanceManagedBlock, createMaintenanceSectionSnapshot } from "./maintenance-section-patch";
@@ -23,7 +24,7 @@ export function validateMaintenanceP2Plan(plan: readonly MaintenanceWritingItem[
   const errors: string[] = [];
   for (const [index,item] of plan.entries()) { try {
     const fields = item.knowledge;
-    if (!fields || !Array.isArray(fields.unitIds) || !fields.unitIds.length || new Set(fields.unitIds).size !== fields.unitIds.length || !fields.decision || !["new", "same_point", "uncertain"].includes(fields.decision.kind) || typeof fields.decision.reason !== "string" || !fields.decision.reason.trim()) throw new Error("P2清单必须声明knowledge.unitIds与同知识点判断decision及理由。");
+    if (!fields || !isUnknownArray(fields.unitIds) || !fields.unitIds.length || new Set(fields.unitIds).size !== fields.unitIds.length || !fields.decision || !["new", "same_point", "uncertain"].includes(fields.decision.kind) || typeof fields.decision.reason !== "string" || !fields.decision.reason.trim()) throw new Error("P2清单必须声明knowledge.unitIds与同知识点判断decision及理由。");
     const own: MaintenanceKnowledgeUnit[] = [];
     for (const id of fields.unitIds) {
       const unit = byId.get(id);
@@ -44,9 +45,9 @@ export function validateMaintenanceP2Plan(plan: readonly MaintenanceWritingItem[
       if (exact.length && fields.decision.kind !== "uncertain") throw new Error("标题或别名已有候选；确认同知识点更新原页，拿不准新建并解释相关关系。");
       if (fields.decision.kind === "uncertain" && (!fields.related?.length || (fields.decision.candidatePath && !fields.related.some(relation => relation.targetPath === fields.decision.candidatePath)))) throw new Error("不确定新建须声明相关条目及关系说明，程序会补互链。");
     }
-    for (const relation of fields.related ?? []) if (!relation || typeof relation.targetPath !== "string" || relation.targetPath === item.targetPath || typeof relation.reason !== "string" || !relation.reason.trim() || /[\r\n\[\]<>]/u.test(relation.reason)) throw new Error("相关条目需有效目标与单行关系说明，不能是自链或指令。");
-    for (const relation of fields.related ?? []) if (relation.reverseReason !== undefined && (typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n\[\]<>]/u.test(relation.reverseReason))) throw new Error("显式reverseReason须为非空单行关系说明，不能含[]<>；未提供时保持单向。");
-    if (fields.decision.kind === "uncertain" && fields.related?.some(relation => typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n\[\]<>]/u.test(relation.reverseReason))) throw new Error("不确定条目的互链须分别声明reason/reverseReason，写清两个方向的关系。");
+    for (const relation of fields.related ?? []) if (!relation || typeof relation.targetPath !== "string" || relation.targetPath === item.targetPath || typeof relation.reason !== "string" || !relation.reason.trim() || /[\r\n[\]<>]/u.test(relation.reason)) throw new Error("相关条目需有效目标与单行关系说明，不能是自链或指令。");
+    for (const relation of fields.related ?? []) if (relation.reverseReason !== undefined && (typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n[\]<>]/u.test(relation.reverseReason))) throw new Error("显式reverseReason须为非空单行关系说明，不能含[]<>；未提供时保持单向。");
+    if (fields.decision.kind === "uncertain" && fields.related?.some(relation => typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n[\]<>]/u.test(relation.reverseReason))) throw new Error("不确定条目的互链须分别声明reason/reverseReason，写清两个方向的关系。");
   } catch(error) { errors.push(`writingPlan[${index}]: ${error instanceof Error ? error.message : String(error)}`); } }
   for (const unit of units) if (!used.has(unit.id)) errors.push(`知识点未安排：${unit.id}`);
   for (const candidate of candidates) for (const other of candidate.batchUnitIds) {

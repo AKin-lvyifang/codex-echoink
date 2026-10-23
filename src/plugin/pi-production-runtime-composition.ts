@@ -843,7 +843,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
     },
     async resolveMaintenanceScope(request) {
       if (!request.trim()) return Object.freeze({ mode: "global" as const, ...await privateMaintenanceSourceScope(input.vaultRootPath, { processedSources: input.processedSources?.() }) });
-      const explicitPaths = [...request.matchAll(/(?:\[\[|`)?([^\s`\[\]<>|，。；]+\/[^\s`\[\]<>|，。；]+\.(?:markdown|md))(?![a-z0-9_.-])(?:\]\]|`)?/giu)].map(match => match[1]);
+      const explicitPaths = [...request.matchAll(/(?:\[\[|`)?([^\s`[\]<>|，。；]+\/[^\s`[\]<>|，。；]+\.(?:markdown|md))(?![a-z0-9_.-])(?:\]\]|`)?/giu)].map(match => match[1]);
       if (explicitPaths.length) {
         const roles = explicitPaths.map(relative => ({ relative, role: knowledgePathRole(input.vaultRootPath, relative) }));
         const paths = [...new Set(roles.filter(item => item.role === "raw" || item.role === "inbox").map(item => item.relative))];

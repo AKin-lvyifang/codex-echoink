@@ -167,7 +167,7 @@ export function preferExistingBilingualKnowledgeDefaults(config: KnowledgeFolder
   for (const role of KNOWLEDGE_ROOT_ROLES) {
     const binding = next.roles[role], chinese = KNOWLEDGE_ROOT_NAMES[role];
     const anotherPurpose = KNOWLEDGE_ROOT_ROLES.some(other => other !== role &&
-      [...config.roles[other].readPaths, ...(config.roles[other].writePath ? [config.roles[other].writePath!] : [])]
+      [...config.roles[other].readPaths, ...(config.roles[other].writePath ? [config.roles[other].writePath] : [])]
         .some(directory => pathInKnowledgeDirectory(chinese, directory) || pathInKnowledgeDirectory(directory, chinese)));
     if (!binding.enabled || binding.native || !directories.includes(chinese)
       || anotherPurpose

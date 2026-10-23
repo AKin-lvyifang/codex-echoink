@@ -21,14 +21,14 @@ const join = (directory: string, name: string): string => directory ? `${directo
 
 function assertPath(path: string, allowRoot = false): void {
   if ((path === "" && allowRoot)) return;
-  if (!path || /[\\\u0000-\u001f\u007f]/u.test(path) || path.startsWith("/") || /^[a-z]:/iu.test(path) ||
+  if (!path || /\\|(?=\p{ASCII})\p{Cc}/u.test(path) || path.startsWith("/") || /^[a-z]:/iu.test(path) ||
     path.split("/").some(segment => !segment || segment === "." || segment === "..")) {
     throw new Error(`领域地图路径无效：${path}`);
   }
 }
 
 function safeDomain(domain: string): string {
-  const safe = domain.normalize("NFC").replace(/[<>:"/\\|?*#\[\]\u0000-\u001f\u007f]/gu, "_").trim().replace(/^[. ]+|[. ]+$/gu, "");
+  const safe = domain.normalize("NFC").replace(/[<>:"/\\|?*#[\]]|(?=\p{ASCII})\p{Cc}/gu, "_").trim().replace(/^[. ]+|[. ]+$/gu, "");
   if (!safe || new TextEncoder().encode(`${safe}索引.md`).length > 240) throw new Error("领域名称不能生成安全的索引文件名。");
   return safe;
 }

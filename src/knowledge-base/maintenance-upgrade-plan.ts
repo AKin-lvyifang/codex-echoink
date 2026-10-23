@@ -27,7 +27,7 @@ function resolveRelativePath(base: string, value: string): string | undefined {
 function linkTarget(value: string): string | undefined {
   try {
     const decoded = decodeURIComponent(value.trim().replace(/^<|>$/gu, "")).split(/[#^]/u, 1)[0];
-    return decoded && !/^(?:[a-z][a-z\d+.-]*:|\/|~\/)/iu.test(decoded) && !/[\\\u0000-\u001f\u007f]/u.test(decoded) ? decoded : undefined;
+    return decoded && !/^(?:[a-z][a-z\d+.-]*:|\/|~\/)/iu.test(decoded) && !/\\|(?=\p{ASCII})\p{Cc}/u.test(decoded) ? decoded : undefined;
   } catch { return undefined; }
 }
 

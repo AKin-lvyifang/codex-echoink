@@ -41,6 +41,6 @@ export function maintenanceUserReceiptFromResult(value: unknown): Readonly<impor
   if (receipt.sourceCount !== undefined && !integer(receipt.sourceCount)) return null;
   const counts = receipt.pageCounts as Record<string, unknown> | undefined;
   if (counts && (!integer(counts.written) || !integer(counts.created) || !integer(counts.updated) || counts.created + counts.updated !== counts.written)) return null;
-  return { version: 1, text: receipt.text, ...(receipt.sourceCount === undefined ? {} : { sourceCount: receipt.sourceCount as number }),
+  return { version: 1, text: receipt.text, ...(receipt.sourceCount === undefined ? {} : { sourceCount: receipt.sourceCount }),
     ...(counts ? { pageCounts: { written: counts.written as number, created: counts.created as number, updated: counts.updated as number } } : {}) };
 }

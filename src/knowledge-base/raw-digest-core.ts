@@ -52,7 +52,7 @@ export function normalizeRawDigestRegistry(value: unknown, strict = false): RawD
   for (const [key, raw] of Object.entries(rawEntries)) {
     const item = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
     const rawPath = normalizeRawDigestRelativePath(item.rawPath || key), fingerprint = typeof item.fingerprint === "string" ? item.fingerprint.trim() : "";
-    if (strict && (!rawPath || !fingerprint || rawPath !== (item.rawPath || key) || /[\u0000-\u001f\u007f]/u.test(rawPath)
+    if (strict && (!rawPath || !fingerprint || rawPath !== (item.rawPath || key) || /(?=\p{ASCII})\p{Cc}/u.test(rawPath)
       || Object.prototype.hasOwnProperty.call(entries, rawPath))) throw new Error(`Invalid Raw registry entry: ${key}`);
     if (!rawPath || !fingerprint) continue;
     entries[rawPath] = { rawPath, fingerprint, size: positive(item.size), mtime: positive(item.mtime), digestedAt: positive(item.digestedAt),

@@ -749,7 +749,7 @@ interface ActiveProductRun {
   maintenanceScope?: PiChatSubmitRequest["maintenanceScope"];
   maintenanceCommand?: Readonly<PiKnowledgeMaintenanceCommandContext>;
   maintenanceScopePersisted?: boolean;
-  maintenanceScopeError?: unknown;
+  maintenanceScopeError?: Error;
   noteMentions: readonly Readonly<PiChatNoteMention>[];
   selectionAnnotations: readonly SelectionAnnotation[];
   documents: readonly Readonly<PiChatPreparedDocument>[];
@@ -1649,7 +1649,8 @@ export class PiNativeConversationRuntime {
           assertPiSubmissionActive(execution.knowledgeAbort.signal);
           // Advice remains ordinary chat. Its durable user message is still
           // a new-selection boundary, so later confirmation cannot revive A.
-          execution.maintenanceScopeError = error;
+          const failure = error instanceof Error ? error : new Error(String(error), { cause: error });
+          execution.maintenanceScopeError = error ? failure : undefined;
         }
       }
       if (execution.generation) {

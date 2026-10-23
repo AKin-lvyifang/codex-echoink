@@ -781,27 +781,6 @@ export function renderContextPanel(
   }
 }
 
-export function shouldShowPiSteerAction(
-  state: Pick<
-    ComposerToolbarState,
-    | "session"
-    | "running"
-    | "promptEnhancerRunning"
-    | "viewRunKind"
-    | "activeRunSessionId"
-    | "hasTextDraft"
-  >
-): boolean {
-  return false && Boolean(
-    state.session.bodyAuthority === "pi_session_only"
-    && state.running
-    && !state.promptEnhancerRunning
-    && state.viewRunKind === "chat"
-    && state.activeRunSessionId === state.session.id
-    && state.hasTextDraft
-  );
-}
-
 export function renderTurnQueue(container: HTMLElement, state: TurnQueueState, callbacks: TurnQueueCallbacks): void {
   const language = state.language ?? "zh-CN";
   container.empty();

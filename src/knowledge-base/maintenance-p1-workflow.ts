@@ -1,3 +1,4 @@
+import { isUnknownArray } from "../utils/unknown-array";
 import { maintenanceInspection, type MaintenanceInspectionView } from "./maintenance-p2-receipt";
 import { Phase3MaintenanceError } from "./phase3-maintenance-service";
 import { extractMachineSourceMarkers } from "./knowledge-maintenance-protocol";
@@ -76,7 +77,7 @@ export class MaintenanceP1Workflow {
       if (record && record.p1!.phase !== "decompose") return this.receipt(record, "已有未完成清单，使用resume继续；不会覆盖已存拆解。");
       if (!selected.length || selected.length > 20) throw new Error("拆解须使用当前授权的1–20篇来源。");
       const decompositions = action.decompositions;
-      if (!Array.isArray(decompositions) || !decompositions.length || decompositions.length > selected.length) throw new Error("decompositions须含本批至少1篇来源；可逐篇提交同一decompose阶段，全部齐备后才能plan。");
+      if (!isUnknownArray(decompositions) || !decompositions.length || decompositions.length > selected.length) throw new Error("decompositions须含本批至少1篇来源；可逐篇提交同一decompose阶段，全部齐备后才能plan。");
       const fingerprints: Record<string, string> = { ...record?.p1!.sourceFingerprints };
       const sourceTexts: MaintenanceKnowledgeSource[] = [];
       for (const sourcePath of selected) {
@@ -89,7 +90,7 @@ export class MaintenanceP1Workflow {
       }
       const seen = new Set<string>();
       for (const d of decompositions) {
-        if (!d || typeof d.sourcePath !== "string" || !selected.includes(d.sourcePath) || seen.has(d.sourcePath) || typeof d.summary !== "string" || !d.summary.trim() || !Array.isArray(d.units) || d.units.some(u => !u || typeof u !== "object" || !Array.isArray(u.evidence) || !u.evidence.some(e => e.sourcePath === d.sourcePath))) throw new Error("拆解必须使用带七类型和本篇原句证据的结构化知识点；旧字符串仅供已有P1清单恢复。");
+        if (!d || typeof d.sourcePath !== "string" || !selected.includes(d.sourcePath) || seen.has(d.sourcePath) || typeof d.summary !== "string" || !d.summary.trim() || !isUnknownArray(d.units) || d.units.some(u => !u || typeof u !== "object" || !isUnknownArray(u.evidence) || !u.evidence.some(e => e.sourcePath === d.sourcePath))) throw new Error("拆解必须使用带七类型和本篇原句证据的结构化知识点；旧字符串仅供已有P1清单恢复。");
         seen.add(d.sourcePath);
         await this.host.current?.(input, "decompose", d.sourcePath);
         for (const sourcePath of new Set([d.sourcePath, ...d.units.flatMap(u => typeof u === "string" ? [] : u.evidence.map(e => e.sourcePath))])) {
@@ -143,12 +144,12 @@ export class MaintenanceP1Workflow {
     if (action.stage === "plan") {
       if (state.phase === "decompose") throw new Error(`全部来源校验后才能plan；尚缺：${record.sources.filter(source => !state.decompositions.some(d => d.sourcePath === source.path)).map(source => source.path).join("、")}`);
       if (state.phase !== "plan") return this.receipt(record, "写作清单已固定，使用resume继续，不覆盖已有目标。");
-      if (!Array.isArray(action.writingPlan) || action.writingPlan.length > 100) throw new Error("需要明确的writingPlan数组。");
+      if (!isUnknownArray(action.writingPlan) || action.writingPlan.length > 100) throw new Error("需要明确的writingPlan数组。");
       const ids = new Set<string>(), targets = new Set<string>();
       const plan: MaintenanceWritingItem[] = [];
       const errors: string[] = [];
       for (const [index,item] of action.writingPlan.entries()) { try {
-        if (!item || !/^[A-Za-z0-9_-]{1,80}$/u.test(item.id) || ids.has(item.id) || !Array.isArray(item.sourcePaths) || !item.sourcePaths.length || new Set(item.sourcePaths).size !== item.sourcePaths.length || item.sourcePaths.some(p => !record!.sources.some(s => s.path === p))) throw new Error("清单ID、来源或条目无效。");
+        if (!item || !/^[A-Za-z0-9_-]{1,80}$/u.test(item.id) || ids.has(item.id) || !isUnknownArray(item.sourcePaths) || !item.sourcePaths.length || new Set(item.sourcePaths).size !== item.sourcePaths.length || item.sourcePaths.some(p => !record.sources.some(s => s.path === p))) throw new Error("清单ID、来源或条目无效。");
         const targetPath = await this.host.targetPath(item.targetPath);
         if (targets.has(targetPath)) throw new Error("同一目标只安排一页；先聚合重复知识点。");
         const before = await this.host.read(targetPath);
@@ -266,7 +267,7 @@ export class MaintenanceP1Workflow {
       const raw = await this.host.read(p);
       const heading = raw === null ? undefined : createMaintenanceSectionSnapshot(raw).regions.map(region => raw.slice(region.start, region.contentStart)).find(heading => /^ {0,3}#\s+/u.test(heading));
       const title = heading?.replace(/^ {0,3}#\s+/u, "").trim().replace(/[ \t]+#+[ \t]*$/u, "") || p.split("/").at(-1)!.replace(/\.(?:md|markdown)$/iu, "");
-      const label = title.replace(/[\[\]|\r\n]/gu, " ");
+      const label = title.replace(/[[\]|\r\n]/gu, " ");
       links.push(`[[${p}|${label}]]${eol}<!-- echoink-source: ${JSON.stringify({ path: p, revision: `sha256:${record.p1!.sourceFingerprints[p].split(":").at(-1)}` })} -->`);
     }
     return links.join(eol);
@@ -344,8 +345,8 @@ export class MaintenanceP1Workflow {
     if (!region) return appendMaintenanceManagedBlock(content, `## 来源${eol}${eol}${links}${eol}`, eol);
     // This is the only program-managed area; all other bytes stay verbatim.
     let sourceContent = content.slice(region.contentStart, region.end);
-    sourceContent = sourceContent.replace(/^\[\[([^\r\n]+)\]\][ \t]*(?:\r\n|\n|\r)<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->[ \t]*(?:\r\n|\n|\r|$)/gmu, (pair, _link: string, json: string) => { try { return item.sourcePaths.includes(JSON.parse(json).path) ? "" : pair; } catch { return pair; } });
-    for (const p of item.sourcePaths) sourceContent = sourceContent.replace(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu, (marker, json: string) => { try { return JSON.parse(json).path === p ? "" : marker; } catch { return marker; } });
+    sourceContent = sourceContent.replace(/^\[\[([^\r\n]+)\]\][ \t]*(?:\r\n|\n|\r)<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->[ \t]*(?:\r\n|\n|\r|$)/gmu, (pair: string, _link: string, json: string) => { try { const marker: unknown = JSON.parse(json); return marker && typeof marker === "object" && "path" in marker && typeof marker.path === "string" && item.sourcePaths.includes(marker.path) ? "" : pair; } catch { return pair; } });
+    for (const p of item.sourcePaths) sourceContent = sourceContent.replace(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu, (marker: string, json: string) => { try { const value: unknown = JSON.parse(json); return value && typeof value === "object" && "path" in value && value.path === p ? "" : marker; } catch { return marker; } });
     const selected = new Set(item.sourcePaths.flatMap(p => [p, p.replace(/\.(?:md|markdown)$/iu, "")]));
     sourceContent = sourceContent.replace(/\[\[([^\]|#\r\n]+)(?:\|[^\]\r\n]*)?\]\]/gu, (link, target: string) => selected.has(target) ? "" : link);
     if (sourceContent && !/^[\r\n]/u.test(sourceContent)) sourceContent = eol + sourceContent;

@@ -7,7 +7,7 @@ import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error"
 export type PiToolAccessDecision = Readonly<{ allowed: true }> | Readonly<{ allowed: false; reason: string }>;
 
 export function piToolAccessFailure(error: unknown): Readonly<{ allowed: false; reason: string }> {
-  const detail = knowledgeErrorDetail(error).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/gu, "").slice(0, 2000);
+  const detail = knowledgeErrorDetail(error).replace(/(?![\t\r\n\u007f])(?=\p{ASCII})\p{Cc}/gu, "").slice(0, 2000);
   return { allowed: false, reason: detail || "authorization_failed" };
 }
 

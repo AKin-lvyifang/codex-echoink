@@ -682,7 +682,8 @@ function normalizeP1(value: unknown): Readonly<MaintenanceP1Action> {
   const list = (value: unknown, location: string, maximum = 100): value is unknown[] => { if (!Array.isArray(value) || value.length > maximum) { errors.push(`${location}须为最多${maximum}项的数组。`); return false; } return true; };
   const strings = (value: unknown, location: string, nonempty = false) => { if (list(value, location)) { if (nonempty && !value.length) errors.push(`${location}不能为空。`); value.forEach((item,index) => text(item, `${location}[${index}]`)); } };
   keys(r, ["stage", "sourcePaths", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches", "view", "offset"], "root");
-  if (r.view !== undefined && !["candidates", "units", "pages"].includes(String(r.view))) errors.push("view只可为candidates/units/pages。");
+  const requestedView = String(r.view);
+  if (r.view !== undefined && !["candidates", "units", "pages"].includes(requestedView)) errors.push("view只可为candidates/units/pages。");
   if (r.offset !== undefined && (!Number.isSafeInteger(r.offset) || Number(r.offset) < 0)) errors.push("offset须为非负整数。");
   for (const key of ["pageId", "targetPath"]) if (r[key] !== undefined || (r.stage === "write" && key === "pageId") || (r.stage === "sections" && key === "targetPath")) text(r[key], key);
   if (r.content !== undefined && typeof r.content !== "string") errors.push("content须为Markdown字符串。");
@@ -727,5 +728,5 @@ function normalizeP1(value: unknown): Readonly<MaintenanceP1Action> {
 /** SDK validates before tool_call hooks. Keep the rich schema as a model hint,
  * but route field-shape failures through our bounded production diagnostics. */
 function diagnosticParameters<T extends { properties: Record<string, unknown> }>(schema: T): T {
-  return { ...schema, required: [], additionalProperties: true, properties: Object.fromEntries(Object.entries(schema.properties).map(([key,value]) => [key, { anyOf: [value, {}] }])) } as T;
+  return { ...schema, required: [], additionalProperties: true, properties: Object.fromEntries(Object.entries(schema.properties).map(([key,value]) => [key, { anyOf: [value, {}] }])) };
 }

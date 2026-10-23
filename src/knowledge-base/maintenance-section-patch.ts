@@ -1,3 +1,4 @@
+import { isUnknownArray } from "../utils/unknown-array";
 import { sha256Hex } from "../utils/sha256";
 import type {
   MaintenanceSectionPatch,
@@ -71,7 +72,7 @@ export function createMaintenanceSectionSnapshot(markdown: string, newSections: 
       end: headings[index + 1]?.start ?? markdown.length
     });
   });
-  if (!Array.isArray(newSections) || newSections.length > 20) throw new Error("newSections须为最多20个新H2标题的数组。");
+  if (!isUnknownArray(newSections) || newSections.length > 20) throw new Error("newSections须为最多20个新H2标题的数组。");
   const titles = new Set(regions.map(region => region.title.normalize("NFKC").toLowerCase()));
   const insertion = regions.find(region => region.kind === "sources" || region.kind === "related" || isMaintenanceQuoteSectionTitle(region.title))?.start ?? markdown.length;
   for (const [index, title] of newSections.entries()) {
@@ -102,7 +103,7 @@ export function applyMaintenanceSectionPatches(
   };
   if (snapshot?.revision !== current.revision) fail("STALE_SNAPSHOT", "文档已变化，区域快照已过期，未应用修改。");
   if (!sameSnapshot(snapshot, current)) fail("INVALID_SNAPSHOT", "区域快照的目录或边界不匹配，未应用修改。");
-  if (!Array.isArray(patches)) fail("INVALID_PATCH", "分区补丁必须是数组，未应用修改。");
+  if (!isUnknownArray(patches)) fail("INVALID_PATCH", "分区补丁必须是数组，未应用修改。");
 
   const byId = new Map(current.regions.map(region => [region.id, region]));
   const replacements = new Map<string, string>();
@@ -179,7 +180,7 @@ export function applyMaintenanceSectionPatches(
 }
 
 export function isMaintenanceQuoteSectionTitle(title: string): boolean {
-  return typeof title === "string" && title.normalize("NFKC").replace(/[\s*_`\[\]：:]/gu, "") === "关键原句";
+  return typeof title === "string" && title.normalize("NFKC").replace(/[\s*_`[\]：:]/gu, "") === "关键原句";
 }
 function maintenanceQuoteSections(markdown: string): { start: number; end: number; bytes: string }[] {
   const headings = readHeadings(markdown, frontmatterEnd(markdown));
@@ -222,7 +223,7 @@ function regionKind(title: string): MaintenanceSectionRegion["kind"] {
 }
 
 function sameSnapshot(left: MaintenanceSectionSnapshot, right: MaintenanceSectionSnapshot): boolean {
-  return Array.isArray(left.regions) && left.regions.length === right.regions.length
+  return isUnknownArray(left.regions) && left.regions.length === right.regions.length
     && left.regions.every((region, index) => {
       const expected = right.regions[index];
       return region?.id === expected.id && region.title === expected.title && region.kind === expected.kind

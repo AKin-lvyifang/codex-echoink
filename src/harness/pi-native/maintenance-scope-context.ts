@@ -1,3 +1,4 @@
+import { isUnknownArray } from "../../utils/unknown-array";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { PiKnowledgeMaintenanceScope, PiProductRunRecord } from "./contracts";
 import { isRawMarkdownPath } from "../../knowledge-base/raw-digest";
@@ -23,18 +24,18 @@ export function freezeMaintenanceScopeContext(value: unknown): Readonly<Maintena
   const root = record(value), scope = record(root?.scope);
   if (!root || !scope || typeof root.productRunId !== "string" || !root.productRunId.trim() || typeof root.request !== "string") return null;
   const paths = scope.mode === "query" ? scope.candidatePaths : scope.sourcePaths;
-  if (!["global", "exact", "batch", "query"].includes(String(scope.mode)) || !Array.isArray(paths)
-    || paths.some(value => typeof value !== "string" || !isRawMarkdownPath(value) || value.split("/").some(part => !part || part === "." || part === ".."))
+  if (!["global", "exact", "batch", "query"].includes(String(scope.mode)) || !isUnknownArray(paths)
+    || !paths.every((value): value is string => typeof value === "string" && isRawMarkdownPath(value) && !value.split("/").some(part => !part || part === "." || part === ".."))
     || new Set(paths).size !== paths.length || paths.length > (scope.mode === "query" ? 12 : 20)
     || scope.mode === "exact" && paths.length !== 1 || scope.mode !== "global" && paths.length === 0) return null;
   const revision = root.folderBindingsRevision ?? scope.folderBindingsRevision;
   if (revision !== undefined && (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0)) return null;
-  const frozenPaths = Object.freeze([...paths]) as readonly string[];
+  const frozenPaths = Object.freeze([...paths]);
   const frozenScope: PiKnowledgeMaintenanceScope = scope.mode === "query" ? { mode: "query", candidatePaths: frozenPaths }
     : scope.mode === "exact" ? { mode: "exact", sourcePaths: frozenPaths as readonly [string] }
-    : { mode: scope.mode as "global" | "batch", sourcePaths: frozenPaths, ...(revision === undefined ? {} : { folderBindingsRevision: revision as number }) };
+    : { mode: scope.mode as "global" | "batch", sourcePaths: frozenPaths, ...(revision === undefined ? {} : { folderBindingsRevision: revision }) };
   return Object.freeze({ productRunId: root.productRunId, request: root.request, scope: Object.freeze(frozenScope),
-    ...(revision === undefined ? {} : { folderBindingsRevision: revision as number }) });
+    ...(revision === undefined ? {} : { folderBindingsRevision: revision }) });
 }
 
 /** A narrow confirmation grammar prevents unrelated ordinary messages inheriting. */
@@ -42,7 +43,7 @@ export function isMaintenanceScopeConfirmation(text: string): boolean {
   const value = text.trim().replace(/^\/maintain\s*/iu, "").replace(/[\s，。！？、,.!?；;]+$/gu, "");
   // A reference to the original checklist may carry execution instructions.
   // Explicit replacement sources/queries still take precedence over recovery.
-  if (/[^\s`\[\]<>|，。；]+\/[^\s`\[\]<>|，。；]+\.(?:markdown|md)(?![a-z0-9_.-])/iu.test(value)
+  if (/[^\s`[\]<>|，。；]+\/[^\s`[\]<>|，。；]+\.(?:markdown|md)(?![a-z0-9_.-])/iu.test(value)
     || /(?:改为|改成|换成)(?:[^。；\n]*)(?:来源|资料|笔记|主题|范围)|(?:另外|另行|重新)(?:维护|整理|处理|选择|检索|搜索)/u.test(value)) return false;
   if (/^(?:请[，,\s]*)?(?:继续|接着)(?:整理|维护|处理|执行|完成|写完)?(?:当前|原来?|上次|刚才|这)(?:的|这)?(?:一?批|维护清单|写作清单|清单|维护任务|整理任务|进度)/u.test(value)) return true;
   return /^(?:(?:好的?|可以|行|嗯)[，,\s]*)?(?:都?按(?:照)?(?:你(?:的)?推荐(?:的)?|推荐(?:的)?(?:方案)?|(?:刚才|上面)(?:的)?方案)(?:去)?(?:做|执行|整理|维护)|就(?:按这个|这么)(?:做|执行|办)|继续(?:吧|执行|整理|维护|处理)?|确认(?:执行)?|执行吧|开始吧|好的?|可以|行)$/u.test(value)
@@ -53,7 +54,7 @@ export function isMaintenanceScopeConfirmation(text: string): boolean {
 export function isNewMaintenanceScopeRequest(text: string, vaultRootPath?: string): boolean {
   if (isMaintenanceScopeConfirmation(text)) return false;
   const value = text.trim();
-  const explicitPath = /[^\s`\[\]<>|，。；]+\/[^\s`\[\]<>|，。；]+\.(?:markdown|md)(?![a-z0-9_.-])/giu;
+  const explicitPath = /[^\s`[\]<>|，。；]+\/[^\s`[\]<>|，。；]+\.(?:markdown|md)(?![a-z0-9_.-])/giu;
   const paths = [...value.matchAll(explicitPath)].map(match => match[0]);
   // A Raw selection need not start with an imperative. Wiki/Projects paths
   // describe targets; unknown paths still go through the resolver's rejection.
@@ -120,9 +121,9 @@ export function maintenanceScopeContextFromEntries(
 }
 
 function messageText(message: { content: unknown }): string {
-  return typeof message.content === "string" ? message.content : Array.isArray(message.content)
-    ? message.content.flatMap(part => part?.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n") : "";
+  return typeof message.content === "string" ? message.content : isUnknownArray(message.content)
+    ? message.content.flatMap(part => part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part && typeof part.text === "string" ? [part.text] : []).join("\n") : "";
 }
 function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  return value && typeof value === "object" && !isUnknownArray(value) ? value as Record<string, unknown> : null;
 }

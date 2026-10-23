@@ -198,7 +198,7 @@ export class KnowledgePageView extends ItemView {
     }
     this.renderHeatmap(); this.renderDirectories(); this.renderIssues(); this.renderRecent();
   }
-  private upgradeService(): Partial<MaintenanceUpgradeSurface> | null { return this.plugin.getKnowledgeSurfaceService() as Partial<MaintenanceUpgradeSurface> | null; }
+  private upgradeService(): Partial<MaintenanceUpgradeSurface> | null { return this.plugin.getKnowledgeSurfaceService(); }
   private upgradeActivity(): Readonly<MaintenanceActivity> | undefined {
     const recordId = this.snapshot?.upgrade?.recordId;
     return this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance
