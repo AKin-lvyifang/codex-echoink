@@ -10,7 +10,7 @@ import { ChangeSet } from "@codemirror/state";
 import { addSelectionAnnotation, composerSelectionAnnotations, removeSelectionAnnotation, editAnnotationQuestion, snapshotSelectionDraft, restoreSelectionDraft, selectionDraft, clearSelectionDraft } from "../selection-ask/draft";
 import { normalizeSelectionAskSettings, visibleCharacters } from "../selection-ask/settings";
 import { captureReadingSelection, readingBodyProjection, resolveReadingRange, resolveProjectedReadingRange } from "../selection-ask/reading";
-import { attachSourceAnchor, resolveSourceSpan, renderedSpanForSource, mapSelectionSource, mapSourceChangeOnce } from "../selection-ask/anchors";
+import { attachSourceAnchor, resolveSourceSpan, renderedSpanForSource, mapSelectionSource, mapSourceChangeOnce, markdownProjection } from "../selection-ask/anchors";
 import { captureEditorSelection } from "../editor-actions/selection-ask";
 import { buildPiSelectionAnnotationContextMessage, selectionAnnotationsFromPiContext } from "../harness/pi-native/pi-selection-annotations";
 import { createPiKnowledgeInlineExtension } from "../plugin/pi-production-runtime-composition";
@@ -42,6 +42,7 @@ export async function runSelectionAnnotationTests(): Promise<void> {
   Object.assign(win.HTMLElement.prototype, { attachEvent() {}, detachEvent() {} });
   try {
     draftBehavior(win.document);
+    projectionMarkers();
     sourceAnchors(win.document);
     queueAndProjection();
     await queueOnlyAnnotations(win.document);
@@ -60,6 +61,14 @@ export async function runSelectionAnnotationTests(): Promise<void> {
     dom.window.close();
     for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
   }
+}
+function projectionMarkers(): void {
+  for (const [markdown, text, offsets] of [
+    ["\\**", "\\*", [0, 1]], ["\\__", "\\_", [0, 1]],
+    ["\\~~", "\\~~", [0, 1, 2]], ["\\```", "\\`", [0, 1]],
+    ["\\\\**", "\\\\*", [0, 1, 2]], ["~~~", "~", [2]],
+    ["**__~~``", "", []], ["末行\r\n**字**", "末行字", [0, 1, 6]]
+  ] as const) assert.deepEqual(markdownProjection(markdown), { text, offsets }, "escaped or adjacent markers retain the original source offsets");
 }
 function draftBehavior(doc: Document): void {
   const input = doc.createElement("textarea"); doc.body.append(input);

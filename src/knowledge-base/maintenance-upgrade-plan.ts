@@ -100,7 +100,7 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
     let fence: string | undefined;
     const bodyStart = regions[0]?.start ?? 0;
     const body = wiki.content.slice(0, bodyStart).replace(/[^\r\n]/gu, " ") + wiki.content.slice(bodyStart);
-    const visible = body.split(/(?<=\n)/u).map(line => {
+    const visible = (body.match(/[^\n]*\n|[^\n]+$/gu) ?? [""]).map(line => {
       const match = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
       if (match) {
         if (!fence) fence = match[1];
@@ -124,7 +124,10 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
       const line = readable.slice(readable.lastIndexOf("\n", match.index) + 1, match.index);
       add(target, display, inSources(match.index) || /来源|原始材料|source/iu.test(line));
     }
-    for (const match of readable.matchAll(/(?<!!)\[([^\]\r\n]*)\]\((<[^>\r\n]+>|[^)\r\n]+)\)/gu)) {
+    const markdownLinks = /\[([^\]\r\n]*)\]\((<[^>\r\n]+>|[^)\r\n]+)\)/gu;
+    for (let match = markdownLinks.exec(readable); match; match = markdownLinks.exec(readable)) {
+      // Retry after a rejected start so a nested non-image link is still seen.
+      if (readable[match.index - 1] === "!") { markdownLinks.lastIndex = match.index + 1; continue; }
       const target = match[2].replace(/\s+["'][\s\S]*$/u, "");
       if (/^[a-z][a-z\d+.-]*:/iu.test(target)) continue;
       const line = readable.slice(readable.lastIndexOf("\n", match.index) + 1, match.index);

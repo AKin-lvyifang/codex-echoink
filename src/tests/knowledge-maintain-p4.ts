@@ -25,11 +25,31 @@ export async function runKnowledgeMaintainP4Tests(root: string): Promise<void> {
   testPriority();
   testBytePatches();
   testMalformedPreviewMessages();
+  testSourceScanLineEndings();
   const completedSourceReview = testCompletedSourceReview();
   const summary = testPlan();
   await testRegistryReaders(root);
   await fs.writeFile(path.join(root, "p4-core-result.json"), JSON.stringify({ passed: true, ...summary, completedSourceReview }, null, 2));
   console.log("Knowledge maintenance P4 core: PASS (priority, all registries, unique source relationships, byte patches, classification scope, idempotence)");
+}
+
+function testSourceScanLineEndings(): void {
+  for (const eol of ["\n", "\r\n"]) for (const finalNewline of [false, true]) {
+    const content = ["---", "类型: 概念", "---", "# 换行兼容", "", "```md",
+      "[[Raw/代码.md]]", '<!-- echoink-source: {"path":"Raw/代码.md"} -->', "```", "",
+      ...Array.from({ length: 40 }, () => "前面的文字和空行不改变后面的来源位置。"), "", "## 来源", "",
+      "![图片](../Raw/图片.md)", "![图 [内链](../Raw/嵌套.md))", "[[失踪资料]]",
+      "[正常来源](../Raw/正常.md)", "[末行来源](../Raw/末行.md)"
+    ].join(eol) + (finalNewline ? eol : "");
+    const wiki = file("Wiki/换行兼容.md", "wiki", content);
+    const names = ["代码", "图片", "嵌套", "正常", "末行"];
+    const sources = names.map(name => file(`Raw/${name}.md`, "raw", `# ${name}`));
+    const plan = buildMaintenanceUpgradePlan({ files: [wiki, ...sources], bindingRevision: 1, now: 1 });
+    for (const name of ["代码", "图片"]) assert.equal(plan.sourceItems.find(item => item.path === `Raw/${name}.md`)?.addTargetPaths, undefined);
+    for (const name of ["嵌套", "正常", "末行"]) assert.deepEqual(plan.sourceItems.find(item => item.path === `Raw/${name}.md`)?.addTargetPaths, [wiki.path]);
+    assert.deepEqual(plan.issues.map(issue => issue.message), ["没有找到来源“失踪资料”对应的资料，原链接先保留，请你核对。"], "source-section offsets survive code masking, blank lines, CRLF and an unterminated final line");
+    assert.equal(wiki.content, content);
+  }
 }
 
 function testCompletedSourceReview() {
