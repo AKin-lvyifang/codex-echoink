@@ -71,13 +71,13 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
         plan.wikiItems.push({ path: wiki.path, title: fileTitle(wiki), revision: wiki.revision, content: wiki.content });
       } catch { issue(wiki, UNREADABLE_PROPERTIES_MESSAGE, "unavailable"); }
     }
-    else if (!MAINTENANCE_KNOWLEDGE_TYPES.some(value => value === type.value)) issue(wiki, "已有非标准“类型”属性，保留原值，请人工核对");
+    else if (!MAINTENANCE_KNOWLEDGE_TYPES.some(value => value === type.value)) issue(wiki, "这页的“类型”不在七种知识类型里，先保留，请你核对。");
 
     const regions = createMaintenanceSectionSnapshot(wiki.content).regions;
     const inSources = (offset: number) => regions.some(region => region.kind === "sources" && offset >= region.start && offset < region.end);
     const add = (value: string, display: string | undefined, required: boolean) => {
       const target = linkTarget(value);
-      if (!target) { if (required) issue(wiki, `来源“${value}”无法安全定位，保留原链接`); return; }
+      if (!target) { if (required) issue(wiki, `来源链接“${value}”暂时打不开，原链接先保留，请你核对。`); return; }
       const directory = wiki.path.slice(0, Math.max(0, wiki.path.lastIndexOf("/")));
       const relative = resolveRelativePath(directory, target);
       const direct = resolveRelativePath("", target);
@@ -91,16 +91,16 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
       if (!matches.length && display) matches = [...(sourceNames.get(nameKey(display)) ?? [])];
       if (matches.length === 1) {
         const targets = reverse.get(matches[0]) ?? new Set<string>(); targets.add(wiki.path); reverse.set(matches[0], targets);
-      } else if (matches.length > 1) issue(wiki, `来源“${value}”对应 ${matches.length} 篇资料，无法唯一定位，保留原链接`);
+      } else if (matches.length > 1) issue(wiki, `来源“${value}”有 ${matches.length} 篇同名资料，分不清是哪一篇，原链接先保留。`);
       else if (required || sourceRoots.has(target.split("/")[0]) || /^(?:raw|inbox|原始资料|收件箱)(?:[（(/]|$)/iu.test(target)) {
-        issue(wiki, `来源“${value}”未找到可唯一定位的资料，保留原链接`);
+        issue(wiki, `没有找到来源“${value}”对应的资料，原链接先保留，请你核对。`);
       }
     };
     // Code examples do not establish source relationships. Keep offsets stable.
     let fence: string | undefined;
     const bodyStart = regions[0]?.start ?? 0;
     const body = wiki.content.slice(0, bodyStart).replace(/[^\r\n]/gu, " ") + wiki.content.slice(bodyStart);
-    const visible = body.split(/(?<=\n)/u).map(line => {
+    const visible = (body.match(/[^\n]*\n|[^\n]+$/gu) ?? [""]).map(line => {
       const match = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
       if (match) {
         if (!fence) fence = match[1];
@@ -110,13 +110,13 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
       return fence ? line.replace(/[^\r\n]/gu, " ") : line;
     }).join("");
     const markers = [...visible.matchAll(/<!--\s*echoink-source\s*:\s*(\{[^\r\n]*\})\s*-->/gu)];
-    if ([...visible.matchAll(/<!--\s*echoink-source\b/giu)].length !== markers.length) issue(wiki, "旧机器来源标记不完整，保留原文并请人工核对");
+    if ([...visible.matchAll(/<!--\s*echoink-source\b/giu)].length !== markers.length) issue(wiki, "这页有一处旧来源信息不完整，原文先保留，请你核对。");
     for (const marker of markers) {
       try {
         const value: unknown = JSON.parse(marker[1]);
         if (!value || typeof value !== "object" || typeof (value as { path?: unknown }).path !== "string") throw new Error("invalid marker");
         add((value as { path: string }).path, undefined, true);
-      } catch { issue(wiki, "旧机器来源标记无法解析，保留原文并请人工核对"); }
+      } catch { issue(wiki, "这页有一处旧来源信息看不出指向哪篇资料，原文先保留，请你核对。"); }
     }
     const readable = visible.replace(/<!--[\s\S]*?-->/gu, value => value.replace(/[^\r\n]/gu, " ")).replace(/`[^`\r\n]*`/gu, value => " ".repeat(value.length));
     for (const match of readable.matchAll(/\[\[([^\]\r\n]+)\]\]/gu)) {
@@ -124,7 +124,10 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
       const line = readable.slice(readable.lastIndexOf("\n", match.index) + 1, match.index);
       add(target, display, inSources(match.index) || /来源|原始材料|source/iu.test(line));
     }
-    for (const match of readable.matchAll(/(?<!!)\[([^\]\r\n]*)\]\((<[^>\r\n]+>|[^)\r\n]+)\)/gu)) {
+    const markdownLinks = /\[([^\]\r\n]*)\]\((<[^>\r\n]+>|[^)\r\n]+)\)/gu;
+    for (let match = markdownLinks.exec(readable); match; match = markdownLinks.exec(readable)) {
+      // Retry after a rejected start so a nested non-image link is still seen.
+      if (readable[match.index - 1] === "!") { markdownLinks.lastIndex = match.index + 1; continue; }
       const target = match[2].replace(/\s+["'][\s\S]*$/u, "");
       if (/^[a-z][a-z\d+.-]*:/iu.test(target)) continue;
       const line = readable.slice(readable.lastIndexOf("\n", match.index) + 1, match.index);
@@ -148,7 +151,7 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
     ].filter(value => typeof value === "string" && Boolean(value.trim()));
     const currentFingerprint = completedFingerprints.length ? file.fingerprint ?? supplied.fingerprint?.() : undefined;
     if (currentFingerprint && completedFingerprints.some(value => value !== currentFingerprint)) {
-      issue(file, "可选：重新提炼。旧完成记录的指纹与当前正文不同；缺少旧正文，无法分辨排版或内容改动。", "optional-reingest");
+      issue(file, "可选：重新提炼。这页在上次整理后改过，看不出改的是排版还是内容。原文不动；想更新的话，可以让 Agent 重新整理这页。", "optional-reingest");
     }
     const inferred = [...(reverse.get(file.path) ?? [])].filter(isMaintenanceSourceTargetPath).sort((a, b) => a.localeCompare(b, "en"));
     const declaredTargetPaths = Array.isArray(targets.value) ? targets.value.flatMap(value => {
@@ -157,17 +160,17 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
     }) : [];
     const existingTargetPaths = declaredTargetPaths.filter(targetPath => wikiPaths.has(targetPath));
     for (const targetPath of declaredTargetPaths.filter(targetPath => !wikiPaths.has(targetPath))) {
-      issue(file, `提炼到中的成果页“${targetPath}”已不存在，原值会保留，请人工核对。`);
+      issue(file, `“提炼到”里的 Wiki 页面“${targetPath}”找不到了，原链接先保留，请你核对。`);
     }
     if (resolution.state === "digested" && !existingTargetPaths.length && !inferred.length) {
-      issue(file, "没有找到能唯一确认的成果页，未补提炼到，状态仍已提炼。");
+      issue(file, "看不出这篇资料整理到了哪页 Wiki，先不补链接，仍算已提炼。");
     }
     if (status.error || targets.error) { issue(file, UNREADABLE_PROPERTIES_MESSAGE, "unavailable"); continue; }
-    if (status.present && !isMaintenanceCanonicalSourceStatus(status.value)) issue(file, "已有非标准“提炼状态”属性，保留原值，请人工核对");
+    if (status.present && !isMaintenanceCanonicalSourceStatus(status.value)) issue(file, "这篇资料的“提炼状态”看不明白，先保留，请你核对。");
     if (targets.present && (!Array.isArray(targets.value) || targets.value.some(value => {
       const match = typeof value === "string" ? /^\[\[(.+)\]\]$/u.exec(value) : null;
       return !match || !isMaintenanceSourceTargetPath(match[1]);
-    }))) issue(file, "已有非标准“提炼到”属性，保留原值，请人工核对");
+    }))) issue(file, "这篇资料的“提炼到”没写成 Wiki 链接列表，先保留，请你核对。");
     const addStatus = !status.present ? statusForState[resolution.state] : undefined;
     const addTargetPaths = !targets.present && inferred.length ? inferred : undefined;
     if (addStatus === undefined && addTargetPaths === undefined) continue;
@@ -192,7 +195,7 @@ export function previewMaintenanceUpgradePlan(plan: MaintenanceUpgradePlan): Mai
         ...(item.addStatus ? [`提炼状态：${item.addStatus}`] : []),
         ...(item.addTargetPaths ? [`提炼到：${item.addTargetPaths.length} 页`] : [])
       ] })),
-      ...plan.wikiItems.map(item => ({ path: item.path, title: item.title, properties: ["类型"], description: "确认后由当前模型从七种类型中判断；拿不准时加“类型待确认”" }))
+      ...plan.wikiItems.map(item => ({ path: item.path, title: item.title, properties: ["类型"], description: "确认后让 Agent 从七种知识类型中选择；拿不准时标上“类型待确认”。" }))
     ]
   };
 }

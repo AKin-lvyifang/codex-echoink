@@ -12,7 +12,12 @@ export function markdownProjection(markdown: string): { text: string; offsets: n
     const start = match.index, labelStart = start + match[0].indexOf("[") + 1;
     hide(start, labelStart); hide(labelStart + match[1].length, start + match[0].length);
   }
-  for (const match of markdown.matchAll(/(?<!\\)(?:\*\*|__|~~|`+|\*|_)/gu)) hide(match.index, match.index + match[0].length);
+  const markers = /\*\*|__|~~|`+|\*|_/gu;
+  for (let match = markers.exec(markdown); match; match = markers.exec(markdown)) {
+    // An escaped start may be followed by another, unescaped marker.
+    if (markdown[match.index - 1] === "\\") { markers.lastIndex = match.index + 1; continue; }
+    hide(match.index, match.index + match[0].length);
+  }
   const offsets: number[] = []; let text = "";
   for (let index = 0; index < markdown.length; index++) if (!hidden[index] && !/\s|\|/u.test(markdown[index])) { text += markdown[index]; offsets.push(index); }
   return { text, offsets };
