@@ -1,5 +1,45 @@
 # Changelog
 
+## 2.8.4 - 2026-10-23
+<!-- release-type: fix -->
+### 2.8.4 · 知识整理、对话排版与工作台修复
+
+### 中文
+
+类型：修复
+
+#### 桌面端更新内容
+
+- **整理知识库（/maintain）更可靠。** 相关资料会按知识类型整理成一页中文 Wiki，页面之间自动互相链接；更新已有页面时，你手写的内容原样保留。中途停下后点“继续”，会从停下的地方接着做，已经写好的页面不会重写。侧栏、状态栏和工作台会同步显示进度；整理完成后告诉你“整理完多少篇资料，生成多少页 Wiki”。
+- **老知识库可以一键补齐属性。** 知识库页会提示有多少篇资料和 Wiki 需要补属性。点“查看并升级”会先给你看预览，确认后才动手；只补属性和链接，正文不改。
+- **对话回答排版更完整。** 回答正文和思考过程改用 Obsidian 自带的排版，公式、斜体、删除线、链接、多层列表和脚注都能正常显示，字体和颜色跟随当前主题。
+- **工作台不再看起来是空的。** 各分组始终显示，没有内容时会写明“暂无……”，读取失败时会单独提示。
+- **发送消息不再像卡住。** 按下发送后输入框立刻清空，你的消息马上出现；运行中再输入的消息会先排在输入框上方，本轮结束后自动发出。
+- **接着上一句继续整理。** 在整理知识的过程中回复“都按你推荐的去做”，会接着处理原来那批资料，不会找错范围。
+
+#### 下载与升级
+
+需要 **Obsidian 1.11.4 及以上**。升级前请备份 Vault 与插件数据。前往[官网下载安装](https://echoink.cn/install)，或从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.4) 下载 **main.js、manifest.json、styles.css**，放入 `.obsidian/plugins/codex-echoink/` 后重新启用插件。
+
+### English
+
+**2.8.4 · Knowledge maintenance, chat formatting, and workbench fixes**
+
+Type: Fixes
+
+#### What's new on desktop
+
+- **Knowledge maintenance (/maintain) is more reliable.** Related notes are organized into one Wiki page per topic, grouped by knowledge type, and pages link to each other automatically. When an existing page is updated, your handwritten content stays as it is. If you stop midway, Continue picks up where it left off without rewriting finished pages. Progress shows in the sidebar, status bar, and workbench, and the final summary tells you how many notes were processed and how many Wiki pages were created.
+- **Older knowledge bases can be upgraded in one step.** The knowledge page shows how many notes and Wiki pages are missing properties. Review & upgrade shows a preview first and changes nothing until you confirm; it only adds properties and links and never edits the body text.
+- **Better formatting in chat answers.** Answers and reasoning now use Obsidian's own rendering, so math, italics, strikethrough, links, nested lists, and footnotes display correctly and follow your theme.
+- **The workbench no longer looks empty.** Every section stays visible, shows a clear empty message when there is nothing in it, and reports load failures separately.
+- **Sending no longer looks stuck.** The input clears and your message appears right away. Messages typed while a reply is running wait above the input and are sent when the current turn finishes.
+- **Follow-up replies keep the same scope.** Replying "go with your recommendation" during knowledge maintenance continues with the same set of notes.
+
+#### Download and upgrade
+
+Requires **Obsidian 1.11.4 or later**. Back up your vault and plugin data before upgrading. Install from the [website](https://echoink.cn/install), or download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.4) into `.obsidian/plugins/codex-echoink/`, then re-enable the plugin.
+
 ## 2.8.3 - 2026-10-21
 <!-- release-type: fix -->
 ### 2.8.3 · 模型设置页滚动修复
