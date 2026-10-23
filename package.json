@@ -35,6 +35,7 @@
     "test:settings-search": "node --enable-source-maps scripts/native-settings-search-tests.mjs",
     "test:selection-annotations": "node scripts/selection-annotations-tests.mjs",
     "test:conversation-ui": "node scripts/conversation-ui-tests.mjs",
+    "test:answer-markdown": "node scripts/answer-markdown-tests.mjs",
     "test:personal-memory": "node src/tests/personal-memory-tests.mjs",
     "test:system-prompt": "node src/tests/system-prompt-tests.mjs",
     "test:agent-self": "node src/tests/agent-self-tests.mjs",

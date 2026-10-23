@@ -65,6 +65,8 @@ interface TestActivationEvent {
   stopPropagation(): void;
 }
 
+const fallbackDocument = { createElement: (tag: string) => new FakeElement(tag) };
+
 export class FakeElement {
   readonly attributes = new Map<string, string>();
   readonly dataset: Record<string, string> = {};
@@ -135,7 +137,16 @@ export class FakeElement {
   }
 
   get ownerDocument(): Document {
-    return (globalThis as unknown as { document: Document }).document;
+    return (globalThis as unknown as { document?: Document }).document ?? fallbackDocument as unknown as Document;
+  }
+
+  get parentElement(): FakeElement | null { return this.parent; }
+
+  replaceChildren(...children: FakeElement[]): void {
+    for (const child of [...this.children]) child.remove();
+    this.content = [];
+    this.textContent = "";
+    for (const child of children) this.insertBefore(child, null);
   }
 
   createEl(
@@ -662,7 +673,7 @@ async function assertInlineApprovalDockIntegration(): Promise<void> {
   renderer.dispose(); view.interactionDock.dispose(); broker.dispose();
 }
 
-function assertReasoningTransitionRendererContracts(): void {
+async function assertReasoningTransitionRendererContracts(): Promise<void> {
   const context = createTestContext();
   const renderer = new CodexMessageListRenderer();
   const messagesEl = new FakeElement("div");
@@ -693,6 +704,8 @@ function assertReasoningTransitionRendererContracts(): void {
   assert.equal(renderer.tryUpdateMessage(later, [later]), true, "the hidden ended segment does not force repeated rebuilds");
   assert.equal(virtualListEl.emptyCallCount, renderCount);
   assert.equal(virtualListEl.findByClass("codex-assistant-turn-reasoning-node"), surviving);
+  assert.match(renderedText(surviving), /其他公开内容/u, "native Markdown keeps old text readable until its async commit");
+  await Promise.resolve();
   assert.match(renderedText(surviving), /新增内容/u);
   const emptyTurn = reasoningVisibilityFixture(false, 1_999, "");
   const guarded = new FakeElement("div");
@@ -2310,7 +2323,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     }
   });
   try {
-    assertReasoningTransitionRendererContracts();
+    await assertReasoningTransitionRendererContracts();
     await assertInlineApprovalDockIntegration();
     await assertAnswerSaveUiContracts();
     await assertMaintenanceLinkingResultVisibleFromPiProjection();
@@ -4436,6 +4449,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     );
     assert.equal(assistantTurnRoot.findAllByClass("codex-ai-elements-reasoning")[1], secondReasoningRoot,
       "the Reasoning disclosure keeps its DOM identity across a delta");
+    await Promise.resolve();
     assert.match(renderedText(secondReasoningRoot), /SECOND_REASONING_DELTA/u);
     assert.match(renderedText(secondReasoningRoot), /读取长期记忆.*相关记忆/su);
     assert.doesNotMatch(
@@ -4471,6 +4485,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       localUpdater.tryUpdateAssistantTurnMessage(assistantTurnSurface, manualReviewReasoningSibling),
       true
     );
+    await Promise.resolve();
     assert.equal(secondReasoningBody.scrollTop, 240,
       "a Reasoning delta preserves the reader's manual scroll position");
 
@@ -4493,6 +4508,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       localUpdater.tryUpdateAssistantTurnMessage(assistantTurnSurface, resumedFollowReasoningSibling),
       true
     );
+    await Promise.resolve();
     assert.equal(secondReasoningBody.scrollTop, secondReasoningBody.scrollHeight,
       "returning to the Reasoning bottom restores follow on the next delta");
 
@@ -4506,6 +4522,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.equal(localUpdater.tryUpdateAssistantTurnMessage(assistantTurnSurface, updatedAnswer), true);
     assert.equal(assistantTurnRoot.findByClass("codex-assistant-turn-answer"), answerContentBefore,
       "the final Answer keeps its content node across a delta");
+    await Promise.resolve();
     assert.match(renderedText(answerContentBefore), /ANSWER_LOCAL_DELTA/u);
 
     const toolRowBefore = unifiedActions.find((action) => action.dataset.messageId === "tool-separated")!;
