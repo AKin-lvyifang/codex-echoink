@@ -1,0 +1,17 @@
+import esbuild from "esbuild";
+import { spawnSync } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+const root = fileURLToPath(new URL("../", import.meta.url));
+const configuredRoot = process.env.ECHOINK_KNOWLEDGE_TEST_ROOT;
+if (!configuredRoot) throw new Error("Set ECHOINK_KNOWLEDGE_TEST_ROOT to an explicitly selected disposable test directory.");
+const allowedRoot = path.resolve(configuredRoot);
+const output = path.join(allowedRoot, "automatic", `p4-run-${Date.now()}`);
+await mkdir(path.join(output, "tmp"), { recursive: true });
+await mkdir(path.join(output, "source-state"), { recursive: true });
+const entry = path.join(output, "p4-tests.mjs");
+await esbuild.build({ stdin: { contents: `import { runKnowledgeMaintainP4Tests } from './src/tests/knowledge-maintain-p4'; import { runKnowledgeUpgradeServiceTests } from './src/tests/knowledge-upgrade-service'; (async()=>{await runKnowledgeMaintainP4Tests(${JSON.stringify(path.join(output,"core"))}); await runKnowledgeUpgradeServiceTests(${JSON.stringify(path.join(output,"service"))});})().catch(e=>{console.error(e);process.exitCode=1;});`, loader: "ts", resolveDir: root }, bundle: true, platform: "node", format: "esm", target: "node22", outfile: entry, alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") }, loader: { ".md": "text", ".svg": "text", ".webp": "dataurl" }, banner: { js: `import { createRequire } from "node:module"; const require=createRequire(${JSON.stringify(path.join(root,"package.json"))});` }, external: ["electron"], plugins: [{ name:"p2-external", setup(build) { build.onResolve({filter:/^(?:@earendil-works\/pi-(?:agent-core|ai|coding-agent)(?:\/.*)?|yaml|jsdom)$/},args=>({path:fileURLToPath(import.meta.resolve(args.path)),external:true})); } }] });
+const result = spawnSync(process.execPath, [entry], { cwd: root, stdio: "inherit", env: { ...process.env, TMPDIR: path.join(output, "tmp"), ECHOINK_KNOWLEDGE_TEST_ROOT: output } });
+console.log(`Evidence fixtures: ${output}`);
+process.exitCode = result.status ?? 1;

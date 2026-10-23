@@ -1060,9 +1060,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     return this.conversationRunService;
   }
   resumeTask(taskId: string, optionalMessage?: string, frozenItem?: QueuedTurnItem): Promise<import("./ui/codex-view/runner-context").QueuedTurnOutcome> {
+    if (this.knowledgeBase?.upgrade?.ownsTask(taskId)) return this.knowledgeBase.resumeUpgrade().then(snapshot => snapshot.status === "running" ? "running" : snapshot.status === "completed" ? "completed" : "failed");
     return this.getConversationRunService().resumeTask(taskId, optionalMessage, frozenItem);
   }
-  isTaskResuming(taskId: string): boolean { return this.conversationRunService?.isResuming(taskId) ?? false; }
+  isTaskResuming(taskId: string): boolean { return this.knowledgeBase?.upgrade?.ownsTask(taskId) ? this.knowledgeBase.upgrade.running : this.conversationRunService?.isResuming(taskId) ?? false; }
   getTaskResumeError(taskId: string): string | undefined { return this.conversationRunService?.getResumeError(taskId); }
   get activeTaskResumeSafety(): ReadonlyMap<string, Readonly<TaskResumeContext>> {
     return this.getConversationRunService().activeResumeContexts;
@@ -1939,6 +1940,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   async externalizeMessageText(message: ChatMessage, fullText: string): Promise<void> { return this.getSettingsStore().externalizeMessageText(message, fullText); }
   async readRawMessageText(rawRef: string): Promise<string> { return this.getSettingsStore().readRawMessageText(rawRef); }
   getKnowledgeSurfaceService(): EchoInkKnowledgeSurfaceService | null { return this.knowledgeBase; }
+  /** Local stores and the Vault journal are available without initializing a Provider. */
+  getKnowledgeUpgradeLocalData(): Promise<PiLocalDataService> { return this.ensurePiLocalData(); }
   async readKnowledgeInitialActivities(): Promise<import("./knowledge-base/maintenance-activity").MaintenanceActivity[]> {
     const local = await this.ensurePiLocalData();
     const visible = new Set((await local.catalog.list({ statuses: ["active"] })).map(entry => entry.conversationId));

@@ -26,8 +26,9 @@ import { FileConversationCatalog } from "../harness/pi-native/file-conversation-
 import { FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
 import { FileApprovalTicketStore } from "../harness/pi-native/tool-authorization";
 import { PiObsidianToolSecurity } from "../harness/pi-native/pi-obsidian-tools";
-import { MAINTENANCE_ACTIVITY_STAGES, maintenanceCompletionText, type KnowledgeActivitySnapshot, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import { MAINTENANCE_ACTIVITY_STAGES, maintenanceCompletionText, maintenanceTaskTitle, type KnowledgeActivitySnapshot, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
+import { mountKnowledgeActivityProgress } from "../ui/codex-view/knowledge-linking-progress";
 
 function createHost(catalog: any, runtime: any, settings: any): any {
   const local = { catalog, productRuns: runtime.productRuns,
@@ -57,7 +58,7 @@ export async function runAgentTaskTests(root: string): Promise<void> {
   const f = await createAgentRunFixture(path.join(root, "runtime"), createHost);
   f.plugin.app.vault = { getRoot: () => ({ children: [] }), getAbstractFileByPath: () => null };
   try {
-    maintenanceDisplayProjection(f, dom.window.document);
+    await maintenanceDisplayProjection(f, dom.window.document);
     await pluginRemovalApprovalPresentation(path.join(root, "delete-approval-source"));
     await deleteApprovalPresentation(dom.window.document);
     await coldNavigationReadiness(f, dom.window.document);
@@ -73,8 +74,8 @@ export async function runAgentTaskTests(root: string): Promise<void> {
   }
 }
 
-function maintenanceDisplayProjection(f: any, doc: Document): void {
-  const now = Date.now(), originalSource = f.plugin.getKnowledgeActivitySource;
+async function maintenanceDisplayProjection(f: any, doc: Document): Promise<void> {
+  const now = Date.now(), originalSource = f.plugin.getKnowledgeActivitySource, originalSurface = f.plugin.getKnowledgeSurfaceService;
   const original = Object.freeze(task("maintenance-ui", { taskStatus: "running", taskStartedAt: now }));
   const activity: MaintenanceActivity = { kind: "maintenance", id: "maintenance-ui-record", originConversationId: original.conversationId,
     status: "running", stage: "write", sourceCount: 20, sourcePaths: ["Raw/资料.md"], batch: { index: 1, total: 1 },
@@ -103,9 +104,22 @@ function maintenanceDisplayProjection(f: any, doc: Document): void {
   try {
     view.observeTaskMaintenance();
     assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "进行中", "global primary cannot override the current task");
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-detail-title")?.textContent, maintenanceTaskTitle(activity));
+    assert.doesNotMatch(view.taskSummaryText(original), /第 1 批|Batch/u, "One batch keeps the step and stage without a batch label");
+    assert.match(view.taskSummaryText(original), /第 4 步.*写Wiki/u);
     const partial: MaintenanceActivity = { ...activity, status: "partial", updatedAt: now + 1,
       failures: [{ key: "write:internal", message: "CAS revision stage resume targetPath Wiki/知识条目.md 冲突", at: now }] };
     publish(partial);
+    const progress = doc.body.createDiv();
+    const unmountProgress = mountKnowledgeActivityProgress(progress, { ready: Promise.resolve(), snapshot: () => ({ primary: partial, other: null, maintenance: [partial] }), subscribe: () => () => {} }, () => {});
+    assert.equal(progress.querySelector(":scope > .echoink-knowledge-activity-failures"), null, "The outer duplicate failure list is removed");
+    assert.match(progress.querySelector(".echoink-knowledge-linking-progress-status")?.textContent ?? "", /不覆盖你的修改/u);
+    assert.equal((progress.querySelector(".echoink-knowledge-activity-details") as HTMLElement).hidden, true);
+    assert.equal(progress.querySelectorAll(".echoink-knowledge-activity-details .echoink-knowledge-activity-failures li").length, 1);
+    (progress.querySelector(".echoink-knowledge-linking-progress-button") as HTMLButtonElement).click();
+    assert.equal((progress.querySelector(".echoink-knowledge-activity-details") as HTMLElement).hidden, false);
+    assert.equal(partial.failures.length, 1, "Failure facts remain intact");
+    unmountProgress(); progress.remove();
     assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "没做完", "shared-source change refreshes the real header without catalog writes");
     assert.equal(maintenanceVisibleCopyIsSafe(view.taskInterruptionEl.textContent), true);
     assert.match(view.taskInterruptionEl.textContent, /《知识条目》.*不覆盖你的修改.*继续/u);
@@ -116,17 +130,44 @@ function maintenanceDisplayProjection(f: any, doc: Document): void {
     assert.equal(card.querySelector(".echoink-task-card-status")?.textContent, "没做完");
     assert.equal(maintenanceVisibleCopyIsSafe(card.textContent), true);
     assert.equal(maintenanceVisibleCopyIsSafe(card.getAttribute("aria-label")), true);
+    assert.match(card.textContent, /整理知识库（20 篇资料）/u);
+    publish({ ...partial, sourceCount: null });
+    assert.equal(view.taskListEl.querySelector(".echoink-task-card-title")?.textContent, "整理知识库", "An unknown source count never becomes zero");
     navigation.page = { kind: "detail", taskId: original.conversationId };
     publish({ ...activity, status: "waiting", updatedAt: now + 2 });
     assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "等你回应");
     publish({ ...activity, status: "completed", completedAt: now + 3, updatedAt: now + 3 });
     assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "已完成");
     assert.equal(view.taskSummaryText(original), maintenanceCompletionText(activity));
+    const upgrade = { ...activity, taskKind: "upgrade" as const, upgradeCounts: { sourceTotal: 20, sourceCompleted: 20, linkTotal: 4, linksCompleted: 4, wikiTotal: 3, wikiCompleted: 3 } };
+    publish(upgrade);
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-detail-title")?.textContent, "升级旧知识");
+    assert.ok(view.taskDetailHeaderEl.querySelector('[aria-label="停止升级"]'), "Upgrade stop stays available without a Pi agent run");
+    let stops = 0, upgradeTaskId = original.conversationId;
+    f.plugin.getKnowledgeSurfaceService = () => ({ getUpgradeSnapshot: async () => ({ status: "running", taskId: upgradeTaskId }), stopUpgrade: async () => { stops++; } });
+    await view.stopTurn(); assert.equal(stops, 1);
+    upgradeTaskId = "another-upgrade";
+    await assert.rejects(view.stopTurn(), /升级任务已更新/u); assert.equal(stops, 1, "A foreign upgrade cannot be stopped by this task");
+    const upgradeReason = "《旧资料》已有同名属性，原值保留，请核对后继续。";
+    const interruptedUpgrade = { ...upgrade, status: "interrupted" as const, failures: [{ key: "upgrade:review", message: upgradeReason, at: now + 3 }] };
+    publish(interruptedUpgrade);
+    assert.ok(view.taskInterruptionEl.textContent.includes(upgradeReason), "Controlled upgrade reasons keep the actual unresolved property");
+    const upgradeProgress = doc.body.createDiv();
+    const unmountUpgrade = mountKnowledgeActivityProgress(upgradeProgress, { ready: Promise.resolve(), snapshot: () => ({ primary: interruptedUpgrade, other: null, maintenance: [interruptedUpgrade] }), subscribe: () => () => {} }, () => {});
+    assert.ok(upgradeProgress.querySelector(".echoink-knowledge-activity-failures")?.textContent?.includes(upgradeReason));
+    assert.match(upgradeProgress.querySelector(".echoink-knowledge-activity-details")?.textContent ?? "", /判断类型.*核对变更.*补属性和链接/u);
+    assert.doesNotMatch(upgradeProgress.querySelector(".echoink-knowledge-activity-details")?.textContent ?? "", /写Wiki|已写好.*页/u);
+    unmountUpgrade(); upgradeProgress.remove();
+    publish({ ...upgrade, status: "completed", completedAt: now + 3, updatedAt: now + 3 });
+    assert.doesNotMatch(view.taskSummaryText(original), /生成.*Wiki/u);
+    assert.match(view.taskSummaryText(original), /20.*篇.*4.*条.*3.*页/u);
     view.taskEntries = [{ ...original, taskStartedAt: now + 4 }]; view.renderTaskPages();
     assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "进行中", "later ordinary follow-up ignores completed maintenance");
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-detail-title")?.textContent, original.title);
+    assert.equal(original.title, "maintenance-ui", "Display titles never rewrite the user's catalog title");
   } finally {
     view.taskMaintenanceDispose?.(); assert.equal(listeners.size, 0);
-    disposeOriginControls(view.rootEl); view.rootEl.remove(); f.plugin.getKnowledgeActivitySource = originalSource;
+    disposeOriginControls(view.rootEl); view.rootEl.remove(); f.plugin.getKnowledgeActivitySource = originalSource; f.plugin.getKnowledgeSurfaceService = originalSurface;
   }
 }
 

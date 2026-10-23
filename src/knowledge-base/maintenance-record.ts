@@ -2,6 +2,8 @@ import type { KnowledgeMaintenanceResultEnvelope } from "./knowledge-maintenance
 
 export interface KnowledgeMaintenanceRecord {
   schemaVersion: 1;
+  /** An approved legacy upgrade shares this record and its durable progress. */
+  upgrade?: import("./maintenance-upgrade-contract").MaintenanceUpgradeState;
   /** Durable P1 writing list and unfinished source finalization, in the existing record. */
   p1?: import("./maintenance-p1-contract").MaintenanceP1State;
   progress?: import("./maintenance-activity").MaintenanceActivityProgress;

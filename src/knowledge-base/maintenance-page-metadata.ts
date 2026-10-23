@@ -1,5 +1,21 @@
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import { createMaintenanceSectionSnapshot } from "./maintenance-section-patch";
+import { appendMissingMaintenanceFrontmatterProperties, readMaintenanceFrontmatterProperty } from "./maintenance-source-frontmatter";
+import type { MaintenanceUpgradeClassification } from "./maintenance-upgrade-contract";
+
+export const MAINTENANCE_KNOWLEDGE_TYPES = ["概念", "方法 / 流程", "观点 / 论断", "工具 / 产品", "案例 / 事件", "人物 / 组织", "趋势 / 主题"] as const;
+
+/** Classification adds metadata only; existing types and confirmation flags always win. */
+export function appendMaintenancePageType(content: string, classification: MaintenanceUpgradeClassification): string {
+  if (!classification || !MAINTENANCE_KNOWLEDGE_TYPES.includes(classification.type) || typeof classification.uncertain !== "boolean") {
+    throw new Error("Wiki类型必须从七种标准类型中选择。");
+  }
+  if (readMaintenanceFrontmatterProperty(content, "类型").present) return content;
+  return appendMissingMaintenanceFrontmatterProperties(content, {
+    类型: classification.type,
+    ...(classification.uncertain ? { 类型待确认: true } : {})
+  });
+}
 
 export function maintenancePageTitle(content: string, path: string): string {
   const title = createMaintenanceSectionSnapshot(content).regions.find(region => region.kind === "introduction" && region.start < region.contentStart);

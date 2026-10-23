@@ -91,16 +91,16 @@ export async function runWorkbenchMaintenanceSourceTests(root: string): Promise<
     const compatibilityMatrix: { id: string; state: string; pending: boolean }[] = [];
     const transitionCases = [
       { id: "registry-current", registry: "current", expected: "digested" },
-      { id: "registry-stale", registry: "old", expected: "changed" },
+      { id: "registry-stale", registry: "old", expected: "digested" },
       { id: "private-current", privateStatus: "processed", privateVersion: "current", expected: "digested" },
       { id: "private-failed-over-registry", registry: "current", privateStatus: "failed", privateVersion: "current", expected: "failed" },
-      { id: "private-stale-over-registry", registry: "current", privateStatus: "processed", privateVersion: "old", expected: "changed" },
+      { id: "private-stale-over-registry", registry: "current", privateStatus: "processed", privateVersion: "old", expected: "digested" },
       { id: "new-complete-over-stale", property: "已提炼", registry: "old", privateStatus: "failed", privateVersion: "old", expected: "digested" },
       { id: "new-pending-over-complete", property: "未提炼", registry: "current", privateStatus: "processed", privateVersion: "current", expected: "pending" },
-      { id: "new-null", property: "null", registry: "current", expected: "pending" },
-      { id: "new-empty-quoted", property: "''", registry: "current", expected: "pending" },
-      { id: "new-empty", property: "", registry: "current", expected: "pending" },
-      { id: "new-unparseable", property: "[invalid", registry: "current", expected: "pending" }
+      { id: "new-null", property: "null", registry: "current", expected: "digested" },
+      { id: "new-empty-quoted", property: "''", registry: "current", expected: "digested" },
+      { id: "new-empty", property: "", registry: "current", expected: "digested" },
+      { id: "new-unparseable", property: "[invalid", registry: "current", expected: "digested" }
     ];
     for (const [index, item] of transitionCases.entries()) {
       const previous = await read(), relative = `raw/articles/transition-${item.id}.md`;

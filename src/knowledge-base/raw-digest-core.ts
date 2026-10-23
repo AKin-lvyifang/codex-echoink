@@ -40,7 +40,11 @@ export interface RawDigestRegistry {
 export function emptyRawDigestRegistry(): RawDigestRegistry {
   return { schemaVersion: RAW_DIGEST_SCHEMA_VERSION, updatedAt: "", entries: {} };
 }
-export function normalizeRawDigestRegistry(value: unknown): RawDigestRegistry {
+export function normalizeRawDigestRegistry(value: unknown, strict = false): RawDigestRegistry {
+  if (strict && (!value || typeof value !== "object" || Array.isArray(value)
+    || (value as Record<string, unknown>).schemaVersion !== RAW_DIGEST_SCHEMA_VERSION
+    || !(value as Record<string, unknown>).entries || typeof (value as Record<string, unknown>).entries !== "object"
+    || Array.isArray((value as Record<string, unknown>).entries))) throw new Error("Invalid Raw registry structure");
   if (!value || typeof value !== "object" || Array.isArray(value)) return emptyRawDigestRegistry();
   const input = value as Record<string, unknown>, entries: Record<string, RawDigestRegistryEntry> = {};
   const rawEntries = input.entries && typeof input.entries === "object" && !Array.isArray(input.entries) ? input.entries as Record<string, unknown> : {};
@@ -48,6 +52,8 @@ export function normalizeRawDigestRegistry(value: unknown): RawDigestRegistry {
   for (const [key, raw] of Object.entries(rawEntries)) {
     const item = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
     const rawPath = normalizeRawDigestRelativePath(item.rawPath || key), fingerprint = typeof item.fingerprint === "string" ? item.fingerprint.trim() : "";
+    if (strict && (!rawPath || !fingerprint || rawPath !== (item.rawPath || key) || /[\u0000-\u001f\u007f]/u.test(rawPath)
+      || Object.prototype.hasOwnProperty.call(entries, rawPath))) throw new Error(`Invalid Raw registry entry: ${key}`);
     if (!rawPath || !fingerprint) continue;
     entries[rawPath] = { rawPath, fingerprint, size: positive(item.size), mtime: positive(item.mtime), digestedAt: positive(item.digestedAt),
       runId: typeof item.runId === "string" ? item.runId : "", reportPath: normalizeRawDigestRelativePath(item.reportPath ?? ""),
@@ -89,7 +95,7 @@ export function rawDigestRecordFromText(content: string): RawDigestFrontmatterRe
   if (!parsed.hasFrontmatter) return null;
   const values = readFrontmatterValues(parsed.frontmatter);
   const fingerprint = values.get(RAW_DIGEST_FIELDS.fingerprint)?.trim() ?? "";
-  if (!fingerprint) return null;
+  if (!Object.values(RAW_DIGEST_FIELDS).some(key => values.has(key))) return null;
   return {
     processed: parseBoolean(values.get(RAW_DIGEST_FIELDS.processed)),
     status: values.get(RAW_DIGEST_FIELDS.status)?.trim() ?? "",
@@ -162,7 +168,7 @@ export function rawDigestFrontmatterKey(line: string): string | null {
 }
 
 function parseBoolean(value: string | undefined): boolean {
-  return /^(true|yes|1|已处理)$/i.test(String(value ?? "").trim());
+  return /^(true|yes|1|已处理)$/i.test(stripYamlString(String(value ?? "").replace(/\s+#.*$/u, "")).trim());
 }
 
 function parseEvidencePaths(value: string): string[] {

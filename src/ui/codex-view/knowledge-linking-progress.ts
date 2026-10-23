@@ -1,5 +1,5 @@
 import type { KnowledgeLinkingTask } from "../../knowledge-base/knowledge-linking-types";
-import { maintenanceActivityText, maintenanceStageLabel, maintenanceStepText, maintenanceTaskStateLabel, type KnowledgeActivity, type KnowledgeActivitySnapshot, type KnowledgeActivitySource, type MaintenanceActivity } from "../../knowledge-base/maintenance-activity";
+import { maintenanceActivityText, maintenanceStageLabel, maintenanceStepText, maintenanceTaskStateLabel, maintenanceTaskTitle, type KnowledgeActivity, type KnowledgeActivitySnapshot, type KnowledgeActivitySource, type MaintenanceActivity } from "../../knowledge-base/maintenance-activity";
 import { maintenanceFailureText, maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
 
 export interface KnowledgeLinkingProgressSource {
@@ -81,12 +81,13 @@ export function mountKnowledgeActivityProgress(
   detailButton.className = "echoink-knowledge-activity-open";
   detailButton.textContent = english ? "View task" : "查看任务"; details.append(detailButton);
   const failures = document.createElement("ul"); failures.className = "echoink-knowledge-activity-failures"; failures.hidden = true;
+  details.insertBefore(failures, detailButton);
   const otherButton = document.createElement("button"); otherButton.type = "button";
   otherButton.className = "echoink-knowledge-activity-open echoink-knowledge-activity-other"; otherButton.hidden = true;
-  container.append(button, details, failures, otherButton);
+  container.append(button, details, otherButton);
   const expanded = new Set<string>();
   let current: Readonly<KnowledgeActivity> | null = null, other: Readonly<KnowledgeActivity> | null = null;
-  const activityTitle = (activity: Readonly<KnowledgeActivity>) => activity.kind === "maintenance" ? (english ? "Organize knowledge" : "整理知识库") : (english ? "Knowledge links" : "知识关联");
+  const activityTitle = (activity: Readonly<KnowledgeActivity>) => activity.kind === "maintenance" ? maintenanceTaskTitle(activity, english) : (english ? "Knowledge links" : "知识关联");
   const activityText = (activity: Readonly<KnowledgeActivity>) => activity.kind === "maintenance" ? maintenanceActivityText(activity, english) : knowledgeLinkingProgressText(activity.task, english);
   const updateExpanded = () => {
     const maintenance = current?.kind === "maintenance" ? current : null, isExpanded = maintenance !== null && expanded.has(maintenance.id);
@@ -116,19 +117,19 @@ export function mountKnowledgeActivityProgress(
       renderMaintenanceProgressBar(barHost, current);
       for (const step of current.steps) {
         const row = document.createElement("li");
-        const label = document.createElement("span"); label.textContent = maintenanceStageLabel(step.stage, english);
+        const label = document.createElement("span"); label.textContent = maintenanceStageLabel(step.stage, english, current.taskKind);
         const count = document.createElement("span"); count.className = "echoink-knowledge-activity-step-status";
         const state = step.state === "completed" ? (english ? "Completed" : "已完成")
           : step.state === "pending" ? (english ? "Not started" : "待开始")
           : maintenanceTaskStateLabel(current, english);
         const progress = step.stage === "finalize" && step.state === "running" || step.total !== null && ["decompose", "write"].includes(step.stage)
-          ? maintenanceStepText(step, english) : "";
+          ? maintenanceStepText(step, english, current.taskKind) : "";
         count.textContent = progress ? `${state} · ${progress}` : state;
         row.append(label, count); steps.append(row);
       }
       path.hidden = !current.currentPath;
       path.textContent = current.currentPath ? `${english ? "Current: " : "当前："}${maintenancePageLabel(current.currentPath)}` : "";
-      for (const failure of current.failures) { const row = document.createElement("li"); row.textContent = maintenanceFailureText(failure.message, current.currentPath, english); failures.append(row); }
+      for (const failure of current.failures) { const row = document.createElement("li"); row.textContent = current.taskKind === "upgrade" ? failure.message : maintenanceFailureText(failure.message, current.currentPath, english); failures.append(row); }
       failures.hidden = !current.failures.length;
     } else {
       const task = current.task, progress = document.createElement("progress");

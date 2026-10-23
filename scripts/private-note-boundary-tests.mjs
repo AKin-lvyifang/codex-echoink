@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import esbuild from 'esbuild';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const output = path.join(root, '.tmp/private-boundary-20261018/private-note-boundary-tests.mjs');
+const output = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "private-boundary-20261018/private-note-boundary-tests.mjs");
 await mkdir(path.dirname(output), { recursive: true });
 await esbuild.build({
   stdin: { contents: `import { runVaultBodySearchPrivateBoundaryTests } from './src/tests/vault-body-search';

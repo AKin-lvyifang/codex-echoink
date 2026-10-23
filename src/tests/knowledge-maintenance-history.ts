@@ -6,6 +6,8 @@ import type { KnowledgeBaseMaintenanceHistoryEntry } from "../settings/settings"
 import {
   mergeKnowledgeMaintenanceHistory,
   knowledgeMaintenanceHistoryStatus,
+  knowledgeMaintenanceHistoryTitle,
+  knowledgeMaintenanceHistoryDescription,
   renderKnowledgeMaintenanceHistoryList,
   renderKnowledgeMaintenanceRecordDetail,
   openKnowledgeMaintenancePath,
@@ -126,6 +128,33 @@ export async function runKnowledgeMaintenanceHistoryTests(): Promise<void> {
   cleanup(); host.empty();
   cleanup = renderKnowledgeMaintenanceRecordDetail(host, { zh: false, record: records[0], onBack() {}, onOpenPath: open });
   assert.ok(host.textContent!.includes("Sources") && host.textContent!.includes("原始成果摘要"), "UI language never rewrites recorded content");
+  cleanup(); host.remove();
+  const upgradeRecord: KnowledgeMaintenanceRecord = { ...record(90), originConversationId: "upgrade-history-task", sources: [], summary: "升级旧知识",
+    result: { schema: "echoink.knowledge-maintenance-result.v1", status: "noop", notes: [], issues: [], assessments: [], systemPaths: [] },
+    upgrade: { version: 1, phase: "completed", rootsRegistered: true, classifications: { "Wiki/已补类型.md": { type: "概念", uncertain: false } }, skipped: {},
+      plan: { version: 1, id: "upgrade-history-preview", createdAt: 1, bindingRevision: 1, rootAdditions: [],
+        counts: { sourceCount: 2, sourceStatusCount: 1, sourceLinkCount: 2, backlinkCount: 2, wikiCount: 1 },
+        sourceItems: [{ path: "Raw/补状态.md", title: "补状态", revision: "before", content: "", state: "digested", addStatus: "已提炼", addTargetPaths: ["Wiki/已补类型.md"] }, { path: "Raw/仅补链接.md", title: "仅补链接", revision: "before", content: "", state: "digested", addTargetPaths: ["Wiki/已补类型.md"] }],
+        wikiItems: [{ path: "Wiki/已补类型.md", title: "已补类型", revision: "before", content: "" }], issues: [{ title: "需核对旧资料", kind: "review", message: "原有链接需要核对。" }] },
+      writes: Object.fromEntries(["Raw/补状态.md", "Raw/仅补链接.md", "Wiki/已补类型.md"].map((path, index) => [path, { operationId: path, path, role: index < 2 ? "source" as const : "wiki" as const, expectedVersion: "before", content: "after", done: true }])) } };
+  const upgradeBefore = JSON.stringify(upgradeRecord), upgradeEntry = mergeKnowledgeMaintenanceHistory([], [upgradeRecord])[0];
+  assert.equal(upgradeEntry.resultStatus, "noop", "the generic envelope is preserved; the upgrade projection reads its own durable facts");
+  assert.match(knowledgeMaintenanceHistoryTitle(upgradeEntry, true, upgradeRecord), /旧知识升级/u);
+  assert.equal(knowledgeMaintenanceHistoryStatus(upgradeEntry, true, upgradeRecord), "已完成");
+  assert.match(knowledgeMaintenanceHistoryDescription(upgradeEntry, true, upgradeRecord), /已完成.*已补好 1 篇资料状态、2 条链接.*1 页 Wiki/u);
+  cleanup(); host.empty();
+  cleanup = renderKnowledgeMaintenanceHistoryList(host, { zh: true, entries: [upgradeEntry], records: [upgradeRecord], state: { date: "", page: 1, listScroll: 0 }, onBack() {}, onChange() {},
+    onSelectRecord(value) { selected = value; detail(); }, onOpenPath: open, onUnavailable() {} });
+  assert.match(host.textContent!, /旧知识升级.*已完成.*1 篇资料状态、2 条链接.*1 页 Wiki/u);
+  assert.doesNotMatch(host.textContent!, /已检查|无需新增/u);
+  click(".echoink-maintenance-record-list button");
+  assert.match(host.textContent!, /旧知识升级详情.*已完成.*已补好 1 篇资料状态、2 条链接.*1 页 Wiki.*已补好的文件/u);
+  for (const text of ["补状态", "仅补链接", "已补类型", "需核对旧资料"]) assert.ok(host.textContent!.includes(text));
+  assert.doesNotMatch(host.textContent!, /本轮没有选中来源|本轮没有新增或更新|无需新增/u);
+  const partialUpgrade = structuredClone(upgradeRecord); partialUpgrade.upgrade!.phase = "write"; partialUpgrade.upgrade!.writes["Wiki/已补类型.md"].done = false; partialUpgrade.upgrade!.skipped["Wiki/已补类型.md"] = "这页的类型尚未补完。";
+  cleanup(); host.empty(); cleanup = renderKnowledgeMaintenanceRecordDetail(host, { zh: true, record: partialUpgrade, onBack() {}, onOpenPath: open });
+  assert.match(host.textContent!, /没做完.*1 篇资料状态、2 条链接.*0 页 Wiki.*未补完的文件.*类型尚未补完/us);
+  assert.equal(JSON.stringify(upgradeRecord), upgradeBefore, "upgrade list/detail are read-only projections");
   cleanup(); host.remove();
   sibling.querySelector<HTMLButtonElement>("button")!.click(); assert.equal(siblingClicks, 1, "history disposer preserves unrelated Origin controls");
   disposeOriginControls(sibling); sibling.remove();

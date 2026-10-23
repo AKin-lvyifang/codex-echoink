@@ -1,4 +1,6 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { readFile, mkdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -9,7 +11,7 @@ import { piBraceExpansionPlugin } from "./pi-brace-expansion.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
-const directory = path.join(root, ".tmp/pi-brace-expansion-tests");
+const directory = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "pi-brace-expansion-tests");
 const fixedVersion = require("brace-expansion/package.json").version;
 assert.equal(fixedVersion, "5.0.12");
 const legacyMinimatch = require(path.join(root, "node_modules/@earendil-works/pi-coding-agent/node_modules/minimatch/dist/commonjs/index.js"));
@@ -25,8 +27,10 @@ try {
         outfile: out, metafile: true, plugins: [piBraceExpansionPlugin], logLevel: "silent"
       });
       const minimatch = require(out);
-      const dependency = built.metafile.inputs[source].imports.find(item => item.original === "brace-expansion");
-      assert.ok(dependency?.path.startsWith("node_modules/brace-expansion/"), format);
+      const sourceKey = Object.keys(built.metafile.inputs).find(key => realpathSync(path.resolve(root, key)) === realpathSync(path.resolve(root, source)));
+      assert.ok(sourceKey, "metafile retains the exact minimatch entry through a dependency symlink");
+      const dependency = built.metafile.inputs[sourceKey].imports.find(item => item.original === "brace-expansion");
+      assert.ok(dependency && realpathSync(path.resolve(root, dependency.path)).startsWith(path.dirname(require.resolve("brace-expansion/package.json")) + path.sep), format);
       assert.equal(Object.keys(built.metafile.inputs).some(name => name.includes("pi-coding-agent/node_modules/brace-expansion/")), false);
       for (const pattern of patterns) assert.deepEqual(minimatch.braceExpand(pattern), legacyMinimatch.braceExpand(pattern), pattern);
       assert.equal(minimatch.minimatch("note-02.md", "note-{01..03}.md"), true);

@@ -151,6 +151,7 @@ function measuredRows(first: Window, second: Window) {
   for (const [name, win] of [["main", first], ["popout", second]] as const) {
     const messages = win.document.createElement("div");
     const list = win.document.createElement("div");
+    list.setCssStyles = styles => { Object.assign(list.style, styles); };
     const row = win.document.createElement("div");
     row.dataset.rowId = "message-row";
     row.getBoundingClientRect = () => ({ height: 123.5 } as DOMRect);

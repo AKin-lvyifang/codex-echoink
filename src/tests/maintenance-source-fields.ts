@@ -31,7 +31,6 @@ function assertCurrentStatusOnly(): void {
     "提炼状态: 已提炼\n正文",
     "# 笔记\n```yaml\n提炼状态: 已提炼\n```",
     "---\n提炼状态: 未提炼\n已处理: true\n---\n提炼状态: 已提炼",
-    `---\n已处理: true\n提炼指纹: sha256:${"a".repeat(64)}\n---\n正文`,
     "---\nnested:\n  提炼状态: 已提炼\n---\n正文",
     "---\n提炼状态: 已提炼\n提炼状态: 未提炼\n---\n正文",
     "---\n提炼状态: [已提炼\n---\n正文",
@@ -71,7 +70,7 @@ function assertMigrationPlans(): void {
   assert.deepEqual(planMaintenanceSourceMigration({
     status: "已提炼", legacyProcessed: false, targetPaths: ["Wiki/A.md"],
     reverseSourceTargets: ["Wiki/A.md", "Wiki/B.md"]
-  }), { status: "已提炼", targetPaths: ["Wiki/A.md", "Wiki/B.md"], needsReview: false, shouldWrite: true });
+  }), { status: "已提炼", targetPaths: ["Wiki/A.md"], needsReview: false, shouldWrite: false }, "existing target properties are preserved, including their omissions");
   assert.deepEqual(planMaintenanceSourceMigration({ status: "已提炼", targetPaths: ["Wiki/A.md"] }), {
     status: "已提炼", targetPaths: ["Wiki/A.md"], needsReview: false, shouldWrite: false
   });
@@ -79,7 +78,7 @@ function assertMigrationPlans(): void {
     status: "已提炼", targetPaths: [], needsReview: true, shouldWrite: false
   });
   assert.deepEqual(planMaintenanceSourceMigration({ status: "待校准", privateProcessed: true }), {
-    status: "未提炼", targetPaths: [], needsReview: true, shouldWrite: true
+    status: "待校准", targetPaths: [], needsReview: false, shouldWrite: false
   });
   for (const evidence of [
     { privateProcessed: false, registryProcessed: true },
@@ -87,9 +86,10 @@ function assertMigrationPlans(): void {
     { legacyProcessed: false, privateProcessed: true },
     { legacyProcessed: true, registryProcessed: false }
   ]) {
+    const processed = evidence.privateProcessed ?? evidence.registryProcessed ?? evidence.legacyProcessed;
     assert.deepEqual(planMaintenanceSourceMigration(evidence), {
-      status: "未提炼", targetPaths: [], needsReview: true, shouldWrite: true
-    }, "contradictory legacy completion evidence cannot be OR-ed together");
+      status: processed ? "已提炼" : "未提炼", targetPaths: [], needsReview: Boolean(processed), shouldWrite: true
+    }, "private receipts outrank registry, which outranks old headers");
     assert.deepEqual(planMaintenanceSourceMigration({ ...evidence, status: "未提炼" }), {
       status: "未提炼", targetPaths: [], needsReview: false, shouldWrite: false
     });
@@ -211,17 +211,17 @@ function assertReadOnlyLegacyTransition(): void {
   const registry = { rawPath: "raw/a.md", fingerprint, size: 5, mtime: 1, digestedAt: 1, runId: "legacy-success", reportPath: "", evidencePaths: [], confidence: "verified" as const };
   let hashes = 0; const current = () => { hashes++; return fingerprint; };
   assert.equal(maintenanceSourceState("body", { fingerprint: current, registry }), "digested");
-  assert.equal(hashes, 1);
+  assert.equal(hashes, 0);
   for (const value of ["已提炼", "未提炼", "null", "''", "", "[invalid"]) {
     const result = resolveMaintenanceSourceState(`---\n提炼状态: ${value}\n---\nbody`, { fingerprint: current, registry });
-    assert.equal(result.state, value === "已提炼" ? "digested" : "pending", value);
-    assert.equal(result.origin, "new"); assert.ok(result.reason);
+    assert.equal(result.state, value === "未提炼" ? "pending" : "digested", value);
+    assert.equal(result.origin, ["已提炼", "未提炼"].includes(value) ? "new" : "registry"); assert.ok(result.reason);
   }
-  assert.equal(hashes, 1, "an existing new property never hashes the body, including null/empty/invalid values");
-  assert.equal(maintenanceSourceState("body", { fingerprint: () => "changed", registry }), "changed");
+  assert.equal(hashes, 0, "daily source state never compares old fingerprints; nonstandard values preserve bytes and fall back to receipt priority");
+  assert.equal(maintenanceSourceState("body", { fingerprint: () => "changed", registry }), "digested");
   assert.equal(maintenanceSourceState("body", { fingerprint: current, registry, maintenance: { fingerprint, status: "failed" } }), "failed");
   assert.equal(maintenanceSourceState("body", { fingerprint: current, registry, maintenance: { fingerprint, status: "unread" } }), "pending");
-  assert.equal(maintenanceSourceState("body", { fingerprint: current, registry, maintenance: { fingerprint: "old", status: "processed" } }), "changed");
+  assert.equal(maintenanceSourceState("body", { fingerprint: current, registry, maintenance: { fingerprint: "old", status: "processed" } }), "digested");
   assert.equal(maintenanceSourceState("body", { fingerprint: current, maintenance: { fingerprint, status: "processed" } }), "digested");
-  assert.equal(maintenanceSourceState("body", { fingerprint: current, previous: {} }), "calibration", "mtime/boolean hints cannot prove completion");
+  assert.equal(maintenanceSourceState("body", { fingerprint: current, previous: {} }), "pending", "mtime/boolean hints cannot prove completion");
 }

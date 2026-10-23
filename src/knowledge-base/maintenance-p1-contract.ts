@@ -17,7 +17,7 @@ export interface MaintenanceMigrationEvidence {
   reverseSourceTargets?: readonly string[];
 }
 export interface MaintenanceSourceMigrationPlan {
-  status: MaintenanceRefinementStatus;
+  status: import("./maintenance-upgrade-contract").MaintenanceCanonicalSourceStatus;
   targetPaths: readonly string[];
   needsReview: boolean;
   shouldWrite: boolean;

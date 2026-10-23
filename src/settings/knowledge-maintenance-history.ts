@@ -4,6 +4,7 @@ import type { KnowledgeBaseMaintenanceHistoryEntry } from "./settings";
 import { OriginSetting } from "./origin-setting";
 import { createOriginInput, createOriginButton, createOriginPagination, disposeOriginControls } from "./origin-controls";
 import { applySettingsRow, createSettingsPage, createSettingsGroup, createSettingsSection } from "./settings-v2";
+import { maintenanceCompletionText, projectMaintenanceActivity } from "../knowledge-base/maintenance-activity";
 
 export interface KnowledgeMaintenanceHistoryState {
   date: string;
@@ -101,9 +102,10 @@ export function renderKnowledgeMaintenanceHistoryList(container: HTMLElement, op
   group.setAttr("aria-label", zh ? "维护记录列表" : "Maintenance record list");
   group.onscroll = () => { state.listScroll = group.scrollTop; };
   for (const entry of entries.slice((currentPage - 1) * pageSize, currentPage * pageSize)) {
+    const record = options.records.find(item => item.recordId === entry.recordId);
     const row = new OriginSetting(group)
-      .setName(knowledgeMaintenanceHistoryTitle(entry, zh))
-      .setDesc(knowledgeMaintenanceHistoryDescription(entry, zh));
+      .setName(knowledgeMaintenanceHistoryTitle(entry, zh, record))
+      .setDesc(knowledgeMaintenanceHistoryDescription(entry, zh, record));
     if (entry.reportPath || entry.recordId) {
       row.addOriginButton((button) => {
         const label = zh ? "查看明细" : "View details";
@@ -121,7 +123,7 @@ export function renderKnowledgeMaintenanceHistoryList(container: HTMLElement, op
           });
         button.buttonEl.setAttr(
           "aria-label",
-          `${label} ${knowledgeMaintenanceHistoryTitle(entry, zh)}`
+          `${label} ${knowledgeMaintenanceHistoryTitle(entry, zh, record)}`
         );
       });
     }
@@ -159,8 +161,30 @@ export interface KnowledgeMaintenanceRecordDetailOptions {
 export function renderKnowledgeMaintenanceRecordDetail(container: HTMLElement, options: KnowledgeMaintenanceRecordDetailOptions): () => void {
   const { zh, record } = options;
   const restoreSurface = alignDesktopMaintenanceSurface(container);
-  const page = createSettingsPage(container, { title: zh ? "维护详情" : "Maintenance details", detail: true, backLabel: zh ? "返回维护记录" : "Back to records", onBack: options.onBack });
+  const page = createSettingsPage(container, { title: record.upgrade ? zh ? "旧知识升级详情" : "Legacy upgrade details" : zh ? "维护详情" : "Maintenance details", detail: true, backLabel: zh ? "返回维护记录" : "Back to records", onBack: options.onBack });
   const overview = createSettingsGroup(page);
+  if (record.upgrade) {
+    const entry = { status: record.cancelled ? "canceled" : "success", resultStatus: record.result.status } as KnowledgeBaseMaintenanceHistoryEntry;
+    new OriginSetting(overview).setName(knowledgeMaintenanceHistoryStatus(entry, zh, record)).setDesc(knowledgeUpgradeHistorySummary(record, zh));
+    const files = createSettingsGroup(createSettingsSection(page, { title: zh ? "已补好的文件" : "Updated files", surface: "flat" }));
+    for (const write of Object.values(record.upgrade.writes).filter(write => write.done)) {
+      const item = [...record.upgrade.plan.sourceItems, ...record.upgrade.plan.wikiItems].find(item => item.path === write.path);
+      const source = record.upgrade.plan.sourceItems.find(item => item.path === write.path);
+      const properties = write.role === "wiki" ? [zh ? "Wiki 类型" : "Wiki type"] : [source?.addStatus ? zh ? "资料状态" : "Source status" : "", source?.addTargetPaths?.length ? zh ? "提炼到链接" : "Links to Wiki" : ""].filter(Boolean);
+      applySettingsRow(new OriginSetting(files).setName(item?.title ?? write.path).setDesc(`${properties.join("、")}\n${write.path}`)
+        .addOriginButton(button => button.setButtonText(zh ? "打开笔记" : "Open note").onClick(() => void options.onOpenPath(write.path))));
+    }
+    if (!Object.values(record.upgrade.writes).some(write => write.done)) files.createDiv({ text: zh ? "暂时没有已核对完成的补写，原文件保留。" : "No verified additions yet. Original files are preserved." });
+    if (Object.keys(record.upgrade.skipped).length) {
+      const unfinished = createSettingsGroup(createSettingsSection(page, { title: zh ? "未补完的文件" : "Unfinished files", surface: "flat" }));
+      for (const [file, reason] of Object.entries(record.upgrade.skipped)) applySettingsRow(new OriginSetting(unfinished).setName(file).setDesc(reason));
+    }
+    if (record.upgrade.plan.issues.length) {
+      const review = createSettingsGroup(createSettingsSection(page, { title: zh ? "需要你看的清单" : "Items to review", surface: "flat" }));
+      for (const issue of record.upgrade.plan.issues) applySettingsRow(new OriginSetting(review).setName(issue.title ?? issue.path ?? (zh ? "需核对" : "Review")).setDesc(issue.message));
+    }
+    return () => { disposeOriginControls(page); restoreSurface(); };
+  }
   new OriginSetting(overview).setName(knowledgeMaintenanceHistoryStatus({ status: record.cancelled ? "canceled" : "success", resultStatus: record.cancelled ? "cancelled" : record.result.status } as KnowledgeBaseMaintenanceHistoryEntry, zh)).setDesc(record.summary);
   const sources = createSettingsGroup(createSettingsSection(page, { title: zh ? "来源" : "Sources", surface: "flat" }));
   for (const source of record.sources) applySettingsRow(new OriginSetting(sources).setName(source.path).setDesc(zh ? { processed: "已处理", failed: "待处理：本轮未全部完成", unread: "未读，保留待处理" }[source.status] : source.status));
@@ -208,8 +232,10 @@ export async function openKnowledgeMaintenancePath(app: App, relativePath: strin
 
 export function knowledgeMaintenanceHistoryTitle(
   entry: Readonly<KnowledgeBaseMaintenanceHistoryEntry>,
-  zh: boolean
+  zh: boolean,
+  record?: Readonly<KnowledgeMaintenanceRecord>
 ): string {
+  if (record?.upgrade) return `${formatKnowledgeMaintenanceTime(entry.at, entry.date, zh)} · ${zh ? "旧知识升级" : "Legacy knowledge upgrade"}`;
   const modeLabels = zh
     ? {
         maintain: "知识提炼",
@@ -232,8 +258,10 @@ export function knowledgeMaintenanceHistoryTitle(
 
 export function knowledgeMaintenanceHistoryDescription(
   entry: Readonly<KnowledgeBaseMaintenanceHistoryEntry>,
-  zh: boolean
+  zh: boolean,
+  record?: Readonly<KnowledgeMaintenanceRecord>
 ): string {
+  if (record?.upgrade) return `${knowledgeMaintenanceHistoryStatus(entry, zh, record)} · ${knowledgeUpgradeHistorySummary(record, zh)}`;
   const status = knowledgeMaintenanceHistoryStatus(entry, zh);
   const pending = entry.pendingSources?.length
     ? (zh
@@ -250,8 +278,10 @@ export function knowledgeMaintenanceHistoryDescription(
 
 export function knowledgeMaintenanceHistoryStatus(
   entry: Readonly<KnowledgeBaseMaintenanceHistoryEntry>,
-  zh: boolean
+  zh: boolean,
+  record?: Readonly<KnowledgeMaintenanceRecord>
 ): string {
+  if (record?.upgrade) return record.cancelled ? zh ? "已取消" : "Cancelled" : record.upgrade.phase === "completed" ? zh ? "已完成" : "Completed" : zh ? "没做完" : "Not finished";
   if (entry.resultStatus) {
     const labels = zh ? { completed: "已完成", partial: "部分完成", noop: "已检查，无需新增", failed: "失败", write_uncertain: "写入状态待核对", cancelled: "已取消" } : { completed: "Completed", partial: "Partially completed", noop: "Checked, no new content", failed: "Failed", write_uncertain: "Write needs verification", cancelled: "Cancelled" };
     return labels[entry.resultStatus];
@@ -262,6 +292,11 @@ export function knowledgeMaintenanceHistoryStatus(
   if (entry.completion === "recovered") return zh ? "恢复后完成" : "Completed after recovery";
   if (entry.completion === "noop") return zh ? "已检查，无新内容" : "Checked, no new content";
   return zh ? "已完成" : "Completed";
+}
+
+export function knowledgeUpgradeHistorySummary(record: Readonly<KnowledgeMaintenanceRecord>, zh: boolean): string {
+  const activity = projectMaintenanceActivity(record);
+  return activity?.upgradeCounts ? maintenanceCompletionText(activity, !zh) : zh ? "升级结果待核对" : "Upgrade results need verification";
 }
 
 function formatKnowledgeMaintenanceTime(at: number, date: string, zh: boolean): string {

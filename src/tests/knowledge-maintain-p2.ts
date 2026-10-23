@@ -258,11 +258,11 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
       { id: "new-complete", property: "已提炼", privateStatus: "failed", stale: true, complete: true },
       { id: "registry-current", registry: true, complete: true },
       { id: "private-current", privateStatus: "processed", complete: true },
-      { id: "setting-current", setting: true, complete: true },
+      { id: "setting-current", setting: true, complete: false },
       { id: "new-pending", property: "未提炼", registry: true, complete: false },
-      { id: "new-null", property: "null", registry: true, complete: false },
-      { id: "new-invalid", property: "unknown", registry: true, complete: false },
-      { id: "private-stale-over-registry", registry: true, privateStatus: "processed", stale: true, complete: false },
+      { id: "new-null", property: "null", registry: true, complete: true },
+      { id: "new-invalid", property: "unknown", registry: true, complete: true },
+      { id: "private-stale-over-registry", registry: true, privateStatus: "processed", stale: true, complete: true },
       { id: "private-failed-over-registry", registry: true, privateStatus: "failed", complete: false },
       { id: "no-evidence", complete: false }
     ];

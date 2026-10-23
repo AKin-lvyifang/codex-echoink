@@ -3,6 +3,7 @@ import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings"
 import type { KnowledgeBaseDashboardHealth, KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
 import type { KnowledgeLinkHealth } from "../knowledge-base/link-health";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import type { MaintenanceUpgradeSnapshot, MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-upgrade-contract";
 import type { KnowledgeSourceHealth } from "../knowledge-base/source-health-core";
 import type { KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseSettings } from "../settings/settings";
 import { mergeKnowledgeMaintenanceHistory } from "../knowledge-base/maintenance-history-core";
@@ -32,7 +33,7 @@ export interface KnowledgePageHost {
   getKnowledgeSurfaceService(): {
     getDashboardSnapshot(): Promise<KnowledgeBaseDashboardSnapshot>;
     getMaintenanceRecords?(): Promise<KnowledgeMaintenanceRecord[]>;
-  } | null;
+  } & Partial<MaintenanceUpgradeSurface> | null;
 }
 export interface KnowledgePageSnapshot {
   generatedAt: number;
@@ -46,7 +47,9 @@ export interface KnowledgePageSnapshot {
   sources: KnowledgeSourceHealth;
   maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[];
   maintenanceRecords: KnowledgeMaintenanceRecord[];
-  errors: Partial<Record<"health" | "activity" | "directories" | "links" | "sources" | "history", string>>;
+  /** Absent on older hosts; unknown is never projected as zero work. */
+  upgrade?: MaintenanceUpgradeSnapshot | null;
+  errors: Partial<Record<"health" | "activity" | "directories" | "links" | "sources" | "history" | "upgrade", string>>;
 }
 
 export interface PageFile { path: string; mtime: number; birthtime: number | null; }

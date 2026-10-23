@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -5,7 +6,7 @@ import esbuild from "esbuild";
 import { JSDOM } from "jsdom";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const directory = path.join(root, ".tmp/resource-presentation-tests");
+const directory = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "resource-presentation-tests");
 await mkdir(directory, { recursive: true });
 try {
   const entry = path.join(directory, "test.mjs");

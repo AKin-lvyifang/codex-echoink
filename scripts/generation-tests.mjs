@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
@@ -7,7 +8,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const configured = process.env.ECHOINK_GENERATION_TEST_ROOT;
 if (!configured || !path.isAbsolute(configured)) throw new Error("Set ECHOINK_GENERATION_TEST_ROOT to the explicitly authorized disposable test Vault.");
 const fixture = await mkdtemp(path.join(configured, ".generation-unit-"));
-const tempRoot = path.join(root, ".tmp"); await mkdir(tempRoot, { recursive: true });
+const tempRoot = disposableTestOutputRoot(path.join(root, ".tmp")); await mkdir(tempRoot, { recursive: true });
 const directory = await mkdtemp(path.join(tempRoot, "generation-tests-"));
 try {
   const file = path.join(directory, "tests.mjs");

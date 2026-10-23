@@ -829,6 +829,18 @@ implements Phase3MaintenanceStateStore {
     });
   }
 
+  /** Upgrade checkpoints live in the same record store, with immutable ownership. */
+  async saveUpgradeRecord(record: KnowledgeMaintenanceRecord): Promise<void> {
+    if (!record.upgrade) throw new Error("旧知识升级清单缺失。");
+    await serializePiNativeFileWrite(this.rootPath, async () => {
+      const directory = await ensurePrivateStateDirectory(this.rootPath, ["records"]);
+      const previous = await readPrivateMaintenanceRecord(this.rootPath, record.recordId, this.vaultId);
+      if (previous && (!previous.upgrade || previous.originConversationId !== record.originConversationId
+        || previous.runId !== record.runId || previous.upgrade.plan.id !== record.upgrade!.plan.id)) throw new Error("旧知识升级清单归属冲突。");
+      await writeControlEnvelope(path.join(directory, `${requireControlId(record.recordId)}.json`), this.vaultId, "record", record);
+    });
+  }
+
   /** Enrich the already-finalized outcome without replacing its source receipts. */
   async updateLinkingMetadata(recordId: string, result: import("../knowledge-base/knowledge-maintenance-result").KnowledgeMaintenanceResultEnvelope, summary: string): Promise<void> {
     const linkingIssues = result.issues.filter(issue => issue.code === "linking_start_failed" || issue.code === "link_target_skipped");

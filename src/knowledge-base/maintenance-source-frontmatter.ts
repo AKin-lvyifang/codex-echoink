@@ -1,6 +1,7 @@
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type { Node, Pair } from "yaml";
 import type { MaintenanceSourceFields } from "./maintenance-p1-contract";
+import type { MaintenanceCanonicalSourceStatus } from "./maintenance-upgrade-contract";
 
 const MANAGED_KEYS = ["提炼状态", "摘要", "提炼到"] as const;
 type ManagedKey = typeof MANAGED_KEYS[number];
@@ -60,6 +61,7 @@ export function readMaintenanceSourceStateProperty(markdown: string): { present:
     if (!parsed || !isMap(parsed.document.contents)) return { present: false };
     const pair = parsed.document.contents.items.find((item) => isScalar(item.key) && item.key.value === "提炼状态");
     if (!pair) return { present: false };
+    if (!isScalar(pair.key) || pair.key.anchor || pair.key.tag) return { present: true, error: "提炼状态属性带有锚点或标签，保留原值" };
     const value = pair.value;
     return isScalar(value) && !value.anchor && !value.tag ? { present: true, value: value.value } : { present: true, error: "提炼状态不是明确的标量，保留待处理" };
   } catch {
@@ -70,6 +72,61 @@ export function readMaintenanceSourceStateProperty(markdown: string): { present:
 /** Reading malformed or ambiguous metadata never marks a source as processed. */
 export function readMaintenanceSourceStatus(markdown: string): unknown {
   return readMaintenanceSourceStateProperty(markdown).value;
+}
+
+/** Read one property without treating an empty or unsupported value as absence. */
+export function readMaintenanceFrontmatterProperty(markdown: string, key: string): { present: boolean; value?: unknown; error?: string } {
+  try {
+    const parsed = parseSourceFrontmatter(markdown);
+    if (!parsed || !isMap(parsed.document.contents)) return { present: false };
+    const pair = parsed.document.contents.items.find(item => isScalar(item.key) && item.key.value === key);
+    if (!pair) return { present: false };
+    if (!isScalar(pair.key) || pair.key.anchor || pair.key.tag) return { present: true, error: `${key}属性不能安全读取，保留原值` };
+    const value = pair.value;
+    if (value === null) return { present: true, value: null };
+    if (isScalar(value) && !value.anchor && !value.tag) return { present: true, value: value.value };
+    if (isSeq(value) && !value.anchor && !value.tag && value.items.every(item => isScalar(item) && !item.anchor && !item.tag)) {
+      return { present: true, value: value.items.map(item => isScalar(item) ? item.value : null) };
+    }
+    return { present: true, error: `${key}属性不是明确的普通值，保留原值` };
+  } catch {
+    return { present: true, error: "文件头无法明确解析，保留原文件" };
+  }
+}
+
+/** Insert absent keys only. Original YAML, comments, delimiters and body are exact slices. */
+export function appendMissingMaintenanceFrontmatterProperties(markdown: string, fields: Readonly<Record<string, string | boolean | readonly string[]>>): string {
+  const parsed = parseSourceFrontmatter(markdown);
+  const pairs = Object.entries(fields);
+  if (!pairs.length) return markdown;
+  if (parsed && isMap(parsed.document.contents) && (parsed.document.contents.flow
+    || parsed.document.contents.items.some(pair => !isScalar(pair.key) || pair.key.anchor || pair.key.tag))) {
+    throw new Error("文件头不能安全追加属性，保留原文件。");
+  }
+  const missing = pairs.filter(([key]) => !parsed || !isMap(parsed.document.contents)
+    || !parsed.document.contents.items.some(pair => isScalar(pair.key) && pair.key.value === key));
+  if (!missing.length) return markdown;
+  const newline = parsed?.newline ?? /\r\n|\n|\r/u.exec(markdown)?.[0] ?? "\n";
+  const lines = missing.map(([key, value]) => `${key}: ${JSON.stringify(value)}${newline}`).join("");
+  if (parsed) return markdown.slice(0, parsed.close) + lines + markdown.slice(parsed.close);
+  const bom = markdown.startsWith("\uFEFF") ? 1 : 0;
+  return markdown.slice(0, bom) + `---${newline}${lines}---${newline}` + markdown.slice(bom);
+}
+
+/** P4 upgrade never changes a property that appeared after its preview. */
+export function patchMaintenanceUpgradeSourceFrontmatter(markdown: string, fields: {
+  status?: MaintenanceCanonicalSourceStatus;
+  targetPaths?: readonly string[];
+}): string {
+  if (!fields || Object.keys(fields).some(key => key !== "status" && key !== "targetPaths")
+    || (fields.status !== undefined && !["已提炼", "未提炼", "待重新提炼", "提炼失败", "待校准"].includes(fields.status))
+    || (fields.targetPaths !== undefined && (!Array.isArray(fields.targetPaths) || fields.targetPaths.some(value => !isMaintenanceSourceTargetPath(value))))) {
+    throw new Error("Invalid upgrade source fields.");
+  }
+  const additions: Record<string, string | readonly string[]> = {};
+  if (fields.status !== undefined) additions.提炼状态 = fields.status;
+  if (fields.targetPaths !== undefined) additions.提炼到 = [...new Set(fields.targetPaths)].map(value => `[[${value}]]`);
+  return appendMissingMaintenanceFrontmatterProperties(markdown, additions);
 }
 
 function managedPairValue(pair: Pair, key: ManagedKey): string | null | string[] {

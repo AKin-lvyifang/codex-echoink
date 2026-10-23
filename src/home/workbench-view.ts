@@ -19,8 +19,8 @@ import { openWorkbenchModule, WORKBENCH_MODULES } from "./module-navigation";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
 import { isProWorkbenchModule, renderWorkbenchModuleLock, workbenchHasPro, workbenchProModuleEnabled, type ProWorkbenchModuleId } from "./workbench-module-lock";
-import { maintenanceActivityText, maintenanceCompletionText, maintenanceTaskStatus, type KnowledgeActivitySource, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
-import { maintenanceFailureText } from "../knowledge-base/maintenance-user-copy";
+import { maintenanceActivityText, maintenanceTaskTitle, maintenanceTaskStatus, type KnowledgeActivitySource, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import type { MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-upgrade-contract";
 import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
@@ -483,9 +483,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private pending(entry: TaskEntry): Readonly<EchoInkTurnInteraction> | undefined { return this.plugin.getConversationRunService().pendingInteractions.get(entry.conversationId); }
   private summary(entry: TaskEntry): string {
     const activity = this.maintenance.get(entry.conversationId);
-    if (activity) return activity.status === "completed" ? maintenanceCompletionText(activity, this.language === "en")
-      : maintenanceTaskStatus(activity) === "interrupted" ? maintenanceFailureText(activity.failures[0]?.message ?? "停止", activity.currentPath, this.language === "en")
-      : maintenanceActivityText(activity, this.language === "en");
+    if (activity) return maintenanceActivityText(activity, this.language === "en");
     const session = this.plugin.settings.sessions.find(session => session.id === entry.conversationId);
     if (taskState(entry) === "completed" && !session?.messages.some(item => item.role === "assistant" && item.text.trim())) {
       const preview = this.completedPreviews.get(entry.conversationId);
@@ -526,7 +524,8 @@ export class EchoInkWorkbenchView extends ItemView {
     const activity = this.maintenance.get(entry.conversationId), state = this.taskState(entry), agent = this.agent(entry);
     const body = this.button(card, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary");
     body.classList.add("wb-task-body");
-    setTooltip(body, `${entry.title}\n${taskCardHintSummary(this.summary(entry))}`, { classes: ["echoink-task-card-tooltip"] });
+    const title = activity ? maintenanceTaskTitle(activity, this.language === "en") : entry.title;
+    setTooltip(body, `${title}\n${taskCardHintSummary(this.summary(entry))}`, { classes: ["echoink-task-card-tooltip"] });
     const header = body.createSpan({ cls: "wb-task-header" }); renderTaskAvatar(header, agent);
     header.createSpan({ cls: "wb-agent-name", text: agent.name });
     const status = header.createSpan({ cls: `wb-task-status is-${state}` });
@@ -536,7 +535,7 @@ export class EchoInkWorkbenchView extends ItemView {
       const started = !activity && (this.plugin.getConversationRunService().runs.get(entry.conversationId)?.turnStartedAt || entry.taskStartedAt);
       if (started) status.createSpan({ attr: { "data-started-at": String(started) } });
     } else { setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: taskStateLabel({ ...entry, taskStatus: state, ...(state !== "waiting" ? { pendingResponse: undefined } : {}) }, this.language) }); }
-    body.createSpan({ cls: "wb-task-title", text: entry.title });
+    body.createSpan({ cls: "wb-task-title", text: title });
     const inline = state === "waiting" ? workbenchInlineQuestion(entry, this.pending(entry)) : undefined;
     const step = activity && state === "interrupted" ? undefined : activity ? this.summary(entry) : inline ? entry.taskStage : this.summary(entry);
     if (step && !(state === "interrupted" && step === this.t("没做完", "Not finished"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
@@ -550,6 +549,17 @@ export class EchoInkWorkbenchView extends ItemView {
         () => this.runAction(key, async () => { this.selectedTask = entry.conversationId; await this.plugin.resumeTaskAndOpenDetail(entry.conversationId); }), "secondary", "play");
       resume.classList.add("is-small"); resume.disabled = !!this.taskError || this.busy.has(key); setAmicroButtonPending(resume, this.busy.has(key));
       resume.dataset.wbBusy = key; resume.dataset.wbSource = "tasks"; resume.dataset.wbResume = "true";
+    } else if (activity?.taskKind === "upgrade" && state === "running") {
+      const footer = card.createDiv({ cls: "wb-task-footer" }), key = `stop-upgrade-${entry.conversationId}`;
+      const stop = this.button(footer, this.t("停止", "Stop"), key, () => this.runAction(key, async () => {
+        const current = maintenanceActivityForTask(entry, this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance ?? []);
+        const service = this.plugin.getKnowledgeSurfaceService() as Partial<MaintenanceUpgradeSurface> | null;
+        const snapshot = await service?.getUpgradeSnapshot?.();
+        if (current?.taskKind !== "upgrade" || current.originConversationId !== entry.conversationId || snapshot?.taskId !== entry.conversationId || snapshot.status !== "running" || !service?.stopUpgrade) throw new Error(this.t("升级任务已更新，请重新打开", "Upgrade task changed. Reopen it."));
+        await service.stopUpgrade();
+      }), "secondary", "square");
+      stop.classList.add("is-small"); stop.disabled = this.busy.has(key); setAmicroButtonPending(stop, this.busy.has(key));
+      stop.dataset.wbBusy = key; stop.dataset.wbSource = "tasks";
     } else if (state === "waiting") {
       const question = workbenchInlineQuestion(entry, this.pending(entry));
       const ask = card.createDiv({ cls: "wb-question" });
@@ -588,12 +598,12 @@ export class EchoInkWorkbenchView extends ItemView {
   private completedRow(entry: TaskEntry): HTMLElement {
     const row = this.contentEl.ownerDocument.createElement("div"); row.className = "wb-completed"; row.dataset.task = entry.conversationId;
     const button = this.button(row, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary"); button.classList.add("wb-completed-body");
-    const agent = this.agent(entry); renderTaskAvatar(button, agent);
-    const copy = button.createSpan({ cls: "wb-grow" }); copy.createSpan({ cls: "wb-row-title", text: entry.title });
+    const agent = this.agent(entry), activity = this.maintenance.get(entry.conversationId); renderTaskAvatar(button, agent);
+    const title = activity ? maintenanceTaskTitle(activity, this.language === "en") : entry.title;
+    const copy = button.createSpan({ cls: "wb-grow" }); copy.createSpan({ cls: "wb-row-title", text: title });
     copy.createSpan({ cls: "wb-secondary", text: `${agent.name} · ${this.summary(entry)}` });
-    const activity = this.maintenance.get(entry.conversationId);
     if (activity) { copy.classList.add("wb-maintenance-completed"); renderMaintenanceProgressBar(copy, activity); }
-    if (entry.unreadAnswerAt !== undefined) { button.createSpan({ cls: "wb-unread", attr: { "aria-hidden": "true" } }); button.setAttribute("aria-label", `${entry.title}，${this.t("有新结果", "New result")}`); }
+    if (entry.unreadAnswerAt !== undefined) { button.createSpan({ cls: "wb-unread", attr: { "aria-hidden": "true" } }); button.setAttribute("aria-label", `${title}，${this.t("有新结果", "New result")}`); }
     const completedAt = activity?.completedAt ?? entry.taskCompletedAt ?? entry.updatedAt;
     button.createEl("time", { cls: "wb-time", text: localTaskTime(completedAt), attr: { datetime: new Date(completedAt).toISOString() } });
     return row;

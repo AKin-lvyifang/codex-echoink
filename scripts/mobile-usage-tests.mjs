@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { webcrypto } from "node:crypto";
@@ -31,7 +32,7 @@ console.log('PASS mobile usage numeric schema, dedup, streak, cold read, partiti
 const store=new MobileStore(adapter,'runtime/mobile','runtime-instance');await store.load();
 const settings=loadMobileSettings({});const provider=mobileProvider('custom');provider.apiKey='fixture';provider.baseUrl='https://provider.invalid/v1';provider.models=[mobileModel('fixture-model')];provider.defaultModelId='fixture-model';settings.apiProviders=[provider];settings.activeApiProviderId=provider.id;settings.defaultModel='fixture-model';
 const tracked=new MobileUsageStore(adapter,'runtime/mobile','runtime-instance');await tracked.initialize();let calls=0;
-const app={vault:{adapter,getMarkdownFiles:()=>[],getAbstractFileByPath:()=>null},workspace:{getActiveFile:()=>null}};
+const app={vault:{adapter,on:()=>({}),offref(){},getMarkdownFiles:()=>[],getAbstractFileByPath:()=>null},metadataCache:{on:()=>({}),offref(){},resolvedLinks:{},unresolvedLinks:{}},workspace:{getActiveFile:()=>null}};
 const runtime=new MobileRuntime(app,store,()=>settings,async()=>{calls++;return {status:200,json:{choices:[{message:{role:'assistant',content:'fixture completed'},finish_reason:'stop'}]}};});
 runtime.setUsage(tracked);await runtime.initialize();await runtime.send('test numeric usage');assert.equal(calls,1);assert.equal(tracked.readStatistics().totalTurns,1);assert.ok(tracked.readStatistics().totalTokens>0);
 const tokens=tracked.readStatistics().totalTokens,taskId=store.session.id;await store.archiveAndCreateSession(taskId);await store.restoreSession(taskId);assert.equal(tracked.readStatistics().totalTokens,tokens);assert.equal(tracked.readStatistics().totalTurns,1);
@@ -148,7 +149,7 @@ console.log('PASS real lifestyle and model-save requests share numeric usage; fa
 }
 console.log('PASS real AccountService reads local statistics when anonymous, signed in and signed out without clearing usage');
 if(process.env.ECHOINK_USAGE_TEST_ROOT){
-  const registered=await fs.realpath(path.join(homedir(),'EchoInk-TestVaults/90-任务临时/移动端改版-M10-20261019')),root=await fs.realpath(process.env.ECHOINK_USAGE_TEST_ROOT);
+  const registered=await fs.realpath(disposableTestRoot(path.join(homedir(),'EchoInk-TestVaults/90-任务临时/移动端改版-M10-20261019'))),root=await fs.realpath(process.env.ECHOINK_USAGE_TEST_ROOT);
   assert.ok(root.startsWith(`${registered}${path.sep}`),'Mobile usage fixtures must stay inside the registered M10 disposable root');
   const directory=await fs.mkdtemp(path.join(root,'mobile-usage-'));
   const resolve=relative=>{const absolute=path.resolve(directory,relative);assert.ok(absolute.startsWith(`${directory}${path.sep}`));return absolute;};

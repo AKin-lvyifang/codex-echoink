@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,10 +7,8 @@ import { createRequire } from "node:module";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P9自动测试-20261019");
-if (!process.env.ECHOINK_ENGLISH_DIARY_NAVIGATION_TEST_ROOT || path.resolve(process.env.ECHOINK_ENGLISH_DIARY_NAVIGATION_TEST_ROOT) !== allowed) {
-  throw new Error("Set ECHOINK_ENGLISH_DIARY_NAVIGATION_TEST_ROOT to the registered P9 disposable test directory.");
-}
+if (!process.env.ECHOINK_ENGLISH_DIARY_NAVIGATION_TEST_ROOT?.trim() && !process.env.ECHOINK_TEST_ROOT?.trim()) throw new Error("Set an explicit disposable test root.");
+const allowed = disposableTestRoot(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P9自动测试-20261019"), ["ECHOINK_ENGLISH_DIARY_NAVIGATION_TEST_ROOT"]);
 await access(allowed);
 process.env.TZ = "America/Los_Angeles";
 const directory = await mkdtemp(path.join(allowed, ".english-diary-navigation-data-"));

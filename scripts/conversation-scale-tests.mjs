@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -5,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
-const outputDir = path.join(rootDir, ".tmp");
+const outputDir = disposableTestOutputRoot(path.join(rootDir, ".tmp"));
 const outputFile = path.join(outputDir, "conversation-scale-tests.mjs");
 
 await mkdir(outputDir, { recursive: true });
@@ -24,6 +25,7 @@ await esbuild.build({
     sourcefile: "conversation-scale-test-entry.ts",
     loader: "ts"
   },
+  loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
   bundle: true,
   platform: "node",
   target: "node22",

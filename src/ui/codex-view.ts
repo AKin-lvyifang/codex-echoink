@@ -6,7 +6,8 @@ import { freezePdfTaskRequest } from "../pdf-reading/task-context";
 import { workbenchModuleOwner } from "../home/module-navigation";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
 import { isUserTask, maintenanceActivityForTask, taskEntryWithMaintenance, taskState, taskSummary, type TaskEntry } from "../agents/task-presentation";
-import { maintenanceActivityText, maintenanceCompletionText, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import { maintenanceActivityText, maintenanceTaskTitle, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import type { MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-upgrade-contract";
 import { maintenanceFailureText } from "../knowledge-base/maintenance-user-copy";
 import { type TaskDraft, type TaskPage } from "../agents/task-workspace";
 import { applyConversationTaskMetadata } from "../agents/task-metadata";
@@ -429,7 +430,7 @@ export class CodexView extends ItemView {
       const pending = this.taskSubmitting.has(`resume:${id}`) || this.plugin.isTaskResuming(id);
       const reason = this.taskResumeErrors.get(id) ?? this.plugin.getTaskResumeError(id) ?? activity.failures[0]?.message ?? "停止";
       renderTaskInterruption(element, { pending, language: this.plugin.settings.settingsLanguage,
-        userCopy: maintenanceFailureText(reason, activity.currentPath, this.plugin.settings.settingsLanguage === "en"),
+        userCopy: activity.taskKind === "upgrade" ? reason : maintenanceFailureText(reason, activity.currentPath, this.plugin.settings.settingsLanguage === "en"),
         buttonLabel: this.taskText("继续", "Continue"), onResume: () => { void this.resumeInterruptedTask(id, false); } });
       return;
     }
@@ -480,7 +481,10 @@ export class CodexView extends ItemView {
   private renderTaskPages(): void {
     if (!this.taskListEl || !this.taskDetailEl || !this.taskEditorEl || !this.taskErrorEl || !this.taskInterruptionEl) return;
     const page = this.taskNavigation.page, agent = this.currentTaskAgent(), entry = this.currentTaskEntry();
-    const displayEntries = this.taskEntries.map(task => taskEntryWithMaintenance(task, this.taskMaintenanceActivities ?? []));
+    const displayEntries = this.taskEntries.map(task => {
+      const activity = maintenanceActivityForTask(task, this.taskMaintenanceActivities ?? []), entry = taskEntryWithMaintenance(task, this.taskMaintenanceActivities ?? []);
+      return activity ? { ...entry, title: maintenanceTaskTitle(activity, this.plugin.settings.settingsLanguage === "en") } : entry;
+    });
     renderAgentRoster(this.tabBarEl, this.plugin.settings.agentRegistry.agents, displayEntries, agent.id,
       { onSelect: id => void this.openAgentTaskList(id), onCreate: () => this.openAgentEditor() }, this.plugin.settings.settingsLanguage);
     this.taskEditorEl.hidden = !this.taskEditor; this.taskListEl.hidden = !!this.taskEditor || page.kind !== "list";
@@ -510,7 +514,7 @@ export class CodexView extends ItemView {
       onTask: id => void this.openTaskDetail(id), onEdit: () => this.openAgentEditor(agent.id),
       summary: entry => this.taskSummaryText(entry)
     }, Date.now(), this.plugin.settings.settingsLanguage);
-    else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? []);
+    else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? [], () => this.stopTurn().catch(error => { new Notice(error instanceof Error ? error.message : String(error)); }));
     else {
       disposeOriginControls(this.taskDetailHeaderEl!); this.taskDetailHeaderEl!.empty();
       this.taskDetailHeaderEl!.createDiv({ cls: "echoink-task-detail-header", text: this.taskText("任务详情", "Task details") });
@@ -520,8 +524,7 @@ export class CodexView extends ItemView {
   }
   private taskSummaryText(entry: TaskEntry): string | undefined {
     const activity = maintenanceActivityForTask(entry, this.taskMaintenanceActivities ?? []);
-    if (activity) return activity.status === "completed" ? maintenanceCompletionText(activity, this.plugin.settings.settingsLanguage === "en")
-      : maintenanceActivityText(activity, this.plugin.settings.settingsLanguage === "en");
+    if (activity) return maintenanceActivityText(activity, this.plugin.settings.settingsLanguage === "en");
     const pending = this.plugin.getConversationRunService().pendingInteractions.get(entry.conversationId);
     const session = this.sessionById(entry.conversationId);
     if (pending || session?.messages.length) return taskSummary(entry, session ?? undefined, this.plugin.settings.settingsLanguage, pending);
@@ -1912,6 +1915,14 @@ export class CodexView extends ItemView {
   private async startChatTurn(_session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await this.startQueuedTurnItem(item, source); }
   private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> { await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner); }
   private async stopTurn(): Promise<void> {
+    const entry = this.taskUiMounted ? this.currentTaskEntry() : undefined;
+    const activity = entry ? maintenanceActivityForTask(entry, this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance ?? this.taskMaintenanceActivities ?? []) : undefined;
+    if (entry && activity?.taskKind === "upgrade" && activity.originConversationId === entry.conversationId && activity.status === "running") {
+      const service = this.plugin.getKnowledgeSurfaceService() as Partial<MaintenanceUpgradeSurface> | null;
+      const snapshot = await service?.getUpgradeSnapshot?.();
+      if (snapshot?.taskId !== entry.conversationId || snapshot.status !== "running" || !service?.stopUpgrade) throw new Error(this.taskText("升级任务已更新，请重新打开", "Upgrade task changed. Reopen it."));
+      await service.stopUpgrade(); return;
+    }
     const owner = this.composerDraftOwner || this.plugin.settings.activeSessionId;
     for (const [id, transfer] of this.composerTransfers) if (transfer.owner === owner) {
       transfer.cancelled = true; this.cancelledComposerTransfers.add(id);

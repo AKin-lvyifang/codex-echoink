@@ -9,3 +9,8 @@ export function disposableTestRoot(fallback, envNames = []) {
   if (root !== base && !root.startsWith(base + path.sep)) throw new Error("Test fixtures must stay inside EchoInk-TestVaults/90-任务临时");
   return root;
 }
+
+/** Preserve historical defaults while allowing an explicitly isolated output root. */
+export function disposableTestOutputRoot(fallback) {
+  return process.env.ECHOINK_TEST_ROOT?.trim() ? disposableTestRoot(fallback) : fallback;
+}

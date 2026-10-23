@@ -1,11 +1,12 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
-await mkdir(path.join(root,".tmp"),{ recursive:true });
-const directory = await mkdtemp(path.join(root,".tmp", "finance-budget-test-"));
+await mkdir(disposableTestOutputRoot(path.join(root, ".tmp")),{ recursive:true });
+const directory = await mkdtemp(path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "finance-budget-test-"));
 try {
   const target = path.join(directory, "budget.mjs");
   await esbuild.build({ stdin: { contents: 'export { paidTestAccess } from "./src/tests/membership-access"; export * from "./src/lifestyle/finance-budget"; export { LifestyleStore, EMPTY_LIFESTYLE_DATA } from "./src/lifestyle/store"; export { LifestyleFinanceService } from "./src/lifestyle/finance-service";', resolveDir: root, loader: "ts" }, bundle: true, platform: "node", format: "esm", outfile: target, external: ["read-excel-file/node", "yaml", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"], loader: { ".md": "text", ".svg": "dataurl" }, banner: { js: `import {createRequire} from "node:module"; const require = createRequire(${JSON.stringify(path.join(root,"package.json"))});` }, alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") } });

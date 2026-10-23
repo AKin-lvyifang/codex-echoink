@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -5,9 +6,9 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const out = path.join(root, ".tmp/appearance-theme");
+const out = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "appearance-theme");
 await mkdir(out, { recursive: true });
-const common = { absWorkingDir: root, bundle: true, logLevel: "silent", alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") } };
+const common = { loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" }, absWorkingDir: root, bundle: true, logLevel: "silent", alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") } };
 await esbuild.build({ ...common, entryPoints: ["src/settings/settings.ts"], platform: "node", format: "esm", outfile: path.join(out, "settings.mjs"),
   external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml"],
   banner: { js: 'import {createRequire} from "node:module"; const require = createRequire(import.meta.url);' } });
