@@ -1,3 +1,4 @@
+import { normalizeMarkdownMath } from "../core/markdown-math";
 import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
 import { isMobileDataConflict, MobileDataConflictError, MobileStore } from "./store";
@@ -309,7 +310,7 @@ export class EchoInkIPhoneView extends ItemView {
         await this.plugin.iphoneNavigation!.openNote(file);
       },
       openLegacy: page => this.showPage(page), openModule: module => this.openModule(module),
-      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? "", this.markdown); }
+      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, normalizeMarkdownMath(text), element, sourcePath ?? "", this.markdown); }
     });
     return this.mounting = this.ui.mount();
   }
@@ -362,7 +363,7 @@ export class EchoInkIPadView extends ItemView {
         if (!(file instanceof TFile)) throw new Error("笔记不存在。");
         await this.plugin.ipadNavigation!.openNote(file);
       },
-      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? "", this.markdown); }
+      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, normalizeMarkdownMath(text), element, sourcePath ?? "", this.markdown); }
     };
     this.ui = this.area === "home" ? new IPadWorkbench(this.contentEl, host) : new IPadAgentPane(this.contentEl, host);
     const ui = this.ui;
@@ -414,7 +415,7 @@ export class EchoInkIPadSettingsView extends ItemView {
         if (!(file instanceof TFile)) throw new Error("笔记不存在。");
         await this.plugin.ipadNavigation!.openNote(file);
       },
-      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? "", this.markdown); }
+      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, normalizeMarkdownMath(text), element, sourcePath ?? "", this.markdown); }
     });
     const ui = this.ui;
     return this.mounting = ui.mount().then(() => { if (this.ui === ui) this.refreshSettings(); });
@@ -466,7 +467,7 @@ export class EchoInkMobileView extends ItemView {
         await this.plugin.navigation.openNote(file, this.leaf);
       },
       beginRender: () => { this.removeChild(this.markdown); this.markdown = new Component(); this.addChild(this.markdown); },
-      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, text, element, sourcePath ?? this.plugin.store.session.notePath, this.markdown); }
+      renderMarkdown: (text, element, sourcePath) => { void MarkdownRenderer.render(this.app, normalizeMarkdownMath(text), element, sourcePath ?? this.plugin.store.session.notePath, this.markdown); }
     });
     this.ui.mount();
     if (this.requestedPage) this.ui.showPage(this.requestedPage);

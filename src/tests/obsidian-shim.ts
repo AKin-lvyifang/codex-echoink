@@ -49,11 +49,21 @@ export class FileSystemAdapter {
 }
 
 export class Component {
+  private readonly cleanups: Array<() => void> = [];
   loaded = false;
   unloaded = false;
   load(): void { this.loaded = true; }
-  unload(): void { this.unloaded = true; }
-  registerDomEvent(): void {}
+  unload(): void { this.unloaded = true; for (const cleanup of this.cleanups.splice(0)) cleanup(); }
+  registerDomEvent(element: HTMLElement, type: string, callback: EventListener): void {
+    const fake = element as unknown as { listeners?: Map<string, EventListener> };
+    if (typeof element.addEventListener === "function") {
+      element.addEventListener(type, callback);
+      this.cleanups.push(() => element.removeEventListener(type, callback));
+    } else if (fake.listeners) {
+      fake.listeners.set(type, callback);
+      this.cleanups.push(() => { if (fake.listeners?.get(type) === callback) fake.listeners.delete(type); });
+    }
+  }
   registerEvent(): void {}
 }
 
@@ -61,6 +71,9 @@ export const openTestMarkdownRenders: { markdown: string; element: HTMLElement; 
 export class MarkdownRenderer {
   static async render(_app: App, markdown: string, element: HTMLElement, _sourcePath: string, component: Component): Promise<void> {
     openTestMarkdownRenders.push({ markdown, element, component });
+    // Preserve readable content in UI tests; this shim does not simulate the
+    // host's Markdown parser or MathJax. Native formatting is verified in-app.
+    element.setText(markdown);
   }
 }
 

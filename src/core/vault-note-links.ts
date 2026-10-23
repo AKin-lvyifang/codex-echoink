@@ -58,6 +58,7 @@ function collectVaultNoteLinkCandidates(text: string, vaultBasePathValue: string
       end: start + match[0].length,
       label: cleanLinkLabel(match[2] ?? "") || displayNameForVaultNote(targetPath),
       targetPath,
+      heading: match[1].includes("#") ? decodeUriPath(match[1].slice(match[1].indexOf("#") + 1)) : undefined,
       title: titleForVaultNote(targetPath, basePath)
     });
   }
@@ -121,7 +122,7 @@ function resolveVaultNoteCandidate(value: string, basePath: string): string {
 
 function normalizeWikiLinkCandidate(value: string, basePath: string): string {
   const cleaned = value.trim();
-  if (!cleaned || /^https?:\/\//i.test(cleaned) || cleaned.startsWith("/")) return "";
+  if (!cleaned || /^https?:\/\//i.test(cleaned)) return "";
   const relative = relativePathForAbsoluteVaultNote(cleaned, basePath);
   if (relative) return relative;
   const withoutHeading = decodeUriPath(cleaned.split("#")[0].trim().replace(/^\.\//, ""));

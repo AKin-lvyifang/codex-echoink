@@ -24608,6 +24608,139 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   .echoink-generation-template-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 520px) { .modal.echoink-generation-modal { padding: 18px 16px 0; } }
+/* Native Markdown owns formatting; the conversation owns reading density. */
+.echoink-chat-surface .echoink-answer-markdown {
+  --p-spacing: 10px;
+  --heading-spacing: 14px;
+  --list-spacing: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  color: var(--text-normal);
+  font-family: var(--font-text);
+  font-size: 14px;
+  line-height: 1.68;
+  overflow-wrap: anywhere;
+}
+
+.echoink-chat-surface .echoink-answer-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 14px 0 8px;
+  padding: 0;
+  border: 0;
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: normal;
+}
+
+.echoink-chat-surface .echoink-answer-markdown > :first-child,
+.echoink-chat-surface .echoink-answer-markdown > div > :first-child {
+  margin-top: 0;
+}
+
+.echoink-chat-surface .echoink-answer-markdown p {
+  margin: 0 0 10px;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.echoink-chat-surface .echoink-answer-markdown :is(ul, ol) {
+  margin: 5px 0 10px;
+  padding-inline-start: 24px;
+}
+
+.echoink-chat-surface .echoink-answer-markdown li {
+  margin: 5px 0;
+  font-size: inherit;
+  line-height: 1.55;
+}
+
+.echoink-chat-surface .echoink-answer-markdown li > p {
+  margin-bottom: 5px;
+}
+
+.echoink-chat-surface .echoink-answer-markdown :is(blockquote, .callout) {
+  margin: 8px 0;
+  padding: 8px 10px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.echoink-chat-surface .echoink-answer-markdown blockquote {
+  border-inline-start: 2px solid var(--interactive-accent);
+  border-radius: 6px;
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+}
+
+.echoink-chat-surface .echoink-answer-markdown :is(.callout-title, .callout-content) {
+  font-size: 14px;
+}
+
+.echoink-chat-surface .echoink-answer-markdown :is(pre, .table-wrapper, .math-block) {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.echoink-chat-surface .echoink-answer-markdown pre {
+  margin: 8px 0;
+  padding: 28px 12px 10px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  white-space: pre;
+}
+
+.echoink-chat-surface .echoink-answer-markdown code {
+  font-family: var(--font-monospace);
+  font-size: 13px;
+}
+
+.echoink-chat-surface .echoink-answer-markdown table {
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.echoink-chat-surface .echoink-answer-markdown :is(th, td) {
+  padding: 6px 10px;
+  border: 1px solid var(--background-modifier-border);
+  text-align: start;
+}
+
+.echoink-chat-surface .echoink-answer-markdown th {
+  color: var(--text-normal);
+  background: var(--background-secondary);
+}
+
+.echoink-chat-surface .echoink-answer-markdown a.internal-link {
+  padding: 0 2px;
+  border-radius: 3px;
+  color: var(--color-purple);
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+  font-weight: 400;
+  text-decoration: none;
+}
+
+.echoink-chat-surface .echoink-answer-markdown a.internal-link:hover {
+  color: var(--color-purple);
+  text-decoration: underline;
+}
+
+.echoink-chat-surface .echoink-answer-markdown :is(a, button):focus-visible {
+  outline: none;
+  box-shadow: none;
+  background: var(--background-modifier-hover);
+}
+
+.echoink-chat-surface .echoink-answer-markdown img {
+  max-width: 100%;
+}
 /* ECHOINK_WORKSPACE_SETTINGS_END */
 
 /* ===== EchoInk 快捷 AI 小窗（quick chat popout）===== */

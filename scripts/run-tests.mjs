@@ -5,6 +5,7 @@ const suites = [
   "test:react-dom-resources",
   "test:provider-settings",
   "test:conversation-ui",
+  "test:answer-markdown",
   "test:personal-memory",
   "test:knowledge",
   "test:knowledge-linking",

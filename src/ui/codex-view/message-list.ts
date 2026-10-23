@@ -28,6 +28,7 @@ import { extractKnowledgeBaseResultTitle } from "../knowledge-base-result-title"
 import type { KnowledgeBaseMaintainReportPayload, KnowledgeBaseMaintainReportSectionItem, KnowledgeBaseMessageUiPayload, KnowledgeBaseRunPayload } from "../../knowledge-base/maintain-report-card";
 import { formatMessageHeaderTime } from "../message-time";
 import { openImageOverlay, renderPreformattedVaultNoteText, renderRichText } from "../render-message";
+import { AnswerMarkdownRenderer } from "../answer-markdown";
 import {
   conversationUiLocale,
   conversationUiText,
@@ -148,6 +149,7 @@ export interface MessageListRenderInput {
   messagesEl: HTMLElement;
   virtualListEl: HTMLElement;
   sessionId: string;
+  sourcePath?: string;
   conversationTitle?: string;
   knowledgeFolderBindings?: KnowledgeFolderBindings | null;
   getKnowledgeFolderBindings?: () => KnowledgeFolderBindings | null | undefined;
@@ -397,6 +399,7 @@ interface TextSelectionBookmark {
 }
 
 export class CodexMessageListRenderer {
+  private readonly answerMarkdown = new AnswerMarkdownRenderer();
   private readonly linkingResultSubscriptions = new Map<HTMLElement, () => void>();
   private virtualSessionId = "";
   private virtualRowHeights = new Map<string, number>();
@@ -435,6 +438,7 @@ export class CodexMessageListRenderer {
     const { messagesEl, virtualListEl, messages } = env;
     this.observeMessageViewport(messagesEl);
     if (this.virtualSessionId !== env.sessionId) {
+      this.answerMarkdown.clear();
       this.cancelAllDisclosureAutoFolds();
       this.virtualSessionId = env.sessionId;
       this.virtualRowHeights.clear();
@@ -448,11 +452,13 @@ export class CodexMessageListRenderer {
     const shouldPinBottom = shouldPinMessageListBottom(env.options, this.isNearBottom(messagesEl, virtualListEl));
     const readingAnchor = !shouldPinBottom ? this.captureReadingAnchor() : null;
     this.disconnectVisibleRowsObserver();
+    this.answerMarkdown.beginRender();
     virtualListEl.empty();
     if (messages.length === 0) {
       // Agent task pages own the empty state; an empty transcript adds no greeting.
       virtualListEl.setCssStyles({ height: "100%" });
       this.currentRows = [];
+      this.answerMarkdown.endRender();
       return;
     }
 
@@ -478,6 +484,8 @@ export class CodexMessageListRenderer {
       rowEl.setCssStyles({ transform: `translateY(${virtualRow.top}px)` });
       this.renderVirtualRow(rowEl, row);
     }
+
+    this.answerMarkdown.endRender();
 
     this.observeVisibleVirtualRows(messagesEl, virtualListEl);
     this.measureVisibleVirtualRows(messagesEl, virtualListEl, shouldPinBottom);
@@ -676,6 +684,7 @@ export class CodexMessageListRenderer {
   }
 
   dispose(): void {
+    this.answerMarkdown.clear();
     this.openGenerationRequests.clear();
     this.cancelAllDisclosureAutoFolds();
     this.disconnectVisibleRowsObserver();
@@ -1058,7 +1067,7 @@ export class CodexMessageListRenderer {
       );
       preserveTextSelectionDuringMutation(body, () => {
         if (displayText.trim()) {
-          renderRichText(env.app, env.component, body, displayText);
+          this.renderAnswerMarkdown(body, `reasoning:${turn.key}:${reasoning.reasoningId}`, displayText, reasoning.status === "running");
         } else {
           body.empty();
         }
@@ -1416,7 +1425,7 @@ export class CodexMessageListRenderer {
         reasoning.summary.setAttribute("aria-expanded", String(reasoning.root.open));
         env.onScheduleMeasure();
       };
-      renderRichText(env.app, env.component, reasoning.body, displayTextForMessage(message));
+      this.renderAnswerMarkdown(reasoning.body, `reasoning-message:${message.id}`, displayTextForMessage(message), status === "running");
       return;
     }
     if (isProcessItemType(message.itemType)) {
@@ -1481,9 +1490,29 @@ export class CodexMessageListRenderer {
       env.onScheduleRunProgress();
       return;
     }
-    renderRichText(env.app, env.component, container, text);
+    this.renderAnswerMarkdown(container, `answer:${message.id}`, text, message.status === "running", message.savedNotePath);
     container.dataset.renderedText = text;
     markAIElementsResponse(container, message.status === "running");
+  }
+
+  private renderAnswerMarkdown(container: HTMLElement, key: string, text: string, streaming: boolean, sourcePath?: string): void {
+    const env = this.requireEnv();
+    this.answerMarkdown.render({
+      app: env.app, container, key, text, streaming, sourcePath: sourcePath ?? env.sourcePath ?? "",
+      mutate: (root, change) => {
+        const host = root.parentElement;
+        const previousScrollTop = host?.scrollTop ?? 0;
+        const followReasoning = host && isReasoningScrollNearBottom(previousScrollTop, host.clientHeight, host.scrollHeight);
+        preserveTextSelectionDuringMutation(root, change);
+        if (host?.hasClass("codex-ai-elements-reasoning-content")) {
+          host.scrollTop = followReasoning ? host.scrollHeight : previousScrollTop;
+        }
+      },
+      onCommit: () => {
+        if (this.env?.sessionId !== env.sessionId) return;
+        env.onScheduleMeasure(env.shouldFollowBottom?.() ?? false);
+      }
+    });
   }
 
   private renderAssistantFailureReason(
@@ -2794,7 +2823,7 @@ export class CodexMessageListRenderer {
       env.onScheduleMeasure();
     };
     if (displayText.trim()) {
-      renderRichText(env.app, env.component, elements.body, displayText);
+      this.renderAnswerMarkdown(elements.body, `reasoning:${turn.key}:${reasoning.reasoningId}`, displayText, reasoning.status === "running");
       if (reasoning.status === "running") {
         elements.body.scrollTop = elements.body.scrollHeight;
       }
