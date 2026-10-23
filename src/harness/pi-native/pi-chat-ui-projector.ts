@@ -1799,8 +1799,12 @@ function toolMessage(input: {
 }): ChatMessage {
   if (input.toolName === "knowledge_maintain") {
     const receipt = maintenanceUserReceiptFromResult(input.result);
+    const failureCode = privacySafeToolFailureCode(input.result, input.resultText);
+    const failureText = failureCode
+      ? failureCode === "knowledge_source_changed" ? maintenanceFailureText(failureCode) : KNOWLEDGE_TOOL_FAILURE_COPY[failureCode]
+      : maintenanceFailureText(input.resultText ?? displayUnknown(input.result));
     const text = receipt?.text ?? (runtimeMessageStillActive(input.status) ? "正在整理知识。"
-      : input.status === "failed" ? maintenanceFailureText(input.resultText ?? displayUnknown(input.result))
+      : input.status === "failed" ? failureText
       : input.status === "interrupted" || input.status === "cancelled" ? "这次整理已停下，已写好的内容会保留。" : "这一步已完成，正在继续整理。" );
     return { id: toolMessageId(input.scope, input.toolCallId), role: "tool", itemType: "dynamicToolCall", processKind: "tool",
       title: "整理知识库", text, details: undefined, processInput: undefined, processOutput: text,

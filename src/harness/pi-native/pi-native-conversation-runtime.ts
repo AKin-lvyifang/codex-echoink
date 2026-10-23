@@ -472,7 +472,7 @@ export interface PiNativeConversationRuntimeOptions {
   /** Product-owned Skill routing and independent post-task review. */
   skills?: PiRuntimeSkillPort;
   /** Disposes runtime-owned live resources before active sessions are released. */
-  disposeRuntimeResources?(): void;
+  disposeRuntimeResources?(): void | Promise<void>;
   knowledge?: PiKnowledgeRuntimePort;
   projector?: PiChatUiProjector;
   idFactory?: () => string;
@@ -2789,7 +2789,7 @@ export class PiNativeConversationRuntime {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     try {
-      this.options.disposeRuntimeResources?.();
+      await this.options.disposeRuntimeResources?.();
       for (const conversationId of [...this.active.keys()]) {
         await this.releaseConversation(conversationId);
       }

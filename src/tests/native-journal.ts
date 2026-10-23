@@ -33,10 +33,12 @@ export async function runNativeJournalTests(): Promise<void> {
     assert.equal(fixture.enableCalls(), 0, "startup does not configure native plugins");
     await service.startInitialization("recommended");
     await service.confirmInitialization();
-    for (let i = 0; i < 400 && (await service.getInitializationState())?.status === "active"; i++) {
+    // The terminal job status is visible before its last disk write/finally.
+    for (let i = 0; i < 400 && ((await service.getInitializationState())?.status === "active" || service.isRunning); i++) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     assert.equal((await service.getInitializationState())?.status, "initialized");
+    assert.equal(service.isRunning, false, "initialization flight must finish before structure repair");
     assert.equal(fixture.providerCalls(), 0);
     assert.equal(fixture.enableCalls(), 2);
     assert.deepEqual(JSON.parse(await readFile(path.join(root, ".obsidian/core-plugins.json"), "utf8")), ["daily-notes", "templates"]);

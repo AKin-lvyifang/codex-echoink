@@ -149,6 +149,7 @@ async function automaticLinking(root: string): Promise<void> {
   const release = registerKnowledgeFolderBindings(root, () => bindings);
   const raw = "# Source\nAgent 是人工智能系统。\n";
   await fixture.write("raw/source.md", raw); await fixture.write("wiki/AI.md", "# AI\n人工智能系统。\n");
+  await fixture.write("raw/other.md", "---\n提炼状态: 已提炼\n---\n# Other\n另一个已处理来源。\n");
   const index = new KnowledgeAgentIndex({ vaultPath: root, storageRootPath: path.join(root, ".index") });
   await index.refresh();
   let refreshes = 0, starts = 0, enabled = false;
@@ -162,31 +163,46 @@ async function automaticLinking(root: string): Promise<void> {
   const port = new ProductionPiKnowledgeMaintenanceToolPort(options);
   const input: Parameters<typeof port.execute>[0] = { vaultId: "p12-linking", conversationId: "p12-linking-conversation", piSessionId: "p12-session", productRunId: "p12-linking-run", toolCallId: "maintain", mode: "maintain", request: "",
     sourcePaths: ["raw/source.md"], sourceBodyFingerprints: { "raw/source.md": rawDigestFingerprint("raw/source.md", Buffer.from(raw)) },
-    preferenceSnapshot: { profileVersion: "echoink-knowledge-preference-profile-v1", state: "default", revision: `sha256:${"a".repeat(64)}` },
-    candidateActions: [{ targetPath: "wiki/Gate.md", content: "# Gate\nAgent 是人工智能系统。\n", expectedTarget: { kind: "missing" } }] };
+    preferenceSnapshot: { profileVersion: "echoink-knowledge-preference-profile-v1", state: "default", revision: `sha256:${"a".repeat(64)}` } };
+  const writeInput: Parameters<typeof port.execute>[0] = { ...input, p1: { stage: "write", pageId: "gate", content: "---\n类型: 概念\naliases: [Agent]\n---\n# Gate\nAgent 是人工智能系统。\n\n## 定义\nAgent 是人工智能系统。\n" } };
   try {
     await port.initialize();
-    const result = await port.execute(input);
+    const decomposed = await port.execute({ ...input, toolCallId: "decompose", p1: { stage: "decompose", decompositions: [{ sourcePath: "raw/source.md", summary: "Agent 是人工智能系统。", units: [{ id: "gate-unit", title: "Gate", type: "概念", domain: "知识管理", aliases: ["Agent"], points: ["Agent 是人工智能系统。"], evidence: [{ sourcePath: "raw/source.md", sourceRevision: `sha256:${createHash("sha256").update(raw).digest("hex")}`, quote: "Agent 是人工智能系统。" }] }] }] } });
+    assert.equal(decomposed.status, "completed", decomposed.message);
+    const planned = await port.execute({ ...input, toolCallId: "plan", p1: { stage: "plan", writingPlan: [{ id: "gate", targetPath: "wiki/Gate.md", sourcePaths: ["raw/source.md"], expectedTarget: { kind: "missing" }, knowledge: { unitIds: ["gate-unit"], decision: { kind: "new", reason: "独立的合成知识条目，用于验证后台关联开关。" } } }] } });
+    assert.equal(planned.status, "completed", planned.message);
+    const result = await port.execute(writeInput);
     assert.equal(result.status, "completed", result.message);
     assert.equal(starts, 0, "disabled automatic linking never submits a new linking task");
     assert(refreshes > 0, "knowledge index refresh remains enabled after commit");
     assert((await fs.readFile(path.join(root, "wiki/Gate.md"), "utf8")).includes("Agent"));
-    let record = (await readPrivateMaintenanceRecords(stateRoot))[0];
+    const committedPage = await fs.readFile(path.join(root, "wiki/Gate.md"), "utf8");
+    const committedSource = await fs.readFile(path.join(root, "raw/source.md"), "utf8");
+    let record = (await readPrivateMaintenanceRecords(stateRoot)).find(value => value.recordId === result.recordId)!;
     assert(record.pendingLinking, "intentional disable retains the durable pending record");
     assert(!record.result.issues.some(issue => issue.code === "linking_start_failed"));
     const recovered = new ProductionPiKnowledgeMaintenanceToolPort(options);
     await recovered.initialize();
     assert.equal(starts, 0, "reload does not bypass the disabled setting");
-    record = (await readPrivateMaintenanceRecords(stateRoot))[0];
+    record = (await readPrivateMaintenanceRecords(stateRoot)).find(value => value.recordId === result.recordId)!;
     assert(record.pendingLinking); assert(!record.result.issues.some(issue => issue.code === "linking_start_failed"));
+    const resumeInput: Parameters<typeof port.execute>[0] = { ...input, p1: { stage: "resume" } };
+    assert.equal((await recovered.execute(resumeInput)).status, "completed");
+    assert.equal(starts, 0, "continuation does not bypass the disabled setting");
     enabled = true;
-    await recovered.execute(input);
+    assert.equal((await recovered.execute({ ...resumeInput, conversationId: "another-conversation" })).status, "completed");
+    assert.equal(starts, 0, "another conversation cannot resume this saved linking task");
+    assert.equal((await recovered.execute({ ...resumeInput, sourcePaths: ["raw/other.md"] })).status, "completed");
+    assert.equal(starts, 0, "a different selected source scope cannot resume this saved linking task");
+    assert.equal((await recovered.execute(resumeInput)).status, "completed");
     assert.equal(starts, 1, "the existing saved-execution path resumes pending linking after enable");
-    record = (await readPrivateMaintenanceRecords(stateRoot))[0];
+    record = (await readPrivateMaintenanceRecords(stateRoot)).find(value => value.recordId === result.recordId)!;
     assert.equal(record.pendingLinking, undefined);
     assert.equal(record.result.linkingTaskId, "p12-auto-task");
-    await recovered.execute(input);
+    assert.equal((await recovered.execute(resumeInput)).status, "completed");
     assert.equal(starts, 1, "settled linking does not get duplicated");
+    assert.equal(await fs.readFile(path.join(root, "wiki/Gate.md"), "utf8"), committedPage, "linking-only continuation never rewrites the successful page");
+    assert.equal(await fs.readFile(path.join(root, "raw/source.md"), "utf8"), committedSource, "linking-only continuation never rewrites source status or backlinks");
   } finally { release(); }
 }
 
@@ -290,15 +306,38 @@ async function chatRecall(root: string): Promise<void> {
     const ask = await runtime.retrieveAsk(request("INBOX_ONLY_TOKEN", ["收件箱/想法.md"]) as never);
     assert.equal(ask.references.length, 0, "/ask excludes Inbox including an explicit Inbox path");
     assert.equal((await runtime.retrieveAsk(request("PROJECT_STABLE_TOKEN") as never)).references[0].vaultRelativePath, "项目/原结果.md");
-    await assert.rejects(() => runtime.resolveMaintenanceScope!("INBOX_ONLY_TOKEN"), /没有找到/u);
+    const inboxMaintenance = await runtime.resolveMaintenanceScope!("INBOX_ONLY_TOKEN");
+    assert.equal(inboxMaintenance.mode, "query");
+    if (inboxMaintenance.mode !== "query") throw new Error("expected Inbox query scope");
+    assert.deepEqual(inboxMaintenance.candidatePaths, ["收件箱/想法.md"]);
+    assert.deepEqual((await runtime.resolveMaintenanceScope!("资料/来源.md 收件箱/想法.md") as { sourcePaths: readonly string[] }).sourcePaths, ["资料/来源.md", "收件箱/想法.md"], "explicit Raw and Inbox sources are both allowed");
     const maintenance = await runtime.resolveMaintenanceScope!("RAW_ONLY_TOKEN");
     assert.equal(maintenance.mode, "query");
     if (maintenance.mode !== "query") throw new Error("expected query scope");
-    assert.equal(maintenance.candidatePaths[0], "资料/来源.md");
+    assert.deepEqual(maintenance.candidatePaths, ["资料/来源.md"]);
+    // Enabled retrieval purposes do not grant source-maintenance authority.
+    for (const [role, directory, token] of [["projects", "项目", "PROJECT_STABLE_TOKEN"], ["journal", "日记", "JOURNAL_MAINTENANCE_TOKEN"], ["outputs", "财务", "FINANCE_MAINTENANCE_TOKEN"], ["assets", "附件", "ASSET_MAINTENANCE_TOKEN"], ["templates", "模板", "TEMPLATE_MAINTENANCE_TOKEN"], ["wiki", "知识", "WIKI_MAINTENANCE_TOKEN"]] as const) {
+      Object.assign(bindings.roles[role], { enabled: true, searchEnabled: true, readPaths: [directory], writePath: directory });
+      const relative = role === "projects" ? "项目/原结果.md" : `${directory}/范围检查.md`;
+      if (role !== "projects") {
+        bodies.set(relative, `# 范围检查\n${token}`);
+        await fs.mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+        await fs.writeFile(path.join(root, relative), bodies.get(relative)!);
+      }
+      if (role !== "assets" && role !== "templates") assert.ok((await chat(token)).references.some(reference => reference.vaultRelativePath === relative), `${role} can be retrieved without becoming a maintenance source`);
+      await assert.rejects(() => runtime.resolveMaintenanceScope!(token), /没有找到/u, `${role} query cannot become a source`);
+      await assert.rejects(() => runtime.resolveMaintenanceScope!(relative), /指定来源不在当前资料目录/u, `${role} explicit path cannot become a source`);
+    }
+    bindings.roles.raw.enabled = false;
+    await assert.rejects(() => runtime.resolveMaintenanceScope!("RAW_ONLY_TOKEN"), /没有找到/u, "revoked Raw must stop being a maintenance candidate");
+    await assert.rejects(() => runtime.resolveMaintenanceScope!("资料/来源.md"), /指定来源不在当前资料目录/u);
+    bindings.roles.raw.enabled = true;
     bindings.roles.inbox.searchEnabled = false;
     assert.equal((await chat("INBOX_ONLY_TOKEN")).references.length, 0);
     bindings.roles.inbox.searchEnabled = true; bindings.roles.inbox.enabled = false;
     assert.equal((await chat("INBOX_ONLY_TOKEN")).references.length, 0);
+    await assert.rejects(() => runtime.resolveMaintenanceScope!("INBOX_ONLY_TOKEN"), /没有找到/u, "revoked Inbox must stop being a maintenance candidate");
+    await assert.rejects(() => runtime.resolveMaintenanceScope!("收件箱/想法.md"), /指定来源不在当前资料目录/u);
     bindings.inboxRecallExclusions = ["收件箱"];
     bindings.roles.inbox.readPaths = []; bindings.roles.inbox.writePath = null;
     assert.equal((await chat("INBOX_ONLY_TOKEN")).references.length, 0, "withdrawn Inbox must not reappear as ordinary notes");

@@ -257,6 +257,14 @@ implements PiKnowledgeMaintenanceToolPort {
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     this.assertIdentity(input);
     if (input.folderBindingsRevision !== undefined && input.folderBindingsRevision !== (getKnowledgeFolderBindings(this.vaultRootPath)?.revision ?? 0)) return { status: "failed", errorCode: "preview_stale", processedSourcePaths: [], message: "知识库目录已变化，请重新读取。", userReceipt: { version: 1, text: maintenanceFailureText("知识库目录已变化，请重新读取。") } };
+    const selectedSources = input.sourcePaths?.length ? input.sourcePaths : input.globalSourcePaths;
+    if (input.p1?.stage === "resume" && selectedSources?.length) {
+      for (const record of await this.state.pendingLinkingRecords()) {
+        if (record.originConversationId === input.conversationId && record.sources.every(source => selectedSources.includes(source.path))) {
+          await this.ensurePendingLinking(record);
+        }
+      }
+    }
     await this.activity.beforeTool(input);
     let result = await this.p1.execute(input);
     await this.activity.afterTool(input, result.status === "failed", result.message);

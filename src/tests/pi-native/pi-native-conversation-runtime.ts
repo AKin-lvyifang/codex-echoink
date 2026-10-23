@@ -3089,7 +3089,7 @@ async function assertInvalidMaintenanceResultSurvivesReopen(
     assert.equal(
       projection.messages.some((message) =>
         message.runId === currentRunId
-        && message.title === "知识维护失败"
+        && message.title === "知识整理没做完"
       ),
       false,
       `${label} must not rewrite Agent messages as repeated failure cards`
@@ -3147,6 +3147,14 @@ Promise<void> {
           maintenanceScope: QUERY_MAINTENANCE_SCOPE,
           submittedAt: 10 + index
         });
+        const issuePath = testCase.status === "partial" ? "wiki/间隔复习.md" : `raw/${testCase.status}.md`;
+        const internalDiagnostic = testCase.status === "partial"
+          ? "revision_conflict: wiki/间隔复习.md expectedTarget=sha256:fixture recordId=r9-known toolCallId=write-1"
+          : `${testCase.status} opaque diagnostic recordId=r9-unknown toolCallId=write-2 stage=write`;
+        const expectedIssueDescription = testCase.status === "partial"
+          ? "《间隔复习》在整理时被改过。为了不覆盖你的修改，这一页先跳过了；点继续会重新读取后再写。"
+          : "这一步还没做完。已写好的内容会保留，点继续会重新核对后处理。";
+        const issues = [{ code: `${testCase.status}_issue`, message: internalDiagnostic, path: issuePath }];
         const envelope = createKnowledgeMaintenanceResultEnvelope({
           status: testCase.status,
           notes: [{
@@ -3155,11 +3163,7 @@ Promise<void> {
             title: `${testCase.status} 回读标题`,
             summary: `${testCase.status} 回读摘要`
           }],
-          issues: [{
-            code: `${testCase.status}_issue`,
-            message: `${testCase.status} 真实问题`,
-            path: `raw/${testCase.status}.md`
-          }],
+          issues,
           systemPaths: [`.echoink/${testCase.status}-report.md`]
         });
         fixture.latestSession().finishTool(
@@ -3175,15 +3179,17 @@ Promise<void> {
           conversationId,
           productRunId: handle.productRunId,
           expectedTitle: testCase.status === "partial"
-            ? "知识维护部分完成"
+            ? "知识整理没做完"
             : testCase.status === "write_uncertain"
               ? "知识写入状态不确定"
-              : "知识维护失败",
+              : "知识整理没做完",
           expectedStatus: "failed",
           expectedNotePath: `wiki/${testCase.status}.md`,
           expectedNoteDescription: `${testCase.status} 回读摘要`,
-          expectedIssuePath: `raw/${testCase.status}.md`,
-          expectedIssueDescription: `${testCase.status} 真实问题`
+          expectedIssuePath: issuePath,
+          expectedIssueDescription,
+          expectedInternalToolCallId: `maintain-trusted-${testCase.status}`,
+          expectedInternalIssues: issues
         });
       }
 
@@ -3228,7 +3234,7 @@ Promise<void> {
           conversationId,
           productRunId: handle.productRunId,
           expectedTitle: status === "completed"
-            ? "知识维护完成"
+            ? "知识整理已完成"
             : "没有需要提炼的知识",
           expectedStatus: "success",
           ...(status === "completed"
@@ -3286,6 +3292,8 @@ async function assertMaintenanceCardSurvivesReopen(input: Readonly<{
   expectedNoteDescription?: string;
   expectedIssuePath?: string;
   expectedIssueDescription?: string;
+  expectedInternalToolCallId?: string;
+  expectedInternalIssues?: readonly Readonly<{ code: string; message: string; path: string }>[];
 }>): Promise<void> {
   const assertProjection = async (label: string): Promise<void> => {
     const projection = await input.fixture.runtime.readProjection(
@@ -3297,6 +3305,15 @@ async function assertMaintenanceCardSurvivesReopen(input: Readonly<{
     assert.ok(card, `${label} must retain the trusted maintenance card`);
     assert.equal(card.title, input.expectedTitle, label);
     assert.equal(card.status, input.expectedStatus, label);
+    const visibleCopy = [card.title, ...card.sections.flatMap(section => [section.title ?? "", ...section.items.flatMap(item => [item.title ?? "", item.description ?? ""])])].join("\n");
+    assert.doesNotMatch(visibleCopy, /\b(?:recordId|toolCallId|productRunId|expectedTarget|stage|CAS|WAL|revision|revision_conflict)\b|(?:wiki|raw)\//iu, `${label} must keep internal diagnostics out of visible copy`);
+    if (input.expectedInternalToolCallId) {
+      assert.ok(projection.catalog.sessionFile, `${label} must resolve the durable session file`);
+      const entries = (await readFile(projection.catalog.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+      const persisted = entries.find(entry => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolCallId === input.expectedInternalToolCallId);
+      assert.ok(persisted, `${label} must retain the actual tool result on disk`);
+      assert.deepEqual(persisted.message.details.maintenanceResult.issues, input.expectedInternalIssues, `${label} must retain exact original diagnostics in the durable internal record`);
+    }
     if (input.expectedNotePath) {
       const note = card.sections.flatMap((section) => section.items).find(
         (item) => item.path === input.expectedNotePath
