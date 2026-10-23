@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import { mkdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -6,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const directory = path.join(root, ".tmp/finance-catalog-tests");
+const directory = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "finance-catalog-tests");
 const require = createRequire(import.meta.url);
 const { JSDOM } = require(process.env.ECHOINK_JSDOM_PATH || "jsdom");
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });

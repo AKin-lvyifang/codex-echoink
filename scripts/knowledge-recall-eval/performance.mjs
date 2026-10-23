@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { disposableTestRoot } from "../disposable-test-root.mjs";
 import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
@@ -99,7 +100,7 @@ export async function runPerformance(options) {
   const testRoot = path.join(os.homedir(), 'EchoInk-TestVaults');
   if (!within(testRoot, fixtureRoot)) throw new Error('Performance fixture must be inside EchoInk-TestVaults');
   if (!smoke && fixtureRoot !== path.join(testRoot, '20-特殊场景/大规模')) throw new Error('Formal K1 requires the approved large-vault source');
-  const workRoot = path.join(testRoot, '90-任务临时', `知识库-召回评测-${runId}`);
+  const workRoot = path.join(disposableTestRoot(path.join(testRoot, '90-任务临时')), `知识库-召回评测-${runId}`);
   if (within(fixtureRoot, outputRun) || within(fixtureRoot, workRoot) || within(workRoot, fixtureRoot)) throw new Error('Source fixture, working copy and output must be separate');
   await requireNew(workRoot); await requireNew(outputRun);
   await rejectSymlinks(workRoot); await rejectSymlinks(outputRun);

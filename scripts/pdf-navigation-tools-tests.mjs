@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -5,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const fixtureRoot = path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P10自动测试-20261019");
+const fixtureRoot = disposableTestRoot(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P10自动测试-20261019"));
 await mkdir(fixtureRoot, { recursive: true });
 const directory = await mkdtemp(path.join(fixtureRoot, "pdf-tools-"));
 try {

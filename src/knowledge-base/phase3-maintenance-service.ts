@@ -1,3 +1,4 @@
+import { patchMaintenanceSourceFrontmatter } from "./maintenance-source-frontmatter";
 import { knowledgeRolePath } from "./root-paths";
 import { createHash, randomUUID } from "node:crypto";
 import type {
@@ -91,6 +92,7 @@ export interface Phase3MaintenanceTrackerSnapshot {
 }
 
 export interface Phase3MaintenanceProposalAction {
+  sourceFields?: import("./maintenance-p1-contract").MaintenanceSourceFields;
   targetPath: string;
   content: string;
   /** Internal baseline bytes; authenticated against server readback before authorizing retained sources. */
@@ -102,7 +104,7 @@ export interface Phase3MaintenanceProposalAction {
 }
 
 export interface Phase3MaintenanceProposal {
-  bookkeeping?: { readSourcePaths: readonly string[]; failedSourcePaths?: readonly string[]; linkingTargetPaths?: readonly string[]; assessments?: readonly import("./knowledge-maintenance-result").KnowledgeMaintenanceAssessment[]; issues: readonly { code: string; message: string; path?: string }[] };
+  bookkeeping?: { p1RecordId?: string; readSourcePaths: readonly string[]; failedSourcePaths?: readonly string[]; linkingTargetPaths?: readonly string[]; assessments?: readonly import("./knowledge-maintenance-result").KnowledgeMaintenanceAssessment[]; issues: readonly { code: string; message: string; path?: string }[] };
   /** Existing Shadow attempt/control identity. */
   shadowId: string;
   /** Sealed Shadow/change-set digest. */
@@ -201,10 +203,11 @@ export interface Phase3MaintenanceBatchApprovalPort {
 export type Phase3MaintenanceVaultDomain = Pick<
   VaultDomainService,
   "readback" | "noteCreate" | "noteUpdate"
->;
+> & Partial<Pick<VaultDomainService, "maintenanceSourceUpdate">>;
 
 export interface Phase3MaintenanceAction {
-  purpose?: "knowledge";
+  purpose?: "knowledge" | "source-metadata";
+  sourceFields?: import("./maintenance-p1-contract").MaintenanceSourceFields;
   actionId: string;
   operation: "create" | "update";
   targetPath: string;
@@ -1053,6 +1056,10 @@ export class Phase3KnowledgeMaintenanceService {
         action.targetPath
       );
     }
+    if (action.sourceFields) {
+      if (!this.domain.maintenanceSourceUpdate) throw phase3Error("write_failed", "当前环境缺少来源字段写入能力");
+      return await this.domain.maintenanceSourceUpdate({ vaultId: preview.vaultId, operationIdentity, relativePath: action.targetPath, expectedVersion: action.expected.version, fields: action.sourceFields });
+    }
     return await this.domain.noteUpdate({
       vaultId: preview.vaultId,
       operationIdentity,
@@ -1079,12 +1086,13 @@ export class Phase3KnowledgeMaintenanceService {
       }
     }
     const drafts = input.proposal.actions.map((draft) => {
-      const targetPath = normalizeFormalTargetPath(
+      const targetPath = draft.sourceFields ? normalizeRawPath(draft.targetPath, this.pathPolicy) : normalizeFormalTargetPath(
         draft.targetPath,
         input.dateKey, this.pathPolicy
       );
-      if (this.privateRecords && !/^(wiki|projects)\//u.test(this.pathPolicy(targetPath))) throw phase3Error("proposal_invalid", "仅允许写入已绑定的知识成果位置", targetPath);
-      if (protectedPaths.has(targetPath)) {
+      if (this.privateRecords && !draft.sourceFields && !/^(wiki|projects)\//u.test(this.pathPolicy(targetPath))) throw phase3Error("proposal_invalid", "仅允许写入已绑定的知识成果位置", targetPath);
+      if (draft.sourceFields && !input.selectedSources.some(source => source.raw.relativePath === targetPath)) throw phase3Error("proposal_invalid", "来源字段只能更新本批已绑定来源", targetPath);
+      if (protectedPaths.has(targetPath) && !draft.sourceFields) {
         throw phase3Error(
           "proposal_invalid",
           `Maintenance proposal targets Raw or its attachment: ${targetPath}`,
@@ -1093,6 +1101,7 @@ export class Phase3KnowledgeMaintenanceService {
       }
       return {
         targetPath,
+        ...(draft.sourceFields ? { sourceFields: draft.sourceFields } : {}),
         content: requireString(draft.content, "action.content"),
         ...(draft.baselineContent !== undefined ? { baselineContent: requireString(draft.baselineContent, "action.baselineContent") } : {}),
         ...(draft.expectedTarget
@@ -1192,7 +1201,8 @@ export class Phase3KnowledgeMaintenanceService {
         );
       }
       actions.push(Object.freeze({
-        purpose: /^(wiki|projects)\//u.test(this.pathPolicy(draft.targetPath)) ? "knowledge" : undefined,
+        ...(draft.sourceFields ? { sourceFields: draft.sourceFields } : {}),
+        purpose: draft.sourceFields ? "source-metadata" : /^(wiki|projects)\//u.test(this.pathPolicy(draft.targetPath)) ? "knowledge" : undefined,
         actionId: `${input.previewId}:${String(index + 1).padStart(3, "0")}`,
         operation: expected.kind === "missing" ? "create" : "update",
         targetPath: draft.targetPath,
@@ -1457,15 +1467,17 @@ function normalizeProposalAction(
     throw phase3Error("proposal_invalid", "Maintenance action is invalid");
   }
   const record = action as Record<string, unknown>;
+  if (record.sourceFields !== undefined) patchMaintenanceSourceFrontmatter("", record.sourceFields as import("./maintenance-p1-contract").MaintenanceSourceFields);
   const keys = Object.keys(record);
   if (
     !keys.every((key) =>
-      key === "targetPath" || key === "content" || key === "expectedTarget" || key === "baselineContent"
+      key === "targetPath" || key === "content" || key === "expectedTarget" || key === "baselineContent" || key === "sourceFields"
     )
   ) {
     throw phase3Error("proposal_invalid", "Maintenance action is invalid");
   }
   return Object.freeze({
+    ...(record.sourceFields ? { sourceFields: record.sourceFields as import("./maintenance-p1-contract").MaintenanceSourceFields } : {}),
     targetPath: requireNonEmpty(record.targetPath, "action.targetPath"),
     content: requireString(record.content, "action.content"),
     ...(record.baselineContent !== undefined ? { baselineContent: requireString(record.baselineContent, "action.baselineContent") } : {}),
@@ -1656,6 +1668,7 @@ function targetHasDesiredContent(
 function actionDigestInput(action: Readonly<Phase3MaintenanceAction>): unknown {
   return {
     actionId: action.actionId,
+    ...(action.sourceFields ? { sourceFields: action.sourceFields } : {}),
     operation: action.operation,
     targetPath: action.targetPath,
     contentSha256: action.contentSha256,

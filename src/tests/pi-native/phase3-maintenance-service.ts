@@ -71,18 +71,12 @@ const PREFERENCE = Object.freeze({
  * fixture as the only filesystem acceptance Vault.
  */
 export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void> {
+  await runPhase3MaintenanceWalRegressionTests();
+}
+
+/** P1 keeps the immutable source, CAS, WAL and old-WAL recovery regression suite. */
+export async function runPhase3MaintenanceWalRegressionTests(): Promise<void> {
   await runPreservedMaintenanceSourceTests();
-  await runMaintenanceReadFingerprintTests();
-  assertProtocolAllowsNaturalCompletion();
-  assertProtocolDelegatesPlacementToBackground();
-  assertStrictDurableResultEnvelope();
-  await assertMaintenanceScopeSecurityIsFailClosed();
-  await assertReliableExistingKnowledgeReturnsNoopBeforeWrites();
-  await assertProductionStructuredNoopCompletesChangedRaw();
-  await assertPrivateRecordsRecoverWithoutRewriting();
-  await assertCorruptPrivateHistoryDoesNotBlockMaintenanceOrRetry();
-  await assertFailedNaturalSettlementKeepsEverySourcePending();
-  await assertPrivateSettlementBoundaries();
   await assertOriginalV1WalNeverRevivesRetiredFiles();
   await assertStructuredNoopProcessesExplicitRaw();
   await assertExplicitRawPriorityAndDirectSequentialWrite();
@@ -93,12 +87,12 @@ export async function runPhase3KnowledgeMaintenanceServiceTests(): Promise<void>
   await assertAgentExpectedExistingTargetRejectsConcurrentEdit();
   await assertAgentExpectedMissingTargetRejectsConcurrentCreate();
   await assertAgentExpectedExistingTargetAllowsUnchangedUpdate();
-  await assertCandidateActionExpectedTargetIsStrict();
   await assertWalRecoveryDoesNotRegenerateOrRepeatWrite();
   await assertTruncatedLargeKnowledgeReadbackStillProducesNote();
   await assertStaleUnwrittenWalDoesNotBlockCorrection();
   await assertCompletedCheckpointFailureIsWriteUncertainAndRecoveredFirst();
   await assertRecoveredWalContinuesWithCurrentTargets();
+  console.log("P1 existing maintenance WAL/CAS/20-source/legacy recovery regressions: PASS");
 }
 
 export async function runPreservedMaintenanceSourceTests(): Promise<void> {

@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
@@ -5,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const temporaryRoot = path.join(root, ".tmp");
+const temporaryRoot = disposableTestOutputRoot(path.join(root, ".tmp"));
 await mkdir(temporaryRoot, { recursive: true });
 const directory = await mkdtemp(path.join(temporaryRoot, "english-diary-tests-"));
 const outputFile = path.join(directory, "tests.mjs");

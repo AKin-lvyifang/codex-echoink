@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +7,7 @@ import { createRequire } from "node:module";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const directory = path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P8自动测试-20261018/history-tests");
+const directory = path.join(disposableTestRoot(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P8自动测试-20261018"), ["ECHOINK_KNOWLEDGE_PAGE_TEST_ROOT"]), "history-tests");
 const require = createRequire(import.meta.url);
 const { JSDOM } = require("jsdom");
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://maintenance-fixture.invalid" });

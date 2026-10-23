@@ -19266,8 +19266,10 @@ button.codex-assistant-turn-process-toggle:is(:hover, :focus-visible) {
 }
 
 .codex-interaction-option:has(.codex-interaction-option-control:focus-visible) {
-  outline: 2px solid var(--echoink-conversation-focus);
-  outline-offset: 2px;
+  background: var(--background-modifier-hover);
+  border-color: transparent;
+  outline: none;
+  box-shadow: none;
 }
 
 .codex-interaction-option.is-selected {
@@ -27412,6 +27414,10 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench .wb-question { padding-top: 10px; border-top: 1px solid var(--wb-line); overflow-wrap: anywhere; }
 .echoink-workbench .wb-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .echoink-workbench .wb-options > button { text-align: left; }
+.echoink-task-detail .codex-interaction-option-control { margin-top: calc((var(--echoink-conversation-font-body, 14px) * var(--echoink-conversation-line-body, 1.55) - 16px) / 2); }
+/* Scroll a normal box so fieldset/legend content stays above the separate actions. */
+.codex-interaction-question-card > .codex-interaction-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scroll-padding-block: var(--echoink-conversation-space-2); }
+.codex-interaction-body > .codex-interaction-question { overflow: visible; }
 .echoink-workbench .wb-rows { border: 1px solid var(--wb-line); border-radius: 12px; overflow: clip; }
 .echoink-workbench .wb-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 14px; }
 .echoink-workbench .wb-row + .wb-row, .echoink-workbench .wb-completed + .wb-completed { border-top: 1px solid var(--wb-line); }
@@ -27423,6 +27429,10 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench button.wb-completed-body { display: flex; width: 100%; justify-content: flex-start; gap: 10px; padding: 9px 14px; border: 0; border-radius: 0; text-align: left; font-size: inherit; color: var(--wb-text); }
 .echoink-workbench .wb-completed.is-current { background: var(--wb-hover); }
 .echoink-workbench .wb-completed-body .wb-secondary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-workbench .wb-maintenance-summary { font-size: inherit; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.echoink-workbench .wb-maintenance-completed { display: flex; flex-direction: column; gap: 5px; }
+.echoink-workbench .wb-maintenance-completed .wb-secondary { overflow: visible; white-space: normal; }
+.echoink-workbench .wb-maintenance-failures { margin: 0; padding-left: 18px; color: var(--text-error); overflow-wrap: anywhere; }
 .echoink-workbench .wb-row-title { display: block; }
 .echoink-workbench .wb-time { flex-shrink: 0; color: var(--wb-muted); font-size: calc(var(--font-text-size, 16px) * .75); font-variant-numeric: tabular-nums; }
 .echoink-workbench .wb-unread { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--wb-accent); }
@@ -27476,6 +27486,31 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 
 .echoink-workbench .wb-group-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-muted); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 .echoink-workbench .wb-group-status[hidden], .echoink-workbench .wb-count[hidden], .echoink-workbench .wb-grid.is-empty, .echoink-workbench .wb-rows.is-empty { display: none; }
+
+/* Knowledge maintenance uses the same five-stage projection in both views. */
+.codex-messages-shell:has(> .echoink-knowledge-activity-slot) { display: flex; flex-direction: column; }
+.codex-messages-shell:has(> .echoink-knowledge-activity-slot) > .codex-messages { height: auto; flex: 1 1 0; min-height: 0; }
+.codex-messages-shell > .echoink-knowledge-activity-slot { flex: 0 0 auto; }
+.echoink-task-detail > .echoink-knowledge-activity-slot { flex: 0 0 auto; min-width: 0; }
+.echoink-task-detail:has(> .echoink-knowledge-activity-slot) { overflow-y: auto; }
+.echoink-task-detail:has(> .echoink-knowledge-activity-slot) > .codex-messages-shell { overflow: hidden; }
+.echoink-maintenance-progress-bar { display: flex; flex: 0 0 auto; gap: 3px; width: 100%; height: 3px; }
+.echoink-maintenance-progress-segment { display: block; flex: 1 1 0; min-width: 0; height: 3px; overflow: hidden; border-radius: 2px; background: var(--echoink-theme-line, var(--background-modifier-border)); }
+.echoink-maintenance-progress-segment > span { display: block; height: 100%; background: var(--echoink-theme-accent, var(--interactive-accent)); }
+.echoink-maintenance-progress-segment.is-running { background: color-mix(in srgb, var(--echoink-theme-accent, var(--interactive-accent)) 25%, var(--echoink-theme-line, var(--background-modifier-border))); }
+.echoink-knowledge-activity-progress [hidden] { display: none !important; }
+.echoink-knowledge-activity-progress .echoink-knowledge-linking-progress-status { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.echoink-knowledge-activity-bar { display: block; grid-column: 1 / -1; min-width: 0; }
+.echoink-knowledge-activity-details { padding: 0 10px 8px; color: var(--text-normal); font-size: var(--echoink-conversation-font-label-primary, 13px); line-height: 1.4; }
+.echoink-knowledge-activity-details ol { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.echoink-knowledge-activity-details li { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 5px 10px; }
+.echoink-knowledge-activity-step-status { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.echoink-knowledge-activity-path { margin-top: 8px; overflow-wrap: anywhere; color: var(--text-muted); }
+.echoink-knowledge-activity-progress button.echoink-knowledge-activity-open { display: block; width: auto; max-width: 100%; height: auto; min-height: 28px; padding: 4px 6px; border: 0; border-radius: var(--echoink-conversation-radius-sm, 6px); background: transparent; color: var(--text-muted); box-shadow: none; font-size: var(--echoink-conversation-font-label-primary, 13px); line-height: 1.4; text-align: left; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+.echoink-knowledge-activity-progress button.echoink-knowledge-activity-open:is(:hover, :active, :focus-visible) { background: var(--background-modifier-hover); color: var(--text-normal); outline: none; box-shadow: none; }
+.echoink-knowledge-activity-details > button.echoink-knowledge-activity-open { margin-top: 5px; }
+.echoink-knowledge-activity-progress button.echoink-knowledge-activity-other { margin: 0 4px 4px; }
+.echoink-knowledge-activity-failures { margin: 0; padding: 0 10px 8px 28px; color: var(--text-error); font-size: var(--echoink-conversation-font-label-primary, 13px); line-height: 1.4; overflow-wrap: anywhere; }
 
 /* P6 desktop journal: container widths follow the actual Obsidian pane. */
 .echoink-journal-page {
@@ -27729,6 +27764,9 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-knowledge-page .knowledge-header, .echoink-knowledge-page .knowledge-title, .echoink-knowledge-page .knowledge-heading { display: flex; align-items: center; gap: 12px; }
 .echoink-knowledge-page .knowledge-header { flex-wrap: wrap; justify-content: space-between; gap: 14px; margin-bottom: 22px; }
 .echoink-knowledge-page .knowledge-header > .knowledge-button { margin-left: auto; }
+.echoink-knowledge-page .knowledge-upgrade-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding-bottom: 12px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+.echoink-knowledge-page .knowledge-upgrade-banner > span { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.echoink-knowledge-page .knowledge-upgrade-banner > button { margin-left: auto; }
 .echoink-knowledge-page .knowledge-heading { flex-wrap: wrap; justify-content: space-between; margin-bottom: 12px; }
 .echoink-knowledge-page button.knowledge-button {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; height: auto;
@@ -27784,6 +27822,20 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-knowledge-page .knowledge-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }
 .echoink-knowledge-page [data-knowledge="secondary"] > h1 { margin-top: 18px; overflow-wrap: anywhere; }
 .echoink-knowledge-page .knowledge-rules summary:focus-visible { background: var(--soft); outline: none; box-shadow: none; }
+.echoink-knowledge-page .knowledge-upgrade-page { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.echoink-knowledge-page .knowledge-upgrade-page > .knowledge-button { align-self: flex-start; padding-left: 0; }
+.echoink-knowledge-page .knowledge-upgrade-intro { margin: 0; overflow-wrap: anywhere; }
+.echoink-knowledge-page .knowledge-upgrade-list { min-height: 144px; max-height: min(560px, 60vh); overflow: auto; overflow-wrap: anywhere; }
+.echoink-knowledge-page .knowledge-upgrade-list:focus-visible { background: var(--soft); outline: none; box-shadow: none; }
+.echoink-knowledge-page .knowledge-upgrade-list .knowledge-heading:not(:first-child) { margin-top: 24px; }
+.echoink-knowledge-page .knowledge-upgrade-rows { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.echoink-knowledge-page .knowledge-upgrade-row { padding: 12px 18px; }
+.echoink-knowledge-page .knowledge-upgrade-row + .knowledge-upgrade-row { border-top: 1px solid var(--line); }
+.echoink-knowledge-page .knowledge-upgrade-row strong { display: block; font-weight: 500; }
+.echoink-knowledge-page .knowledge-upgrade-issue + .knowledge-upgrade-issue { margin-top: 12px; }
+.echoink-knowledge-page .knowledge-upgrade-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.echoink-knowledge-page .knowledge-upgrade-progress { display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+.echoink-knowledge-page .knowledge-upgrade-progress .echoink-maintenance-progress-bar { width: 100%; }
 @container echoink-knowledge (max-width: 760px) {
   .echoink-knowledge-page .knowledge-inner { padding: 24px; }
   .echoink-knowledge-page .knowledge-directory-figures { max-width: 180px; }

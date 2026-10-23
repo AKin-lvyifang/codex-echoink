@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -5,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
-const outputDir = path.join(rootDir, ".tmp");
+const outputDir = disposableTestOutputRoot(path.join(rootDir, ".tmp"));
 const outputFile = path.join(outputDir, "personal-memory-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
 

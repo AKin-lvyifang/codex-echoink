@@ -1,3 +1,4 @@
+import { resolveMaintenanceSourceState } from "../knowledge-base/maintenance-source-state";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { TFile, type EventRef } from "obsidian";
@@ -10,6 +11,7 @@ import { isKnowledgeMaintenanceSourcePath, rawDigestFingerprint, rawDigestRecord
 import { rawDigestStateForRecord } from "../knowledge-base/digest-status";
 import { latestMaintenanceSourceStates } from "../knowledge-base/maintenance-record";
 import type { DomainReceipt } from "../harness/pi-native/domain-receipt-store";
+import type { KnowledgeActivitySource } from "../knowledge-base/maintenance-activity";
 import { parseTodoMarkdown } from "./todo-markdown";
 import { nativeJournalPathForDate, readNativeJournalSettings, takePreparedNativeJournalTemplate } from "./native-journal";
 import { journalContentLines, readWorkbenchJournalDay, recordWorkbenchJournalTemplate, type WorkbenchJournalDay } from "./workbench-journal";
@@ -18,6 +20,7 @@ import { getWorkbenchRecordStore, localWorkbenchDate, validWorkbenchDate, workbe
 import type { WorkbenchDataPort, WorkbenchSnapshot, WorkbenchTaskSource } from "./workbench-types";
 
 type WorkbenchHost = Pick<CodexForObsidianPlugin, "app" | "settings" | "manifest" | "accountService" | "lifestyle" | "pdfReading" | "getVaultPath" | "getPluginDataDirName" | "listPiConversations" | "readPiConversationCatalogEntry" | "getKnowledgeSurfaceService"> & {
+  getKnowledgeActivitySource?(): KnowledgeActivitySource | undefined;
   readWorkbenchTaskReceipts?(taskId: string): Promise<readonly DomainReceipt[]>;
 };
 const instances = new WeakMap<object, WorkbenchDataService>();
@@ -25,6 +28,7 @@ const visiblePath = (target: string): boolean => !target.split("/").some(part =>
 const safeRelativePath = (value: unknown): value is string => typeof value === "string" && !!value && !value.startsWith("/") && !value.includes("\\") && !value.split("/").some(part => part === "." || part === ".." || !part);
 const scopeKey = (roots: readonly string[]): string => workbenchFingerprint([...roots].sort().join("\n")).slice(0, 24);
 interface CachedSourceContent {
+  markdown: string;
   fingerprint: string;
   rawFingerprint: string;
   rawDigest: RawDigestFrontmatterRecord | null;
@@ -77,7 +81,8 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     if (previous?.mtime === mtime && previous.size === size) return previous.result;
     const result = this.plugin.app.vault.readBinary(file).then(content => {
       const bytes = Buffer.from(content);
-      return { fingerprint: workbenchFingerprint(bytes), rawFingerprint: rawDigestFingerprint(target, bytes),
+      let full: string | undefined, raw: string | undefined;
+      return { markdown: bytes.toString("utf8"), get fingerprint() { return full ??= workbenchFingerprint(bytes); }, get rawFingerprint() { return raw ??= rawDigestFingerprint(target, bytes); },
         rawDigest: /\.(?:md|markdown)$/iu.test(target) ? rawDigestRecordFromMarkdown(bytes) : null };
     });
     const cached = { mtime, size, result };
@@ -148,6 +153,8 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     bind(this.plugin.lifestyle?.store, () => this.plugin.lifestyle.store.subscribe(this.changed));
     bind(this.plugin.lifestyle?.finance, () => this.plugin.lifestyle.finance.subscribeEntries(this.changed));
     bind(this.plugin.pdfReading?.api, () => this.plugin.pdfReading!.api.subscribe(this.changed));
+    const knowledge = this.plugin.getKnowledgeActivitySource?.();
+    bind(knowledge, () => knowledge!.subscribe(this.changed));
   }
   private async observeInbox(now: number): Promise<WorkbenchSourceFile[]> {
     if (!this.plugin.app.workspace.layoutReady) return [];
@@ -243,7 +250,8 @@ export class WorkbenchDataService implements WorkbenchDataPort {
       const file = this.plugin.app.vault.getAbstractFileByPath("EchoInk/待办.md");
       return file instanceof TFile ? parseTodoMarkdown(await this.plugin.app.vault.read(file)).records : [];
     });
-    const facts: WorkbenchFacts = { now, modules: authorizedModules, tasks, todos, journals: [], englishMissing: null, inbox: [],
+    const facts: WorkbenchFacts = { now, modules: authorizedModules, tasks, maintenance: this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance,
+      todos, journals: [], englishMissing: null, inbox: [],
       inboxScope: scopeKey(this.roots("inbox")), raw: [], rawScope: scopeKey(this.roots("raw")), pdfJobs: [], reviewComplete: null,
       isolated: null, knowledgeScope: scopeKey([...this.roots("wiki"), ...this.roots("projects")]), language: this.plugin.settings.settingsLanguage };
     if (authorizedModules.includes("finance") && this.plugin.app.workspace.layoutReady) facts.finance = await attempt("财务读取失败", undefined, async () => {
@@ -286,7 +294,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
       modules, lockedModules, issues, nextRefreshAt: nextWorkbenchRefreshAt(facts) };
   }
   private async readPendingRaw(issues: string[]): Promise<WorkbenchSourceFile[]> {
-    const bindings = this.bindings, roots = this.roots("raw");
+    const bindings = this.bindings, roots = [...this.roots("raw"), ...this.roots("inbox")];
     if (!bindings || !roots.length) return [];
     const registry = await readRawDigestRegistry(this.plugin.getVaultPath(), true);
     const latest = latestMaintenanceSourceStates(await this.plugin.getKnowledgeSurfaceService()?.getMaintenanceRecords() ?? []);
@@ -294,13 +302,12 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     let batch = 0;
     for (const file of this.plugin.app.vault.getFiles()) {
       if (!isKnowledgeMaintenanceSourcePath(file.path)
-        || classifyKnowledgePath(bindings, file.path) !== "raw" || !roots.some(root => file.path.startsWith(`${root}/`))
+        || !["raw", "inbox"].includes(classifyKnowledgePath(bindings, file.path) ?? "") || !roots.some(root => file.path.startsWith(`${root}/`))
         || bindings.roles.assets.readPaths.some(root => file.path.startsWith(`${root}/`))) continue;
       try {
-        const content = await this.readSourceContent(file), fingerprint = content.rawFingerprint;
-        const state = rawDigestStateForRecord({ fingerprint, frontmatter: content.rawDigest,
-          previous: this.plugin.settings.knowledgeBase.processedSources[file.path], registry: registry.entries[file.path], hasTrackerHint: false, maintenance: latest.get(file.path) });
-        if (state !== "digested") result.push({ path: file.path, fingerprint });
+        const cached = await this.readSourceContent(file), content = cached.markdown;
+        const resolution = resolveMaintenanceSourceState(content, { fingerprint: () => cached.rawFingerprint, registry: registry.entries[file.path], maintenance: latest.get(file.path), previous: this.plugin.settings.knowledgeBase.processedSources[file.path] });
+        if (resolution.state !== "digested") result.push({ path: file.path, fingerprint: resolution.origin === "new" ? `stat:${file.stat.mtime}:${file.stat.size}` : cached.rawFingerprint });
       } catch (error) { issues.push(`来源暂不可读取：${file.path}：${message(error)}`); }
       if (++batch % 32 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
     }

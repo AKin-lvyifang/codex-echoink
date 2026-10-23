@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -6,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const testRoot = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P10自动测试-20261019"));
+const testRoot = await realpath(disposableTestRoot(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P10自动测试-20261019")));
 const fixture = await mkdtemp(path.join(testRoot, "pdf-page-ui-"));
 try {
   const output = path.join(fixture, "tests.mjs");

@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -10,7 +11,7 @@ import ts from 'typescript';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const require = createRequire(import.meta.url);
 const { JSDOM } = require(process.env.ECHOINK_JSDOM_PATH || 'jsdom');
-const directory = path.join(root, '.tmp/community-warning-fixes');
+const directory = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "community-warning-fixes");
 const shortcutOnly = process.argv.includes('--shortcut-only');
 await mkdir(directory, { recursive: true });
 try {

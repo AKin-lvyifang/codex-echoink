@@ -157,6 +157,8 @@ export interface PiProductRunRecord {
   memoryRecall?: PiMemoryRecallObservation;
   knowledge?: PiKnowledgeObservation;
   maintenance?: PiKnowledgeMaintenanceOutcome;
+  /** Pre-checkpoint activity, then a pointer to the existing maintenance record. */
+  maintenanceActivity?: import("../../knowledge-base/maintenance-activity").MaintenanceInitialActivity;
   createdAt: number;
   updatedAt: number;
 }
@@ -271,6 +273,7 @@ export interface PiKnowledgeMaintenanceSettlement {
 }
 
 export interface PiKnowledgeRuntimePort {
+  maintenanceActivity?(event: Readonly<import("../../knowledge-base/maintenance-activity").MaintenanceActivityLifecycle>): Promise<void>;
   prepareMaintenanceStructure?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   resolveMaintenanceScope?(request: string): Promise<PiKnowledgeMaintenanceScope>;
   /** Recheck only this frozen selection against current private source state. */
@@ -331,6 +334,10 @@ export interface PiKnowledgeRuntimePort {
 }
 
 export interface PiKnowledgeMaintenanceToolInput extends PiKnowledgeRunIdentity {
+  /** Internal parent record identity, not model-authored. */
+  readonly p1RecordId?: string;
+  readonly observedTargetRevisions?: Readonly<Record<string, string>>;
+  readonly p1?: Readonly<import("../../knowledge-base/maintenance-p1-contract").MaintenanceP1Action>;
   readonly folderBindingsRevision?: number;
   readonly globalSourcePaths?: readonly string[];
   readonly toolCallId: string;
@@ -359,6 +366,10 @@ export interface PiKnowledgeMaintenanceToolInput extends PiKnowledgeRunIdentity 
 }
 
 export interface PiKnowledgeMaintenanceToolResult {
+  /** Product-owned UI copy; message remains the full model-facing protocol. */
+  readonly userReceipt?: Readonly<import("../../knowledge-base/maintenance-activity").MaintenanceUserReceipt>;
+  /** Trusted intermediate stage, never a terminal maintenance outcome. */
+  readonly maintenanceStage?: "decompose" | "plan" | "write" | "finalize" | "sections" | "completed";
   readonly recordId?: string;
   readonly verifiedSourceFingerprints?: Readonly<Record<string, string>>;
   readonly status: "completed" | "failed" | "cancelled";
@@ -389,6 +400,7 @@ export interface PiKnowledgeMaintenanceToolResult {
 
 /** Typed Phase 3 seam; the maintenance implementation remains one Pi Tool. */
 export interface PiKnowledgeMaintenanceToolPort {
+  maintenanceActivity?(event: Readonly<import("../../knowledge-base/maintenance-activity").MaintenanceActivityLifecycle>): Promise<void>;
   execute(
     input: Readonly<PiKnowledgeMaintenanceToolInput>
   ): Promise<Readonly<PiKnowledgeMaintenanceToolResult>>;
@@ -506,6 +518,8 @@ export interface PiChatRunHandle {
 }
 
 interface PiChatRuntimeEventBase {
+  /** User projection context only; full provider reasoning stays in Session. */
+  maintenanceContext?: boolean;
   productRunId: string;
   conversationId: string;
   piSessionId: string;

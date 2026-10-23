@@ -34,7 +34,8 @@ export class ElementNode {
   set textContent(value: string) { this.empty(); this.ownText = value; }
   get classList() { return {
     contains: (name: string) => this.className.split(" ").includes(name),
-    add: (name: string) => this.toggleClass(name, true),
+    add: (...names: string[]) => names.forEach(name => this.toggleClass(name, true)),
+    remove: (...names: string[]) => names.forEach(name => this.toggleClass(name, false)),
     toggle: (name: string, force?: boolean) => { const next = force ?? !this.className.split(" ").includes(name); this.toggleClass(name, next); return next; }
   }; }
   getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
@@ -61,6 +62,8 @@ export class ElementNode {
   }
   createDiv(options?: Parameters<ElementNode["createEl"]>[1]): ElementNode { return this.createEl("div", options); }
   createSpan(options?: Parameters<ElementNode["createEl"]>[1]): ElementNode { return this.createEl("span", options); }
+  get firstChild(): ElementNode | null { return this.children[0] ?? null; }
+  insertBefore(child: ElementNode, before: ElementNode | null): ElementNode { child.remove(); child.parentElement = this; const at = before ? this.children.indexOf(before) : -1; if (at < 0) this.children.push(child); else this.children.splice(at, 0, child); return child; }
   appendChild(child: ElementNode): ElementNode { child.parentElement = this; this.children.push(child); return child; }
   querySelector<T extends ElementNode = ElementNode>(selector: string): T | null { return this.querySelectorAll<T>(selector)[0] ?? null; }
   closest(selector: string): ElementNode | null {
@@ -99,6 +102,7 @@ export class TestDocument {
   removeEventListener(type: string, listener: (event: { key: string }) => void): void { this.listeners.get(type)?.delete(listener); }
   dispatchKey(key: string): void { for (const listener of this.listeners.get("keydown") ?? []) listener({ key }); }
   listenerCount(type: string): number { return this.listeners.get(type)?.size ?? 0; }
+  createElement(tag: string): ElementNode { return new ElementNode(tag, this); }
   createElementNS(_namespace: string, tag: string): ElementNode { return new ElementNode(tag, this); }
 }
 

@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -5,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const output = path.join(root, ".tmp", "developer-mode-tests.mjs");
+const output = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "developer-mode-tests.mjs");
 await mkdir(path.dirname(output), { recursive: true });
 try {
   await esbuild.build({

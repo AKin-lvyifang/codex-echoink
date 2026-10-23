@@ -1,5 +1,7 @@
-// Mobile default; parity with the desktop repository is checked by mobile tests.
-export const ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES = [
+import { maintenanceKnowledgeTypePrompt } from "../knowledge-base/maintenance-knowledge-types";
+
+// Shared by desktop and mobile; keep this module free of Node dependencies.
+export const ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES = [
   "# EchoInk 知识提炼偏好",
   "",
   "## 关注维度",
@@ -25,5 +27,12 @@ export const ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES = [
   "## 好结果示例",
   "- 好：写清“在条件 A 下选择 B，因为证据 C；若 D 变化需重新核验”，并链接精确 Raw 来源。",
   "- 避免：只复述全文、把每段都变成条目、无来源拔高结论，或为显得完整而制造固定模板。",
+  ""
+].join("\n");
+
+export const ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES = [
+  ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES.trimEnd(),
+  "",
+  maintenanceKnowledgeTypePrompt(),
   ""
 ].join("\n");

@@ -8,6 +8,7 @@ export function attachTestConversationRunService(plugin: any): ConversationRunSe
   if (plugin.getConversationRunService) return plugin.getConversationRunService();
   const service = new ConversationRunService(plugin as CodexForObsidianPlugin);
   plugin.getConversationRunService = () => service;
+  plugin.getKnowledgeActivitySource ??= () => undefined;
   plugin.saveSettings ??= async () => undefined;
   plugin.setPiConversationTaskMetadata ??= async (id: string, patch: ConversationTaskMetadataPatch) => {
     const session = plugin.settings.sessions?.find((candidate: StoredSession) => candidate.id === id);

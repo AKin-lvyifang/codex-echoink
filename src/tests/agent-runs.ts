@@ -114,7 +114,7 @@ export async function createAgentRunFixture(root: string, createHost: (catalog: 
   const plugin = createHost(catalog, runtime, settings);
   const dataPath = path.join(root, "settings-projection.json");
   Object.assign(plugin, {
-    getVaultPath: () => root, app: {},
+    getVaultPath: () => root, app: {}, getKnowledgeActivitySource: () => null,
     saveSettings: async () => { await writeFile(dataPath, JSON.stringify(settings)); },
     persistPiNativeSettings: async () => { await writeFile(dataPath, JSON.stringify(settings)); },
     externalizeMessageText: async () => undefined,

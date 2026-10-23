@@ -2,7 +2,7 @@ import { RAW_DIGEST_REGISTRY_PATH, RAW_DIGEST_SCHEMA_VERSION, RAW_DIGEST_FIELDS,
   isRawMarkdownPath, canonicalRawMarkdownForDigest, rawDigestRecordFromText, rawDigestFrontmatterKey as frontmatterKey,
   type RawDigestFrontmatterRecord, type RawDigestRegistryEntry, type RawDigestRegistry } from "./raw-digest-core";
 export * from "./raw-digest-core";
-import { resolveKnowledgePath, resolveKnowledgePathFromRoots, knowledgeRootEntries, knowledgePrivateRoot, getKnowledgeFolderBindings } from "./root-paths";
+import { resolveKnowledgePath, knowledgeRootEntries, knowledgeRootRole, knowledgePrivateRoot, getKnowledgeFolderBindings } from "./root-paths";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { contentFingerprint } from "./raw-integrity";
@@ -83,24 +83,72 @@ export function rawDigestUserFrontmatterProjectionBytes(
   ]);
 }
 
-export async function readRawDigestRegistry(vaultPath: string, strict = false): Promise<RawDigestRegistry> {
+export interface RawDigestRegistrySource {
+  path: string;
+  origin: "private" | "legacy";
+  registry: RawDigestRegistry;
+}
+
+/** Read every store independently: an empty private store must not hide old receipts. */
+export async function readRawDigestRegistrySources(vaultPath: string, strict = false): Promise<RawDigestRegistrySource[]> {
   const privateRoot = knowledgePrivateRoot(vaultPath);
-  const privatePath = privateRoot ? path.join(privateRoot, "processed-sources.json") : null;
-  const absolute = privatePath && await fsp.lstat(privatePath).then(() => true, (error) => { if (!isMissingPathError(error)) throw error; return false; })
-    ? privatePath : path.join(vaultPath, resolveKnowledgePathFromRoots(RAW_DIGEST_REGISTRY_PATH, knowledgeRootEntries(vaultPath)));
-  const stat = await fsp.lstat(absolute).catch((error) => { if (strict && !isMissingPathError(error)) throw error; return null; });
-  if (strict && stat && (!stat.isFile() || stat.nlink > 1)) throw new Error("Raw registry is not a readable regular file");
-  if (!stat?.isFile() || stat.nlink > 1) return emptyRawDigestRegistry();
-  const text = await fsp.readFile(absolute, "utf8").catch((error) => { if (strict) throw error; return ""; });
-  if (!text.trim()) return emptyRawDigestRegistry();
-  try {
-    const parsed = JSON.parse(text) as RawDigestRegistry;
-    if (parsed.schemaVersion !== RAW_DIGEST_SCHEMA_VERSION) throw new Error("Unsupported Raw registry schema");
-    return normalizeRawDigestRegistry(parsed);
-  } catch (error) {
-    if (strict) throw error;
-    return emptyRawDigestRegistry();
+  const bindings = getKnowledgeFolderBindings(vaultPath);
+  const roots = [...new Set([
+    ...(bindings?.roles.outputs.readPaths ?? []),
+    ...knowledgeRootEntries(vaultPath).filter(root => knowledgeRootRole(root) === "outputs").sort(),
+    "outputs", "Outputs"
+  ])];
+  const candidates = [
+    ...(privateRoot ? [{ absolute: path.join(privateRoot, "processed-sources.json"), origin: "private" as const, root: privateRoot }] : []),
+    ...roots.map(root => ({ absolute: path.join(vaultPath, root, ".raw-digest-registry.json"), origin: "legacy" as const, root }))
+  ];
+  const sources: RawDigestRegistrySource[] = [], seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (seen.has(candidate.absolute)) continue;
+    seen.add(candidate.absolute);
+    try {
+      if (candidate.origin === "legacy") {
+        if (!candidate.root || candidate.root.startsWith("/") || candidate.root.includes("\\")
+          || candidate.root.split("/").some(part => !part || part === "." || part === "..")) throw new Error("Invalid Raw registry directory");
+        let parent = vaultPath;
+        for (const segment of candidate.root.split("/")) {
+          parent = path.join(parent, segment);
+          const stat = await fsp.lstat(parent);
+          if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Raw registry directory is not a regular directory");
+        }
+      }
+      const stat = await fsp.lstat(candidate.absolute);
+      if (!stat.isFile() || stat.nlink > 1) throw new Error("Raw registry is not a readable regular file");
+      const content = await fsp.readFile(candidate.absolute, "utf8");
+      if (!content.trim()) throw new Error("Raw registry is empty or damaged");
+      const value: unknown = JSON.parse(content);
+      if (!value || typeof value !== "object" || (value as RawDigestRegistry).schemaVersion !== RAW_DIGEST_SCHEMA_VERSION) throw new Error("Unsupported Raw registry schema");
+      sources.push({ path: candidate.absolute, origin: candidate.origin, registry: normalizeRawDigestRegistry(value, strict) });
+    } catch (error) {
+      if (isMissingPathError(error)) continue;
+      if (strict) throw new Error(`Cannot read Raw registry ${candidate.absolute}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
+  return sources;
+}
+
+/** Private receipts win. Same-level stores use receipt time, store time, then stable root order. */
+export async function readRawDigestRegistry(vaultPath: string, strict = false): Promise<RawDigestRegistry> {
+  const result = emptyRawDigestRegistry();
+  const selected = new Map<string, { priority: number; receiptAt: number; storeAt: number }>();
+  for (const source of await readRawDigestRegistrySources(vaultPath, strict)) {
+    const priority = source.origin === "private" ? 1 : 0;
+    const storeAt = Date.parse(source.registry.updatedAt) || 0;
+    if (storeAt > (Date.parse(result.updatedAt) || 0)) result.updatedAt = source.registry.updatedAt;
+    for (const [key, entry] of Object.entries(source.registry.entries)) {
+      const previous = selected.get(key), receiptAt = entry.digestedAt;
+      if (previous && (previous.priority > priority || (previous.priority === priority
+        && (previous.receiptAt > receiptAt || (previous.receiptAt === receiptAt && previous.storeAt >= storeAt))))) continue;
+      result.entries[key] = entry;
+      selected.set(key, { priority, receiptAt, storeAt });
+    }
+  }
+  return result;
 }
 
 export async function writeRawDigestRegistry(vaultPath: string, registry: RawDigestRegistry): Promise<void> {

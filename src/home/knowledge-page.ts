@@ -4,8 +4,12 @@ import { createOriginButton, createOriginPagination, disposeOriginControls } fro
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
 import { renderActivityHeatmap, setActivityHeatmapsActive } from "../settings/activity-heatmap";
 import { renderSettingsKnowledgeDashboard } from "../settings/knowledge-dashboard";
-import { knowledgeMaintenanceHistoryTitle, knowledgeMaintenanceHistoryDescription, knowledgeMaintenanceHistoryStatus, renderKnowledgeMaintenanceHistoryList, renderKnowledgeMaintenanceRecordDetail, openKnowledgeMaintenancePath } from "../settings/knowledge-maintenance-history";
+import { knowledgeMaintenanceHistoryTitle, knowledgeMaintenanceHistoryDescription, knowledgeMaintenanceHistoryStatus, knowledgeUpgradeHistorySummary, renderKnowledgeMaintenanceHistoryList, renderKnowledgeMaintenanceRecordDetail, openKnowledgeMaintenancePath } from "../settings/knowledge-maintenance-history";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import type { MaintenanceUpgradePreview, MaintenanceUpgradeSnapshot, MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-upgrade-contract";
+import { maintenanceActivityText, maintenanceTaskStateLabel, maintenanceTaskTitle, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import { maintenancePageLabel } from "../knowledge-base/maintenance-user-copy";
+import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
 import { ForegroundView } from "../ui/foreground-view";
 import { loadKnowledgePageData, type KnowledgePageSnapshot } from "./knowledge-page-data";
 import { getWorkbenchDataService } from "./workbench-data";
@@ -13,10 +17,10 @@ import { prefillWorkbenchModule, workbenchModuleOwner } from "./module-navigatio
 import { openObsidianFolderGraphLeaf } from "./open-native-graph";
 
 export const KNOWLEDGE_PAGE_VIEW_TYPE = "echoink-knowledge-page";
-type Page = "overview" | "health" | "history";
+type Page = "overview" | "health" | "history" | "upgrade";
 type Issue = "isolated" | "sources";
 
-/** Desktop read-only knowledge surface. Every handoff is a draft, never an execution. */
+/** Knowledge handoffs stay drafts; legacy upgrades write only after their preview is confirmed. */
 export class KnowledgePageView extends ItemView {
   private closed = true;
   private foreground: ForegroundView | null = null;
@@ -41,6 +45,12 @@ export class KnowledgePageView extends ItemView {
   private overviewScroll = 0;
   private pendingIssue: Issue | null = null;
   private healthDataset: Record<string, string> = {};
+  private upgradePreview: MaintenanceUpgradePreview | null = null;
+  private upgradeBusy = false;
+  private upgradeError = "";
+  private upgradeSignature = "";
+  private upgradeListScroll = 0;
+  private upgradeReadGeneration = 0;
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) { super(leaf); }
   getViewType(): string { return KNOWLEDGE_PAGE_VIEW_TYPE; }
   getDisplayText(): string { return this.t("知识库", "Knowledge"); }
@@ -61,7 +71,7 @@ export class KnowledgePageView extends ItemView {
     await this.refresh();
   }
   async onClose(): Promise<void> {
-    this.closed = true; this.syncHeatmaps(); this.generation++; this.unsubscribe();
+    this.closed = true; this.syncHeatmaps(); this.generation++; this.upgradeReadGeneration++; this.unsubscribe();
     this.secondaryCleanup?.(); this.secondaryCleanup = null;
     this.foreground?.dispose(); this.foreground = null;
     disposeOriginControls(this.contentEl);
@@ -76,6 +86,10 @@ export class KnowledgePageView extends ItemView {
     observe(this.app.metadataCache, this.app.metadataCache.on("resolved", () => this.scheduleRefresh()));
     observe(this.app.metadataCache, this.app.metadataCache.on("changed", () => this.scheduleRefresh()));
     this.releases.push(getWorkbenchDataService(this.plugin).subscribe(() => this.scheduleRefresh()));
+    const source = this.plugin.getKnowledgeActivitySource?.();
+    if (source) this.releases.push(source.subscribe(snapshot => {
+      if (snapshot.maintenance.some(activity => activity.taskKind === "upgrade")) void this.refreshUpgrade();
+    }));
   }
   private unsubscribe(): void { for (const release of this.releases.splice(0)) release(); }
   private scheduleRefresh(): void {
@@ -91,12 +105,16 @@ export class KnowledgePageView extends ItemView {
     this.pending = true;
     if (!this.active()) return;
     this.pending = false;
-    const generation = ++this.generation;
+    const generation = ++this.generation, upgradeReadGeneration = this.upgradeReadGeneration;
     this.settingsSignature = this.signature(); this.renderHeader();
     if (!this.snapshot) this.field("status").setText(this.t("正在读取知识库…", "Reading knowledge…"));
     try {
       const next = await this.loadSnapshot();
       if (this.closed || generation !== this.generation || !this.active()) return;
+      if (this.snapshot && upgradeReadGeneration !== this.upgradeReadGeneration) {
+        next.upgrade = this.snapshot.upgrade;
+        if (this.snapshot.errors.upgrade) next.errors.upgrade = this.snapshot.errors.upgrade; else delete next.errors.upgrade;
+      }
       this.snapshot = next;
       this.reset(this.field("status")); this.renderOverview(); this.renderSecondary();
     } catch (error) {
@@ -137,6 +155,7 @@ export class KnowledgePageView extends ItemView {
     inner.createDiv({ cls: "knowledge-status", attr: { "data-knowledge": "status", role: "status", "aria-live": "polite" } });
     const overview = inner.createDiv({ attr: { "data-knowledge": "overview" } });
     overview.createDiv({ cls: "knowledge-header", attr: { "data-knowledge": "header" } });
+    overview.createDiv({ cls: "knowledge-upgrade-banner", attr: { "data-knowledge": "upgrade", role: "status", "aria-live": "polite" } });
     overview.createDiv({ cls: "knowledge-metrics", attr: { "data-knowledge": "metrics" } });
     for (const name of ["activity", "directories", "issues", "recent"]) overview.createEl("section", { cls: `knowledge-${name}`, attr: { "data-knowledge": name } });
     inner.createDiv({ attr: { "data-knowledge": "secondary" } });
@@ -162,7 +181,7 @@ export class KnowledgePageView extends ItemView {
     this.button(error, this.t("重试", "Retry"), () => this.refresh());
   }
   private renderOverview(): void {
-    const data = this.snapshot!; const metrics = this.field("metrics"); this.reset(metrics);
+    const data = this.snapshot!; this.renderUpgradeBanner(); const metrics = this.field("metrics"); this.reset(metrics);
     const health = data.health;
     const available = health && ["local-structure", "limited"].includes(health.assessment);
     for (const [label, value, unit] of [
@@ -178,6 +197,192 @@ export class KnowledgePageView extends ItemView {
       }
     }
     this.renderHeatmap(); this.renderDirectories(); this.renderIssues(); this.renderRecent();
+  }
+  private upgradeService(): Partial<MaintenanceUpgradeSurface> | null { return this.plugin.getKnowledgeSurfaceService() as Partial<MaintenanceUpgradeSurface> | null; }
+  private upgradeActivity(): Readonly<MaintenanceActivity> | undefined {
+    const recordId = this.snapshot?.upgrade?.recordId;
+    return this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance
+      .filter(activity => activity.taskKind === "upgrade" && (!recordId || activity.id === recordId))
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  }
+  /** Activity events trigger a read of the existing upgrade state, without another timer or ledger. */
+  private async refreshUpgrade(): Promise<void> {
+    if (!this.active() || !this.snapshot) return;
+    const read = ++this.upgradeReadGeneration;
+    try {
+      const upgrade = await this.upgradeService()?.getUpgradeSnapshot?.();
+      if (this.closed || !this.active() || read !== this.upgradeReadGeneration || !this.snapshot) return;
+      this.snapshot.upgrade = upgrade ?? null; delete this.snapshot.errors.upgrade;
+    } catch (error) {
+      if (this.closed || !this.active() || read !== this.upgradeReadGeneration || !this.snapshot) return;
+      this.snapshot.errors.upgrade = this.error(error);
+    }
+    this.renderUpgradeBanner(); if (this.page === "upgrade") this.renderSecondary();
+  }
+  private upgradeHasWork(upgrade: MaintenanceUpgradeSnapshot): boolean {
+    const counts = upgrade.counts;
+    return counts.sourceStatusCount > 0 || counts.sourceLinkCount > 0 || counts.backlinkCount > 0 || counts.wikiCount > 0
+      || !!upgrade.preview?.automatic.length || !!upgrade.preview?.rootAdditions.length || !!upgrade.preview?.issues.length;
+  }
+  private upgradeResult(upgrade: MaintenanceUpgradeSnapshot): string {
+    const done = upgrade.completed;
+    return done ? this.t(`已补 ${done.sources} 篇资料状态 · ${done.links} 条链接 · ${done.wiki} 页 Wiki 类型`, `${done.sources} source statuses · ${done.links} links · ${done.wiki} Wiki types added`) : "";
+  }
+  private renderUpgradeBanner(): void {
+    const host = this.field("upgrade"), upgrade = this.snapshot?.upgrade, error = this.snapshot?.errors.upgrade;
+    this.reset(host); host.hidden = !error && (!upgrade || upgrade.status === "ready" && !this.upgradeHasWork(upgrade));
+    if (host.hidden) return;
+    if (error || upgrade?.status === "failed" && !upgrade.recordId) {
+      host.createSpan({ text: this.t("旧资料检查暂时没完成", "Legacy check is unavailable") + `：${error || upgrade?.message || this.t("请重试", "Retry")}` });
+      this.button(host, this.t("重试", "Retry"), () => this.openUpgradePreview(), "is-secondary").disabled = this.upgradeBusy; return;
+    }
+    if (!upgrade) return;
+    if (upgrade.status === "scanning") { host.createSpan({ text: this.t("正在检查旧资料…", "Checking legacy notes…") }); return; }
+    const ready = upgrade.status === "ready", activity = this.upgradeActivity();
+    const additions: string[] = [];
+    if (upgrade.counts.sourceStatusCount) additions.push(this.t(`${upgrade.counts.sourceStatusCount} 篇资料待补状态`, `${upgrade.counts.sourceStatusCount} sources need status`));
+    if (upgrade.counts.sourceLinkCount) additions.push(this.t(`${upgrade.counts.sourceLinkCount} 篇资料待补链接`, `${upgrade.counts.sourceLinkCount} sources need links`));
+    if (upgrade.counts.wikiCount) additions.push(this.t(`${upgrade.counts.wikiCount} 页 Wiki 待补类型`, `${upgrade.counts.wikiCount} Wiki notes need types`));
+    const automatic = additions.length > 0 || !!upgrade.preview?.automatic.length || !!upgrade.preview?.rootAdditions.length;
+    const text = ready ? additions.length ? this.t(`有 ${additions.join("，")}`, additions.join(", "))
+      : upgrade.preview?.automatic.length ? this.t("有旧资料待补属性", "Legacy notes need properties")
+      : upgrade.preview?.rootAdditions.length ? this.t("有旧目录待登记", "Legacy folders need registering")
+      : this.t(`有 ${upgrade.preview?.issues.length ?? 0} 项旧资料需要核对`, `${upgrade.preview?.issues.length ?? 0} legacy items need review`)
+      : upgrade.status === "completed" ? this.upgradeResult(upgrade) || this.t("旧知识升级已完成", "Legacy knowledge upgrade completed")
+      : activity ? maintenanceActivityText(activity, this.plugin.settings.settingsLanguage === "en") : upgrade.message || this.t(upgrade.status === "running" ? "正在升级旧知识" : "旧知识升级没做完", upgrade.status === "running" ? "Upgrading legacy knowledge" : "Legacy upgrade is not finished");
+    host.createSpan({ text });
+    this.button(host, ready ? automatic ? this.t("查看并升级", "Review and upgrade") : this.t("查看清单", "Review items") : this.t("查看升级", "View upgrade"), () => ready ? this.openUpgradePreview() : this.openPage("upgrade"), "is-secondary").disabled = this.upgradeBusy;
+  }
+  private async openUpgradePreview(): Promise<void> {
+    if (this.upgradeBusy) return;
+    const preview = this.upgradeService()?.previewUpgrade;
+    if (!preview) throw new Error(this.t("旧资料检查暂时不可用", "Legacy check is unavailable"));
+    this.upgradeBusy = true; this.renderUpgradeBanner();
+    try {
+      const service = this.upgradeService()!;
+      const next = await service.previewUpgrade!();
+      const upgrade = await service.getUpgradeSnapshot?.();
+      if (this.closed) return;
+      this.upgradePreview = next; this.upgradeError = "";
+      if (this.snapshot) { this.snapshot.upgrade = upgrade ?? { status: "ready", counts: next.counts, preview: next }; delete this.snapshot.errors.upgrade; }
+      this.openPage("upgrade");
+    } catch (error) {
+      this.upgradeError = this.error(error);
+      if (this.snapshot) this.snapshot.errors.upgrade = this.upgradeError;
+    } finally {
+      this.upgradeBusy = false;
+      if (!this.closed) { this.renderUpgradeBanner(); if (this.page === "upgrade") this.renderSecondary(); }
+    }
+  }
+  private async upgradeAction(action: "confirm" | "stop" | "resume"): Promise<void> {
+    if (this.upgradeBusy) return;
+    const service = this.upgradeService(), previewId = this.upgradePreview?.id;
+    if (!service || action === "confirm" && !previewId) return;
+    this.upgradeBusy = true; this.upgradeError = ""; this.generation++; this.upgradeReadGeneration++;
+    this.renderSecondary();
+    try {
+      let next: MaintenanceUpgradeSnapshot | undefined;
+      if (action === "confirm") {
+        if (!service.confirmUpgrade) throw new Error(this.t("升级暂时不可用", "Upgrade is unavailable"));
+        next = await service.confirmUpgrade(previewId!);
+      } else if (action === "resume") {
+        if (!service.resumeUpgrade) throw new Error(this.t("继续升级暂时不可用", "Resume is unavailable"));
+        next = await service.resumeUpgrade();
+      } else {
+        if (!service.stopUpgrade) throw new Error(this.t("停止升级暂时不可用", "Stop is unavailable"));
+        await service.stopUpgrade(); next = await service.getUpgradeSnapshot?.();
+      }
+      if (!this.closed && this.snapshot && next) { this.upgradeReadGeneration++; this.snapshot.upgrade = next; delete this.snapshot.errors.upgrade; }
+    } catch (error) { this.upgradeError = this.error(error); }
+    finally {
+      this.upgradeBusy = false;
+      if (!this.closed) { this.renderUpgradeBanner(); if (this.page === "upgrade") this.renderSecondary(); }
+    }
+  }
+  private renderUpgradePage(host: HTMLElement): void {
+    const upgrade = this.snapshot?.upgrade, activity = this.upgradeActivity();
+    const preview = upgrade?.recordId ? upgrade.preview ?? this.upgradePreview : this.upgradePreview ?? upgrade?.preview;
+    const signature = JSON.stringify([upgrade, preview, activity, this.upgradeBusy, this.upgradeError, this.snapshot?.errors.upgrade, this.plugin.settings.settingsLanguage]);
+    if (signature === this.upgradeSignature && host.querySelector(".knowledge-upgrade-page")) return;
+    this.upgradeSignature = signature;
+    const oldList = host.querySelector<HTMLElement>(".knowledge-upgrade-list");
+    if (oldList) this.upgradeListScroll = oldList.scrollTop;
+    const focused = host.contains(host.ownerDocument.activeElement) ? (host.ownerDocument.activeElement as HTMLElement)?.dataset.upgradeAction : undefined;
+    this.secondaryCleanup?.(); this.secondaryCleanup = null; this.reset(host);
+    const page = host.createDiv({ cls: "knowledge-upgrade-page" });
+    this.button(page, this.t("返回知识库", "Back to knowledge"), () => this.openPage("overview")).dataset.upgradeAction = "back";
+    page.createEl("h1", { text: this.t("知识库升级检查", "Legacy knowledge upgrade") });
+    const showingPreview = preview && (!upgrade || upgrade.status === "ready" || upgrade.status === "scanning" || upgrade.status === "failed" && !upgrade.recordId);
+    if (showingPreview) {
+      page.createEl("p", { cls: "knowledge-upgrade-intro", text: this.t("确认后只补属性和原文指向 Wiki 的链接，正文、旧字段和旧报告都保留。", "Confirmation adds properties and source links to Wiki notes. Existing text, properties and reports are preserved.") });
+      const list = page.createDiv({ cls: "knowledge-upgrade-list", attr: { role: "region", "aria-label": this.t("升级预览清单", "Upgrade preview"), tabindex: "0" } });
+      this.heading(list, this.t("会自动补的", "Automatic additions"));
+      const rows = list.createDiv({ cls: "knowledge-upgrade-rows" });
+      const titleCounts = new Map<string, number>();
+      for (const item of preview.automatic) titleCounts.set(item.title, (titleCounts.get(item.title) ?? 0) + 1);
+      for (const item of preview.automatic) {
+        const row = rows.createDiv({ cls: "knowledge-upgrade-row" });
+        row.createEl("strong", { text: maintenancePageLabel(item.title) });
+        if (item.path && (titleCounts.get(item.title) ?? 0) > 1) row.createDiv({ cls: "knowledge-upgrade-location", text: this.t(`位置：${item.path}`, `Location: ${item.path}`) });
+        for (const property of item.properties) row.createDiv({ text: property });
+        if (item.description) row.createDiv({ text: item.description });
+      }
+      if (!preview.automatic.length) rows.createDiv({ cls: "knowledge-empty", text: this.t("没有需要自动补的属性", "No properties need adding") });
+      if (preview.rootAdditions.length) {
+        this.heading(list, this.t("将登记的旧目录", "Legacy folders to register"));
+        const roots = list.createDiv({ cls: "knowledge-upgrade-rows" });
+        for (const root of preview.rootAdditions) {
+          const role = root.role === "outputs" ? this.t("旧维护报告", "Legacy reports") : this.roleLabel(root.role);
+          roots.createDiv({ cls: "knowledge-upgrade-row", text: `${root.path} · ${role}` });
+        }
+      }
+      this.heading(list, this.t("需要你看的清单", "Items to review"));
+      for (const item of preview.issues) {
+        const row = list.createDiv({ cls: "knowledge-upgrade-issue" });
+        if (item.kind === "optional-reingest") row.createDiv({ text: this.t("可选：重新提炼", "Optional: extract again") });
+        row.createDiv({ text: `${item.title || item.path ? `${maintenancePageLabel(item.title || item.path!)}：` : ""}${item.message}` });
+      }
+      if (!preview.issues.length) list.createDiv({ cls: "knowledge-empty", text: this.t("没有需要你核对的项目", "No items need review") });
+      list.scrollTop = this.upgradeListScroll;
+      const actions = page.createDiv({ cls: "knowledge-upgrade-actions" });
+      this.button(actions, this.t("暂不升级", "Not now"), () => this.openPage("overview"), "is-secondary").dataset.upgradeAction = "cancel";
+      const confirm = this.button(actions, this.t("确认升级", "Confirm upgrade"), () => this.upgradeAction("confirm"), "is-primary"); confirm.dataset.upgradeAction = "confirm";
+      confirm.disabled = this.upgradeBusy || !preview.automatic.length && !preview.rootAdditions.length;
+      // A preview restored from the service is also the only accepted confirmation identity.
+      this.upgradePreview = preview;
+    } else {
+      const status = page.createDiv({ cls: "knowledge-upgrade-progress", attr: { role: "status", "aria-live": "polite" } });
+      status.createEl("strong", { text: activity ? `${maintenanceTaskTitle(activity, this.plugin.settings.settingsLanguage === "en")} · ${maintenanceTaskStateLabel(activity, this.plugin.settings.settingsLanguage === "en")}`
+        : this.t(upgrade?.status === "completed" ? "已完成" : upgrade?.status === "running" ? "进行中" : "没做完", upgrade?.status === "completed" ? "Completed" : upgrade?.status === "running" ? "In progress" : "Not finished") });
+      if (activity) { status.createDiv({ text: maintenanceActivityText(activity, this.plugin.settings.settingsLanguage === "en") }); renderMaintenanceProgressBar(status, activity); }
+      const result = upgrade && this.upgradeResult(upgrade);
+      if (result && activity?.status !== "completed") status.createDiv({ text: result });
+      if (upgrade?.message && !activity) status.createDiv({ text: upgrade.message });
+      const unfinishedIssues = preview?.issues.filter(item => item.executionFailure) ?? [];
+      if (activity?.failures.length || unfinishedIssues.length) {
+        const reasons = page.createEl("details", { cls: "knowledge-rules" }); reasons.createEl("summary", { text: this.t("未处理原因", "Unfinished items") });
+        for (const failure of activity?.failures ?? []) reasons.createDiv({ text: failure.message });
+        for (const issue of unfinishedIssues) reasons.createDiv({ text: `${maintenancePageLabel(issue.title || issue.path!)}：${issue.message}` });
+      }
+      const reviewIssues = preview?.issues.filter(item => !item.executionFailure) ?? [];
+      if (reviewIssues.length) {
+        const review = page.createEl("details", { cls: "knowledge-rules knowledge-upgrade-review" });
+        review.createEl("summary", { text: this.t("需要你看的清单", "Items to review") });
+        review.createEl("p", { text: this.t("这些是原有资料中需要核对或可选重新提炼的项目，原文件保留，不属于补写失败。", "These existing notes need review or optional extraction. Their original files were preserved; these are not failed additions.") });
+        for (const issue of reviewIssues) {
+          const row = review.createDiv({ cls: "knowledge-upgrade-issue" });
+          if (issue.kind === "optional-reingest") row.createDiv({ text: this.t("可选：重新提炼", "Optional: extract again") });
+          row.createDiv({ text: `${issue.title || issue.path ? `${maintenancePageLabel(issue.title || issue.path!)}：` : ""}${issue.message}` });
+        }
+      }
+      const actions = page.createDiv({ cls: "knowledge-upgrade-actions" });
+      if (upgrade?.status === "running") this.button(actions, this.t("停止", "Stop"), () => this.upgradeAction("stop"), "is-secondary").dataset.upgradeAction = "stop";
+      if (upgrade?.status === "interrupted" || upgrade?.status === "failed" && upgrade.recordId) this.button(actions, this.t("继续升级", "Continue upgrade"), () => this.upgradeAction("resume"), "is-primary").dataset.upgradeAction = "resume";
+    }
+    const error = this.upgradeError || this.snapshot?.errors.upgrade;
+    if (error) page.createDiv({ cls: "knowledge-error", attr: { role: "alert" }, text: error });
+    for (const button of Array.from(page.querySelectorAll<HTMLButtonElement>("button"))) button.disabled ||= this.upgradeBusy;
+    if (focused) page.querySelector<HTMLButtonElement>(`[data-upgrade-action="${focused}"]`)?.focus({ preventScroll: true });
   }
   private renderHeatmap(): void {
     const data = this.snapshot; if (!data) return;
@@ -299,13 +504,13 @@ export class KnowledgePageView extends ItemView {
         else new Notice(this.t("维护记录尚未读取或已缺失", "Maintenance record is unavailable"));
       }, "is-tertiary knowledge-recent-row");
       this.renderIcon(row, "notebook-pen");
-      const copy = row.createDiv({ cls: "knowledge-row-copy" }); copy.createEl("strong", { text: knowledgeMaintenanceHistoryTitle(entry, this.plugin.settings.settingsLanguage !== "en") });
+      const copy = row.createDiv({ cls: "knowledge-row-copy" }); copy.createEl("strong", { text: knowledgeMaintenanceHistoryTitle(entry, this.plugin.settings.settingsLanguage !== "en", record) });
       const added = record?.result.notes.filter(note => note.operation === "created").length ?? 0;
       const updated = record?.result.notes.filter(note => note.operation === "updated").length ?? 0;
-      const summary = added || updated
+      const summary = record?.upgrade ? knowledgeUpgradeHistorySummary(record, this.plugin.settings.settingsLanguage !== "en") : added || updated
         ? [added ? this.t(`新增 ${added} 篇`, `${added} created`) : "", updated ? this.t(`更新 ${updated} 篇`, `${updated} updated`) : ""].filter(Boolean).join(" · ")
         : record?.summary.split(/\r?\n/u)[0].replace(/Readback/giu, this.t("回读核对", "readback"));
-      copy.createSpan({ cls: "knowledge-note", text: record ? `${knowledgeMaintenanceHistoryStatus(entry, this.plugin.settings.settingsLanguage !== "en")} · ${summary}` : knowledgeMaintenanceHistoryDescription(entry, this.plugin.settings.settingsLanguage !== "en") });
+      copy.createSpan({ cls: "knowledge-note", text: record ? `${knowledgeMaintenanceHistoryStatus(entry, this.plugin.settings.settingsLanguage !== "en", record)} · ${summary}` : knowledgeMaintenanceHistoryDescription(entry, this.plugin.settings.settingsLanguage !== "en") });
     }
   }
   private time(at: number): string { return new Date(at).toLocaleString(this.plugin.settings.settingsLanguage === "en" ? "en-US" : "zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }
@@ -331,6 +536,7 @@ export class KnowledgePageView extends ItemView {
     this.showPage();
     if (!this.field("overview").hidden) { this.secondaryCleanup?.(); this.secondaryCleanup = null; return; }
     const host = this.field("secondary"), data = this.snapshot;
+    if (this.page === "upgrade") { this.renderUpgradePage(host); return; }
     if (this.page === "health" && !this.issue && !this.detail) {
       const signature = JSON.stringify([data?.dashboard, data?.errors.health, this.healthExpanded, this.plugin.settings.settingsLanguage]);
       const editor = host.querySelector<HTMLElement>(".activity-range-editor");

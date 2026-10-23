@@ -1,4 +1,5 @@
 import { projectGenerationEntries, generationStageMessage, positionGenerationMessages } from "../../generation/projection";
+import { maintenanceFailureText, maintenancePageLabel, maintenanceToolTitle, maintenanceUserReceiptFromResult } from "../../knowledge-base/maintenance-user-copy";
 import { savedAnswerNotePaths } from "./pi-answer-save";
 import { projectInjectedMemorySources } from "./pi-memory-sources";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
@@ -272,8 +273,9 @@ interface BranchProjectionContext {
   readonly piSessionId: string;
   readonly vaultPath: string;
   readonly entryRuns: ReadonlyMap<string, string>;
-  readonly toolRuns: ReadonlyMap<string, string>;
+  readonly toolRuns: Map<string, string>;
   readonly privacySafeToolRuns: ReadonlySet<string>;
+  readonly maintenanceRunIds: ReadonlySet<string>;
   currentRunId?: string;
 }
 
@@ -342,7 +344,8 @@ export class PiChatUiProjector {
     const {
       entryRuns,
       toolRuns,
-      privacySafeToolRuns
+      privacySafeToolRuns,
+      maintenanceRunIds
     } = buildRunIdentityMaps(input.runIdentities ?? []);
     const context: BranchProjectionContext = {
       scope,
@@ -351,6 +354,7 @@ export class PiChatUiProjector {
       entryRuns,
       toolRuns,
       privacySafeToolRuns,
+      maintenanceRunIds,
       currentRunId: input.productRunId
     };
     // Reasoning summaries persist the actual tool events; assistant timestamps include model waiting.
@@ -399,7 +403,8 @@ export class PiChatUiProjector {
             summary,
             status: reopenedReasoningStatus,
             terminalAt: run.updatedAt
-          })
+          }),
+          context.maintenanceRunIds.has(summary.productRunId)
         );
       }
     }
@@ -483,7 +488,8 @@ export class PiChatUiProjector {
         upsertReasoningSummaryMessage(
           view.messages,
           scope,
-          event.summary
+          event.summary,
+          event.maintenanceContext === true
         );
         break;
       case "provider_reasoning_start":
@@ -806,7 +812,8 @@ export class PiChatUiProjector {
         upsertReasoningSummaryMessage(
           messages,
           context.scope,
-          reasoningSummary
+          reasoningSummary,
+          context.maintenanceRunIds.has(reasoningSummary.productRunId)
         );
         return;
       }
@@ -879,12 +886,15 @@ export class PiChatUiProjector {
           || toolCall.toolName === PI_USER_QUESTION_TOOL_ID
         ) continue;
         const toolRunId = context.toolRuns.get(toolCall.toolCallId) ?? runId;
+        // Old ProductRuns may lack tool IDs; Session calls still carry their real entry/run owner.
+        if (toolRunId) context.toolRuns.set(toolCall.toolCallId, toolRunId);
         upsertMessage(messages, toolMessage({
           scope: context.scope,
           toolCallId: toolCall.toolCallId,
           toolName: toolCall.toolName,
           args: toolCall.args,
           privacySafe: context.privacySafeToolRuns.has(toolCall.toolCallId),
+          maintenanceContext: !!toolRunId && context.maintenanceRunIds.has(toolRunId),
           status: initialPiToolCallStatus(toolCall.toolName),
           runId: toolRunId,
           createdAt: this.toolExecutionTimes.get(this.toolTimeKey(context.piSessionId, toolCall.toolCallId))?.startedAt ?? observedAt,
@@ -907,7 +917,7 @@ export class PiChatUiProjector {
             : failure.status === "interrupted"
               ? "interrupted"
               : "completed",
-          reasoningBlocks
+          reasoningBlocks: runId && context.maintenanceRunIds.has(runId) ? reasoningBlocks.map(block => ({ ...block, text: "正在理解资料并核对已有知识。" })) : reasoningBlocks
         });
       }
       return;
@@ -923,8 +933,8 @@ export class PiChatUiProjector {
       const resultText = textFromContent(message.content);
       const cancelled = isCancelledResult(message.details);
       const status = cancelled ? "interrupted" : message.isError ? "failed" : "completed";
-      const runId = context.toolRuns.get(toolCallId) ?? context.currentRunId;
       const existing = findByIdentity(messages, "tool", toolCallId);
+      const runId = context.toolRuns.get(toolCallId) ?? context.entryRuns.get(entry.id) ?? existing?.runId ?? context.currentRunId;
       const timing = this.toolExecutionTimes.get(this.toolTimeKey(context.piSessionId, toolCallId));
       const projected = toolMessage({
         scope: context.scope,
@@ -934,6 +944,7 @@ export class PiChatUiProjector {
         result: message.details ?? resultText,
         resultText,
         privacySafe: context.privacySafeToolRuns.has(toolCallId),
+        maintenanceContext: !!runId && context.maintenanceRunIds.has(runId),
         status,
         runId,
         createdAt: timing?.completedAt !== undefined ? timing.startedAt : messageTime(message, createdAt),
@@ -1094,7 +1105,7 @@ export class PiChatUiProjector {
     segments[segmentIndex] = Object.freeze({
       ...previous,
       status: "running" as const,
-      text: `${previous.text}${event.textDelta}`,
+      text: event.maintenanceContext ? "正在理解资料并核对已有知识。" : `${previous.text}${event.textDelta}`,
       updatedAt: event.occurredAt
     });
     const { providerReasoning: _legacyReasoning, ...current } = turn;
@@ -1145,7 +1156,7 @@ export class PiChatUiProjector {
       reasoningId: event.reasoningId,
       source: "provider_public" as const,
       status: event.status,
-      text: event.text,
+      text: event.maintenanceContext ? "正在理解资料并核对已有知识。" : event.text,
       startedAt: previous.startedAt,
       updatedAt: event.occurredAt,
       completedAt: event.occurredAt,
@@ -1357,6 +1368,7 @@ export class PiChatUiProjector {
       toolName: event.toolName,
       args: event.args,
       privacySafe: event.privacySafe === true,
+      maintenanceContext: event.maintenanceContext === true,
       status: existing && terminalProcessStatus(existing.status)
         ? existing.status!
         : initialPiToolCallStatus(event.toolName),
@@ -1389,6 +1401,7 @@ export class PiChatUiProjector {
       result: event.update,
       resultText: displayUnknown(event.update),
       privacySafe: event.privacySafe === true,
+      maintenanceContext: event.maintenanceContext === true,
       status: runtimeToolProgressStatus(existing, event.update),
       runId: event.productRunId,
       createdAt: existing?.createdAt ?? event.occurredAt,
@@ -1432,6 +1445,7 @@ export class PiChatUiProjector {
       result: event.result,
       resultText: displayUnknown(event.result),
       privacySafe: event.privacySafe === true,
+      maintenanceContext: event.maintenanceContext === true,
       status,
       runId: event.productRunId,
       createdAt: timing?.startedAt ?? event.occurredAt,
@@ -1776,12 +1790,33 @@ function toolMessage(input: {
   readonly result?: unknown;
   readonly resultText?: string;
   readonly privacySafe?: boolean;
+  readonly maintenanceContext?: boolean;
   readonly status: string;
   readonly runId?: string;
   readonly createdAt: number;
   readonly completedAt?: number;
   readonly vaultPath: string;
 }): ChatMessage {
+  if (input.toolName === "knowledge_maintain") {
+    const receipt = maintenanceUserReceiptFromResult(input.result);
+    const failureCode = privacySafeToolFailureCode(input.result, input.resultText);
+    const failureText = failureCode
+      ? failureCode === "knowledge_source_changed" ? maintenanceFailureText(failureCode) : KNOWLEDGE_TOOL_FAILURE_COPY[failureCode]
+      : maintenanceFailureText(input.resultText ?? displayUnknown(input.result));
+    const text = receipt?.text ?? (runtimeMessageStillActive(input.status) ? "正在整理知识。"
+      : input.status === "failed" ? failureText
+      : input.status === "interrupted" || input.status === "cancelled" ? "这次整理已停下，已写好的内容会保留。" : "这一步已完成，正在继续整理。" );
+    return { id: toolMessageId(input.scope, input.toolCallId), role: "tool", itemType: "dynamicToolCall", processKind: "tool",
+      title: "整理知识库", text, details: undefined, processInput: undefined, processOutput: text,
+      processInputAvailability: "empty", processOutputAvailability: "provided", processContentAvailability: "provided",
+      files: undefined, status: input.status, runId: input.runId, turnId: input.runId, createdAt: input.createdAt, completedAt: input.completedAt };
+  }
+  if (input.maintenanceContext && !exactPiToolDisplayTitle(input.toolName)) {
+    const text = runtimeMessageStillActive(input.status) ? "正在处理这一步。" : input.status === "completed" ? "这一步已完成。" : input.status === "interrupted" || input.status === "cancelled" ? "这一步已停止。" : "这一步没完成，已写好的内容会保留。";
+    return { id: toolMessageId(input.scope, input.toolCallId), role: "tool", itemType: "dynamicToolCall", processKind: "tool", title: maintenanceToolTitle(input.toolName, input.status), text,
+      details: undefined, processInput: undefined, processOutput: text, processInputAvailability: "empty", processOutputAvailability: "provided", processContentAvailability: "provided", files: undefined,
+      status: input.status, runId: input.runId, turnId: input.runId, createdAt: input.createdAt, completedAt: input.completedAt };
+  }
   const personalMemoryCopy = personalMemoryToolCopy(
     input.toolName,
     input.status,
@@ -1813,7 +1848,7 @@ function toolMessage(input: {
       completedAt: input.completedAt
     };
   }
-  const privateCopy = input.privacySafe || input.status === "failed"
+  const privateCopy = input.privacySafe || input.maintenanceContext === true || input.status === "failed"
     ? privacySafeKnowledgeToolCopy(input.toolName, input.status, input.result, input.resultText)
     : null;
   if (privateCopy) {
@@ -1822,12 +1857,12 @@ function toolMessage(input: {
     const files = references.map((reference) => ({
       name: reference.vaultRelativePath.split("/").at(-1)!,
       path: reference.vaultRelativePath,
-      displayPath: reference.vaultRelativePath,
+      displayPath: maintenancePageLabel(reference.vaultRelativePath),
       kind: "vault" as const,
       openable: true
     }));
     const fileDetails = references.map((reference) =>
-      `${reference.vaultRelativePath} · 第 ${reference.lineStart}–${reference.lineEnd} 行`
+      `${maintenancePageLabel(reference.vaultRelativePath)} · 第 ${reference.lineStart}–${reference.lineEnd} 行`
     ).join("\n");
     const output = fileDetails || (input.status === "failed" ? privateCopy.text : "");
     return {
@@ -1917,13 +1952,14 @@ function projectKnowledgeMaintenanceReport(input: Readonly<{
 
 function mergeToolMessages(existing: ChatMessage | undefined, projected: ChatMessage): ChatMessage {
   if (!existing) return projected;
+  if (projected.role === "tool" && projected.processInputAvailability === "empty") return { ...existing, ...projected };
   return {
     ...existing,
     ...projected,
-    processInput: projected.processInput || existing.processInput,
+    processInput: projected.processInputAvailability === "empty" ? undefined : projected.processInput ?? existing.processInput,
     processInputAvailability: projected.processInputAvailability
       ?? existing.processInputAvailability,
-    processOutput: projected.processOutput || existing.processOutput,
+    processOutput: projected.processOutputAvailability === "empty" ? undefined : projected.processOutput ?? existing.processOutput,
     processOutputAvailability: projected.processOutputAvailability
       ?? existing.processOutputAvailability,
     text: projected.text || existing.text,
@@ -2249,7 +2285,7 @@ function assistantFailure(message: PiSessionMessageView): {
       itemType: "error",
       status: "interrupted",
       title: "回答已停止",
-      text: errorMessage ? assistantFailureText(errorMessage) : "已停止生成"
+      text: "这次生成已停止，已生成的内容会保留。"
     };
   }
   return { itemType: "assistant", status: "completed", text: "" };
@@ -2711,15 +2747,18 @@ function runtimeToolProgressStatus(
 
 function buildRunIdentityMaps(identities: readonly PiChatUiRunIdentity[]): {
   readonly entryRuns: ReadonlyMap<string, string>;
-  readonly toolRuns: ReadonlyMap<string, string>;
+  readonly toolRuns: Map<string, string>;
   readonly privacySafeToolRuns: ReadonlySet<string>;
+  readonly maintenanceRunIds: ReadonlySet<string>;
 } {
   const entryRuns = new Map<string, string>();
   const toolRuns = new Map<string, string>();
   const privacySafeToolRuns = new Set<string>();
+  const maintenanceRunIds = new Set<string>();
   for (const identity of identities) {
     if (!identity.productRunId || !identity.userEntryId) continue;
     entryRuns.set(identity.userEntryId, identity.productRunId);
+    if (identity.knowledgeWorkflow === "maintain") maintenanceRunIds.add(identity.productRunId);
     if (identity.assistantEntryId) entryRuns.set(identity.assistantEntryId, identity.productRunId);
     for (const toolCallId of identity.toolCallIds ?? []) {
       if (!toolCallId) continue;
@@ -2727,7 +2766,7 @@ function buildRunIdentityMaps(identities: readonly PiChatUiRunIdentity[]): {
       if (identity.knowledgeWorkflow) privacySafeToolRuns.add(toolCallId);
     }
   }
-  return { entryRuns, toolRuns, privacySafeToolRuns };
+  return { entryRuns, toolRuns, privacySafeToolRuns, maintenanceRunIds };
 }
 
 function projectionScope(piSessionId: string, activeLeafId: string | null): string {
@@ -2891,7 +2930,8 @@ function upsertMessage(messages: ChatMessage[], message: ChatMessage): void {
 function upsertReasoningSummaryMessage(
   messages: ChatMessage[],
   scope: string,
-  summary: Readonly<EchoInkReasoningSummarySnapshot>
+  summary: Readonly<EchoInkReasoningSummarySnapshot>,
+  maintenanceContext = false
 ): void {
   const id = reasoningSummaryMessageId(scope, summary.productRunId);
   const existing = messages.find(
@@ -2907,8 +2947,8 @@ function upsertReasoningSummaryMessage(
     role: "assistant",
     itemType: "reasoning",
     processKind: "reasoning",
-    title: reasoningSummaryTitle(summary),
-    text: reasoningSummaryText(summary),
+    title: maintenanceContext ? "整理知识库" : reasoningSummaryTitle(summary),
+    text: maintenanceContext ? summary.status === "running" ? "正在理解资料并核对已有知识。" : summary.status === "completed" ? "这轮整理已结束。" : "这次整理已停下，已写好的内容会保留。" : reasoningSummaryText(summary),
     processContentAvailability: summary.activities.length ? "provided" : "empty",
     status: summary.status,
     reasoningSummary: summary,

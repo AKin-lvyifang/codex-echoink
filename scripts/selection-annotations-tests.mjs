@@ -1,8 +1,9 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { mkdir } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import esbuild from "esbuild";
-const root = process.cwd(), output = path.join(root, ".tmp/selection-annotations-tests.mjs");
+const root = process.cwd(), output = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "selection-annotations-tests.mjs");
 await mkdir(path.dirname(output), { recursive: true });
 await esbuild.build({ stdin: { contents: 'import { runSelectionAnnotationTests } from "./src/tests/selection-annotations"; await runSelectionAnnotationTests();', resolveDir: root, loader: "ts" }, bundle: true, platform: "node", format: "esm", target: "node22", outfile: output,
   loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" }, external: ["jsdom", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml"],

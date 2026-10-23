@@ -101,8 +101,10 @@ function assertWorkRecordToolMetadataIsAccurateAndPrivate(): void {
         details: { errorCode: "knowledge_source_changed", rawPrompt: "PRIVATE_PROMPT_CANARY" } }
     }, "work-records", "work-records-run"));
     const failure = toolByCall(view, toolName);
-    assert.equal(failure.title, toolName === "knowledge_maintain" ? "整理知识关联" : toolName);
-    assert.match(failure.text, /来源内容已变化.*回答没用上这一步/u);
+    assert.equal(failure.title, toolName === "knowledge_maintain" ? "整理知识库" : toolName);
+    if (toolName === "knowledge_maintain") {
+      assert.equal(failure.text, "这份资料在整理时有了新的修改。已写好的内容会保留，点继续会重新核对。");
+    } else assert.match(failure.text, /来源内容已变化.*回答没用上这一步/u);
   }
   assert.doesNotMatch(JSON.stringify(view), /PRIVATE_|Knowledge Agent|WAL|CAS|隐私安全进度/u);
 }
@@ -617,7 +619,7 @@ function assertControlledTransportAbortUsesFriendlyCopy(): void {
       message.role === "assistant" && message.itemType === "error"
     );
     assert.equal(error?.title, "回答已停止");
-    assert.equal(error?.text, "已停止生成。");
+    assert.equal(error?.text, "这次生成已停止，已生成的内容会保留。");
     assert.doesNotMatch(JSON.stringify(error), /controlled_transport_aborted/u);
   }
 }
@@ -1258,7 +1260,7 @@ function assertKnowledgeMaintenanceResultCardIsLiveDurableAndStrict(): void {
   const liveCard = onlyTool(live);
   assert.equal(liveCard.status, "completed", "a verified maintenance result is not waiting for a separate receipt");
   assert.equal(liveCard.itemType, "knowledgeBase");
-  assert.equal(liveCard.knowledgeBaseUi?.title, "知识维护完成");
+  assert.equal(liveCard.knowledgeBaseUi?.title, "知识整理已完成");
   assert.equal(
     liveCard.knowledgeBaseUi?.sections[0]?.items[0]?.path,
     "wiki/Readback.md"
@@ -1384,9 +1386,9 @@ function assertKnowledgeMaintenanceResultCardIsLiveDurableAndStrict(): void {
   }
 
   const expected = [
-    ["partial", "知识维护部分完成", "partial", "failed"],
+    ["partial", "知识整理没做完", "partial", "failed"],
     ["noop", "没有需要提炼的知识", "noop", "success"],
-    ["failed", "知识维护失败", undefined, "failed"],
+    ["failed", "知识整理没做完", undefined, "failed"],
     ["write_uncertain", "知识写入状态不确定", undefined, "failed"]
   ] as const;
   for (const [status, title, completion, cardStatus] of expected) {
@@ -1486,7 +1488,7 @@ function assertKnowledgeFailuresStayAccurateAndPrivate(): void {
     { toolName: "knowledge_read", text: "PRIVATE_FAILURE_CANARY", details: { errorCode: "knowledge_source_changed" }, expected: "来源内容已变化" },
     { toolName: "knowledge_search", text: "PRIVATE_FAILURE_CANARY", details: { errorCode: "knowledge_cursor_stale" }, expected: "检索结果已更新" },
     { toolName: "vault_search", text: "PRIVATE_FAILURE_CANARY", details: {}, expected: "记录未保留可展示的具体原因" },
-    { toolName: "knowledge_maintain", text: "PRIVATE_FAILURE_CANARY", details: {}, expected: "记录未保留可展示的具体原因" }
+    { toolName: "knowledge_maintain", text: "PRIVATE_FAILURE_CANARY", details: {}, expected: "这一步还没做完。已写好的内容会保留，点继续会重新核对后处理。" }
   ];
   for (const [index, entry] of cases.entries()) {
     const projector = new PiChatUiProjector();
@@ -1521,7 +1523,8 @@ function assertKnowledgeFailuresStayAccurateAndPrivate(): void {
       const tool = toolByCall(view, toolCallId);
       assert.equal(tool.status, "failed");
       assert.doesNotMatch(tool.title ?? "", /完成/u);
-      assert.match(tool.text ?? "", new RegExp(entry.expected, "u"));
+      if (entry.toolName === "knowledge_maintain") assert.equal(tool.text, entry.expected);
+      else assert.match(tool.text ?? "", new RegExp(entry.expected, "u"));
       assert.doesNotMatch(JSON.stringify(tool), /PRIVATE_(?:PATH|FAILURE)_CANARY|已完成/u);
       const item = buildActionTimeline([tool]).groups[0]?.items[0];
       assert.equal(item?.userDetails?.error, tool.text,

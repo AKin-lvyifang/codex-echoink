@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import esbuild from 'esbuild';
 import { JSDOM } from 'jsdom';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const output = path.join(root, '.tmp/home-photo-calendar-tests.mjs');
+const output = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "home-photo-calendar-tests.mjs");
 await mkdir(path.dirname(output), { recursive: true });
 await esbuild.build({
   stdin: { contents: 'export { EchoInkHomeView } from "./src/home/home-view"; export { homeWorkspaceMarkup } from "./src/home/home-workspace-template";',

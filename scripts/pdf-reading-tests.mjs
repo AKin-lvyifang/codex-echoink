@@ -1,8 +1,9 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { build } from "esbuild";
 import { mkdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-const root = process.cwd(), out = path.join(root, ".tmp/pdf-reading-tests.mjs");
+const root = process.cwd(), out = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "pdf-reading-tests.mjs");
 const fixture = process.env.ECHOINK_PDF_TEST_ROOT;
 if (!fixture || !path.isAbsolute(fixture) || !fixture.endsWith("/.tests/pdf-reading-index")) throw new Error("Set ECHOINK_PDF_TEST_ROOT to an explicit disposable test directory ending in /.tests/pdf-reading-index.");
 await mkdir(path.dirname(out), { recursive: true });

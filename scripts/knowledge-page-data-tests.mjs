@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,10 +7,7 @@ import { createRequire } from "node:module";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P8自动测试-20261018");
-if (!process.env.ECHOINK_KNOWLEDGE_PAGE_TEST_ROOT || path.resolve(process.env.ECHOINK_KNOWLEDGE_PAGE_TEST_ROOT) !== allowed) {
-  throw new Error("Set ECHOINK_KNOWLEDGE_PAGE_TEST_ROOT to the registered P8 disposable Vault.");
-}
+const allowed = disposableTestRoot(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P8自动测试-20261018"), ["ECHOINK_KNOWLEDGE_PAGE_TEST_ROOT"]);
 await access(allowed);
 process.env.TZ = "America/Los_Angeles";
 const directory = await mkdtemp(path.join(allowed, ".knowledge-page-data-"));

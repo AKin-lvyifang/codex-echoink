@@ -70,5 +70,25 @@ export async function runWorkbenchSignalsTests(): Promise<void> {
   facts.tasks = [{ taskStatus: "waiting", businessKey: signal.key }]; assert.deepEqual(ids(facts), []);
   for (const taskStatus of ["interrupted", "completed", "failed", undefined]) { facts.tasks = [{ taskStatus, businessKey: signal.key }]; assert.deepEqual(ids(facts), [14]); }
   facts.tasks = []; facts.modules = []; assert.deepEqual(ids(facts), [], "eligibility is applied before signals and counts");
+  const mixed = base();
+  mixed.raw = Array.from({ length: 15 }, (_, index) => ({ path: `raw/mixed-${index}.md`, fingerprint: `v${index}` }));
+  const rawSignal = calculateWorkbenchSignals(mixed).find(item => item.id === 7)!;
+  mixed.tasks = [{ conversationId: "maintenance-origin", taskStatus: "running", businessKey: rawSignal.key }];
+  assert.ok(!ids(mixed).includes(7), "an unknown busy scope keeps the original business-key suppression");
+  mixed.maintenance = [{ originConversationId: "maintenance-origin", sourcePaths: mixed.raw.slice(0, 12).map(file => file.path), status: "running", updatedAt: now }];
+  const mixedSignal = calculateWorkbenchSignals(mixed).find(item => item.id === 7)!;
+  assert.ok(mixedSignal, "a known maintenance origin does not suppress unrelated remaining sources");
+  assert.equal(mixedSignal.source.objects.length, 15, "generator retains the full snapshot for the common remaining-scope projection");
+  assert.deepEqual(mixedSignal.source.objects.filter(path => !mixed.maintenance![0].sourcePaths.includes(path)), mixed.raw.slice(12).map(file => file.path));
+  mixed.tasks = [...mixed.tasks, { conversationId: "ordinary-origin", taskStatus: "waiting", businessKey: rawSignal.key }];
+  assert.ok(!ids(mixed).includes(7), "an ordinary busy task with the same key still suppresses the signal");
+  mixed.tasks = mixed.tasks.slice(0, 1);
+  mixed.maintenance = [{ ...mixed.maintenance[0], sourcePaths: [] }];
+  assert.ok(!ids(mixed).includes(7), "an unknown maintenance source range never opens the busy key");
+  mixed.maintenance = [{ originConversationId: "another-origin", sourcePaths: [mixed.raw[0].path], status: "running", updatedAt: now }];
+  assert.ok(!ids(mixed).includes(7), "an unrelated maintenance origin cannot exempt an ordinary task");
+  mixed.maintenance = [{ originConversationId: "maintenance-origin", sourcePaths: [mixed.raw[0].path], status: "running", updatedAt: now },
+    { originConversationId: "maintenance-origin", sourcePaths: [mixed.raw[0].path], status: "completed", updatedAt: now + 1 }];
+  assert.ok(!ids(mixed).includes(7), "completed maintenance history cannot exempt a later ordinary busy task");
   console.log("Workbench signal rules: 13 signals, transitions, strict thresholds, local dates, PRO/module eligibility and task suppression passed");
 }

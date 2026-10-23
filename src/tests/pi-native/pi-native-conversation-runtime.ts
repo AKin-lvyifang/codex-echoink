@@ -88,8 +88,10 @@ import {
 } from "../../harness/pi-native/pi-task-plan";
 import {
   PI_USER_QUESTION_TOOL_ID,
-  PiUserQuestionToolSecurity
+  PiUserQuestionToolSecurity,
+  createPiUserQuestionToolDefinition
 } from "../../harness/pi-native/pi-user-question-tool";
+import { PiTurnInteractionBroker } from "../../plugin/pi-turn-interaction-broker";
 import {
   createPiVaultToolSecurityAdapter,
   PiVaultToolAuthorizationError
@@ -1834,7 +1836,7 @@ async function assertVaultWritesUseExistingApproval(): Promise<void> {
   );
 }
 
-async function assertUserQuestionUsesCentralFailClosedSecurity(): Promise<void> {
+export async function assertUserQuestionUsesCentralFailClosedSecurity(): Promise<void> {
   const questionSecurity = new PiUserQuestionToolSecurity();
   const adapter = createPiVaultToolSecurityAdapter({
     authorization: {
@@ -1918,6 +1920,25 @@ async function assertUserQuestionUsesCentralFailClosedSecurity(): Promise<void> 
   });
   assert.equal(corrected.isError, false);
   assert.doesNotMatch(JSON.stringify(corrected), /UNTRUSTED/u);
+
+  const abort = new AbortController(), records: unknown[] = [];
+  const broker = new PiTurnInteractionBroker();
+  const cancelledId = "user-question-cancelled";
+  assert.equal(await handleToolCall({ toolName: PI_USER_QUESTION_TOOL_ID, toolCallId: cancelledId, input: argumentsValue }, { signal: abort.signal }), undefined);
+  const question = createPiUserQuestionToolDefinition({
+    sessionManager: { getSessionId: () => "question-session", appendCustomEntry: (_type: string, data: unknown) => { records.push(data); return "cancelled-entry"; } } as never,
+    broker, security: questionSecurity,
+    currentRun: () => ({ conversationId: "question-conversation", piSessionId: "question-session", productRunId: "question-run" }),
+    reportRequested: async () => { abort.abort(); }, reportResolved: async () => {}
+  });
+  await assert.rejects(question.execute(cancelledId, argumentsValue, abort.signal, undefined, {} as never), /用户取消了本次结构化问题/u);
+  const cancelled = await handleToolResult({ toolName: PI_USER_QUESTION_TOOL_ID, toolCallId: cancelledId, content: [], details: {}, isError: true }) as { content: { text: string }[]; details: Record<string, unknown>; isError: boolean };
+  assert.equal(cancelled.isError, true);
+  assert.equal(cancelled.details.outcome, "cancelled");
+  assert.match(cancelled.content[0]!.text, /用户取消/u);
+  assert.doesNotMatch(JSON.stringify(cancelled), /authorization_failed/u);
+  assert.equal((records[0] as { record: { outcome: string } }).record.outcome, "cancelled");
+  broker.dispose();
 
   assert.deepEqual(await handleToolCall({
     toolName: PI_USER_QUESTION_TOOL_ID,
@@ -3068,7 +3089,7 @@ async function assertInvalidMaintenanceResultSurvivesReopen(
     assert.equal(
       projection.messages.some((message) =>
         message.runId === currentRunId
-        && message.title === "知识维护失败"
+        && message.title === "知识整理没做完"
       ),
       false,
       `${label} must not rewrite Agent messages as repeated failure cards`
@@ -3126,6 +3147,14 @@ Promise<void> {
           maintenanceScope: QUERY_MAINTENANCE_SCOPE,
           submittedAt: 10 + index
         });
+        const issuePath = testCase.status === "partial" ? "wiki/间隔复习.md" : `raw/${testCase.status}.md`;
+        const internalDiagnostic = testCase.status === "partial"
+          ? "revision_conflict: wiki/间隔复习.md expectedTarget=sha256:fixture recordId=r9-known toolCallId=write-1"
+          : `${testCase.status} opaque diagnostic recordId=r9-unknown toolCallId=write-2 stage=write`;
+        const expectedIssueDescription = testCase.status === "partial"
+          ? "《间隔复习》在整理时被改过。为了不覆盖你的修改，这一页先跳过了；点继续会重新读取后再写。"
+          : "这一步还没做完。已写好的内容会保留，点继续会重新核对后处理。";
+        const issues = [{ code: `${testCase.status}_issue`, message: internalDiagnostic, path: issuePath }];
         const envelope = createKnowledgeMaintenanceResultEnvelope({
           status: testCase.status,
           notes: [{
@@ -3134,11 +3163,7 @@ Promise<void> {
             title: `${testCase.status} 回读标题`,
             summary: `${testCase.status} 回读摘要`
           }],
-          issues: [{
-            code: `${testCase.status}_issue`,
-            message: `${testCase.status} 真实问题`,
-            path: `raw/${testCase.status}.md`
-          }],
+          issues,
           systemPaths: [`.echoink/${testCase.status}-report.md`]
         });
         fixture.latestSession().finishTool(
@@ -3154,15 +3179,17 @@ Promise<void> {
           conversationId,
           productRunId: handle.productRunId,
           expectedTitle: testCase.status === "partial"
-            ? "知识维护部分完成"
+            ? "知识整理没做完"
             : testCase.status === "write_uncertain"
               ? "知识写入状态不确定"
-              : "知识维护失败",
+              : "知识整理没做完",
           expectedStatus: "failed",
           expectedNotePath: `wiki/${testCase.status}.md`,
           expectedNoteDescription: `${testCase.status} 回读摘要`,
-          expectedIssuePath: `raw/${testCase.status}.md`,
-          expectedIssueDescription: `${testCase.status} 真实问题`
+          expectedIssuePath: issuePath,
+          expectedIssueDescription,
+          expectedInternalToolCallId: `maintain-trusted-${testCase.status}`,
+          expectedInternalIssues: issues
         });
       }
 
@@ -3207,7 +3234,7 @@ Promise<void> {
           conversationId,
           productRunId: handle.productRunId,
           expectedTitle: status === "completed"
-            ? "知识维护完成"
+            ? "知识整理已完成"
             : "没有需要提炼的知识",
           expectedStatus: "success",
           ...(status === "completed"
@@ -3265,6 +3292,8 @@ async function assertMaintenanceCardSurvivesReopen(input: Readonly<{
   expectedNoteDescription?: string;
   expectedIssuePath?: string;
   expectedIssueDescription?: string;
+  expectedInternalToolCallId?: string;
+  expectedInternalIssues?: readonly Readonly<{ code: string; message: string; path: string }>[];
 }>): Promise<void> {
   const assertProjection = async (label: string): Promise<void> => {
     const projection = await input.fixture.runtime.readProjection(
@@ -3276,6 +3305,15 @@ async function assertMaintenanceCardSurvivesReopen(input: Readonly<{
     assert.ok(card, `${label} must retain the trusted maintenance card`);
     assert.equal(card.title, input.expectedTitle, label);
     assert.equal(card.status, input.expectedStatus, label);
+    const visibleCopy = [card.title, ...card.sections.flatMap(section => [section.title ?? "", ...section.items.flatMap(item => [item.title ?? "", item.description ?? ""])])].join("\n");
+    assert.doesNotMatch(visibleCopy, /\b(?:recordId|toolCallId|productRunId|expectedTarget|stage|CAS|WAL|revision|revision_conflict)\b|(?:wiki|raw)\//iu, `${label} must keep internal diagnostics out of visible copy`);
+    if (input.expectedInternalToolCallId) {
+      assert.ok(projection.catalog.sessionFile, `${label} must resolve the durable session file`);
+      const entries = (await readFile(projection.catalog.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+      const persisted = entries.find(entry => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolCallId === input.expectedInternalToolCallId);
+      assert.ok(persisted, `${label} must retain the actual tool result on disk`);
+      assert.deepEqual(persisted.message.details.maintenanceResult.issues, input.expectedInternalIssues, `${label} must retain exact original diagnostics in the durable internal record`);
+    }
     if (input.expectedNotePath) {
       const note = card.sections.flatMap((section) => section.items).find(
         (item) => item.path === input.expectedNotePath
@@ -5956,9 +5994,9 @@ async function withFixture(
       },
       currentMemoryTurn: () => currentMemoryTurnReader?.() ?? null,
       currentKnowledgeTurn: () => currentKnowledgeTurnReader?.() ?? null,
-      currentMaintenanceCommand: async () => {
+      currentMaintenanceCommand: async (options) => {
         assert.ok(currentMaintenanceCommandReader);
-        return await currentMaintenanceCommandReader();
+        return await currentMaintenanceCommandReader(options);
       },
       currentSkillTurn: () => currentSkillTurnReader?.() ?? null,
       currentGenerationContext: () => currentGenerationReader?.() ?? null,
@@ -6556,6 +6594,7 @@ async function assertWorkspacePermissionsAndLateSources(): Promise<void> {
       if (permission === "workspace-write") {
         const command = await fixture.currentMaintenanceCommand();
         assert.equal(command.request, "read then answer");
+        assert.equal(fixture.currentKnowledgeTurn()?.kind, "ask", "scope lookup must preserve the answer workflow");
         assert.deepEqual(command.scope, QUERY_MAINTENANCE_SCOPE);
         assert.deepEqual(maintenanceRequests, ["read then answer"], "writable ask lazily resolves the existing maintenance scope");
         session.finishTool("late-read", "knowledge_read", { details: { type: "echoink.knowledge-references.v1", schemaVersion: 1, references: [reference], status: "completed" } }, false);
@@ -6571,6 +6610,15 @@ async function assertWorkspacePermissionsAndLateSources(): Promise<void> {
     fixture.latestSession().finishSuccessful("只读下提供维护建议。");
     assert.equal((await readonlyMaintain.result).terminalState, "completed");
     assert.equal(finalized, 0, "read-only maintenance does not finalize any content writes");
+    const activated = await fixture.submit({ conversationId: "activated-maintain", permission: "workspace-write", text: "/ask read then answer", submittedAt: 5 });
+    const parsed = await fixture.currentMaintenanceCommand();
+    assert.equal(fixture.currentKnowledgeTurn()?.kind, "ask");
+    assert.equal(await fixture.currentMaintenanceCommand({ activateMaintenance: true }), parsed, "formal tool activation reuses the frozen scope");
+    assert.equal(fixture.currentKnowledgeTurn()?.kind, "maintain", "formal tool execution activates maintenance");
+    fixture.latestSession().finishTool("activated-noop", "knowledge_maintain", { details: { status: "completed", maintenanceResult: createKnowledgeMaintenanceResultEnvelope({ status: "noop" }) } }, false);
+    fixture.latestSession().finishSuccessful("没有需要提炼的知识。");
+    assert.equal((await activated.result).terminalState, "completed");
+    assert.equal(finalized, 1, "activated maintenance still settles through the existing finalizer");
   }, { knowledge });
 }
 

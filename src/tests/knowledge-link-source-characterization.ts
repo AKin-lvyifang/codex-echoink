@@ -1,3 +1,5 @@
+import { createMaintenanceSectionSnapshot } from "../knowledge-base/maintenance-section-patch";
+import { executeStagedMaintenanceFixture } from "./maintenance-staged-fixture";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
@@ -7,7 +9,7 @@ import {
   completeKnowledgeMaintenanceCandidateSources,
   validateKnowledgeMaintenanceCandidateSources
 } from "../knowledge-base/knowledge-maintenance-protocol";
-import { rawDigestFingerprint } from "../knowledge-base/raw-digest";
+import { canonicalRawMarkdownForDigest, rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { ObsidianVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
 import {
@@ -113,110 +115,71 @@ export async function runKnowledgeLinkSourceCharacterizationTests(): Promise<voi
   }
 }
 
-async function runProductionScenario(root: string, scenario: Scenario, before: string, candidate: string, completed?: string) {
-  const vault = path.join(root, "vault");
-  const privateRoot = path.join(root, "private");
+async function runProductionScenario(root: string, scenario: Scenario, before: string, candidate: string, _completed?: string) {
+  const vault = path.join(root, "vault"), privateRoot = path.join(root, "private");
   const fixture = await nativeJournalFixture(vault);
   for (const [relative, content] of Object.entries(RAW)) await fixture.write(relative, content);
-  await fixture.write(TARGET, before);
-  await fixture.write("wiki/Agent.md", "---\naliases: [智能体]\n---\n# Agent\n");
+  await fixture.write(TARGET, before); await fixture.write("wiki/Agent.md", "---\naliases: [智能体]\n---\n# Agent\n");
   const adapter = new ObsidianVaultDomainAdapter(fixture.app, VAULT_ID, vault);
-  const events: string[] = [];
-  const writes: string[] = [];
-  const updateFile = adapter.updateFile.bind(adapter);
-  adapter.updateFile = async (...args) => {
-    await updateFile(...args);
-    writes.push(args[0].relativePath);
-    events.push(`write:${args[0].relativePath}`);
-  };
-  const createFile = adapter.createFile.bind(adapter);
-  adapter.createFile = async (...args) => {
-    await createFile(...args);
-    writes.push(args[0].relativePath);
-    events.push(`write:${args[0].relativePath}`);
-  };
+  const events: string[] = [], writes: string[] = [];
+  const updateFile = adapter.updateFile.bind(adapter), createFile = adapter.createFile.bind(adapter);
+  adapter.updateFile = async (...args) => { await updateFile(...args); writes.push(args[0].relativePath); events.push(`write:${args[0].relativePath}`); };
+  adapter.createFile = async (...args) => { await createFile(...args); writes.push(args[0].relativePath); events.push(`write:${args[0].relativePath}`); };
   const domain = new VaultDomainService(adapter, { allowMissingParentDirectories: true });
-  const port = new ProductionPiKnowledgeMaintenanceToolPort({
-    vaultRootPath: vault, privateKnowledgeRootPath: privateRoot, vaultId: VAULT_ID,
-    userId: "fixture", deviceId: "fixture", domainService: domain,
-    dateKey: () => "2026-10-15", createPreviewId: () => `preview-${scenario.id}`,
-    faultInjector: point => { events.push(point); }
-  });
+  let sequence = 0;
+  const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: privateRoot, vaultId: VAULT_ID, userId: "fixture", deviceId: "fixture", domainService: domain,
+    dateKey: () => "2026-10-15", createPreviewId: () => `preview-${scenario.id}-${++sequence}`, faultInjector: point => { events.push(point); } });
   await port.initialize();
   const createWal = port.state.createWal.bind(port.state);
-  port.state.createWal = async wal => {
-    const saved = await createWal(wal);
-    events.push(wal.terminalRecord ? "terminal-only-wal" : "knowledge-wal");
-    return saved;
-  };
-  const result = await port.execute({
-    vaultId: VAULT_ID, conversationId: "fixture-conversation", piSessionId: "fixture-session",
-    productRunId: scenario.id, toolCallId: "maintain", mode: "maintain", request: "",
-    sourcePaths: [...scenario.selected],
-    sourceBodyFingerprints: Object.fromEntries(scenario.selected.map(relative => [relative, rawDigestFingerprint(relative, Buffer.from(RAW[relative]))])),
+  port.state.createWal = async wal => { const saved = await createWal(wal); events.push(wal.terminalRecord ? "terminal-only-wal" : "knowledge-wal"); return saved; };
+  // Legacy prose alone could not disambiguate multiple current sources. The new
+  // plan must declare that exact relation before a write can be authorized.
+  const pageSources = scenario.rejection ? [] : scenario.evidence!;
+  const result = await executeStagedMaintenanceFixture(port, domain, {
+    vaultId: VAULT_ID, conversationId: "fixture-conversation", piSessionId: "fixture-session", productRunId: scenario.id, toolCallId: "maintain", mode: "maintain", request: "", sourcePaths: [...scenario.selected],
     preferenceSnapshot: { profileVersion: "echoink-knowledge-preference-profile-v1", state: "default", revision: `sha256:${"a".repeat(64)}` },
     candidateActions: [{ targetPath: TARGET, content: candidate, expectedTarget: { kind: "file", contentRevision: `sha256:${sha256(before)}` } }]
-  });
-  const afterBytes = await readFile(path.join(vault, TARGET));
-  const wals = await port.state.listRecoverableWals(VAULT_ID);
-  const knowledgeWals = wals.filter(wal => !wal.terminalRecord);
+  }, [pageSources]);
+  const afterBytes = await readFile(path.join(vault, TARGET)), wals = await port.state.listRecoverableWals(VAULT_ID);
+  const knowledgeWals = wals.filter(wal => wal.actions.some(entry => entry.action.purpose === "knowledge"));
   const terminalWals = wals.filter(wal => wal.terminalRecord);
   const records = await readPrivateMaintenanceRecords(privateRoot, { vaultId: VAULT_ID });
-  assert.equal(records.length, 1);
-  const record = records[0];
+  assert.equal(records.length, 1); const record = records[0];
   if (scenario.rejection) {
-    assert.equal(result.status, "failed", result.message);
-    assert.equal(result.errorCode, "proposal_invalid", result.message);
-    assert.equal(result.maintenanceResult?.status, "failed");
-    assert.ok(result.message.includes(scenario.rejection), result.message);
-    assert.deepEqual(result.maintenanceResult?.issues.map(issue => ({ code: issue.code, path: issue.path })), [{ code: "candidate_skipped", path: TARGET }]);
-    assert.ok(afterBytes.equals(Buffer.from(before)), "rejected old note must remain byte-identical");
-    assert.deepEqual(writes, []);
-    assert.equal(knowledgeWals.length, 0, "source rejection precedes creation of the knowledge action WAL");
-    assert.equal(terminalWals.length, 1, "execute persists a separate failure record via a terminal-only WAL");
-    assert.equal(terminalWals[0].actions.length, 0);
-    assert.equal(events.includes("after-wal-before-first-write"), false);
-    assert.deepEqual(result.producedPaths ?? [], []);
-    assert.deepEqual(result.processedSourcePaths ?? [], []);
-    assert.equal(record.result.status, "failed");
-    assert.equal(record.sources.some(source => source.status === "processed"), false);
+    assert.equal(result.status, "failed", result.message); assert.equal(result.errorCode, "proposal_invalid");
+    assert.match(result.message, /来源|清单/u, "ambiguous current-source mapping is rejected at plan stage");
+    assert.ok(afterBytes.equals(Buffer.from(before)), "rejected page stays byte exact"); assert.deepEqual(writes, []); assert.equal(wals.length, 0, "invalid source mapping cannot reach a write WAL");
+    assert.equal(record.p1?.phase, "plan"); assert.equal(record.sources.some(source => source.status === "processed"), false);
   } else {
-    assert.equal(result.status, "completed", result.message);
-    assert.equal(result.maintenanceResult?.status, "completed", result.message);
-    assert.equal(afterBytes.toString("utf8"), completed, "production persisted exactly the source-completed candidate");
-    assert.deepEqual(writes, [TARGET]);
-    assert.equal(knowledgeWals.length, 1);
-    assert.equal(terminalWals.length, 1, "execute also stores a terminal record after the knowledge WAL");
-    assert.equal(knowledgeWals[0].status, "completed");
-    assert.equal(knowledgeWals[0].actions.length, 1);
-    assert.equal(knowledgeWals[0].actions[0].status, "completed");
-    assert.deepEqual(validationOutcome(knowledgeWals[0].preview.actions[0].content, scenario.selected, before), { evidence: scenario.evidence });
-    assert.ok(events.indexOf("knowledge-wal") < events.indexOf("after-wal-before-first-write"));
-    assert.ok(events.indexOf("after-wal-before-first-write") < events.indexOf(`write:${TARGET}`));
-    assert.deepEqual(result.producedPaths, [TARGET]);
-    assert.deepEqual([...result.processedSourcePaths ?? []].sort(), [...scenario.selected].sort(),
-      "all selected Raw were declared read; processed includes read sources that need no additional note");
-    assert.equal(record.result.status, "completed");
-    assert.deepEqual(record.sources.filter(source => source.status === "processed").map(source => ({ path: source.path, evidencePaths: source.evidencePaths }))
-      .sort((left, right) => left.path.localeCompare(right.path)),
-      scenario.selected.map(relative => ({ path: relative, evidencePaths: scenario.evidence?.includes(relative) ? [TARGET] : [] }))
-        .sort((left, right) => left.path.localeCompare(right.path)));
-    assert.equal(Buffer.from(undoConceptLink(afterBytes.toString("utf8"))).equals(Buffer.from(before)), false);
+    assert.equal(result.status, "completed", result.message); assert.equal(result.maintenanceResult?.status, "completed");
+    assert.equal(frontmatter(afterBytes.toString("utf8")), frontmatter(before));
+    const withoutSources = (markdown: string) => {
+      const sources = createMaintenanceSectionSnapshot(markdown).regions.find(region => region.kind === "sources");
+      assert.ok(sources, "the fixture and output have an independently managed source region");
+      return markdown.slice(0, sources.start) + markdown.slice(sources.end);
+    };
+    assert.equal(undoConceptLink(withoutSources(afterBytes.toString("utf8"))), withoutSources(before), "only the requested concept link and the independent source region may change; all other paragraphs/whitespace are byte exact");
+    assert.ok(afterBytes.includes(Buffer.from(AGENT_LINK)), "requested concept patch is persisted");
+    assert.deepEqual(validationOutcome(afterBytes.toString("utf8"), scenario.selected, before), { evidence: scenario.evidence });
+    assert.deepEqual(writes.filter(relative => relative.startsWith("wiki/")), [TARGET, "wiki/合成回归索引.md"], "P2 adds one managed domain map after the content page");
+    assert.equal(knowledgeWals.length, 2, "content and managed map both have ordinary WAL/readback"); assert.equal(terminalWals.length, 0, "P1 settles the existing parent record instead of creating duplicate terminal WAL records");
+    assert.equal(knowledgeWals[0].status, "completed"); assert.equal(knowledgeWals[0].actions[0].status, "completed");
+    assert.ok(events.indexOf("knowledge-wal") < events.indexOf("after-wal-before-first-write")); assert.ok(events.indexOf("after-wal-before-first-write") < events.indexOf(`write:${TARGET}`));
+    assert.deepEqual(result.producedPaths, [TARGET]); assert.deepEqual([...result.processedSourcePaths ?? []].sort(), [...scenario.selected].sort());
+    assert.deepEqual(record.sources.filter(source => source.status === "processed").map(source => ({ path: source.path, evidencePaths: source.evidencePaths })).sort((a, b) => a.path.localeCompare(b.path)),
+      scenario.selected.map(relative => ({ path: relative, evidencePaths: scenario.evidence?.includes(relative) ? [TARGET] : [] })).sort((a, b) => a.path.localeCompare(b.path)));
   }
-  // Raw files and the target page are real files in the disposable fixture.
-  for (const [relative, content] of Object.entries(RAW)) assert.equal(await readFile(path.join(vault, relative), "utf8"), content);
-  assert.equal(await readFile(path.join(vault, "wiki/Agent.md"), "utf8"), "---\naliases: [智能体]\n---\n# Agent\n");
-  assert.equal(fixture.providerCalls(), 0);
-  return { productionStatus: result.status, resultStatus: result.maintenanceResult?.status,
-    errorCode: result.errorCode ?? null, formalWrites: writes.length, targetByteIdentical: afterBytes.equals(Buffer.from(before)),
-    knowledgeWals: knowledgeWals.length, terminalOnlyWals: terminalWals.length,
-    persistedMachineSources: sourceMarkers(afterBytes.toString("utf8")).map(marker => marker.path),
-    processedSources: result.processedSourcePaths ?? [],
-    linkOnlyBytesPreserved: Buffer.from(undoConceptLink(afterBytes.toString("utf8"))).equals(Buffer.from(before)) };
+  for (const [relative, content] of Object.entries(RAW)) {
+    const actual = await readFile(path.join(vault, relative), "utf8");
+    if (scenario.rejection || !scenario.selected.includes(relative as RawPath)) assert.equal(actual, content);
+    else assert.equal(canonicalRawMarkdownForDigest(actual), canonicalRawMarkdownForDigest(content), "selected source body is immutable while controlled metadata may be added");
+  }
+  assert.equal(await readFile(path.join(vault, "wiki/Agent.md"), "utf8"), "---\naliases: [智能体]\n---\n# Agent\n"); assert.equal(fixture.providerCalls(), 0);
+  return { productionStatus: result.status, resultStatus: result.maintenanceResult?.status, errorCode: result.errorCode ?? null, formalWrites: writes.length, targetByteIdentical: afterBytes.equals(Buffer.from(before)), knowledgeWals: knowledgeWals.length, terminalOnlyWals: terminalWals.length, persistedMachineSources: sourceMarkers(afterBytes.toString("utf8")).map(marker => marker.path), processedSources: result.processedSourcePaths ?? [] };
 }
 
 function originalNote(sources: readonly RawPath[]): string {
-  return "---\naliases: [人工智能]\nstatus: established\n---\n# AI\n\n智能体会调用工具。\n\n"
+  return "---\naliases: [人工智能]\nstatus: established\n---\n# AI\n\n智能体会调用工具。\n\n## 来源\n"
     + sources.map((relative, index) => `[[${relative}|旧材料 ${index + 1}]]\n${originalMarker(relative)}\n`).join("");
 }
 

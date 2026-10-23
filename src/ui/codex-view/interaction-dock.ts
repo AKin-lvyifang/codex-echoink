@@ -124,7 +124,8 @@ export class InteractionDockController {
     }
 
     const errorId = `codex-interaction-error-${safeDomIdentity(interaction.interactionId)}-${safeDomIdentity(question.questionId)}`;
-    const fieldset = card.createEl("fieldset", {
+    const body = card.createDiv({ cls: "codex-interaction-body" });
+    const fieldset = body.createEl("fieldset", {
       cls: "codex-interaction-question",
       attr: {
         ...(state.invalidQuestionId === question.questionId

@@ -1,3 +1,6 @@
+import { MAINTENANCE_KNOWLEDGE_TYPES } from "../../knowledge-base/maintenance-knowledge-types";
+import type { MaintenanceP1Action } from "../../knowledge-base/maintenance-p1-contract";
+import { throwMaintenanceDiagnostics } from "../../knowledge-base/maintenance-diagnostics";
 import { knowledgeRolePath, knowledgePathRole } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { isDeepStrictEqual } from "node:util";
@@ -21,7 +24,7 @@ import {
   secureVaultToolResult,
   type VaultToolResultEgressPort
 } from "./vault-tool-result-safety";
-import { echoInkKnowledgeMaintenanceProtocolPrompt } from "../../knowledge-base/knowledge-maintenance-protocol";
+import { echoInkKnowledgeMaintenanceProtocolPrompt, MAINTENANCE_TOOL_PARAMETER_EXAMPLES } from "../../knowledge-base/knowledge-maintenance-protocol";
 import { isRawMarkdownPath } from "../../knowledge-base/raw-digest";
 import type { KnowledgeMaintenanceAssessment } from "../../knowledge-base/knowledge-maintenance-result";
 
@@ -32,7 +35,7 @@ const RESULT_PENDING_SAFETY = "knowledge_maintain_result_pending_safety";
 
 /** File revisions identify citations; only an explicitly observed Raw body digest authorizes maintenance. */
 export function recordMaintenanceSourceBodyFingerprint(fingerprints: Record<string, string>, relativePath: string, fingerprint: string | undefined, vaultRoot = ""): void {
-  if (knowledgePathRole(vaultRoot, relativePath) === "raw" && typeof fingerprint === "string" && /^sha256:\d+:[a-f0-9]{64}$/u.test(fingerprint)) fingerprints[relativePath] = fingerprint;
+  if (["raw", "inbox"].includes(knowledgePathRole(vaultRoot, relativePath) ?? "") && typeof fingerprint === "string" && /^sha256:\d+:[a-f0-9]{64}$/u.test(fingerprint)) fingerprints[relativePath] = fingerprint;
 }
 
 /** Reuse source versions already delivered in this conversation after reopening. */
@@ -94,6 +97,7 @@ interface KnowledgeMaintenanceCandidateAction {
 interface AuthorizedMaintenanceExecution {
   readonly identity: Readonly<PiKnowledgeRunIdentity>;
   readonly command: Readonly<PiKnowledgeMaintenanceCommandContext>;
+  readonly p1: Readonly<MaintenanceP1Action>;
   readonly candidateActions: readonly Readonly<KnowledgeMaintenanceCandidateAction>[];
   readonly sourcePaths: readonly string[];
   readonly assessments: readonly Readonly<KnowledgeMaintenanceAssessment>[];
@@ -166,6 +170,7 @@ implements PiVaultAdditionalToolSecurityPort {
     this.executions.set(event.toolCallId, {
       identity,
       command,
+      p1: normalizeP1(event.input),
       candidateActions,
       sourcePaths,
       assessments,
@@ -181,6 +186,7 @@ implements PiVaultAdditionalToolSecurityPort {
   ): Readonly<{
     identity: Readonly<PiKnowledgeRunIdentity>;
     command: Readonly<PiKnowledgeMaintenanceCommandContext>;
+    p1: Readonly<MaintenanceP1Action>;
     candidateActions: readonly Readonly<KnowledgeMaintenanceCandidateAction>[];
     sourcePaths: readonly string[];
     assessments: readonly Readonly<KnowledgeMaintenanceAssessment>[];
@@ -201,6 +207,7 @@ implements PiVaultAdditionalToolSecurityPort {
     return Object.freeze({
       identity: execution.identity,
       command: execution.command,
+      p1: execution.p1,
       candidateActions: execution.candidateActions,
       sourcePaths: execution.sourcePaths,
       assessments: execution.assessments
@@ -259,6 +266,8 @@ implements PiVaultAdditionalToolSecurityPort {
           productRunId: execution.identity.productRunId,
           piSessionId: execution.identity.piSessionId,
           status: execution.result.status,
+          ...(execution.result.userReceipt ? { userReceipt: execution.result.userReceipt } : {}),
+          ...(execution.result.maintenanceStage ? { maintenanceStage: execution.result.maintenanceStage } : {}),
           ...(execution.result.protocolVersion
             ? { protocolVersion: execution.result.protocolVersion }
             : {}),
@@ -317,55 +326,16 @@ export function createPiKnowledgeMaintenanceToolDefinition(
   return defineTool({
     name: PI_KNOWLEDGE_MAINTAIN_TOOL_ID,
     label: "维护知识库",
-    description: [
-      "用户要求维护知识库时，提交当前已确认范围内的知识维护动作。",
-      "资料与目标均使用本轮上下文中提供的真实绑定路径；未启用用途不写入。",
-      "exact 范围只可使用已绑定单篇 Raw；batch 范围只可使用已绑定的 1-20 篇 Raw；query 范围必须从候选中选择唯一 sourcePaths；global 范围不得提供 sourcePaths。",
-      "只读取本轮已选真实来源；global 待处理范围由程序私有状态提供，不读取 Tracker 文件。candidateActions 只写当前绑定的知识成果或项目位置。",
-      "每个候选必须携带 expectedTarget。更新已有目标前先 note_read，并原样使用其 contentRevision；确认目标不存在时使用 kind=missing。",
-      "维护记录由 EchoInk 私有保存，不要把索引、Tracker 或报告放进 candidateActions。",
-      "候选完成自检后可分次提交或修正后重试；工具会安全写入并回读。Raw 属性和 Tag 使用 metadata_update，保持正文不变。",
-      "同时对重要知识主张给出 assessments：仍有效(valid)、需补充(needs_supplement)、已过时(outdated)或冲突(conflict)，并记录证据、日期和是否完成外部核验；assessments 可选；无法核验时使用 unverified。"
-    ].join(""),
-    parameters: Type.Object({
-      sourcePaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
-        minItems: 1,
-        maxItems: 20
-      })),
-      candidateActions: Type.Optional(Type.Array(Type.Object({
-        targetPath: Type.String({ minLength: 1 }),
-        content: Type.String(),
-        expectedTarget: Type.Union([
-          Type.Object({
-            kind: Type.Literal("missing")
-          }, { additionalProperties: false }),
-          Type.Object({
-            kind: Type.Literal("file"),
-            contentRevision: Type.String({
-              pattern: "^sha256:[a-f0-9]{64}$"
-            })
-          }, { additionalProperties: false })
-        ])
-      }, { additionalProperties: true }))),
-      assessments: Type.Optional(Type.Array(Type.Object({
-        claim: Type.String({ minLength: 1, maxLength: 500 }),
-        status: Type.Union([
-          Type.Literal("valid"),
-          Type.Literal("needs_supplement"),
-          Type.Literal("outdated"),
-          Type.Literal("conflict")
-        ]),
-        evidence: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), {
-          maxItems: 20
-        }),
-        asOf: Type.String({ minLength: 1, maxLength: 100 }),
-        verification: Type.Union([
-          Type.Literal("local_verified"),
-          Type.Literal("external_verified"),
-          Type.Literal("unverified")
-        ])
-      }, { additionalProperties: false }), { maxItems: 100 }))
-    }, { additionalProperties: false }),
+    description: "仅在显式 /maintain 范围内串行维护。必须 decompose（每篇摘要与七类结构化知识点/原句版本证据，可逐篇检查点，全批齐备后返回Wiki候选）→plan（knowledge.unitIds、同知识点decision/理由与related关系，固定逐页写作清单）→write（每次一页），成功页不重写；失败后 resume 仅补未完成。新页提供content；已有页先sections取得完整快照regionId，再sectionPatches只追加/替换选中区域。来源/相关条目为独立区，错误编号重新sections，不猜不整页覆盖。禁止生成关键原句小节，已有同名用户小节逐字保留。只有全部页与原文三个字段成功才已提炼。\n" + MAINTENANCE_TOOL_PARAMETER_EXAMPLES,
+    parameters: diagnosticParameters(Type.Object({
+      stage: Type.Union(["decompose", "plan", "write", "resume", "sections", "inspect"].map(value => Type.Literal(value))),
+      sourcePaths: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 20 })),
+      decompositions: Type.Optional(Type.Array(Type.Object({ sourcePath: Type.String(), summary: Type.String(), units: Type.Array(Type.Object({ id: Type.String(), type: Type.Union(MAINTENANCE_KNOWLEDGE_TYPES.map(value => Type.Literal(value))), typePendingConfirmation: Type.Optional(Type.Boolean()), domain: Type.String(), title: Type.String(), aliases: Type.Optional(Type.Array(Type.String())), points: Type.Array(Type.String(), { minItems: 1 }), evidence: Type.Array(Type.Object({ sourcePath: Type.String(), sourceRevision: Type.String(), quote: Type.String() }, { additionalProperties: false }), { minItems: 1 }) }, { additionalProperties: false })) }, { additionalProperties: false }), { maxItems: 20 })),
+      writingPlan: Type.Optional(Type.Array(Type.Object({ id: Type.String(), targetPath: Type.String(), sourcePaths: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }), newSections: Type.Optional(Type.Array(Type.String(), { maxItems: 20 })), expectedTarget: Type.Union([Type.Object({ kind: Type.Literal("missing") }), Type.Object({ kind: Type.Literal("file"), contentRevision: Type.String() })]), knowledge: Type.Object({ unitIds: Type.Array(Type.String(), { minItems: 1 }), decision: Type.Object({ kind: Type.Union([Type.Literal("new"), Type.Literal("same_point"), Type.Literal("uncertain")]), reason: Type.String(), candidatePath: Type.Optional(Type.String()) }, { additionalProperties: false }), related: Type.Optional(Type.Array(Type.Object({ targetPath: Type.String(), reason: Type.String(), reverseReason: Type.Optional(Type.String()) }, { additionalProperties: false }))), type: Type.Optional(Type.Union(MAINTENANCE_KNOWLEDGE_TYPES.map(value => Type.Literal(value)))), domain: Type.Optional(Type.String()) }, { additionalProperties: false }) }, { additionalProperties: false }), { maxItems: 100 })),
+      view: Type.Optional(Type.Union([Type.Literal("candidates"), Type.Literal("units"), Type.Literal("pages")])), offset: Type.Optional(Type.Integer({ minimum: 0 })),
+      pageId: Type.Optional(Type.String()), targetPath: Type.Optional(Type.String()), content: Type.Optional(Type.String()),
+      sectionPatches: Type.Optional(Type.Array(Type.Object({ regionId: Type.String(), operation: Type.Union([Type.Literal("append"), Type.Literal("replace")]), content: Type.String() }, { additionalProperties: false }), { maxItems: 100 }))
+    }, { additionalProperties: false })),
     executionMode: "sequential",
     execute: async (toolCallId, rawArguments, signal) => {
       const authorized = options.security.consume(toolCallId, rawArguments);
@@ -374,6 +344,7 @@ export function createPiKnowledgeMaintenanceToolDefinition(
         toolCallId,
         mode: "maintain",
         request: authorized.command.request,
+        p1: authorized.p1,
         sourcePaths: authorized.sourcePaths,
         candidateActions: authorized.candidateActions,
         assessments: authorized.assessments,
@@ -421,7 +392,8 @@ function normalizeArguments(
   }
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record);
-  const allowedKeys = new Set(["candidateActions", "sourcePaths", "assessments"]);
+  const p1 = normalizeP1(value);
+  const allowedKeys = new Set(["stage", "sourcePaths", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches", "view", "offset"]);
   if (
     keys.some((key) => !allowedKeys.has(key))
     || (record.candidateActions !== undefined && (!Array.isArray(record.candidateActions) || record.candidateActions.length > 100))
@@ -459,9 +431,8 @@ function normalizeArguments(
   );
   return Object.freeze({
     arguments: Object.freeze({
-      candidateActions,
-      ...(sourcePaths.length ? { sourcePaths } : {}),
-      assessments
+      ...p1,
+      ...(sourcePaths.length ? { sourcePaths } : {})
     }),
     candidateActions,
     sourcePaths,
@@ -698,4 +669,63 @@ function rejectedResult(
     }),
     isError: true
   });
+}
+
+function normalizeP1(value: unknown): Readonly<MaintenanceP1Action> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("knowledge_maintenance_stage_required");
+  const r = value as Record<string, unknown>;
+  if (!["decompose", "plan", "write", "resume", "sections", "inspect"].includes(String(r.stage))) throw new TypeError("knowledge_maintenance_stage_required: decompose -> plan -> write; resume 补未完");
+  const errors: string[] = [];
+  const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+  const keys = (item: Record<string, unknown>, allowed: string[], location: string) => { for (const key of Object.keys(item)) if (!allowed.includes(key)) errors.push(`${location}.${key}不是允许字段；按工具完整示例的嵌套层级提交。`); };
+  const text = (value: unknown, location: string) => { if (typeof value !== "string" || !value.trim()) errors.push(`${location}须为非空字符串。`); };
+  const list = (value: unknown, location: string, maximum = 100): value is unknown[] => { if (!Array.isArray(value) || value.length > maximum) { errors.push(`${location}须为最多${maximum}项的数组。`); return false; } return true; };
+  const strings = (value: unknown, location: string, nonempty = false) => { if (list(value, location)) { if (nonempty && !value.length) errors.push(`${location}不能为空。`); value.forEach((item,index) => text(item, `${location}[${index}]`)); } };
+  keys(r, ["stage", "sourcePaths", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches", "view", "offset"], "root");
+  if (r.view !== undefined && !["candidates", "units", "pages"].includes(String(r.view))) errors.push("view只可为candidates/units/pages。");
+  if (r.offset !== undefined && (!Number.isSafeInteger(r.offset) || Number(r.offset) < 0)) errors.push("offset须为非负整数。");
+  for (const key of ["pageId", "targetPath"]) if (r[key] !== undefined || (r.stage === "write" && key === "pageId") || (r.stage === "sections" && key === "targetPath")) text(r[key], key);
+  if (r.content !== undefined && typeof r.content !== "string") errors.push("content须为Markdown字符串。");
+  if (r.decompositions !== undefined || r.stage === "decompose") if (list(r.decompositions, "decompositions", 20)) r.decompositions.forEach((d,index) => {
+    const at = `decompositions[${index}]`;
+    if (!object(d)) { errors.push(`${at}须含sourcePath/summary/units的对象。`); return; }
+    keys(d, ["sourcePath", "summary", "units"], at); text(d.sourcePath, `${at}.sourcePath`); text(d.summary, `${at}.summary`);
+    if (list(d.units, `${at}.units`)) d.units.forEach((unit,j) => {
+      const path = `${at}.units[${j}]`;
+      if (!object(unit)) { errors.push(`${path}须为七类型结构化对象，不能是旧字符串。`); return; }
+      keys(unit, ["id", "type", "typePendingConfirmation", "domain", "title", "aliases", "points", "evidence"], path);
+      for (const key of ["id", "domain", "title"]) text(unit[key], `${path}.${key}`);
+      if (!MAINTENANCE_KNOWLEDGE_TYPES.includes(unit.type as never)) errors.push(`${path}.type须为七种正式类型之一。`);
+      if (unit.typePendingConfirmation !== undefined && typeof unit.typePendingConfirmation !== "boolean") errors.push(`${path}.typePendingConfirmation须为boolean。`);
+      if (unit.aliases !== undefined) strings(unit.aliases, `${path}.aliases`);
+      strings(unit.points, `${path}.points`, true);
+      if (list(unit.evidence, `${path}.evidence`)) { if (!unit.evidence.length) errors.push(`${path}.evidence不能为空。`); unit.evidence.forEach((e,k) => { const at = `${path}.evidence[${k}]`; if (!object(e)) { errors.push(`${at}须为sourcePath/sourceRevision/quote对象。`); return; } keys(e, ["sourcePath", "sourceRevision", "quote"], at); for (const key of ["sourcePath", "sourceRevision", "quote"]) text(e[key], `${at}.${key}`); }); }
+    });
+  });
+  if (r.writingPlan !== undefined || r.stage === "plan") if (list(r.writingPlan, "writingPlan")) r.writingPlan.forEach((item,index) => {
+    const at = `writingPlan[${index}]`;
+    if (!object(item)) { errors.push(`${at}须为清单对象。`); return; }
+    keys(item, ["id", "targetPath", "sourcePaths", "expectedTarget", "knowledge", "newSections"], at);
+    text(item.id, `${at}.id`); text(item.targetPath, `${at}.targetPath`); strings(item.sourcePaths, `${at}.sourcePaths`, true);
+    if (item.newSections !== undefined) { if (list(item.newSections, `${at}.newSections`, 20)) item.newSections.forEach((title,i) => text(title, `${at}.newSections[${i}]`)); }
+    if (!object(item.expectedTarget) || !["missing", "file"].includes(String(item.expectedTarget.kind))) errors.push(`${at}.expectedTarget须为{kind:"missing"}或{kind:"file",contentRevision:真实版本}。`);
+    else { keys(item.expectedTarget, item.expectedTarget.kind === "file" ? ["kind", "contentRevision"] : ["kind"], `${at}.expectedTarget`); if (item.expectedTarget.kind === "file") text(item.expectedTarget.contentRevision, `${at}.expectedTarget.contentRevision`); }
+    const k = item.knowledge;
+    if (!object(k)) { errors.push(`${at}.knowledge须嵌套unitIds/decision/related，不能放在清单条目顶层。`); return; }
+    keys(k, ["unitIds", "decision", "related", "type", "domain"], `${at}.knowledge`); strings(k.unitIds, `${at}.knowledge.unitIds`, true);
+    if (!object(k.decision)) errors.push(`${at}.knowledge.decision须含kind/reason。`);
+    else { keys(k.decision, ["kind", "reason", "candidatePath"], `${at}.knowledge.decision`); if (!["new", "same_point", "uncertain"].includes(String(k.decision.kind))) errors.push(`${at}.knowledge.decision.kind非法。`); text(k.decision.reason, `${at}.knowledge.decision.reason`); if (k.decision.candidatePath !== undefined) text(k.decision.candidatePath, `${at}.knowledge.decision.candidatePath`); }
+    if (k.related !== undefined && list(k.related, `${at}.knowledge.related`)) k.related.forEach((relation,i) => { const at = `writingPlan[${index}].knowledge.related[${i}]`; if (!object(relation)) { errors.push(`${at}须为关系对象。`); return; } keys(relation, ["targetPath", "reason", "reverseReason"], at); text(relation.targetPath, `${at}.targetPath`); text(relation.reason, `${at}.reason`); if (relation.reverseReason !== undefined) text(relation.reverseReason, `${at}.reverseReason`); });
+  });
+  if (r.sectionPatches !== undefined && list(r.sectionPatches, "sectionPatches")) r.sectionPatches.forEach((patch,index) => { const at = `sectionPatches[${index}]`; if (!object(patch)) { errors.push(`${at}须为区域补丁对象。`); return; } keys(patch, ["regionId", "operation", "content"], at); text(patch.regionId, `${at}.regionId`); if (!["append", "replace"].includes(String(patch.operation))) errors.push(`${at}.operation须为append/replace。`); if (typeof patch.content !== "string") errors.push(`${at}.content须为正文字符串，不包含新标题。`); });
+  throwMaintenanceDiagnostics(errors);
+  const cloned = JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(r).filter(([key]) => key !== "sourcePaths")))) as MaintenanceP1Action;
+  for (const d of cloned.decompositions ?? []) for (const u of d.units) if (typeof u !== "string" && u.aliases === undefined) (u as { aliases: readonly string[] }).aliases = [];
+  return Object.freeze(cloned);
+}
+
+/** SDK validates before tool_call hooks. Keep the rich schema as a model hint,
+ * but route field-shape failures through our bounded production diagnostics. */
+function diagnosticParameters<T extends { properties: Record<string, unknown> }>(schema: T): T {
+  return { ...schema, required: [], additionalProperties: true, properties: Object.fromEntries(Object.entries(schema.properties).map(([key,value]) => [key, { anyOf: [value, {}] }])) } as T;
 }

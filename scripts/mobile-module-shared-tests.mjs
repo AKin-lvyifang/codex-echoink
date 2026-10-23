@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { homedir } from "node:os";
@@ -6,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import esbuild from "esbuild";
 
 const project = fileURLToPath(new URL("../", import.meta.url));
-const root = path.join(homedir(), "EchoInk-TestVaults/90-任务临时/移动端改版-M11-20261019");
+const root = disposableTestRoot(path.join(homedir(), "EchoInk-TestVaults/90-任务临时/移动端改版-M11-20261019"));
 await fs.mkdir(root, { recursive: true });
 const directory = await fs.mkdtemp(path.join(root, "module-shared-"));
 const suites = {

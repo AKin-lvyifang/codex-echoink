@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { disposableTestRoot } from "../disposable-test-root.mjs";
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile, lstat, copyFile, symlink, rm, readdir } from 'node:fs/promises';
@@ -88,7 +89,7 @@ export async function runEvaluation(options) {
   const runId = options['run-id'];
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/u.test(runId ?? '')) throw new Error('run-id must be 1-120 ASCII letters/digits/._-');
   if (contains(datasetPath, outputRun)) throw new Error('Runtime output cannot be inside frozen dataset');
-  const workRoot = path.join(os.homedir(), 'EchoInk-TestVaults', '90-任务临时', `知识库-召回评测-${runId}`);
+  const workRoot = path.join(disposableTestRoot(path.join(os.homedir(), 'EchoInk-TestVaults', '90-任务临时')), `知识库-召回评测-${runId}`);
   if (contains(datasetPath, workRoot) || contains(workRoot, datasetPath)) throw new Error('Dataset and work directory must be separate');
   await ensureNew(outputRun);
   await ensureNew(workRoot);
@@ -99,7 +100,7 @@ export async function runEvaluation(options) {
   const code = {
     git_commit: git(sourceRoot, ['rev-parse', 'HEAD']),
     retrieval_baseline_commit: baselineCommit,
-    retrieval_matches_baseline: git(sourceRoot, ['diff', baselineCommit, '--', 'src']) === '',
+    retrieval_matches_baseline: git(sourceRoot, ['diff', '--name-only', baselineCommit, '--', 'src']) === '',
     evaluator_version: 'knowledge-recall-eval-v1',
     evaluator_git_commit: git(path.resolve(here, '../..'), ['rev-parse', 'HEAD']),
     evaluator_files: await Promise.all((await readdir(here)).filter(name => /\.(?:mjs|ts)$/u.test(name)).sort().map(async name => ({ path: name, sha256: createHash('sha256').update(await readFile(path.join(here, name))).digest('hex') }))),

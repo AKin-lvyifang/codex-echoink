@@ -1,4 +1,5 @@
 import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
+import { maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
 import { renderGenerationRequestSummary, renderGenerationResultCard } from "../../generation/message-ui";
 import type CodexForObsidianPlugin from "../../main";
 import { knowledgeLinkingProgressText } from "./knowledge-linking-progress";
@@ -1948,9 +1949,9 @@ export class CodexMessageListRenderer {
     setIcon(icon, payload.status === "success" ? "badge-check" : payload.status === "canceled" ? "circle-slash" : "triangle-alert");
     const title = header.createDiv({ cls: "codex-kb-maintain-title" });
     title.createDiv({ cls: "codex-kb-maintain-title-text", text: payload.title });
-    if (payload.reportPath) title.createDiv({ cls: "codex-kb-maintain-report-path", text: payload.reportPath });
+    if (payload.reportPath) title.createDiv({ cls: "codex-kb-maintain-report-path", text: maintenancePageLabel(payload.reportPath) });
     if (payload.reportPath) {
-      const open = header.createEl("button", { cls: "codex-kb-maintain-open", attr: { type: "button", title: payload.reportPath } });
+      const open = header.createEl("button", { cls: "codex-kb-maintain-open", attr: { type: "button", title: maintenancePageLabel(payload.reportPath) } });
       setIcon(open.createSpan({ cls: "codex-kb-maintain-open-icon" }), "external-link");
       open.createSpan({ text: conversationUiText(language, "打开报告", "Open report") });
       open.onclick = (event) => {
@@ -1995,7 +1996,7 @@ export class CodexMessageListRenderer {
         };
         const summary = details.createEl("summary", { cls: "codex-kb-maintain-section-summary" });
         summary.createSpan({ cls: "codex-kb-maintain-section-name", text: section.title });
-        summary.createSpan({ cls: "codex-kb-maintain-section-count", text: String(section.count) });
+        summary.createSpan({ cls: "codex-kb-maintain-section-count", text: `${section.count} ${section.id === "knowledge-notes" ? "页" : "项"}` });
         const chevron = summary.createSpan({ cls: "codex-kb-maintain-section-chevron" });
         setIcon(chevron, "chevron-right");
         const body = details.createDiv({ cls: "codex-kb-maintain-section-body" });
@@ -2012,7 +2013,7 @@ export class CodexMessageListRenderer {
               text: item.title,
               attr: {
                 type: "button",
-                title: conversationUiText(language, `打开 ${itemPath}`, `Open ${itemPath}`)
+                title: conversationUiText(language, `打开 ${item.title}`, `Open ${item.title}`)
               }
             });
             title.onclick = (event) => {
@@ -4925,9 +4926,9 @@ export function knowledgeBaseMaintainExecutionItems(
 ): string[] {
   const items: string[] = [];
   if (payload.completion === "noop") items.push(conversationUiText(language, "无新来源", "No new sources"));
-  else if (payload.completion === "partial") items.push(conversationUiText(language, "部分完成", "Partially complete"));
-  else if (payload.completion === "recovered") items.push(conversationUiText(language, "自动恢复完成", "Recovered automatically"));
-  else if (payload.completion === "full") items.push(conversationUiText(language, "完整完成", "Complete"));
+  else if (payload.completion === "partial") items.push(conversationUiText(language, "没做完", "Not finished"));
+  else if (payload.completion === "recovered") items.push(conversationUiText(language, "已完成", "Completed"));
+  else if (payload.completion === "full") items.push(conversationUiText(language, "已完成", "Completed"));
 
   if (payload.performance) {
     items.push(formatKnowledgeBaseRunDuration(payload.performance.totalMs, language));

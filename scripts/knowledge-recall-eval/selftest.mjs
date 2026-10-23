@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "../disposable-test-root.mjs";
 import assert from 'node:assert/strict';
 import { appendFile, mkdir, readFile, writeFile, rm, symlink, access, lstat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -11,8 +12,8 @@ import { judgePromptBoundary } from './prompt-boundary.mjs';
 
 process.env.PI_OFFLINE = '1';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const temporary = path.join(os.homedir(), 'EchoInk-TestVaults/90-任务临时');
-const registry = path.join(os.homedir(), 'EchoInk-TestVaults/README.md');
+const temporary = disposableTestRoot(path.join(os.homedir(), 'EchoInk-TestVaults/90-任务临时'));
+const registry = process.env.ECHOINK_TEST_ROOT ? path.join(temporary, 'selftest-registry.md') : path.join(os.homedir(), 'EchoInk-TestVaults/README.md');
 const runId = `selftest-${process.pid}-${Date.now()}-${randomUUID()}`;
 const fixture = path.join(temporary, `知识库-召回评测-${runId}-fixture`);
 const dataset = path.join(fixture, 'dataset');

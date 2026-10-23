@@ -33,7 +33,7 @@ interface AuthorizedUserQuestionCall {
   state: "authorized" | "consumed" | "result_ready";
   result?: Readonly<{
     interactionId: string;
-    outcome: "answered";
+    outcome: "answered" | "cancelled";
     questionCount: number;
     text: string;
   }>;
@@ -92,7 +92,7 @@ implements PiVaultAdditionalToolSecurityPort {
     toolCallId: string,
     result: Readonly<{
       interactionId: string;
-      outcome: "answered";
+      outcome: "answered" | "cancelled";
       questionCount: number;
       text: string;
     }>
@@ -145,7 +145,7 @@ implements PiVaultAdditionalToolSecurityPort {
           outcome: call.result.outcome,
           questionCount: call.result.questionCount
         }),
-        isError: false
+        isError: call.result.outcome === "cancelled"
       });
     } finally {
       this.calls.delete(event.toolCallId);
@@ -240,6 +240,12 @@ export function createPiUserQuestionToolDefinition(input: Readonly<{
         });
         appendInteractionRecord(input.sessionManager, context, record);
         await input.reportResolved(record).catch(() => undefined);
+        input.security.complete(_toolCallId, {
+          interactionId,
+          outcome: "cancelled",
+          questionCount: interaction.questions.length,
+          text: "用户取消了本次结构化问题。"
+        });
         throw new Error("用户取消了本次结构化问题。");
       }
       const updatedAt = input.now?.() ?? Date.now();

@@ -1,4 +1,4 @@
-import { mountKnowledgeLinkingProgress } from "./knowledge-linking-progress";
+import { mountKnowledgeActivityProgress, mountKnowledgeLinkingProgress } from "./knowledge-linking-progress";
 import { setIcon, type Component } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import type { StoredSession } from "../../settings/settings";
@@ -55,6 +55,7 @@ export interface CodexViewShellHost extends Component {
 
 export function renderViewShell(host: CodexViewShellHost): void {
   host.knowledgeLinkingProgressDispose?.();
+  host.knowledgeLinkingProgressDispose = undefined;
   host.contentEl.empty();
   host.contentEl.addClass("echoink-chat-surface");
   host.rootEl = host.contentEl.createDiv({ cls: "codex-container" });
@@ -83,14 +84,10 @@ export function renderViewShell(host: CodexViewShellHost): void {
     ])) host.closeComposerMenus();
   });
 
-  const linking = host.plugin.getKnowledgeSurfaceService()?.linking;
-  if (linking) {
-    const mount = host.rootEl.createDiv();
-    host.knowledgeLinkingProgressDispose = mountKnowledgeLinkingProgress(mount, linking, taskId => void host.plugin.openKnowledgeLinkingDetails(taskId), host.plugin.settings.settingsLanguage === "en");
-    host.register(() => host.knowledgeLinkingProgressDispose?.());
-  }
   host.tabBarEl = host.rootEl.createDiv({ cls: "codex-tabs" });
   const messagesShell = host.rootEl.createDiv({ cls: "codex-messages-shell" });
+  mountKnowledgeProgress(host, messagesShell.createDiv({ cls: "echoink-knowledge-activity-slot" }));
+  host.register(() => host.knowledgeLinkingProgressDispose?.());
   host.messagesEl = messagesShell.createDiv({ cls: "codex-messages" });
   host.virtualListEl = host.messagesEl.createDiv({ cls: "codex-virtual-list" });
   host.registerDomEvent(host.messagesEl, "wheel", (event) => host.messageScrollFollow.handleWheel(event as WheelEvent));
@@ -143,7 +140,32 @@ export function refreshViewShellCopy(host: CodexViewShellHost): void {
   if (!host.rootEl) return;
   refreshCodexHeaderCopy(host.rootEl, host.plugin.settings.settingsLanguage);
   refreshComposerShellCopy(host.rootEl, host.plugin.settings.settingsLanguage);
+  const progress = host.rootEl.querySelector<HTMLElement>(".echoink-knowledge-activity-slot");
+  if (progress) mountKnowledgeProgress(host, progress);
   applyViewShellCopy(host);
+}
+
+/** Keep the same mounted progress and subscription below the real task header. */
+export function moveKnowledgeProgressToTaskDetail(messagesShell: HTMLElement, taskDetail: HTMLElement): void {
+  const slot = Array.from(messagesShell.children).find(node => node.classList.contains("echoink-knowledge-activity-slot"));
+  if (slot) taskDetail.append(slot);
+}
+
+function mountKnowledgeProgress(host: CodexViewShellHost, mount: HTMLElement): void {
+  host.knowledgeLinkingProgressDispose?.();
+  host.knowledgeLinkingProgressDispose = undefined;
+  const source = host.plugin.getKnowledgeActivitySource();
+  const english = host.plugin.settings.settingsLanguage === "en";
+  if (source) {
+    host.knowledgeLinkingProgressDispose = mountKnowledgeActivityProgress(mount, source, activity => {
+      if (activity.kind === "maintenance") void host.plugin.openTaskDetail(activity.originConversationId);
+      else void host.plugin.openKnowledgeLinkingDetails(activity.task.id);
+    }, english);
+    return;
+  }
+  const linking = host.plugin.getKnowledgeSurfaceService()?.linking;
+  if (linking) host.knowledgeLinkingProgressDispose = mountKnowledgeLinkingProgress(mount, linking, taskId => void host.plugin.openKnowledgeLinkingDetails(taskId), english);
+  else mount.hidden = true;
 }
 
 function applyViewShellCopy(host: CodexViewShellHost): void {

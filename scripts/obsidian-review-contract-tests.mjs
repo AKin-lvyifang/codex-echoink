@@ -1,3 +1,4 @@
+import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -84,8 +85,8 @@ check(auditLintCoverage(root, ["src/example.ts"], [{ filePath: path.join(root, "
 const ignored = await auditResolvedContracts({ isPathIgnored: async () => true, calculateConfigForFile: async () => ({ rules: SOURCE_HARD_RULES }) }, root, ["src/example.ts"]);
 check(ignored.some(error => error.includes("ignored")), "ignored production source fails even with valid rules");
 
-fs.mkdirSync(path.join(root, ".tmp"), { recursive: true });
-const fixture = fs.mkdtempSync(path.join(root, ".tmp/obsidian-review-contract-"));
+fs.mkdirSync(disposableTestOutputRoot(path.join(root, ".tmp")), { recursive: true });
+const fixture = fs.mkdtempSync(path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "obsidian-review-contract-"));
 try {
   fs.mkdirSync(path.join(fixture, "src/nested"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "src/tests"), { recursive: true });

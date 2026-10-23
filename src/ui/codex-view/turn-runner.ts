@@ -53,6 +53,7 @@ import {
   selectedPiConversationDraftId
 } from "./pi-conversation-support";
 import { routeKnowledgeConversationCommand } from "../../knowledge-base/commands";
+import { isMaintenanceScopeConfirmation } from "../../harness/pi-native/maintenance-scope-context";
 import {
   PiImageInputError,
   preparePiChatImages
@@ -767,7 +768,8 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       return "failed";
     }
     try {
-      if (!maintenanceScope && item.turnOptions.permission !== "read-only") {
+      if (!maintenanceScope && item.turnOptions.permission !== "read-only"
+        && (item.attachments.length > 0 || !isMaintenanceScopeConfirmation(knowledgeCommand.request))) {
         maintenanceScope = await view.plugin.prepareEchoInkKnowledgeMaintenanceScope({
           request: knowledgeCommand.request,
           attachmentPaths: item.attachments.map((attachment) => attachment.path)

@@ -1278,7 +1278,7 @@ export async function runVaultBodySearchConcurrencyTests(): Promise<void> {
 
   // The legacy relation index needs real files. Keep this owned synthetic fixture in
   // the worktree; no native Obsidian Vault or operating-system temp Vault is used.
-  const temporaryRoot = path.join(process.cwd(), ".tmp");
+  const temporaryRoot = process.env.ECHOINK_KNOWLEDGE_TEST_ROOT ?? path.join(process.cwd(), ".tmp");
   await mkdir(temporaryRoot, { recursive: true });
   const root = await mkdtemp(path.join(temporaryRoot, "body-search-related-"));
   const bindings = emptyKnowledgeFolderBindings();

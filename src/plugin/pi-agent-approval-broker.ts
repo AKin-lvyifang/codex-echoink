@@ -62,6 +62,8 @@ export class PiAgentApprovalBroker {
   private readonly listeners = new Set<ApprovalListener>();
   private disposed = false;
 
+  constructor(private readonly onWaiting?: (input: Readonly<PiAgentApprovalWaitInput>, waiting: boolean) => void | Promise<void>) {}
+
   waitForDecision(input: Readonly<PiAgentApprovalWaitInput>): Promise<boolean> {
     const identity = normalizeIdentity(input);
     const requestId = requiredIdentity(input.requestId, "requestId");
@@ -76,7 +78,7 @@ export class PiAgentApprovalBroker {
       return Promise.reject(new Error("pi_agent_approval_cancelled"));
     }
 
-    return new Promise<boolean>((resolve, reject) => {
+    const pending = new Promise<boolean>((resolve, reject) => {
       let waiter!: ApprovalWaiter;
       const onAbort = input.signal
         ? () => this.cancelWaiter(waiter)
@@ -100,6 +102,11 @@ export class PiAgentApprovalBroker {
       this.waitersByIdentity.set(key, waiter);
       this.notify(runIdentityKey(waiter));
     });
+    if (!this.onWaiting) return pending;
+    void pending.catch(() => undefined);
+    // Every approval wrapper, including cancellation/disposal, uses this bridge.
+    // Install the live waiter synchronously so existing decision bindings stay valid.
+    return Promise.resolve(this.onWaiting(input, true)).then(() => pending).finally(() => this.onWaiting?.(input, false));
   }
 
   bindingFor(

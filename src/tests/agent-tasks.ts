@@ -26,6 +26,9 @@ import { FileConversationCatalog } from "../harness/pi-native/file-conversation-
 import { FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
 import { FileApprovalTicketStore } from "../harness/pi-native/tool-authorization";
 import { PiObsidianToolSecurity } from "../harness/pi-native/pi-obsidian-tools";
+import { MAINTENANCE_ACTIVITY_STAGES, maintenanceCompletionText, maintenanceTaskTitle, type KnowledgeActivitySnapshot, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
+import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
+import { mountKnowledgeActivityProgress } from "../ui/codex-view/knowledge-linking-progress";
 
 function createHost(catalog: any, runtime: any, settings: any): any {
   const local = { catalog, productRuns: runtime.productRuns,
@@ -55,6 +58,7 @@ export async function runAgentTaskTests(root: string): Promise<void> {
   const f = await createAgentRunFixture(path.join(root, "runtime"), createHost);
   f.plugin.app.vault = { getRoot: () => ({ children: [] }), getAbstractFileByPath: () => null };
   try {
+    await maintenanceDisplayProjection(f, dom.window.document);
     await pluginRemovalApprovalPresentation(path.join(root, "delete-approval-source"));
     await deleteApprovalPresentation(dom.window.document);
     await coldNavigationReadiness(f, dom.window.document);
@@ -67,6 +71,103 @@ export async function runAgentTaskTests(root: string): Promise<void> {
     await f.service.dispose(); await f.runtime.shutdown(); f.approvalBroker.dispose();
     disposeOriginControls(dom.window.document.body); dom.window.close();
     for (const [key, descriptor] of descriptors) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+  }
+}
+
+async function maintenanceDisplayProjection(f: any, doc: Document): Promise<void> {
+  const now = Date.now(), originalSource = f.plugin.getKnowledgeActivitySource, originalSurface = f.plugin.getKnowledgeSurfaceService;
+  const original = Object.freeze(task("maintenance-ui", { taskStatus: "running", taskStartedAt: now }));
+  const activity: MaintenanceActivity = { kind: "maintenance", id: "maintenance-ui-record", originConversationId: original.conversationId,
+    status: "running", stage: "write", sourceCount: 20, sourcePaths: ["Raw/资料.md"], batch: { index: 1, total: 1 },
+    activeElapsedMs: 1000, etaMs: null, failures: [], currentPath: "Wiki/知识条目.md", updatedAt: now,
+    pageCounts: { written: 14, created: 10, updated: 4 },
+    steps: MAINTENANCE_ACTIVITY_STAGES.map((stage, index) => ({ stage, completed: stage === "write" ? 7 : 0, total: stage === "write" ? 12 : null, state: index < 3 ? "completed" : index === 3 ? "running" : "pending" })) };
+  const foreign = { ...activity, id: "foreign", originConversationId: "another-task", status: "waiting" as const };
+  let snapshot: KnowledgeActivitySnapshot = { primary: foreign, other: activity, maintenance: [foreign, activity] };
+  const listeners = new Set<(snapshot: KnowledgeActivitySnapshot) => void>();
+  f.plugin.getKnowledgeActivitySource = () => ({ ready: Promise.resolve(), snapshot: () => snapshot,
+    subscribe(listener: (snapshot: KnowledgeActivitySnapshot) => void) { listeners.add(listener); listener(snapshot); return () => { listeners.delete(listener); }; } });
+  const view: any = new CodexView({} as never, f.plugin);
+  view.rootEl = doc.body.createDiv({ cls: "codex-container echoink-agent-tasks" });
+  view.tabBarEl = view.rootEl.createDiv(); view.taskListEl = view.rootEl.createDiv(); view.taskDetailEl = view.rootEl.createDiv();
+  view.taskDetailHeaderEl = view.taskDetailEl.createDiv(); view.taskEditorEl = view.rootEl.createDiv(); view.taskErrorEl = view.rootEl.createDiv();
+  const shell = view.taskDetailEl.createDiv(); view.messagesEl = shell.createDiv(); view.taskInterruptionEl = view.messagesEl.createDiv();
+  view.taskPlanDockEl = view.taskDetailEl.createDiv(); view.interactionDockEl = view.taskDetailEl.createDiv(); view.queueEl = view.rootEl.createDiv();
+  view.inputEl = view.rootEl.createDiv().createEl("textarea"); view.taskUiMounted = view.taskDetailLoaded = true;
+  view.taskEntries = [original]; view.updateInputPlaceholder = view.renderComposerTransfers = () => {};
+  const navigation = { page: { kind: "detail", taskId: original.conversationId } as any, token: 1 };
+  Object.defineProperty(view, "taskNavigation", { value: navigation });
+  const publish = (current: MaintenanceActivity) => {
+    snapshot = { primary: foreign, other: current, maintenance: [foreign, current] };
+    for (const listener of listeners) listener(snapshot);
+  };
+  try {
+    view.observeTaskMaintenance();
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "进行中", "global primary cannot override the current task");
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-detail-title")?.textContent, maintenanceTaskTitle(activity));
+    assert.doesNotMatch(view.taskSummaryText(original), /第 1 批|Batch/u, "One batch keeps the step and stage without a batch label");
+    assert.match(view.taskSummaryText(original), /第 4 步.*写Wiki/u);
+    const partial: MaintenanceActivity = { ...activity, status: "partial", updatedAt: now + 1,
+      failures: [{ key: "write:internal", message: "CAS revision stage resume targetPath Wiki/知识条目.md 冲突", at: now }] };
+    publish(partial);
+    const progress = doc.body.createDiv();
+    const unmountProgress = mountKnowledgeActivityProgress(progress, { ready: Promise.resolve(), snapshot: () => ({ primary: partial, other: null, maintenance: [partial] }), subscribe: () => () => {} }, () => {});
+    assert.equal(progress.querySelector(":scope > .echoink-knowledge-activity-failures"), null, "The outer duplicate failure list is removed");
+    assert.match(progress.querySelector(".echoink-knowledge-linking-progress-status")?.textContent ?? "", /不覆盖你的修改/u);
+    assert.equal((progress.querySelector(".echoink-knowledge-activity-details") as HTMLElement).hidden, true);
+    assert.equal(progress.querySelectorAll(".echoink-knowledge-activity-details .echoink-knowledge-activity-failures li").length, 1);
+    (progress.querySelector(".echoink-knowledge-linking-progress-button") as HTMLButtonElement).click();
+    assert.equal((progress.querySelector(".echoink-knowledge-activity-details") as HTMLElement).hidden, false);
+    assert.equal(partial.failures.length, 1, "Failure facts remain intact");
+    unmountProgress(); progress.remove();
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "没做完", "shared-source change refreshes the real header without catalog writes");
+    assert.equal(maintenanceVisibleCopyIsSafe(view.taskInterruptionEl.textContent), true);
+    assert.match(view.taskInterruptionEl.textContent, /《知识条目》.*不覆盖你的修改.*继续/u);
+    assert.equal(view.taskInterruptionEl.querySelector("button")?.disabled, false);
+    assert.equal(original.taskStatus, "running");
+    navigation.page = { kind: "list", agentId: "sol" }; view.renderTaskPages();
+    const card = view.taskListEl.querySelector('[data-task-id="maintenance-ui"]');
+    assert.equal(card.querySelector(".echoink-task-card-status")?.textContent, "没做完");
+    assert.equal(maintenanceVisibleCopyIsSafe(card.textContent), true);
+    assert.equal(maintenanceVisibleCopyIsSafe(card.getAttribute("aria-label")), true);
+    assert.match(card.textContent, /整理知识库（20 篇资料）/u);
+    publish({ ...partial, sourceCount: null });
+    assert.equal(view.taskListEl.querySelector(".echoink-task-card-title")?.textContent, "整理知识库", "An unknown source count never becomes zero");
+    navigation.page = { kind: "detail", taskId: original.conversationId };
+    publish({ ...activity, status: "waiting", updatedAt: now + 2 });
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "等你回应");
+    publish({ ...activity, status: "completed", completedAt: now + 3, updatedAt: now + 3 });
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "已完成");
+    assert.equal(view.taskSummaryText(original), maintenanceCompletionText(activity));
+    const upgrade = { ...activity, taskKind: "upgrade" as const, upgradeCounts: { sourceTotal: 20, sourceCompleted: 20, linkTotal: 4, linksCompleted: 4, wikiTotal: 3, wikiCompleted: 3 } };
+    publish(upgrade);
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-detail-title")?.textContent, "升级旧知识");
+    assert.ok(view.taskDetailHeaderEl.querySelector('[aria-label="停止升级"]'), "Upgrade stop stays available without a Pi agent run");
+    let stops = 0, upgradeTaskId = original.conversationId;
+    f.plugin.getKnowledgeSurfaceService = () => ({ getUpgradeSnapshot: async () => ({ status: "running", taskId: upgradeTaskId }), stopUpgrade: async () => { stops++; } });
+    await view.stopTurn(); assert.equal(stops, 1);
+    upgradeTaskId = "another-upgrade";
+    await assert.rejects(view.stopTurn(), /升级任务已更新/u); assert.equal(stops, 1, "A foreign upgrade cannot be stopped by this task");
+    const upgradeReason = "《旧资料》已有同名属性，原值保留，请核对后继续。";
+    const interruptedUpgrade = { ...upgrade, status: "interrupted" as const, failures: [{ key: "upgrade:review", message: upgradeReason, at: now + 3 }] };
+    publish(interruptedUpgrade);
+    assert.ok(view.taskInterruptionEl.textContent.includes(upgradeReason), "Controlled upgrade reasons keep the actual unresolved property");
+    const upgradeProgress = doc.body.createDiv();
+    const unmountUpgrade = mountKnowledgeActivityProgress(upgradeProgress, { ready: Promise.resolve(), snapshot: () => ({ primary: interruptedUpgrade, other: null, maintenance: [interruptedUpgrade] }), subscribe: () => () => {} }, () => {});
+    assert.ok(upgradeProgress.querySelector(".echoink-knowledge-activity-failures")?.textContent?.includes(upgradeReason));
+    assert.match(upgradeProgress.querySelector(".echoink-knowledge-activity-details")?.textContent ?? "", /判断类型.*核对变更.*补属性和链接/u);
+    assert.doesNotMatch(upgradeProgress.querySelector(".echoink-knowledge-activity-details")?.textContent ?? "", /写Wiki|已写好.*页/u);
+    unmountUpgrade(); upgradeProgress.remove();
+    publish({ ...upgrade, status: "completed", completedAt: now + 3, updatedAt: now + 3 });
+    assert.doesNotMatch(view.taskSummaryText(original), /生成.*Wiki/u);
+    assert.match(view.taskSummaryText(original), /20.*篇.*4.*条.*3.*页/u);
+    view.taskEntries = [{ ...original, taskStartedAt: now + 4 }]; view.renderTaskPages();
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "进行中", "later ordinary follow-up ignores completed maintenance");
+    assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-detail-title")?.textContent, original.title);
+    assert.equal(original.title, "maintenance-ui", "Display titles never rewrite the user's catalog title");
+  } finally {
+    view.taskMaintenanceDispose?.(); assert.equal(listeners.size, 0);
+    disposeOriginControls(view.rootEl); view.rootEl.remove(); f.plugin.getKnowledgeActivitySource = originalSource; f.plugin.getKnowledgeSurfaceService = originalSurface;
   }
 }
 
@@ -231,6 +332,7 @@ async function coldNavigationReadiness(f: any, doc: Document): Promise<void> {
       if (scenario === "list-conflict") f.settings.taskWorkspace.newTaskDrafts.sol = { text: "EXISTING-LIST-DRAFT", attachments: [] };
       f.settings.sessions = structuredClone(originals.sessions); f.settings.activeSessionId = "A";
       const view: any = new CodexView({} as never, f.plugin);
+      view.register = () => undefined; // The minimal Obsidian shim omits Component.register.
       view.contentEl = doc.body.createDiv(); view.inputEl = doc.createElement("textarea"); view.attachments = []; view.selectedSkill = null;
       for (const name of ["renderAttachments", "renderToolbar", "resetVirtualWindow", "renderMessages", "closeComposerMenus"]) view[name] = () => undefined;
       const initialReached = latch(), initialRelease = latch(), catalogReached = latch(), catalogRelease = latch(), navigationReached = latch();
@@ -273,7 +375,9 @@ async function coldNavigationReadiness(f: any, doc: Document): Promise<void> {
           assert.match(String(await opening), /injected task shell startup failure/);
           assert.equal(navigations, 0); assert.deepEqual(f.settings.taskWorkspace.page, { kind: "detail", taskId: "A" });
         } else {
-          initialRelease.resolve(); await catalogReached.promise; await navigationReached.promise;
+          initialRelease.resolve();
+          await Promise.race([catalogReached.promise, opening!.then(result => { throw result instanceof Error ? result : new Error("Task shell startup ended before the Catalog gate"); })]);
+          await navigationReached.promise;
           assert.equal(view.taskUiMounted, true); assert.ok(view.runSubscriptionDispose, "navigation starts only after the run subscription is installed");
           assert.deepEqual(f.settings.taskWorkspace.page, detail ? { kind: "detail", taskId: "B" } : { kind: "list", agentId: "sol" });
           const token = view.taskNavigation.token;
@@ -307,6 +411,7 @@ async function navigationAndSubmission(f: any, doc: Document): Promise<void> {
   const cold: any = new CodexView({} as never, f.plugin);
   assert.doesNotThrow(() => cold.refreshPersonalizationUi(), "identity initialization can finish before the View shell is mounted");
   const view: any = new CodexView({} as never, f.plugin);
+  view.register = () => undefined; // Real Obsidian provides the component cleanup registry.
   view.contentEl = doc.body.createDiv();
   view.inputEl = doc.createElement("textarea"); view.attachments = []; view.selectedSkill = null;
   for (const name of ["renderAttachments", "renderToolbar", "resetVirtualWindow", "renderMessages", "closeComposerMenus"]) view[name] = () => undefined;
@@ -574,42 +679,69 @@ async function asyncDraftAndSurfaceIsolation(f: any, view: any): Promise<void> {
   assert.equal(await f.service.start(f.item("A", "RUNNING-A-PRIVATE"), "composer"), "running");
   const flight = f.service.runs.get("A").flight;
   await started.promise;
-  const originalFollow = f.plugin.followUpPiConversation, originalSteer = f.plugin.steerPiConversation;
+  const originalCreateContext = view.createTurnRunnerContext, originalSteer = f.plugin.steerPiConversation;
   try {
-    for (const method of ["followUpPiConversation", "steerPiConversation"]) for (const switchPage of [true, false]) {
+    for (const method of ["enqueue", "steer"]) for (const switchPage of [true, false]) {
       await view.openTaskDetail("A"); view.clearComposerDraft();
       const submitted = `${method}-accepted-${switchPage}`;
       view.inputEl.value = submitted; view.saveTaskComposerDraft();
       const accepted = latch(), waiting = latch();
-      f.plugin[method] = async (id: string, text: string) => { assert.equal(id, "A"); assert.equal(text, submitted); waiting.resolve(); await accepted.promise; };
-      const sending = method === "followUpPiConversation" ? view.enqueueComposerDraft() : view.steerPiChatFromComposer();
-      await waiting.promise;
-      if (switchPage) await view.openAgentTaskList("colleague");
-      view.inputEl.value = "NEWER-DRAFT-MUST-SURVIVE";
-      view.attachments = [{ type: "file", path: path.join(f.root, "newer.txt"), name: "newer.txt" }];
-      accepted.resolve(); await sending;
-      assert.equal(view.inputEl.value, "NEWER-DRAFT-MUST-SURVIVE", `${method}: later text survives ${switchPage ? "another Agent list" : "the same task"}`);
-      assert.equal(view.attachments[0].name, "newer.txt");
-      if (switchPage) assert.equal(f.settings.taskWorkspace.replyDrafts.A.text, "", "only the accepted source snapshot is consumed");
+      let queuedSnapshot: any = null;
+      if (method === "enqueue") view.createTurnRunnerContext = (sessionId: string) => {
+        const context = originalCreateContext.call(view, sessionId), createQueued = context.createQueuedTurnFromComposer;
+        context.createQueuedTurnFromComposer = async (options: any) => {
+          const item = await createQueued(options);
+          assert.equal(item.sessionId, "A"); assert.equal(item.text, submitted);
+          queuedSnapshot = item; waiting.resolve(); await accepted.promise;
+          return item;
+        };
+        return context;
+      };
+      else f.plugin.steerPiConversation = async (id: string, text: string) => {
+        assert.equal(id, "A"); assert.equal(text, submitted); waiting.resolve(); await accepted.promise;
+      };
+      const sending = method === "enqueue" ? view.enqueueComposerDraft() : view.steerPiChatFromComposer();
+      try {
+        await Promise.race([waiting.promise, sending.then(() => assert.fail(`${method} returned before reaching its actual acceptance boundary`))]);
+        if (switchPage) await view.openAgentTaskList("colleague");
+        view.inputEl.value = "NEWER-DRAFT-MUST-SURVIVE";
+        view.attachments = [{ type: "file", path: path.join(f.root, "newer.txt"), name: "newer.txt" }];
+        accepted.resolve(); await sending;
+        assert.equal(view.inputEl.value, "NEWER-DRAFT-MUST-SURVIVE", `${method}: later text survives ${switchPage ? "another Agent list" : "the same task"}`);
+        assert.equal(view.attachments[0].name, "newer.txt");
+        if (switchPage) assert.equal(f.settings.taskWorkspace.replyDrafts.A.text, "", "only the accepted source snapshot is consumed");
+        if (queuedSnapshot) {
+          const queued = f.service.turnQueue.itemsForSession("A").find((item: any) => item.id === queuedSnapshot.id);
+          assert.equal(queued?.text, submitted, "the next turn retains the frozen source snapshot after later edits or navigation");
+          assert.deepEqual(queued.attachments, [], "a later attachment never enters the accepted next turn");
+        }
+      } finally {
+        accepted.resolve(); await sending;
+        view.createTurnRunnerContext = originalCreateContext; f.plugin.steerPiConversation = originalSteer;
+        if (queuedSnapshot) f.service.turnQueue.removeQueuedItem("A", queuedSnapshot.id);
+      }
     }
     await hiddenSurfaceDuringRead(f, view);
     f.service.runs.get("A")?.context?.setPendingInteraction("A", null);
     await view.openTaskDetail("A"); view.clearComposerDraft();
     view.inputEl.value = "CLOSED-QUEUED-SNAPSHOT"; view.saveTaskComposerDraft();
-    const queued = await view.createQueuedTurnFromComposer({ allowLocalKnowledgeCommands: false });
-    queued.clearComposerAfterPiAcceptance = true; f.service.turnQueue.enqueue(queued);
+    await view.enqueueComposerDraft();
+    assert.equal(f.settings.taskWorkspace.replyDrafts.A.text, "", "freezing the next turn consumes only the source Composer snapshot");
+    assert.equal(f.service.turnQueue.itemsForSession("A").at(-1)?.text, "CLOSED-QUEUED-SNAPSHOT");
+    view.inputEl.value = "CLOSED-LATER-DRAFT"; view.saveTaskComposerDraft();
     await view.onClose();
-    assert.equal(f.settings.taskWorkspace.replyDrafts.A.text, "CLOSED-QUEUED-SNAPSHOT");
+    assert.equal(f.settings.taskWorkspace.replyDrafts.A.text, "CLOSED-LATER-DRAFT");
     modelGate.resolve(); await flight;
     const deadline = Date.now() + 5000;
-    while (f.service.turnQueue.hasQueuedItems("A") || f.settings.taskWorkspace.replyDrafts.A.text) {
-      if (Date.now() > deadline) assert.fail("a closed View's accepted queue draft was not consumed by its plugin owner");
+    while (f.service.turnQueue.hasQueuedItems("A")) {
+      if (Date.now() > deadline) assert.fail("a closed View's frozen next turn was not consumed by its plugin owner");
       await new Promise(resolve => setTimeout(resolve, 5));
     }
     await f.service.runs.get("A")?.flight;
-    assert.equal(f.settings.taskWorkspace.replyDrafts.A.text, "", "automatic queue acceptance consumes the persisted snapshot with no View subscriber");
+    assert.ok(f.requests.get("A").at(-1).includes("CLOSED-QUEUED-SNAPSHOT"), "the plugin owner automatically sends the frozen next turn after the View closes");
+    assert.equal(f.settings.taskWorkspace.replyDrafts.A.text, "CLOSED-LATER-DRAFT", "automatic queue execution preserves a later draft with no View subscriber");
   } finally {
-    f.plugin.followUpPiConversation = originalFollow; f.plugin.steerPiConversation = originalSteer;
+    view.createTurnRunnerContext = originalCreateContext; f.plugin.steerPiConversation = originalSteer;
     f.service.runs.get("A")?.context?.setPendingInteraction("A", null);
     modelGate.resolve(); await flight; f.gates.delete("A");
   }

@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { access, mkdtemp, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -6,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P10自动测试-20261019");
+const allowed = disposableTestRoot(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时/工作台P10自动测试-20261019"));
 await access(allowed);
 const directory = await mkdtemp(path.join(allowed, ".pdf-navigation-storage-"));
 try {

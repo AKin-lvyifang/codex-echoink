@@ -7,12 +7,14 @@ import type { PdfJob } from "../pdf-reading/types";
 import type { WorkbenchJournalDay } from "./workbench-journal";
 import { localWorkbenchDate, validWorkbenchDate, workbenchWeekKey } from "./workbench-source";
 import type { WorkbenchSignal, WorkbenchSignalId } from "./workbench-types";
+import type { MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 
 export interface WorkbenchSourceFile { path: string; fingerprint: string; enteredAt?: number }
 export interface WorkbenchFacts {
   now: number;
   modules: readonly AgentModuleId[];
-  tasks: readonly { businessKey?: string; taskStatus?: string; pendingResponse?: unknown; status?: string }[];
+  tasks: readonly { conversationId?: string; businessKey?: string; taskStatus?: string; pendingResponse?: unknown; status?: string }[];
+  maintenance?: readonly Readonly<Pick<MaintenanceActivity, "originConversationId" | "sourcePaths" | "status" | "updatedAt">>[];
   todos: readonly ParsedTodoRecord[];
   finance?: { entries: readonly FinanceEntry[]; data: Readonly<LifestyleData> };
   journals: readonly WorkbenchJournalDay[];
@@ -51,13 +53,23 @@ export function latestFailedPdfRequests(jobs: readonly PdfJob[]): PdfJob[] {
 export function calculateWorkbenchSignals(facts: WorkbenchFacts): WorkbenchSignal[] {
   const { now } = facts, date = new Date(now), today = localWorkbenchDate(date), month = today.slice(0, 7);
   const enabled = new Set(facts.modules), signals: WorkbenchSignal[] = [], english = facts.language === "en";
-  const busy = new Set(facts.tasks.filter(task => task.status !== "deleted" && (task.pendingResponse || task.taskStatus === "waiting" || task.taskStatus === "running"))
-    .map(task => task.businessKey).filter(Boolean));
+  const busyTasks = facts.tasks.filter(task => task.status !== "deleted" && (task.pendingResponse || task.taskStatus === "waiting" || task.taskStatus === "running"));
+  const busy = new Set(busyTasks.map(task => task.businessKey).filter(Boolean));
+  const maintenance = new Map<string, NonNullable<WorkbenchFacts["maintenance"]>[number]>();
+  for (const activity of facts.maintenance ?? []) {
+    const previous = maintenance.get(activity.originConversationId);
+    if (!previous || activity.updatedAt > previous.updatedAt) maintenance.set(activity.originConversationId, activity);
+  }
+  const scopedMaintenance = new Set([...maintenance.values()].filter(activity => activity.status !== "completed"
+    && activity.sourcePaths.length > 0 && activity.sourcePaths.every(path => typeof path === "string" && path.trim()))
+    .map(activity => activity.originConversationId));
+  // A known maintenance scope is subtracted by the view; unrelated busy work still owns its key.
+  const rawBusy = new Set(busyTasks.filter(task => !scopedMaintenance.has(task.conversationId ?? "")).map(task => task.businessKey).filter(Boolean));
   const add = (id: WorkbenchSignalId, moduleId: AgentModuleId, scene: string, scope: string,
     icon: string, description: string, prompt: string, objects: readonly string[] = [], versions?: Record<string, string>) => {
     if (!enabled.has(moduleId)) return;
     const key = `workbench:${moduleId}:${scene}:${scope}`;
-    if (busy.has(key)) return;
+    if ((id === 7 ? rawBusy : busy).has(key)) return;
     signals.push({ id, key, moduleId, icon, description, prompt, source: {
       version: 1, signalId: id, businessKey: key, moduleId, objects: [...objects], ...(versions ? { versions } : {}), prompt, capturedAt: now
     } });
@@ -93,7 +105,7 @@ export function calculateWorkbenchSignals(facts: WorkbenchFacts): WorkbenchSigna
   const inbox = facts.inbox.filter(file => file.enteredAt !== undefined);
   if (inbox.length >= 3 || inbox.some(file => now - file.enteredAt! > 72 * 3_600_000)) add(6, "knowledge-base", "inbox", facts.inboxScope, "inbox",
     english ? `${inbox.length} new Inbox items to organize` : `Inbox 新增 ${inbox.length} 条待整理内容`, "请帮我逐条整理这些 Inbox 新增内容，保留不能确认完成的条目。", inbox.map(file => file.path), Object.fromEntries(inbox.map(file => [file.path, file.fingerprint])));
-  if (facts.raw.length >= 3) add(7, "knowledge-base", "raw", facts.rawScope, "library", english ? `${facts.raw.length} sources to organize` : `${facts.raw.length} 份资料待整理`,
+  if (facts.raw.length >= 3) add(7, "knowledge-base", "raw", facts.rawScope, "library", english ? `${facts.raw.length} sources to organize` : `${facts.raw.length} 篇资料待整理`,
     "请整理当前版本尚未处理、已改版、失败或待校准的资料，沿用现有知识库维护流程。", facts.raw.map(file => file.path), Object.fromEntries(facts.raw.map(file => [file.path, file.fingerprint])));
   const pdf = latestFailedPdfRequests(facts.pdfJobs);
   if (pdf.length) add(8, "pdf-reading", "unfinished", "history", "file-warning", english ? `${pdf.length} PDF requests unfinished` : `${pdf.length} 份 PDF 处理未完成`,

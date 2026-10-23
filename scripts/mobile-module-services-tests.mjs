@@ -1,3 +1,4 @@
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { webcrypto } from "node:crypto";
@@ -304,7 +305,7 @@ await test("bill association, record deletion and external changes retain exact 
   assert.equal((await f.services.modules.finance.service.readForConversation()).records.length, 0); assert.equal(f.store.session.operations.at(-1).status, "completed"); await f.release();
 });
 await test("physical DataAdapter persists ledger and M4 receipt for a fresh cold store", async () => {
-  const registered = path.join(homedir(), "EchoInk-TestVaults/90-任务临时/移动端改版-M11-20261019"); await fs.mkdir(registered, { recursive: true });
+  const registered = disposableTestRoot(path.join(homedir(), "EchoInk-TestVaults/90-任务临时/移动端改版-M11-20261019")); await fs.mkdir(registered, { recursive: true });
   const directory = await fs.mkdtemp(path.join(registered, "module-services-")), f = await fixture();
   const full = relative => { const target = path.resolve(directory, relative); assert.ok(target.startsWith(`${directory}${path.sep}`)); return target; };
   try {

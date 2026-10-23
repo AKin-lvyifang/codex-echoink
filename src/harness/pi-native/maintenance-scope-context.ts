@@ -40,6 +40,11 @@ export function freezeMaintenanceScopeContext(value: unknown): Readonly<Maintena
 /** A narrow confirmation grammar prevents unrelated ordinary messages inheriting. */
 export function isMaintenanceScopeConfirmation(text: string): boolean {
   const value = text.trim().replace(/^\/maintain\s*/iu, "").replace(/[\s，。！？、,.!?；;]+$/gu, "");
+  // A reference to the original checklist may carry execution instructions.
+  // Explicit replacement sources/queries still take precedence over recovery.
+  if (/[^\s`\[\]<>|，。；]+\/[^\s`\[\]<>|，。；]+\.(?:markdown|md)(?![a-z0-9_.-])/iu.test(value)
+    || /(?:改为|改成|换成)(?:[^。；\n]*)(?:来源|资料|笔记|主题|范围)|(?:另外|另行|重新)(?:维护|整理|处理|选择|检索|搜索)/u.test(value)) return false;
+  if (/^(?:请[，,\s]*)?(?:继续|接着)(?:整理|维护|处理|执行|完成|写完)?(?:当前|原来?|上次|刚才|这)(?:的|这)?(?:一?批|维护清单|写作清单|清单|维护任务|整理任务|进度)/u.test(value)) return true;
   return /^(?:(?:好的?|可以|行|嗯)[，,\s]*)?(?:都?按(?:照)?(?:你(?:的)?推荐(?:的)?|推荐(?:的)?(?:方案)?|(?:刚才|上面)(?:的)?方案)(?:去)?(?:做|执行|整理|维护)|就(?:按这个|这么)(?:做|执行|办)|继续(?:吧|执行|整理|维护|处理)?|确认(?:执行)?|执行吧|开始吧|好的?|可以|行)$/u.test(value)
     || /^(?:yes|ok(?:ay)?|go ahead|continue|proceed)(?: please)?$/iu.test(value);
 }
@@ -84,7 +89,10 @@ export function maintenanceScopeContextFromEntries(
   for (const entry of entries) {
     if (entry.type !== "custom" || entry.customType !== MAINTENANCE_SCOPE_CONTEXT_TYPE) continue;
     const context = freezeMaintenanceScopeContext(entry.data);
-    if (context && runById.has(context.productRunId)) contexts.push(context);
+    // Older composer preflight searched continuation instructions as a query.
+    // These are not new selection facts; recover the preceding owning scope.
+    if (context && runById.has(context.productRunId)
+      && !(context.scope.mode === "query" && isMaintenanceScopeConfirmation(context.request))) contexts.push(context);
   }
   // Pre-V9 signal7 already persisted its exact selection in before_agent_start.
   // It is repeated as background material on later turns; only its first entry

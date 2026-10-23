@@ -1,3 +1,4 @@
+import { maintenanceSourceState } from "./maintenance-source-state";
 import { buildKnowledgeStructureHealth } from "./health-core";
 import { getKnowledgeFolderBindings, knowledgePrivateRoot, knowledgePathRole, knowledgeRoleStatus, knowledgeRolePath, resolveKnowledgePath, knowledgeRoleRoots, type KnowledgeRootRole } from "./root-paths";
 import { latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "./maintenance-record";
@@ -21,6 +22,8 @@ export interface KnowledgeBaseDashboardFile {
   createdAt?: number;
   fingerprint?: string;
   rawDigest?: RawDigestFrontmatterRecord | null;
+  refinementProcessed?: boolean;
+  refinementState?: KnowledgeBaseRawDigestState;
 }
 
 export interface KnowledgeBaseDashboardDirectory {
@@ -205,11 +208,13 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
   const reportExists = reportPath ? await exists(path.join(vaultPath, reportPath)) : false;
   const wikiIndexPath = bindings?.roles.wiki.writePath ? `${bindings.roles.wiki.writePath}/index.md` : resolveKnowledgePath(vaultPath, "wiki/index.md");
   const wikiIndexExists = await structureExists(wikiIndexPath);
-  const rawSourceFiles = raw.files.filter(isRawProcessingSource);
+  const rawSourceFiles = [...raw.files, ...inbox.files].filter(file => isKnowledgeMaintenanceSourcePath(file.path));
   const registry = await readRawDigestRegistry(vaultPath, true).catch(() => {
     readErrors.push("来源处理记录");
     return { schemaVersion: 1, updatedAt: "", entries: {} };
   });
+  const privateRoot = knowledgePrivateRoot(vaultPath);
+  const latestSources = latestMaintenanceSourceStates(privateRoot ? await (await import("../plugin/pi-knowledge-maintenance-production")).readPrivateMaintenanceRecords(privateRoot) : []);
   const fingerprintCoverage = { limited: 0, failed: 0 };
   const rawContentFiles = await attachRawFingerprints(
     vaultPath,
@@ -219,14 +224,12 @@ export async function buildKnowledgeBaseDashboardSnapshot(vaultPath: string, set
     createKnowledgeBaseIoBudget({
       maxFileBytes: options.maxRawFingerprintBytes,
       maxTotalBytes: options.maxTotalRawFingerprintBytes
-    }), fingerprintCoverage
+    }), fingerprintCoverage, latestSources
   );
   const trackerHints = bindings ? { paths: new Set<string>(), updatedAt: 0 } : await readKnowledgeBaseTrackerHints(vaultPath, trackerPath, rawContentFiles, true).catch(() => {
     readErrors.push(trackerPath);
     return { paths: new Set<string>(), updatedAt: 0 };
   });
-  const privateRoot = knowledgePrivateRoot(vaultPath);
-  const latestSources = latestMaintenanceSourceStates(privateRoot ? await (await import("../plugin/pi-knowledge-maintenance-production")).readPrivateMaintenanceRecords(privateRoot) : []);
   const rawDigestStatus = buildRawDigestStatus(rawContentFiles, processedSources, registry.entries, trackerHints.paths, latestSources);
   const mergedProcessedSources = authoritativeProcessedSources(rawContentFiles, processedSources, registry.entries);
   const reportFindings = await readReportFindings(vaultPath, reportPath);
@@ -448,27 +451,20 @@ async function attachRawFingerprints(
   processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
   registryEntries: Record<string, RawDigestRegistryEntry>,
   budget: KnowledgeBaseIoBudget,
-  coverage: { limited: number; failed: number }
+  coverage: { limited: number; failed: number },
+  maintenance: ReadonlyMap<string, KnowledgeMaintenanceRecord["sources"][number]>
 ): Promise<KnowledgeBaseDashboardFile[]> {
   const result: KnowledgeBaseDashboardFile[] = [];
   for (const file of files) {
-    const cachedFingerprint = cachedRawFingerprint(file, processed, registryEntries);
-    if (cachedFingerprint) {
-      result.push({ ...file, fingerprint: cachedFingerprint, rawDigest: null });
-      continue;
-    }
-    if (!shouldReadKnowledgeBaseFileContent(file, budget, {
-      allowChunkedText: isDashboardRawTextPath(file.path)
-    }).ok) {
-      coverage.limited += 1;
-      result.push(file);
-      continue;
-    }
     const content = await fsp.readFile(path.join(vaultPath, file.path)).catch(() => { coverage.failed += 1; return null; });
+    let fingerprint: string | undefined;
+    const state = content === null ? "pending" : maintenanceSourceState(content.toString("utf8"), { fingerprint: () => fingerprint = rawDigestFingerprint(file.path, content), registry: registryEntries[file.path], maintenance: maintenance.get(file.path), previous: processed[file.path] });
     result.push({
       ...file,
+      ...(fingerprint ? { fingerprint } : {}),
+      refinementState: state,
       ...(content !== null ? {
-        fingerprint: rawDigestFingerprint(file.path, content),
+        refinementProcessed: state === "digested",
         rawDigest: rawDigestRecordFromMarkdown(content)
       } : {})
     });
@@ -506,14 +502,7 @@ function buildRawDigestStatus(
 ): KnowledgeBaseRawDigestStatus {
   const status: KnowledgeBaseRawDigestStatus = { digested: 0, pending: 0, changed: 0, calibration: 0, failed: 0 };
   for (const file of files) {
-    const state = rawDigestStateForRecord({
-      fingerprint: file.fingerprint ?? "",
-      frontmatter: file.rawDigest ?? null,
-      previous: processed[file.path],
-      registry: registryEntries[file.path],
-      hasTrackerHint: trackerHints.has(file.path),
-      maintenance: maintenance.get(file.path)
-    });
+    const state = file.refinementState ?? "pending";
     status[state] += 1;
   }
   return status;
@@ -711,15 +700,7 @@ async function buildRecommendationCards(vaultPath: string, input: Recommendation
   const candidates: RecommendationCandidate[] = [];
   const addCandidates = (files: KnowledgeBaseDashboardFile[], kind: KnowledgeBaseDashboardCardKind) => {
     for (const file of visibleDashboardCardFiles(files)) {
-      const rawState = kind === "raw"
-        ? rawDigestStateForRecord({
-          fingerprint: file.fingerprint ?? "",
-          frontmatter: file.rawDigest ?? null,
-          previous: input.processedSources[file.path],
-          registry: input.registryEntries[file.path],
-          hasTrackerHint: input.trackerHints.has(file.path)
-        })
-        : null;
+      const rawState = kind === "raw" ? file.refinementState ?? "pending" : null;
       const status = dashboardCardStatus(kind, rawState, file, input.generatedAt);
       candidates.push({
         file,

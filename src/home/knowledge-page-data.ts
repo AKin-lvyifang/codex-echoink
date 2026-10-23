@@ -70,12 +70,15 @@ export async function loadKnowledgePageData(host: KnowledgePageHost, loadLinks: 
   const bindings = structuredClone(host.settingsKnowledgeBindings?.() ?? host.settings.knowledgeBase?.folderBindings ?? emptyKnowledgeFolderBindings());
   const errors: KnowledgePageSnapshot["errors"] = {};
   let service: ReturnType<KnowledgePageHost["getKnowledgeSurfaceService"]> = null;
-  try { service = host.getKnowledgeSurfaceService(); } catch (error) { errors.health = message(error); errors.history = message(error); }
-  const [dashboardResult, recordsResult, linksResult] = await Promise.allSettled([
+  try { service = host.getKnowledgeSurfaceService(); } catch (error) { errors.health = message(error); errors.history = message(error); errors.upgrade = message(error); }
+  const [dashboardResult, recordsResult, linksResult, upgradeResult] = await Promise.allSettled([
     Promise.resolve().then(() => { if (!service) throw new Error("知识库状态暂时读不到"); return service.getDashboardSnapshot(); }),
     Promise.resolve().then(() => { if (!service?.getMaintenanceRecords) throw new Error("维护记录暂时读不到"); return service.getMaintenanceRecords(); }),
-    Promise.resolve().then(() => loadLinks(bindings))
+    Promise.resolve().then(() => loadLinks(bindings)),
+    Promise.resolve().then(() => service?.getUpgradeSnapshot?.() ?? null)
   ]);
+  const upgrade = upgradeResult.status === "fulfilled" ? upgradeResult.value : null;
+  if (upgradeResult.status === "rejected") errors.upgrade = message(upgradeResult.reason);
   const dashboard = dashboardResult.status === "fulfilled" ? dashboardResult.value : null;
   if (dashboardResult.status === "rejected") errors.health = message(dashboardResult.reason);
   const maintenanceRecords = recordsResult.status === "fulfilled" ? recordsResult.value : [];
@@ -108,5 +111,5 @@ export async function loadKnowledgePageData(host: KnowledgePageHost, loadLinks: 
   try { if (vaultPath) sources = await loadKnowledgeSourceHealth(vaultPath, bindings, wiki.files.map(file => file.path)); }
   catch (error) { errors.sources = message(error); }
   if (wiki.directory.state === "partial" || wiki.directory.state === "unavailable") { sources.state = "partial"; errors.sources = "部分知识成果尚未读取"; }
-  return { generatedAt: now, bindings, dashboard, health: dashboard?.health ?? null, ...activity, directories: scans.map(scan => scan.directory), links, sources, maintenanceHistory, maintenanceRecords, errors };
+  return { generatedAt: now, bindings, dashboard, health: dashboard?.health ?? null, ...activity, directories: scans.map(scan => scan.directory), links, sources, maintenanceHistory, maintenanceRecords, upgrade, errors };
 }

@@ -37,8 +37,9 @@ export async function runWorkbenchToolDiagnosticTests(): Promise<void> {
     return rejection.reason as string;
   };
   assert.match(await blocked("missing-target", "obsidian_cli", { command: "read" }), /obsidian_cli_exact_target_required.*file 或 path/u);
-  assert.match(await blocked("outside-scope", "knowledge_maintain", { sourcePaths: ["raw/articles/outside.md"], candidateActions: [] }), /knowledge_maintenance_source_scope_invalid.*raw\/articles\/source\.md/u);
-  const valid = await handlers.get("tool_call")!({ toolCallId: "corrected-call", toolName: "knowledge_maintain", input: { sourcePaths: ["raw/articles/source.md"], candidateActions: [] } }, { signal: undefined });
+  assert.match(await blocked("old-protocol", "knowledge_maintain", { sourcePaths: ["raw/articles/source.md"], candidateActions: [] }), /knowledge_maintenance_stage_required/u);
+  assert.match(await blocked("outside-scope", "knowledge_maintain", { stage: "resume", sourcePaths: ["raw/articles/outside.md"] }), /knowledge_maintenance_source_scope_invalid.*raw\/articles\/source\.md/u);
+  const valid = await handlers.get("tool_call")!({ toolCallId: "corrected-call", toolName: "knowledge_maintain", input: { stage: "resume", sourcePaths: ["raw/articles/source.md"] } }, { signal: undefined });
   assert.equal(valid, undefined, "a fresh corrected call remains admissible");
   console.log("Workbench tool diagnostics: PASS (workspace decision + sole security extension + result hook)");
 }

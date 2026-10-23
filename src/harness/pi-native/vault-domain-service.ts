@@ -1,3 +1,5 @@
+import { patchMaintenanceSourceFrontmatter } from "../../knowledge-base/maintenance-source-frontmatter";
+import type { MaintenanceSourceFields } from "../../knowledge-base/maintenance-p1-contract";
 import { knowledgePathRole } from "../../knowledge-base/root-paths";
 import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
 import { isPrivateNoteSourcePath } from "../../knowledge-base/note-source-policy";
@@ -354,7 +356,7 @@ export class VaultDomainService {
     assertOrdinaryNoteSource(target);
     throwIfAborted(input.signal);
     const snapshot = await this.adapter.readFile(target, {
-      maxBytes: knowledgePathRole(target.vaultRootPath, target.relativePath) === "raw" ? Number.MAX_SAFE_INTEGER : VAULT_READ_RESULT_LIMIT_BYTES
+      maxBytes: ["raw", "inbox"].includes(knowledgePathRole(target.vaultRootPath, target.relativePath) ?? "") ? Number.MAX_SAFE_INTEGER : VAULT_READ_RESULT_LIMIT_BYTES
     });
     if (!snapshot) {
       throw domainError(
@@ -364,7 +366,7 @@ export class VaultDomainService {
     }
     return Object.freeze({
       snapshot: Object.freeze({ ...normalizeSnapshot(snapshot, target, VAULT_READ_RESULT_LIMIT_BYTES),
-        ...(!snapshot.truncated && knowledgePathRole(target.vaultRootPath, target.relativePath) === "raw" ? { bodyFingerprint: rawDigestFingerprint(target.relativePath, Buffer.from(snapshot.content, "utf8")) } : {})
+        ...(!snapshot.truncated && ["raw", "inbox"].includes(knowledgePathRole(target.vaultRootPath, target.relativePath) ?? "") ? { bodyFingerprint: rawDigestFingerprint(target.relativePath, Buffer.from(snapshot.content, "utf8")) } : {})
       })
     });
   }
@@ -439,6 +441,17 @@ export class VaultDomainService {
         patch
       })
     );
+  }
+
+  /** Maintenance-only action: exactly three source fields, with the ordinary CAS/readback adapter. */
+  async maintenanceSourceUpdate(input: Readonly<Omit<VaultNoteUpdateInput, "content"> & { fields: MaintenanceSourceFields }>): Promise<Readonly<VaultOperationResult>> {
+    const target = await this.resolver.resolve({ vaultId: input.vaultId, relativePath: input.relativePath, mustExist: true, expectedKind: "file" });
+    if (!["raw", "inbox"].includes(knowledgePathRole(target.vaultRootPath, target.relativePath) ?? "")) throw domainError("invalid_input", "来源字段只允许 Raw/Inbox");
+    const before = await this.readFullSnapshot(target);
+    const content = patchMaintenanceSourceFrontmatter(before.content, input.fields);
+    return await this.executeOnce(input.operationIdentity,
+      { operation: "metadata_update", vaultId: input.vaultId, relativePath: target.relativePath, expectedVersion: input.expectedVersion, fields: input.fields },
+      async () => await this.replaceContentOnce({ ...input, relativePath: target.relativePath, operation: "metadata_update", content, knownBefore: before }));
   }
 
   async noteMove(

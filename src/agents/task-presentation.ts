@@ -4,6 +4,7 @@ import type { SettingsLanguage } from "../settings/settings";
 import type { StoredSession } from "../settings/settings";
 import { GENERAL_ASSISTANT_ID } from "./types";
 import type { ConversationTaskStatus } from "./task-metadata";
+import { maintenanceTaskStatus, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 
 export type TaskEntry = Readonly<PiConversationCatalogEntry>;
 export function isUserTask(entry: TaskEntry): boolean {
@@ -13,8 +14,20 @@ export function taskState(entry: TaskEntry): ConversationTaskStatus {
   return entry.pendingResponse ? "waiting" : entry.taskStatus ?? "interrupted";
 }
 export function taskStateLabel(entry: TaskEntry, language: SettingsLanguage = "zh-CN"): string {
-  return (language === "en" ? { waiting: "Waiting for you", running: "In progress", interrupted: "Interrupted", completed: "Completed" }
-    : { waiting: "等你回应", running: "进行中", interrupted: "已中断", completed: "已完成" })[taskState(entry)];
+  return (language === "en" ? { waiting: "Waiting for you", running: "In progress", interrupted: "Not finished", completed: "Completed" }
+    : { waiting: "等你回应", running: "进行中", interrupted: "没做完", completed: "已完成" })[taskState(entry)];
+}
+/** Same-task business facts override catalog display without creating another state store. */
+export function maintenanceActivityForTask(entry: TaskEntry, activities: readonly Readonly<MaintenanceActivity>[]): Readonly<MaintenanceActivity> | undefined {
+  const latest = activities.filter(activity => activity.originConversationId === entry.conversationId).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  return latest?.status === "completed" && (latest.completedAt === undefined || (entry.taskStartedAt ?? 0) > latest.completedAt) ? undefined : latest;
+}
+export function taskEntryWithMaintenance(entry: TaskEntry, activities: readonly Readonly<MaintenanceActivity>[]): TaskEntry {
+  const activity = maintenanceActivityForTask(entry, activities);
+  if (!activity) return entry;
+  const taskStatus = maintenanceTaskStatus(activity);
+  return { ...entry, taskStatus, ...(taskStatus !== "waiting" ? { pendingResponse: undefined } : {}),
+    ...(taskStatus === "completed" ? { taskCompletedAt: activity.completedAt } : { taskCompletedAt: undefined }) };
 }
 export function taskActivityAt(entry: TaskEntry): number {
   return Math.max(entry.updatedAt, entry.taskStartedAt ?? 0, entry.taskCompletedAt ?? 0, entry.taskInterruptedAt ?? 0);
