@@ -612,8 +612,14 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       comparison.textContent = t("按月购买，轻松开始", "Start with one month");
     }
     const current = valid && currentPlanId === plan.id;
-    const purchase = button(card, current ? t("使用中", "Current plan") : t("购买待开放", "Purchasing unavailable"), current ? "secondary is-current" : "secondary");
-    purchase.disabled = true;
+    const purchasable = vm.salesOpen === true && plan.id !== "early" && !!actions.selectPlan;
+    const label = !vm.salesOpen ? t("购买待开放", "Purchasing unavailable") : plan.id === "early" ? current ? t("使用中", "Current plan") : t("暂不出售", "Not for sale") : currency === "USD" ? t("查看人民币套餐", "View CNY plans") : current ? t("续费", "Renew") : t("购买", "Purchase");
+    const purchase = button(card, label, current ? "secondary is-current" : "secondary", purchasable ? () => {
+      if (purchase.disabled) return;
+      purchase.disabled = true;
+      void actions.selectPlan!({ planId: pricing.id, currency: "CNY" }).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => { purchase.disabled = !purchasable; });
+    } : undefined);
+    purchase.disabled = !purchasable;
     if (current) purchase.setAttribute("aria-current", "true");
   }
   if (!desktop) el(details, "p", "plan-note", t("日均价格按月卡 30 天、季卡 90 天、年卡 365 天估算。", "Daily estimates use 30, 90 and 365 days for monthly, quarterly and annual passes."));

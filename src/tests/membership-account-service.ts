@@ -14,6 +14,7 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
   const account = (id = "A") => ({ id, email: `${id}@example.test`, name: id, joinedAt: "2026-10-08", avatar: null, passwordSet: true });
   const start = Date.parse("2026-10-08T00:00:00Z");
   async function fixture(options: { active?: boolean; bound?: boolean; anonymous?: boolean } = {}) {
+    let salesOpen = false; const opened: string[] = [];
     let wall = start, state = options.active ? "active" : "free", offline = false, limit = false, invalidLease = false;
     let identityError: Error | null = null;
     let saved: LocalAccountState = options.anonymous ? {} : { token: "A", account: account() };
@@ -35,7 +36,7 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
       if (path === "/api/auth/logout") return {};
       if (path === "/api/auth/login" || path === "/api/auth/password") return { token: body.email.startsWith("B") ? "B" : "A" };
       if (path === "/api/account") return account(token);
-      if (path === "/api/products") return { products: [] };
+      if (path === "/api/products") return { products: [], salesOpen };
       if (path === "/api/membership") {
         if (waitRights) await waitRights();
         const devices = activeDevices.has(token!) ? [{ id: `device-${token}`, name: "test", platform: "fixture", verified: wall }] : [];
@@ -58,10 +59,22 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
       if (path === "/api/keys") return { keys };
       throw new Error(`unexpected route ${path}`);
     };
-    const service = new AccountService(storage, transport, "https://fixture.invalid", () => {}, "https://fixture.invalid", () => "configured", () => wall);
+    const service = new AccountService(storage, transport, "https://fixture.invalid", url => opened.push(url), "https://fixture.invalid", () => "configured", () => wall);
     await service.initialize();
-    return { service, storage, calls, bindings: () => [...activeDevices], offline(value: boolean) { offline = value; }, limit(value: boolean) { limit = value; }, invalid(value: boolean) { invalidLease = value; }, wall(value: number) { wall = value; }, failIdentity(error: Error | null) { identityError = error; }, waitRights(value: (() => Promise<void>) | null) { waitRights = value; }, waitLease(value: (() => Promise<void>) | null) { waitLease = value; } };
+    return { service, storage, calls, opened, sales(value: boolean) { salesOpen = value; }, bindings: () => [...activeDevices], offline(value: boolean) { offline = value; }, limit(value: boolean) { limit = value; }, invalid(value: boolean) { invalidLease = value; }, wall(value: number) { wall = value; }, failIdentity(error: Error | null) { identityError = error; }, waitRights(value: (() => Promise<void>) | null) { waitRights = value; }, waitLease(value: (() => Promise<void>) | null) { waitLease = value; } };
   }
+  const shop = await fixture({ anonymous: true });
+  try {
+    assert.equal(shop.service.read().salesOpen, false);
+    await assert.rejects(shop.service.actions.selectPlan!({ planId: "month", currency: "CNY" }), /购买待开放/);
+    shop.sales(true); await shop.service.refresh(); assert.equal(shop.service.read().salesOpen, true);
+    const before = shop.calls.length;
+    await shop.service.actions.selectPlan!({ planId: "quarter", currency: "CNY" });
+    const url = new URL(shop.opened[0]); assert.equal(url.pathname, "/plans"); assert.equal(url.searchParams.get("plan"), "quarter");
+    assert.equal(url.searchParams.get("currency"), "CNY"); assert.equal(shop.calls.length, before, "opening a plan never creates a payment or grants rights in the plugin");
+    await assert.rejects(shop.service.actions.selectPlan!({ planId: "early", currency: "CNY" }), /购买待开放/);
+    shop.sales(false); await shop.service.refresh(); assert.equal(shop.service.read().salesOpen, false);
+  } finally { shop.service.dispose(); }
   const localUsage = await fixture({ anonymous: true });
   const usageListeners = new Set<() => void>();
   const replacementListeners = new Set<() => void>();

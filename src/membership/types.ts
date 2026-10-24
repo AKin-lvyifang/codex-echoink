@@ -65,7 +65,7 @@ export interface MembershipApiResponses {
   "/api/auth/password": { token: string };
   "/api/account": MembershipAccount;
   "/api/membership": MembershipRights & { serverTime: number };
-  "/api/products": { products: MembershipProduct[] };
+  "/api/products": { products: MembershipProduct[]; salesOpen?: boolean };
   "/api/devices/challenge": { challengeId: string; nonce: string };
   "/api/devices/activate": DeviceLeaseResponse;
   "/api/devices/lease": DeviceLeaseResponse;

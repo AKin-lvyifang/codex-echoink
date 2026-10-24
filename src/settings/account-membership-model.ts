@@ -58,6 +58,7 @@ export interface AccountMembershipViewModel {
   readonly serviceAvailable: boolean;
   readonly storageNotice?: string | null;
   readonly verificationError?: string | null;
+  readonly salesOpen?: boolean;
   readonly products?: readonly {id: MembershipPlanId;prices:{CNY:number;USD:number};days:number|null}[];
   readonly activityGifts?: readonly AccountActivityGift[];
   readonly betaOffer?: { readonly status: string } | null;
@@ -72,7 +73,7 @@ export interface AccountActions {
   readonly resetPassword?: (input: { email: string; code: string; next: string }) => Promise<void>;
   readonly signOut?: () => Promise<void>;
   readonly redeem?: (code: string) => Promise<void>;
-  /** Legacy purchase intent; the beta keeps it unavailable and never grants rights from it. */
+  /** Open the selected website plan; never creates an order or grants rights in the plugin. */
   readonly selectPlan?: (input: { planId: MembershipPlanId; currency: MembershipCurrency }) => Promise<void>;
   readonly verify?: () => Promise<void>;
   readonly activateDevice?: (name?:string) => Promise<void>;

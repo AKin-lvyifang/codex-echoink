@@ -214,7 +214,14 @@ export class IPhoneAccountPages {
       if (plan.id !== "early" && plan.savingsPercent !== null && plan.savingsPercent > 0) price.append(el(ctx.document, "span", "ip-account-savings", this.text(`省 ${plan.savingsPercent}%`, `Save ${plan.savingsPercent}%`))); card.append(price);
       card.append(el(ctx.document, "div", "ip-account-plan-detail", plan.days === null ? settingsText(ctx, "一次购买") : this.text(`${plan.days} 天`, `${plan.days} days`)));
       card.append(el(ctx.document, "div", "ip-account-plan-detail", plan.dailyAmountMinor === null ? settingsText(ctx, "当前 2.x 版本长期可用") : this.text(`每天约 ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)}`, `About ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)} / day`)));
-      const purchase = settingsButton(ctx, current ? "续费待开放" : "购买待开放", () => {}); purchase.disabled = true; if (current) purchase.setAttribute("aria-current", "true"); card.append(purchase); parent.append(card);
+      const purchasable = vm.salesOpen === true && plan.id !== "early" && !!this.adapter.actions.selectPlan;
+      const label = !vm.salesOpen ? settingsText(ctx, "购买待开放") : plan.id === "early" ? this.text("暂不出售", "Not for sale") : currency === "USD" ? this.text("查看人民币套餐", "View CNY plans") : current ? this.text("续费", "Renew") : this.text("购买", "Purchase");
+      const feedback = settingsError(ctx, card);
+      const purchase = settingsButton(ctx, label, () => {
+        if (purchase.disabled) return;
+        purchase.disabled = true; feedback.show();
+        void this.adapter.actions.selectPlan!({ planId: plan.id, currency: "CNY" }).catch(error => feedback.show(error instanceof Error ? error.message : String(error))).finally(() => { purchase.disabled = !purchasable; });
+      }); purchase.disabled = !purchasable; if (current) purchase.setAttribute("aria-current", "true"); card.append(purchase); parent.append(card);
     }
   }
   private membershipLine(vm: AccountMembershipViewModel): string {

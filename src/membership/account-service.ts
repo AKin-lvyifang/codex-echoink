@@ -1,3 +1,4 @@
+import { membershipWebsiteLink } from "./website-links";
 import {
   createUnavailableAccountAdapter,
   type AccountActions,
@@ -77,6 +78,7 @@ export class AccountService implements CapabilityAccess {
   private generation = 0;
   private refreshGeneration = -1;
   private products: MembershipProduct[] = [];
+  private salesOpen = false;
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
   private statisticsSource: AccountStatisticsSource | null = null;
   private unsubscribeStatistics: (() => void) | null = null;
@@ -147,7 +149,10 @@ export class AccountService implements CapabilityAccess {
         if (id === this.state.deviceId) this.clearLease();
         await this.refresh(true);
       },
-      selectPlan: async () => { throw new MembershipApiError("PRODUCT_UNAVAILABLE"); },
+      selectPlan: async ({ planId, currency }) => {
+        if (!this.salesOpen || !["month", "quarter", "year"].includes(planId)) throw new MembershipApiError("PRODUCT_UNAVAILABLE");
+        this.openWebsite(membershipWebsiteLink(`plugin.plan.${planId}`, { baseURL: this.websiteUrl, planId, currency }));
+      },
     };
   }
 
@@ -427,6 +432,7 @@ export class AccountService implements CapabilityAccess {
           );
           this.assertCurrent(operation);
           this.products = products.products;
+          this.salesOpen = products.salesOpen === true;
         } catch {
           /* Unauthenticated free use remains available. */
         }
@@ -442,6 +448,7 @@ export class AccountService implements CapabilityAccess {
       ]);
       this.assertCurrent(operation);
       this.products = products.products;
+      this.salesOpen = products.salesOpen === true;
       this.connected = true;
       this.refreshError = null;
       this.state = {
@@ -595,6 +602,7 @@ export class AccountService implements CapabilityAccess {
         deviceLimit: rights?.deviceLimit || null,
       },
       products: this.products,
+      salesOpen: this.salesOpen,
       activityGifts: rights?.activityGifts ?? [],
       betaOffer: rights?.betaOffer ?? null,
       serviceAvailable: !!this.apiUrl && !this.initializing,
