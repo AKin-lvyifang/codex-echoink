@@ -25,6 +25,10 @@ function fixture(value = initial(), actions: AccountActions = {}) {
 
 export async function runDesktopAccountMembershipTests() {
   installProviderBrowserHost(); HTMLElement.prototype.scrollIntoView = () => {};
+  let opened = 0;
+  const ordersFixture = fixture(initial(), { openOrders: async () => { opened++; } });
+  try { button(ordersFixture.host, "我的订单").click(); await Promise.resolve(); assert.equal(opened, 1); assert.equal(ordersFixture.host.querySelector(".desktop-account-detail")!.hasAttribute("hidden"), true); }
+  finally { ordersFixture.dispose(); }
   await structure(); await anonymousOverview(); await sourceFocus(); await forms(); await accountSwitch(); await redemption(); await confirmations(); await mobileDefault();
   console.log("P14 desktop account real controls: structure, states, drafts, suspend, identity, redemption and confirmation PASS");
 }

@@ -92,6 +92,7 @@ const english: Record<string, string> = {
   "当前 2.x 版本长期可用": "Long-term access to the current 2.x version",
   "续费待开放": "Renewals unavailable",
   "购买待开放": "Purchasing unavailable",
+  "我的订单": "My orders",
   "到期": "expires",
   "已验证": "Verified",
   // M9 Agent, profile and Memory controls. User content is rendered separately.

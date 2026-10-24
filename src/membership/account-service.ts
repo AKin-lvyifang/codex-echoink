@@ -149,6 +149,9 @@ export class AccountService implements CapabilityAccess {
         if (id === this.state.deviceId) this.clearLease();
         await this.refresh(true);
       },
+      openOrders: async () => {
+        this.openWebsite(membershipWebsiteLink("plugin.account.orders", { baseURL: this.websiteUrl }));
+      },
       selectPlan: async ({ planId, currency }) => {
         if (!this.salesOpen || !["month", "quarter", "year"].includes(planId)) throw new MembershipApiError("PRODUCT_UNAVAILABLE");
         this.openWebsite(membershipWebsiteLink(`plugin.plan.${planId}`, { baseURL: this.websiteUrl, planId, currency }));

@@ -564,6 +564,9 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     else { const devicesButton = button(memberFooter, "", "quiet", devices); icon(devicesButton, "layers");
       el(devicesButton, "span", "", vm.membership.devices == null ? t("设备管理", "Devices") : `${t("设备管理", "Devices")} · ${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`); icon(devicesButton, "chevron-right"); }
   }
+  const openOrders = () => { void actions.openOrders?.().catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+  if (desktop) { const orders = createSettingsNavigationRow(memberFooter, { title: t("我的订单", "My orders"), onActivate: openOrders }); orders.disabled = !actions.openOrders; }
+  else { const orders = button(memberFooter, t("我的订单", "My orders"), "quiet", openOrders); orders.disabled = !actions.openOrders; }
   if (!desktop) el(memberFooter, "span", "", t("AI 需自备 API Key，模型调用费另计", "Bring your own API key; model costs are separate"));
   const intro = el(details, "div", "plans-intro");
   if (!desktop) {
@@ -613,7 +616,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     }
     const current = valid && currentPlanId === plan.id;
     const purchasable = vm.salesOpen === true && plan.id !== "early" && !!actions.selectPlan;
-    const label = !vm.salesOpen ? t("购买待开放", "Purchasing unavailable") : plan.id === "early" ? current ? t("使用中", "Current plan") : t("暂不出售", "Not for sale") : currency === "USD" ? t("查看人民币套餐", "View CNY plans") : current ? t("续费", "Renew") : t("购买", "Purchase");
+    const label = !vm.salesOpen ? t("购买待开放", "Purchasing unavailable") : plan.id === "early" ? current ? t("使用中", "Current plan") : t("暂不出售", "Not for sale") : currency === "USD" ? t("查看人民币套餐", "View CNY plans") : current ? t("续费", "Renew") : t("立即订阅", "Subscribe now");
     const purchase = button(card, label, current ? "secondary is-current" : "secondary", purchasable ? () => {
       if (purchase.disabled) return;
       purchase.disabled = true;

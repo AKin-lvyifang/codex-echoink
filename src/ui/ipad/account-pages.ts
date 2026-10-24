@@ -116,8 +116,10 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
         login.append(button, el(ctx.document, "span", "pd-account-gift", t(ctx, "注册送激活码"))); copy.append(login);
       }
       row.append(avatar, copy); head.append(row);
+      const group = el(ctx.document, "div", "pd-settings-group pd-account-links"); head.append(group);
+      const orders = settingsRow(ctx, group, t(ctx, "我的订单"), "", () => api.actions.openOrders!()) as HTMLButtonElement; orders.disabled = !api.actions.openOrders;
       if (vm.identity) {
-        const group = el(ctx.document, "div", "pd-settings-group pd-account-links"), outArea = el(ctx.document, "div", "pd-account-inline-confirm"); head.append(group);
+        const outArea = el(ctx.document, "div", "pd-account-inline-confirm");
         settingsRow(ctx, group, t(ctx, "编辑资料"), "", () => v.child(createProfilePage(ctx, api)));
         settingsRow(ctx, group, t(ctx, "设备管理"), vm.membership.devices ? `${vm.membership.devices.length} / ${vm.membership.deviceLimit ?? "—"}` : "—", () => v.child(createDevicesPage(ctx, api)));
         settingsRow(ctx, group, t(ctx, "退出登录"), "", () => inlineConfirm(ctx, outArea, "退出后这台设备不再使用 PRO 功能，已保存的内容不受影响。", "退出登录", async () => {
@@ -191,7 +193,7 @@ function renderPlans(ctx: IPadSettingsContext, parent: HTMLElement, vm: AccountM
     if (plan.id !== "early" && plan.savingsPercent !== null && plan.savingsPercent > 0) price.append(el(ctx.document, "span", "pd-account-saving", english(ctx) ? `Save ${plan.savingsPercent}%` : `省 ${plan.savingsPercent}%`));
     card.append(name, price, el(ctx.document, "div", "pd-account-plan-detail", plan.days === null ? t(ctx, "一次购买") : english(ctx) ? `${plan.days} days` : `${plan.days} 天`), el(ctx.document, "div", "pd-account-plan-detail", plan.dailyAmountMinor === null ? t(ctx, "当前 2.x 版本长期可用") : english(ctx) ? `About ${symbol}${money(plan.dailyAmountMinor, true)} / day` : `每天约 ${symbol}${money(plan.dailyAmountMinor, true)}`));
     const purchasable = vm.salesOpen === true && plan.id !== "early" && !!api.actions.selectPlan;
-    const label = !vm.salesOpen ? t(ctx, "购买待开放") : plan.id === "early" ? english(ctx) ? "Not for sale" : "暂不出售" : currency === "USD" ? english(ctx) ? "View CNY plans" : "查看人民币套餐" : active ? english(ctx) ? "Renew" : "续费" : english(ctx) ? "Purchase" : "购买";
+    const label = !vm.salesOpen ? t(ctx, "购买待开放") : plan.id === "early" ? english(ctx) ? "Not for sale" : "暂不出售" : currency === "USD" ? english(ctx) ? "View CNY plans" : "查看人民币套餐" : active ? english(ctx) ? "Renew" : "续费" : english(ctx) ? "Subscribe now" : "立即订阅";
     const feedback = settingsError(ctx), button = el(ctx.document, "button", "pd-settings-action"); button.type = "button"; button.disabled = !purchasable;
     button.append(el(ctx.document, "span", "pd-settings-action-visible", label));
     button.onclick = () => {

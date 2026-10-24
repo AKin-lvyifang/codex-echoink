@@ -15,7 +15,7 @@ vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports,
   HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, Node: dom.window.Node, AbortController, structuredClone, URL, setTimeout: timerSet, clearTimeout: timerClear, console, atob, btoa, TextEncoder, TextDecoder, Date: TestDate,
   require(id) { assert.equal(id, "obsidian"); return { setIcon: (node, icon) => { node.dataset.icon = icon; }, Notice: class { constructor(value) { notices.push(value); } } }; } });
 const tick = async () => { for (let index = 0; index < 5; index++) await new Promise(resolve => setTimeout(resolve, 0)); };
-const root = dom.window.document.querySelector("main"), right = dom.window.document.querySelector("aside textarea"), listeners = new Set(), stack = [], calls = { code: [], login: [], redeem: [], profile: [], removed: [], logout: 0, purchase: 0, verify: 0, activate: 0 };
+const root = dom.window.document.querySelector("main"), right = dom.window.document.querySelector("aside textarea"), listeners = new Set(), stack = [], calls = { code: [], login: [], redeem: [], profile: [], removed: [], logout: 0, purchase: 0, orders: 0, verify: 0, activate: 0 };
 let codeFailure = false, loginFailure = false, profileFailure = false, deviceFailure = false, redeemFailure = false, signInDeferred;
 let state = {
   identity: null,
@@ -38,6 +38,7 @@ const api = {
     signOut: async () => { calls.logout++; state.identity = null; state.membership = { ...state.membership, state: "anonymous", planId: null, planName: null, devices: null, expiresAt: null }; emit(); },
     verify: async () => { calls.verify++; emit(); },
     activateDevice: async () => { calls.activate++; state.membership.state = "active"; emit(); },
+    openOrders: async () => { calls.orders++; },
     selectPlan: async () => { calls.purchase++; throw new Error("purchase must remain unavailable"); }
   }
 };
@@ -55,6 +56,16 @@ try {
   assert.match(account.content.textContent, /未登录/); assert.match(account.content.textContent, /12,345/); assert.equal(account.content.querySelectorAll(".pd-account-stat").length, 4); assert.equal(account.content.querySelectorAll("[data-plan-id]").length, 4);
   assert.ok([...account.content.querySelectorAll(".pd-account-plan button")].every(button => button.disabled)); assert.match(account.content.textContent, /仅电脑/); assert.equal(account.content.querySelector(".heat,.heatmap"), null);
   assert.match(account.content.querySelector('[data-plan-id="month"]').textContent, /3\.99|10/); assert.ok(!account.content.textContent.includes("限量"), "no fabricated stock");
+  await click("我的订单"); assert.equal(calls.orders, 1); assert.equal(current().id, "ipad-settings-account");
+  const originalMembership = structuredClone(state.membership);
+  state.salesOpen = true; state.membership = { ...state.membership, state: "active", planId: "quarter" }; emit(); await tick();
+  const planButton = id => account.content.querySelector(`[data-plan-id="${id}"] button`);
+  const international = account.content.querySelector(".pd-account-currency").textContent === "US$";
+  assert.equal(planButton("month").textContent.trim(), international ? "查看人民币套餐" : "立即订阅"); assert.equal(planButton("quarter").textContent.trim(), international ? "查看人民币套餐" : "续费"); assert.equal(planButton("early").disabled, true);
+  planButton("month").click(); await tick(); assert.equal(calls.purchase, 1);
+  state.salesOpen = false; state.membership = originalMembership; emit(); await tick();
+  assert.equal(planButton("month").textContent.trim(), "购买待开放"); assert.equal(planButton("month").disabled, true);
+  console.log("PASS round7 pd orders entry and sale-open/closed subscription labels");
   await click("登录 / 注册"); const login = current(); fill("邮箱", "test@example.invalid");
   codeFailure = true; await click("获取验证码"); assert.match(login.content.textContent, /验证码发送失败/); assert.ok(findButton("获取验证码")); assert.equal(timers.size, 0, "failed send starts no cooldown"); assert.equal(login.content.querySelector('[aria-label="邮箱"]').value, "test@example.invalid");
   codeFailure = false; await click("获取验证码"); assert.ok(findButton("60 秒后重发")); assert.equal(findButton("60 秒后重发").disabled, true);
@@ -79,7 +90,7 @@ try {
   await click("退出登录"); assert.equal(calls.logout, 0); await click("退出登录", account.content.querySelector(".pd-account-inline-confirm")); assert.equal(calls.logout, 1); assert.match(account.content.textContent, /未登录/); assert.match(account.content.textContent, /12,345/); assert.match(account.content.textContent, /完成的对话轮次8/);
   await click("登录 / 注册"); fill("邮箱", "first@example.invalid"); await click("密码登录"); fill("密码", "not-a-real-password"); signInDeferred = true; await click("登录"); assert.equal(current().content.getAttribute("aria-busy"), "true"); signedIn("second@example.invalid"); await tick(); const resolveLogin = signInDeferred; resolveLogin(); await tick();
   assert.equal(current().id, "ipad-account-login", "late completion cannot navigate a different account"); assert.equal(state.identity.email, "second@example.invalid"); assert.equal(current().content.querySelector('[aria-label="密码"]').value, "", "identity change clears sensitive draft");
-  assert.equal(right, dom.window.document.querySelector("aside textarea")); assert.equal(right.value, "right Agent draft"); assert.equal(calls.purchase, 0); assert.equal(unhandled.length, 0, `Unhandled errors: ${unhandled.join("; ")}`);
+  assert.equal(right, dom.window.document.querySelector("aside textarea")); assert.equal(right.value, "right Agent draft"); assert.equal(calls.purchase, 1); assert.equal(unhandled.length, 0, `Unhandled errors: ${unhandled.join("; ")}`);
   while (stack.length) { const page = stack.pop(); page.dispose?.(); page.panel.remove(); }
   const missing = { ...ctx, host: { ...ctx.host, accountService: undefined } }; mount(module.exports.createAccountPage(missing)); await tick(); assert.equal(findButton("登录 / 注册").disabled, true); assert.match(current().content.textContent, /账号服务暂不可用/); assert.match(current().content.textContent, /—/);
   console.log("iPad M10 account UI: anonymous/free/actual PRO, authoritative pricing/current plan, four local stats retained on logout, send failure/no cooldown/deadline resume, login methods/failure/late identity guard, inline redemption node retained, profile/device failure retention, readonly current device, disabled purchases, central/right draft isolation and unavailable adapter passed.");

@@ -74,6 +74,14 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     assert.equal(url.searchParams.get("currency"), "CNY"); assert.equal(shop.calls.length, before, "opening a plan never creates a payment or grants rights in the plugin");
     await assert.rejects(shop.service.actions.selectPlan!({ planId: "early", currency: "CNY" }), /购买待开放/);
     shop.sales(false); await shop.service.refresh(); assert.equal(shop.service.read().salesOpen, false);
+    const beforeOrders = shop.calls.length;
+    await shop.service.actions.openOrders!();
+    const orders = new URL(shop.opened.at(-1)!);
+    assert.equal(orders.pathname, "/account");
+    assert.equal(orders.searchParams.get("tab"), "orders");
+    assert.equal(orders.searchParams.get("entry"), "plugin.account.orders");
+    assert.deepEqual([...orders.searchParams.keys()].sort(), ["entry", "tab"]);
+    assert.equal(shop.calls.length, beforeOrders, "orders can open before sales and login without contacting a payment API");
   } finally { shop.service.dispose(); }
   const localUsage = await fixture({ anonymous: true });
   const usageListeners = new Set<() => void>();

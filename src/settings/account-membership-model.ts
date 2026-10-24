@@ -75,6 +75,8 @@ export interface AccountActions {
   readonly redeem?: (code: string) => Promise<void>;
   /** Open the selected website plan; never creates an order or grants rights in the plugin. */
   readonly selectPlan?: (input: { planId: MembershipPlanId; currency: MembershipCurrency }) => Promise<void>;
+  /** Open website orders in the system browser; website authentication owns the return path. */
+  readonly openOrders?: () => Promise<void>;
   readonly verify?: () => Promise<void>;
   readonly activateDevice?: (name?:string) => Promise<void>;
   readonly renameDevice?: (id:string,name:string) => Promise<void>;

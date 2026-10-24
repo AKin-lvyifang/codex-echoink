@@ -36,6 +36,21 @@ export async function runAccountMembershipSubscriptionTests(win: Window & typeof
     page?.dispose(); page = mountAccountMembership(parent, { app: new App(), language: "zh-CN", viewModel: vm, actions, openProviders() {} });
   };
   try {
+    let ordersOpened = 0;
+    const selections: string[] = [];
+    const entryActions: AccountActions = { openOrders: async () => { ordersOpened++; }, selectPlan: async input => { selections.push(input.planId); } };
+    mount({ ...model("anonymous", false), salesOpen: false }, entryActions);
+    assert.equal(find("我的订单")!.disabled, false);
+    find("我的订单")!.click(); await settle(); assert.equal(ordersOpened, 1);
+    assert.ok([...parent.querySelectorAll<HTMLButtonElement>(".plan button")].every(button => button.textContent === "购买待开放" && button.disabled));
+    mount({ ...model("active"), salesOpen: true, membership: { ...model("active").membership, planId: "quarter" } }, entryActions);
+    const planButton = (id: string) => parent.querySelector<HTMLButtonElement>(`[data-plan-id="${id}"] button`)!;
+    const international = !!parent.querySelector(".price-currency");
+    assert.equal(planButton("month").textContent, international ? "查看人民币套餐" : "立即订阅"); assert.equal(planButton("quarter").textContent, international ? "查看人民币套餐" : "续费");
+    assert.equal(planButton("early").disabled, true);
+    planButton("month").click(); await settle(); assert.deepEqual(selections, ["month"]);
+    mount(model("free")); assert.equal(find("我的订单")!.disabled, true, "unavailable adapter cannot open orders");
+    console.log("PASS account orders entry and sale-open/closed subscription labels");
     const gift = { id: "beta-test", name: "内测活动", product: "beta", endedAt: null, gift: { code: "ECHO-history-secret", codeAvailability: "readable", state: "issued" } };
     mount({ ...model("free"), activityGifts: [gift], betaOffer: { status: "exhausted" } }, { redeem: async () => {} });
     assert.ok(find("使用兑换码"));

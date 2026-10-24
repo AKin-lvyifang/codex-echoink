@@ -48,7 +48,7 @@ export async function runAccountMembershipTests(win: Window & typeof globalThis)
   assert.ok(!parent.querySelector("iframe"));
   assert.equal(findButton(parent, "编辑资料"), undefined, "anonymous cannot edit a fake profile");
   assert.equal(parent.querySelector(".profile-section .avatar"), null);
-  assert.equal(parent.querySelector(".membership-footer button"), null, "anonymous has no personal device actions");
+  assert.deepEqual([...parent.querySelectorAll(".membership-footer button")].map(button => button.textContent), ["我的订单"], "anonymous can only open website orders and has no personal device actions");
   assert.equal(parent.querySelector(".activation-form"), null, "redemption only appears after sign-in");
   findButton(parent, "登录 / 注册").click();
   let modal = openTestModals.at(-1)!; assert.ok(modal);

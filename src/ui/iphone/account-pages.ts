@@ -62,12 +62,14 @@ export class IPhoneAccountPages {
       }
       identityArea.replaceChildren(); accountLinks.replaceChildren(); statusActions.replaceChildren();
       const head = el(ctx.document, "div", "ip-account-head"); head.append(this.avatar(vm.identity)); const copy = el(ctx.document, "div", "ip-settings-label"), name = el(ctx.document, "div", "ip-account-name"); copy.append(name); head.append(copy); identityArea.append(head);
+      const links = settingsGroup(ctx, accountLinks);
+      const orders = settingsRow(ctx, links, "我的订单", { action: () => runAccountAction(() => this.adapter.actions.openOrders!()) }) as HTMLButtonElement; orders.disabled = !this.adapter.actions.openOrders;
       if (vm.identity) {
         name.append(el(ctx.document, "span", "", vm.identity.name));
         if (this.valid(vm)) createPluginEditionBadge(name, "pro", ctx.host.settings().settingsLanguage);
         else name.append(settingsMessage(ctx, el(ctx.document, "span", "ip-account-free"), vm.membership.state === "free" ? "免费版" : STATE_NAMES[vm.membership.state]));
         const metadata = vm.membership.state === "free" ? vm.identity.email : this.membershipLine(vm); copy.append(el(ctx.document, "div", "ip-account-sub", metadata));
-        const links = settingsGroup(ctx, accountLinks); settingsRow(ctx, links, "编辑资料", { action: () => this.profile() });
+        settingsRow(ctx, links, "编辑资料", { action: () => this.profile() });
         settingsRow(ctx, links, "设备管理", { literalValue: true, value: `${vm.membership.devices?.length ?? "—"} / ${vm.membership.deviceLimit ?? "—"}`, action: () => this.devices() });
         const signOut = settingsRow(ctx, links, "退出登录", { navigation: false, action: () => {
           if (busy || !this.adapter.actions.signOut) return;
@@ -215,7 +217,7 @@ export class IPhoneAccountPages {
       card.append(el(ctx.document, "div", "ip-account-plan-detail", plan.days === null ? settingsText(ctx, "一次购买") : this.text(`${plan.days} 天`, `${plan.days} days`)));
       card.append(el(ctx.document, "div", "ip-account-plan-detail", plan.dailyAmountMinor === null ? settingsText(ctx, "当前 2.x 版本长期可用") : this.text(`每天约 ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)}`, `About ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)} / day`)));
       const purchasable = vm.salesOpen === true && plan.id !== "early" && !!this.adapter.actions.selectPlan;
-      const label = !vm.salesOpen ? settingsText(ctx, "购买待开放") : plan.id === "early" ? this.text("暂不出售", "Not for sale") : currency === "USD" ? this.text("查看人民币套餐", "View CNY plans") : current ? this.text("续费", "Renew") : this.text("购买", "Purchase");
+      const label = !vm.salesOpen ? settingsText(ctx, "购买待开放") : plan.id === "early" ? this.text("暂不出售", "Not for sale") : currency === "USD" ? this.text("查看人民币套餐", "View CNY plans") : current ? this.text("续费", "Renew") : this.text("立即订阅", "Subscribe now");
       const feedback = settingsError(ctx, card);
       const purchase = settingsButton(ctx, label, () => {
         if (purchase.disabled) return;
