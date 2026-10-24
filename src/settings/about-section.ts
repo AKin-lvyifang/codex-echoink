@@ -57,7 +57,7 @@ export function renderCompactAbout(parent: HTMLElement, options: {
     applyAmicroButton(button, { variant: "icon" });
     if (kind === "star") renderStarIcon(button);
     else renderMorphIcon(button, kind === "website" ? "globe" : "message-circle", kind === "website" ? "send" : "check");
-    setTooltip(button, label);
+    setTooltip(button, label, { placement: "top", delay: 300 });
     button.onclick = () => { openLink(url); };
   }
   const check = createOriginButton(actions, { cls: "echoink-about-compact-check", attr: { type: "button" } });
