@@ -22,6 +22,8 @@ import { isProWorkbenchModule, renderWorkbenchModuleLock, workbenchHasPro, workb
 import { maintenanceActivityText, maintenanceTaskTitle, maintenanceTaskStatus, type KnowledgeActivitySource, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 import type { MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-upgrade-contract";
 import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
+import { renderVaultMemoryBanner } from "./vault-memory-banner";
+import type { VaultMemoryNotice } from "../storage/vault-identity";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
 export const VIEW_TYPE_ECHOINK_WORKBENCH = "codex-echoink-home";
@@ -82,6 +84,7 @@ export function workbenchInlineQuestion(entry: TaskEntry, pending?: Readonly<Ech
 }
 
 export class EchoInkWorkbenchView extends ItemView {
+  private memoryNotice: VaultMemoryNotice | null = null;
   private readonly port: WorkbenchDataPort;
   private readonly searchService: HomeSearchService;
   private readonly id = `echoink-workbench-${++viewId}`;
@@ -213,8 +216,9 @@ export class EchoInkWorkbenchView extends ItemView {
     this.observeKnowledgeActivity();
     const now = Date.now();
     this.refreshFlight = (async () => {
-      const [tasks, snapshot] = await Promise.allSettled([this.plugin.listAgentTaskEntries(), this.port.load(now)]);
+      const [tasks, snapshot, memory] = await Promise.allSettled([this.plugin.listAgentTaskEntries(), this.port.load(now), this.plugin.getVaultMemoryNotice?.()]);
       if (!this.active() || version !== this.refreshVersion) return;
+      if (memory.status === "fulfilled") this.memoryNotice = memory.value ?? null;
       if (tasks.status === "fulfilled") {
         this.entries = tasks.value;
         this.maintenance = latestMaintenanceActivities(this.maintenanceActivities, this.entries);
@@ -304,6 +308,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.button(actions, this.t("插件设置", "Plugin settings"), "settings", () => this.plugin.openEchoInkGeneralSettings(), "icon", "settings");
     this.button(actions, this.t("新任务", "New task"), "new-task", () => this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID), "primary", "plus");
     this.renderSearchShell(page);
+    page.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
     const nav = page.createEl("nav", { cls: "wb-modules", attr: { "data-wb": "modules", "aria-label": this.t("插件导航", "Modules") } });
     for (const module of WORKBENCH_MODULES) {
       const button = this.button(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, () => this.openModule(module.id), "tertiary", module.icon);
@@ -364,6 +369,11 @@ export class EchoInkWorkbenchView extends ItemView {
     });
     if (this.lockedModule && (workbenchHasPro(this.plugin) || !workbenchProModuleEnabled(this.plugin, this.lockedModule))) this.closeModuleLock();
     this.renderStatus();
+    renderVaultMemoryBanner(this.field("memory-notice"), this.memoryNotice, this.language, {
+      dismiss: async () => { await this.plugin.dismissVaultMemoryNotice(); await this.refresh(); },
+      resolve: async action => { await this.plugin.resolveVaultMemory(action); await this.refresh(); },
+      error: () => { new Notice(this.t("记忆恢复未完成，原内容和备份已保留。", "Memory recovery could not finish. Your original content and backup are preserved.")); void this.refresh(); }
+    });
     const groups = this.taskGroups(now);
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));

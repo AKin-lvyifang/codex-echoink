@@ -11,6 +11,7 @@ import { invalidatedMemoryProductRunIds, productRunIdFromExperienceProfileSource
 import { sha256Hex } from "../utils/sha256";
 import { mobileAtomicFilePort } from "./finance-store";
 import { MobileDataConflictError, type MobileStore } from "./store";
+import { legacyMemoryVaultId, newVaultId, parseVaultIdentity, VAULT_IDENTITY_FILE } from "../storage/vault-identity";
 
 const ROOT = ".echoink/", BASE = "shared-user/", MANIFEST = `${BASE}.runtime/manifest.json`, PROFILE = `${BASE}user-profile-state.json`;
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -28,7 +29,48 @@ interface JournalEntry { relativePath: string; existed: boolean; backupFile?: st
 interface Journal { schemaVersion: 1; transactionId: string; owner: string; operation: string; baseRevision: number; targetRevision: number; entries: JournalEntry[] }
 /** Desktop files and global revision, with a Vault DataAdapter instead of Node/fs/watchers. */
 export class MobileMemoryRepository {
-  constructor(readonly adapter: DataAdapter, readonly owner: string, private now = Date.now, private mutationIssue?: string | (() => string | undefined)) {}
+  private readonly root: string;
+  constructor(readonly adapter: DataAdapter, readonly owner: string, private now = Date.now, private mutationIssue?: string | (() => string | undefined), private storageRoot = "") {
+    this.root = storageRoot ? `${storageRoot}/${ROOT}` : ROOT;
+  }
+  /** Same plugin data root and identity as desktop; retain the old mobile tree as a rollback copy. */
+  private async portableIdentity(): Promise<string> {
+    if (this.storageRoot && !await this.adapter.exists(this.root.slice(0, -1)) && await this.adapter.exists(".echoink/shared-user")) {
+      this.assertWritable();
+      const staging = `${this.storageRoot}/mobile-memory-import-${crypto.randomUUID()}`;
+      const copy = async (source: string, target: string): Promise<void> => {
+        let parent = "";
+        for (const part of target.split("/")) { parent = parent ? `${parent}/${part}` : part; if (!await this.adapter.exists(parent)) await this.adapter.mkdir(parent); }
+        const listed = await this.adapter.list(source);
+        for (const file of listed.files) await this.adapter.write(`${target}/${file.split("/").at(-1)!}`, await this.adapter.read(file));
+        for (const directory of listed.folders) await copy(directory, `${target}/${directory.split("/").at(-1)!}`);
+      };
+      await copy(".echoink", staging);
+      await this.adapter.rename(staging, this.root.slice(0, -1));
+    }
+    const file = this.storageRoot ? `${this.storageRoot}/${VAULT_IDENTITY_FILE}` : VAULT_IDENTITY_FILE;
+    const port = mobileAtomicFilePort(this.adapter, file), raw = await port.read();
+    if (raw !== null) return parseVaultIdentity(raw).vaultId;
+    this.assertWritable();
+    const manifest = await this.read(MANIFEST);
+    let vaultId = legacyMemoryVaultId(manifest);
+    if (!vaultId && this.storageRoot && await this.adapter.exists(`${this.storageRoot}/vaults`)) {
+      const candidates: { id: string; count: number }[] = [];
+      for (const directory of (await this.adapter.list(`${this.storageRoot}/vaults`)).folders) {
+        const catalog = await mobileAtomicFilePort(this.adapter, `${directory}/conversation-catalog.v1.json`).read(true);
+        const id = legacyMemoryVaultId(catalog);
+        if (id && catalog) candidates.push({ id, count: (JSON.parse(catalog) as { entries?: unknown[] }).entries?.length ?? 0 });
+      }
+      const populated = candidates.filter(item => item.count > 0);
+      if (populated.length > 1) throw invalid();
+      vaultId = populated[0]?.id ?? (candidates.length === 1 ? candidates[0].id : null);
+    }
+    const identity = { schemaVersion: 1 as const, vaultId: vaultId ?? newVaultId() };
+    // The legacy tree and original manifest are untouched by identity adoption.
+    if (manifest !== null) await port.backup(manifest);
+    await port.write(json(identity), null);
+    return parseVaultIdentity((await port.read())!).vaultId;
+  }
   private issue(): string | undefined { return typeof this.mutationIssue === "function" ? this.mutationIssue() : this.mutationIssue; }
   private assertWritable(): void { const issue = this.issue(); if (issue) throw new MobileDataConflictError(issue); }
   private enqueue<T>(run: () => Promise<T>): Promise<T> {
@@ -38,35 +80,35 @@ export class MobileMemoryRepository {
     });
     lanes.set(this.adapter, pending); return pending;
   }
-  private read(path: string): Promise<string | null> { return mobileAtomicFilePort(this.adapter, `${ROOT}${safe(path)}`).read(true); }
-  private async mkdir(path: string) { let parent = ""; for (const part of `${ROOT}${path}`.split("/")) { parent = parent ? `${parent}/${part}` : part; if (!await this.adapter.exists(parent)) await this.adapter.mkdir(parent); } }
+  private read(path: string): Promise<string | null> { return mobileAtomicFilePort(this.adapter, `${this.root}${safe(path)}`).read(true); }
+  private async mkdir(path: string) { let parent = ""; for (const part of `${this.root}${path}`.split("/")) { parent = parent ? `${parent}/${part}` : part; if (!await this.adapter.exists(parent)) await this.adapter.mkdir(parent); } }
   private async replace(path: string, content: string | null, expected: string | null) {
     this.assertWritable();
-    if (content === null) { if (await this.read(path) !== expected) throw memoryConflict(); if (expected !== null) await this.adapter.remove(`${ROOT}${safe(path)}`); }
-    else try { await mobileAtomicFilePort(this.adapter, `${ROOT}${safe(path)}`).write(content, expected); }
+    if (content === null) { if (await this.read(path) !== expected) throw memoryConflict(); if (expected !== null) await this.adapter.remove(`${this.root}${safe(path)}`); }
+    else try { await mobileAtomicFilePort(this.adapter, `${this.root}${safe(path)}`).write(content, expected); }
     catch (error) {
       // The shared atomic file port uses its finance conflict text for Memory too.
       if (error instanceof Error && error.message === "财务资料已变化，请重新打开账本后再编辑；原资料已保留。") throw memoryConflict();
       throw error;
     }
   }
-  private async cleanup(directory: string) { this.assertWritable(); await this.adapter.rmdir(`${ROOT}${directory}`, true); }
+  private async cleanup(directory: string) { this.assertWritable(); await this.adapter.rmdir(`${this.root}${directory}`, true); }
   private async assertNoDesktopTransaction(): Promise<void> {
     const directory = `${BASE}.runtime/transactions`;
-    if (!await this.adapter.exists(`${ROOT}${directory}`)) return;
-    for (const folder of (await this.adapter.list(`${ROOT}${directory}`)).folders) {
-      const relative = folder.slice(ROOT.length), state = (await this.read(`${relative}/state`))?.trim();
+    if (!await this.adapter.exists(`${this.root}${directory}`)) return;
+    for (const folder of (await this.adapter.list(`${this.root}${directory}`)).folders) {
+      const relative = folder.slice(this.root.length), state = (await this.read(`${relative}/state`))?.trim();
       if (relative.split("/").at(-1)?.startsWith("txn_mobile_") || state !== "committed") throw new MobileDataConflictError("桌面或旧版移动记忆事务尚未完成，未读取、恢复或覆盖其中资料。");
     }
   }
   private async recover(): Promise<void> {
     await this.assertNoDesktopTransaction();
     const directory = `${BASE}.runtime/mobile-transactions`;
-    if (!await this.adapter.exists(`${ROOT}${directory}`)) return;
-    const listed = await this.adapter.list(`${ROOT}${directory}`);
+    if (!await this.adapter.exists(`${this.root}${directory}`)) return;
+    const listed = await this.adapter.list(`${this.root}${directory}`);
     const recoveries: { relative: string; entries: { path: string; before: string | null; current: string | null }[] }[] = [];
     for (const folder of listed.folders) {
-      const relative = folder.slice(ROOT.length), raw = await this.read(`${relative}/plan.json`);
+      const relative = folder.slice(this.root.length), raw = await this.read(`${relative}/plan.json`);
       if (!raw) {
         if (relative.split("/").at(-1)?.startsWith(`txn_mobile_${sha256Hex(this.owner).slice(0, 12)}_`)) { recoveries.push({ relative, entries: [] }); continue; }
         throw new MobileDataConflictError("记忆事务尚未准备完成，请稍后重新读取。");
@@ -97,8 +139,8 @@ export class MobileMemoryRepository {
       this.assertWritable();
       for (const entry of recovery.entries) {
         if (entry.current !== entry.before) await this.replace(entry.path, entry.before, entry.current);
-        else if (entry.before !== null && !await this.adapter.exists(`${ROOT}${entry.path}`)) {
-          this.assertWritable(); await mobileAtomicFilePort(this.adapter, `${ROOT}${entry.path}`).read();
+        else if (entry.before !== null && !await this.adapter.exists(`${this.root}${entry.path}`)) {
+          this.assertWritable(); await mobileAtomicFilePort(this.adapter, `${this.root}${entry.path}`).read();
         }
       }
       await this.cleanup(recovery.relative);
@@ -116,16 +158,16 @@ export class MobileMemoryRepository {
       safe(path); const before = await this.read(path), wanted = expected.get(path);
       if (expected.has(path) && before !== wanted) throw memoryConflict(); expected.set(path, before);
       const backupFile = before === null ? undefined : `backup/${entries.length}.bak`;
-      if (backupFile) await this.adapter.write(`${ROOT}${directory}/${backupFile}`, before!);
+      if (backupFile) await this.adapter.write(`${this.root}${directory}/${backupFile}`, before!);
       entries.push({ relativePath: path, existed: before !== null, ...(backupFile ? { backupFile } : {}), installedHash: content === null ? null : sha256Hex(content) });
     }
     const plan: Journal = { schemaVersion: 1, transactionId: id, owner: this.owner, operation, baseRevision, targetRevision, entries };
-    await this.adapter.write(`${ROOT}${directory}/plan.json`, json(plan)); await this.adapter.write(`${ROOT}${directory}/state`, "applying\n");
+    await this.adapter.write(`${this.root}${directory}/plan.json`, json(plan)); await this.adapter.write(`${this.root}${directory}/state`, "applying\n");
     } catch (error) { try { await this.cleanup(directory); } catch { /* An owned preparation is safe to finish on reopening. */ } throw error; }
     try {
       for (const [path, content] of changes) { guard(); await this.replace(path, content, expected.get(path)!); guard(); if (await this.read(path) !== content) throw new MobileDataConflictError("记忆保存回读不一致，原稿已保留。"); }
       guard();
-      await this.adapter.write(`${ROOT}${directory}/state`, "committed\n");
+      await this.adapter.write(`${this.root}${directory}/state`, "committed\n");
     } catch (error) { try { await this.recover(); } catch (recovery) { throw new AggregateError([error, recovery], "记忆保存失败，原资料与恢复事务已保留。"); } throw error; }
     try { await this.cleanup(directory); } catch { /* A committed journal is safe to clean at next access. */ }
   }
@@ -157,10 +199,13 @@ export class MobileMemoryRepository {
     return { ...value, ...parsed, items: parsed.items.map(item => ({ ...(value.items as Record<string, unknown>[]).find(raw => raw.id === item.id), ...item })) };
   }
   private async fresh(): Promise<MobileCanonicalSnapshot> {
+    const vaultId = await this.portableIdentity();
     await this.recover();
     let raw = await this.read(MANIFEST);
     if (raw === null) { await this.bootstrap(); raw = await this.read(MANIFEST); }
-    const manifest = this.parseManifest(raw!); const records: PersonalMemoryRecord[] = [], originals = new Map<string, string | null>([[MANIFEST, raw]]);
+    const manifest = this.parseManifest(raw!);
+    if (manifest.vaultId !== vaultId) throw invalid();
+    const records: PersonalMemoryRecord[] = [], originals = new Map<string, string | null>([[MANIFEST, raw]]);
     for (const metadata of manifest.records) {
       const bytes = await this.read(metadata.file); if (bytes === null) throw invalid();
       const record = parseCanonicalMemoryRecord(bytes, metadata.file);
@@ -188,19 +233,19 @@ export class MobileMemoryRepository {
     const records: PersonalMemoryRecord[] = [], originals = new Map<string, string | null>([[MANIFEST, null]]);
     for (const kind of ["facts", "views", "decisions", "active", "episodes"]) {
       const directory = `${BASE}memory/${kind}`;
-      if (!await this.adapter.exists(`${ROOT}${directory}`)) continue;
-      for (const path of (await this.adapter.list(`${ROOT}${directory}`)).files) {
+      if (!await this.adapter.exists(`${this.root}${directory}`)) continue;
+      for (const path of (await this.adapter.list(`${this.root}${directory}`)).files) {
         if (!path.endsWith(".md")) continue;
-        const relative = path.slice(ROOT.length), bytes = await this.read(relative); if (bytes === null) throw invalid();
+        const relative = path.slice(this.root.length), bytes = await this.read(relative); if (bytes === null) throw invalid();
         records.push(parseCanonicalMemoryRecord(bytes, relative)); originals.set(relative, bytes);
       }
     }
     const existingProfile = await this.read(PROFILE); if (existingProfile !== null) { let value: unknown; try { value = JSON.parse(existingProfile); } catch { throw invalid(); }
       if (!object(value)) throw invalid(); this.profileState(value); }
     const now = this.now(), previousUser = await this.read(`${BASE}USER.md`), profile = emptyUserProfileState(now), user = previousUser ?? renderUserMarkdown(profile);
-    const agent = await this.adapter.exists(`${ROOT}agents/echoink/AGENT.md`) ? await this.adapter.read(`${ROOT}agents/echoink/AGENT.md`) : "";
+    const agent = await this.adapter.exists(`${this.root}agents/echoink/AGENT.md`) ? await this.adapter.read(`${this.root}agents/echoink/AGENT.md`) : "";
     const revision = Math.max(0, ...records.map(record => record.revision));
-    const manifest: CanonicalMemoryManifest = { schemaVersion: 1, vaultId: `vault_${crypto.randomUUID().replaceAll("-", "")}`, revision, records: records.map(canonicalMemoryMetadata), tombstones: [], updatedAt: now,
+    const manifest: CanonicalMemoryManifest = { schemaVersion: 1, vaultId: await this.portableIdentity(), revision, records: records.map(canonicalMemoryMetadata), tombstones: [], updatedAt: now,
       fixedFileHashes: { agent: sha256Hex(agent), user: sha256Hex(user) } };
     const changes = new Map<string, string | null>();
     changes.set(MANIFEST, json(manifest));
@@ -279,7 +324,7 @@ export class MobileMemoryRepository {
     if (!memories.length) { await this.snapshot(); return; }
     const marker = `${BASE}.runtime/mobile-memory-import-${store.instanceId}.json`;
     await this.enqueue(async () => { await this.fresh(); const backup = `${BASE}.runtime/backups/mobile-v2-${store.instanceId}.json`;
-      if (await this.read(backup) === null) { await this.mkdir(`${BASE}.runtime/backups`); await this.adapter.write(`${ROOT}${backup}`, source); if (await this.read(backup) !== source) throw new MobileDataConflictError("旧移动记忆备份回读失败，未导入。"); } });
+      if (await this.read(backup) === null) { await this.mkdir(`${BASE}.runtime/backups`); await this.adapter.write(`${this.root}${backup}`, source); if (await this.read(backup) !== source) throw new MobileDataConflictError("旧移动记忆备份回读失败，未导入。"); } });
     const existing = await this.read(marker);
     let mapping: Record<string, string> = {};
     if (existing !== null) { let parsed: unknown; try { parsed = JSON.parse(existing); } catch { throw invalid(); }

@@ -26,6 +26,8 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
+    "test:vault-identity": "node scripts/vault-identity-tests.mjs",
+    "test:vault-memory-ui": "node scripts/vault-memory-ui-tests.mjs",
     "test:english-diary": "node scripts/english-diary-tests.mjs",
     "test:react-dom-resources": "node scripts/react-dom-script-resources-tests.mjs",
     "test:provider-settings": "node scripts/provider-settings-tests.mjs",

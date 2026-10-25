@@ -14,6 +14,7 @@ import type { ChatMessage } from "../settings/settings";
 import { runDesktopModuleSettingsTests } from "./desktop-module-settings";
 import { MAINTENANCE_ACTIVITY_STAGES, maintenanceCompletionText, type KnowledgeActivitySnapshot, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
+import type { VaultMemoryNotice } from "../storage/vault-identity";
 
 const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const entry = (id: string, state: TaskEntry["taskStatus"], at = Date.now()): TaskEntry => ({ conversationId: id, piSessionId: `session-${id}`, vaultId: "fixture", title: `任务 ${id}`, status: "active", defaultMemoryMode: "normal", createdAt: at, updatedAt: at, agentId: "sol", taskStatus: state, taskStartedAt: at, taskCompletedAt: at, taskInterruptedAt: at });
@@ -36,6 +37,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
   const calls: unknown[][] = [], subscribers = new Set<ConversationRunSubscriber>(), dataSubscribers = new Set<() => void>();
   let tasks: readonly TaskEntry[] = [], failTasks = false, failData = false, hasFocus = true, todoFailure = false;
   let taskReads = 0, dataReads = 0;
+  let memoryNotice: VaultMemoryNotice | null = null;
   let projectionsInFlight = 0, maxProjectionConcurrency = 0;
   let pro = true;
   const projectionReads = new Map<string, number>(), projectionText = new Map<string, string>(), failedProjections = new Set<string>();
@@ -70,6 +72,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     getKnowledgeActivitySource: () => activitySource,
     getKnowledgeSurfaceService: () => ({ getUpgradeSnapshot: async () => ({ status: "running", taskId: upgradeTaskId }), stopUpgrade: async () => { calls.push(["stop-upgrade", upgradeTaskId]); } }),
     async listAgentTaskEntries() { taskReads++; if (failTasks) throw new Error("任务读取失败"); return tasks; },
+    async getVaultMemoryNotice() { return memoryNotice; },
+    async dismissVaultMemoryNotice() { calls.push(["dismiss-memory-notice"]); memoryNotice = null; },
+    async resolveVaultMemory(action: string) { calls.push(["resolve-memory", action]); memoryNotice = null; },
     async readPiConversationProjection(taskId: string) {
       projectionReads.set(taskId, (projectionReads.get(taskId) ?? 0) + 1);
       maxProjectionConcurrency = Math.max(maxProjectionConcurrency, ++projectionsInFlight);
@@ -123,6 +128,33 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 6);
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 6);
     assert.equal(content.querySelector("time")?.getAttribute("datetime"), localDate(new Date()));
+    memoryNotice = { kind: "mismatch", reason: "Personal Memory manifest belongs to another Vault" };
+    await view.refresh();
+    assert.equal(content.querySelectorAll(".wb-memory-notice").length, 1);
+    assert.equal(content.querySelectorAll('[data-wb-group][data-state="error"]').length, 0, "memory failure does not fail task groups");
+    assert.equal(content.querySelector(".wb-memory-notice details")?.hasAttribute("open"), false);
+    assert.ok(content.querySelector(".wb-memory-notice details")?.textContent?.includes(memoryNotice.reason));
+    const memoryHost = content.querySelector<HTMLElement>('[data-wb="memory-notice"]')!;
+    assert.equal(memoryHost.nextElementSibling?.getAttribute("data-wb"), "modules", "memory explanation precedes module navigation");
+    const useMemory = memoryHost.querySelector<HTMLButtonElement>(".is-primary")!;
+    assert.equal(useMemory.textContent, "沿用这份记忆"); useMemory.click(); await tick();
+    assert.deepEqual(calls.at(-1), ["resolve-memory", "adopt"]); assert.equal(memoryHost.children.length, 0);
+    memoryNotice = { kind: "copy", originalName: "合成原库" }; await view.refresh();
+    const restart = memoryHost.querySelector<HTMLButtonElement>(".is-secondary")!;
+    restart.click(); await tick();
+    assert.equal(calls.at(-1)?.[1], "adopt", "asking for confirmation does not reset memory");
+    assert.equal(memoryHost.querySelector<HTMLElement>(".wb-memory-notice-row")!.hidden, true);
+    memoryHost.querySelector<HTMLButtonElement>(".review-confirm button:first-child")!.click(); await tick();
+    assert.equal(memoryHost.querySelector(".review-confirm"), null); assert.equal(document.activeElement, restart);
+    restart.click(); await tick();
+    memoryHost.querySelector<HTMLButtonElement>(".review-confirm button:last-child")!.click(); await tick();
+    assert.deepEqual(calls.at(-1), ["resolve-memory", "reset"]); assert.equal(memoryHost.children.length, 0);
+    memoryNotice = { kind: "copy", originalName: "合成原库" }; host.settings.settingsLanguage = "en"; await view.refresh();
+    assert.match(memoryHost.textContent ?? "", /copied from.*合成原库/u);
+    assert.equal(memoryHost.querySelector<HTMLButtonElement>(".is-primary")!.textContent, "Got it");
+    memoryHost.querySelector<HTMLButtonElement>(".is-primary")!.click(); await tick();
+    assert.deepEqual(calls.at(-1), ["dismiss-memory-notice"]); assert.equal(memoryHost.children.length, 0);
+    host.settings.settingsLanguage = "zh-CN"; await view.refresh();
     await click("new-task"); assert.deepEqual(calls.at(-1), ["list", GENERAL_ASSISTANT_ID]);
     await click("settings"); assert.deepEqual(calls.at(-1), ["settings"]);
     for (const module of snapshot.modules) await openWorkbenchModule(plugin, module);

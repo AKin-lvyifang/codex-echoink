@@ -27438,6 +27438,23 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench .wb-unread { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--wb-accent); }
 .echoink-workbench .wb-todo-check { flex: 0 0 16px; width: 16px; height: 16px; min-height: 16px; padding: 0; border: 1px solid var(--wb-line); border-radius: 4px; box-shadow: none; }
 .echoink-workbench .wb-status:not(:empty) { margin-bottom: 24px; color: var(--wb-secondary); }
+.echoink-workbench .wb-memory-notice { padding: 12px 14px; margin-bottom: 20px; border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); }
+.echoink-workbench .wb-memory-notice-row { display: flex; align-items: flex-start; gap: 10px; }
+.echoink-workbench .wb-memory-notice .wb-lead { flex-basis: 20px; width: 20px; height: 30px; }
+.echoink-workbench .wb-memory-notice .is-warning { color: var(--wb-warn); }
+.echoink-workbench .wb-memory-notice .wb-grow { padding-top: 5px; }
+.echoink-workbench .wb-memory-notice-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.echoink-workbench .wb-memory-notice details { margin-top: 6px; color: var(--wb-secondary); }
+.echoink-workbench .wb-memory-notice summary { cursor: pointer; border-radius: 6px; }
+.echoink-workbench .wb-memory-notice summary:focus-visible { outline: none; background: var(--wb-hover); }
+.echoink-workbench .wb-memory-notice details div { overflow-wrap: anywhere; }
+.echoink-workbench .wb-memory-notice .review-confirm { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--wb-line); }
+.echoink-workbench .wb-memory-notice .review-confirm p { margin: 0 0 10px; }
+.echoink-workbench .wb-memory-notice .review-confirm .settings-inline { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+@container echoink-workbench (max-width: 640px) {
+  .echoink-workbench .wb-memory-notice-row { flex-wrap: wrap; }
+  .echoink-workbench .wb-memory-notice-actions { width: 100%; }
+}
 .echoink-workbench .wb-error { display: flex; align-items: flex-start; gap: 10px; color: var(--text-error); }
 .echoink-workbench .wb-error details { color: var(--wb-secondary); margin-top: 6px; overflow-wrap: anywhere; }
 .echoink-workbench .wb-error summary { cursor: pointer; border-radius: 6px; }

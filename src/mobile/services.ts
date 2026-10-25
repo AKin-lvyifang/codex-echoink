@@ -69,7 +69,7 @@ export class MobileServices implements HomeHost {
   setUsage(observer: MobileUsageObserver): void { this.usage = observer; this.memory.setUsage(observer); }
   get memory(): MobileMemoryService {
     if (!this.memoryService) {
-      this.memoryService = new MobileMemoryService({ adapter: this.app.vault.adapter, store: this.host.store, settings: () => this.settings,
+      this.memoryService = new MobileMemoryService({ adapter: this.app.vault.adapter, storageRoot: `${this.preferenceRoot}/pi-agent-product-v1`, store: this.host.store, settings: () => this.settings,
         saveSettings: () => this.host.saveSettings(), request: this.host.capabilityRequest ?? requestUrl, changed: () => this.host.runtime.onChange(), isBusy: id => this.host.runtime.isBusy(id) });
       this.host.store.bindCanonicalMemory(() => this.memoryService!.recordsForRuntime());
     }

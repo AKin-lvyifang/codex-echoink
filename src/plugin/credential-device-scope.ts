@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
+import { vaultIdDigest } from "../storage/vault-identity";
 import {
   DurableAppendOnlyCasError,
   readDurableRegularFile,
@@ -29,6 +30,7 @@ export class EchoInkCredentialDeviceScopeError extends Error {
 export async function prepareEchoInkCredentialDeviceScope(options: {
   stateRootPath: string;
   vaultPath: string;
+  vaultId?: string;
 }): Promise<EchoInkCredentialDeviceScope> {
   try {
     await fsp.mkdir(options.stateRootPath, { recursive: true, mode: 0o700 });
@@ -40,6 +42,7 @@ export async function prepareEchoInkCredentialDeviceScope(options: {
     return await credentialDeviceScope({
       stateRootPath,
       deviceIdDigest,
+      vaultId: options.vaultId,
       vaultPath: options.vaultPath
     });
   } catch {
@@ -51,6 +54,7 @@ export async function prepareEchoInkCredentialDeviceScope(options: {
 export async function readEchoInkCredentialDeviceScope(options: {
   stateRootPath: string;
   vaultPath: string;
+  vaultId?: string;
 }): Promise<EchoInkCredentialDeviceScope> {
   try {
     const stateRootPath = await resolveDurablePlainRoot(
@@ -64,6 +68,7 @@ export async function readEchoInkCredentialDeviceScope(options: {
     return await credentialDeviceScope({
       stateRootPath,
       deviceIdDigest,
+      vaultId: options.vaultId,
       vaultPath: options.vaultPath
     });
   } catch {
@@ -100,12 +105,15 @@ async function credentialDeviceScope(options: {
   stateRootPath: string;
   deviceIdDigest: string;
   vaultPath: string;
+  vaultId?: string;
 }): Promise<EchoInkCredentialDeviceScope> {
   const vaultRealPath = await fsp.realpath(options.vaultPath);
   return Object.freeze({
     stateRootPath: options.stateRootPath,
     deviceIdDigest: options.deviceIdDigest,
-    vaultIdDigest: sha256Digest(`echoink-vault-identity-v1\0${path.resolve(vaultRealPath)}`)
+    // Old credential callers can still read the old scope; local stores pass
+    // the portable identity. Existing sha256 IDs therefore keep their scope.
+    vaultIdDigest: options.vaultId ? vaultIdDigest(options.vaultId) : sha256Digest(`echoink-vault-identity-v1\0${path.resolve(vaultRealPath)}`)
   });
 }
 

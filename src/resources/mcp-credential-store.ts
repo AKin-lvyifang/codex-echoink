@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { App } from "obsidian";
+import { pluginDataDir } from "../plugin/plugin-data-paths";
+import { readVaultIdentity } from "../plugin/vault-identity";
 import {
   DeviceCredentialResolver,
   createCredentialRef,
@@ -142,9 +144,11 @@ export class EchoInkMcpCredentialStore {
   }
 
   private async scope() {
+    const identity = await readVaultIdentity(pluginDataDir(this.options.vaultPath));
     return await prepareEchoInkCredentialDeviceScope({
       stateRootPath: this.options.stateRootPath ?? defaultEchoInkDeviceStateRoot(),
-      vaultPath: this.options.vaultPath
+      vaultPath: this.options.vaultPath,
+      vaultId: identity?.vaultId
     });
   }
 

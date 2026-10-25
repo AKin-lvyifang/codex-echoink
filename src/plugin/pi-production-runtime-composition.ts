@@ -534,7 +534,7 @@ export async function createPiProductionRuntimeBundle(
   );
   const vaultAdapter = new ObsidianVaultDomainAdapter(
     plugin.app,
-    deviceScope.vaultIdDigest,
+    localData.vaultIdentity.vaultId,
     vaultRootPath
   );
   const knowledgeAgentIndex = new KnowledgeAgentIndex({
@@ -574,7 +574,7 @@ export async function createPiProductionRuntimeBundle(
   const knowledgeMaintenance = createProductionPiKnowledgeMaintenanceToolPort({
     vaultRootPath,
     privateKnowledgeRootPath,
-    vaultId: deviceScope.vaultIdDigest,
+    vaultId: localData.vaultIdentity.vaultId,
     userId: localPiVaultUserId(deviceScope.deviceIdDigest),
     deviceId: deviceScope.deviceIdDigest,
     domainService: maintenanceVaultDomainService,

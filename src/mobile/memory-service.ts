@@ -18,6 +18,7 @@ const clone = <T>(value: T): T => structuredClone(value);
 const activeDreams = new WeakMap<DataAdapter, object>();
 const DREAM_LEDGER = "shared-user/.runtime/mobile-dream-ledger.json", DREAM_STATE = "shared-user/.runtime/dream-state.json";
 export interface MobileMemoryServiceOptions {
+  storageRoot?: string;
   adapter: DataAdapter; store: MobileStore; settings(): MobileSettings; saveSettings(): Promise<void>; request: MobileRequest;
   changed(): void; isBusy(id: string): boolean; now?: () => number;
 }
@@ -34,7 +35,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
   private usage?: MobileUsageObserver;
   setUsage(observer: MobileUsageObserver): void { this.usage = observer; }
   constructor(private options: MobileMemoryServiceOptions) {
-    this.now = options.now ?? Date.now; this.repository = new MobileMemoryRepository(options.adapter, options.store.instanceId, this.now, () => options.store.unavailableReason);
+    this.now = options.now ?? Date.now; this.repository = new MobileMemoryRepository(options.adapter, options.store.instanceId, this.now, () => options.store.unavailableReason, options.storageRoot);
     this.status = { phase: "idle", dayKey: this.day(), attemptsToday: 0, dailyLimit: this.readSettings().dreamRunsPerDay, startedAt: null, finishedAt: null, error: "" };
   }
   private day() { const date = new Date(this.now()); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }

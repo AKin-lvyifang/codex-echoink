@@ -53,6 +53,8 @@ import {
 } from "./credential-device-scope";
 import { pluginDataDir } from "./plugin-data-paths";
 import { loadPiVaultToolProductState } from "./pi-vault-tool-production";
+import { dismissVaultCopyNotice, prepareVaultIdentity, repairVaultMemory } from "./vault-identity";
+import { legacyMemoryVaultId, type VaultIdentity, type VaultMemoryNotice } from "../storage/vault-identity";
 
 export interface PiLocalDataPluginHost {
   getVaultPath(): string;
@@ -65,6 +67,7 @@ export interface PiLocalDataPluginHost {
  * local operations never need a second store or a Provider admission step.
  */
 export class PiLocalDataService {
+  private memoryIssue: string | null = null;
   private constructor(
     readonly vaultRootPath: string,
     readonly pluginDataRootPath: string,
@@ -77,8 +80,9 @@ export class PiLocalDataService {
     readonly approvals: FileApprovalTicketStore,
     readonly receipts: FileDomainReceiptStore,
     readonly knowledgeUsageStore: FileKnowledgeUsageStore,
-    readonly personalMemory: PersonalMemoryRepository,
-    readonly sessionApi: PiSessionManagerApi
+    public personalMemory: PersonalMemoryRepository,
+    readonly sessionApi: PiSessionManagerApi,
+    readonly vaultIdentity: VaultIdentity
   ) {}
 
   static async create(
@@ -92,9 +96,14 @@ export class PiLocalDataService {
     );
     await fsp.mkdir(rawPluginDataRootPath, { recursive: true, mode: 0o700 });
     const pluginDataRootPath = await fsp.realpath(rawPluginDataRootPath);
+    const vaultIdentity = await prepareVaultIdentity({
+      pluginDataRoot: pluginDataRootPath, vaultRoot: vaultRootPath,
+      deviceStateRoot: defaultEchoInkDeviceStateRoot()
+    });
     const deviceScope = await prepareEchoInkCredentialDeviceScope({
       stateRootPath: defaultEchoInkDeviceStateRoot(),
-      vaultPath: vaultRootPath
+      vaultPath: vaultRootPath,
+      vaultId: vaultIdentity.vaultId
     });
     const storeScope: DevicePiStoreSetBindingScope = Object.freeze({
       pluginDataRootPath,
@@ -111,32 +120,29 @@ export class PiLocalDataService {
     registerKnowledgePrivateRoot(vaultRootPath, path.join(piNativeStorageRootPath, "knowledge"));
     const catalog = new FileConversationCatalog({
       storageRootPath: piNativeStorageRootPath,
-      vaultId: deviceScope.vaultIdDigest
+      vaultId: vaultIdentity.vaultId
     });
     const productRuns = new FileProductRunStore({
       storageRootPath: piNativeStorageRootPath,
-      vaultId: deviceScope.vaultIdDigest,
+      vaultId: vaultIdentity.vaultId,
       catalog
     });
     const approvals = new FileApprovalTicketStore({
       storageRootPath: piNativeStorageRootPath,
-      vaultId: deviceScope.vaultIdDigest
+      vaultId: vaultIdentity.vaultId
     });
     const receipts = new FileDomainReceiptStore({
       storageRootPath: piNativeStorageRootPath,
-      vaultId: deviceScope.vaultIdDigest
+      vaultId: vaultIdentity.vaultId
     });
     const knowledgeUsageStore = new FileKnowledgeUsageStore({
       storageRootPath: piNativeStorageRootPath,
-      vaultId: deviceScope.vaultIdDigest
+      vaultId: vaultIdentity.vaultId
     });
     const personalMemory = new PersonalMemoryRepository({
       vaultPath: piNativeStorageRootPath,
-      vaultId: deviceScope.vaultIdDigest
+      vaultId: vaultIdentity.vaultId
     });
-    if (options.recoverDeveloperChange !== false) {
-      await new MemoryDeveloperBackups(personalMemory.layout.root).recoverInterruptedChange();
-    }
     const sessionApi = createPiSessionManagerApi();
 
     await catalog.initialize();
@@ -144,12 +150,23 @@ export class PiLocalDataService {
     await approvals.initialize();
     await receipts.initialize();
     await knowledgeUsageStore.initialize();
-    await personalMemory.initialize();
-    const maintenanceState = new FilePhase3MaintenanceStateStore({ vaultRootPath, storageRootPath: path.join(piNativeStorageRootPath, "knowledge"), vaultId: deviceScope.vaultIdDigest });
+    let memoryIssue: string | null = null;
+    try {
+      if (options.recoverDeveloperChange !== false) await new MemoryDeveloperBackups(personalMemory.layout.root).recoverInterruptedChange();
+      let manifest: string | null;
+      try { manifest = await fsp.readFile(personalMemory.layout.manifest, "utf8"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; manifest = null; }
+      if (manifest !== null && legacyMemoryVaultId(manifest) !== vaultIdentity.vaultId) throw new Error("Personal Memory manifest is invalid or belongs to another Vault");
+      await personalMemory.initialize();
+    } catch (error) {
+      memoryIssue = error instanceof Error ? error.message : String(error);
+      await personalMemory.dispose();
+    }
+    const maintenanceState = new FilePhase3MaintenanceStateStore({ vaultRootPath, storageRootPath: path.join(piNativeStorageRootPath, "knowledge"), vaultId: vaultIdentity.vaultId });
     await maintenanceState.initialize();
     await maintenanceState.recoverPrivateFinalization();
 
-    return new PiLocalDataService(
+    const service = new PiLocalDataService(
       vaultRootPath,
       pluginDataRootPath,
       piNativeStorageRootPath,
@@ -162,8 +179,45 @@ export class PiLocalDataService {
       receipts,
       knowledgeUsageStore,
       personalMemory,
-      sessionApi
+      sessionApi,
+      vaultIdentity
     );
+    service.memoryIssue = memoryIssue;
+    return service;
+  }
+
+  get memoryNotice(): VaultMemoryNotice | null {
+    if (this.memoryIssue !== null) return { kind: "mismatch", reason: this.memoryIssue };
+    return this.vaultIdentity.copiedFrom ? { kind: "copy", originalName: this.vaultIdentity.copiedFrom } : null;
+  }
+
+  assertMemoryAvailable(): void {
+    if (this.memoryIssue !== null) throw new Error("Personal Memory is paused; resolve it in Workbench");
+  }
+
+  async dismissMemoryNotice(): Promise<void> { await dismissVaultCopyNotice(this.pluginDataRootPath, this.vaultIdentity); }
+
+  async resolveMemory(action: "adopt" | "reset"): Promise<string> {
+    await this.personalMemory.dispose();
+    let next: PersonalMemoryRepository | null = null;
+    try {
+      const backup = await repairVaultMemory({
+        pluginDataRoot: this.pluginDataRootPath, identity: this.vaultIdentity, action,
+        validate: async () => {
+          const validation = new PersonalMemoryRepository({ vaultPath: this.piNativeStorageRootPath, vaultId: this.vaultIdentity.vaultId, watchExternalChanges: false });
+          try { await validation.initialize(); } finally { await validation.dispose(); }
+        }
+      });
+      next = new PersonalMemoryRepository({ vaultPath: this.piNativeStorageRootPath, vaultId: this.vaultIdentity.vaultId });
+      await next.initialize();
+      this.personalMemory = next;
+      this.memoryIssue = null;
+      return backup;
+    } catch (error) {
+      await next?.dispose();
+      this.memoryIssue = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 
   async dispose(): Promise<void> {

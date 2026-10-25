@@ -2243,6 +2243,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   private async createCognitiveSystem(localData: PiLocalDataService): Promise<CognitiveSystem> {
+    localData.assertMemoryAvailable();
     const system = await CognitiveSystem.create({
       repository: localData.personalMemory,
       llm: () => this.createDreamLlmPort(),
@@ -2484,6 +2485,38 @@ export default class CodexForObsidianPlugin extends Plugin {
     return await flight;
   }
 
+  async getVaultMemoryNotice() { return (await this.ensurePiLocalData()).memoryNotice; }
+
+  async dismissVaultMemoryNotice(): Promise<void> {
+    await (await this.ensurePiLocalData()).dismissMemoryNotice();
+    this.notifyHomeSurfacesChanged();
+  }
+
+  async resolveVaultMemory(action: "adopt" | "reset"): Promise<void> {
+    const local = await this.ensurePiLocalData();
+    const cognitive = this.cognitiveSystem ?? await this.cognitiveSystemFlight?.catch(() => null);
+    if (this.developerMemoryChanging || this.piRunConversations.size || this.piSubmittingConversations.size
+      || this.productActivity.hasActivity || cognitive?.engine.isRunning) {
+      throw new Error(this.settings.settingsLanguage === "en" ? "Wait for the current task to finish, then try again." : "请等当前任务结束后再试。");
+    }
+    this.productActivity.beginSwitch();
+    this.developerMemoryChanging = true;
+    try {
+      await this.suspendPiProductionRuntime();
+      await cognitive?.dispose();
+      this.cognitiveSystem = null;
+      this.cognitiveSystemFlight = null;
+      this.personalMemoryCorrection = null;
+      await local.resolveMemory(action);
+      this.cognitiveSystem = await this.createCognitiveSystem(local);
+    } finally {
+      this.developerMemoryChanging = false;
+      this.productActivity.endSwitch();
+      this.getCodexView()?.refreshPersonalizationUi();
+      this.notifyHomeSurfacesChanged();
+    }
+  }
+
   private async settlePiRuntimeFlight(): Promise<void> {
     await this.piRuntimeFlight?.catch(() => undefined);
   }
@@ -2501,9 +2534,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (this.piRuntimeBundle) return this.piRuntimeBundle;
     if (this.piRuntimeFlight) return await this.piRuntimeFlight;
     const flight = this.ensurePiLocalData()
-      .then(async (localData) =>
-        await createPiProductionRuntimeBundle(this, localData)
-      )
+      .then(async (localData) => {
+        localData.assertMemoryAvailable();
+        return await createPiProductionRuntimeBundle(this, localData);
+      })
       .then((bundle) => {
         this.piRuntimeBundle = bundle;
         return bundle;
