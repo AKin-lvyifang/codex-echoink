@@ -27,7 +27,7 @@ const versionOf = (registry: AgentRegistry) => sha256Hex(JSON.stringify(registry
 /** Registry is the only Agent configuration. Legacy sources are inspected read-only once. */
 export class MobileAgentRegistryService {
   private initialized = false;
-  constructor(private adapter: DataAdapter, private settings: MobileSettings, private saveRegistry: (candidate: AgentRegistry) => Promise<void>) {}
+  constructor(private adapter: DataAdapter, private settings: MobileSettings, private saveRegistry: (candidate: AgentRegistry) => Promise<void>, private memoryRoot: () => string = () => ".echoink") {}
 
   private enqueue<T>(run: () => Promise<T>): Promise<T> {
     const pending = (lanes.get(this.settings) ?? Promise.resolve()).catch(() => {}).then(run);
@@ -173,7 +173,7 @@ export class MobileAgentRegistryService {
     });
   }
   private async read(path: string): Promise<string | undefined> {
-    const fullPath = `.echoink/${path}`;
+    const fullPath = `${this.memoryRoot()}/${path}`;
     return await this.adapter.exists(fullPath) ? this.adapter.read(fullPath) : undefined;
   }
   private async readJson(path: string): Promise<Record<string, unknown> | null | undefined> {

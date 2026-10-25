@@ -38,6 +38,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
   let tasks: readonly TaskEntry[] = [], failTasks = false, failData = false, hasFocus = true, todoFailure = false;
   let taskReads = 0, dataReads = 0;
   let memoryNotice: VaultMemoryNotice | null = null;
+  let memoryError: string | null = null;
   let projectionsInFlight = 0, maxProjectionConcurrency = 0;
   let pro = true;
   const projectionReads = new Map<string, number>(), projectionText = new Map<string, string>(), failedProjections = new Set<string>();
@@ -73,8 +74,8 @@ export async function runWorkbenchUiTests(): Promise<void> {
     getKnowledgeSurfaceService: () => ({ getUpgradeSnapshot: async () => ({ status: "running", taskId: upgradeTaskId }), stopUpgrade: async () => { calls.push(["stop-upgrade", upgradeTaskId]); } }),
     async listAgentTaskEntries() { taskReads++; if (failTasks) throw new Error("任务读取失败"); return tasks; },
     async getVaultMemoryNotice() { return memoryNotice; },
-    async dismissVaultMemoryNotice() { calls.push(["dismiss-memory-notice"]); memoryNotice = null; },
-    async resolveVaultMemory(action: string) { calls.push(["resolve-memory", action]); memoryNotice = null; },
+    async getVaultMemoryError() { return memoryError; },
+    async resolveVaultMemory(action: string) { calls.push(["resolve-memory", action]); memoryNotice = null; memoryError = null; },
     async readPiConversationProjection(taskId: string) {
       projectionReads.set(taskId, (projectionReads.get(taskId) ?? 0) + 1);
       maxProjectionConcurrency = Math.max(maxProjectionConcurrency, ++projectionsInFlight);
@@ -139,7 +140,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     const useMemory = memoryHost.querySelector<HTMLButtonElement>(".is-primary")!;
     assert.equal(useMemory.textContent, "沿用这份记忆"); useMemory.click(); await tick();
     assert.deepEqual(calls.at(-1), ["resolve-memory", "adopt"]); assert.equal(memoryHost.children.length, 0);
-    memoryNotice = { kind: "copy", originalName: "合成原库" }; await view.refresh();
+    memoryNotice = { kind: "mismatch", reason: "Personal Memory manifest belongs to another Vault" }; await view.refresh();
     const restart = memoryHost.querySelector<HTMLButtonElement>(".is-secondary")!;
     restart.click(); await tick();
     assert.equal(calls.at(-1)?.[1], "adopt", "asking for confirmation does not reset memory");
@@ -149,12 +150,15 @@ export async function runWorkbenchUiTests(): Promise<void> {
     restart.click(); await tick();
     memoryHost.querySelector<HTMLButtonElement>(".review-confirm button:last-child")!.click(); await tick();
     assert.deepEqual(calls.at(-1), ["resolve-memory", "reset"]); assert.equal(memoryHost.children.length, 0);
-    memoryNotice = { kind: "copy", originalName: "合成原库" }; host.settings.settingsLanguage = "en"; await view.refresh();
-    assert.match(memoryHost.textContent ?? "", /copied from.*合成原库/u);
-    assert.equal(memoryHost.querySelector<HTMLButtonElement>(".is-primary")!.textContent, "Got it");
+    memoryNotice = { kind: "mismatch", reason: "Personal Memory manifest belongs to another Vault" }; host.settings.settingsLanguage = "en"; await view.refresh();
+    assert.match(memoryHost.textContent ?? "", /does not belong to this vault/u);
+    assert.equal(memoryHost.querySelector<HTMLButtonElement>(".is-primary")!.textContent, "Use this memory");
     memoryHost.querySelector<HTMLButtonElement>(".is-primary")!.click(); await tick();
-    assert.deepEqual(calls.at(-1), ["dismiss-memory-notice"]); assert.equal(memoryHost.children.length, 0);
-    host.settings.settingsLanguage = "zh-CN"; await view.refresh();
+    assert.deepEqual(calls.at(-1), ["resolve-memory", "adopt"]); assert.equal(memoryHost.children.length, 0);
+    memoryError = "fixture unsupported schema"; await view.refresh();
+    assert.equal(memoryHost.children.length, 0); assert.match(content.querySelector('[data-wb="status"]')?.textContent ?? "", /Memory unavailable/u);
+    assert.equal(content.querySelectorAll('[data-wb-group][data-state="error"]').length, 0);
+    memoryError = null; host.settings.settingsLanguage = "zh-CN"; await view.refresh();
     await click("new-task"); assert.deepEqual(calls.at(-1), ["list", GENERAL_ASSISTANT_ID]);
     await click("settings"); assert.deepEqual(calls.at(-1), ["settings"]);
     for (const module of snapshot.modules) await openWorkbenchModule(plugin, module);

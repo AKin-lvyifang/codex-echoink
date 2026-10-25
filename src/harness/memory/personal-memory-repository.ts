@@ -1,4 +1,4 @@
-import { renderCanonicalMemoryExport, serializeCanonicalMemoryRecord, parseCanonicalMemoryRecord, CanonicalMemoryFormatError } from "./personal-memory-core";
+import { renderCanonicalMemoryExport, serializeCanonicalMemoryRecord, parseCanonicalMemoryRecord, CanonicalMemoryFormatError, PersonalMemoryIdentityMismatchError, parseCanonicalMemoryManifest } from "./personal-memory-core";
 import { renderPersonalMemoryOverview as renderOverview } from "./mobile-profile-protocol";
 import { createHash, randomUUID } from "node:crypto";
 import { watch, type FSWatcher, type Stats } from "node:fs";
@@ -412,6 +412,14 @@ export class PersonalMemoryRepository {
     const layout = await this.initialization;
     await this.consumePendingSourceDirectoryRefresh();
     return layout;
+  }
+
+  /** Recover existing storage transactions before identity inventory, without creating memory or reconciling it. */
+  async recoverStorageTransactions(): Promise<void> {
+    if (!await pathExists(this.layout.root)) return;
+    await this.assertManagedTreeSafe();
+    await this.assertNoMobileTransactions();
+    if (await pathExists(this.layout.transactions)) await this.recoverPendingTransactions();
   }
 
   private async initializeOnce(): Promise<Readonly<PersonalMemoryLayout>> {
@@ -3083,7 +3091,7 @@ export class PersonalMemoryRepository {
     } catch {
       return null;
     }
-    if (value.schemaVersion !== 1 || value.vaultId !== this.vaultId) {
+    if (value.schemaVersion !== 1) {
       throw new PersonalMemoryAccessError(
         "invalid_request",
         "Personal Memory manifest belongs to another Vault or schema"
@@ -3100,6 +3108,10 @@ export class PersonalMemoryRepository {
         || typeof record.file !== "string"
       )
     ) return null;
+    if (value.vaultId !== this.vaultId) {
+      parseCanonicalMemoryManifest(JSON.stringify(value));
+      throw new PersonalMemoryIdentityMismatchError(this.vaultId, String(value.vaultId));
+    }
     return value as PersonalMemoryManifest;
   }
 
@@ -3458,11 +3470,15 @@ export class PersonalMemoryRepository {
 
   private async readManifestFromDisk(): Promise<PersonalMemoryManifest> {
     const value = JSON.parse(await readFile(this.layout.manifest, "utf8")) as Partial<PersonalMemoryManifest>;
-    if (value.schemaVersion !== 1 || value.vaultId !== this.vaultId || !Number.isSafeInteger(value.revision)) {
+    if (value.schemaVersion !== 1 || !Number.isSafeInteger(value.revision)) {
       throw new PersonalMemoryAccessError("invalid_request", "Personal Memory manifest is invalid or belongs to another Vault");
     }
     if (!Array.isArray(value.records) || !Array.isArray(value.tombstones)) {
       throw new PersonalMemoryAccessError("invalid_request", "Personal Memory manifest collections are invalid");
+    }
+    if (value.vaultId !== this.vaultId) {
+      parseCanonicalMemoryManifest(JSON.stringify(value));
+      throw new PersonalMemoryIdentityMismatchError(this.vaultId, String(value.vaultId));
     }
     return {
       ...value,

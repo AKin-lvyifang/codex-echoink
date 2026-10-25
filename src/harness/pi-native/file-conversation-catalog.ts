@@ -713,12 +713,17 @@ export class FileConversationCatalog {
     document: ConversationCatalogDocumentV1
   ): Promise<ConversationCatalogDocumentV1> {
     await this.ensurePreAgentMetadataBackup(document);
-    return await atomicWriteJsonFile(
+    const stored = await atomicWriteJsonFile(
       this.filePath,
       document,
       "Pi Conversation Catalog",
-      (value) => parseCatalogDocument(value, this.vaultId, this.layout)
+      (value) => {
+        const normalized = parseCatalogDocument(value, this.vaultId, this.layout);
+        return { ...normalized, entries: normalized.entries.map(entry => entry.sessionFile
+          ? { ...entry, sessionFile: path.relative(this.sessionRootPath, entry.sessionFile).split(path.sep).join("/") } : entry) };
+      }
     );
+    return parseCatalogDocument(stored, this.vaultId, this.layout);
   }
 
   /** Back up actual old bytes before any writer publishes the new strict-schema fields. */

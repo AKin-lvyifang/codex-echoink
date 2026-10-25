@@ -53,8 +53,9 @@ import {
 } from "./credential-device-scope";
 import { pluginDataDir } from "./plugin-data-paths";
 import { loadPiVaultToolProductState } from "./pi-vault-tool-production";
-import { dismissVaultCopyNotice, prepareVaultIdentity, repairVaultMemory } from "./vault-identity";
-import { legacyMemoryVaultId, type VaultIdentity, type VaultMemoryNotice } from "../storage/vault-identity";
+import { prepareVaultIdentity, repairVaultMemory } from "./vault-identity";
+import { type VaultIdentity, type VaultMemoryNotice } from "../storage/vault-identity";
+import { parseCanonicalMemoryManifest, PersonalMemoryIdentityMismatchError } from "../harness/memory/personal-memory-core";
 
 export interface PiLocalDataPluginHost {
   getVaultPath(): string;
@@ -67,7 +68,7 @@ export interface PiLocalDataPluginHost {
  * local operations never need a second store or a Provider admission step.
  */
 export class PiLocalDataService {
-  private memoryIssue: string | null = null;
+  private memoryIssue: Error | null = null;
   private constructor(
     readonly vaultRootPath: string,
     readonly pluginDataRootPath: string,
@@ -97,8 +98,7 @@ export class PiLocalDataService {
     await fsp.mkdir(rawPluginDataRootPath, { recursive: true, mode: 0o700 });
     const pluginDataRootPath = await fsp.realpath(rawPluginDataRootPath);
     const vaultIdentity = await prepareVaultIdentity({
-      pluginDataRoot: pluginDataRootPath, vaultRoot: vaultRootPath,
-      deviceStateRoot: defaultEchoInkDeviceStateRoot()
+      pluginDataRoot: pluginDataRootPath, vaultRoot: vaultRootPath, recoverDeveloperChange: options.recoverDeveloperChange
     });
     const deviceScope = await prepareEchoInkCredentialDeviceScope({
       stateRootPath: defaultEchoInkDeviceStateRoot(),
@@ -150,16 +150,19 @@ export class PiLocalDataService {
     await approvals.initialize();
     await receipts.initialize();
     await knowledgeUsageStore.initialize();
-    let memoryIssue: string | null = null;
+    let memoryIssue: Error | null = null;
     try {
       if (options.recoverDeveloperChange !== false) await new MemoryDeveloperBackups(personalMemory.layout.root).recoverInterruptedChange();
       let manifest: string | null;
       try { manifest = await fsp.readFile(personalMemory.layout.manifest, "utf8"); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; manifest = null; }
-      if (manifest !== null && legacyMemoryVaultId(manifest) !== vaultIdentity.vaultId) throw new Error("Personal Memory manifest is invalid or belongs to another Vault");
+      if (manifest !== null) {
+        const parsed = parseCanonicalMemoryManifest(manifest);
+        if (parsed.vaultId !== vaultIdentity.vaultId) throw new PersonalMemoryIdentityMismatchError(vaultIdentity.vaultId, parsed.vaultId);
+      }
       await personalMemory.initialize();
     } catch (error) {
-      memoryIssue = error instanceof Error ? error.message : String(error);
+      memoryIssue = error instanceof Error ? error : new Error(String(error));
       await personalMemory.dispose();
     }
     const maintenanceState = new FilePhase3MaintenanceStateStore({ vaultRootPath, storageRootPath: path.join(piNativeStorageRootPath, "knowledge"), vaultId: vaultIdentity.vaultId });
@@ -187,17 +190,31 @@ export class PiLocalDataService {
   }
 
   get memoryNotice(): VaultMemoryNotice | null {
-    if (this.memoryIssue !== null) return { kind: "mismatch", reason: this.memoryIssue };
-    return this.vaultIdentity.copiedFrom ? { kind: "copy", originalName: this.vaultIdentity.copiedFrom } : null;
+    return this.memoryIssue instanceof PersonalMemoryIdentityMismatchError ? { kind: "mismatch", reason: this.memoryIssue.message } : null;
   }
+
+  get memoryError(): string | null { return this.memoryIssue && !this.memoryNotice ? this.memoryIssue.message : null; }
+  get memoryUnavailable(): boolean { return this.memoryIssue !== null; }
 
   assertMemoryAvailable(): void {
     if (this.memoryIssue !== null) throw new Error("Personal Memory is paused; resolve it in Workbench");
   }
 
-  async dismissMemoryNotice(): Promise<void> { await dismissVaultCopyNotice(this.pluginDataRootPath, this.vaultIdentity); }
+  async retryMemory(): Promise<void> {
+    await this.personalMemory.dispose();
+    const next = new PersonalMemoryRepository({ vaultPath: this.piNativeStorageRootPath, vaultId: this.vaultIdentity.vaultId });
+    try {
+      const raw = await fsp.readFile(next.layout.manifest, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+      if (raw !== null) {
+        const parsed = parseCanonicalMemoryManifest(raw);
+        if (parsed.vaultId !== this.vaultIdentity.vaultId) throw new PersonalMemoryIdentityMismatchError(this.vaultIdentity.vaultId, parsed.vaultId);
+      }
+      await next.initialize(); this.personalMemory = next; this.memoryIssue = null;
+    } catch (error) { await next.dispose(); this.memoryIssue = error instanceof Error ? error : new Error(String(error)); throw error; }
+  }
 
   async resolveMemory(action: "adopt" | "reset"): Promise<string> {
+    if (!(this.memoryIssue instanceof PersonalMemoryIdentityMismatchError)) throw new Error("Memory identity recovery is unavailable for this error");
     await this.personalMemory.dispose();
     let next: PersonalMemoryRepository | null = null;
     try {
@@ -215,7 +232,7 @@ export class PiLocalDataService {
       return backup;
     } catch (error) {
       await next?.dispose();
-      this.memoryIssue = error instanceof Error ? error.message : String(error);
+      this.memoryIssue = error instanceof Error ? error : new Error(String(error));
       throw error;
     }
   }

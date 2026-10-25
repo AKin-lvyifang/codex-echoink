@@ -113,7 +113,7 @@ export class MobileServices implements HomeHost {
     host.runtime.setCapabilities(() => this.capabilities);
     host.runtime.setMemory?.(() => this.memory);
     host.runtime.setModules?.(() => this.modules);
-    const adapter = this.app.vault.adapter; this.profileProtocol = new MobileAgentRegistryService(adapter, host.settings, registry => host.saveSettings(registry));
+    const adapter = this.app.vault.adapter; this.profileProtocol = new MobileAgentRegistryService(adapter, host.settings, registry => host.saveSettings(registry), () => `${this.preferenceRoot}/pi-agent-product-v1/.echoink`);
     this.homeActivity = new HomeActivityCore({ read: async () => await adapter.exists(`${directory}/home-activity.json`) ? adapter.read(`${directory}/home-activity.json`) : null,
       write: bytes => adapter.write(`${directory}/home-activity.json`, bytes) });
     this.todos = new EchoInkTodoStore(this, () => this.settings.mobileUi.todoSourcePath);
@@ -141,11 +141,11 @@ export class MobileServices implements HomeHost {
     }
   }
   async initialize() {
-    await this.initializeTaskData(() => this.refreshAgentIdentity());
     if (!this.host.store.unavailableReason) await this.initializeTaskData(async () => {
       await this.memory.initialize();
       await this.memory.archiveCompleted();
     });
+    await this.initializeTaskData(() => this.refreshAgentIdentity());
     await this.homeActivity.initialize(); await this.todos.initialize();
     this.homeActivity.restoreOpen(this.app.workspace.getActiveFile()?.path ?? null);
     this.registerEvent(this.app.workspace.on("file-open", file => this.homeActivity.open(file?.path ?? null)));

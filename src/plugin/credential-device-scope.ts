@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { vaultIdDigest } from "../storage/vault-identity";
+import { validVaultId } from "../storage/vault-identity";
 import {
   DurableAppendOnlyCasError,
   readDurableRegularFile,
@@ -108,12 +108,13 @@ async function credentialDeviceScope(options: {
   vaultId?: string;
 }): Promise<EchoInkCredentialDeviceScope> {
   const vaultRealPath = await fsp.realpath(options.vaultPath);
+  if (options.vaultId !== undefined && !validVaultId(options.vaultId)) throw new EchoInkCredentialDeviceScopeError();
   return Object.freeze({
     stateRootPath: options.stateRootPath,
     deviceIdDigest: options.deviceIdDigest,
     // Old credential callers can still read the old scope; local stores pass
     // the portable identity. Existing sha256 IDs therefore keep their scope.
-    vaultIdDigest: options.vaultId ? vaultIdDigest(options.vaultId) : sha256Digest(`echoink-vault-identity-v1\0${path.resolve(vaultRealPath)}`)
+    vaultIdDigest: options.vaultId ?? sha256Digest(`echoink-vault-identity-v1\0${path.resolve(vaultRealPath)}`)
   });
 }
 

@@ -987,12 +987,6 @@ function createApprovalTicket(
   return cloneAndFreeze({ ...unsigned, ticketId });
 }
 
-/** Recompute a copied store's ownership hashes without changing its approval state or lifetime. */
-export function rebindStoredApprovalTicket(value: unknown, vaultId: string): EchoInkApprovalTicket {
-  const original = normalizeEchoInkApprovalTicket(pickKeys(requireInputObject(value, "Stored Approval Ticket"), TICKET_KEYS));
-  return createApprovalTicket(normalizeApprovalTicketIssueInput({ ...pickKeys(original, ISSUE_KEYS), vaultId }));
-}
-
 function normalizeEchoInkApprovalTicket(
   value: unknown
 ): EchoInkApprovalTicket {

@@ -304,7 +304,7 @@ export function createProductionKnowledgeUpgradeService(plugin: CodexForObsidian
     vaultRoot: root, bindings: () => plugin.settings.knowledgeBase.folderBindings,
     records: () => readPrivateMaintenanceRecords(privateRoot),
     historyRoots: () => readUpgradeHistoryRoots(pluginDataDir(root, plugin.getPluginDataDirName())),
-    save: async record => { const data = await local(); await new FilePhase3MaintenanceStateStore({ storageRootPath: privateRoot, vaultRootPath: root, vaultId: data.vaultIdentity.vaultId }).saveUpgradeRecord(record); },
+    save: async record => { const data = await local(); await new FilePhase3MaintenanceStateStore({ storageRootPath: privateRoot, vaultRootPath: root, vaultId: data.deviceScope.vaultIdDigest }).saveUpgradeRecord(record); },
     createTask: async () => { const id = `knowledge-upgrade-${randomUUID()}`; await plugin.createPiConversation({ conversationId: id, title: "升级旧知识", cwd: root, defaultMemoryMode: "no_memory", agentId: plugin.settings.agentRegistry.moduleOwners["knowledge-base"], taskStatus: "running", taskStartedAt: Date.now() }); return id; },
     taskStatus: async (id, status) => { await plugin.setPiConversationTaskMetadata(id, { taskStatus: status, ...(status === "completed" ? { taskCompletedAt: Date.now() } : {}), ...(status === "interrupted" ? { taskInterruptedAt: Date.now() } : {}), pendingResponse: undefined }); plugin.getCodexView?.()?.refreshAgentTasks(); },
     registerRoots: async (roots, revision) => {
@@ -322,7 +322,7 @@ export function createProductionKnowledgeUpgradeService(plugin: CodexForObsidian
     },
     classify: async (item, record, signal) => classifyKnowledgeUpgradePage(plugin, await local(), { conversationId: record.originConversationId!, runId: record.runId, path: item.path, content: item.content, signal }),
     write: async function performWrite(write, record, signal, retry) {
-      const data = await local(), vaultId = data.vaultIdentity.vaultId, task = await data.catalog.get(record.originConversationId!);
+      const data = await local(), vaultId = data.deviceScope.vaultIdDigest, task = await data.catalog.get(record.originConversationId!);
       if (!task) throw new Error("升级任务会话暂时读不到。");
       domain ??= new VaultDomainService(new ObsidianVaultDomainAdapter(plugin.app, vaultId, root));
       const contract: ApprovalOperationContract = { productRunId: record.runId, toolCallId: `${write.operationId}:attempt-${write.attempt ?? 0}`, conversationId: task.conversationId, piSessionId: task.piSessionId,

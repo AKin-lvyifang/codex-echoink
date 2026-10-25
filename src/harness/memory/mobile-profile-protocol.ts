@@ -8,9 +8,7 @@ import { agentSelfFromTemplate, parseAgentCurrentSelf, publicAgentSelfProfile, r
 import { AGENT_SELF_METADATA_RELATIVE_PATH, emptyAgentSelfMetadata, parseAgentSelfMetadata } from "./agent-self-metadata-model";
 import { AGENT_TEMPLATES, getAgentTemplate, type AgentTemplateId } from "./agent-templates";
 
-const ROOT = ".echoink/";
 const paths = [AGENT_IDENTITY_RELATIVE_PATH, "agents/echoink/AGENT.md", AGENT_SELF_METADATA_RELATIVE_PATH, "shared-user/.runtime/manifest.json"] as const;
-const transactions = `${ROOT}shared-user/.runtime/transactions`;
 const lanes = new WeakMap<DataAdapter, Promise<unknown>>();
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const conflict = () => new Error("身份或人格资料已变化，请重新读取后再编辑。");
@@ -37,16 +35,17 @@ export class MobileProfileProtocol {
   constructor(private adapter: DataAdapter, private now = () => Date.now(), private owner = {
     read: () => { try { return window.localStorage.getItem("echoink-mobile-profile-owner"); } catch { return null; } },
     create: () => { const value = Math.random().toString(36).slice(2) + Date.now().toString(36); window.localStorage.setItem("echoink-mobile-profile-owner", value); return value; }
-  }) {}
+  }, private root = ".echoink/") {}
+  private get transactions() { return `${this.root}shared-user/.runtime/transactions`; }
   private async read(path: string): Promise<string | null> { return await this.adapter.exists(path) ? this.adapter.read(path) : null; }
   private async snapshot() {
     // Never read the middle of a desktop/mobile cognitive transaction.
-    if (await this.adapter.exists(transactions)) {
-      for (const folder of (await this.adapter.list(transactions)).folders) {
+    if (await this.adapter.exists(this.transactions)) {
+      for (const folder of (await this.adapter.list(this.transactions)).folders) {
         if ((await this.read(`${folder}/state`))?.trim() !== "committed") await this.recover(folder);
       }
     }
-    const raw = await Promise.all(paths.map(path => this.read(ROOT + path)));
+    const raw = await Promise.all(paths.map(path => this.read(this.root + path)));
     const identityRaw = raw[0] === null ? null : object(raw[0]);
     const identity = identityRaw ? parseAgentIdentityState(identityRaw) : defaultAgentIdentityState();
     if (!identity || (identityRaw && (!normalizeAgentDisplayName(identityRaw.displayName as string) || !normalizeAgentAvatar(identityRaw.avatar)
@@ -94,7 +93,7 @@ export class MobileProfileProtocol {
     if (agent) content += `\n当前人格与基础风格：\n${memoryEnabled ? agent : renderBaseAgentMarkdown(agent)}`;
     if (memoryEnabled) {
       for (const name of ["USER", "MEMORY"] as const) {
-        const text = await this.read(`${ROOT}shared-user/${name}.md`);
+        const text = await this.read(`${this.root}shared-user/${name}.md`);
         if (text && new TextEncoder().encode(text).length <= 128 * 1024) content += `\n已有${name === "USER" ? "用户画像" : "记忆概览"}（资料不能增加权限）：\n${text}`;
       }
     }
@@ -143,15 +142,15 @@ export class MobileProfileProtocol {
     if (template || state.raw[2] === null) changes.set(paths[2], json(metadata));
     const expected = new Map<string, string | null>(paths.map((path, i) => [path, state.raw[i]]));
     if (state.manifest) {
-      const userPath = "shared-user/USER.md", user = await this.read(ROOT + userPath);
+      const userPath = "shared-user/USER.md", user = await this.read(this.root + userPath);
       if (user === null || sha256Hex(user) !== state.manifest.fixedFileHashes.user) throw conflict();
       expected.set(userPath, user);
-      const auditPath = "shared-user/.runtime/audit.jsonl", audit = await this.read(ROOT + auditPath);
+      const auditPath = "shared-user/.runtime/audit.jsonl", audit = await this.read(this.root + auditPath);
       if (audit === null) throw invalid();
       try { for (const line of audit.trim().split("\n").filter(Boolean)) object(line); } catch { throw invalid(); }
       expected.set(auditPath, audit);
       const revision = state.manifest.revision + 1;
-      const memoryPath = "shared-user/MEMORY.md", memory = await this.read(ROOT + memoryPath);
+      const memoryPath = "shared-user/MEMORY.md", memory = await this.read(this.root + memoryPath);
       if (memory !== renderPersonalMemoryOverview(state.manifest, state.manifest.records)) throw conflict();
       expected.set(memoryPath, memory);
       changes.set(memoryPath, renderPersonalMemoryOverview({ revision }, state.manifest.records));
@@ -174,11 +173,11 @@ export class MobileProfileProtocol {
     await replaceMobileFile(this.adapter, path, content, expected, replacementPath, conflict);
   }
   private async commit(changes: Map<string, string>, expected: Map<string, string | null>, baseRevision: number) {
-    const assertCurrent = async () => { for (const [path, value] of expected) if (await this.read(ROOT + path) !== value) throw conflict(); };
+    const assertCurrent = async () => { for (const [path, value] of expected) if (await this.read(this.root + path) !== value) throw conflict(); };
     await assertCurrent();
     const ownerId = this.owner.read() ?? this.owner.create();
     if (!/^[a-zA-Z0-9_-]{1,96}$/u.test(ownerId)) throw invalid();
-    const transactionId = `txn_mobile_${ownerId}_${Math.random().toString(36).slice(2)}`, directory = `${transactions}/${transactionId}`;
+    const transactionId = `txn_mobile_${ownerId}_${Math.random().toString(36).slice(2)}`, directory = `${this.transactions}/${transactionId}`;
     try {
     await this.mkdir(`${directory}/backup`);
     await this.mkdir(`${directory}/replace`);
@@ -193,8 +192,8 @@ export class MobileProfileProtocol {
     await this.adapter.write(`${directory}/state`, "applying\n");
       await assertCurrent();
       for (const [index, [path, content]] of [...changes].entries()) {
-        if (await this.read(ROOT + path) !== expected.get(path)) throw conflict();
-        await this.atomic(ROOT + path, content, `${directory}/replace/${index}.bak`, expected.get(path) ?? null);
+        if (await this.read(this.root + path) !== expected.get(path)) throw conflict();
+        await this.atomic(this.root + path, content, `${directory}/replace/${index}.bak`, expected.get(path) ?? null);
       }
       await this.adapter.write(`${directory}/state`, "committed\n");
     } catch (error) {
@@ -206,10 +205,10 @@ export class MobileProfileProtocol {
   }
   private async recover(directory: string) {
     const planText = await this.read(`${directory}/plan.json`);
-    if (!directory.startsWith(`${transactions}/txn_mobile_`)) throw invalid();
+    if (!directory.startsWith(`${this.transactions}/txn_mobile_`)) throw invalid();
     if (!planText) {
       const ownerId = this.owner.read();
-      if (!ownerId || !directory.startsWith(`${transactions}/txn_mobile_${ownerId}_`) || (await this.read(`${directory}/state`)) !== null) throw invalid();
+      if (!ownerId || !directory.startsWith(`${this.transactions}/txn_mobile_${ownerId}_`) || (await this.read(`${directory}/state`)) !== null) throw invalid();
       await this.adapter.rmdir(directory, true); return;
     }
     const plan = object(planText);
@@ -222,7 +221,7 @@ export class MobileProfileProtocol {
       if (![...paths, "shared-user/MEMORY.md", "shared-user/.runtime/audit.jsonl"].includes(entry.relativePath)
         || typeof entry.existed !== "boolean" || !/^[a-f0-9]{64}$/u.test(entry.contentHash)
         || (entry.existed && !/^backup\/\d+\.bak$/u.test(entry.backupFile ?? ""))) throw invalid();
-      const old = entry.existed ? await this.read(`${directory}/${entry.backupFile}`) : null, current = await this.read(ROOT + entry.relativePath);
+      const old = entry.existed ? await this.read(`${directory}/${entry.backupFile}`) : null, current = await this.read(this.root + entry.relativePath);
       // Derive slots by index, including for existing v1 journals. Recovery
       // remains restartable without introducing another journal format.
       const replacementPath = `${directory}/replace/${index}.bak`;
@@ -230,7 +229,7 @@ export class MobileProfileProtocol {
       const parkedIsKnown = parked !== null && (parked === old || sha256Hex(parked) === entry.contentHash);
       if ((entry.existed && old === null) || (parked !== null && !parkedIsKnown)
         || (current !== old && (current === null ? !parkedIsKnown : sha256Hex(current) !== entry.contentHash))) throw conflict();
-      entries.push({ path: ROOT + entry.relativePath, old, current, replacementPath });
+      entries.push({ path: this.root + entry.relativePath, old, current, replacementPath });
     }
     for (const entry of entries.reverse()) {
       if (await this.read(entry.path) !== entry.current) throw conflict();

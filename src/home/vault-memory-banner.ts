@@ -5,7 +5,7 @@ import { showSettingsInlineConfirmation } from "../settings/settings-v2";
 import type { VaultMemoryNotice } from "../storage/vault-identity";
 
 export function renderVaultMemoryBanner(host: HTMLElement, notice: VaultMemoryNotice | null, language: string, actions: {
-  dismiss(): Promise<void>; resolve(action: "adopt" | "reset"): Promise<void>; error(error: unknown): void;
+  resolve(action: "adopt" | "reset"): Promise<void>; error(error: unknown): void;
 }): void {
   const signature = JSON.stringify([notice, language]);
   if (host.dataset.signature === signature) return;
@@ -14,17 +14,13 @@ export function renderVaultMemoryBanner(host: HTMLElement, notice: VaultMemoryNo
   const t = (zh: string, en: string) => language === "en" ? en : zh;
   const panel = host.createDiv({ cls: "wb-memory-notice", attr: { role: "status" } });
   const row = panel.createDiv({ cls: "wb-memory-notice-row" });
-  const icon = row.createSpan({ cls: `wb-lead${notice.kind === "mismatch" ? " is-warning" : ""}`, attr: { "aria-hidden": "true" } });
-  setIcon(icon, notice.kind === "copy" ? "copy" : "circle-alert");
+  const icon = row.createSpan({ cls: "wb-lead is-warning", attr: { "aria-hidden": "true" } });
+  setIcon(icon, "circle-alert");
   const copy = row.createDiv({ cls: "wb-grow" });
-  copy.createDiv({ text: notice.kind === "copy"
-    ? t(`这个库是从「${notice.originalName}」复制的，已沿用那边的记忆和对话。`, `This vault was copied from “${notice.originalName}”. Its memory and conversations are ready to use.`)
-    : t("这份记忆不属于当前库，暂时没有读取。", "This memory does not belong to this vault and has not been loaded.") });
-  if (notice.kind === "mismatch") {
-    const details = copy.createEl("details");
-    details.createEl("summary", { text: t("查看原因", "Details") });
-    details.createDiv({ text: notice.reason });
-  }
+  copy.createDiv({ text: t("这份记忆不属于当前库，暂时没有读取。", "This memory does not belong to this vault and has not been loaded.") });
+  const details = copy.createEl("details");
+  details.createEl("summary", { text: t("查看原因", "Details") });
+  details.createDiv({ text: notice.reason });
   const controls = row.createDiv({ cls: "wb-memory-notice-actions" });
   let busy = false;
   const run = async (trigger: HTMLButtonElement, pending: string, operation: () => Promise<void>): Promise<void> => {
@@ -48,7 +44,7 @@ export function renderVaultMemoryBanner(host: HTMLElement, notice: VaultMemoryNo
     const node = createOriginButton(controls, { text, cls: `wb-button is-${variant}`, attr: { type: "button" } });
     applyAmicroButton(node, { variant }); return node;
   };
-  const reset = button(notice.kind === "copy" ? t("为这个库重新建立", "Start fresh in this vault") : t("重新建立", "Start fresh"), "secondary");
+  const reset = button(t("重新建立", "Start fresh"), "secondary");
   reset.onclick = () => {
     if (busy) return;
     showSettingsInlineConfirmation(panel, reset, {
@@ -68,6 +64,6 @@ export function renderVaultMemoryBanner(host: HTMLElement, notice: VaultMemoryNo
     row.hidden = true;
     confirmation[0]?.addEventListener("click", () => { row.hidden = false; });
   };
-  const primary = button(notice.kind === "copy" ? t("知道了", "Got it") : t("沿用这份记忆", "Use this memory"), "primary");
-  primary.onclick = () => { void run(primary, t("正在恢复…", "Restoring…"), () => notice.kind === "copy" ? actions.dismiss() : actions.resolve("adopt")); };
+  const primary = button(t("沿用这份记忆", "Use this memory"), "primary");
+  primary.onclick = () => { void run(primary, t("正在恢复…", "Restoring…"), () => actions.resolve("adopt")); };
 }

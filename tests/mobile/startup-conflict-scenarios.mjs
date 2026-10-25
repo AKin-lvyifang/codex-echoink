@@ -5,7 +5,7 @@ import { createHost, FixtureTFile } from "./host.mjs";
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
-const shared = ".echoink/shared-user/";
+const shared = "plugin/pi-agent-product-v1/.echoink/shared-user/";
 const hash = value => createHash("sha256").update(value).digest("hex");
 
 /** Current production bootstrap, not a handcrafted Store-only startup substitute. */
@@ -114,7 +114,7 @@ export async function mobileStartupConflictScenarios({ code, dom, test }) {
       if (mode === "dream-ledger-race") f.files.set(`${shared}.runtime/mobile-dream-ledger.json`, JSON.stringify({ schema: "echoink.mobile-dream.v1", dayKey: "2026-10-20", attempts: 1, owner: state.instanceId,
         status: { phase: "running", dayKey: "2026-10-20", attemptsToday: 1, dailyLimit: 1, startedAt: 42, finishedAt: null, error: "" } }));
       if (mode === "agent-registry") f.saved = { ...f.saved, agentRegistry: { schemaVersion: 99, preserved: "future Agent data" } };
-      if (mode === "legacy-agent") { const settings = { ...f.saved }; delete settings.agentRegistry; f.saved = settings; f.files.set(".echoink/agents/echoink/agent-identity.json", "{malformed legacy identity"); }
+      if (mode === "legacy-agent") { const settings = { ...f.saved }; delete settings.agentRegistry; f.saved = settings; f.files.set("plugin/pi-agent-product-v1/.echoink/agents/echoink/agent-identity.json", "{malformed legacy identity"); }
       const protectedFiles = new Map(f.files), rawRegistry = JSON.stringify(f.saved.agentRegistry), registryPresent = Object.hasOwn(f.saved, "agentRegistry");
       if (mode === "dream-ledger-race") {
         const read = f.adapter.read.bind(f.adapter); let changed = false;

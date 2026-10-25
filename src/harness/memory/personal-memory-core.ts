@@ -6,6 +6,31 @@ export interface CanonicalMemoryManifest extends Record<string, unknown> {
   schemaVersion: 1; vaultId: string; revision: number; records: CanonicalMemoryMetadata[]; tombstones: CanonicalMemoryTombstone[]; updatedAt: number;
   fixedFileHashes?: { agent: string; user: string };
 }
+export class PersonalMemoryIdentityMismatchError extends Error {
+  constructor(readonly expectedVaultId: string, readonly actualVaultId: string) {
+    super("Personal Memory manifest belongs to another Vault");
+    this.name = "PersonalMemoryIdentityMismatchError";
+  }
+}
+export function parseCanonicalMemoryManifest(raw: string): CanonicalMemoryManifest {
+  const value = JSON.parse(raw) as Partial<CanonicalMemoryManifest> | null;
+  if (!value || value.schemaVersion !== 1 || typeof value.vaultId !== "string" || !value.vaultId
+    || !Number.isSafeInteger(value.revision) || Number(value.revision) < 0 || !Array.isArray(value.records) || !Array.isArray(value.tombstones)
+    || typeof value.updatedAt !== "number" || !Number.isFinite(value.updatedAt)
+    || value.fixedFileHashes !== undefined && (!value.fixedFileHashes || !/^[a-f0-9]{64}$/u.test(value.fixedFileHashes.agent) || !/^[a-f0-9]{64}$/u.test(value.fixedFileHashes.user))
+    || value.records.some(record => !record || typeof record.id !== "string" || typeof record.file !== "string"
+      || !/^[a-zA-Z0-9_-]{3,96}$/u.test(record.id) || !/^shared-user\/memory\/(facts|views|decisions|active|episodes)\/[a-zA-Z0-9_-]{3,96}\.md$/u.test(record.file)
+      || !["fact", "view", "decision", "goal", "task", "open_loop", "episode"].includes(record.kind)
+      || !["current", "superseded", "closed"].includes(record.status) || !["explicit", "observed", "inferred"].includes(record.basis)
+      || !Number.isSafeInteger(record.revision) || record.revision < 1 || typeof record.title !== "string" || typeof record.source !== "string" || typeof record.date !== "string"
+      || record.contentHash !== undefined && !/^[a-f0-9]{64}$/u.test(record.contentHash))
+    || new Set(value.records.map(record => record.id)).size !== value.records.length
+    || value.tombstones.some(row => !row || typeof row.recordId !== "string" || typeof row.backupFile !== "string"
+      || !row.backupFile.startsWith("shared-user/.runtime/backups/") || !Number.isFinite(row.forgottenAt) || typeof row.reason !== "string" || typeof row.source !== "string")) {
+    throw new Error("Personal Memory manifest structure or schema is invalid");
+  }
+  return value as CanonicalMemoryManifest;
+}
 export const canonicalMemoryMetadata = (record: PersonalMemoryRecord): CanonicalMemoryMetadata => {
   const { content, ...metadata } = record; return { ...metadata, contentHash: sha256Hex(content) };
 };

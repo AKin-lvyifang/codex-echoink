@@ -504,7 +504,7 @@ async function pluginResetLifecycle(system: CognitiveSystem, reopen: () => Promi
   const access = new DeveloperModeAccess();
   unlock(access);
   let shutdowns = 0;
-  const local = (cognitive: CognitiveSystem) => ({ personalMemory: cognitive.repository, dispose: () => cognitive.repository.dispose() });
+  const local = (cognitive: CognitiveSystem) => ({ personalMemory: cognitive.repository, assertMemoryAvailable() {}, dispose: () => cognitive.repository.dispose() });
   Object.assign(host, {
     developerMode: access, developerMemoryChanging: false,
     settings: { defaultPermission: "workspace-write", memory: { useLongTermMemory: true, dreamEnabled: true, dreamRunsPerDay: 3 } },
@@ -525,7 +525,7 @@ async function pluginResetLifecycle(system: CognitiveSystem, reopen: () => Promi
     await next.dispose();
     const repository = new PersonalMemoryRepository({ vaultPath: path.dirname(next.repository.layout.root), vaultId: "developer-fixture", watchExternalChanges: false });
     await repository.initialize();
-    return { personalMemory: repository, dispose: () => repository.dispose() };
+    return { personalMemory: repository, assertMemoryAvailable() {}, dispose: () => repository.dispose() };
   };
   try {
     host.piRunConversations.set("run", "chat");

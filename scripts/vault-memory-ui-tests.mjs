@@ -39,5 +39,5 @@ try {
   const module = { exports: {} };
   new Function("require", "module", "exports", build.outputFiles[0].text)(require, module, module.exports);
   await module.exports.runWorkbenchUiTests();
-  console.log("PASS Workbench memory banners, adoption, inline reset/cancel, English copy and existing DOM regressions (native appearance unverified)");
+  console.log("PASS Workbench memory banners, adoption, inline reset/cancel, English text and existing DOM regressions (native appearance unverified)");
 } finally { win.close(); }

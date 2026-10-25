@@ -2487,12 +2487,9 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   async getVaultMemoryNotice() { return (await this.ensurePiLocalData()).memoryNotice; }
 
-  async dismissVaultMemoryNotice(): Promise<void> {
-    await (await this.ensurePiLocalData()).dismissMemoryNotice();
-    this.notifyHomeSurfacesChanged();
-  }
+  async getVaultMemoryError() { return (await this.ensurePiLocalData()).memoryError; }
 
-  async resolveVaultMemory(action: "adopt" | "reset"): Promise<void> {
+  async resolveVaultMemory(action: "adopt" | "reset" | "retry"): Promise<void> {
     const local = await this.ensurePiLocalData();
     const cognitive = this.cognitiveSystem ?? await this.cognitiveSystemFlight?.catch(() => null);
     if (this.developerMemoryChanging || this.piRunConversations.size || this.piSubmittingConversations.size
@@ -2507,7 +2504,8 @@ export default class CodexForObsidianPlugin extends Plugin {
       this.cognitiveSystem = null;
       this.cognitiveSystemFlight = null;
       this.personalMemoryCorrection = null;
-      await local.resolveMemory(action);
+      if (action === "retry") await local.retryMemory();
+      else await local.resolveMemory(action);
       this.cognitiveSystem = await this.createCognitiveSystem(local);
     } finally {
       this.developerMemoryChanging = false;

@@ -11,7 +11,9 @@ import { invalidatedMemoryProductRunIds, productRunIdFromExperienceProfileSource
 import { sha256Hex } from "../utils/sha256";
 import { mobileAtomicFilePort } from "./finance-store";
 import { MobileDataConflictError, type MobileStore } from "./store";
-import { legacyMemoryVaultId, newVaultId, parseVaultIdentity, VAULT_IDENTITY_FILE } from "../storage/vault-identity";
+import { newVaultId, legacyPathVaultId } from "../storage/vault-identity";
+import { preparePortableVaultData } from "../storage/vault-data-migration";
+import { mobileVaultMigrationIO } from "./vault-data-migration";
 
 const ROOT = ".echoink/", BASE = "shared-user/", MANIFEST = `${BASE}.runtime/manifest.json`, PROFILE = `${BASE}user-profile-state.json`;
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -33,43 +35,27 @@ export class MobileMemoryRepository {
   constructor(readonly adapter: DataAdapter, readonly owner: string, private now = Date.now, private mutationIssue?: string | (() => string | undefined), private storageRoot = "") {
     this.root = storageRoot ? `${storageRoot}/${ROOT}` : ROOT;
   }
-  /** Same plugin data root and identity as desktop; retain the old mobile tree as a rollback copy. */
-  private async portableIdentity(): Promise<string> {
-    if (this.storageRoot && !await this.adapter.exists(this.root.slice(0, -1)) && await this.adapter.exists(".echoink/shared-user")) {
+  private identityFlight?: Promise<string>;
+  /** Both adapters run the same inventory, merge and rollback protocol. */
+  private portableIdentity(): Promise<string> {
+    return this.identityFlight ??= (async () => {
+      const io = mobileVaultMigrationIO(this.adapter);
+      const saved = await io.read(this.storageRoot ? `${this.storageRoot}/vault-identity.json` : "vault-identity.json");
+      if (this.issue() && saved !== null) return (JSON.parse(saved) as { vaultId: string }).vaultId;
       this.assertWritable();
-      const staging = `${this.storageRoot}/mobile-memory-import-${crypto.randomUUID()}`;
-      const copy = async (source: string, target: string): Promise<void> => {
-        let parent = "";
-        for (const part of target.split("/")) { parent = parent ? `${parent}/${part}` : part; if (!await this.adapter.exists(parent)) await this.adapter.mkdir(parent); }
-        const listed = await this.adapter.list(source);
-        for (const file of listed.files) await this.adapter.write(`${target}/${file.split("/").at(-1)!}`, await this.adapter.read(file));
-        for (const directory of listed.folders) await copy(directory, `${target}/${directory.split("/").at(-1)!}`);
-      };
-      await copy(".echoink", staging);
-      await this.adapter.rename(staging, this.root.slice(0, -1));
-    }
-    const file = this.storageRoot ? `${this.storageRoot}/${VAULT_IDENTITY_FILE}` : VAULT_IDENTITY_FILE;
-    const port = mobileAtomicFilePort(this.adapter, file), raw = await port.read();
-    if (raw !== null) return parseVaultIdentity(raw).vaultId;
-    this.assertWritable();
-    const manifest = await this.read(MANIFEST);
-    let vaultId = legacyMemoryVaultId(manifest);
-    if (!vaultId && this.storageRoot && await this.adapter.exists(`${this.storageRoot}/vaults`)) {
-      const candidates: { id: string; count: number }[] = [];
-      for (const directory of (await this.adapter.list(`${this.storageRoot}/vaults`)).folders) {
-        const catalog = await mobileAtomicFilePort(this.adapter, `${directory}/conversation-catalog.v1.json`).read(true);
-        const id = legacyMemoryVaultId(catalog);
-        if (id && catalog) candidates.push({ id, count: (JSON.parse(catalog) as { entries?: unknown[] }).entries?.length ?? 0 });
-      }
-      const populated = candidates.filter(item => item.count > 0);
-      if (populated.length > 1) throw invalid();
-      vaultId = populated[0]?.id ?? (candidates.length === 1 ? candidates[0].id : null);
-    }
-    const identity = { schemaVersion: 1 as const, vaultId: vaultId ?? newVaultId() };
-    // The legacy tree and original manifest are untouched by identity adoption.
-    if (manifest !== null) await port.backup(manifest);
-    await port.write(json(identity), null);
-    return parseVaultIdentity((await port.read())!).vaultId;
+      const basePath = (this.adapter as DataAdapter & { getBasePath?(): string }).getBasePath?.();
+      const result = await preparePortableVaultData({ io, root: this.storageRoot, legacyMemoryRoot: ".echoink",
+        fallbackVaultId: basePath ? legacyPathVaultId(basePath) : newVaultId(),
+        recoverTransactions: async () => {
+          await this.recover();
+          if (this.storageRoot && await this.adapter.exists(".echoink/shared-user")) {
+            const old = new MobileMemoryRepository(this.adapter, this.owner, this.now, this.mutationIssue);
+            await old.recover();
+          }
+        }
+      });
+      return result.identity.vaultId;
+    })().catch(error => { this.identityFlight = undefined; throw error instanceof MobileDataConflictError ? error : new MobileDataConflictError(error instanceof Error ? error.message : String(error)); });
   }
   private issue(): string | undefined { return typeof this.mutationIssue === "function" ? this.mutationIssue() : this.mutationIssue; }
   private assertWritable(): void { const issue = this.issue(); if (issue) throw new MobileDataConflictError(issue); }

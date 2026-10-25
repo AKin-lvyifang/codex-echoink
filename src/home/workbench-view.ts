@@ -85,6 +85,7 @@ export function workbenchInlineQuestion(entry: TaskEntry, pending?: Readonly<Ech
 
 export class EchoInkWorkbenchView extends ItemView {
   private memoryNotice: VaultMemoryNotice | null = null;
+  private memoryError: string | null = null;
   private readonly port: WorkbenchDataPort;
   private readonly searchService: HomeSearchService;
   private readonly id = `echoink-workbench-${++viewId}`;
@@ -216,9 +217,10 @@ export class EchoInkWorkbenchView extends ItemView {
     this.observeKnowledgeActivity();
     const now = Date.now();
     this.refreshFlight = (async () => {
-      const [tasks, snapshot, memory] = await Promise.allSettled([this.plugin.listAgentTaskEntries(), this.port.load(now), this.plugin.getVaultMemoryNotice?.()]);
+      const [tasks, snapshot, memory, memoryError] = await Promise.allSettled([this.plugin.listAgentTaskEntries(), this.port.load(now), this.plugin.getVaultMemoryNotice?.(), this.plugin.getVaultMemoryError?.()]);
       if (!this.active() || version !== this.refreshVersion) return;
       if (memory.status === "fulfilled") this.memoryNotice = memory.value ?? null;
+      if (memoryError.status === "fulfilled") this.memoryError = memoryError.value ?? null;
       if (tasks.status === "fulfilled") {
         this.entries = tasks.value;
         this.maintenance = latestMaintenanceActivities(this.maintenanceActivities, this.entries);
@@ -370,7 +372,6 @@ export class EchoInkWorkbenchView extends ItemView {
     if (this.lockedModule && (workbenchHasPro(this.plugin) || !workbenchProModuleEnabled(this.plugin, this.lockedModule))) this.closeModuleLock();
     this.renderStatus();
     renderVaultMemoryBanner(this.field("memory-notice"), this.memoryNotice, this.language, {
-      dismiss: async () => { await this.plugin.dismissVaultMemoryNotice(); await this.refresh(); },
       resolve: async action => { await this.plugin.resolveVaultMemory(action); await this.refresh(); },
       error: () => { new Notice(this.t("记忆恢复未完成，原内容和备份已保留。", "Memory recovery could not finish. Your original content and backup are preserved.")); void this.refresh(); }
     });
@@ -396,22 +397,24 @@ export class EchoInkWorkbenchView extends ItemView {
   private renderStatus(): void {
     const host = this.field("status");
     const previewErrors = [...this.completedPreviews.values()].flatMap(preview => preview.error ? [preview.error] : []);
-    const signature = JSON.stringify([this.language, !!this.entries, !!this.snapshot, this.taskError, this.dataError, this.snapshot?.issues, previewErrors]);
+    const signature = JSON.stringify([this.language, !!this.entries, !!this.snapshot, this.taskError, this.dataError, this.memoryError, this.snapshot?.issues, previewErrors]);
     if (host.dataset.signature === signature) return;
     disposeOriginControls(host); host.empty(); host.dataset.signature = signature;
     if (!this.entries && !this.taskError) host.createDiv({ text: this.t("正在读取任务…", "Reading tasks…"), attr: { "aria-busy": "true" } });
     if (!this.snapshot && !this.dataError) host.createDiv({ text: this.t("正在查看本地事项…", "Checking local items…"), attr: { "aria-busy": "true" } });
-    if (this.taskError || this.dataError || this.snapshot?.issues.length || previewErrors.length) {
+    if (this.taskError || this.dataError || this.memoryError || this.snapshot?.issues.length || previewErrors.length) {
       const row = host.createDiv({ cls: "wb-error", attr: { role: "status" } });
       const copy = row.createDiv({ cls: "wb-grow" });
+      if (this.memoryError) copy.createDiv({ text: this.t("记忆暂时读不到", "Memory unavailable") });
       if (this.taskError) copy.createDiv({ text: this.t(`任务暂时读不到${this.entries ? "，尚未更新" : ""}`, `Tasks unavailable${this.entries ? "; not updated" : ""}`) });
       if (this.dataError) copy.createDiv({ text: this.t(`本地事项暂时读不到${this.snapshot ? "，尚未更新" : ""}`, `Local items unavailable${this.snapshot ? "; not updated" : ""}`) });
       if (this.snapshot?.issues.length) copy.createDiv({ text: this.t("部分事项暂时无法确认", "Some items could not be checked") });
       if (previewErrors.length) copy.createDiv({ text: this.t("部分任务结果暂时读不到", "Some task results are unavailable") });
       const details = copy.createEl("details");
       details.createEl("summary", { text: this.t("查看原因", "Details") });
-      for (const reason of [this.taskError, this.dataError, ...(this.snapshot?.issues ?? []), ...previewErrors].filter(Boolean)) details.createDiv({ text: reason });
-      this.button(row, this.t("重试", "Retry"), "retry", () => {
+      for (const reason of [this.taskError, this.dataError, this.memoryError, ...(this.snapshot?.issues ?? []), ...previewErrors].filter((value): value is string => !!value)) details.createDiv({ text: reason });
+      this.button(row, this.t("重试", "Retry"), "retry", async () => {
+        if (this.memoryError) await this.plugin.resolveVaultMemory("retry");
         for (const [id, preview] of this.completedPreviews) if (preview.error) this.completedPreviews.delete(id);
         return this.refresh();
       }, "secondary");
@@ -558,7 +561,7 @@ export class EchoInkWorkbenchView extends ItemView {
       const resume = this.button(footer, this.busy.has(key) ? this.t("正在核对…", "Checking…") : this.t("继续", "Continue"), key,
         () => this.runAction(key, async () => { this.selectedTask = entry.conversationId; await this.plugin.resumeTaskAndOpenDetail(entry.conversationId); }), "secondary", "play");
       resume.classList.add("is-small"); resume.disabled = !!this.taskError || this.busy.has(key); setAmicroButtonPending(resume, this.busy.has(key));
-      resume.dataset.wbBusy = key; resume.dataset.wbSource = "tasks"; resume.dataset.wbResume = "true";
+      resume.dataset.wbMemory = "true"; resume.dataset.wbBusy = key; resume.dataset.wbSource = "tasks"; resume.dataset.wbResume = "true";
     } else if (activity?.taskKind === "upgrade" && state === "running") {
       const footer = card.createDiv({ cls: "wb-task-footer" }), key = `stop-upgrade-${entry.conversationId}`;
       const stop = this.button(footer, this.t("停止", "Stop"), key, () => this.runAction(key, async () => {
@@ -582,7 +585,7 @@ export class EchoInkWorkbenchView extends ItemView {
             () => this.runAction(key, async () => { await answerWorkbenchQuestion(this.plugin, entry, question.questionId, option.optionId); }), "secondary");
           button.classList.add("is-small"); button.title = option.description ?? option.label;
           button.disabled = !!this.taskError || this.busy.has(key); setAmicroButtonPending(button, this.busy.has(key));
-          button.dataset.wbBusy = key; button.dataset.wbSource = "tasks";
+          button.dataset.wbMemory = "true"; button.dataset.wbBusy = key; button.dataset.wbSource = "tasks";
         }
       } else if (entry.pendingResponse?.kind === "confirmation") {
         ask.createDiv({ cls: "wb-options" });
@@ -655,7 +658,7 @@ export class EchoInkWorkbenchView extends ItemView {
             } });
           }), "secondary");
         button.classList.add("is-small"); button.disabled = !!this.dataError || this.busy.has(key); setAmicroButtonPending(button, this.busy.has(key));
-        button.dataset.wbBusy = key; button.dataset.wbSource = "data";
+        button.dataset.wbMemory = "true"; button.dataset.wbBusy = key; button.dataset.wbSource = "data";
         return row;
       });
   }
@@ -693,7 +696,8 @@ export class EchoInkWorkbenchView extends ItemView {
   private updateActionStates(): void {
     this.field("groups").querySelectorAll<HTMLButtonElement>("[data-wb-busy]").forEach(button => {
       const pending = this.busy.has(button.dataset.wbBusy!);
-      button.disabled = pending || !!(button.dataset.wbSource === "tasks" ? this.taskError : this.dataError);
+      button.disabled = pending || !!(button.dataset.wbSource === "tasks" ? this.taskError : this.dataError)
+        || button.dataset.wbMemory === "true" && !!(this.memoryNotice || this.memoryError);
       setAmicroButtonPending(button, pending);
       if (button.dataset.wbResume) {
         for (const child of Array.from(button.childNodes)) if (child.nodeType === 3) child.textContent = pending ? this.t("正在核对…", "Checking…") : this.t("继续", "Continue");
