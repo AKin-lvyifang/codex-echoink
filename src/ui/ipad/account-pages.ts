@@ -1,6 +1,6 @@
 import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
 import { Notice } from "obsidian";
-import { createUnavailableAccountAdapter, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
+import { membershipPlanAction, registrationGiftLabel, createUnavailableAccountAdapter, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
 import { getMembershipPlanPricing, resolveMembershipCurrency, type MembershipCurrency, type MembershipPlanId } from "../../settings/account-membership-pricing";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import type { MobileShellPage } from "../mobile/shell-types";
@@ -98,7 +98,7 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
   function render(): void {
     if (!v.alive) return; const vm = api.read(), nextIdentity = accountKey(api);
     if (identity !== nextIdentity) { identity = nextIdentity; redeemCode = ""; code.value = ""; redeemFeedback.hidden = true; v.error.hidden = true; }
-    const nextHead = JSON.stringify([vm.identity, vm.membership, vm.serviceAvailable, ctx.host.settings().settingsLanguage]);
+    const nextHead = JSON.stringify([vm.identity, vm.membership, vm.serviceAvailable, vm.betaOffer, ctx.host.settings().settingsLanguage]);
     if (nextHead !== headKey) {
       headKey = nextHead; head.replaceChildren(); const row = el(ctx.document, "div", "pd-account-head"), avatar = el(ctx.document, "span", "pd-account-avatar"), copy = el(ctx.document, "div", "pd-account-copy"), name = el(ctx.document, "div", "pd-account-name");
       if (vm.identity?.avatar && vm.identity.avatar !== "initial") { const image = el(ctx.document, "img", ""); image.src = vm.identity.avatar.url; image.alt = ""; avatar.append(image); }
@@ -113,7 +113,8 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
         copy.append(name, el(ctx.document, "div", "pd-account-sub", details));
       } else {
         copy.append(name); const login = el(ctx.document, "div", "pd-account-login-actions"), button = settingsAction(ctx, "登录 / 注册", () => v.child(createLoginPage(ctx, api)), true); button.disabled = !vm.serviceAvailable || !api.actions.signIn;
-        login.append(button, el(ctx.document, "span", "pd-account-gift", t(ctx, "注册送激活码"))); copy.append(login);
+        login.append(button); const giftLabel = registrationGiftLabel(vm);
+        if (giftLabel) login.append(el(ctx.document, "span", "pd-account-gift", giftLabel[english(ctx) ? 1 : 0])); copy.append(login);
       }
       row.append(avatar, copy); head.append(row);
       const group = el(ctx.document, "div", "pd-settings-group pd-account-links"); head.append(group);
@@ -181,10 +182,11 @@ function renderBenefits(ctx: IPadSettingsContext, parent: HTMLElement): void {
 }
 function renderPlans(ctx: IPadSettingsContext, parent: HTMLElement, vm: AccountMembershipViewModel, api: AccountMembershipAdapter): void {
   let zone: string | undefined; try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* Formal pricing supplies the international fallback. */ }
-  const currency: MembershipCurrency = resolveMembershipCurrency(zone), symbol = currency === "CNY" ? "¥" : "US$";
-  const money = (minor: number, daily = false) => (minor / 100).toLocaleString(english(ctx) ? "en-US" : "zh-CN", { minimumFractionDigits: daily || currency === "USD" ? 2 : 0, maximumFractionDigits: 2 });
+  const currency: MembershipCurrency = resolveMembershipCurrency(zone);
   parent.replaceChildren();
   for (const plan of getMembershipPlanPricing(currency, vm.products)) {
+    const currency = plan.currency, symbol = currency === "CNY" ? "¥" : "US$";
+    const money = (minor: number, daily = false) => (minor / 100).toLocaleString(english(ctx) ? "en-US" : "zh-CN", { minimumFractionDigits: daily || currency === "USD" ? 2 : 0, maximumFractionDigits: 2 });
     const active = validPro(vm) && (vm.membership.planId ?? (vm.membership.state === "lifetime" ? "early" : null)) === plan.id;
     const card = el(ctx.document, "article", `pd-account-plan${plan.id === "early" ? " is-early" : ""}`); card.dataset.planId = plan.id;
     const name = el(ctx.document, "div", "pd-account-plan-name", t(ctx, planNames[plan.id]));
@@ -192,8 +194,8 @@ function renderPlans(ctx: IPadSettingsContext, parent: HTMLElement, vm: AccountM
     const price = el(ctx.document, "div", "pd-account-price"); price.append(el(ctx.document, "span", "pd-account-currency", symbol), el(ctx.document, "span", "", money(plan.amountMinor)));
     if (plan.id !== "early" && plan.savingsPercent !== null && plan.savingsPercent > 0) price.append(el(ctx.document, "span", "pd-account-saving", english(ctx) ? `Save ${plan.savingsPercent}%` : `省 ${plan.savingsPercent}%`));
     card.append(name, price, el(ctx.document, "div", "pd-account-plan-detail", plan.days === null ? t(ctx, "一次购买") : english(ctx) ? `${plan.days} days` : `${plan.days} 天`), el(ctx.document, "div", "pd-account-plan-detail", plan.dailyAmountMinor === null ? t(ctx, "当前 2.x 版本长期可用") : english(ctx) ? `About ${symbol}${money(plan.dailyAmountMinor, true)} / day` : `每天约 ${symbol}${money(plan.dailyAmountMinor, true)}`));
-    const purchasable = vm.salesOpen === true && plan.id !== "early" && !!api.actions.selectPlan;
-    const label = !vm.salesOpen ? t(ctx, "购买待开放") : plan.id === "early" ? english(ctx) ? "Not for sale" : "暂不出售" : currency === "USD" ? english(ctx) ? "View CNY plans" : "查看人民币套餐" : active ? english(ctx) ? "Renew" : "续费" : english(ctx) ? "Subscribe now" : "立即订阅";
+    const { purchasable, zh, en } = membershipPlanAction(vm, plan.id, currency, active, !!api.actions.selectPlan);
+    const label = english(ctx) ? en : zh;
     const feedback = settingsError(ctx), button = el(ctx.document, "button", "pd-settings-action"); button.type = "button"; button.disabled = !purchasable;
     button.append(el(ctx.document, "span", "pd-settings-action-visible", label));
     button.onclick = () => {

@@ -7,9 +7,13 @@ export interface MembershipProductPricing {
   readonly id: MembershipPlanId;
   readonly prices: Readonly<Record<MembershipCurrency, number>>;
   readonly days: number | null;
+  readonly available?: boolean;
+  readonly availability?: "available" | "owned" | "paused" | "sold_out" | "unavailable";
+  readonly currencies?: readonly MembershipCurrency[];
 }
 
 export interface MembershipPlanPricing {
+  readonly currency: MembershipCurrency;
   readonly id: MembershipPlanId;
   readonly amountMinor: number;
   readonly days: number | null;
@@ -41,20 +45,25 @@ const periods: readonly { readonly id: MembershipPlanId; readonly days: number |
 ];
 
 export function getMembershipPlanPricing(currency: MembershipCurrency, products?: readonly MembershipProductPricing[] | null): readonly MembershipPlanPricing[] {
-  const resolved = periods.map(period => {
+  const resolvePrice = (period: typeof periods[number], displayCurrency: MembershipCurrency) => {
     const product = products?.find(product => product?.id === period.id
-      && Number.isSafeInteger(product.prices?.[currency]) && product.prices[currency] >= 0
+      && Number.isSafeInteger(product.prices?.[displayCurrency]) && product.prices[displayCurrency] >= 0
       && (period.days === null ? product.days === null : Number.isSafeInteger(product.days) && product.days! > 0));
-    return { id: period.id, amountMinor: product?.prices[currency] ?? prices[currency][period.id], days: product ? product.days : period.days };
+    return { id: period.id, currency: displayCurrency, amountMinor: product?.prices[displayCurrency] ?? prices[displayCurrency][period.id], days: product ? product.days : period.days };
+  };
+  const resolved = periods.map(period => {
+    const offered = products?.find(product => product.id === period.id);
+    const displayCurrency = period.id === "early" && offered?.currencies?.includes("CNY") && !offered.currencies.includes("USD") ? "CNY" : currency;
+    return resolvePrice(period, displayCurrency);
   });
   const amounts = Object.fromEntries(resolved.map(plan => [plan.id, plan.amountMinor])) as Record<MembershipPlanId, number>;
-  return resolved.map(({ id, days, amountMinor }) => {
-    const comparisonAmountMinor = id === "early" ? amounts.year
+  return resolved.map(({ id, days, amountMinor, currency: displayCurrency }) => {
+    const comparisonAmountMinor = id === "early" ? resolvePrice(periods[3], displayCurrency).amountMinor
       : id === "quarter" ? amounts.month * 3
       : id === "year" ? amounts.month * 12 : null;
     const savingsAmountMinor = comparisonAmountMinor == null ? null : comparisonAmountMinor - amountMinor;
     return {
-      id, amountMinor, days,
+      id, amountMinor, days, currency: displayCurrency,
       dailyAmountMinor: days == null ? null : amountMinor / days,
       comparisonAmountMinor,
       savingsAmountMinor,

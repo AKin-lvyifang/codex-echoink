@@ -14,6 +14,7 @@ import type {
   CapabilityAccess,
   MembershipApiResponses,
   MembershipProduct,
+  MembershipRights,
 } from "./types";
 import { hasProPluginAccess } from "./access";
 import { signProof, verifyLease } from "./crypto";
@@ -79,6 +80,7 @@ export class AccountService implements CapabilityAccess {
   private refreshGeneration = -1;
   private products: MembershipProduct[] = [];
   private salesOpen = false;
+  private betaOffer: MembershipRights["betaOffer"] = null;
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
   private statisticsSource: AccountStatisticsSource | null = null;
   private unsubscribeStatistics: (() => void) | null = null;
@@ -153,7 +155,7 @@ export class AccountService implements CapabilityAccess {
         this.openWebsite(membershipWebsiteLink("plugin.account.orders", { baseURL: this.websiteUrl }));
       },
       selectPlan: async ({ planId, currency }) => {
-        if (!this.salesOpen || !["month", "quarter", "year"].includes(planId)) throw new MembershipApiError("PRODUCT_UNAVAILABLE");
+        if (!this.salesOpen || !["early", "month", "quarter", "year"].includes(planId) || planId === "early" && !this.products.some(product => product.id === "early" && product.available === true && product.availability === "available" && Number.isSafeInteger(product.prices.CNY) && product.prices.CNY > 0)) throw new MembershipApiError("PRODUCT_UNAVAILABLE");
         this.openWebsite(membershipWebsiteLink(`plugin.plan.${planId}`, { baseURL: this.websiteUrl, planId, currency }));
       },
     };
@@ -436,6 +438,7 @@ export class AccountService implements CapabilityAccess {
           this.assertCurrent(operation);
           this.products = products.products;
           this.salesOpen = products.salesOpen === true;
+          this.betaOffer = products.betaOffer ?? null;
         } catch {
           /* Unauthenticated free use remains available. */
         }
@@ -452,6 +455,7 @@ export class AccountService implements CapabilityAccess {
       this.assertCurrent(operation);
       this.products = products.products;
       this.salesOpen = products.salesOpen === true;
+      this.betaOffer = products.betaOffer ?? null;
       this.connected = true;
       this.refreshError = null;
       this.state = {
@@ -607,7 +611,7 @@ export class AccountService implements CapabilityAccess {
       products: this.products,
       salesOpen: this.salesOpen,
       activityGifts: rights?.activityGifts ?? [],
-      betaOffer: rights?.betaOffer ?? null,
+      betaOffer: rights?.betaOffer ?? this.betaOffer,
       serviceAvailable: !!this.apiUrl && !this.initializing,
       storageNotice: this.storage.persistent
         ? null

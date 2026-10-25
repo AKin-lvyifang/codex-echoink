@@ -2,6 +2,7 @@
 // Scope and preserved rights: ../../LICENSE
 import { Modal, Notice, setIcon, type App } from "obsidian";
 import { createOriginButton, createOriginInput, disposeOriginControls } from "./origin-controls";
+import { membershipPlanAction, registrationGiftLabel } from "./account-membership-model";
 import type { AccountActions, AccountAvatar, AccountMembershipViewModel, AccountRank, MembershipState } from "./account-membership-model";
 import { getMembershipPlanPricing, resolveMembershipCurrency } from "./account-membership-pricing";
 import { MobileViewport } from "../ui/mobile/viewport";
@@ -137,6 +138,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const missing = t("暂无统计", "No statistics");
   const valid = ["active", "lifetime", "offline-valid"].includes(vm.membership.state);
   const currentPlanId = vm.membership.planId ?? (vm.membership.state === "lifetime" ? "early" : null);
+  const giftLabel = registrationGiftLabel(vm);
   const currentPlanLabel = (currentPlanId && subscriptionLabels[currentPlanId]?.[zh ? 0 : 1]) || vm.membership.planName || t("已订阅", "Subscribed");
   const retainedMembership = valid || ["verification-required", "device-limit", "device-required", "revoked"].includes(vm.membership.state);
   let profileDraft: ProfileDraft | undefined;
@@ -322,11 +324,11 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     if (desktop) {
       identityCopy = identity;
       profileSection.classList.add("is-anonymous");
-      el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
+      if (giftLabel) el(profileActions, "span", "registration-gift-tag", t(...giftLabel));
     }
     const signIn = button(profileActions, t("登录 / 注册", "Sign in / register"), "primary account-login-action", () => login());
     if (desktop) signIn.dataset.echoinkFocusKey = "account:login";
-    if (!desktop) el(profileActions, "span", "registration-gift-tag", t("注册送激活码", "Register for an activation code"));
+    if (!desktop && giftLabel) el(profileActions, "span", "registration-gift-tag", t(...giftLabel));
   }
   const heading = (parent: HTMLElement, title: string, caption?: string) => {
     const row = el(parent, "div", "section-heading"); el(row, "h2", "", title); if (caption) el(row, "span", "muted", caption); return row;
@@ -577,14 +579,13 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   let timeZone: string | undefined;
   try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* Unknown zones use the international price list. */ }
   const currency = resolveMembershipCurrency(timeZone);
-  const currencySymbol = currency === "CNY" ? "¥" : "US$";
-  const money = (amountMinor: number, savings = false) => (amountMinor / 100).toLocaleString(zh ? "zh-CN" : "en-US", {
-    minimumFractionDigits: currency === "USD" || savings && amountMinor % 100 !== 0 ? 2 : 0,
-    maximumFractionDigits: 2
-  });
-  const serverPrices=vm.products?.length?vm.products:null;
-  const pricingRows=desktop ? getMembershipPlanPricing(currency, vm.products) : getMembershipPlanPricing(currency).map(row=>{const p=serverPrices?.find(p=>p.id===row.id);if(!p)return row;const amountMinor=p.prices[currency],comparisonAmountMinor=row.id==="early"?serverPrices!.find(p=>p.id==="year")!.prices[currency]:row.id==="quarter"?serverPrices!.find(p=>p.id==="month")!.prices[currency]*3:row.id==="year"?serverPrices!.find(p=>p.id==="month")!.prices[currency]*12:null;const savingsAmountMinor=comparisonAmountMinor===null?null:comparisonAmountMinor-amountMinor;return {...row,amountMinor,days:p.days,dailyAmountMinor:p.days===null?null:amountMinor/p.days,comparisonAmountMinor,savingsAmountMinor,savingsPercent:comparisonAmountMinor?Math.round(savingsAmountMinor!/comparisonAmountMinor*100):null};});
+  const pricingRows = getMembershipPlanPricing(currency, vm.products);
   for (const pricing of pricingRows) {
+    const currency = pricing.currency, currencySymbol = currency === "CNY" ? "¥" : "US$";
+    const money = (amountMinor: number, savings = false) => (amountMinor / 100).toLocaleString(zh ? "zh-CN" : "en-US", {
+      minimumFractionDigits: currency === "USD" || savings && amountMinor % 100 !== 0 ? 2 : 0,
+      maximumFractionDigits: 2
+    });
     const plan = plans.find(item => item.id === pricing.id)!;
     const card = el(planGrid, "article", `plan${plan.id === "early" ? " is-early" : ""}`);
     card.dataset.planId = plan.id;
@@ -615,8 +616,8 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       comparison.textContent = t("按月购买，轻松开始", "Start with one month");
     }
     const current = valid && currentPlanId === plan.id;
-    const purchasable = vm.salesOpen === true && plan.id !== "early" && !!actions.selectPlan;
-    const label = !vm.salesOpen ? t("购买待开放", "Purchasing unavailable") : plan.id === "early" ? current ? t("使用中", "Current plan") : t("暂不出售", "Not for sale") : currency === "USD" ? t("查看人民币套餐", "View CNY plans") : current ? t("续费", "Renew") : t("立即订阅", "Subscribe now");
+    const { purchasable, zh: zhLabel, en: enLabel } = membershipPlanAction(vm, pricing.id, currency, current, !!actions.selectPlan);
+    const label = t(zhLabel, enLabel);
     const purchase = button(card, label, current ? "secondary is-current" : "secondary", purchasable ? () => {
       if (purchase.disabled) return;
       purchase.disabled = true;

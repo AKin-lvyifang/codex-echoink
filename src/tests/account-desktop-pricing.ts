@@ -10,6 +10,10 @@ export function runAccountDesktopPricingTests(): void {
     { id: "quarter", prices: { CNY: 3000, USD: 1199 }, days: 100 },
     { id: "year", prices: { CNY: 12000, USD: 3999 }, days: 400 }
   ];
+  const earlyCny = getMembershipPlanPricing("USD", [{ ...products[0], prices: { CNY: 2370, USD: 999 }, currencies: ["CNY"] }, ...products.slice(1)]);
+  assert.equal(earlyCny[0].currency, "CNY"); assert.equal(earlyCny[0].amountMinor, 2370);
+  assert.equal(earlyCny[0].comparisonAmountMinor, products[3].prices.CNY);
+  assert.equal(earlyCny[1].currency, "USD"); assert.equal(earlyCny[1].amountMinor, products[1].prices.USD);
   const original = structuredClone(products);
   for (const currency of ["CNY", "USD"] as const) {
     const plans = getMembershipPlanPricing(currency, products);

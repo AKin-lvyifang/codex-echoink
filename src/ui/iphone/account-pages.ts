@@ -1,5 +1,5 @@
 import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
-import { createUnavailableAccountAdapter, type AccountIdentity, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
+import { membershipPlanAction, registrationGiftLabel, createUnavailableAccountAdapter, type AccountIdentity, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
 import { getMembershipPlanPricing, resolveMembershipCurrency, type MembershipPlanId } from "../../settings/account-membership-pricing";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import type { MobileShellPage } from "../mobile/shell-types";
@@ -78,7 +78,8 @@ export class IPhoneAccountPages {
       } else {
         name.append(settingsMessage(ctx, el(ctx.document, "span", ""), "未登录")); const actions = el(ctx.document, "div", "ip-account-login-actions");
         const login = settingsButton(ctx, "登录 / 注册", () => { void this.login().catch(error => ctx.error(error)); }, "is-primary"); login.disabled = !vm.serviceAvailable || !this.adapter.actions.signIn;
-        actions.append(login, settingsMessage(ctx, el(ctx.document, "span", "ip-account-gift"), "注册送激活码")); copy.append(actions);
+        actions.append(login); const giftLabel = registrationGiftLabel(vm);
+        if (giftLabel) actions.append(el(ctx.document, "span", "ip-account-gift", this.text(...giftLabel))); copy.append(actions);
       }
       serviceFeedback.show([vm.verificationError, vm.storageNotice, !vm.serviceAvailable ? settingsText(ctx, "账号服务暂不可用") : undefined].filter(Boolean).join("\n") || undefined);
       if (vm.identity && ["verification-required", "device-limit", "device-required", "offline-valid", "expired", "revoked", "scheduled"].includes(vm.membership.state)) {
@@ -207,17 +208,18 @@ export class IPhoneAccountPages {
   }
   private plans(parent: HTMLElement, vm: AccountMembershipViewModel): void {
     const { ctx } = this; let timeZone: string | undefined; try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* The pricing contract handles an unknown zone. */ }
-    const currency = resolveMembershipCurrency(timeZone), symbol = currency === "CNY" ? "¥" : "US$", currentPlan = vm.membership.planId ?? (vm.membership.state === "lifetime" ? "early" : null); parent.replaceChildren();
-    const money = (minor: number) => (minor / 100).toLocaleString(this.language(), { minimumFractionDigits: currency === "USD" ? 2 : 0, maximumFractionDigits: 2 });
+    const currency = resolveMembershipCurrency(timeZone), currentPlan = vm.membership.planId ?? (vm.membership.state === "lifetime" ? "early" : null); parent.replaceChildren();
     for (const plan of getMembershipPlanPricing(currency, vm.products)) {
+      const currency = plan.currency, symbol = currency === "CNY" ? "¥" : "US$";
+      const money = (minor: number) => (minor / 100).toLocaleString(this.language(), { minimumFractionDigits: currency === "USD" ? 2 : 0, maximumFractionDigits: 2 });
       const current = this.valid(vm) && currentPlan === plan.id, card = el(ctx.document, "article", `ip-account-plan${plan.id === "early" ? " is-early" : ""}`); card.dataset.planId = plan.id;
       const title = el(ctx.document, "div", "ip-account-plan-name", settingsText(ctx, PLAN_NAMES[plan.id])); if (current) title.append(settingsMessage(ctx, el(ctx.document, "span", "ip-account-current-plan"), "使用中")); card.append(title);
       const price = el(ctx.document, "div", "ip-account-price"); price.append(el(ctx.document, "span", "ip-account-currency", symbol), el(ctx.document, "span", "", money(plan.amountMinor)));
       if (plan.id !== "early" && plan.savingsPercent !== null && plan.savingsPercent > 0) price.append(el(ctx.document, "span", "ip-account-savings", this.text(`省 ${plan.savingsPercent}%`, `Save ${plan.savingsPercent}%`))); card.append(price);
       card.append(el(ctx.document, "div", "ip-account-plan-detail", plan.days === null ? settingsText(ctx, "一次购买") : this.text(`${plan.days} 天`, `${plan.days} days`)));
       card.append(el(ctx.document, "div", "ip-account-plan-detail", plan.dailyAmountMinor === null ? settingsText(ctx, "当前 2.x 版本长期可用") : this.text(`每天约 ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)}`, `About ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)} / day`)));
-      const purchasable = vm.salesOpen === true && plan.id !== "early" && !!this.adapter.actions.selectPlan;
-      const label = !vm.salesOpen ? settingsText(ctx, "购买待开放") : plan.id === "early" ? this.text("暂不出售", "Not for sale") : currency === "USD" ? this.text("查看人民币套餐", "View CNY plans") : current ? this.text("续费", "Renew") : this.text("立即订阅", "Subscribe now");
+      const { purchasable, zh, en } = membershipPlanAction(vm, plan.id, currency, current, !!this.adapter.actions.selectPlan);
+      const label = this.text(zh, en);
       const feedback = settingsError(ctx, card);
       const purchase = settingsButton(ctx, label, () => {
         if (purchase.disabled) return;

@@ -1,5 +1,5 @@
 import type { AccountActivityGift } from "../settings/account-membership-model";
-import type { MembershipPlanId } from "../settings/account-membership-pricing";
+import type { MembershipProductPricing } from "../settings/account-membership-pricing";
 
 export const PRO_CAPABILITIES = [
   "finance.analysis.generate",
@@ -35,11 +35,7 @@ export interface MembershipSigningKey {
   alg: string;
   publicKey: JsonWebKey;
 }
-export interface MembershipProduct {
-  id: MembershipPlanId;
-  prices: { CNY: number; USD: number };
-  days: number | null;
-}
+export type MembershipProduct = MembershipProductPricing;
 /** The cached snapshot can retain only a state after a server-side revocation. */
 export interface MembershipRights {
   state: string;
@@ -52,7 +48,7 @@ export interface MembershipRights {
   deviceLimit?: number;
   capabilities?: string[];
   activityGifts?: AccountActivityGift[];
-  betaOffer?: { status: string } | null;
+  betaOffer?: { status: string; visible?: boolean } | null;
 }
 export interface DeviceLeaseResponse {
   lease: string;
@@ -65,7 +61,7 @@ export interface MembershipApiResponses {
   "/api/auth/password": { token: string };
   "/api/account": MembershipAccount;
   "/api/membership": MembershipRights & { serverTime: number };
-  "/api/products": { products: MembershipProduct[]; salesOpen?: boolean };
+  "/api/products": { products: MembershipProduct[]; salesOpen?: boolean; betaOffer?: MembershipRights["betaOffer"] };
   "/api/devices/challenge": { challengeId: string; nonce: string };
   "/api/devices/activate": DeviceLeaseResponse;
   "/api/devices/lease": DeviceLeaseResponse;

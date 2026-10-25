@@ -49,6 +49,22 @@ export async function runAccountMembershipSubscriptionTests(win: Window & typeof
     assert.equal(planButton("month").textContent, international ? "查看人民币套餐" : "立即订阅"); assert.equal(planButton("quarter").textContent, international ? "查看人民币套餐" : "续费");
     assert.equal(planButton("early").disabled, true);
     planButton("month").click(); await settle(); assert.deepEqual(selections, ["month"]);
+    const early = { id: "early" as const, prices: { CNY: 2370, USD: 999 }, days: null, available: true, availability: "available" as const, currencies: ["CNY" as const] };
+    mount({ ...model("free"), salesOpen: true, products: [early] }, entryActions);
+    assert.equal(planButton("early").textContent, "立即购买"); assert.equal(planButton("early").disabled, false);
+    assert.match(parent.querySelector('[data-plan-id="early"] .price')!.textContent!, /¥23[.,]7/);
+    planButton("early").click(); await settle(); assert.deepEqual(selections, ["month", "early"]);
+    for (const availability of ["owned", "paused", "sold_out"] as const) {
+      mount({ ...model("free"), salesOpen: true, products: [{ ...early, available: false, availability }] }, entryActions);
+      assert.equal(planButton("early").textContent, availability === "owned" ? "已拥有" : "售罄");
+      assert.equal(planButton("early").disabled, true); planButton("early").click(); await settle();
+      assert.deepEqual(selections, ["month", "early"]);
+    }
+    mount({ ...model("anonymous", false), betaOffer: { status: "stopped", visible: false } });
+    assert.equal(parent.querySelector(".registration-gift-tag"), null);
+    mount({ ...model("anonymous", false), betaOffer: { status: "paused", visible: true } });
+    assert.equal(parent.querySelector(".registration-gift-tag")!.textContent, "内测领码已暂停");
+    console.log("PASS round12 early server price, purchase/owned/sold-out and beta stopped/paused");
     mount(model("free")); assert.equal(find("我的订单")!.disabled, true, "unavailable adapter cannot open orders");
     console.log("PASS account orders entry and sale-open/closed subscription labels");
     const gift = { id: "beta-test", name: "内测活动", product: "beta", endedAt: null, gift: { code: "ECHO-history-secret", codeAvailability: "readable", state: "issued" } };

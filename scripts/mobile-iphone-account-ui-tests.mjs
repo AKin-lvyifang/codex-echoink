@@ -59,6 +59,21 @@ try {
   const planButton = id => body().querySelector(`[data-plan-id="${id}"] button`);
   assert.equal(planButton("month").textContent.trim(), "立即订阅"); assert.equal(planButton("quarter").textContent.trim(), "续费"); assert.equal(planButton("early").disabled, true);
   planButton("month").click(); await tick(); assert.equal(calls.purchase, 1);
+  const early = model.products[0], originalEarly = structuredClone(early);
+  Object.assign(early, { available: true, availability: "available", currencies: ["CNY"], prices: { CNY: 2370, USD: 999 } }); emit(); await tick();
+  assert.equal(planButton("early").textContent.trim(), "立即购买"); assert.equal(planButton("early").disabled, false);
+  assert.match(body().querySelector('[data-plan-id="early"]').textContent, /¥23[.,]7/);
+  planButton("early").click(); await tick(); assert.equal(calls.purchase, 2);
+  for (const availability of ["owned", "paused", "sold_out"]) {
+    early.available = false; early.availability = availability; emit(); await tick();
+    assert.equal(planButton("early").textContent.trim(), availability === "owned" ? "已拥有" : "售罄");
+    assert.equal(planButton("early").disabled, true); planButton("early").click(); await tick(); assert.equal(calls.purchase, 2);
+  }
+  model.products[0] = originalEarly;
+  model.betaOffer = { status: "stopped", visible: false }; emit(); await tick(); assert.equal(body().querySelector(".ip-account-gift"), null);
+  model.betaOffer = { status: "paused", visible: true }; emit(); await tick(); assert.equal(body().querySelector(".ip-account-gift").textContent, "内测领码已暂停");
+  delete model.betaOffer;
+  console.log("PASS round12 iphone early open/owned/sold-out, server CNY and beta stop/pause");
   model.salesOpen = false; model.membership = originalMembership; emit(); await tick();
   assert.equal(planButton("month").textContent.trim(), "购买待开放"); assert.equal(planButton("month").disabled, true);
   console.log("PASS round7 ip orders entry and sale-open/closed subscription labels");
@@ -76,7 +91,7 @@ try {
   await click("使用兑换码"); const redeemInput = input("兑换码", "fixture-invalid-code"); await click("兑换"); assert.equal(redeemInput.value, "fixture-invalid-code"); assert.match(body().textContent, /兑换码无效/); assert.doesNotMatch(body().textContent, /fixture-invalid-code/); assert.equal(shell.activePageId, "iphone-settings-account"); failRedeem = false; await click("兑换"); assert.match(body().textContent, /真实季卡/); assert.match(body().textContent, /2027-01-20/); assert.ok(body().querySelector('[data-plan-id="quarter"] [aria-current="true"]')); assert.equal(body().querySelector('[data-plan-id="year"] [aria-current="true"]'), null);
   model.membership = { ...model.membership, state: "lifetime", planId: "early", planName: "2.x 买断", expiresAt: null }; emit(); assert.ok(body().querySelector('[data-plan-id="early"] [aria-current="true"]')); assert.doesNotMatch(body().querySelector(".ip-account-sub").textContent, /到期/);
   model.membership = { ...model.membership, state: "offline-valid", offlineUntil: "2026-10-21" }; emit(); assert.match(body().textContent, /离线可用至 2026-10-21/); model.membership = { ...model.membership, state: "device-limit" }; emit(); assert.match(body().textContent, /设备名额已满/);
-  const beforeStats = [...body().querySelectorAll(".ip-account-stat strong")].map(node => node.textContent); await click("退出登录"); assert.equal(calls.signOut, 0); await clickConfirm("退出登录"); assert.equal(calls.signOut, 1); assert.deepEqual([...body().querySelectorAll(".ip-account-stat strong")].map(node => node.textContent), beforeStats); assert.equal(calls.purchase, 1);
+  const beforeStats = [...body().querySelectorAll(".ip-account-stat strong")].map(node => node.textContent); await click("退出登录"); assert.equal(calls.signOut, 0); await clickConfirm("退出登录"); assert.equal(calls.signOut, 1); assert.deepEqual([...body().querySelectorAll(".ip-account-stat strong")].map(node => node.textContent), beforeStats); assert.equal(calls.purchase, 2);
   model.identity = clone(accountA); model.membership.state = "free"; emit(); input("兑换码", "pending-private-code"); deferRedeem = true; await click("兑换"); model.identity = clone(accountB); emit(); assert.equal(body().querySelector('[aria-label="兑换码"]').value, ""); pendingRedeem.reject(new Error("old redemption error")); await tick(); assert.doesNotMatch(body().textContent, /old redemption error/); assert.match(body().textContent, /另一账号/);
   await click("编辑资料"); input("名字", "account B draft"); deferProfile = true; await click("保存"); model.identity = clone(accountA); emit(); assert.match(body().textContent, /账号已变化/); assert.equal(body().querySelector('[aria-label="名字"]').value, ""); pendingProfile(); await tick(); assert.equal(shell.activePageId, "iphone-settings-account-profile"); await shell.back();
   model.identity = null; model.membership.state = "anonymous"; emit(); await click("登录 / 注册"); assert.equal(body().querySelector('[aria-label="邮箱"]').value, accountA.email, "Only the email survives leaving and reopening login"); assert.equal(body().querySelector('[aria-label="密码"]').value, ""); input("邮箱验证码", "654321"); deferLogin = true; await click("登录"); model.identity = clone(accountB); model.membership.state = "free"; emit(); pendingLogin(); await tick(); assert.match(body().textContent, /账号已变化/); assert.equal(body().querySelector('[aria-label="邮箱验证码"]').value, ""); await shell.back(); await shell.back();

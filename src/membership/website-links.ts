@@ -13,12 +13,15 @@ export function membershipWebsiteLink(
   const plan = options.planId;
   if (entry !== "plugin.about" && entry !== "plugin.account.orders" && (!plan || !["early", "month", "quarter", "year"].includes(plan) || entry !== `plugin.plan.${plan}`))
     throw new Error("Invalid membership website entry");
-  const url = new URL(entry === "plugin.about" ? "/" : entry === "plugin.account.orders" ? "/account" : "/plans", base.origin);
+  const url = new URL(entry === "plugin.about" ? "/" : entry === "plugin.account.orders" ? "/account" : plan === "early" ? "/checkout" : "/plans", base.origin);
   if (entry === "plugin.account.orders") url.searchParams.set("tab", "orders");
   else if (entry !== "plugin.about") {
     if (!["CNY", "USD"].includes(options.currency || "")) throw new Error("Invalid membership currency");
-    url.searchParams.set("plan", plan!);
-    url.searchParams.set("currency", options.currency!);
+    if (plan === "early") url.searchParams.set("plan", plan);
+    else {
+      url.searchParams.set("plan", plan!);
+      url.searchParams.set("currency", options.currency!);
+    }
   }
   url.searchParams.set("entry", entry);
   return url.href;
