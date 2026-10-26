@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ChangeSet, type ChangeDesc } from "@codemirror/state";
 import { anchorAt, applyChanges, cleanDocument, commitChanges, intersects, locateInstruction, locateTarget, mapAnchor, markerFor, markerPattern, touchesInterior } from "./document";
 import { validNotePath, type InlineRepository } from "./store";
-import type { InlineChange, InlineProposalInput, InlineRequest, InlineTarget } from "./types";
+import type { InlineChange, InlineContext, InlineModelSelection, InlineProposalInput, InlineRequest, InlineTarget, InlineTiming } from "./types";
 
 export interface InlineEditorPort {
   read(): string;
@@ -39,7 +39,12 @@ export class InlineRequestService {
     if (this.comparingOriginal.has(id)) this.comparingOriginal.delete(id); else this.comparingOriginal.add(id);
     this.host.changed();
   }
-  async stageProposal(input: InlineProposalInput): Promise<InlineRequest> {
+  async stageProposal(input: InlineProposalInput): Promise<InlineRequest> { return await this.createRequest(input, false); }
+  async beginRequest(input: Omit<InlineProposalInput, "target" | "text">, requirement: string, submittedAt = Date.now()): Promise<InlineRequest> {
+    const record = await this.createRequest({ ...input, target: { kind: "insert", from: input.instruction.from, to: input.instruction.from }, text: "" }, true, requirement, submittedAt);
+    return record;
+  }
+  private async createRequest(input: InlineProposalInput, thinking: boolean, requirement?: string, submittedAt?: number): Promise<InlineRequest> {
     if (this.stopped || this.fileFlights.has(input.path)) throw new Error("这篇笔记正在处理，请稍后重试。");
     if (!validNotePath(input.path) || !input.taskId || !input.agentId || !input.trigger || typeof input.text !== "string") throw new Error("正文提案信息不完整。");
     this.fileFlights.add(input.path);
@@ -51,6 +56,7 @@ export class InlineRequestService {
       if (intersects(instruction, target) || markerPattern().test(target.text)) throw new Error("目标包含指令，请重新选择正文范围。");
       for (const r of this.requests.values()) {
         if (r.path !== input.path || terminal(r) || r.status === "missing") continue;
+        if (thinking) throw new Error("请先处理这篇笔记里的上一块，再交代新请求。");
         const control = locateInstruction(before, r);
         if (control && (intersects(control, instruction) || intersects(control, target) || intersects(r.target, target))) throw new Error("目标与已有正文块重叠；本轮尚未接入排队。");
       }
@@ -66,18 +72,65 @@ export class InlineRequestService {
       const controls = this.list(input.path).flatMap(r => { const span = locateInstruction(document, r); return span ? [span] : []; });
       const record: InlineRequest = { id, vaultId: this.vaultId, path: input.path, taskId: input.taskId, agentId: input.agentId, agentName: input.agentName,
         status: "preparing", instruction: control, target: mappedTarget, observedDocument: document, currentVersionId: versionId, followups: [], createdAt: now, updatedAt: now,
-        versions: [{ id: versionId, number: 1, text: input.text, requirement: instruction.text, sourceDocument: document, context: cleanDocument(document, [...controls, control]), target: structuredClone(mappedTarget), createdAt: now }] };
+        versions: thinking ? [] : [{ id: versionId, number: 1, text: input.text, requirement: instruction.text, sourceDocument: document, context: cleanDocument(document, [...controls, control]), target: structuredClone(mappedTarget), createdAt: now }],
+        targetResolved: !thinking, thread: [{ id: randomUUID(), role: "user", text: requirement ?? instruction.text, at: now }], timing: { submittedAt: submittedAt ?? now } };
+      if (thinking) record.currentVersionId = "";
       this.requests.set(id, record);
       await this.flush();
       if (editor.read() !== before) { record.status = "missing"; record.error = "发送前正文已变化，未添加编号。"; await this.flush(); throw new Error(record.error); }
       editor.apply([{ from: instruction.to, to: instruction.to, insert: addition }], "system", id);
-      record.status = "pending";
+      record.status = thinking ? "thinking" : "pending";
       try { await editor.save(); await this.flush(); }
       catch (error) { record.status = "interrupted"; record.error = "指令或请求保存失败，请重开后核对。"; this.scheduleSave(); throw error; }
       this.host.changed();
       return structuredClone(record);
     } finally { this.fileFlights.delete(input.path); }
   }
+
+  async readSource(id: string): Promise<{ request: InlineRequest; document: string; context: InlineContext }> {
+    const r = this.requests.get(id); if (!r) throw new Error("正文请求不存在。");
+    const editor = await this.host.editor(r.path), document = editor.read();
+    this.reconcileRecord(r, document);
+    if (!locateInstruction(document, r) || r.status === "missing") throw new Error("正文位置已删除，请重新 @ 管家。");
+    const controls = this.list(r.path).flatMap(record => { const span = locateInstruction(document, record); return span ? [span] : []; });
+    return { request: structuredClone(r), document, context: cleanDocument(document, controls) };
+  }
+  async startRun(id: string, requirement: string, model: InlineModelSelection, context: InlineContext, addMessage = true): Promise<string> {
+    const r = this.requests.get(id); if (!r || terminal(r) || r.status === "missing") throw new Error("这块已结束，请重新建立位置。");
+    if (r.question && r.timing?.questionAt) r.timing.userWaitMs = (r.timing.userWaitMs ?? 0) + Date.now() - r.timing.questionAt;
+    r.question = undefined; r.error = undefined; r.status = "thinking"; r.model = structuredClone(model); r.readContext = structuredClone(context); r.runToken = randomUUID(); r.updatedAt = Date.now();
+    r.timing = { submittedAt: r.timing?.submittedAt ?? Date.now(), userWaitMs: r.timing?.userWaitMs, contextReadyAt: Date.now(), modelStartedAt: Date.now() };
+    if (addMessage) { r.followups.push(requirement); (r.thread ??= []).push({ id: randomUUID(), role: "user", text: requirement, at: Date.now() }); }
+    this.comparingOriginal.delete(id); await this.flush(); this.host.changed(); return r.runToken;
+  }
+  async completeProposal(id: string, token: string, sourceDocument: string, target: InlineTarget, text: string, requirement: string, section: string, timing: Partial<InlineTiming>): Promise<void> {
+    const r = this.requests.get(id); if (!r || r.runToken !== token || r.status !== "thinking") return;
+    const source = await this.readSource(id);
+    if (r.runToken !== token || r.status !== "thinking") return;
+    const resolved = locateTarget(source.document, target, source.document === sourceDocument);
+    const instruction = locateInstruction(source.document, r);
+    if (!resolved || !instruction || intersects(instruction, resolved) || markerPattern().test(resolved.text)) throw new Error("正文已变化或目标包含指令，请重试生成。");
+    const versionId = randomUUID(); r.target = { ...resolved, kind: target.kind }; r.targetResolved = true; r.section = section;
+    r.versions.push({ id: versionId, number: r.versions.length + 1, text, requirement, sourceDocument: source.document, context: r.readContext ?? source.context, target: structuredClone(r.target), createdAt: Date.now(), model: r.model && structuredClone(r.model) });
+    r.currentVersionId = versionId; r.observedDocument = source.document; r.status = "pending"; r.updatedAt = Date.now(); r.timing = { ...r.timing!, ...timing, proposalReadyAt: Date.now() };
+    (r.thread ??= []).push({ id: randomUUID(), role: "assistant", text: `${r.versions.length > 1 ? `第 ${r.versions.length} 版` : "新稿"}写好了，已经放在正文里等你确认。`, versionId, at: Date.now() });
+    await this.flush(); this.host.changed();
+  }
+  async clarify(id: string, token: string, question: NonNullable<InlineRequest["question"]>, timing: Partial<InlineTiming>): Promise<void> {
+    const r = this.requests.get(id); if (!r || r.runToken !== token || r.status !== "thinking") return;
+    r.question = structuredClone(question); r.status = "clarifying"; r.timing = { ...r.timing!, ...timing, questionAt: Date.now() }; r.updatedAt = Date.now();
+    (r.thread ??= []).push({ id: randomUUID(), role: "assistant", text: question.question, question: structuredClone(question), at: Date.now() });
+    await this.flush(); this.host.changed();
+  }
+  async failRun(id: string, token: string | undefined, error: string, interrupted = false): Promise<void> {
+    if (this.stopped) return;
+    const r = this.requests.get(id); if (!r || r.runToken !== token || terminal(r) || r.status === "missing") return;
+    r.status = interrupted ? "interrupted" : "failed"; r.runToken = randomUUID(); r.error = error; r.updatedAt = Date.now();
+    (r.thread ??= []).push({ id: randomUUID(), role: "assistant", text: interrupted ? "已停下，正文没动。点重试我再来一次。" : `这次没写成，正文没动。${error}`, at: Date.now() });
+    await this.flush(); this.host.changed();
+  }
+  async timing(id: string, token: string, timing: Partial<InlineTiming>): Promise<void> { const r = this.requests.get(id); if (r?.runToken === token) { r.timing = { ...r.timing!, ...timing }; this.scheduleSave(); } }
+  latestForTask(taskId: string): InlineRequest | undefined { return this.list().filter(r => r.taskId === taskId).at(-1); }
 
   confirm(id: string, versionId: string): Promise<void> { return this.commit(id, versionId, "confirm"); }
   revoke(id: string, versionId: string): Promise<void> { return this.commit(id, versionId, "revoke"); }
@@ -114,8 +167,9 @@ export class InlineRequestService {
       }
       if (action === "confirm" && r.status !== "pending") throw new Error(r.error ?? "目标已变化，请重新生成后确认。");
       const version = r.versions.find(v => v.id === versionId)!;
+      if (action === "confirm" && (!version || r.targetResolved === false)) throw new Error("还没有可确认的新稿。");
       if (action === "confirm" && before.slice(r.target.from, r.target.to) !== version.target.text) throw new Error("目标已变化，未写入。");
-      const changes = commitChanges(before, instruction, action === "confirm" ? r.target : undefined, version.text);
+      const changes = commitChanges(before, instruction, action === "confirm" ? r.target : undefined, version?.text ?? "");
       const after = applyChanges(before, changes);
       const desc = ChangeSet.of(changes, before.length);
       const mergedInsertion = action === "confirm" && r.target.kind === "insert" && changes.length === 1 && r.target.from >= changes[0].from && r.target.from <= changes[0].to;
@@ -137,7 +191,9 @@ export class InlineRequestService {
       await editor.save();
       if (editor.read() !== commit.afterDocument) throw new Error("保存期间正文已变化，请核对后重试。");
       r.status = commit.action === "confirm" ? "confirmed" : "revoked";
-      commit.savedAt = Date.now(); r.error = undefined; r.observedDocument = editor.read();
+      commit.savedAt = Date.now(); r.updatedAt = commit.savedAt; r.error = undefined; r.observedDocument = editor.read();
+      const messageId = `${r.id}:commit:${commit.versionId}:${commit.action}`;
+      if (!r.thread?.some(m => m.id === messageId)) (r.thread ??= []).push({ id: messageId, role: "assistant", text: commit.action === "confirm" ? "已写入正文。" : "已撤销，原文没动。想换个说法，可以编辑上面的要求再发。", at: Date.now() });
       await this.flush();
     } catch (error) {
       commit.savedAt = undefined; r.status = "save_failed"; r.error = "保存失败；当前文字保留，重试只核对和保存。";

@@ -6,6 +6,7 @@ import type { AgentRegistry } from "../agents/types";
 import { defaultTaskWorkspace, normalizeTaskWorkspace, type TaskWorkspace } from "../agents/task-workspace";
 import { normalizeConversationTaskMetadata } from "../agents/task-metadata";
 import { normalizeSelectionAskSettings } from "../selection-ask/settings";
+import { normalizeInlineAgentSettings } from "../inline-agent/settings";
 import { newId } from "../core/new-id";
 export { newId } from "../core/new-id";
 import { normalizeDiscoveredProviderModel, type DiscoveredProviderModel } from "./provider-model-discovery";
@@ -519,6 +520,7 @@ export interface CodexForObsidianSettings {
   generationTemplates: GenerationTemplate[];
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
   selectionAsk: import("../selection-ask/settings").SelectionAskSettings;
+  inlineAgent: import("../inline-agent/settings").InlineAgentSettings;
   englishDiary: import("../english-diary/types").EnglishDiarySettings;
   productGeneration: "pi-agent-product-v1";
   settingsVersion: number;
@@ -571,6 +573,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   generationTemplates: defaultGenerationTemplates(),
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
   selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }] },
+  inlineAgent: { trigger: "@", nldConflictNoticeShown: false },
   englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS },
   productGeneration: "pi-agent-product-v1",
   settingsVersion: 54,
@@ -749,6 +752,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     settingsTab: normalizeSettingsTab(data?.settingsTab),
     tavily: normalizeTavilySettings(data.tavily),
     selectionAsk: normalizeSelectionAskSettings(data.selectionAsk),
+    inlineAgent: normalizeInlineAgentSettings(data.inlineAgent),
     autoArchiveDays: normalizeAutoArchiveDays(data.autoArchiveDays),
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,

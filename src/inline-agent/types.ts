@@ -14,7 +14,11 @@ export interface InlineVersion {
   context: InlineContext;
   target: InlineTarget;
   createdAt: number;
+  model?: InlineModelSelection;
 }
+export interface InlineModelSelection { providerSettingsId: string; runtimeProviderId: string; modelId: string; reasoning: import("../types/app-server").ReasoningEffort; memoryMode: "normal" | "no_memory" }
+export interface InlineThreadMessage { id: string; role: "user" | "assistant"; text: string; at: number; versionId?: string; question?: { question: string; options: { id: string; label: string }[] } }
+export interface InlineTiming { submittedAt: number; contextReadyAt?: number; modelStartedAt?: number; firstOutputAt?: number; proposalReadyAt?: number; userWaitMs?: number; questionAt?: number; toolCalls?: number; memoryRecall?: unknown; productRunId?: string }
 export interface InlineChange extends TextSpan { insert: string }
 export interface InlineCommit {
   action: "confirm" | "revoke";
@@ -47,6 +51,14 @@ export interface InlineRequest {
   error?: string;
   createdAt: number;
   updatedAt: number;
+  targetResolved?: boolean;
+  section?: string;
+  thread?: InlineThreadMessage[];
+  question?: { question: string; options: { id: string; label: string }[] };
+  model?: InlineModelSelection;
+  runToken?: string;
+  timing?: InlineTiming;
+  readContext?: InlineContext;
 }
 export interface InlineProposalInput {
   path: string;

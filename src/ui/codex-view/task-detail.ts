@@ -6,7 +6,8 @@ import { disposeOriginControls } from "../../settings/origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
 import { renderTaskAvatar, taskIconButton } from "./agent-roster";
 
-export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition, original: TaskEntry, onBack: () => void, language: SettingsLanguage = "zh-CN", maintenance: readonly Readonly<MaintenanceActivity>[] = [], onStopUpgrade?: () => Promise<void> | void): void {
+export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition, original: TaskEntry, onBack: () => void, language: SettingsLanguage = "zh-CN", maintenance: readonly Readonly<MaintenanceActivity>[] = [], onStopUpgrade?: () => Promise<void> | void,
+  display?: { subtitle: string; status: string; state: ReturnType<typeof taskState> }): void {
   const entry = taskEntryWithMaintenance(original, maintenance);
   const activity = maintenanceActivityForTask(original, maintenance), title = activity ? maintenanceTaskTitle(activity, language === "en") : entry.title;
   disposeOriginControls(root); root.empty();
@@ -17,7 +18,7 @@ export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition
   titles.createDiv({ cls: "echoink-task-detail-title", text: title, attr: { title } });
   const completed = taskState(entry) === "completed";
   const at = completed ? entry.taskCompletedAt ?? entry.updatedAt : entry.taskInterruptedAt;
-  titles.createDiv({ cls: "echoink-task-detail-subtitle", text: `${agent.name}${at !== undefined ? ` · ${localDateLabel(at, Date.now(), language)} ${localTaskTime(at)}` : ""}` });
+  titles.createDiv({ cls: "echoink-task-detail-subtitle", text: display?.subtitle ?? `${agent.name}${at !== undefined ? ` · ${localDateLabel(at, Date.now(), language)} ${localTaskTime(at)}` : ""}` });
   if (activity?.taskKind === "upgrade" && taskState(entry) === "running" && onStopUpgrade) {
     const stop = taskIconButton(header, language === "en" ? "Stop upgrade" : "停止升级", "square", () => {});
     applyAmicroButton(stop, { variant: "secondary" });
@@ -27,7 +28,7 @@ export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition
       try { await onStopUpgrade(); } finally { stop.disabled = false; setAmicroButtonPending(stop, false); }
     };
   }
-  header.createSpan({ cls: `echoink-task-card-status is-${taskState(entry)}`, text: taskStateLabel(entry, language) });
+  header.createSpan({ cls: `echoink-task-card-status is-${display?.state ?? taskState(entry)}`, text: display?.status ?? taskStateLabel(entry, language) });
 }
 const entered = new WeakMap<HTMLElement, number>();
 export function animateTaskDetailEntry(root: HTMLElement, navigationToken: number): void {

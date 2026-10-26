@@ -10,7 +10,9 @@ import { readVaultIdentity } from "../plugin/vault-identity";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { applyAmicroButton } from "../settings/amicro-buttons";
 import { resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
-import { locateInstruction, markerPattern } from "./document";
+import { locateInstruction, locateTarget, markerPattern } from "./document";
+import { InlineMentionController } from "./mention";
+import { InlineAgentRuntimeController } from "./orchestrator";
 import { FileInlineRepository } from "./store";
 import { InlineRequestService, type InlineEditorPort } from "./service";
 import type { InlineProposalInput, InlineRequest } from "./types";
@@ -22,14 +24,18 @@ const statePath = (state: EditorState): string | undefined => state.field(Obsidi
 /** The first-round adapter has no model, mention picker, commands, or sidebar UI. */
 export class InlineAgentController {
   readonly service: InlineRequestService;
+  readonly runtime: InlineAgentRuntimeController;
+  private mention?: InlineMentionController;
+  private listeners = new Set<() => void>();
   private editors = new Set<EditorView>();
   private redrawQueued = false;
   private disposed = false;
   private readonly field: StateField<DecorationSet>;
   private constructor(readonly plugin: CodexForObsidianPlugin, vaultId: string, file: string) {
     this.service = new InlineRequestService(vaultId, new FileInlineRepository(file, vaultId), {
-      editor: notePath => this.editor(notePath), changed: () => this.refresh(), report: error => this.report(error)
+      editor: notePath => this.editor(notePath), changed: () => { this.refresh(); for (const listener of this.listeners) listener(); }, report: error => this.report(error)
     });
+    this.runtime = new InlineAgentRuntimeController(plugin, this.service, { editor: notePath => this.editor(notePath), openTask: id => this.openTask(id) });
     this.field = StateField.define<DecorationSet>({
       create: state => { const filePath = statePath(state); if (filePath) this.service.reconcile(filePath, state.doc.toString()); return this.decorations(state); },
       update: (_value, tr) => {
@@ -57,9 +63,41 @@ export class InlineAgentController {
       destroy() { detach(this.view); }
     });
     this.plugin.registerEditorExtension([this.field, views]);
+    this.mention = new InlineMentionController({ plugin: this.plugin, agents: () => this.plugin.settings.agentRegistry.agents,
+      trigger: () => { this.checkDateConflict(); return this.plugin.settings.inlineAgent.trigger; }, send: input => this.runtime.sendDraft(input) });
+    this.mention.register();
+    this.plugin.app.workspace.onLayoutReady(() => this.checkDateConflict());
     this.plugin.registerEvent(this.plugin.app.vault.on("rename", (file, oldPath) => this.service.rename(oldPath, file.path)));
     this.plugin.registerEvent(this.plugin.app.vault.on("delete", file => this.service.delete(file.path)));
-    this.plugin.register(() => { this.disposed = true; this.editors.clear(); void this.service.dispose().catch(error => this.report(error)); });
+    this.plugin.register(() => { this.disposed = true; this.mention?.dispose(); this.runtime.dispose(); this.listeners.clear(); this.editors.clear(); void this.service.dispose().catch(error => this.report(error)); });
+  }
+  subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  async openTask(taskId: string): Promise<void> {
+    await this.plugin.activateView({ focusInput: false });
+    const view = this.plugin.getCodexView();
+    if (view && await view.waitForTaskUiReady()) await view.openTaskDetail(taskId);
+  }
+  async openSource(id: string): Promise<void> {
+    const r = this.service.get(id); if (!r) throw new Error("来源请求已不存在。");
+    const port = await this.editor(r.path), document = port.read();
+    const leaf = this.plugin.app.workspace.getLeavesOfType("markdown").find(item => item.view instanceof MarkdownView && item.view.file?.path === r.path && item.view.getMode() === "source");
+    if (!leaf || !(leaf.view instanceof MarkdownView)) return;
+    await this.plugin.app.workspace.revealLeaf(leaf);
+    const target = r.commit?.result ?? (r.targetResolved === false ? r.instruction : r.target);
+    const located = locateTarget(document, target, r.observedDocument === document);
+    if (!located || r.status === "missing") { new Notice("已打开来源笔记，原位置已变化。"); return; }
+    const pos = leaf.view.editor.offsetToPos(located.from);
+    leaf.view.editor.setCursor(pos); leaf.view.editor.scrollIntoView({ from: pos, to: pos }, true); leaf.view.editor.focus();
+  }
+  checkDateConflict(): void {
+    const settings = this.plugin.settings.inlineAgent;
+    if (settings.trigger !== "@" || settings.nldConflictNoticeShown) return;
+    const plugins = (this.plugin.app as typeof this.plugin.app & { plugins?: { plugins?: Record<string, { settings?: { autocompleteTriggerPhrase?: string; isAutosuggestEnabled?: boolean } }> } }).plugins;
+    const nld = plugins?.plugins?.["nldates-obsidian"];
+    if (!nld || nld.settings?.isAutosuggestEnabled === false || (nld.settings?.autocompleteTriggerPhrase ?? "@") !== "@") return;
+    settings.nldConflictNoticeShown = true;
+    new Notice("正文管家和 Natural Language Dates 都在使用 @，可能互相抢占。建议在任一个插件设置里改掉唤起符号。", 12000);
+    void this.plugin.saveSettings(true).catch(error => console.error("Inline mention conflict preference could not save", error));
   }
   /** Future runtime output and fixed native fixtures use the same validated proposal entry. */
   async stageProposal(input: InlineProposalInput): Promise<InlineRequest> {
@@ -73,9 +111,13 @@ export class InlineAgentController {
     const document = state.doc.toString(), ranges: ReturnType<Decoration["range"]>[] = [];
     const records = this.service.list(filePath), known = new Set(records.map(r => r.id));
     for (const r of records) {
-      if (!["pending", "conflict", "interrupted", "save_failed", "saving"].includes(r.status)) continue;
+      if (!["thinking", "clarifying", "queued", "failed", "pending", "conflict", "interrupted", "save_failed", "saving"].includes(r.status)) continue;
       const control = locateInstruction(document, r);
       if (!control && !["saving", "save_failed"].includes(r.status)) continue;
+      if (control && ["thinking", "clarifying", "queued", "interrupted", "failed"].includes(r.status)) {
+        ranges.push(Decoration.replace({ widget: new RequestStateWidget(this, r), block: true, inclusive: false }).range(control.from, control.to));
+        continue;
+      }
       if (control) ranges.push(Decoration.replace({ inclusive: false }).range(control.from, control.to));
       const targetValid = r.target.to <= document.length && document.slice(r.target.from, r.target.to) === r.versions.find(v => v.id === r.currentVersionId)?.target.text;
       const applied = !control && r.commit && r.commit.result.to <= document.length && document.slice(r.commit.result.from, r.commit.result.to) === r.commit.originalResult.text ? r.commit.result : undefined;
@@ -168,4 +210,17 @@ class ProposalWidget extends WidgetType {
 class MissingRecordWidget extends WidgetType {
   eq(): boolean { return true; }
   toDOM(view: EditorView): HTMLElement { const el = view.dom.ownerDocument.createElement("div"); el.className = "echoink-inline-missing"; el.textContent = "任务记录未同步"; return el; }
+}
+class RequestStateWidget extends WidgetType {
+  constructor(private readonly controller: InlineAgentController, private readonly request: InlineRequest) { super(); }
+  eq(other: RequestStateWidget): boolean { return this.request.id === other.request.id && this.request.status === other.request.status && this.request.error === other.request.error; }
+  toDOM(view: EditorView): HTMLElement {
+    const r = this.request, root = view.dom.ownerDocument.createElement("div"); root.className = "echoink-inline-request-state"; root.dataset.requestId = r.id;
+    const labels: Record<string, string> = { thinking: "思考中", clarifying: "等你回答", queued: "等待前一块处理", interrupted: "已中断 · 重试", failed: "没写成 · 重试" };
+    const state = root.createEl("button", { cls: `echoink-inline-state-label${r.status === "clarifying" ? " is-waiting" : ""}`, text: `${r.agentName} · ${labels[r.status] ?? r.status}`, attr: { type: "button" } });
+    state.onclick = () => { void this.controller.openTask(r.taskId).catch(error => this.controller.report(error)); };
+    root.createDiv({ cls: "echoink-inline-sent-instruction", text: r.instruction.text.slice(0, -r.instruction.marker.length).trimEnd() });
+    return root;
+  }
+  destroy(dom: HTMLElement): void { disposeOriginControls(dom); }
 }

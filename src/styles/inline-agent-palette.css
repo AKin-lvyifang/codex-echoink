@@ -1,0 +1,127 @@
+/* Reuse the approved companion palette tokens; do not import gallery or theme-management behavior. */
+body { --echoink-control-fill: #18181b; --echoink-control-on-fill: #ffffff; }
+body.theme-dark { --echoink-control-fill: #fafafa; --echoink-control-on-fill: #18181b; }
+body[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-inline-block, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-inline-request-state) {
+  --echoink-theme-scheme: light;
+  --echoink-theme-bg: #ffffff;
+  --echoink-theme-card: #ffffff;
+  --echoink-theme-raised: #f4f4f5;
+  --echoink-theme-hover: #f4f4f5;
+  --echoink-theme-warn: #9c6b1e;
+  --echoink-theme-text: #18181b;
+  --echoink-theme-secondary: #52525b;
+  --echoink-theme-muted: #71717a;
+  --echoink-theme-line: #e4e4e7;
+  --echoink-theme-focus: #a1a1aa;
+  --echoink-theme-accent-text: #18181b;
+  --echoink-theme-accent: #18181b;
+  --echoink-theme-active: #f4f4f5;
+  --echoink-theme-on-accent: #ffffff;
+}
+body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-inline-block, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-inline-request-state) {
+  --echoink-theme-scheme: dark;
+  --echoink-theme-bg: #0f0f11;
+  --echoink-theme-card: #18181b;
+  --echoink-theme-raised: #27272a;
+  --echoink-theme-hover: #27272a;
+  --echoink-theme-warn: #d9a75a;
+  --echoink-theme-text: #fafafa;
+  --echoink-theme-secondary: #a1a1aa;
+  --echoink-theme-muted: #a1a1aa;
+  --echoink-theme-line: #27272a;
+  --echoink-theme-focus: #52525b;
+  --echoink-theme-accent-text: #fafafa;
+  --echoink-theme-accent: #fafafa;
+  --echoink-theme-active: #27272a;
+  --echoink-theme-on-accent: #18181b;
+}
+body[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-inline-block, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-inline-request-state) {
+  --echoink-theme-scheme: light;
+  --echoink-theme-bg: #ffffff;
+  --echoink-theme-card: #ffffff;
+  --echoink-theme-raised: #f7f7f5;
+  --echoink-theme-hover: #f3f3f1;
+  --echoink-theme-warn: #8a6d00;
+  --echoink-theme-text: #2a2a2a;
+  --echoink-theme-secondary: #5f6368;
+  --echoink-theme-muted: #737373;
+  --echoink-theme-line: #ececec;
+  --echoink-theme-focus: #9a9a9a;
+  --echoink-theme-accent-text: #8a6d00;
+  --echoink-theme-accent: #ffd700;
+  --echoink-theme-active: #fff6c4;
+  --echoink-theme-on-accent: #2a2a2a;
+}
+body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-inline-block, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-inline-request-state) {
+  --echoink-theme-scheme: dark;
+  --echoink-theme-bg: #1b1b1b;
+  --echoink-theme-card: #232323;
+  --echoink-theme-raised: #303030;
+  --echoink-theme-hover: #303030;
+  --echoink-theme-warn: #ffd75e;
+  --echoink-theme-text: #ededed;
+  --echoink-theme-secondary: #b4b4b4;
+  --echoink-theme-muted: #b4b4b4;
+  --echoink-theme-line: #303030;
+  --echoink-theme-focus: #7a7a7a;
+  --echoink-theme-accent-text: #ffd700;
+  --echoink-theme-accent: #ffd700;
+  --echoink-theme-active: #3f3a1e;
+  --echoink-theme-on-accent: #1b1b1b;
+}
+body[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-inline-block, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-inline-request-state) {
+  --echoink-theme-scheme: light;
+  --echoink-theme-bg: #f3f3f3;
+  --echoink-theme-card: #f3f3f3;
+  --echoink-theme-raised: #e6e6e6;
+  --echoink-theme-hover: #e6e6e6;
+  --echoink-theme-warn: #8a6d00;
+  --echoink-theme-text: #212121;
+  --echoink-theme-secondary: #555555;
+  --echoink-theme-muted: #6c6c6c;
+  --echoink-theme-line: #d9d9d9;
+  --echoink-theme-focus: #8a8a8a;
+  --echoink-theme-accent-text: #76640e;
+  --echoink-theme-accent: #f2d741;
+  --echoink-theme-active: #f4ecc0;
+  --echoink-theme-on-accent: #212121;
+}
+body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-inline-block, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-inline-request-state) {
+  --echoink-theme-scheme: dark;
+  --echoink-theme-bg: #212121;
+  --echoink-theme-card: #212121;
+  --echoink-theme-raised: #2c2c2c;
+  --echoink-theme-hover: #2c2c2c;
+  --echoink-theme-warn: #ffd75e;
+  --echoink-theme-text: #f3f3f3;
+  --echoink-theme-secondary: #b0b0b0;
+  --echoink-theme-muted: #9c9c9c;
+  --echoink-theme-line: #3a3a3a;
+  --echoink-theme-focus: #6c6c6c;
+  --echoink-theme-accent-text: #f2d741;
+  --echoink-theme-accent: #f2d741;
+  --echoink-theme-active: #403b24;
+  --echoink-theme-on-accent: #212121;
+}
+
+.echoink-agent-tasks {
+  --background-primary: var(--echoink-theme-bg);
+  --background-secondary: var(--echoink-theme-raised);
+  --background-modifier-hover: var(--echoink-theme-hover);
+  --background-modifier-border: var(--echoink-theme-line);
+  --text-normal: var(--echoink-theme-text);
+  --text-muted: var(--echoink-theme-secondary);
+}
+.cm-editor :is(.echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end) {
+  --echoink-inline-draft-background: var(--echoink-theme-raised, var(--background-secondary));
+  --echoink-inline-draft-foreground: var(--text-normal);
+}
+.echoink-theme-choice[data-theme="minimal"] .echoink-theme-swatch { background: #18181b; color: #fff; }
+.echoink-theme-choice[data-theme="highlighter"] .echoink-theme-swatch { background: #ffd700; color: #2a2a2a; }
+.echoink-theme-choice[data-theme="manifesto"] .echoink-theme-swatch { background: #f2d741; color: #212121; }
+.echoink-inline-trigger-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 18px; }
+.echoink-inline-trigger-setting input.echoink-origin-control { width: 52px; text-align: center; }
+.echoink-inline-state-label { height: auto; min-height: 24px; padding: 2px 0; background: transparent; border: 0; box-shadow: none; color: var(--text-muted); font-size: 12px; }
+.echoink-inline-state-label.is-waiting { color: var(--echoink-theme-warn, var(--text-warning)); }
+.echoink-inline-request-state .echoink-inline-state-label:focus-visible { box-shadow: none; outline: none; background: var(--background-modifier-hover); }
+.echoink-inline-sent-instruction { background: var(--echoink-theme-raised, var(--background-secondary)); padding: 5px 8px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }

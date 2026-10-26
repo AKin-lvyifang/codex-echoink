@@ -1,5 +1,6 @@
 import { skillIcon } from "../agents/skill-icons";
 import { DesktopAgentSettings } from "./agent-settings";
+import { renderInlineAgentSettings } from "./inline-agent-settings";
 import { DesktopMemorySettings } from "./desktop-memory-settings";
 import { UserProfileSettingsController } from "./user-profile-settings";
 import { renderKnowledgeLinkingSection } from "./knowledge-linking-section";
@@ -1396,6 +1397,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const page = createSettingsPage(container, { title: "Agent", titleVisibility: "screen-reader" });
     page.addClass("echoink-desktop-agent-page");
     agents.renderSummary(page);
+    renderInlineAgentSettings(page, this.plugin);
     this.desktopMemory ??= new DesktopMemorySettings(this.plugin, {
       redraw: () => this.scheduleDisplay(), openCorrection: () => this.openSettingsDetail("review-memory"),
       openProfile: () => { this.ensureDesktopProfile().refreshWhenOpened(); this.desktopProfileOpen = true; this.scheduleDisplay(); }

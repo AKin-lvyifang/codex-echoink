@@ -8,6 +8,7 @@ import { anchorAt, cleanDocument, commitChanges, applyChanges, instructionDeleti
 import { FileInlineRepository, type InlineRepository } from "../inline-agent/store";
 import { InlineRequestService, type InlineEditorPort } from "../inline-agent/service";
 import type { InlineRequest, InlineProposalInput } from "../inline-agent/types";
+import { buildInlineCandidates, proposalTarget } from "../inline-agent/candidates";
 
 let checks = 0;
 const check = (name: string, fn: () => void | Promise<void>) => Promise.resolve().then(fn).then(() => { checks++; console.log(`PASS ${name}`); });
@@ -41,13 +42,47 @@ await check("B17 control substring deletion preserves prefix, suffix and multi-l
     const command = `${trigger}小墨 改写\n第二行要求 %%echoink:r%%`, doc = `保留前文 ${command} 保留后文\n下一行`;
     const from = doc.indexOf(trigger), to = from + command.length;
     const changes = action === "revoke" ? [instructionDeletion(doc, { from, to })] : commitChanges(doc, { from, to }, { from: doc.indexOf("下一行"), to: doc.length }, "新稿");
-    assert.equal(applyChanges(doc, changes), `保留前文  保留后文\n${action === "confirm" ? "新稿" : "下一行"}`);
+    assert.equal(applyChanges(doc, changes), `保留前文 保留后文\n${action === "confirm" ? "新稿" : "下一行"}`);
   }
 });
 await check("empty line removal is bounded and preserves whitespace-only user content", () => {
-  for (const [doc, expected] of [["头\n@命令\n尾", "头\n尾"], ["头\n@命令", "头"], ["@命令\n尾", "尾"], ["@命令", ""], [" @命令 ", "  "]]) {
+  for (const [doc, expected] of [["头\n@命令\n尾", "头\n尾"], ["头\n@命令", "头"], ["@命令\n尾", "尾"], ["@命令", ""], [" @命令 ", " "], ["中文@命令后文", "中文后文"]]) {
     const from = doc.indexOf("@"); assert.equal(applyChanges(doc, [instructionDeletion(doc, { from, to: from + 3 })]), expected);
   }
+});
+const model = { providerSettingsId: "provider", runtimeProviderId: "openai", modelId: "model", reasoning: "none" as const, memoryMode: "normal" as const };
+await check("a thinking request has no fake proposal, clarifies, and revokes without a version", async () => {
+  const f = fixture(), input = f.input(); const { target: _target, text: _text, ...base } = input;
+  const r = await f.service.beginRequest(base, "重写这一段"); assert.equal(r.status, "thinking"); assert.equal(r.versions.length, 0);
+  const source = await f.service.readSource(r.id), token = await f.service.startRun(r.id, "重写这一段", model, source.context, false);
+  assert.ok(!source.context.text.includes("%%echoink:")); assert.ok(source.context.text.includes("用户前文"));
+  await f.service.clarify(r.id, token, { question: "哪一段？", options: [{ id: "a", label: "第一段" }, { id: "b", label: "第二段" }] }, { toolCalls: 0 });
+  assert.equal(f.service.get(r.id)?.status, "clarifying"); await f.service.revoke(r.id, "");
+  assert.ok(f.port.read().includes("用户前文 后缀")); assert.equal(f.service.get(r.id)?.status, "revoked"); await f.service.dispose();
+});
+await check("new versions retain the file instruction and reject an old run or old confirmation", async () => {
+  const f = fixture(), input = f.input(); const { target: _target, text: _text, ...base } = input;
+  const r = await f.service.beginRequest(base, "重写这一段"), source = await f.service.readSource(r.id);
+  const candidates = buildInlineCandidates(source.document, source.context, r), candidate = candidates.find(c => c.text.includes("原文第一行"))!;
+  const target = proposalTarget(source.document, candidates, { kind: "proposal", candidateId: candidate.id, original: "原文第一行\n原文第二行", text: "第一版" });
+  const first = await f.service.startRun(r.id, "重写这一段", model, source.context, false);
+  await f.service.completeProposal(r.id, first, source.document, target, "第一版", "重写这一段", "正文", { toolCalls: 0 });
+  const oldVersion = f.service.get(r.id)!.currentVersionId;
+  const second = await f.service.startRun(r.id, "再短一点", model, source.context, true);
+  await f.service.completeProposal(r.id, first, source.document, target, "过期结果", "重写这一段", "正文", {});
+  assert.equal(f.service.get(r.id)?.status, "thinking"); assert.equal(f.service.get(r.id)?.versions.length, 1);
+  await f.service.completeProposal(r.id, second, source.document, target, "第二版", "再短一点", "正文", { toolCalls: 0 });
+  assert.equal(f.service.get(r.id)?.versions.length, 2); assert.equal(f.service.get(r.id)?.instruction.text, r.instruction.text);
+  await assert.rejects(f.service.confirm(r.id, oldVersion), /版本已变化/u);
+  await f.service.confirm(r.id, f.service.get(r.id)!.currentVersionId); assert.ok(f.port.read().includes("第二版")); await f.service.dispose();
+});
+await check("a deleted instruction cannot be revived by a late model response", async () => {
+  const f = fixture(), input = f.input(); const { target: _target, text: _text, ...base } = input;
+  const r = await f.service.beginRequest(base, "重写这一段"), source = await f.service.readSource(r.id), token = await f.service.startRun(r.id, "重写这一段", model, source.context, false);
+  const target = { ...anchorAt(source.document, input.target), kind: "replace" as const };
+  f.edit(r.instruction.from, r.instruction.to, ""); const before = f.port.read();
+  await f.service.completeProposal(r.id, token, source.document, target, "晚到的稿", "重写这一段", "正文", {});
+  assert.equal(f.service.get(r.id)?.status, "missing"); assert.equal(f.port.read(), before); await f.service.dispose();
 });
 await check("clean whole-note mapping preserves surrounding prose and rejects ranges across controls", () => {
   const context = cleanDocument("前文@命令后文", [{ from: 2, to: 5 }]);
@@ -69,14 +104,14 @@ await check("range and insertion boundary typing follows explicit association", 
 await check("one CM6 history event confirms both edits, Undo/Redo never reruns a request", async () => {
   const f = fixture(); await f.service.initialize(); const r = await f.service.stageProposal(f.input());
   const before = f.port.read(), applied = f.applies(); await Promise.all([f.service.confirm(r.id, r.currentVersionId), f.service.confirm(r.id, r.currentVersionId)]);
-  const after = f.port.read(); assert.equal(f.applies(), applied + 1); assert.ok(after.includes("用户前文  后缀")); assert.ok(!after.includes("%%echoink:"));
+  const after = f.port.read(); assert.equal(f.applies(), applied + 1); assert.ok(after.includes("用户前文 后缀")); assert.ok(!after.includes("%%echoink:"));
   assert.ok(f.history("undo")); assert.equal(f.port.read(), before); assert.equal(f.service.get(r.id)?.status, "withdrawn");
   assert.ok(f.history("redo")); assert.equal(f.port.read(), after); assert.equal(f.service.get(r.id)?.status, "confirmed"); await f.service.dispose();
 });
 await check("compare original blocks shared confirmation", async () => {
   const f = fixture(); const r = await f.service.stageProposal(f.input()); f.service.compare(r.id);
   await assert.rejects(f.service.confirm(r.id, r.currentVersionId), /切回新稿/u); f.service.compare(r.id);
-  await f.service.revoke(r.id, r.currentVersionId); assert.ok(f.port.read().includes("原文第一行\n原文第二行")); assert.ok(f.port.read().includes("用户前文  后缀")); await f.service.dispose();
+  await f.service.revoke(r.id, r.currentVersionId); assert.ok(f.port.read().includes("原文第一行\n原文第二行")); assert.ok(f.port.read().includes("用户前文 后缀")); await f.service.dispose();
 });
 await check("manual edits remain modified after later unrelated typing and after cold restore", async () => {
   const f = fixture(); const r = await f.service.stageProposal(f.input()); await f.service.confirm(r.id, r.currentVersionId);

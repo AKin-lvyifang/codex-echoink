@@ -1,10 +1,18 @@
 import type { App } from "obsidian";
 
-export type EchoInkColorTheme = "green" | "violet";
+export const ECHOINK_COLOR_THEMES = [
+  { id: "minimal", zh: "极简黑白", en: "Minimal" },
+  { id: "highlighter", zh: "荧光笔记", en: "Highlighter" },
+  { id: "manifesto", zh: "黄白宣言", en: "Manifesto" }
+] as const;
+export type EchoInkColorTheme = "green" | "violet" | typeof ECHOINK_COLOR_THEMES[number]["id"];
 export const ECHOINK_THEME_ATTRIBUTE = "data-echoink-theme";
 
 export function normalizeEchoInkColorTheme(value: unknown): EchoInkColorTheme {
-  return value === "violet" ? "violet" : "green";
+  return value === "minimal" || value === "highlighter" || value === "manifesto" || value === "violet" ? value : "green";
+}
+export function displayedEchoInkPalette(value: EchoInkColorTheme): typeof ECHOINK_COLOR_THEMES[number]["id"] {
+  return value === "green" ? "highlighter" : value === "violet" ? "minimal" : value;
 }
 
 /** Theme metadata is window-wide; CSS only targets EchoInk surfaces. */
@@ -15,8 +23,9 @@ export class EchoInkAppearance {
 
   applyToDocument(doc: Document): void {
     this.documents.add(doc);
-    if (doc.body.getAttribute(ECHOINK_THEME_ATTRIBUTE) !== this.theme()) {
-      doc.body.setAttribute(ECHOINK_THEME_ATTRIBUTE, this.theme());
+    const palette = displayedEchoInkPalette(this.theme());
+    if (doc.body.getAttribute(ECHOINK_THEME_ATTRIBUTE) !== palette) {
+      doc.body.setAttribute(ECHOINK_THEME_ATTRIBUTE, palette);
     }
   }
 

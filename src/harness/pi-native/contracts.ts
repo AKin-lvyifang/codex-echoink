@@ -137,6 +137,8 @@ export interface PiKnowledgeMaintenanceOutcome {
 }
 
 export interface PiProductRunRecord {
+  /** Request-scoped structured completion; not persisted in the pointer-only run store. */
+  inlineProposalResult?: import("../../inline-agent/protocol").InlineModelOutput;
   interruption?: import("../../agents/task-resume").TaskInterruptionRecord;
   agentSnapshot?: AgentRunSnapshot;
   productRunId: string;
@@ -409,6 +411,7 @@ export interface PiKnowledgeMaintenanceToolPort {
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface PiChatSubmitRequest {
+  inlineProposalRequest?: Readonly<import("../../inline-agent/protocol").InlineModelRequest>;
   generationRequest?: Readonly<import("../../generation/types").GenerationRequest>;
   /** Locally selected English generation source; never contains source body. */
   englishDiarySourcePath?: string;

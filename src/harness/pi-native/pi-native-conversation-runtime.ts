@@ -1,3 +1,5 @@
+import { freezeInlineModelRequest, inlineProposalContextContent, INLINE_PROPOSAL_SYSTEM_PROMPT, parseInlineModelOutput, type InlineModelRequest, type InlineModelOutput } from "../../inline-agent/protocol";
+import { estimateTokenValue } from "../usage/token-estimator";
 import { assertGenerationInputBudget, freezeGenerationRequest, generationModelPrompt, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
 import { GenerationOutputValidationError, prepareGenerationOutput } from "../../generation/output";
 import { GENERATION_ATTEMPT_ENTRY, GENERATION_STAGE_ENTRY, projectGenerationEntries } from "../../generation/projection";
@@ -216,6 +218,7 @@ type PiChatRuntimeEventPayload = DistributiveOmit<
 >;
 
 export interface PiNativeAgentSessionFactoryInput {
+  currentInlineProposalRequest?(): Readonly<InlineModelRequest> | null;
   currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment; attempt?: GenerationAttempt } | null;
   providerSettingsId?: string;
   runtimeProviderId?: string;
@@ -716,6 +719,7 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  inlineProposal?: { request: Readonly<InlineModelRequest>; previousAutoCompaction?: boolean };
   generation?: { request: GenerationRequest; assessment?: GenerationSourceAssessment; attempt?: GenerationAttempt; inputBudget?: number; stage?: GenerationStage; previousAutoCompaction?: boolean; durable?: boolean; pendingEntries: { customType: string; data: unknown }[] };
   pdfTaskRequest?: Readonly<PdfTaskRequest>;
   pdfDeliveryJobs?: Set<string>;
@@ -1401,8 +1405,9 @@ export class PiNativeConversationRuntime {
     }
     this.submitting.add(request.conversationId);
     try {
+      const inlineProposalRequest = request.inlineProposalRequest ? freezeInlineModelRequest(request.inlineProposalRequest) : undefined;
       const workbenchSource = freezeWorkbenchTaskSource(request.workbenchSource);
-      return await this.submitPrepared(Object.freeze({ ...request, workbenchSource: workbenchSource ?? undefined, permission: normalizePiWorkspacePermission(request.permission) }));
+      return await this.submitPrepared(Object.freeze({ ...request, inlineProposalRequest, workbenchSource: workbenchSource ?? undefined, permission: normalizePiWorkspacePermission(request.permission) }));
     } finally {
       this.submitting.delete(request.conversationId);
     }
@@ -1413,6 +1418,11 @@ export class PiNativeConversationRuntime {
   ): Promise<PiChatRunHandle> {
     assertPiSubmissionActive(request.signal);
     this.assertConversationNotRecovering(request.conversationId);
+    if (request.inlineProposalRequest && (request.generationRequest || request.pdfTaskRequest || request.englishDiarySourcePath
+      || request.skillPath || request.skillId || request.skillName || request.maintenanceScope || request.resumeContext
+      || request.workbenchSource || request.images?.length || request.documents?.length || request.noteMentions?.length || request.selectionAnnotations?.length)) {
+      throw new Error("正文提案使用独立快照，请移除其他任务、附件或 Skill 后重试。");
+    }
     assertValidSkillBinding(request);
     const promptImages = normalizePiChatPreparedImages(request.images);
     const noteMentions = normalizePiChatNoteMentions(request.noteMentions);
@@ -1453,11 +1463,11 @@ export class PiNativeConversationRuntime {
       : null;
 
     const knowledgeCommand: KnowledgeConversationCommand =
-      request.generationRequest || mode === "plan" || !this.options.knowledge
+      request.inlineProposalRequest || request.generationRequest || mode === "plan" || !this.options.knowledge
         ? Object.freeze({ kind: "chat", originalText: request.text })
         : routeKnowledgeConversationCommand(request.text);
 
-    const selectedRuntimeSkill = !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath && !request.skillPath
+    const selectedRuntimeSkill = !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath && !request.skillPath
       ? catalog.defaultSkillId
         ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId, catalog)
         : mode !== "plan" && knowledgeCommand.kind !== "maintain"
@@ -1500,13 +1510,13 @@ export class PiNativeConversationRuntime {
         `Conversation ${request.conversationId} 已有运行中的 ProductRun`
       );
     }
-    const inheritedPdf = pdfTaskRequestFromEntries(active.sessionManager.getBranch());
+    const inheritedPdf = request.inlineProposalRequest ? undefined : pdfTaskRequestFromEntries(active.sessionManager.getBranch());
     const pdfTaskRequest = request.pdfTaskRequest ? freezePdfTaskRequest(request.pdfTaskRequest) : inheritedPdf;
     if (request.pdfTaskRequest && (!pdfTaskRequest || inheritedPdf && JSON.stringify(inheritedPdf) !== JSON.stringify(pdfTaskRequest))) throw new PiNativeConversationRuntimeError("agent_session_invalid", "PDF任务的文件和成果已固定，请从PDF页另建任务。");
     if (request.pdfTaskRequest && !inheritedPdf && active.sessionManager.getBranch().some(entry => entry.type === "message")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "请从PDF页新建独立任务。");
     if (request.pdfTaskRequest && (documents.length !== 1 || documents[0].transport !== "tool_reference" || documents[0].attachmentId !== pdfTaskRequest!.attachmentId || documents[0].sha256 !== pdfTaskRequest!.sourceFingerprint || documents[0].bytes.length !== pdfTaskRequest!.byteLength || promptImages.length || noteMentions.length || selectionAnnotations.length || request.skillPath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "PDF任务的附件与本次选择不一致，未发送。");
     if (pdfTaskRequest && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "处理PDF需要可写工作区和Agent模式，请调整对话栏权限后重试。");
-    const inheritedEnglish = englishDiaryTaskContextFromEntries(active.sessionManager.getBranch());
+    const inheritedEnglish = request.inlineProposalRequest ? undefined : englishDiaryTaskContextFromEntries(active.sessionManager.getBranch());
     const englishDiarySourcePath = normalizeEnglishDiarySourcePath(request.englishDiarySourcePath) ?? inheritedEnglish?.sourcePath;
     if (request.englishDiarySourcePath && inheritedEnglish && request.englishDiarySourcePath !== inheritedEnglish.sourcePath) throw new PiNativeConversationRuntimeError("agent_session_invalid", "这件任务的原稿范围已固定，请从列表另建一件事。");
     if (request.englishDiarySourcePath && !inheritedEnglish && active.sessionManager.getBranch().some(entry => entry.type === "message")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "请从英文日记页新建独立任务，避免把原有会话内容带入生成。");
@@ -1539,7 +1549,7 @@ export class PiNativeConversationRuntime {
     const documentRequestPreflight = preflightPiAnthropicDocumentRequest({
       documents,
       images: [
-        ...piInlineImagesInMessages(active.session.messages),
+        ...(request.inlineProposalRequest ? [] : piInlineImagesInMessages(active.session.messages)),
         ...promptImages
       ],
       contextWindow: active.session.model?.contextWindow ?? 0
@@ -1562,6 +1572,7 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
+      ...(request.inlineProposalRequest ? { inlineProposal: { request: request.inlineProposalRequest } } : {}),
       ...(request.generationRequest ? { generation: { request: freezeGenerationRequest(request.generationRequest), pendingEntries: [] } } : {}),
       ...(pdfTaskRequest ? { pdfTaskRequest } : {}),
       ...(englishDiarySourcePath ? { englishDiarySourcePath } : {}),
@@ -1639,7 +1650,7 @@ export class PiNativeConversationRuntime {
         summary: cloneReasoningSummary(execution.reasoningSummary)
       });
       this.configureToolsForTurn(active, knowledgeCommand, mode, memoryMode);
-      if (knowledgeCommand.kind === "chat" && !execution.maintenanceScope && !execution.generation && !englishDiarySourcePath && !pdfTaskRequest
+      if (knowledgeCommand.kind === "chat" && !execution.maintenanceScope && !execution.inlineProposal && !execution.generation && !englishDiarySourcePath && !pdfTaskRequest
         && isNewMaintenanceScopeRequest(request.text, active.cwd)) {
         // Selection facts are independent of the chat/maintenance workflow.
         // A suggestion-only turn must still replace the previous selection.
@@ -1653,7 +1664,16 @@ export class PiNativeConversationRuntime {
           execution.maintenanceScopeError = error ? failure : undefined;
         }
       }
-      if (execution.generation) {
+      if (execution.inlineProposal) {
+        active.knowledgeTurnContext = null;
+        if (typeof active.session.setAutoCompactionEnabled === "function") {
+          execution.inlineProposal.previousAutoCompaction = active.session.autoCompactionEnabled;
+          active.session.setAutoCompactionEnabled(false);
+        }
+        const inputBudget = active.generationInputBudget ?? calculatePiEffectiveInputBudget({ contextWindow: active.session.model!.contextWindow, maxOutputReserve: active.session.model!.maxTokens }).effectiveInputBudget;
+        const tokens = estimateTokenValue(INLINE_PROPOSAL_SYSTEM_PROMPT) + estimateTokenValue(inlineProposalContextContent(execution.inlineProposal.request)) + estimateTokenValue(request.text);
+        if (tokens + 1024 > inputBudget) throw new Error("正文全文超出当前模型的本轮预算，请缩小正文或切换模型；本轮没有截断发送。");
+      } else if (execution.generation) {
         if (!this.options.generation || mode === "plan" || permission === "read-only" || englishDiarySourcePath || pdfTaskRequest || noteMentions.length || documents.length || promptImages.length || request.skillPath) throw new Error("生成需要独立的资料选择、Agent 模式和可写权限。");
         active.knowledgeTurnContext = null;
         // Do not send an unrelated branch to a summarization Provider before
@@ -1821,7 +1841,7 @@ export class PiNativeConversationRuntime {
       throw error;
     }
 
-    const promptText = execution.generation ? generationModelPrompt(execution.generation.request, request.text) : englishDiarySourcePath ? request.text : active.skillPromptPrefix
+    const promptText = execution.inlineProposal ? request.text : execution.generation ? generationModelPrompt(execution.generation.request, request.text) : englishDiarySourcePath ? request.text : active.skillPromptPrefix
       ? `${active.skillPromptPrefix}\n\n${request.text}`
       : knowledgeCommand.kind === "chat" && active.skillCommandName
         ? `/skill:${active.skillCommandName} ${request.text}`
@@ -1866,6 +1886,7 @@ export class PiNativeConversationRuntime {
     try {
       promptPromise = active.session.prompt(promptText, {
         source: "interactive",
+        ...(execution.inlineProposal ? { expandPromptTemplates: false } : {}),
         // Pi appends the user Entry only after auth, compaction and
         // before_agent_start. Their duration is not an Entry-write timeout.
         preflightResult: (accepted) => {
@@ -2127,7 +2148,7 @@ export class PiNativeConversationRuntime {
     mode: PiChatMode,
     memoryMode: PiConversationMemoryMode
   ): void {
-    if (active.currentRun?.generation) { active.session.setActiveToolsByName([]); return; }
+    if (active.currentRun?.inlineProposal || active.currentRun?.generation) { active.session.setActiveToolsByName([]); return; }
     const names = resolvePiTurnToolNames({
       commandKind: command.kind,
       englishDiary: Boolean(active.currentRun?.englishDiarySourcePath),
@@ -2177,6 +2198,7 @@ export class PiNativeConversationRuntime {
     active: ActiveConversation,
     execution: ActiveProductRun
   ): void {
+    if (execution.inlineProposal?.previousAutoCompaction !== undefined) active.session.setAutoCompactionEnabled(execution.inlineProposal.previousAutoCompaction);
     if (execution.generation?.previousAutoCompaction !== undefined) active.session.setAutoCompactionEnabled(execution.generation.previousAutoCompaction);
     execution.releaseSubmissionAbort?.();
     execution.releaseSubmissionAbort = undefined;
@@ -2536,7 +2558,7 @@ export class PiNativeConversationRuntime {
     execution: ActiveProductRun,
     terminalState: PiProductRunTerminalState
   ): void {
-    if (execution.abortRequested) return;
+    if (execution.abortRequested || execution.inlineProposal) return;
     const plan = activeTaskPlanFromBranch(
       active.sessionManager.getBranch()
     );
@@ -2971,6 +2993,7 @@ export class PiNativeConversationRuntime {
         // Bind the source intent to the task; the tool separately binds the live user entry.
         return { sourcePath: run.englishDiarySourcePath, intentEntryId: stored?.intentEntryId ?? `english-diary:${catalog.conversationId}` };
       },
+      currentInlineProposalRequest: () => holder.active?.currentRun?.inlineProposal?.request ?? null,
       currentGenerationContext: () => {
         const generation = holder.active?.currentRun?.generation;
         return generation?.assessment ? { request: generation.request, assessment: generation.assessment, attempt: generation.attempt } : null;
@@ -3001,7 +3024,7 @@ export class PiNativeConversationRuntime {
           memoryMode: run.memoryMode,
           ...(run.projectId ? { projectId: run.projectId } : {}),
           query: run.requestText,
-          recentConversation: selectMemoryRecallPreviousUserContext(branch.flatMap((entry) =>
+          recentConversation: run.inlineProposal ? [] : selectMemoryRecallPreviousUserContext(branch.flatMap((entry) =>
             entry.id !== currentUserEntry?.id && entry.type === "message" && entry.message.role === "user"
               ? [{ role: entry.message.role, content: publicMessageText(entry.message) }]
               : []))
@@ -3433,6 +3456,17 @@ export class PiNativeConversationRuntime {
         if (result.writeState !== "verified" && terminalState === "completed") { terminalState = "failed"; promptError = new Error(result.error ?? "生成未写入文件。"); }
         await this.setGenerationStage(active, execution, undefined, result.writeState === "verified" ? "completed" : execution.abortRequested ? "cancelled" : "failed");
       }
+      let inlineProposalResult: InlineModelOutput | undefined;
+      if (execution.inlineProposal && terminalState === "completed") {
+        try {
+          const assistant = lastAssistantEntry(runEntries)?.message;
+          if (!assistant || execution.toolCallIds.size || runEntries.some(entry => entry.type === "message" && entry.message.role === "assistant" && entry.message.content.some(part => part.type === "toolCall"))) throw new Error("正文提案不能调用工具。");
+          inlineProposalResult = parseInlineModelOutput(publicMessageText(assistant), execution.inlineProposal.request, assistant.stopReason);
+        } catch (error) {
+          terminalState = "failed";
+          promptError = error;
+        }
+      }
       const maintenance = execution.knowledgeWorkflow?.kind === "maintain"
         && execution.permission !== "read-only"
         ? execution.knowledgeWorkflow
@@ -3740,7 +3774,7 @@ export class PiNativeConversationRuntime {
         this.now()
       );
       const settledAt = Math.max(agentSettledAt, this.now());
-      await this.options.knowledge?.maintenanceActivity?.({ type: "settled", conversationId: active.catalog.conversationId, productRunId: execution.productRunId, failed: terminalState === "failed" });
+      if (!execution.inlineProposal) await this.options.knowledge?.maintenanceActivity?.({ type: "settled", conversationId: active.catalog.conversationId, productRunId: execution.productRunId, failed: terminalState === "failed" });
       const settled = await this.productRuns.update(
         execution.productRunId,
         {
@@ -3782,6 +3816,7 @@ export class PiNativeConversationRuntime {
       ].sort());
       if (
         this.options.skills
+        && !execution.inlineProposal
         && !execution.generation
         && terminalState === "completed"
         && execution.mode !== "plan"
@@ -3805,6 +3840,7 @@ export class PiNativeConversationRuntime {
       }
       if (
         execution.memoryMode === "normal"
+        && !execution.inlineProposal
         && terminalState !== "cancelled"
         && assistantEntryId
         && this.options.recordDreamExperience
@@ -3842,7 +3878,7 @@ export class PiNativeConversationRuntime {
         terminalState,
         assistantEntryId
       });
-      return settled;
+      return inlineProposalResult ? Object.freeze({ ...settled, inlineProposalResult }) : settled;
     } catch (settlementError) {
       let providerReasoningCloseError: unknown = null;
       try {

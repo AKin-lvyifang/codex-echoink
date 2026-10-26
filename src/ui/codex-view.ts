@@ -17,6 +17,8 @@ import { renderAgentTaskList } from "./codex-view/task-list";
 import { animateTaskDetailEntry, renderTaskDetailHeader } from "./codex-view/task-detail";
 import { AgentEditorController } from "./codex-view/agent-editor";
 import { renderTaskInterruption } from "./codex-view/task-interruption";
+import { InlineTaskDetailView, inlineTaskHost, inlineTaskState, inlineTaskStatus, inlineTaskSummary, inlineNoteName, projectInlineTaskEntries, type InlineTaskHost } from "./codex-view/inline-task";
+import type { InlineRequest } from "../inline-agent/types";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { unavailableCapabilityAccess } from "../membership/access";
@@ -26,7 +28,7 @@ import type { ConversationRunState } from "../plugin/conversation-run-service";
 export type { ConversationRunState } from "../plugin/conversation-run-service";
 import { addSelectionAnnotation as appendSelectionAnnotation, composerSelectionAnnotations, selectionDraft, snapshotSelectionDraft, restoreSelectionDraft, emptySelectionDraft, type SelectionDraft } from "../selection-ask/draft";
 import { cloneSelectionAnnotations, selectionAnnotationsMatch, type SelectionAnnotation, type SelectionCapture } from "../types/selection-annotations";
-import { ItemView, Notice, Platform, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ChatMessage, StoredAttachment, StoredSession } from "../settings/settings";
 import { newId, providerConnectionLabel } from "../settings/settings";
@@ -238,6 +240,12 @@ export class CodexView extends ItemView {
   private taskListEl?: HTMLElement;
   private taskDetailEl?: HTMLElement;
   private taskDetailHeaderEl?: HTMLElement;
+  private inlineTaskBodyEl?: HTMLElement;
+  private inlineTaskDetail?: InlineTaskDetailView;
+  private inlineTaskDispose?: () => void;
+  private inlineTaskObservedHost?: InlineTaskHost;
+  private inlineComposerKey = "";
+  private inlineComposerComposing = false;
   private taskEditorEl?: HTMLElement;
   private taskErrorEl?: HTMLElement;
   private taskInterruptionEl?: HTMLElement;
@@ -260,7 +268,22 @@ export class CodexView extends ItemView {
 
   private currentTaskEntry(): TaskEntry | undefined {
     const page = this.taskNavigation.page;
-    return page.kind === "detail" ? this.taskEntries.find(entry => entry.conversationId === page.taskId) : undefined;
+    return page.kind === "detail" ? projectInlineTaskEntries(this.taskEntries, inlineTaskHost(this.plugin)?.service.list() ?? []).find(entry => entry.conversationId === page.taskId) : undefined;
+  }
+  private currentInlineTask(): InlineRequest | undefined {
+    if (!this.taskUiMounted) return undefined;
+    const page = this.taskNavigation.page;
+    return page.kind === "detail" ? inlineTaskHost(this.plugin)?.service.latestForTask(page.taskId) : undefined;
+  }
+  /** Refresh only presentation; closing this view never owns or cancels a正文 request. */
+  refreshInlineTasks(): void {
+    if (!this.taskUiMounted || this.viewLifecycleAbortController.signal.aborted) return;
+    const host = inlineTaskHost(this.plugin);
+    if (host !== this.inlineTaskObservedHost) {
+      this.inlineTaskDispose?.(); this.inlineTaskObservedHost = host;
+      this.inlineTaskDispose = host?.subscribe(() => this.refreshInlineTasks());
+    }
+    this.renderTaskPages(); this.renderToolbar();
   }
   private observeTaskMaintenance(): void {
     this.taskMaintenanceDispose?.(); this.taskMaintenanceDispose = undefined;
@@ -288,10 +311,16 @@ export class CodexView extends ItemView {
     this.rootEl.insertBefore(this.taskEditorEl, shell);
     this.rootEl.insertBefore(this.taskDetailEl, shell);
     this.taskDetailHeaderEl = this.taskDetailEl.createDiv();
+    this.inlineTaskDetail?.dispose();
+    this.inlineTaskBodyEl = this.taskDetailEl.createDiv({ cls: "echoink-inline-task-body" });
+    this.inlineTaskDetail = new InlineTaskDetailView(this.inlineTaskBodyEl, () => inlineTaskHost(this.plugin));
+    this.inlineTaskBodyEl.hidden = true;
     moveKnowledgeProgressToTaskDetail(shell, this.taskDetailEl);
     this.taskDetailEl.append(shell, this.taskPlanDockEl, this.interactionDockEl);
     this.taskInterruptionEl = this.messagesEl.createDiv({ cls: "echoink-task-interruption" });
     this.taskInterruptionEl.dataset.messageTail = "interruption";
+    this.inputEl.addEventListener("compositionstart", () => { this.inlineComposerComposing = true; });
+    this.inputEl.addEventListener("compositionend", () => { this.inlineComposerComposing = false; });
     this.restoreTaskComposerDraft();
     this.renderTaskPages();
   }
@@ -357,6 +386,12 @@ export class CodexView extends ItemView {
     const token = this.taskNavigation.navigate({ kind: "detail", taskId });
     this.taskDetailLoaded = false; this.taskLoadError = "";
     this.restoreTaskComposerDraft(); this.renderTaskPages();
+    const inline = inlineTaskHost(this.plugin)?.service.latestForTask(taskId);
+    if (inline) {
+      this.plugin.settings.activeSessionId = taskId; this.taskDetailLoaded = true;
+      this.renderTaskPages(); this.renderToolbar(); animateTaskDetailEntry(this.taskDetailEl!, token);
+      this.plugin.getConversationRunService().scheduleSave(); return;
+    }
     try {
       const projection = await this.plugin.readPiConversationProjection(taskId);
       if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
@@ -392,6 +427,7 @@ export class CodexView extends ItemView {
           if (this.viewLifecycleAbortController.signal.aborted) return;
           this.taskEntries = entries;
           for (const entry of entries) {
+            if (inlineTaskHost(this.plugin)?.service.latestForTask(entry.conversationId)) continue;
             const at = Math.max(entry.updatedAt, entry.taskCompletedAt ?? 0, entry.taskStartedAt ?? 0, entry.taskInterruptedAt ?? 0);
             const resident = this.sessionById(entry.conversationId);
             if (resident) applyConversationTaskMetadata(resident, entry);
@@ -420,6 +456,7 @@ export class CodexView extends ItemView {
   private renderTaskInterruptionCard(): void {
     const element = this.taskInterruptionEl, entry = this.currentTaskEntry();
     if (!element) return;
+    if (this.currentInlineTask()) { element.hidden = true; return; }
     const activities = this.taskMaintenanceActivities ?? [], activity = entry ? maintenanceActivityForTask(entry, activities) : undefined;
     const interrupted = !!entry && taskState(taskEntryWithMaintenance(entry, activities)) === "interrupted";
     element.hidden = !interrupted || !this.taskDetailLoaded || !!this.taskEditor || this.taskDerivationInProgress;
@@ -481,10 +518,11 @@ export class CodexView extends ItemView {
   private renderTaskPages(): void {
     if (!this.taskListEl || !this.taskDetailEl || !this.taskEditorEl || !this.taskErrorEl || !this.taskInterruptionEl) return;
     const page = this.taskNavigation.page, agent = this.currentTaskAgent(), entry = this.currentTaskEntry();
-    const displayEntries = this.taskEntries.map(task => {
+    const inlineHost = inlineTaskHost(this.plugin), inline = this.currentInlineTask();
+    const displayEntries = projectInlineTaskEntries(this.taskEntries.map(task => {
       const activity = maintenanceActivityForTask(task, this.taskMaintenanceActivities ?? []), entry = taskEntryWithMaintenance(task, this.taskMaintenanceActivities ?? []);
       return activity ? { ...entry, title: maintenanceTaskTitle(activity, this.plugin.settings.settingsLanguage === "en") } : entry;
-    });
+    }), inlineHost?.service.list() ?? []);
     renderAgentRoster(this.tabBarEl, this.plugin.settings.agentRegistry.agents, displayEntries, agent.id,
       { onSelect: id => void this.openAgentTaskList(id), onCreate: () => this.openAgentEditor() }, this.plugin.settings.settingsLanguage);
     this.taskEditorEl.hidden = !this.taskEditor; this.taskListEl.hidden = !!this.taskEditor || page.kind !== "list";
@@ -493,9 +531,12 @@ export class CodexView extends ItemView {
     this.inputEl.parentElement!.hidden = this.taskDerivationInProgress || !!this.taskEditor || page.kind === "detail" && !this.taskDetailLoaded;
     this.renderTaskInterruptionCard();
     const ready = page.kind === "detail" && this.taskDetailLoaded && !this.taskEditor && !this.taskDerivationInProgress;
-    this.messagesEl.parentElement!.hidden = !ready;
-    this.taskPlanDockEl.hidden = !ready || interrupted; this.interactionDockEl.hidden = !ready || interrupted;
-    this.queueEl.hidden = !!this.taskEditor;
+    this.messagesEl.parentElement!.hidden = !ready || !!inline;
+    this.taskPlanDockEl.hidden = !ready || interrupted || !!inline; this.interactionDockEl.hidden = !ready || interrupted || !!inline;
+    this.queueEl.hidden = !!this.taskEditor || !!inline;
+    this.taskDetailEl.classList.toggle("is-inline-task", !!inline);
+    if (this.inlineTaskBodyEl) this.inlineTaskBodyEl.hidden = !ready || !inline;
+    if (ready && inline) this.inlineTaskDetail?.render(inline, inlineHost?.service.list() ?? [inline], agent, this.plugin.settings.settingsLanguage);
     const loading = this.taskDerivationInProgress || page.kind === "detail" && !this.taskDetailLoaded && !this.taskLoadError;
     disposeOriginControls(this.taskErrorEl); this.taskErrorEl.empty(); this.taskErrorEl.hidden = !this.taskLoadError && !loading;
     this.taskErrorEl.style.color = loading ? "var(--text-muted)" : "";
@@ -512,17 +553,22 @@ export class CodexView extends ItemView {
     if (this.taskEditor) return;
     if (page.kind === "list") renderAgentTaskList(this.taskListEl, agent, displayEntries, this.plugin.settings.sessions, {
       onTask: id => void this.openTaskDetail(id), onEdit: () => this.openAgentEditor(agent.id),
-      summary: entry => this.taskSummaryText(entry)
+      summary: entry => this.taskSummaryText(entry),
+      status: entry => { const request = inlineHost?.service.latestForTask(entry.conversationId); return request ? inlineTaskStatus(request, this.plugin.settings.settingsLanguage) : undefined; }
     }, Date.now(), this.plugin.settings.settingsLanguage);
-    else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? [], () => this.stopTurn().catch(error => { new Notice(error instanceof Error ? error.message : String(error)); }));
+    else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? [], () => this.stopTurn().catch(error => { new Notice(error instanceof Error ? error.message : String(error)); }),
+      inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) } : undefined);
     else {
       disposeOriginControls(this.taskDetailHeaderEl!); this.taskDetailHeaderEl!.empty();
       this.taskDetailHeaderEl!.createDiv({ cls: "echoink-task-detail-header", text: this.taskText("任务详情", "Task details") });
     }
     this.updateInputPlaceholder();
+    this.renderInlineComposer();
     this.renderComposerTransfers();
   }
   private taskSummaryText(entry: TaskEntry): string | undefined {
+    const inline = inlineTaskHost(this.plugin)?.service.latestForTask(entry.conversationId);
+    if (inline) return inlineTaskSummary(inline);
     const activity = maintenanceActivityForTask(entry, this.taskMaintenanceActivities ?? []);
     if (activity) return maintenanceActivityText(activity, this.plugin.settings.settingsLanguage === "en");
     const pending = this.plugin.getConversationRunService().pendingInteractions.get(entry.conversationId);
@@ -531,6 +577,60 @@ export class CodexView extends ItemView {
     return this.taskPreviews.get(entry.conversationId)?.text ?? taskSummary(entry, undefined, this.plugin.settings.settingsLanguage);
   }
   private taskText(zh: string, en: string): string { return conversationUiText(this.plugin.settings.settingsLanguage, zh, en); }
+
+  private renderInlineComposer(): boolean {
+    if (!this.taskUiMounted || !this.toolbarEl || !this.inputEl) return false;
+    const request = this.currentInlineTask();
+    this.rootEl.classList.toggle("has-inline-task", !!request);
+    if (!request) {
+      this.inlineComposerKey = "";
+      const presets = this.inputEl.parentElement?.querySelector<HTMLElement>(".echoink-inline-task-presets");
+      if (presets) { disposeOriginControls(presets); presets.remove(); }
+      return false;
+    }
+    const hasPresets = request.versions.length > 0 && ["pending", "confirmed"].includes(request.status);
+    const key = `${request.taskId}:${this.plugin.settings.settingsLanguage}:${hasPresets}`;
+    if (this.inlineComposerKey !== key || !this.toolbarEl.querySelector(".echoink-inline-task-send")) {
+      this.inlineComposerKey = key;
+      const old = this.inputEl.parentElement?.querySelector<HTMLElement>(".echoink-inline-task-presets");
+      if (old) { disposeOriginControls(old); old.remove(); }
+      if (hasPresets) {
+        const presets = this.inputEl.ownerDocument.createElement("div"); presets.className = "echoink-inline-task-presets";
+        this.inputEl.parentElement!.insertBefore(presets, this.inputEl);
+        for (const text of [this.taskText("再短一点", "Make it shorter"), this.taskText("换个语气", "Change the tone")]) {
+          const button = createOriginButton(presets, { cls: "echoink-inline-task-action", text, attr: { type: "button" } });
+          button.onclick = () => { this.inputEl.value = text; this.onInputChanged(); this.inputEl.focus(); };
+        }
+      }
+      disposeOriginControls(this.toolbarEl); this.toolbarEl.empty();
+      const row = this.toolbarEl.createDiv({ cls: "echoink-inline-task-composer-actions" });
+      const send = row.createEl("button", { cls: "codex-send-button codex-composer-send-button is-send-action echoink-inline-task-send", attr: { type: "button", "aria-label": this.taskText("发送", "Send") } });
+      setIcon(send.createSpan({ cls: "codex-composer-send-icon-wrap", attr: { "aria-hidden": "true" } }), "arrow-up");
+      send.onclick = () => { void this.sendMessage(); };
+    }
+    const send = this.toolbarEl.querySelector<HTMLButtonElement>(".echoink-inline-task-send")!;
+    const submitting = this.taskSubmitting.has(`inline-reply:${request.taskId}`);
+    send.disabled = submitting || !this.inputEl.value.trim(); send.setAttribute("aria-busy", String(submitting));
+    this.queueEl.hidden = true;
+    return true;
+  }
+
+  private async sendInlineTaskReply(request: InlineRequest): Promise<void> {
+    const host = inlineTaskHost(this.plugin), text = this.inputEl.value, key = `inline-reply:${request.taskId}`;
+    if (!host || !text.trim() || this.inlineComposerComposing || this.taskSubmitting.has(key)) return;
+    const token = this.taskNavigation.token;
+    this.taskSubmitting.add(key); this.renderInlineComposer();
+    try {
+      await host.runtime.reply(request.taskId, text);
+      if (token === this.taskNavigation.token && this.currentInlineTask()?.taskId === request.taskId && this.inputEl.value === text) {
+        this.inputEl.value = ""; this.saveTaskComposerDraft();
+      }
+    } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+    finally {
+      this.taskSubmitting.delete(key);
+      if (!this.viewLifecycleAbortController.signal.aborted) this.refreshInlineTasks();
+    }
+  }
 
   get onboardingAgentAnchor(): HTMLElement | null { return this.rootEl.querySelector<HTMLElement>(".echoink-agent-roster") ?? this.taskEditorEl ?? this.rootEl; }
   openOnboardingAgentEditor(): HTMLElement | null {
@@ -1121,7 +1221,7 @@ export class CodexView extends ItemView {
           if (session) { this.renderMessagesIfActive(session, message); if (this.plugin.settings.activeSessionId === id) this.renderInteractionDock(session); }
         }
       });
-      if (desktopTasks) this.observeTaskMaintenance();
+      if (desktopTasks) { this.observeTaskMaintenance(); this.refreshInlineTasks(); }
       this.settleTaskUiReady(desktopTasks);
       if (desktopTasks) {
         await this.reloadTaskCatalog();
@@ -1161,6 +1261,8 @@ export class CodexView extends ItemView {
     if (this.rootEl) disposeOriginControls(this.rootEl);
     this.runSubscriptionDispose?.(); this.runSubscriptionDispose = undefined;
     this.taskMaintenanceDispose?.(); this.taskMaintenanceDispose = undefined; this.taskMaintenanceActivities = [];
+    this.inlineTaskDispose?.(); this.inlineTaskDispose = undefined; this.inlineTaskObservedHost = undefined;
+    this.inlineTaskDetail?.dispose(); this.inlineTaskDetail = undefined;
     this.knowledgeLinkingProgressDispose?.(); this.knowledgeLinkingProgressDispose = undefined;
     this.viewLifecycleGeneration++;
     this.viewLifecycleAbortController?.abort();
@@ -1575,12 +1677,14 @@ export class CodexView extends ItemView {
   }
   private renderMessages(options: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean } = {}): void {
     if (this.taskUiMounted && (this.taskDerivationInProgress || this.taskNavigation.page.kind !== "detail" || !this.taskDetailLoaded || this.taskEditor)) return;
+    if (this.taskUiMounted && this.currentInlineTask()) { this.renderTaskPages(); return; }
     if (this.taskUiMounted) this.renderTaskInterruptionCard();
     renderMessagesAction(this.messageHost(), options);
     this.turnNavigator?.handleRender();
     this.renderComposerTransfers();
   }
   private renderTaskPlanDock(session: StoredSession): void {
+    if (this.taskUiMounted && this.currentInlineTask()) { this.taskPlanDockEl.hidden = true; return; }
     this.taskPlanDock.render(this.taskPlanDockEl, {
       sessionId: session.id,
       language: this.plugin.settings.settingsLanguage,
@@ -1592,6 +1696,7 @@ export class CodexView extends ItemView {
     });
   }
   private renderInteractionDock(session: StoredSession): void {
+    if (this.taskUiMounted && this.currentInlineTask()) { this.interactionDockEl.hidden = true; return; }
     const pending = this.pendingInteractionsBySession.get(session.id);
     const questionBinding = pending?.kind === "question"
       && pending.status === "pending"
@@ -1689,9 +1794,10 @@ export class CodexView extends ItemView {
       if (session) this.renderInteractionDock(session);
     }
   }
-  private renderToolbar(): void { renderToolbarAction(this.composerHost()); }
+  private renderToolbar(): void { if (!this.taskUiMounted || !this.renderInlineComposer()) renderToolbarAction(this.composerHost()); }
   private enhancePrompt(): void { void enhanceChatInputRunner(this.promptEnhancerRunnerContext); }
   private renderQueue(): void {
+    if (this.taskUiMounted && this.currentInlineTask()) { this.queueEl.hidden = true; return; }
     const host = this.composerHost();
     const target = this.taskUiMounted && this.taskNavigation.page.kind === "list"
       && (this.taskSubmitting.has(this.taskNavigation.draftKey) || this.activeComposerTransfer()) ? this.composerConversationTargets.get(this.taskNavigation.draftKey) : undefined;
@@ -1803,6 +1909,7 @@ export class CodexView extends ItemView {
 
   private onInputChanged(): void {
     if (this.taskUiMounted) this.saveTaskComposerDraft();
+    if (this.taskUiMounted && this.currentInlineTask()) { this.renderInlineComposer(); return; }
     selectionDraft(this.inputEl);
     onInputChangedAction(this.composerHost());
   }
@@ -1815,6 +1922,8 @@ export class CodexView extends ItemView {
 
   private async sendMessage(): Promise<void> {
     if (this.taskDerivationInProgress) return;
+    const inline = this.taskUiMounted ? this.currentInlineTask() : undefined;
+    if (inline) { await this.sendInlineTaskReply(inline); return; }
     if (this.running && (this.inputEl.value.trim() || this.attachments.length || this.selectedSkill
       || composerNoteMentionSelections(this.inputEl).length || composerSelectionAnnotations(this.inputEl).length)) {
       await this.enqueueComposerDraft(); return;
@@ -1839,6 +1948,8 @@ export class CodexView extends ItemView {
 
   private async enqueueComposerDraft(): Promise<void> {
     if (this.taskDerivationInProgress) return;
+    const inline = this.taskUiMounted ? this.currentInlineTask() : undefined;
+    if (inline) { await this.sendInlineTaskReply(inline); return; }
     if (this.taskUiMounted && this.taskNavigation.page.kind === "list") {
       if (this.taskSubmitting.has(this.taskNavigation.draftKey) || this.activeComposerTransfer()) {
         await enqueueComposerDraftRunner(this.createTurnRunnerContext(this.taskNavigation.draftKey));
@@ -1915,6 +2026,8 @@ export class CodexView extends ItemView {
   private async startChatTurn(_session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await this.startQueuedTurnItem(item, source); }
   private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> { await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner); }
   private async stopTurn(): Promise<void> {
+    const inline = this.taskUiMounted ? this.currentInlineTask() : undefined;
+    if (inline) { await inlineTaskHost(this.plugin)?.runtime.stop(inline.taskId); return; }
     const entry = this.taskUiMounted ? this.currentTaskEntry() : undefined;
     const activity = entry ? maintenanceActivityForTask(entry, this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance ?? this.taskMaintenanceActivities ?? []) : undefined;
     if (entry && activity?.taskKind === "upgrade" && activity.originConversationId === entry.conversationId && activity.status === "running") {
@@ -1989,6 +2102,7 @@ export class CodexView extends ItemView {
   private attachTurnIdToRun(session: StoredSession, turnId: string): void { attachTurnIdToRunAction(this.messageHost(), session, turnId); }
   private renderMessagesIfActive(session: StoredSession, updatedMessage?: ChatMessage): void {
     if (this.taskUiMounted && (this.taskDerivationInProgress || this.taskNavigation.page.kind !== "detail" || !this.taskDetailLoaded || this.taskEditor)) return;
+    if (this.taskUiMounted && this.currentInlineTask()) { this.renderTaskPages(); return; }
     renderMessagesIfActiveAction(this.messageHost(), session, updatedMessage);
     this.renderComposerTransfers();
   }

@@ -75,6 +75,8 @@ export function instructionDeletion(document: string, span: TextSpan): InlineCha
     if (nextNewline >= 0) to = nextNewline + 1;
     else if (from > 0) { from--; to = lineEnd; }
   }
+  // Keep one existing ASCII space where removing a command joins two spaces.
+  else if (document[from - 1] === " " && document[to] === " ") to++;
   return { from, to, insert: "" };
 }
 export function commitChanges(document: string, instruction: TextSpan, target?: TextSpan, text = ""): InlineChange[] {
