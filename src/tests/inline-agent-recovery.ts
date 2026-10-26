@@ -155,7 +155,7 @@ cases.push(["missing records and duplicate markers preserve note text and stop e
   try {
     const request = await f.service.stageProposal(f.input()); f.edit(f.editor.read().length, f.editor.read().length, `\n${request.instruction.text}`);
     const before = f.editor.read(); assert.equal(f.service.get(request.id)?.status, "missing"); assert.match(f.service.get(request.id)?.error ?? "", /编号重复/u);
-    await assert.rejects(f.service.confirm(request.id, request.currentVersionId)); await f.controller!.retry(request.taskId); await drain();
+    await assert.rejects(f.service.confirm(request.id, request.currentVersionId)); await assert.rejects(f.controller!.retry(request.taskId), /编号重复/u); await drain();
     assert.equal(f.calls.length, 0); assert.equal(f.editor.read(), before);
   } finally { await f.close(); }
 }]);
@@ -184,7 +184,7 @@ cases.push(["tab close, duplicate split-pane observation, Undo and Redo never re
   try {
     early.edit(early.editor.read().length, early.editor.read().length, COMMAND); const request = await early.begin();
     assert.ok(early.history("undo")); assert.ok(early.editor.read().includes(request.instruction.marker)); assert.equal(early.service.get(request.id)?.status, "missing");
-    await early.controller!.retry(request.taskId); await drain(); assert.equal(early.calls.length, 0); assert.ok(early.history("redo")); assert.equal(early.calls.length, 0);
+    await assert.rejects(early.controller!.retry(request.taskId), /正文位置/u); await drain(); assert.equal(early.calls.length, 0); assert.ok(early.history("redo")); assert.equal(early.calls.length, 0);
   } finally { await early.close(); }
 }]);
 

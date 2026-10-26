@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
 import type CodexForObsidianPlugin from "../main";
 import { getActiveApiProviderModel } from "../settings/settings";
 import { resolveComposerReasoningState } from "../ui/composer-reasoning";
@@ -36,21 +37,22 @@ export class InlineAgentRuntimeController {
     const taskId = `inline-${randomUUID()}`;
     await this.plugin.createPiConversation({ conversationId: taskId, title: input.text.trim().slice(0, 64), agentId: agent.id, cwd: this.plugin.getVaultPath(), defaultMemoryMode: model.memoryMode });
     const request = await this.service.beginRequest({ path: input.path, taskId, agentId: agent.id, agentName: agent.name, trigger: input.trigger, instruction: { from: input.from, to: input.to } }, input.text.trim(), submittedAt);
-    this.launch(request, input.text.trim(), model, false);
+    void this.launch(request, input.text.trim(), model, false).catch(error => this.report(error));
     void this.host.openTask(taskId).catch(error => this.report(error));
   }
-  async reply(taskId: string, text: string): Promise<void> {
+  async reply(taskId: string, text: string, annotations?: readonly SelectionAnnotation[]): Promise<void> {
     if (!text.trim()) return;
     let request = this.service.latestForTask(taskId);
     if (!request) throw new Error("这件任务没有正文位置。");
+    const snapshot = cloneSelectionAnnotations(annotations ?? request.selectionAnnotations);
     const model = this.model();
     if (this.flights.has(taskId)) await this.stop(taskId);
     if (["confirmed", "revoked", "withdrawn", "modified"].includes(request.status)) {
-      request = await this.newRequest(request, text.trim());
-      this.launch(request, text.trim(), model, false);
+      request = await this.newRequest(request, text.trim(), snapshot);
+      await this.launch(request, text.trim(), model, false, snapshot);
     } else {
       if (request.status === "missing") throw new Error("正文位置已删除，请从正文重新 @ 管家。");
-      this.launch(request, text.trim(), model, true);
+      await this.launch(request, text.trim(), model, true, snapshot);
     }
   }
   async retry(taskId: string): Promise<void> {
@@ -59,7 +61,7 @@ export class InlineAgentRuntimeController {
     const requirement = request.thread?.filter(m => m.role === "user").at(-1)?.text ?? request.versions.at(-1)?.requirement;
     if (!requirement) throw new Error("请重新写下要求。");
     if (this.flights.has(taskId)) return;
-    this.launch(request, requirement, request.model ?? this.model(), false);
+    await this.launch(request, requirement, request.model ?? this.model(), false);
   }
   async stop(taskId: string): Promise<void> {
     const flight = this.flights.get(taskId); if (!flight) return;
@@ -69,14 +71,17 @@ export class InlineAgentRuntimeController {
     await flight.completion;
     if (this.flights.get(taskId) === flight) this.flights.delete(taskId);
   }
-  private launch(request: InlineRequest, requirement: string, model: InlineModelSelection, addMessage: boolean): void {
+  private launch(request: InlineRequest, requirement: string, model: InlineModelSelection, addMessage: boolean, annotations = request.selectionAnnotations ?? []): Promise<void> {
     if (this.flights.has(request.taskId)) throw new Error("这件事正在写，请稍候。");
     const flight: InlineFlight = { id: request.id, abort: new AbortController() };
+    let accept!: () => void, reject!: (error: unknown) => void;
+    const accepted = new Promise<void>((resolve, fail) => { accept = resolve; reject = fail; });
     this.flights.set(request.taskId, flight);
-    flight.completion = this.run(request, requirement, model, addMessage, flight).catch(error => this.report(error)).finally(() => {
+    flight.completion = this.run(request, requirement, model, addMessage, flight, cloneSelectionAnnotations(annotations), accept, reject).catch(error => { reject(error); this.report(error); }).finally(() => {
       if (this.flights.get(request.taskId) === flight) this.flights.delete(request.taskId);
       this.scheduleQueue();
     });
+    return accepted;
   }
   private scheduleQueue(): void {
     if (this.disposed || this.drainScheduled) return;
@@ -87,26 +92,28 @@ export class InlineAgentRuntimeController {
       for (const request of this.service.list()) {
         if (request.status !== "queued" || !request.queue?.regenerate || request.queue.blockedBy.length || this.flights.has(request.taskId) || !this.service.canAutomaticallyRegenerate(request.id)) continue;
         const requirement = request.preparedProposal?.requirement ?? request.thread?.filter(m => m.role === "user").at(-1)?.text;
-        if (requirement && request.model) this.launch(request, requirement, request.model, false);
+        if (requirement && request.model) void this.launch(request, requirement, request.model, false).catch(error => this.report(error));
       }
     });
   }
-  private async run(request: InlineRequest, requirement: string, model: InlineModelSelection, addMessage: boolean, flight: InlineFlight): Promise<void> {
+  private async run(request: InlineRequest, requirement: string, model: InlineModelSelection, addMessage: boolean, flight: InlineFlight,
+    annotations: SelectionAnnotation[], accept: () => void, reject: (error: unknown) => void): Promise<void> {
     let unsubscribe: (() => void) | undefined;
     let productRunId: string | undefined;
     try {
       const source = await this.service.readSource(request.id);
       const candidates = buildInlineCandidates(source.document, source.context, source.request);
-      const token = flight.token = await this.service.startRun(request.id, requirement, model, source.context, addMessage);
-      if (flight.abort.signal.aborted) { await this.service.failRun(request.id, token, "已停止", true); return; }
+      const token = flight.token = await this.service.startRun(request.id, requirement, model, source.context, addMessage, annotations);
+      if (flight.abort.signal.aborted) throw new Error("发送已停止，输入已保留。");
       const latest = source.request.versions.find(v => v.id === source.request.currentVersionId);
       const handle = await this.plugin.submitPiChat({ conversationId: request.taskId, text: requirement, submittedAt: Date.now(), signal: flight.abort.signal,
-        mode: "agent", permission: "read-only", ...model,
+        mode: "agent", permission: "read-only", ...model, selectionAnnotations: cloneSelectionAnnotations(annotations),
         inlineProposalRequest: { requestId: request.id, context: source.context.text,
           candidates: candidates.map(({ id, kind, text, label }) => ({ id, kind, text, label })),
           ...(latest ? { previousDraft: latest.text } : {}),
           questionAnswers: [...(source.request.thread?.filter(m => m.role === "user").map(m => m.text) ?? []), ...(source.request.question ? [`管家的追问：${source.request.question.question}`] : [])] } });
       productRunId = handle.productRunId;
+      accept();
       let sawOutput = false;
       const subscription = this.plugin.subscribePiRun(handle.productRunId, event => {
         if (!sawOutput && event.type === "message_update" && "textDelta" in event && event.textDelta) { sawOutput = true; void this.service.timing(request.id, token, { firstOutputAt: event.occurredAt }); }
@@ -124,13 +131,14 @@ export class InlineAgentRuntimeController {
         await this.service.completeProposal(request.id, token, source.document, target, output.text, requirement, sectionAt(source.document, target.from), timing);
       }
     } catch (error) {
+      reject(error);
       if (flight.token || this.flights.get(request.taskId) === flight) await this.service.failRun(request.id, flight.token ?? this.service.get(request.id)?.runToken, error instanceof Error ? error.message : "模型请求失败。", flight.abort.signal.aborted);
     } finally {
       unsubscribe?.();
       if (productRunId) this.plugin.releasePiProductionRun(productRunId);
     }
   }
-  private async newRequest(previous: InlineRequest, requirement: string): Promise<InlineRequest> {
+  private async newRequest(previous: InlineRequest, requirement: string, annotations: SelectionAnnotation[]): Promise<InlineRequest> {
     const editor = await this.host.editor(previous.path), document = editor.read();
     const old = previous.commit?.result ?? previous.target;
     const target = locateTarget(document, old, previous.observedDocument === document);
@@ -138,7 +146,7 @@ export class InlineAgentRuntimeController {
     const trigger = this.plugin.settings.inlineAgent.trigger, command = `${trigger}${previous.agentName} ${requirement}`;
     const insertion = `\n\n${command}\n`, from = target.to;
     editor.apply([{ from, to: from, insert: insertion }], "normal", `inline-followup-${randomUUID()}`);
-    return await this.service.beginRequest({ path: previous.path, taskId: previous.taskId, agentId: previous.agentId, agentName: previous.agentName, trigger,
+    return await this.service.beginRequest({ path: previous.path, taskId: previous.taskId, agentId: previous.agentId, agentName: previous.agentName, trigger, selectionAnnotations: annotations,
       instruction: { from: from + 2, to: from + 2 + command.length } }, requirement);
   }
   dispose(): void { this.disposed = true; this.unsubscribe(); for (const flight of this.flights.values()) flight.abort.abort(); this.flights.clear(); }
