@@ -16,6 +16,10 @@ const ORIGINAL_B = `乙段原文：${"午后核对项目事实，逐项补齐可
 const ORIGINAL_C = `丙段原文：${"晚间回顾行动结果，留下可供明日参考的事实。".repeat(8)}丙段结束。`;
 const LATEST_C = "丙段最新事实：排队期间人工新增了不可丢失的决定。";
 type Label = "甲" | "乙" | "丙";
+const MULTI_B = `  ${ORIGINAL_B}  `, MULTI_C = `\t${ORIGINAL_C}  `;
+const MULTI_ORIGINAL = `${MULTI_B}\n\n\n### 核对\n\n${MULTI_C}`;
+const MULTI_SECTION = "并发正文 › 乙节 › 并发正文 › 乙节 › 核对";
+const multiDocument = (commands: Record<Label, string>) => `# 并发正文\n\n${ORIGINAL_A}\n\n## 乙节\n\n${MULTI_ORIGINAL}\n\n---\n\n${commands.甲}\n\n${commands.乙}\n\n${commands.丙}\n`;
 type ManualRun = {
   id: string;
   request: PiChatSubmitRequest;
@@ -35,13 +39,13 @@ async function drain(): Promise<void> {
   for (let turn = 0; turn < 8; turn++) await new Promise<void>(resolve => setImmediate(resolve));
 }
 
-async function fixture() {
+async function fixture(documentFor: (commands: Record<Label, string>) => string = commands => `# 并发正文\n\n${ORIGINAL_A}\n\n${ORIGINAL_B}\n\n${ORIGINAL_C}\n\n---\n\n${commands.甲}\n\n${commands.乙}\n\n${commands.丙}\n`) {
   const settings = structuredClone(DEFAULT_SETTINGS), provider = createApiProviderConfig("deepseek", "concurrency-provider");
   provider.models[0].reasoning = false; provider.models[0].reasoningEnabled = false;
   settings.apiProviders = [provider]; settings.activeApiProviderId = provider.id; settings.defaultModel = provider.models[0].id;
   const agent = settings.agentRegistry.agents[0];
   const commands: Record<Label, string> = { 甲: `@${agent.name} 处理甲段`, 乙: `@${agent.name} 处理乙段`, 丙: `@${agent.name} 处理丙段` };
-  let state = EditorState.create({ doc: `# 并发正文\n\n${ORIGINAL_A}\n\n${ORIGINAL_B}\n\n${ORIGINAL_C}\n\n---\n\n${commands.甲}\n\n${commands.乙}\n\n${commands.丙}\n` });
+  let state = EditorState.create({ doc: documentFor(commands) });
   let records: InlineRequest[] = [];
   let service: InlineRequestService;
   const reports: unknown[] = [], editorPaths: string[] = [];
@@ -106,6 +110,14 @@ async function fixture() {
     assert.equal(candidates?.length, 1, `the exact original must belong to one candidate: ${original}`);
     settle(run, "completed", { kind: "proposal", candidateId: candidates![0].id, original, text });
   };
+  const rangeProposal = (run: ManualRun, start: string, end: string, text: string) => {
+    const candidates = run.request.inlineProposalRequest?.candidates;
+    const first = candidates?.find(candidate => candidate.kind === "replace" && candidate.text === start);
+    const last = candidates?.find(candidate => candidate.kind === "replace" && candidate.text === end);
+    assert.ok(first && last, "both full paragraphs must be independently selectable in the model request");
+    assert.notEqual(first.id, last.id); assert.ok(first.boundaryGroup); assert.equal(first.boundaryGroup, last.boundaryGroup);
+    settle(run, "completed", { kind: "proposal", startCandidateId: first.id, endCandidateId: last.id, text });
+  };
   const done = async (run: ManualRun) => { await until(() => released.has(run.id) && !subscriptions.has(run.id), `${run.id} never released`); await drain(); };
   const send = async (label: Label) => {
     const document = editor.read(), command = commands[label], from = document.indexOf(command), previous = new Set(service.list().map(record => record.id));
@@ -120,7 +132,7 @@ async function fixture() {
     await Promise.all(calls); await drain(); assert.equal(get(id).status, "confirmed");
   };
   return {
-    service, controller, editor, runs, busy, released, subscriptions, aborted, reports, editorPaths, transactions, get, runsFor, waitForRuns, settle, proposal, done, send, edit, confirm,
+    service, controller, editor, runs, busy, released, subscriptions, aborted, reports, editorPaths, transactions, get, runsFor, waitForRuns, settle, proposal, rangeProposal, done, send, edit, confirm,
     switchGlobalModel() {
       const later = structuredClone(provider); later.id = "later-provider"; later.runtimeProviderId = "later-runtime";
       later.models[0].id = "later-model"; later.defaultModelId = later.models[0].id;
@@ -332,13 +344,104 @@ async function inFlightGenerationSnapshotStaysConsistent(): Promise<void> {
   } finally { await f.close(); }
 }
 
+async function multiParagraphGenerationSnapshot(): Promise<void> {
+  const f = await fixture(multiDocument);
+  try {
+    const a = await f.send("甲"), b = await f.send("乙"), aRun = f.runsFor(a.id)[0], bRun = f.runsFor(b.id)[0];
+    const sentDocument = f.editor.read(), sentContext = bRun.request.inlineProposalRequest!.context;
+    const candidates = bRun.request.inlineProposalRequest!.candidates;
+    const heading = candidates.find(candidate => candidate.text === "### 核对"); assert.ok(heading);
+    assert.equal(heading.label, "并发正文 › 乙节 › 核对"); assert.ok(heading.boundaryGroup);
+    assert.ok(candidates.filter(candidate => candidate.kind === "replace").every(candidate => candidate.boundaryGroup && !("from" in candidate) && !("to" in candidate)));
+    f.proposal(aRun, ORIGINAL_A, "甲段先确认的短稿。"); await f.done(aRun); await f.confirm(a.id);
+    assert.equal(bRun.settled, false); const beforeResult = f.editor.read();
+    f.rangeProposal(bRun, MULTI_B, MULTI_C, "乙节与核对一并整理的新稿。"); await f.done(bRun);
+    const pending = f.get(b.id), version = pending.versions.find(item => item.id === pending.currentVersionId); assert.ok(version);
+    assert.equal(pending.status, "pending"); assert.equal(pending.section, MULTI_SECTION); assert.equal(f.runs.length, 2);
+    assert.equal(f.editor.read(), beforeResult, "publishing a multi-paragraph proposal must not write any target text");
+    assert.equal(version.target.text, MULTI_ORIGINAL, "the full snapshot slice must retain headings, blank lines, indentation and trailing spaces");
+    assert.equal(version.sourceDocument, sentDocument); assert.equal(version.context.text, sentContext);
+    assert.equal(version.target.from, sentDocument.indexOf(MULTI_B));
+    assert.equal(version.sourceDocument.slice(version.target.from, version.target.to), MULTI_ORIGINAL);
+    for (const segment of version.context.segments) assert.equal(version.sourceDocument.slice(segment.sourceFrom, segment.sourceTo), version.context.text.slice(segment.cleanFrom, segment.cleanTo));
+    assert.equal(pending.target.from, beforeResult.indexOf(MULTI_B)); assert.notEqual(pending.target.from, version.target.from);
+    assert.equal(beforeResult.slice(pending.target.from, pending.target.to), MULTI_ORIGINAL);
+    f.service.compare(b.id); await assert.rejects(f.service.confirm(b.id, version.id), /切回新稿/u); assert.equal(f.editor.read(), beforeResult);
+    f.service.compare(b.id); await f.confirm(b.id, true);
+    assert.ok(f.editor.read().includes("甲段先确认的短稿。")); assert.ok(f.editor.read().includes("乙节与核对一并整理的新稿。"));
+    assert.equal(f.editor.read().includes("### 核对"), false); assert.equal(f.editor.read().includes(ORIGINAL_B), false); assert.equal(f.editor.read().includes(ORIGINAL_C), false);
+    assert.deepEqual(f.get(b.id).versions[0], version); f.assertHealthy();
+    console.log("PASS inline concurrency: multi-paragraph output keeps the full immutable source and cross-section label while its live target maps through an earlier confirmation");
+  } finally { await f.close(); }
+}
+
+async function multiParagraphOverlapRegenerates(): Promise<void> {
+  const f = await fixture(multiDocument);
+  try {
+    const a = await f.send("甲"), b = await f.send("乙"), aRun = f.runsFor(a.id)[0], bRun = f.runsFor(b.id)[0];
+    f.rangeProposal(bRun, MULTI_B, MULTI_C, "不可复用的多段旧稿。"); await f.done(bRun);
+    assert.equal(f.get(b.id).queue?.reason, "unresolved"); assert.equal(f.get(b.id).preparedProposal?.original, MULTI_ORIGINAL);
+    f.proposal(aRun, ORIGINAL_B, "乙段已由前块确认的新事实。"); await f.done(aRun);
+    assert.equal(f.get(b.id).status, "queued"); assert.equal(f.get(b.id).queue?.reason, "overlap"); assert.equal(f.get(b.id).queue?.regenerate, true);
+    const at = f.editor.read().indexOf("### 核对"); f.edit([{ from: at, to: at + "### 核对".length, insert: "### 最新核对" }]);
+    await f.confirm(a.id); const regenerated = await f.waitForRuns(b.id, 2), request = regenerated.request.inlineProposalRequest!;
+    assert.ok(request.context.includes("乙段已由前块确认的新事实。")); assert.ok(request.context.includes("### 最新核对"));
+    assert.equal(request.previousDraft?.includes("不可复用的多段旧稿。") ?? false, false);
+    assert.equal(f.get(b.id).versions.length, 0, "the stale multi-paragraph proposal must never become a version");
+    const first = request.candidates.find(candidate => candidate.text.includes("乙段已由前块确认的新事实。")); assert.ok(first);
+    f.rangeProposal(regenerated, first.text, MULTI_C, "按最新小节和前块事实生成的多段稿。"); await f.done(regenerated);
+    const pending = f.get(b.id), current = f.editor.read();
+    assert.equal(pending.status, "pending"); assert.equal(pending.versions.length, 1);
+    assert.ok(pending.target.text.includes("### 最新核对")); assert.ok(pending.target.text.includes("乙段已由前块确认的新事实。"));
+    assert.equal(pending.versions[0].sourceDocument, current); assert.equal(current.includes("不可复用的多段旧稿。"), false);
+    await f.confirm(b.id); assert.ok(f.editor.read().includes("按最新小节和前块事实生成的多段稿。"));
+    assert.equal(f.editor.read().includes("不可复用的多段旧稿。"), false); f.assertHealthy();
+    console.log("PASS inline concurrency: an overlapping queued multi-paragraph draft is discarded and regenerated from the latest paragraphs and heading");
+  } finally { await f.close(); }
+}
+
+async function multiParagraphChangesBlockConfirmation(change: "paragraph" | "heading" | "blank"): Promise<void> {
+  const f = await fixture(multiDocument);
+  try {
+    const b = await f.send("乙"), run = f.runsFor(b.id)[0]; f.rangeProposal(run, MULTI_B, MULTI_C, "不得覆盖人工修改的多段稿。"); await f.done(run);
+    const record = f.get(b.id), prefix = "范围外新增\n";
+    f.edit([{ from: 0, to: 0, insert: prefix }]);
+    assert.equal(f.get(b.id).status, "pending"); assert.equal(f.get(b.id).target.from, record.target.from + prefix.length);
+    const document = f.editor.read(), needle = change === "paragraph" ? ORIGINAL_C : change === "heading" ? "### 核对" : "\n\n\n### 核对";
+    const at = document.indexOf(needle); assert.ok(at >= 0);
+    const from = change === "blank" ? at + 1 : at + 2, to = change === "blank" ? from : from + 1;
+    f.edit([{ from, to, insert: change === "blank" ? " " : "改" }]);
+    const modified = f.editor.read(); assert.equal(f.get(b.id).status, "conflict");
+    await assert.rejects(f.service.confirm(b.id, record.currentVersionId), /变动|变化|定位/u);
+    assert.equal(f.editor.read(), modified); assert.equal(f.transactions.filter(transaction => transaction.requestId === b.id && transaction.history === "normal").length, 0);
+    f.assertHealthy(); console.log(`PASS inline concurrency: an outside edit only moves a multi-paragraph target, while a middle ${change} edit blocks confirmation`);
+  } finally { await f.close(); }
+}
+
+async function multiParagraphControlBoundary(control: "own" | "other"): Promise<void> {
+  const f = await fixture(commands => `# 并发正文\n\n${ORIGINAL_A}\n\n${commands.甲}\n\n${ORIGINAL_B}\n\n${commands.乙}\n\n${ORIGINAL_C}\n\n${commands.丙}`);
+  try {
+    const a = await f.send("甲"), b = control === "other" ? await f.send("乙") : a, run = f.runsFor(b.id)[0];
+    const request = run.request.inlineProposalRequest!, first = request.candidates.find(candidate => candidate.text === ORIGINAL_A), last = request.candidates.find(candidate => candidate.text === ORIGINAL_B);
+    assert.ok(first && last); assert.notEqual(first.boundaryGroup, last.boundaryGroup, "removing a control must leave a model-visible boundary");
+    const before = f.editor.read();
+    f.settle(run, "completed", { kind: "proposal", startCandidateId: first.id, endCandidateId: last.id, text: "绝不能吞掉指令的跨段稿。" }); await f.done(run);
+    const failed = f.get(b.id); assert.equal(failed.status, "failed"); assert.match(failed.error ?? "", /把 @ 指令移到.*范围外/u);
+    assert.equal(failed.queue, undefined); assert.equal(failed.preparedProposal, undefined); assert.equal(failed.versions.length, 0); assert.equal(f.editor.read(), before);
+    console.log(`PASS inline concurrency: a range crossing the ${control} control is rejected before queueing with a move-instruction hint`);
+  } finally { await f.close(); }
+}
+
 const cases: ReadonlyArray<readonly [string, () => Promise<void>]> = [
   ["disjoint-confirm-first", () => nonOverlapping("甲")],
   ["disjoint-confirm-second", () => nonOverlapping("乙")],
   ...(["confirm", "revoke", "missing"] as const).map(action => [`overlap-${action}`, () => overlapping(action)] as const),
   ["retry-order", retryKeepsPriority], ["versions-stop-duplicate", versionsStopAndDuplicateConfirm],
   ["three-blocks-simultaneous-confirm", threeBlocksConfirmTogether], ["same-insertion-point", sameInsertionPoint],
-  ["in-flight-generation-snapshot", inFlightGenerationSnapshotStaysConsistent]
+  ["in-flight-generation-snapshot", inFlightGenerationSnapshotStaysConsistent],
+  ["multi-paragraph-generation-snapshot", multiParagraphGenerationSnapshot], ["multi-paragraph-overlap-regenerates", multiParagraphOverlapRegenerates],
+  ...(["paragraph", "heading", "blank"] as const).map(change => [`multi-paragraph-change-${change}`, () => multiParagraphChangesBlockConfirmation(change)] as const),
+  ...(["own", "other"] as const).map(control => [`multi-paragraph-control-${control}`, () => multiParagraphControlBoundary(control)] as const)
 ];
 const failures: Error[] = [];
 for (const [name, run] of cases) {
