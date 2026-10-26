@@ -1,0 +1,96 @@
+/* Draft decorations leave the note in Obsidian's native editor. */
+.cm-editor .echoink-inline-input,
+.cm-editor .echoink-inline-input-start,
+.cm-editor .echoink-inline-input-end {
+  --echoink-inline-draft-background: var(--echoink-theme-raised, var(--background-secondary));
+  --echoink-inline-draft-foreground: var(--echoink-theme-text, var(--text-normal));
+  background: var(--echoink-inline-draft-background);
+  color: var(--echoink-inline-draft-foreground);
+  font-size: inherit;
+  line-height: inherit;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.cm-editor .echoink-inline-input { padding-block: 3px; }
+.cm-editor .echoink-inline-input-name { font-size: inherit; font-weight: 600; }
+.cm-editor .echoink-inline-input-tail { white-space: pre; }
+/* CM inserts a zero-width image buffer before the widget. Join both sides of it. */
+.cm-editor .echoink-inline-input-tail::after { content: "\2060"; }
+
+.echoink-inline-input-avatar {
+  display: inline-flex;
+  box-sizing: border-box;
+  width: 18px;
+  min-width: 18px;
+  max-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  max-height: 18px;
+  flex: 0 0 18px;
+  padding: 0;
+  border: 0;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -3px;
+  color: var(--echoink-theme-secondary, var(--text-muted));
+}
+
+.echoink-inline-input-avatar img { display: block; width: 18px; height: 18px; object-fit: cover; border-radius: 50%; }
+.echoink-inline-input-avatar > span { font-size: 12px; line-height: 18px; }
+.cm-editor .echoink-inline-input-start { box-sizing: content-box; padding: 3px 4px 3px 5px; border-radius: 6px 0 0 6px; }
+.cm-editor .echoink-inline-input-end { padding: 3px 5px 3px 0; border-radius: 0 6px 6px 0; white-space: nowrap; }
+
+.cm-editor button.echoink-inline-input-send {
+  display: inline-flex;
+  box-sizing: border-box;
+  width: 18px;
+  min-width: 18px;
+  max-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  max-height: 18px;
+  margin: 0 0 0 4px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -1px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--echoink-theme-hover, var(--background-modifier-hover));
+  color: var(--echoink-theme-text, var(--text-normal));
+  font-size: inherit;
+  line-height: 1;
+  box-shadow: none;
+  outline: none;
+  cursor: pointer;
+}
+
+.cm-editor button.echoink-inline-input-send:hover,
+.cm-editor button.echoink-inline-input-send:focus-visible { background: var(--echoink-theme-hover, var(--background-modifier-hover)); box-shadow: none; outline: none; }
+.cm-editor button.echoink-inline-input-send:active { background: var(--echoink-theme-hover, var(--background-modifier-hover)); transform: translateY(1px); }
+.cm-editor button.echoink-inline-input-send:disabled { opacity: .45; cursor: default; transform: none; }
+.cm-editor button.echoink-inline-input-send svg { width: 14px; height: 14px; }
+
+.cm-tooltip.echoink-inline-mention-list {
+  width: max-content;
+  min-width: 160px;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: min(300px, 50vh);
+  padding: 4px;
+  overflow: auto;
+  border: 0;
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  box-shadow: none;
+}
+
+.echoink-inline-mention-option { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 8px; border-radius: 4px; cursor: pointer; overflow-wrap: anywhere; }
+.echoink-inline-mention-option:hover,
+.echoink-inline-mention-option[aria-selected="true"] { background: var(--background-modifier-hover); }
+
+.echoink-inline-trigger-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 18px; }
+.echoink-inline-trigger-setting input.echoink-origin-control { width: 52px; text-align: center; }

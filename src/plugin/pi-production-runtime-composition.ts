@@ -1,3 +1,5 @@
+import { INLINE_PROPOSAL_CONTEXT_TYPE, INLINE_PROPOSAL_SYSTEM_PROMPT, inlineProposalContextContent, type InlineModelRequest } from "../inline-agent/protocol";
+import { estimateTokenValue } from "../harness/usage/token-estimator";
 import { createGenerationRuntimePort } from "./generation-production";
 import type { MaintenanceUpgradeClassification } from "../knowledge-base/maintenance-upgrade-contract";
 import { MAINTENANCE_KNOWLEDGE_TYPES } from "../knowledge-base/maintenance-page-metadata";
@@ -52,6 +54,7 @@ import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
   type Api,
+  type Context,
   type Model
 } from "@earendil-works/pi-ai";
 import { Notice, type App } from "obsidian";
@@ -1185,6 +1188,31 @@ function parsePiKnowledgeReference(value: unknown): PiKnowledgeReference | null 
   });
 }
 
+/** Fail closed at the final Provider boundary; the full snapshot must survive unchanged. */
+export function createInlineProposalDispatchGuard(input: Readonly<{
+  currentRequest(): Readonly<InlineModelRequest> | null;
+  effectiveInputBudget: number;
+}>): (context: Readonly<Context>, execution: Readonly<{ runId: string }>, additionalInputTokens?: number) => void {
+  let dispatchedRunId: string | undefined;
+  return (context, execution, additionalInputTokens = 0) => {
+    const request = input.currentRequest();
+    if (!request) return;
+    if (dispatchedRunId === execution.runId) throw new Error("正文提案不能自动追问工具或重试模型，请手动重试。");
+    if (context.tools?.length) throw new Error("正文提案的模型工具列表必须为空。");
+    if (!context.systemPrompt?.startsWith(INLINE_PROPOSAL_SYSTEM_PROMPT)) throw new Error("正文提案上下文未正确初始化，本轮未发送。");
+    const snapshot = inlineProposalContextContent(request);
+    if (!context.messages.some(message => message.role === "user" && (typeof message.content === "string"
+      ? message.content.includes(snapshot)
+      : message.content.some(part => part.type === "text" && part.text.includes(snapshot))))) {
+      throw new Error("正文快照不完整，本轮未发送。");
+    }
+    if (estimateTokenValue(context) + additionalInputTokens + 1024 > input.effectiveInputBudget) {
+      throw new Error("正文全文与记忆超出当前模型的本轮预算，请切换模型；本轮没有截断发送。");
+    }
+    dispatchedRunId = execution.runId;
+  };
+}
+
 export function createPiKnowledgeInlineExtension(input: Readonly<{
   knowledgeBindings?: () => import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;
   vaultSecurity: InlineExtension;
@@ -1193,6 +1221,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
+  currentInlineProposalRequest?(): Readonly<InlineModelRequest> | null;
   currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment; attempt?: GenerationAttempt } | null;
   assertCurrentSkillsAllowed?(): Promise<void>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
@@ -1281,7 +1310,8 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           input.contextLedger?.capturePersonalMemoryAccess({ mode: "not_applicable", effectiveMode: "not_applicable", capability: "not_applicable", fixedContextRevision: null });
           return { systemPrompt, message };
         }
-        await input.assertCurrentSkillsAllowed?.();
+        const inlineProposal = input.currentInlineProposalRequest?.();
+        if (!inlineProposal) await input.assertCurrentSkillsAllowed?.();
         transientTurnContext = null;
         transientResourceContextSignature = null;
         transientAskPersonalMemorySources = null;
@@ -1297,28 +1327,28 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           capability: "not_applicable",
           fixedContextRevision: null
         });
-        const englishDiary = input.currentEnglishDiaryRequest?.();
+        const englishDiary = inlineProposal ? null : input.currentEnglishDiaryRequest?.();
         if (englishDiary) return { systemPrompt: event.systemPrompt + "\n" + piWorkspaceAccessPrompt(input.currentWorkspaceAccess?.() ?? { permission: "read-only", mode: "agent", memoryMode: "no_memory" }), message: buildEnglishDiaryTaskContext(englishDiary) };
-        const turn = input.currentTurn();
-        const taskPlanTurn = turn
+        const turn = inlineProposal ? null : input.currentTurn();
+        const taskPlanTurn = inlineProposal || turn
           ? null
           : input.currentTaskPlanTurn?.() ?? null;
         const access = input.currentWorkspaceAccess?.();
-        let systemPrompt = access
+        let systemPrompt = inlineProposal ? INLINE_PROPOSAL_SYSTEM_PROMPT : access
           ? `${event.systemPrompt}\n\n${piWorkspaceAccessPrompt(access)}`
           : event.systemPrompt;
-        const selectionMessage = buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
-        const workbenchMessage = buildWorkbenchContextMessage(input.currentWorkbenchSource?.());
-        const pdfMessage = buildPdfTaskContextMessage(input.currentPdfTaskRequest?.());
-        const noteMentionTurn = input.currentNoteMentionTurn?.() ?? null;
+        const selectionMessage = inlineProposal ? null : buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
+        const workbenchMessage = inlineProposal ? null : buildWorkbenchContextMessage(input.currentWorkbenchSource?.());
+        const pdfMessage = inlineProposal ? null : buildPdfTaskContextMessage(input.currentPdfTaskRequest?.());
+        const noteMentionTurn = inlineProposal ? null : input.currentNoteMentionTurn?.() ?? null;
         const noteMentionMessage = noteMentionTurn
           ? buildPiNoteMentionContextMessage(noteMentionTurn.noteMentions)
           : null;
-        const documentTurn = input.currentDocumentTurn?.() ?? null;
+        const documentTurn = inlineProposal ? null : input.currentDocumentTurn?.() ?? null;
         const documentMessage = documentTurn
           ? buildPiDocumentContextMessage(documentTurn.documents)
           : null;
-        const skillTurn = input.currentSkillTurn?.() ?? null;
+        const skillTurn = inlineProposal ? null : input.currentSkillTurn?.() ?? null;
         const skillMessage = skillTurn
           ? buildPiSkillTurnContextMessage(skillTurn)
           : null;
@@ -1416,7 +1446,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           }
           const capability = memoryTurn.memoryMode === "no_memory"
             ? "not_applicable"
-            : input.personalMemoryAvailable === false
+            : inlineProposal || input.personalMemoryAvailable === false
               ? "recall_only"
               : "read_write";
           input.contextLedger?.capturePersonalMemoryAccess({
@@ -1530,6 +1560,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             message: message!
           };
         }
+        if (inlineProposal) return { systemPrompt };
         const attachmentContextMessage = mergePiBeforeAgentStartContextMessages(
           null,
           skillMessage,
@@ -1563,6 +1594,21 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           const currentUser = event.messages[currentPiUserMessageIndex(event.messages)];
           const context: AgentMessage = { role: "custom", ...generationContextMessage(generation.request, generation.assessment.sources, generation.attempt), timestamp: Date.now() };
           return { messages: currentUser ? [context, currentUser] : [context] };
+        }
+        const inlineProposal = input.currentInlineProposalRequest?.();
+        if (inlineProposal) {
+          const currentUser = event.messages[currentPiUserMessageIndex(event.messages)];
+          const context: AgentMessage = { role: "custom", customType: INLINE_PROPOSAL_CONTEXT_TYPE,
+            content: inlineProposalContextContent(inlineProposal), display: false, timestamp: Date.now() };
+          const memory = transientTurnContext ? [structuredClone(transientTurnContext)] : [];
+          input.contextLedger?.captureTransientContextMessages(memory);
+          if (transientAskPersonalMemorySources && !transientAskPersonalMemorySourcesReported) {
+            transientAskPersonalMemorySourcesReported = true;
+            await input.onPersonalMemorySourcesInjected?.({ productRunId: transientAskPersonalMemorySources.productRunId,
+              sources: transientAskPersonalMemorySources.sources.map(source => ({ ...source })) });
+          }
+          // No prior branch, tool result, Skill, Knowledge, or durable custom material.
+          return { messages: [...memory, context, ...(currentUser ? [currentUser] : [])] };
         }
         // Personal Memory context is request-scoped and never persisted into
         // the Pi conversation body.
@@ -2029,6 +2075,7 @@ async function createProductionAgentSession(input: {
       ? (event) => input.plugin.recordModelUsage?.(event)
       : undefined,
     observeRequest: (context, execution, additionalInputTokens) => {
+      assertInlineDispatch(context, execution, additionalInputTokens);
       contextLedger.recordProviderRequest(context, execution, additionalInputTokens);
     },
     resolveAuthToken: async () =>
@@ -2075,12 +2122,17 @@ async function createProductionAgentSession(input: {
     throw error;
   }
 
+  const assertInlineDispatch = createInlineProposalDispatchGuard({
+    currentRequest: () => input.input.currentInlineProposalRequest?.() ?? null,
+    effectiveInputBudget: contextBudget.effectiveInputBudget
+  });
   if (Boolean(input.input.skillPath) !== Boolean(input.input.skillName)) {
     throw new Error("Pi-native Skill path and name must be selected together");
   }
   // The task ID exists before a run is bound (Skill loading happens during activation).
   const liveCapabilityContext = async () => await currentAgentCapabilityContext(input.plugin, input.catalog, input.input.catalog.conversationId, input.input.currentWorkspaceAccess?.());
   const assertToolAllowed = async (name: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown, currentOperation?: Readonly<{ productRunId: string; toolCallId: string }>) => {
+    if (input.input.currentInlineProposalRequest?.()) throw new Error("inline_proposal_tool_scope_blocked");
     if (input.input.currentGenerationContext?.()) throw new Error("generation_tool_scope_blocked");
     if (input.input.currentEnglishDiaryRequest?.() && name !== "english_diary_generate") throw new Error("english_diary_task_scope_required");
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
@@ -2465,6 +2517,7 @@ async function createProductionAgentSession(input: {
     currentWorkbenchSource: () => input.input.currentWorkbenchSource?.() ?? null,
     currentPdfTaskRequest: () => input.input.currentPdfTaskRequest?.(),
     currentEnglishDiaryRequest: () => input.input.currentEnglishDiaryRequest?.() ?? null,
+    currentInlineProposalRequest: () => input.input.currentInlineProposalRequest?.() ?? null,
     currentGenerationContext: () => input.input.currentGenerationContext?.() ?? null,
     assertCurrentSkillsAllowed: async () => {
       const context = await liveCapabilityContext();

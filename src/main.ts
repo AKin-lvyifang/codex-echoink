@@ -198,6 +198,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private settingsStore: EchoInkSettingsStore | null = null;
   private viewService: EchoInkViewService | null = null;
   selectionAskController: import("./selection-ask/controller").SelectionAskController | null = null;
+  inlineAgent: import("./inline-agent/controller").InlineAgentController | null = null;
   private quickChatWindow: QuickChatWindowController | null = null;
   private todoStore: EchoInkTodoStore | null = null;
   private todoReminderService: TodoReminderService | null = null;
@@ -322,6 +323,16 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.initializeKnowledgeActivityStatusBar();
     this.review = controllers.review;
     this.selectionAskController = controllers.selectionAsk;
+    if (Platform.isDesktopApp) {
+      try {
+        const { InlineAgentController } = await import("./inline-agent/controller");
+        this.inlineAgent = await InlineAgentController.create(this);
+        this.inlineAgent.register();
+      } catch (error) {
+        console.error("EchoInk inline requests could not initialize", error);
+        new Notice("正文块暂时不可用，请求记录已保留。");
+      }
+    }
     registerEchoInkStartupTasks(this);
     // Global quick-chat window: registration is fail-safe by design; when the
     // desktop bridge is missing the sidebar experience stays untouched.

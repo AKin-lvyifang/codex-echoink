@@ -6,7 +6,7 @@ import { createOriginButton, disposeOriginControls } from "../../settings/origin
 import { renderTaskAvatar, taskIconButton } from "./agent-roster";
 
 export function renderAgentTaskList(root: HTMLElement, agent: AgentDefinition, entries: readonly TaskEntry[], sessions: readonly StoredSession[],
-  actions: { onTask(id: string): void; onEdit(): void; summary?(entry: TaskEntry): string | undefined }, now = Date.now(), language: SettingsLanguage = "zh-CN"): void {
+  actions: { onTask(id: string): void; onEdit(): void; summary?(entry: TaskEntry): string | undefined; status?(entry: TaskEntry): string | undefined }, now = Date.now(), language: SettingsLanguage = "zh-CN"): void {
   const prior = root.querySelector<HTMLElement>(".echoink-task-list-items");
   const scrollTop = prior?.scrollTop ?? 0;
   const focused = root.contains(root.ownerDocument.activeElement) ? (root.ownerDocument.activeElement as HTMLElement)?.dataset.taskId : undefined;
@@ -26,7 +26,7 @@ export function renderAgentTaskList(root: HTMLElement, agent: AgentDefinition, e
     for (const entry of group.tasks) {
       const summary = actions.summary?.(entry) ?? taskSummary(entry, sessions.find(session => session.id === entry.conversationId), language);
       const hintSummary = taskCardHintSummary(summary);
-      const status = taskState(entry) === "completed" ? localTaskTime(entry.taskCompletedAt ?? entry.updatedAt) : taskStateLabel(entry, language);
+      const status = actions.status?.(entry) ?? (taskState(entry) === "completed" ? localTaskTime(entry.taskCompletedAt ?? entry.updatedAt) : taskStateLabel(entry, language));
       const button = createOriginButton(list, { cls: "echoink-task-card", attr: {
         type: "button", "data-task-id": entry.conversationId,
         "aria-description": `${status}${entry.unreadAnswerAt !== undefined ? language === "en" ? ", new result" : "，有新结果" : ""}`
