@@ -2,10 +2,11 @@ import license from "../../../LICENSE";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
 import type { AgentModuleId } from "../../agents/types";
 import { membershipWebsiteLink } from "../../membership/website-links";
-import { getProPluginAccess, unavailableCapabilityAccess } from "../../membership/access";
+import { getProPluginAccess, hasProPluginAccess, unavailableCapabilityAccess } from "../../membership/access";
 import { mobileModuleEnabled, setMobileModuleEnabled } from "../../mobile/module-settings";
 import { createStaticSettingsTabIcon } from "../../settings/animated-settings-tab-icon";
-import { normalizeEchoInkColorTheme } from "../appearance-theme";
+import { effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
+import { decorateProAppearanceChoice } from "../appearance-pro";
 import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { refreshSettingsLanguage, settingsMessage } from "./settings-language";
@@ -69,12 +70,16 @@ export class IPhoneSettingsPages {
     const { ctx } = this, body = settingsBody(ctx), appearance = settingsGroup(ctx, body, "外观");
     const color = settingsRow(ctx, appearance, "配色"), track = el(ctx.document, "div", "ip-settings-segments"); track.setAttribute("role", "group"); track.setAttribute("aria-label", "配色");
     const slider = el(ctx.document, "span", "ip-settings-segment-slider"); slider.setAttribute("aria-hidden", "true"); track.append(slider); color.append(track);
-    const choices: ["green" | "violet", string][] = [["green", "暖白翠绿"], ["violet", "雾紫石墨"]];
+    const choices = ECHOINK_COLOR_THEMES.map(theme => [theme.id, theme.zh] as const);
     const error = settingsError(ctx, body); let busy = false;
+    const hasPro = () => hasProPluginAccess(ctx.host.accountService ?? unavailableCapabilityAccess);
+    const locks: (() => void)[] = [];
+    track.classList.add("echoink-appearance-pro-surface"); track.dataset.echoinkAppearancePicker = "";
     const colorButtons = choices.map(([value, label]) => {
-      const button = el(ctx.document, "button", "ip-settings-segment"); settingsMessage(ctx, button, label); button.type = "button";
-      button.addEventListener("click", () => { void persist("colorTheme", value).then(sync).catch(error.show); }); track.append(button); return button;
+      const button = el(ctx.document, "button", "ip-settings-segment"); button.append(settingsMessage(ctx, el(ctx.document, "span", "echoink-theme-choice-title"), label)); button.type = "button";
+      button.addEventListener("click", () => { if (value !== "minimal" && !hasPro() || effectiveEchoInkColorTheme(ctx.host.settings().colorTheme, ctx.host.accountService) === value) return; void persist("colorTheme", value).then(sync).catch(error.show); }); if (value !== "minimal") locks.push(decorateProAppearanceChoice(button, track, { zh: ctx.host.settings().settingsLanguage !== "en", allowed: hasPro, upgrade: () => { void this.accountPages.open(); } })); track.append(button); return button;
     });
+    renderCompanionThemeRecommendation(appearance, ctx.host.settings().settingsLanguage !== "en");
     const language = settingsRow(ctx, appearance, "界面语言", { value: ctx.host.settings().settingsLanguage === "en" ? "English" : "简体中文", action: () => this.language(() => { settingsMessage(ctx, language.querySelector<HTMLElement>(".ip-settings-value")!, ctx.host.settings().settingsLanguage === "en" ? "English" : "简体中文"); }) });
     const startup = settingsGroup(ctx, body, "启动"), startLabel = el(ctx.document, "label", "ip-settings-row"), start = el(ctx.document, "input", "ip-settings-switch");
     start.type = "checkbox"; start.setAttribute("role", "switch"); start.setAttribute("aria-label", "启动时打开工作台"); start.checked = ctx.host.settings().autoOpenHome === true;
@@ -82,8 +87,9 @@ export class IPhoneSettingsPages {
     start.addEventListener("change", () => { void persist("autoOpenHome", start.checked).then(sync).catch(error.show); });
     settingsRow(ctx, settingsGroup(ctx, body, "关于"), "EchoInk Agent", { value: ctx.host.version ?? "版本未知", action: () => this.about() });
     const sync = () => {
-      const value = normalizeEchoInkColorTheme(ctx.host.settings().colorTheme); track.dataset.selected = value;
+      const value = effectiveEchoInkColorTheme(ctx.host.settings().colorTheme, ctx.host.accountService); track.dataset.selected = value;
       for (const [index, button] of colorButtons.entries()) { button.setAttribute("aria-pressed", String(choices[index][0] === value)); button.disabled = busy; }
+      locks.forEach(update => update());
       start.checked = ctx.host.settings().autoOpenHome === true; start.disabled = busy;
       ctx.document.body.setAttribute("data-echoink-theme", value);
     };
@@ -93,7 +99,7 @@ export class IPhoneSettingsPages {
       catch (failure) { if (settings[key] === value) settings[key] = previous; throw failure; }
       finally { busy = false; sync(); }
     };
-    sync(); return { id: "iphone-settings-general", title: "通用", content: body, canLeave: () => !busy };
+    track.addEventListener(ECHOINK_APPEARANCE_REFRESH, sync); sync(); return { id: "iphone-settings-general", title: "通用", content: body, canLeave: () => !busy };
   }
   private async language(changed: () => void): Promise<void> {
     const { ctx } = this, body = settingsBody(ctx), group = settingsGroup(ctx, body), error = settingsError(ctx, body); let busy = false;

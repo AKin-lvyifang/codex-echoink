@@ -1,5 +1,5 @@
 /* Semantic host defaults, taken from the unmodified Obsidian stylesheet.
-   EchoInk's existing green/violet page mappings still own their page colors.
+   EchoInk's minimal/highlighter/manifesto page mappings still own their page colors.
    These declarations stop theme tokens changing otherwise unstyled controls;
    they do not paint labels/rows, reset descendants, or change user font/zoom. */
 :where(body:not(.is-mobile)) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,

@@ -18,7 +18,7 @@
 .echoink-agent-badge.is-waiting, .echoink-agent-badge.is-interrupted { background: var(--echoink-theme-warn, var(--text-warning)); color: var(--background-primary); }
 .echoink-agent-badge.is-running { background: var(--background-primary); color: var(--text-muted); }
 .echoink-agent-badge.is-running svg { width: 11px; height: 11px; animation: echoink-task-spin 1s linear infinite; }
-.echoink-agent-badge.is-unread, .echoink-task-unread { background: var(--interactive-accent); width: 6px; min-width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+.echoink-agent-badge.is-unread, .echoink-task-unread { background: var(--echoink-control-fill); width: 6px; min-width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
 .echoink-agent-badge.is-unread { box-sizing: content-box; }
 .echoink-task-list, .echoink-task-detail, .echoink-agent-editor-mount { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; overflow: hidden; }
 .echoink-agent-list-header { display: flex; align-items: center; gap: 8px; padding: 12px; flex: 0 0 auto; }

@@ -99,12 +99,12 @@
 }
 
 .echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button) {
-  background: var(--echoink-theme-accent, var(--interactive-accent)) !important;
-  color: var(--echoink-theme-on-accent, var(--text-on-accent)) !important;
+  background: var(--echoink-control-fill) !important;
+  color: var(--echoink-control-on-fill) !important;
 }
 .echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button):is(:hover, :focus-visible) {
-  background: var(--background-modifier-hover) !important;
-  color: var(--text-normal) !important;
+  background: var(--echoink-control-hover) !important;
+  color: var(--echoink-control-fill) !important;
 }
 
 .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button:focus-visible,

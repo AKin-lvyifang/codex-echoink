@@ -19,6 +19,7 @@ import {
   replaceTranslationSelectionIfUnchanged
 } from "../editor-actions/translation-selection";
 
+import { registerGalleryFeature } from "../gallery/controller";
 import { SelectionAskController } from "../selection-ask/controller";
 
 export interface EchoInkPluginControllers {
@@ -51,6 +52,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
       await plugin.handleEchoInkOnboardingTargetActivated("sidebar");
     })();
   });
+  ribbonAnchor.classList.add("echoink-ribbon-icon");
   plugin.setEchoInkOnboardingRibbonAnchor(ribbonAnchor);
 
   plugin.addCommand({
@@ -115,6 +117,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
   const review = new ReviewManager(plugin);
   review.register();
 
+  registerGalleryFeature(plugin);
   const selectionAsk = new SelectionAskController(plugin);
   selectionAsk.register();
   return { knowledgeBase, review, selectionAsk };

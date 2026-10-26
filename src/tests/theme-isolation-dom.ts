@@ -82,7 +82,7 @@ export async function runThemeIsolationExtras(AvatarFields:new()=>{render(parent
   const run=async(name:string,test:()=>Promise<void>)=>{try{await test();results.push(`PASS ${name}`);}catch(error){results.push(`FAIL ${name}: ${String(error)}`);}report.textContent=results.join("\n");};
   for(const mode of ["theme-light","theme-dark"]){
     await run(`${mode}: production UI images preserve default shape/shadow`,async()=>{
-      document.body.className=mode+" mod-macos";document.body.dataset.echoinkTheme="green";before.textContent=after.textContent="";product.textContent=baseline;await frame();const original=images.map(image=>read(image));
+      document.body.className=mode+" mod-macos";document.body.dataset.echoinkTheme="minimal";before.textContent=after.textContent="";product.textContent=baseline;await frame();const original=images.map(image=>read(image));
       product.textContent=current;await frame();assert(JSON.stringify(images.map(image=>read(image)))===JSON.stringify(original),"default image geometry/style changed");
       for(const order of [before,after]){
         order.textContent=interference;await frame();
@@ -157,45 +157,54 @@ export async function runThemeIsolation(ProviderFields: new()=>{render(parent: H
   };
   const snapshots=()=>tracked.map(element=>({style:read(element),after:element.matches(".codex-resource-tab")?read(element,"::after"):null,
     placeholder:element.matches("input,textarea")?readPlaceholder(element):null}));
-  const equal=(expected:ReturnType<typeof snapshots>,actual:ReturnType<typeof snapshots>,phase:string)=>{
+  const equal=(expected:ReturnType<typeof snapshots>,actual:ReturnType<typeof snapshots>,phase:string,paletteChange=false)=>{
     expected.forEach((item,index)=>{
       for(const [property,value] of Object.entries(item.style)) {
-        // Sole deliberate correction: remove the old field focus outline.
+        // The companion-theme task deliberately replaces palette paint, while preserving geometry.
+        if(paletteChange && ["backgroundColor","color","borderTopColor","boxShadow"].includes(property))continue;
+        // Remove the old field focus outline.
         if(tracked[index].matches("input")&&property.startsWith("outline"))continue;
         assert(actual[index].style[property]===value,`${phase}: ${tracked[index].className} ${property}: ${value} -> ${actual[index].style[property]}`);
       }
-      assert(JSON.stringify(actual[index].after)===JSON.stringify(item.after),`${phase}: navigation underline changed`);
-      assert(JSON.stringify(actual[index].placeholder)===JSON.stringify(item.placeholder),`${phase}: placeholder changed`);
+      if(paletteChange && item.after && actual[index].after){
+        for(const [property,value] of Object.entries(item.after))if(!["backgroundColor","color","borderTopColor","boxShadow"].includes(property))
+          assert(actual[index].after![property]===value,`${phase}: navigation underline ${property} changed`);
+      }else assert(JSON.stringify(actual[index].after)===JSON.stringify(item.after),`${phase}: navigation underline changed`);
+      if(paletteChange && item.placeholder && actual[index].placeholder){
+        for(const property of ["opacity","fontFamily","fontSize"] as const)assert(actual[index].placeholder![property]===item.placeholder[property],`${phase}: placeholder ${property} changed`);
+      }else assert(JSON.stringify(actual[index].placeholder)===JSON.stringify(item.placeholder),`${phase}: placeholder changed`);
     });
   };
   if(new URLSearchParams(location.search).has("placeholder")){
     const fields=tracked.filter(element=>element.matches("input,textarea"));
     const capture=()=>fields.map(element=>({placeholder:readPlaceholder(element),caretColor:getComputedStyle(element).caretColor}));
-    for(const mode of ["theme-light","theme-dark"])for(const theme of ["green","violet"])for(const size of [16,24])await run(`${mode}/${theme}/H=${size}: production placeholder and caret`,async()=>{
+    for(const mode of ["theme-light","theme-dark"])for(const theme of ["minimal","highlighter","manifesto"])for(const size of [16,24])await run(`${mode}/${theme}/H=${size}: production placeholder and caret`,async()=>{
       document.body.className=mode+" mod-macos";document.body.dataset.echoinkTheme=theme;document.body.style.setProperty("--font-text-size",`${size}px`);
       document.body.style.setProperty("--font-interface-override",size===24?"Georgia":"'??'");
       before.textContent=after.textContent="";product.textContent=baseline;outside.focus();await frame();const original=capture();
-      product.textContent=current;await frame();assert(JSON.stringify(capture())===JSON.stringify(original),"default placeholder/caret changed");
+      product.textContent=current;await frame();const approved=capture();
+      fields.forEach((_field,index)=>{for(const property of ["opacity","fontFamily","fontSize"] as const)assert(approved[index].placeholder[property]===original[index].placeholder[property],"default placeholder typography changed");});
       for(const order of [before,after]){
         order.textContent=interference;await frame();const actual=capture();
-        fields.forEach((field,index)=>assert(JSON.stringify(actual[index])===JSON.stringify(original[index]),`${field.getAttribute("aria-label")??field.className}: ${JSON.stringify(original[index])} -> ${JSON.stringify(actual[index])}`));order.textContent="";
+        fields.forEach((field,index)=>assert(JSON.stringify(actual[index])===JSON.stringify(approved[index]),`${field.getAttribute("aria-label")??field.className}: ${JSON.stringify(original[index])} -> ${JSON.stringify(actual[index])}`));order.textContent="";
       }
     });
-    document.body.className="theme-light mod-macos";document.body.dataset.echoinkTheme="green";document.body.style.setProperty("--font-text-size","16px");document.body.style.setProperty("--font-interface-override","'??'");product.textContent=current;after.textContent=interference;
+    document.body.className="theme-light mod-macos";document.body.dataset.echoinkTheme="minimal";document.body.style.setProperty("--font-text-size","16px");document.body.style.setProperty("--font-interface-override","'??'");product.textContent=current;after.textContent=interference;
     report.dataset.result=results.some(result=>result.startsWith("FAIL"))?"failed":"passed";report.textContent=results.join("\n")+"\nBoundary: incremental production placeholder pseudo-element/caret comparison; native acceptance remains with control.";
     fixture.style.removeProperty("pointer-events");
     return;
   }
-  for(const mode of ["theme-light","theme-dark"])for(const theme of ["green","violet"])for(const size of [16,24]) {
+  for(const mode of ["theme-light","theme-dark"])for(const theme of ["minimal","highlighter","manifesto"])for(const size of [16,24]) {
     await run(`${mode}/${theme}/H=${size}: immutable baseline + theme load order`,async()=>{
       document.body.className=mode+" mod-macos";document.body.dataset.echoinkTheme=theme;document.body.style.setProperty("--font-text-size",`${size}px`);
       document.body.style.setProperty("--font-interface-override",size===24?"Georgia":"'??'");
       before.textContent=after.textContent="";product.textContent=baseline;outside.focus();await frame();const normal=snapshots();
       tavily.focus();await frame();const focus=snapshots();
-      product.textContent=current;await frame();equal(focus,snapshots(),"current default focus");
-      outside.focus();await frame();equal(normal,snapshots(),"current default normal");
+      product.textContent=current;await frame();equal(focus,snapshots(),"current default focus",true);
+      outside.focus();await frame();equal(normal,snapshots(),"current default normal",true);
+      const approved=snapshots();
       for(const order of [before,after]){
-        order.textContent=interference;await frame();equal(normal,snapshots(),"interfered normal");
+        order.textContent=interference;await frame();equal(approved,snapshots(),"interfered normal");
         for(const input of inputs){
           const ancestor=input.closest<HTMLElement>("label")??input.closest<HTMLElement>(".codex-provider-modal-field")!;
           const labelStyle=read(ancestor);input.focus();await frame();const css=read(input);
@@ -219,7 +228,7 @@ export async function runThemeIsolation(ProviderFields: new()=>{render(parent: H
     assert(tavily.type==="text"&&tavily.isConnected,"Tavily reveal replaced input");
   });
   await run("body Select inherits owning boundary, keyboard and Scope release",async()=>{
-    document.body.className="theme-dark mod-macos";document.body.dataset.echoinkTheme="violet";
+    document.body.className="theme-dark mod-macos";document.body.dataset.echoinkTheme="manifesto";
     settings.style.setProperty("--font-interface","Georgia");document.body.style.setProperty("--font-text-size","24px");
     const host=createOriginSelectHostFixture(window);
     const select=createOriginSelect(page,{attr:{"aria-label":"Language"}},[{value:"zh",label:"中文"},{value:"en",label:"English"}],"zh",host.app).element;
@@ -261,7 +270,7 @@ export async function runThemeIsolation(ProviderFields: new()=>{render(parent: H
     const modal=new Modal({} as App);modal.containerEl.addClass("mod-dim");modal.modalEl.addClass("echoink-finance-dialog");
     modal.contentEl.createEl("h2",{text:"记一笔"});modal.contentEl.createEl("input",{attr:{type:"text"}});modal.open();
     try{
-      for(const mode of ["theme-light","theme-dark"])for(const theme of ["green","violet"]){
+      for(const mode of ["theme-light","theme-dark"])for(const theme of ["minimal","highlighter","manifesto"]){
         document.body.className=mode+" mod-macos";document.body.dataset.echoinkTheme=theme;
         before.textContent=after.textContent="";product.textContent=baseline;outside.focus();await frame();const original=read(modal.modalEl);
         product.textContent=current;await frame();assert(JSON.stringify(read(modal.modalEl))===JSON.stringify(original),`default modal shell changed ${mode}/${theme}: ${JSON.stringify(original)} -> ${JSON.stringify(read(modal.modalEl))}`);
@@ -274,7 +283,7 @@ export async function runThemeIsolation(ProviderFields: new()=>{render(parent: H
   await run("production note picker in another document: search, draft, retry, Escape",async()=>{
     const iframe=document.createElement("iframe");iframe.style.cssText="width:390px;height:700px;border:0";document.body.append(iframe);
     await new Promise<void>(resolve=>{iframe.onload=()=>resolve();iframe.srcdoc='<link rel="stylesheet" href="obsidian-app.css"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="things-theme.css"><style>body{display:block;margin:0}.modal-container{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}</style><main class="echoink-settings-demo"></main>';});
-    const owner=iframe.contentDocument!;installDomMethods(owner.defaultView!);owner.body.className="theme-dark mod-macos";owner.body.dataset.echoinkTheme="violet";
+    const owner=iframe.contentDocument!;installDomMethods(owner.defaultView!);owner.body.className="theme-dark mod-macos";owner.body.dataset.echoinkTheme="manifesto";
     const root=owner.querySelector<HTMLElement>("main")!;root.style.setProperty("--font-interface","Georgia");root.style.setProperty("--font-text-size","24px");
     const trigger=createOriginButton(root,{text:"Add notes"});
     const picker=new KnowledgeNotePickerModal({fixtureDocument:owner} as unknown as App,{zh:false,targetRole:"wiki",targetLabel:"Wiki",triggerEl:trigger,notes:[{sourcePath:"Raw/First note.md",role:"raw"},{sourcePath:"Reviews/Second note.md",role:"review"}],onConfirm:async()=>{throw new Error("Fixture save failure");}});
@@ -295,7 +304,7 @@ export async function runThemeIsolation(ProviderFields: new()=>{render(parent: H
       key(owner.activeElement as HTMLElement,"Escape");await frame();assert(!modal.isConnected&&owner.activeElement===trigger,"Escape/restore focus failed");
     }finally{if(picker.modalEl.isConnected)picker.close();disposeOriginControls(root);iframe.remove();}
   });
-  document.body.className="theme-light mod-macos";document.body.dataset.echoinkTheme="green";document.body.style.setProperty("--font-text-size","16px");document.body.style.setProperty("--font-interface-override","'??'");settings.style.removeProperty("--font-interface");
+  document.body.className="theme-light mod-macos";document.body.dataset.echoinkTheme="minimal";document.body.style.setProperty("--font-text-size","16px");document.body.style.setProperty("--font-interface-override","'??'");settings.style.removeProperty("--font-interface");
   (window as Window & {themeIsolationEvidence?:unknown[]}).themeIsolationEvidence=evidence;
   report.dataset.result=results.some(result=>result.startsWith("FAIL"))?"failed":"passed";
   report.textContent=results.join("\n")+"\nBoundary: production renderers/fields, synthetic browser host; native Obsidian acceptance belongs to control.";

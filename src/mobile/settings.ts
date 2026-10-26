@@ -1,3 +1,4 @@
+import { normalizeEchoInkColorTheme } from "../ui/appearance-theme";
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { ApiProviderConfig, ApiProviderModelConfig, CodexForObsidianSettings } from "../settings/settings";
 import { API_PROVIDER_PRESETS, getApiProviderPreset, normalizeApiProviderBaseUrl, type ApiProviderId } from "../settings/provider-presets";
@@ -28,7 +29,7 @@ export interface MobileAppearance {
 }
 
 type MobileHomeSettings = Omit<HomeHost["settings"], "knowledgeBase">;
-export interface MobileSettings extends Record<string, unknown>, MobileHomeSettings, Pick<CodexForObsidianSettings, "customWelcomeEnabled" | "customWelcomeTitle" | "customWelcomeSubtitle" | "resources" | "knowledgeBase" | "review"> {
+export interface MobileSettings extends Record<string, unknown>, MobileHomeSettings, Pick<CodexForObsidianSettings, "colorTheme" | "customWelcomeEnabled" | "customWelcomeTitle" | "customWelcomeSubtitle" | "resources" | "knowledgeBase" | "review"> {
   apiProviders: ApiProviderConfig[];
   activeApiProviderId: string;
   defaultModel: string;
@@ -53,6 +54,7 @@ export function loadMobileSettings(value: unknown): MobileSettings {
   const savedMemory = (raw?.mobileMemory ?? {}) as { dreamEnabled?: unknown; dreamRunsPerDay?: unknown; autoArchive?: unknown };
   const settings: MobileSettings = {
     ...raw,
+    colorTheme: normalizeEchoInkColorTheme(raw?.colorTheme),
     // Both desktop and mobile persist the same provider configuration schema.
     apiProviders: Array.isArray(raw?.apiProviders) ? raw.apiProviders as ApiProviderConfig[] : [],
     activeApiProviderId: typeof raw?.activeApiProviderId === "string" ? raw.activeApiProviderId : "",

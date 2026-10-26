@@ -1395,10 +1395,6 @@ button.codex-user-message-copy {
 
 /* EchoInk onboarding: approved five-step Demo on real product anchors. */
 /* The onboarding-only focus exception follows the selected brand in both modes. */
-body:not(.is-mobile)[data-echoink-theme="green"] { --echoink-onboarding-accent: #2e7569; --echoink-onboarding-on-accent: #fff; }
-body.theme-dark:not(.is-mobile)[data-echoink-theme="green"] { --echoink-onboarding-accent: color-mix(in srgb, #2e7569 65%, white); --echoink-onboarding-on-accent: #191919; }
-body:not(.is-mobile)[data-echoink-theme="violet"] { --echoink-onboarding-accent: #725aa8; --echoink-onboarding-on-accent: #fff; }
-body.theme-dark:not(.is-mobile)[data-echoink-theme="violet"] { --echoink-onboarding-accent: #b5a8ec; --echoink-onboarding-on-accent: #211c30; }
 .echoink-onboarding-spotlight {
   position: fixed;
   z-index: 1001;
@@ -11799,8 +11795,8 @@ button.codex-message-note-mention-chip:focus-visible {
 }
 
 .is-desktop-composer .codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) {
-  color: var(--echoink-theme-on-accent, var(--text-on-accent));
-  background: var(--echoink-theme-accent, var(--interactive-accent)) !important;
+  color: var(--echoink-control-on-fill);
+  background: var(--echoink-control-fill) !important;
 }
 
 .is-desktop-composer .codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):is(:hover, :focus-visible, :active),
@@ -22586,7 +22582,7 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
   font-size: calc(var(--font-text-size, 16px) * .75);
 }
 /* Semantic host defaults, taken from the unmodified Obsidian stylesheet.
-   EchoInk's existing green/violet page mappings still own their page colors.
+   EchoInk's minimal/highlighter/manifesto page mappings still own their page colors.
    These declarations stop theme tokens changing otherwise unstyled controls;
    they do not paint labels/rows, reset descendants, or change user font/zoom. */
 :where(body:not(.is-mobile)) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
@@ -25112,79 +25108,138 @@ body:not(.is-mobile) .echoink-settings-demo .codex-settings-tabs .codex-settings
 @media (prefers-reduced-motion: reduce) { .echoink-mobile *, .echoink-mobile *::before, .echoink-mobile *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
 .echoink-mobile .em-confirm { border: 1px solid var(--em-line); border-radius: 10px; padding: 12px; font-size: .86em; line-height: 1.7; }
 
+body:not(.is-mobile)[data-echoink-theme="minimal"] { --echoink-onboarding-accent: #18181b; --echoink-onboarding-on-accent: #ffffff; }
+body.theme-dark:not(.is-mobile)[data-echoink-theme="minimal"] { --echoink-onboarding-accent: #fafafa; --echoink-onboarding-on-accent: #18181b; }
+body:not(.is-mobile)[data-echoink-theme="highlighter"] { --echoink-onboarding-accent: #ffd700; --echoink-onboarding-on-accent: #2a2a2a; }
+body.theme-dark:not(.is-mobile)[data-echoink-theme="highlighter"] { --echoink-onboarding-accent: #ffd700; --echoink-onboarding-on-accent: #1b1b1b; }
+body:not(.is-mobile)[data-echoink-theme="manifesto"] { --echoink-onboarding-accent: #f2d741; --echoink-onboarding-on-accent: #212121; }
+body.theme-dark:not(.is-mobile)[data-echoink-theme="manifesto"] { --echoink-onboarding-accent: #f2d741; --echoink-onboarding-on-accent: #212121; }
+
 /* ECHOINK_COLOR_THEMES_START */
-/* Only EchoInk surfaces receive these tokens; Obsidian owns appearance. */
-body[data-echoink-theme="green"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal),
-body.theme-dark[data-echoink-theme="green"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"] {
+/* Solid plugin controls stay neutral; notebook and surface palettes are separate. */
+body { --echoink-control-fill: #18181b; --echoink-control-on-fill: #ffffff; --echoink-control-hover: #f4f4f5; --echoink-control-line: #e4e4e7; --echoink-control-muted: #a1a1aa; }
+body.theme-dark { --echoink-control-fill: #fafafa; --echoink-control-on-fill: #18181b; --echoink-control-hover: #27272a; --echoink-control-line: #27272a; }
+.workspace-ribbon .echoink-ribbon-icon, .workspace-ribbon .echoink-ribbon-icon:is(:hover, :focus-visible, :active) { opacity: 1; background: var(--echoink-control-fill); color: var(--echoink-control-on-fill); border-radius: 7px; }
+.echoink-chat-surface :is(button.is-primary, button.mod-cta, .codex-task-plan-action.is-primary, .codex-send-button, .codex-message-checkbox.is-checked, .codex-session-checkbox.is-selected, .codex-session-active-dot) {
+  --interactive-accent: var(--echoink-control-fill); --interactive-accent-hover: var(--echoink-control-fill); --text-on-accent: var(--echoink-control-on-fill);
+  --text-normal: var(--echoink-control-fill); --text-faint: var(--echoink-control-muted); --background-modifier-hover: var(--echoink-control-hover); --background-modifier-border: var(--echoink-control-line); --background-modifier-border-hover: var(--echoink-control-line);
+}
+.echoink-chat-surface :is(.codex-message-checkbox.is-checked, .codex-session-checkbox.is-selected) { color: var(--echoink-control-on-fill); }
+/* Only EchoInk surfaces receive these tokens; Obsidian owns light/dark mode. */
+body[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
+body.is-popout-modal:has(.modal.mod-settings) {
   --echoink-theme-scheme: light;
   --echoink-theme-bg: #ffffff;
   --echoink-theme-card: #ffffff;
-  --echoink-theme-raised: #f7f8f5;
-  --echoink-theme-hover: #f1f3ef;
-  --echoink-theme-warn: #97573a;
-  --echoink-theme-text: #303b38;
-  --echoink-theme-secondary: #646e68;
-  --echoink-theme-muted: #68736b;
-  --echoink-theme-line: #e8ebe7;
-  --echoink-theme-focus: #51867b;
-  --echoink-theme-accent: #2e7569;
-  --echoink-theme-active: #eaf3ed;
+  --echoink-theme-raised: #f4f4f5;
+  --echoink-theme-hover: #f4f4f5;
+  --echoink-theme-warn: #9c6b1e;
+  --echoink-theme-text: #18181b;
+  --echoink-theme-secondary: #52525b;
+  --echoink-theme-muted: #71717a;
+  --echoink-theme-line: #e4e4e7;
+  --echoink-theme-focus: #a1a1aa;
+  --echoink-theme-accent-text: #18181b;
+  --echoink-theme-accent: #18181b;
+  --echoink-theme-active: #f4f4f5;
   --echoink-theme-on-accent: #ffffff;
 }
-body.theme-dark[data-echoink-theme="green"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal),
-body.theme-light[data-echoink-theme="green"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"] {
+body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-light[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
+body.theme-dark.is-popout-modal:has(.modal.mod-settings) {
   --echoink-theme-scheme: dark;
-  --echoink-theme-bg: #191919;
-  --echoink-theme-card: #242424;
-  --echoink-theme-raised: #2e2e2e;
-  --echoink-theme-hover: #2a2a2a;
-  --echoink-theme-warn: #d9a083;
-  --echoink-theme-text: #eeeeee;
-  --echoink-theme-secondary: #b7b7b7;
-  --echoink-theme-muted: #999999;
-  --echoink-theme-line: #414141;
-  --echoink-theme-focus: #828282;
-  --echoink-theme-accent: #dedee3;
-  --echoink-theme-active: #343436;
-  --echoink-theme-on-accent: #212123;
+  --echoink-theme-bg: #0f0f11;
+  --echoink-theme-card: #18181b;
+  --echoink-theme-raised: #27272a;
+  --echoink-theme-hover: #27272a;
+  --echoink-theme-warn: #d9a75a;
+  --echoink-theme-text: #fafafa;
+  --echoink-theme-secondary: #a1a1aa;
+  --echoink-theme-muted: #a1a1aa;
+  --echoink-theme-line: #27272a;
+  --echoink-theme-focus: #52525b;
+  --echoink-theme-accent-text: #fafafa;
+  --echoink-theme-accent: #fafafa;
+  --echoink-theme-active: #27272a;
+  --echoink-theme-on-accent: #18181b;
 }
-body[data-echoink-theme="violet"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal),
-body.theme-dark[data-echoink-theme="violet"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"] {
+body[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: light;
-  --echoink-theme-bg: #f7f7fa;
+  --echoink-theme-bg: #ffffff;
   --echoink-theme-card: #ffffff;
-  --echoink-theme-raised: #f0f0f5;
-  --echoink-theme-hover: #eaeaf1;
-  --echoink-theme-warn: #93573e;
-  --echoink-theme-text: #2d2b34;
-  --echoink-theme-secondary: #6d6979;
-  --echoink-theme-muted: #6d6979;
-  --echoink-theme-line: #dedde6;
-  --echoink-theme-focus: #8d80a8;
-  --echoink-theme-accent: #725aa8;
-  --echoink-theme-active: #eeeaf7;
-  --echoink-theme-on-accent: #ffffff;
+  --echoink-theme-raised: #f7f7f5;
+  --echoink-theme-hover: #f3f3f1;
+  --echoink-theme-warn: #8a6d00;
+  --echoink-theme-text: #2a2a2a;
+  --echoink-theme-secondary: #5f6368;
+  --echoink-theme-muted: #737373;
+  --echoink-theme-line: #ececec;
+  --echoink-theme-focus: #9a9a9a;
+  --echoink-theme-accent-text: #8a6d00;
+  --echoink-theme-accent: #ffd700;
+  --echoink-theme-active: #fff6c4;
+  --echoink-theme-on-accent: #2a2a2a;
 }
-body.theme-dark[data-echoink-theme="violet"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal),
-body.theme-light[data-echoink-theme="violet"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"] {
+body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-light[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: dark;
-  --echoink-theme-bg: #17171b;
-  --echoink-theme-card: #202025;
-  --echoink-theme-raised: #292931;
-  --echoink-theme-hover: #27272e;
-  --echoink-theme-warn: #dba58f;
-  --echoink-theme-text: #eeeef2;
-  --echoink-theme-secondary: #aeb0bc;
-  --echoink-theme-muted: #92929f;
-  --echoink-theme-line: #373740;
-  --echoink-theme-focus: #777486;
-  --echoink-theme-accent: #b5a8ec;
-  --echoink-theme-active: #302b41;
-  --echoink-theme-on-accent: #211c30;
+  --echoink-theme-bg: #1b1b1b;
+  --echoink-theme-card: #232323;
+  --echoink-theme-raised: #303030;
+  --echoink-theme-hover: #303030;
+  --echoink-theme-warn: #ffd75e;
+  --echoink-theme-text: #ededed;
+  --echoink-theme-secondary: #b4b4b4;
+  --echoink-theme-muted: #b4b4b4;
+  --echoink-theme-line: #303030;
+  --echoink-theme-focus: #7a7a7a;
+  --echoink-theme-accent-text: #ffd700;
+  --echoink-theme-accent: #ffd700;
+  --echoink-theme-active: #3f3a1e;
+  --echoink-theme-on-accent: #1b1b1b;
 }
-
-/* Preserve the original green light illustrations; the home palette owns interaction colors. */
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace {
+body[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
+  --echoink-theme-scheme: light;
+  --echoink-theme-bg: #f3f3f3;
+  --echoink-theme-card: #f3f3f3;
+  --echoink-theme-raised: #e6e6e6;
+  --echoink-theme-hover: #e6e6e6;
+  --echoink-theme-warn: #8a6d00;
+  --echoink-theme-text: #212121;
+  --echoink-theme-secondary: #555555;
+  --echoink-theme-muted: #6c6c6c;
+  --echoink-theme-line: #d9d9d9;
+  --echoink-theme-focus: #8a8a8a;
+  --echoink-theme-accent-text: #76640e;
+  --echoink-theme-accent: #f2d741;
+  --echoink-theme-active: #f4ecc0;
+  --echoink-theme-on-accent: #212121;
+}
+body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-light[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
+  --echoink-theme-scheme: dark;
+  --echoink-theme-bg: #212121;
+  --echoink-theme-card: #212121;
+  --echoink-theme-raised: #2c2c2c;
+  --echoink-theme-hover: #2c2c2c;
+  --echoink-theme-warn: #ffd75e;
+  --echoink-theme-text: #f3f3f3;
+  --echoink-theme-secondary: #b0b0b0;
+  --echoink-theme-muted: #9c9c9c;
+  --echoink-theme-line: #3a3a3a;
+  --echoink-theme-focus: #6c6c6c;
+  --echoink-theme-accent-text: #f2d741;
+  --echoink-theme-accent: #f2d741;
+  --echoink-theme-active: #403b24;
+  --echoink-theme-on-accent: #212121;
+}
+/* All three home palettes use the same semantic mappings. */
+body[data-echoink-theme] .echoink-home-workspace {
   --bg: var(--echoink-theme-bg);
   --ink: var(--echoink-theme-text);
   --secondary: var(--echoink-theme-secondary);
@@ -25205,111 +25260,118 @@ body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink
   --text-on-accent: var(--echoink-theme-on-accent);
   color-scheme: var(--echoink-theme-scheme);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.start-strip, .note-feature, .small-note-list, .calendar, .bento, .calendar-journal) {
+body[data-echoink-theme] .echoink-home-workspace :is(.start-strip, .note-feature, .small-note-list, .calendar, .bento, .calendar-journal) {
   background: var(--echoink-theme-card);
   border-color: var(--line);
   filter: none;
   box-shadow: none;
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.logo, .tile-icon, .journal-date-icon, .resume-chip, .project-pill, .index-sheet) {
+body[data-echoink-theme] .echoink-home-workspace :is(.logo, .tile-icon, .journal-date-icon, .resume-chip, .project-pill, .index-sheet) {
   background: var(--soft);
   border-color: var(--line);
   color: var(--secondary);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.note-feature h3, .bento-name, .journal-date, .wiki-count, .review-score strong, .calendar-days button) {
+body[data-echoink-theme] .echoink-home-workspace :is(.note-feature h3, .bento-name, .journal-date, .wiki-count, .review-score strong, .calendar-days button) {
   color: var(--ink);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.start-label, .start-label i, .note-kicker, .note-feature p, .bento-kicker, .bento-meta, .bento-line, .project-line, .journal-quote, .journal-date > span, .inbox-bottom > span, .inbox-bottom small, .wiki-count > span, .review-score > span, .art-caption, .meta-separator, .page-footer, .page-footer button) {
+body[data-echoink-theme] .echoink-home-workspace :is(.start-label, .start-label i, .note-kicker, .note-feature p, .bento-kicker, .bento-meta, .bento-line, .project-line, .journal-quote, .journal-date > span, .inbox-bottom > span, .inbox-bottom small, .wiki-count > span, .review-score > span, .art-caption, .meta-separator, .page-footer, .page-footer button) {
   color: var(--secondary);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.tile-icon, .corner-arrow, .inbox-bottom > i, .health) {
+body[data-echoink-theme] .echoink-home-workspace :is(.tile-icon, .corner-arrow, .inbox-bottom > i, .health) {
   color: var(--accent);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .bento {
+body[data-echoink-theme] .echoink-home-workspace .bento {
   --bento-action-color: var(--accent);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.note-feature, .small-note, .bento, .calendar-journal):hover {
+body[data-echoink-theme] .echoink-home-workspace :is(.note-feature, .small-note, .bento, .calendar-journal):hover {
   background: var(--soft);
   border-color: var(--echoink-theme-focus);
   box-shadow: none;
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .bento:is(:focus-visible, :active) {
+body[data-echoink-theme] .echoink-home-workspace .bento:is(:focus-visible, :active) {
   border-color: var(--accent);
   box-shadow: none;
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .button.primary {
+body[data-echoink-theme] .echoink-home-workspace .button.primary {
   background: var(--accent);
   color: var(--echoink-theme-on-accent);
   box-shadow: none;
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .button.primary:not(:disabled):hover {
+body[data-echoink-theme] .echoink-home-workspace .button.primary:not(:disabled):hover {
   background: color-mix(in srgb, var(--accent) 90%, var(--ink));
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .button.quiet:hover {
+body[data-echoink-theme] .echoink-home-workspace .button.quiet:hover {
   border-color: var(--echoink-theme-focus);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.today-button, .calendar-days .today) {
+body[data-echoink-theme] .echoink-home-workspace :is(.today-button, .calendar-days .today) {
   background: var(--accent-soft);
   color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--echoink-theme-focus);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .calendar-days .outside {
+body[data-echoink-theme] .echoink-home-workspace .calendar-days .outside {
   color: var(--muted);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .calendar-days .selected {
+body[data-echoink-theme] .echoink-home-workspace .calendar-days .selected {
   color: var(--echoink-theme-on-accent);
   background: var(--accent);
   box-shadow: none;
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.calendar-key b, .health > b, .mini-dot),
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .calendar-days .has-record::after {
+body[data-echoink-theme] .echoink-home-workspace :is(.calendar-key b, .health > b, .mini-dot),
+body[data-echoink-theme] .echoink-home-workspace .calendar-days .has-record::after {
   background: var(--accent);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .calendar-days .selected::after {
+body[data-echoink-theme] .echoink-home-workspace .calendar-days .selected::after {
   background: var(--echoink-theme-on-accent);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.mark.new, .spine.new) {
+body[data-echoink-theme] .echoink-home-workspace :is(.mark.new, .spine.new) {
   background: var(--accent);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.mark.edit, .spine.edit) {
+body[data-echoink-theme] .echoink-home-workspace :is(.mark.edit, .spine.edit) {
   background: color-mix(in srgb, var(--accent) 65%, var(--echoink-theme-card));
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.mark.revisit, .spine.revisit) {
+body[data-echoink-theme] .echoink-home-workspace :is(.mark.revisit, .spine.revisit) {
   background: color-mix(in srgb, var(--accent) 40%, var(--echoink-theme-card));
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .index-sheet :is(b, i) {
+body[data-echoink-theme] .echoink-home-workspace .index-sheet :is(b, i) {
   background: color-mix(in srgb, var(--accent) 45%, var(--soft));
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.sun-disk, .horizon, .review-orbit) {
+body[data-echoink-theme] .echoink-home-workspace :is(.sun-disk, .horizon, .review-orbit) {
   filter: grayscale(1);
   opacity: .25;
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace :is(.dialog, .search-suggestions, .echoink-todo-filter-pop) {
+body[data-echoink-theme] .echoink-home-workspace :is(.dialog, .search-suggestions, .echoink-todo-filter-pop) {
   background: var(--echoink-theme-card);
   border-color: var(--line);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .dialog .handoff {
+body[data-echoink-theme] .echoink-home-workspace .dialog .handoff {
   border-color: var(--echoink-theme-focus);
 }
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace .dialog :is(input, textarea):focus {
+body[data-echoink-theme] .echoink-home-workspace .dialog :is(input, textarea):focus {
   border-color: var(--accent);
 }
-/* The approved violet light refinement retains a light tint in the illustrated home cards. */
-body.theme-light[data-echoink-theme="violet"] .echoink-home-workspace .note-feature {
-  background: linear-gradient(115deg, #f2eef8, #fcfbfd);
-}
-body.theme-light[data-echoink-theme="violet"] .echoink-home-workspace .start-strip { background: #f1eef6; }
-body.theme-light[data-echoink-theme="violet"] .echoink-home-workspace .bento {
-  background: linear-gradient(145deg, #fff, #f6f3fa);
-}
-body.theme-light[data-echoink-theme="violet"] .echoink-home-workspace .index-sheet {
-  background: #e9e3f2;
-  border-color: #c7bbd8;
-}
-body.theme-light[data-echoink-theme="violet"] .echoink-home-workspace .calendar-days .outside { color: #817b89; }
-body.theme-light[data-echoink-theme="violet"] .echoink-home-workspace .sun-disk { opacity: .35; }
 
-/* Settings share the selected palette while retaining success, warning and danger roles. */
+
+/* Settings are neutral independently of the chosen notebook/workbench palette. */
+body.is-popout-modal:has(.modal.mod-settings),.modal.mod-settings {
+  --titlebar-background:var(--echoink-theme-bg);--titlebar-background-focused:var(--echoink-theme-bg);--background-primary:var(--echoink-theme-bg);--background-primary-alt:var(--echoink-theme-raised);
+  --background-secondary:var(--echoink-theme-bg);--background-secondary-alt:var(--echoink-theme-raised);
+  --background-modifier-border:var(--echoink-theme-line);--background-modifier-border-hover:var(--echoink-theme-focus);--background-modifier-border-focus:var(--echoink-theme-focus);--background-modifier-hover:var(--echoink-theme-hover);--background-modifier-active-hover:var(--echoink-theme-active);
+  --text-normal:var(--echoink-theme-text);--text-muted:var(--echoink-theme-secondary);--text-faint:var(--echoink-theme-muted);--text-on-accent:var(--echoink-theme-on-accent);
+  --interactive-normal:var(--echoink-theme-card);--interactive-hover:var(--echoink-theme-raised);--interactive-accent:var(--echoink-theme-accent);--interactive-accent-hover:var(--echoink-theme-accent);
+  --text-accent:var(--echoink-theme-accent-text);--text-accent-hover:var(--echoink-theme-accent-text);
+  --color-accent:var(--echoink-theme-accent);--color-accent-1:var(--echoink-theme-accent);--color-accent-2:var(--echoink-theme-accent);
+  --accent-h:0;--accent-s:0%;--accent-l:10%;--color-accent-rgb:24,24,27;--interactive-accent-rgb:24,24,27;
+  --color-accent-hsl:var(--accent-h),var(--accent-s),var(--accent-l);--link-color:var(--echoink-theme-accent-text);--link-color-hover:var(--echoink-theme-accent-text);--link-external-color:var(--echoink-theme-accent-text);--link-external-color-hover:var(--echoink-theme-accent-text);
+  --text-selection:color-mix(in srgb,var(--echoink-theme-accent) 18%,transparent);--text-highlight-bg:var(--echoink-theme-hover);
+  --checkbox-color:var(--echoink-theme-accent);--checkbox-color-hover:var(--echoink-theme-accent);--checkbox-marker-color:var(--echoink-theme-on-accent);--checkbox-border-color:var(--echoink-theme-muted);--checkbox-border-color-hover:var(--echoink-theme-focus);
+  --background-modifier-accent:var(--echoink-theme-active);color-scheme:var(--echoink-theme-scheme);
+}
+body.theme-dark.is-popout-modal:has(.modal.mod-settings),body.theme-dark .modal.mod-settings {--accent-l:98%;--color-accent-rgb:250,250,250;--interactive-accent-rgb:250,250,250}
+.modal.mod-settings .checkbox-container.is-enabled::after {background:var(--text-on-accent)}
+.echoink-settings-demo .echoink-theme-picker .echoink-theme-choice>input:checked+.echoink-theme-swatch {background:var(--echoink-theme-accent)}
+.echoink-settings-demo .echoink-theme-picker .echoink-theme-choice>input:checked+.echoink-theme-swatch svg {color:var(--echoink-theme-on-accent)}
+
+/* Settings map the fixed Minimal palette, retaining semantic status colors. */
 body[data-echoink-theme] .echoink-settings-host {
   background: var(--echoink-theme-bg);
   color-scheme: var(--echoink-theme-scheme);
@@ -25439,7 +25501,7 @@ body[data-echoink-theme] .echoink-settings-demo .toast {
   border: 0;
 }
 .echoink-settings-demo .echoink-theme-choice {
-  --echoink-theme-swatch: #2e7569;
+  --echoink-theme-swatch: #18181b;
   position: relative;
   display: grid;
   place-items: center;
@@ -25452,7 +25514,8 @@ body[data-echoink-theme] .echoink-settings-demo .toast {
   border-radius: 50%;
   cursor: pointer;
 }
-.echoink-settings-demo .echoink-theme-choice[data-theme="violet"] { --echoink-theme-swatch: #8872b0; }
+.echoink-settings-demo .echoink-theme-choice[data-theme="highlighter"] { --echoink-theme-swatch: #ffd700; }
+.echoink-settings-demo .echoink-theme-choice[data-theme="manifesto"] { --echoink-theme-swatch: #f2d741; }
 .echoink-settings-demo .echoink-theme-choice > input[type=radio] {
   position: absolute;
   inset: 0;
@@ -25485,16 +25548,16 @@ body[data-echoink-theme] .echoink-settings-demo .toast {
   opacity: 0;
 }
 .echoink-settings-demo .echoink-theme-choice > input:checked + .echoink-theme-swatch {
-  outline-color: var(--echoink-theme-swatch);
+  background: var(--echoink-theme-hover);
 }
 .echoink-settings-demo .echoink-theme-choice > input:checked + .echoink-theme-swatch svg { opacity: 1; }
 .echoink-settings-demo .echoink-theme-choice:hover > input:not(:disabled) + .echoink-theme-swatch {
   filter: brightness(1.12);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--echoink-theme-swatch) 18%, transparent);
+  box-shadow: none;
 }
 .echoink-settings-demo .echoink-theme-choice > input:focus-visible + .echoink-theme-swatch {
-  outline: 3px solid var(--text);
-  outline-offset: 3px;
+  outline: none;
+  background: var(--echoink-theme-hover);
 }
 .echoink-settings-demo .echoink-theme-choice:has(> input:disabled) { cursor: wait; }
 .echoink-settings-demo .echoink-theme-choice > input:disabled ~ span { opacity: .55; }
@@ -25520,6 +25583,37 @@ body[data-echoink-theme] .echoink-settings-demo .toast {
   max-width: none;
   justify-content: flex-end;
 }
+/* Surfaces outside page containers, including body-mounted menus and dialogs. */
+body[data-echoink-theme] :is(.echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip) {
+  --background-primary:var(--echoink-theme-bg);--background-primary-alt:var(--echoink-theme-raised);
+  --background-secondary:var(--echoink-theme-raised);--background-secondary-alt:var(--echoink-theme-raised);
+  --text-normal:var(--echoink-theme-text);--text-muted:var(--echoink-theme-secondary);--text-faint:var(--echoink-theme-muted);
+  --background-modifier-border:var(--echoink-theme-line);--background-modifier-hover:var(--echoink-theme-hover);
+  --interactive-normal:var(--echoink-theme-card);--interactive-hover:var(--echoink-theme-hover);
+  --interactive-accent:var(--echoink-theme-accent);--interactive-accent-hover:var(--echoink-theme-accent);
+  --text-on-accent:var(--echoink-theme-on-accent);
+  --menu-background:var(--echoink-theme-card);--modal-background:var(--echoink-theme-bg);
+  --dropdown-background:var(--echoink-theme-card);--dropdown-background-hover:var(--echoink-theme-hover);
+  color-scheme:var(--echoink-theme-scheme);
+}
+.echoink-theme-recommendation { margin:10px 0 0; font-size:12px; line-height:1.6; color:var(--echoink-theme-secondary,var(--text-muted)); }
+.echoink-appearance-pro-surface .echoink-plugin-edition-badge.is-pro { display:inline-flex; align-items:center; gap:3px; flex:none; margin-left:5px; color:var(--echoink-control-fill); background:var(--echoink-control-hover); border:1px solid var(--echoink-control-line); }
+.echoink-appearance-pro-surface .echoink-plugin-edition-icon { display:inline-flex; }
+.echoink-appearance-pro-surface .echoink-plugin-edition-icon svg { width:11px; height:11px; color:inherit; }
+.echoink-appearance-pro-popover { position:fixed; inset:auto; margin:0; padding:9px 12px; width:max-content; max-width:calc(100vw - 16px); border:1px solid var(--echoink-control-line); border-radius:6px; color:var(--echoink-control-fill); background:var(--echoink-control-on-fill); font:inherit; line-height:1.55; }
+.echoink-appearance-pro-popover[hidden] { display:none; }
+.echoink-appearance-pro-popover .echoink-appearance-upgrade { display:block; width:fit-content; margin-top:4px; color:var(--echoink-control-fill); text-decoration:underline; }
+.echoink-appearance-pro-popover .echoink-appearance-upgrade:is(:hover,:focus-visible) { background:var(--echoink-control-hover); outline:none; }
+.echoink-theme-recommendation[hidden] { display:none!important; }
+.echoink-theme-recommendation details { margin-top:4px; }
+.echoink-theme-recommendation summary { cursor:pointer; }
+.echoink-theme-recommendation p { margin:4px 0; }
+.echoink-settings-demo .echoink-theme-choice:is([data-theme="highlighter"], [data-theme="manifesto"]) .echoink-theme-swatch svg { color:#212121; }
+/* Yellow fills and readable emphasis text have separate roles. */
+body[data-echoink-theme] .echoink-settings-demo :is(.codex-settings-tab.active, .codex-settings-tab.is-active, .codex-resource-tab.active, .inline-link) { color:var(--echoink-theme-accent-text); }
+body[data-echoink-theme] .echoink-home-workspace :is(.tile-icon, .corner-arrow, .inbox-bottom>i, .health) { color:var(--echoink-theme-accent-text); }
+body[data-echoink-theme] .echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab.is-active { color:var(--echoink-theme-accent-text); }
+body[data-echoink-theme] .echoink-theme-recommendation summary:focus-visible { outline:none;box-shadow:none;background:var(--echoink-theme-hover); }
 /* ECHOINK_COLOR_THEMES_END */
 
 /* Keep the existing mobile colors when the shared home palette changes. */
@@ -25532,8 +25626,8 @@ body.theme-dark.is-mobile .echoink-home-workspace,
 body.theme-dark .echoink-home-workspace.echoink-mobile-home {
   --soft: #2a312c;
 }
-body.is-mobile:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace,
-body:is(.theme-dark[data-echoink-theme], [data-echoink-theme="violet"]) .echoink-home-workspace.echoink-mobile-home {
+body.is-mobile[data-echoink-theme] .echoink-home-workspace,
+body[data-echoink-theme] .echoink-home-workspace.echoink-mobile-home {
   --soft: var(--echoink-theme-raised);
   --clay: var(--echoink-theme-accent);
 }
@@ -27032,7 +27126,7 @@ body.is-tablet :is(.echoink-mobile-finance.echoink-lifestyle-view,.echoink-mobil
 .echoink-agent-badge.is-waiting, .echoink-agent-badge.is-interrupted { background: var(--echoink-theme-warn, var(--text-warning)); color: var(--background-primary); }
 .echoink-agent-badge.is-running { background: var(--background-primary); color: var(--text-muted); }
 .echoink-agent-badge.is-running svg { width: 11px; height: 11px; animation: echoink-task-spin 1s linear infinite; }
-.echoink-agent-badge.is-unread, .echoink-task-unread { background: var(--interactive-accent); width: 6px; min-width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+.echoink-agent-badge.is-unread, .echoink-task-unread { background: var(--echoink-control-fill); width: 6px; min-width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
 .echoink-agent-badge.is-unread { box-sizing: content-box; }
 .echoink-task-list, .echoink-task-detail, .echoink-agent-editor-mount { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; overflow: hidden; }
 .echoink-agent-list-header { display: flex; align-items: center; gap: 8px; padding: 12px; flex: 0 0 auto; }
@@ -27315,12 +27409,12 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 }
 
 .echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button) {
-  background: var(--echoink-theme-accent, var(--interactive-accent)) !important;
-  color: var(--echoink-theme-on-accent, var(--text-on-accent)) !important;
+  background: var(--echoink-control-fill) !important;
+  color: var(--echoink-control-on-fill) !important;
 }
 .echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button):is(:hover, :focus-visible) {
-  background: var(--background-modifier-hover) !important;
-  color: var(--text-normal) !important;
+  background: var(--echoink-control-hover) !important;
+  color: var(--echoink-control-fill) !important;
 }
 
 .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button:focus-visible,
@@ -27342,8 +27436,8 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
   --wb-line: var(--echoink-theme-line, var(--background-modifier-border));
   --wb-hover: var(--echoink-theme-hover, var(--background-modifier-hover));
   --wb-warn: var(--echoink-theme-warn, var(--text-warning));
-  --wb-accent: var(--echoink-theme-accent, var(--interactive-accent));
-  --wb-on-accent: var(--echoink-theme-on-accent, var(--text-on-accent));
+  --wb-accent: var(--echoink-control-fill);
+  --wb-on-accent: var(--echoink-control-on-fill);
   padding: 0;
   overflow: auto;
   background: var(--wb-bg);
@@ -27366,7 +27460,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
   font: inherit; font-weight: 400; line-height: 1.55; white-space: normal; overflow-wrap: anywhere;
   box-shadow: none; outline: none; cursor: pointer;
 }
-.echoink-workbench button.wb-button.is-primary { background: var(--wb-accent); border-color: transparent; color: var(--wb-on-accent); }
+.echoink-workbench button.wb-button.is-primary { --wb-text: var(--echoink-control-fill); --wb-hover: var(--echoink-control-hover); --wb-line: var(--echoink-control-line); background: var(--wb-accent); border-color: transparent; color: var(--wb-on-accent); }
 .echoink-workbench button.wb-button.is-tertiary, .echoink-workbench button.wb-button.is-icon { border-color: transparent; background: transparent; color: var(--wb-secondary); }
 .echoink-workbench button.wb-button.is-tertiary { min-height: 0; padding: 3px 6px; font-size: calc(var(--font-text-size, 16px) * .75); border-radius: 6px; }
 .echoink-workbench button.wb-button.is-icon { flex: 0 0 auto; width: 30px; min-height: 30px; padding: 0; }
@@ -28865,11 +28959,12 @@ body[data-echoink-theme] .echoink-iphone {
 .echoink-iphone .ip-settings input.ip-settings-switch:checked { background: var(--ip-accent); }
 .echoink-iphone .ip-settings input.ip-settings-switch:disabled { opacity: .45; cursor: default; }
 .echoink-iphone .ip-settings input.ip-settings-switch:checked::before { transform: translateX(18px); }
-.echoink-iphone .ip-settings-segments { position: relative; display: inline-flex; flex: 0 0 auto; align-items: stretch; min-width: 0; padding: 0 2px; isolation: isolate; }
+.echoink-iphone .ip-settings-segments { position: relative; display: inline-grid; grid-template-columns: repeat(3, minmax(max-content, 1fr)); flex: 0 0 auto; align-items: stretch; min-width: 0; padding: 0 2px; isolation: isolate; }
 .echoink-iphone .ip-settings-segments::before { content: ""; position: absolute; z-index: -2; inset: 6px 0; border-radius: 8px; background: var(--background-modifier-hover); }
-.echoink-iphone .ip-settings-segment-slider { position: absolute; z-index: -1; inset: 8px auto 8px 2px; width: calc(50% - 2px); border-radius: 6px; background: var(--background-primary); transition: transform 180ms ease; }
-.echoink-iphone .ip-settings-segments[data-selected="violet"] .ip-settings-segment-slider { transform: translateX(100%); }
-.echoink-iphone .ip-settings button.ip-settings-segment { flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 6px 12px; border: 0; border-radius: 7px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: .8em; white-space: nowrap; }
+.echoink-iphone .ip-settings-segment-slider { position: absolute; z-index: -1; inset: 8px auto 8px 2px; width: calc((100% - 4px) / 3); border-radius: 6px; background: var(--background-primary); transition: transform 180ms ease; }
+.echoink-iphone .ip-settings-segments[data-selected="highlighter"] .ip-settings-segment-slider { transform: translateX(100%); }
+.echoink-iphone .ip-settings-segments[data-selected="manifesto"] .ip-settings-segment-slider { transform: translateX(200%); }
+.echoink-iphone .ip-settings button.ip-settings-segment { flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 6px 5px; border: 0; border-radius: 7px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: .8em; white-space: nowrap; }
 .echoink-iphone .ip-settings button.ip-settings-segment[aria-pressed="true"] { color: var(--ip-ink); font-weight: 600; }
 .echoink-iphone .ip-settings .ip-settings-row:has(> .ip-settings-segments) { padding-top: 0; padding-bottom: 0; }
 .echoink-iphone .ip-settings-model-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0 6px; }
@@ -30011,11 +30106,12 @@ body[data-echoink-theme] .echoink-ipad {
 .echoink-ipad.pd-settings .pd-settings-module-title { appearance: none; display: flex; justify-content: flex-start; align-items: center; min-height: 44px; min-width: 0; width: 100%; padding: 0; margin: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; box-shadow: none; cursor: pointer; }
 .echoink-ipad.pd-settings .pd-settings-module-title:focus-visible { background: var(--pd-settings-soft); outline: none; }
 .echoink-ipad.pd-settings .pd-settings-module-title::after { content: none; }
-.echoink-ipad.pd-settings .pd-settings-segments { isolation: isolate; position: relative; display: inline-flex; flex: 0 0 auto; min-width: 0; min-height: 44px; padding: 8px 2px; border-radius: 10px; }
+.echoink-ipad.pd-settings .pd-settings-segments { isolation: isolate; position: relative; display: inline-grid; grid-template-columns: repeat(3, minmax(max-content, 1fr)); flex: 0 0 auto; min-width: 0; min-height: 44px; padding: 8px 2px; border-radius: 10px; }
 .echoink-ipad.pd-settings .pd-settings-segments::before { content: ""; position: absolute; z-index: -2; inset: 8px 0; border-radius: 8px; background: var(--background-secondary); }
-.echoink-ipad.pd-settings .pd-settings-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 3px; width: calc(50% - 3px); border-radius: 6px; background: var(--background-primary); transition: transform .16s; }
-.echoink-ipad.pd-settings .pd-settings-segments[data-value="violet"] .pd-settings-segment-thumb { transform: translateX(100%); }
-.echoink-ipad.pd-settings button.pd-settings-segment { appearance: none; flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: -8px 0; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: .8em; white-space: nowrap; box-shadow: none; cursor: pointer; }
+.echoink-ipad.pd-settings .pd-settings-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 3px; width: calc((100% - 6px) / 3); border-radius: 6px; background: var(--background-primary); transition: transform 180ms ease; }
+.echoink-ipad.pd-settings .pd-settings-segments[data-value="highlighter"] .pd-settings-segment-thumb { transform: translateX(100%); }
+.echoink-ipad.pd-settings .pd-settings-segments[data-value="manifesto"] .pd-settings-segment-thumb { transform: translateX(200%); }
+.echoink-ipad.pd-settings button.pd-settings-segment { appearance: none; flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: -8px 0; padding: 8px 5px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: .8em; white-space: nowrap; box-shadow: none; cursor: pointer; }
 .echoink-ipad.pd-settings button.pd-settings-segment[aria-pressed="true"] { color: var(--text-normal); font-weight: 600; }
 .echoink-ipad.pd-settings button.pd-settings-segment::after { content: none; }
 .echoink-ipad.pd-settings .pd-settings-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0 8px; }
@@ -30582,3 +30678,16 @@ body[data-echoink-theme] .echoink-ipad {
 
 .echoink-ipad .pd-english-list:empty { display: none; }
 /* ECHOINK_IPAD_PAGES_END */
+
+/* Explicit image-gallery controls; note image nodes stay owned by Obsidian. */
+.echoink-gallery-layer{position:absolute;inset:0;pointer-events:none;z-index:20;overflow:hidden}
+.echoink-gallery-image-control{position:absolute;pointer-events:none;border-radius:12px}
+.echoink-gallery-image-control.is-selected{outline:3px solid #ffd700;outline-offset:-3px}
+.echoink-gallery-layer .echoink-gallery-pick{position:absolute;top:8px;left:8px;width:22px;height:22px;min-width:22px;min-height:22px;padding:0;border-radius:50%;border:1.5px solid #888;background:#ffffffdd;color:#222;box-shadow:none;pointer-events:auto;display:grid;place-items:center;cursor:pointer;transition:background-color 180ms,border-color 180ms}
+.echoink-gallery-image-control.is-selected .echoink-gallery-pick{background:#ffd700;border-color:#ffd700}
+.echoink-gallery-toolbar{position:absolute;top:8px;left:16px;right:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 12px;border-radius:8px;background:var(--text-normal);color:var(--background-primary);font:12px/1.6 var(--font-interface);pointer-events:auto}
+.echoink-gallery-toolbar button{font:inherit;background:#ffd700;color:#222;padding:3px 10px;min-height:26px;border:0;border-radius:5px;box-shadow:none;transition:opacity 180ms}
+.echoink-gallery-toolbar button:last-child{background:transparent;color:inherit}
+.echoink-gallery-toolbar button:hover{opacity:.8}
+.echoink-gallery-comparison{display:block;width:100%;max-width:640px;height:auto;margin-block:10px;border-radius:8px}
+@media(prefers-reduced-motion:reduce){.echoink-gallery-layer button{transition:none!important;animation:none!important}}

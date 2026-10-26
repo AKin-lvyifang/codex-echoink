@@ -2,6 +2,9 @@ import { spawnSync } from "node:child_process";
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const suites = [
+  "test:gallery",
+  "test:appearance",
+  "test:companion-theme",
   "test:vault-identity",
   "test:vault-memory-ui",
   "test:react-dom-resources",

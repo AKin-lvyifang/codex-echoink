@@ -1,8 +1,10 @@
 import { Notice } from "obsidian";
+import { effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
+import { decorateProAppearanceChoice } from "../appearance-pro";
 import license from "../../../LICENSE";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
 import { MobileModelConfiguration } from "../../mobile/model-configuration";
-import { getProPluginAccess, unavailableCapabilityAccess } from "../../membership/access";
+import { getProPluginAccess, hasProPluginAccess, unavailableCapabilityAccess } from "../../membership/access";
 import { mobileModuleEnabled, setMobileModuleEnabled } from "../../mobile/module-settings";
 import { MobileUI } from "../mobile/mobile-ui";
 import type { MobileSettingsRoute } from "../mobile/settings-pages";
@@ -78,7 +80,7 @@ export class IPadSettings {
   }
   private refresh(): void {
     if (this.disposed) return;
-    this.root.ownerDocument.body.setAttribute("data-echoink-theme", this.host.settings().colorTheme === "violet" ? "violet" : "green");
+    this.root.ownerDocument.body.setAttribute("data-echoink-theme", effectiveEchoInkColorTheme(this.host.settings().colorTheme, this.host.accountService));
     for (const [id, , label] of CATEGORIES) {
       const text = this.root.querySelector(`[data-category-id="${id}"] .echoink-ipad-settings-category-label`); if (text) text.textContent = t(this.context, label);
     }
@@ -101,27 +103,32 @@ export class IPadSettings {
   private general(): MobileShellPage {
     const ctx = this.context, content = settingsContent(ctx); let signature = "", busy = false;
     const render = () => {
-      const settings = this.host.settings(), key = JSON.stringify([settings.colorTheme, settings.settingsLanguage, settings.autoOpenHome, this.host.version]);
+      const settings = this.host.settings(), hasPro = () => hasProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess), key = JSON.stringify([hasPro(), settings.colorTheme, settings.settingsLanguage, settings.autoOpenHome, this.host.version]);
       if (key === signature) return; signature = key; content.replaceChildren();
       const appearance = settingsGroup(ctx, content, t(ctx, "外观")), row = settingsRow(ctx, appearance, t(ctx, "配色"));
       const track = el(ctx.document, "div", "pd-settings-segments"); track.setAttribute("role", "group"); track.setAttribute("aria-label", t(ctx, "配色"));
-      track.dataset.value = settings.colorTheme === "violet" ? "violet" : "green";
+      track.dataset.value = effectiveEchoInkColorTheme(settings.colorTheme, this.host.accountService);
+      track.classList.add("echoink-appearance-pro-surface");
       track.append(el(ctx.document, "span", "pd-settings-segment-thumb"));
-      for (const [value, label] of [["green", "暖白翠绿"], ["violet", "雾紫石墨"]]) {
+      for (const { id: value, zh: label } of ECHOINK_COLOR_THEMES) {
         const button = el(ctx.document, "button", "pd-settings-segment", t(ctx, label)); button.type = "button";
         button.setAttribute("aria-pressed", String(track.dataset.value === value));
-        button.addEventListener("click", () => { if (busy || this.host.settings().colorTheme === value) return; busy = true;
-          track.querySelectorAll("button").forEach(control => { control.disabled = true; });
-          void this.save(current => { const old = current.colorTheme; current.colorTheme = value; return () => { current.colorTheme = old; }; }).catch(error => ctx.error(error)).finally(() => { busy = false; signature = ""; render(); }); }); track.append(button);
+        button.addEventListener("click", () => { if (busy || value !== "minimal" && !hasPro() || effectiveEchoInkColorTheme(this.host.settings().colorTheme, this.host.accountService) === value) return; busy = true;
+          track.dataset.value = value;
+          this.root.ownerDocument.body.setAttribute("data-echoink-theme", effectiveEchoInkColorTheme(value, this.host.accountService));
+          track.querySelectorAll("button").forEach(control => { control.disabled = true; control.setAttribute("aria-pressed", String(control === button)); });
+          void this.save(current => { const old = current.colorTheme; current.colorTheme = value; return () => { current.colorTheme = old; }; }).catch(error => ctx.error(error)).finally(() => { busy = false; signature = ""; render(); }); }); if (value !== "minimal") decorateProAppearanceChoice(button, track, { zh: settings.settingsLanguage !== "en", allowed: hasPro, upgrade: () => { void ctx.push(this.category("account")); } })(); track.append(button);
       }
       row.append(track);
+      renderCompanionThemeRecommendation(appearance, settings.settingsLanguage !== "en");
       settingsRow(ctx, appearance, t(ctx, "界面语言"), settings.settingsLanguage === "en" ? "English" : "简体中文", () => ctx.push(this.language()));
       settingsSwitch(ctx, settingsGroup(ctx, content, t(ctx, "启动")), t(ctx, "启动时打开工作台"), settings.autoOpenHome === true, enabled => this.save(current => {
         const previous = current.autoOpenHome; current.autoOpenHome = enabled; return () => { current.autoOpenHome = previous; };
       }));
       settingsRow(ctx, settingsGroup(ctx, content, t(ctx, "关于")), "EchoInk Agent", this.host.version ?? "", () => ctx.push(this.about()));
     };
-    return liveSettingsPage(ctx, { id: "ipad-settings-general", title: "通用", content }, render);
+    content.dataset.echoinkAppearancePicker = ""; content.addEventListener(ECHOINK_APPEARANCE_REFRESH, render);
+    return liveSettingsPage(ctx, { id: "ipad-settings-general", title: "通用", content, dispose: () => content.removeEventListener(ECHOINK_APPEARANCE_REFRESH, render) }, render);
   }
   private language(): MobileShellPage {
     const ctx = this.context, content = settingsContent(ctx); let busy = false, signature = "";

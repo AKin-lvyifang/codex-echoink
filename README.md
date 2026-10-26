@@ -39,7 +39,7 @@ EchoInk is a personal knowledge agent that lives in Obsidian. Chat with your not
 - Knowledge recall adds body text, sections, and reference navigation. Memory stays closer to the current question and explicitly named projects. Knowledge retrieval excludes private-memory and internal plugin data; check sources for important information.
 - Custom Knowledge folders, folder graphs, selection questions and annotations, and saving answers as notes connect reading with chat. English Diary improves native editing, expression review, and daily expressions on Home.
 
-Finance, English Diary, and PDF reading require active PRO. **PRO does not include model credits.** Campaign and subscription details are on the [website](https://echoink.cn/plans). See the [CHANGELOG](CHANGELOG.md) for full release notes and usage instructions.
+Finance, English Diary, and PDF reading require active PRO. Minimal appearance is free; Highlighter and Manifesto require active PRO. The companion theme is provided separately: download it from [echoink.cn/theme](https://echoink.cn/theme) and install it in Obsidian. **PRO does not include model credits.** Campaign and subscription details are on the [website](https://echoink.cn/plans). See the [CHANGELOG](CHANGELOG.md) for full release notes and usage instructions.
 
 ## Download and documentation
 

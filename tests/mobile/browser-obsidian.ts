@@ -63,6 +63,8 @@ export class Plugin extends Component {
   private domEvents: (() => void)[] = [];
   constructor(public app: any, public manifest: any) { super(); }
   registerView(type: string, factory: unknown) { this.app.workspace.registerView(type, factory); }
+  registerEditorExtension() {}
+  registerMarkdownPostProcessor() {}
   async saveData(_data: unknown) {}
   registerDomEvent(target: Document | Window, name: string, listener: EventListener) {
     target.addEventListener(name, listener); this.domEvents.push(() => target.removeEventListener(name, listener));

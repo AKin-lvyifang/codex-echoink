@@ -24,7 +24,7 @@ export const mobilePiPlugin = {
   }
 };
 export function mobileBuildOptions(entry = "src/mobile/plugin.ts") {
-  return { entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian"], loader: { ".md": "text", ".svg": "dataurl" }, plugins: [mobilePiPlugin, financeBrandsPlugin(), agentAvatarAssetsPlugin(), profileStringsPlugin()], logLevel: "silent" };
+  return { entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian", "@codemirror/state", "@codemirror/view", "@codemirror/commands"], loader: { ".md": "text", ".svg": "dataurl" }, plugins: [mobilePiPlugin, financeBrandsPlugin(), agentAvatarAssetsPlugin(), profileStringsPlugin()], logLevel: "silent" };
 }
 export async function assemblePlatformBundle(desktopCode, minify) {
   const mobile = await esbuild.build({ ...mobileBuildOptions(), plugins: [profileModulesPlugin(), mobilePiPlugin, financeBrandsPlugin(true), agentAvatarAssetsPlugin(true), profileStringsPlugin(true)], metafile: true, minify });

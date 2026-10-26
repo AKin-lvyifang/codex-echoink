@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+const requireEditorLibrary = createRequire(import.meta.url);
+const editorLibraries = new Set(["@codemirror/state", "@codemirror/view", "@codemirror/commands"]);
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -11,11 +14,12 @@ import { findDynamicScriptCreations } from "./react-dom-script-resources.mjs";
 import { profileScenarios } from "../tests/mobile/profile-scenarios.mjs";
 import { financeSettingsNavigationScenarios } from "../tests/mobile/finance-settings-navigation-scenarios.mjs";
 import { originControlScenarios } from "../tests/mobile/origin-controls-scenarios.mjs";
-import { createHost, answer, FixtureTFile } from "../tests/mobile/host.mjs";
+import { createHost as createMemoryHost, answer, FixtureTFile } from "../tests/mobile/host.mjs";
 import { mobileLifecycleScenarios } from "../tests/mobile/lifecycle-scenarios.mjs";
 import { mobileStartupConflictScenarios } from "../tests/mobile/startup-conflict-scenarios.mjs";
 
 const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile/entry.ts"), metafile: true });
+assert.ok(!Object.keys(build.metafile.inputs).some(name => name.includes("node_modules/@codemirror/")), "Mobile must use the host editor libraries, not bundle another copy");
 // Bootstrap checks must cover this checkout, independent of shared dist artifacts.
 const productionCode = (await esbuild.build(mobileBuildOptions())).outputFiles[0].text;
 const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVisual: true, url: "https://fixture.example" });
@@ -26,7 +30,12 @@ const module = { exports: {} };
 const obsidian = { exports: {} };
 const hostBuild = await esbuild.build({ entryPoints: ["tests/mobile/browser-obsidian.ts"], bundle: true, write: false, platform: "browser", format: "cjs", logLevel: "silent" });
 vm.runInNewContext(hostBuild.outputFiles[0].text, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, SVGElement: dom.window.SVGElement, DOMParser: dom.window.DOMParser, module: obsidian, exports: obsidian.exports, console });
-const globals = { window: dom.window, document: dom.window.document, DOMParser: dom.window.DOMParser, MutationObserver: dom.window.MutationObserver, HTMLElement: dom.window.HTMLElement, SVGElement: dom.window.SVGElement, module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, setTimeout, clearTimeout, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, require: id => { if (id !== "obsidian") throw new Error(`Node import on mobile: ${id}`); return { ...obsidian.exports, TFile: FixtureTFile }; } };
+function createHost(...args) {
+  const host = createMemoryHost(...args);
+  host.app.workspace.containerEl = dom.window.document.body;
+  return host;
+}
+const globals = { window: dom.window, document: dom.window.document, DOMParser: dom.window.DOMParser, MutationObserver: dom.window.MutationObserver, HTMLElement: dom.window.HTMLElement, SVGElement: dom.window.SVGElement, module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, setTimeout, clearTimeout, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, require: id => { if (editorLibraries.has(id)) return requireEditorLibrary(id); if (id !== "obsidian") throw new Error(`Node import on mobile: ${id}`); return { ...obsidian.exports, TFile: FixtureTFile }; } };
 vm.runInNewContext(build.outputFiles[0].text, globals);
 const { MobileStore, MobileRuntime, mobileTools, loadMobileSettings, mobileProvider, mobileModel, mobilePresets, MobileUI, MobileWorkspace, MobileServices, MobileViewport, AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl, HomeActivityCore, mobilePluginDataRoot, SETTINGS_TAB_ICONS, renderAnimatedSettingsTabIcon, createMobileMembershipStorage, AccountService, MembershipApiError, keyHash, mobileLifestyleStore, mobileGenerateText, readFinanceBill, sha256Hex, FinanceWorkspace, EchoInkMobilePlugin, mobileWorkspaceFixture } = module.exports;
 const memoryArgs = { kind: "view", title: "解释偏好", content: "解释技术问题时先说结论。", recallWhen: "解释技术问题", basis: "explicit" };
@@ -1067,20 +1076,23 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
     constructor() { this.app = host.app; this.manifest = { id: "codex-echoink", dir: "plugin" }; }
     async loadData() { return { desktopUnknown: { keep: true } }; }
     async saveData() {}
+    registerEditorExtension() {}
+    registerMarkdownPostProcessor() {}
     registerEvent() {}
     register() {}
     registerDomEvent() {}
     registerInterval(id) { this.interval = id; }
     registerView(type, factory) { this.factory = factory; }
-    addRibbonIcon() {}
+    addRibbonIcon() { return dom.window.document.createElement("button"); }
     addCommand(command) { commands.push(command.id); }
   }
   class Component {}
   const exports = { exports: {} };
   const context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
-    require(id) { imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, Component, Modal: class {}, TFile: FixtureTFile, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
+    require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, Component, Modal: class {}, TFile: FixtureTFile, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
   });
   vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports; const plugin = new MobilePlugin(); await plugin.onload();
+  for (const id of ["insert-gallery", "group-selected-images", "split-gallery"]) assert.ok(commands.includes(id), `Mobile gallery command missing: ${id}`);
   assert.ok(commands.includes("open-echoink-mobile")); assert.ok(plugin.store); assert.equal(plugin.settings.apiProviders.length, 0);
   assert.ok(imported.every(id => id === "obsidian")); assert.equal(vm.runInContext("typeof process + ':' + typeof Buffer", context), "undefined:undefined");
   const initialProfile = await plugin.services.readAgentProfile();
@@ -1110,17 +1122,17 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
       constructor() { this.app = host.app; this.manifest = { id: "codex-echoink", dir: "plugin" }; }
       async loadData() { return { autoOpenHome: false }; }
       async saveData() {}
-      registerEvent() {} register() {} registerDomEvent() {}
+      registerEditorExtension() {} registerMarkdownPostProcessor() {} registerEvent() {} register() {} registerDomEvent() {}
       registerInterval(id) { this.interval = id; }
       registerView(type, factory) { views.push(type); factories.set(type, factory); }
-      addRibbonIcon() {} addCommand(command) { commands.push(command.id); }
+      addRibbonIcon() { return dom.window.document.createElement("button"); } addCommand(command) { commands.push(command.id); }
     }
     class NativeItemView {
       constructor() { this.app = host.app; this.containerEl = dom.window.document.createElement("div"); this.contentEl = this.containerEl; }
       async open(parent) { parent.append(this.containerEl); await this.onOpen(); }
     }
     const exports = { exports: {} }, context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
-      require(id) { assert.equal(id, "obsidian"); return { Platform: platform, Plugin, ItemView: NativeItemView, Component: class {}, Modal: class {}, TFile: FixtureTFile, Notice: class { constructor(message) { notices.push(message); } }, requestUrl() { throw new Error("startup requested Provider"); } }; }
+      require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); assert.equal(id, "obsidian"); return { Platform: platform, Plugin, ItemView: NativeItemView, Component: class {}, Modal: class {}, TFile: FixtureTFile, Notice: class { constructor(message) { notices.push(message); } }, requestUrl() { throw new Error("startup requested Provider"); } }; }
     });
     vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports, plugin = new MobilePlugin();
     try {

@@ -575,7 +575,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   productGeneration: "pi-agent-product-v1",
   settingsVersion: 54,
   settingsLanguage: "zh-CN",
-  colorTheme: "green",
+  colorTheme: "minimal",
   settingsTab: "providers",
   proxyEnabled: false,
   proxyUrl: "http://127.0.0.1:7890",
