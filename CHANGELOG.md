@@ -1,5 +1,59 @@
 # Changelog
 
+## 2.8.5 - 2026-10-26
+<!-- release-type: feat -->
+### 2.8.5 · 三套外观与图片组
+
+![EchoInk 2.8.5：三套外观与图片组](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.8.5/assets/releases/echoink-agent-2.8.5-release.png)
+
+### 中文
+
+类型：新功能
+
+#### 更新内容
+
+- **三套外观，随 Obsidian 切换明暗。** 新增极简黑白、荧光笔记和黄白宣言。极简黑白免费，荧光笔记和黄白宣言需要有效 PRO；旧的绿、紫外观会自动换成极简黑白。未安装配套主题时，也能使用插件界面的三套配色。
+- **图片可以排成一组。** 配套主题生效后，桌面实时预览里可用圆圈选择连续的 2–3 张图片，再从右键菜单排成两张并排、一大两小或三张一排。也可以手写 `> [!gallery]`，一行放一张图片；用 `> [!gallery|row]` 排成一行，用 `> [!gallery|300]` 设置高度。手机和 iPad 通过命令操作，不显示圆圈控件。
+- **会员页直接打开官网套餐。** 可前往所选套餐页面，包括早鸟终身版；新增订单入口，并标明订阅类型。
+- **修复电脑端自定义服务商连接失败。** 使用原生网络通道，避免浏览器跨域限制导致请求被拦截；连接、鉴权等错误提示更清楚。手机端的网络方式不变。
+- **修复“记忆属于另一个库”的误报。** 笔记库身份保存在库内，同一个笔记库在电脑和手机上共用一份个人记忆。
+- **设置与常用按钮保持黑白。** 设置页、工作台主按钮和 Agent 侧栏实心按钮只随明暗切换，不随笔记外观变黄或变红。关于页的图标提示改到按钮上方，减少遮挡。
+
+#### 如何使用
+
+到 **设置 → EchoInk → 通用 → 外观** 选择配色。配套主题需从[官网配套主题页](https://echoink.cn/theme)另行下载和安装，插件包不包含主题文件。启用后即可体验笔记样式和图片组。
+
+图片组需启用配套主题 echoink-theme。在命令面板中选择 **EchoInk：插入图片组**，或用 **把选中的图片排成图片组**、**拆开图片组** 操作。组内只放图片，最多 3 张；光标移出后查看排版。单张图片原有的尺寸写法会保留，拆组后恢复。
+
+#### 下载与升级
+
+需要 **Obsidian 1.11.4 及以上**。升级前请备份 Vault 与插件数据。从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.5) 下载 **main.js、manifest.json、styles.css**，放入 `.obsidian/plugins/codex-echoink/` 后重新启用插件。PRO 不包含模型调用额度，模型服务费用由所选服务商另行收取。
+
+### English
+
+**2.8.5 · Three appearances and image galleries**
+
+Type: New
+
+#### What's new
+
+- **Three appearances that follow Obsidian's light and dark modes.** Choose Minimal, Highlighter, or Manifesto. Minimal is free; Highlighter and Manifesto require active PRO. The previous green and violet appearances migrate to Minimal. All three plugin palettes work without the companion theme.
+- **Arrange images in galleries.** With the companion theme active, use circles in desktop Live Preview to select 2–3 consecutive images, then choose a layout from the context menu: two side by side, one large with two smaller images, or three in a row. You can also write `> [!gallery]` with one image per line, use `> [!gallery|row]` for a row, or `> [!gallery|300]` to set the height. Phones and iPads use commands and do not show selection circles.
+- **Membership settings open the selected website plan.** This includes the early-bird lifetime plan. There is also an order entry and clearer subscription labels.
+- **Fixed custom-provider connection failures on desktop.** Requests use the native network path to avoid browser CORS restrictions, with clearer connection and authentication errors. Mobile networking is unchanged.
+- **Fixed false “memory belongs to another vault” warnings.** Vault identity stays inside the vault, and desktop and mobile share the same personal memory for that vault.
+- **Settings and primary controls stay neutral.** Settings, workbench primary buttons, and solid buttons in the Agent sidebar follow light or dark mode without turning yellow or red with the note appearance. About-page icon tooltips now appear above the buttons to reduce overlap.
+
+#### How to use
+
+Choose a palette in **Settings → EchoInk → General → Appearance**. Download and install the companion theme separately from the [official theme page](https://echoink.cn/theme); it is not included in the plugin package. Enable it to use the note styles and galleries.
+
+Image galleries require the active echoink-theme companion. Use **EchoInk: Insert image gallery**, **Group selected images**, or **Ungroup image gallery** from the command palette. A group can contain up to 3 images and no other content. Move the cursor outside the group to see its layout. Existing per-image size syntax stays in the source and applies again after ungrouping.
+
+#### Download and upgrade
+
+Requires **Obsidian 1.11.4 or later**. Back up your vault and plugin data before upgrading. Download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.5) into `.obsidian/plugins/codex-echoink/`, then re-enable the plugin. PRO does not include model credits; your chosen provider bills model usage separately.
+
 ## 2.8.4 - 2026-10-23
 <!-- release-type: fix -->
 ### 2.8.4 · 知识整理、对话排版与工作台修复
