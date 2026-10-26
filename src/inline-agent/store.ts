@@ -36,6 +36,15 @@ export class FileInlineRepository implements InlineRepository {
         versions.add(v.id);
       }
       if (r.versions.length ? !versions.has(r.currentVersionId) : r.currentVersionId !== "") return invalid();
+      if (r.order !== undefined && (!Number.isSafeInteger(r.order) || r.order < 1)) return invalid();
+      if (r.queue && (!Array.isArray(r.queue.blockedBy) || r.queue.blockedBy.some(id => typeof id !== "string" || id === r.id)
+        || !["unresolved", "overlap"].includes(r.queue.reason) || typeof r.queue.regenerate !== "boolean")) return invalid();
+      const proposal = r.preparedProposal;
+      if (proposal && (typeof proposal.text !== "string" || typeof proposal.original !== "string" || typeof proposal.requirement !== "string"
+        || typeof proposal.section !== "string" || typeof proposal.sourceDocument !== "string" || !Number.isFinite(proposal.createdAt)
+        || !validAnchor(proposal.sourceTarget) || !["replace", "insert"].includes(proposal.sourceTarget.kind)
+        || !proposal.context || typeof proposal.context.text !== "string" || !Array.isArray(proposal.context.segments)
+        || !proposal.timing || typeof proposal.timing !== "object" || proposal.versionId !== undefined && !versions.has(proposal.versionId))) return invalid();
       if (r.thread && (!Array.isArray(r.thread) || r.thread.some(m => !m.id || !["user", "assistant"].includes(m.role) || typeof m.text !== "string" || !Number.isFinite(m.at)))) return invalid();
       if (r.commit && ((!versions.has(r.commit.versionId) && !(r.versions.length === 0 && r.commit.versionId === "" && r.commit.action === "revoke")) || !["confirm", "revoke"].includes(r.commit.action) || typeof r.commit.beforeDocument !== "string"
         || typeof r.commit.afterDocument !== "string" || !validAnchor(r.commit.result) || !validAnchor(r.commit.originalTarget) || !validAnchor(r.commit.originalResult) || !Array.isArray(r.commit.changes)

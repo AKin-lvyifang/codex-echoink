@@ -89,6 +89,18 @@ await check("source snapshot is fixed, action card is unique, version one has no
   assert.equal(f.root.querySelectorAll('[data-inline-action="confirm"]').length, 1); f.close();
 });
 
+await check("pending lead stays normal while only actionable problems use reminder color", () => {
+  const attention = ["clarifying", "conflict", "interrupted", "failed", "missing", "save_failed"];
+  for (const status of ["pending", "thinking", "queued", "confirmed", ...attention] as InlineRequestStatus[]) {
+    const item = request(status); if (status === "pending") item.section = undefined;
+    const f = fixture(item), card = f.root.querySelector(".echoink-inline-task-pin")!;
+    assert.equal(card.classList.contains("is-attention"), attention.includes(status), status);
+    if (status === "pending") assert.equal(card.querySelector(".echoink-inline-task-pin-lead")?.textContent, "新稿待确认");
+    if (status === "queued") assert.equal(card.querySelector(".echoink-inline-task-pin-lead")?.textContent, "排队中 · 等前一块处理完");
+    f.close();
+  }
+});
+
 await check("shared compare state disables confirmation; confirmed version is marked written", async () => {
   const f = fixture(); f.button("compare").click(); await settle();
   assert.ok(f.host.service.comparingOriginal.has("r1")); assert.equal(f.button("confirm").disabled, true); f.button("confirm").click(); await settle();

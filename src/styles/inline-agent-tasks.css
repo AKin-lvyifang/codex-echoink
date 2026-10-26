@@ -20,13 +20,13 @@
 .echoink-inline-task-read[open] { flex-basis: 100%; }
 .echoink-inline-task-snapshot { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 6px; padding: 8px 10px; background: var(--background-secondary); border-radius: 6px; font-size: 13px; line-height: 1.7; }
 .echoink-inline-task-pin { position: sticky; top: 0; z-index: 1; display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 9px 10px; border: 1px solid var(--background-modifier-border); border-radius: 8px; background: var(--background-primary); }
-.echoink-inline-task-pin-lead { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
-.echoink-inline-task-pin.is-waiting .echoink-inline-task-pin-lead { color: var(--echoink-theme-warn, var(--text-warning)); }
+.echoink-inline-task-pin-lead { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 500; color: var(--echoink-theme-text, var(--text-normal)); overflow-wrap: anywhere; }
+.echoink-inline-task-pin.is-attention .echoink-inline-task-pin-lead { color: var(--echoink-theme-warn, var(--text-warning)); }
 .echoink-inline-task-pin-actions { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-left: auto; }
 .echoink-agent-tasks .echoink-inline-task-action.echoink-origin-control[data-slot="button"] { min-height: 27px; height: auto; padding: 3px 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: transparent; color: var(--text-normal); font-size: 12px; line-height: 1.4; box-shadow: none; white-space: normal; }
 .echoink-agent-tasks .echoink-inline-task-action.echoink-origin-control[data-slot="button"]:is(:hover, :focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
-.echoink-agent-tasks .echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"] { background: var(--echoink-control-fill, var(--text-normal)); color: var(--echoink-control-on-fill, var(--background-primary)); border-color: transparent; }
-.echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"]:is(:hover, :active) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
+.echoink-agent-tasks .echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"] { background: var(--echoink-theme-text, var(--text-normal)); color: var(--echoink-theme-bg, var(--background-primary)); border-color: transparent; }
+.echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"]:is(:hover, :active) { background: var(--echoink-theme-text, var(--text-normal)) !important; color: var(--echoink-theme-bg, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
 .echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"]:focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; outline: none !important; box-shadow: none !important; }
 .echoink-agent-tasks .echoink-inline-task-action:disabled { opacity: .45; cursor: default; }
 .echoink-agent-tasks .echoink-inline-task-source button.echoink-inline-task-source-link.echoink-origin-control[data-slot="button"] { min-height: 24px; height: auto; padding: 1px 3px; border: 0 !important; background: transparent; color: var(--text-muted); text-align: left; white-space: normal; overflow-wrap: anywhere; font: inherit; outline: none !important; box-shadow: none !important; }
@@ -53,10 +53,14 @@
 .echoink-inline-task-edit-actions { display: flex; gap: 6px; justify-content: flex-end; align-self: flex-end; }
 .echoink-inline-task-presets { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 8px; }
 .echoink-inline-task-composer-actions { display: flex; justify-content: flex-end; width: 100%; }
-.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
+.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-theme-text, var(--text-normal)) !important; color: var(--echoink-theme-bg, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
 .echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; }
 .has-inline-task .codex-input-wrap > :is(.codex-turn-queue, .codex-composer-workspace, .codex-attachments, .codex-composer-enhance-review, .codex-skill-menu, .codex-knowledge-command-menu, .codex-composer-resource-panel) { display: none !important; }
 .has-inline-task .echoink-task-detail > .echoink-knowledge-activity-slot { display: none; }
+.echoink-inline-state-label { height: auto; min-height: 24px; padding: 2px 0; background: transparent; border: 0; box-shadow: none; color: var(--text-muted); font-size: 12px; }
+.echoink-inline-state-label.is-waiting { color: var(--echoink-theme-warn, var(--text-warning)); }
+.echoink-inline-request-state .echoink-inline-state-label:focus-visible { box-shadow: none; outline: none; background: var(--background-modifier-hover); }
+.echoink-inline-sent-instruction { background: var(--echoink-theme-raised, var(--background-secondary)); padding: 5px 8px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (hover: none) { .echoink-inline-task-message .echoink-inline-task-edit-button { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .echoink-inline-task-spinner svg { animation: none; } }
 @container (max-width: 360px) { .echoink-inline-task-pin-actions { width: 100%; justify-content: flex-end; } }

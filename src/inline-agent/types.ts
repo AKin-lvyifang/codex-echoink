@@ -20,6 +20,19 @@ export interface InlineModelSelection { providerSettingsId: string; runtimeProvi
 export interface InlineThreadMessage { id: string; role: "user" | "assistant"; text: string; at: number; versionId?: string; question?: { question: string; options: { id: string; label: string }[] } }
 export interface InlineTiming { submittedAt: number; contextReadyAt?: number; modelStartedAt?: number; firstOutputAt?: number; proposalReadyAt?: number; userWaitMs?: number; questionAt?: number; toolCalls?: number; memoryRecall?: unknown; productRunId?: string }
 export interface InlineChange extends TextSpan { insert: string }
+export interface InlinePreparedProposal {
+  text: string;
+  original: string;
+  requirement: string;
+  section: string;
+  sourceDocument: string;
+  sourceTarget: InlineTarget;
+  context: InlineContext;
+  createdAt: number;
+  timing: Partial<InlineTiming>;
+  versionId?: string;
+}
+export interface InlineQueue { blockedBy: string[]; reason: "unresolved" | "overlap"; regenerate: boolean }
 export interface InlineCommit {
   action: "confirm" | "revoke";
   versionId: string;
@@ -35,6 +48,7 @@ export interface InlineCommit {
 /** Task identity belongs to the existing Conversation catalog. These are request facts only. */
 export interface InlineRequest {
   id: string;
+  order?: number;
   vaultId: string;
   path: string;
   taskId: string;
@@ -59,6 +73,8 @@ export interface InlineRequest {
   runToken?: string;
   timing?: InlineTiming;
   readContext?: InlineContext;
+  preparedProposal?: InlinePreparedProposal;
+  queue?: InlineQueue;
 }
 export interface InlineProposalInput {
   path: string;

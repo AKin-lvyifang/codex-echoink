@@ -171,7 +171,7 @@ export class InlineTaskDetailView {
   private renderPin(request: InlineRequest, language: SettingsLanguage, comparing: boolean): void {
     disposeOriginControls(this.pin); this.pin.empty();
     const en = english(language), host = this.host(), version = request.versions.find(item => item.id === request.currentVersionId);
-    this.pin.classList.toggle("is-waiting", inlineTaskState(request) === "waiting");
+    this.pin.classList.toggle("is-attention", ["clarifying", "conflict", "interrupted", "failed", "missing", "save_failed"].includes(request.status));
     const lead = this.pin.createDiv({ cls: "echoink-inline-task-pin-lead" });
     const actions = this.pin.createDiv({ cls: "echoink-inline-task-pin-actions" });
     const revoke = (label = en ? "Revoke" : "撤销") => this.button(actions, label, "revoke", () => host?.service.revoke(request.id, request.currentVersionId));
@@ -191,7 +191,7 @@ export class InlineTaskDetailView {
         lead.createSpan({ text: en ? "Writing · Your note is unchanged" : "正在写 · 正文还没改" });
         this.button(actions, en ? "Stop" : "停止", "stop", () => host?.runtime.stop(request.taskId)); break;
       case "clarifying": lead.textContent = en ? "Waiting for your answer" : "等你回答"; revoke(); break;
-      case "queued": lead.textContent = en ? "Queued · Waiting for the preceding block" : "排队中 · 等同一段的前一块处理完"; revoke(); break;
+      case "queued": lead.textContent = en ? "Queued · Waiting for the preceding block" : "排队中 · 等前一块处理完"; revoke(); break;
       case "conflict": lead.textContent = en ? "Target text changed · Confirmation blocked" : "目标已变动，已阻止确认"; revoke(); retry(); break;
       case "failed": case "interrupted": lead.textContent = inlineTaskStatus(request, language); revoke(); retry(); break;
       case "missing": lead.textContent = en ? "The source position was deleted" : "正文位置已删除"; revoke(en ? "Discard" : "丢弃"); break;

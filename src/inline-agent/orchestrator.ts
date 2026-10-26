@@ -12,7 +12,12 @@ export interface InlineOrchestratorHost { editor(path: string): Promise<InlineEd
 interface InlineFlight { id: string; token?: string; abort: AbortController; completion?: Promise<void> }
 export class InlineAgentRuntimeController {
   private flights = new Map<string, InlineFlight>();
-  constructor(private readonly plugin: CodexForObsidianPlugin, private readonly service: InlineRequestService, private readonly host: InlineOrchestratorHost) {}
+  private readonly unsubscribe: () => void;
+  private drainScheduled = false;
+  private disposed = false;
+  constructor(private readonly plugin: CodexForObsidianPlugin, private readonly service: InlineRequestService, private readonly host: InlineOrchestratorHost) {
+    this.unsubscribe = service.subscribe(() => this.scheduleQueue());
+  }
   private model(): InlineModelSelection {
     const selected = getActiveApiProviderModel(this.plugin.settings);
     if (!selected) throw new Error("请先在设置里选择默认 Provider 和模型。");
@@ -26,9 +31,6 @@ export class InlineAgentRuntimeController {
     if (!input.text.trim()) throw new Error("先写下要交代的事。");
     const model = this.model(), editor = await this.host.editor(input.path);
     if (editor.read() !== input.document) throw new Error("正文已变化，请重新发送。");
-    if (this.service.list(input.path).some(r => !["confirmed", "revoked", "withdrawn", "modified", "missing"].includes(r.status))) {
-      throw new Error("请先处理这篇笔记里的上一块，再交代新请求。");
-    }
     const agent = this.plugin.settings.agentRegistry.agents.find(a => a.id === input.agentId);
     if (!agent) throw new Error("这位管家已不存在，请重新选择。");
     const taskId = `inline-${randomUUID()}`;
@@ -57,7 +59,7 @@ export class InlineAgentRuntimeController {
     const requirement = request.thread?.filter(m => m.role === "user").at(-1)?.text ?? request.versions.at(-1)?.requirement;
     if (!requirement) throw new Error("请重新写下要求。");
     if (this.flights.has(taskId)) return;
-    this.launch(request, requirement, this.model(), false);
+    this.launch(request, requirement, request.model ?? this.model(), false);
   }
   async stop(taskId: string): Promise<void> {
     const flight = this.flights.get(taskId); if (!flight) return;
@@ -73,6 +75,20 @@ export class InlineAgentRuntimeController {
     this.flights.set(request.taskId, flight);
     flight.completion = this.run(request, requirement, model, addMessage, flight).catch(error => this.report(error)).finally(() => {
       if (this.flights.get(request.taskId) === flight) this.flights.delete(request.taskId);
+      this.scheduleQueue();
+    });
+  }
+  private scheduleQueue(): void {
+    if (this.disposed || this.drainScheduled) return;
+    this.drainScheduled = true;
+    queueMicrotask(() => {
+      this.drainScheduled = false;
+      if (this.disposed) return;
+      for (const request of this.service.list()) {
+        if (request.status !== "queued" || !request.queue?.regenerate || request.queue.blockedBy.length || this.flights.has(request.taskId)) continue;
+        const requirement = request.preparedProposal?.requirement ?? request.thread?.filter(m => m.role === "user").at(-1)?.text;
+        if (requirement && request.model) this.launch(request, requirement, request.model, false);
+      }
     });
   }
   private async run(request: InlineRequest, requirement: string, model: InlineModelSelection, addMessage: boolean, flight: InlineFlight): Promise<void> {
@@ -125,6 +141,6 @@ export class InlineAgentRuntimeController {
     return await this.service.beginRequest({ path: previous.path, taskId: previous.taskId, agentId: previous.agentId, agentName: previous.agentName, trigger,
       instruction: { from: from + 2, to: from + 2 + command.length } }, requirement);
   }
-  dispose(): void { for (const flight of this.flights.values()) flight.abort.abort(); this.flights.clear(); }
+  dispose(): void { this.disposed = true; this.unsubscribe(); for (const flight of this.flights.values()) flight.abort.abort(); this.flights.clear(); }
   private report(error: unknown): void { console.error("EchoInk inline proposal failed", error instanceof Error ? error.message : "unknown error"); }
 }

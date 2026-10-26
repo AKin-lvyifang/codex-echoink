@@ -187,6 +187,21 @@ await check("real repository persists, validates scope and refuses corrupt data"
   try {
     const file = path.join(dir, "requests.json"), repo = new FileInlineRepository(file, "vault-test"), f = fixture(undefined, repo);
     await f.service.initialize(); const r = await f.service.stageProposal(f.input()); await f.service.dispose(); assert.equal((await repo.load())[0].id, r.id);
+    const queueRepo = new FileInlineRepository(path.join(dir, "queued.json"), "vault-test");
+    const queued = fixture("甲段\n\n乙段\n\n@小墨 先改\n\n@小墨 后改", queueRepo); await queued.service.initialize();
+    const begin = async (command: string) => { const from = queued.port.read().indexOf(command); return queued.service.beginRequest({ path: "正文.md", taskId: command, agentId: "sol", agentName: "小墨", trigger: "@", instruction: { from, to: from + command.length } }, command); };
+    const first = await begin("@小墨 先改"), second = await begin("@小墨 后改"), source = await queued.service.readSource(second.id);
+    const token = await queued.service.startRun(second.id, "后改", model, source.context, false), at = source.document.indexOf("乙段");
+    await queued.service.completeProposal(second.id, token, source.document, { ...anchorAt(source.document, { from: at, to: at + 2 }), kind: "replace" }, "乙段新稿", "后改", "正文", { toolCalls: 0 });
+    await queued.service.dispose(); const saved = (await queueRepo.load()).find(item => item.id === second.id)!;
+    assert.deepEqual(saved.queue?.blockedBy, [first.id]); assert.equal(saved.preparedProposal?.sourceDocument, source.document);
+    assert.equal(saved.preparedProposal?.sourceTarget.text, "乙段");
+    const restored = fixture(queued.port.read(), queueRepo); await restored.service.initialize();
+    assert.equal(restored.service.get(first.id)?.status, "interrupted"); assert.equal(restored.service.get(second.id)?.status, "queued");
+    await restored.service.revoke(first.id, ""); const ready = restored.service.get(second.id)!;
+    assert.equal(ready.status, "pending"); assert.equal(ready.order, saved.order);
+    assert.equal(ready.versions[0].sourceDocument, source.document); await restored.service.confirm(ready.id, ready.currentVersionId);
+    assert.ok(restored.port.read().includes("乙段新稿")); await restored.service.dispose();
     await assert.rejects(new FileInlineRepository(file, "other-vault").load(), /当前仓库/u);
     const raw = await readFile(file, "utf8"); await writeFile(file, raw.replace('"status": "pending"', '"status": "unknown"')); await assert.rejects(repo.load(), /损坏/u);
     assert.ok((await readFile(file, "utf8")).includes("unknown"));

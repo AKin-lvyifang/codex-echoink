@@ -2,8 +2,8 @@
 .cm-editor .echoink-inline-input,
 .cm-editor .echoink-inline-input-start,
 .cm-editor .echoink-inline-input-end {
-  --echoink-inline-draft-background: var(--background-secondary);
-  --echoink-inline-draft-foreground: var(--text-normal);
+  --echoink-inline-draft-background: var(--echoink-theme-raised, var(--background-secondary));
+  --echoink-inline-draft-foreground: var(--echoink-theme-text, var(--text-normal));
   background: var(--echoink-inline-draft-background);
   color: var(--echoink-inline-draft-foreground);
   font-size: inherit;
@@ -91,3 +91,6 @@
 .echoink-inline-mention-option { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 8px; border-radius: 4px; cursor: pointer; overflow-wrap: anywhere; }
 .echoink-inline-mention-option:hover,
 .echoink-inline-mention-option[aria-selected="true"] { background: var(--background-modifier-hover); }
+
+.echoink-inline-trigger-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 18px; }
+.echoink-inline-trigger-setting input.echoink-origin-control { width: 52px; text-align: center; }

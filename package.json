@@ -27,6 +27,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
     "test:inline-agent": "node scripts/inline-agent-tests.mjs",
+    "test:inline-agent-concurrency": "node scripts/inline-agent-concurrency-tests.mjs",
     "test:inline-agent-runtime": "node scripts/inline-agent-runtime-tests.mjs",
     "test:inline-agent-mention": "node scripts/inline-agent-mention-tests.mjs",
     "test:inline-agent-task-ui": "node scripts/inline-agent-task-ui-tests.mjs",

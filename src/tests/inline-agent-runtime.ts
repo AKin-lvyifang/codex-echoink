@@ -264,8 +264,7 @@ async function assertOrchestratorRunLifecycle(): Promise<void> {
     const taskId = runs[0].request.conversationId, firstRequestId = service.latestForTask(taskId)!.id;
     finish(0, "completed", "第一稿。"); await waitForRelease(1);
     assert.equal(service.get(firstRequestId)?.status, "pending");
-    await assert.rejects(controller.sendDraft({ path: "正文.md", agentId: agent.id, trigger: "@", from, to: from + instruction.length, document, text: "另一个请求" }), /先处理/u);
-    assert.equal(createdConversations, 1, "a blocked second request must not create an empty task");
+    assert.equal(createdConversations, 1);
     await controller.reply(taskId, "再短一点");
     await waitFor(() => runs.length === 2 || service.get(firstRequestId)?.status === "failed", "follow-up must submit after the first result");
     assert.equal(runs.length, 2, "host ownership from the first result must not block a consecutive follow-up");

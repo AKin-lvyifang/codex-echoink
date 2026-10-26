@@ -216,10 +216,10 @@ class RequestStateWidget extends WidgetType {
   eq(other: RequestStateWidget): boolean { return this.request.id === other.request.id && this.request.status === other.request.status && this.request.error === other.request.error; }
   toDOM(view: EditorView): HTMLElement {
     const r = this.request, root = view.dom.ownerDocument.createElement("div"); root.className = "echoink-inline-request-state"; root.dataset.requestId = r.id;
-    const labels: Record<string, string> = { thinking: "思考中", clarifying: "等你回答", queued: "等待前一块处理", interrupted: "已中断 · 重试", failed: "没写成 · 重试" };
+    const labels: Record<string, string> = { thinking: "思考中", clarifying: "等你回答", queued: "等前一块处理", interrupted: "已中断 · 重试", failed: "没写成 · 重试" };
     const state = root.createEl("button", { cls: `echoink-inline-state-label${r.status === "clarifying" ? " is-waiting" : ""}`, text: `${r.agentName} · ${labels[r.status] ?? r.status}`, attr: { type: "button" } });
     state.onclick = () => { void this.controller.openTask(r.taskId).catch(error => this.controller.report(error)); };
-    root.createDiv({ cls: "echoink-inline-sent-instruction", text: r.instruction.text.slice(0, -r.instruction.marker.length).trimEnd() });
+    if (r.status !== "queued") root.createDiv({ cls: "echoink-inline-sent-instruction", text: r.instruction.text.slice(0, -r.instruction.marker.length).trimEnd() });
     return root;
   }
   destroy(dom: HTMLElement): void { disposeOriginControls(dom); }

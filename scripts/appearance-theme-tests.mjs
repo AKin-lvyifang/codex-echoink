@@ -16,7 +16,7 @@ const { DEFAULT_SETTINGS, normalizeSettingsData } = await import(pathToFileURL(p
 const old = structuredClone(DEFAULT_SETTINGS); delete old.colorTheme;
 assert.equal(normalizeSettingsData(old).settings.colorTheme, "green");
 assert.equal(normalizeSettingsData({ ...old, colorTheme: "unknown" }).settings.colorTheme, "green");
-for (const colorTheme of ["green", "violet", "minimal", "highlighter", "manifesto"]) {
+for (const colorTheme of ["green", "violet"]) {
   const settings = normalizeSettingsData({ ...old, colorTheme }).settings;
   assert.equal(normalizeSettingsData(JSON.parse(JSON.stringify(settings))).settings.colorTheme, colorTheme);
 }

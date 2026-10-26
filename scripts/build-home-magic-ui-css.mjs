@@ -70,7 +70,6 @@ const boundarySource = await readFile(path.join(rootDir, "src/styles/theme-bound
 const selectionAskSource = await readFile(path.join(rootDir, "src/styles/selection-ask.css"), "utf8");
 const inlineAgentSource = await readFile(path.join(rootDir, "src/styles/inline-agent.css"), "utf8");
 const inlineAgentInputSource = await readFile(path.join(rootDir, "src/styles/inline-agent-input.css"), "utf8");
-const inlineAgentPaletteSource = await readFile(path.join(rootDir, "src/styles/inline-agent-palette.css"), "utf8");
 const inlineAgentTasksSource = await readFile(path.join(rootDir, "src/styles/inline-agent-tasks.css"), "utf8");
 const moduleSettingsSource = await readFile(path.join(rootDir, "src/styles/desktop-module-settings.css"), "utf8");
 const knowledgeSettingsSource = await readFile(path.join(rootDir, "src/styles/desktop-knowledge-settings.css"), "utf8");
@@ -80,7 +79,7 @@ const alignedFormsSource = await readFile(path.join(rootDir, "src/styles/setting
 const alignedModulesSource = await readFile(path.join(rootDir, "src/styles/settings-demo-modules.css"), "utf8");
 const generationUiSource = await readFile(path.join(rootDir, "src/styles/generation-ui.css"), "utf8");
 const answerMarkdownSource = await readFile(path.join(rootDir, "src/styles/answer-markdown.css"), "utf8");
-const settingsGenerated = [settingsStart, selectionAskSource.trim(), inlineAgentSource.trim(), settingsSource.trim(), originSource.trim(), boundarySource.trim(), paperGuideSource.trim(), pdfReadingSource.trim(), moduleSettingsSource.trim(), knowledgeSettingsSource.trim(), accountSettingsSource.trim(), alignedSettingsSource.trim(), alignedFormsSource.trim(), alignedModulesSource.trim(), generationUiSource.trim(), answerMarkdownSource.trim(), inlineAgentInputSource.trim(), inlineAgentPaletteSource.trim(), inlineAgentTasksSource.trim(), settingsEnd].join("\n");
+const settingsGenerated = [settingsStart, selectionAskSource.trim(), inlineAgentSource.trim(), settingsSource.trim(), originSource.trim(), boundarySource.trim(), paperGuideSource.trim(), pdfReadingSource.trim(), moduleSettingsSource.trim(), knowledgeSettingsSource.trim(), accountSettingsSource.trim(), alignedSettingsSource.trim(), alignedFormsSource.trim(), alignedModulesSource.trim(), generationUiSource.trim(), answerMarkdownSource.trim(), inlineAgentInputSource.trim(), inlineAgentTasksSource.trim(), settingsEnd].join("\n");
 const agentStart = "/* ECHOINK_AGENT_WORKBENCH_CSS_START */";
 const agentEnd = "/* ECHOINK_AGENT_WORKBENCH_CSS_END */";
 const agentCss = await Promise.all(["agent-tasks.css", "agent-editor.css", "agent-approval.css", "workbench.css", "journal-page.css", "todo-page.css", "knowledge-page.css", "english-diary-page.css", "pdf-reading-page.css", "module-navigation.css", "agent-settings.css", "user-profile-settings.css"].map(name => readFile(path.join(rootDir, "src/styles", name), "utf8")));
