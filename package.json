@@ -26,6 +26,7 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
+    "test:inline-agent": "node scripts/inline-agent-tests.mjs",
     "test:vault-identity": "node scripts/vault-identity-tests.mjs",
     "test:vault-memory-ui": "node scripts/vault-memory-ui-tests.mjs",
     "test:english-diary": "node scripts/english-diary-tests.mjs",
@@ -70,6 +71,7 @@
   "author": "AKin-lvyifang",
   "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
+    "@codemirror/commands": "6.8.1",
     "@eslint/js": "^9.39.5",
     "@eslint/json": "^0.14.0",
     "@tailwindcss/postcss": "4.1.13",

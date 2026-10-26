@@ -19896,6 +19896,36 @@ body .echoink-home-workspace .calendar-days>button.has-photo:is(.today,.selected
 .markdown-source-view.mod-cm6 button.echoink-selection-tag, .echoink-selection-overlay button.echoink-selection-tag { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 5px; background: #3478d4; color: #fff; font-size: 11px; cursor: pointer; box-shadow: none; }
 .echoink-selection-overlay { position: fixed; inset: 0; z-index: 20; pointer-events: none; }
 .echoink-selection-overlay .echoink-selection-tag { position: absolute; pointer-events: auto; }
+.echoink-inline-block {
+  container-type: inline-size;
+  margin: 6px 0;
+  padding: 12px;
+  border-radius: var(--radius-m, 8px);
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  font-family: var(--font-text);
+  overflow-wrap: anywhere;
+}
+.echoink-inline-header, .echoink-inline-identity, .echoink-inline-actions { display: flex; align-items: center; gap: 6px; }
+.echoink-inline-header { justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
+.echoink-inline-identity { font-size: var(--font-ui-smaller, 12px); min-width: 0; }
+.echoink-inline-avatar { width: 20px; height: 20px; border-radius: 50%; }
+.echoink-inline-actions { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.echoink-inline-block .echoink-inline-actions button.echoink-origin-control { height: auto; min-height: 26px; padding: 3px 8px; font-size: 12px; line-height: 1.4; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s, 6px); box-shadow: none; }
+.echoink-inline-block .echoink-inline-actions button.echoink-origin-control.mod-cta { background: var(--echoink-control-fill, var(--text-normal)); color: var(--echoink-control-on-fill, var(--background-primary)); border-color: transparent; box-shadow: none; }
+.echoink-inline-block .echoink-inline-actions button.echoink-origin-control:hover, .echoink-inline-block .echoink-inline-actions button.echoink-origin-control:focus-visible { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.echoink-inline-block .echoink-inline-actions button.echoink-origin-control.mod-cta:hover, .echoink-inline-block .echoink-inline-actions button.echoink-origin-control.mod-cta:focus-visible { background: var(--echoink-control-fill, var(--text-normal)); border-color: transparent; outline: none; box-shadow: none; opacity: .85; }
+.echoink-inline-actions button:disabled { opacity: .45; cursor: default; }
+.echoink-inline-body { font-size: inherit; line-height: 1.6; white-space: normal; }
+.echoink-inline-body > :first-child { margin-top: 0; }
+.echoink-inline-body > :last-child { margin-bottom: 0; }
+.echoink-inline-body pre { overflow-x: auto; }
+.echoink-inline-error, .echoink-inline-missing { color: var(--text-error); font-size: var(--font-ui-small, 13px); margin: 6px 0; }
+@media (hover: hover) {
+  .echoink-inline-actions { opacity: 0; }
+  .echoink-inline-block:hover .echoink-inline-actions, .echoink-inline-block:focus-within .echoink-inline-actions { opacity: 1; }
+}
+@container (max-width: 520px) { .echoink-inline-actions { opacity: 1; } }
 /* EchoInk settings: native adaptation of the approved 2026-09-06 demo. */
 
 /* settings.css */
