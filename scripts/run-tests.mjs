@@ -35,6 +35,9 @@ const codexTransportResult = spawnSync(process.execPath, ["scripts/codex-desktop
 });
 if (codexTransportResult.status !== 0) process.exit(codexTransportResult.status ?? 1);
 
+const providerTransportResult = spawnSync(process.execPath, ["scripts/desktop-provider-transport-tests.mjs"], { stdio: "inherit" });
+if (providerTransportResult.status !== 0) process.exit(providerTransportResult.status ?? 1);
+
 const codexOAuthResult = spawnSync(process.execPath, ["scripts/codex-oauth-compat-tests.mjs"], {
   stdio: "inherit"
 });

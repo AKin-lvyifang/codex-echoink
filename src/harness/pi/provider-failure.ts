@@ -4,6 +4,7 @@ export interface ProviderFailureDetail {
   status?: number;
   code?: string;
   param?: string;
+  message?: string;
   reason?: "unsupported" | "invalid" | "required" | "out_of_range";
 }
 
@@ -11,7 +12,13 @@ export type AssistantProviderFailure = AssistantMessage & {
   echoInkProviderFailure?: ProviderFailureDetail;
 };
 
-/** Never retain raw bodies or arbitrary message text. Reasons are a finite vocabulary. */
+/** Known SDK status prefixes only; never infer status from arbitrary provider prose. */
+export function providerFailureHttpStatus(message: string): number | null {
+  const match = message.match(/^(?:(?:HTTP\s+)?([1-5]\d{2})(?:[:\s]|$)|OpenAI API error \(([1-5]\d{2})\):)/u);
+  return match ? Number(match[1] ?? match[2]) : null;
+}
+
+/** Keep bounded, redacted upstream message text, never the full response or request. */
 export function sanitizeProviderFailureDetail(status: number | null, raw: unknown, secrets: readonly string[] = []): ProviderFailureDetail | undefined {
   const text = typeof raw === "string" ? raw.slice(0, 8192) : "";
   let candidate: Record<string, unknown> = {};
@@ -32,29 +39,46 @@ export function sanitizeProviderFailureDetail(status: number | null, raw: unknow
   const message = typeof candidate?.message === "string" ? candidate.message : text;
   const param = safeField(candidate?.param) ?? safeField(message.match(/(?:parameter|param)\s*[:=]?\s*[`'"]?([A-Za-z][A-Za-z0-9_.-]*)/iu)?.[1]);
   const code = safeField(candidate?.code);
-  const effectiveStatus = status ?? (Number(text.match(/^(?:HTTP\s+)?([1-5]\d{2})(?:[:\s]|$)/u)?.[1]) || null);
+  const effectiveStatus = status ?? providerFailureHttpStatus(text);
   const reason = effectiveStatus === 401 || effectiveStatus === 403 ? undefined
     : /unsupported|not supported|unknown parameter/iu.test(message) ? "unsupported"
     : /must|range|exceed|maximum|limit/iu.test(message) ? "out_of_range"
     : /required|missing/iu.test(message) ? "required"
     : /invalid/iu.test(message) ? "invalid" : undefined;
+  const upstreamMessage = typeof candidate?.message === "string"
+    ? sanitizeProviderMessage(candidate.message, secrets) : "";
   const detail: ProviderFailureDetail = {
     ...(Number.isInteger(effectiveStatus) && effectiveStatus! >= 100 && effectiveStatus! <= 599 ? { status: effectiveStatus! } : {}),
     ...(code ? { code } : {}),
+    ...(upstreamMessage ? { message: upstreamMessage } : {}),
     ...(param ? { param } : {}),
     ...(reason && (param || code) ? { reason } : {})
   };
   return Object.keys(detail).length ? detail : undefined;
 }
 
+function sanitizeProviderMessage(value: string, secrets: readonly string[]): string {
+  let message = value;
+  for (const secret of secrets) {
+    if (secret) message = message.split(secret).join("[已隐藏凭据]");
+  }
+  return message
+    .replace(/\bauthorization\s*:\s*[^;\r\n]+/giu, "[已隐藏凭据]")
+    .replace(/\bBearer\s+[^\s,;]+/giu, "[已隐藏凭据]")
+    .replace(/\b(?:sk|pk|sess)-[A-Za-z0-9_-]{8,}/gu, "[已隐藏凭据]")
+    .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token)\s*[=:]\s*)[^\s,;]+/giu, "$1[已隐藏凭据]")
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .trim().slice(0, 512);
+}
+
 export function providerFailureDetailText(value: unknown): string {
   if (!value || typeof value !== "object") return "";
   const raw = value as ProviderFailureDetail;
-  const detail = sanitizeProviderFailureDetail(raw.status ?? null, { code: raw.code, param: raw.param });
+  const detail = sanitizeProviderFailureDetail(raw.status ?? null, { code: raw.code, param: raw.param, message: raw.message });
   if (!detail) return "";
   const reason = { unsupported: "不支持该参数", invalid: "参数无效", required: "缺少必填参数", out_of_range: "参数超出允许范围" };
   return [detail.status ? `HTTP ${detail.status}` : "", detail.code, detail.param,
-    detail.status !== 401 && detail.status !== 403 && raw.reason && Object.hasOwn(reason, raw.reason) ? reason[raw.reason] : ""].filter(Boolean).join(" · ");
+    !detail.message && detail.status !== 401 && detail.status !== 403 && raw.reason && Object.hasOwn(reason, raw.reason) ? reason[raw.reason] : "", detail.message].filter(Boolean).join(" · ");
 }
 
 export function assistantProviderFailureText(message: { errorMessage?: string; echoInkProviderFailure?: unknown }): string {
@@ -69,6 +93,8 @@ const PROVIDER_FAILURE_CODES = new Set([
   "provider_api_key_missing",
   "provider_auth_failed",
   "provider_content_filtered",
+  "provider_certificate_failed",
+  "provider_proxy_failed",
   "provider_finish_reason_missing",
   "provider_finish_reason_unsupported",
   "provider_http_failed",
@@ -175,6 +201,7 @@ export function providerFailureText(value: unknown): string | null {
       return "Provider 返回的文本编码无效，回答未完成。";
     case "provider_network_error":
     case "provider_network_failed":
+      return "无法连接模型服务，请检查网络或代理。";
     case "provider_network_interrupted":
     case "provider_partial_interrupted_network":
       return "网络连接中断，回答未完成。";
@@ -187,8 +214,12 @@ export function providerFailureText(value: unknown): string | null {
       return "等待 Provider 回答超时，请稍后重试。";
     case "provider_partial_interrupted_deadline":
       return "等待后续回答超时，已保留收到的内容并停止自动重试。";
+    case "provider_certificate_failed":
+      return "证书校验失败，请检查服务商证书或代理证书。";
+    case "provider_proxy_failed":
+      return "无法连接代理，请检查代理设置或代理服务。";
     case "provider_request_rejected":
-      return "Provider 拒绝了请求，请检查模型或参数设置。";
+      return "服务商拒绝了请求。";
     case "provider_partial_interrupted_service":
     case "provider_service_failed":
     case "provider_service_unavailable":
@@ -198,7 +229,7 @@ export function providerFailureText(value: unknown): string | null {
       return "Provider 声明了工具调用，但没有返回完整工具参数。";
     case "provider_auth_failed":
     case "provider_api_key_missing":
-      return "Provider 凭证不可用，请检查设置。";
+      return "API Key 无效或未填写，请检查设置。";
     case "provider_oauth_relogin_required":
       return "OpenAI Codex 授权已失效，请在设置中重新登录。";
     case "provider_model_invalid":

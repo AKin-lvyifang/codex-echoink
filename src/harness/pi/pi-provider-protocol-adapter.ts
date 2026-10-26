@@ -40,6 +40,7 @@ import {
   sanitizeProviderFailureDetail,
   preventProviderRetryAfterPartial,
   providerFailureCodeFromError,
+  providerFailureHttpStatus,
   safeProviderFailureCode
 } from "./provider-failure";
 import { validProviderHistory } from "./provider-stream-codec";
@@ -68,6 +69,8 @@ export type PiProviderConnectionFailureKind =
   | "model"
   | "rate_limit"
   | "network"
+  | "certificate"
+  | "proxy"
   | "timeout"
   | "request"
   | "provider";
@@ -333,8 +336,10 @@ export function classifyPiProviderConnectionFailure(
 ): PiProviderConnectionFailureKind {
   const normalized = message.toLowerCase();
   // Pi SDK errors may carry the HTTP status only in the error prefix.
-  const authenticationStatus = status ?? Number(message.match(/^(?:HTTP\s+)?(401|403)(?:[:\s]|$)/u)?.[1]);
-  if (authenticationStatus === 401 || authenticationStatus === 403) return "auth";
+  status = status ?? providerFailureHttpStatus(message);
+  const authenticationStatus = status;
+  if (authenticationStatus === 401) return "auth";
+  if (authenticationStatus === 403) return "request";
   // OAuth and local adapters provide content-free codes. Keep those categories
   // instead of treating their human-readable messages as upstream response bodies.
   switch (safeProviderFailureCode(message)) {
@@ -346,6 +351,9 @@ export function classifyPiProviderConnectionFailure(
     case "provider_rate_limited": return "rate_limit";
     case "provider_request_rejected": return "request";
     case "provider_request_timeout": return "timeout";
+    case "provider_certificate_failed": return "certificate";
+    case "provider_proxy_failed": return "proxy";
+    case "provider_network_error_http_incomplete": return "network";
     case "provider_network_error":
     case "provider_network_failed":
     case "provider_network_interrupted": return "network";
@@ -491,6 +499,9 @@ function runtimeProviderFailureCode(
       "context_length_exceeded",
       assistantMessage
     );
+  }
+  if (/Stream ended without finish_reason|stream ended before (?:message_stop|a terminal response event)/iu.test(message)) {
+    return preventProviderRetryAfterPartial("provider_network_error_http_incomplete", assistantMessage);
   }
   const safeCode = safeProviderFailureCode(message) ?? providerFailureCode(
     classifyPiProviderConnectionFailure(status, message)
@@ -670,6 +681,10 @@ function providerFailureCode(
       return "provider_rate_limited";
     case "network":
       return "provider_network_error";
+    case "certificate":
+      return "provider_certificate_failed";
+    case "proxy":
+      return "provider_proxy_failed";
     case "timeout":
       return "provider_request_timeout";
     case "request":

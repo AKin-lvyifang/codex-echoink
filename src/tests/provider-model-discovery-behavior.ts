@@ -238,9 +238,10 @@ export async function runProviderModelDiscoveryRegression(installDom: () => void
     assert.equal(authResult.echoInkProviderFailure?.status, 401);
     assert.equal(authResult.echoInkProviderFailure?.code, "invalid_request_error");
     assert.equal(authRequests, 1);
-    assert.match(assistantProviderFailureText(authResult), /凭证不可用/u);
+    assert.match(assistantProviderFailureText(authResult), /API Key 无效/u);
     assert.doesNotMatch(assistantProviderFailureText(authResult), /参数无效|模型或参数设置/u);
-    assert.doesNotMatch(JSON.stringify(authResult), /FAKE_DISCOVERY_KEY|Authentication Fails/u);
+    assert.doesNotMatch(JSON.stringify(authResult), /FAKE_DISCOVERY_KEY/u);
+    assert.match(authResult.echoInkProviderFailure?.message ?? "", /Authentication Fails/u);
   } finally { globalThis.fetch = originalFetch; }
   console.log("PASS wire: actual Pi SDK payloads for old/new DeepSeek off/on, tools and reasoning tool-result continuation; generic output unchanged");
 
@@ -270,7 +271,7 @@ export async function runProviderModelDiscoveryRegression(installDom: () => void
   }
   assert.notEqual(reasons[0], reasons[1]);
   assert.deepEqual(sanitizeProviderFailureDetail(400, { error: { param: key, code: key } }, [key]), { status: 400 });
-  assert.deepEqual(sanitizeProviderFailureDetail(null, '400 {"error":{"code":"invalid_request_error","param":"max_tokens","message":"Unsupported parameter max_tokens"}}', [key]), { status: 400, code: "invalid_request_error", param: "max_tokens", reason: "unsupported" });
+  assert.deepEqual(sanitizeProviderFailureDetail(null, '400 {"error":{"code":"invalid_request_error","param":"max_tokens","message":"Unsupported parameter max_tokens"}}', [key]), { status: 400, code: "invalid_request_error", param: "max_tokens", message: "Unsupported parameter max_tokens", reason: "unsupported" });
   console.log("PASS errors: distinct actionable parameters and HTTP status; no raw body/Key/Authorization; stable retry category");
 }
 

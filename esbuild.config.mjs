@@ -9,6 +9,7 @@ import { assemblePlatformBundle } from "./scripts/mobile-build.mjs";
 import { financeBrandsPlugin, agentAvatarAssetsPlugin, profileStringsPlugin, profileModulesPlugin } from "./scripts/bundle-shared-assets.mjs";
 import { piBraceExpansionPlugin } from "./scripts/pi-brace-expansion.mjs";
 import { radixIconsEsmPlugin, pinyinDictionaryCompressionPlugin } from "./scripts/bundle-static-data.mjs";
+import { piDesktopProviderTransportPlugin } from "./scripts/pi-desktop-provider-transport.mjs";
 import { piCodexDesktopTransportPlugin } from "./scripts/pi-codex-desktop-transport.mjs";
 import { piOpenAICodexOAuthPlugin } from "./scripts/pi-codex-oauth-compat.mjs";
 
@@ -654,6 +655,7 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
     piBraceExpansionPlugin,
     piOpenAICodexOAuthPlugin,
     piCodexDesktopTransportPlugin,
+    piDesktopProviderTransportPlugin,
     piRuntimeSurfacePlugin,
     piPhotonRuntimePlugin,
     piLeafModuleShimsPlugin,
