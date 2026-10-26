@@ -1,3 +1,6 @@
+import { StateField } from "@codemirror/state";
+export const editorInfoField = StateField.define({ create: () => undefined, update: value => value });
+export const editorLivePreviewField = StateField.define({ create: () => false, update: value => value });
 import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
 import { StateField } from "@codemirror/state";
 export const editorInfoField = StateField.define({ create: () => ({ file: null }), update: value => value });

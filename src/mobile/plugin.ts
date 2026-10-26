@@ -1,3 +1,4 @@
+import { registerGalleryFeature } from "../gallery/controller";
 import { normalizeMarkdownMath } from "../core/markdown-math";
 import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
@@ -20,7 +21,7 @@ import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
 import { IPHONE_SHELL_VIEW, IPhoneShellWorkspace, IPAD_SHELL_HOME_VIEW, IPAD_SHELL_AGENT_VIEW, IPAD_SHELL_SETTINGS_VIEW, IPadShellWorkspace } from "./shell-workspace";
 import { MobileWorkbenchService } from "./workbench";
 import { IPhoneWorkbench } from "../ui/iphone/workbench";
-import { normalizeEchoInkColorTheme } from "../ui/appearance-theme";
+import { EchoInkAppearance, ECHOINK_THEME_ATTRIBUTE } from "../ui/appearance-theme";
 import type { IPhoneRoute } from "../ui/iphone/workbench-contract";
 import { IPadWorkbench } from "../ui/ipad/workbench";
 import { IPadAgentPane } from "../ui/ipad/agent-pane";
@@ -38,6 +39,8 @@ export default class EchoInkMobilePlugin extends Plugin {
   navigation!: MobileWorkspace;
   services!: MobileServices;
   accountService!: AccountService;
+  private appearance?: EchoInkAppearance;
+  applyAppearanceTheme(doc?: Document): void { if (doc) this.appearance?.applyToDocument(doc); this.appearance?.refresh(); }
   iphoneNavigation?: IPhoneShellWorkspace;
   ipadNavigation?: IPadShellWorkspace;
   workbench?: MobileWorkbenchService;
@@ -50,6 +53,12 @@ export default class EchoInkMobilePlugin extends Plugin {
     try {
       const saved: unknown = await this.loadData();
       this.settings = loadMobileSettings(saved);
+      const savedRecord = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
+      const migratedTheme = savedRecord.colorTheme !== this.settings.colorTheme;
+      const appearanceDocument = this.app.workspace.containerEl?.ownerDocument ?? document;
+      this.appearance = new EchoInkAppearance(this.app, () => this.settings.colorTheme, () => this.accountService);
+      this.applyAppearanceTheme(appearanceDocument);
+      this.register(() => this.appearance?.dispose());
       if (mobileAgentRegistrySource(this.settings) !== "existing") {
         const raw = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
         this.retainedRegistry = { present: Object.hasOwn(raw, "agentRegistry"), value: raw.agentRegistry };
@@ -86,13 +95,14 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.manifest.dir));
       await this.services.initialize();
       if (!this.store.unavailableReason) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
-      if (migratedBindings) await this.saveSettings();
+      if (migratedBindings || migratedTheme) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
       this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
       if (!this.store.unavailableReason) await this.initializeTaskData(() => this.runtime.initialize());
       this.registerTaskLifecycle();
       await this.services.initializeFinance();
-      this.register(this.accountService.subscribe(() => { this.services.lifestyle.refresh(); this.services.notifyHomeSurfacesChanged(); }));
+      this.applyAppearanceTheme();
+      this.register(this.accountService.subscribe(() => { this.applyAppearanceTheme(); this.services.lifestyle.refresh(); this.services.notifyHomeSurfacesChanged(); }));
       this.addCommand({ id: "open-lifestyle-finance", name: "打开 财务", callback: () => void this.services.lifestyle.open("finance") });
       this.app.workspace.onLayoutReady(() => {
         if (this.settings.lifestyle.finance.enabled || this.services.lifestyle.store.snapshot().financeEntries.length)
@@ -100,9 +110,11 @@ export default class EchoInkMobilePlugin extends Plugin {
       });
       this.registerDomEvent(window, "focus", () => { void this.accountService.refresh(); });
       this.registerInterval(window.setInterval(() => { void this.accountService.refresh(); this.archiveMobileTasks(); }, 300000));
+      registerGalleryFeature(this);
       this.registerWorkspaceViews();
       this.registerStartupWorkbench();
-      this.addRibbonIcon("bot", "打开 EchoInk", () => { void this.open().catch(error => new Notice(String(error))); });
+      this.addRibbonIcon("bot", "打开 EchoInk", () => { void this.open().catch(error => new Notice(String(error))); }).classList.add("echoink-ribbon-icon");
+      this.registerEvent(this.app.workspace.on("css-change", () => this.applyAppearanceTheme()));
       this.addCommand({ id: "open-echoink-mobile", name: "打开移动对话", callback: () => { void this.open().catch(error => new Notice(String(error))); } });
       this.addCommand({ id: "open-echoink-mobile-home", name: "打开首页", callback: () => { void (Platform.isTablet ? this.navigation.openHome() : this.open()).catch(error => new Notice(String(error))); } });
       this.addCommand({ id: "echoink-mobile-current-note", name: "在 EchoInk 中引用当前笔记", callback: () => {
@@ -271,6 +283,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   }
   onunload(): void {
     this.unloaded = true;
+    (this.app.workspace.containerEl?.ownerDocument ?? document).body.removeAttribute(ECHOINK_THEME_ATTRIBUTE);
     this.workbench?.dispose();
     this.iphoneNavigation?.dispose();
     this.ipadNavigation?.dispose();
@@ -291,7 +304,7 @@ export class EchoInkIPhoneView extends ItemView {
   getDisplayText(): string { return "EchoInk"; }
   getIcon(): string { return "bot"; }
   refreshSettings(): void {
-    this.contentEl.ownerDocument.body.setAttribute("data-echoink-theme", normalizeEchoInkColorTheme(this.plugin.settings.colorTheme));
+    this.plugin.applyAppearanceTheme(this.contentEl.ownerDocument);
     this.contentEl.dataset.appearance = this.plugin.settings.mobileUi.appearance;
     this.contentEl.classList.toggle("em-large-text", this.plugin.settings.mobileUi.largeText);
   }
@@ -337,7 +350,7 @@ export class EchoInkIPadView extends ItemView {
   getDisplayText(): string { return this.area === "home" ? "工作台" : "EchoInk"; }
   getIcon(): string { return this.area === "home" ? "layout-dashboard" : "bot"; }
   refreshSettings(): void {
-    this.contentEl.ownerDocument.body.setAttribute("data-echoink-theme", normalizeEchoInkColorTheme(this.plugin.settings.colorTheme));
+    this.plugin.applyAppearanceTheme(this.contentEl.ownerDocument);
     for (const root of [this.contentEl, ...Array.from(this.contentEl.querySelectorAll<HTMLElement>(".echoink-ipad"))]) {
       root.dataset.appearance = this.plugin.settings.mobileUi.appearance;
       root.classList.toggle("em-large-text", this.plugin.settings.mobileUi.largeText);
@@ -391,7 +404,7 @@ export class EchoInkIPadSettingsView extends ItemView {
   getDisplayText(): string { return "EchoInk 设置"; }
   getIcon(): string { return "settings"; }
   refreshSettings(): void {
-    this.contentEl.ownerDocument.body.setAttribute("data-echoink-theme", normalizeEchoInkColorTheme(this.plugin.settings.colorTheme));
+    this.plugin.applyAppearanceTheme(this.contentEl.ownerDocument);
     for (const root of [this.contentEl, ...Array.from(this.contentEl.querySelectorAll<HTMLElement>(".echoink-ipad"))]) {
       root.dataset.appearance = this.plugin.settings.mobileUi.appearance;
       root.classList.toggle("em-large-text", this.plugin.settings.mobileUi.largeText);

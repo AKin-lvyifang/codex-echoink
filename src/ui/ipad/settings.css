@@ -49,11 +49,12 @@
 .echoink-ipad.pd-settings .pd-settings-module-title { appearance: none; display: flex; justify-content: flex-start; align-items: center; min-height: 44px; min-width: 0; width: 100%; padding: 0; margin: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; box-shadow: none; cursor: pointer; }
 .echoink-ipad.pd-settings .pd-settings-module-title:focus-visible { background: var(--pd-settings-soft); outline: none; }
 .echoink-ipad.pd-settings .pd-settings-module-title::after { content: none; }
-.echoink-ipad.pd-settings .pd-settings-segments { isolation: isolate; position: relative; display: inline-flex; flex: 0 0 auto; min-width: 0; min-height: 44px; padding: 8px 2px; border-radius: 10px; }
+.echoink-ipad.pd-settings .pd-settings-segments { isolation: isolate; position: relative; display: inline-grid; grid-template-columns: repeat(3, minmax(max-content, 1fr)); flex: 0 0 auto; min-width: 0; min-height: 44px; padding: 8px 2px; border-radius: 10px; }
 .echoink-ipad.pd-settings .pd-settings-segments::before { content: ""; position: absolute; z-index: -2; inset: 8px 0; border-radius: 8px; background: var(--background-secondary); }
-.echoink-ipad.pd-settings .pd-settings-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 3px; width: calc(50% - 3px); border-radius: 6px; background: var(--background-primary); transition: transform .16s; }
-.echoink-ipad.pd-settings .pd-settings-segments[data-value="violet"] .pd-settings-segment-thumb { transform: translateX(100%); }
-.echoink-ipad.pd-settings button.pd-settings-segment { appearance: none; flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: -8px 0; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: .8em; white-space: nowrap; box-shadow: none; cursor: pointer; }
+.echoink-ipad.pd-settings .pd-settings-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 3px; width: calc((100% - 6px) / 3); border-radius: 6px; background: var(--background-primary); transition: transform 180ms ease; }
+.echoink-ipad.pd-settings .pd-settings-segments[data-value="highlighter"] .pd-settings-segment-thumb { transform: translateX(100%); }
+.echoink-ipad.pd-settings .pd-settings-segments[data-value="manifesto"] .pd-settings-segment-thumb { transform: translateX(200%); }
+.echoink-ipad.pd-settings button.pd-settings-segment { appearance: none; flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: -8px 0; padding: 8px 5px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: .8em; white-space: nowrap; box-shadow: none; cursor: pointer; }
 .echoink-ipad.pd-settings button.pd-settings-segment[aria-pressed="true"] { color: var(--text-normal); font-weight: 600; }
 .echoink-ipad.pd-settings button.pd-settings-segment::after { content: none; }
 .echoink-ipad.pd-settings .pd-settings-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0 8px; }

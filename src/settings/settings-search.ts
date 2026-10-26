@@ -10,7 +10,7 @@ const CATEGORY_ALIASES: Record<SettingsTab, readonly string[]> = {
     "日记", "journal", "daily notes", "文件夹", "folder", "长期记忆", "Memory",
     "Obsidian 原生 CLI", "CLI", "命令行界面", "command line interface", "native features",
     "个性化", "personalization", "人格", "personality", "头像", "avatar",
-    "外观", "appearance", "主题", "theme", "颜色", "color", "暖白翠绿", "雾紫石墨", "Ivory", "Jade", "Violet", "Graphite"
+    "外观", "appearance", "主题", "theme", "颜色", "color", "极简黑白", "荧光笔记", "黄白宣言", "Minimal", "Highlighter", "Manifesto", "echoink-theme"
   ],
   layout: [
     "布局与外观", "Layout", "appearance", "模块", "modules", "首页", "home",

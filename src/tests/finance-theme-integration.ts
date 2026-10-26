@@ -42,7 +42,7 @@ export async function runFinanceThemeIntegrationTests(): Promise<void> {
   stylesheet.walkRules((rule) => {
     if (declarations(rule).has("--echoink-theme-scheme")) palettes.push(rule);
   });
-  assert.equal(palettes.length, 4, "Finance reuses the two existing themes in light and dark modes");
+  assert.equal(palettes.length, 6, "Finance reuses the three appearances in light and dark modes");
   for (const palette of palettes) {
     for (const surface of [".echoink-home-workspace", ".echoink-settings-host", ".echoink-settings-demo",
       ".echoink-lifestyle-view", ".echoink-finance-dialog"]) {
@@ -65,12 +65,12 @@ export async function runFinanceThemeIntegrationTests(): Promise<void> {
   assert.ok(!mapped.has("--text-error") && !mapped.has("--text-warning") && !mapped.has("--color-green"),
     "Theme mapping must preserve the existing report heading and status colors");
 
-  for (const theme of ["green", "violet"]) {
+  for (const theme of ["minimal", "highlighter", "manifesto"]) {
     for (const mode of ["light", "dark"]) {
       const variables = new Map<string, string>();
       for (const palette of palettes) {
         if (!palette.selector.includes(`[data-echoink-theme="${theme}"]`)) continue;
-        if (mode === "light" && palette.selector.includes(".theme-dark")) continue;
+        if ((mode === "dark") !== palette.selector.split(",")[0].includes(".theme-dark")) continue;
         for (const [property, value] of declarations(palette)) variables.set(property, value);
       }
       for (const [property, value] of mapped) if (property.startsWith("--")) variables.set(property, value);
@@ -84,6 +84,7 @@ export async function runFinanceThemeIntegrationTests(): Promise<void> {
       assert.notEqual(color("--background-modifier-hover"), color("--background-primary"), `${context}: visible neutral feedback`);
       for (const foreground of ["--text-normal", "--text-muted"])
         assert.ok(contrast(color(foreground), color("--background-primary")) >= 4.5, `${context}: ${foreground} remains readable on cards and dialogs`);
+      assert.ok(contrast(color("--echoink-theme-accent-text"), color("--background-primary")) >= 4.5, `${context}: emphasis text remains readable`);
       assert.ok(contrast(color("--text-on-accent"), color("--interactive-accent")) >= 4.5,
         `${context}: primary button label remains readable`);
     }
@@ -101,5 +102,5 @@ export async function runFinanceThemeIntegrationTests(): Promise<void> {
     "Category legends retain the actual category color");
   assert.match(rules.get(".echoink-life-body .echoink-finance-chart-row")?.get("border-left") ?? "", /var\(--finance-chart-color\)/u,
     "Spending chart rows retain their individual series colors");
-  console.log("Finance theme CSS passed: green/violet × light/dark scopes, token resolution, text contrast and category colors.");
+  console.log("Finance theme CSS passed: minimal/highlighter/manifesto × light/dark scopes, token resolution, text contrast and category colors.");
 }

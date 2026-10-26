@@ -63,7 +63,10 @@
     "test:finance-bill-plans": "node scripts/finance-bill-plan-tests.mjs",
     "test:finance-ui": "node scripts/finance-ui-tests.mjs",
     "test:finance-budget": "node scripts/finance-budget-tests.mjs",
-    "test:membership-gates": "node scripts/membership-gate-tests.mjs"
+    "test:membership-gates": "node scripts/membership-gate-tests.mjs",
+    "test:gallery": "node scripts/gallery-tests.mjs",
+    "test:appearance": "node scripts/appearance-theme-tests.mjs",
+    "test:companion-theme": "node scripts/companion-theme-tests.mjs"
   },
   "keywords": [
     "obsidian",

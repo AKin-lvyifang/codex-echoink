@@ -1,0 +1,7 @@
+import { build } from "esbuild";
+import { mkdir } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+await mkdir(".tmp/gallery-tests", { recursive: true });
+await build({ entryPoints: ["src/tests/gallery.ts"], outfile: ".tmp/gallery-tests/run.cjs", bundle: true, platform: "node", format: "cjs", external: ["jsdom", "@codemirror/state", "@codemirror/view", "@codemirror/commands"], loader: { ".svg": "dataurl" }, plugins: [{ name: "host", setup(b) { b.onResolve({ filter: /^obsidian$/ }, () => ({ path: "obsidian", namespace: "gallery-host" })); b.onLoad({ filter: /.*/, namespace: "gallery-host" }, () => ({ contents: `export const Platform={isMobile:false}; export class Notice { static messages=[]; constructor(text){Notice.messages.push(text);} } export class Menu { items=[]; addItem(cb){const item={setSection(){return this},setTitle(title){this.title=title;return this},setIcon(){return this},setDisabled(disabled){this.disabled=disabled;return this},onClick(run){this.run=run;return this}};cb(item);this.items.push(item);return this} } import {StateField} from "@codemirror/state"; export const editorInfoField=StateField.define({create:()=>undefined,update:value=>value}); export const editorLivePreviewField=StateField.define({create:()=>true,update:value=>value});` })); } }], logLevel: "silent" });
+const result = spawnSync(process.execPath, [".tmp/gallery-tests/run.cjs"], { stdio: "inherit" });
+process.exitCode = result.status ?? 1;

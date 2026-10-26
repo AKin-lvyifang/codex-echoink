@@ -4962,7 +4962,7 @@ async function assertOnboardingCoachmarkAccessibilityContract(): Promise<void> {
       return element.isConnected ? [element.getBoundingClientRect()] : [];
     }
   }));
-  const computedStyle = (element: ProviderModalTestElement) => ({ visibility: element.style.getPropertyValue("visibility") || "visible" });
+  const computedStyle = (element: ProviderModalTestElement) => ({ visibility: element.style.getPropertyValue("visibility") || "visible", getPropertyValue: (name: string) => element.style.getPropertyValue(name) });
   Object.assign(providerModalTestDocument, { querySelector: (selector: string) => queryLayers(selector)[0] ?? null, querySelectorAll: queryLayers });
   Object.assign(providerModalTestDocument.defaultView, { getComputedStyle: computedStyle });
   const settings = structuredClone(DEFAULT_SETTINGS);
@@ -10791,6 +10791,7 @@ class ProviderModalTestDocument {
   activeElement: ProviderModalTestElement | null = null;
   prefersReducedMotion = false;
   readonly defaultView = {
+    getComputedStyle: (element: ProviderModalTestElement) => element.style,
     MouseEvent: ProviderModalTestMouseEvent,
     ResizeObserver: ProviderModalTestResizeObserver,
     HTMLElement: ProviderModalTestElement,
@@ -10818,7 +10819,9 @@ class ProviderModalTestDocument {
     addEventListener: () => undefined,
     removeEventListener: () => undefined
   };
+  readonly documentElement = new ProviderModalTestElement("html", this);
   readonly body = new ProviderModalTestElement("body", this);
+  querySelectorAll(selector: string): ProviderModalTestElement[] { return this.body.querySelectorAll(selector); }
   private readonly eventListeners = new Map<string, Array<(event: any) => void>>();
 
   createElement(tagName: string): ProviderModalTestElement {

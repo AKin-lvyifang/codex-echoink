@@ -261,8 +261,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.register(() => dataRoot.dispose());
     const settingsLoad = await this.loadSettings();
     registerKnowledgePrivateRoot(this.getVaultPath(), path.join(pluginDataDir(this.getVaultPath(), this.getPluginDataDirName()), "pi-agent-product-v1", "knowledge"));
-    this.appearance = new EchoInkAppearance(this.app, () => this.settings.colorTheme);
+    this.appearance = new EchoInkAppearance(this.app, () => this.settings.colorTheme, () => this.accountService);
     this.appearance.refresh();
+    this.registerEvent(this.app.workspace.on("css-change", () => this.appearance?.refresh()));
     this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, win) => {
       this.appearance?.applyToDocument(win.document);
     }));
@@ -315,7 +316,8 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.pdfReading = new PdfReadingController(this);
     this.englishDiary = new EnglishDiaryController(this);
     this.englishDiary.register();
-    this.register(this.accountService.subscribe(() => this.notifyHomeSurfacesChanged()));
+    this.register(this.accountService.subscribe(() => { this.applyAppearanceTheme(); this.notifyHomeSurfacesChanged(); }));
+    this.applyAppearanceTheme();
     const controllers = registerEchoInkPluginFeatures(this);
     this.knowledgeBase = controllers.knowledgeBase;
     this.initializeKnowledgeActivityStatusBar();

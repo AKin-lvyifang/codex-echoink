@@ -1,0 +1,10 @@
+/** Image widget subtree from an earlier native Obsidian DOM capture, with local
+ * URLs anonymized. The surrounding Callout and wrapper variants are scaffolding,
+ * not a capture of the current failing live-preview Callout. */
+export function galleryNativeMarkup(options: { count: number; width?: number; row?: boolean; buffers?: boolean; wrapped?: boolean; metadata?: string; format?: "inline" | "adjacent" | "lines" | "blank" }): string {
+  const images = Array.from({ length: options.count }, (_, index) => {
+    const widget = `<div class="internal-embed media-embed image-embed is-loaded no-hover-actions" tabindex="-1" src="image-${index}.svg" alt="image-${index}.svg" contenteditable="false"${options.width && index === 0 ? ` width="${options.width}" style="width:${options.width}px"` : ""}><div class="image-wrapper"${options.width && index === 0 ? ` style="width:${options.width}px"` : ""}><img src="fixture://image-${index}.svg" alt="image-${index}.svg"${options.width && index === 0 ? ` width="${options.width}" style="width:${options.width}px;height:310px"` : ""}><div class="image-resize-corner"></div></div><div class="embed-actions"><div class="embed-action" aria-label="放大"><svg class="svg-icon lucide-zoom-in"></svg></div><div class="embed-action edit-block-button" aria-label="编辑这个区块"><svg class="svg-icon lucide-code-2"></svg></div></div></div>`;
+    return `${options.buffers ? '<img class="cm-widgetBuffer" aria-hidden="true">' : ''}${options.wrapped ? `<span class="native-wrapper">${widget}</span>` : widget}${options.buffers ? '<img class="cm-widgetBuffer" aria-hidden="true">' : ''}`;
+  }).join(options.format === 'adjacent' ? '' : options.format === 'lines' ? '<br>\n' : options.format === 'blank' ? '</p><p>' : ' ');
+  return `<div class="callout" data-callout="gallery" data-callout-metadata="${options.metadata ?? (options.row ? 'row' : '')}"><div class="callout-title">Gallery</div><div class="callout-content">${options.wrapped ? '<div class="native-content">' : ''}<p>${images}</p>${options.wrapped ? '</div>' : ''}</div></div>`;
+}

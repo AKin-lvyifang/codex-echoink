@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+const editorRequire = createRequire(import.meta.url);
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { createHash, webcrypto } from "node:crypto";
@@ -12,20 +14,22 @@ const hash = value => createHash("sha256").update(value).digest("hex");
 export async function mobileStartupConflictScenarios({ code, dom, test }) {
   function fixture(tablet) {
     const host = createHost(), commands = [], views = [], notices = [];
+    host.app.workspace.containerEl = dom.window.document.body;
     let saved = { autoOpenHome: false };
     class Plugin {
       constructor() { this.app = host.app; this.manifest = { id: "codex-echoink", dir: "plugin" }; }
       async loadData() { return structuredClone(saved); }
       async saveData(value) { saved = structuredClone(value); }
-      registerEvent() {} register() {} registerDomEvent() {}
+      registerEditorExtension() {} registerMarkdownPostProcessor() {} registerEvent() {} register() {} registerDomEvent() {}
       registerInterval(id) { this.interval = id; }
       registerView(type) { views.push(type); }
-      addRibbonIcon() {} addCommand(command) { commands.push(command.id); }
+      addRibbonIcon() { return dom.window.document.createElement("button"); } addCommand(command) { commands.push(command.id); }
     }
     const module = { exports: {} };
     const context = vm.createContext({ module, exports: module.exports, window: dom.window, document: dom.window.document,
       URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
       require(id) {
+        if (["@codemirror/state", "@codemirror/view", "@codemirror/commands"].includes(id)) return editorRequire(id);
         assert.equal(id, "obsidian");
         return { Platform: { isMobileApp: true, isMobile: !tablet, isTablet: tablet }, Plugin,
           ItemView: class {}, Component: class {}, Modal: class {}, TFile: FixtureTFile,
@@ -49,6 +53,38 @@ export async function mobileStartupConflictScenarios({ code, dom, test }) {
     await first.onload(); await close(first);
     f.commands.length = 0; f.views.length = 0; f.notices.length = 0; f.mutations.length = 0;
     return { f, path: first.store.statePath };
+  }
+  for (const tablet of [false,true]) for (const legacy of ["green","violet",undefined,"unknown"]) {
+    await test(`production appearance migration and unload: ${tablet ? "iPad" : "iPhone"}/${legacy ?? "missing"}`, async () => {
+      const { f } = await seed(tablet);
+      f.saved = { ...f.saved, colorTheme:legacy, settingsLanguage:"en" };
+      const plugin = f.create();
+      try {
+        await plugin.onload();
+        assert.equal(plugin.settings.colorTheme,"minimal");
+        assert.equal(f.saved.colorTheme,"minimal","startup persists migration even when folder bindings already exist");
+        assert.equal(f.saved.settingsLanguage,"en","migration preserves unrelated settings");
+        assert.equal(dom.window.document.body.dataset.echoinkTheme,"minimal","appearance is applied before any view opens");
+      } finally { await close(plugin); }
+      assert.equal(dom.window.document.body.hasAttribute("data-echoink-theme"),false,"unload restores the standalone theme default");
+    });
+  }
+  for (const tablet of [false,true]) for (const theme of ["highlighter","manifesto"]) {
+    await test(`production PRO appearance preference survives fallback and entitlement restoration: ${tablet ? "iPad" : "iPhone"}/${theme}`, async () => {
+      const { f } = await seed(tablet); f.saved = { ...f.saved, colorTheme: theme };
+      const plugin = f.create();
+      try {
+        await plugin.onload();
+        assert.equal(plugin.settings.colorTheme,theme); assert.equal(dom.window.document.body.dataset.echoinkTheme,"minimal");
+        const account = plugin.accountService, original = account.checkCapability;
+        try {
+          account.checkCapability = () => true; account.emit(); assert.equal(dom.window.document.body.dataset.echoinkTheme,theme);
+          account.checkCapability = () => false; account.emit(); assert.equal(dom.window.document.body.dataset.echoinkTheme,"minimal");
+          assert.equal(plugin.settings.colorTheme,theme); assert.equal(f.saved.colorTheme,theme);
+          account.checkCapability = () => true; account.emit(); assert.equal(dom.window.document.body.dataset.echoinkTheme,theme);
+        } finally { account.checkCapability = original; }
+      } finally { await close(plugin); }
+    });
   }
   async function assertAvailableShell(f, plugin) {
     assert.ok(f.commands.includes("open-echoink-mobile")); assert.ok(f.views.length >= 4);

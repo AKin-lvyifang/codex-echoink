@@ -8,8 +8,8 @@
   --wb-line: var(--echoink-theme-line, var(--background-modifier-border));
   --wb-hover: var(--echoink-theme-hover, var(--background-modifier-hover));
   --wb-warn: var(--echoink-theme-warn, var(--text-warning));
-  --wb-accent: var(--echoink-theme-accent, var(--interactive-accent));
-  --wb-on-accent: var(--echoink-theme-on-accent, var(--text-on-accent));
+  --wb-accent: var(--echoink-control-fill);
+  --wb-on-accent: var(--echoink-control-on-fill);
   padding: 0;
   overflow: auto;
   background: var(--wb-bg);
@@ -32,7 +32,7 @@
   font: inherit; font-weight: 400; line-height: 1.55; white-space: normal; overflow-wrap: anywhere;
   box-shadow: none; outline: none; cursor: pointer;
 }
-.echoink-workbench button.wb-button.is-primary { background: var(--wb-accent); border-color: transparent; color: var(--wb-on-accent); }
+.echoink-workbench button.wb-button.is-primary { --wb-text: var(--echoink-control-fill); --wb-hover: var(--echoink-control-hover); --wb-line: var(--echoink-control-line); background: var(--wb-accent); border-color: transparent; color: var(--wb-on-accent); }
 .echoink-workbench button.wb-button.is-tertiary, .echoink-workbench button.wb-button.is-icon { border-color: transparent; background: transparent; color: var(--wb-secondary); }
 .echoink-workbench button.wb-button.is-tertiary { min-height: 0; padding: 3px 6px; font-size: calc(var(--font-text-size, 16px) * .75); border-radius: 6px; }
 .echoink-workbench button.wb-button.is-icon { flex: 0 0 auto; width: 30px; min-height: 30px; padding: 0; }

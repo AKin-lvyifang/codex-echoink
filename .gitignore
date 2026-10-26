@@ -21,4 +21,5 @@ src/tests/agent-evals/
 src/tests/fixtures/agent-evals-v1/
 
 *.log
+/companion-theme/
 node_modules

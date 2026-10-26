@@ -22,6 +22,7 @@ import { renderTavilySettings, renderProviderTabs } from "./tavily-settings";
 import { renderTodoStatistics } from "./todo-statistics";
 import { renderTodoReminderSettings } from "./todo-reminder-settings";
 import { renderEnglishDiaryActivity } from "./english-diary-activity";
+import { renderCompanionThemeRecommendation } from "../ui/appearance-theme";
 import { renderAppearancePicker } from "./appearance-picker";
 import { renderObsidianCliStatus } from "./obsidian-cli-status";
 import { DESKTOP_SETTINGS_TAB_ICONS, SETTINGS_TAB_ICONS } from "./settings-tab-icons";
@@ -1146,6 +1147,7 @@ export class CodexSettingTab extends PluginSettingTab {
         ? Platform.isDesktopApp ? "跟随 Obsidian 明暗" : "选择主题颜色，浅色与深色跟随 Obsidian。"
         : Platform.isDesktopApp ? "Follows Obsidian light and dark modes" : "Choose a color theme. Light and dark modes follow Obsidian."));
     renderAppearancePicker(appearanceRow.controlEl, this.plugin, zh);
+    renderCompanionThemeRecommendation(appearanceSection, zh);
     const interfaceSection = createSettingsSection(page, {
       title: zh ? "界面与启动" : "Interface and startup",
       surface: "group"

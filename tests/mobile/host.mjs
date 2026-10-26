@@ -39,6 +39,7 @@ export function createHost(seed = { "笔记/来源.md": "项目决定：先完�
       async create(path, content) { if (files.has(path)) throw new Error("File already exists"); files.set(path, content); writes.push(path); const f = file(path); vaultEvents.trigger("create", f); return f; }
     },
     workspace: {
+      iterateAllLeaves() {},
       ...workspaceEvents, containerEl: { ownerDocument: { defaultView: globalThis } },
       layoutReady: true, getLeavesOfType() { return []; }, onLayoutReady(callback) { callback(); },
       getActiveFile() { return file("笔记/来源.md"); },
