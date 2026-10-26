@@ -19897,8 +19897,8 @@ body .echoink-home-workspace .calendar-days>button.has-photo:is(.today,.selected
   margin: 6px 0;
   padding: 12px;
   border-radius: var(--radius-m, 8px);
-  color: var(--text-normal);
-  background: var(--background-secondary);
+  color: var(--echoink-theme-text, var(--text-normal));
+  background: var(--echoink-theme-raised, var(--background-secondary));
   font-family: var(--font-text);
   overflow-wrap: anywhere;
 }
@@ -19907,9 +19907,9 @@ body .echoink-home-workspace .calendar-days>button.has-photo:is(.today,.selected
 .echoink-inline-identity { font-size: var(--font-ui-smaller, 12px); min-width: 0; }
 .echoink-inline-avatar { width: 20px; height: 20px; border-radius: 50%; }
 .echoink-inline-actions { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
-.echoink-inline-block .echoink-inline-actions button.echoink-origin-control { height: auto; min-height: 26px; padding: 3px 8px; font-size: 12px; line-height: 1.4; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s, 6px); box-shadow: none; }
+.echoink-inline-block .echoink-inline-actions button.echoink-origin-control { height: auto; min-height: 26px; padding: 3px 8px; font-size: 12px; line-height: 1.4; border: 1px solid var(--echoink-theme-line, var(--background-modifier-border)); border-radius: var(--radius-s, 6px); color: var(--echoink-theme-text, var(--text-normal)); background: var(--echoink-theme-bg, var(--background-primary)); box-shadow: none; }
 .echoink-inline-block .echoink-inline-actions button.echoink-origin-control.mod-cta { background: var(--echoink-control-fill, var(--text-normal)); color: var(--echoink-control-on-fill, var(--background-primary)); border-color: transparent; box-shadow: none; }
-.echoink-inline-block .echoink-inline-actions button.echoink-origin-control:hover, .echoink-inline-block .echoink-inline-actions button.echoink-origin-control:focus-visible { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.echoink-inline-block .echoink-inline-actions button.echoink-origin-control:hover, .echoink-inline-block .echoink-inline-actions button.echoink-origin-control:focus-visible { background: var(--echoink-theme-hover, var(--background-modifier-hover)); outline: none; box-shadow: none; }
 .echoink-inline-block .echoink-inline-actions button.echoink-origin-control.mod-cta:hover, .echoink-inline-block .echoink-inline-actions button.echoink-origin-control.mod-cta:focus-visible { background: var(--echoink-control-fill, var(--text-normal)); border-color: transparent; outline: none; box-shadow: none; opacity: .85; }
 .echoink-inline-actions button:disabled { opacity: .45; cursor: default; }
 .echoink-inline-body { font-size: inherit; line-height: 1.6; white-space: normal; }
@@ -19917,6 +19917,8 @@ body .echoink-home-workspace .calendar-days>button.has-photo:is(.today,.selected
 .echoink-inline-body > :last-child { margin-bottom: 0; }
 .echoink-inline-body pre { overflow-x: auto; }
 .echoink-inline-error, .echoink-inline-missing { color: var(--text-error); font-size: var(--font-ui-small, 13px); margin: 6px 0; }
+button.echoink-inline-missing { width: auto; min-height: 0; padding: 1px 4px; border: 0; background: var(--background-secondary); font: inherit; color: var(--text-error); box-shadow: none; }
+button.echoink-inline-missing:is(:hover, :focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
 @media (hover: hover) {
   .echoink-inline-actions { opacity: 0; }
   .echoink-inline-block:hover .echoink-inline-actions, .echoink-inline-block:focus-within .echoink-inline-actions { opacity: 1; }
@@ -24804,7 +24806,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   align-items: center;
   justify-content: center;
   vertical-align: -3px;
-  color: var(--text-muted);
+  color: var(--echoink-theme-secondary, var(--text-muted));
 }
 
 .echoink-inline-input-avatar img { display: block; width: 18px; height: 18px; object-fit: cover; border-radius: 50%; }
@@ -24828,8 +24830,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   vertical-align: -1px;
   border: 0;
   border-radius: 4px;
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
+  background: var(--echoink-theme-hover, var(--background-modifier-hover));
+  color: var(--echoink-theme-text, var(--text-normal));
   font-size: inherit;
   line-height: 1;
   box-shadow: none;
@@ -24838,8 +24840,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 }
 
 .cm-editor button.echoink-inline-input-send:hover,
-.cm-editor button.echoink-inline-input-send:focus-visible { background: var(--background-modifier-active-hover, var(--background-modifier-hover)); box-shadow: none; outline: none; }
-.cm-editor button.echoink-inline-input-send:active { background: var(--background-modifier-hover); transform: translateY(1px); }
+.cm-editor button.echoink-inline-input-send:focus-visible { background: var(--echoink-theme-hover, var(--background-modifier-hover)); box-shadow: none; outline: none; }
+.cm-editor button.echoink-inline-input-send:active { background: var(--echoink-theme-hover, var(--background-modifier-hover)); transform: translateY(1px); }
 .cm-editor button.echoink-inline-input-send:disabled { opacity: .45; cursor: default; transform: none; }
 .cm-editor button.echoink-inline-input-send svg { width: 14px; height: 14px; }
 
@@ -24892,8 +24894,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-inline-task-pin-actions { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-left: auto; }
 .echoink-agent-tasks .echoink-inline-task-action.echoink-origin-control[data-slot="button"] { min-height: 27px; height: auto; padding: 3px 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: transparent; color: var(--text-normal); font-size: 12px; line-height: 1.4; box-shadow: none; white-space: normal; }
 .echoink-agent-tasks .echoink-inline-task-action.echoink-origin-control[data-slot="button"]:is(:hover, :focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
-.echoink-agent-tasks .echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"] { background: var(--echoink-theme-text, var(--text-normal)); color: var(--echoink-theme-bg, var(--background-primary)); border-color: transparent; }
-.echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"]:is(:hover, :active) { background: var(--echoink-theme-text, var(--text-normal)) !important; color: var(--echoink-theme-bg, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
+.echoink-agent-tasks .echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"] { background: var(--echoink-control-fill, var(--text-normal)); color: var(--echoink-control-on-fill, var(--background-primary)); border-color: transparent; }
+.echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"]:is(:hover, :active) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
 .echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"]:focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; outline: none !important; box-shadow: none !important; }
 .echoink-agent-tasks .echoink-inline-task-action:disabled { opacity: .45; cursor: default; }
 .echoink-agent-tasks .echoink-inline-task-source button.echoink-inline-task-source-link.echoink-origin-control[data-slot="button"] { min-height: 24px; height: auto; padding: 1px 3px; border: 0 !important; background: transparent; color: var(--text-muted); text-align: left; white-space: normal; overflow-wrap: anywhere; font: inherit; outline: none !important; box-shadow: none !important; }
@@ -24920,14 +24922,20 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-inline-task-edit-actions { display: flex; gap: 6px; justify-content: flex-end; align-self: flex-end; }
 .echoink-inline-task-presets { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 8px; }
 .echoink-inline-task-composer-actions { display: flex; justify-content: flex-end; width: 100%; }
-.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-theme-text, var(--text-normal)) !important; color: var(--echoink-theme-bg, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
+.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
 .echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; }
 .has-inline-task .codex-input-wrap > :is(.codex-turn-queue, .codex-composer-workspace, .codex-attachments, .codex-composer-enhance-review, .codex-skill-menu, .codex-knowledge-command-menu, .codex-composer-resource-panel) { display: none !important; }
 .has-inline-task .echoink-task-detail > .echoink-knowledge-activity-slot { display: none; }
-.echoink-inline-state-label { height: auto; min-height: 24px; padding: 2px 0; background: transparent; border: 0; box-shadow: none; color: var(--text-muted); font-size: 12px; }
-.echoink-inline-state-label.is-waiting { color: var(--echoink-theme-warn, var(--text-warning)); }
-.echoink-inline-request-state .echoink-inline-state-label:focus-visible { box-shadow: none; outline: none; background: var(--background-modifier-hover); }
-.echoink-inline-sent-instruction { background: var(--echoink-theme-raised, var(--background-secondary)); padding: 5px 8px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cm-editor .echoink-inline-request-state button.echoink-inline-state-label { display: block; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 2px 0; border: 0 !important; border-radius: 0; background: transparent !important; box-shadow: none !important; outline: none !important; color: var(--echoink-theme-secondary, var(--text-muted)); font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left; }
+.cm-editor .echoink-inline-request-state button.echoink-inline-state-label.is-waiting { color: var(--echoink-theme-warn, var(--text-warning)); }
+.cm-editor .echoink-inline-request-state button.echoink-inline-state-label:is(:hover, :focus-visible) { box-shadow: none !important; outline: none !important; background: var(--echoink-theme-hover, var(--background-modifier-hover)) !important; }
+.echoink-inline-request-state { margin: 0; color: var(--echoink-theme-text, var(--text-normal)); }
+.cm-editor button.echoink-inline-sent-instruction { display: flex; align-items: baseline; gap: 5px; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 5px 8px; border: 0; border-radius: 6px; background: var(--echoink-theme-raised, var(--background-secondary)); color: var(--echoink-theme-text, var(--text-normal)); font: inherit; font-weight: 400; line-height: inherit; text-align: left; box-shadow: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cm-editor button.echoink-inline-sent-instruction:is(:hover, :focus-visible) { background: var(--echoink-theme-hover, var(--background-modifier-hover)); outline: none; box-shadow: none; }
+.echoink-inline-sent-avatar { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; min-width: 18px; flex: 0 0 18px; align-self: center; }
+.echoink-inline-sent-avatar :is(img, svg) { width: 18px; height: 18px; border-radius: 50%; }
+.echoink-inline-sent-text { min-width: 0; font: inherit; }
+.echoink-inline-sent-name { font-weight: 600; }
 @media (hover: none) { .echoink-inline-task-message .echoink-inline-task-edit-button { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .echoink-inline-task-spinner svg { animation: none; } }
 @container (max-width: 360px) { .echoink-inline-task-pin-actions { width: 100%; justify-content: flex-end; } }
@@ -25318,7 +25326,7 @@ body.theme-dark { --echoink-control-fill: #fafafa; --echoink-control-on-fill: #1
 }
 .echoink-chat-surface :is(.codex-message-checkbox.is-checked, .codex-session-checkbox.is-selected) { color: var(--echoink-control-on-fill); }
 /* Only EchoInk surfaces receive these tokens; Obsidian owns light/dark mode. */
-body[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
 body.is-popout-modal:has(.modal.mod-settings) {
@@ -25338,7 +25346,7 @@ body.is-popout-modal:has(.modal.mod-settings) {
   --echoink-theme-active: #f4f4f5;
   --echoink-theme-on-accent: #ffffff;
 }
-body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-light[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-dark :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
 body.theme-dark.is-popout-modal:has(.modal.mod-settings) {
@@ -25358,7 +25366,7 @@ body.theme-dark.is-popout-modal:has(.modal.mod-settings) {
   --echoink-theme-active: #27272a;
   --echoink-theme-on-accent: #18181b;
 }
-body[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: light;
   --echoink-theme-bg: #ffffff;
@@ -25376,7 +25384,7 @@ body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-
   --echoink-theme-active: #fff6c4;
   --echoink-theme-on-accent: #2a2a2a;
 }
-body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-light[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: dark;
   --echoink-theme-bg: #1b1b1b;
@@ -25394,7 +25402,7 @@ body.theme-light[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink
   --echoink-theme-active: #3f3a1e;
   --echoink-theme-on-accent: #1b1b1b;
 }
-body[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: light;
   --echoink-theme-bg: #f3f3f3;
@@ -25412,7 +25420,7 @@ body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ip
   --echoink-theme-active: #f4ecc0;
   --echoink-theme-on-accent: #212121;
 }
-body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-light[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: dark;
   --echoink-theme-bg: #212121;

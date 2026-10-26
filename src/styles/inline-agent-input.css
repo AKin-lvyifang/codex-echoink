@@ -33,7 +33,7 @@
   align-items: center;
   justify-content: center;
   vertical-align: -3px;
-  color: var(--text-muted);
+  color: var(--echoink-theme-secondary, var(--text-muted));
 }
 
 .echoink-inline-input-avatar img { display: block; width: 18px; height: 18px; object-fit: cover; border-radius: 50%; }
@@ -57,8 +57,8 @@
   vertical-align: -1px;
   border: 0;
   border-radius: 4px;
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
+  background: var(--echoink-theme-hover, var(--background-modifier-hover));
+  color: var(--echoink-theme-text, var(--text-normal));
   font-size: inherit;
   line-height: 1;
   box-shadow: none;
@@ -67,8 +67,8 @@
 }
 
 .cm-editor button.echoink-inline-input-send:hover,
-.cm-editor button.echoink-inline-input-send:focus-visible { background: var(--background-modifier-active-hover, var(--background-modifier-hover)); box-shadow: none; outline: none; }
-.cm-editor button.echoink-inline-input-send:active { background: var(--background-modifier-hover); transform: translateY(1px); }
+.cm-editor button.echoink-inline-input-send:focus-visible { background: var(--echoink-theme-hover, var(--background-modifier-hover)); box-shadow: none; outline: none; }
+.cm-editor button.echoink-inline-input-send:active { background: var(--echoink-theme-hover, var(--background-modifier-hover)); transform: translateY(1px); }
 .cm-editor button.echoink-inline-input-send:disabled { opacity: .45; cursor: default; transform: none; }
 .cm-editor button.echoink-inline-input-send svg { width: 14px; height: 14px; }
 

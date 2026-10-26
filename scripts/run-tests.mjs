@@ -5,6 +5,8 @@ const suites = [
   "test:inline-agent",
   "test:inline-agent-runtime",
   "test:inline-agent-concurrency",
+  "test:inline-agent-recovery",
+  "test:inline-agent-editor",
   "test:inline-agent-mention",
   "test:inline-agent-task-ui",
   "test:gallery",

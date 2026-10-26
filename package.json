@@ -28,6 +28,8 @@
     "test": "node scripts/run-tests.mjs",
     "test:inline-agent": "node scripts/inline-agent-tests.mjs",
     "test:inline-agent-concurrency": "node scripts/inline-agent-concurrency-tests.mjs",
+    "test:inline-agent-recovery": "node scripts/inline-agent-recovery-tests.mjs",
+    "test:inline-agent-editor": "node scripts/inline-agent-editor-tests.mjs",
     "test:inline-agent-runtime": "node scripts/inline-agent-runtime-tests.mjs",
     "test:inline-agent-mention": "node scripts/inline-agent-mention-tests.mjs",
     "test:inline-agent-task-ui": "node scripts/inline-agent-task-ui-tests.mjs",

@@ -183,7 +183,7 @@ await check("interrupted send without marker is retained as missing, never auto-
   assert.equal(g.service.get(r.id)?.status, "missing"); assert.equal(g.applies(), 0); await g.service.dispose();
 });
 await check("real repository persists, validates scope and refuses corrupt data", async () => {
-  const base = path.join(homedir(), "EchoInk-TestVaults/90-任务临时"); await mkdir(base, { recursive: true }); const dir = await mkdtemp(path.join(base, "inline-round1-tests-"));
+  const base = process.env.ECHOINK_TEST_ROOT || path.join(homedir(), "EchoInk-TestVaults/90-任务临时"); await mkdir(base, { recursive: true }); const dir = await mkdtemp(path.join(base, "inline-round1-tests-"));
   try {
     const file = path.join(dir, "requests.json"), repo = new FileInlineRepository(file, "vault-test"), f = fixture(undefined, repo);
     await f.service.initialize(); const r = await f.service.stageProposal(f.input()); await f.service.dispose(); assert.equal((await repo.load())[0].id, r.id);

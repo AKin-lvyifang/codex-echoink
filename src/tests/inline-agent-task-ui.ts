@@ -110,6 +110,28 @@ await check("shared compare state disables confirmation; confirmed version is ma
   assert.deepEqual(f.calls.at(-1), ["confirm", "r1", "v1"]); assert.ok(f.root.textContent?.includes("已写入")); f.close();
 });
 
+await check("failed commit exposes only retry-save and keeps the original local action and version", async () => {
+  for (const action of ["confirm", "revoke"] as const) {
+    const item = request("save_failed"); item.commit = { action, versionId: "v1" } as never;
+    const f = fixture(item);
+    assert.deepEqual([...f.root.querySelectorAll<HTMLButtonElement>(".echoink-inline-task-pin [data-inline-action]")].map(button => button.dataset.inlineAction), ["retry-save"]);
+    assert.equal(f.button("revoke"), null); assert.equal(f.button("retry-save").textContent, "重试保存");
+    assert.ok(f.root.querySelector(".echoink-inline-task-version summary")?.textContent?.includes("当前"));
+    assert.equal(f.root.querySelector(".echoink-inline-task-version summary")?.textContent?.includes("已写入"), false);
+    f.button("retry-save").click(); await settle();
+    assert.deepEqual(f.calls, [[action, "r1", "v1"]]); f.close();
+  }
+});
+
+await check("written version requires a saved commit or confirmed status and savedAt updates its UI signature", () => {
+  const item = request("saving"); item.commit = { action: "confirm", versionId: "v1" } as never;
+  const f = fixture(item), before = inlineTaskUiSignature(f.records, false, "zh-CN");
+  assert.ok(f.root.querySelector(".echoink-inline-task-version summary")?.textContent?.includes("当前"));
+  item.commit!.savedAt = 250;
+  assert.notEqual(inlineTaskUiSignature(f.records, false, "zh-CN"), before); f.emit();
+  assert.ok(f.root.querySelector(".echoink-inline-task-version summary")?.textContent?.includes("已写入")); f.close();
+});
+
 await check("second version and friendly assistant text never expose raw model JSON", () => {
   const item = request(); item.versions.push({ ...structuredClone(item.versions[0]), id: "v2", number: 2, text: "更短的新稿", createdAt: 250 }); item.currentVersionId = "v2";
   item.thread!.push({ id: "a2", role: "assistant", text: '{"action":"replace","text":"secret raw draft"}', at: 250, versionId: "v2" });

@@ -85,7 +85,7 @@ export class InlineAgentRuntimeController {
       this.drainScheduled = false;
       if (this.disposed) return;
       for (const request of this.service.list()) {
-        if (request.status !== "queued" || !request.queue?.regenerate || request.queue.blockedBy.length || this.flights.has(request.taskId)) continue;
+        if (request.status !== "queued" || !request.queue?.regenerate || request.queue.blockedBy.length || this.flights.has(request.taskId) || !this.service.canAutomaticallyRegenerate(request.id)) continue;
         const requirement = request.preparedProposal?.requirement ?? request.thread?.filter(m => m.role === "user").at(-1)?.text;
         if (requirement && request.model) this.launch(request, requirement, request.model, false);
       }

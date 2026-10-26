@@ -17,6 +17,7 @@ export interface InlineTaskHost {
     revoke(id: string, versionId: string): Promise<void>;
     compare(id: string): void;
     comparingOriginal: Set<string>;
+    canAutomaticallyRegenerate?(id: string): boolean;
   };
   runtime: { reply(taskId: string, text: string): Promise<void>; retry(taskId: string): Promise<void>; stop(taskId: string): Promise<void> };
   openSource(requestId: string): Promise<void>;
@@ -74,7 +75,7 @@ export function inlineTaskUiSignature(requests: readonly InlineRequest[], compar
     agentId: request.agentId, agentName: request.agentName, currentVersionId: request.currentVersionId, error: request.error, question: request.question,
     instruction: request.instruction.text, marker: request.instruction.marker, thread: request.thread, followups: request.followups,
     context: request.readContext?.text ?? request.versions.find(version => version.id === request.currentVersionId)?.context.text,
-    commit: request.commit && [request.commit.action, request.commit.versionId],
+    commit: request.commit && [request.commit.action, request.commit.versionId, request.commit.savedAt],
     versions: request.versions.map(version => [version.id, version.number, version.text, version.target.text]) }))]);
 }
 
@@ -191,12 +192,19 @@ export class InlineTaskDetailView {
         lead.createSpan({ text: en ? "Writing · Your note is unchanged" : "正在写 · 正文还没改" });
         this.button(actions, en ? "Stop" : "停止", "stop", () => host?.runtime.stop(request.taskId)); break;
       case "clarifying": lead.textContent = en ? "Waiting for your answer" : "等你回答"; revoke(); break;
-      case "queued": lead.textContent = en ? "Queued · Waiting for the preceding block" : "排队中 · 等前一块处理完"; revoke(); break;
+      case "queued":
+        lead.textContent = en ? "Queued · Waiting for the preceding block" : "排队中 · 等前一块处理完";
+        revoke();
+        if (host?.service.canAutomaticallyRegenerate?.(request.id) === false && request.queue?.blockedBy.length === 0) retry();
+        break;
       case "conflict": lead.textContent = en ? "Target text changed · Confirmation blocked" : "目标已变动，已阻止确认"; revoke(); retry(); break;
       case "failed": case "interrupted": lead.textContent = inlineTaskStatus(request, language); revoke(); retry(); break;
       case "missing": lead.textContent = en ? "The source position was deleted" : "正文位置已删除"; revoke(en ? "Discard" : "丢弃"); break;
-      case "save_failed": lead.textContent = en ? "Save failed · Review the note before retrying" : "保存失败，请核对正文后重试"; revoke();
-        if (request.commit?.action === "confirm") this.button(actions, en ? "Retry saving" : "重试保存", "confirm", () => host?.service.confirm(request.id, request.currentVersionId), true);
+      case "save_failed": lead.textContent = en ? "Save failed · Review the note before retrying" : "保存失败，请核对正文后重试";
+        if (request.commit) {
+          const commit = request.commit;
+          this.button(actions, en ? "Retry saving" : "重试保存", "retry-save", () => host?.service[commit.action](request.id, commit.versionId), true);
+        }
         break;
       default: lead.textContent = inlineTaskStatus(request, language);
     }
@@ -209,7 +217,7 @@ export class InlineTaskDetailView {
     const wanted = new Set<string>();
     items.forEach((item, index) => {
       const key = `${item.request.id}:${item.message.id}`; wanted.add(key);
-      const signature = this.editing?.key === key ? `editing:${this.busy.size}` : JSON.stringify([item.message, item.request.status, item.request.currentVersionId, item.request.commit?.versionId, item.request.versions.map(version => [version.id, version.number, version.text]), index === lastUser, index === lastAssistant, current.language]);
+      const signature = this.editing?.key === key ? `editing:${this.busy.size}` : JSON.stringify([item.message, item.request.status, item.request.currentVersionId, item.request.commit && [item.request.commit.action, item.request.commit.versionId, item.request.commit.savedAt], item.request.versions.map(version => [version.id, version.number, version.text]), index === lastUser, index === lastAssistant, current.language]);
       let entry = this.nodes.get(key);
       if (!entry || entry.signature !== signature) {
         // Keep an active editing node intact even when unrelated request state changes.
@@ -274,7 +282,7 @@ export class InlineTaskDetailView {
     return row;
   }
   private version(root: HTMLElement, request: InlineRequest, version: InlineVersion, language: SettingsLanguage): void {
-    const en = english(language), written = request.commit?.action === "confirm" && request.commit.versionId === version.id;
+    const en = english(language), written = request.commit?.action === "confirm" && request.commit.versionId === version.id && (request.commit.savedAt !== undefined || request.status === "confirmed");
     const current = request.currentVersionId === version.id && ["pending", "conflict", "saving", "save_failed"].includes(request.status);
     const label = written ? en ? "Written to note" : "已写入" : current ? en ? "Current" : "当前" : en ? "Replaced by a newer version" : "已被新版替换";
     const details = root.createEl("details", { cls: "echoink-inline-task-version" });

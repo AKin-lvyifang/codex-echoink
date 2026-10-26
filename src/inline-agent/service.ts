@@ -15,6 +15,11 @@ export interface InlineHost {
   report(error: unknown): void;
 }
 const terminal = (r: InlineRequest) => ["confirmed", "revoked", "withdrawn", "modified"].includes(r.status);
+const missingInstructionError = (document: string, r: InlineRequest): string => {
+  const first = document.indexOf(r.instruction.marker);
+  return first >= 0 && document.indexOf(r.instruction.marker, first + r.instruction.marker.length) >= 0
+    ? "正文编号重复，位置已失效。" : "正文位置已删除或指令不完整。";
+};
 
 /** Independent of sidebar/view lifetime and ordinary ProductRun completion. */
 export class InlineRequestService {
@@ -24,6 +29,7 @@ export class InlineRequestService {
   private readonly listeners = new Set<() => void>();
   private readonly runDocuments = new Map<string, { token: string; document: string; changes: ChangeDesc }>();
   private readonly commitTails = new Map<string, Promise<void>>();
+  private readonly restoredReadyQueues = new Set<string>();
   private nextOrder = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
@@ -37,9 +43,12 @@ export class InlineRequestService {
       record.order ??= ++this.nextOrder;
       this.nextOrder = Math.max(this.nextOrder, record.order);
       this.requests.set(record.id, record);
+      if (record.status === "queued" && record.queue?.regenerate && !record.queue.blockedBy.length) this.restoredReadyQueues.add(record.id);
     }
-    this.changed();
+    this.changed(false);
   }
+  /** A queue already ready at boot pauses; handling a still-blocking predecessor resumes its successors normally. */
+  canAutomaticallyRegenerate(id: string): boolean { return this.requests.has(id) && !this.restoredReadyQueues.has(id); }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   list(path?: string): InlineRequest[] { return [...this.requests.values()].filter(r => !path || r.path === path).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(r => structuredClone(r)); }
   get(id: string): InlineRequest | undefined { const r = this.requests.get(id); return r && structuredClone(r); }
@@ -98,12 +107,13 @@ export class InlineRequestService {
     const r = this.requests.get(id); if (!r) throw new Error("正文请求不存在。");
     const editor = await this.host.editor(r.path), document = editor.read();
     this.reconcileRecord(r, document);
-    if (!locateInstruction(document, r) || r.status === "missing") throw new Error("正文位置已删除，请重新 @ 管家。");
+    if (!locateInstruction(document, r) || r.status === "missing") throw new Error(r.error ?? "正文位置已删除，请重新 @ 管家。");
     const controls = this.list(r.path).flatMap(record => { const span = locateInstruction(document, record); return span ? [span] : []; });
     return { request: structuredClone(r), document, context: cleanDocument(document, controls) };
   }
   async startRun(id: string, requirement: string, model: InlineModelSelection, context: InlineContext, addMessage = true): Promise<string> {
     const r = this.requests.get(id); if (!r || terminal(r) || r.status === "missing") throw new Error("这块已结束，请重新建立位置。");
+    this.restoredReadyQueues.delete(id);
     if (r.question && r.timing?.questionAt) r.timing.userWaitMs = (r.timing.userWaitMs ?? 0) + Date.now() - r.timing.questionAt;
     r.question = undefined; r.error = undefined; r.status = "thinking"; r.targetResolved = false; r.preparedProposal = undefined; r.queue = undefined; r.model = structuredClone(model); r.readContext = structuredClone(context); r.runToken = randomUUID(); r.updatedAt = Date.now();
     r.timing = { submittedAt: r.timing?.submittedAt ?? Date.now(), userWaitMs: r.timing?.userWaitMs, contextReadyAt: Date.now(), modelStartedAt: Date.now() };
@@ -206,6 +216,12 @@ export class InlineRequestService {
       editor.apply(changes, "normal", r.id);
       r.observedDocument = after;
       await this.finishSave(r, editor);
+    } catch (error) {
+      if (r.status === "saving" && r.commit && !r.commit.savedAt) {
+        r.status = "save_failed"; r.error = "保存尚未完成；当前文字保留，请重试。";
+        await this.flush().catch(() => undefined);
+      }
+      throw error;
     } finally { this.fileFlights.delete(r.path); this.changed(); }
   }
   private async finishSave(r: InlineRequest, editor: InlineEditorPort): Promise<void> {
@@ -246,7 +262,7 @@ export class InlineRequestService {
         }
       } else if (!["missing", "revoked"].includes(r.status)) {
         const instruction = locateInstruction(next, r);
-        if (!instruction) { r.status = "missing"; r.error = "正文位置已删除。"; }
+        if (!instruction) { r.status = "missing"; r.error = missingInstructionError(next, r); }
         else {
           r.instruction = { ...r.instruction, ...instruction };
           if (r.targetResolved !== false && touchesInterior(r.target, changes)) { if (r.status === "queued" && r.queue) r.queue.regenerate = true; else r.status = "conflict"; r.error = "目标已变动，请重新生成。"; }
@@ -289,7 +305,7 @@ export class InlineRequestService {
     }
     if (terminal(r)) return;
     const instruction = locateInstruction(document, r);
-    if (!instruction) { r.status = "missing"; r.error = "正文位置已删除或指令不完整。"; return; }
+    if (!instruction) { r.status = "missing"; r.error = missingInstructionError(document, r); return; }
     if (r.targetResolved === false) { r.instruction = { ...r.instruction, ...instruction }; r.observedDocument = document; return; }
     const target = locateTarget(document, r.target, r.observedDocument === document);
     r.instruction = { ...r.instruction, ...instruction };
@@ -352,7 +368,7 @@ export class InlineRequestService {
     }
     return before !== signature();
   }
-  private changed(): void { if (this.updateQueues()) this.scheduleSave(); this.host.changed(); for (const listener of this.listeners) listener(); }
+  private changed(updateQueues = true): void { if (updateQueues && this.updateQueues()) this.scheduleSave(); this.host.changed(); for (const listener of this.listeners) listener(); }
   async flush(): Promise<void> {
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
     try { await this.repository.save(this.list()); this.storageError = undefined; }

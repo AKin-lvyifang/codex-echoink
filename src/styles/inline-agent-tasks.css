@@ -25,8 +25,8 @@
 .echoink-inline-task-pin-actions { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-left: auto; }
 .echoink-agent-tasks .echoink-inline-task-action.echoink-origin-control[data-slot="button"] { min-height: 27px; height: auto; padding: 3px 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: transparent; color: var(--text-normal); font-size: 12px; line-height: 1.4; box-shadow: none; white-space: normal; }
 .echoink-agent-tasks .echoink-inline-task-action.echoink-origin-control[data-slot="button"]:is(:hover, :focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
-.echoink-agent-tasks .echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"] { background: var(--echoink-theme-text, var(--text-normal)); color: var(--echoink-theme-bg, var(--background-primary)); border-color: transparent; }
-.echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"]:is(:hover, :active) { background: var(--echoink-theme-text, var(--text-normal)) !important; color: var(--echoink-theme-bg, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
+.echoink-agent-tasks .echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"] { background: var(--echoink-control-fill, var(--text-normal)); color: var(--echoink-control-on-fill, var(--background-primary)); border-color: transparent; }
+.echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"]:is(:hover, :active) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
 .echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot="button"]:focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; outline: none !important; box-shadow: none !important; }
 .echoink-agent-tasks .echoink-inline-task-action:disabled { opacity: .45; cursor: default; }
 .echoink-agent-tasks .echoink-inline-task-source button.echoink-inline-task-source-link.echoink-origin-control[data-slot="button"] { min-height: 24px; height: auto; padding: 1px 3px; border: 0 !important; background: transparent; color: var(--text-muted); text-align: left; white-space: normal; overflow-wrap: anywhere; font: inherit; outline: none !important; box-shadow: none !important; }
@@ -53,14 +53,20 @@
 .echoink-inline-task-edit-actions { display: flex; gap: 6px; justify-content: flex-end; align-self: flex-end; }
 .echoink-inline-task-presets { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 8px; }
 .echoink-inline-task-composer-actions { display: flex; justify-content: flex-end; width: 100%; }
-.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-theme-text, var(--text-normal)) !important; color: var(--echoink-theme-bg, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
+.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
 .echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; }
 .has-inline-task .codex-input-wrap > :is(.codex-turn-queue, .codex-composer-workspace, .codex-attachments, .codex-composer-enhance-review, .codex-skill-menu, .codex-knowledge-command-menu, .codex-composer-resource-panel) { display: none !important; }
 .has-inline-task .echoink-task-detail > .echoink-knowledge-activity-slot { display: none; }
-.echoink-inline-state-label { height: auto; min-height: 24px; padding: 2px 0; background: transparent; border: 0; box-shadow: none; color: var(--text-muted); font-size: 12px; }
-.echoink-inline-state-label.is-waiting { color: var(--echoink-theme-warn, var(--text-warning)); }
-.echoink-inline-request-state .echoink-inline-state-label:focus-visible { box-shadow: none; outline: none; background: var(--background-modifier-hover); }
-.echoink-inline-sent-instruction { background: var(--echoink-theme-raised, var(--background-secondary)); padding: 5px 8px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cm-editor .echoink-inline-request-state button.echoink-inline-state-label { display: block; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 2px 0; border: 0 !important; border-radius: 0; background: transparent !important; box-shadow: none !important; outline: none !important; color: var(--echoink-theme-secondary, var(--text-muted)); font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left; }
+.cm-editor .echoink-inline-request-state button.echoink-inline-state-label.is-waiting { color: var(--echoink-theme-warn, var(--text-warning)); }
+.cm-editor .echoink-inline-request-state button.echoink-inline-state-label:is(:hover, :focus-visible) { box-shadow: none !important; outline: none !important; background: var(--echoink-theme-hover, var(--background-modifier-hover)) !important; }
+.echoink-inline-request-state { margin: 0; color: var(--echoink-theme-text, var(--text-normal)); }
+.cm-editor button.echoink-inline-sent-instruction { display: flex; align-items: baseline; gap: 5px; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 5px 8px; border: 0; border-radius: 6px; background: var(--echoink-theme-raised, var(--background-secondary)); color: var(--echoink-theme-text, var(--text-normal)); font: inherit; font-weight: 400; line-height: inherit; text-align: left; box-shadow: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cm-editor button.echoink-inline-sent-instruction:is(:hover, :focus-visible) { background: var(--echoink-theme-hover, var(--background-modifier-hover)); outline: none; box-shadow: none; }
+.echoink-inline-sent-avatar { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; min-width: 18px; flex: 0 0 18px; align-self: center; }
+.echoink-inline-sent-avatar :is(img, svg) { width: 18px; height: 18px; border-radius: 50%; }
+.echoink-inline-sent-text { min-width: 0; font: inherit; }
+.echoink-inline-sent-name { font-weight: 600; }
 @media (hover: none) { .echoink-inline-task-message .echoink-inline-task-edit-button { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .echoink-inline-task-spinner svg { animation: none; } }
 @container (max-width: 360px) { .echoink-inline-task-pin-actions { width: 100%; justify-content: flex-end; } }
