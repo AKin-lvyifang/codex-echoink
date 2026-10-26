@@ -7,6 +7,7 @@ import type { SettingsLanguage } from "../../settings/settings";
 import { createOriginButton, disposeOriginControls } from "../../settings/origin-controls";
 import { renderTaskAvatar } from "./agent-roster";
 import { markAIElementsQuestion } from "./smooth-chat-ui";
+import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface InlineTaskHost {
   service: {
@@ -19,7 +20,7 @@ export interface InlineTaskHost {
     comparingOriginal: Set<string>;
     canAutomaticallyRegenerate?(id: string): boolean;
   };
-  runtime: { reply(taskId: string, text: string): Promise<void>; retry(taskId: string): Promise<void>; stop(taskId: string): Promise<void> };
+  runtime: { reply(taskId: string, text: string, annotations?: readonly SelectionAnnotation[]): Promise<void>; retry(taskId: string): Promise<void>; stop(taskId: string): Promise<void> };
   openSource(requestId: string): Promise<void>;
   subscribe(listener: () => void): () => void;
 }
@@ -253,7 +254,7 @@ export class InlineTaskDetailView {
         this.button(actions, en ? "Cancel" : "取消", "cancel-edit", () => { this.editing = undefined; this.signature = ""; this.refresh(); });
         this.button(actions, en ? "Resend" : "重发", "resend", async () => {
           if (editing.composing || !editing.text.trim()) return;
-          await this.host()?.runtime.reply(request.taskId, editing.text); this.editing = undefined;
+          await this.host()?.runtime.reply(request.taskId, editing.text, message.selectionAnnotations ?? []); this.editing = undefined;
         }, true);
         return row;
       }

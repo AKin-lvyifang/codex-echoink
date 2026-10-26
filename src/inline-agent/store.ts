@@ -1,6 +1,7 @@
 import { atomicWriteJsonFile, readJsonFileIfPresent, serializePiNativeFileWrite } from "../harness/pi-native/file-store-utils";
 import { INLINE_STATUSES, type InlineRequest, type SourceAnchor } from "./types";
 import { markerFor } from "./document";
+import { normalizeSelectionAnnotations } from "../harness/pi-native/pi-selection-annotations";
 
 export interface InlineRepository {
   load(): Promise<InlineRequest[]>;
@@ -45,7 +46,9 @@ export class FileInlineRepository implements InlineRepository {
         || !validAnchor(proposal.sourceTarget) || !["replace", "insert"].includes(proposal.sourceTarget.kind)
         || !proposal.context || typeof proposal.context.text !== "string" || !Array.isArray(proposal.context.segments)
         || !proposal.timing || typeof proposal.timing !== "object" || proposal.versionId !== undefined && !versions.has(proposal.versionId))) return invalid();
-      if (r.thread && (!Array.isArray(r.thread) || r.thread.some(m => !m.id || !["user", "assistant"].includes(m.role) || typeof m.text !== "string" || !Number.isFinite(m.at)))) return invalid();
+      const validAnnotations = (value: unknown) => value === undefined || Array.isArray(value) && normalizeSelectionAnnotations(value).length === value.length;
+      if (!validAnnotations(r.selectionAnnotations)) return invalid();
+      if (r.thread && (!Array.isArray(r.thread) || r.thread.some(m => !m.id || !["user", "assistant"].includes(m.role) || typeof m.text !== "string" || !Number.isFinite(m.at) || !validAnnotations(m.selectionAnnotations)))) return invalid();
       if (r.commit && ((!versions.has(r.commit.versionId) && !(r.versions.length === 0 && r.commit.versionId === "" && r.commit.action === "revoke")) || !["confirm", "revoke"].includes(r.commit.action) || typeof r.commit.beforeDocument !== "string"
         || typeof r.commit.afterDocument !== "string" || !validAnchor(r.commit.result) || !validAnchor(r.commit.originalTarget) || !validAnchor(r.commit.originalResult) || !Array.isArray(r.commit.changes)
         || r.commit.changes.some(c => !Number.isSafeInteger(c.from) || !Number.isSafeInteger(c.to) || c.from < 0 || c.to < c.from || typeof c.insert !== "string"))) return invalid();

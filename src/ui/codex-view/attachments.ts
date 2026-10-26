@@ -29,6 +29,7 @@ export interface CodexAttachmentHost {
   attachments: StoredAttachment[];
   selectedSkill: EchoInkResource | null;
   renderToolbar(): void;
+  onInputChanged?(): void;
   renderAttachments(): void;
   runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void>;
 }
@@ -67,14 +68,14 @@ export function renderAttachmentsView(host: CodexAttachmentHost): void {
   const annotations = composerSelectionAnnotations(host.inputEl);
   if (annotations.length) {
     host.attachmentsEl.removeClass("is-empty");
-    const summary = host.attachmentsEl.createDiv();
-    const changed = () => { host.renderAttachments(); host.renderToolbar(); host.plugin.selectionAskController?.refresh(); };
+    const summary = host.attachmentsEl.createDiv({ cls: "echoink-composer-annotation-slot" });
+    const changed = () => { host.onInputChanged?.(); host.renderAttachments(); host.renderToolbar(); host.plugin.selectionAskController?.refresh(); };
     const remove = (id: string) => {
-      if (removeSelectionAnnotation(host.inputEl, id)) new Notice(conversationUiText(host.plugin.settings.settingsLanguage, "已保留你修改的问题", "Your edited question was kept"));
+      removeSelectionAnnotation(host.inputEl, id);
     };
     renderSelectionAnnotationSummary(summary, annotations, host.plugin.settings.settingsLanguage, {
       onSource: (annotation) => { void host.plugin.selectionAskController?.openSource(annotation); },
-      onEdit: (id) => { editAnnotationQuestion(host.inputEl, id, host.plugin.settings.settingsLanguage === "en"); host.renderToolbar(); },
+      onEdit: (id) => { editAnnotationQuestion(host.inputEl, id, host.plugin.settings.settingsLanguage === "en"); host.onInputChanged?.(); host.renderToolbar(); },
       onRemove: (id) => { remove(id); changed(); },
       onRemoveAll: () => { annotations.forEach((annotation) => remove(annotation.id)); changed(); }
     }, host.app);

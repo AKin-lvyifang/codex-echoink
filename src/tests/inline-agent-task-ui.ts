@@ -10,6 +10,9 @@ import { disposeOriginControls } from "../settings/origin-controls";
 import { anchorAt } from "../inline-agent/document";
 import type { AgentDefinition } from "../agents/types";
 import type { InlineRequest, InlineRequestStatus } from "../inline-agent/types";
+import { addSelectionAnnotation, composerSelectionAnnotations, snapshotSelectionDraft, removeSelectionAnnotation } from "../selection-ask/draft";
+import { TaskNavigationState } from "../ui/codex-view/task-navigation-state";
+import { defaultTaskWorkspace } from "../agents/task-workspace";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true, url: "https://local.test/" });
 for (const key of ["window", "document", "HTMLElement", "HTMLButtonElement", "HTMLInputElement", "HTMLTextAreaElement", "Element", "Node", "MutationObserver", "navigator", "Event", "CustomEvent", "KeyboardEvent", "getComputedStyle"]) Object.defineProperty(globalThis, key, { configurable: true, value: (dom.window as any)[key] });
@@ -256,6 +259,63 @@ await check("view subscription refreshes projections once and onClose only unsub
 
 await check("closing presentation disposes listeners without stopping the request runtime", () => {
   const f = fixture(request("thinking")); f.close(); assert.equal(f.calls.some(call => call[0] === "stop"), false);
+});
+
+const selectionCapture = (id = 1) => ({ selectedText: `R5_OTHER_NOTE_${id}`, vaultRelativePath: "引用.md", fileName: "引用.md",
+  anchor: { mode: "editor" as const, from: id * 20, to: id * 20 + 15, before: "", after: "" } });
+
+await check("task page drafts restore owned questions and only the active draft exposes body annotations", () => {
+  const workspace = defaultTaskWorkspace(), view = Object.create(CodexView.prototype) as any, input = document.createElement("textarea");
+  const nav = new TaskNavigationState(() => workspace);
+  Object.assign(view, { taskUiMounted: true, inputEl: input, attachments: [], selectedSkill: null, taskNav: nav, composerSessionDrafts: new Map(),
+    plugin: { settings: { agentRegistry: { agents: [agent] } }, getConversationRunService: () => ({ scheduleSave() {} }) },
+    renderAttachments() {}, renderToolbar() {}, updateInputPlaceholder() {} });
+  nav.navigate({ kind: "detail", taskId: "card" }); view.restoreTaskComposerDraft();
+  const first = addSelectionAnnotation(input, selectionCapture(), { id: "default", template: "" }); view.saveTaskComposerDraft();
+  nav.navigate({ kind: "list", agentId: "sol" }); view.restoreTaskComposerDraft();
+  assert.equal(view.selectionAnnotationRecords().length, 0);
+  addSelectionAnnotation(input, selectionCapture(2), { id: "default", template: "" }); view.saveTaskComposerDraft();
+  nav.navigate({ kind: "detail", taskId: "card" }); view.restoreTaskComposerDraft();
+  assert.equal(view.selectionAnnotationRecords()[0].id, first.id); assert.equal(snapshotSelectionDraft(input).fragments.length, 1);
+  removeSelectionAnnotation(input, first.id); assert.equal(input.value, "", "restored automatic prefix is still safely removable");
+  assert.equal(workspace.newTaskDrafts.sol.annotations?.[0].selectedText, "R5_OTHER_NOTE_2");
+});
+
+await check("inline annotation submission clears accepted snapshots, retains failures/new annotations and consumes only its original page", async () => {
+  for (const scenario of ["success", "failed", "new-annotation", "navigate", "closed-view"] as const) {
+    const f = fixture(), view = Object.create(CodexView.prototype) as any, input = document.createElement("textarea"), workspace = defaultTaskWorkspace();
+    const nav = new TaskNavigationState(() => workspace); nav.navigate({ kind: "detail", taskId: "t1" });
+    let resolve!: () => void, reject!: (error: Error) => void, submitted: unknown;
+    f.host.runtime.reply = async (_id, _text, annotations) => { submitted = structuredClone(annotations); await new Promise<void>((done, fail) => { resolve = done; reject = fail; }); };
+    Object.assign(view, { plugin: { inlineAgent: f.host, settings: {}, getConversationRunService: () => ({ scheduleSave() {} }) }, inputEl: input, taskUiMounted: true, taskNav: nav,
+      attachments: [], selectedSkill: null, composerSessionDrafts: new Map(), taskSubmitting: new Set(), inlineComposerComposing: false, viewLifecycleAbortController: new AbortController(),
+      renderInlineComposer() { return true; }, refreshInlineTasks() {}, renderAttachments() {}, renderToolbar() {}, updateInputPlaceholder() {} });
+    view.composerDraftOwner = "t1";
+    const first = addSelectionAnnotation(input, selectionCapture(), { id: "default", template: "" }); view.saveTaskComposerDraft();
+    const sending = view.sendMessage(); await settle();
+    assert.equal((submitted as any[])[0].id, first.id);
+    if (scenario === "new-annotation") addSelectionAnnotation(input, selectionCapture(2), { id: "default", template: "" });
+    if (scenario === "navigate") { view.saveTaskComposerDraft(); nav.navigate({ kind: "list", agentId: "sol" }); view.restoreTaskComposerDraft(); input.value = "另一页新草稿"; }
+    if (scenario === "closed-view") {
+      view.viewLifecycleAbortController.abort();
+      nav.save({ ...nav.draft(), text: "新窗口中尚未发送的要求" });
+    }
+    if (scenario === "failed") reject(new Error("synthetic pre-accept failure")); else resolve();
+    await sending;
+    assert.equal(composerSelectionAnnotations(input).length, scenario === "new-annotation" ? 2 : ["failed", "closed-view"].includes(scenario) ? 1 : 0);
+    if (scenario === "navigate") { assert.equal(input.value, "另一页新草稿"); assert.equal(workspace.replyDrafts.t1.annotations?.length, 0); }
+    if (scenario === "success") assert.equal(input.value, "");
+    if (scenario === "closed-view") assert.equal(workspace.replyDrafts.t1.text, "新窗口中尚未发送的要求");
+    f.close();
+  }
+});
+
+await check("pencil resend uses the original message selection snapshot", async () => {
+  const item = request(); item.thread![0].selectionAnnotations = [{ ...selectionCapture(), id: "history-selection", number: 1, appliedActions: [] }];
+  const f = fixture(item); let sent: unknown;
+  f.host.runtime.reply = async (_id, _text, annotations) => { sent = structuredClone(annotations); };
+  f.button("edit").click(); await settle(); f.button("resend").click(); await settle();
+  assert.deepEqual(sent, item.thread![0].selectionAnnotations); f.close();
 });
 
 disposeOriginControls(document.body); dom.window.close();

@@ -74,16 +74,20 @@ function draftBehavior(doc: Document): void {
   const input = doc.createElement("textarea"); doc.body.append(input);
   input.value = "手写问题";
   const first = addSelectionAnnotation(input, capture(), { id: "default", template: "" });
-  assert.equal(input.value, "手写问题", "empty template adds neither hidden question nor orphan prefix");
+  assert.equal(input.value, "手写问题\n注释1，", "empty template adds its numbered prefix");
+  assert.equal(input.selectionStart, input.value.length); assert.equal(input.selectionEnd, input.value.length);
   addSelectionAnnotation(input, capture(), { id: "other", template: "解释\n并举例" });
-  assert.equal(input.value, "手写问题\n注释1，解释\n并举例");
+  assert.equal(input.value, "手写问题\n注释1，\n注释1，解释\n并举例");
   addSelectionAnnotation(input, capture(), { id: "other", template: "解释\n并举例" });
   assert.equal(composerSelectionAnnotations(input).length, 1);
+  assert.equal(input.value.slice(input.selectionStart, input.selectionEnd), "注释1，解释\n并举例", "repeated actions locate their own question");
   const second = addSelectionAnnotation(input, capture("other.md"), { id: "default", template: "总结" });
   const third = addSelectionAnnotation(input, capture("notes/source.md", 20), { id: "default", template: "总结" });
   removeSelectionAnnotation(input, second.id);
   assert.deepEqual(composerSelectionAnnotations(input).map((value) => value.number), [1, 3]);
-  assert.equal(addSelectionAnnotation(input, capture("third.md"), { id: "default", template: "" }).number, 4);
+  const fourth = addSelectionAnnotation(input, capture("third.md"), { id: "default", template: "" });
+  assert.equal(fourth.number, 4);
+  removeSelectionAnnotation(input, fourth.id);
   removeSelectionAnnotation(input, first.id);
   assert.equal(input.value, "手写问题\n注释3，总结");
   input.value += "我修改了问题";
@@ -100,12 +104,88 @@ function draftBehavior(doc: Document): void {
   removeSelectionAnnotation(input, owned.id);
   assert.equal(input.value, "前面新写\n注释1，用户自己写的", "matching user prefixes must not gain automatic deletion authority");
   const noQuestion = addSelectionAnnotation(input, capture(), { id: "default", template: "" });
-  editAnnotationQuestion(input, noQuestion.id);
   assert.equal(input.selectionStart, input.value.length);
   assert.equal(input.selectionEnd, input.value.length, "new question leaves the caret after its prefix");
   const snapshot = snapshotSelectionDraft(input); const other = doc.createElement("textarea"); other.value = input.value; restoreSelectionDraft(other, snapshot);
   selectionDraft(other).annotations[0].anchor.from = 999;
   assert.notEqual(selectionDraft(input).annotations[0].anchor.from, 999);
+
+  clearSelectionDraft(input); input.value = "";
+  addSelectionAnnotation(input, capture(), { id: "default", template: "解释" });
+  const two = addSelectionAnnotation(input, capture("two.md"), { id: "default", template: "总结" });
+  removeSelectionAnnotation(input, two.id);
+  assert.equal(addSelectionAnnotation(input, capture("three.md"), { id: "default", template: "总结" }).number, 2, "number follows the current maximum after removing the last annotation");
+  for (const annotation of composerSelectionAnnotations(input)) removeSelectionAnnotation(input, annotation.id);
+  assert.equal(addSelectionAnnotation(input, capture("reset.md"), { id: "default", template: "" }).number, 1, "removing all annotations restarts numbering");
+
+  clearSelectionDraft(input); input.value = "";
+  const edited = addSelectionAnnotation(input, capture(), { id: "explain", template: "解释这段" });
+  addSelectionAnnotation(input, capture("later.md"), { id: "default", template: "总结" });
+  input.value = input.value.replace("解释这段", "用户改写的问题更长");
+  addSelectionAnnotation(input, capture(), { id: "explain", template: "解释这段" });
+  assert.equal(input.value.slice(input.selectionStart, input.selectionEnd), "注释1，用户改写的问题更长", "edited ownership follows replacement without inserting another prefix");
+  input.value = "前面新写\n" + input.value;
+  const editedSnapshot = JSON.parse(JSON.stringify(snapshotSelectionDraft(input)));
+  const restored = doc.createElement("textarea"); restored.value = input.value; restoreSelectionDraft(restored, editedSnapshot);
+  editAnnotationQuestion(restored, edited.id);
+  assert.equal(restored.value.slice(restored.selectionStart, restored.selectionEnd), "注释1，用户改写的问题更长", "cold restoration preserves edited ownership and position");
+  assert.equal(removeSelectionAnnotation(restored, edited.id), true);
+  assert.match(restored.value, /用户改写的问题更长/, "restoration does not regain deletion authority");
+  removeSelectionAnnotation(restored, composerSelectionAnnotations(restored)[0].id);
+  assert.equal(restored.value, "前面新写\n注释1，用户改写的问题更长", "later intact fragments keep their correct positions after earlier edits");
+  editAnnotationQuestion(input, edited.id);
+  input.value = input.value.slice(0, input.selectionStart) + input.value.slice(input.selectionEnd);
+  const afterDeletion = input.value;
+  addSelectionAnnotation(input, capture(), { id: "explain", template: "解释这段" });
+  assert.equal(input.value, `${afterDeletion}\n注释1，解释这段`, "fully deleted question can be reapplied despite appliedActions");
+
+  clearSelectionDraft(input); input.value = "注释1，解释";
+  const sameText = addSelectionAnnotation(input, capture(), { id: "default", template: "解释" });
+  input.value = "注释1，解释";
+  addSelectionAnnotation(input, capture(), { id: "default", template: "解释" });
+  assert.equal(input.value, "注释1，解释\n注释1，解释", "matching handwritten text is not mistaken for the deleted owned question");
+  input.value = input.value.replace(/解释$/, "改");
+  editAnnotationQuestion(input, sameText.id);
+  assert.equal(input.value.slice(input.selectionStart, input.selectionEnd), "注释1，改", "partial deletion still locates the existing question");
+  assert.equal(removeSelectionAnnotation(input, sameText.id), true);
+  assert.equal(input.value, "注释1，解释\n注释1，改");
+
+  clearSelectionDraft(input); input.value = "";
+  addSelectionAnnotation(input, capture(), { id: "default", template: "   " }, true);
+  assert.equal(input.value, "Annotation 1, "); assert.equal(input.selectionStart, input.value.length);
+
+  clearSelectionDraft(input); input.value = "";
+  const prepended = addSelectionAnnotation(input, capture(), { id: "default", template: "解释" });
+  input.value = "请" + input.value;
+  editAnnotationQuestion(input, prepended.id);
+  assert.equal(input.value.slice(input.selectionStart, input.selectionEnd), "请注释1，解释");
+  assert.equal(removeSelectionAnnotation(input, prepended.id), true);
+  assert.equal(input.value, "请注释1，解释", "prepending to the first question also revokes deletion authority");
+
+  clearSelectionDraft(input); input.value = "";
+  const pencil = addSelectionAnnotation(input, capture(), { id: "explain", template: "解释" });
+  input.value = "";
+  editAnnotationQuestion(input, pencil.id);
+  assert.equal(input.value, "注释1，");
+  restoreSelectionDraft(input, JSON.parse(JSON.stringify(snapshotSelectionDraft(input))));
+  addSelectionAnnotation(input, capture(), { id: "summarize", template: "总结" });
+  assert.equal(input.value, "注释1，\n注释1，总结", "pencil-created prefixes never swallow a new template action after restoration");
+  addSelectionAnnotation(input, capture(), { id: "summarize", template: "总结" });
+  assert.equal(input.value.slice(input.selectionStart, input.selectionEnd), "注释1，总结");
+  addSelectionAnnotation(input, capture(), { id: "explain", template: "解释" });
+  assert.equal(input.value, "注释1，\n注释1，总结\n注释1，解释", "pencil prefix is also independent of a previously deleted template action");
+
+  clearSelectionDraft(input); input.value = "";
+  const legacy = addSelectionAnnotation(input, capture(), { id: "default", template: "解释" });
+  const legacySnapshot = snapshotSelectionDraft(input); delete legacySnapshot.fragments[0].actionKey;
+  restoreSelectionDraft(input, legacySnapshot);
+  addSelectionAnnotation(input, capture(), { id: "default", template: "解释" });
+  assert.equal(input.value, "注释1，解释", "legacy fragments without action keys conservatively retain ownership");
+  assert.equal(composerSelectionAnnotations(input)[0].id, legacy.id);
+  addSelectionAnnotation(input, capture(), { id: "summarize", template: "总结" });
+  assert.equal(input.value, "注释1，解释\n注释1，总结", "legacy ownership cannot swallow an action absent from appliedActions");
+  addSelectionAnnotation(input, capture(), { id: "summarize", template: "总结" });
+  assert.equal(input.value.slice(input.selectionStart, input.selectionEnd), "注释1，总结", "an explicit action fragment takes precedence over legacy fallback ownership");
 }
 function sourceAnchors(doc: Document): void {
   const root = doc.createElement("div"); root.innerHTML = "<div class='mod-header mod-ui'>笔记属性添加笔记属性</div><div class='markdown-preview-pusher'>宿主占位</div><p>前文 <strong>重点</strong>，<a href='/link'>链接</a></p><p>后文</p>"; doc.body.append(root);
@@ -168,6 +248,7 @@ function queueAndProjection(): void {
 async function queueOnlyAnnotations(doc: Document): Promise<void> {
   const input = doc.createElement("textarea");
   addSelectionAnnotation(input, capture(), { id: "default", template: "" });
+  input.value = "";
   let workspaceCalls = 0;
   const empty: any = { inputEl: input, attachments: [], selectedSkill: null, ensureSession: () => ({ id: "A" }), currentTurnOptions: () => ({}), plugin: { settings: DEFAULT_SETTINGS }, ensureChatWorkspaceSelected: async () => { workspaceCalls++; return true; } };
   assert.equal(await createQueuedTurnFromComposer(empty, { allowLocalKnowledgeCommands: false }), null);
@@ -449,6 +530,7 @@ async function settingsBehavior(win: Window & typeof globalThis): Promise<void> 
   const plugin: any = { settings: structuredClone(DEFAULT_SETTINGS), async saveSettings() { if (fail) throw new Error("disk failure"); saved.push(structuredClone(this.settings.selectionAsk)); } };
   const host = win.document.createElement("div"); win.document.body.append(host);
   renderSelectionAnnotationSettings(host, plugin, () => {});
+  assert.equal(host.querySelector(".echoink-selection-settings-preview")!.textContent, "注释1，", "empty-template preview matches the inserted prefix");
   const buttons = () => Array.from(host.querySelectorAll<HTMLButtonElement>("button"));
   const find = (text: string) => buttons().find((button) => button.textContent === text)!;
   assert.equal(host.querySelector<HTMLInputElement>("input")!.disabled, true);

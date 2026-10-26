@@ -7,6 +7,7 @@ import type { NoteMentionSelection } from "../ui/codex-view/note-mentions";
 import { sanitizeStoredPiDocumentReplay, type StoredAttachment } from "../settings/settings";
 import { GENERAL_ASSISTANT_ID } from "./types";
 import { normalizeAgentId } from "./registry";
+import type { AutoQuestionFragment } from "../selection-ask/draft";
 
 export type TaskPage = { kind: "list"; agentId: string } | { kind: "detail"; taskId: string };
 export interface TaskDraft {
@@ -16,6 +17,7 @@ export interface TaskDraft {
   englishDiarySourcePath?: string;
   noteMentions?: NoteMentionSelection[];
   annotations?: SelectionAnnotation[];
+  annotationFragments?: AutoQuestionFragment[];
   selectedSkill?: EchoInkResource | null;
   selectedProviderSettingsId?: string;
   selectedModel?: string;
@@ -83,6 +85,15 @@ function normalizeDrafts(value: unknown): Record<string, TaskDraft> {
       ...(typeof draft.selectedModel === "string" ? { selectedModel: draft.selectedModel } : {}),
       ...(["read-only", "workspace-write", "danger-full-access"].includes(draft.selectedPermission as string) ? { selectedPermission: draft.selectedPermission as TaskDraft["selectedPermission"] } : {}),
       ...(["agent", "plan"].includes(draft.selectedMode as string) ? { selectedMode: draft.selectedMode as TaskDraft["selectedMode"] } : {}) };
+    if (Array.isArray(draft.annotationFragments)) snapshot.annotationFragments = draft.annotationFragments.flatMap(value => {
+      const fragment = record(value);
+      if (!fragment || typeof fragment.annotationId !== "string" || !snapshot.annotations?.some(annotation => annotation.id === fragment.annotationId)
+        || typeof fragment.from !== "number" || !Number.isSafeInteger(fragment.from) || typeof fragment.to !== "number" || !Number.isSafeInteger(fragment.to)
+        || fragment.from < 0 || fragment.to < fragment.from || fragment.to > snapshot.text.length || typeof fragment.text !== "string" || typeof fragment.intact !== "boolean") return [];
+      return [{ annotationId: fragment.annotationId, from: fragment.from, to: fragment.to, text: fragment.text,
+        intact: fragment.intact && snapshot.text.slice(fragment.from, fragment.to) === fragment.text,
+        ...(typeof fragment.actionKey === "string" ? { actionKey: fragment.actionKey } : {}) }];
+    });
     for (const key of ["noteMentions", "annotations", "selectedSkill"] as const) if (!Object.hasOwn(draft, key)) delete snapshot[key];
     return [[id, snapshot]];
   }));

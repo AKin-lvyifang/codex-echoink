@@ -1420,7 +1420,7 @@ export class PiNativeConversationRuntime {
     this.assertConversationNotRecovering(request.conversationId);
     if (request.inlineProposalRequest && (request.generationRequest || request.pdfTaskRequest || request.englishDiarySourcePath
       || request.skillPath || request.skillId || request.skillName || request.maintenanceScope || request.resumeContext
-      || request.workbenchSource || request.images?.length || request.documents?.length || request.noteMentions?.length || request.selectionAnnotations?.length)) {
+      || request.workbenchSource || request.images?.length || request.documents?.length || request.noteMentions?.length)) {
       throw new Error("正文提案使用独立快照，请移除其他任务、附件或 Skill 后重试。");
     }
     assertValidSkillBinding(request);

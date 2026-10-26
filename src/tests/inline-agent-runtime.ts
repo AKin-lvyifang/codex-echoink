@@ -24,6 +24,10 @@ import { createApiProviderConfig, DEFAULT_SETTINGS } from "../settings/settings"
 import type CodexForObsidianPlugin from "../main";
 import type { InlineRequest } from "../inline-agent/types";
 import type { PiChatRuntimeEvent, PiChatSubmitRequest, PiProductRunRecord } from "../harness/pi-native/contracts";
+import type { SelectionAnnotation } from "../types/selection-annotations";
+
+const annotations: SelectionAnnotation[] = [{ id: "quoted-other-note", number: 1, selectedText: "R5_OTHER_NOTE_EXCLUSIVE_鹭岛42", vaultRelativePath: "其他材料.md", fileName: "其他材料.md",
+  anchor: { mode: "editor", from: 0, to: 28, before: "", after: "" }, appliedActions: [] }];
 
 const proposal = { kind: "proposal", candidateId: "paragraph", original: "原文片段", text: "修改后的段落" } as const;
 const rangeProposal = { kind: "proposal", startCandidateId: "paragraph", endCandidateId: "paragraph-end", text: "连续多段的新稿" } as const;
@@ -57,6 +61,8 @@ function assertProtocol(): void {
   assert.throws(() => guard({ ...context, systemPrompt: "ordinary-chat" }, { runId: "guard" }), /未正确初始化/u);
   const tooLarge = createInlineProposalDispatchGuard({ currentRequest: () => request, effectiveInputBudget: 1_000 });
   assert.throws(() => tooLarge(context, { runId: "budget" }), /全文与记忆/u);
+  assert.throws(() => createInlineProposalDispatchGuard({ currentRequest: () => request, effectiveInputBudget: 30_000 })({ ...context,
+    messages: [...context.messages, { role: "user", content: annotations[0].selectedText.repeat(40_000), timestamp: 2 }] }, { runId: "annotation-budget" }), /预算/u);
   guard(context, { runId: "guard" });
   assert.throws(() => guard(context, { runId: "guard" }), /不能自动/u);
   console.log("PASS inline protocol: strict complete JSON, bounded candidate/original, insert, clarification, immutable request");
@@ -121,6 +127,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
             pi.on("tool_result", async () => undefined);
           } },
           currentInlineProposalRequest: () => input.currentInlineProposalRequest?.() ?? null,
+          currentSelectionAnnotations: () => input.currentSelectionAnnotationTurnContext?.() ?? [],
           currentTurn: () => input.currentKnowledgeTurnContext(),
           currentSkillTurn: () => input.currentSkillTurnContext?.() ?? null,
           currentTaskPlanTurn: () => input.currentTaskPlanTurnContext(),
@@ -152,7 +159,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
     try {
       await runtime.createConversation({ conversationId: scenario, title: "正文离线提案", cwd: root, defaultSkillId: "must-not-resolve" });
       const text = "/maintain 银槐写作偏好，请按知识库和Skill润色正文";
-      const submit = () => runtime.submit({ conversationId: scenario, text, submittedAt: Date.now(), inlineProposalRequest: request,
+      const submit = () => runtime.submit({ conversationId: scenario, text, selectionAnnotations: annotations, submittedAt: Date.now(), inlineProposalRequest: request,
         memoryMode: scenario === "no_memory" ? "no_memory" : "normal", permission: "read-only", runtimeProviderId: "inline-offline", modelId: "inline-model", reasoning: "none" });
       if (scenario === "oversize") {
         await assert.rejects(submit(), /正文全文超出/u);
@@ -176,6 +183,8 @@ async function runScenario(scenario: Scenario): Promise<void> {
         assert.ok(contexts[0].messages.some(message => message.role === "user" && (typeof message.content === "string" ? message.content.includes(inlineProposalContextContent(request))
           : message.content.some(part => part.type === "text" && part.text.includes(inlineProposalContextContent(request))))), "full exact snapshot, previous draft and answers reach the Provider");
         assert.ok(sent.includes(text), "latest user instruction stays separate and unexpanded");
+        assert.equal(sent.split(annotations[0].selectedText).length - 1, 1, "other-note selected snapshot reaches the Provider exactly once");
+        assert.ok(sent.includes("其他材料.md"), "selection source metadata uses the ordinary selection context format");
         assert.equal(sent.includes("湖蓝短句"), scenario !== "no_memory", "real local Recall follows the submitted memory mode");
         assert.deepEqual(memoryModes, [scenario === "no_memory" ? "no_memory" : "normal"]);
         assert.equal(result.memoryRecall?.result, scenario === "no_memory" ? "skipped_no_memory" : "completed");
@@ -270,10 +279,13 @@ async function assertOrchestratorRunLifecycle(): Promise<void> {
     finish(0, "completed", "第一稿。"); await waitForRelease(1);
     assert.equal(service.get(firstRequestId)?.status, "pending");
     assert.equal(createdConversations, 1);
-    await controller.reply(taskId, "再短一点");
+    await controller.reply(taskId, "再短一点", annotations);
+    assert.deepEqual(service.get(firstRequestId)?.selectionAnnotations, annotations);
+    assert.deepEqual(persisted.find(item => item.id === firstRequestId)?.thread?.at(-1)?.selectionAnnotations, annotations);
     await waitFor(() => runs.length === 2 || service.get(firstRequestId)?.status === "failed", "follow-up must submit after the first result");
     assert.equal(runs.length, 2, "host ownership from the first result must not block a consecutive follow-up");
     assert.equal(runs[1].request.inlineProposalRequest?.previousDraft, "第一稿。");
+    assert.deepEqual(runs[1].request.selectionAnnotations, annotations);
     finish(1, "completed", "第二稿。"); await waitForRelease(2);
     assert.deepEqual(service.get(firstRequestId)?.versions.map(version => version.text), ["第一稿。", "第二稿。"]);
     const second = service.get(firstRequestId)!;
@@ -290,6 +302,7 @@ async function assertOrchestratorRunLifecycle(): Promise<void> {
     finish(3, "failed"); await waitForRelease(4);
     assert.equal(service.latestForTask(taskId)?.status, "failed");
     await controller.retry(taskId); await waitFor(() => runs.length === 5, "failed result must release ownership before retry");
+    assert.deepEqual(runs[4].request.selectionAnnotations, annotations, "retry retains the frozen selected snapshot");
     finish(4, "completed", "失败后重试成功。"); await waitForRelease(5);
     assert.equal(service.latestForTask(taskId)?.status, "pending");
 

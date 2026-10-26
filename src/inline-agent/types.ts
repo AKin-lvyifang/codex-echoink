@@ -1,3 +1,4 @@
+import type { SelectionAnnotation } from "../types/selection-annotations";
 export type InlineRequestStatus = "preparing" | "thinking" | "clarifying" | "queued" | "pending" | "conflict" | "interrupted" | "missing" | "failed" | "saving" | "save_failed" | "confirmed" | "revoked" | "withdrawn" | "modified";
 export interface TextSpan { from: number; to: number }
 export interface SourceAnchor extends TextSpan { text: string; before: string; after: string }
@@ -17,7 +18,7 @@ export interface InlineVersion {
   model?: InlineModelSelection;
 }
 export interface InlineModelSelection { providerSettingsId: string; runtimeProviderId: string; modelId: string; reasoning: import("../types/app-server").ReasoningEffort; memoryMode: "normal" | "no_memory" }
-export interface InlineThreadMessage { id: string; role: "user" | "assistant"; text: string; at: number; versionId?: string; question?: { question: string; options: { id: string; label: string }[] } }
+export interface InlineThreadMessage { id: string; role: "user" | "assistant"; text: string; at: number; selectionAnnotations?: SelectionAnnotation[]; versionId?: string; question?: { question: string; options: { id: string; label: string }[] } }
 export interface InlineTiming { submittedAt: number; contextReadyAt?: number; modelStartedAt?: number; firstOutputAt?: number; proposalReadyAt?: number; userWaitMs?: number; questionAt?: number; toolCalls?: number; memoryRecall?: unknown; productRunId?: string }
 export interface InlineChange extends TextSpan { insert: string }
 export interface InlinePreparedProposal {
@@ -61,6 +62,7 @@ export interface InlineRequest {
   versions: InlineVersion[];
   currentVersionId: string;
   followups: string[];
+  selectionAnnotations?: SelectionAnnotation[];
   commit?: InlineCommit;
   error?: string;
   createdAt: number;
@@ -77,6 +79,7 @@ export interface InlineRequest {
   queue?: InlineQueue;
 }
 export interface InlineProposalInput {
+  selectionAnnotations?: SelectionAnnotation[];
   path: string;
   taskId: string;
   agentId: string;
