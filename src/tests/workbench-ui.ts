@@ -350,6 +350,32 @@ export async function runWorkbenchUiTests(): Promise<void> {
     failTasks = failData = true; await view.refresh();
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="error"]').length, 6);
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0);
+    failTasks = failData = false; pro = false; host.settings.englishDiary.enabled = true;
+    snapshot = { ...snapshot, issues: [] }; await view.refresh();
+    const header = content.querySelector<HTMLElement>(".wb-header")!, nav = content.querySelector<HTMLElement>(".wb-modules")!;
+    const navStyles = document.createElement("style"); navStyles.textContent = ".wb-header { column-gap: 16px } .wb-modules { column-gap: 4px }"; document.head.append(navStyles);
+    cleanups.push(() => navStyles.remove());
+    const navButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("[data-module]")), more = content.querySelector<HTMLElement>('[data-wb="module-more"]')!;
+    [80, 80, 140, 105, 160, 160].forEach((width, index) => { navButtons[index].getBoundingClientRect = () => ({ width } as DOMRect); });
+    more.getBoundingClientRect = () => ({ width: 74 } as DOMRect);
+    let withoutWeather = 950;
+    nav.getBoundingClientRect = () => ({ width: Math.max(1, withoutWeather
+      - (header.classList.contains("is-weather-condensed") ? 0 : content.querySelector(".wb-sky.is-feedback") ? 350 : 170)
+      + 2 * (16 - Number.parseFloat(header.style.columnGap || "16"))) } as DOMRect);
+    const layout = view as unknown as { fitNavigation(): void; weatherStage: { say(text: string): void; clearFeedback(): void } };
+    layout.weatherStage.clearFeedback(); layout.fitNavigation();
+    assert.equal(more.hidden, true); assert.equal(header.classList.contains("is-weather-condensed"), false, "weather stays when every module fits");
+    layout.weatherStage.say("今天聊过，已自动签到"); layout.fitNavigation();
+    assert.equal(header.classList.contains("is-weather-condensed"), true, "temporary feedback yields weather space first");
+    assert.equal(navButtons.filter(button => !button.hidden).length, 6, "temporary feedback cannot move modules into More");
+    layout.weatherStage.clearFeedback(); layout.fitNavigation();
+    assert.equal(header.classList.contains("is-weather-condensed"), false, "weather returns after the temporary message clears");
+    withoutWeather = 900; layout.fitNavigation();
+    assert.equal(more.hidden, true, "hide weather before overflowing modules");
+    withoutWeather = 140; layout.fitNavigation();
+    assert.equal(navButtons[0].hidden, false, "narrow layout reclaims column gaps before losing the first module");
+    assert.equal(more.hidden, false); assert.equal(navButtons.filter(button => !button.hidden).length, 1);
+    assert.ok(Number.parseFloat(header.style.columnGap) < 16);
     console.log("Workbench UI passed: task groups, cold-shell result projections and revision cache, no duplicate summaries after redraw, bounded read concurrency and retry, local date, real routes, valid question binding, prefill, collapse and focus, stale errors, to-do success/failure, search keyboard, foreground lifecycle.");
   } finally {
     await view.onClose(); for (const cleanup of cleanups.reverse()) cleanup(); container.remove();

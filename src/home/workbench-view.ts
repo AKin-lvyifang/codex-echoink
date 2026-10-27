@@ -327,7 +327,7 @@ export class EchoInkWorkbenchView extends ItemView {
       const section = this.field("groups").querySelector<HTMLElement>(`[data-wb-group="${key}"]`);
       section?.scrollIntoView({ block: "start", behavior: this.contentEl.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
       section?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
-    });
+    }, () => this.scheduleNav());
     const actions = header.createDiv({ cls: "wb-header-actions" });
     this.button(actions, this.t("搜索笔记", "Search notes"), "search-trigger", () => this.openSearch(), "icon", "search").dataset.wb = "search-trigger";
     this.button(actions, this.t("插件设置", "Plugin settings"), "settings", () => this.plugin.openEchoInkGeneralSettings(), "icon", "settings");
@@ -357,14 +357,29 @@ export class EchoInkWorkbenchView extends ItemView {
   private fitNavigation(): void {
     if (this.closed || !this.active()) return;
     const nav = this.field("modules"), more = this.field("module-more");
+    const header = nav.closest<HTMLElement>(".wb-header")!;
+    // Always retry with the full layout so weather returns when space becomes available.
+    header.classList.remove("is-weather-condensed"); header.style.removeProperty("column-gap");
     const visible = WORKBENCH_MODULES.filter(module => isProWorkbenchModule(module.id) ? workbenchProModuleEnabled(this.plugin, module.id) : this.snapshot?.modules.includes(module.id));
     const buttons = visible.map(module => nav.querySelector<HTMLButtonElement>(`[data-module="${module.id}"]`)!);
     buttons.forEach(button => { button.hidden = false; }); more.hidden = true; this.overflowModules = [];
-    const width = nav.clientWidth; if (!width) return;
-    const total = () => buttons.filter(button => !button.hidden).reduce((sum, button) => sum + button.getBoundingClientRect().width + 4, 0) - 4;
-    if (total() <= width) return;
+    if (!nav.getBoundingClientRect().width) return;
+    const gap = Number.parseFloat(this.contentEl.ownerDocument.defaultView!.getComputedStyle(nav).columnGap) || 4;
+    const total = () => { const shown = buttons.filter(button => !button.hidden); return shown.reduce((sum, button) => sum + button.getBoundingClientRect().width, 0) + Math.max(0, shown.length - 1) * gap; };
+    // Subpixel layout rounding must not hide a module that otherwise fits.
+    const fits = (width: number) => width <= nav.getBoundingClientRect().width + .5;
+    if (fits(total())) return;
+    header.classList.add("is-weather-condensed");
+    if (fits(total())) return;
     more.hidden = false;
-    for (let i = buttons.length - 1; i >= 0 && total() + more.getBoundingClientRect().width + 4 > width; i--) {
+    const moreWidth = more.getBoundingClientRect().width;
+    const firstWithMore = (buttons[0]?.getBoundingClientRect().width ?? 0) + gap + moreWidth;
+    if (!fits(firstWithMore)) {
+      // At narrow English widths, reclaim the two column gaps before losing the first item.
+      const columnGap = Number.parseFloat(this.contentEl.ownerDocument.defaultView!.getComputedStyle(header).columnGap) || 0;
+      header.style.columnGap = `${Math.max(0, columnGap - (firstWithMore - nav.getBoundingClientRect().width) / 2)}px`;
+    }
+    for (let i = buttons.length - 1; i >= 0 && !fits(total() + moreWidth + (buttons.some(button => !button.hidden) ? gap : 0)); i--) {
       buttons[i].hidden = true; this.overflowModules.unshift(visible[i]);
     }
     const focused = this.contentEl.ownerDocument.activeElement;

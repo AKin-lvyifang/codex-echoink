@@ -71,6 +71,12 @@ export async function runWorkbenchHomeRefreshTests(): Promise<void> {
     pointer("pointerdown", 0); pointer("pointermove", 10); pointer("pointerup", 10); await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(stageHost.settings.workbenchCheckin.signedDates.length, 1);
     assert.match(parent.querySelector(".wb-weather-count")?.textContent ?? "", /签到成功/);
     assert.equal(button.disabled, false, "animation does not retain the submission lock");
+    button.click();
+    assert.match(parent.querySelector(".wb-checkin-popover")?.textContent ?? "", /用 Agent 0 天/);
+    await workbenchCheckin(stageHost as never).record(true);
+    weather.update("fair", "今天做完 1 件");
+    assert.match(parent.querySelector(".wb-checkin-popover")?.textContent ?? "", /用 Agent 1 天/, "open totals refresh after the accepted-message callback saves Agent usage");
+    assert.equal(parent.querySelectorAll(".wb-checkin-popover").length, 1, "refresh retains one open totals surface");
     weather.dispose(); parent.remove();
     console.log("PASS workbench home: once-only titles, manual rename race, durable fallback, local check-in rollback/dedup, per-turn results, bounded carousel, PRO and exact pull threshold");
   } finally { await fs.rm(root, { recursive: true, force: true }); }

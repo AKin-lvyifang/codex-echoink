@@ -28,7 +28,7 @@ export class WorkbenchWeatherStage {
   private popover?: HTMLElement;
   private readonly media: MediaQueryList | undefined;
   private readonly win: Window;
-  constructor(parent: HTMLElement, private readonly plugin: CodexForObsidianPlugin, private readonly jump: (weather: WorkbenchWeather) => void) {
+  constructor(parent: HTMLElement, private readonly plugin: CodexForObsidianPlugin, private readonly jump: (weather: WorkbenchWeather) => void, private readonly layoutChanged: () => void = () => {}) {
     this.win = parent.ownerDocument.defaultView!;
     this.element = parent.createDiv({ cls: "wb-sky" });
     this.text = this.element.createEl("button", { cls: "wb-weather-copy", attr: { type: "button", "aria-live": "polite" } });
@@ -81,6 +81,7 @@ export class WorkbenchWeatherStage {
       this.text.setAttribute("aria-label", `${names[weather][this.plugin.settings.settingsLanguage === "en" ? 1 : 0]} · ${line}`);
     }
     if (!this.signing) this.paintTag();
+    this.renderPopover();
     if (weather !== this.weather) { this.weather = weather; this.restart(); }
     if (this.active && weather !== null && workbenchCheckin(this.plugin).consumeAutoPresentation()) void this.celebrate(true);
   }
@@ -141,10 +142,12 @@ export class WorkbenchWeatherStage {
     const line = this.text.querySelector(".wb-weather-count"); if (line) line.textContent = text;
     if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer);
     this.feedbackTimer = this.win.setTimeout(() => { this.clearFeedback(); }, 2600);
+    this.layoutChanged();
   }
   private clearFeedback(): void {
     this.feedback.textContent = ""; this.element.classList.remove("is-feedback");
     const line = this.text.querySelector(".wb-weather-count"); if (line) line.textContent = this.countLine;
+    this.layoutChanged();
   }
   private hint(): void {
     this.say(this.t("向下拉一下，或按 ↓ 签到", "Pull down, or press ↓ to check in"));
@@ -190,11 +193,16 @@ export class WorkbenchWeatherStage {
   private togglePopover(): void {
     if (this.popover) { this.closePopover(); return; }
     this.clearFeedback();
-    const data = workbenchCheckin(this.plugin).snapshot();
     this.popover = this.element.createDiv({ cls: "wb-checkin-popover", attr: { role: "status" } });
+    this.renderPopover();
+    this.stage.setAttribute("aria-expanded", "true");
+  }
+  private renderPopover(): void {
+    if (!this.popover) return;
+    const data = workbenchCheckin(this.plugin).snapshot();
+    this.popover.replaceChildren();
     this.popover.createDiv({ text: this.t(`累计签到 ${data.signedDates.length} 天`, `${data.signedDates.length} check-in days`) });
     this.popover.createDiv({ text: this.t(`用 Agent ${data.agentDates.length} 天`, `${data.agentDates.length} days with Agent`) });
-    this.stage.setAttribute("aria-expanded", "true");
   }
   private closePopover(): void { this.popover?.remove(); this.popover = undefined; this.stage.setAttribute("aria-expanded", "false"); }
   dispose(): void { this.disposed = true; this.stop(); if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer); for (const cleanup of this.cleanups) cleanup(); this.element.remove(); }
