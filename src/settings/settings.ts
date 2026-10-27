@@ -1,4 +1,5 @@
 import { normalizeWorkbenchCheckin, type WorkbenchCheckinData } from "../home/workbench-checkin";
+import { normalizeWeatherCity, type WeatherCity } from "../home/weather-types";
 import { defaultGenerationTemplates, normalizeGenerationTemplates } from "./generation-templates";
 import type { GenerationTemplate } from "../generation/types";
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -520,6 +521,7 @@ export interface EchoInkTodoItem {
 }
 
 export interface CodexForObsidianSettings {
+  weatherCity: WeatherCity | null;
   workbenchCheckin: WorkbenchCheckinData;
   generationTemplates: GenerationTemplate[];
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
@@ -574,6 +576,7 @@ export interface CodexForObsidianSettings {
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
+  weatherCity: null,
   workbenchCheckin: { signedDates: [], agentDates: [] },
   generationTemplates: defaultGenerationTemplates(),
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
@@ -751,6 +754,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     ...DEFAULT_SETTINGS,
     ...currentData,
     workbenchCheckin: normalizeWorkbenchCheckin(data.workbenchCheckin),
+    weatherCity: normalizeWeatherCity(data.weatherCity),
     // Plan is a conversation/draft choice, never a default for future tasks.
     defaultMode: "agent",
     productGeneration: DEFAULT_SETTINGS.productGeneration,

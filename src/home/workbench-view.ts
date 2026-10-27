@@ -1,4 +1,5 @@
-import { WorkbenchWeatherStage, type WorkbenchWeather } from "./workbench-weather";
+import { workbenchAgentState } from "./workbench-doll-motion";
+import { WorkbenchWeatherStage } from "./workbench-weather";
 import { workbenchModuleSetupReason, renderWorkbenchModuleSetup } from "./workbench-module-setup";
 import { WorkbenchStarters } from "./workbench-starters";
 import { workbenchResultType, type WorkbenchResultType } from "./workbench-result";
@@ -151,6 +152,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.renderShell();
     this.observeKnowledgeActivity();
     this.foreground = new ForegroundView(this, active => this.foregroundChanged(active));
+    this.foregroundChanged(this.foreground.isActive());
     const service = this.plugin.getConversationRunService();
     this.unsubscribers.push(this.port.subscribe(() => this.scheduleRefresh()));
     this.unsubscribers.push(service.subscribe({ refresh: () => this.scheduleRefresh(), clearAcceptedDraft() {}, isTaskVisible: () => false }));
@@ -324,12 +326,13 @@ export class EchoInkWorkbenchView extends ItemView {
       button.dataset.module = module.id;
     }
     this.button(nav, this.t("更多", "More"), "module-more", () => this.openMoreModules(), "tertiary", "ellipsis").dataset.wb = "module-more";
-    this.weatherStage = new WorkbenchWeatherStage(header, this.plugin, weather => {
-      const key = { drizzle: "interrupted", overcast: "waiting", breeze: "running", fair: "completed", still: "" }[weather];
+    this.weatherStage = new WorkbenchWeatherStage(header, this.plugin, state => {
+      const key = { unfinished: "interrupted", waiting: "waiting", working: "running", done: "completed", idle: "" }[state];
       const section = this.field("groups").querySelector<HTMLElement>(`[data-wb-group="${key}"]`);
       section?.scrollIntoView({ block: "start", behavior: this.contentEl.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
       section?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
     }, () => this.scheduleNav());
+    if (this.foreground) this.weatherStage.setActive(this.active());
     const actions = header.createDiv({ cls: "wb-header-actions" });
     this.button(actions, this.t("搜索笔记", "Search notes"), "search-trigger", () => this.openSearch(), "icon", "search").dataset.wb = "search-trigger";
     this.button(actions, this.t("插件设置", "Plugin settings"), "settings", () => this.plugin.openEchoInkGeneralSettings(), "icon", "settings");
@@ -472,10 +475,9 @@ export class EchoInkWorkbenchView extends ItemView {
       error: () => { new Notice(this.t("记忆恢复未完成，原内容和备份已保留。", "Memory recovery could not finish. Your original content and backup are preserved.")); void this.refresh(); }
     });
     const groups = this.taskGroups(now);
-    const weather: WorkbenchWeather | null = this.taskError || this.entries === null ? null
-      : groups.interrupted.length ? "drizzle" : groups.waiting.length ? "overcast" : groups.running.length ? "breeze" : groups.completed.length ? "fair" : "still";
-    const count = weather === "drizzle" ? groups.interrupted.length : weather === "overcast" ? groups.waiting.length : weather === "breeze" ? groups.running.length : groups.completed.length;
-    this.weatherStage?.update(weather, weather === "drizzle" ? this.t(`${count} 件没做完`, `${count} unfinished`) : weather === "overcast" ? this.t(`${count} 件等你回应`, `${count} waiting for you`) : weather === "breeze" ? this.t(`${count} 件在跑`, `${count} in progress`) : weather === "fair" ? this.t(`今天做完 ${count} 件`, `${count} completed today`) : this.t("一切安静", "All quiet"));
+    const state = this.taskError || this.entries === null ? null : workbenchAgentState(groups);
+    const count = state === "unfinished" ? groups.interrupted.length : state === "waiting" ? groups.waiting.length : state === "working" ? groups.running.length : groups.completed.length;
+    this.weatherStage?.update(state, state === "unfinished" ? this.t(`${count} 件没做完`, `${count} unfinished`) : state === "waiting" ? this.t(`${count} 件等你回应`, `${count} waiting for you`) : state === "working" ? this.t(`${count} 件在跑`, `${count} in progress`) : state === "done" ? this.t(`今天做完 ${count} 件`, `${count} completed today`) : this.t("一切安静", "All quiet"));
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));
     for (const [state, zh, en] of [["waiting", "等你回应", "Waiting for you"], ["running", "正在进行", "In progress"], ["interrupted", "没做完", "Not finished"]] as const) {

@@ -22490,6 +22490,15 @@ body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plug
 .echoink-settings-desktop button.codex-provider-saved-identity{justify-content:flex-start;text-align:left;white-space:normal;padding:0;border:0;background:transparent;height:auto;box-shadow:none}
 .echoink-settings-desktop button.codex-provider-saved-identity:is(:hover,:focus-visible){background:var(--hover);outline:none;box-shadow:none}
 .echoink-settings-desktop .codex-provider-saved-identity .codex-provider-saved-details{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+
+/* Desktop weather selection stays inside the existing General settings group. */
+.echoink-settings-demo .echoink-weather-city-control { display: flex; gap: 8px; align-items: center; min-width: 0; max-width: 320px; }
+.echoink-settings-demo .echoink-weather-city-control input { min-width: 0; width: 100%; }
+.echoink-settings-demo .echoink-weather-city-control > button { flex-shrink: 0; }
+.echoink-settings-demo .echoink-weather-cities { display: flex; flex-direction: column; }
+.echoink-settings-demo button.echoink-weather-city-option { width: 100%; justify-content: flex-start; text-align: left; white-space: normal; padding: 8px 18px; }
+.echoink-settings-demo .echoink-weather-city-status:not(:empty) { padding: 8px 18px; font-size: 12px; color: var(--text-muted); }
+.echoink-settings-demo .echoink-weather-sources { padding: 12px 18px 0; font-size: 12px; line-height: 1.8; color: var(--text-muted); }
 /* MIT Origin UI primitive styling, scoped to the actual library controls.
    EchoInk maps Origin's utility styles to the approved Demo tokens. No preflight. */
 .echoink-origin-control {
@@ -27862,7 +27871,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench .wb-weather-details { display: flex; flex-direction: column; align-items: flex-start; }
 .echoink-workbench .wb-header { position: relative; }
 .echoink-workbench .wb-weather-copy { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--wb-secondary); font: inherit; text-align: left; white-space: nowrap; cursor: pointer; box-shadow: none; }
-.echoink-workbench .wb-header.is-weather-condensed .wb-weather-copy { display: none; }
+.echoink-workbench .wb-header.is-weather-condensed .wb-weather-copy, .echoink-workbench .wb-header.is-weather-condensed .wb-weather-count-button { display: none; }
 .echoink-workbench .wb-header.is-weather-condensed .wb-weather-details { width: 0; }
 .echoink-workbench .wb-header.is-weather-condensed .wb-sky { position: static; gap: 0; }
 .echoink-workbench .wb-header.is-weather-condensed:has(.wb-sky.is-feedback) { padding-bottom: 54px; }
@@ -27914,7 +27923,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench .wb-completed-sub .wb-secondary { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .echoink-workbench .wb-completed-body .wb-row-title { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 @container wb-page (max-width: 819px) {
-  .echoink-workbench .wb-weather-copy { display: none; }
+  .echoink-workbench .wb-weather-copy, .echoink-workbench .wb-weather-count-button { display: none; }
   .echoink-workbench .wb-weather-details { width: 0; }
   .echoink-workbench .wb-sky { position: static; gap: 0; }
   .echoink-workbench .wb-header:has(.wb-sky.is-feedback) { padding-bottom: 54px; }
@@ -27934,6 +27943,13 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench .wb-module-setup-header > h1 { flex: 1; margin: 0; }
 .echoink-workbench .wb-module-setup-header > .is-primary { margin-left: auto; }
 .echoink-workbench .wb-module-setup > .wb-secondary { margin: 0; color: var(--wb-secondary); line-height: 1.7; }
+
+.echoink-workbench .wb-weather-copy { max-width: 170px; min-width: 0; padding-bottom: 3px; }
+.echoink-workbench .wb-weather-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.echoink-workbench button.wb-weather-count-button { display: block; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--wb-secondary); height: auto; box-shadow: none; text-align: left; }
+.echoink-workbench button.wb-weather-count-button:is(:hover,:focus-visible) { background: var(--wb-hover); outline: none; box-shadow: none; }
+.echoink-workbench button.wb-weather-count-button:disabled { opacity: 1; cursor: default; }
+@container wb-page (max-width: 819px) { .echoink-workbench button.wb-weather-count-button { display: none; } }
 
 /* P6 desktop journal: container widths follow the actual Obsidian pane. */
 .echoink-journal-page {

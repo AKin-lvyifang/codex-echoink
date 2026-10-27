@@ -790,9 +790,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   getCodexView(): CodexView | null { return this.getViewService().getCodexView(); }
   refreshKnowledgeBaseSurfaces(): void { this.getViewService().refreshKnowledgeBaseSurfaces(); }
   async refreshLanguageSurfaces(): Promise<void> { await this.getViewService().refreshLanguageSurfaces(); }
-  async openWorkbenchSetup(target: "agent" | "knowledge" | "appearance"): Promise<void> {
+  async openWorkbenchSetup(target: "agent" | "knowledge" | "appearance" | "weather"): Promise<void> {
     await this.getViewService().openEchoInkSettings(target === "knowledge" ? "knowledgeBase" : "general",
-      target === "agent" ? "general:personality-template" : target === "knowledge" ? "knowledge:onboarding" : "general:appearance");
+      target === "agent" ? "general:personality-template" : target === "knowledge" ? "knowledge:onboarding" : target === "weather" ? "general:weather" : "general:appearance");
   }
   async openEchoInkGeneralSettings(): Promise<void> { await this.getViewService().openEchoInkSettings("general"); }
   async openWorkbenchModuleSettings(id: import("./agents/types").AgentModuleId): Promise<void> {
