@@ -136,7 +136,11 @@ export class InlineRequestService {
     const resolved = tracked && from <= to && to <= source.document.length && source.document.slice(from, to) === target.text
       ? anchorAt(source.document, { from, to }) : tracked ? null : locateTarget(source.document, target, source.document === sourceDocument);
     const controls = this.list(r.path).flatMap(item => { const span = locateInstruction(source.document, item); return span ? [span] : []; });
-    if (!resolved || controls.some(control => intersects(control, resolved)) || markerPattern().test(resolved.text)) throw new Error("正文已变化或目标包含指令，请重试生成。");
+    const mappedRange = tracked && from <= to && to <= source.document.length ? { from, to } : resolved;
+    if (mappedRange && (controls.some(control => intersects(control, mappedRange)) || markerPattern().test(source.document.slice(mappedRange.from, mappedRange.to)))) {
+      throw new Error("修改范围包含指令，请把 @ 指令移到要改的范围外再试。");
+    }
+    if (!resolved) throw new Error("正文已变化，请重试生成。");
     r.target = { ...resolved, kind: target.kind }; r.targetResolved = true; r.section = section;
     r.preparedProposal = { text, original: resolved.text, requirement, section, sourceDocument, sourceTarget: structuredClone(target),
       context: structuredClone(r.readContext ?? source.context), createdAt: Date.now(), timing };
@@ -203,7 +207,7 @@ export class InlineRequestService {
       const version = r.versions.find(v => v.id === versionId)!;
       if (action === "confirm" && (!version || r.targetResolved === false)) throw new Error("还没有可确认的新稿。");
       if (action === "confirm" && before.slice(r.target.from, r.target.to) !== version.target.text) throw new Error("目标已变化，未写入。");
-      if (action === "confirm" && this.list(r.path).some(item => item.id !== id && (() => { const control = locateInstruction(before, item); return control && intersects(control, r.target); })())) throw new Error("目标包含另一块的指令，未写入。");
+      if (action === "confirm" && this.list(r.path).some(item => item.id !== id && (() => { const control = locateInstruction(before, item); return control && intersects(control, r.target); })())) throw new Error("修改范围包含指令，请把 @ 指令移到要改的范围外再试。");
       const changes = commitChanges(before, instruction, action === "confirm" ? r.target : undefined, version?.text ?? "");
       r.runToken = randomUUID(); r.preparedProposal = undefined; r.queue = undefined; this.runDocuments.delete(id);
       const after = applyChanges(before, changes);

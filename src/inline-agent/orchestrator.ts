@@ -4,7 +4,7 @@ import type CodexForObsidianPlugin from "../main";
 import { getActiveApiProviderModel } from "../settings/settings";
 import { resolveComposerReasoningState } from "../ui/composer-reasoning";
 import { locateTarget } from "./document";
-import { buildInlineCandidates, proposalTarget, sectionAt } from "./candidates";
+import { buildInlineCandidates, proposalTarget, sectionForRange } from "./candidates";
 import type { InlineDraftSubmission } from "./mention";
 import { InlineRequestService, type InlineEditorPort } from "./service";
 import type { InlineModelSelection, InlineRequest } from "./types";
@@ -109,7 +109,7 @@ export class InlineAgentRuntimeController {
       const handle = await this.plugin.submitPiChat({ conversationId: request.taskId, text: requirement, submittedAt: Date.now(), signal: flight.abort.signal,
         mode: "agent", permission: "read-only", ...model, selectionAnnotations: cloneSelectionAnnotations(annotations),
         inlineProposalRequest: { requestId: request.id, context: source.context.text,
-          candidates: candidates.map(({ id, kind, text, label }) => ({ id, kind, text, label })),
+          candidates: candidates.map(({ id, kind, text, label, boundaryGroup }) => ({ id, kind, text, label, ...(boundaryGroup !== undefined ? { boundaryGroup } : {}) })),
           ...(latest ? { previousDraft: latest.text } : {}),
           questionAnswers: [...(source.request.thread?.filter(m => m.role === "user").map(m => m.text) ?? []), ...(source.request.question ? [`管家的追问：${source.request.question.question}`] : [])] } });
       productRunId = handle.productRunId;
@@ -128,7 +128,7 @@ export class InlineAgentRuntimeController {
       if (output.kind === "clarification") await this.service.clarify(request.id, token, { question: output.question, options: output.options.map(o => ({ ...o })) }, timing);
       else {
         const target = proposalTarget(source.document, candidates, output);
-        await this.service.completeProposal(request.id, token, source.document, target, output.text, requirement, sectionAt(source.document, target.from), timing);
+        await this.service.completeProposal(request.id, token, source.document, target, output.text, requirement, sectionForRange(source.document, target), timing);
       }
     } catch (error) {
       reject(error);

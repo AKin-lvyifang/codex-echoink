@@ -7,6 +7,7 @@ import { renderAgentTaskList } from "../ui/codex-view/task-list";
 import { renderTaskDetailHeader } from "../ui/codex-view/task-detail";
 import { agentTaskCounts, taskState, type TaskEntry } from "../agents/task-presentation";
 import { disposeOriginControls } from "../settings/origin-controls";
+import { anchorAt } from "../inline-agent/document";
 import type { AgentDefinition } from "../agents/types";
 import type { InlineRequest, InlineRequestStatus } from "../inline-agent/types";
 import { addSelectionAnnotation, composerSelectionAnnotations, snapshotSelectionDraft, removeSelectionAnnotation } from "../selection-ask/draft";
@@ -90,6 +91,29 @@ await check("source snapshot is fixed, action card is unique, version one has no
   f.records[0].observedDocument = "正文后来变了"; f.emit();
   assert.equal(f.root.querySelector(".echoink-inline-task-snapshot")?.textContent, "# 周会\n原正文");
   assert.equal(f.root.querySelectorAll('[data-inline-action="confirm"]').length, 1); f.close();
+});
+
+await check("multi-paragraph source and pinned actions show the same full cross-section label and fixed note snapshot", async () => {
+  const original = `  讨论原文：${"完整的讨论事实。".repeat(180)}  \n\n\n## 行动\n\n\t最后一段行动。  `;
+  const context = `# 周会\n\n## 讨论\n\n${original}`, document = `${context}\n\n@小墨 改写这段 %%echoink:request%%`, item = request();
+  const from = document.indexOf(original), instructionFrom = document.indexOf("@小墨"), section = "周会 › 讨论 › 周会 › 行动";
+  item.target = { ...anchorAt(document, { from, to: from + original.length }), kind: "replace" };
+  item.instruction = { ...anchorAt(document, { from: instructionFrom, to: document.length }), trigger: "@", marker: "%%echoink:request%%" };
+  item.observedDocument = document; item.section = section;
+  item.versions[0] = { ...item.versions[0], sourceDocument: document, target: structuredClone(item.target), text: "跨节整理的新稿", context: { text: context, segments: [{ cleanFrom: 0, cleanTo: context.length, sourceFrom: 0, sourceTo: context.length }] } };
+  const f = fixture(item);
+  try {
+    assert.equal(f.button("source").textContent, `周会 › ${section}`);
+    assert.equal(f.root.querySelector(".echoink-inline-task-pin-lead")?.textContent, `改「${section}」`);
+    assert.equal(f.root.querySelector(".echoink-inline-task-snapshot")?.textContent, context);
+    f.records[0].observedDocument = "范围外的后续改动"; f.records[0].target.from += 10; f.records[0].target.to += 10; f.emit();
+    assert.equal(f.root.querySelector(".echoink-inline-task-snapshot")?.textContent, context, "the full original reading snapshot must survive a live target move");
+    f.button("compare").click(); await settle();
+    assert.equal(f.root.querySelector(".echoink-inline-task-pin-lead")?.textContent, `改「${section}」 · 正在看原文`);
+    assert.equal(f.button("source").textContent, `周会 › ${section}`); assert.equal(f.button("confirm").disabled, true);
+    f.button("confirm").click(); await settle(); assert.equal(f.calls.some(call => call[0] === "confirm"), false);
+    f.button("source").click(); await settle(); assert.deepEqual(f.calls.at(-1), ["source", item.id]);
+  } finally { f.close(); }
 });
 
 await check("pending lead stays normal while only actionable problems use reminder color", () => {

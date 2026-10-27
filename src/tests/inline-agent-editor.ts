@@ -20,12 +20,12 @@ const agent = { id: "sol", name: "小墨", avatar: { kind: "preset", presetId: "
 let checks = 0;
 const check = async (name: string, run: () => unknown | Promise<unknown>) => { await run(); checks++; console.log(`PASS ${name}`); };
 
-function record(text: string, status: InlineRequestStatus = "pending"): InlineRequest {
-  const from = text.indexOf(command), targetFrom = text.indexOf("原文"), targetTo = targetFrom + "原文第一行\n原文第二行".length;
+function record(text: string, status: InlineRequestStatus = "pending", original = "原文第一行\n原文第二行", draft = "新稿"): InlineRequest {
+  const from = text.indexOf(command), targetFrom = text.indexOf(original), targetTo = targetFrom + original.length;
   const target = { ...anchorAt(text, { from: targetFrom, to: targetTo }), kind: "replace" as const };
   return { id, vaultId: "synthetic", path: "合成正文.md", taskId: "task-1", agentId: "sol", agentName: "小墨", status,
     instruction: { ...anchorAt(text, { from, to: from + command.length }), trigger: "@", marker }, target, observedDocument: text, currentVersionId: "v1",
-    versions: [{ id: "v1", number: 1, text: "新稿", requirement: "改写这段", sourceDocument: text, context: { text, segments: [] }, target, createdAt: 1 }], followups: [], createdAt: 1, updatedAt: 1 };
+    versions: [{ id: "v1", number: 1, text: draft, requirement: "改写这段", sourceDocument: text, context: { text, segments: [] }, target, createdAt: 1 }], followups: [], createdAt: 1, updatedAt: 1 };
 }
 function controllerFor(requests: InlineRequest[]) {
   const controller = Object.create(InlineAgentController.prototype) as any, opened: string[] = [];
@@ -63,6 +63,31 @@ await check("full-line display expansion preserves inline prefix/suffix and all 
   assert.ok(f.lines().includes("保留段落")); assert.ok(f.lines().includes("尾段"));
   assert.equal(f.lines().filter(line => !line).length, 3);
   assert.equal(f.view.state.doc.toString(), text); f.close();
+});
+
+await check("a multi-paragraph block covers every original line and heading; compare renders the whole source and disables confirm", () => {
+  const original = `  原文首段：${"保留完整内容。".repeat(240)}  \n\n\n## 范围内标题\n\n\t原文末段：尾部也必须保留。  `;
+  const draft = "多段新稿\n\n## 整理后的标题\n\n整理后的末段。";
+  const text = `前文\n\n${original}\n\n${command}\n\n后文`, request = record(text, "pending", original, draft), f = editor(text, [request]);
+  let confirms = 0;
+  f.controller.service.compare = (requestId: string) => {
+    const comparing = f.controller.service.comparingOriginal;
+    if (comparing.has(requestId)) comparing.delete(requestId); else comparing.add(requestId);
+  };
+  f.controller.service.confirm = async () => { confirms++; };
+  const button = (label: string) => [...f.view.contentDOM.querySelectorAll<HTMLButtonElement>(".echoink-inline-block button")].find(element => element.textContent === label)!;
+  try {
+    assert.deepEqual(f.lines(), ["前文", "", "后文"], "the complete selected range, internal heading and owned control gap must be replaced by one block");
+    assert.equal(f.view.contentDOM.querySelectorAll(".echoink-inline-block").length, 1);
+    assert.equal(f.view.contentDOM.querySelector(".echoink-inline-body")?.textContent, draft);
+    button("对比").click(); f.view.dispatch({});
+    assert.ok(f.controller.service.comparingOriginal.has(id));
+    assert.equal(f.view.contentDOM.querySelector(".echoink-inline-body")?.textContent, original, "comparison must preserve the full multi-paragraph source, including whitespace at both ends");
+    assert.ok(original.length > 1600); assert.equal(button("确认").disabled, true); button("确认").click(); assert.equal(confirms, 0);
+    assert.deepEqual(f.lines(), ["前文", "", "后文"]); assert.equal(f.view.state.doc.toString(), text);
+    button("看新稿").click(); f.view.dispatch({}); assert.equal(button("确认").disabled, false);
+    assert.equal(f.view.contentDOM.querySelector(".echoink-inline-body")?.textContent, draft); assert.equal(f.view.state.doc.toString(), text);
+  } finally { f.close(); }
 });
 
 await check("queued request keeps one status followed by a native keyboard-accessible full instruction button", async () => {

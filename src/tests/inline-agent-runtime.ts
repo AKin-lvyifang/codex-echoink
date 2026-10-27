@@ -30,8 +30,10 @@ const annotations: SelectionAnnotation[] = [{ id: "quoted-other-note", number: 1
   anchor: { mode: "editor", from: 0, to: 28, before: "", after: "" }, appliedActions: [] }];
 
 const proposal = { kind: "proposal", candidateId: "paragraph", original: "原文片段", text: "修改后的段落" } as const;
+const rangeProposal = { kind: "proposal", startCandidateId: "paragraph", endCandidateId: "paragraph-end", text: "连续多段的新稿" } as const;
 const request: InlineModelRequest = { requestId: "inline-request", context: "全文开头\n" + "全文中间完整保留。".repeat(700) + "\n全文末尾",
-  candidates: [{ id: "paragraph", kind: "replace", text: "前句。原文片段。后句。", label: "当前段落" }, { id: "end", kind: "insert", text: "", label: "文末" }],
+  candidates: [{ id: "paragraph", kind: "replace", text: "前句。原文片段。后句。", label: "当前段落", boundaryGroup: "body-0" },
+    { id: "paragraph-end", kind: "replace", text: "末段保留负责人。", label: "下一步", boundaryGroup: "body-0" }, { id: "end", kind: "insert", text: "", label: "文末" }],
   previousDraft: "上一稿内容", questionAnswers: ["保留专业用语"] };
 
 function assertProtocol(): void {
@@ -66,7 +68,7 @@ function assertProtocol(): void {
   console.log("PASS inline protocol: strict complete JSON, bounded candidate/original, insert, clarification, immutable request");
 }
 
-type Scenario = "normal" | "no_memory" | "clarification" | "invalid" | "length" | "unknown_tool" | "oversize";
+type Scenario = "normal" | "no_memory" | "clarification" | "range" | "invalid_range" | "range_length" | "invalid" | "length" | "unknown_tool" | "oversize";
 
 async function runScenario(scenario: Scenario): Promise<void> {
   await withPersonalMemoryFixture(async memory => {
@@ -110,8 +112,10 @@ async function runScenario(scenario: Scenario): Promise<void> {
           contexts.push(structuredClone(context));
           if (scenario === "unknown_tool") return fauxAssistantMessage(fauxToolCall("user_question", { question: "不应执行" }, { id: "forbidden-call" }), { stopReason: "toolUse" });
           return fauxAssistantMessage(scenario === "invalid" ? JSON.stringify({ ...proposal, original: "不存在" })
+            : scenario === "invalid_range" ? JSON.stringify({ ...rangeProposal, endCandidateId: "end" })
+            : scenario === "range" || scenario === "range_length" ? JSON.stringify(rangeProposal)
             : scenario === "clarification" ? JSON.stringify({ kind: "clarification", question: "保留什么语气？", options: [{ id: "concise", label: "简短" }, { id: "formal", label: "正式" }] })
-              : JSON.stringify(proposal), { stopReason: scenario === "length" ? "length" : "stop" });
+              : JSON.stringify(proposal), { stopReason: scenario === "length" || scenario === "range_length" ? "length" : "stop" });
         };
         provider.setResponses([respond, respond]);
         const modelRuntime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), modelsPath: null, allowModelNetwork: false });
@@ -167,9 +171,10 @@ async function runScenario(scenario: Scenario): Promise<void> {
         const subscription = runtime.subscribeProductRun(handle.productRunId, event => { allEvents.push(structuredClone(event)); });
         const result = await handle.result;
         subscription.unsubscribe();
-        const successful = ["normal", "no_memory", "clarification"].includes(scenario);
+        const successful = ["normal", "no_memory", "clarification", "range"].includes(scenario);
         assert.equal(result.terminalState, successful ? "completed" : "failed", `${scenario}: ${result.error}`);
         assert.equal(result.inlineProposalResult?.kind, scenario === "clarification" ? "clarification" : successful ? "proposal" : undefined);
+        if (scenario === "range") assert.deepEqual(result.inlineProposalResult, rangeProposal);
         assert.equal(providerCalls, 1, "invalid/truncated/tool-call output must not cause another Provider call");
         assert.deepEqual(contexts[0].tools ?? [], []);
         const sent = JSON.stringify(contexts[0]);
@@ -322,5 +327,5 @@ async function assertOrchestratorRunLifecycle(): Promise<void> {
 }
 
 assertProtocol();
-for (const scenario of ["normal", "no_memory", "clarification", "invalid", "length", "unknown_tool", "oversize"] as const) await runScenario(scenario);
+for (const scenario of ["normal", "no_memory", "clarification", "range", "invalid_range", "range_length", "invalid", "length", "unknown_tool", "oversize"] as const) await runScenario(scenario);
 await assertOrchestratorRunLifecycle();

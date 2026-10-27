@@ -4,6 +4,7 @@ const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const suites = [
   "test:plan-mode",
   "test:inline-agent",
+  "test:inline-agent-ranges",
   "test:inline-agent-runtime",
   "test:inline-agent-concurrency",
   "test:inline-agent-recovery",
