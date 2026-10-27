@@ -91,7 +91,7 @@ export function createProductionKnowledgeLinkingHost(plugin: CodexForObsidianPlu
       if (session && (await plugin.readPiConversationCatalogEntry(session.conversationId))?.agentId !== agentId) await release();
       if (!session) {
         if (plugin.getConversationRunService().isAgentBlocked(agentId)) throw new Error("agent_removal_in_progress");
-        const conversation = await plugin.createPiConversation({ conversationId: `knowledge-linking-${randomUUID()}`, title: "知识关联分析", cwd: root, agentId, defaultMemoryMode: "no_memory" });
+        const conversation = await plugin.createPiConversation({ conversationId: `knowledge-linking-${randomUUID()}`, title: "知识关联分析", titleSource: "fallback", cwd: root, agentId, defaultMemoryMode: "no_memory" });
         const batch: PiKnowledgeLinkingBatch = { ...input, proposals: null };
         session = { taskId: input.taskId, conversationId: conversation.conversationId, batch, unregister: registerPiKnowledgeLinkingBatch(conversation.conversationId, batch) };
       }

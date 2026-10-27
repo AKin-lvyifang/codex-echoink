@@ -1070,6 +1070,7 @@ export function createKnowledgeInitializationHost(
       const entry = await plugin.createPiConversation({
         conversationId,
         title: "知识库初始化",
+        titleSource: "fallback",
         cwd: vaultRootPath,
         defaultMemoryMode: "normal"
       });

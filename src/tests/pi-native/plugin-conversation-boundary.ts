@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Platform } from "obsidian";
 import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -24,6 +25,7 @@ import type {
 } from "../../harness/pi-native/contracts";
 import {
   createDurablePiSession,
+  persistPiActiveLeaf,
   type PiSessionManagerApi
 } from "../../harness/pi-native/pi-session-durability";
 import { FileApprovalTicketStore } from "../../harness/pi-native/tool-authorization";
@@ -44,10 +46,12 @@ import {
   createApiProviderModelConfig, type StoredSession
 } from "../../settings/settings";
 import { ProductActivityGate } from "../../plugin/api-provider-activation-service";
+import { readDurablePiConversationProjection } from "../../harness/pi-native/pi-native-conversation-runtime";
 
 const pluginPrototype = CodexForObsidianPlugin.prototype as any;
 
 export async function runPiPluginConversationBoundaryTests(): Promise<void> {
+  await runPiConversationTitleEntryTests();
   await runPiKnowledgePromptBoundaryTests();
   await runtimeBundleInitializesConversationShellsWithoutBodyReads();
   await missingProviderKeepsHistoryReadableWithoutActivation();
@@ -69,6 +73,64 @@ export async function runPiPluginConversationBoundaryTests(): Promise<void> {
   await localManagementAndMemoryStayProviderIndependent();
   await releaseClearsPluginActivationStateEvenWhenRuntimeReleaseFails();
   await chatPropagatesTheMissingApiKeyError();
+}
+
+/** Exercise the public plugin create/accept entry points, not hand-built Catalog rows. */
+export async function runPiConversationTitleEntryTests(): Promise<void> {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "echoink-title-entry-")));
+  const desktop = Platform.isDesktopApp;
+  Platform.isDesktopApp = true;
+  try {
+    const catalog = new FileConversationCatalog({ storageRootPath: root, vaultId: "title-entry" });
+    const sessionApi: PiSessionManagerApi = { codingAgentVersion: VERSION, currentSessionVersion: CURRENT_SESSION_VERSION, open: SessionManager.open };
+    const productRuns = new FileProductRunStore({ storageRootPath: root, vaultId: catalog.vaultId, catalog });
+    await catalog.initialize(); await productRuns.initialize();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const unused = createApiProviderConfig("custom", "unused-default");
+    const provider = createApiProviderConfig("custom", "accepted-request-provider");
+    const model = createApiProviderModelConfig("custom", "accepted-request-model");
+    provider.models = [model]; settings.apiProviders = [unused, provider]; settings.activeApiProviderId = unused.id;
+    const entered = deferred<void>(), generated = deferred<string>();
+    let calls = 0;
+    const host = pluginHost({
+      settings, manualTitleChanges: new Set(),
+      ensurePiLocalData: async () => ({ catalog, sessionApi }),
+      readPiConversationProjection: (conversationId: string) => readDurablePiConversationProjection({ catalog, productRuns, sessionApi, conversationId, resolveConversationCwd: () => root }),
+      getKnowledgeActivitySource: () => null,
+      notifyHomeSurfacesChanged: () => {},
+      getPiProviderConfigurationService: () => ({ generateText: async (request: { draft: { providerSettingsId: string; modelId: string } }) => {
+        calls++;
+        assert.equal(request.draft.providerSettingsId, provider.id, "use the accepted request's provider, not the global default");
+        assert.equal(request.draft.modelId, model.id);
+        entered.resolve(); return await generated.promise;
+      } })
+    });
+    const entry = await host.createPiConversation({ conversationId: "from-public-create", title: "请帮我整理这周的收件箱，并按主题列出待办清单。", cwd: root });
+    assert.equal(entry.titleSource, "pending", "desktop ordinary creation must persist title eligibility before the first send");
+    settings.sessions.push(shellFromCatalogEntry(entry));
+    const manager = sessionApi.open(entry.sessionFile!, catalog.sessionRootPath, root);
+    const text = "请帮我整理这周的收件箱，并按主题列出待办清单。";
+    manager.appendMessage({ role: "user", content: text, timestamp: Date.now() });
+    persistPiActiveLeaf({ sessionRoot: catalog.sessionRootPath, sessionManager: manager });
+    const item = { sessionId: entry.conversationId, text, turnOptions: { providerSettingsId: provider.id, model: model.id } };
+    const first = host.onWorkbenchMessageAccepted(item);
+    await Promise.race([entered.promise, first.then(() => { throw new Error("accepted request returned without generating its pending title"); })]);
+    assert.equal((await catalog.get(entry.conversationId))?.title, "请帮我整理这周的收件箱，并按");
+    assert.equal((await catalog.get(entry.conversationId))?.titleSource, "fallback", "persist the fallback before waiting for generation");
+    await host.onWorkbenchMessageAccepted(item); assert.equal(calls, 1, "duplicate acceptance during generation cannot call twice");
+    generated.resolve("本周收件箱整理"); await first; await flushMicrotasks();
+    assert.equal((await catalog.get(entry.conversationId))?.title, "本周收件箱整理");
+    assert.equal((await catalog.get(entry.conversationId))?.titleSource, "automatic");
+    await host.onWorkbenchMessageAccepted(item); assert.equal(calls, 1);
+    await flushMicrotasks(); assert.equal(settings.sessions[0].title, "本周收件箱整理", "the sidebar shell follows the stored short title");
+    const fixed = await host.createPiConversation({ conversationId: "fixed-knowledge-title", title: "知识库初始化", titleSource: "fallback", cwd: root });
+    await host.onWorkbenchMessageAccepted({ ...item, sessionId: fixed.conversationId });
+    assert.equal((await catalog.get(fixed.conversationId))?.title, "知识库初始化"); assert.equal(calls, 1, "fixed business titles never generate");
+    Platform.isDesktopApp = false;
+    const mobile = await host.createPiConversation({ conversationId: "mobile-unchanged", title: "移动端原有标题", cwd: root });
+    assert.equal(mobile.titleSource, "fallback", "desktop title eligibility does not change mobile creation");
+    console.log("PASS production title entry: public create -> durable user message -> accepted callback -> durable fallback -> one generation -> sidebar title; fixed and mobile titles preserved");
+  } finally { Platform.isDesktopApp = desktop; await rm(root, { recursive: true, force: true }); }
 }
 
 /** Pure message conversion: no session, Provider request or Vault access. */
