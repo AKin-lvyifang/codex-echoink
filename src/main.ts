@@ -1143,7 +1143,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       item = { id: newId("task-resume"), sessionId: taskId, text: message?.trim() || "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。", attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
         turnOptions: { cwd: this.getVaultPath(), providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: model.id,
           reasoning: resolveComposerReasoningState(this.settings, provider.id, model.id)?.effort ?? "none",
-          permission: choice?.permission ?? this.settings.defaultPermission, mode: choice?.mode ?? this.settings.defaultMode, mcpEnabled: true }, clearComposerAfterPiAcceptance: false };
+          permission: choice?.permission ?? this.settings.defaultPermission, mode: choice?.mode ?? "agent", mcpEnabled: true }, clearComposerAfterPiAcceptance: false };
     }
     const selection = item.turnOptions;
     const provider = this.settings.apiProviders.find(provider => provider.id === selection.providerSettingsId);

@@ -26,6 +26,7 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
+    "test:plan-mode": "node scripts/plan-mode-tests.mjs",
     "test:inline-agent": "node scripts/inline-agent-tests.mjs",
     "test:inline-agent-concurrency": "node scripts/inline-agent-concurrency-tests.mjs",
     "test:inline-agent-recovery": "node scripts/inline-agent-recovery-tests.mjs",

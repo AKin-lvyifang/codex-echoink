@@ -11519,7 +11519,7 @@ button.codex-message-note-mention-chip:focus-visible {
   color: var(--text-error);
 }
 
-.codex-composer-mode-indicator {
+button.codex-composer-mode-indicator {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -11534,8 +11534,30 @@ button.codex-message-note-mention-chip:focus-visible {
   font-size: 13px;
   font-weight: 400;
   white-space: nowrap;
-  pointer-events: none;
+  cursor: pointer;
+  border-radius: var(--echoink-conversation-radius-sm, 6px);
 }
+
+.codex-composer-mode-indicator:hover,
+.codex-composer-mode-indicator:focus-visible {
+  background: var(--background-modifier-hover);
+  outline: none;
+  box-shadow: none;
+}
+
+.codex-composer-mode-close { display: flex; }
+.codex-composer-mode-close svg { width: 12px; height: 12px; }
+
+.codex-plan-missing { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; color: var(--text-muted); font-size: 13px; line-height: 1.4; }
+.codex-plan-missing-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+button.codex-plan-missing-action { height: auto; min-height: 30px; padding: 5px 10px; font-size: 13px; line-height: 1.4; color: var(--text-normal); border: 1px solid var(--background-modifier-border); border-radius: var(--echoink-conversation-radius-sm, 6px); background: transparent; box-shadow: none; }
+.codex-plan-missing-action:hover,
+.codex-plan-missing-action:focus-visible { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.codex-plan-missing-action:disabled { opacity: .45; cursor: default; }
+.codex-pi-diagnostic-panel:not(.has-recovery) { border: 0; background: transparent; }
+.codex-pi-diagnostic-panel > summary { cursor: pointer; color: var(--text-muted); }
+details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-muted); }
+@media (pointer: coarse) { .codex-plan-missing-action, .codex-composer-mode-indicator { min-height: 44px; } }
 
 .codex-composer-mode-indicator-icon {
   display: inline-flex;

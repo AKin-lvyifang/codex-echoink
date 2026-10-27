@@ -206,7 +206,8 @@ type PiProductRunStartFailureStage =
   | "user_entry_readback"
   | "draft_remove"
   | "product_run_create"
-  | "product_run_mark_running";
+  | "product_run_mark_running"
+  | "post_acceptance_setup";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
   ? Omit<T, Extract<keyof T, K>>
@@ -2039,17 +2040,24 @@ export class PiNativeConversationRuntime {
         userEntry.id
       );
     }
-    if (execution.knowledgeWorkflow?.kind === "maintain") {
-      await this.options.knowledge?.maintenanceActivity?.({ type: "start", conversationId: catalog.conversationId, productRunId,
-        sourcePaths: execution.maintenanceScope ? maintenanceScopePaths(execution.maintenanceScope) : undefined,
-        request: execution.knowledgeWorkflow.command.request });
-    }
-    if (execution.generation) {
-      // Local preflight/auth may fail before a formal run exists. Keep its
-      // phases transient until the user Entry and ProductRun are both durable.
-      execution.generation.durable = true;
-      for (const entry of execution.generation.pendingEntries) this.appendGenerationEntry(active, entry.customType, entry.data);
-      execution.generation.pendingEntries = [];
+    try {
+      if (execution.knowledgeWorkflow?.kind === "maintain") {
+        await this.options.knowledge?.maintenanceActivity?.({ type: "start", conversationId: catalog.conversationId, productRunId,
+          sourcePaths: execution.maintenanceScope ? maintenanceScopePaths(execution.maintenanceScope) : undefined,
+          request: execution.knowledgeWorkflow.command.request });
+      }
+      if (execution.generation) {
+        // Local preflight/auth may fail before a formal run exists. Keep its
+        // phases transient until the user Entry and ProductRun are both durable.
+        execution.generation.durable = true;
+        for (const entry of execution.generation.pendingEntries) this.appendGenerationEntry(active, entry.customType, entry.data);
+        execution.generation.pendingEntries = [];
+      }
+    } catch (error) {
+      await this.appendProductRunStartFailureDiagnostic(active, execution, "post_acceptance_setup", error);
+      const cleanupErrors = await this.cleanupFailedProductRunStart(active, execution, promptPromise);
+      throw productRunStartFailureAfterUserEntry(error, cleanupErrors,
+        "消息已受理，但启动记录保存失败，本轮已停止。", userEntry.id);
     }
     const result = this.completeProductRun(
       active,
@@ -2477,8 +2485,12 @@ export class PiNativeConversationRuntime {
     execution.abortRequested = true;
     this.finishProviderWait(execution, "cancelled");
     execution.knowledgeAbort.abort();
-    await this.options.knowledge?.maintenanceActivity?.({ type: "stop", conversationId, productRunId: execution.productRunId });
     const abortErrors: unknown[] = [];
+    try {
+      await this.options.knowledge?.maintenanceActivity?.({ type: "stop", conversationId, productRunId: execution.productRunId });
+    } catch (error) {
+      abortErrors.push(error);
+    }
     try {
       await this.pauseTaskPlanForAbort(active, execution);
     } catch (error) {
@@ -3510,16 +3522,22 @@ export class PiNativeConversationRuntime {
         sessionManager: active.sessionManager
       });
       if (
-        execution.mode === "plan"
+        terminalState === "completed"
+        && execution.mode === "plan"
         && !runEntries.some((entry) =>
           taskPlanFromSessionEntry(entry, active.catalog.piSessionId)
             ?.productRunId === execution.productRunId
         )
       ) {
-        throw new PiNativeConversationRuntimeError(
-          "projection_unsettled",
-          "Plan 模式未通过 task_update 写入结构化任务计划"
-        );
+        const outcomeId = active.sessionManager.appendCustomEntry("echoink.plan-missing.v1", {
+          productRunId: execution.productRunId,
+          assistantEntryId: lastAssistantEntryId(runEntries)
+        });
+        assertPiSessionAppendsDurable({ sessionRoot: this.catalog.sessionRootPath,
+          sessionManager: active.sessionManager, expectedEntryIds: [outcomeId] });
+        persistPiActiveLeaf({ sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager });
+        entries = active.sessionManager.getEntries();
+        runEntries = entries.filter(entry => !execution.baselineEntryIds.has(entry.id));
       }
       let assistantEntryId = lastAssistantEntryId(runEntries);
       let toolCallIds = collectToolCallIds(

@@ -40,6 +40,7 @@ export interface CodexMessageHost {
     action: "execute" | "continue" | "pause" | "cancel"
   ): Promise<void>;
   preparePiTaskPlanModification(planId: string, title: string): void;
+  handleMissingPlanAction(message: ChatMessage, action: "retry" | "disable"): Promise<void>;
   renderTaskPlanDock(session: StoredSession): void;
   renderInteractionDock(session: StoredSession): void;
   renderMessages(options?: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean }): void;
@@ -140,7 +141,9 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
           action: "execute" | "continue" | "pause" | "cancel"
         ) => host.handlePiTaskPlanAction(planId, action),
         onModifyTaskPlan: (planId: string, title: string) =>
-          host.preparePiTaskPlanModification(planId, title)
+          host.preparePiTaskPlanModification(planId, title),
+        onMissingPlanAction: (message: ChatMessage, action: "retry" | "disable") => host.handleMissingPlanAction(message, action),
+        planActionsDisabled: host.running
       }
       : {}),
     onScheduleMeasure: (forceBottom) => host.scheduleMeasureVirtualRows(forceBottom),
