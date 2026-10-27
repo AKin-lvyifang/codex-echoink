@@ -260,7 +260,7 @@ const english: Record<string, string> = {
   "Skill 指令已保存": "Skill instructions saved",
   "MCP 服务已保存": "MCP service saved",
   "联网搜索设置已保存": "Web search settings saved",
-  "Tavily 联网搜索": "Tavily web search",
+  "联网搜索": "Web search", "搜索服务": "Search service", "官网 / 获取 API Key": "Website / Get an API key", "官方定价": "Official pricing", "请先填写当前搜索服务的 API Key。": "Enter the selected search service's API key first.", "测试会发送一次搜索请求，按官方定价计费。": "Testing sends one search request, charged at official rates.",
   "已填写 Key": "API key configured",
   "未填写 Key": "No API key",
   "无法复制路径": "Could not copy path",

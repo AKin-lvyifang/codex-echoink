@@ -50,6 +50,9 @@ if (codexTransportResult.status !== 0) process.exit(codexTransportResult.status 
 const providerTransportResult = spawnSync(process.execPath, ["scripts/desktop-provider-transport-tests.mjs"], { stdio: "inherit" });
 if (providerTransportResult.status !== 0) process.exit(providerTransportResult.status ?? 1);
 
+const webSearchResult = spawnSync(process.execPath, ["scripts/web-search-tests.mjs"], { stdio: "inherit", env: { ...process.env, PI_OFFLINE: "1" } });
+if (webSearchResult.status !== 0) process.exit(webSearchResult.status ?? 1);
+
 const codexOAuthResult = spawnSync(process.execPath, ["scripts/codex-oauth-compat-tests.mjs"], {
   stdio: "inherit"
 });

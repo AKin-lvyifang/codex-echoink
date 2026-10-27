@@ -1,3 +1,5 @@
+import { renderTavilySettings } from "../settings/tavily-settings";
+import { type WebSearchSettings, type searchWeb } from "../tools/web-search";
 import * as assert from "node:assert/strict";
 import { App, Platform, Setting } from "obsidian";
 import { CodexSettingTab } from "../settings/settings-tab";
@@ -732,6 +734,7 @@ async function checkDesktopSettings(
     Object.assign(f.plugin.app, { setting: { searchComponent: { inputEl: searchInput } } });
     for (const [query, category, selector, child] of [
       ["Tavily", "capabilities", ".echoink-tavily-card", "tools"],
+      ["DeepSeek", "capabilities", ".echoink-tavily-card", "tools"],
       ["MCP", "capabilities", '[data-resource-tab="mcp"][aria-selected="true"]', "mcp"],
       ["Skills", "capabilities", '[data-resource-tab="skills"][aria-selected="true"]', "skills"],
       ["知识库", "modules", '[data-module="knowledge"].is-expanded [data-echoink-focus-key="knowledge:directory:raw"]', "knowledgeBase"]
@@ -1109,4 +1112,36 @@ async function checkDesktopInlineProModule(win: Window & typeof globalThis, sche
     } finally { mount.cleanup(); f.registrations.forEach(cleanup => cleanup()); f.tab.containerEl.remove(); }
   }
   console.log("PASS @Agent PRO module: bilingual shared drawer/badge/benefits, moved trigger, saved symbol and enable, live membership lock and retained preference");
+}
+
+/** Focused production Origin controls; controlled request completion, no external service. */
+export async function runWebSearchSettingsDomTests(win: Window & typeof globalThis): Promise<void> {
+  const scheduler = prepareDocument(win);
+  for (const language of ["zh-CN", "en"]) {
+    const container = win.document.createElement("div"); container.className = "echoink-settings-aligned"; win.document.body.append(container);
+    const saved: unknown[] = [], calls: { settings: WebSearchSettings; signal?: AbortSignal; resolve: () => void }[] = [];
+    const deepseekFixture = ["deepseek", "fixture"].join("-");
+    const host = { settings: { settingsLanguage: language, tavily: { enabled: true, apiKey: "tavily-fixture", provider: "tavily", deepseekApiKey: deepseekFixture } as WebSearchSettings }, async saveSettings() { saved.push(structuredClone(this.settings.tavily)); } };
+    const search: typeof searchWeb = (settings, input) => new Promise(resolve => { calls.push({ settings, signal: input.signal, resolve: () => resolve({ source: "web", provider: settings.provider === "deepseek" ? "DeepSeek" : "Tavily", results: [] }) }); });
+    try {
+      renderTavilySettings(container, host, search); await scheduler.flush();
+      const input = container.querySelector<HTMLInputElement>('input[type="password"]')!, toggle = container.querySelector<OriginCheckElement>('[role="switch"]')!, test = container.querySelector<HTMLButtonElement>('.echoink-tavily-test button')!;
+      const provider = (name: string) => container.querySelector<HTMLButtonElement>(`button[role="radio"][aria-label="${name}"]`)!;
+      const edit = (value: string) => { input.value = value; input.dispatchEvent(new win.Event("input", { bubbles: true })); };
+      assert.equal(container.querySelectorAll('[role="radio"]').length, 2); assert.equal(provider("Tavily").getAttribute("aria-checked"), "true"); assert.equal(input.value, "tavily-fixture");
+      provider("DeepSeek").click(); await scheduler.flush(); assert.equal(input.value, "deepseek-fixture"); assert.equal(provider("DeepSeek").getAttribute("aria-checked"), "true"); assert.equal(provider("Tavily").getAttribute("aria-checked"), "false");
+      test.click(); await scheduler.flush(); assert.equal(calls[0].settings.provider, "deepseek"); assert.equal(calls[0].settings.deepseekApiKey, "deepseek-fixture"); assert.equal(test.disabled, true);
+      provider("Tavily").click(); await scheduler.flush(); assert.equal(calls[0].signal?.aborted, true); assert.equal(test.disabled, false); assert.equal(input.value, "tavily-fixture");
+      calls[0].resolve(); await scheduler.flush(); assert.equal(container.querySelector('.is-success'), null, "a previous provider's late completion cannot mark the current service connected");
+      test.click(); await scheduler.flush(); edit("edited-tavily"); assert.equal(calls[1].signal?.aborted, true); calls[1].resolve(); await scheduler.flush(); assert.equal(container.querySelector('.is-success'), null);
+      provider("DeepSeek").click(); await scheduler.flush(); assert.equal(input.value, "deepseek-fixture"); edit(""); assert.equal(host.settings.tavily.enabled, false); assert.equal(toggle.checked, false); assert.equal(host.settings.tavily.apiKey, "edited-tavily");
+      toggle.click(); await scheduler.flush(); assert.equal(toggle.checked, false); assert.ok(container.querySelector('.is-error'));
+      edit("edited-deepseek"); test.click(); await scheduler.flush(); calls[2].resolve(); await scheduler.flush(); assert.ok(container.querySelector('.is-success'), "empty results are a successful connection response"); assert.equal(host.settings.tavily.enabled, false, "test does not enable search");
+      toggle.click(); await scheduler.flush(); assert.equal(host.settings.tavily.enabled, true);
+      provider("Tavily").click(); await scheduler.flush(); assert.equal(input.value, "edited-tavily"); assert.equal(host.settings.tavily.deepseekApiKey, "edited-deepseek");
+      test.click(); await scheduler.flush(); disposeOriginControls(container); assert.equal(calls[3].signal?.aborted, true, "closing settings cancels the current test"); calls[3].resolve(); await scheduler.flush();
+      assert.ok(saved.length > 0); assert.ok(!container.textContent?.includes("edited-deepseek"));
+    } finally { disposeOriginControls(container); container.remove(); }
+  }
+  console.log("PASS web search settings: production Origin radios, selected Key/independent storage, enable gate, no-results success, edit/switch/dispose cancellation and stale result suppression; Chinese and English DOM (no live requests)." );
 }

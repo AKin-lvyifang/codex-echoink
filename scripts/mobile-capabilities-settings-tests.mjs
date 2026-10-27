@@ -363,4 +363,23 @@ await test("Tavily uses real production request shape, no missing-key request, s
   assert.ok(!JSON.stringify(response).includes(key)); f.settings.tavily.enabled = false;
   await assert.rejects(tool.execute("search-2", { query: "blocked" })); assert.equal(calls.length, 1);
 });
+await test("DeepSeek shares selected-service settings, testing and guarded mobile runtime without fallback", async () => {
+  const calls = [], tavilyKey = "synthetic-tavily-key", deepseekKey = "synthetic-deepseek-key";
+  let finish;
+  const f = fixture(async input => { calls.push(input); return { status: 200, json: { results: [{ title: "Source", url: "https://example.com", summary: `Summary ${deepseekKey} ${tavilyKey}`, date: "2026-10-27" }] } }; });
+  const draft = f.service.readTavily(); Object.assign(draft, { provider: "deepseek", apiKey: tavilyKey, deepseekApiKey: deepseekKey, enabled: true });
+  const saved = await f.service.saveTavily(draft); assert.equal(saved.apiKey, tavilyKey); assert.equal(saved.deepseekApiKey, deepseekKey);
+  const tool = f.service.runtimeTools(f.policy(), async () => {}).find(tool => tool.name === "web_search"); assert.ok(tool); assert.match(tool.description, /128/u);
+  const response = await tool.execute("deepseek", { query: "😀".repeat(128) }); assert.equal(calls[0].url, "https://api.deepseek.com/v1/tools/search"); assert.equal(calls[0].headers.Authorization, `Bearer ${deepseekKey}`);
+  assert.deepEqual(JSON.parse(calls[0].body), { query: "😀".repeat(128), count: 5, need_content: false }); assert.ok(!JSON.stringify(response).includes(deepseekKey)); assert.ok(!JSON.stringify(response).includes(tavilyKey));
+  await assert.rejects(tool.execute("long", { query: "汉".repeat(129) }), /128/u); assert.equal(calls.length, 1);
+  await f.service.testTavily(saved); assert.equal(JSON.parse(calls[1].body).count, 1, "mobile connection test dispatches only one result");
+  f.settings.tavily.deepseekApiKey = ""; await assert.rejects(tool.execute("missing", { query: "blocked" })); assert.equal(calls.length, 2, "unselected key cannot authorize or cause fallback");
+  f.settings.tavily.deepseekApiKey = deepseekKey; f.settings.tavily.provider = "tavily";
+  const switched = f.service.readTavily(); switched.provider = "deepseek"; await f.service.saveTavily(switched); assert.equal(f.service.readTavily().apiKey, tavilyKey);
+  const race = fixture(input => new Promise(resolve => { finish = resolve; })); Object.assign(race.settings.tavily, { provider: "deepseek", deepseekApiKey: deepseekKey, enabled: true });
+  const raceTool = race.service.runtimeTools(race.policy(), async () => {}).find(tool => tool.name === "web_search");
+  const pending = raceTool.execute("switch", { query: "news" }); race.settings.tavily.provider = "tavily"; race.settings.tavily.apiKey = tavilyKey;
+  finish({ status: 200, json: { results: [] } }); await assert.rejects(pending, /配置已变化/u);
+});
 console.log(`OK ${passed} mobile capabilities settings tests; controlled loopback HTTP only; third-party MCP/Tavily unverified`);

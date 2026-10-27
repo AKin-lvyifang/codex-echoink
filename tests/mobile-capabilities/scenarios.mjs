@@ -115,6 +115,11 @@ export async function runMobileCapabilityScenarios(api) {
     assert.throws(() => f.policy.assertTool("web_search", {}), code(/module_disabled:web-search/u));
     f.settings.tavily.apiKey = "synthetic-capability-key";
     assert.doesNotThrow(() => f.policy.assertTool("web_search", {}));
+    f.settings.tavily.provider = "deepseek";
+    assert.throws(() => f.policy.assertTool("web_search", {}), code(/module_disabled:web-search/u));
+    f.settings.tavily.deepseekApiKey = ["synthetic", "deepseek", "capability", "key"].join("-");
+    f.settings.tavily.apiKey = "";
+    assert.doesNotThrow(() => f.policy.assertTool("web_search", {}));
     const sol = f.settings.agentRegistry.agents.find(agent => agent.id === "sol");
     const beforeWebGrant = sol.disabledCapabilityIds;
     sol.disabledCapabilityIds = [...(beforeWebGrant ?? []), "web-search"];

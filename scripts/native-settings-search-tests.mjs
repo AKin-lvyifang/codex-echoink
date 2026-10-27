@@ -30,7 +30,8 @@ try {
   globalThis.getComputedStyle = win.getComputedStyle.bind(win);
   const test = await import(pathToFileURL(entry).href);
   try {
-    if (process.argv.includes("--polish")) await test.runSettingsPolishDomTests(win);
+    if (process.argv.includes("--web-search")) await test.runWebSearchSettingsDomTests(win);
+    else if (process.argv.includes("--polish")) await test.runSettingsPolishDomTests(win);
     else if (process.argv.includes("--plugin-rows")) await test.runBuiltinPluginRowDomTests(win);
     else await test.runSettingsSearchDomTests(win, () => new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true }));
   }

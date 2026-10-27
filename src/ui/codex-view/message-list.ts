@@ -4986,8 +4986,8 @@ function firstPartyMessageTitle(
   language: SettingsLanguage
 ): string {
   const title = message.title ?? "";
-  if (message.role === "tool" && title === "网页搜索 · Tavily") {
-    return conversationUiText(language, title, "Web search · Tavily");
+  if (message.role === "tool" && (title === "联网搜索" || title === "网页搜索 · Tavily")) {
+    return conversationUiText(language, title, title === "联网搜索" ? "Web search" : "Web search · Tavily");
   }
   return isFirstPartySystemPresentation(message)
     || (message.itemType === "knowledgeBase" && title === "知识库管理")

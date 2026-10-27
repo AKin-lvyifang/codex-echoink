@@ -1,3 +1,4 @@
+import { webSearchAvailable, type WebSearchSettings } from "../tools/web-search-settings";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { EchoInkResource } from "../resources/types";
 import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
@@ -14,7 +15,7 @@ export interface AgentCapabilitySettings {
   readonly lifestyle: { readonly finance: { readonly enabled: boolean } };
   readonly pdfReading: { readonly enabled: boolean };
   readonly englishDiary: { readonly enabled: boolean };
-  readonly tavily: { readonly enabled: boolean; readonly apiKey: string };
+  readonly tavily: WebSearchSettings;
   readonly knowledgeBase: { readonly folderBindings?: KnowledgeFolderBindings | null };
 }
 export interface AgentCapabilityToolAdapters {
@@ -106,7 +107,7 @@ export function checkAgentCapability(context: AgentCapabilityContext, capability
   const enabled = capabilityId === "finance" ? s.lifestyle.finance.enabled
     : capabilityId === "pdf-reading" ? s.pdfReading.enabled
       : capabilityId === "english-diary" ? s.englishDiary.enabled
-        : capabilityId === "web-search" ? s.tavily.enabled && !!s.tavily.apiKey.trim()
+        : capabilityId === "web-search" ? webSearchAvailable(s.tavily)
             : capabilityId === "journal" ? s.knowledgeBase.folderBindings?.roles.journal.enabled !== false
               : capabilityId === "knowledge" ? !s.knowledgeBase.folderBindings || ["raw", "wiki", "projects", "inbox"].some(role => s.knowledgeBase.folderBindings!.roles[role as "raw"].enabled) : true;
   if (!enabled || context.moduleEnabled?.[capabilityId as AgentModuleCapability] === false) return decision(capabilityId, "module_disabled");
