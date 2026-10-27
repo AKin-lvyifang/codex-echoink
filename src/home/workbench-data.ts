@@ -1,7 +1,7 @@
 import { resolveMaintenanceSourceState } from "../knowledge-base/maintenance-source-state";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { TFile, type EventRef } from "obsidian";
+import { TFile, TFolder, type EventRef } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentModuleId } from "../agents/types";
 import { hasProPluginAccess } from "../membership/access";
@@ -235,7 +235,10 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     const pro = this.plugin.accountService ? hasProPluginAccess(this.plugin.accountService) : false;
     const bindings = this.bindings;
     let journalAvailable = false;
-    try { journalAvailable = (!bindings || bindings.roles.journal.enabled) && readNativeJournalSettings(this.plugin.app, this.plugin.settings.journalDirectory, bindings).available; }
+    try {
+      const journal = readNativeJournalSettings(this.plugin.app, this.plugin.settings.journalDirectory, bindings);
+      journalAvailable = (!bindings || bindings.roles.journal.enabled) && journal.available && (!journal.folder || this.plugin.app.vault.getAbstractFileByPath(journal.folder) instanceof TFolder);
+    }
     catch (error) { issues.push(`日记配置：${message(error)}`); }
     if (journalAvailable) modules.push("journal");
     if (["raw", "wiki", "projects", "inbox"].some(role => this.roots(role as "raw").length)) modules.push("knowledge-base");

@@ -795,6 +795,13 @@ export default class CodexForObsidianPlugin extends Plugin {
       target === "agent" ? "general:personality-template" : target === "knowledge" ? "knowledge:onboarding" : "general:appearance");
   }
   async openEchoInkGeneralSettings(): Promise<void> { await this.getViewService().openEchoInkSettings("general"); }
+  async openWorkbenchModuleSettings(id: import("./agents/types").AgentModuleId): Promise<void> {
+    if (id === "journal") return this.getViewService().openEchoInkSettings("general", "module:journal");
+    if (id === "knowledge-base") return this.getViewService().openEchoInkSettings("knowledgeBase");
+    if (id === "todos") return this.getViewService().openEchoInkSettings("todos");
+    this.settings.resourceManagementTab = "plugins";
+    await this.getViewService().openEchoInkSettings("resources", `${id === "pdf-reading" ? "pdf-reading" : id}:settings`);
+  }
   async openEchoInkKnowledgeSettings(): Promise<void> {
     await this.getViewService().openEchoInkSettings("knowledgeBase");
   }

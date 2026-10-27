@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { WorkspaceLeaf, TFile } from "obsidian";
 import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, groupWorkbenchTasks, workbenchInlineQuestion } from "../home/workbench-view";
 import { openWorkbenchModule } from "../home/module-navigation";
+import { DEFAULT_SETTINGS } from "../settings/settings";
 import type { TaskEntry } from "../agents/task-presentation";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchSnapshot } from "../home/workbench-types";
 import type { EchoInkQuestionInteraction } from "../types/conversation-turn";
@@ -102,6 +103,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
     async openEchoInkAccountSettings(target?: "login" | "benefits") { calls.push(["account", target]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
+    async openWorkbenchModuleSettings(id: string) { calls.push(["module-settings", id]); },
     lifestyle: { async open(kind: string) { calls.push(["lifestyle", kind]); } },
     englishDiary: { async openToday() { calls.push(["english"]); } },
     getTodoStore: () => ({ async toggleDone(todo: ParsedTodoRecord, done: boolean) { calls.push(["todo", todo.id, done]); if (todoFailure) throw new Error("保存失败"); snapshot = { ...snapshot, todayTodos: [] }; } })
@@ -182,9 +184,32 @@ export async function runWorkbenchUiTests(): Promise<void> {
       await click("module-lock-back"); assert.equal(document.activeElement, button(`module-${id}`));
     }
     host.settings.lifestyle.finance.enabled = false; await view.refresh();
-    assert.equal(button("module-finance").hidden, true);
+    assert.equal(button("module-finance").hidden, false);
     const disabledCalls = calls.length;
-    button("module-finance").click(); await tick(); assert.equal(calls.length, disabledCalls, "stale hidden navigation cannot open a disabled module");
+    button("module-finance").click(); await tick(); assert.equal(calls.length, disabledCalls, "disabled PRO navigation cannot open the module service");
+    assert.ok(content.querySelector('[data-locked-module="finance"]'), "PRO gating precedes setup");
+    await click("module-lock-back");
+    pro = true; host.settings.pdfReading.enabled = false;
+    snapshot = { ...snapshot, modules: ["todos"] }; await view.refresh();
+    const configured = { ...host.settings };
+    Object.assign(host.settings, structuredClone(DEFAULT_SETTINGS)); await view.refresh();
+    assert.equal(content.querySelectorAll('[data-module]:not([hidden])').length, 6, "default/unconfigured modules remain discoverable independently of snapshot.modules");
+    Object.assign(host.settings, configured); await view.refresh();
+    for (const id of ["journal", "knowledge-base", "finance", "pdf-reading"] as const) {
+      const before = calls.length; await click(`module-${id}`);
+      const setup = content.querySelector<HTMLElement>(`[data-setup-module="${id}"]`)!;
+      assert.ok(setup); assert.equal(setup.querySelectorAll(".is-primary").length, 1);
+      assert.equal(calls.length, before, "setup landing never starts a module or reads its data");
+      await click("module-setup-settings"); assert.deepEqual(calls.at(-1), ["module-settings", id]);
+      await click("module-setup-back");
+    }
+    host.settings.englishDiary.enabled = false; await click("module-english-diary");
+    assert.match(content.querySelector('[data-wb="module-setup"]')?.textContent ?? "", /英文日记尚未开启/);
+    host.settings.englishDiary.enabled = true; await view.refresh();
+    assert.equal(content.querySelector('[data-wb="module-setup"]'), null, "configuration completion opens the actual module");
+    assert.deepEqual(calls.at(-1), ["english"]);
+    host.settings.pdfReading.enabled = true;
+    snapshot = { ...snapshot, modules: ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading"] };
     host.settings.lifestyle.finance.enabled = true; pro = true; await view.refresh();
     assert.equal(button("module-finance").querySelector('[data-plugin-edition="pro"]'), null);
     await click("module-finance"); assert.deepEqual(calls.at(-1), ["lifestyle", "finance"]);
