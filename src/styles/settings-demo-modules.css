@@ -43,6 +43,10 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   margin: 0;
   padding: 12px 18px 4px;
 }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-settings-section ~ .echoink-settings-section > .echoink-settings-section-header {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-settings-section-header h3 {
   margin: 0;
   color: var(--text);
