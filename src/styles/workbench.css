@@ -205,9 +205,14 @@
 .echoink-workbench .wb-modules { grid-column: 1; grid-row: 2; display: flex; flex-wrap: nowrap; min-width: 0; overflow: hidden; padding: 0; border: 0; margin: 0; }
 .echoink-workbench .wb-modules button.wb-button { flex: 0 0 auto; max-width: none; white-space: nowrap; height: 30px; }
 .echoink-workbench .wb-sky { grid-column: 2; grid-row: 1 / 3; display: flex; align-items: flex-end; justify-self: center; position: relative; gap: 4px; min-width: 0; --bg: var(--wb-bg); }
+.echoink-workbench .wb-weather-details { display: flex; flex-direction: column; align-items: flex-start; }
+.echoink-workbench .wb-header { position: relative; }
 .echoink-workbench .wb-weather-copy { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--wb-secondary); font: inherit; text-align: left; white-space: nowrap; cursor: pointer; box-shadow: none; }
 .echoink-workbench .wb-header.is-weather-condensed .wb-weather-copy { display: none; }
-.echoink-workbench .wb-header.is-weather-condensed .wb-sky.is-feedback .wb-sky-feedback { display: block; }
+.echoink-workbench .wb-header.is-weather-condensed .wb-weather-details { width: 0; }
+.echoink-workbench .wb-header.is-weather-condensed .wb-sky { position: static; gap: 0; }
+.echoink-workbench .wb-header.is-weather-condensed:has(.wb-sky.is-feedback) { padding-bottom: 54px; }
+.echoink-workbench .wb-header.is-weather-condensed .wb-sky-feedback { position: absolute; right: 0; bottom: 8px; max-width: 100%; padding: 0; }
 .echoink-workbench .wb-weather-copy:disabled { cursor: default; opacity: 1; }
 .echoink-workbench .wb-weather-name { display: flex; align-items: baseline; gap: 6px; font-size: calc(var(--font-text-size, 16px) * .75); }
 .echoink-workbench .wb-weather-name em { font: inherit; font-family: Georgia, serif; color: var(--wb-muted); }
@@ -219,7 +224,12 @@
 .echoink-workbench .is-checkin-disabled .wb-weather-stage > svg { overflow: hidden; }
 .echoink-workbench .wb-weather-stage [data-layer^="weather-"] { color: var(--wb-muted); }
 .echoink-workbench .wb-weather-copy:is(:hover, :focus-visible), .echoink-workbench .wb-weather-stage:focus-visible { background: var(--wb-hover); outline: none; box-shadow: none; }
-.echoink-workbench .wb-sky-feedback { display: none; position: absolute; right: 0; top: calc(100% + 7px); z-index: 25; max-width: min(300px, 70cqi); padding: 7px 10px; border: 1px solid var(--wb-line); border-radius: 8px; background: var(--wb-bg); font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-workbench .wb-sky-feedback { display: none; flex-wrap: wrap; align-items: baseline; gap: 4px; max-width: 150px; padding: 0 8px 6px; color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.5; }
+.echoink-workbench .wb-sky.is-feedback .wb-sky-feedback { display: flex; }
+.echoink-workbench .wb-sky.is-feedback .wb-weather-count { display: none; }
+.echoink-workbench .wb-sky.is-feedback .wb-weather-copy { padding-bottom: 0; }
+.echoink-workbench .wb-checkin-message { overflow-wrap: anywhere; }
+.echoink-workbench button.wb-checkin-login { flex: 0 0 auto; height: auto; padding: 0 4px; line-height: inherit; }
 
 .echoink-workbench .wb-checkin-popover { position: absolute; z-index: 24; top: calc(100% + 7px); right: 0; border: 1px solid var(--wb-line); background: var(--wb-bg); border-radius: 10px; padding: 10px 12px; color: var(--wb-secondary); white-space: nowrap; font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.8; font-variant-numeric: tabular-nums; }
 .echoink-workbench .wb-starters { margin-bottom: 26px; }
@@ -251,10 +261,14 @@
 .echoink-workbench .wb-completed-body .wb-row-title { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 @container wb-page (max-width: 819px) {
   .echoink-workbench .wb-weather-copy { display: none; }
-  .echoink-workbench .wb-sky.is-feedback .wb-sky-feedback { display: block; }
+  .echoink-workbench .wb-weather-details { width: 0; }
+  .echoink-workbench .wb-sky { position: static; gap: 0; }
+  .echoink-workbench .wb-header:has(.wb-sky.is-feedback) { padding-bottom: 54px; }
+  .echoink-workbench .wb-sky-feedback { position: absolute; right: 0; bottom: 8px; max-width: 100%; padding: 0; }
 }
 @container wb-page (max-width: 559px) {
   .echoink-workbench .wb-header { column-gap: 8px; grid-template-rows: auto auto; }
+  .echoink-workbench .wb-header-actions { gap: 0; }
   .echoink-workbench .wb-heading { grid-column: 1 / 4; }
   .echoink-workbench .wb-sky { grid-row: 2; }
   .echoink-workbench .wb-weather-stage { width: 130px; height: 62px; }

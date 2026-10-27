@@ -15,6 +15,8 @@ import type {
   MembershipApiResponses,
   MembershipProduct,
   MembershipRights,
+  CheckInSummary,
+  CheckInResult,
 } from "./types";
 import { hasProPluginAccess } from "./access";
 import { signProof, verifyLease } from "./crypto";
@@ -43,8 +45,10 @@ const ERRORS: Record<string, string> = {
 };
 
 export class MembershipApiError extends Error {
-  constructor(readonly code: string) {
+  readonly retryAfter?: number;
+  constructor(readonly code: string, retryAfter?: number) {
     super(ERRORS[code] || "账号请求未完成，请重试。");
+    if (Number.isSafeInteger(retryAfter) && retryAfter! > 0) this.retryAfter = retryAfter;
   }
 }
 export type MembershipTransport = (
@@ -174,6 +178,32 @@ export class AccountService implements CapabilityAccess {
   private assertCurrent(operation: Operation): void {
     if (!this.isCurrent(operation))
       throw new MembershipApiError("OPERATION_CANCELLED");
+  }
+
+  /** An opaque in-memory session revision; no token or PRO/device lease is exposed. */
+  checkInSession(): number | null { return !this.closed && this.state.token ? this.generation : null; }
+
+  async getCheckIns(date: string): Promise<CheckInSummary> {
+    const result = await this.checkInRequest(`/api/check-ins?date=${encodeURIComponent(date)}`, "GET");
+    const value = result as CheckInSummary;
+    if (!validCheckInSummary(value) || value.today?.date !== date || typeof value.today.checkedIn !== "boolean"
+      || value.today.source !== (value.today.checkedIn ? "manual" : null) || value.today.checkedIn && value.total < 1) throw new MembershipApiError("CHECKIN_RESPONSE_INVALID");
+    return value;
+  }
+
+  async checkIn(input: { date: string; timezone: string; source: "manual" }): Promise<CheckInResult> {
+    const result = await this.checkInRequest("/api/check-ins", "POST", { date: input.date, timezone: input.timezone, source: "manual" });
+    const value = result as CheckInResult;
+    if (!value || value.date !== input.date || value.source !== "manual" || typeof value.alreadyCheckedIn !== "boolean"
+      || !Number.isFinite(value.checkedInAt) || value.checkedInAt < 0 || !validCheckInSummary(value.summary) || value.summary.total < 1) throw new MembershipApiError("CHECKIN_RESPONSE_INVALID");
+    return value;
+  }
+
+  private async checkInRequest(path: string, method: string, body?: unknown): Promise<unknown> {
+    const operation = this.operation();
+    if (!operation.token) throw new MembershipApiError("AUTH_REQUIRED");
+    try { return await this.call(path, method, body, operation); }
+    finally { this.assertCurrent(operation); }
   }
 
   async initialize(): Promise<void> {
@@ -670,4 +700,10 @@ export class AccountService implements CapabilityAccess {
     this.claims = null;
     this.state = {};
   }
+}
+
+function validCheckInSummary(value: unknown): value is Omit<CheckInSummary, "today"> {
+  const data = value as Partial<CheckInSummary> | null;
+  return !!data && Number.isSafeInteger(data.total) && data.total! >= 0 && Number.isFinite(data.serverTime) && data.serverTime! >= 0
+    && Array.isArray(data.recent) && data.recent.length <= 30 && data.recent.every(date => typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(date));
 }

@@ -55,6 +55,19 @@ export interface DeviceLeaseResponse {
   deviceId: string;
   serverTime: number;
 }
+export interface CheckInSummary {
+  total: number;
+  today: { date: string; checkedIn: boolean; source: "manual" | null };
+  recent: string[];
+  serverTime: number;
+}
+export interface CheckInResult {
+  date: string;
+  alreadyCheckedIn: boolean;
+  source: "manual";
+  checkedInAt: number;
+  summary: Omit<CheckInSummary, "today">;
+}
 /** Response shapes for the API endpoints whose payloads the client consumes. */
 export interface MembershipApiResponses {
   "/api/auth/login": { token: string };

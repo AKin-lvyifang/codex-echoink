@@ -1,8 +1,9 @@
 import { animate, type AnimationPlaybackControlsWithThen } from "framer-motion";
-import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
+import { MembershipApiError } from "../membership/account-service";
+import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { WORKBENCH_ART, inlineWorkbenchArt } from "./workbench-artwork";
-import { WORKBENCH_CHECKIN_ENABLED, workbenchCheckin, workbenchDate } from "./workbench-checkin";
+import { WORKBENCH_CHECKIN_ENABLED, workbenchCheckin, type WorkbenchCheckinService } from "./workbench-checkin";
 
 export type WorkbenchWeather = "drizzle" | "overcast" | "breeze" | "fair" | "still";
 const names: Record<WorkbenchWeather, [string, string]> = { drizzle: ["小雨", "Drizzle"], overcast: ["阴天", "Overcast"], breeze: ["起风了", "Breeze"], fair: ["晴", "Fair"], still: ["无风", "Still"] };
@@ -14,38 +15,51 @@ export class WorkbenchWeatherStage {
   private readonly stage: HTMLButtonElement | HTMLDivElement;
   private readonly svg: SVGSVGElement;
   private readonly feedback: HTMLElement;
+  private readonly feedbackText: HTMLElement;
+  private readonly login: HTMLButtonElement;
+  private readonly checkins: WorkbenchCheckinService;
   private readonly controls = new Set<AnimationPlaybackControlsWithThen>();
   private readonly cleanups: (() => void)[] = [];
   private blinkTimer?: number;
   private feedbackTimer?: number;
   private weather: WorkbenchWeather | null = null;
-  private countLine = "";
   private active = true;
   private reduced = false;
   private dragging: { pointer: number; y: number; dy: number } | null = null;
   private signing = false;
+  private submitGeneration = 0;
+  private checkinContext = -1;
+  private errorVersion = -1;
   private disposed = false;
   private popover?: HTMLElement;
   private readonly media: MediaQueryList | undefined;
   private readonly win: Window;
   constructor(parent: HTMLElement, private readonly plugin: CodexForObsidianPlugin, private readonly jump: (weather: WorkbenchWeather) => void, private readonly layoutChanged: () => void = () => {}) {
     this.win = parent.ownerDocument.defaultView!;
+    this.checkins = workbenchCheckin(plugin);
     this.element = parent.createDiv({ cls: "wb-sky" });
     this.element.classList.toggle("is-checkin-disabled", !WORKBENCH_CHECKIN_ENABLED);
-    this.text = this.element.createEl("button", { cls: "wb-weather-copy", attr: { type: "button", "aria-live": "polite" } });
+    const details = this.element.createDiv({ cls: "wb-weather-details" });
+    this.text = details.createEl("button", { cls: "wb-weather-copy", attr: { type: "button" } });
     this.stage = WORKBENCH_CHECKIN_ENABLED
       ? this.element.createEl("button", { cls: "wb-weather-stage", attr: { type: "button", "aria-label": this.t("向下拉晴天娃娃签到，或按向下键", "Pull down to check in, or press Arrow Down") } })
       : this.element.createDiv({ cls: "wb-weather-stage", attr: { role: "img", "aria-label": this.t("工作天气晴天娃娃", "Work weather doll") } });
     this.svg = inlineWorkbenchArt(parent.ownerDocument, WORKBENCH_ART.weather); this.stage.append(this.svg);
     // Trim the unused tag area without changing the doll's scale or its pivots.
     if (!WORKBENCH_CHECKIN_ENABLED) this.svg.setAttribute("viewBox", "0 0 180 104");
-    this.feedback = this.element.createDiv({ cls: "wb-sky-feedback", attr: { role: "status", "aria-live": "polite" } });
+    this.feedback = details.createDiv({ cls: "wb-sky-feedback", attr: { role: "status", "aria-live": "polite" } });
+    this.feedbackText = this.feedback.createSpan({ cls: "wb-checkin-message" });
+    this.login = createOriginButton(this.feedback, { cls: "wb-button is-tertiary wb-checkin-login", text: this.t("去登录", "Sign in") }); this.login.hidden = true;
+    this.listen(this.login, "click", () => { void this.plugin.openEchoInkAccountSettings("login").catch(() => this.say(this.t("账号设置未打开，请重试", "Account settings did not open. Try again"))); });
     this.media = this.win.matchMedia?.("(prefers-reduced-motion: reduce)"); this.reduced = this.media?.matches ?? false;
     const reduce = () => { this.reduced = this.media?.matches ?? false; this.restart(); };
     this.media?.addEventListener("change", reduce); this.cleanups.push(() => this.media?.removeEventListener("change", reduce));
     this.listen(this.text, "click", () => { if (this.weather) this.jump(this.weather); });
     if (WORKBENCH_CHECKIN_ENABLED) this.bindCheckin();
     this.update(null, "");
+    this.cleanups.push(this.checkins.subscribe(() => this.checkinChanged()));
+    this.checkinChanged();
+    this.refreshCheckin(true);
   }
   private bindCheckin(): void {
     this.listen(this.stage, "pointerdown", (e: PointerEvent) => {
@@ -59,8 +73,9 @@ export class WorkbenchWeatherStage {
     });
     this.listen(this.stage, "pointerup", (e: PointerEvent) => {
       const drag = this.dragging; if (!drag || drag.pointer !== e.pointerId) return;
+      drag.dy = Math.max(0, e.clientY - drag.y);
       this.dragging = null;
-      if (drag.dy >= 10 && !this.signed()) void this.checkIn();
+      if (drag.dy >= 10) { if (!this.signed()) void this.checkIn(); else this.restart(); }
       else if (this.signed() && drag.dy < 10) { this.restart(); this.togglePopover(); }
       else this.hint();
     });
@@ -78,26 +93,39 @@ export class WorkbenchWeatherStage {
   private listen(target: EventTarget, name: string, listener: (event: any) => void): void {
     target.addEventListener(name, listener); this.cleanups.push(() => target.removeEventListener(name, listener));
   }
-  private signed(): boolean { return workbenchCheckin(this.plugin).snapshot().signedDates.includes(workbenchDate()); }
+  private signed(): boolean { return this.checkins.snapshot().checkedIn; }
+  private refreshCheckin(force = false): void {
+    if (WORKBENCH_CHECKIN_ENABLED && this.active && this.win.navigator.onLine !== false) void this.checkins.refresh(force).catch(() => undefined);
+  }
+  private checkinChanged(): void {
+    if (this.disposed) return;
+    const state = this.checkins.snapshot();
+    if (state.context !== this.checkinContext) {
+      this.checkinContext = state.context; this.submitGeneration++; this.signing = false; this.dragging = null;
+      this.stage.removeAttribute("disabled"); this.clearFeedback(); this.closePopover(); this.restart(); this.refreshCheckin();
+      this.stage.removeAttribute("aria-busy");
+    }
+    if (!this.signing) this.paintTag(); this.renderPopover();
+    if (state.errorVersion !== this.errorVersion) { this.errorVersion = state.errorVersion; if (state.error) this.failure(state.error); }
+  }
   update(weather: WorkbenchWeather | null, line: string): void {
-    this.countLine = line;
     this.text.hidden = weather === null; this.text.disabled = !weather || weather === "still";
     this.text.replaceChildren();
     if (weather) {
       const name = this.text.createSpan({ cls: "wb-weather-name" }); name.createSpan({ text: names[weather][0] }); name.createEl("em", { text: names[weather][1] });
-      this.text.createSpan({ cls: "wb-weather-count", text: this.feedback.textContent || line });
+      this.text.createSpan({ cls: "wb-weather-count", text: line });
       this.text.setAttribute("aria-label", `${names[weather][this.plugin.settings.settingsLanguage === "en" ? 1 : 0]} · ${line}`);
     }
     if (!this.signing) this.paintTag();
     this.renderPopover();
     if (weather !== this.weather) { this.weather = weather; this.restart(); }
-    if (WORKBENCH_CHECKIN_ENABLED && this.active && weather !== null && workbenchCheckin(this.plugin).consumeAutoPresentation()) void this.celebrate(true);
+    this.refreshCheckin();
   }
-  setActive(active: boolean): void { if (active !== this.active) { this.active = active; this.closePopover(); this.restart(); } }
+  setActive(active: boolean): void { if (active !== this.active) { this.active = active; this.closePopover(); this.restart(); if (active) this.refreshCheckin(true); } }
   private paintTag(): void {
     this.layer("tag").setAttribute("display", WORKBENCH_CHECKIN_ENABLED ? "inline" : "none");
     if (!WORKBENCH_CHECKIN_ENABLED) return;
-    const days = workbenchCheckin(this.plugin).snapshot().signedDates.length;
+    const days = this.checkins.snapshot().total ?? 0;
     this.layer("tag-text").textContent = this.signed() ? this.t(`${days} 天`, `${days} d`) : this.t("签到", "Check in");
     this.stage.setAttribute("aria-label", this.signed() ? this.t(`已签到，累计 ${days} 天，查看统计`, `Checked in, ${days} days. View totals`) : this.t("向下拉晴天娃娃签到，或按向下键", "Pull down to check in, or press Arrow Down"));
   }
@@ -147,17 +175,15 @@ export class WorkbenchWeatherStage {
     }, 2500 + Math.random() * 3000); };
     if (this.weather !== "still") blink();
   }
-  private say(text: string): void {
+  private say(text: string, login = false): void {
     if (!WORKBENCH_CHECKIN_ENABLED) return;
-    this.feedback.textContent = text; this.element.classList.add("is-feedback");
-    const line = this.text.querySelector(".wb-weather-count"); if (line) line.textContent = text;
+    this.feedbackText.textContent = text; this.login.hidden = !login; this.element.classList.add("is-feedback");
     if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer);
-    this.feedbackTimer = this.win.setTimeout(() => { this.clearFeedback(); }, 2600);
+    this.feedbackTimer = this.win.setTimeout(() => { this.clearFeedback(); }, 4500);
     this.layoutChanged();
   }
   private clearFeedback(): void {
-    this.feedback.textContent = ""; this.element.classList.remove("is-feedback");
-    const line = this.text.querySelector(".wb-weather-count"); if (line) line.textContent = this.countLine;
+    this.feedbackText.textContent = ""; this.login.hidden = true; this.element.classList.remove("is-feedback");
     this.layoutChanged();
   }
   private hint(): void {
@@ -168,30 +194,42 @@ export class WorkbenchWeatherStage {
   }
   private async checkIn(): Promise<void> {
     if (!WORKBENCH_CHECKIN_ENABLED || this.signing || this.signed()) return; this.signing = true; this.stage.setAttribute("disabled", "");
-    let saved = false;
-    try { await workbenchCheckin(this.plugin).record(); saved = true; }
-    catch { if (!this.disposed) { this.say(this.t("签到未保存，请再试一次", "Check-in was not saved. Try again")); new Notice(this.feedback.textContent ?? ""); } }
+    this.stage.setAttribute("aria-busy", "true"); this.layer("tag-text").textContent = this.t("签到中", "…");
+    const generation = ++this.submitGeneration;
+    let celebrate = false;
+    try {
+      if (this.win.navigator.onLine === false) this.failure(new Error("offline"));
+      else celebrate = !(await this.checkins.record()).alreadyCheckedIn;
+    } catch { /* The shared service publishes only errors for the current account. */ }
     finally {
-      this.signing = false;
-      if (!this.disposed) { this.stage.removeAttribute("disabled"); this.paintTag(); this.restart(); }
+      if (!this.disposed && generation === this.submitGeneration) { this.signing = false; this.stage.removeAttribute("disabled"); this.stage.removeAttribute("aria-busy"); this.paintTag(); this.restart(); }
     }
-    // Animation cancellation (background/reduced motion) cannot retain a submitting state.
-    if (saved && !this.disposed) void this.celebrate(false).then(() => { if (!this.disposed) this.restart(); });
+    if (celebrate && !this.disposed && generation === this.submitGeneration) void this.celebrate(generation).then(() => { if (!this.disposed && generation === this.submitGeneration) this.restart(); });
   }
-  private async celebrate(auto: boolean): Promise<void> {
+  private failure(error: unknown): void {
+    const code = error instanceof MembershipApiError ? error.code : "NETWORK";
+    if (code === "OPERATION_CANCELLED") return;
+    const copy = code === "AUTH_REQUIRED" ? ["登录后才能签到", "Sign in to check in"]
+      : code === "RATE_LIMITED" ? ["签得太快了，稍后再试", "Too many check-ins. Try again later"]
+      : code === "CHECKIN_DATE_OUT_OF_RANGE" ? ["设备时间不对，签不了", "Device date or timezone is incorrect"]
+      : code === "ACCOUNT_DISABLED" ? ["账号已停用，暂时无法签到", "This account is disabled. Check-in is unavailable"]
+      : ["INVALID_INPUT", "BODY_TOO_LARGE", "ORIGIN_DENIED", "ORIGIN_REQUIRED", "CHECKIN_RESPONSE_INVALID"].includes(code) ? ["签到请求异常，请稍后再试", "Check-in request failed. Try again later"]
+      : ["没联网，签不了", "No connection. Cannot check in"];
+    this.say(this.t(copy[0], copy[1]), code === "AUTH_REQUIRED");
+  }
+  private async celebrate(generation: number): Promise<void> {
     if (!WORKBENCH_CHECKIN_ENABLED) return;
     this.stop();
-    const days = workbenchCheckin(this.plugin).snapshot().signedDates.length;
-    this.say(auto ? this.t("今天聊过，已自动签到", "You chatted today. Checked in automatically") : this.t(`签到成功 · 第 ${days} 天`, `Checked in · Day ${days}`));
+    const days = this.checkins.snapshot().total ?? 0;
+    this.say(this.t(`签到成功 · 第 ${days} 天`, `Checked in · Day ${days}`));
     if (!this.reduced && this.active) {
       this.layer("tag-text").textContent = this.t("签到", "Check in");
       const rebound = this.motion(16, 0, y => this.pull(y), { type: "spring", stiffness: 150, damping: 8 });
       await this.motion(1, 0, v => this.layer("tag-card").setAttribute("transform", `translate(181 45) scale(${v} 1) translate(-181 -45)`), { duration: .16 });
-      if (this.disposed) return; this.paintTag();
+      if (this.disposed || generation !== this.submitGeneration) return; this.paintTag();
       const flip = this.motion(0, 1, v => this.layer("tag-card").setAttribute("transform", `translate(181 45) scale(${v} 1) translate(-181 -45)`), { type: "spring", stiffness: 230, damping: 14 });
       this.sparkle();
       await Promise.all([rebound, flip]);
-      if (auto && !this.disposed) this.restart();
     } else { this.pull(0); this.paintTag(); }
   }
   private sparkle(): void {
@@ -213,11 +251,11 @@ export class WorkbenchWeatherStage {
   }
   private renderPopover(): void {
     if (!this.popover) return;
-    const data = workbenchCheckin(this.plugin).snapshot();
+    const total = this.checkins.snapshot().total;
+    if (total === null) { this.closePopover(); return; }
     this.popover.replaceChildren();
-    this.popover.createDiv({ text: this.t(`累计签到 ${data.signedDates.length} 天`, `${data.signedDates.length} check-in days`) });
-    this.popover.createDiv({ text: this.t(`用 Agent ${data.agentDates.length} 天`, `${data.agentDates.length} days with Agent`) });
+    this.popover.createDiv({ text: this.t(`累计签到 ${total} 天`, `${total} check-in days`) });
   }
   private closePopover(): void { this.popover?.remove(); this.popover = undefined; if (WORKBENCH_CHECKIN_ENABLED) this.stage.setAttribute("aria-expanded", "false"); }
-  dispose(): void { this.disposed = true; this.stop(); if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer); for (const cleanup of this.cleanups) cleanup(); this.element.remove(); }
+  dispose(): void { this.disposed = true; this.submitGeneration++; this.stop(); if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer); for (const cleanup of this.cleanups) cleanup(); disposeOriginControls(this.element); this.element.remove(); }
 }

@@ -9,7 +9,7 @@ export async function runDesktopModuleSettingsTests(): Promise<void> {
   const settings = { inlineAgent: { enabled: true }, settingsLanguage: "zh-CN", selectionAsk: { enabled: true }, lifestyle: { finance: { enabled: true } }, englishDiary: { enabled: false }, pdfReading: { enabled: true } };
   const plugin = {
     settings,
-    accountService: { checkCapability: () => pro, subscribe(listener: () => void) { listeners.add(listener); return () => listeners.delete(listener); } },
+    accountService: { checkCapability: () => pro, checkInSession: () => null, subscribe(listener: () => void) { listeners.add(listener); return () => listeners.delete(listener); } },
     lifestyle: { async setEnabled(_kind: string, enabled: boolean) { writes++; settings.lifestyle.finance.enabled = enabled; } },
     englishDiary: { async setEnabled(enabled: boolean) { writes++; settings.englishDiary.enabled = enabled; } },
     pdfReading: { async setEnabled(enabled: boolean) { writes++; settings.pdfReading.enabled = enabled; } },
