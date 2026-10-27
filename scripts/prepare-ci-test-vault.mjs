@@ -12,6 +12,7 @@ appendFileSync(path.join(vaultsRoot, "README.md"),
   `\n- \`90-任务临时/${path.basename(fixtureRoot)}\`: isolated synthetic CI fixtures; removed with the disposable runner.\n`);
 const environment = {
   TMPDIR: fixtureRoot,
+  ECHOINK_TEST_ROOT: fixtureRoot,
   ECHOINK_MEMORY_TEST_ROOT: fixtureRoot,
   ECHOINK_SETTINGS_TEST_ROOT: fixtureRoot,
   ECHOINK_KNOWLEDGE_TEST_ROOT: fixtureRoot
