@@ -1,12 +1,16 @@
 import * as assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   appendFile,
+  link,
+  mkdir,
   mkdtemp,
   readFile,
   rm,
   symlink,
   writeFile
 } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -19,6 +23,7 @@ import {
   PiSessionDurabilityError,
   assertPiSessionPreAssistantDurable,
   assertSupportedPiSessionApi,
+  assertPiSessionAppendsDurable,
   createDurablePiSession,
   createDurablePiSessionFromPrefix,
   inspectPiSessionJsonl,
@@ -43,6 +48,51 @@ export async function runPiSessionDurabilityTests(): Promise<void> {
   await withTemporaryRoot(assertMalformedLineStopsAtVerifiedPrefix);
   await withTemporaryRoot(assertUnsafePathsAndSymlinksFailClosed);
   await withTemporaryRoot(assertInvalidLeafPointerFailsClosed);
+  await assertSessionOperationsWithoutLinkCounts();
+  await withTemporaryRoot(assertSharedSessionFileIsAccepted);
+}
+
+async function assertSessionOperationsWithoutLinkCounts(): Promise<void> {
+  const originalLstatSync = fs.lstatSync;
+  // DriveFS reports zero even for ordinary files. Keep all real I/O and
+  // other metadata so the public SessionManager exercises the storage path.
+  fs.lstatSync = ((...args: Parameters<typeof fs.lstatSync>) => {
+    const stat = originalLstatSync(...args);
+    stat.nlink = typeof stat.nlink === "bigint" ? 0n : 0;
+    return stat;
+  }) as typeof fs.lstatSync;
+  syncBuiltinESMExports();
+  try {
+    await withTemporaryRoot(assertFirstUserAndConfigurationAreDurable);
+    await withTemporaryRoot(assertActiveLeafSurvivesImmediateReopen);
+    await withTemporaryRoot(assertTruncatedTailProducesRecoveryPrefix);
+    await withTemporaryRoot(assertUnsafePathsAndSymlinksFailClosed);
+  } finally {
+    fs.lstatSync = originalLstatSync;
+    syncBuiltinESMExports();
+  }
+}
+
+async function assertSharedSessionFileIsAccepted(sessionRoot: string): Promise<void> {
+  const opened = createDurablePiSession({ api: API, sessionRoot, cwd: sessionRoot });
+  const alias = path.join(sessionRoot, "shared-session.jsonl");
+  await link(opened.sessionFile, alias);
+  const entryId = opened.sessionManager.appendMessage({
+    role: "user",
+    content: "a shared file must not block the conversation",
+    timestamp: Date.now()
+  });
+  assertPiSessionAppendsDurable({
+    sessionRoot,
+    sessionManager: opened.sessionManager,
+    expectedEntryIds: [entryId]
+  });
+  persistPiActiveLeaf({ sessionRoot, sessionManager: opened.sessionManager });
+  const reopened = openDurablePiSession({
+    api: API, sessionRoot, sessionFile: opened.sessionFile, cwd: sessionRoot
+  });
+  assert.equal(reopened.sessionManager.getLeafId(), entryId);
+  assert.deepEqual(await readFile(alias), await readFile(opened.sessionFile));
 }
 
 async function assertPrefixWithoutAssistantIsMaterialized(
@@ -316,6 +366,14 @@ async function assertMalformedLineStopsAtVerifiedPrefix(
 async function assertUnsafePathsAndSymlinksFailClosed(
   sessionRoot: string
 ): Promise<void> {
+  const directoryPath = path.join(sessionRoot, "directory.jsonl");
+  await mkdir(directoryPath);
+  assert.throws(
+    () => inspectPiSessionJsonl({ sessionRoot, sessionFile: directoryPath }),
+    (error: unknown) =>
+      error instanceof PiSessionDurabilityError
+      && error.code === "pi_session_path_unsafe"
+  );
   assert.throws(
     () => createDurablePiSession({
       api: API,

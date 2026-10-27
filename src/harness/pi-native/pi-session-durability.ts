@@ -1346,14 +1346,12 @@ function assertRegularOwnedFile(filePath: string): PiSessionFileIdentity {
       error
     );
   }
-  if (
-    fileStats.isSymbolicLink()
-    || !fileStats.isFile()
-    || fileStats.nlink !== 1
-  ) {
+  // Session files may have multiple names, and virtual drives may omit nlink.
+  // Scope is enforced by the resolved Session Root, not by the link count.
+  if (fileStats.isSymbolicLink() || !fileStats.isFile()) {
     throw durabilityError(
       "pi_session_path_unsafe",
-      `Pi Session repository file must be a single regular file: ${filePath}`
+      `Pi Session repository file must be a regular file: ${filePath}`
     );
   }
   return Object.freeze({
