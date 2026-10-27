@@ -195,6 +195,8 @@ export interface ChatMessageApprovalSnapshot {
 import type { SelectionAnnotation } from "../types/selection-annotations";
 
 export interface ChatMessage {
+  /** A completed planning turn without a structured plan; projected from Pi history. */
+  planMissing?: boolean;
   /** Manual save receipt projected from this conversation's durable Pi Session. */
   savedNotePath?: string;
   generationRequest?: import("../generation/types").GenerationRequest;
@@ -745,6 +747,8 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
   const settings: CodexForObsidianSettings = {
     ...DEFAULT_SETTINGS,
     ...currentData,
+    // Plan is a conversation/draft choice, never a default for future tasks.
+    defaultMode: "agent",
     productGeneration: DEFAULT_SETTINGS.productGeneration,
     generationTemplates: normalizeGenerationTemplates(data.generationTemplates),
     settingsLanguage: normalizedLanguage,

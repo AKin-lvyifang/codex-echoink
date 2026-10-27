@@ -352,7 +352,7 @@ export class CodexView extends ItemView {
     this.selectedProviderSettingsId = draft.selectedProviderSettingsId ?? this.plugin.settings.activeApiProviderId;
     this.selectedModel = draft.selectedModel ?? this.plugin.settings.defaultModel;
     this.selectedPermission = draft.selectedPermission ?? this.plugin.settings.defaultPermission;
-    this.selectedMode = draft.selectedMode ?? this.plugin.settings.defaultMode;
+    this.selectedMode = draft.selectedMode ?? "agent";
     this.renderAttachments(); this.renderToolbar(); this.updateInputPlaceholder();
   }
   private rememberTaskListPosition(taskId?: string): void {
@@ -823,6 +823,13 @@ export class CodexView extends ItemView {
       if (item.piUserEntryAccepted) {
         submissionOutcome = "running";
         if (!item.composerDraftTransferred) consumeAcceptedTaskDraft(this.plugin.settings.taskWorkspace, key, item);
+        const reply = this.plugin.settings.taskWorkspace.replyDrafts[created.id];
+        this.plugin.settings.taskWorkspace.replyDrafts[created.id] = { ...(reply ?? { text: "", attachments: [] }), selectedMode: reply?.selectedMode ?? item.turnOptions.mode };
+        const nextDraft = this.taskNavigation.draft(page);
+        if (!nextDraft.text.trim() && !nextDraft.attachments.length) {
+          this.taskNavigation.save({ ...nextDraft, selectedMode: "agent" }, page);
+          if (this.composerDraftOwner === key) this.selectedMode = "agent";
+        }
         this.plugin.getConversationRunService().scheduleSave();
         await this.reloadTaskCatalog();
         if (token === this.taskNavigation.token && !this.viewLifecycleAbortController.signal.aborted) await this.openTaskDetail(created.id);
@@ -942,6 +949,7 @@ export class CodexView extends ItemView {
     const previous = this.composerDraftOwner || this.plugin.settings.activeSessionId;
     if (previous && previous !== sessionId) this.composerSessionDrafts.set(previous, { text: this.inputEl.value, annotations: snapshotSelectionDraft(this.inputEl), attachments: this.attachments.map((item) => ({ ...item })), noteMentions: composerNoteMentionSelections(this.inputEl), selectedSkill: this.selectedSkill });
     this.composerDraftOwner = sessionId;
+    this.selectedMode = this.plugin.settings.taskWorkspace?.replyDrafts[sessionId]?.selectedMode ?? "agent";
     const draft = this.composerSessionDrafts.get(sessionId);
     this.inputEl.value = draft?.text ?? "";
     restoreSelectionDraft(this.inputEl, draft?.annotations ?? emptySelectionDraft());
@@ -1093,7 +1101,7 @@ export class CodexView extends ItemView {
     this.selectedProviderSettingsId = plugin.settings.activeApiProviderId;
     this.selectedModel = plugin.settings.defaultModel;
     this.selectedPermission = plugin.settings.defaultPermission;
-    this.selectedMode = plugin.settings.defaultMode;
+    this.selectedMode = plugin.settings.taskWorkspace?.replyDrafts[plugin.settings.activeSessionId]?.selectedMode ?? "agent";
     this.promptEnhancerRunnerContext = this.createPromptEnhancerRunnerContext();
   }
 
@@ -1468,7 +1476,6 @@ export class CodexView extends ItemView {
     this.selectedProviderSettingsId = this.plugin.settings.activeApiProviderId;
     this.selectedModel = this.plugin.settings.defaultModel;
     this.selectedPermission = this.plugin.settings.defaultPermission;
-    this.selectedMode = this.plugin.settings.defaultMode;
     this.renderToolbar();
   }
 
@@ -1863,14 +1870,14 @@ export class CodexView extends ItemView {
         .filter((attachment, index, all) => all.findIndex(other => other.type === attachment.type && other.path === attachment.path) === index);
       this.taskNavigation.save({ text: anchor.text, attachments, annotations: cloneSelectionAnnotations(anchor.selectionAnnotations), selectedSkill: null,
         selectedProviderSettingsId: this.selectedProviderSettingsId, selectedModel: this.selectedModel,
-        selectedPermission: this.selectedPermission, selectedMode: this.selectedMode }, { kind: "list", agentId });
+        selectedPermission: this.selectedPermission, selectedMode: "agent" }, { kind: "list", agentId });
       await this.openAgentTaskList(agentId); return;
     }
     const sourceReplay: StoredSession = { ...session, messages: [], piImageAttachments: structuredClone(session.piImageAttachments), piDocumentReplay: structuredClone(session.piDocumentReplay) };
     const targetDraft: TaskDraft = { text: "", attachments: piComposerImageAttachmentsForEntry(session, entryId),
       annotations: cloneSelectionAnnotations(anchor?.selectionAnnotations), selectedSkill: null,
       selectedProviderSettingsId: this.selectedProviderSettingsId, selectedModel: this.selectedModel,
-      selectedPermission: this.selectedPermission, selectedMode: this.selectedMode };
+      selectedPermission: this.selectedPermission, selectedMode: "agent" };
     const title = session.title.trim() || anchor?.text.trim() || this.taskText("新任务", "New task");
     const stillCurrent = () => this.taskNavigation.token === token && !this.taskEditor && !this.viewLifecycleAbortController.signal.aborted;
     this.taskDerivationToken = token; this.taskLoadError = "";
@@ -1923,6 +1930,14 @@ export class CodexView extends ItemView {
 
   private onInputChanged(): void {
     if (this.taskUiMounted) this.saveTaskComposerDraft();
+    else {
+      const id = this.composerDraftOwner || this.plugin.settings.activeSessionId;
+      if (id && this.plugin.settings.taskWorkspace) {
+        const previous = this.plugin.settings.taskWorkspace.replyDrafts[id];
+        this.plugin.settings.taskWorkspace.replyDrafts[id] = { ...(previous ?? { text: "", attachments: [] }), selectedMode: this.selectedMode };
+        this.plugin.getConversationRunService().scheduleSave();
+      }
+    }
     if (this.taskUiMounted && this.currentInlineTask()) { this.renderInlineComposer(); return; }
     selectionDraft(this.inputEl);
     onInputChangedAction(this.composerHost());
@@ -1991,6 +2006,25 @@ export class CodexView extends ItemView {
   ): Promise<void> {
     if (this.taskUiMounted && this.currentTaskEntry()?.taskStatus === "interrupted") return;
     await handlePiTaskPlanActionRunner(this.turnRunnerContext, planId, action);
+  }
+  private async handleMissingPlanAction(message: ChatMessage, action: "retry" | "disable"): Promise<void> {
+    const session = this.ensureSession();
+    if (!session.messages.some(item => item.id === message.id && item.planMissing)) return;
+    if (action === "disable") {
+      selectComposerModeAction(this.composerHost(), "agent");
+      return;
+    }
+    if (this.running) return;
+    const index = session.messages.findIndex(item => item.id === message.id);
+    const request = session.messages.slice(0, index).reverse().find(item => item.role === "user")?.text ?? "";
+    selectComposerModeAction(this.composerHost(), "plan");
+    const item: QueuedTurnItem = {
+      id: newId("queued-turn"), sessionId: session.id,
+      text: this.taskText("请为以下需求重新生成可确认的任务计划：", "Generate a reviewable task plan for this request:") + "\n" + request,
+      attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
+      turnOptions: { ...this.currentTurnOptions(session), mode: "plan" }, clearComposerAfterPiAcceptance: false
+    };
+    await this.plugin.getConversationRunService().start(item, "queue");
   }
   private preparePiTaskPlanModification(planId: string, title: string): void {
     if (this.running) {

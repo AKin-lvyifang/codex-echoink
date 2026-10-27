@@ -57,6 +57,8 @@ implements PiVaultAdditionalToolSecurityPort {
 
   private readonly executions = new Map<string, AuthorizedTaskPlanUpdate>();
   private readonly seenToolCallIds = new Set<string>();
+  private correctionRunId = "";
+  private validationFailures = 0;
 
   constructor(private readonly options: Readonly<{
     sessionManager: SessionManager;
@@ -81,7 +83,20 @@ implements PiVaultAdditionalToolSecurityPort {
     this.seenToolCallIds.add(event.toolCallId);
     try {
       const context = normalizeRunContext(this.options.currentRun());
-      const draft = normalizeEchoInkTaskPlanDraft(event.input);
+      if (context.productRunId !== this.correctionRunId) {
+        this.correctionRunId = context.productRunId;
+        this.validationFailures = 0;
+      }
+      if (context.mode === "plan" && this.validationFailures >= 2) {
+        return block("计划参数修正仍未通过，请停止重试并向用户说明本次未生成计划。The single correction attempt was used; stop retrying and explain that no plan was created.");
+      }
+      let draft: Readonly<EchoInkTaskPlanDraft>;
+      try {
+        draft = normalizeEchoInkTaskPlanDraft(event.input);
+      } catch (error) {
+        if (context.mode !== "plan") return block("tool_policy_blocked");
+        return block(this.validationFailureReason(error));
+      }
       const branch = this.options.sessionManager.getBranch();
       const active = activeTaskPlanFromBranch(branch);
       const previous = latestTaskPlanFromBranch(branch, draft.planId);
@@ -95,6 +110,12 @@ implements PiVaultAdditionalToolSecurityPort {
     } catch {
       return block("tool_policy_blocked");
     }
+  }
+
+  private validationFailureReason(error: unknown): string {
+    this.validationFailures += 1;
+    const reason = error instanceof TypeError ? error.message : "task_plan_arguments_invalid";
+    return `计划参数校验失败 / Invalid plan arguments: ${reason}. planId、stepId、currentStepId 只能使用 ASCII 字母、数字、点、下划线、冒号或连字符，首字符必须为字母或数字；步骤不得为空，规划状态须为 pending。${this.validationFailures === 1 ? "请修正后再调用一次 task_update（只允许一次修正）。Correct the arguments and retry task_update once." : "修正仍未通过，请停止重试，说明本次未生成计划。Correction failed; stop retrying."}`;
   }
 
   consume(
@@ -131,6 +152,27 @@ implements PiVaultAdditionalToolSecurityPort {
     isError: boolean;
   }>> {
     const execution = this.executions.get(event.toolCallId);
+    // Pi validates its JSON schema before tool_call. Preserve a correctable
+    // argument error from that path instead of replacing it with authorization_failed.
+    if (event.toolName === this.toolName && event.isError && !execution && !this.seenToolCallIds.has(event.toolCallId)) {
+      try {
+        const context = normalizeRunContext(this.options.currentRun());
+        if (context.mode === "plan") {
+          if (context.productRunId !== this.correctionRunId) {
+            this.correctionRunId = context.productRunId;
+            this.validationFailures = 0;
+          }
+          this.seenToolCallIds.add(event.toolCallId);
+          try { normalizeEchoInkTaskPlanDraft(event.input); }
+          catch (error) {
+            const schemaReason = event.content.filter(part => part.type === "text").map(part => part.text)
+              .join("\n").split("\n\nReceived arguments:")[0].slice(0, 800);
+            return rejectedResult(event.toolCallId, this.validationFailureReason(
+              new TypeError(`${error instanceof TypeError ? error.message : "task_plan_arguments_invalid"}; ${schemaReason}`)));
+          }
+        }
+      } catch { /* No active planning turn: keep the original fail-closed behavior. */ }
+    }
     if (
       event.toolName !== this.toolName
       || !execution

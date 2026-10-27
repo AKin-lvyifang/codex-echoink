@@ -413,10 +413,6 @@ export class PiChatUiProjector {
     const diagnostics = dedupeDiagnostics(
       (input.diagnostics ?? []).filter((item) => item.piSessionId === piSessionId)
     );
-    for (const diagnostic of diagnostics) {
-      if (diagnostic.code === "runtime_resource_warning") continue;
-      upsertMessage(messages, diagnosticMessage(scope, diagnostic));
-    }
     const durableUpdatedAt = Math.max(
       0,
       ...input.entries.map(entryTime),
@@ -820,6 +816,15 @@ export class PiChatUiProjector {
       const taskPlan = taskPlanFromSessionEntry(entry, context.piSessionId);
       if (taskPlan) {
         upsertTaskPlanMessage(messages, context.scope, taskPlan, createdAt);
+        return;
+      }
+      if (entry.customType === "echoink.plan-missing.v1") {
+        const data = entry.data as { assistantEntryId?: unknown; productRunId?: unknown } | undefined;
+        if (typeof data?.assistantEntryId === "string" && typeof data.productRunId === "string") {
+          const answer = messages.find(message => message.id === entryMessageId(context.scope, data.assistantEntryId as string)
+            && message.role === "assistant" && message.runId === data.productRunId);
+          if (answer) answer.planMissing = true;
+        }
         return;
       }
       const diagnostic = diagnosticFromCustomEntry(entry, context);
@@ -1584,12 +1589,12 @@ export class PiChatUiProjector {
 
   private projectRuntimeDiagnostic(
     view: PiChatUiViewModel,
-    scope: string,
+    _scope: string,
     diagnostic: PiConversationDiagnostic
   ): void {
     if (diagnostic.piSessionId !== view.piSessionId) return;
     view.diagnostics = dedupeDiagnostics([...view.diagnostics, diagnostic]);
-    upsertMessage(view.messages, diagnosticMessage(scope, diagnostic));
+    // The diagnostic panel owns persisted runtime diagnostics.
   }
 
   private projectProductSettlement(
@@ -2483,19 +2488,6 @@ function diagnosticFromCustomEntry(
   };
 }
 
-function diagnosticMessage(scope: string, diagnostic: PiConversationDiagnostic): ChatMessage {
-  return {
-    id: diagnosticMessageId(scope, diagnostic.diagnosticId),
-    role: "system",
-    itemType: "error",
-    title: "会话诊断",
-    details: diagnostic.code,
-    text: diagnostic.message,
-    status: diagnostic.code === "runtime_interrupted" ? "interrupted" : "failed",
-    createdAt: diagnostic.createdAt,
-    completedAt: diagnostic.createdAt
-  };
-}
 
 function appendRehydratedTerminalMarker(
   messages: ChatMessage[],
@@ -2812,9 +2804,6 @@ function runtimeCompactionId(scope: string, runId: string, reason: string): stri
   return `${scope}:provisional-compaction:${encodeIdentity(runId)}:${encodeIdentity(reason)}`;
 }
 
-function diagnosticMessageId(scope: string, diagnosticId: string): string {
-  return `${scope}:diagnostic:${encodeIdentity(diagnosticId)}`;
-}
 
 function branchChangeMessageId(scope: string): string {
   return `${scope}:branch-change`;

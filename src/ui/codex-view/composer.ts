@@ -117,6 +117,7 @@ export interface ComposerResourcePanelCallbacks {
 }
 
 export interface ComposerToolbarCallbacks {
+  onDisablePlanMode?: () => void;
   onOpenAddMenu: (event: MouseEvent) => void;
   onMentionNote: () => void;
   onEnhancePrompt: () => void;
@@ -398,7 +399,7 @@ export function renderComposerToolbar(
   workspaceContainer.addClass("is-visible");
   addWorkspaceButton(workspaceContainer, state, callbacks, language);
   if (shouldShowComposerPlanIndicator(state.selectedMode)) {
-    addPlanModeIndicator(workspaceContainer, language);
+    addPlanModeIndicator(workspaceContainer, language, callbacks.onDisablePlanMode);
   }
 
   const row = container.createDiv({ cls: "codex-composer-row" });
@@ -557,7 +558,7 @@ export function renderComposerResourcePanel(
     addGroup,
     "lightbulb",
     copy("计划模式", "Plan mode"),
-    state.selectedMode === "plan" ? copy("已开启", "On") : "",
+    state.selectedMode === "plan" ? copy("已开启 · 点击关闭", "On · Click to turn off") : copy("未开启", "Off"),
     callbacks.onSelectPlanMode,
     state.selectedMode === "plan"
   );
@@ -913,17 +914,18 @@ function renderPiConversationDiagnostics(
   callbacks: TurnQueueCallbacks,
   language: SettingsLanguage
 ): void {
-  const panel = container.createDiv({
+  const panel = container.createEl(recovery ? "div" : "details", {
     cls: "codex-pi-support-panel codex-pi-diagnostic-panel"
   });
-  const header = panel.createDiv({ cls: "codex-turn-queue-header" });
+  panel.toggleClass("has-recovery", Boolean(recovery));
+  const header = panel.createEl(recovery ? "div" : "summary", { cls: "codex-turn-queue-header" });
   const title = header.createDiv({ cls: "codex-turn-queue-title" });
   const icon = title.createSpan({ cls: "codex-turn-queue-title-icon" });
-  setIcon(icon, recovery ? "shield-alert" : "triangle-alert");
+  setIcon(icon, recovery ? "shield-alert" : "info");
   title.createSpan({
     text: recovery
       ? conversationUiText(language, "Pi 会话记录需要修复", "Pi conversation records need repair")
-      : conversationUiText(language, "Pi 会话诊断", "Pi conversation diagnostics")
+      : conversationUiText(language, "会话诊断详情", "Conversation diagnostic details")
   });
   if (recovery?.recoveryPath) {
     const recover = header.createEl("button", {
@@ -1417,15 +1419,17 @@ function addWorkspaceButton(
   button.onclick = (event) => callbacks.onOpenWorkspaceMenu(event, state.session);
 }
 
-function addPlanModeIndicator(container: HTMLElement, language: SettingsLanguage): void {
-  const label = conversationUiText(language, "当前模式：计划", "Current mode: Plan");
-  const indicator = container.createDiv({
+function addPlanModeIndicator(container: HTMLElement, language: SettingsLanguage, onDisable?: () => void): void {
+  const label = conversationUiText(language, "关闭计划模式", "Turn off plan mode");
+  const indicator = container.createEl("button", {
     cls: "codex-composer-mode-indicator",
-    attr: { "aria-label": label, title: label }
+    attr: { type: "button", "aria-label": label, title: label }
   });
+  indicator.onclick = () => onDisable?.();
   const icon = indicator.createSpan({ cls: "codex-composer-mode-indicator-icon", attr: { "aria-hidden": "true" } });
   setIcon(icon, "list-todo");
   indicator.createSpan({ cls: "codex-composer-mode-indicator-label", text: conversationUiText(language, "计划", "Plan") });
+  setIcon(indicator.createSpan({ cls: "codex-composer-mode-close", attr: { "aria-hidden": "true" } }), "x");
 }
 
 function composerActionButtonView(

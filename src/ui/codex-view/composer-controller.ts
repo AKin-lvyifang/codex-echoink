@@ -218,6 +218,7 @@ export function renderToolbar(host: CodexComposerHost): void {
       },
       onOpenWorkspaceMenu: (event, nextSession) => host.openWorkspaceMenu(event, nextSession),
       onOpenModelMenu: (event) => host.openModelMenu(event),
+      onDisablePlanMode: () => selectComposerMode(host, "agent"),
       onToggleContextPanel: () => {
         if (host.contextPanelOpen) {
           closeContextPopover(host, true);
@@ -279,7 +280,7 @@ export function renderToolbar(host: CodexComposerHost): void {
       },
       onSelectPlanMode: () => {
         closeResourcePanel(host, false);
-        selectComposerMode(host, "plan");
+        selectComposerMode(host, host.selectedMode === "plan" ? "agent" : "plan");
       },
       onSelectSkill: (skill) => {
         host.selectedSkill = skill;
@@ -728,7 +729,8 @@ export function selectComposerReasoning(host: CodexComposerHost, reasoning: Reas
 
 export function selectComposerMode(host: CodexComposerHost, mode: UiMode): void {
   host.selectedMode = mode;
-  persistComposerDefaults(host);
+  // Save the current conversation/draft without changing other conversations.
+  host.onInputChanged();
   host.renderToolbar();
 }
 
@@ -778,7 +780,6 @@ export function currentComposerProviderBrand(host: CodexComposerHost): ProviderB
 export function persistComposerDefaults(host: CodexComposerHost): void {
   host.plugin.settings.defaultModel = host.selectedModel;
   host.plugin.settings.defaultPermission = host.selectedPermission;
-  host.plugin.settings.defaultMode = host.selectedMode;
   saveComposerSettings(host, conversationUiText(host.plugin.settings.settingsLanguage, "运行参数", "run settings"));
 }
 

@@ -4311,12 +4311,13 @@ export async function runPiNativeTaskPlanRuntimeTests(): Promise<void> {
         submittedAt: 4
       });
       session.finishSuccessful("只有文本计划");
-      await assert.rejects(
-        missingUpdate.result,
-        (error: unknown) => error instanceof PiNativeConversationRuntimeError
-          && error.code === "projection_unsettled"
-          && /task_update/u.test(error.message)
-      );
+      assert.equal((await missingUpdate.result).terminalState, "completed");
+      const missingProjection = await fixture.runtime.readProjection(conversationId);
+      assert.equal(missingProjection.messages.find(message => message.text === "只有文本计划")?.planMissing, true);
+      assert.equal(missingProjection.diagnostics.length, 0);
+      const missingReopened = await readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns,
+        sessionApi: API, conversationId, resolveConversationCwd: () => fixture.root });
+      assert.equal(missingReopened.messages.find(message => message.text === "只有文本计划")?.planMissing, true);
       assert.equal(
         fixture.runtime.releaseProductRun(missingUpdate.productRunId),
         true
@@ -6831,4 +6832,66 @@ async function assertCanvasGenerationAttempts(): Promise<void> {
       finish: (...args) => { finishes++; return port.finish(...args); }
     } });
   }
+}
+
+/** Failure injection through the complete production start/stop chain. */
+export async function runPlanModeFailureTests(): Promise<void> {
+  const preference = { profileVersion: "echoink-knowledge-preference-profile-v1", state: "default" as const,
+    revision: `sha256:${"a".repeat(64)}`, providerResourceText: "preferences" };
+  for (const failAt of ["start", "stop"] as const) {
+    const failure = new Error(`injected_activity_${failAt}_failure`);
+    await withFixture([`activity-${failAt}`, `after-${failAt}`], async fixture => {
+      const request = { conversationId: `activity-${failAt}`, text: "/maintain", submittedAt: 1,
+        maintenanceScope: { mode: "global" as const, sourcePaths: [] } };
+      if (failAt === "start") {
+        await assert.rejects(fixture.submit(request), error => error instanceof PiNativeConversationRuntimeError
+          && error.code === "product_run_start_failed_after_user_entry");
+      } else {
+        const run = await fixture.submit(request);
+        await assert.rejects(fixture.runtime.abort(request.conversationId), /injected_activity_stop_failure/);
+        assert.equal((await run.result).terminalState, "cancelled");
+      }
+      assert.ok(fixture.latestSession().lifecycleCalls.includes("abort"), "progress failure cannot bypass native abort");
+      assert.equal(await fixture.runtime.releaseConversationIfIdle(request.conversationId), true, "failed lifecycle must release the busy state");
+      await fixture.runtime.releaseConversation(request.conversationId);
+      const next = await fixture.submit({ conversationId: request.conversationId, text: "after failure", submittedAt: 2 });
+      fixture.latestSession().finishSuccessful("ready again");
+      assert.equal((await next.result).terminalState, "completed");
+    }, { knowledge: { prepareMaintenancePreferences: async () => preference,
+      maintenanceActivity: async event => { if (event.type === failAt) throw failure; } } });
+  }
+  await withFixture(["generation-start-failure"], async fixture => {
+    const id = "generation-start-failure";
+    await fixture.runtime.createConversation({ conversationId: id, title: id, cwd: fixture.root });
+    await fixture.runtime.activateConversation(id);
+    const manager = fixture.latestSession().sessionManager;
+    const append = manager.appendCustomEntry.bind(manager);
+    manager.appendCustomEntry = (type, data) => {
+      if (type.startsWith("echoink.generation")) throw new Error("injected_generation_append_failure");
+      return append(type, data);
+    };
+    const request = createGenerationRequest({ id: "brief", name: "Brief", description: "Brief", instructions: "Summarize", outputKind: "markdown" }, ["raw/source.md"], "output");
+    await assert.rejects(fixture.submit({ conversationId: id, text: "generate", generationRequest: request, submittedAt: 1 }),
+      error => error instanceof PiNativeConversationRuntimeError && error.code === "product_run_start_failed_after_user_entry");
+    assert.ok(fixture.latestSession().lifecycleCalls.includes("abort"));
+    assert.equal(await fixture.runtime.releaseConversationIfIdle(id), true);
+    manager.appendCustomEntry = append;
+    await fixture.runtime.releaseConversation(id);
+  }, { generation: { prepare: async () => ({ sources: [{ path: "raw/source.md", content: "source", bytes: 6 }], totalBytes: 6, readFailures: [] }),
+    finish: async () => { throw new Error("must not finalize failed startup"); } } });
+  for (const terminal of ["cancelled", "failed"] as const) {
+    await withFixture([`plan-${terminal}`], async fixture => {
+      fixture.configureFactoryTools({ registered: ["task_update"], defaults: ["task_update"], planAllowed: ["task_update"] });
+      const run = await fixture.submit({ conversationId: `plan-${terminal}`, text: "plan", mode: "plan", submittedAt: 1 });
+      if (terminal === "cancelled") await fixture.runtime.abort(run.conversationId);
+      else fixture.latestSession().finishFailed("actual provider error");
+      const settled = await run.result;
+      assert.equal(settled.terminalState, terminal);
+      if (terminal === "failed") assert.match(settled.error ?? "", /actual provider error/);
+      const projection = await fixture.runtime.readProjection(run.conversationId);
+      assert.equal(projection.messages.some(message => message.planMissing), false);
+      assert.equal(projection.diagnostics.some(diagnostic => diagnostic.message.includes("projection_unsettled")), false);
+    });
+  }
+  console.log("Plan mode: missing plan, cancellation, provider error, maintenance start/stop and generation startup recovery PASS");
 }

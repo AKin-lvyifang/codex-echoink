@@ -141,5 +141,5 @@ export function consumeAcceptedTaskDraft(workspace: TaskWorkspace, key: string, 
     || (draft.noteMentions ?? []).some((mention, index) => mention.vaultRelativePath !== item.noteMentions?.[index].vaultRelativePath)
     || draft.attachments.length !== item.attachments.length
     || draft.attachments.some((attachment, index) => { const other = item.attachments[index]; return attachment.path !== other.path || attachment.type !== other.type || attachment.name !== other.name || attachment.mimeType !== other.mimeType || attachment.sizeBytes !== other.sizeBytes; })) return false;
-  drafts[id] = { text: "", attachments: [] }; return true;
+  drafts[id] = { text: "", attachments: [], selectedMode: key.startsWith("agent:") ? "agent" : draft.selectedMode ?? item.turnOptions.mode }; return true;
 }

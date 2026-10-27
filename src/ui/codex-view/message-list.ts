@@ -173,6 +173,8 @@ export interface MessageListRenderInput {
     action: "execute" | "continue" | "pause" | "cancel"
   ) => Promise<void>;
   onModifyTaskPlan?: (planId: string, title: string) => void;
+  onMissingPlanAction?: (message: ChatMessage, action: "retry" | "disable") => Promise<void>;
+  planActionsDisabled?: boolean;
   resolveApprovalDecision?: (
     message: Readonly<ChatMessage>
   ) => MessageApprovalDecisionBinding | null;
@@ -1443,6 +1445,7 @@ export class CodexMessageListRenderer {
       else renderRichText(env.app, env.component, content, displayText);
     }
     if (message.generationResult) renderGenerationResultCard(bodyHost, { app: env.app, result: message.generationResult, language: env.settingsLanguage, onMeasure: () => env.onScheduleMeasure() });
+    this.renderMissingPlanHint(bodyHost, message);
     if (message.rawRef) this.renderRawMessageExpander(content, message);
     if (message.itemType === "knowledgeBase" && message.details) this.renderKnowledgeBaseContextNote(wrapper, message.details);
     this.renderKnowledgeUsageCards(wrapper, message.id, knowledgeUsageMessageData(message), message.citations);
@@ -1538,6 +1541,26 @@ export class CodexMessageListRenderer {
       cls: "codex-process-detail codex-assistant-turn-failure-reason"
     });
     if (reason.textContent !== text) reason.setText(text);
+  }
+
+  private renderMissingPlanHint(bodyHost: HTMLElement, message: ChatMessage): void {
+    const env = this.requireEnv();
+    if (message.planMissing && message.role === "assistant") {
+      const hint = bodyHost.createDiv({ cls: "codex-plan-missing", attr: { role: "status" } });
+      hint.createDiv({ text: conversationUiText(env.settingsLanguage, "本次没有生成计划", "No plan was created") });
+      const actions = hint.createDiv({ cls: "codex-plan-missing-actions" });
+      for (const action of ["disable", "retry"] as const) {
+        const button = actions.createEl("button", { cls: "codex-plan-missing-action", attr: { type: "button" },
+          text: action === "retry" ? conversationUiText(env.settingsLanguage, "重新生成计划", "Generate plan again")
+            : conversationUiText(env.settingsLanguage, "关闭计划模式", "Turn off plan mode") });
+        button.disabled = !env.onMissingPlanAction || Boolean(env.planActionsDisabled);
+        button.onclick = () => {
+          for (const item of Array.from(actions.querySelectorAll("button"))) item.disabled = true;
+          void env.onMissingPlanAction?.(message, action).catch(error => new Notice(error instanceof Error ? error.message : String(error)))
+            .finally(() => { for (const item of Array.from(actions.querySelectorAll("button"))) item.disabled = Boolean(env.planActionsDisabled); });
+        };
+      }
+    }
   }
 
   private renderTaskPlanCard(
@@ -2388,6 +2411,7 @@ export class CodexMessageListRenderer {
       this.renderAgentAnswerContent(answerContent, answer);
       this.renderAssistantFailureReason(answerSection, answer);
       if (answer.generationResult) renderGenerationResultCard(answerSection, { app: env.app, result: answer.generationResult, language: env.settingsLanguage, onMeasure: () => env.onScheduleMeasure() });
+      this.renderMissingPlanHint(answerSection, answer);
       this.renderAnswerSources(answerSection, turn);
       if (isTerminalTurnStatus(turn.status)) {
         const footerActions = this.renderAgentFooter(answerSection, answer);
