@@ -6,11 +6,14 @@ import { previewKnowledgeDirectoryPlan, type KnowledgeDirectoryPlan } from "../k
 import { rebaseKnowledgePath, KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
 import { optimizeWikiFolderNames } from "../knowledge-base/wiki-folder-names";
 import { captureMoveLinks, finishMoveLinks } from "./knowledge-folders-links";
-import { FolderJournal, type FolderTransaction, type FolderConfiguration, type FolderAction } from "./knowledge-folders-journal";
+import { assertKnowledgeModulePath, prepareKnowledgeModuleDirectories } from "../knowledge-base/module-directories";
+import { applyFolderConfigurationDelta, folderConfigurationDelta, folderConfigurationLabels, legacyConfigurationKeys, type CurrentFolderConfiguration } from "./knowledge-folders-configuration";
+import { FolderJournal, validateFolderConfiguration, type FolderTransaction, type FolderConfiguration, type FolderAction } from "./knowledge-folders-journal";
 import { assertSavedBindings, digest, fileHash, inventory, kind, moduleDirectories, nativeJournalFolder, object, parentPath, protectedPaths, readBaseline, safePath, saveJournalFolder, settingsToken, stopped, within } from "./knowledge-folders-io";
 
 interface PreparedFolders {
   preview: MobileKnowledgeFolderPreview; baseline: Awaited<ReturnType<typeof readBaseline>>;
+  configuration?: { before: FolderConfiguration; after: FolderConfiguration };
   hashes: Record<string, string>; plan?: KnowledgeDirectoryPlan; original?: FolderTransaction;
 }
 const detail = (error: unknown): string => error instanceof Error ? error.message : "目录操作未完成，请重新核对。";
@@ -31,13 +34,13 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
     if (this.services.settings.defaultPermission === "read-only") throw new Error("当前只读，未继续创建或移动目录文件。");
     if (this.services.settings.mobileUi.moduleEnabled?.["knowledge-base"] === false) throw new Error("知识库模块已停用。");
   }
-  private configuration(): FolderConfiguration {
-    const settings = this.services.settings, modules = moduleDirectories(this.services);
+  private configuration(): CurrentFolderConfiguration {
+    const settings = this.services.settings;
     return structuredClone({ bindings: settings.knowledgeBase.folderBindings ?? null, journal: settings.journalDirectory,
       review: settings.review.outputDir, english: settings.englishDiary.englishDirectory, expressions: settings.englishDiary.expressionDirectory,
       englishMode: settings.englishDiary.englishDirectoryMode, expressionMode: settings.englishDiary.expressionDirectoryMode,
       legacyEnglish: settings.englishDiary.legacyEnglishDirectories, legacyExpressions: settings.englishDiary.legacyExpressionDirectories,
-      pdfOriginal: modules.pdfOriginal, nativeJournal: nativeJournalFolder(this.services) });
+      pdfOriginal: object(settings.pdfReading).originalDirectory as string | undefined, nativeJournal: nativeJournalFolder(this.services) });
   }
   read: MobileKnowledgeFoldersPort["read"] = async () => {
     const baseline = await readBaseline(this.services), records = await this.journal.records();
@@ -82,12 +85,17 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
     const prepared: PreparedFolders = { preview, baseline, hashes };
     const adapter = this.services.app.vault.adapter;
     if (input.kind === "initialize") {
-      input.createPaths.forEach(safePath);
+      input.createPaths.forEach((path, index) => assertKnowledgeModulePath(path, `新建目录（第 ${index + 1} 项）`));
+      const selection = prepareKnowledgeModuleDirectories(this.services.settings, input.bindings,
+        (this.services.app.vault.getRoot?.().children ?? []).map(file => file.path), input.moduleDirectories,
+        this.services.settings.knowledgeBase.folderBindings);
+      input.moduleDirectories = selection.directories;
       const plan = await previewKnowledgeDirectoryPlan({ baseRevision: this.services.settings.knowledgeBase.folderBindings?.revision ?? 0,
         baseline: this.services.settings.knowledgeBase.folderBindings, bindings: input.bindings, createPaths: input.createPaths, mode: input.mode,
         baseSettingsSignature: baseline.settings, moduleDirectories: input.moduleDirectories, files: baseline.inventory.files,
         protectedPaths: await protectedPaths(this.services, baseline.inventory, input.moduleDirectories),
         sourcePaths: baseline.inventory.files.filter(file => /\.(?:md|markdown)$/iu.test(file.path)).map(file => file.path), kind: path => kind(adapter, path) });
+      plan.moduleDirectoryModes = selection.modes; plan.issues.push(...selection.issues);
       prepared.plan = plan;
       Object.assign(preview, { reuse: plan.reuse, create: plan.create, moves: plan.moves.map(({ from, to }) => ({ from, to })), excluded: plan.excluded, issues: plan.issues, changes: plan.changes });
     } else if (input.kind === "names") {
@@ -135,6 +143,11 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
       const links = await captureMoveLinks(this.services.app, baseline.inventory, move.from, move.to);
       for (const link of links) hashes[link.path] ??= await fileHash(adapter, link.path);
     }
+    try {
+      const before = this.configuration(), after = this.intendedConfiguration(prepared, before);
+      prepared.configuration = folderConfigurationDelta(before, after);
+      validateFolderConfiguration(prepared.configuration.before, true); validateFolderConfiguration(prepared.configuration.after, true);
+    } catch (error) { preview.issues.push(detail(error)); }
     stopped(signal);
     if ((await readBaseline(this.services)).token !== baseline.token) preview.issues.push("目录或设置已变化，请重新预览。");
     preview.issues = [...new Set(preview.issues)];
@@ -160,35 +173,44 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
     this.previews.delete(token);
     return this.execute(prepared, signal);
   });
-  private async installConfiguration(next: FolderConfiguration, signal?: AbortSignal): Promise<void> {
+  private async installConfiguration(changes: { before: FolderConfiguration; after: FolderConfiguration }, signal?: AbortSignal): Promise<void> {
     this.guard(signal);
-    const settings = this.services.settings;
-    if (next.nativeJournal !== undefined && nativeJournalFolder(this.services) !== next.nativeJournal) await saveJournalFolder(this.services, next.nativeJournal, nativeJournalFolder(this.services), () => this.guard(signal));
+    const settings = this.services.settings, next = applyFolderConfigurationDelta(this.configuration(), changes.before, changes.after);
+    const has = (key: keyof FolderConfiguration) => Object.hasOwn(changes.after, key);
+    if (has("nativeJournal") && nativeJournalFolder(this.services) !== next.nativeJournal) await saveJournalFolder(this.services, next.nativeJournal, nativeJournalFolder(this.services), () => this.guard(signal));
     this.guard(signal);
-    settings.knowledgeBase.folderBindings = structuredClone(next.bindings);
-    settings.journalDirectory = next.journal; settings.review.outputDir = next.review;
-    settings.englishDiary.englishDirectory = next.english; settings.englishDiary.expressionDirectory = next.expressions;
-    settings.englishDiary.englishDirectoryMode = next.englishMode; settings.englishDiary.expressionDirectoryMode = next.expressionMode;
-    settings.englishDiary.legacyEnglishDirectories = next.legacyEnglish; settings.englishDiary.legacyExpressionDirectories = next.legacyExpressions;
-    const pdf = object(settings.pdfReading);
-    if (next.pdfOriginal === undefined) { if (pdf.originalDirectory !== undefined) { const updated = { ...pdf }; delete updated.originalDirectory; settings.pdfReading = updated; } }
-    else settings.pdfReading = { ...pdf, originalDirectory: next.pdfOriginal };
+    if (has("bindings")) settings.knowledgeBase.folderBindings = structuredClone(next.bindings);
+    if (has("journal")) settings.journalDirectory = next.journal;
+    if (has("review")) settings.review.outputDir = next.review;
+    if (has("english")) settings.englishDiary.englishDirectory = next.english;
+    if (has("expressions")) settings.englishDiary.expressionDirectory = next.expressions;
+    if (has("englishMode")) { if (next.englishMode === undefined) delete settings.englishDiary.englishDirectoryMode; else settings.englishDiary.englishDirectoryMode = next.englishMode; }
+    if (has("expressionMode")) { if (next.expressionMode === undefined) delete settings.englishDiary.expressionDirectoryMode; else settings.englishDiary.expressionDirectoryMode = next.expressionMode; }
+    if (has("legacyEnglish")) { if (next.legacyEnglish === undefined) delete settings.englishDiary.legacyEnglishDirectories; else settings.englishDiary.legacyEnglishDirectories = next.legacyEnglish; }
+    if (has("legacyExpressions")) { if (next.legacyExpressions === undefined) delete settings.englishDiary.legacyExpressionDirectories; else settings.englishDiary.legacyExpressionDirectories = next.legacyExpressions; }
+    if (has("pdfOriginal")) {
+      const updated = { ...object(settings.pdfReading) };
+      if (next.pdfOriginal === undefined) delete updated.originalDirectory; else updated.originalDirectory = next.pdfOriginal;
+      settings.pdfReading = updated;
+    }
     this.guard(signal); await this.services.saveSettings(); await assertSavedBindings(this.services, next.bindings);
     const observed = this.configuration();
-    if (digest(observed) !== digest(next)) {
-      const changed = Object.keys(next).filter(key => digest(object(observed)[key]) !== digest(object(next)[key]));
-      throw new Error(`目录配置保存回读不一致：${changed.join("、")}`);
-    }
+    const changed = Object.keys(changes.after).filter(key => digest(object(observed)[key]) !== digest(object(next)[key]));
+    if (changed.length) throw new Error(`目录配置保存回读不一致：${changed.map(key => folderConfigurationLabels[key as keyof FolderConfiguration]).join("、")}`);
   }
-  private intendedConfiguration(prepared: PreparedFolders, before: FolderConfiguration): FolderConfiguration {
+  private intendedConfiguration(prepared: PreparedFolders, before: CurrentFolderConfiguration): CurrentFolderConfiguration {
     const next = structuredClone(before), request = prepared.preview.request;
     if (prepared.plan) {
       next.bindings = { ...structuredClone(prepared.plan.bindings), configured: true, revision: prepared.plan.baseRevision + 1 };
       const modules = prepared.plan.moduleDirectories;
       if (modules?.journal !== undefined) { next.journal = modules.journal; next.nativeJournal = modules.journal; }
       if (modules?.review !== undefined) next.review = modules.review;
-      if (modules?.english !== undefined) { if (next.english !== modules.english) next.legacyEnglish = [...new Set([...(next.legacyEnglish ?? []), next.english])]; next.english = modules.english; next.englishMode = "custom"; }
-      if (modules?.expressions !== undefined) { if (next.expressions !== modules.expressions) next.legacyExpressions = [...new Set([...(next.legacyExpressions ?? []), next.expressions])]; next.expressions = modules.expressions; next.expressionMode = "custom"; }
+      if (modules?.english !== undefined && prepared.plan.moduleDirectoryModes?.english !== "role" && next.english !== modules.english) {
+        next.legacyEnglish = [...new Set([...(next.legacyEnglish ?? []), next.english])]; next.english = modules.english; next.englishMode = "custom";
+      }
+      if (modules?.expressions !== undefined && prepared.plan.moduleDirectoryModes?.expressions !== "role" && next.expressions !== modules.expressions) {
+        next.legacyExpressions = [...new Set([...(next.legacyExpressions ?? []), next.expressions])]; next.expressions = modules.expressions; next.expressionMode = "custom";
+      }
       if (modules?.pdfOriginal !== undefined) next.pdfOriginal = modules.pdfOriginal;
     } else if (request.kind === "names") {
       for (const move of prepared.preview.moves) {
@@ -199,35 +221,48 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
       }
     } else if (prepared.original?.after) {
       const original = prepared.original, applied = original.after!;
-      const config = structuredClone(before.bindings ?? emptyKnowledgeFolderBindings());
-      for (const role of KNOWLEDGE_ROOT_ROLES) if (digest(before.bindings?.roles[role]) === digest(applied.bindings?.roles[role])) {
-        const prior = original.before.bindings?.roles[role] ?? emptyKnowledgeFolderBindings().roles[role];
-        const current = config.roles[role];
-        const retained = current.readPaths.filter(root => prepared.baseline.inventory.files.some(file => within(file.path, root)
-          && !prepared.preview.moves.some(move => move.from === file.path)));
-        config.roles[role] = structuredClone(prior);
-        if (retained.length) {
-          const restored = config.roles[role]; restored.enabled = true; restored.readPaths = [...new Set([...restored.readPaths, ...retained])];
-          restored.writePath ??= current.writePath; restored.compatibilityReadScopes = restored.readPaths.length > 1;
-          restored.autoOrganizePaths = [...new Set([...(restored.autoOrganizePaths ?? []), ...(current.autoOrganizePaths ?? []).filter(path => retained.includes(path))])];
-          restored.allowedSubdirectoryRoots = [...new Set([...(restored.allowedSubdirectoryRoots ?? prior.readPaths), ...(current.allowedSubdirectoryRoots ?? current.readPaths).filter(path => retained.includes(path))])];
-          restored.allowedSubdirectories = [...new Set([...prior.allowedSubdirectories, ...current.allowedSubdirectories])];
+      if (Object.hasOwn(applied, "bindings")) {
+        const config = structuredClone(before.bindings ?? emptyKnowledgeFolderBindings());
+        for (const role of KNOWLEDGE_ROOT_ROLES) if (digest(before.bindings?.roles[role]) === digest(applied.bindings?.roles[role])) {
+          const prior = original.before.bindings?.roles[role] ?? emptyKnowledgeFolderBindings().roles[role];
+          const current = config.roles[role];
+          const retained = current.readPaths.filter(root => prepared.baseline.inventory.files.some(file => within(file.path, root)
+            && !prepared.preview.moves.some(move => move.from === file.path)));
+          config.roles[role] = structuredClone(prior);
+          if (retained.length) {
+            const restored = config.roles[role]; restored.enabled = true; restored.readPaths = [...new Set([...restored.readPaths, ...retained])];
+            restored.writePath ??= current.writePath; restored.compatibilityReadScopes = restored.readPaths.length > 1;
+            restored.autoOrganizePaths = [...new Set([...(restored.autoOrganizePaths ?? []), ...(current.autoOrganizePaths ?? []).filter(path => retained.includes(path))])];
+            restored.allowedSubdirectoryRoots = [...new Set([...(restored.allowedSubdirectoryRoots ?? prior.readPaths), ...(current.allowedSubdirectoryRoots ?? current.readPaths).filter(path => retained.includes(path))])];
+            restored.allowedSubdirectories = [...new Set([...prior.allowedSubdirectories, ...current.allowedSubdirectories])];
+          }
         }
+        if (digest(before.bindings?.collectionTargets) === digest(applied.bindings?.collectionTargets)) config.collectionTargets = structuredClone(original.before.bindings?.collectionTargets);
+        config.revision = (before.bindings?.revision ?? 0) + 1; next.bindings = config;
       }
-      if (digest(before.bindings?.collectionTargets) === digest(applied.bindings?.collectionTargets)) config.collectionTargets = structuredClone(original.before.bindings?.collectionTargets);
-      config.revision = (before.bindings?.revision ?? 0) + 1; next.bindings = config;
       for (const key of ["journal", "nativeJournal", "review", "english", "expressions", "englishMode", "expressionMode", "legacyEnglish", "legacyExpressions", "pdfOriginal"] as const) {
+        if (original.schema === 2 && (!Object.hasOwn(applied, key) || key === "legacyEnglish" || key === "legacyExpressions")) continue;
+        // A retained custom directory must keep its mode as well as its contents.
+        if (key === "englishMode" && Object.hasOwn(applied, "english") && next.english !== original.before.english) continue;
+        if (key === "expressionMode" && Object.hasOwn(applied, "expressions") && next.expressions !== original.before.expressions) continue;
         const current = before[key], directory = typeof current === "string" && ["journal", "nativeJournal", "review", "english", "expressions", "pdfOriginal"].includes(key) ? current : null;
         const retained = directory && prepared.baseline.inventory.files.some(file => within(file.path, directory) && !prepared.preview.moves.some(move => move.from === file.path));
-        if (!retained && digest(current) === digest(applied[key])) Object.assign(next, { [key]: structuredClone(original.before[key]) });
+        if (!retained && digest(current) === digest(applied[key])) Object.assign(next, { [key]: structuredClone(original.before[key] ?? undefined) });
+      }
+      if (original.schema === 2) for (const key of legacyConfigurationKeys) {
+        const directory = key === "legacyEnglish" ? "english" : "expressions";
+        if (Object.hasOwn(applied, key) && (!Object.hasOwn(applied, directory) || digest(next[directory]) === digest(original.before[directory]))) {
+          const restored = applyFolderConfigurationDelta(next, { [key]: applied[key] }, { [key]: original.before[key] });
+          if (restored[key] === undefined) delete next[key]; else next[key] = restored[key];
+        }
       }
     }
     return next;
   }
   private async execute(prepared: PreparedFolders, signal?: AbortSignal): Promise<MobileKnowledgeFolderApplyResult> {
-    const adapter = this.services.app.vault.adapter, before = this.configuration(), expected = { ...prepared.hashes };
-    const transaction: FolderTransaction = { schema: 1, id: `folders-${Date.now().toString(36)}-${crypto.randomUUID()}`, createdAt: Date.now(),
-      kind: prepared.preview.request.kind, status: "partial", before, positions: [], actions: [], created: [], linkHashes: {},
+    const adapter = this.services.app.vault.adapter, changes = prepared.configuration!, expected = { ...prepared.hashes };
+    const transaction: FolderTransaction = { schema: 2, id: `folders-${Date.now().toString(36)}-${crypto.randomUUID()}`, createdAt: Date.now(),
+      kind: prepared.preview.request.kind, status: "partial", before: changes.before, after: changes.after, positions: [], actions: [], created: [], linkHashes: {},
       directories: prepared.baseline.inventory.directories.filter(path => prepared.preview.moves.some(move => within(path, move.from))).map(path => ({ original: path, current: path })),
       ...(prepared.original ? { restoreOf: prepared.original.id } : {}) };
     for (const file of prepared.baseline.inventory.files) if (prepared.preview.moves.some(move => within(file.path, move.from))) transaction.positions.push({ original: file.path, current: file.path, hash: expected[file.path] });
@@ -277,9 +312,8 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
         active.state = "completed"; result.moved.push(move); await this.journal.write(transaction); active = undefined;
       }
       guard(); await assertSettings();
-      transaction.after = this.intendedConfiguration(prepared, before);
       active = { kind: "settings", state: "prepared" }; transaction.actions.push(active); await this.journal.write(transaction);
-      guard(); await this.installConfiguration(transaction.after, signal);
+      guard(); await this.installConfiguration(changes, signal);
       liveSettings = await settingsToken(this.services); active.state = "completed"; transaction.status = "completed";
       await this.journal.write(transaction); active = undefined;
       if (prepared.original) {

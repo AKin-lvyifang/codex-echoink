@@ -1,23 +1,13 @@
 import { TFolder } from "obsidian";
 import type { MobileServices } from "./services";
-import { knowledgeRolePath, resolveKnowledgePathFromRoots } from "../knowledge-base/root-paths-core";
 import { normalizeDiaryPath } from "../english-diary/repository";
-import { DEFAULT_ENGLISH_DIRECTORY, DEFAULT_EXPRESSION_DIRECTORY, LEGACY_ENGLISH_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_ENGLISH_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY } from "../english-diary/types";
+import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
 
 /** Resolve a local view of the already-confirmed setup; construction never saves settings. */
 export function mobileEnglishStorage(services: MobileServices) {
-  const settings = services.settings.englishDiary, bindings = services.settings.knowledgeBase.folderBindings, output = bindings?.roles.outputs;
-  const rootNames = (services.app.vault.getRoot?.().children ?? []).map(file => file.path);
-  const roots = [...new Set(["outputs", ...rootNames.filter(root => knowledgeRolePath(root) === "outputs"), ...(output?.readPaths ?? []), ...(output?.writePath ? [output.writePath] : [])])];
-  const oldEnglish = [DEFAULT_ENGLISH_DIRECTORY, LEGACY_ENGLISH_DIRECTORY, LEGACY_HIDDEN_ENGLISH_DIRECTORY, ...roots.flatMap(root => [`${root}/.english-diary/diaries`, `${root}/英文日记`])];
-  const oldExpressions = [DEFAULT_EXPRESSION_DIRECTORY, LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY, ...roots.flatMap(root => [`${root}/.english-diary/expressions`, `${root}/表达库`, `${root}/英文日记/表达库`])];
-  const roleEnglish = settings.englishDirectoryMode === "role" || !settings.englishDirectoryMode && (oldEnglish.includes(settings.englishDirectory) || knowledgeRolePath(settings.englishDirectory) === DEFAULT_ENGLISH_DIRECTORY);
-  const roleExpressions = settings.expressionDirectoryMode === "role" || !settings.expressionDirectoryMode && (oldExpressions.includes(settings.expressionDirectory) || knowledgeRolePath(settings.expressionDirectory) === DEFAULT_EXPRESSION_DIRECTORY);
-  const englishDirectory = normalizeDiaryPath(roleEnglish && output?.enabled && output.writePath ? `${output.writePath}/英文日记` : !bindings && roleEnglish ? resolveKnowledgePathFromRoots(DEFAULT_ENGLISH_DIRECTORY, rootNames) : settings.englishDirectory);
-  const expressionDirectory = normalizeDiaryPath(roleExpressions && output?.enabled && output.writePath ? `${output.writePath}/英文日记/表达库` : !bindings && roleExpressions ? resolveKnowledgePathFromRoots(DEFAULT_EXPRESSION_DIRECTORY, rootNames) : settings.expressionDirectory);
-  return { englishDirectory, expressionDirectory, roleEnglish, roleExpressions,
-    legacyEnglishDirectories: [...new Set([...(settings.legacyEnglishDirectories ?? []), settings.englishDirectory, ...oldEnglish])].filter(path => path !== englishDirectory),
-    legacyExpressionDirectories: [...new Set([...(settings.legacyExpressionDirectories ?? []), settings.expressionDirectory, ...oldExpressions])].filter(path => path !== expressionDirectory) };
+  const paths = resolveEnglishStoragePaths(services.settings.englishDiary, services.settings.knowledgeBase.folderBindings,
+    (services.app.vault.getRoot?.().children ?? []).map(file => file.path));
+  return { ...paths, englishDirectory: normalizeDiaryPath(paths.englishDirectory), expressionDirectory: normalizeDiaryPath(paths.expressionDirectory) };
 }
 export function assertMobileEnglishStorage(services: MobileServices): void {
   const paths = mobileEnglishStorage(services), output = services.settings.knowledgeBase.folderBindings?.roles.outputs;

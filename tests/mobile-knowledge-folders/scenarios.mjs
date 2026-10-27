@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { runInitializationRegressions } from "./initialization-regressions.mjs";
 import { folderFixture } from "./host.mjs";
 
 export async function runFolderScenarios(api, root) {
@@ -155,6 +156,7 @@ export async function runFolderScenarios(api, root) {
   });
   await test("module directories save real native journal settings and preserve prior English locations", async () => {
     const f = await fixture({ "source.md": "SOURCE", "journal/2026-10-20.md": "NATIVE" });
+    f.settings.englishDiary.enabled = true; f.settings.review.enabled = true; f.settings.pdfReading = { ...f.settings.pdfReading, enabled: true };
     const originalEnglish = f.settings.englishDiary.englishDirectory, request = build();
     request.moduleDirectories = { journal: "新日记", english: "新英文", expressions: "新表达", review: "新回顾", pdfOriginal: "新PDF" };
     const preview = await f.service.preview(request); assert.deepEqual(plain(preview.issues), []); assert.ok(!preview.moves.some(move => move.from === "journal/2026-10-20.md"));
@@ -172,5 +174,6 @@ export async function runFolderScenarios(api, root) {
     const bindings = api.emptyKnowledgeFolderBindings(); Object.assign(bindings.roles.raw, { enabled: true, readPaths: ["first", "second"], writePath: "first", allowedSubdirectories: ["approved/deep"], allowedSubdirectoryRoots: ["first"] });
     assert.equal(api.knowledgeMayCreateCategoryDirectory(bindings, "first/approved"), true); assert.equal(api.knowledgeMayCreateCategoryDirectory(bindings, "second/approved"), false); assert.equal(api.knowledgeMayOrganizeMove(bindings, "first/a.md", "second/a.md"), false);
   });
+  passed += await runInitializationRegressions(api, fixture, build);
   console.log(`PASS ${passed} mobile knowledge folder service groups on registered real-disk fixtures; initialization preview writes=0; no user deletion; name-model usage is measured separately`);
 }

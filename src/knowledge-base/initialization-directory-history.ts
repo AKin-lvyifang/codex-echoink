@@ -46,6 +46,27 @@ export interface DirectoryHistoryHost {
   currentModuleDirectories?(): readonly string[];
 }
 
+
+/** The writer and reader share exactly the same persisted-settings validation. */
+export function validateDirectoryModuleSettings(modules: DirectoryModuleSettings): void {
+  if (!modules || typeof modules !== "object" || Array.isArray(modules)) throw new Error("初始化模块目录记录损坏");
+  const relative = (directory: unknown, label: string, optional = false) => {
+    if (optional && directory === undefined) return;
+    if (typeof directory !== "string" || directory.startsWith("/") || /^[a-z]:/iu.test(directory)
+      || directory.replace(/\\/gu, "/").split("/").some(part => part === "." || part === "..") || /[\0\r\n]/u.test(directory)) throw new Error(`${label}：初始化模块目录记录损坏`);
+  };
+  relative(modules.journal, "EchoInk 日记目录", true); relative(modules.review, "复盘输出目录", true);
+  if (modules.nativeJournal) relative(modules.nativeJournal.folder, "Obsidian 日记文件夹", true);
+  if (modules.pdfOriginal) relative(modules.pdfOriginal.directory, "原 PDF 目录", true);
+  for (const [key, label] of [["english", "英文日记"], ["expressions", "表达库"]] as const) {
+    const entry = modules[key]; if (!entry) continue;
+    relative(entry.directory, `${label}目录`);
+    if (entry.mode !== undefined && entry.mode !== "role" && entry.mode !== "custom") throw new Error(`${label}：初始化模块目录模式损坏`);
+    if (entry.legacyDirectories !== undefined && !Array.isArray(entry.legacyDirectories)) throw new Error(`${label}：初始化模块旧目录记录损坏`);
+    entry.legacyDirectories?.forEach((directory, index) => relative(directory, `${label}历史位置（第 ${index + 1} 项）`));
+  }
+}
+
 /** Position journal, never a content backup. Callers serialize all mutations. */
 export class InitializationDirectoryHistory {
   constructor(private readonly host: DirectoryHistoryHost) {}
@@ -78,24 +99,7 @@ export class InitializationDirectoryHistory {
       if (value.folderRenames !== undefined && !Array.isArray(value.folderRenames)) throw new Error("初始化目录改名索引损坏");
       for (const folder of value.folderRenames ?? []) { this.absolute(folder.original); this.absolute(folder.current); }
       if (value.pending) { this.absolute(value.pending.from); this.absolute(value.pending.to); if (value.pending.folderOriginal) this.absolute(value.pending.folderOriginal); }
-      for (const modules of [value.moduleSettings, value.appliedModuleSettings]) {
-        if (modules === undefined) continue;
-        if (!modules || typeof modules !== "object" || Array.isArray(modules)) throw new Error("初始化模块目录记录损坏");
-        const relative = (directory: unknown, optional = false) => {
-          if (optional && directory === undefined) return;
-          if (typeof directory !== "string" || directory.startsWith("/") || /^[a-z]:/iu.test(directory)
-            || directory.replace(/\\/gu, "/").split("/").some(part => part === "." || part === "..") || /[\0\r\n]/u.test(directory)) throw new Error("初始化模块目录记录损坏");
-        };
-        relative(modules.journal, true); relative(modules.review, true);
-        if (modules.nativeJournal) relative(modules.nativeJournal.folder, true);
-        if (modules.pdfOriginal) relative(modules.pdfOriginal.directory, true);
-        for (const entry of [modules.english, modules.expressions]) if (entry) {
-          relative(entry.directory);
-          if (entry.mode !== undefined && entry.mode !== "role" && entry.mode !== "custom") throw new Error("初始化模块目录模式损坏");
-          if (entry.legacyDirectories !== undefined && !Array.isArray(entry.legacyDirectories)) throw new Error("初始化模块旧目录记录损坏");
-          entry.legacyDirectories?.forEach(directory => relative(directory));
-        }
-      }
+      for (const modules of [value.moduleSettings, value.appliedModuleSettings]) if (modules !== undefined) validateDirectoryModuleSettings(modules);
       return value;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -158,10 +162,12 @@ export class InitializationDirectoryHistory {
 
   /** Record intended settings before their first write; keep the first original. */
   async recordModuleSettings(original: DirectoryModuleSettings, applied: DirectoryModuleSettings): Promise<void> {
+    validateDirectoryModuleSettings(original); validateDirectoryModuleSettings(applied);
     const record = await this.read();
     if (!record) throw new Error("初始化前目录记录缺失，未保存模块目录。 ");
     record.moduleSettings = { ...structuredClone(original), ...record.moduleSettings };
     record.appliedModuleSettings = { ...record.appliedModuleSettings, ...structuredClone(applied) };
+    validateDirectoryModuleSettings(record.moduleSettings); validateDirectoryModuleSettings(record.appliedModuleSettings);
     await this.save(record);
   }
 

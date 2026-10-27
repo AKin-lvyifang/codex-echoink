@@ -120,6 +120,9 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     const beforeInitialization = JSON.stringify(saved);
     section.open("initialize"); button("使用现有文件夹").click(); await flush();
     assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields input[aria-label^="初始化"]').length, 9, "initialization uses the current four purposes and five module locations");
+    for (const label of ["初始化复盘输出", "初始化英文稿", "初始化表达库", "初始化原 PDF"]) {
+      assert.equal(host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!.disabled, true, "disabled modules keep their displayed values without permitting edits");
+    }
     assert(previewCalls > 0); assert.equal(applyCalls, 0, "rendering and previewing cannot apply directory changes");
     assert.equal(JSON.stringify(saved), beforeInitialization);
     applyFails = true; button("确认初始化").click(); await flush();

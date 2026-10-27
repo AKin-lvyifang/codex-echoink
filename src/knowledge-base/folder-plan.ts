@@ -1,3 +1,4 @@
+import { assertKnowledgeModulePath, knowledgeModuleLabels, type KnowledgeEnglishDirectoryModes } from "./module-directories";
 import { KNOWLEDGE_ROOT_ROLES } from "./root-paths-core";
 import { classifyKnowledgePath, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeMaintenanceFolderIssues, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, pathInKnowledgeDirectory, type KnowledgeFolderBinding, type KnowledgeFolderBindings } from "./folder-bindings";
 import type { KnowledgeRootRole } from "./root-paths-core";
@@ -28,6 +29,7 @@ export interface KnowledgeDirectoryPlan {
   baseSettingsSignature?: string;
   wikiChanged?: boolean;
   moduleDirectories?: KnowledgeModuleDirectories;
+  moduleDirectoryModes?: KnowledgeEnglishDirectoryModes;
   changes: { role: KnowledgeRootRole; before: KnowledgeFolderBinding; after: KnowledgeFolderBinding }[];
   moves: KnowledgeDirectoryMove[];
   excluded: { path: string; reason: string }[];
@@ -64,7 +66,12 @@ export async function previewKnowledgeDirectoryPlan(input: {
   const mode = input.mode ?? "existing";
   const issues = [...knowledgeFolderIssues(bindings, roleScope), ...knowledgeMaintenanceFolderIssues(bindings, input.baseline, mode === "build")];
   if (input.wikiChanged) issues.push(...knowledgeWikiFolderSelectionIssues(bindings));
-  const approved = new Set(input.createPaths.map(normalizeKnowledgeDirectory));
+  const approved = new Set(input.createPaths.flatMap((value, index) => {
+    const label = `新建目录（第 ${index + 1} 项）`;
+    try {
+      const directory = normalizeKnowledgeDirectory(value); assertKnowledgeModulePath(directory, label); return [directory];
+    } catch { issues.push(`${label}：请选择合法的 Vault 相对目录（${JSON.stringify(value)}）。`); return []; }
+  }));
   const reuse = new Set<string>();
   const create = new Set<string>();
   const addParents = async (directory: string) => {
@@ -83,16 +90,21 @@ export async function previewKnowledgeDirectoryPlan(input: {
     if (key === "journal" && value.trim() === "") { moduleDirectories.journal = ""; continue; }
     let directory: string;
     try { directory = normalizeKnowledgeDirectory(value); }
-    catch { issues.push(`${key}：请选择合法的 Vault 相对目录。`); continue; }
+    catch { issues.push(`${knowledgeModuleLabels[key]}：请选择合法的 Vault 相对目录（${JSON.stringify(value)}）。`); continue; }
+    try { assertKnowledgeModulePath(directory, knowledgeModuleLabels[key]); } catch (error) { issues.push((error as Error).message); continue; }
     moduleDirectories[key] = directory;
     const kind = await input.kind(directory);
     if (kind === "folder") reuse.add(directory);
     else if (kind === "missing" && mode === "build") await addParents(directory);
-    else issues.push(`${directory}：原位置已失效或不是目录`);
+    else issues.push(`${knowledgeModuleLabels[key]}：${directory}：原位置已失效或不是目录`);
   }
   for (const role of roleScope) {
     const binding = bindings.roles[role];
     if (!binding.enabled) continue;
+    for (const directory of [...binding.readPaths, ...binding.allowedSubdirectories]) {
+      const label = { raw: "资料来源", wiki: "知识成果", projects: "项目", inbox: "收件箱", journal: "日记", outputs: "输出", templates: "模板", assets: "附件", work: "工作", archive: "归档" }[role];
+      try { assertKnowledgeModulePath(directory, `${label}目录`); } catch (error) { issues.push((error as Error).message); }
+    }
     if (binding.native && (role === "journal" || role === "templates")) { for (const directory of binding.readPaths) if (await input.kind(directory) === "folder") reuse.add(directory); continue; }
     for (const directory of binding.readPaths) {
       const kind = await input.kind(directory);
@@ -151,7 +163,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
 }
 
 export function knowledgeDirectoryPlanSignature(plan: KnowledgeDirectoryPlan): string {
-  return JSON.stringify({ mode: plan.mode, baseRevision: plan.baseRevision, baseSignature: plan.baseSignature, baseSettingsSignature: plan.baseSettingsSignature, wikiChanged: plan.wikiChanged, moduleDirectories: plan.moduleDirectories,
+  return JSON.stringify({ mode: plan.mode, baseRevision: plan.baseRevision, baseSignature: plan.baseSignature, baseSettingsSignature: plan.baseSettingsSignature, wikiChanged: plan.wikiChanged, moduleDirectories: plan.moduleDirectories, moduleDirectoryModes: plan.moduleDirectoryModes,
     bindings: knowledgeFolderBindingsSignature(plan.bindings), reuse: plan.reuse, create: plan.create,
     moves: plan.moves, sources: plan.sources, issues: plan.issues, fileSnapshot: plan.fileSnapshot });
 }

@@ -1,11 +1,13 @@
 import type { App, DataAdapter } from "obsidian";
-import { normalizeKnowledgeDirectory, knowledgeFolderBindingsSignature } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, normalizeKnowledgeDirectory, knowledgeFolderBindingsSignature } from "../knowledge-base/folder-bindings";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
 import { nativeRootJournalPaths, readNativeJournalSettings } from "../home/native-journal";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { sha256Hex } from "../utils/sha256";
 import type { MobileServices } from "./services";
+import { prepareKnowledgeModuleDirectories } from "../knowledge-base/module-directories";
+import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
 
 export interface FolderFile { path: string; size: number; mtime: number }
 export interface FolderInventory { directories: string[]; files: FolderFile[] }
@@ -69,7 +71,7 @@ interface NativeEntry extends NativeStorage {
   instance?: { options?: Record<string, unknown>; plugin?: NativeStorage; onExternalSettingsChange?(): Promise<void> };
 }
 /** Same native option save semantics, with the live guard at its actual save boundary. */
-export async function saveJournalFolder(services: MobileServices, folder: string, expected: string | undefined, guard: () => void): Promise<void> {
+export async function saveJournalFolder(services: MobileServices, folder: string | undefined, expected: string | undefined, guard: () => void): Promise<void> {
   const plugins = (services.app as unknown as { internalPlugins?: { plugins?: Record<string, NativeEntry> } }).internalPlugins?.plugins;
   const entry = plugins?.["daily-notes"], instance = entry?.instance, storage = instance?.plugin ?? entry;
   if (!instance || !storage?.loadData || !storage.saveData) throw new Error("Obsidian 原生日记设置暂时不可用，未保存位置。");
@@ -88,10 +90,11 @@ export async function assertSavedBindings(services: MobileServices, bindings: Kn
   if ((actual?.revision ?? 0) !== (bindings?.revision ?? 0) || knowledgeFolderBindingsSignature(actual) !== knowledgeFolderBindingsSignature(bindings)) throw new Error("目录设置保存回读不一致，请重新读取。");
 }
 export function moduleDirectories(services: MobileServices): KnowledgeModuleDirectories {
-  const settings = services.settings, pdfOriginal = object(settings.pdfReading).originalDirectory;
-  return { journal: nativeJournalFolder(services) ?? readNativeJournalSettings(services.app, settings.journalDirectory, settings.knowledgeBase.folderBindings).folder,
-    review: settings.review.outputDir, english: settings.englishDiary.englishDirectory, expressions: settings.englishDiary.expressionDirectory,
-    ...(typeof pdfOriginal === "string" ? { pdfOriginal } : {}) };
+  const settings = services.settings;
+  return prepareKnowledgeModuleDirectories(settings, settings.knowledgeBase.folderBindings,
+    (services.app.vault.getRoot?.().children ?? []).map(file => file.path), {
+      journal: nativeJournalFolder(services) ?? (settings.knowledgeBase.folderBindings ? readNativeJournalSettings(services.app, settings.journalDirectory, settings.knowledgeBase.folderBindings).folder : settings.journalDirectory)
+    }).directories;
 }
 export async function settingsToken(services: MobileServices): Promise<string> {
   const settings = services.settings, adapter = services.app.vault.adapter;
@@ -112,13 +115,18 @@ export async function readBaseline(services: MobileServices) {
     revision: services.settings.knowledgeBase.folderBindings?.revision ?? 0, bindings: knowledgeFolderBindingsSignature(services.settings.knowledgeBase.folderBindings) }) };
 }
 export async function protectedPaths(services: MobileServices, files: FolderInventory, modules?: KnowledgeModuleDirectories): Promise<string[]> {
-  const settings = services.settings, native = readNativeJournalSettings(services.app, settings.journalDirectory, settings.knowledgeBase.folderBindings);
+  const settings = services.settings, native = readNativeJournalSettings(services.app, settings.journalDirectory, settings.knowledgeBase.folderBindings ?? emptyKnowledgeFolderBindings());
   const paths = new Set([services.app.vault.configDir, services.directory.replace(/\/mobile$/u, ""), services.getTodoStore().sourcePath,
     "EchoInk/待办-settings-backup.json", "EchoInk/财务", settings.lifestyle.finance.analysisDirectory, native.template]);
   if (services.lifestyle) paths.add(services.lifestyle.finance.ledger.paths().root);
   const values = (input: unknown): string[] => Object.values(object(input)).filter((value): value is string => typeof value === "string");
-  for (const path of [...values(moduleDirectories(services)), ...values(modules), native.templatesFolder,
-    ...(settings.englishDiary.legacyEnglishDirectories ?? []), ...(settings.englishDiary.legacyExpressionDirectories ?? [])]) if (path) paths.add(path);
+  const english = resolveEnglishStoragePaths(settings.englishDiary, settings.knowledgeBase.folderBindings, (services.app.vault.getRoot?.().children ?? []).map(file => file.path));
+  // Protection is independent of enablement and includes stored and role-resolved paths.
+  for (const path of [native.folder, settings.journalDirectory, settings.review.outputDir, settings.englishDiary.englishDirectory,
+    settings.englishDiary.expressionDirectory, english.englishDirectory, english.expressionDirectory, object(settings.pdfReading).originalDirectory,
+    ...(settings.knowledgeBase.folderBindings?.roles.outputs.readPaths ?? []).flatMap(root => [`${root}/英文日记`, `${root}/英文日记/表达库`]),
+    ...values(modules), native.templatesFolder,
+    ...(settings.englishDiary.legacyEnglishDirectories ?? []), ...(settings.englishDiary.legacyExpressionDirectories ?? [])]) if (typeof path === "string" && path) paths.add(path);
   for (const file of files.files) {
     if (isFinanceRootName(file.path.split("/")[0]) || isLegacyFinancePath(file.path)) paths.add(file.path.split("/")[0] === "EchoInk" ? "EchoInk/财务" : file.path.split("/")[0]);
     if (file.path.endsWith("/ledger.base") && isEchoInkFinanceBase(await services.app.vault.adapter.read(file.path))) paths.add(parentPath(file.path));
