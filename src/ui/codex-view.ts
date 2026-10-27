@@ -369,6 +369,9 @@ export class CodexView extends ItemView {
     this.taskNavigation.navigate({ kind: "list", agentId }); this.taskDetailLoaded = false; this.taskLoadError = "";
     const accepted = prefill === undefined || this.taskNavigation.prefill(agentId, prefill, prefillSource, englishDiarySourcePath);
     this.restoreTaskComposerDraft(); this.renderTaskPages();
+    if (accepted && prefill !== undefined) {
+      this.inputEl.focus(); this.inputEl.setSelectionRange(this.inputEl.value.length, this.inputEl.value.length); this.onInputChanged();
+    }
     const position = this.taskNavigation.listPositions.get(agentId);
     const list = this.taskListEl?.querySelector<HTMLElement>(".echoink-task-list-items");
     if (list && position) {

@@ -876,7 +876,7 @@ export class CodexSettingTab extends PluginSettingTab {
           "button, input, select, textarea, a[href], [tabindex]"
         )).find((element) => this.settingsFocusKey(element) === sharedKey);
         if (!focusable?.isConnected) return;
-        if (sharedKey === "explicit:account:login" || sharedKey === "explicit:account:benefits") focusable.scrollIntoView({ block: "center" });
+        if (sharedKey === "explicit:account:login" || sharedKey === "explicit:account:benefits" || sharedKey === "explicit:general:appearance") focusable.scrollIntoView({ block: "center" });
         focusable.focus({ preventScroll: true });
         if (this.containerEl.ownerDocument.activeElement !== focusable) return;
         settingsContainerFocusIntents.delete(this.containerEl);
@@ -890,7 +890,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (!focusable) return;
     const focusTarget = () => {
       if (!focusable.isConnected || focusable.closest("[hidden], [inert]")) return;
-      if (key === "explicit:account:login" || key === "explicit:account:benefits") focusable.scrollIntoView({ block: "center" });
+      if (key === "explicit:account:login" || key === "explicit:account:benefits" || key === "explicit:general:appearance") focusable.scrollIntoView({ block: "center" });
       focusable.focus({ preventScroll: true });
     };
     focusTarget();
@@ -1145,6 +1145,8 @@ export class CodexSettingTab extends PluginSettingTab {
     page.addClass("echoink-general-page");
     const appearanceSection = createSettingsSection(page, { title: Platform.isDesktopApp ? (zh ? "外观" : "Appearance") : undefined, surface: "group" });
     appearanceSection.addClass("echoink-appearance-section");
+    appearanceSection.setAttribute("data-echoink-focus-key", "general:appearance");
+    appearanceSection.setAttribute("tabindex", "-1");
     const appearanceRow = applySettingsRow(new OriginSetting(Platform.isDesktopApp ? createSettingsGroup(appearanceSection) : appearanceSection)
       .setName(Platform.isDesktopApp ? (zh ? "配色" : "Color theme") : zh ? "外观" : "Appearance")
       .setDesc(zh

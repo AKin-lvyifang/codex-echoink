@@ -1,4 +1,5 @@
 import esbuild from "esbuild";
+import { workbenchSvgTextPlugin } from "./scripts/workbench-svg-text.mjs";
 import { createHash } from "node:crypto";
 import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import fs from "node:fs";
@@ -645,6 +646,7 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
   metafile: isProd,
   treeShaking: true,
   plugins: [
+    workbenchSvgTextPlugin(),
     ...(!isPiImageBundleProbe ? [profileModulesPlugin()] : []),
     financeBrandsPlugin(true),
     agentAvatarAssetsPlugin(true),

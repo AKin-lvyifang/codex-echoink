@@ -305,7 +305,7 @@ export function createProductionKnowledgeUpgradeService(plugin: CodexForObsidian
     records: () => readPrivateMaintenanceRecords(privateRoot),
     historyRoots: () => readUpgradeHistoryRoots(pluginDataDir(root, plugin.getPluginDataDirName())),
     save: async record => { const data = await local(); await new FilePhase3MaintenanceStateStore({ storageRootPath: privateRoot, vaultRootPath: root, vaultId: data.deviceScope.vaultIdDigest }).saveUpgradeRecord(record); },
-    createTask: async () => { const id = `knowledge-upgrade-${randomUUID()}`; await plugin.createPiConversation({ conversationId: id, title: "升级旧知识", cwd: root, defaultMemoryMode: "no_memory", agentId: plugin.settings.agentRegistry.moduleOwners["knowledge-base"], taskStatus: "running", taskStartedAt: Date.now() }); return id; },
+    createTask: async () => { const id = `knowledge-upgrade-${randomUUID()}`; await plugin.createPiConversation({ conversationId: id, title: "升级旧知识", titleSource: "fallback", cwd: root, defaultMemoryMode: "no_memory", agentId: plugin.settings.agentRegistry.moduleOwners["knowledge-base"], taskStatus: "running", taskStartedAt: Date.now() }); return id; },
     taskStatus: async (id, status) => { await plugin.setPiConversationTaskMetadata(id, { taskStatus: status, ...(status === "completed" ? { taskCompletedAt: Date.now() } : {}), ...(status === "interrupted" ? { taskInterruptedAt: Date.now() } : {}), pendingResponse: undefined }); plugin.getCodexView?.()?.refreshAgentTasks(); },
     registerRoots: async (roots, revision) => {
       const previous = plugin.settings.knowledgeBase.folderBindings ?? emptyKnowledgeFolderBindings();

@@ -502,6 +502,7 @@ export interface ReadDurablePiConversationProjectionOptions {
 }
 
 export interface CreatePiNativeConversationInput extends ConversationTaskMetadata {
+  titleSource?: PiConversationCatalogEntry["titleSource"];
   conversationId: string;
   title: string;
   cwd: string;
@@ -536,6 +537,7 @@ export async function createPiConversation(
       piSessionId: durable.piSessionId,
       vaultId: catalog.vaultId,
       title: conversation.title,
+      ...(conversation.titleSource ? { titleSource: conversation.titleSource } : {}),
       ...normalizeConversationTaskMetadata(conversation),
       taskMetadataUpdatedAt: createdAt,
       status: "active",
@@ -1013,6 +1015,7 @@ export class PiNativeConversationRuntime {
     try {
       derivedCatalog = await this.catalog.upsert({
         conversationId: targetConversationId,
+        titleSource: "pending",
         piSessionId: durable.piSessionId,
         vaultId: this.catalog.vaultId,
         title,
@@ -1174,6 +1177,14 @@ export class PiNativeConversationRuntime {
       memoryMode: run.memoryMode,
       terminalState: run.terminalState
     });
+  }
+
+  /** Background titles update the live projection without becoming manual renames. */
+  syncConversationTitle(entry: Readonly<PiConversationCatalogEntry>): void {
+    const active = this.active.get(entry.conversationId);
+    if (active && active.catalog.piSessionId === entry.piSessionId && active.catalog.titleSource !== "manual") {
+      active.catalog = { ...active.catalog, title: entry.title, titleSource: entry.titleSource };
+    }
   }
 
   async renameConversation(

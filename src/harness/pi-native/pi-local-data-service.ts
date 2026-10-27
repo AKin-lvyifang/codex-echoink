@@ -35,6 +35,7 @@ export async function createPiLocalConversation(
     piSessionId: durable.piSessionId,
     vaultId: store.catalog.vaultId,
     title: input.title,
+    ...(input.titleSource ? { titleSource: input.titleSource } : {}),
     ...normalizeConversationTaskMetadata(input),
     taskMetadataUpdatedAt: createdAt,
     status: "active",

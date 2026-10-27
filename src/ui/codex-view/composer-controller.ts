@@ -972,6 +972,15 @@ function renderNoteMentionAutocomplete(host: CodexComposerHost): void {
     );
   };
   setComposerNoteMentionMenu(host.inputEl, {
+    ...(/^(?:带我精读|Read closely)\s*@/iu.test(host.inputEl.value) ? { leadingAction: {
+      label: conversationUiText(host.plugin.settings.settingsLanguage, "随便挑一篇", "Pick a note for me"),
+      select: () => {
+        host.inputEl.value = conversationUiText(host.plugin.settings.settingsLanguage,
+          "从我的笔记里随便挑一篇，带我精读：先讲它说了什么，再问我三个问题。",
+          "Pick any of my notes and read it closely with me: explain what it says, then ask me three questions.");
+        closeComposerNoteMentionMenu(host.inputEl); host.onInputChanged(); host.inputEl.focus();
+      }
+    } } : {}),
     results,
     onSelect: select,
     onRender: render,

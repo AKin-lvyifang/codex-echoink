@@ -21,7 +21,7 @@ await esbuild.build({
       'import { runPiChatUiProjectorTests } from "./src/tests/harness-v2/pi-chat-ui-projector";',
       'import { runPiSessionDurabilityTests } from "./src/tests/pi-native/pi-session-durability";',
       'import { runPiNativeConversationRuntimeTests } from "./src/tests/pi-native/pi-native-conversation-runtime";',
-      'import { runPiPluginConversationBoundaryTests } from "./src/tests/pi-native/plugin-conversation-boundary";',
+      'import { runPiPluginConversationBoundaryTests, runPiConversationTitleEntryTests } from "./src/tests/pi-native/plugin-conversation-boundary";',
       'import { runPiConversationStartupTests } from "./src/tests/pi-native/conversation-startup";',
       'import { runPiConversationTabsTests } from "./src/tests/pi-native/conversation-tabs";',
       'import { runPiNativeTurnRunnerTests } from "./src/tests/pi-native/turn-runner";',
@@ -37,6 +37,7 @@ await esbuild.build({
       'import { runQuickChatWindowTests } from "./src/tests/quick-chat-window";',
       'import { runHomeTodoTests } from "./src/tests/home-todos";',
       "await runSelectionAnnotationTests();",
+      ...(process.argv.includes("--conversation-titles") ? ["await runPiConversationTitleEntryTests();"] : []),
       "await runPiNativeFileStoreTests();",
       "await runPiSessionDurabilityTests();",
       "await runPiNativeConversationRuntimeTests();",
@@ -56,8 +57,9 @@ await esbuild.build({
       "await runTurnNavigatorTests();",
       "await runQuickChatWindowTests();",
       "await runHomeTodoTests();",
-      `console.log(${JSON.stringify(process.argv.includes("--conversation-ui") ? "Conversation UI targeted acceptance: PASS" : "Current Pi Conversation acceptance: PASS")});`
+      `console.log(${JSON.stringify(process.argv.includes("--conversation-titles") ? "Conversation title entry acceptance: PASS" : process.argv.includes("--conversation-ui") ? "Conversation UI targeted acceptance: PASS" : "Current Pi Conversation acceptance: PASS")});`
     ].filter((line) => !process.argv.includes("--daily-journal") || line.startsWith("import ") || line.includes("runDailyJournalPipelineTests") || line.includes("console.log"))
+      .filter((line) => !process.argv.includes("--conversation-titles") || line.startsWith("import ") || line.includes("runPiConversationTitleEntryTests") || line.includes("console.log"))
       .filter((line) => !process.argv.includes("--conversation-ui") || line.startsWith("import ") || /run(?:SmoothConversationUi|MessageListIdentity|TurnNavigator)Tests|console\.log/u.test(line))
       .join("\n"),
     resolveDir: rootDir,

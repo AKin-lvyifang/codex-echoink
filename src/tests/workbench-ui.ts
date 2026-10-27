@@ -126,8 +126,8 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="loading"]').length, 6);
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0, "unread groups never claim zero");
     await tick();
-    assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 6);
-    assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 6);
+    assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 0);
+    assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0);
     assert.equal(content.querySelector("time")?.getAttribute("datetime"), localDate(new Date()));
     memoryNotice = { kind: "mismatch", reason: "Personal Memory manifest belongs to another Vault" };
     await view.refresh();
@@ -136,7 +136,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelector(".wb-memory-notice details")?.hasAttribute("open"), false);
     assert.ok(content.querySelector(".wb-memory-notice details")?.textContent?.includes(memoryNotice.reason));
     const memoryHost = content.querySelector<HTMLElement>('[data-wb="memory-notice"]')!;
-    assert.equal(memoryHost.nextElementSibling?.getAttribute("data-wb"), "modules", "memory explanation precedes module navigation");
+    assert.equal(memoryHost.nextElementSibling?.getAttribute("data-wb"), "starters", "memory explanation precedes starter cards and task groups");
     const useMemory = memoryHost.querySelector<HTMLButtonElement>(".is-primary")!;
     assert.equal(useMemory.textContent, "沿用这份记忆"); useMemory.click(); await tick();
     assert.deepEqual(calls.at(-1), ["resolve-memory", "adopt"]); assert.equal(memoryHost.children.length, 0);
@@ -202,7 +202,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(button("task-run").querySelector(".wb-task-step")?.textContent, runningStage, "visible stage remains intact");
     await click("task-run"); assert.deepEqual(calls.at(-1), ["detail", "run"]);
     calls.pop();
-    assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /总助 · 真正结果 已整理 3 篇笔记。/);
+    assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /真正结果 已整理 3 篇笔记。/);
     assert.equal(projectionReads.get("done"), 1, "cold settings shells read the real stored projection");
     assert.equal(host.settings.sessions[0].messages.length, 0, "preview does not hydrate or mutate the resident shell");
     assert.equal(calls.some(call => call[0] === "detail"), false, "completed preview is available before opening the sidebar task");
@@ -217,8 +217,8 @@ export async function runWorkbenchUiTests(): Promise<void> {
     await view.refresh();
     assert.equal(projectionReads.get("done"), 2, "a changed Catalog revision reloads the result");
     assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /更新后的真实结果/);
-    assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>("[data-wb-group]")).map(node => node.dataset.wbGroup), ["waiting", "running", "interrupted", "signals", "completed", "todos"]);
-    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["等你回应", "正在进行", "没做完", "可以交给 Agent", "今天完成", "今日待办"]);
+    assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>("[data-wb-group]")).map(node => node.dataset.wbGroup), ["waiting", "running", "interrupted", "signals", "completed"]);
+    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["等你回应", "正在进行", "没做完", "可以交给 Agent", "今天完成"]);
     assert.match(content.textContent ?? "", /被你停止/);
     assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 5);
     const retained = button("signal-signal-0");
@@ -259,7 +259,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     snapshot = { ...snapshot, issues: [], todayTodos: [todo] }; await view.refresh();
     todoFailure = true; await click("todo-today"); assert.equal(snapshot.todayTodos.length, 1);
     assert.ok(button("todo-today")); todoFailure = false; await click("todo-today"); await view.refresh();
-    assert.equal(content.querySelector('[data-wb-group="todos"]')?.getAttribute("data-state"), "empty");
+    assert.equal(content.querySelector('[data-wb-group="todos"]')?.getAttribute("data-state"), undefined);
 
     await click("search-trigger"); await new Promise(resolve => setTimeout(resolve, 120)); await tick();
     assert.equal(content.querySelectorAll('[role="option"]').length, 6);
@@ -321,7 +321,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(completedCard.closest<HTMLElement>("[data-wb-group]")?.dataset.wbGroup, "completed");
     assert.ok(completedCard.textContent?.includes(maintenanceCompletionText(activity)));
     assert.equal(completedCard.querySelector(".wb-row-title")?.textContent, "整理知识库（20 篇资料）");
-    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["等你回应", "正在进行", "没做完", "可以交给 Agent", "今天完成", "今日待办"], "maintenance never renames a group");
+    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["可以交给 Agent", "今天完成"], "maintenance never renames visible groups");
     const upgrade = { ...activity, taskKind: "upgrade" as const, upgradeCounts: { sourceTotal: 20, sourceCompleted: 20, linkTotal: 4, linksCompleted: 4, wikiTotal: 3, wikiCompleted: 3 } };
     publishActivities(upgrade);
     assert.equal(content.querySelector('[data-task="maintenance"] .wb-task-title')?.textContent, "升级旧知识");
@@ -339,17 +339,44 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelector('[data-task="maintenance"] .wb-task-title')?.textContent, maintenanceTask.title, "A later ordinary task retains its original title");
     publishActivities();
     tasks = []; snapshot = { ...snapshot, signals: [], todayTodos: [] }; await view.refresh();
-    assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 6);
+    assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 0);
     snapshot = { ...snapshot, issues: ["待办读取失败：合成错误"] }; await view.refresh();
     assert.equal(content.querySelector('[data-wb-group="signals"]')?.getAttribute("data-state"), "unconfirmed");
     assert.equal(content.querySelector('[data-wb-group="todos"]')?.getAttribute("data-state"), "unconfirmed");
     assert.equal(content.querySelector('[data-wb-group="todos"] .wb-count')?.hasAttribute("hidden"), true);
     assert.doesNotMatch(content.querySelector('[data-wb-group="todos"]')?.textContent ?? "", /今天没有待办/);
     snapshot = { ...snapshot, issues: ["财务：合成错误"] }; await view.refresh();
-    assert.equal(content.querySelector('[data-wb-group="todos"]')?.getAttribute("data-state"), "empty", "unrelated finance errors do not hide verified to-dos");
+    assert.equal(content.querySelector('[data-wb-group="todos"]')?.getAttribute("data-state"), undefined, "unrelated finance errors do not hide verified to-dos");
     failTasks = failData = true; await view.refresh();
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="error"]').length, 6);
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0);
+    failTasks = failData = false; pro = false; host.settings.englishDiary.enabled = true;
+    snapshot = { ...snapshot, issues: [] }; await view.refresh();
+    const header = content.querySelector<HTMLElement>(".wb-header")!, nav = content.querySelector<HTMLElement>(".wb-modules")!;
+    const navStyles = document.createElement("style"); navStyles.textContent = ".wb-header { column-gap: 16px } .wb-modules { column-gap: 4px }"; document.head.append(navStyles);
+    cleanups.push(() => navStyles.remove());
+    const navButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("[data-module]")), more = content.querySelector<HTMLElement>('[data-wb="module-more"]')!;
+    [80, 80, 140, 105, 160, 160].forEach((width, index) => { navButtons[index].getBoundingClientRect = () => ({ width } as DOMRect); });
+    more.getBoundingClientRect = () => ({ width: 74 } as DOMRect);
+    let withoutWeather = 950;
+    nav.getBoundingClientRect = () => ({ width: Math.max(1, withoutWeather
+      - (header.classList.contains("is-weather-condensed") ? 0 : content.querySelector(".wb-sky.is-feedback") ? 350 : 170)
+      + 2 * (16 - Number.parseFloat(header.style.columnGap || "16"))) } as DOMRect);
+    const layout = view as unknown as { fitNavigation(): void; weatherStage: { say(text: string): void; clearFeedback(): void } };
+    layout.weatherStage.clearFeedback(); layout.fitNavigation();
+    assert.equal(more.hidden, true); assert.equal(header.classList.contains("is-weather-condensed"), false, "weather stays when every module fits");
+    layout.weatherStage.say("今天聊过，已自动签到"); layout.fitNavigation();
+    assert.equal(header.classList.contains("is-weather-condensed"), false, "disabled check-in cannot add feedback or consume navigation space");
+    assert.equal(content.querySelector(".wb-sky-feedback")?.textContent, "");
+    assert.equal(navButtons.filter(button => !button.hidden).length, 6);
+    layout.weatherStage.clearFeedback(); layout.fitNavigation();
+    assert.equal(header.classList.contains("is-weather-condensed"), false, "weather returns after the temporary message clears");
+    withoutWeather = 900; layout.fitNavigation();
+    assert.equal(more.hidden, true, "hide weather before overflowing modules");
+    withoutWeather = 140; layout.fitNavigation();
+    assert.equal(navButtons[0].hidden, false, "narrow layout reclaims column gaps before losing the first module");
+    assert.equal(more.hidden, false); assert.equal(navButtons.filter(button => !button.hidden).length, 1);
+    assert.ok(Number.parseFloat(header.style.columnGap) < 16);
     console.log("Workbench UI passed: task groups, cold-shell result projections and revision cache, no duplicate summaries after redraw, bounded read concurrency and retry, local date, real routes, valid question binding, prefill, collapse and focus, stale errors, to-do success/failure, search keyboard, foreground lifecycle.");
   } finally {
     await view.onClose(); for (const cleanup of cleanups.reverse()) cleanup(); container.remove();

@@ -1,3 +1,4 @@
+import { generateConversationTitle } from "./plugin/conversation-title";
 import { maintenanceActivityText, maintenanceStatusBarText, maintenanceTaskStateLabel, projectMaintenanceInitialActivity } from "./knowledge-base/maintenance-activity";
 import { knowledgeLinkingProgressText } from "./ui/codex-view/knowledge-linking-progress";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES } from "./knowledge-base/root-paths-core";
@@ -208,6 +209,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private agentRegistryWriteTail: Promise<void> = Promise.resolve();
   private readonly agentRegistryListeners = new Set<() => void>();
   private readonly conversationCatalogListeners = new Set<() => void>();
+  private readonly manualTitleChanges = new Set<string>();
   private pendingSettingsResourceDetailId = "";
   private mcpBrokerService: EchoInkMcpBrokerService | null = null;
   private mcpSettingsService: EchoInkMcpSettingsService | null = null;
@@ -787,6 +789,10 @@ export default class CodexForObsidianPlugin extends Plugin {
   getCodexView(): CodexView | null { return this.getViewService().getCodexView(); }
   refreshKnowledgeBaseSurfaces(): void { this.getViewService().refreshKnowledgeBaseSurfaces(); }
   async refreshLanguageSurfaces(): Promise<void> { await this.getViewService().refreshLanguageSurfaces(); }
+  async openWorkbenchSetup(target: "agent" | "knowledge" | "appearance"): Promise<void> {
+    await this.getViewService().openEchoInkSettings(target === "knowledge" ? "knowledgeBase" : "general",
+      target === "agent" ? "general:personality-template" : target === "knowledge" ? "knowledge:onboarding" : "general:appearance");
+  }
   async openEchoInkGeneralSettings(): Promise<void> { await this.getViewService().openEchoInkSettings("general"); }
   async openEchoInkKnowledgeSettings(): Promise<void> {
     await this.getViewService().openEchoInkSettings("knowledgeBase");
@@ -1026,6 +1032,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     });
     this.piConversationActivationLane = recording.catch(() => undefined);
     await recording;
+    const local = await this.ensurePiLocalData(), entry = await local.catalog.get(conversationId);
+    if (entry) await local.catalog.upsert({ ...entry, updatedAt: Math.max(Date.now(), entry.updatedAt) });
+    this.conversationRunService?.refreshTask(conversationId); this.notifyHomeSurfacesChanged();
   }
   async discardPiConversationDraft(
     conversationId: string,
@@ -1386,7 +1395,33 @@ export default class CodexForObsidianPlugin extends Plugin {
     input: CreatePiNativeConversationInput
   ): Promise<Readonly<PiConversationCatalogEntry>> {
     if (this.conversationRunService?.isAgentBlocked(input.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("agent_removal_in_progress");
-    return await createPiLocalConversation(await this.ensurePiLocalData(), input);
+    return await createPiLocalConversation(await this.ensurePiLocalData(), { ...input, ...(Platform.isDesktopApp ? { titleSource: input.titleSource ?? "pending" } : {}) });
+  }
+  /** Invoked only after the durable user entry has been accepted, independent of Views. */
+  async onWorkbenchMessageAccepted(item: Readonly<QueuedTurnItem>): Promise<void> {
+    if (!Platform.isDesktopApp) return;
+    const provider = this.settings.apiProviders.find(p => p.id === item.turnOptions.providerSettingsId);
+    const model = provider && getApiProviderModel(provider, item.turnOptions.model);
+    const draft = provider && model ? this.activePiProviderConfigurationDraft({ provider, model }) : undefined;
+    const local = await this.ensurePiLocalData();
+    const entry = await local.catalog.get(item.sessionId);
+    if (entry?.titleSource === "pending" && !item.maintenanceScope
+      && !this.getKnowledgeActivitySource?.()?.snapshot().maintenance.some(activity => activity.originConversationId === item.sessionId)) {
+      const requests = await this.readPiConversationProjection(item.sessionId).then(projection => projection.messages.filter(message => message.role === "user").map(message => message.text)).catch(() => [item.text]);
+      await generateConversationTitle({ catalog: local.catalog, conversationId: item.sessionId,
+        requests: requests.length ? requests : [item.text],
+        generate: draft ? prompt => this.getPiProviderConfigurationService().generateText({ draft,
+          systemPrompt: "为用户的对话生成简短标题，不超过14个字符。保持用户语言，只输出标题，不解释，不加引号。", userPrompt: prompt, timeoutMs: 12_000, maxTokens: 128 }) : undefined,
+        changed: () => { void local.catalog.get(item.sessionId).then(updated => {
+          const shell = this.settings.sessions.find(session => session.id === item.sessionId);
+          if (updated && updated.titleSource !== "manual" && !this.manualTitleChanges.has(item.sessionId)) {
+            if (shell) shell.title = updated.title;
+            this.piRuntimeBundle?.runtime.syncConversationTitle(updated);
+          }
+          this.conversationRunService?.refreshTask(item.sessionId); this.notifyHomeSurfacesChanged();
+        }).catch(() => undefined); }
+      });
+    }
   }
   async derivePiConversation(
     input: DerivePiNativeConversationInput
@@ -1398,6 +1433,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     conversationId: string,
     title: string
   ): Promise<Readonly<PiConversationCatalogEntry>> {
+    this.manualTitleChanges.add(conversationId);
     await this.settlePiRuntimeFlight();
     return this.piRuntimeBundle
       ? await this.piRuntimeBundle.runtime.renameConversation(

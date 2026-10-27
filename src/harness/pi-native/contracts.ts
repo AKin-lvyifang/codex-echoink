@@ -36,6 +36,8 @@ export interface PiConversationCatalogEntry extends ConversationTaskMetadata {
   piSessionId: string;
   vaultId: string;
   title: string;
+  /** Missing on legacy entries means the original locally truncated title. */
+  titleSource?: "pending" | "automatic" | "fallback" | "manual";
   status: PiConversationCatalogStatus;
   defaultMemoryMode: PiConversationMemoryMode;
   /** Optional product-owned Skill resolved again before every formal Turn. */

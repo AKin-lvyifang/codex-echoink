@@ -41,7 +41,10 @@ interface RankedNoteMention {
   readonly score: number;
 }
 
+export interface NoteMentionLeadingAction { label: string; select(): void }
+
 interface ComposerNoteMentionState {
+  leadingAction?: Readonly<NoteMentionLeadingAction>;
   selections: NoteMentionSelection[];
   catalog: readonly Readonly<NoteMentionCatalogEntry>[] | null;
   results: readonly Readonly<NoteMentionCatalogEntry>[];
@@ -219,14 +222,16 @@ export function clearComposerNoteMentions(input: HTMLTextAreaElement): void {
 }
 
 export function setComposerNoteMentionMenu(input: HTMLTextAreaElement, options: Readonly<{
+  leadingAction?: Readonly<NoteMentionLeadingAction>;
   results: readonly Readonly<NoteMentionCatalogEntry>[];
   onSelect: (entry: Readonly<NoteMentionCatalogEntry>) => void;
   onRender: () => void;
   onClose: () => void;
 }>): void {
   const state = requireComposerState(input);
+  state.leadingAction = options.leadingAction;
   state.results = options.results;
-  state.activeIndex = Math.min(state.activeIndex, Math.max(0, options.results.length - 1));
+  state.activeIndex = Math.min(state.activeIndex, Math.max(0, options.results.length + (options.leadingAction ? 1 : 0) - 1));
   state.open = true;
   state.onSelect = options.onSelect;
   state.onRender = options.onRender;
@@ -234,12 +239,14 @@ export function setComposerNoteMentionMenu(input: HTMLTextAreaElement, options: 
 }
 
 export function composerNoteMentionMenuState(input: HTMLTextAreaElement): Readonly<{
+  leadingAction?: Readonly<NoteMentionLeadingAction>;
   results: readonly Readonly<NoteMentionCatalogEntry>[];
   activeIndex: number;
   open: boolean;
 }> {
   const state = requireComposerState(input);
   return Object.freeze({
+    leadingAction: state.leadingAction,
     results: state.results,
     activeIndex: state.activeIndex,
     open: state.open
@@ -288,7 +295,10 @@ export function handleComposerNoteMentionKeyDown(
     return true;
   }
   if (event.key === "Enter") {
-    const selected = state.results[state.activeIndex];
+    if (state.leadingAction && state.activeIndex === 0) {
+      event.preventDefault(); event.stopPropagation(); state.leadingAction.select(); return true;
+    }
+    const selected = state.results[state.activeIndex - (state.leadingAction ? 1 : 0)];
     if (!selected) return false;
     event.preventDefault();
     event.stopPropagation();
@@ -296,12 +306,13 @@ export function handleComposerNoteMentionKeyDown(
     return true;
   }
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return false;
-  if (!state.results.length) return true;
+  const count = state.results.length + (state.leadingAction ? 1 : 0);
+  if (!count) return true;
   event.preventDefault();
   event.stopPropagation();
   state.activeIndex = event.key === "ArrowDown"
-    ? (state.activeIndex + 1) % state.results.length
-    : (state.activeIndex - 1 + state.results.length) % state.results.length;
+    ? (state.activeIndex + 1) % count
+    : (state.activeIndex - 1 + count) % count;
   state.onRender?.();
   return true;
 }

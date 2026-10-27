@@ -299,6 +299,7 @@ export function renderComposerNoteMentionMenu(
     results: readonly Readonly<NoteMentionCatalogEntry>[];
     activeIndex: number;
     loading?: boolean;
+    leadingAction?: Readonly<{ label: string; select(): void }>;
   }>,
   callbacks: Readonly<{
     onSelect: (entry: Readonly<NoteMentionCatalogEntry>) => void;
@@ -319,7 +320,15 @@ export function renderComposerNoteMentionMenu(
     });
     return;
   }
-  if (!state.results.length) {
+  if (state.leadingAction) {
+    const action = container.createEl("button", { cls: `codex-composer-resource-row codex-note-mention-option${state.activeIndex === 0 ? " is-active" : ""}`,
+      attr: { id: `${container.id}-action`, type: "button", role: "option", tabindex: "-1", "aria-selected": String(state.activeIndex === 0) } });
+    const icon = action.createSpan({ cls: "codex-composer-resource-icon", attr: { "aria-hidden": "true" } }); setIcon(icon, "dices");
+    action.createSpan({ cls: "codex-composer-resource-name", text: state.leadingAction.label });
+    action.onpointerdown = event => { event.preventDefault(); event.stopPropagation(); state.leadingAction?.select(); };
+    if (state.activeIndex === 0) input.setAttribute("aria-activedescendant", action.id);
+  }
+  if (!state.results.length && !state.leadingAction) {
     input.removeAttribute("aria-activedescendant");
     container.createDiv({
       cls: "codex-note-mention-empty",
@@ -330,13 +339,13 @@ export function renderComposerNoteMentionMenu(
   for (const [index, entry] of state.results.entries()) {
     const optionId = `${container.id}-option-${index}`;
     const row = container.createEl("button", {
-      cls: `codex-composer-resource-row codex-note-mention-option${index === state.activeIndex ? " is-active" : ""}`,
+      cls: `codex-composer-resource-row codex-note-mention-option${index + (state.leadingAction ? 1 : 0) === state.activeIndex ? " is-active" : ""}`,
       attr: {
         id: optionId,
         type: "button",
         role: "option",
         tabindex: "-1",
-        "aria-selected": String(index === state.activeIndex),
+        "aria-selected": String(index + (state.leadingAction ? 1 : 0) === state.activeIndex),
         title: entry.fileName
       }
     });
@@ -351,7 +360,7 @@ export function renderComposerNoteMentionMenu(
       event.stopPropagation();
       callbacks.onSelect(entry);
     };
-    if (index === state.activeIndex) input.setAttribute("aria-activedescendant", optionId);
+    if (index + (state.leadingAction ? 1 : 0) === state.activeIndex) input.setAttribute("aria-activedescendant", optionId);
   }
 }
 
