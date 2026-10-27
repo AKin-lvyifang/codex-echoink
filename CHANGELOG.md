@@ -12,13 +12,13 @@
 
 #### 更新内容
 
-- **@Agent（PRO 功能）：在笔记哪里都能 @ 管家，让 AI 直接帮你改这一段。** 输入 `@` 选一个管家，写下要求，修改提议就会出现在笔记原处。看过后点确认才写回，也可以撤销。支持选中文字、修改连续多段，以及给选文加注释；多个提议可以分别处理，重启后仍能找回。
+- **@Agent（PRO 功能）：在笔记哪里都能 @ 管家，让 AI 直接帮你改这一段。** 输入 `@` 选一个管家，写下要求，修改提议就会出现在笔记原处。看过后点确认才写回，也可以撤销。一次可以修改连续多段；多个提议可以分别处理，重启后仍能找回。
 - **计划模式按当前任务生效。** 切换模式不会影响其他任务；没有生成计划时会提示你接着做。
 - **修复 iPad 等移动设备初始化文件夹时卡住的问题。**
 
 #### 如何使用
 
-在电脑端打开笔记的**实时预览**，在需要帮忙的位置输入 `@`，选一个管家，再写一句具体要求，例如“把上面这一段写得简洁一点”。发送后，在原处查看修改提议，确认后写回笔记。也可以先选中文字，再提出要求。
+在电脑端打开笔记的**实时预览**，在需要帮忙的位置输入 `@`，选一个管家，再写一句具体要求，例如“把上面这一段写得简洁一点”。发送后，在原处查看修改提议，确认后写回笔记。
 
 #### 下载与升级
 
@@ -32,13 +32,13 @@ Type: New
 
 #### What's new
 
-- **@Agent (PRO): mention an agent anywhere in your note and ask AI to edit that passage.** Type `@`, choose an agent, and describe what you want. A proposed edit appears right there in the note. Review and confirm it before it is written back, with an option to undo. You can work with selected text or several consecutive paragraphs, add comments to selections, and handle multiple proposals separately. Proposals remain available after a restart.
+- **@Agent (PRO): mention an agent anywhere in your note and ask AI to edit that passage.** Type `@`, choose an agent, and describe what you want. A proposed edit appears right there in the note. Review and confirm it before it is written back, with an option to undo. A proposal can cover several consecutive paragraphs, and multiple proposals can be handled separately. Proposals remain available after a restart.
 - **Plan mode applies to the current task.** Switching modes no longer affects other tasks. If no plan was generated, a prompt helps you continue.
 - **Fixed folder initialization getting stuck on iPad and other mobile devices.**
 
 #### How to use
 
-On desktop, open a note in **Live Preview**, type `@` where you need help, choose an agent, and write a specific request, such as “Make the paragraph above more concise.” Send it, review the proposed edit in place, then confirm to write it back. You can also select text before making your request.
+On desktop, open a note in **Live Preview**, type `@` where you need help, choose an agent, and write a specific request, such as “Make the paragraph above more concise.” Send it, review the proposed edit in place, then confirm to write it back.
 
 #### Download and upgrade
 
