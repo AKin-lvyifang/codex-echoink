@@ -1,22 +1,20 @@
 import type { DataAdapter } from "obsidian";
-import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { replaceMobileFile } from "./replace-file";
 import { digest, object, parentPath, safePath } from "./knowledge-folders-io";
 
-export interface FolderConfiguration {
-  bindings: KnowledgeFolderBindings | null;
-  journal: string; review: string; english: string; expressions: string;
-  englishMode?: "role" | "custom"; expressionMode?: "role" | "custom";
-  legacyEnglish?: string[]; legacyExpressions?: string[]; pdfOriginal?: string; nativeJournal?: string;
-}
+import type { FolderConfiguration } from "./knowledge-folders-configuration";
+import { folderConfigurationKeys, folderConfigurationLabels } from "./knowledge-folders-configuration";
+import { assertKnowledgeModulePath } from "../knowledge-base/module-directories";
+export type { FolderConfiguration } from "./knowledge-folders-configuration";
+
 export interface FolderPosition { original: string; current: string; hash: string; restored?: boolean }
 export interface FolderAction {
   kind: "mkdir" | "move" | "settings"; from?: string; to?: string;
   state: "prepared" | "completed" | "uncertain";
 }
 export interface FolderTransaction {
-  schema: 1; id: string; createdAt: number; kind: "initialize" | "names" | "restore";
+  schema: 1 | 2; id: string; createdAt: number; kind: "initialize" | "names" | "restore";
   status: "completed" | "partial" | "uncertain";
   before: FolderConfiguration; after?: FolderConfiguration; positions: FolderPosition[];
   directories?: { original: string; current: string }[];
@@ -24,31 +22,38 @@ export interface FolderTransaction {
   restoreOf?: string; restoredBy?: string;
 }
 const validHash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
-function configuration(value: unknown): FolderConfiguration {
+export function validateFolderConfiguration(value: unknown, partial = false): FolderConfiguration {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("目录事务设置损坏。");
   const input = object(value);
-  if (input.bindings !== null && !normalizeKnowledgeFolderBindings(input.bindings)) throw new Error("目录事务绑定损坏。");
-  for (const key of ["journal", "review", "english", "expressions"]) {
-    if (typeof input[key] !== "string") throw new Error("目录事务设置损坏。");
-    if (input[key]) safePath(input[key]);
+  if (partial && Object.keys(input).some(key => !folderConfigurationKeys.includes(key as typeof folderConfigurationKeys[number]))) throw new Error("目录事务设置字段损坏。");
+  if ((!partial || Object.hasOwn(input, "bindings")) && input.bindings !== null && !normalizeKnowledgeFolderBindings(input.bindings)) throw new Error("目录事务绑定损坏。");
+  const labels = folderConfigurationLabels;
+  for (const key of ["journal", "review", "english", "expressions", "pdfOriginal", "nativeJournal"] as const) {
+    if ((partial || key === "pdfOriginal" || key === "nativeJournal") && input[key] === undefined) continue;
+    if (partial && input[key] === null && (key === "pdfOriginal" || key === "nativeJournal")) continue;
+    if (typeof input[key] !== "string") throw new Error(`${labels[key]}：目录事务设置损坏。`);
+    if (partial) assertKnowledgeModulePath(input[key], labels[key], key === "journal" || key === "nativeJournal");
+    else if (input[key]) safePath(input[key]);
   }
-  for (const key of ["pdfOriginal", "nativeJournal"]) if (input[key] !== undefined) {
-    if (typeof input[key] !== "string") throw new Error("目录事务设置损坏。");
-    if (input[key]) safePath(input[key]);
+  for (const key of ["legacyEnglish", "legacyExpressions"] as const) if (input[key] !== undefined) {
+    if (partial && input[key] === null) continue;
+    const label = key === "legacyEnglish" ? "英文日记历史位置" : "表达库历史位置";
+    if (!Array.isArray(input[key]) || (input[key] as unknown[]).some(path => typeof path !== "string")) throw new Error(`${label}：目录事务旧位置损坏。`);
+    for (const [index, path] of (input[key] as string[]).entries()) {
+      if (partial) assertKnowledgeModulePath(path, `${label}（第 ${index + 1} 项）`); else safePath(path);
+    }
   }
-  for (const key of ["legacyEnglish", "legacyExpressions"]) if (input[key] !== undefined) {
-    if (!Array.isArray(input[key]) || (input[key] as unknown[]).some(path => typeof path !== "string")) throw new Error("目录事务旧位置损坏。");
-    for (const path of input[key] as string[]) safePath(path);
-  }
-  for (const key of ["englishMode", "expressionMode"]) if (input[key] !== undefined && input[key] !== "role" && input[key] !== "custom") throw new Error("目录事务模式损坏。");
-  return input as unknown as FolderConfiguration;
+  for (const key of ["englishMode", "expressionMode"]) if (input[key] !== undefined && !(partial && input[key] === null) && input[key] !== "role" && input[key] !== "custom") throw new Error("目录事务模式损坏。");
+  return input;
 }
 function parse(raw: string, expectedId: string): FolderTransaction {
   const envelope = object(JSON.parse(raw) as unknown), value = object(envelope.payload);
-  if (envelope.schema !== 1 || envelope.checksum !== digest(value) || value.schema !== 1 || value.id !== expectedId
+  if (envelope.schema !== 1 || envelope.checksum !== digest(value) || (value.schema !== 1 && value.schema !== 2) || value.id !== expectedId
     || !/^folders-[a-z0-9-]+$/u.test(expectedId) || !Number.isSafeInteger(value.createdAt)
     || !["initialize", "names", "restore"].includes(String(value.kind)) || !["completed", "partial", "uncertain"].includes(String(value.status))
-    || !Array.isArray(value.positions) || !Array.isArray(value.actions) || !Array.isArray(value.created)) throw new Error("目录事务记录损坏，未执行或推测恢复。");
-  configuration(value.before); if (value.after !== undefined) configuration(value.after);
+    || !Array.isArray(value.positions) || !Array.isArray(value.actions) || !Array.isArray(value.created)
+    || value.schema === 2 && value.after === undefined) throw new Error("目录事务记录损坏，未执行或推测恢复。");
+  validateFolderConfiguration(value.before, value.schema === 2); if (value.after !== undefined) validateFolderConfiguration(value.after, value.schema === 2);
   for (const rawPosition of value.positions as unknown[]) {
     const position = object(rawPosition);
     if (typeof position.original !== "string" || typeof position.current !== "string" || !validHash(position.hash)

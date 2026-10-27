@@ -1,3 +1,6 @@
+import { assertKnowledgeModulePath, prepareKnowledgeModuleDirectories, type KnowledgeEnglishDirectoryModes } from "../knowledge-base/module-directories";
+import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
+import { validateDirectoryModuleSettings } from "../knowledge-base/initialization-directory-history";
 import { createProductionKnowledgeLinkingService } from "./knowledge-linking-production";
 import { KnowledgeActivityService } from "./knowledge-activity-service";
 import { createProductionKnowledgeUpgradeService, type KnowledgeUpgradeService } from "./knowledge-upgrade-service";
@@ -543,6 +546,9 @@ export class EchoInkKnowledgeSurfaceService {
     const vault = this.plugin.app.vault;
     const vaultRoot = this.plugin.getVaultPath();
     const baseline = structuredClone(this.plugin.settings.knowledgeBase.folderBindings);
+    const rootNames = (vault.getRoot?.().children ?? []).map(file => file.path);
+    const selection = prepareKnowledgeModuleDirectories(this.plugin.settings, bindings, rootNames, options.moduleDirectories, baseline);
+    options = { ...options, moduleDirectories: selection.directories };
     const baseSettingsSignature = await this.directorySettingsSignature();
     const observedFiles = await Promise.all((vault.getFiles?.() ?? vault.getMarkdownFiles()).map(async file => {
       const stat = await fsp.lstat(path.join(vaultRoot, file.path)).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
@@ -561,6 +567,8 @@ export class EchoInkKnowledgeSurfaceService {
     protect(this.plugin.settings.lifestyle?.finance.analysisDirectory);
     protect(this.plugin.lifestyle?.finance.ledger.paths().root);
     protect(this.plugin.settings.englishDiary?.englishDirectory); protect(this.plugin.settings.englishDiary?.expressionDirectory);
+    const englishPaths = resolveEnglishStoragePaths(this.plugin.settings.englishDiary, baseline, rootNames);
+    protect(englishPaths.englishDirectory); protect(englishPaths.expressionDirectory);
     this.plugin.settings.englishDiary?.legacyEnglishDirectories?.forEach(protect);
     this.plugin.settings.englishDiary?.legacyExpressionDirectories?.forEach(protect);
     protect(this.plugin.settings.pdfReading?.originalDirectory);
@@ -594,6 +602,23 @@ export class EchoInkKnowledgeSurfaceService {
         const stat = await fsp.lstat(path.join(vaultRoot, relative)).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
         return stat ? stat.isDirectory() ? "folder" : "other" : file instanceof TFolder ? "folder" : file ? "other" : "missing";
       }, sourcePaths: files.filter(file => /\.(?:md|markdown)$/iu.test(file.path) && !file.symbolicLink).map(file => file.path) });
+    plan.moduleDirectoryModes = selection.modes; plan.issues.push(...selection.issues);
+    try {
+      const choices = this.directoryModuleChanges(plan.moduleDirectories ?? {}, selection.modes);
+      const original = this.directoryModuleSettings(choices), applied = this.intendedDirectoryModuleSettings(choices);
+      for (const [key, value] of Object.entries(choices)) {
+        if (value === undefined) continue;
+        if (key === "journal") {
+          assertKnowledgeModulePath(this.plugin.settings.journalDirectory, "EchoInk 日记目录", true);
+          const native = original.nativeJournal?.folder;
+          if (native !== undefined) assertKnowledgeModulePath(native, "Obsidian 日记文件夹", true);
+        } else if (key === "review") assertKnowledgeModulePath(this.plugin.settings.review.outputDir, "复盘输出目录");
+        else if (key === "english") assertKnowledgeModulePath(this.plugin.settings.englishDiary.englishDirectory, "英文日记目录");
+        else if (key === "expressions") assertKnowledgeModulePath(this.plugin.settings.englishDiary.expressionDirectory, "表达库目录");
+        else if (this.plugin.settings.pdfReading.originalDirectory !== undefined) assertKnowledgeModulePath(this.plugin.settings.pdfReading.originalDirectory, "原 PDF 目录");
+      }
+      validateDirectoryModuleSettings(original); validateDirectoryModuleSettings(applied);
+    } catch (error) { plan.issues.push(knowledgeErrorDetail(error)); }
     if (await this.directorySettingsSignature() !== baseSettingsSignature || knowledgeFolderBindingsSignature(this.plugin.settings.knowledgeBase.folderBindings) !== knowledgeFolderBindingsSignature(baseline)) {
       plan.issues.push("文件或设置已变化，请重新核对。");
     }
@@ -696,17 +721,10 @@ export class EchoInkKnowledgeSurfaceService {
       const previousReview = this.plugin.settings.review.outputDir;
       const previousPdfOriginal = this.plugin.settings.pdfReading.originalDirectory;
       const previousPdfOriginalConfigured = Object.hasOwn(this.plugin.settings.pdfReading, "originalDirectory");
-      const nativeJournal = plan.moduleDirectories?.journal !== undefined ? await this.captureNativeJournalSettings() : null;
-      const moduleSettings = plan.moduleDirectories ? this.directoryModuleSettings(plan.moduleDirectories) : null;
-      const intendedModules = moduleSettings ? structuredClone(moduleSettings) : null;
-      if (intendedModules && plan.moduleDirectories) {
-        const modules = plan.moduleDirectories;
-        if (modules.journal !== undefined) { intendedModules.journal = modules.journal; intendedModules.nativeJournal = { folder: modules.journal }; }
-        if (modules.review !== undefined) intendedModules.review = modules.review;
-        if (modules.english !== undefined) intendedModules.english = { directory: modules.english, mode: "custom" };
-        if (modules.expressions !== undefined) intendedModules.expressions = { directory: modules.expressions, mode: "custom" };
-        if (modules.pdfOriginal !== undefined) intendedModules.pdfOriginal = { directory: modules.pdfOriginal };
-      }
+      const choices = this.directoryModuleChanges(plan.moduleDirectories ?? {}, plan.moduleDirectoryModes ?? {});
+      const nativeJournal = choices.journal !== undefined ? await this.captureNativeJournalSettings() : null;
+      const moduleSettings = Object.keys(choices).length ? this.directoryModuleSettings(choices) : null;
+      const intendedModules = moduleSettings ? this.intendedDirectoryModuleSettings(choices) : null;
       let nativeJournalChanged = false;
       try {
         if (plan.create.length || plan.moves.length || moduleSettings) await this.directoryHistory.capture(`folder-plan-${Date.now()}`);
@@ -726,7 +744,7 @@ export class EchoInkKnowledgeSurfaceService {
           result.moved.push(move);
         }
         this.plugin.settings.knowledgeBase.folderBindings = { ...structuredClone(plan.bindings), configured: true, revision: plan.baseRevision + 1 };
-        const modules = plan.moduleDirectories;
+        const modules = choices;
         if (modules?.journal !== undefined) {
           nativeJournalChanged = true; // Native save can complete before its refresh hook fails.
           await saveNativeJournalFolder(this.plugin.app, modules.journal);
@@ -744,7 +762,7 @@ export class EchoInkKnowledgeSurfaceService {
           this.plugin.settings.englishDiary.expressionDirectoryMode = "custom";
         }
         if (modules?.pdfOriginal !== undefined) this.plugin.settings.pdfReading.originalDirectory = modules.pdfOriginal;
-        this.plugin.englishDiary?.refreshStoragePaths();
+        if (this.plugin.settings.englishDiary.enabled) this.plugin.englishDiary?.refreshStoragePaths();
         if (moduleSettings && modules) await this.directoryHistory.recordModuleSettings(moduleSettings, this.directoryModuleSettings(modules));
         if (plan.create.length || plan.moves.length || moduleSettings) await this.directoryHistory.appliedBindings(this.plugin.settings.knowledgeBase.folderBindings);
         await this.plugin.saveSettings(true);
@@ -755,7 +773,7 @@ export class EchoInkKnowledgeSurfaceService {
         this.plugin.settings.review.outputDir = previousReview;
         if (previousPdfOriginalConfigured) this.plugin.settings.pdfReading.originalDirectory = previousPdfOriginal;
         else delete this.plugin.settings.pdfReading.originalDirectory;
-        this.plugin.englishDiary?.refreshStoragePaths();
+        if (this.plugin.settings.englishDiary.enabled) this.plugin.englishDiary?.refreshStoragePaths();
         const recovery: string[] = [];
         if (nativeJournalChanged && nativeJournal) {
           try { await nativeJournal.restore(); }
@@ -772,7 +790,7 @@ export class EchoInkKnowledgeSurfaceService {
           catch (error) { recovery.push(`${directory}：${knowledgeErrorDetail(error)}`); }
         }
         if (moduleSettings && plan.moduleDirectories) {
-          try { await this.directoryHistory.recordModuleSettings(moduleSettings, this.directoryModuleSettings(plan.moduleDirectories)); }
+          try { await this.directoryHistory.recordModuleSettings(moduleSettings, this.directoryModuleSettings(choices)); }
           catch (error) { recovery.push(`模块目录恢复记录：${knowledgeErrorDetail(error)}`); }
         }
         try { await this.plugin.saveSettings(true); } catch (error) { recovery.push(`配置恢复：${knowledgeErrorDetail(error)}`); }
@@ -791,6 +809,26 @@ export class EchoInkKnowledgeSurfaceService {
       return result;
     }, plan.create.length === 0 && plan.moves.length === 0 && !optimize); }
     finally { this.directoryPlanBusy = false; this.folderOperationMessage = ""; }
+  }
+
+  private directoryModuleChanges(choices: KnowledgeModuleDirectories, modes: KnowledgeEnglishDirectoryModes): KnowledgeModuleDirectories {
+    const settings = this.plugin.settings, next = { ...choices };
+    const current = this.directoryModuleSettings(choices);
+    if (next.journal === settings.journalDirectory && next.journal === current.nativeJournal?.folder) delete next.journal;
+    if (!settings.review.enabled || next.review === settings.review.outputDir) delete next.review;
+    if (!settings.englishDiary.enabled || modes.english === "role" || next.english === settings.englishDiary.englishDirectory) delete next.english;
+    if (!settings.englishDiary.enabled || modes.expressions === "role" || next.expressions === settings.englishDiary.expressionDirectory) delete next.expressions;
+    if (!settings.pdfReading.enabled || next.pdfOriginal === settings.pdfReading.originalDirectory) delete next.pdfOriginal;
+    return next;
+  }
+  private intendedDirectoryModuleSettings(choices: KnowledgeModuleDirectories): DirectoryModuleSettings {
+    const next = this.directoryModuleSettings(choices);
+    if (choices.journal !== undefined) { next.journal = choices.journal; next.nativeJournal = { folder: choices.journal }; }
+    if (choices.review !== undefined) next.review = choices.review;
+    if (choices.english !== undefined) next.english = { directory: choices.english, mode: "custom" };
+    if (choices.expressions !== undefined) next.expressions = { directory: choices.expressions, mode: "custom" };
+    if (choices.pdfOriginal !== undefined) next.pdfOriginal = { directory: choices.pdfOriginal };
+    return next;
   }
 
   private directoryModuleSettings(choices: KnowledgeModuleDirectories): DirectoryModuleSettings {

@@ -7,6 +7,7 @@ import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBin
 import { previewKnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES, registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
+import { InitializationDirectoryHistory } from "../knowledge-base/initialization-directory-history";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import CodexForObsidianPlugin from "../main";
 import { echoInkKnowledgeMaintenanceProtocolPrompt } from "../knowledge-base/knowledge-maintenance-protocol";
@@ -100,6 +101,7 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
     await assertRenamedLegacyConsentRestores(path.join(root, "restore-legacy"));
     await assertRootNativeJournalProtection(path.join(root, "native-root"));
     await assertRetiredBindingsSurviveDesktopEdits(path.join(root, "retired-roles"));
+    await assertInitializationModuleRegression(path.join(root, "module-regression"));
   } finally { await fs.rm(root, { recursive: true, force: true }); }
   console.log("Knowledge directory plans, relocation and recovery: PASS");
 }
@@ -368,4 +370,41 @@ async function assertFailedSaveRecovery(root: string) {
     assert.equal(await fs.readFile(path.join(root, "source.md"), "utf8"), "SAVED CONTENT");
     assert.equal(fixture.plugin.settings.knowledgeBase.folderBindings.roles.wiki.enabled, false);
   } finally { fixture.release(); }
+}
+
+async function assertInitializationModuleRegression(root: string): Promise<void> {
+  const f = await fixtureAt(root);
+  try {
+    await f.write("closed-review/keep.md", "REVIEW"); await f.write("closed-english/keep.md", "ENGLISH");
+    f.plugin.settings.review.enabled = false; f.plugin.settings.review.outputDir = "closed-review";
+    Object.assign(f.plugin.settings.englishDiary, { enabled: false, englishDirectory: "closed-english", legacyEnglishDirectories: ["outputs/.english-diary/diaries"] });
+    const before = JSON.stringify(f.plugin.settings.englishDiary);
+    let refreshed = 0; f.plugin.englishDiary = { refreshStoragePaths() { refreshed++; } } as any;
+    const disabled = await f.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build", moduleDirectories: { review: "/ignored", english: "/ignored", expressions: "missing" } });
+    assert.deepEqual(disabled.issues, []); assert.ok(!disabled.moves.some(move => /^(closed-review|closed-english)\//u.test(move.from)));
+    await f.service.applyDirectoryPlan(disabled); assert.equal(JSON.stringify(f.plugin.settings.englishDiary), before); assert.equal(refreshed, 0);
+    await fs.mkdir(path.join(root, "mapped-output"));
+    Object.assign(f.plugin.settings.knowledgeBase.folderBindings!.roles.outputs, { enabled: true, readPaths: ["mapped-output"], writePath: "mapped-output" });
+    Object.assign(f.plugin.settings.englishDiary, { enabled: true, englishDirectory: "outputs/英文日记", expressionDirectory: "outputs/英文日记/表达库", englishDirectoryMode: "role", expressionDirectoryMode: "role" });
+    const role = await f.service.previewDirectoryPlan(structuredClone(f.plugin.settings.knowledgeBase.folderBindings!), [], { mode: "build" });
+    assert.deepEqual(role.issues, []); assert.equal(role.moduleDirectories!.english, "mapped-output/英文日记");
+    await f.service.applyDirectoryPlan(role); assert.equal(f.plugin.settings.englishDiary.englishDirectoryMode, "role"); assert.equal(f.plugin.settings.englishDiary.expressionDirectoryMode, "role");
+    f.plugin.settings.englishDiary.enabled = false;
+    f.records["daily-notes"].instance.options.folder = "/08-生活/日记";
+    const invalid = await f.service.previewDirectoryPlan(structuredClone(f.plugin.settings.knowledgeBase.folderBindings!), [], { mode: "build", moduleDirectories: { journal: "new-journal" } });
+    assert.match(invalid.issues.join("；"), /Obsidian 日记文件夹/u); await assert.rejects(f.service.applyDirectoryPlan(invalid));
+    const historyRoot = path.join(root, "journal-vault"); await fs.mkdir(historyRoot);
+    const history = new InitializationDirectoryHistory({ vaultRoot: historyRoot, privateRoot: path.join(historyRoot, ".private"), mkdir: async () => {}, rename: async () => {}, removeEmptyFolder: async () => {} });
+    await history.capture("regression"); const status = await history.status();
+    await assert.rejects(history.recordModuleSettings({ nativeJournal: { folder: "/invalid" } }, {}), /Obsidian 日记文件夹/u);
+    assert.deepEqual(await history.status(), status, "a rejected write must not poison the existing receipt");
+    await history.recordModuleSettings({ english: { directory: "old", legacyDirectories: ["outputs/.english-diary/diaries"] } }, { english: { directory: "new" } });
+    assert.deepEqual(await history.status(), status, "every accepted module-settings write remains readable");
+    for (const unsafe of ["../outside", "/absolute", "C:/drive", "notes/.hidden", "notes/\u0001bad", "notes/node_modules/cache"]) {
+      const plan = await previewKnowledgeDirectoryPlan({ baseRevision: 0, bindings: emptyKnowledgeFolderBindings(), createPaths: [], sourcePaths: [], moduleDirectories: { english: unsafe }, mode: "build", kind: async () => "missing" });
+      assert.ok(plan.issues.length, `unsafe operation path rejected: ${JSON.stringify(unsafe)}`);
+      const creation = await previewKnowledgeDirectoryPlan({ baseRevision: 0, bindings: emptyKnowledgeFolderBindings(), createPaths: [unsafe], sourcePaths: [], mode: "build", kind: async () => "missing" });
+      assert.match(creation.issues.join("；"), /新建目录（第 1 项）/u);
+    }
+  } finally { f.release(); }
 }
