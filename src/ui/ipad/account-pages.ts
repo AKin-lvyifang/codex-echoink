@@ -169,7 +169,7 @@ function renderBenefits(ctx: IPadSettingsContext, parent: HTMLElement): void {
   parent.replaceChildren(); const scroll = el(ctx.document, "div", "pd-account-comparison-scroll"), table = el(ctx.document, "table", "pd-account-comparison"), header = el(ctx.document, "thead", ""), headerRow = el(ctx.document, "tr", "");
   for (const label of ["功能", "免费", "PRO"]) { const cell = el(ctx.document, "th", "", t(ctx, label)); cell.scope = "col"; headerRow.append(cell); } header.append(headerRow); table.append(header);
   const groups = [{ title: "基础能力", pro: false, rows: [["Agent 对话", "多个 Agent、任务继续"], ["知识库", "整理、检索与补链"], ["长期记忆", ""], ["日记、复盘、待办", ""], ["选文提问", ""], ["Skills 与 MCP", ""]] },
-    { title: "PRO 插件", pro: true, rows: [["财务", "记账、导入账单、预算与分析"], ["英文日记", "英文稿与表达库"], ["PDF 精读 · 提取", "原文、译文、精读、摘要（仅电脑）"]] }];
+    { title: "PRO 插件", pro: true, rows: [["财务", "记账、导入账单、预算与分析"], ["英文日记", "英文稿与表达库"], ["PDF 精读 · 提取", "原文、译文、精读、摘要（仅电脑）"], ["@Agent 正文管家", "正文提问、就地提议与确认写回（仅电脑）"]] }];
   const body = el(ctx.document, "tbody", "");
   for (const group of groups) {
     const headingRow = el(ctx.document, "tr", "pd-account-benefit-group"), headingCell = el(ctx.document, "th", "", t(ctx, group.title)); headingCell.colSpan = 3; headingCell.scope = "colgroup"; if (group.pro) edition(ctx, headingCell); headingRow.append(headingCell); body.append(headingRow);

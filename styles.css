@@ -24890,6 +24890,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-inline-trigger-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 18px; }
 .echoink-inline-trigger-setting input.echoink-origin-control { width: 52px; text-align: center; }
 /* The inline task uses the existing Agent navigation, header and Composer shell. */
+.echoink-inline-generation-gate { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; color: var(--text-muted); font-size: var(--echoink-conversation-font-status, 13px); line-height: 1.4; }
 .echoink-task-detail.is-inline-task { overflow: hidden; }
 .echoink-inline-task-body {
   display: flex;

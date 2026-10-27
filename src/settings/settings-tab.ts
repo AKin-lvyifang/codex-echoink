@@ -13,7 +13,7 @@ import { GenerationTemplatesSection } from "./generation-templates-section";
 import { HomeWorkbenchDataService } from "../home/home-workbench-data";
 import { JournalTemplateModal } from "../home/journal-template-modal";
 import { BUILT_IN_JOURNAL_TEMPLATES } from "../home/home-workbench-model";
-import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
+import { hasProPluginAccess, getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import { mountAccountMembership } from "./account-membership";
 import { mountDesktopAccountMembership, type DesktopAccountMembershipHandle } from "./desktop-account-membership";
@@ -351,6 +351,10 @@ export class CodexSettingTab extends PluginSettingTab {
     else if (/knowledge:(?:folders|onboarding)/u.test(route.focus ?? "")) this.openSettingsDetail("knowledge-folders");
     else if (/knowledge:linking/u.test(route.focus ?? "")) this.openSettingsDetail("knowledge-linking");
     else if (/knowledge:restore/u.test(route.focus ?? "")) { this.desktopModuleExpanded.add("knowledge"); this.settingsFocusIntent = "explicit:module:knowledge"; }
+    else if (/^inline-agent/u.test(route.focus ?? "")) {
+      this.desktopModuleExpanded.add("inline-agent");
+      if (!this.plugin.settings.inlineAgent.enabled || !hasProPluginAccess(this.plugin.accountService ?? unavailableCapabilityAccess)) this.settingsFocusIntent = "explicit:module:inline-agent";
+    }
     else if (/^pdf-reading/u.test(route.focus ?? "")) this.openPdfReadingDetail();
     else if (/^finance/u.test(route.focus ?? "")) this.openLifestyleDetail("finance");
     else if (/^english-diary/u.test(route.focus ?? "")) {
@@ -1399,7 +1403,6 @@ export class CodexSettingTab extends PluginSettingTab {
     const page = createSettingsPage(container, { title: "Agent", titleVisibility: "screen-reader" });
     page.addClass("echoink-desktop-agent-page");
     agents.renderSummary(page);
-    renderInlineAgentSettings(page, this.plugin);
     this.desktopMemory ??= new DesktopMemorySettings(this.plugin, {
       redraw: () => this.scheduleDisplay(), openCorrection: () => this.openSettingsDetail("review-memory"),
       openProfile: () => { this.ensureDesktopProfile().refreshWhenOpened(); this.desktopProfileOpen = true; this.scheduleDisplay(); }
@@ -1499,7 +1502,8 @@ export class CodexSettingTab extends PluginSettingTab {
         } else if (module === "pdf") {
           this.pdfSettingsPanel ??= new PdfReadingSettingsPanel(this.plugin, () => { void this.closeSettingsDetail(); });
           this.pdfSettingsPanel.render(parent, { embedded: true }); return () => this.pdfSettingsPanel?.dispose();
-        } else this.renderEnglishDiarySettings(parent, true);
+        } else if (module === "inline-agent") renderInlineAgentSettings(parent, this.plugin);
+        else this.renderEnglishDiarySettings(parent, true);
         } finally {
           const location = module === "finance" ? this.lifestyleSettingsPanel?.navigationKey() ?? "finance:root" : module;
           parent.dataset.moduleDraftLocation = location;

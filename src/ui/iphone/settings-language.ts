@@ -295,6 +295,8 @@ const messages: Record<string, string> = {
   "PRO 插件": "PRO plugins",
   "记账、导入账单、预算与分析": "Records, bill import, budgets and analysis",
   "英文稿与表达库": "English drafts and expressions",
+  "@Agent 正文管家": "@Agent in notes",
+  "正文提问、就地提议与确认写回（仅电脑）": "Ask in notes, review proposed edits and confirm changes (desktop only)",
   "PDF 精读 · 提取": "PDF reading · extraction",
   "原文、译文、精读、摘要（仅电脑）": "Originals, translation, close reading and summaries (desktop only)",
   "包含": "Included",

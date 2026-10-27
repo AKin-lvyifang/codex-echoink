@@ -11,6 +11,7 @@ import { createOriginButton, disposeOriginControls } from "../settings/origin-co
 import { applyAmicroButton } from "../settings/amicro-buttons";
 import { resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { locateInstruction, locateTarget, markerPattern } from "./document";
+import { inlineGenerationAccess, requireInlineGeneration } from "./access";
 import { InlineMentionController } from "./mention";
 import { InlineAgentRuntimeController } from "./orchestrator";
 import { FileInlineRepository } from "./store";
@@ -45,6 +46,7 @@ export class InlineAgentController {
   private readonly field: StateField<DecorationSet>;
   private constructor(readonly plugin: CodexForObsidianPlugin, vaultId: string, file: string) {
     this.service = new InlineRequestService(vaultId, new FileInlineRepository(file, vaultId), {
+      assertCanGenerate: () => requireInlineGeneration(plugin),
       editor: notePath => this.editor(notePath), changed: () => { this.refresh(); for (const listener of this.listeners) listener(); }, report: error => this.report(error)
     });
     this.runtime = new InlineAgentRuntimeController(plugin, this.service, { editor: notePath => this.editor(notePath), openTask: id => this.openTask(id) });
@@ -76,13 +78,18 @@ export class InlineAgentController {
     });
     this.plugin.registerEditorExtension([this.field, views]);
     this.mention = new InlineMentionController({ plugin: this.plugin, agents: () => this.plugin.settings.agentRegistry.agents,
+      enabled: () => this.generationAccess().allowed,
       trigger: () => { this.checkDateConflict(); return this.plugin.settings.inlineAgent.trigger; }, send: input => this.runtime.sendDraft(input) });
     this.mention.register();
+    this.plugin.register(this.plugin.accountService?.subscribe(() => this.refreshAccess()) ?? (() => {}));
     this.plugin.app.workspace.onLayoutReady(() => this.checkDateConflict());
     this.plugin.registerEvent(this.plugin.app.vault.on("rename", (file, oldPath) => this.service.rename(oldPath, file.path)));
     this.plugin.registerEvent(this.plugin.app.vault.on("delete", file => this.service.delete(file.path)));
     this.plugin.register(() => { this.disposed = true; this.mention?.dispose(); this.runtime.dispose(); this.listeners.clear(); this.editors.clear(); void this.service.dispose().catch(error => this.report(error)); });
   }
+  generationAccess() { return inlineGenerationAccess(this.plugin); }
+  openProBenefits(): Promise<void> { return this.plugin.openEchoInkAccountSettings("benefits"); }
+  refreshAccess(): void { this.mention?.refreshAccess(); this.runtime.refreshAccess(); for (const listener of this.listeners) listener(); }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   async openTask(taskId: string): Promise<void> {
     await this.plugin.activateView({ focusInput: false });

@@ -563,6 +563,7 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
     await checkDesktopSettings(primary, scheduler, secondDocument);
     await checkDesktopMemoryConflict(primary);
     await checkDesktopEnableSwitches(primary, scheduler);
+    await checkDesktopInlineProModule(primary, scheduler);
     await checkDesktopSettingPolish(primary, scheduler);
   } finally { Platform.isDesktopApp = false; }
 }
@@ -1075,4 +1076,37 @@ export async function runSettingsPolishDomTests(win: Window & typeof globalThis)
   Platform.isDesktopApp = true;
   try { await checkDesktopSettingPolish(win, scheduler); }
   finally { Platform.isDesktopApp = desktop; }
+}
+
+async function checkDesktopInlineProModule(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {
+  for (const language of ["zh-CN", "en"] as const) {
+    const f = fixture(win, language), plugin = f.plugin as any;
+    let paid = true, updates = 0, conflictChecks = 0; const listeners = new Set<() => void>();
+    plugin.accountService = { checkCapability: () => paid, requireCapability() { if (!paid) throw new Error("PRO"); }, subscribe(fn: () => void) { listeners.add(fn); return () => listeners.delete(fn); } };
+    plugin.inlineAgent = { refreshAccess() { updates++; }, checkDateConflict() { conflictChecks++; } };
+    const mount = mountDefinitions(f.tab);
+    try {
+      f.tab.openDesktopRoute({ tab: "agent" }); await scheduler.flush();
+      assert.equal(f.tab.containerEl.querySelector('[data-echoink-focus-key="inline-agent:trigger"]'), null, "Agent page no longer owns the trigger setting");
+      f.tab.openDesktopRoute({ tab: "modules" }); await scheduler.flush();
+      const card = () => f.tab.containerEl.querySelector<HTMLElement>('[data-module="inline-agent"]')!;
+      assert.match(card().textContent!, language === "en" ? /@Agent in notes/ : /@Agent 正文管家/);
+      assert.ok(card().querySelector('[data-plugin-edition="pro"]'));
+      card().querySelector<HTMLButtonElement>('[data-echoink-focus-key="module:inline-agent"]')!.click(); await scheduler.flush();
+      const trigger = card().querySelector<HTMLInputElement>('[data-echoink-focus-key="inline-agent:trigger"]')!; assert.ok(trigger);
+      trigger.value = "!"; trigger.dispatchEvent(new win.Event("change", { bubbles: true })); await scheduler.flush();
+      assert.equal(plugin.settings.inlineAgent.trigger, "!"); assert.equal(conflictChecks, 1);
+      paid = false; listeners.forEach(fn => fn());
+      assert.equal(card().querySelector('[role="switch"]'), null); assert.ok(card().classList.contains("is-pro-locked"));
+      assert.equal(plugin.settings.inlineAgent.enabled, true, "expiry retains the saved enable choice");
+      plugin.accountService = undefined;
+      card().querySelector<HTMLButtonElement>('[data-echoink-focus-key="module:inline-agent"]')!.click(); await scheduler.flush();
+      assert.match(f.tab.containerEl.querySelector('.desktop-account-benefits')!.textContent!, /@Agent/);
+      plugin.accountService = paidTestAccess; paid = true; f.tab.openDesktopRoute({ tab: "modules" }); await scheduler.flush();
+      card().querySelector<HTMLButtonElement>('[data-echoink-focus-key="module:inline-agent:enabled"]')!.click(); await scheduler.flush();
+      assert.equal(plugin.settings.inlineAgent.enabled, false); assert.ok(updates >= 2);
+      assert.equal((f.saved.at(-1) as any).inlineAgent.enabled, false);
+    } finally { mount.cleanup(); f.registrations.forEach(cleanup => cleanup()); f.tab.containerEl.remove(); }
+  }
+  console.log("PASS @Agent PRO module: bilingual shared drawer/badge/benefits, moved trigger, saved symbol and enable, live membership lock and retained preference");
 }

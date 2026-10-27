@@ -196,7 +196,7 @@ export class IPhoneAccountPages {
     const head = el(ctx.document, "tr", ""); for (const title of ["功能", "免费", "PRO"]) { const cell = el(ctx.document, "th", ""); settingsMessage(ctx, cell, title); cell.scope = "col"; head.append(cell); } const thead = el(ctx.document, "thead", ""); thead.append(head); table.append(thead); const rows = el(ctx.document, "tbody", ""); table.append(rows);
     const groups = [
       { name: "基础能力", pro: false, rows: [["Agent 对话", "多个 Agent、任务继续"], ["知识库", "整理、检索与补链"], ["长期记忆", ""], ["日记、复盘、待办", ""], ["选文提问", ""], ["Skills 与 MCP", ""]] },
-      { name: "PRO 插件", pro: true, rows: [["财务", "记账、导入账单、预算与分析"], ["英文日记", "英文稿与表达库"], ["PDF 精读 · 提取", "原文、译文、精读、摘要（仅电脑）"]] }
+      { name: "PRO 插件", pro: true, rows: [["财务", "记账、导入账单、预算与分析"], ["英文日记", "英文稿与表达库"], ["PDF 精读 · 提取", "原文、译文、精读、摘要（仅电脑）"], ["@Agent 正文管家", "正文提问、就地提议与确认写回（仅电脑）"]] }
     ];
     for (const group of groups) {
       const titleRow = el(ctx.document, "tr", "ip-account-benefit-group"), title = el(ctx.document, "td", ""); title.append(settingsMessage(ctx, el(ctx.document, "span", ""), group.name)); title.colSpan = 3; if (group.pro) createPluginEditionBadge(title, "pro", ctx.host.settings().settingsLanguage); titleRow.append(title); rows.append(titleRow);

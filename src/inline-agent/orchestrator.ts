@@ -3,6 +3,7 @@ import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/se
 import type CodexForObsidianPlugin from "../main";
 import { getActiveApiProviderModel } from "../settings/settings";
 import { resolveComposerReasoningState } from "../ui/composer-reasoning";
+import { inlineGenerationAccess, requireInlineGeneration } from "./access";
 import { locateTarget } from "./document";
 import { buildInlineCandidates, proposalTarget, sectionForRange } from "./candidates";
 import type { InlineDraftSubmission } from "./mention";
@@ -28,20 +29,24 @@ export class InlineAgentRuntimeController {
       memoryMode: this.plugin.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" };
   }
   async sendDraft(input: InlineDraftSubmission): Promise<void> {
+    requireInlineGeneration(this.plugin);
     const submittedAt = Date.now();
     if (!input.text.trim()) throw new Error("先写下要交代的事。");
     const model = this.model(), editor = await this.host.editor(input.path);
     if (editor.read() !== input.document) throw new Error("正文已变化，请重新发送。");
     const agent = this.plugin.settings.agentRegistry.agents.find(a => a.id === input.agentId);
     if (!agent) throw new Error("这位管家已不存在，请重新选择。");
+    requireInlineGeneration(this.plugin);
     const taskId = `inline-${randomUUID()}`;
     await this.plugin.createPiConversation({ conversationId: taskId, title: input.text.trim().slice(0, 64), agentId: agent.id, cwd: this.plugin.getVaultPath(), defaultMemoryMode: model.memoryMode });
+    requireInlineGeneration(this.plugin);
     const request = await this.service.beginRequest({ path: input.path, taskId, agentId: agent.id, agentName: agent.name, trigger: input.trigger, instruction: { from: input.from, to: input.to } }, input.text.trim(), submittedAt);
     void this.launch(request, input.text.trim(), model, false).catch(error => this.report(error));
     void this.host.openTask(taskId).catch(error => this.report(error));
   }
   async reply(taskId: string, text: string, annotations?: readonly SelectionAnnotation[]): Promise<void> {
     if (!text.trim()) return;
+    requireInlineGeneration(this.plugin);
     let request = this.service.latestForTask(taskId);
     if (!request) throw new Error("这件任务没有正文位置。");
     const snapshot = cloneSelectionAnnotations(annotations ?? request.selectionAnnotations);
@@ -56,6 +61,7 @@ export class InlineAgentRuntimeController {
     }
   }
   async retry(taskId: string): Promise<void> {
+    requireInlineGeneration(this.plugin);
     const request = this.service.latestForTask(taskId);
     if (!request) throw new Error("找不到正文请求。");
     const requirement = request.thread?.filter(m => m.role === "user").at(-1)?.text ?? request.versions.at(-1)?.requirement;
@@ -72,6 +78,7 @@ export class InlineAgentRuntimeController {
     if (this.flights.get(taskId) === flight) this.flights.delete(taskId);
   }
   private launch(request: InlineRequest, requirement: string, model: InlineModelSelection, addMessage: boolean, annotations = request.selectionAnnotations ?? []): Promise<void> {
+    requireInlineGeneration(this.plugin);
     if (this.flights.has(request.taskId)) throw new Error("这件事正在写，请稍候。");
     const flight: InlineFlight = { id: request.id, abort: new AbortController() };
     let accept!: () => void, reject!: (error: unknown) => void;
@@ -83,12 +90,13 @@ export class InlineAgentRuntimeController {
     });
     return accepted;
   }
+  refreshAccess(): void { this.scheduleQueue(); }
   private scheduleQueue(): void {
     if (this.disposed || this.drainScheduled) return;
     this.drainScheduled = true;
     queueMicrotask(() => {
       this.drainScheduled = false;
-      if (this.disposed) return;
+      if (this.disposed || !inlineGenerationAccess(this.plugin).allowed) return;
       for (const request of this.service.list()) {
         if (request.status !== "queued" || !request.queue?.regenerate || request.queue.blockedBy.length || this.flights.has(request.taskId) || !this.service.canAutomaticallyRegenerate(request.id)) continue;
         const requirement = request.preparedProposal?.requirement ?? request.thread?.filter(m => m.role === "user").at(-1)?.text;
@@ -100,12 +108,16 @@ export class InlineAgentRuntimeController {
     annotations: SelectionAnnotation[], accept: () => void, reject: (error: unknown) => void): Promise<void> {
     let unsubscribe: (() => void) | undefined;
     let productRunId: string | undefined;
+    let previous: InlineRequest | undefined;
     try {
       const source = await this.service.readSource(request.id);
+      previous = source.request;
       const candidates = buildInlineCandidates(source.document, source.context, source.request);
+      requireInlineGeneration(this.plugin);
       const token = flight.token = await this.service.startRun(request.id, requirement, model, source.context, addMessage, annotations);
       if (flight.abort.signal.aborted) throw new Error("发送已停止，输入已保留。");
       const latest = source.request.versions.find(v => v.id === source.request.currentVersionId);
+      requireInlineGeneration(this.plugin);
       const handle = await this.plugin.submitPiChat({ conversationId: request.taskId, text: requirement, submittedAt: Date.now(), signal: flight.abort.signal,
         mode: "agent", permission: "read-only", ...model, selectionAnnotations: cloneSelectionAnnotations(annotations),
         inlineProposalRequest: { requestId: request.id, context: source.context.text,
@@ -132,7 +144,11 @@ export class InlineAgentRuntimeController {
       }
     } catch (error) {
       reject(error);
-      if (flight.token || this.flights.get(request.taskId) === flight) await this.service.failRun(request.id, flight.token ?? this.service.get(request.id)?.runToken, error instanceof Error ? error.message : "模型请求失败。", flight.abort.signal.aborted);
+      if (flight.token) {
+        if (previous && (previous.versions.length || ["clarifying", "queued"].includes(previous.status)) && !inlineGenerationAccess(this.plugin).allowed && !flight.abort.signal.aborted)
+          await this.service.restoreDeniedRun(request.id, flight.token, previous);
+        else await this.service.failRun(request.id, flight.token, error instanceof Error ? error.message : "模型请求失败。", flight.abort.signal.aborted);
+      }
     } finally {
       unsubscribe?.();
       if (productRunId) this.plugin.releasePiProductionRun(productRunId);
@@ -145,6 +161,7 @@ export class InlineAgentRuntimeController {
     if (!target) throw new Error("找不到原笔记中的位置，请从正文重新 @ 管家。");
     const trigger = this.plugin.settings.inlineAgent.trigger, command = `${trigger}${previous.agentName} ${requirement}`;
     const insertion = `\n\n${command}\n`, from = target.to;
+    requireInlineGeneration(this.plugin);
     editor.apply([{ from, to: from, insert: insertion }], "normal", `inline-followup-${randomUUID()}`);
     return await this.service.beginRequest({ path: previous.path, taskId: previous.taskId, agentId: previous.agentId, agentName: previous.agentName, trigger, selectionAnnotations: annotations,
       instruction: { from: from + 2, to: from + 2 + command.length } }, requirement);

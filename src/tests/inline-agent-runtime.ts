@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { runInlineProGateTests } from "./inline-agent-pro";
+import { paidTestAccess } from "./membership-access";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -230,6 +232,7 @@ async function assertOrchestratorRunLifecycle(): Promise<void> {
   let blockedSubmissions = 0;
   let createdConversations = 0;
   const plugin = {
+    accountService: paidTestAccess,
     settings,
     getVaultPath: () => tmpdir(),
     createPiConversation: async input => { createdConversations++; return { conversationId: input.conversationId, piSessionId: "inline-lifecycle-session", vaultId: "inline-lifecycle-vault",
@@ -329,3 +332,5 @@ async function assertOrchestratorRunLifecycle(): Promise<void> {
 assertProtocol();
 for (const scenario of ["normal", "no_memory", "clarification", "range", "invalid_range", "range_length", "invalid", "length", "unknown_tool", "oversize"] as const) await runScenario(scenario);
 await assertOrchestratorRunLifecycle();
+
+await runInlineProGateTests();

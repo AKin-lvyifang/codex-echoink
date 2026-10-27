@@ -1,3 +1,4 @@
+import { requireInlineGeneration } from "../inline-agent/access";
 import { INLINE_PROPOSAL_CONTEXT_TYPE, INLINE_PROPOSAL_SYSTEM_PROMPT, inlineProposalContextContent, type InlineModelRequest } from "../inline-agent/protocol";
 import { estimateTokenValue } from "../harness/usage/token-estimator";
 import { createGenerationRuntimePort } from "./generation-production";
@@ -1192,11 +1193,13 @@ function parsePiKnowledgeReference(value: unknown): PiKnowledgeReference | null 
 export function createInlineProposalDispatchGuard(input: Readonly<{
   currentRequest(): Readonly<InlineModelRequest> | null;
   effectiveInputBudget: number;
+  assertAccess?(): void;
 }>): (context: Readonly<Context>, execution: Readonly<{ runId: string }>, additionalInputTokens?: number) => void {
   let dispatchedRunId: string | undefined;
   return (context, execution, additionalInputTokens = 0) => {
     const request = input.currentRequest();
     if (!request) return;
+    input.assertAccess?.();
     if (dispatchedRunId === execution.runId) throw new Error("正文提案不能自动追问工具或重试模型，请手动重试。");
     if (context.tools?.length) throw new Error("正文提案的模型工具列表必须为空。");
     if (!context.systemPrompt?.startsWith(INLINE_PROPOSAL_SYSTEM_PROMPT)) throw new Error("正文提案上下文未正确初始化，本轮未发送。");
@@ -2125,7 +2128,8 @@ async function createProductionAgentSession(input: {
 
   const assertInlineDispatch = createInlineProposalDispatchGuard({
     currentRequest: () => input.input.currentInlineProposalRequest?.() ?? null,
-    effectiveInputBudget: contextBudget.effectiveInputBudget
+    effectiveInputBudget: contextBudget.effectiveInputBudget,
+    assertAccess: () => requireInlineGeneration(input.plugin)
   });
   if (Boolean(input.input.skillPath) !== Boolean(input.input.skillName)) {
     throw new Error("Pi-native Skill path and name must be selected together");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { paidTestAccess } from "./membership-access";
 import { tmpdir } from "node:os";
 import { ChangeSet, EditorState } from "@codemirror/state";
 import type CodexForObsidianPlugin from "../main";
@@ -71,6 +72,7 @@ async function fixture(documentFor: (commands: Record<Label, string>) => string 
   const runs: ManualRun[] = [], busy = new Map<string, string>(), released = new Set<string>(), subscriptions = new Set<string>(), aborted = new Set<string>();
   let busyRejects = 0;
   const plugin = {
+    accountService: paidTestAccess,
     settings,
     getVaultPath: () => tmpdir(),
     createPiConversation: async input => ({ conversationId: input.conversationId, piSessionId: `session-${input.conversationId}`, vaultId: "concurrency-vault",

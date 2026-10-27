@@ -17,7 +17,7 @@ import { renderAgentTaskList } from "./codex-view/task-list";
 import { animateTaskDetailEntry, renderTaskDetailHeader } from "./codex-view/task-detail";
 import { AgentEditorController } from "./codex-view/agent-editor";
 import { renderTaskInterruption } from "./codex-view/task-interruption";
-import { InlineTaskDetailView, inlineTaskHost, inlineTaskState, inlineTaskStatus, inlineTaskSummary, inlineNoteName, projectInlineTaskEntries, type InlineTaskHost } from "./codex-view/inline-task";
+import { InlineTaskDetailView, renderInlineGenerationGate, inlineTaskHost, inlineTaskState, inlineTaskStatus, inlineTaskSummary, inlineNoteName, projectInlineTaskEntries, type InlineTaskHost } from "./codex-view/inline-task";
 import type { InlineRequest } from "../inline-agent/types";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
@@ -590,7 +590,7 @@ export class CodexView extends ItemView {
       return false;
     }
     const hasPresets = request.versions.length > 0 && ["pending", "confirmed"].includes(request.status);
-    const key = `${request.taskId}:${this.plugin.settings.settingsLanguage}:${hasPresets}`;
+    const key = `${request.taskId}:${this.plugin.settings.settingsLanguage}:${hasPresets}:${JSON.stringify(inlineTaskHost(this.plugin)?.generationAccess?.())}`;
     if (this.inlineComposerKey !== key || !this.toolbarEl.querySelector(".echoink-inline-task-send")) {
       this.inlineComposerKey = key;
       const old = this.inputEl.parentElement?.querySelector<HTMLElement>(".echoink-inline-task-presets");
@@ -604,6 +604,7 @@ export class CodexView extends ItemView {
         }
       }
       disposeOriginControls(this.toolbarEl); this.toolbarEl.empty();
+      renderInlineGenerationGate(this.toolbarEl, inlineTaskHost(this.plugin), this.plugin.settings.settingsLanguage);
       const row = this.toolbarEl.createDiv({ cls: "echoink-inline-task-composer-actions" });
       const send = row.createEl("button", { cls: "codex-send-button codex-composer-send-button is-send-action echoink-inline-task-send", attr: { type: "button", "aria-label": this.taskText("发送", "Send") } });
       setIcon(send.createSpan({ cls: "codex-composer-send-icon-wrap", attr: { "aria-hidden": "true" } }), "arrow-up");

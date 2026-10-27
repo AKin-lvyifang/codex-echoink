@@ -460,7 +460,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     revoked: t("授权已撤销，请联系支持核实；已有资料保留。", "Authorization was revoked. Contact support; saved content is retained."),
     expired: t("订阅已到期，已有资料仍可查看。", "Subscription expired. Saved content remains accessible.")
   };
-  if (!compactAuthorization) el(memberCopy, "p", "", descriptions[vm.membership.state] ?? (vm.membership.expiresAt ? `${t("有效至", "Valid until")} ${vm.membership.expiresAt}` : valid && currentPlanId === "early" ? desktop ? t("当前 2.x PRO 插件长期可用，模型调用费另计。", "Lifetime access to the current 2.x PRO plugins. Model costs are separate.") : t("财务 + 英语日记 2.x 不限时使用。", "Finance + English Diary 2.x lifetime access.") : valid ? t("已解锁 PRO 功能。", "PRO features unlocked.") : t("财务和英文日记需要 PRO，AI 需配置自己的模型服务。", "Finance and English Diary require PRO. Bring your own model provider.")));
+  if (!compactAuthorization) el(memberCopy, "p", "", descriptions[vm.membership.state] ?? (vm.membership.expiresAt ? `${t("有效至", "Valid until")} ${vm.membership.expiresAt}` : valid && currentPlanId === "early" ? desktop ? t("当前 2.x PRO 插件长期可用，模型调用费另计。", "Lifetime access to the current 2.x PRO plugins. Model costs are separate.") : t("财务、英文日记、PDF 精读与 @Agent 正文管家 2.x 不限时使用。", "Finance, English Diary, PDF reading and @Agent in notes 2.x lifetime access.") : valid ? t("已解锁 PRO 功能。", "PRO features unlocked.") : t("财务、英文日记、PDF 精读和 @Agent 正文管家需要 PRO，AI 需配置自己的模型服务。", "Finance, English Diary, PDF reading and @Agent in notes require PRO. Bring your own model provider.")));
   const verificationNote = [vm.membership.verifiedAt && `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}`, vm.membership.offlineUntil && `${t("凭证有效至", "Offline until")} ${vm.membership.offlineUntil}`].filter(Boolean).join(" · ");
   if (verificationNote && !compactAuthorization) el(memberCopy, "div", "verification-note", verificationNote);
   const memberActions = el(summary, "div", "membership-actions");
@@ -572,7 +572,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   if (!desktop) el(memberFooter, "span", "", t("AI 需自备 API Key，模型调用费另计", "Bring your own API key; model costs are separate"));
   const intro = el(details, "div", "plans-intro");
   if (!desktop) {
-    if (!valid) el(intro, "p", "", t("升级 PRO，解锁更多插件的进阶功能。", "Upgrade to PRO for advanced features across more plugins."));
+    if (!valid) el(intro, "p", "", t("升级 PRO，使用财务、英文日记、PDF 精读和 @Agent 正文管家。", "Upgrade to PRO for Finance, English Diary, PDF reading and @Agent in notes."));
     el(intro, "p", "", t("详细功能见下方 PRO 版本功能权益介绍。", "Explore PRO features in the benefits section below."));
   }
   const planGrid = el(details, "div", "plan-grid");
@@ -638,7 +638,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     const body = el(table, "tbody");
     const groups: { title: string; pro: boolean; rows: [string, string][] }[] = [
       { title: t("基础能力", "Core features"), pro: false, rows: [[t("Agent 对话", "Agent conversations"), t("多会话与任务继续", "Conversations and task continuation")], [t("知识库", "Knowledge"), t("整理、检索与补链", "Organization, retrieval and linking")], [t("长期记忆", "Long-term memory"), ""], [t("日记、复盘、待办", "Journal, reviews and to-dos"), ""], [t("选文提问", "Selection Ask"), ""], [t("Skills 与 MCP", "Skills and MCP"), ""]] },
-      { title: t("PRO 插件", "PRO plugins"), pro: true, rows: [[t("财务", "Finance"), t("记账、导入账单、预算与分析", "Records, import, budgets and analysis")], [t("英文日记", "English Diary"), t("英文稿与表达库", "English drafts and expressions")], [t("PDF 精读 · 提取", "PDF reading and extraction"), t("原文、译文、精读、摘要", "Originals, translation, reading and summaries")]] }
+      { title: t("PRO 插件", "PRO plugins"), pro: true, rows: [[t("财务", "Finance"), t("记账、导入账单、预算与分析", "Records, import, budgets and analysis")], [t("英文日记", "English Diary"), t("英文稿与表达库", "English drafts and expressions")], [t("PDF 精读 · 提取", "PDF reading and extraction"), t("原文、译文、精读、摘要", "Originals, translation, reading and summaries")], [t("@Agent 正文管家", "@Agent in notes"), t("正文提问、就地提议与确认写回", "Ask in notes, review proposed edits and confirm changes")]] }
     ];
     for (const group of groups) {
       const title = el(el(body, "tr", "benefits-group"), "td", "", group.title); title.colSpan = 3;

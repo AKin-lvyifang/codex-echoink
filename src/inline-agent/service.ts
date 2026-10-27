@@ -11,6 +11,7 @@ export interface InlineEditorPort {
   save(): Promise<void>;
 }
 export interface InlineHost {
+  assertCanGenerate?(): void;
   editor(path: string): Promise<InlineEditorPort>;
   changed(): void;
   report(error: unknown): void;
@@ -63,11 +64,13 @@ export class InlineRequestService {
     return record;
   }
   private async createRequest(input: InlineProposalInput, thinking: boolean, requirement?: string, submittedAt?: number): Promise<InlineRequest> {
+    if (thinking) this.host.assertCanGenerate?.();
     if (this.stopped || this.fileFlights.has(input.path)) throw new Error("这篇笔记正在处理，请稍后重试。");
     if (!validNotePath(input.path) || !input.taskId || !input.agentId || !input.trigger || typeof input.text !== "string") throw new Error("正文提案信息不完整。");
     this.fileFlights.add(input.path);
     try {
       const editor = await this.host.editor(input.path), before = editor.read();
+      if (thinking) this.host.assertCanGenerate?.();
       const instruction = anchorAt(before, input.instruction), target = anchorAt(before, input.target);
       if (!instruction.text.startsWith(input.trigger) || !instruction.text.slice(input.trigger.length).trim() || markerPattern().test(instruction.text)) throw new Error("请提供完整的原始指令范围。");
       if ((input.target.kind === "insert") !== (target.from === target.to)) throw new Error("插入位置与替换范围类型不符。");
@@ -95,6 +98,10 @@ export class InlineRequestService {
       if (thinking) record.currentVersionId = "";
       this.requests.set(id, record);
       await this.flush();
+      if (thinking) {
+        try { this.host.assertCanGenerate?.(); }
+        catch (error) { this.requests.delete(id); await this.flush(); throw error; }
+      }
       if (editor.read() !== before) { record.status = "missing"; record.error = "发送前正文已变化，未添加编号。"; await this.flush(); throw new Error(record.error); }
       editor.apply([{ from: instruction.to, to: instruction.to, insert: addition }], "system", id);
       record.status = thinking ? "thinking" : "pending";
@@ -114,6 +121,7 @@ export class InlineRequestService {
     return { request: structuredClone(r), document, context: cleanDocument(document, controls) };
   }
   async startRun(id: string, requirement: string, model: InlineModelSelection, context: InlineContext, addMessage = true, annotations?: readonly SelectionAnnotation[]): Promise<string> {
+    this.host.assertCanGenerate?.();
     const r = this.requests.get(id); if (!r || terminal(r) || r.status === "missing") throw new Error("这块已结束，请重新建立位置。");
     this.restoredReadyQueues.delete(id);
     if (r.question && r.timing?.questionAt) r.timing.userWaitMs = (r.timing.userWaitMs ?? 0) + Date.now() - r.timing.questionAt;
@@ -161,6 +169,16 @@ export class InlineRequestService {
     this.runDocuments.delete(id);
     r.status = interrupted ? "interrupted" : "failed"; r.runToken = randomUUID(); r.error = error; r.updatedAt = Date.now();
     (r.thread ??= []).push({ id: randomUUID(), role: "assistant", text: interrupted ? "已停下，正文没动。点重试我再来一次。" : `这次没写成，正文没动。${error}`, at: Date.now() });
+    await this.flush(); this.changed();
+  }
+  /** A denied dispatch never replaces an already earned draft or clarification. */
+  async restoreDeniedRun(id: string, token: string, previous: InlineRequest): Promise<void> {
+    const current = this.requests.get(id);
+    if (!current || current.runToken !== token || current.status !== "thinking") return;
+    this.runDocuments.delete(id);
+    const restored = { ...structuredClone(previous), instruction: current.instruction, target: current.target, observedDocument: current.observedDocument };
+    this.reconcileRecord(restored, current.observedDocument);
+    this.requests.set(id, restored);
     await this.flush(); this.changed();
   }
   async timing(id: string, token: string, timing: Partial<InlineTiming>): Promise<void> { const r = this.requests.get(id); if (r?.runToken === token) { r.timing = { ...r.timing!, ...timing }; this.scheduleSave(); } }

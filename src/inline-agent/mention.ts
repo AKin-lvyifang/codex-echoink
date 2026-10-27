@@ -19,6 +19,7 @@ export interface InlineMentionHost {
   plugin: Plugin & { app: App };
   agents(): readonly AgentDefinition[];
   trigger(): string;
+  enabled?(): boolean;
   send(input: InlineDraftSubmission): Promise<void>;
 }
 
@@ -197,6 +198,10 @@ export class InlineMentionController {
     this.host.plugin.register(() => this.dispose());
   }
 
+  refreshAccess(): void {
+    if (!this.disposed) for (const view of this.views) view.dispatch({ effects: action.of({ kind: "close" }) });
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -205,12 +210,12 @@ export class InlineMentionController {
   }
 
   private enabled(state: EditorState): boolean {
-    return state.field(editorLivePreviewField, false) === true && !!state.field(editorInfoField, false)?.file?.path && state.facet(EditorView.editable);
+    return this.host.enabled?.() !== false && state.field(editorLivePreviewField, false) === true && !!state.field(editorInfoField, false)?.file?.path && state.facet(EditorView.editable);
   }
 
   private select(view: EditorView, agent: AgentDefinition): void {
     const state = view.state.field(this.field), match = state.candidate;
-    if (!match || state.composing || view.composing || view.compositionStarted || this.disposed) return;
+    if (!this.enabled(view.state) || !match || state.composing || view.composing || view.compositionStarted || this.disposed) return;
     const trigger = this.host.trigger(), insert = `${trigger}${agent.name} `;
     const draft: InlineMentionDraft = { id: ++this.sequence, from: match.from, to: match.from + insert.length, agentId: agent.id, agentName: agent.name, trigger, pending: false };
     view.dispatch({ changes: { from: match.from, to: match.to, insert }, selection: { anchor: draft.to }, effects: action.of({ kind: "select", draft }), userEvent: "input.complete" });

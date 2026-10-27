@@ -318,5 +318,23 @@ await check("pencil resend uses the original message selection snapshot", async 
   assert.deepEqual(sent, item.thread![0].selectionAnnotations); f.close();
 });
 
-disposeOriginControls(document.body); dom.window.close();
+disposeOriginControls(document.body); await check("expired PRO keeps old draft actions and shows a clickable local upgrade route", async () => {
+  const f = fixture(); let paid = false, upgrades = 0;
+  f.host.generationAccess = () => ({ allowed: paid, requiresPro: !paid, message: paid ? "" : "正文管家需要有效 PRO，已有提议仍可处理。" });
+  f.host.openProBenefits = async () => { upgrades++; };
+  const view = Object.create(CodexView.prototype) as any;
+  const root = document.createElement("div"), input = document.createElement("textarea"), toolbar = document.createElement("div"), queue = document.createElement("div");
+  root.append(input, toolbar); document.body.append(root); input.value = "尚未发送";
+  Object.assign(view, { plugin: { inlineAgent: f.host, settings: { settingsLanguage: "zh-CN" } }, rootEl: root, inputEl: input, toolbarEl: toolbar, queueEl: queue,
+    taskUiMounted: true, taskNav: { page: { kind: "detail", taskId: "t1" }, token: 1 }, taskSubmitting: new Set(), inlineComposerKey: "", onInputChanged() {} });
+  view.renderInlineComposer(); const gate = toolbar.querySelector(".echoink-inline-generation-gate")!;
+  assert.match(gate.textContent!, /有效 PRO/); (gate.querySelector("button") as HTMLButtonElement).click(); await settle(); assert.equal(upgrades, 1);
+  const annotationInput = input; paid = true; view.renderInlineComposer(); assert.equal(toolbar.querySelector(".echoink-inline-generation-gate"), null); assert.equal(input, annotationInput); assert.equal(input.value, "尚未发送");
+  paid = false; f.records[0].status = "conflict"; f.render();
+  const pin = f.root.querySelector(".echoink-inline-task-pin")!;
+  assert.ok(pin.querySelector('[data-inline-action="revoke"]')); assert.ok(pin.querySelector(".echoink-inline-generation-gate button"));
+  disposeOriginControls(root); root.remove(); f.close();
+});
+
+dom.window.close();
 console.log(`${checks} inline task UI checks passed`);

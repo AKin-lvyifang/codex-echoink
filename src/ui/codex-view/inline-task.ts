@@ -8,8 +8,11 @@ import { createOriginButton, disposeOriginControls } from "../../settings/origin
 import { renderTaskAvatar } from "./agent-roster";
 import { markAIElementsQuestion } from "./smooth-chat-ui";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
+import type { InlineGenerationAccess } from "../../inline-agent/access";
 
 export interface InlineTaskHost {
+  generationAccess?(): InlineGenerationAccess;
+  openProBenefits?(): Promise<void>;
   service: {
     list(): InlineRequest[];
     latestForTask(taskId: string): InlineRequest | undefined;
@@ -23,6 +26,17 @@ export interface InlineTaskHost {
   runtime: { reply(taskId: string, text: string, annotations?: readonly SelectionAnnotation[]): Promise<void>; retry(taskId: string): Promise<void>; stop(taskId: string): Promise<void> };
   openSource(requestId: string): Promise<void>;
   subscribe(listener: () => void): () => void;
+}
+
+export function renderInlineGenerationGate(root: HTMLElement, host: InlineTaskHost | undefined, language: SettingsLanguage): void {
+  const policy = host?.generationAccess?.();
+  if (!policy || policy.allowed) return;
+  const hint = root.createDiv({ cls: "echoink-inline-generation-gate", attr: { role: "status" } });
+  hint.createSpan({ text: policy.message });
+  if (policy.requiresPro) {
+    const upgrade = createOriginButton(hint, { cls: "echoink-inline-task-action", text: language === "en" ? "View PRO benefits" : "查看 PRO 权益" });
+    upgrade.onclick = () => { void host?.openProBenefits?.().catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+  }
 }
 
 export function inlineTaskHost(plugin: object): InlineTaskHost | undefined {
@@ -125,7 +139,7 @@ export class InlineTaskDetailView {
     const sorted = requests.filter(item => item.taskId === request.taskId).sort((a, b) => a.createdAt - b.createdAt);
     if (!sorted.length) sorted.push(request);
     const comparing = this.host()?.service.comparingOriginal.has(request.id) ?? false;
-    const signature = inlineTaskUiSignature(sorted, comparing, language) + JSON.stringify([agent.name, agent.avatar]);
+    const signature = inlineTaskUiSignature(sorted, comparing, language) + JSON.stringify([agent.name, agent.avatar, this.host()?.generationAccess?.()]);
     if (this.taskId !== request.taskId) { this.editing = undefined; this.signature = ""; this.nodes.clear(); disposeOriginControls(this.thread); this.thread.empty(); }
     const changedTask = this.taskId !== request.taskId;
     this.taskId = request.taskId; this.current = { request, requests: sorted, agent, language };
@@ -210,6 +224,7 @@ export class InlineTaskDetailView {
       default: lead.textContent = inlineTaskStatus(request, language);
     }
     if (!actions.childElementCount) actions.remove();
+    if (["clarifying", "queued", "conflict", "failed", "interrupted"].includes(request.status)) renderInlineGenerationGate(this.pin, host, language);
     if (request.error && ["conflict", "failed", "interrupted", "missing", "save_failed"].includes(request.status)) this.pin.createDiv({ cls: "echoink-inline-task-error", text: request.error });
   }
   private renderThread(): void {

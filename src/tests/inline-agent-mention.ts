@@ -24,11 +24,11 @@ const agents: AgentDefinition[] = [
 ];
 const draft = (document: string, from = document.indexOf("@"), to = document.length): InlineMentionDraft => ({ id: 1, from, to, agentId: "sol", agentName: "小墨", trigger: "@", pending: false });
 
-function fixture(text = "前文 ", options: { send?: InlineMentionHost["send"]; document?: Document; extensions?: Extension[] } = {}) {
+function fixture(text = "前文 ", options: { send?: InlineMentionHost["send"]; enabled?: () => boolean; document?: Document; extensions?: Extension[] } = {}) {
   let extension: Extension = [], field: StateField<{ drafts: InlineMentionDraft[]; composing: boolean }>;
   const submissions: InlineDraftSubmission[] = [], cleanups: (() => void)[] = [];
   const host = { plugin: { registerEditorExtension(value: Extension[]) { extension = value; field = value[0] as typeof field; }, register(fn: () => void) { cleanups.push(fn); } },
-    agents: () => agents, trigger: () => "@", send: options.send ?? (async input => { submissions.push(input); }) } as unknown as InlineMentionHost;
+    enabled: options.enabled, agents: () => agents, trigger: () => "@", send: options.send ?? (async input => { submissions.push(input); }) } as unknown as InlineMentionHost;
   const controller = new InlineMentionController(host); controller.register();
   const document = options.document ?? browser.window.document;
   const view = new EditorView({ state: EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [editorInfoField, editorLivePreviewField, history(), extension, ...(options.extensions ?? [])] }), parent: document.body });
@@ -193,6 +193,21 @@ await check("source mode and readonly editors stay inactive; dispose removes all
     const f = fixture("", { extensions }); f.type("@"); assert.equal(f.view.state.facet(showTooltip).filter(Boolean).length, 0); f.close();
   }
   const f = fixture(""); f.select(); assert.ok(f.button()); f.controller.dispose(); assert.equal(f.button(), null); f.close();
+});
+
+await check("free, disabled and membership changes keep @ ordinary and clear stale menus immediately", () => {
+  let pro = false, enabled = true;
+  const f = fixture("", { enabled: () => pro && enabled });
+  const popup = () => f.view.state.facet(showTooltip).filter(Boolean);
+  f.type("@"); assert.equal(popup().length, 0); assert.equal(f.drafts().length, 0);
+  pro = true; f.controller.refreshAccess(); assert.equal(popup().length, 0, "login never retroactively invokes ordinary text");
+  f.type(" "); f.type("@"); assert.equal(popup().length, 1);
+  pro = false; f.controller.refreshAccess(); assert.equal(popup().length, 0); f.key("Enter"); assert.equal(f.drafts().length, 0);
+  pro = true; f.controller.refreshAccess(); f.type(" "); f.select(); f.type("保留要求");
+  const before = f.view.state.doc.toString(); pro = false; f.controller.refreshAccess();
+  assert.equal(f.view.state.doc.toString(), before); assert.equal(f.button(), null); assert.equal(f.submissions.length, 0);
+  pro = true; enabled = false; f.controller.refreshAccess(); f.type(" @"); assert.equal(popup().length, 0);
+  enabled = true; f.controller.refreshAccess(); f.type(" @"); assert.equal(popup().length, 1); f.close();
 });
 
 browser.window.close();

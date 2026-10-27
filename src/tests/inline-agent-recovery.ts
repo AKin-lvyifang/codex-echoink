@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { paidTestAccess } from "./membership-access";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -53,6 +54,7 @@ async function fixture(repository: InlineRepository = new Repository(), document
   const calls: Array<{ request: PiChatSubmitRequest; id: string; settled: boolean; resolve(record: Readonly<PiProductRunRecord>): void }> = [];
   const busy = new Map<string, string>();
   const plugin = {
+    accountService: paidTestAccess,
     settings, getVaultPath: () => tmpdir(),
     createPiConversation: async input => ({ conversationId: input.conversationId, piSessionId: "recovery-session", vaultId: "recovery-vault", title: input.title,
       status: "active" as const, defaultMemoryMode: "normal" as const, createdAt: Date.now(), updatedAt: Date.now() }),

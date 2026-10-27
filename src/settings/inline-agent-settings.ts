@@ -2,12 +2,11 @@ import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { validInlineTrigger } from "../inline-agent/settings";
 import { createOriginInput } from "./origin-controls";
-import { createSettingsGroup, createSettingsSection } from "./settings-v2";
+import { createSettingsGroup } from "./settings-v2";
 
 export function renderInlineAgentSettings(parent: HTMLElement, plugin: CodexForObsidianPlugin): void {
   const zh = plugin.settings.settingsLanguage !== "en";
-  const section = createSettingsSection(parent, { title: zh ? "正文管家" : "Agent in notes", surface: "flat" });
-  const group = createSettingsGroup(section), row = group.createDiv({ cls: "echoink-inline-trigger-setting" });
+  const group = createSettingsGroup(parent), row = group.createDiv({ cls: "echoink-inline-trigger-setting" });
   const label = row.createEl("label", { text: zh ? "唤起符号" : "Trigger character" });
   const input = createOriginInput(row, { value: plugin.settings.inlineAgent.trigger, attr: { type: "text", maxlength: "2", "aria-label": label.textContent ?? "", "data-echoink-focus-key": "inline-agent:trigger" } });
   label.htmlFor = input.id = "echoink-inline-trigger";

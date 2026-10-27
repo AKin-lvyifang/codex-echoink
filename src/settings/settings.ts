@@ -575,7 +575,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   generationTemplates: defaultGenerationTemplates(),
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
   selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }] },
-  inlineAgent: { trigger: "@", nldConflictNoticeShown: false },
+  inlineAgent: { enabled: true, trigger: "@", nldConflictNoticeShown: false },
   englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS },
   productGeneration: "pi-agent-product-v1",
   settingsVersion: 54,

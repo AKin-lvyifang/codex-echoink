@@ -5,7 +5,7 @@ import { createOriginButton, createOriginSwitch, disposeOriginControls, type Ori
 import { createSettingsSection } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 
-export type DesktopModuleId = "knowledge" | "journal" | "review" | "todo" | "selection" | "finance" | "english" | "pdf";
+export type DesktopModuleId = "knowledge" | "journal" | "review" | "todo" | "selection" | "finance" | "english" | "pdf" | "inline-agent";
 export interface DesktopModuleSettingsOptions {
   plugin: CodexForObsidianPlugin;
   expanded: Set<DesktopModuleId>;
@@ -23,7 +23,8 @@ const modules: readonly { id: DesktopModuleId; zh: string; en: string; icon: str
   { id: "selection", zh: "选文提问", en: "Selection Ask", icon: "text-cursor-input" },
   { id: "finance", zh: "财务", en: "Finance", icon: "wallet", pro: true },
   { id: "english", zh: "英文日记", en: "English diary", icon: "languages", pro: true },
-  { id: "pdf", zh: "PDF 精读 · 提取", en: "PDF reading and extraction", icon: "file-text", pro: true }
+  { id: "pdf", zh: "PDF 精读 · 提取", en: "PDF reading and extraction", icon: "file-text", pro: true },
+  { id: "inline-agent", zh: "@Agent 正文管家", en: "@Agent in notes", icon: "at-sign", pro: true }
 ];
 
 /** Owns presentation and the original enable paths; the settings tab owns routes and expansion. */
@@ -65,7 +66,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
       let animation: Animation | null = null;
       let wasOpen: boolean | undefined;
       disposers.push(() => animation?.cancel());
-      const enabled = () => module.id === "selection" ? plugin.settings.selectionAsk.enabled : module.id === "finance" ? plugin.settings.lifestyle.finance.enabled : module.id === "english" ? plugin.settings.englishDiary.enabled : module.id === "pdf" ? plugin.settings.pdfReading.enabled : true;
+      const enabled = () => module.id === "inline-agent" ? plugin.settings.inlineAgent.enabled : module.id === "selection" ? plugin.settings.selectionAsk.enabled : module.id === "finance" ? plugin.settings.lifestyle.finance.enabled : module.id === "english" ? plugin.settings.englishDiary.enabled : module.id === "pdf" ? plugin.settings.pdfReading.enabled : true;
       const setExpanded = (value: boolean) => {
         if (value) options.expanded.add(module.id); else options.expanded.delete(module.id);
         options.onExpandedChange?.(module.id, value);
@@ -78,7 +79,12 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
           if (module.id === "finance") await plugin.lifestyle.setEnabled("finance", value);
           else if (module.id === "pdf") { if (!plugin.pdfReading) throw new Error("PDF 精读尚未就绪"); await plugin.pdfReading.setEnabled(value); }
           else if (module.id === "english") { if (!plugin.englishDiary) throw new Error("英文日记尚未就绪"); await plugin.englishDiary.setEnabled(value); }
-          else {
+          else if (module.id === "inline-agent") {
+            const previous = plugin.settings.inlineAgent.enabled;
+            plugin.settings.inlineAgent.enabled = value; plugin.inlineAgent?.refreshAccess();
+            try { await plugin.saveSettings(true); } catch (error) { plugin.settings.inlineAgent.enabled = previous; throw error; }
+            finally { plugin.inlineAgent?.refreshAccess(); }
+          } else {
             const previous = plugin.settings.selectionAsk.enabled;
             plugin.settings.selectionAsk.enabled = value;
             try { await plugin.saveSettings(true); } catch (error) { plugin.settings.selectionAsk.enabled = previous; throw error; }
