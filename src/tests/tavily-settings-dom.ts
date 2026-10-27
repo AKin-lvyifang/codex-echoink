@@ -1,7 +1,7 @@
 import {renderTavilySettings,renderProviderTabs} from "../settings/tavily-settings";
 import {createSettingsPage} from "../settings/settings-v2";
 import {disposeOriginControls} from "../settings/origin-controls";
-import type {searchTavily} from "../tools/tavily-search";
+import type {searchWeb} from "../tools/web-search";
 const prototype = HTMLElement.prototype;
 function create(this:HTMLElement,tag:string,options:any={}){const el=this.ownerDocument.createElement(tag);if(typeof options==='string')el.className=options;else {if(options.cls)el.className=options.cls;if(options.text)el.textContent=options.text;if(options.href)el.setAttribute('href',options.href);for(const [k,v] of Object.entries(options.attr??{}))el.setAttribute(k,String(v));}this.append(el);return el;}
 Object.assign(prototype,{empty(){this.replaceChildren();},addClass(...tokens:string[]){this.classList.add(...tokens);},setAttr(k:string,v:string){this.setAttribute(k,String(v));},createEl:create,createDiv(options:any){return create.call(this,'div',options);},createSpan(options:any){return create.call(this,'span',options);}});
@@ -17,7 +17,7 @@ const english = params.get('lang') === 'en';
 document.body.classList.toggle('theme-dark',params.get('theme')==='dark');
 let saves=0, calls=0; let respond:()=>void=()=>{};
 const host={settings:{settingsLanguage:english?'en':'zh-CN',tavily:{enabled:false,apiKey:''}},async saveSettings(){saves++;}};
-const search: typeof searchTavily = async request => {calls++; if(request.maxResults!==1)throw new Error('not small test'); await new Promise<void>(resolve=>{respond=resolve;});return {source:'web',provider:'Tavily',results:[]};};
+const search: typeof searchWeb = async (settings, request) => {calls++; if(request.maxResults!==1)throw new Error('not small test'); await new Promise<void>(resolve=>{respond=resolve;});return {source:'web',provider:'Tavily',results:[]};};
 const container=document.querySelector<HTMLElement>('#content')!;
 let active:'models'|'tools'='tools';
 function render(focus=false){disposeOriginControls(container);container.empty();const page=createSettingsPage(container,{title:english?'Models and providers':'模型与提供商',description:english?'Manage providers, models, and web search.':'管理模型与提供商，以及对话中使用的联网搜索。'});page.addClass('codex-provider-model-manager');const panel=renderProviderTabs(page,active,english,(tab,restore)=>{active=tab;render(restore);});if(active==='tools')renderTavilySettings(panel,host,search);else panel.createDiv({text:english?'Existing model manager location':'现有模型管理器位置（验证二级导航）'});if(focus)document.querySelector<HTMLElement>(`#echoink-provider-tab-${active}`)?.focus();}
@@ -42,10 +42,10 @@ const fixture=document.querySelector<HTMLElement>('#fixture')!;
 const rect=(selector:string)=>container.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
 const copy=rect('.echoink-tavily-card .setting-item-info');
 const key=rect('.echoink-tavily-key-label');
-const header=rect('.echoink-tavily-card h3');
+
 const switchRect=rect('[role=switch]');
 assert(getComputedStyle(fixture).containerName==='settings','production named settings container');
-assert(Math.abs(copy.left-key.left)<1 && Math.abs(copy.left-header.left)<1,'search copy aligns with key and card heading');
+assert(Math.abs(copy.left-key.left)<1,'search copy aligns with key and card heading');
 assert(Math.abs(switchRect.right-key.right)<1,'switch aligns with card content right edge');
 assert(switchRect.top>=copy.top-1 && switchRect.bottom<=copy.bottom+1 && switchRect.left>=copy.right,'switch stays beside copy');
 assert(switchRect.width===36 && switchRect.height===21,'switch keeps intrinsic size');

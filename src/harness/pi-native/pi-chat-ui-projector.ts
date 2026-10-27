@@ -2556,7 +2556,7 @@ function toolItemType(toolName: string, args: unknown, result: unknown): string 
 
 function exactPiToolDisplayTitle(toolName: string): string | undefined {
   const titles: Readonly<Record<string, string>> = {
-    web_search: "网页搜索 · Tavily", knowledge_search: "检索知识库",
+    web_search: "联网搜索", knowledge_search: "检索知识库",
     vault_search: "检索笔记", knowledge_read: "读取笔记", note_read: "读取笔记",
     knowledge_maintain: "整理知识关联", memory_search: "查看个人记忆",
     memory_read: "读取个人记忆", memory_write: "写入个人记忆",

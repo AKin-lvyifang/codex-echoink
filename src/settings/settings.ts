@@ -586,7 +586,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   proxyUrl: "http://127.0.0.1:7890",
   proxyEndpoint: "",
   proxyCredentialRef: "",
-  tavily: { enabled: false, apiKey: "" },
+  tavily: { enabled: false, apiKey: "", provider: "tavily", deepseekApiKey: "" },
   autoArchiveDays: 0,
   providerMode: "custom-api",
   activeApiProviderId: "",

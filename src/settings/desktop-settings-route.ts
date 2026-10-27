@@ -37,7 +37,7 @@ export function resolveDesktopSettingsRoute(
   if (focus.replace(/^explicit:/u, "") === "knowledge:provider") return { tab: "models", focus: "models:default" };
   const extra = { ...(focus ? { focus } : {}), ...(options.resourceId ? { resourceId: options.resourceId } : {}) };
   if (legacyTab === "agents" || legacyTab === "providers") {
-    return { tab: /tavily|tools/iu.test(focus) ? "capabilities" : "models", ...(/tavily|tools/iu.test(focus) ? { capabilityTab: "tools" as const } : {}), ...extra };
+    return { tab: /tavily|deepseek|tools/iu.test(focus) ? "capabilities" : "models", ...(/tavily|deepseek|tools/iu.test(focus) ? { capabilityTab: "tools" as const } : {}), ...extra };
   }
   if (legacyTab === "resources") return { tab: options.resourceTab === "plugins" ? "modules" : "capabilities", ...(options.resourceTab !== "plugins" ? { capabilityTab: options.resourceTab ?? "skills" } : {}), ...extra };
   if (legacyTab === "knowledgeBase" || legacyTab === "todos") return { tab: "modules", section: legacyTab, ...extra };
@@ -52,7 +52,7 @@ export function resolveDesktopSettingsSearchRoute(tab: DesktopSettingsTab, query
   const term = query.trim();
   if (!term) return null;
   if (tab === "capabilities") {
-    if (/tavily|tools?|工具|联网/iu.test(term)) return { tab, capabilityTab: "tools" };
+    if (/tavily|deepseek|web search|tools?|工具|联网/iu.test(term)) return { tab, capabilityTab: "tools" };
     if (/mcp|servers?|服务/iu.test(term)) return { tab, capabilityTab: "mcp" };
     if (/skills?|技能/iu.test(term)) return { tab, capabilityTab: "skills" };
   }

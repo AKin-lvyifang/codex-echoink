@@ -39,7 +39,7 @@ await assert.rejects(searchTavily({ apiKey: secret, query: "news", signal: abort
 assert.equal(normalizeSettingsData({}).settings.tavily.enabled, false);
 assert.equal(normalizeSettingsData({}).settings.autoArchiveDays, 0);
 const restored = normalizeSettingsData(JSON.parse(JSON.stringify({ tavily: { enabled: true, apiKey: secret }, autoArchiveDays: 14 }))).settings;
-assert.deepEqual(restored.tavily, { enabled: true, apiKey: secret }); assert.equal(restored.autoArchiveDays, 14);
+assert.deepEqual(restored.tavily, { enabled: true, apiKey: secret, provider: "tavily", deepseekApiKey: "" }); assert.equal(restored.autoArchiveDays, 14);
 assert.equal(normalizeSettingsData({ tavily: { enabled: true, apiKey: " " }, autoArchiveDays: 8 }).settings.tavily.enabled, false);
 assert.equal(normalizeSettingsData({autoArchiveDays: 8}).settings.autoArchiveDays, 0);
 

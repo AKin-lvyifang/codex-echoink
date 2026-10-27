@@ -4933,7 +4933,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       }
     }, semanticById.get("semantic-move")!, semanticById.get("semantic-delete")!,
     semanticById.get("semantic-command")!, semanticById.get("semantic-unknown")!,
-    semanticTool("semantic-web", "网页搜索 · Tavily", JSON.stringify({ query: "EchoInk" }), "", "dynamicToolCall", "search"), {
+    semanticTool("semantic-web", "联网搜索", JSON.stringify({ query: "EchoInk" }), "", "dynamicToolCall", "search"), {
       ...semanticTool(
         "semantic-failure",
         "third_party_tool",

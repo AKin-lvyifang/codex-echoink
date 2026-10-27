@@ -85,14 +85,20 @@ try {
   pendingDiscovery = true; await click("连接并发现工具"); await click("停止"); assert.equal(discoveryAborted, true); assert.equal(credential.value, "private-token");
   failMcpSave = true; await click("保存"); assert.equal(credential.value, "private-token"); assert.match(current().content.textContent, /\[redacted\]/); assert.ok(!current().content.textContent.includes("private-token"));
   failMcpSave = false; await click("保存"); assert.equal(writes.mcp.length, 2); assert.equal(writes.mcp[1].headers.Authorization, "private-token"); assert.equal(writes.mcp[1].trusted, true); assert.equal(writes.mcp[1].toolPolicies.read_page.trusted, true);
-  await click("Tavily 联网搜索未填写 Key"); const testButton = button("测试连接"); assert.equal(testButton.disabled, true, "no Key cannot send a test");
+  await click("联网搜索未填写 Key"); const testButton = button("测试连接"); assert.equal(testButton.disabled, true, "no Key cannot send a test");
   const searchEnabled = current().content.querySelector('[role="switch"]'); searchEnabled.checked = true; searchEnabled.dispatchEvent(new dom.window.Event("change")); await tick(); assert.equal(button("保存").disabled, true);
   input("API Key", "private-search-key"); testFailure = "Tavily 积分不足，请检查账户额度。"; await click("测试连接"); assert.match(current().content.textContent, /积分不足/, "service quota error must not become a network error"); testFailure = "";
   failTavilySave = true; await click("保存"); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, "private-search-key"); assert.match(current().content.textContent, /\[redacted\]/); assert.ok(!current().content.textContent.includes("private-search-key"));
   failTavilySave = false; await click("保存"); assert.equal(current().id, "ipad-settings-caps"); assert.equal(tavily.enabled, true);
-  await click("Tavily 联网搜索已填写 Key"); pendingTest = true; await click("测试连接"); await click("停止"); assert.match(current().content.textContent, /测试已取消/); testAborted = false;
+  await click("联网搜索已填写 Key"); pendingTest = true; await click("测试连接"); await click("停止"); assert.match(current().content.textContent, /测试已取消/); testAborted = false;
+  await click("测试连接"); current().content.querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(testAborted, true, "provider change aborts old test"); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, ""); assert.equal(button("测试连接").disabled, true);
+  input("API Key", "private-deepseek-key"); pendingTest = false; await click("测试连接"); assert.match(current().content.textContent, /连接成功/);
+  current().content.querySelector('[aria-label="Tavily"]').click(); await tick(); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, "private-search-key");
+  current().content.querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, "private-deepseek-key");
+  await click("保存"); assert.equal(writes.tavily.at(-1).apiKey, "private-search-key"); assert.equal(writes.tavily.at(-1).deepseekApiKey, "private-deepseek-key");
+  await click("联网搜索已填写 Key"); pendingTest = true;
   await click("测试连接"); const tavilyPage = current(); tavilyPage.dispose(); await tick(); assert.equal(testAborted, true, "disposing aborts test");
-  assert.equal(writes.tavily.length, 2); assert.equal(right.value, "right pane draft");
+  assert.equal(writes.tavily.length, 3); assert.equal(right.value, "right pane draft");
   assert.equal(unhandled.length, 0, "no unhandled asynchronous failures");
   console.log("iPad capability UI: real counts/icons, switch rollback, disabled read/edit, default draft, conflict retention, central Agent stack, leave guard, private MCP discovery/trust/policies/abort, stdio read-only, Tavily no-Key/quota/save retention/cancel/dispose passed.");
 } finally { while (stack.length) { const page = stack.pop(); page.dispose?.(); } process.off("unhandledRejection", collect); dom.window.close(); }

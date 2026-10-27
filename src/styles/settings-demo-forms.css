@@ -81,6 +81,7 @@
 
 /* Search enablement comes first; quota, outbound scope and real result stay visible. */
 .echoink-settings-aligned .echoink-tavily-card { display: flex; flex-direction: column; gap: 0; }
+.echoink-settings-aligned .echoink-web-search-providers { border-top: 1px solid var(--line); }
 .echoink-settings-aligned .echoink-tavily-key-label { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 340px); align-items: start; gap: 8px 18px; padding: 13px 18px; margin: 0; border-top: 1px solid var(--line); font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 400; }
 .echoink-settings-aligned .echoink-tavily-key-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .echoink-settings-aligned .echoink-tavily-links { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 0; font-size: calc(var(--font-text-size, 16px) * .75); }

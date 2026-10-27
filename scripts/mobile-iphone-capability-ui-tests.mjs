@@ -80,11 +80,17 @@ try {
   const policy = [...body().querySelectorAll("label")].find(label => label.textContent === "允许调用").querySelector("input"); policy.checked = true; policy.dispatchEvent(new Event("change"));
   await click("保存"); assert.equal(shell.activePageId, "iphone-settings-mcp-server"); assert.match(body().textContent, /配置冲突/); assert.doesNotMatch(body().textContent, /local-secret/); assert.equal(body().querySelector('[aria-label="请求头值"]').value, "Bearer local-secret");
   mcpConflict = false; await click("保存"); assert.equal(calls.saveMcp[1].headers.Authorization, "Bearer local-secret"); assert.equal(calls.saveMcp[1].trusted, true); assert.equal(calls.saveMcp[1].toolPolicies.lookup.enabled, true); assert.equal(calls.saveMcp[1].toolPolicies.oldTool.enabled, false);
-  await click("Tavily 联网搜索未填写 Key"); input("API Key", "private-key"); await click("测试连接"); assert.equal(calls.saveTavily.length, 0); assert.match(body().textContent, /连接成功 · 1 条结果/); assert.equal(calls.test[0].apiKey, "private-key");
+  await click("联网搜索未填写 Key"); input("API Key", "private-key"); await click("测试连接"); assert.equal(calls.saveTavily.length, 0); assert.match(body().textContent, /连接成功 · 1 条结果/); assert.equal(calls.test[0].apiKey, "private-key");
   testPending = true; await click("测试连接"); await click("停止"); assert.equal(activeSignal.aborted, true); assert.doesNotMatch(body().textContent, /private-key/); assert.equal(body().querySelector('[aria-label="API Key"]').value, "private-key");
   await click("保存"); assert.equal(shell.activePageId, "iphone-settings-tavily"); assert.equal(body().querySelector('[aria-label="API Key"]').value, "private-key"); assert.doesNotMatch(body().textContent, /private-key/);
   tavilyFailure = false; await click("保存"); assert.equal(calls.saveTavily[1].apiKey, "private-key");
-  await click("Tavily 联网搜索已填写 Key"); testPending = true; await click("测试连接"); await shell.back(); await tick(); assert.equal(activeSignal.aborted, true, "Leaving a clean testing page aborts its request");
+  await click("联网搜索已填写 Key"); testPending = true; await click("测试连接"); await shell.back(); await tick(); assert.equal(activeSignal.aborted, true, "Leaving a clean testing page aborts its request");
+  await click("联网搜索已填写 Key"); await click("测试连接");
+  body().querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(activeSignal.aborted, true, "provider change aborts old test"); assert.equal(body().querySelector('[aria-label="API Key"]').value, ""); assert.equal(button("测试连接").disabled, true);
+  input("API Key", "private-deepseek-key"); testPending = false; await click("测试连接"); assert.equal(calls.test.at(-1).provider, "deepseek"); assert.equal(calls.test.at(-1).deepseekApiKey, "private-deepseek-key");
+  body().querySelector('[aria-label="Tavily"]').click(); await tick(); assert.equal(body().querySelector('[aria-label="API Key"]').value, "private-key");
+  body().querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(body().querySelector('[aria-label="API Key"]').value, "private-deepseek-key");
+  await click("保存"); assert.equal(calls.saveTavily.at(-1).apiKey, "private-key"); assert.equal(calls.saveTavily.at(-1).deepseekApiKey, "private-deepseek-key");
   while (pages.length > 1) { await shell.back(); }
   console.log("PASS iPhone capability pages: real counts, independent toggles, Skill drafts/conflicts/defaults, HTTP discovery/policy/save, stdio readonly, Tavily cancellation/secrets");
 } finally { for (const page of pages) page.dispose?.(); dom.window.close(); }
