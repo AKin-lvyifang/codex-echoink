@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
 import { ChangeSet, type ChangeDesc } from "@codemirror/state";
 import { anchorAt, applyChanges, cleanDocument, commitChanges, intersects, locateInstruction, locateTarget, mapAnchor, markerFor, markerPattern, touchesInterior } from "./document";
 import { validNotePath, type InlineRepository } from "./store";
@@ -89,7 +90,8 @@ export class InlineRequestService {
       const record: InlineRequest = { id, order: ++this.nextOrder, vaultId: this.vaultId, path: input.path, taskId: input.taskId, agentId: input.agentId, agentName: input.agentName,
         status: "preparing", instruction: control, target: mappedTarget, observedDocument: document, currentVersionId: versionId, followups: [], createdAt: now, updatedAt: now,
         versions: thinking ? [] : [{ id: versionId, number: 1, text: input.text, requirement: instruction.text, sourceDocument: document, context: cleanDocument(document, [...controls, control]), target: structuredClone(mappedTarget), createdAt: now }],
-        targetResolved: !thinking, thread: [{ id: randomUUID(), role: "user", text: requirement ?? instruction.text, at: now }], timing: { submittedAt: submittedAt ?? now } };
+        targetResolved: !thinking, selectionAnnotations: cloneSelectionAnnotations(input.selectionAnnotations),
+        thread: [{ id: randomUUID(), role: "user", text: requirement ?? instruction.text, at: now, selectionAnnotations: cloneSelectionAnnotations(input.selectionAnnotations) }], timing: { submittedAt: submittedAt ?? now } };
       if (thinking) record.currentVersionId = "";
       this.requests.set(id, record);
       await this.flush();
@@ -111,13 +113,14 @@ export class InlineRequestService {
     const controls = this.list(r.path).flatMap(record => { const span = locateInstruction(document, record); return span ? [span] : []; });
     return { request: structuredClone(r), document, context: cleanDocument(document, controls) };
   }
-  async startRun(id: string, requirement: string, model: InlineModelSelection, context: InlineContext, addMessage = true): Promise<string> {
+  async startRun(id: string, requirement: string, model: InlineModelSelection, context: InlineContext, addMessage = true, annotations?: readonly SelectionAnnotation[]): Promise<string> {
     const r = this.requests.get(id); if (!r || terminal(r) || r.status === "missing") throw new Error("这块已结束，请重新建立位置。");
     this.restoredReadyQueues.delete(id);
     if (r.question && r.timing?.questionAt) r.timing.userWaitMs = (r.timing.userWaitMs ?? 0) + Date.now() - r.timing.questionAt;
     r.question = undefined; r.error = undefined; r.status = "thinking"; r.targetResolved = false; r.preparedProposal = undefined; r.queue = undefined; r.model = structuredClone(model); r.readContext = structuredClone(context); r.runToken = randomUUID(); r.updatedAt = Date.now();
     r.timing = { submittedAt: r.timing?.submittedAt ?? Date.now(), userWaitMs: r.timing?.userWaitMs, contextReadyAt: Date.now(), modelStartedAt: Date.now() };
-    if (addMessage) { r.followups.push(requirement); (r.thread ??= []).push({ id: randomUUID(), role: "user", text: requirement, at: Date.now() }); }
+    r.selectionAnnotations = cloneSelectionAnnotations(annotations ?? r.selectionAnnotations);
+    if (addMessage) { r.followups.push(requirement); (r.thread ??= []).push({ id: randomUUID(), role: "user", text: requirement, at: Date.now(), selectionAnnotations: cloneSelectionAnnotations(r.selectionAnnotations) }); }
     this.runDocuments.set(id, { token: r.runToken, document: r.observedDocument, changes: ChangeSet.empty(r.observedDocument.length) });
     this.updateQueues();
     this.comparingOriginal.delete(id); await this.flush(); this.changed(); return r.runToken;

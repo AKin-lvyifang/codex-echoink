@@ -1337,7 +1337,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         let systemPrompt = inlineProposal ? INLINE_PROPOSAL_SYSTEM_PROMPT : access
           ? `${event.systemPrompt}\n\n${piWorkspaceAccessPrompt(access)}`
           : event.systemPrompt;
-        const selectionMessage = inlineProposal ? null : buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
+        const selectionMessage = buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
         const workbenchMessage = inlineProposal ? null : buildWorkbenchContextMessage(input.currentWorkbenchSource?.());
         const pdfMessage = inlineProposal ? null : buildPdfTaskContextMessage(input.currentPdfTaskRequest?.());
         const noteMentionTurn = inlineProposal ? null : input.currentNoteMentionTurn?.() ?? null;
@@ -1560,7 +1560,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             message: message!
           };
         }
-        if (inlineProposal) return { systemPrompt };
+        if (inlineProposal) return { systemPrompt, ...(selectionMessage ? { message: selectionMessage } : {}) };
         const attachmentContextMessage = mergePiBeforeAgentStartContextMessages(
           null,
           skillMessage,
@@ -1601,6 +1601,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           const context: AgentMessage = { role: "custom", customType: INLINE_PROPOSAL_CONTEXT_TYPE,
             content: inlineProposalContextContent(inlineProposal), display: false, timestamp: Date.now() };
           const memory = transientTurnContext ? [structuredClone(transientTurnContext)] : [];
+          const selection = buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
           input.contextLedger?.captureTransientContextMessages(memory);
           if (transientAskPersonalMemorySources && !transientAskPersonalMemorySourcesReported) {
             transientAskPersonalMemorySourcesReported = true;
@@ -1608,7 +1609,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
               sources: transientAskPersonalMemorySources.sources.map(source => ({ ...source })) });
           }
           // No prior branch, tool result, Skill, Knowledge, or durable custom material.
-          return { messages: [...memory, context, ...(currentUser ? [currentUser] : [])] };
+          return { messages: [...memory, context, ...(selection ? [selection] : []), ...(currentUser ? [currentUser] : [])] };
         }
         // Personal Memory context is request-scoped and never persisted into
         // the Pi conversation body.

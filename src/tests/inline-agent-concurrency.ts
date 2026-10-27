@@ -332,7 +332,28 @@ async function inFlightGenerationSnapshotStaysConsistent(): Promise<void> {
   } finally { await f.close(); }
 }
 
+async function overlappingSelectionSnapshot(): Promise<void> {
+  const f = await fixture();
+  try {
+    const a = await f.send("甲"), b = await f.send("乙");
+    for (const [record, original] of [[a, ORIGINAL_A], [b, ORIGINAL_B]] as const) {
+      const run = f.runsFor(record.id)[0]; f.proposal(run, original, "各自第一稿"); await f.done(run);
+    }
+    const selectedText = "R5_QUEUE_OTHER_NOTE_ONLY", annotations = [{ id: "queue-selection", number: 1, selectedText, vaultRelativePath: "引用.md", fileName: "引用.md",
+      anchor: { mode: "editor" as const, from: 0, to: selectedText.length, before: "", after: "" }, appliedActions: [] }];
+    await f.controller.reply(b.taskId, "注释1，结合选段改甲段", annotations);
+    const run = f.runsFor(b.id).at(-1)!; f.proposal(run, ORIGINAL_A, "重叠等待稿"); await f.done(run);
+    assert.equal(f.get(b.id).status, "queued"); annotations[0].selectedText = "后来改过的草稿";
+    await f.confirm(a.id);
+    const regenerated = await f.waitForRuns(b.id, 3);
+    assert.equal(regenerated.request.selectionAnnotations?.[0].selectedText, selectedText);
+    assert.deepEqual(f.get(b.id).thread?.filter(message => message.role === "user").at(-1)?.selectionAnnotations, run.request.selectionAnnotations);
+    f.proposal(regenerated, "各自第一稿", "引用仍保留的重生稿"); await f.done(regenerated); f.assertHealthy();
+  } finally { await f.close(); }
+}
+
 const cases: ReadonlyArray<readonly [string, () => Promise<void>]> = [
+  ["overlap-selection-snapshot", overlappingSelectionSnapshot],
   ["disjoint-confirm-first", () => nonOverlapping("甲")],
   ["disjoint-confirm-second", () => nonOverlapping("乙")],
   ...(["confirm", "revoke", "missing"] as const).map(action => [`overlap-${action}`, () => overlapping(action)] as const),

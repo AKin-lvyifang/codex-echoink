@@ -72,7 +72,7 @@ export function renderSelectionAnnotationSettings(container: HTMLElement, plugin
     const template = card.createEl("textarea", { cls: "echoink-selection-settings-template", attr: { rows: "3", "aria-label": text("提问模板", "Question template"), placeholder: text("只填写问题正文", "Enter only the question") } });
     template.id = `selection-template-${action.id}`; templateLabel.htmlFor = template.id; template.value = action.template;
     const preview = card.createDiv({ cls: "echoink-selection-settings-preview" });
-    const updatePreview = () => { action.template = template.value; preview.textContent = action.template.trim() ? `${en ? "Annotation 1, " : "注释1，"}${action.template}` : text("仅添加引用", "Add a reference only"); };
+    const updatePreview = () => { action.template = template.value; preview.textContent = `${en ? "Annotation 1, " : "注释1，"}${action.template.trim() ? action.template : ""}`; };
     fields.set(action.id, { name, template, error });
     let composing = false;
     name.addEventListener("compositionstart", () => { composing = true; });

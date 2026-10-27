@@ -332,7 +332,8 @@ export class CodexView extends ItemView {
     const draft: TaskDraft = { text: this.inputEl.value, attachments: this.attachments.map(attachment => ({ ...attachment })),
       ...(this.inputEl.value.trim() && prefillSource ? { prefillSource } : {}),
       ...(this.inputEl.value.trim() && englishDiarySourcePath ? { englishDiarySourcePath } : {}),
-      annotations: composerSelectionAnnotations(this.inputEl), noteMentions: [...composerNoteMentionSelections(this.inputEl)], selectedSkill: this.selectedSkill,
+      annotations: composerSelectionAnnotations(this.inputEl), annotationFragments: snapshotSelectionDraft(this.inputEl).fragments,
+      noteMentions: [...composerNoteMentionSelections(this.inputEl)], selectedSkill: this.selectedSkill,
       selectedProviderSettingsId: this.selectedProviderSettingsId, selectedModel: this.selectedModel,
       selectedPermission: this.selectedPermission, selectedMode: this.selectedMode };
     this.taskNavigation.save(draft, page);
@@ -344,7 +345,7 @@ export class CodexView extends ItemView {
     const draft = this.taskNavigation.draft();
     this.composerDraftOwner = this.taskNavigation.draftKey;
     this.inputEl.value = draft.text;
-    restoreSelectionDraft(this.inputEl, { ...emptySelectionDraft(draft.text), annotations: draft.annotations ?? [], nextNumber: Math.max(0, ...(draft.annotations ?? []).map(annotation => annotation.number)) + 1 });
+    restoreSelectionDraft(this.inputEl, { ...emptySelectionDraft(draft.text), annotations: draft.annotations ?? [], fragments: draft.annotationFragments ?? [], nextNumber: Math.max(0, ...(draft.annotations ?? []).map(annotation => annotation.number)) + 1 });
     this.attachments = draft.attachments.map(attachment => ({ ...attachment })); this.selectedSkill = draft.selectedSkill ?? null;
     clearComposerNoteMentions(this.inputEl);
     for (const mention of draft.noteMentions ?? []) addComposerNoteMentionSelection(this.inputEl, mention);
@@ -618,12 +619,25 @@ export class CodexView extends ItemView {
   private async sendInlineTaskReply(request: InlineRequest): Promise<void> {
     const host = inlineTaskHost(this.plugin), text = this.inputEl.value, key = `inline-reply:${request.taskId}`;
     if (!host || !text.trim() || this.inlineComposerComposing || this.taskSubmitting.has(key)) return;
-    const token = this.taskNavigation.token;
+    const annotations = composerSelectionAnnotations(this.inputEl), owner = request.taskId;
     this.taskSubmitting.add(key); this.renderInlineComposer();
     try {
-      await host.runtime.reply(request.taskId, text);
-      if (token === this.taskNavigation.token && this.currentInlineTask()?.taskId === request.taskId && this.inputEl.value === text) {
-        this.inputEl.value = ""; this.saveTaskComposerDraft();
+      await host.runtime.reply(request.taskId, text, annotations);
+      const active = !this.viewLifecycleAbortController.signal.aborted && this.currentInlineTask()?.taskId === owner;
+      if (active && this.inputEl.value === text
+        && selectionAnnotationsMatch(composerSelectionAnnotations(this.inputEl), annotations)) {
+        this.inputEl.value = ""; restoreSelectionDraft(this.inputEl, emptySelectionDraft()); this.saveTaskComposerDraft();
+        this.renderAttachments();
+      } else if (!active) {
+        const page = { kind: "detail", taskId: owner } as const, draft = this.taskNavigation.draft(page);
+        if (draft.text === text && selectionAnnotationsMatch(draft.annotations ?? [], annotations)) {
+          this.taskNavigation.save({ ...draft, text: "", annotations: [], annotationFragments: [] }, page);
+          const stored = this.composerSessionDrafts.get(owner);
+          if (stored?.text === text && selectionAnnotationsMatch(stored.annotations.annotations, annotations)) {
+            this.composerSessionDrafts.set(owner, { ...stored, text: "", annotations: emptySelectionDraft() });
+          }
+          this.plugin.getConversationRunService().scheduleSave();
+        }
       }
     } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
     finally {
@@ -896,7 +910,7 @@ export class CodexView extends ItemView {
           const page: TaskPage = transfer.owner.startsWith("agent:") ? { kind: "list", agentId: transfer.owner.slice(6) } : { kind: "detail", taskId: transfer.owner };
           this.taskNavigation.save({ text: transfer.draft.text, attachments: transfer.draft.attachments,
             prefillSource: transfer.snapshot.prefillSource, englishDiarySourcePath: transfer.snapshot.englishDiarySourcePath,
-            annotations: transfer.draft.annotations.annotations, noteMentions: [...transfer.draft.noteMentions], selectedSkill: transfer.draft.selectedSkill }, page);
+            annotations: transfer.draft.annotations.annotations, annotationFragments: transfer.draft.annotations.fragments, noteMentions: [...transfer.draft.noteMentions], selectedSkill: transfer.draft.selectedSkill }, page);
         }
       } else {
         const retained = { ...item, prefillSource: item.prefillSource ?? transfer.snapshot.prefillSource, englishDiarySourcePath: item.englishDiarySourcePath ?? transfer.snapshot.englishDiarySourcePath, sessionId: transfer.owner.startsWith("agent:") ? transfer.owner : item.sessionId };
