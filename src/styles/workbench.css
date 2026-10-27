@@ -215,6 +215,8 @@
 .echoink-workbench .wb-weather-stage { display: block; flex: 0 0 auto; width: 180px; height: 85px; padding: 0; border: 0; border-radius: 8px; color: var(--wb-text); background: transparent; cursor: grab; touch-action: none; box-shadow: none; overflow: visible; }
 .echoink-workbench .wb-weather-stage:active { cursor: grabbing; }
 .echoink-workbench .wb-weather-stage > svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.echoink-workbench .is-checkin-disabled .wb-weather-stage { width: 148px; cursor: default; touch-action: auto; }
+.echoink-workbench .is-checkin-disabled .wb-weather-stage > svg { overflow: hidden; }
 .echoink-workbench .wb-weather-stage [data-layer^="weather-"] { color: var(--wb-muted); }
 .echoink-workbench .wb-weather-copy:is(:hover, :focus-visible), .echoink-workbench .wb-weather-stage:focus-visible { background: var(--wb-hover); outline: none; box-shadow: none; }
 .echoink-workbench .wb-sky-feedback { display: none; position: absolute; right: 0; top: calc(100% + 7px); z-index: 25; max-width: min(300px, 70cqi); padding: 7px 10px; border: 1px solid var(--wb-line); border-radius: 8px; background: var(--wb-bg); font-size: calc(var(--font-text-size, 16px) * .75); }
@@ -256,5 +258,6 @@
   .echoink-workbench .wb-heading { grid-column: 1 / 4; }
   .echoink-workbench .wb-sky { grid-row: 2; }
   .echoink-workbench .wb-weather-stage { width: 130px; height: 62px; }
+  .echoink-workbench .is-checkin-disabled .wb-weather-stage { width: 107px; }
   .echoink-workbench .wb-starter-card { width: 250px; margin-left: -125px; }
 }

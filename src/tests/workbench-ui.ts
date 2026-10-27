@@ -366,8 +366,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     layout.weatherStage.clearFeedback(); layout.fitNavigation();
     assert.equal(more.hidden, true); assert.equal(header.classList.contains("is-weather-condensed"), false, "weather stays when every module fits");
     layout.weatherStage.say("今天聊过，已自动签到"); layout.fitNavigation();
-    assert.equal(header.classList.contains("is-weather-condensed"), true, "temporary feedback yields weather space first");
-    assert.equal(navButtons.filter(button => !button.hidden).length, 6, "temporary feedback cannot move modules into More");
+    assert.equal(header.classList.contains("is-weather-condensed"), false, "disabled check-in cannot add feedback or consume navigation space");
+    assert.equal(content.querySelector(".wb-sky-feedback")?.textContent, "");
+    assert.equal(navButtons.filter(button => !button.hidden).length, 6);
     layout.weatherStage.clearFeedback(); layout.fitNavigation();
     assert.equal(header.classList.contains("is-weather-condensed"), false, "weather returns after the temporary message clears");
     withoutWeather = 900; layout.fitNavigation();

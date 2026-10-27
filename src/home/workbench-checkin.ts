@@ -1,5 +1,8 @@
 import type CodexForObsidianPlugin from "../main";
 
+// Keep the local implementation dormant until account-backed check-in is ready.
+export const WORKBENCH_CHECKIN_ENABLED = false;
+
 export interface WorkbenchCheckinData { signedDates: string[]; agentDates: string[] }
 export function workbenchDate(now = Date.now()): string {
   const d = new Date(now);
@@ -25,10 +28,12 @@ export class WorkbenchCheckinService {
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
   snapshot(): WorkbenchCheckinData { return this.saving ?? normalizeWorkbenchCheckin(this.plugin.settings.workbenchCheckin); }
   consumeAutoPresentation(): boolean {
+    if (!WORKBENCH_CHECKIN_ENABLED) return false;
     if (autoPresented.has(this.plugin.app) || !this.snapshot().agentDates.includes(workbenchDate())) return false;
     autoPresented.add(this.plugin.app); return true;
   }
   record(agent = false, at = Date.now()): Promise<void> {
+    if (!WORKBENCH_CHECKIN_ENABLED) return Promise.resolve();
     const date = workbenchDate(at);
     const run = this.tail.then(async () => {
       const before = this.plugin.settings.workbenchCheckin;

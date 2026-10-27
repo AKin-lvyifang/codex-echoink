@@ -1,4 +1,3 @@
-import { workbenchCheckin } from "./home/workbench-checkin";
 import { generateConversationTitle } from "./plugin/conversation-title";
 import { maintenanceActivityText, maintenanceStatusBarText, maintenanceTaskStateLabel, projectMaintenanceInitialActivity } from "./knowledge-base/maintenance-activity";
 import { knowledgeLinkingProgressText } from "./ui/codex-view/knowledge-linking-progress";
@@ -1401,11 +1400,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   /** Invoked only after the durable user entry has been accepted, independent of Views. */
   async onWorkbenchMessageAccepted(item: Readonly<QueuedTurnItem>): Promise<void> {
     if (!Platform.isDesktopApp) return;
-    const at = Date.now();
     const provider = this.settings.apiProviders.find(p => p.id === item.turnOptions.providerSettingsId);
     const model = provider && getApiProviderModel(provider, item.turnOptions.model);
     const draft = provider && model ? this.activePiProviderConfigurationDraft({ provider, model }) : undefined;
-    const sign = workbenchCheckin(this).record(true, at).catch(() => undefined);
     const local = await this.ensurePiLocalData();
     const entry = await local.catalog.get(item.sessionId);
     if (entry?.titleSource === "pending" && !item.maintenanceScope
@@ -1425,7 +1422,6 @@ export default class CodexForObsidianPlugin extends Plugin {
         }).catch(() => undefined); }
       });
     }
-    await sign;
   }
   async derivePiConversation(
     input: DerivePiNativeConversationInput

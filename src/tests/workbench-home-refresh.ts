@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
 import { generateConversationTitle } from "../plugin/conversation-title";
-import { workbenchCheckin, workbenchDate } from "../home/workbench-checkin";
+import { WORKBENCH_CHECKIN_ENABLED, workbenchCheckin, workbenchDate } from "../home/workbench-checkin";
 import { workbenchResultType } from "../home/workbench-result";
 import { WorkbenchWeatherStage } from "../home/workbench-weather";
 import { WorkbenchStarters } from "../home/workbench-starters";
@@ -32,13 +32,17 @@ export async function runWorkbenchHomeRefreshTests(): Promise<void> {
     await create("legacy", false); await generateConversationTitle({ ...input, conversationId: "legacy" }); assert.equal(calls, 1);
     const stale = (await catalog.get("once"))!; await catalog.rename("once", "手动名称"); await catalog.upsert({ ...stale, updatedAt: Date.now() + 10 }); assert.equal((await catalog.get("once"))?.title, "手动名称");
 
-    let failSave = true, saves = 0;
-    const host = { app: {}, settings: { settingsLanguage: "zh-CN", workbenchCheckin: { signedDates: [] as string[], agentDates: [] as string[] } },
-      async saveSettings() { saves++; if (failSave) throw Error("disk unavailable"); }, notifyHomeSurfacesChanged() {} };
-    const service = workbenchCheckin(host as never); await assert.rejects(service.record()); assert.equal(service.snapshot().signedDates.length, 0);
-    failSave = false; await Promise.all([service.record(), service.record(true), service.record(true)]);
-    assert.deepEqual(service.snapshot(), { signedDates: [workbenchDate()], agentDates: [workbenchDate()] }); assert.equal(saves, 3);
-    assert.equal(service.consumeAutoPresentation(), true); assert.equal(service.consumeAutoPresentation(), false);
+    let saves = 0, notifications = 0;
+    const stored = { signedDates: ["2026-10-26"], agentDates: ["2026-10-26"] };
+    const host = { app: {}, settings: { settingsLanguage: "zh-CN", workbenchCheckin: stored },
+      async saveSettings() { saves++; }, notifyHomeSurfacesChanged() { notifications++; } };
+    assert.equal(WORKBENCH_CHECKIN_ENABLED, false, "check-in stays dormant until account-backed support is ready");
+    const service = workbenchCheckin(host as never);
+    await Promise.all([service.record(), service.record(true), service.record(true)]);
+    assert.equal(host.settings.workbenchCheckin, stored, "disabled check-in never replaces existing data");
+    assert.deepEqual(stored, { signedDates: ["2026-10-26"], agentDates: ["2026-10-26"] });
+    assert.equal(saves, 0); assert.equal(notifications, 0);
+    assert.equal(service.consumeAutoPresentation(), false);
     assert.equal(workbenchDate(new Date(2026, 9, 27, 0, 1).getTime()), "2026-10-27");
 
     const message = (overrides: Partial<ChatMessage>): ChatMessage => ({ id: "message", role: "assistant", text: "结果", createdAt: 30, runId: "new", ...overrides });
@@ -63,21 +67,29 @@ export async function runWorkbenchHomeRefreshTests(): Promise<void> {
     pro = true; deck.update(); assert.equal(parent.querySelector(".wb-starter-pro"), null);
     const ids = Array.from(parent.querySelectorAll("[id]")).map(node => node.id); assert.equal(new Set(ids).size, ids.length, "nested SVG IDs are unique");
     deck.dispose();
-    const stageHost = { ...host, app: {}, settings: { ...host.settings, workbenchCheckin: { signedDates: [], agentDates: [] } } };
-    const weather = new WorkbenchWeatherStage(parent, stageHost as never, () => {}); weather.update("still", "一切安静");
-    const button = parent.querySelector<HTMLButtonElement>(".wb-weather-stage")!;
-    const pointer = (name: string, y: number) => { const event = new Event(name); Object.assign(event, { pointerId: 1, button: 0, clientY: y }); button.dispatchEvent(event); };
-    pointer("pointerdown", 0); pointer("pointermove", 9); pointer("pointerup", 9); await Promise.resolve(); assert.equal(stageHost.settings.workbenchCheckin.signedDates.length, 0);
-    pointer("pointerdown", 0); pointer("pointermove", 10); pointer("pointerup", 10); await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(stageHost.settings.workbenchCheckin.signedDates.length, 1);
-    assert.match(parent.querySelector(".wb-weather-count")?.textContent ?? "", /签到成功/);
-    assert.equal(button.disabled, false, "animation does not retain the submission lock");
-    button.click();
-    assert.match(parent.querySelector(".wb-checkin-popover")?.textContent ?? "", /用 Agent 0 天/);
-    await workbenchCheckin(stageHost as never).record(true);
-    weather.update("fair", "今天做完 1 件");
-    assert.match(parent.querySelector(".wb-checkin-popover")?.textContent ?? "", /用 Agent 1 天/, "open totals refresh after the accepted-message callback saves Agent usage");
-    assert.equal(parent.querySelectorAll(".wb-checkin-popover").length, 1, "refresh retains one open totals surface");
-    weather.dispose(); parent.remove();
-    console.log("PASS workbench home: once-only titles, manual rename race, durable fallback, local check-in rollback/dedup, per-turn results, bounded carousel, PRO and exact pull threshold");
+    for (const signedDates of [[], [workbenchDate()]]) {
+      const existing = { signedDates, agentDates: [...signedDates] };
+      const stageHost = { ...host, app: {}, settings: { ...host.settings, workbenchCheckin: existing } };
+      let jumps = 0;
+      const weather = new WorkbenchWeatherStage(parent, stageHost as never, () => { jumps++; }); weather.update("fair", "今天做完 1 件");
+      const stage = parent.querySelector<HTMLElement>(".wb-weather-stage")!;
+      assert.equal(stage.tagName, "DIV", "the dormant stage is an illustration, not a button");
+      assert.equal(stage.tabIndex, -1); assert.equal(stage.getAttribute("role"), "img");
+      assert.equal(stage.querySelector('[data-layer="tag"]')?.getAttribute("display"), "none");
+      assert.doesNotMatch(stage.getAttribute("aria-label") ?? "", /签到|check in/i);
+      const pointer = (name: string, y: number) => { const event = new Event(name); Object.assign(event, { pointerId: 1, button: 0, clientY: y }); stage.dispatchEvent(event); };
+      pointer("pointerdown", 0); pointer("pointermove", 20); pointer("pointerup", 20);
+      const down = new KeyboardEvent("keydown", { key: "ArrowDown", cancelable: true }); stage.dispatchEvent(down);
+      assert.equal(down.defaultPrevented, false, "ArrowDown keeps its ordinary scrolling behavior");
+      stage.click(); weather.update("fair", "今天做完 1 件"); await Promise.resolve();
+      assert.equal(stageHost.settings.workbenchCheckin, existing); assert.equal(saves, 0);
+      assert.equal(parent.querySelector(".wb-checkin-popover"), null);
+      assert.equal(parent.querySelector(".wb-sky-feedback")?.textContent, "");
+      assert.equal(parent.querySelector(".wb-weather-count")?.textContent, "今天做完 1 件", "legacy Agent dates do not trigger check-in feedback");
+      parent.querySelector<HTMLButtonElement>(".wb-weather-copy")!.click(); assert.equal(jumps, 1, "weather group navigation remains active");
+      weather.dispose();
+    }
+    parent.remove();
+    console.log("PASS workbench home: once-only titles, manual rename race, durable fallback, dormant check-in preserves data without display or writes, per-turn results, bounded carousel and PRO");
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }

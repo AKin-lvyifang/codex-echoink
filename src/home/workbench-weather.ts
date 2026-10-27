@@ -2,7 +2,7 @@ import { animate, type AnimationPlaybackControlsWithThen } from "framer-motion";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { WORKBENCH_ART, inlineWorkbenchArt } from "./workbench-artwork";
-import { workbenchCheckin, workbenchDate } from "./workbench-checkin";
+import { WORKBENCH_CHECKIN_ENABLED, workbenchCheckin, workbenchDate } from "./workbench-checkin";
 
 export type WorkbenchWeather = "drizzle" | "overcast" | "breeze" | "fair" | "still";
 const names: Record<WorkbenchWeather, [string, string]> = { drizzle: ["小雨", "Drizzle"], overcast: ["阴天", "Overcast"], breeze: ["起风了", "Breeze"], fair: ["晴", "Fair"], still: ["无风", "Still"] };
@@ -11,7 +11,7 @@ const names: Record<WorkbenchWeather, [string, string]> = { drizzle: ["小雨", 
 export class WorkbenchWeatherStage {
   readonly element: HTMLElement;
   private readonly text: HTMLButtonElement;
-  private readonly stage: HTMLButtonElement;
+  private readonly stage: HTMLButtonElement | HTMLDivElement;
   private readonly svg: SVGSVGElement;
   private readonly feedback: HTMLElement;
   private readonly controls = new Set<AnimationPlaybackControlsWithThen>();
@@ -31,14 +31,23 @@ export class WorkbenchWeatherStage {
   constructor(parent: HTMLElement, private readonly plugin: CodexForObsidianPlugin, private readonly jump: (weather: WorkbenchWeather) => void, private readonly layoutChanged: () => void = () => {}) {
     this.win = parent.ownerDocument.defaultView!;
     this.element = parent.createDiv({ cls: "wb-sky" });
+    this.element.classList.toggle("is-checkin-disabled", !WORKBENCH_CHECKIN_ENABLED);
     this.text = this.element.createEl("button", { cls: "wb-weather-copy", attr: { type: "button", "aria-live": "polite" } });
-    this.stage = this.element.createEl("button", { cls: "wb-weather-stage", attr: { type: "button", "aria-label": this.t("向下拉晴天娃娃签到，或按向下键", "Pull down to check in, or press Arrow Down") } });
+    this.stage = WORKBENCH_CHECKIN_ENABLED
+      ? this.element.createEl("button", { cls: "wb-weather-stage", attr: { type: "button", "aria-label": this.t("向下拉晴天娃娃签到，或按向下键", "Pull down to check in, or press Arrow Down") } })
+      : this.element.createDiv({ cls: "wb-weather-stage", attr: { role: "img", "aria-label": this.t("工作天气晴天娃娃", "Work weather doll") } });
     this.svg = inlineWorkbenchArt(parent.ownerDocument, WORKBENCH_ART.weather); this.stage.append(this.svg);
+    // Trim the unused tag area without changing the doll's scale or its pivots.
+    if (!WORKBENCH_CHECKIN_ENABLED) this.svg.setAttribute("viewBox", "0 0 180 104");
     this.feedback = this.element.createDiv({ cls: "wb-sky-feedback", attr: { role: "status", "aria-live": "polite" } });
     this.media = this.win.matchMedia?.("(prefers-reduced-motion: reduce)"); this.reduced = this.media?.matches ?? false;
     const reduce = () => { this.reduced = this.media?.matches ?? false; this.restart(); };
     this.media?.addEventListener("change", reduce); this.cleanups.push(() => this.media?.removeEventListener("change", reduce));
     this.listen(this.text, "click", () => { if (this.weather) this.jump(this.weather); });
+    if (WORKBENCH_CHECKIN_ENABLED) this.bindCheckin();
+    this.update(null, "");
+  }
+  private bindCheckin(): void {
     this.listen(this.stage, "pointerdown", (e: PointerEvent) => {
       if (e.button !== 0 || this.signing) return;
       this.dragging = { pointer: e.pointerId, y: e.clientY, dy: 0 }; this.stop(); this.stage.setPointerCapture?.(e.pointerId);
@@ -62,8 +71,7 @@ export class WorkbenchWeatherStage {
       else if (e.key === "Escape") this.closePopover();
     });
     this.listen(this.stage, "click", (e: MouseEvent) => { if (e.detail === 0) this.signed() ? this.togglePopover() : this.hint(); });
-    this.listen(parent.ownerDocument, "pointerdown", (e: PointerEvent) => { if (!this.element.contains(e.target as Node)) this.closePopover(); });
-    this.update(null, "");
+    this.listen(this.element.ownerDocument, "pointerdown", (e: PointerEvent) => { if (!this.element.contains(e.target as Node)) this.closePopover(); });
   }
   private t(zh: string, en: string): string { return this.plugin.settings.settingsLanguage === "en" ? en : zh; }
   private layer(name: string): SVGElement { return this.svg.querySelector<SVGElement>(`[data-layer="${name}"]`)!; }
@@ -83,10 +91,12 @@ export class WorkbenchWeatherStage {
     if (!this.signing) this.paintTag();
     this.renderPopover();
     if (weather !== this.weather) { this.weather = weather; this.restart(); }
-    if (this.active && weather !== null && workbenchCheckin(this.plugin).consumeAutoPresentation()) void this.celebrate(true);
+    if (WORKBENCH_CHECKIN_ENABLED && this.active && weather !== null && workbenchCheckin(this.plugin).consumeAutoPresentation()) void this.celebrate(true);
   }
   setActive(active: boolean): void { if (active !== this.active) { this.active = active; this.closePopover(); this.restart(); } }
   private paintTag(): void {
+    this.layer("tag").setAttribute("display", WORKBENCH_CHECKIN_ENABLED ? "inline" : "none");
+    if (!WORKBENCH_CHECKIN_ENABLED) return;
     const days = workbenchCheckin(this.plugin).snapshot().signedDates.length;
     this.layer("tag-text").textContent = this.signed() ? this.t(`${days} 天`, `${days} d`) : this.t("签到", "Check in");
     this.stage.setAttribute("aria-label", this.signed() ? this.t(`已签到，累计 ${days} 天，查看统计`, `Checked in, ${days} days. View totals`) : this.t("向下拉晴天娃娃签到，或按向下键", "Pull down to check in, or press Arrow Down"));
@@ -117,7 +127,7 @@ export class WorkbenchWeatherStage {
     if (this.weather !== "still") {
       this.motion(-amp, amp, rotate("doll-swing", 118, 8), { ...loop, duration: this.weather === "breeze" ? 1.5 : 3 });
       this.motion(amp / 2, -amp / 2, rotate("skirt", 118, 51), { ...loop, duration: 2.7, delay: .25 });
-      this.motion(amp * .6, -amp * .6, rotate("tag", 181, 8), { ...loop, duration: 3.1, delay: .4 });
+      if (WORKBENCH_CHECKIN_ENABLED) this.motion(amp * .6, -amp * .6, rotate("tag", 181, 8), { ...loop, duration: 3.1, delay: .4 });
     }
     if (this.weather === "fair") {
       this.motion(0, 360, rotate("rays", 44, 59), { repeat: Infinity, ease: "linear", duration: 30 });
@@ -138,6 +148,7 @@ export class WorkbenchWeatherStage {
     if (this.weather !== "still") blink();
   }
   private say(text: string): void {
+    if (!WORKBENCH_CHECKIN_ENABLED) return;
     this.feedback.textContent = text; this.element.classList.add("is-feedback");
     const line = this.text.querySelector(".wb-weather-count"); if (line) line.textContent = text;
     if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer);
@@ -150,23 +161,25 @@ export class WorkbenchWeatherStage {
     this.layoutChanged();
   }
   private hint(): void {
+    if (!WORKBENCH_CHECKIN_ENABLED) return;
     this.say(this.t("向下拉一下，或按 ↓ 签到", "Pull down, or press ↓ to check in"));
     if (!this.reduced && this.active) { this.stop(); void this.motion(7, 0, y => this.pull(y), { type: "spring", stiffness: 160, damping: 9 }).then(() => this.restart()); this.motion(0, [0, 8, -6, 0], v => this.layer("tag").setAttribute("transform", `rotate(${v} 181 8)`), { duration: .7 }); }
     else this.restart();
   }
   private async checkIn(): Promise<void> {
-    if (this.signing || this.signed()) return; this.signing = true; this.stage.disabled = true;
+    if (!WORKBENCH_CHECKIN_ENABLED || this.signing || this.signed()) return; this.signing = true; this.stage.setAttribute("disabled", "");
     let saved = false;
     try { await workbenchCheckin(this.plugin).record(); saved = true; }
     catch { if (!this.disposed) { this.say(this.t("签到未保存，请再试一次", "Check-in was not saved. Try again")); new Notice(this.feedback.textContent ?? ""); } }
     finally {
       this.signing = false;
-      if (!this.disposed) { this.stage.disabled = false; this.paintTag(); this.restart(); }
+      if (!this.disposed) { this.stage.removeAttribute("disabled"); this.paintTag(); this.restart(); }
     }
     // Animation cancellation (background/reduced motion) cannot retain a submitting state.
     if (saved && !this.disposed) void this.celebrate(false).then(() => { if (!this.disposed) this.restart(); });
   }
   private async celebrate(auto: boolean): Promise<void> {
+    if (!WORKBENCH_CHECKIN_ENABLED) return;
     this.stop();
     const days = workbenchCheckin(this.plugin).snapshot().signedDates.length;
     this.say(auto ? this.t("今天聊过，已自动签到", "You chatted today. Checked in automatically") : this.t(`签到成功 · 第 ${days} 天`, `Checked in · Day ${days}`));
@@ -191,6 +204,7 @@ export class WorkbenchWeatherStage {
     this.win.setTimeout(() => group.remove(), 800);
   }
   private togglePopover(): void {
+    if (!WORKBENCH_CHECKIN_ENABLED) return;
     if (this.popover) { this.closePopover(); return; }
     this.clearFeedback();
     this.popover = this.element.createDiv({ cls: "wb-checkin-popover", attr: { role: "status" } });
@@ -204,6 +218,6 @@ export class WorkbenchWeatherStage {
     this.popover.createDiv({ text: this.t(`累计签到 ${data.signedDates.length} 天`, `${data.signedDates.length} check-in days`) });
     this.popover.createDiv({ text: this.t(`用 Agent ${data.agentDates.length} 天`, `${data.agentDates.length} days with Agent`) });
   }
-  private closePopover(): void { this.popover?.remove(); this.popover = undefined; this.stage.setAttribute("aria-expanded", "false"); }
+  private closePopover(): void { this.popover?.remove(); this.popover = undefined; if (WORKBENCH_CHECKIN_ENABLED) this.stage.setAttribute("aria-expanded", "false"); }
   dispose(): void { this.disposed = true; this.stop(); if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer); for (const cleanup of this.cleanups) cleanup(); this.element.remove(); }
 }
