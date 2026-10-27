@@ -68,7 +68,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
       workspace: { on() { return {}; }, getLeaf() { return { async openFile(file: TFile) { calls.push(["note", file.path]); } }; } }
     },
     settings: { settingsLanguage: "zh-CN", lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
-    accountService: { checkCapability: () => pro, subscribe: () => () => {} },
+    accountService: { checkCapability: () => pro, checkInSession: () => null, subscribe: () => () => {} },
     getConversationRunService: () => ({ pendingInteractions: pending, runs: new Map(), subscribe(listener: ConversationRunSubscriber) { subscribers.add(listener); return () => { subscribers.delete(listener); }; } }),
     getKnowledgeActivitySource: () => activitySource,
     getKnowledgeSurfaceService: () => ({ getUpgradeSnapshot: async () => ({ status: "running", taskId: upgradeTaskId }), stopUpgrade: async () => { calls.push(["stop-upgrade", upgradeTaskId]); } }),
@@ -365,9 +365,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     const layout = view as unknown as { fitNavigation(): void; weatherStage: { say(text: string): void; clearFeedback(): void } };
     layout.weatherStage.clearFeedback(); layout.fitNavigation();
     assert.equal(more.hidden, true); assert.equal(header.classList.contains("is-weather-condensed"), false, "weather stays when every module fits");
-    layout.weatherStage.say("今天聊过，已自动签到"); layout.fitNavigation();
-    assert.equal(header.classList.contains("is-weather-condensed"), false, "disabled check-in cannot add feedback or consume navigation space");
-    assert.equal(content.querySelector(".wb-sky-feedback")?.textContent, "");
+    layout.weatherStage.say("签到成功 · 第 2 天"); layout.fitNavigation();
+    assert.equal(header.classList.contains("is-weather-condensed"), true, "check-in feedback yields weather space before modules");
+    assert.match(content.querySelector(".wb-checkin-message")?.textContent ?? "", /签到成功/);
     assert.equal(navButtons.filter(button => !button.hidden).length, 6);
     layout.weatherStage.clearFeedback(); layout.fitNavigation();
     assert.equal(header.classList.contains("is-weather-condensed"), false, "weather returns after the temporary message clears");
