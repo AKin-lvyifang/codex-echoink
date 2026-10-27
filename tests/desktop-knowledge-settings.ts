@@ -108,7 +108,7 @@ async function fixture(name: string) {
   view = new runtime.DesktopKnowledgeSettings(plugin, { redraw, openPreferences() {}, openLinking() {}, openEditor() {} });
   redraw(); await settle();
   const button = (text: string): HTMLButtonElement => {
-    const result = [...host.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.trim() === text || value.querySelector(".echoink-settings-navigation-title")?.textContent === text);
+    const result = [...host.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.trim() === text || value.getAttribute("aria-label")?.startsWith(`${text}，`));
     assert(result, `button ${text}`); return result;
   };
   const field = (label: string): HTMLInputElement => { const element = host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`); assert(element, `field ${label}`); return element; };
@@ -199,6 +199,83 @@ try {
       assert.equal(f.plugin.settings.knowledgeBase.autoLinkEnabled, false); assert.equal(f.field("自动补链").checked, false, "rollback uses the most recent accepted value");
       assert.deepEqual(await inventory(f.root), before);
       assert.deepEqual([f.calls.applies, f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0, 0]);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("directory permissions stay with their source and retrieval does not grant organization", async () => {
+    const f = await fixture("source-permissions");
+    try {
+      const before = await inventory(f.root);
+      f.button("资料来源").click();
+      const entries = [...f.host.querySelectorAll<HTMLElement>(".echoink-knowledge-source")];
+      assert.equal(entries.length, 2);
+      for (const [index, entry] of entries.entries()) {
+        const folder = ["资料甲", "资料乙"][index];
+        assert.equal(entry.querySelector(".echoink-knowledge-source-path")?.textContent, folder);
+        assert(entry.querySelector('[aria-label="允许 Agent 自动整理"]'));
+        assert(entry.querySelector(`[aria-label="解绑 ${folder}"]`));
+      }
+      (entries[0].querySelector('[role="checkbox"]') as HTMLButtonElement).click(); await settle();
+      assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.roles.raw.autoOrganizePaths, ["资料甲"]);
+      f.failSave(true); (entries[1].querySelector('[role="checkbox"]') as HTMLButtonElement).click(); await settle();
+      assert.equal((entries[1].querySelector('[role="checkbox"]') as HTMLInputElement).checked, false);
+      f.failSave(false); f.field("允许 Agent 检索这些资料").click(); await settle();
+      const raw = f.plugin.settings.knowledgeBase.folderBindings.roles.raw;
+      assert.equal(raw.searchEnabled, false);
+      assert.deepEqual(raw.readPaths, ["资料甲", "资料乙"]); assert.equal(raw.writePath, "资料乙");
+      assert.deepEqual(raw.autoOrganizePaths, ["资料甲"], "retrieval does not change per-directory organization grants");
+      const retrieval = f.field("允许 Agent 检索这些资料").closest(".setting-item")!;
+      assert(retrieval.querySelector(".setting-item-name > .echoink-settings-help-trigger")?.getAttribute("aria-label")?.includes("你主动 @ 引用或提交到聊天的内容除外"));
+      assert.deepEqual(await inventory(f.root), before);
+      assert.deepEqual([f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0]);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("default save rollback, single-source visibility and empty-source recovery preserve files", async () => {
+    const f = await fixture("source-save-location");
+    try {
+      const before = await inventory(f.root), pdf = f.plugin.settings.pdfReading.originalDirectory;
+      const collections = structuredClone(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets);
+      f.button("资料来源").click();
+      assert.deepEqual([...f.host.querySelectorAll(".echoink-settings-section-header h3")].map(item => item.textContent), ["文件夹", "资料检索", "保存位置"]);
+      const select = f.field("资料默认保存到");
+      select.value = "资料甲"; select.dispatchEvent(new win.Event("change", { bubbles: true })); await settle();
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.roles.raw.writePath, "资料甲");
+      f.failSave(true); select.value = "资料乙"; select.dispatchEvent(new win.Event("change", { bubbles: true })); await settle();
+      assert.equal(select.value, "资料甲", "failed selection returns to the latest successful choice");
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.roles.raw.writePath, "资料甲");
+      assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets, collections);
+      assert.equal(f.plugin.settings.pdfReading.originalDirectory, pdf);
+      f.failSave(false); f.field("解绑 资料甲").click(); f.button("确认解绑").click(); await settle();
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.roles.raw.writePath, "资料乙");
+      assert.equal(f.host.querySelector('[aria-label="资料默认保存到"]'), null);
+      f.field("解绑 资料乙").click(); f.button("确认解绑").click(); await settle();
+      assert(f.host.textContent!.includes("还没有资料来源"));
+      assert.equal(f.host.querySelector('[aria-label="允许 Agent 检索这些资料"]'), null);
+      f.field("添加来源目录").click(); f.button("资料甲").click(); await settle();
+      assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.roles.raw.readPaths, ["资料甲"]);
+      assert.equal(f.host.querySelectorAll(".echoink-knowledge-source").length, 1);
+      assert.deepEqual(await inventory(f.root), before);
+      assert.deepEqual([f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0]);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("role details retain replacement and one unbind action per directory", async () => {
+    const f = await fixture("role-entries");
+    try {
+      for (const [role, title] of [["wiki", "知识成果"], ["projects", "项目"], ["inbox", "收件箱"]] as const) {
+        f.button(title).click();
+        const binding = f.plugin.settings.knowledgeBase.folderBindings.roles[role];
+        const entries = [...f.host.querySelectorAll<HTMLElement>(".echoink-knowledge-source")];
+        assert.equal(entries.length, binding.readPaths.length);
+        assert(f.button("更改文件夹"));
+        assert.equal(f.host.querySelectorAll(".echoink-knowledge-source-unbind").length, entries.length);
+        assert.equal([...f.host.querySelectorAll("button")].filter(button => button.textContent?.trim() === "解绑文件夹").length, 0);
+        (entries[0].querySelector('[role="checkbox"]') as HTMLButtonElement).click(); await settle();
+        assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.roles[role].autoOrganizePaths, [binding.readPaths[0]]);
+        f.button("返回模块").click();
+      }
+      assert.deepEqual([f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0]);
     } finally { await f.cleanup(); }
   });
 

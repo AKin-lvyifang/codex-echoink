@@ -81,6 +81,10 @@ body[data-echoink-theme] .echoink-knowledge-page .knowledge-legacy.echoink-setti
 .echoink-settings-demo.echoink-settings-aligned .setting-item-info { flex: 1 1 0; width: auto; min-width: 0; margin: 0; text-align: left; }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-name,
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-title { font-size: 13px; font-weight: 500; line-height: 1.55; }
+/* A help icon belongs immediately after its label, including labels that wrap. */
+.echoink-settings-demo.echoink-settings-aligned .setting-item-name:has(> .echoink-settings-help-trigger) { display: block; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-name > .echoink-settings-help-trigger { display: inline-flex; vertical-align: middle; margin-inline-start: 6px; }
+body:not(.is-mobile) .echoink-settings-aligned button:is(.echoink-settings-help-trigger, .echoink-provider-form-help, .echoink-mcp-form-help):is(:hover, :focus, :focus-visible) { outline: none; box-shadow: none; background: var(--soft); }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title:has(> .echoink-settings-help) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title > .echoink-settings-help > svg { width: 13px; height: 13px; }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-description,

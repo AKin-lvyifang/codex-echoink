@@ -71,7 +71,7 @@ try {
   const access = { checkCapability: () => qualified, requireCapability: () => { if (!qualified) throw new Error("需要 PRO"); }, subscribe: (fn: () => void) => { subscribers.add(fn); return () => subscribers.delete(fn); } };
   const settings = { settingsLanguage: "zh-CN", selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }, { id: "a", name: "总结", template: "总结一下" }] },
     lifestyle: { finance: { enabled: true, aiEnabled: false, importAiEnabled: false, analysisDirectory: "报告", merchants: [], accounts: [], categories: [] } },
-    englishDiary: { enabled: true }, homeModules: { finance: true }, pdfReading: { enabled: true, engine: "local", mineruToken: "secret-token", translationLanguage: "中文", originalDirectory: "资料" } };
+    englishDiary: { enabled: true }, inlineAgent: { enabled: true, trigger: "@" }, homeModules: { finance: true }, pdfReading: { enabled: true, engine: "local", mineruToken: "secret-token", translationLanguage: "中文", originalDirectory: "资料" } };
   const plugin: any = { settings, accountService: access, app: {}, saveSettings: async () => { saves++; if (fail) throw new Error("磁盘已满"); },
     lifestyle: { label: () => "财务", setEnabled: async (_kind: string, value: boolean) => { access.requireCapability(); settings.lifestyle.finance.enabled = value; }, finance: { access, accessState: () => ({ canWrite: qualified, canEnter: true, canToggle: qualified, reason: qualified ? null : "需要 PRO" }), ledger: { paths: () => ({ root: "财务" }) }, saveOption: async (name: string, value: boolean) => { access.requireCapability(); settings.lifestyle.finance[name] = value; }, saveAnalysisDirectory: async () => { access.requireCapability(); } } },
     pdfReading: { api: { deps: { access } }, policy: () => ({ canWrite: qualified, canEnter: true, canToggle: qualified, reason: qualified ? null : "需要 PRO" }), setEnabled: async (value: boolean) => { access.requireCapability(); settings.pdfReading.enabled = value; }, originalDirectories: () => ["资料"], defaultOriginalDirectory: () => "资料" },
@@ -82,15 +82,15 @@ try {
 
   const modules = host(), expanded = new Set(["knowledge", "finance"]), rendered: string[] = [];
   const disposeModules = runtime.renderDesktopModuleSettings(modules, { plugin, expanded, renderContent: (id: string) => { rendered.push(id); }, summary: () => "真实目录", onProBenefits() {} });
-  assert.equal(modules.querySelectorAll(".echoink-module-drawer").length, 8);
-  assert.equal(modules.querySelectorAll('[role="switch"]').length, 4);
+  assert.equal(modules.querySelectorAll(".echoink-module-drawer").length, 9);
+  assert.equal(modules.querySelectorAll('[role="switch"]').length, 5);
   const financeTrigger = input(modules, "财务"), financeToggle = input(modules, "启用财务");
   const beforeSave = saves; financeTrigger.click(); financeTrigger.click(); assert.equal(saves, beforeSave);
   financeToggle.click(); await settle(); assert.equal(settings.lifestyle.finance.enabled, false); assert.equal(expanded.has("finance"), false);
   assert.equal(financeTrigger.disabled, true);
   financeToggle.click(); await settle(); assert.equal(settings.lifestyle.finance.enabled, true); assert.equal(expanded.has("finance"), true, "successful enable opens the drawer");
   qualified = false; subscribers.forEach(fn => fn());
-  assert.equal(financeToggle.disabled, true); assert.equal(financeTrigger.disabled, false); assert.equal(settings.lifestyle.finance.enabled, true);
+  assert.equal(financeToggle.isConnected, false); assert.equal(modules.querySelector('[aria-label="启用财务"]'), null); assert.equal(financeTrigger.disabled, false); assert.equal(settings.lifestyle.finance.enabled, true);
   const selectionToggle = input(modules, "启用选文提问"); fail = true; selectionToggle.click(); await settle(); assert.equal(settings.selectionAsk.enabled, true); assert.equal(selectionToggle.checked, true); fail = false;
   disposeModules(); assert.equal(subscribers.size, 0);
 
@@ -188,17 +188,17 @@ try {
   shell.plugin.englishDiary = plugin.englishDiary;
   shell.plugin.englishDiaryProviderLabel = () => "默认模型";
   shell.tab.openDesktopRoute({ tab: "modules", section: "journal" }); shell.tab.display(); await documentHarness.flush();
-  assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-module-drawer").length, 8);
+  assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-module-drawer").length, 9);
   assert.ok(input(shell.tab.containerEl, "日记保存文件夹"));
   shell.tab.containerEl.querySelector('[data-echoink-focus-key="journal:templates"]').click(); await documentHarness.flush();
   assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-journal-template-card").length, 4); assert.equal(runtime.openTestModals.length, 0);
   shell.tab.containerEl.querySelector(".settings-back").click(); await documentHarness.flush(); assert.ok(input(shell.tab.containerEl, "日记保存文件夹"));
   shell.tab.openDesktopRoute({ tab: "modules", section: "review" }); await documentHarness.flush();
   assert.equal(shell.tab.containerEl.querySelectorAll(".review-generation").length, 0); assert.ok(shell.tab.containerEl.querySelector('[data-module="review"] [role="checkbox"]'));
-  shell.plugin.settings.pdfReading.enabled = true; shell.plugin.settings.englishDiary.enabled = true; shell.plugin.settings.lifestyle.finance.enabled = true;
-  for (const module of ["knowledge", "journal", "review", "todo", "selection", "finance", "english", "pdf"]) shell.state.desktopModuleExpanded.add(module);
+  shell.plugin.settings.pdfReading.enabled = true; shell.plugin.settings.englishDiary.enabled = true; shell.plugin.settings.lifestyle.finance.enabled = true; shell.plugin.settings.inlineAgent.enabled = true;
+  for (const module of ["knowledge", "journal", "review", "todo", "selection", "finance", "english", "pdf", "inline-agent"]) shell.state.desktopModuleExpanded.add(module);
   shell.state.renderSettingsContent();
-  assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-module-drawer.is-expanded").length, 8);
+  assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-module-drawer.is-expanded").length, 9);
   assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-journal-modal-actions,.review-generation").length, 0);
   assert.equal(shell.tab.containerEl.querySelectorAll('.echoink-module-drawer-content [role="switch"]').length, 0);
   change(input(shell.tab.containerEl, "MinerU 专用 Token"), "unsaved-token-draft"); shell.state.renderSettingsContent(); assert.equal(input(shell.tab.containerEl, "MinerU 专用 Token").value, "unsaved-token-draft");

@@ -59,12 +59,17 @@ export class DesktopKnowledgeSettings {
   private reset(): void { this.draft = null; this.mode = null; this.moduleDraft = {}; this.wikiChanged = false; this.plan = null; this.generation++; }
   suspend(): void { this.events.splice(0).forEach(ref => this.plugin.app.vault.offref(ref)); this.host = null; }
   dispose(): void { this.suspend(); }
-  private checkbox(parent: HTMLElement, title: string, checked: boolean, hint: string, save: (value: boolean) => Promise<void>, description?: string): void {
+  private help(parent: HTMLElement, hint: string): void {
+    const help = createOriginButton(parent, { cls: "is-icon echoink-settings-help-trigger", attr: { "aria-label": hint } });
+    setIcon(help, "circle-alert"); attachSettingsTooltip(help, hint);
+  }
+  private checkbox(parent: HTMLElement, title: string, checked: boolean, hint: string, save: (value: boolean) => Promise<void>, description?: string): OriginSetting {
     const row = new OriginSetting(parent).setName(title);
     if (description) row.setDesc(description);
-    const help = createOriginButton(row.nameEl, { cls: "is-icon echoink-settings-help-trigger", attr: { "aria-label": hint } }); setIcon(help, "circle-alert"); attachSettingsTooltip(help, hint);
+    this.help(row.nameEl, hint);
     const check = createOriginCheck(row.controlEl, { attr: { "aria-label": title } }); check.checked = checked; let accepted = checked;
     check.onchange = () => { const next = check.checked; check.disabled = true; void save(next).then(() => { accepted = next; }).catch(error => { check.checked = accepted; new Notice(error instanceof Error ? error.message : String(error)); }).finally(() => { check.disabled = false; }); };
+    return row;
   }
   private async save(next: KnowledgeFolderBindings, wikiChanged = false): Promise<void> {
     if (this.busy) throw new Error("正在保存，请稍后重试");
@@ -124,21 +129,30 @@ export class DesktopKnowledgeSettings {
   private openRole(role: Role): void { this.selectedRole = role; this.change("role"); }
   private renderRole(page: HTMLElement): void {
     const role = this.selectedRole, bindings = this.bindings(), binding = bindings.roles[role];
-    const rows = page.createDiv({ cls: "echoink-knowledge-source-list echoink-knowledge-role-group" });
-    createSettingsNavigationRow(rows, { title: binding.readPaths.length ? "更改文件夹" : "选择文件夹", value: binding.readPaths.join("、") || "未配置", onActivate: () => this.chooseRole(role) });
+    const section = createSettingsSection(page, { title: "文件夹", surface: "flat" });
+    const rows = section.createDiv({ cls: "echoink-knowledge-source-list echoink-knowledge-role-group" });
+    createSettingsNavigationRow(rows, { title: binding.readPaths.length ? "更改文件夹" : "选择文件夹", onActivate: () => this.chooseRole(role) });
     if (!binding.enabled) return;
-    for (const path of binding.readPaths) {
-      const group = createSettingsSection(rows, { title: path, surface: "flat" });
-      if (!(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder)) group.createDiv({ cls: "settings-error", text: "原目录已失效，请重新选择" });
-      this.checkbox(group, "允许 Agent 自动整理", binding.autoOrganizePaths?.includes(path) ?? false, "只在这个已授权的目录内整理，仍沿原有确认与回执。", async enabled => {
-        const next = this.bindings(), item = next.roles[role]; item.autoOrganizePaths = (item.autoOrganizePaths ?? []).filter(value => value !== path); if (enabled) item.autoOrganizePaths.push(path); await this.save(next);
-      });
-    }
-    this.renderSearchPermission(rows, role);
-    const unbind = createOriginButton(page, { text: "解绑文件夹", cls: "settings-danger echoink-knowledge-role-unbind" }); applyDeleteButton(unbind); unbind.onclick = () => this.confirmUnbind(page, unbind, role);
+    for (const path of binding.readPaths) this.renderDirectoryEntry(rows, page, role, path);
+    const search = createSettingsSection(page, { title: "资料检索", surface: "flat" });
+    this.renderSearchPermission(search.createDiv({ cls: "echoink-knowledge-source-list" }), role);
+  }
+  private renderDirectoryEntry(list: HTMLElement, page: HTMLElement, role: Role, path: string): void {
+    const binding = this.bindings().roles[role];
+    const row = list.createDiv({ cls: "echoink-knowledge-source" });
+    const pathLabel = row.createDiv({ cls: "echoink-knowledge-source-path" });
+    setIcon(pathLabel.createSpan({ cls: "echoink-knowledge-source-icon", attr: { "aria-hidden": "true" } }), "folder");
+    pathLabel.createSpan({ text: path });
+    const permission = this.checkbox(row, "允许 Agent 自动整理", binding.autoOrganizePaths?.includes(path) ?? false, "仅对这个已绑定目录生效，执行时仍核对权限并确认写入。", async enabled => {
+      const next = this.bindings(), item = next.roles[role]; item.autoOrganizePaths = (item.autoOrganizePaths ?? []).filter(value => value !== path); if (enabled) item.autoOrganizePaths.push(path); await this.save(next);
+    });
+    permission.settingEl.addClass("echoink-knowledge-source-permission");
+    const unbind = createOriginButton(row, { cls: "is-icon echoink-knowledge-source-unbind", attr: { "aria-label": `解绑 ${path}` } });
+    applyDeleteButton(unbind, { iconOnly: true }); unbind.onclick = () => this.confirmUnbind(page, unbind, role, path);
+    if (!(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder)) row.createDiv({ cls: "settings-error", text: "原目录已失效，请重新选择" });
   }
   private renderSearchPermission(page: HTMLElement, role: Role): void {
-    this.checkbox(page, "允许搜索正文", this.bindings().roles[role].searchEnabled !== false, "沿用当前用途的正文搜索权限。关闭后保留目录绑定。", async enabled => { const next = this.bindings(); next.roles[role].searchEnabled = enabled; await this.save(next); });
+    this.checkbox(page, "允许 Agent 检索这些资料", this.bindings().roles[role].searchEnabled !== false, "回答问题时，知识库检索与读取会使用上方所有资料文件夹；关闭后不再使用这些资料，文件、目录绑定和保存位置不变。你主动 @ 引用或提交到聊天的内容除外。此项不授权整理，也不影响 Obsidian 自带搜索。", async enabled => { const next = this.bindings(); next.roles[role].searchEnabled = enabled; await this.save(next); });
   }
   private chooseRole(role: Role): void {
     this.picker = { title: role === "wiki" ? "知识成果 · 请选择一个一级文件夹" : `选择${titles[role]}文件夹`, role, back: this.page, onChoose: async path => {
@@ -181,28 +195,24 @@ export class DesktopKnowledgeSettings {
     const add = createOriginButton(header, { cls: "is-icon", attr: { "aria-label": "添加来源目录" } }); setIcon(add, "plus"); add.onclick = () => this.chooseRole("raw");
     const list = section.createDiv({ cls: "echoink-knowledge-source-list" });
     const bindings = this.bindings(); if (!bindings.roles.raw.readPaths.length) list.createDiv({ cls: "setting-item-description echoink-knowledge-source-empty", text: "还没有资料来源" });
-    for (const path of bindings.roles.raw.readPaths) {
-      const row = list.createDiv({ cls: "echoink-knowledge-source" });
-      const heading = row.createDiv({ cls: "echoink-knowledge-source-heading" });
-      const pathLabel = heading.createDiv({ cls: "echoink-knowledge-source-path" });
-      setIcon(pathLabel.createSpan({ cls: "echoink-knowledge-source-icon", attr: { "aria-hidden": "true" } }), "folder");
-      pathLabel.createSpan({ text: path });
-      const unbind = createOriginButton(heading, { cls: "is-icon", attr: { "aria-label": `解绑 ${path}` } }); applyDeleteButton(unbind, { iconOnly: true }); unbind.onclick = () => this.confirmUnbind(page, unbind, "raw", path);
-      if (!(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder)) row.createDiv({ cls: "settings-error", text: "原目录已失效" });
-      this.checkbox(row, "允许 Agent 自动整理", bindings.roles.raw.autoOrganizePaths?.includes(path) ?? false, "仅对这个已绑定目录生效，执行时仍核对权限并确认写入。", async enabled => {
-        const next = this.bindings(), binding = next.roles.raw; binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(item => item !== path); if (enabled) binding.autoOrganizePaths.push(path); await this.save(next);
-      });
-    }
+    for (const path of bindings.roles.raw.readPaths) this.renderDirectoryEntry(list, page, "raw", path);
     const multipleSources = bindings.roles.raw.readPaths.length > 1;
-    if (bindings.roles.raw.enabled || multipleSources) {
-      const options = createSettingsSection(page, { title: multipleSources ? "搜索与保存" : "搜索范围", surface: "flat" });
-      const rows = options.createDiv({ cls: "echoink-knowledge-source-list" });
-      if (bindings.roles.raw.enabled) this.renderSearchPermission(rows, "raw");
-      if (multipleSources) {
-        const row = new OriginSetting(rows).setName("默认保存到"); const select = createOriginSelect(row.controlEl, {}, [], "", this.plugin.app);
-        bindings.roles.raw.readPaths.forEach(path => select.addOption(path, path)); select.element.value = bindings.roles.raw.writePath ?? "";
-        select.element.onchange = () => { const next = this.bindings(); next.roles.raw.writePath = select.element.value; void this.save(next).catch(error => { select.element.value = bindings.roles.raw.writePath ?? ""; new Notice(String(error)); }); };
-      }
+    if (bindings.roles.raw.enabled) {
+      const search = createSettingsSection(page, { title: "资料检索", surface: "flat" });
+      this.renderSearchPermission(search.createDiv({ cls: "echoink-knowledge-source-list" }), "raw");
+    }
+    if (multipleSources) {
+      const location = createSettingsSection(page, { title: "保存位置", surface: "flat" });
+      const row = new OriginSetting(location.createDiv({ cls: "echoink-knowledge-source-list" })).setName("资料默认保存到");
+      row.settingEl.addClass("echoink-knowledge-save-location");
+      this.help(row.nameEl, "用于手动收集文字和收集附件；尚未保存独立收藏位置的网页、公众号会跟随此处。PDF 原件已有单独位置时使用单独位置，未单设时使用此处。修改不会移动已有文件。");
+      const select = createOriginSelect(row.controlEl, { attr: { "aria-label": "资料默认保存到" } }, [], "", this.plugin.app);
+      bindings.roles.raw.readPaths.forEach(path => select.addOption(path, path)); select.element.value = bindings.roles.raw.writePath ?? "";
+      let accepted = select.element.value;
+      select.element.onchange = () => {
+        const next = this.bindings(), value = select.element.value; next.roles.raw.writePath = value; select.element.disabled = true;
+        void this.save(next).then(() => { accepted = value; }).catch(error => { select.element.value = accepted; new Notice(String(error)); }).finally(() => { select.element.disabled = false; });
+      };
     }
   }
   private renderInitialization(page: HTMLElement): void {

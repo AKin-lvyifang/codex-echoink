@@ -45,9 +45,9 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-settings-section-header h3 {
   margin: 0;
-  color: var(--secondary);
-  font-size: 12px;
-  font-weight: 400;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
 }
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) :is(.setting-item, .echoink-life-setting-row, button.echoink-settings-navigation-row) {
   box-sizing: border-box;
@@ -123,17 +123,23 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section { margin: 0 0 26px; padding: 0; border: 0; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section-header { padding: 0; margin: 0 0 10px; }
-.echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source { display: block; padding: 0; border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source { display: grid; min-height: 52px; padding: 13px 18px; border-top: 1px solid var(--line); }
 .echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source:first-child { border-top: 0; }
-.echoink-settings-aligned .echoink-knowledge-source-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 52px; padding: 13px 18px; }
-.echoink-settings-aligned .echoink-knowledge-source-heading:is(:hover, :focus-within) { background: var(--soft); }
+.echoink-settings-aligned .echoink-knowledge-source:is(:hover, :focus-within) { background: var(--soft); }
 .echoink-settings-aligned .echoink-knowledge-source-path { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
-.echoink-settings-aligned .echoink-knowledge-source-path > span:last-child { min-width: 0; }
+.echoink-settings-aligned .echoink-knowledge-source-path > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .echoink-settings-aligned .echoink-knowledge-source-icon { display: inline-flex; flex: none; color: var(--secondary); }
 .echoink-settings-aligned .echoink-knowledge-source-icon svg { width: 14px; height: 14px; }
-.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-source > .setting-item { min-height: 0; padding-top: 0; border: 0; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-source > .setting-item.echoink-knowledge-source-permission { justify-content: flex-start; gap: 8px; min-height: 0; padding: 0; border: 0; }
+/* The permission belongs to its directory entry, not a separate host setting row. */
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-source > .setting-item.echoink-knowledge-source-permission::before { content: none; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-source > .setting-item.echoink-knowledge-source-permission > .setting-item-info { flex: 0 1 auto; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-source > .setting-item.echoink-knowledge-source-permission > .setting-item-control { order: -1; flex: none; width: auto; max-width: none; }
+.echoink-settings-aligned .echoink-knowledge-source-permission .setting-item-name { gap: 6px; }
+.echoink-settings-aligned button.echoink-knowledge-source-unbind.echoink-origin-control[data-slot=button] { justify-self: end; width: 30px; min-width: 30px; max-width: 30px; height: 30px; min-height: 30px; padding: 0; }
 .echoink-settings-aligned .echoink-knowledge-source > .settings-error,
 .echoink-settings-aligned .echoink-knowledge-source-empty { padding: 0 18px 13px; }
+.echoink-settings-aligned .echoink-knowledge-source > .settings-error { padding: 0; }
 .echoink-settings-aligned .echoink-knowledge-source-empty { padding-top: 13px; }
 /* These real Origin navigation buttons must outrank the shared module-row reset. */
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-routes { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
@@ -156,13 +162,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-knowledge-init-route-icon svg { width: 16px; height: 16px; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-route > .echoink-settings-navigation-copy { grid-column: 2; grid-row: 1; min-width: 0; text-align: left; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-route > .echoink-settings-navigation-trailing { grid-column: 3; grid-row: 1; display: flex; width: 16px; max-width: none; margin: 0; }
-.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group > .echoink-settings-section { margin: 0; border-top: 1px solid var(--line); }
-.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group .echoink-settings-section-header { margin: 0; padding: 12px 18px 4px; }
-.echoink-settings-aligned .echoink-knowledge-role-group .echoink-settings-section-header h3 { margin: 0; color: var(--secondary); font-size: 12px; font-weight: 400; }
-.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group > .echoink-settings-section > .setting-item { border-top: 0; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group > button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button]:first-child { border-top: 0; }
-.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group .setting-item:has([role=checkbox]) > .setting-item-control:last-child { order: 0; }
-.echoink-settings-aligned .echoink-knowledge-role-unbind { margin-top: 16px; }
 .echoink-settings-aligned .echoink-knowledge-init-fields { margin-top: 16px; }
 .echoink-settings-aligned .echoink-knowledge-init-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 
@@ -287,6 +287,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:not(:last-child) { border-bottom: 1px solid var(--line); }
 }
 @container settings (max-width: 520px) {
+  .echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .setting-item.echoink-knowledge-save-location { flex-direction: column; align-items: stretch; gap: 8px; }
+  .echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-save-location > .setting-item-control { width: 100%; max-width: none; }
   .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item-control > :is(input, [data-slot=select-trigger]) { width: 100%; }
   .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-finance-analysis-location { flex-direction: column; align-items: stretch; }
   .echoink-settings-aligned .echoink-finance-analysis-location > form { width: 100%; max-width: 100%; }
