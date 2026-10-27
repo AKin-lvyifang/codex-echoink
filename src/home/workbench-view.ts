@@ -1,5 +1,8 @@
+import { WorkbenchWeatherStage, type WorkbenchWeather } from "./workbench-weather";
+import { WorkbenchStarters } from "./workbench-starters";
+import { workbenchResultType, type WorkbenchResultType } from "./workbench-result";
 import { getTodoProjects, resolveTodoProject } from "./todo-projects";
-import { ItemView, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
+import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
 import { isUserTask, localDateLabel, localTaskTime, maintenanceActivityForTask, taskCardHintSummary, taskState, taskStateLabel, taskSummary, type TaskEntry } from "../agents/task-presentation";
@@ -84,6 +87,11 @@ export function workbenchInlineQuestion(entry: TaskEntry, pending?: Readonly<Ech
 }
 
 export class EchoInkWorkbenchView extends ItemView {
+  private weatherStage?: WorkbenchWeatherStage;
+  private starters?: WorkbenchStarters;
+  private navObserver?: ResizeObserver;
+  private navFrame?: number;
+  private overflowModules: typeof WORKBENCH_MODULES[number][] = [];
   private memoryNotice: VaultMemoryNotice | null = null;
   private memoryError: string | null = null;
   private readonly port: WorkbenchDataPort;
@@ -107,7 +115,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private interruptions = new Map<string, TaskInterruptionInfo | null>();
   private interruptionRevisions = new Map<string, string>();
   private interruptionErrors = new Set<string>();
-  private readonly completedPreviews = new Map<string, { revision: string; text?: string; error?: string }>();
+  private readonly completedPreviews = new Map<string, { revision: string; text?: string; type?: WorkbenchResultType; error?: string }>();
   private taskError = "";
   private dataError = "";
   private selectedTask = "";
@@ -164,6 +172,7 @@ export class EchoInkWorkbenchView extends ItemView {
   async onClose(): Promise<void> {
     this.closed = true; this.refreshVersion++;
     this.foreground?.dispose(); this.foreground = null;
+    this.disposeHeader(); this.starters?.dispose(); this.starters = undefined;
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
     this.knowledgeUnsubscribe?.(); this.knowledgeUnsubscribe = undefined; this.knowledgeSource = undefined; this.maintenanceActivities = []; this.maintenance.clear();
     this.clearTimers(); this.stopSearchWork();
@@ -177,6 +186,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private foregroundChanged(active: boolean): void {
     if (this.closed) return;
+    this.weatherStage?.setActive(active); this.starters?.setActive(active);
     if (!active) {
       this.clearTimers(); this.stopSearchWork(); this.refreshVersion++; this.refreshPending = true;
       return;
@@ -299,28 +309,87 @@ export class EchoInkWorkbenchView extends ItemView {
     return button;
   }
   private renderShell(): void {
+    this.disposeHeader(); this.starters?.dispose(); this.starters = undefined;
     disposeOriginControls(this.contentEl); this.contentEl.empty(); this.searchOpen = false;
     const page = this.contentEl.createDiv({ cls: "wb-page", attr: { "data-wb": "page" } });
     const header = page.createEl("header", { cls: "wb-header" });
     const titles = header.createDiv({ cls: "wb-heading" });
     titles.createEl("h1", { text: this.t("工作台", "Workbench") });
     titles.createEl("time", { cls: "wb-date", attr: { "data-wb": "date" } });
+    const nav = header.createEl("nav", { cls: "wb-modules", attr: { "data-wb": "modules", "aria-label": this.t("插件导航", "Modules") } });
+    for (const module of WORKBENCH_MODULES) {
+      const button = this.button(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, () => this.openModule(module.id), "tertiary", module.icon);
+      button.dataset.module = module.id; button.hidden = !this.snapshot?.modules.includes(module.id);
+    }
+    this.button(nav, this.t("更多", "More"), "module-more", () => this.openMoreModules(), "tertiary", "ellipsis").dataset.wb = "module-more";
+    this.weatherStage = new WorkbenchWeatherStage(header, this.plugin, weather => {
+      const key = { drizzle: "interrupted", overcast: "waiting", breeze: "running", fair: "completed", still: "" }[weather];
+      const section = this.field("groups").querySelector<HTMLElement>(`[data-wb-group="${key}"]`);
+      section?.scrollIntoView({ block: "start", behavior: this.contentEl.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+      section?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+    });
     const actions = header.createDiv({ cls: "wb-header-actions" });
     this.button(actions, this.t("搜索笔记", "Search notes"), "search-trigger", () => this.openSearch(), "icon", "search").dataset.wb = "search-trigger";
     this.button(actions, this.t("插件设置", "Plugin settings"), "settings", () => this.plugin.openEchoInkGeneralSettings(), "icon", "settings");
     this.button(actions, this.t("新任务", "New task"), "new-task", () => this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID), "primary", "plus");
     this.renderSearchShell(page);
     page.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
-    const nav = page.createEl("nav", { cls: "wb-modules", attr: { "data-wb": "modules", "aria-label": this.t("插件导航", "Modules") } });
-    for (const module of WORKBENCH_MODULES) {
-      const button = this.button(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, () => this.openModule(module.id), "tertiary", module.icon);
-      button.dataset.module = module.id; button.hidden = !this.snapshot?.modules.includes(module.id);
-    }
+    page.createDiv({ attr: { "data-wb": "starters" } });
+    const Observer = this.contentEl.ownerDocument.defaultView?.ResizeObserver;
+    if (Observer) { this.navObserver = new Observer(() => this.scheduleNav()); this.navObserver.observe(header); this.navObserver.observe(actions); this.navObserver.observe(this.weatherStage.element); }
+    void this.contentEl.ownerDocument.fonts?.ready.then(() => this.scheduleNav());
     page.createDiv({ cls: "wb-status", attr: { "data-wb": "status", "aria-live": "polite" } });
     page.createDiv({ cls: "wb-groups", attr: { "data-wb": "groups" } });
     page.createDiv({ cls: "wb-empty", text: this.t("暂时没有待处理的事", "Nothing to handle right now"), attr: { "data-wb": "empty" } }).hidden = true;
     if (this.lockedModule) this.showModuleLock(this.lockedModule);
     this.render();
+  }
+
+  private disposeHeader(): void {
+    this.navObserver?.disconnect(); this.navObserver = undefined;
+    if (this.navFrame !== undefined) this.contentEl.ownerDocument.defaultView?.cancelAnimationFrame(this.navFrame);
+    this.navFrame = undefined; this.weatherStage?.dispose(); this.weatherStage = undefined;
+  }
+  private scheduleNav(): void {
+    if (this.closed || this.navFrame !== undefined) return;
+    this.navFrame = this.contentEl.ownerDocument.defaultView?.requestAnimationFrame(() => { this.navFrame = undefined; this.fitNavigation(); });
+  }
+  private fitNavigation(): void {
+    if (this.closed || !this.active()) return;
+    const nav = this.field("modules"), more = this.field("module-more");
+    const visible = WORKBENCH_MODULES.filter(module => isProWorkbenchModule(module.id) ? workbenchProModuleEnabled(this.plugin, module.id) : this.snapshot?.modules.includes(module.id));
+    const buttons = visible.map(module => nav.querySelector<HTMLButtonElement>(`[data-module="${module.id}"]`)!);
+    buttons.forEach(button => { button.hidden = false; }); more.hidden = true; this.overflowModules = [];
+    const width = nav.clientWidth; if (!width) return;
+    const total = () => buttons.filter(button => !button.hidden).reduce((sum, button) => sum + button.getBoundingClientRect().width + 4, 0) - 4;
+    if (total() <= width) return;
+    more.hidden = false;
+    for (let i = buttons.length - 1; i >= 0 && total() + more.getBoundingClientRect().width + 4 > width; i--) {
+      buttons[i].hidden = true; this.overflowModules.unshift(visible[i]);
+    }
+    const focused = this.contentEl.ownerDocument.activeElement;
+    if (buttons.some(button => button.hidden && button === focused)) (more as HTMLButtonElement).focus();
+  }
+  private openMoreModules(): void {
+    const menu = new Menu();
+    for (const module of this.overflowModules) menu.addItem(item => item.setTitle(`${this.language === "en" ? module.en : module.zh}${isProWorkbenchModule(module.id) && !workbenchHasPro(this.plugin) ? " · PRO" : ""}`).setIcon(module.icon).onClick(() => { void this.openModule(module.id); }));
+    const box = this.field("module-more").getBoundingClientRect(); menu.showAtPosition({ x: box.left, y: box.bottom });
+  }
+  private renderStarters(): void {
+    const show = this.entries !== null && !this.taskError && !this.entries.some(isUserTask);
+    const host = this.field("starters"); host.hidden = !show;
+    if (!show) { this.starters?.dispose(); this.starters = undefined; return; }
+    if (!this.starters) this.starters = new WorkbenchStarters(host, {
+      english: () => this.language === "en", hasPro: () => workbenchHasPro(this.plugin),
+      avatar: () => { const avatar = this.plugin.settings.agentRegistry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)?.avatar; return avatar?.kind === "preset" ? avatar.presetId : "sol"; },
+      act: async index => {
+        if (index < 3) return this.plugin.openWorkbenchSetup((["agent", "knowledge", "appearance"] as const)[index]);
+        if (index === 3 || index === 4) return this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID, index === 3
+          ? this.t("帮我开始写今天的日记，先问我三个问题。", "Help me start today's journal. Ask me three questions first.") : this.t("带我精读 @", "Read closely @"));
+        return this.openModule(index === 5 ? "english-diary" : "pdf-reading");
+      }, upgrade: () => this.plugin.openEchoInkAccountSettings("benefits"), error: error => new Notice(message(error))
+    });
+    else this.starters.update();
   }
 
   private async openModule(id: typeof WORKBENCH_MODULES[number]["id"]): Promise<void> {
@@ -335,6 +404,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const previous = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"]');
     if (previous) { disposeOriginControls(previous); previous.remove(); }
     this.lockedModule = id;
+    this.weatherStage?.setActive(false); this.starters?.setActive(false);
     this.field("page").hidden = true;
     this.field("page").inert = true;
     const page = renderWorkbenchModuleLock(this.contentEl, this.plugin, id, () => this.closeModuleLock());
@@ -347,6 +417,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.lockedModule = null;
     this.field("page").hidden = false;
     this.field("page").inert = false;
+    this.weatherStage?.setActive(this.active()); this.starters?.setActive(this.active());
     this.field("modules").querySelector<HTMLButtonElement>(`[data-module="${id}"]`)?.focus();
   }
 
@@ -370,12 +441,18 @@ export class EchoInkWorkbenchView extends ItemView {
       else if (!locked) badge?.remove();
     });
     if (this.lockedModule && (workbenchHasPro(this.plugin) || !workbenchProModuleEnabled(this.plugin, this.lockedModule))) this.closeModuleLock();
+    this.scheduleNav();
+    this.renderStarters();
     this.renderStatus();
     renderVaultMemoryBanner(this.field("memory-notice"), this.memoryNotice, this.language, {
       resolve: async action => { await this.plugin.resolveVaultMemory(action); await this.refresh(); },
       error: () => { new Notice(this.t("记忆恢复未完成，原内容和备份已保留。", "Memory recovery could not finish. Your original content and backup are preserved.")); void this.refresh(); }
     });
     const groups = this.taskGroups(now);
+    const weather: WorkbenchWeather | null = this.taskError || this.entries === null ? null
+      : groups.interrupted.length ? "drizzle" : groups.waiting.length ? "overcast" : groups.running.length ? "breeze" : groups.completed.length ? "fair" : "still";
+    const count = weather === "drizzle" ? groups.interrupted.length : weather === "overcast" ? groups.waiting.length : weather === "breeze" ? groups.running.length : groups.completed.length;
+    this.weatherStage?.update(weather, weather === "drizzle" ? this.t(`${count} 件没做完`, `${count} unfinished`) : weather === "overcast" ? this.t(`${count} 件等你回应`, `${count} waiting for you`) : weather === "breeze" ? this.t(`${count} 件在跑`, `${count} in progress`) : weather === "fair" ? this.t(`今天做完 ${count} 件`, `${count} completed today`) : this.t("一切安静", "All quiet"));
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));
     for (const [state, zh, en] of [["waiting", "等你回应", "Waiting for you"], ["running", "正在进行", "In progress"], ["interrupted", "没做完", "Not finished"]] as const) {
@@ -385,7 +462,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.taskGroup("completed", this.t("今天完成", "Completed today"), groups.completed, now);
     this.renderTodos();
     this.updateActionStates();
-    this.field("empty").hidden = !this.entries || !this.snapshot || !!this.taskError || !!this.dataError || !!this.snapshot.issues.length || this.field("groups").children.length > 0;
+    this.field("empty").hidden = !this.entries || !this.snapshot || !!this.taskError || !!this.dataError || !!this.snapshot.issues.length || this.field("groups").children.length > 0 || !!this.starters;
     this.updateSelection();
     this.contentEl.scrollTop = oldScroll;
     if (focus && active && !active.isConnected) {
@@ -438,6 +515,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const error = taskGroup ? this.taskError : this.dataError;
     const uncertain = !taskGroup && !!this.snapshot?.issues.some(issue => key === "signals" || /待办|工作区仍在加载/u.test(issue));
     const status = error ? "error" : !available ? "loading" : uncertain ? "unconfirmed" : count ? "ready" : "empty";
+    if (status === "empty") { disposeOriginControls(section); section.remove(); return null; }
     section.dataset.state = status;
     const counter = section.querySelector<HTMLElement>(".wb-count")!;
     counter.hidden = status === "loading" || status === "error" || status === "unconfirmed";
@@ -451,14 +529,6 @@ export class EchoInkWorkbenchView extends ItemView {
       feedback.createSpan({ text: available ? this.t("读取失败，尚未更新", "Could not refresh; showing previous items") : this.t("读取失败", "Could not read items") });
       this.button(feedback, this.t("重试", "Retry"), `retry-${key}`, () => this.refresh(), "tertiary");
     } else if (status === "unconfirmed") feedback.createSpan({ text: this.t("部分事项尚未确认", "Some items have not been checked") });
-    else if (status === "empty") {
-      const emptyCopy: Record<string, [string, string]> = {
-        interrupted: ["暂无没做完的任务", "No unfinished tasks"], waiting: ["暂无需要回应的事项", "Nothing waiting for you"],
-        running: ["暂无进行中的任务", "No tasks in progress"], signals: ["暂无可交给 Agent 的事项", "Nothing ready for an Agent"],
-        completed: ["今天还没有完成的任务", "No tasks completed today"], todos: ["今天没有待办", "No to-dos today"]
-      };
-      feedback.createSpan({ text: this.t(...emptyCopy[key]) });
-    }
     section.lastElementChild?.classList.toggle("is-empty", !count);
     // Reorder only when a group appears; retained rows and focused controls stay put.
     const order = ["waiting", "running", "interrupted", "signals", "completed", "todos"];
@@ -518,7 +588,7 @@ export class EchoInkWorkbenchView extends ItemView {
           const projection = await this.plugin.readPiConversationProjection(entry.conversationId);
           if (!this.active() || version !== this.refreshVersion) return;
           const hasAnswer = projection.messages.some(item => item.role === "assistant" && item.text.trim());
-          this.completedPreviews.set(entry.conversationId, { revision, text: hasAnswer ? taskSummary(entry, projection, this.language) : "" });
+          this.completedPreviews.set(entry.conversationId, { revision, text: hasAnswer ? taskSummary(entry, projection, this.language) : "", type: workbenchResultType(projection.messages, entry.taskStartedAt) });
         } catch (error) {
           if (!this.active() || version !== this.refreshVersion) return;
           this.completedPreviews.set(entry.conversationId, { revision, error: `${entry.title}：${message(error)}` });
@@ -611,10 +681,15 @@ export class EchoInkWorkbenchView extends ItemView {
   private completedRow(entry: TaskEntry): HTMLElement {
     const row = this.contentEl.ownerDocument.createElement("div"); row.className = "wb-completed"; row.dataset.task = entry.conversationId;
     const button = this.button(row, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary"); button.classList.add("wb-completed-body");
-    const agent = this.agent(entry), activity = this.maintenance.get(entry.conversationId); renderTaskAvatar(button, agent);
+    const agent = this.agent(entry), activity = this.maintenance.get(entry.conversationId);
+    const session = this.plugin.settings.sessions.find(session => session.id === entry.conversationId);
+    const type = session?.messages.some(message => message.role === "assistant") ? workbenchResultType(session.messages, entry.taskStartedAt) : this.completedPreviews.get(entry.conversationId)?.type ?? "answer";
+    const kind = button.createSpan({ cls: "wb-result-kind", attr: { "aria-label": type === "note" ? this.t("存成笔记", "Saved note") : type === "plan" ? this.t("计划", "Plan") : this.t("回答", "Answer") } });
+    setIcon(kind, type === "note" ? "file-text" : type === "plan" ? "list-checks" : "message-square-text");
     const title = activity ? maintenanceTaskTitle(activity, this.language === "en") : entry.title;
     const copy = button.createSpan({ cls: "wb-grow" }); copy.createSpan({ cls: "wb-row-title", text: title });
-    copy.createSpan({ cls: "wb-secondary", text: `${agent.name} · ${this.summary(entry)}` });
+    const sub = copy.createSpan({ cls: "wb-completed-sub" }); renderTaskAvatar(sub, agent, 16);
+    sub.createSpan({ cls: "wb-completed-agent", text: agent.name }); sub.createSpan({ cls: "wb-secondary", text: `· ${this.summary(entry)}` });
     if (activity) { copy.classList.add("wb-maintenance-completed"); renderMaintenanceProgressBar(copy, activity); }
     if (entry.unreadAnswerAt !== undefined) { button.createSpan({ cls: "wb-unread", attr: { "aria-hidden": "true" } }); button.setAttribute("aria-label", `${title}，${this.t("有新结果", "New result")}`); }
     const completedAt = activity?.completedAt ?? entry.taskCompletedAt ?? entry.updatedAt;

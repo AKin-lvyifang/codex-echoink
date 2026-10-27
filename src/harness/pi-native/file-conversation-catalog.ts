@@ -200,6 +200,8 @@ export class FileConversationCatalog {
           // Existing task fields have their own CAS writer. A stale full-entry
           // upsert for memory/session metadata must not erase a newer task patch.
           applyConversationTaskMetadata(candidate, existing);
+          candidate.title = existing.title;
+          candidate.titleSource = existing.titleSource ?? "fallback";
           if (existing.status === "deleted" && candidate.status !== "deleted") {
             throw mappingConflict(
               `已删除的 Conversation ${candidate.conversationId} 不能重新激活或复用`
@@ -293,8 +295,23 @@ export class FileConversationCatalog {
     return await this.updateEntry(
       conversationId,
       updatedAt,
-      (entry) => ({ ...entry, title: normalizedTitle })
+      (entry) => ({ ...entry, title: normalizedTitle, titleSource: "manual" })
     );
+  }
+
+  /** Claim once before network IO. A crash retains the valid fallback and never retries. */
+  async claimShortTitle(conversationId: string, fallback: string): Promise<boolean> {
+    let claimed = false;
+    await this.updateEntry(conversationId, undefined, entry => {
+      if (entry.status === "deleted" || entry.titleSource !== "pending") return entry;
+      claimed = true;
+      return { ...entry, title: requireNonEmptyString(fallback, "title"), titleSource: "fallback" };
+    });
+    return claimed;
+  }
+  async finishShortTitle(conversationId: string, fallback: string, title: string): Promise<Readonly<PiConversationCatalogEntry>> {
+    return this.updateEntry(conversationId, undefined, entry => entry.status !== "deleted" && entry.titleSource === "fallback" && entry.title === fallback
+      ? { ...entry, title: requireNonEmptyString(title, "title"), titleSource: "automatic" } : entry);
   }
 
   async status(
@@ -906,9 +923,12 @@ function normalizeCatalogEntry(
       "updatedAt"
     ],
     // Legacy P3 display metadata is accepted only for reading and omitted from normalized entries.
-    ["sessionFile", "defaultSkillId", "journalDirectory", "taskTransfers", ...CONVERSATION_TASK_METADATA_KEYS],
+    ["sessionFile", "defaultSkillId", "journalDirectory", "taskTransfers", "titleSource", ...CONVERSATION_TASK_METADATA_KEYS],
     "Conversation Catalog Entry"
   );
+  if (object.titleSource !== undefined && (typeof object.titleSource !== "string" || !["pending", "automatic", "fallback", "manual"].includes(object.titleSource))) {
+    throw new PiNativeFileStoreError("invalid-input", "entry.titleSource invalid");
+  }
   const vaultId = requireNonEmptyString(object.vaultId, "entry.vaultId");
   if (vaultId !== expectedVaultId) {
     throw mappingConflict(
@@ -960,6 +980,7 @@ function normalizeCatalogEntry(
     ),
     vaultId,
     title: requireNonEmptyString(object.title, "entry.title"),
+    titleSource: (object.titleSource ?? "fallback") as PiConversationCatalogEntry["titleSource"],
     status: requireCatalogStatus(object.status),
     defaultMemoryMode: requireMemoryMode(object.defaultMemoryMode),
     ...(defaultSkillId ? { defaultSkillId } : {}),
@@ -1402,6 +1423,7 @@ function cloneCatalogEntry(
     piSessionId: entry.piSessionId,
     vaultId: entry.vaultId,
     title: entry.title,
+    titleSource: entry.titleSource ?? "fallback",
     status: entry.status,
     defaultMemoryMode: entry.defaultMemoryMode,
     ...(entry.defaultSkillId ? { defaultSkillId: entry.defaultSkillId } : {}),

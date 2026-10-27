@@ -28,7 +28,7 @@ win.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListe
 globalThis.getComputedStyle = win.getComputedStyle.bind(win);
 try {
   const build = await esbuild.build({
-    entryPoints: ["src/tests/workbench-ui.ts"], bundle: true, write: false, platform: "node", target: "node22", format: "cjs",
+    stdin: { contents: 'export { runWorkbenchUiTests } from "./src/tests/workbench-ui"; export { runWorkbenchHomeRefreshTests } from "./src/tests/workbench-home-refresh";', resolveDir: process.cwd(), loader: "ts" }, bundle: true, write: false, platform: "node", target: "node22", format: "cjs",
     alias: { obsidian: path.resolve("src/tests/obsidian-shim.ts") },
     loader: { ".svg": "dataurl", ".webp": "dataurl", ".md": "text" },
     plugins: [{ name: "workbench-ui-data-boundary", setup(build) {
@@ -39,5 +39,6 @@ try {
   const module = { exports: {} };
   new Function("require", "module", "exports", build.outputFiles[0].text)(require, module, module.exports);
   await module.exports.runWorkbenchUiTests();
+  await module.exports.runWorkbenchHomeRefreshTests();
   console.log("PASS Workbench memory banners, adoption, inline reset/cancel, English text and existing DOM regressions (native appearance unverified)");
 } finally { win.close(); }

@@ -1,3 +1,4 @@
+import { normalizeWorkbenchCheckin, type WorkbenchCheckinData } from "../home/workbench-checkin";
 import { defaultGenerationTemplates, normalizeGenerationTemplates } from "./generation-templates";
 import type { GenerationTemplate } from "../generation/types";
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -519,6 +520,7 @@ export interface EchoInkTodoItem {
 }
 
 export interface CodexForObsidianSettings {
+  workbenchCheckin: WorkbenchCheckinData;
   generationTemplates: GenerationTemplate[];
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
   selectionAsk: import("../selection-ask/settings").SelectionAskSettings;
@@ -572,6 +574,7 @@ export interface CodexForObsidianSettings {
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
+  workbenchCheckin: { signedDates: [], agentDates: [] },
   generationTemplates: defaultGenerationTemplates(),
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
   selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }] },
@@ -747,6 +750,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
   const settings: CodexForObsidianSettings = {
     ...DEFAULT_SETTINGS,
     ...currentData,
+    workbenchCheckin: normalizeWorkbenchCheckin(data.workbenchCheckin),
     // Plan is a conversation/draft choice, never a default for future tasks.
     defaultMode: "agent",
     productGeneration: DEFAULT_SETTINGS.productGeneration,

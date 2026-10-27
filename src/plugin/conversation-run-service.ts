@@ -62,6 +62,7 @@ export class ConversationRunService {
     };
   }
   isTaskVisible(id: string): boolean { return [...this.subscribers].some(subscriber => subscriber.isTaskVisible(id)); }
+  refreshTask(id: string): void { this.notify(id); }
   private notify(id: string, message?: ChatMessage): void {
     if (this.disposed) return;
     this.scheduleSave();
@@ -295,6 +296,7 @@ export class ConversationRunService {
     });
     const context: CodexViewTurnContext = {
       onPiRunAccepted: async () => {
+        void plugin.onWorkbenchMessageAccepted?.(item).catch(() => undefined);
         const origin = Platform.isDesktopApp ? parseWorkbenchTaskSource(item.prefillSource) : null;
         if (origin) {
           try {
