@@ -162,7 +162,6 @@ export class EchoInkWorkbenchView extends ItemView {
     });
     this.registerDomEvent(this.contentEl, "compositionend", () => this.scheduleSearch());
     this.registerDomEvent(this.contentEl, "pointermove", event => {
-      this.syncTaskCardFeedback();
       const option = (event.target as HTMLElement).closest<HTMLElement>("[data-search-index]");
       if (option && this.searchOpen) this.selectSearchIndex(Number(option.dataset.searchIndex), false);
     });
