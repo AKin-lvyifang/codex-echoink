@@ -1,3 +1,4 @@
+import { agentCapabilityErrorText } from "../../agents/capability-denial";
 import { runErrors } from "../../run-reports/recent-errors";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { isPiConversationPersistenceError } from "../../harness/pi-native/pi-conversation-persistence-error";
@@ -1206,7 +1207,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
             view.plugin.settings.settingsLanguage,
             knownFailure
           )
-          : settledRun.error
+          : agentCapabilityErrorText(settledRun.error, view.plugin.settings.settingsLanguage) ?? settledRun.error
           ?? uiText(view, "EchoInk Pi Chat 执行失败。", "EchoInk Pi Chat failed.")
       );
     }
@@ -1874,6 +1875,8 @@ function localizedKnownPiChatError(
   view: Pick<CodexViewTurnContext, "plugin">,
   message: string
 ): string {
+  const denial = agentCapabilityErrorText(message, view.plugin.settings.settingsLanguage);
+  if (denial) return denial;
   if (message === PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE) {
     return uiText(
       view,

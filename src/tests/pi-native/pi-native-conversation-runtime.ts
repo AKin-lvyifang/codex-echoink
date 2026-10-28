@@ -651,6 +651,13 @@ export async function runPiSubmissionCancellationTests(): Promise<void> {
       assert.equal(listeners.size, 0);
     }, { knowledge: { retrieveAsk: retrieve, retrieveChat: retrieve } as never });
   }
+  await withFixture(["ask-denied"], async fixture => {
+    await assert.rejects(fixture.submit({ conversationId: "ask-denied", text: "/ask permission denied", submittedAt: 1 }), /agent_capability_agent_disabled:knowledge/u);
+    const projection = await fixture.runtime.readProjection("ask-denied");
+    assert.equal(projection.messages.length, 0, "unaccepted /ask must not leave a searching card after denial or reopen");
+    assert.equal((await fixture.productRuns.list("ask-denied")).length, 0);
+    assert.equal(fixture.latestSession().promptTexts.length, 0);
+  }, { knowledge: { async retrieveAsk() { throw new Error("agent_capability_agent_disabled:knowledge"); } } as never });
   await withFixture(["cancel-before-agent-start"], async fixture => {
     await fixture.runtime.createConversation({ conversationId: "before-agent", title: "Preflight", cwd: fixture.root });
     await fixture.runtime.activateConversation("before-agent");
