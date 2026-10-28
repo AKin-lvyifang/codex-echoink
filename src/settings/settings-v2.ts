@@ -1,5 +1,5 @@
 import { createOriginButton, disposeOriginControls } from "./origin-controls";
-import { Setting, setIcon } from "obsidian";
+import { Platform, Setting, setIcon } from "obsidian";
 import { applyAmicroButton, applyDeleteButton } from "./amicro-buttons";
 
 export type SettingsStateTone = "neutral" | "error" | "success";
@@ -25,7 +25,13 @@ export interface SettingsNavigationRowOptions {
   readonly title: string;
   readonly description?: string;
   readonly value?: string;
+  /** A fixed suffix, such as a total count, kept beside the visual value. */
+  readonly valueSuffix?: string;
+  /** The complete value when the visual summary omits other items. */
+  readonly valueDescription?: string;
+  readonly explanation?: string;
   readonly actionLabel?: string;
+  readonly showChevron?: boolean;
   readonly focusKey?: string;
   readonly onActivate: () => void;
 }
@@ -117,11 +123,11 @@ export function attachSettingsTooltip(
   trigger: HTMLElement,
   explanation: string,
   wrapper = trigger,
-  options: { readonly interactive?: boolean } = {}
+  options: { readonly interactive?: boolean; readonly describeTrigger?: boolean; readonly shouldShow?: () => boolean } = {}
 ): void {
   const interactive = options.interactive ?? true;
   const id = `echoink-settings-help-${++settingsHelpSequence}`;
-  trigger.setAttr("aria-describedby", id);
+  if (options.describeTrigger !== false) trigger.setAttr("aria-describedby", id);
   const panel = wrapper.createDiv({ cls: "echoink-settings-help-panel", text: explanation, attr: { id, role: "tooltip" } });
   panel.hidden = true;
   // Short directory labels must not intercept the next row during a pointer sweep.
@@ -139,6 +145,7 @@ export function attachSettingsTooltip(
   };
   const hideOnScroll = (event: Event) => { if (!panel.contains(event.target as Node)) hide(); };
   const show = () => {
+    if (options.shouldShow && !options.shouldShow()) { hide(); return; }
     // Obsidian setting names and legacy groups can clip their descendants.
     // Keep the themed tooltip in the settings surface, outside those rows.
     const surface = wrapper.closest<HTMLElement>(".echoink-settings-demo") ?? wrapper;
@@ -231,16 +238,19 @@ export function createSettingsNavigationRow(
   section: HTMLElement,
   options: SettingsNavigationRowOptions
 ): HTMLButtonElement {
+  const desktopSummary = Platform.isDesktopApp && !section.ownerDocument.body.classList.contains("is-mobile") && Boolean(options.value);
+  const visibleValue = [options.value, options.valueSuffix].filter(Boolean).join(" ");
+  const fullValue = options.valueDescription ?? visibleValue;
   const row = createOriginButton(section, {
-    cls: "echoink-settings-navigation-row setting-row",
+    cls: `echoink-settings-navigation-row setting-row${desktopSummary ? " has-value-summary" : ""}`,
     attr: {
       type: "button",
-      "aria-label": `${options.title}，${options.actionLabel || "进入"}`,
+      "aria-label": `${options.title}，${desktopSummary && fullValue ? `${fullValue}，` : ""}${options.actionLabel || "进入"}`,
       "data-echoink-focus-key": options.focusKey ?? `navigation:${options.title}`
     }
   });
   const copy = row.createDiv({ cls: "echoink-settings-navigation-copy setting-copy" });
-  copy.createDiv({ cls: "echoink-settings-navigation-title", text: options.title });
+  const title = copy.createDiv({ cls: "echoink-settings-navigation-title", text: options.title });
   if (options.description) {
     copy.createDiv({
       cls: "echoink-settings-navigation-description",
@@ -249,18 +259,53 @@ export function createSettingsNavigationRow(
   }
   const trailing = row.createDiv({ cls: "echoink-settings-navigation-trailing setting-controls" });
   if (options.value) {
-    trailing.createSpan({ cls: "echoink-settings-navigation-value", text: options.value });
+    const value = trailing.createSpan({ cls: "echoink-settings-navigation-value", text: options.value });
+    if (options.valueSuffix) trailing.createSpan({ cls: "echoink-settings-navigation-value-suffix", text: options.valueSuffix });
+    if (desktopSummary) attachSettingsTooltip(row, fullValue, row, {
+      interactive: false,
+      describeTrigger: false,
+      // An existing purpose/help tooltip takes precedence over the summary.
+      shouldShow: () => !row.hasAttribute("aria-describedby") && (fullValue !== visibleValue || value.scrollWidth > value.clientWidth)
+    });
   }
   if (options.actionLabel) trailing.createSpan({ cls: "echoink-settings-navigation-action", text: options.actionLabel });
-  const icon = trailing.createSpan({ cls: "echoink-settings-navigation-icon" });
-  setIcon(icon, "chevron-right");
+  if (options.showChevron !== false) {
+    const icon = trailing.createSpan({ cls: "echoink-settings-navigation-icon" });
+    setIcon(icon, "chevron-right");
+  }
+  if (options.explanation) {
+    const help = title.createSpan({ cls: "echoink-settings-navigation-help echoink-settings-help", attr: { role: "button", tabindex: "0", "aria-label": `${options.title}说明` } });
+    setIcon(help, "circle-alert");
+    attachSettingsTooltip(help, options.explanation, help, { interactive: false });
+    const show = help.onclick, hideSummary = row.onmouseleave;
+    help.onclick = event => { event.preventDefault(); event.stopPropagation(); show?.call(help, event); };
+    help.addEventListener("mouseenter", event => { hideSummary?.call(row, event); });
+    help.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault(); event.stopPropagation(); help.click();
+    });
+  }
   applyAmicroButton(row, { variant: "tertiary", motion: "slide" });
+  // Tooltip setup owns its click handler; navigation must remain authoritative.
   row.onclick = options.onActivate;
   return row;
 }
 
 export function createSettingsCompactList(section: HTMLElement): HTMLElement {
   return section.createDiv({ cls: "echoink-settings-compact-list" });
+}
+
+/** Rebuild an asynchronously changed row so its value, tooltip and accessible name agree. */
+export function replaceSettingsNavigationRow(row: HTMLButtonElement, options: SettingsNavigationRowOptions): HTMLButtonElement {
+  const parent = row.parentElement;
+  if (!parent || !row.isConnected) return row;
+  const focused = row.ownerDocument.activeElement === row;
+  const next = createSettingsNavigationRow(parent, options);
+  parent.insertBefore(next, row);
+  // Origin portals must unmount while their button is still in the owning parent.
+  disposeOriginControls(row); row.remove();
+  if (focused) next.focus({ preventScroll: true });
+  return next;
 }
 
 export function createSettingsState(

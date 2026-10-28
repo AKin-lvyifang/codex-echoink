@@ -11,6 +11,7 @@ export interface DesktopModuleSettingsOptions {
   expanded: Set<DesktopModuleId>;
   renderContent(module: DesktopModuleId, parent: HTMLElement): void | (() => void);
   summary?(module: DesktopModuleId): string;
+  details?: Partial<Record<DesktopModuleId, () => void>>;
   onExpandedChange?(module: DesktopModuleId, expanded: boolean): void;
   onProBenefits(): void;
 }
@@ -43,6 +44,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
       benefits.onclick = () => options.onProBenefits();
     }
     for (const module of modules.filter(item => Boolean(item.pro) === pro)) {
+      const detail = options.details?.[module.id];
       const card = createSettingsSection(group, { surface: "group" });
       card.addClass("echoink-module-drawer"); card.dataset.module = module.id;
       const header = card.createDiv({ cls: "echoink-module-drawer-header" });
@@ -55,13 +57,14 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
       if (module.pro) createPluginEditionBadge(name, "pro", plugin.settings.settingsLanguage);
       const summary = copy.createSpan({ cls: "echoink-module-drawer-summary" });
       const optional = module.id === "selection" || pro;
-      if (!optional) setIcon(trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }), "chevron-down");
+      if (!optional && !detail) setIcon(trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }), "chevron-down");
       let toggle: OriginCheckElement | null = null;
       const required = pro ? trigger.createSpan({ cls: "echoink-module-pro-required", text: english ? "Requires PRO" : "需要 PRO" }) : null;
-      const lockedChevron = pro ? trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }) : null;
+      const lockedChevron = pro || detail ? trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }) : null;
       if (lockedChevron) setIcon(lockedChevron, "chevron-right");
       const content = card.createDiv({ cls: "echoink-module-drawer-content", attr: { id: `echoink-module-content-${module.id}` } });
-      trigger.setAttribute("aria-controls", content.id);
+      if (detail) content.remove();
+      else trigger.setAttribute("aria-controls", content.id);
       let rendered = false, pending = false;
       let animation: Animation | null = null;
       let wasOpen: boolean | undefined;
@@ -89,7 +92,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
             plugin.settings.selectionAsk.enabled = value;
             try { await plugin.saveSettings(true); } catch (error) { plugin.settings.selectionAsk.enabled = previous; throw error; }
           }
-          setExpanded(value);
+          if (!detail) setExpanded(value);
         })().catch(error => { if (!disposed) new Notice(error instanceof Error ? error.message : String(error)); })
           .finally(() => { pending = false; refresh(true); });
       };
@@ -100,9 +103,9 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
         const previousHeight = content.hidden ? 0 : content.getBoundingClientRect().height;
         const active = enabled();
         const locked = pro && !hasProPluginAccess(access);
-        const open = !locked && options.expanded.has(module.id) && active;
+        const open = !detail && !locked && options.expanded.has(module.id) && active;
         trigger.disabled = pending || !locked && !active;
-        if (locked) { trigger.removeAttribute("aria-expanded"); trigger.removeAttribute("aria-controls"); }
+        if (locked || detail) { trigger.removeAttribute("aria-expanded"); trigger.removeAttribute("aria-controls"); }
         else { trigger.setAttribute("aria-expanded", String(open)); trigger.setAttribute("aria-controls", content.id); }
         card.toggleClass("is-expanded", open);
         card.toggleClass("is-disabled", !locked && !active);
@@ -111,7 +114,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
         summary.textContent = locked ? "" : !active ? (english ? "Disabled" : "已停用") : options.summary?.(module.id) || (module.id === "selection" ? (english ? "Ask about selected text" : "选中文字后直接提问") : "");
         summary.hidden = !summary.textContent;
         if (required) required.hidden = !locked;
-        if (lockedChevron) lockedChevron.hidden = !locked;
+        if (lockedChevron) lockedChevron.hidden = !locked && !detail;
         if (locked && toggle) { disposeOriginControls(toggle); toggle = null; }
         if (optional && !locked && !toggle) {
           toggle = createOriginSwitch(header, { attr: { "aria-label": english ? `Enable ${title}` : `启用${title}`, "data-echoink-focus-key": `module:${module.id}:enabled` } });
@@ -138,6 +141,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
       trigger.onclick = () => {
         if (trigger.disabled) return;
         if (pro && !hasProPluginAccess(access)) { options.onProBenefits(); return; }
+        if (detail) { detail(); return; }
         setExpanded(!options.expanded.has(module.id)); refresh(true);
       };
       refresh();

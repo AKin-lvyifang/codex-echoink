@@ -1,7 +1,8 @@
 import type CodexForObsidianPlugin from "../../main";
+import { Notice } from "obsidian";
 import type { StoredSession } from "../../settings/settings";
 import type { SessionMessageInput } from "./session-message-store";
-import { armPausableTurnWatchdog, clearPausableTurnWatchdog, CHAT_TURN_WATCHDOG_MS, type TurnWatchdogOwner } from "../turn-watchdog";
+import { armPausableTurnWatchdog, clearPausableTurnWatchdog, turnWatchdogTimeoutText, CHAT_TURN_WATCHDOG_MS, type TurnWatchdogOwner } from "../turn-watchdog";
 
 export interface CodexTurnLifecycleHost {
   readonly plugin: CodexForObsidianPlugin;
@@ -44,6 +45,7 @@ export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_T
     const runId = host.activeRunId;
     if (!runId) return;
     if (host.plugin.isPiProductionRun(runId)) {
+      new Notice(timeoutText ?? turnWatchdogTimeoutText(timeoutMs, host.plugin.settings.settingsLanguage));
       host.pauseQueueForSession(session.id);
       void host.plugin.cancelHarnessRun(runId)
         .catch((error) => console.error("Pi Chat timeout cancellation failed", error));

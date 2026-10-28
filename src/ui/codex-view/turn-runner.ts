@@ -5,6 +5,7 @@ import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-nativ
 import { composerSelectionAnnotations, restoreSelectionDraft, emptySelectionDraft } from "../../selection-ask/draft";
 import { cloneSelectionAnnotations, selectionAnnotationsMatch, type SelectionAnnotation } from "../../types/selection-annotations";
 import { Notice } from "obsidian";
+import { isTurnWatchdogProgressEvent } from "../turn-watchdog";
 import type {
   PiChatPreparedImage,
   PiChatPreparedDocument,
@@ -1101,6 +1102,10 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       (event) => {
         try {
           assertPiChatRuntimeEventIdentity(event, handle!);
+          if (isTurnWatchdogProgressEvent(event)) view.armTurnWatchdog();
+          // Buffered/private model text still makes progress, without changing
+          // the visible projection or scheduling a settings save for each token.
+          if (event.type === "model_progress") return;
           if (event.type === "tool_execution_end" && event.toolName === "pdf_reading_process" && !event.isError) {
             const receipt = pdfAttachmentReceipt(event.result);
             if (receipt?.conversationId === handle!.conversationId && receipt.userEntryId === handle!.userEntryId) {

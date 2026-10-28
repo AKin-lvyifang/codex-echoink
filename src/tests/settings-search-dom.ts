@@ -1032,7 +1032,7 @@ async function checkDesktopSettingPolish(win: Window & typeof globalThis, schedu
       assert.equal(autoPanel.hidden, false);
       assert.equal(autoPanel.textContent, en ? "Conversations in use or with pending drafts are skipped." : "跳过使用中或有待发送内容的对话");
       const archive = f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="review:archives"]')!;
-      assert.equal(archive.querySelector(".echoink-settings-navigation-description")!.textContent, en ? "View, restore, or delete archived conversations" : "查看、恢复或删除已归档的对话");
+      assert.equal(archive.querySelector(".echoink-settings-navigation-description"), null, "archive navigation omits the redundant description");
       archive.focus();
       const archivePanel = win.document.getElementById(archive.getAttribute("aria-describedby")!)!;
       assert.equal(archivePanel.hidden, false);

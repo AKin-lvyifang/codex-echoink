@@ -81,6 +81,10 @@ body[data-echoink-theme] .echoink-knowledge-page .knowledge-legacy.echoink-setti
 .echoink-settings-demo.echoink-settings-aligned .setting-item-info { flex: 1 1 0; width: auto; min-width: 0; margin: 0; text-align: left; }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-name,
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-title { font-size: 13px; font-weight: 500; line-height: 1.55; }
+/* A help icon belongs immediately after its label, including labels that wrap. */
+.echoink-settings-demo.echoink-settings-aligned .setting-item-name:has(> .echoink-settings-help-trigger) { display: block; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-name > .echoink-settings-help-trigger { display: inline-flex; vertical-align: middle; margin-inline-start: 6px; }
+body:not(.is-mobile) .echoink-settings-aligned button:is(.echoink-settings-help-trigger, .echoink-provider-form-help, .echoink-mcp-form-help):is(:hover, :focus, :focus-visible) { outline: none; box-shadow: none; background: var(--soft); }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title:has(> .echoink-settings-help) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title > .echoink-settings-help > svg { width: 13px; height: 13px; }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-description,
@@ -184,3 +188,13 @@ body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-ma
   .echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta { flex-wrap: wrap; }
   .echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state { flex-basis: auto; }
 }
+
+/* Desktop read-only navigation summaries yield space to the complete setting name. */
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary > .echoink-settings-navigation-copy { flex: 1 1 0%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary > .echoink-settings-navigation-trailing { display: flex; flex: 0 1 auto; flex-flow: row nowrap; gap: 8px; min-width: 0; max-width: 50%; margin-left: auto; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary .echoink-settings-navigation-value { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary :is(.echoink-settings-navigation-value-suffix, .echoink-settings-navigation-action, .echoink-settings-navigation-icon) { flex: none; white-space: nowrap; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-value-suffix { color: var(--secondary); font-size: 12px; font-weight: 400; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help { display: inline-flex; flex: none; align-items: center; color: var(--secondary); border-radius: 3px; cursor: help; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help > svg { width: 13px; height: 13px; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help:focus-visible { outline: none; box-shadow: none; background: var(--soft); }
