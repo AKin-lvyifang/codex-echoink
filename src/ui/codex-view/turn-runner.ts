@@ -1260,6 +1260,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       view.renderMessagesIfActive(session);
     }
     if (submissionSignal?.aborted) return "cancelled";
+    console.error("EchoInk conversation finalization failed", error);
     const rawMessage = normalizePiChatError(error).message;
     const message = localizedPiChatErrorMessage(view, error);
     new Notice(
@@ -1273,10 +1274,10 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
           ? uiText(view,
             isPiConversationPersistenceError(error)
               ? "回答已生成，但记录保存失败。已有内容已保留，无需重新发送。"
-              : `本轮收尾未能完成，已有内容已保留：${message}`,
+              : "本轮收尾未能完成，已有内容已保留。",
             isPiConversationPersistenceError(error)
               ? "The answer was generated, but its records could not be saved. Your content was kept; do not resend."
-              : `This turn could not finish finalizing. Your content was kept: ${message}`)
+              : "This turn could not finish finalizing. Your content was kept.")
         : rawMessage === PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE
         ? message
         : uiText(

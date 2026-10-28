@@ -141,9 +141,10 @@ export async function runConversationFinalizationErrorTests(): Promise<void> {
   const wrapped = new AggregateError([new Error("outer", { cause: persistence })], "settlement failed");
   assert.equal(isPiConversationPersistenceError(wrapped), true);
   assert.equal(isPiConversationPersistenceError(new Error("agent_capability_knowledge_denied")), false);
-  for (const [error, saved] of [[new Error("agent_capability_knowledge_denied"), false], [wrapped, true]] as const) {
+  for (const [error, saved, english] of [[new Error("agent_capability_knowledge_denied"), false, false], [new Error("RAW_FINALIZATION_ERROR_CANARY"), false, true], [wrapped, true, false]] as const) {
     const session = piSessionShell("conversation-turn-runner");
     const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+    if (english) settings.settingsLanguage = "en";
     const result = deferred<Readonly<PiProductRunRecord>>(); let subscribed = false;
     const plugin = { settings, getVaultPath: () => "/fixture", saveSettings: async () => undefined,
       submitPiChat: async () => ({ productRunId: "product-run-turn-runner", conversationId: session.id, piSessionId: session.piSessionId!, userEntryId: "entry-user", result: result.promise }),
@@ -154,6 +155,9 @@ export async function runConversationFinalizationErrorTests(): Promise<void> {
     };
     const service = attachTestConversationRunService(plugin); const provider = settings.apiProviders[0];
     openTestNoticeMessages.length = 0;
+    const originalConsoleError = console.error;
+    const logged: unknown[][] = [];
+    console.error = (...args) => { logged.push(args); };
     try {
       const flight = service.run({ id: "failure-kind", sessionId: session.id, text: "hello", attachments: [], skill: null, kind: "chat", createdAt: 1,
         turnOptions: { providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false } });
@@ -161,8 +165,13 @@ export async function runConversationFinalizationErrorTests(): Promise<void> {
       assert.equal(await flight, "failed");
       assert.equal(openTestNoticeMessages.length, 1);
       assert.equal(openTestNoticeMessages[0].includes("记录保存失败"), saved);
+      assert.equal(openTestNoticeMessages[0].includes(error.message), false, "raw errors must stay out of user Notices");
+      if (!saved) assert.equal(openTestNoticeMessages[0], english
+        ? "This turn could not finish finalizing. Your content was kept."
+        : "本轮收尾未能完成，已有内容已保留。");
+      assert.ok(logged.some(args => args[0] === "EchoInk conversation finalization failed" && args[1] === error));
       assert.ok(session.messages.some(message => message.role === "assistant" && message.status === "completed"));
-    } finally { await service.dispose(); }
+    } finally { console.error = originalConsoleError; await service.dispose(); }
   }
   console.log("PASS conversation finalization: typed persistence errors, permission failure, one Notice, answer retained");
 }
