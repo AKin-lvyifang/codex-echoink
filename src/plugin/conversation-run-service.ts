@@ -11,7 +11,7 @@ import { startQueuedTurnItemSafely, startQueuedTurnItem, startChatTurn } from ".
 import { SessionMessageStore } from "../ui/codex-view/session-message-store";
 import type { ChatMessage, StoredSession } from "../settings/settings";
 import { cloneEchoInkTurnInteraction, type EchoInkTurnInteraction } from "../types/conversation-turn";
-import { armPausableTurnWatchdog, clearPausableTurnWatchdog, setTurnWatchdogWaiting, CHAT_TURN_WATCHDOG_MS } from "../ui/turn-watchdog";
+import { armPausableTurnWatchdog, clearPausableTurnWatchdog, setTurnWatchdogWaiting, turnWatchdogTimeoutText, CHAT_TURN_WATCHDOG_MS } from "../ui/turn-watchdog";
 
 export interface ConversationRunState {
   running: boolean;
@@ -337,7 +337,9 @@ export class ConversationRunService {
       clearActiveRun: () => { store.clearActiveRun(); this.clearActiveRun(id, state); },
       armTurnWatchdog: (timeout = CHAT_TURN_WATCHDOG_MS) => {
         armPausableTurnWatchdog(state, () => {
-          if (state.running) void this.stopTask(id, "watchdog").catch(error => console.error("Conversation timeout cancellation failed", error));
+          if (!state.running) return;
+          new Notice(turnWatchdogTimeoutText(timeout, plugin.settings.settingsLanguage));
+          void this.stopTask(id, "watchdog").catch(error => console.error("Conversation timeout cancellation failed", error));
         }, timeout);
       }, clearTurnWatchdog: () => this.clearWatchdog(state),
       diagnoseCodexFailure: (error, model) => diagnoseProviderError(error, { model: model ?? item.turnOptions.model }),

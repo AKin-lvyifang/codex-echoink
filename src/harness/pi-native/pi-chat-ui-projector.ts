@@ -515,6 +515,8 @@ export class PiChatUiProjector {
         if (index < 0) view.messages.push(message); else view.messages[index] = { ...message, createdAt: view.messages[index].createdAt };
         break;
       }
+      case "model_progress":
+        break;
       case "message_start":
         if (!runtimeEventIsPrivate(event) && event.role !== "tool") {
           this.projectRuntimeMessageStart(view, scope, event);

@@ -78,6 +78,7 @@ import {
   piToolCallIdFromProjectedMessageId
 } from "../../harness/pi-native/pi-chat-ui-projector";
 import { openTestNoticeMessages } from "../obsidian-shim";
+import { CHAT_TURN_WATCHDOG_MS, setTurnWatchdogWaiting } from "../../ui/turn-watchdog";
 import { addComposerNoteMentionSelection } from "../../ui/codex-view/note-mentions";
 import {
   FakeElement,
@@ -102,6 +103,7 @@ async function startChatTurn(...args: Parameters<typeof runChatTurn>): ReturnTyp
 }
 
 export async function runPiNativeTurnRunnerTests(): Promise<void> {
+  await runTurnWatchdogProgressTests();
   await runProjectionSaveFailureTests();
   localAttachmentClassificationUsesMimeOrExtension();
   asyncSkillMenuOnlyReturnsEnabledSkills();
@@ -130,6 +132,145 @@ export async function runPiNativeTurnRunnerTests(): Promise<void> {
   await maintainScopeIsResolvedBeforeProviderSubmit();
   await queuedTurnsKeepExactProviderModelAndRetainUnavailableHead();
   await concurrentViewRunsRemainIndependent();
+}
+
+export async function runTurnWatchdogProgressTests(): Promise<void> {
+  const cases: Array<[string, (fixture: Awaited<ReturnType<typeof watchdogFixture>>, clock: WatchdogTestClock) => Promise<void>]> = [
+    ["real progress keeps a ten-minute turn running", async (f, clock) => {
+      const progress = [
+        { type: "message_start", messageKey: "answer", role: "assistant" },
+        { type: "message_update", messageKey: "answer", textDelta: "next token" },
+        { type: "provider_reasoning_start", messageKey: "answer", reasoningId: "thinking" },
+        { type: "provider_reasoning_delta", messageKey: "answer", reasoningId: "thinking", textDelta: "thinking" },
+        { type: "provider_reasoning_end", messageKey: "answer", reasoningId: "thinking", text: "thinking", status: "completed" },
+        { type: "tool_execution_start", toolCallId: "read", toolName: "note_read", args: { path: "wiki/a.md" } },
+        { type: "tool_execution_update", toolCallId: "read", toolName: "note_read", update: { progress: 1 } },
+        { type: "tool_execution_end", toolCallId: "read", toolName: "note_read", result: {}, isError: false },
+        { type: "knowledge_progress", status: "completed", stage: "searching" },
+        { type: "model_progress" }
+      ];
+      for (let minute = 0; minute < progress.length; minute++) {
+        await clock.advance(60_000);
+        if (f.aborts()) break;
+        await f.emit(progress[minute % progress.length] as RuntimeEventPatch);
+      }
+      assert.equal(f.aborts(), 0, `a progressing Agent must not stop at the old total-time limit: ${JSON.stringify(f.failures)}`);
+      await f.finish();
+      assert.equal(await f.result, "completed");
+    }],
+    ["five silent minutes stop once with the approved copy", async (f, clock) => {
+      await clock.advance(CHAT_TURN_WATCHDOG_MS - 1);
+      assert.equal(f.aborts(), 0);
+      await clock.advance(1);
+      assert.equal(f.aborts(), 1);
+      assert.equal(await f.result, "cancelled");
+      assert.ok(openTestNoticeMessages.includes("Agent 已经 5 分钟没有任何进展，已停止。可以点继续重试。"));
+    }],
+    ["approval waiting does not consume the idle budget", async (f, clock) => {
+      await clock.advance(200_000);
+      const state = f.service.runs.get(f.session.id)!;
+      setTurnWatchdogWaiting(state, true);
+      await clock.advance(10 * 60_000);
+      assert.equal(f.aborts(), 0);
+      setTurnWatchdogWaiting(state, false);
+      await clock.advance(99_999);
+      assert.equal(f.aborts(), 0);
+      await clock.advance(1);
+      assert.equal(f.aborts(), 1);
+      await f.result;
+    }],
+    ["UI refreshes are not runtime progress", async (f, clock) => {
+      for (let minute = 0; minute < 5; minute++) {
+        f.service.refreshTask(f.session.id);
+        await clock.advance(60_000);
+      }
+      assert.equal(f.aborts(), 1);
+      await f.result;
+    }],
+    ["English idle timeout explains how to continue", async (f, clock) => {
+      f.plugin.settings.settingsLanguage = "en";
+      await clock.advance(CHAT_TURN_WATCHDOG_MS);
+      await f.result;
+      assert.ok(openTestNoticeMessages.includes("Agent has made no progress for 5 minutes and has stopped. Click Continue to retry."));
+    }]
+  ];
+  const errors: Error[] = [];
+  for (const [name, run] of cases) {
+    const clock = new WatchdogTestClock(); clock.install();
+    let f: Awaited<ReturnType<typeof watchdogFixture>> | undefined;
+    try {
+      openTestNoticeMessages.length = 0;
+      f = await watchdogFixture(clock);
+      await run(f, clock);
+      console.log(`PASS idle watchdog: ${name}`);
+    } catch (error) { errors.push(new Error(name, { cause: error })); console.error(`FAIL idle watchdog: ${name}`, error); }
+    finally { if (f) await f.service.dispose(); clock.restore(); }
+  }
+  if (errors.length) throw new AggregateError(errors, `${errors.length}/${cases.length} idle watchdog regressions failed`);
+}
+
+async function watchdogFixture(clock: WatchdogTestClock) {
+  const session = piSessionShell("conversation-turn-runner");
+  const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+  const result = deferred<Readonly<PiProductRunRecord>>();
+  let listener: PiChatRuntimeEventListener | null = null; let aborts = 0; let settled = false;
+  const identity = { productRunId: "product-run-turn-runner", conversationId: session.id, piSessionId: session.piSessionId! };
+  async function finish(terminalState: "completed" | "cancelled" = "completed") {
+    if (settled) return; settled = true;
+    await emit(listener, { ...runtimeEvent({ type: "agent_settled" }), ...identity });
+    await emit(listener, { ...runtimeEvent({ type: "product_run_settled", terminalState, assistantEntryId: "entry-assistant" }), ...identity });
+    result.resolve({ productRunId: "product-run-turn-runner", conversationId: session.id, piSessionId: session.piSessionId!,
+      userEntryId: "entry-user", assistantEntryId: "entry-assistant", toolCallIds: [], memoryMode: "normal", state: "product_run_settled",
+      terminalState, activeLeafId: "entry-assistant", createdAt: 1, updatedAt: 8, agentSettledAt: 7, settledAt: 8 });
+  }
+  const plugin = { settings, getVaultPath: () => "/fixture", saveSettings: async () => undefined,
+    submitPiChat: async () => ({ productRunId: "product-run-turn-runner", conversationId: session.id,
+      piSessionId: session.piSessionId!, userEntryId: "entry-user", result: result.promise }),
+    subscribePiRun: (_id: string, next: PiChatRuntimeEventListener) => { listener = next; return { unsubscribe() { listener = null; } }; },
+    subscribePiAgentApproval: () => ({ unsubscribe() {} }), piAgentApprovalBinding: () => null,
+    readPiConversationProjection: async () => durableProjection(session, "completed"),
+    releasePiProductionRun() {}, releasePiConversationIfInactive: async () => false,
+    recordTaskInterruption: async () => undefined,
+    abortPiConversation: async () => { if (!settled) { aborts++; await finish("cancelled"); } }
+  };
+  const service = attachTestConversationRunService(plugin); const provider = settings.apiProviders[0];
+  const flight = service.run({ id: "watchdog", sessionId: session.id, text: "long task", attachments: [], skill: null,
+    kind: "chat", createdAt: 1, turnOptions: { providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId,
+      model: "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false } });
+  await clock.advance(0);
+  assert.ok(listener, "the production run must subscribe before advancing its clock");
+  const failures: string[] = [];
+  service.runs.get(session.id)!.context!.onPiRunFailure = message => { failures.push(message); };
+  return { plugin, service, session, result: flight, finish, failures, aborts: () => aborts,
+    emit: async (patch: RuntimeEventPatch) => { await emit(listener, { ...runtimeEvent(patch), ...identity }); await clock.advance(0); } };
+}
+
+class WatchdogTestClock {
+  private now = Date.UTC(2026, 9, 28);
+  private nextId = 0;
+  private timers = new Map<number, { at: number; callback: () => void }>();
+  private readonly originalNow = Date.now;
+  private readonly originalSet = window.setTimeout;
+  private readonly originalClear = window.clearTimeout;
+  install() {
+    Date.now = () => this.now;
+    window.setTimeout = ((callback: () => void, delay = 0) => {
+      const id = ++this.nextId; this.timers.set(id, { at: this.now + delay, callback }); return id;
+    }) as typeof window.setTimeout;
+    window.clearTimeout = id => { this.timers.delete(id); };
+  }
+  async advance(ms: number) {
+    const target = this.now + ms;
+    for (;;) {
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      const next = [...this.timers].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      this.now = next[1].at; this.timers.delete(next[0]); next[1].callback();
+    }
+    this.now = target;
+    for (let i = 0; i < 100; i++) await Promise.resolve();
+  }
+  restore() { window.setTimeout = this.originalSet; window.clearTimeout = this.originalClear; Date.now = this.originalNow; }
 }
 
 export async function runProjectionSaveFailureTests(): Promise<void> {
