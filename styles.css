@@ -23242,6 +23242,10 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-knowledge-module-page .echoink-settings-navigation-row { min-width: 0; }
 .echoink-knowledge-module-page .echoink-settings-navigation-title,
 .echoink-knowledge-module-page .echoink-settings-navigation-value { overflow-wrap: anywhere; }
+.echoink-settings-aligned .echoink-knowledge-save-location [data-slot=select-trigger] { width: 230px; }
+/* Knowledge uses a single Lucide circle, without the legacy help-button circle. */
+.echoink-settings-demo button.echoink-knowledge-help-trigger.echoink-origin-control[data-slot=button] { width: 14px !important; min-width: 14px; height: 14px !important; min-height: 14px !important; padding: 0 !important; border: 0; }
+.echoink-settings-demo button.echoink-knowledge-help-trigger > svg { width: 14px; height: 14px; }
 .echoink-knowledge-sources-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .echoink-knowledge-sources-heading h3 { margin: 0; }
 .echoink-knowledge-source { display: grid; grid-template-columns: minmax(0, 1fr) 204px 30px; align-items: center; gap: 8px 12px; padding: 12px 0; }
@@ -23251,6 +23255,7 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-knowledge-init-impact { flex: 1 1 240px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .echoink-knowledge-module-page details { margin-top: 12px; overflow-wrap: anywhere; }
 @container settings (max-width: 520px) {
+  .echoink-settings-aligned .echoink-knowledge-save-location [data-slot=select-trigger] { width: 100%; }
   .echoink-knowledge-source { grid-template-columns: minmax(0, 1fr) 30px; }
   .echoink-knowledge-source-path { grid-column: 1; grid-row: 1; }
   .echoink-knowledge-source-permission { grid-column: 1; grid-row: 2; }
@@ -23999,6 +24004,16 @@ body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-ma
   .echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta { flex-wrap: wrap; }
   .echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state { flex-basis: auto; }
 }
+
+/* Desktop read-only navigation summaries yield space to the complete setting name. */
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary > .echoink-settings-navigation-copy { flex: 1 1 0%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary > .echoink-settings-navigation-trailing { display: flex; flex: 0 1 auto; flex-flow: row nowrap; gap: 8px; min-width: 0; max-width: 50%; margin-left: auto; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary .echoink-settings-navigation-value { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary :is(.echoink-settings-navigation-value-suffix, .echoink-settings-navigation-action, .echoink-settings-navigation-icon) { flex: none; white-space: nowrap; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-value-suffix { color: var(--secondary); font-size: 12px; font-weight: 400; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help { display: inline-flex; flex: none; align-items: center; color: var(--secondary); border-radius: 3px; cursor: help; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help > svg { width: 13px; height: 13px; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help:focus-visible { outline: none; box-shadow: none; background: var(--soft); }
 /* Settings-only form composition. Shared controllers keep their original lifecycle. */
 .echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-options {
   display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0;
@@ -24218,6 +24233,7 @@ body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-ma
 .echoink-settings-demo.echoink-settings-aligned .echoink-desktop-modules > .echoink-module-group > .echoink-module-drawer.echoink-settings-section {
   margin: 0 0 10px;
   padding: 0;
+  gap: 0;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--bg);
@@ -24241,6 +24257,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content :is(.echoink-settings-section, .echoink-settings-group, .echoink-life-settings-page) {
   margin: 0;
   padding: 0;
+  gap: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -24331,7 +24348,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   border-radius: 10px;
   overflow: hidden;
 }
-.echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section { margin: 0 0 26px; padding: 0; border: 0; }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section { margin: 0 0 26px; padding: 0; gap: 0; border: 0; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section-header { padding: 0; margin: 0 0 10px; }
 .echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source { display: grid; min-height: 52px; padding: 13px 18px; border-top: 1px solid var(--line); }
 .echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source:first-child { border-top: 0; }
@@ -24521,6 +24538,9 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-navigation-help { display: inline-flex; margin-left: 4px; vertical-align: middle; color: var(--secondary); }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-navigation-help svg { width: 13px; height: 13px; }
+/* Read-only module locations share the desktop summary boundary, not editable fields. */
+body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink-module-path-value { min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink-module-path-value:focus-visible { outline: none; box-shadow: none; background: var(--soft); }
 
 /* Boolean controls lead their copy. Switches keep their original trailing slot. */
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {

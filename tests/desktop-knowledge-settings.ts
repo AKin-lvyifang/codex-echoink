@@ -134,6 +134,8 @@ try {
     export { registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "./src/knowledge-base/root-paths";
     export { nativeJournalFixture } from "./src/tests/native-journal-fixture";
     export { disposeOriginControls } from "./src/settings/origin-controls";
+    export { createSettingsNavigationRow, attachSettingsTooltip } from "./src/settings/settings-v2";
+    export { runKnowledgeFolderActionsTests } from "./src/tests/knowledge-folder-actions";
   `, resolveDir: root, loader: "ts" }, outfile: output, bundle: true, platform: "node", target: "node22", format: "esm",
     banner: { js: `import {createRequire as knowledgeUiRequire} from "node:module"; const require = knowledgeUiRequire(${JSON.stringify(path.join(root, "package.json"))});` },
     loader: { ".md": "text", ".txt": "text", ".svg": "dataurl", ".webp": "dataurl" },
@@ -144,6 +146,143 @@ try {
     } }], logLevel: "silent"
   });
   runtime = await import(pathToFileURL(output).href); runtime.Platform.isDesktopApp = true;
+
+  await run("desktop navigation exposes complete clipped values without replacing activation", async () => {
+    const host = document.createElement("div"); host.className = "echoink-settings-demo echoink-settings-aligned"; document.body.appendChild(host);
+    let activations = 0;
+    try {
+      const full = "项目/个人知识管理/EchoInk/资料与设计/长期研究";
+      const row = runtime.createSettingsNavigationRow(host, { title: "完整设置名称", value: full, onActivate: () => { activations++; } });
+      const value = row.querySelector(".echoink-settings-navigation-value")!;
+      Object.defineProperties(value, { scrollWidth: { configurable: true, value: 300 }, clientWidth: { configurable: true, value: 100 } });
+      assert.equal(row.getAttribute("aria-label"), `完整设置名称，${full}，进入`);
+      assert.equal(row.hasAttribute("aria-describedby"), false, "the complete accessible label does not repeat the tooltip as a description");
+      row.focus();
+      assert.equal(host.querySelector('[role="tooltip"]:not([hidden])')?.textContent, full);
+      assert.equal(row.querySelector('[role="tooltip"]'), null, "visible tooltip content stays outside the button label");
+      row.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      assert.equal(host.querySelector('[role="tooltip"]:not([hidden])'), null);
+      row.dispatchEvent(new win.MouseEvent("mouseenter"));
+      assert.equal(host.querySelector('[role="tooltip"]:not([hidden])')?.textContent, full);
+      row.dispatchEvent(new win.MouseEvent("mouseleave"));
+      assert.equal(host.querySelector('[role="tooltip"]:not([hidden])'), null);
+      row.click(); row.dispatchEvent(new win.MouseEvent("click", { bubbles: true, detail: 0 }));
+      assert.equal(activations, 2, "pointer and keyboard-style activation still navigate exactly once");
+    } finally { runtime.disposeOriginControls(host); host.remove(); }
+  });
+
+  await run("short summaries preserve existing help and mobile navigation behavior", async () => {
+    const host = document.createElement("div"); host.className = "echoink-settings-demo echoink-settings-aligned"; document.body.appendChild(host);
+    let activations = 0;
+    try {
+      const row = runtime.createSettingsNavigationRow(host, { title: "已归档会话", value: "23", onActivate: () => { activations++; } });
+      row.focus(); assert.equal(host.querySelector('[role="tooltip"]:not([hidden])'), null, "a fitting short value has no summary bubble");
+      const help = row.querySelector(".echoink-settings-navigation-title")!.createSpan({ cls: "echoink-settings-help", attr: { "aria-hidden": "true" } });
+      const activate = row.onclick; runtime.attachSettingsTooltip(row, "删除后无法恢复", help); row.onclick = activate;
+      row.blur(); row.focus();
+      assert.equal(document.getElementById(row.getAttribute("aria-describedby")!)?.textContent, "删除后无法恢复");
+      row.click(); assert.equal(activations, 1);
+      row.blur();
+      runtime.Platform.isDesktopApp = false;
+      const mobile = runtime.createSettingsNavigationRow(host, { title: "移动端设置", value: "完整移动摘要", valueDescription: "完整移动摘要及原值", onActivate() {} });
+      assert.equal(mobile.classList.contains("has-value-summary"), false);
+      assert.equal(mobile.getAttribute("aria-label"), "移动端设置，进入");
+      assert.equal(mobile.querySelector('[role="tooltip"]'), null);
+    } finally { runtime.Platform.isDesktopApp = true; runtime.disposeOriginControls(host); host.remove(); }
+  });
+
+  await run("purpose summaries keep the total visible and detail paths complete", async () => {
+    const f = await fixture("purpose-summary");
+    try {
+      const first = "项目/个人知识管理产品/EchoInk/设计资料与竞品研究/需要完整保留的长目录名称";
+      await f.write(`${first}/保留.md`, "合成长路径资料");
+      Object.assign(f.plugin.settings.knowledgeBase.folderBindings.roles.raw, { readPaths: [first, "资料甲", "资料乙"], writePath: "资料乙" });
+      f.redraw();
+      const row = f.host.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:directory:raw"]')!;
+      assert.equal(row.querySelector(".echoink-settings-navigation-value")?.textContent, first);
+      assert.equal(row.querySelector(".echoink-settings-navigation-value-suffix")?.textContent, "等 3 个");
+      assert.equal(row.getAttribute("aria-label"), `资料来源，${first}、资料甲、资料乙，进入`);
+      row.focus();
+      assert.equal(f.host.querySelector('[role="tooltip"]:not([hidden])')?.textContent, `${first}、资料甲、资料乙`);
+      row.click();
+      assert.equal(f.host.querySelector(".echoink-knowledge-source-path")?.textContent, first, "detail path is not shortened by summary generation");
+      assert.equal(f.host.querySelectorAll(".echoink-knowledge-source").length, 3);
+      assert.deepEqual([f.calls.saves, f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0, 0]);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("purpose help and actions match the confirmed rows without intercepting navigation", async () => {
+    const f = await fixture("purpose-actions");
+    try {
+      f.plugin.settings.knowledgeBase.folderBindings.roles.inbox.enabled = false;
+      f.redraw();
+      const purpose = (role: string) => f.host.querySelector<HTMLButtonElement>(`[data-echoink-focus-key="knowledge:directory:${role}"]`)!;
+      const raw = purpose("raw"), wiki = purpose("wiki"), inbox = purpose("inbox");
+      assert(raw.querySelector(".echoink-settings-navigation-icon"));
+      assert.equal(wiki.querySelector(".echoink-settings-navigation-action")?.textContent, "更改");
+      assert.equal(wiki.querySelector(".echoink-settings-navigation-icon"), null);
+      assert.equal(inbox.querySelector(".echoink-settings-navigation-value")?.textContent, "未启用");
+      assert.equal(inbox.querySelector(".echoink-settings-navigation-action")?.textContent, "选择");
+      assert.equal(inbox.querySelector(".echoink-settings-navigation-icon"), null);
+      assert.equal(raw.querySelector(".echoink-knowledge-purpose-commands")?.textContent, "/ask /maintain 召回");
+      assert.equal(inbox.querySelector(".echoink-knowledge-purpose-commands")?.textContent, "召回");
+      const help = raw.querySelector<HTMLElement>(".echoink-settings-navigation-help")!;
+      assert.equal(help.getAttribute("tabindex"), "0");
+      assert.equal(raw.querySelector("button"), null, "purpose help never nests another button");
+      raw.dispatchEvent(new win.MouseEvent("mouseenter"));
+      help.dispatchEvent(new win.MouseEvent("mouseenter"));
+      assert.equal(f.host.querySelectorAll('[role="tooltip"]:not([hidden])').length, 1, "purpose explanation replaces the visible summary bubble");
+      help.focus();
+      assert.equal(document.activeElement, help);
+      assert.equal(document.getElementById(help.getAttribute("aria-describedby")!)?.textContent, "保存原始收藏和材料，网页、公众号、PDF 都放这里");
+      help.click();
+      for (const key of ["Enter", " "]) help.dispatchEvent(new win.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      assert.equal(f.view.isDetail, false, "pointer and keyboard help do not navigate");
+      help.blur(); raw.click();
+      assert.equal(f.view.isDetail, true, "the surrounding row still navigates");
+      assert.equal(f.calls.saves, 0);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("invalid enabled purpose retains an untruncated failure marker", async () => {
+    const f = await fixture("purpose-invalid");
+    try {
+      const missing = "不存在的项目/必须完整保留在详情中的目录名称";
+      Object.assign(f.plugin.settings.knowledgeBase.folderBindings.roles.projects, { enabled: true, readPaths: [missing], writePath: missing });
+      f.redraw();
+      const row = f.host.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:directory:projects"]')!;
+      assert.equal(row.querySelector(".echoink-settings-navigation-value")?.textContent, missing);
+      assert(row.querySelector(".echoink-settings-navigation-value-suffix")?.textContent?.includes("原目录已失效"));
+      assert(!row.textContent?.includes("未启用"));
+      assert.equal(row.querySelector(".echoink-settings-navigation-action")?.textContent, "更改");
+      assert.equal(f.calls.saves, 0);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("refinement summary reads real default and customized states", async () => {
+    const f = await fixture("preference-summary");
+    try {
+      let state = "custom", fails = false;
+      f.plugin.getEchoInkKnowledgeMaintenancePreferenceState = async () => { if (fails) throw new Error("合成读取失败"); return { state }; };
+      const row = () => f.host.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:preferences"]')!;
+      f.redraw(); await settle();
+      assert.equal(row().querySelector(".echoink-settings-navigation-description")?.textContent, "关注维度、颗粒度、组织方式");
+      assert.equal(row().querySelector(".echoink-settings-navigation-value")?.textContent, "已自定义");
+      assert(row().getAttribute("aria-label")?.includes("已自定义"));
+      state = "default"; f.redraw(); await settle();
+      assert.equal(row().querySelector(".echoink-settings-navigation-value")?.textContent, "使用默认");
+      fails = true; f.redraw(); await settle();
+      assert(row().querySelector(".echoink-settings-navigation-description")?.textContent?.includes("知识提炼偏好读取失败"));
+      assert.equal(row().querySelector(".echoink-settings-navigation-value"), null);
+      assert.equal(f.calls.saves, 0);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("folder management keeps confirmed order and live restore summaries", async () => {
+    const host = document.createElement("div"); host.className = "echoink-settings-demo echoink-settings-aligned"; document.body.appendChild(host);
+    try { await runtime.runKnowledgeFolderActionsTests(host, win); }
+    finally { runtime.disposeOriginControls(host); host.remove(); }
+  });
 
   await run("confirmation is the first mutation and existing mode retains legacy scopes", async () => {
     const f = await fixture("existing");

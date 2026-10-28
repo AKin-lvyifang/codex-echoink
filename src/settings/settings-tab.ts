@@ -1486,7 +1486,15 @@ export class CodexSettingTab extends PluginSettingTab {
     const page = createSettingsPage(container, { title: zh ? "模块" : "Modules", titleVisibility: "screen-reader" });
     this.desktopModuleCleanup = mountDesktopModuleSettings(page, {
       plugin: this.plugin, expanded: this.desktopModuleExpanded,
-      summary: module => module === "knowledge" ? zh ? `${this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0} 个资料来源` : `${this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0} source folders` : module === "journal" ? readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder : module === "review" ? this.plugin.settings.review.outputDir : module === "todo" ? TODO_SOURCE_PATH : module === "finance" ? this.plugin.lifestyle.finance.ledger.paths().root : module === "english" ? this.plugin.settings.englishDiary.englishDirectory : module === "pdf" ? this.plugin.settings.pdfReading.engine === "mineru" ? "MinerU" : zh ? "本地文字提取" : "Local text extraction" : "",
+      summary: module => {
+        if (module === "knowledge") {
+          const count = this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0;
+          const registry = this.plugin.settings.agentRegistry;
+          const owner = registry?.agents.find(agent => agent.id === registry.moduleOwners["knowledge-base"]) ?? registry?.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID);
+          return zh ? `资料来源 ${count} 个 · 负责人 ${owner?.name || "未分配"}` : `${count} source folders · Owner ${owner?.name || "Unassigned"}`;
+        }
+        return module === "journal" ? readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder : module === "review" ? this.plugin.settings.review.outputDir : module === "todo" ? TODO_SOURCE_PATH : module === "finance" ? this.plugin.lifestyle.finance.ledger.paths().root : module === "english" ? this.plugin.settings.englishDiary.englishDirectory : module === "pdf" ? this.plugin.settings.pdfReading.engine === "mineru" ? "MinerU" : zh ? "本地文字提取" : "Local text extraction" : "";
+      },
       onProBenefits: () => { this.openDesktopRoute({ tab: "account", focus: "account:benefits" }); },
       renderContent: (module, parent) => {
         try {

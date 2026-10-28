@@ -12,6 +12,7 @@
 .echoink-settings-demo.echoink-settings-aligned .echoink-desktop-modules > .echoink-module-group > .echoink-module-drawer.echoink-settings-section {
   margin: 0 0 10px;
   padding: 0;
+  gap: 0;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--bg);
@@ -35,6 +36,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content :is(.echoink-settings-section, .echoink-settings-group, .echoink-life-settings-page) {
   margin: 0;
   padding: 0;
+  gap: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -125,7 +127,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   border-radius: 10px;
   overflow: hidden;
 }
-.echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section { margin: 0 0 26px; padding: 0; border: 0; }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section { margin: 0 0 26px; padding: 0; gap: 0; border: 0; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section-header { padding: 0; margin: 0 0 10px; }
 .echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source { display: grid; min-height: 52px; padding: 13px 18px; border-top: 1px solid var(--line); }
 .echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source:first-child { border-top: 0; }
@@ -315,6 +317,9 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-navigation-help { display: inline-flex; margin-left: 4px; vertical-align: middle; color: var(--secondary); }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-navigation-help svg { width: 13px; height: 13px; }
+/* Read-only module locations share the desktop summary boundary, not editable fields. */
+body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink-module-path-value { min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink-module-path-value:focus-visible { outline: none; box-shadow: none; background: var(--soft); }
 
 /* Boolean controls lead their copy. Switches keep their original trailing slot. */
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {

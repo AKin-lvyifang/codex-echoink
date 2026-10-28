@@ -188,3 +188,13 @@ body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-ma
   .echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta { flex-wrap: wrap; }
   .echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state { flex-basis: auto; }
 }
+
+/* Desktop read-only navigation summaries yield space to the complete setting name. */
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary > .echoink-settings-navigation-copy { flex: 1 1 0%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary > .echoink-settings-navigation-trailing { display: flex; flex: 0 1 auto; flex-flow: row nowrap; gap: 8px; min-width: 0; max-width: 50%; margin-left: auto; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary .echoink-settings-navigation-value { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary :is(.echoink-settings-navigation-value-suffix, .echoink-settings-navigation-action, .echoink-settings-navigation-icon) { flex: none; white-space: nowrap; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-value-suffix { color: var(--secondary); font-size: 12px; font-weight: 400; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help { display: inline-flex; flex: none; align-items: center; color: var(--secondary); border-radius: 3px; cursor: help; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help > svg { width: 13px; height: 13px; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help:focus-visible { outline: none; box-shadow: none; background: var(--soft); }

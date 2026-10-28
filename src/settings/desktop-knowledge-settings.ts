@@ -7,12 +7,18 @@ import { readNativeJournalSettings } from "../home/native-journal";
 import { TODO_SOURCE_PATH } from "../home/todo-store";
 import { OriginSetting } from "./origin-setting";
 import { createOriginButton, createOriginInput, createOriginCheck, createOriginSelect, disposeOriginControls } from "./origin-controls";
-import { createSettingsPage, createSettingsNavigationRow, createSettingsSection, attachSettingsTooltip, showSettingsInlineConfirmation } from "./settings-v2";
+import { createSettingsPage, createSettingsNavigationRow, replaceSettingsNavigationRow, createSettingsSection, attachSettingsTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { applyDeleteButton } from "./amicro-buttons";
 
 type Role = "raw" | "wiki" | "projects" | "inbox";
 const titles: Record<Role, string> = { raw: "资料来源", wiki: "知识成果", projects: "项目", inbox: "收件箱" };
+const purposeExplanations: Record<Role, string> = {
+  raw: "保存原始收藏和材料，网页、公众号、PDF 都放这里",
+  wiki: "保存提炼后的主题知识；固定为一个一级文件夹，Agent 在里面按主题建分类",
+  projects: "保存项目型知识",
+  inbox: "保存临时笔记"
+};
 type Page = "sources" | "role" | "initialize" | "picker" | null;
 
 /** Desktop presentation only. All writes use the existing directory service. */
@@ -60,7 +66,7 @@ export class DesktopKnowledgeSettings {
   suspend(): void { this.events.splice(0).forEach(ref => this.plugin.app.vault.offref(ref)); this.host = null; }
   dispose(): void { this.suspend(); }
   private help(parent: HTMLElement, hint: string): void {
-    const help = createOriginButton(parent, { cls: "is-icon echoink-settings-help-trigger", attr: { "aria-label": hint } });
+    const help = createOriginButton(parent, { cls: "is-icon echoink-settings-help-trigger echoink-knowledge-help-trigger", attr: { "aria-label": hint } });
     setIcon(help, "circle-alert"); attachSettingsTooltip(help, hint);
   }
   private checkbox(parent: HTMLElement, title: string, checked: boolean, hint: string, save: (value: boolean) => Promise<void>, description?: string): OriginSetting {
@@ -84,9 +90,12 @@ export class DesktopKnowledgeSettings {
     for (const role of ["raw", "wiki", "projects", "inbox"] as const) {
       const binding = bindings.roles[role];
       const invalid = binding.readPaths.some(path => !(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder));
-      const row = createSettingsNavigationRow(folders, { title: titles[role], value: binding.enabled && binding.readPaths.length ? `${binding.readPaths.join("、")}${invalid ? " · 原目录已失效" : ""}` : "未配置", focusKey: `knowledge:directory:${role}`, onActivate: () => role === "raw" ? this.change("sources") : this.openRole(role) });
+      const configured = binding.enabled && binding.readPaths.length > 0;
+      const status = invalid ? " · 原目录已失效" : "";
+      const suffix = `${binding.readPaths.length > 1 ? `等 ${binding.readPaths.length} 个` : ""}${status}`.trim();
+      const row = createSettingsNavigationRow(folders, { title: titles[role], value: configured ? binding.readPaths[0] : binding.enabled ? "未配置" : "未启用", valueSuffix: configured && suffix ? suffix : undefined, valueDescription: configured ? `${binding.readPaths.join("、")}${status}` : undefined, explanation: purposeExplanations[role], actionLabel: configured && role === "raw" ? undefined : configured ? "更改" : "选择", showChevron: configured && role === "raw", focusKey: `knowledge:directory:${role}`, onActivate: () => role === "raw" ? this.change("sources") : this.openRole(role) });
       row.addClass("echoink-knowledge-purpose-row");
-      row.querySelector<HTMLElement>(".echoink-settings-navigation-title")?.createSpan({ cls: "echoink-knowledge-purpose-commands", text: role === "inbox" ? "召回" : "/ask · /maintain · 召回" });
+      row.querySelector<HTMLElement>(".echoink-settings-navigation-title")?.createSpan({ cls: "echoink-knowledge-purpose-commands", text: role === "inbox" ? "召回" : "/ask /maintain 召回" });
     }
     const targets = createSettingsSection(parent, { title: "收藏保存到", surface: "flat" });
     for (const [key, title] of [["web", "网页"], ["wechat", "公众号文章"]] as const) {
@@ -99,16 +108,25 @@ export class DesktopKnowledgeSettings {
         void this.save(next).then(() => this.navigation.redraw()).catch(() => { select.element.value = knowledgeCollectionDirectory(bindings, key) ?? ""; this.navigation.redraw(); }); };
     }
     const permissions = createSettingsSection(parent, { title: "Agent 权限", surface: "flat" });
-    this.checkbox(permissions, "允许 Agent 新建子文件夹", bindings.allowAgentSubfolders === true, "只允许在获准的知识成果和项目中创建子文件夹，不授予移动或删除权限。", async value => { const next = this.bindings(); next.allowAgentSubfolders = value; await this.save(next); }, "在知识成果、项目里按主题新建分类文件夹；只新建，不移动、不删除。");
+    this.checkbox(permissions, "允许 Agent 新建子文件夹", bindings.allowAgentSubfolders === true, "只允许在获准的知识成果和项目中创建子文件夹，不授予移动或删除权限。", async value => { const next = this.bindings(); next.allowAgentSubfolders = value; await this.save(next); }, "在知识成果、项目里按主题自动建分类；只新建，不删除、不搬动已有文件夹");
     this.checkbox(permissions, "自动补链", this.plugin.settings.knowledgeBase.autoLinkEnabled !== false, "新知识写入后自动补全双链。关闭后不再发起自动补链，已开始的写入会完成；仍可手动补全。", async value => {
       const previous = this.plugin.settings.knowledgeBase.autoLinkEnabled; this.plugin.settings.knowledgeBase.autoLinkEnabled = value;
       try { await this.plugin.saveSettings(true); } catch (error) { this.plugin.settings.knowledgeBase.autoLinkEnabled = previous; throw error; }
-    }, "新知识写入后，给本批笔记和相关老笔记补双链。");
-    createSettingsNavigationRow(permissions, { title: "知识提炼偏好", focusKey: "knowledge:preferences", onActivate: () => this.navigation.openPreferences() });
-    createSettingsNavigationRow(permissions, { title: "知识关联", onActivate: () => this.navigation.openLinking() });
+    }, "新知识写入后，给本批笔记和相关老笔记补双链");
+    const preferenceDescription = "关注维度、颗粒度、组织方式";
+    const preferenceOptions = { title: "知识提炼偏好", focusKey: "knowledge:preferences", onActivate: () => this.navigation.openPreferences() };
+    let preference = createSettingsNavigationRow(permissions, { ...preferenceOptions, description: `${preferenceDescription} · 正在读取偏好…` });
+    const showPreference = (value?: string, error?: string) => {
+      preference = replaceSettingsNavigationRow(preference, { ...preferenceOptions, description: error ? `${preferenceDescription} · ${error}` : preferenceDescription, value });
+    };
+    if (typeof this.plugin.getEchoInkKnowledgeMaintenancePreferenceState === "function") {
+      void this.plugin.getEchoInkKnowledgeMaintenancePreferenceState().then(state => { showPreference(state.state === "custom" ? "已自定义" : "使用默认"); })
+        .catch(() => { showPreference(undefined, "知识提炼偏好读取失败"); });
+    } else showPreference(undefined, "知识提炼偏好状态暂不可用");
+    createSettingsNavigationRow(permissions, { title: "知识关联", description: "上次关联结果、应用范围", onActivate: () => this.navigation.openLinking() });
     const service = this.plugin.getKnowledgeSurfaceService();
     if (service) renderKnowledgeFolderActions(parent, service, this.plugin.settings.settingsLanguage, async () => this.navigation.redraw(), group => {
-      createSettingsNavigationRow(group, { title: bindings.configured ? "重新初始化" : "初始化文件夹", focusKey: "knowledge:onboarding", onActivate: () => { this.reset(); this.change("initialize"); } });
+      createSettingsNavigationRow(group, { title: bindings.configured ? "重新初始化" : "初始化文件夹", description: "重新一次设好所有模块的文件夹", focusKey: "knowledge:onboarding", onActivate: () => { this.reset(); this.change("initialize"); } });
     }, editor => this.navigation.openEditor(editor));
     if (this.error) parent.createDiv({ cls: "settings-error", text: this.error, attr: { role: "alert" } });
   }

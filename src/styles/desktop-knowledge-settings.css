@@ -4,6 +4,10 @@
 .echoink-knowledge-module-page .echoink-settings-navigation-row { min-width: 0; }
 .echoink-knowledge-module-page .echoink-settings-navigation-title,
 .echoink-knowledge-module-page .echoink-settings-navigation-value { overflow-wrap: anywhere; }
+.echoink-settings-aligned .echoink-knowledge-save-location [data-slot=select-trigger] { width: 230px; }
+/* Knowledge uses a single Lucide circle, without the legacy help-button circle. */
+.echoink-settings-demo button.echoink-knowledge-help-trigger.echoink-origin-control[data-slot=button] { width: 14px !important; min-width: 14px; height: 14px !important; min-height: 14px !important; padding: 0 !important; border: 0; }
+.echoink-settings-demo button.echoink-knowledge-help-trigger > svg { width: 14px; height: 14px; }
 .echoink-knowledge-sources-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .echoink-knowledge-sources-heading h3 { margin: 0; }
 .echoink-knowledge-source { display: grid; grid-template-columns: minmax(0, 1fr) 204px 30px; align-items: center; gap: 8px 12px; padding: 12px 0; }
@@ -13,6 +17,7 @@
 .echoink-knowledge-init-impact { flex: 1 1 240px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .echoink-knowledge-module-page details { margin-top: 12px; overflow-wrap: anywhere; }
 @container settings (max-width: 520px) {
+  .echoink-settings-aligned .echoink-knowledge-save-location [data-slot=select-trigger] { width: 100%; }
   .echoink-knowledge-source { grid-template-columns: minmax(0, 1fr) 30px; }
   .echoink-knowledge-source-path { grid-column: 1; grid-row: 1; }
   .echoink-knowledge-source-permission { grid-column: 1; grid-row: 2; }

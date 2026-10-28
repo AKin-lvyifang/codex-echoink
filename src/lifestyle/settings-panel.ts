@@ -39,7 +39,10 @@ export class LifestyleSettingsPanel {
     if (this.embedded) {
       const location = page.createDiv({ cls: "echoink-life-setting-row echoink-finance-root-location" });
       location.createEl("strong", { text: "保存位置" });
-      location.createSpan({ cls: "echoink-module-path-value", text: this.plugin.lifestyle.finance.ledger.paths().root });
+      const path = this.plugin.lifestyle.finance.ledger.paths().root;
+      const value = location.createSpan({ cls: "echoink-module-path-value", text: path, attr: { tabindex: "0", "aria-label": path } });
+      attachSettingsTooltip(value, path, value, { interactive: false, describeTrigger: false,
+        shouldShow: () => value.scrollWidth > value.clientWidth });
     }
     const analysis = this.toggle(page, "AI 分析", "默认关闭；仅在开启后显示分析模块，关闭模型不影响记账和预算。", settings.aiEnabled, async (value) => {
       await this.plugin.lifestyle.finance.saveOption("aiEnabled", value);
