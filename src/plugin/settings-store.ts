@@ -15,9 +15,7 @@ import {
   sanitizeCredentialSettingsForDataSave,
   type ChatMessage,
   type ApiProviderConfig,
-  type CodexForObsidianSettings,
-  type KnowledgeBaseSettings,
-  type StoredSession
+  type CodexForObsidianSettings
 } from "../settings/settings";
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { ResourceMutationError } from "./resource-mutation-authority";

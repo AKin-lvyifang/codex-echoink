@@ -76,7 +76,7 @@ export class EchoInkMcpBrokerError extends Error {
 }
 
 export function mcpBrokerConnectionConfig(resource: EchoInkResource): EchoInkMcpConnectionConfig | null {
-  return resolveMcpConnectionConfig(resource, { mcpConnections: {} } as any);
+  return resolveMcpConnectionConfig(resource, { mcpConnections: {} });
 }
 
 export function isMcpBrokerConnectable(resource: EchoInkResource, connections?: EchoInkMcpConnectionRecords): boolean {
@@ -96,7 +96,7 @@ export class EchoInkMcpBroker {
     timeoutMs = 30000,
     signal?: AbortSignal
   ): Promise<EchoInkMcpToolListResult> {
-    const publicConfig = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} } as any);
+    const publicConfig = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} });
     if (!publicConfig) throw brokerError("connection_failed", "MCP 资源没有 EchoInk broker 连接配置。");
     const config = await this.resolveRuntimeConfig(resource, publicConfig);
     throwIfMcpAborted(signal);
@@ -128,7 +128,7 @@ export class EchoInkMcpBroker {
   }
 
   async callTool(invocation: EchoInkMcpBrokerInvocation): Promise<EchoInkMcpBrokerResult> {
-    const publicConfig = resolveMcpConnectionConfig(invocation.resource, { mcpConnections: this.options.connections ?? {} } as any);
+    const publicConfig = resolveMcpConnectionConfig(invocation.resource, { mcpConnections: this.options.connections ?? {} });
     if (!publicConfig) {
       throw brokerError("connection_failed", "MCP 资源没有 EchoInk broker 连接配置。");
     }

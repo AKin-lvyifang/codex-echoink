@@ -5,7 +5,7 @@ import { extractMachineSourceMarkers } from "./knowledge-maintenance-protocol";
 import { createHash } from "node:crypto";
 import type { PiKnowledgeMaintenanceToolInput, PiKnowledgeMaintenanceToolResult } from "../harness/pi-native/contracts";
 import type { KnowledgeMaintenanceRecord } from "./maintenance-record";
-import type { MaintenanceP1State, MaintenanceSectionSnapshot, MaintenanceSourceFields, MaintenanceWritingItem } from "./maintenance-p1-contract";
+import type { MaintenanceSourceFields, MaintenanceWritingItem } from "./maintenance-p1-contract";
 import { createKnowledgeMaintenanceResultEnvelope, knowledgeMaintenanceNoteFromReadback } from "./knowledge-maintenance-result";
 import { createMaintenanceSectionSnapshot, applyMaintenanceSectionPatches, appendMaintenanceBlock, appendMaintenanceManagedBlock, assertMaintenanceQuoteSectionsPreserved } from "./maintenance-section-patch";
 import { appendMaintenanceAliases, maintenancePageTitle } from "./maintenance-page-metadata";

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "eslint-plugin-obsidianmd production errors",
-  "total": 87,
+  "total": 70,
   "findings": [
     {
       "fingerprint": "49628d8f6b19808170eb33b4a9a7cc96df337aa64d89105450653bfaa3e10b9a",
@@ -10,15 +10,6 @@
       "severity": 2,
       "message": "'(kind as { type?: unknown }).type ?? \"\"' will use Object's default stringification format ('[object Object]') when stringified.",
       "context": "const type = String((kind as { type?: unknown }).type ?? \"\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "2914c26c6e16297a7d50d0daf59b70b10fc787f2693fe5f4e79a8d438f31cd25",
-      "path": "src/core/electron.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since it does not change the type of the expression.",
-      "context": "const electronRequire = (window as typeof window & { require?: ElectronRequire }).require",
       "count": 1
     },
     {
@@ -211,24 +202,6 @@
       "count": 1
     },
     {
-      "fingerprint": "6fb4895a724101756bfd68c09ece520424ca13e0c459737d53a222e5df69fa2c",
-      "path": "src/core/workspace-resources.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
-      "context": "next.mcpServers = data as McpServerStatus[];",
-      "count": 1
-    },
-    {
-      "fingerprint": "fc2cbb0a9d69c346cc69abe292eeefab7a2d908b69a3d6ab37b3738631812108",
-      "path": "src/core/workspace-resources.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
-      "context": "else if (kind === \"mcp\") next.mcp = entry as WorkspaceResourceCache[\"mcp\"];",
-      "count": 1
-    },
-    {
       "fingerprint": "f7db608586849d23283bbd943ebd8d071aacf59f33876eea9a95c5b32741fd10",
       "path": "src/harness/pi-native/domain-receipt-store.ts",
       "rule": "@typescript-eslint/no-base-to-string",
@@ -247,48 +220,12 @@
       "count": 1
     },
     {
-      "fingerprint": "e72aade7a7e737c7a15e368b7c5de39017e695203d324db543d513b4fcd08fb3",
-      "path": "src/harness/resources/skill-loader.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since it does not change the type of the expression.",
-      "context": "(data[key] as string) = value;",
-      "count": 1
-    },
-    {
       "fingerprint": "ba35adf8d72858112f5a5be10e683573e64ebb8b3cba4d2a4459dbe17d6e5354",
       "path": "src/harness/resources/vault-store.ts",
       "rule": "@typescript-eslint/no-base-to-string",
       "severity": 2,
       "message": "'binding.ref ?? \"\"' will use Object's default stringification format ('[object Object]') when stringified.",
       "context": "const ref = parseResourceUri(String(binding.ref ?? \"\"));",
-      "count": 1
-    },
-    {
-      "fingerprint": "6c622ac3a8b421c75b010d8e45b348f8f98b44f8a0173bc07ba8e74cefb1b3ef",
-      "path": "src/knowledge-base/digest-evidence.ts",
-      "rule": "no-useless-escape",
-      "severity": 2,
-      "message": "Unnecessary escape character: \\[.",
-      "context": ".replace(/[*_`>#\\[\\]()（）:：，。,.!！?？\\s|\\-]/g, \"\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "fad688221dfbf7162a60dea9f695a8a5a0deeb0a146670449cad65c89a3898f4",
-      "path": "src/knowledge-base/digest-evidence.ts",
-      "rule": "no-useless-escape",
-      "severity": 2,
-      "message": "Unnecessary escape character: \\-.",
-      "context": ".replace(/[*_`>#\\[\\]()（）:：，。,.!！?？\\s|\\-]/g, \"\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "81b50866e6f4722ba7d923d17148e284f04eae00f347583ffc84bf37879adab5",
-      "path": "src/knowledge-base/web-capture.ts",
-      "rule": "no-useless-escape",
-      "severity": 2,
-      "message": "Unnecessary escape character: \\[.",
-      "context": "return cleanInlineText(value).replace(/[\\\\/:*?\"<>|#\\[\\]]/g, \" \").replace(/\\s+/g, \" \").trim().slice(0, 80) || \"未命名资料\";",
       "count": 1
     },
     {
@@ -301,66 +238,12 @@
       "count": 1
     },
     {
-      "fingerprint": "237c6fe7ec5ad56b3f42dae0024fcca1177c166067e8a7a6818a2fd058ed7602",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
-      "context": "const publicConfig = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} } as any);",
-      "count": 1
-    },
-    {
-      "fingerprint": "8866761b804eaa14959c8203798201664605bb9c23df4001d8687058e424fee4",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
-      "context": "return resolveMcpConnectionConfig(resource, { mcpConnections: {} } as any);",
-      "count": 1
-    },
-    {
-      "fingerprint": "8908a5f8a8e9fa7ee2510ea6a6ace7305cb4dd4b420b6817a64ead0fbc31427d",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
-      "context": "const publicConfig = resolveMcpConnectionConfig(invocation.resource, { mcpConnections: this.options.connections ?? {} } as any);",
-      "count": 1
-    },
-    {
       "fingerprint": "158dae0f7dd31b96c8e12eb2d43113c99d9276a3da7c9a9f62b945099f88b8b1",
       "path": "src/resources/mcp-broker.ts",
       "rule": "@typescript-eslint/no-unsafe-argument",
       "severity": 2,
       "message": "Unsafe argument of type `any` assigned to a parameter of type `Pick<EchoInkResourceSettings, \"mcpConnections\"> | null | undefined`.",
       "context": "return Boolean(resolveMcpConnectionConfig(resource, { mcpConnections: connections ?? {} } as any));",
-      "count": 1
-    },
-    {
-      "fingerprint": "9c663f814a9b72fc240029034728a7a5036f029ff9afc56b7d54e1cd14eb5085",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unsafe-argument",
-      "severity": 2,
-      "message": "Unsafe argument of type `any` assigned to a parameter of type `Pick<EchoInkResourceSettings, \"mcpConnections\"> | null | undefined`.",
-      "context": "const publicConfig = resolveMcpConnectionConfig(invocation.resource, { mcpConnections: this.options.connections ?? {} } as any);",
-      "count": 1
-    },
-    {
-      "fingerprint": "9d81ddce8e02aa1428efe15194511a38a3ae6fecc4d6acc650efecec1156f082",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unsafe-argument",
-      "severity": 2,
-      "message": "Unsafe argument of type `any` assigned to a parameter of type `Pick<EchoInkResourceSettings, \"mcpConnections\"> | null | undefined`.",
-      "context": "const publicConfig = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} } as any);",
-      "count": 1
-    },
-    {
-      "fingerprint": "e7b83c7d4eb76a171d273f4cb942cf53f5429a3c35ffff93860a97f8653a101f",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unsafe-argument",
-      "severity": 2,
-      "message": "Unsafe argument of type `any` assigned to a parameter of type `Pick<EchoInkResourceSettings, \"mcpConnections\"> | null | undefined`.",
-      "context": "return resolveMcpConnectionConfig(resource, { mcpConnections: {} } as any);",
       "count": 1
     },
     {
@@ -397,15 +280,6 @@
       "severity": 2,
       "message": "Unsafe member access .tools on an `any` value.",
       "context": "const tools = (result as any).tools;",
-      "count": 1
-    },
-    {
-      "fingerprint": "e8abd01b98f934433c3ea3b81d8dada06dd50a3eae892588d7a36ccdf32526ff",
-      "path": "src/review/preview-view.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since it does not change the type of the expression.",
-      "context": "const frame = contentEl.createEl(\"iframe\", {\ncls: \"codex-review-preview-frame\",\nattr: {\ntitle: this.htmlPath,\nsandbox: \"allow-same-origin\"\n}\n}) as HTMLIFrameElement;",
       "count": 1
     },
     {
@@ -460,33 +334,6 @@
       "severity": 2,
       "message": "Unsafe argument of type `any[]` assigned to a parameter of type `RawFileChange[]`.",
       "context": "const diffSummary = buildDiffSummary(changes);",
-      "count": 1
-    },
-    {
-      "fingerprint": "1aa8d47c387f54da6538f68ffa0217892c7cc1774757771217d48bcce4db641d",
-      "path": "src/ui/codex-view/view-shell.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since it does not change the type of the expression.",
-      "context": "host.registerDomEvent(host.messagesEl, \"wheel\", (event) => host.messageScrollFollow.handleWheel(event as WheelEvent));",
-      "count": 1
-    },
-    {
-      "fingerprint": "48eb3c38dc063c4ffeef29ba9d88895b6a28a25fe30f82bed83cddf246678c28",
-      "path": "src/ui/codex-view/view-shell.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since it does not change the type of the expression.",
-      "context": "host.registerDomEvent(host.messagesEl, \"touchstart\", (event) => host.messageScrollFollow.handleTouchStart(event as TouchEvent));",
-      "count": 1
-    },
-    {
-      "fingerprint": "506c5fa2dcd1830fd40f29cadae5437adf9ddfbb515f54a2b68cd59ef86ed4f8",
-      "path": "src/ui/codex-view/view-shell.ts",
-      "rule": "@typescript-eslint/no-unnecessary-type-assertion",
-      "severity": 2,
-      "message": "This assertion is unnecessary since it does not change the type of the expression.",
-      "context": "host.registerDomEvent(host.messagesEl, \"touchmove\", (event) => host.messageScrollFollow.handleTouchMove(event as TouchEvent));",
       "count": 1
     },
     {

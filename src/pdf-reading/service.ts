@@ -3,7 +3,7 @@ import { pdfLanguage, pdfSourceLanguage } from "./language";
 import { requireProPlugin } from "../membership/access";
 import type { CapabilityAccess } from "../membership/types";
 import { resolveKnowledgePathFromRoots } from "../knowledge-base/root-paths-core";
-import { pdfAbort, pdfStem, type PdfFiles, type PdfJob, type PdfOptions, type PdfExtraction, type PdfChunk, type PdfArtifact, type PdfStartIntent, type PdfStartContext, type PdfHistory } from "./types";
+import { pdfAbort, pdfStem, type PdfFiles, type PdfJob, type PdfOptions, type PdfExtraction, type PdfArtifact, type PdfStartIntent, type PdfStartContext, type PdfHistory } from "./types";
 import { pdfNoteLink } from "./results";
 
 export interface PdfDependencies {

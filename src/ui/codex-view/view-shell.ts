@@ -90,9 +90,9 @@ export function renderViewShell(host: CodexViewShellHost): void {
   host.register(() => host.knowledgeLinkingProgressDispose?.());
   host.messagesEl = messagesShell.createDiv({ cls: "codex-messages" });
   host.virtualListEl = host.messagesEl.createDiv({ cls: "codex-virtual-list" });
-  host.registerDomEvent(host.messagesEl, "wheel", (event) => host.messageScrollFollow.handleWheel(event as WheelEvent));
-  host.registerDomEvent(host.messagesEl, "touchstart", (event) => host.messageScrollFollow.handleTouchStart(event as TouchEvent));
-  host.registerDomEvent(host.messagesEl, "touchmove", (event) => host.messageScrollFollow.handleTouchMove(event as TouchEvent));
+  host.registerDomEvent(host.messagesEl, "wheel", (event) => host.messageScrollFollow.handleWheel(event));
+  host.registerDomEvent(host.messagesEl, "touchstart", (event) => host.messageScrollFollow.handleTouchStart(event));
+  host.registerDomEvent(host.messagesEl, "touchmove", (event) => host.messageScrollFollow.handleTouchMove(event));
   host.registerDomEvent(host.messagesEl, "scroll", () => host.handleMessagesScroll());
   host.turnNavigatorEl = messagesShell.createDiv({ cls: "codex-turn-nav-mount" });
   host.jumpToLatestEl = messagesShell.createEl("button", {

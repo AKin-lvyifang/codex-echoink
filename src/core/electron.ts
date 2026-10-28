@@ -76,7 +76,7 @@ export async function openExternalInElectron(url: string): Promise<boolean> {
 }
 
 function electronModule(): ElectronModule | null {
-  const electronRequire = (window as typeof window & { require?: ElectronRequire }).require
+  const electronRequire = window.require
     ?? (globalThis as typeof globalThis & { require?: ElectronRequire }).require;
   try {
     return (electronRequire?.("electron") as ElectronModule | undefined) ?? null;

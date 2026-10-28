@@ -29,7 +29,6 @@ import {
   type KnowledgeBaseDashboardSnapshot
 } from "../knowledge-base/dashboard";
 import type {
-  CodexForObsidianSettings,
   StoredAttachment
 } from "../settings/settings";
 import {
@@ -42,7 +41,6 @@ import {
   normalizeEchoInkReasoningEffort,
   resolveEchoInkPiReasoningCapabilities
 } from "../settings/pi-model-catalog";
-import type { ReasoningEffort } from "../types/app-server";
 import {
   KnowledgeBaseInitializer,
   knowledgeMaintenanceBatchPrompt,

@@ -23,7 +23,7 @@ export function mergeWorkspaceResourceSnapshot(
     next.plugins = data as CodexPluginInfo[];
     setError(next, "plugins", error);
   } else if (kind === "mcp") {
-    next.mcpServers = data as McpServerStatus[];
+    next.mcpServers = data;
     setError(next, "mcp", error);
   } else {
     next.skills = data as CodexSkill[];
@@ -74,7 +74,7 @@ export function updateWorkspaceResourceCache(
     ...(error ? { error } : {})
   };
   if (kind === "plugins") next.plugins = entry as WorkspaceResourceCache["plugins"];
-  else if (kind === "mcp") next.mcp = entry as WorkspaceResourceCache["mcp"];
+  else if (kind === "mcp") next.mcp = entry;
   else next.skills = entry as WorkspaceResourceCache["skills"];
   return next;
 }

@@ -5,7 +5,7 @@ import { estimateTokenValue } from "../usage/token-estimator";
 import { assertGenerationInputBudget, freezeGenerationRequest, generationModelPrompt, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
 import { GenerationOutputValidationError, prepareGenerationOutput } from "../../generation/output";
 import { GENERATION_ATTEMPT_ENTRY, GENERATION_STAGE_ENTRY, projectGenerationEntries } from "../../generation/projection";
-import type { GenerationAttempt, GenerationRequest, GenerationResult } from "../../generation/types";
+import type { GenerationAttempt, GenerationRequest } from "../../generation/types";
 import type { GenerationSourceAssessment } from "../../generation/sources";
 import type { GenerationRuntimePort, GenerationStage, GenerationExecutionIdentity } from "../../generation/runtime";
 import { freezePdfTaskRequest, pdfTaskRequestFromEntries } from "../../pdf-reading/task-context";

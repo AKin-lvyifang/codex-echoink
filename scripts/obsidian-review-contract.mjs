@@ -38,12 +38,186 @@ export const SOURCE_HARD_RULES = {
   "obsidianmd/no-plugin-as-component": [2],
   "obsidianmd/no-view-references-in-plugin": [2],
   "obsidianmd/no-unsupported-api": [2],
+  "import/no-extraneous-dependencies": [2],
+  "obsidianmd/commands/no-plugin-name-in-command-name": [2],
+  "obsidianmd/prefer-file-manager-trash-file": [2],
   "eslint-comments/no-unlimited-disable": [2],
   "eslint-comments/require-description": [2],
   "eslint-comments/disable-enable-pair": [2, { allowWholeFile: false }],
   "eslint-comments/no-restricted-disable": [2,
-    "obsidianmd/*", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
+    "obsidianmd/*", "import/no-extraneous-dependencies", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
     "@typescript-eslint/no-floating-promises", "no-unsanitized/method", "no-unsanitized/property"]
+};
+// Audited source warning settings. Weakening a rule must not masquerade as resolved debt.
+export const SOURCE_WARNING_RULES = {
+  "@microsoft/sdl/no-document-write": [
+    1
+  ],
+  "@microsoft/sdl/no-inner-html": [
+    1
+  ],
+  "@typescript-eslint/no-deprecated": [
+    1
+  ],
+  "@typescript-eslint/no-explicit-any": [
+    1,
+    {
+      "fixToUnknown": true
+    }
+  ],
+  "@typescript-eslint/no-restricted-imports": [
+    1,
+    {
+      "name": "axios",
+      "message": "Use the built-in `requestUrl` function instead of `axios`."
+    },
+    {
+      "name": "superagent",
+      "message": "Use the built-in `requestUrl` function instead of `superagent`."
+    },
+    {
+      "name": "got",
+      "message": "Use the built-in `requestUrl` function instead of `got`."
+    },
+    {
+      "name": "ofetch",
+      "message": "Use the built-in `requestUrl` function instead of `ofetch`."
+    },
+    {
+      "name": "ky",
+      "message": "Use the built-in `requestUrl` function instead of `ky`."
+    },
+    {
+      "name": "node-fetch",
+      "message": "Use the built-in `requestUrl` function instead of `node-fetch`."
+    },
+    {
+      "name": "moment",
+      "message": "The 'moment' package is bundled with Obsidian. Import the `moment` value from 'obsidian' instead. For the `Moment` type, rely on the global `moment` namespace or add `type Moment = moment.Moment;` (type-only imports from 'moment' are allowed).",
+      "allowTypeImports": true
+    }
+  ],
+  "@typescript-eslint/no-unused-expressions": [
+    1,
+    {
+      "allowShortCircuit": true,
+      "allowTaggedTemplates": false,
+      "allowTernary": true
+    }
+  ],
+  "@typescript-eslint/no-unused-vars": [
+    1,
+    {
+      "args": "none",
+      "ignoreRestSiblings": true
+    }
+  ],
+  "no-alert": [
+    1
+  ],
+  "no-implicit-globals": [
+    1,
+    {
+      "lexicalBindings": false
+    }
+  ],
+  "no-restricted-globals": [
+    1,
+    {
+      "name": "app",
+      "message": "Avoid using the global app object. Instead use the reference provided by your plugin instance."
+    },
+    "warn",
+    {
+      "name": "fetch",
+      "message": "Use the built-in `requestUrl` function instead of `fetch` for network requests in Obsidian."
+    },
+    {
+      "name": "localStorage",
+      "message": "Prefer `App#saveLocalStorage` / `App#loadLocalStorage` functions to write / read localStorage data that's unique to a vault."
+    }
+  ],
+  "no-self-compare": [
+    1
+  ],
+  "no-undef": [
+    1,
+    {
+      "typeof": false
+    }
+  ],
+  "obsidianmd/commands/no-command-in-command-id": [
+    1
+  ],
+  "obsidianmd/commands/no-command-in-command-name": [
+    1
+  ],
+  "obsidianmd/commands/no-default-hotkeys": [
+    1
+  ],
+  "obsidianmd/commands/no-plugin-id-in-command-id": [
+    1
+  ],
+  "obsidianmd/editor-drop-paste": [
+    1
+  ],
+  "obsidianmd/hardcoded-config-path": [
+    1
+  ],
+  "obsidianmd/no-global-this": [
+    1
+  ],
+  "obsidianmd/no-nodejs-modules": [
+    1
+  ],
+  "obsidianmd/no-tfile-tfolder-cast": [
+    1
+  ],
+  "obsidianmd/object-assign": [
+    1
+  ],
+  "obsidianmd/prefer-abstract-input-suggest": [
+    1
+  ],
+  "obsidianmd/prefer-create-el": [
+    1
+  ],
+  "obsidianmd/prefer-get-language": [
+    1
+  ],
+  "obsidianmd/prefer-instanceof": [
+    1
+  ],
+  "obsidianmd/prefer-window-timers": [
+    1
+  ],
+  "obsidianmd/settings-tab/no-deprecated-display": [
+    1
+  ],
+  "obsidianmd/settings-tab/prefer-setting-definitions": [
+    1
+  ],
+  "obsidianmd/settings-tab/prefer-update-over-display": [
+    1
+  ],
+  "obsidianmd/settings-tab/require-display": [
+    1
+  ],
+  "obsidianmd/ui/sentence-case": [
+    1,
+    {
+      "enforceCamelCaseLower": true
+    }
+  ],
+  "obsidianmd/validate-license": [
+    1
+  ],
+  "obsidianmd/validate-manifest": [
+    1
+  ],
+  "obsidianmd/vault/iterate": [
+    1
+  ]
 };
 const JSON_RULES = {
   "json/no-duplicate-keys": [2], "json/no-empty-keys": [2],
@@ -54,6 +228,7 @@ export const PACKAGE_HARD_RULES = {
 };
 const COMMENT_HARD_RULES = new Set(Object.keys(SOURCE_HARD_RULES).filter(rule => rule.startsWith("eslint-comments/")));
 const BASELINE_SOURCE = "eslint-plugin-obsidianmd production errors";
+const WARNING_BASELINE_SOURCE = "eslint-plugin-obsidianmd production warnings";
 const SOURCE_EXTENSIONS = /\.(?:ts|cts|mts|tsx|js|cjs|mjs|jsx)$/u;
 // These are tests and upstream reference material, not plugin runtime code.
 const NON_PRODUCTION_DIRECTORIES = new Set(["src/tests", "src/home/magic-ui/provenance"]);
@@ -78,7 +253,7 @@ function expectedRules(file) {
   if (file === "package.json") return PACKAGE_HARD_RULES;
   if (file === "manifest.json") return { ...JSON_RULES, "obsidianmd/validate-manifest": [2] };
   if (file === "versions.json") return JSON_RULES;
-  return SOURCE_HARD_RULES;
+  return { ...SOURCE_HARD_RULES, ...SOURCE_WARNING_RULES };
 }
 
 function hardRule(rule) {
@@ -123,14 +298,14 @@ export function isHardFinding(finding) {
     || (finding.severity === 2 && (hardRule(finding.rule) || finding.path === "manifest.json"));
 }
 
-export function collectFindings(rootDir, results) {
+export function collectFindings(rootDir, results, { includeWarnings = false } = {}) {
   const findings = [];
   for (const result of results) {
     const file = path.relative(rootDir, result.filePath).split(path.sep).join("/");
     const lines = (result.source ?? fs.readFileSync(result.filePath, "utf8")).split(/\r?\n/u);
     for (const [messages, suppressed] of [[result.messages, false], [result.suppressedMessages ?? [], true]]) {
       for (const message of messages) {
-        if (message.severity !== 2 && !message.fatal) continue;
+        if (message.severity !== 2 && !(includeWarnings && message.severity === 1) && !message.fatal) continue;
         const finding = {
           path: file, rule: message.ruleId ?? "<parse>", severity: message.severity,
           message: message.message,
@@ -140,7 +315,7 @@ export function collectFindings(rootDir, results) {
           line: message.line ?? 0, column: message.column ?? 0,
           fatal: message.fatal === true, suppressed
         };
-        if (!suppressed || isHardFinding(finding)) findings.push(finding);
+        if (!suppressed || isHardFinding(finding) || (includeWarnings && finding.severity === 1)) findings.push(finding);
       }
     }
   }
@@ -155,15 +330,23 @@ export function findingFingerprint(finding) {
 }
 
 export function createBaseline(findings) {
+  return createSeverityBaseline(findings, 2, BASELINE_SOURCE);
+}
+
+export function createWarningBaseline(findings) {
+  return createSeverityBaseline(findings, 1, WARNING_BASELINE_SOURCE);
+}
+
+function createSeverityBaseline(findings, severity, source) {
   const entries = new Map();
   for (const finding of findings) {
-    if (isHardFinding(finding) || finding.severity !== 2) throw new Error("Hard findings and non-error severities cannot enter the baseline.");
+    if (isHardFinding(finding) || finding.severity !== severity || finding.suppressed) throw new Error("Hard, suppressed or wrong-severity findings cannot enter the baseline.");
     const fingerprint = findingFingerprint(finding);
     const entry = entries.get(fingerprint);
     if (entry) entry.count += 1;
     else entries.set(fingerprint, { fingerprint, ...identity(finding), count: 1 });
   }
-  return { schemaVersion: 4, source: BASELINE_SOURCE, total: findings.length,
+  return { schemaVersion: 4, source, total: findings.length,
     findings: [...entries.values()].sort((a, b) => a.path.localeCompare(b.path) || a.rule.localeCompare(b.rule) || a.fingerprint.localeCompare(b.fingerprint)) };
 }
 
@@ -173,16 +356,24 @@ function exactKeys(object, keys) {
 }
 
 export function validateBaseline(value) {
+  return validateSeverityBaseline(value, 2, BASELINE_SOURCE);
+}
+
+export function validateWarningBaseline(value) {
+  return validateSeverityBaseline(value, 1, WARNING_BASELINE_SOURCE);
+}
+
+function validateSeverityBaseline(value, severity, source) {
   const errors = [];
   if (!exactKeys(value, ["schemaVersion", "source", "total", "findings"]) || value.schemaVersion !== 4
-    || value.source !== BASELINE_SOURCE || !Array.isArray(value.findings)
+    || value.source !== source || !Array.isArray(value.findings)
     || !Number.isSafeInteger(value.total) || value.total < 0) return ["Baseline must use the strict schemaVersion 4 fingerprint contract."];
   const seen = new Set();
   let total = 0;
   for (const entry of value.findings) {
     if (!exactKeys(entry, ["fingerprint", "path", "rule", "severity", "message", "context", "count"])) { errors.push("Invalid baseline entry fields."); continue; }
     if (![entry.fingerprint, entry.path, entry.rule, entry.message, entry.context].every(text => typeof text === "string" && text.length > 0)
-      || entry.severity !== 2 || !Number.isSafeInteger(entry.count) || entry.count <= 0) { errors.push("Baseline strings, severity and positive integer counts must be valid."); continue; }
+      || entry.severity !== severity || !Number.isSafeInteger(entry.count) || entry.count <= 0) { errors.push("Baseline strings, severity and positive integer counts must be valid."); continue; }
     if (entry.path.startsWith("/") || entry.path.includes("\\") || entry.path.split("/").some(part => !part || part === "." || part === "..")) errors.push(`Invalid baseline path: ${entry.path}`);
     if (entry.fingerprint !== findingFingerprint(entry)) errors.push(`Invalid baseline fingerprint for ${entry.path}.`);
     if (seen.has(entry.fingerprint)) errors.push(`Duplicate baseline fingerprint: ${entry.fingerprint}`);
@@ -219,6 +410,15 @@ export {};`,
       expected: ["obsidianmd/no-unsupported-api", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
         "obsidianmd/rule-custom-message", "no-unsanitized/property", "no-unsanitized/method",
         "obsidianmd/no-static-styles-assignment", "@typescript-eslint/no-floating-promises"] },
+    { name: "trash follows host preference", file: sourcePath,
+      source: 'import type { App, TFile } from "obsidian"; declare const app: App; declare const file: TFile; void app.vault.trash(file, false); export {};',
+      expected: ["obsidianmd/prefer-file-manager-trash-file"] },
+    { name: "command excludes plugin name", file: sourcePath,
+      source: 'import type { Plugin } from "obsidian"; declare const plugin: Plugin; plugin.addCommand({id: "open-example", name: "打开 EchoInk Agent 侧栏", callback: () => {}}); export {};',
+      expected: ["obsidianmd/commands/no-plugin-name-in-command-name"] },
+    { name: "direct dependency declaration", file: sourcePath,
+      source: 'import { StreamLanguage } from "@codemirror/streamparser"; void StreamLanguage; export {};',
+      expected: ["import/no-extraneous-dependencies"] },
     { name: "restricted suppression", file: sourcePath,
       source: '// eslint-disable-next-line no-eval -- Contract sentinel\neval("1");\nexport {};',
       expected: ["eslint-comments/no-restricted-disable"], suppressed: "no-eval" },

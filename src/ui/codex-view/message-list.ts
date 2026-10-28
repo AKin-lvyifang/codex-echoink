@@ -3293,7 +3293,7 @@ export class CodexMessageListRenderer {
     const ref = findProcessFileRef(item.source.files ?? [], path)
       ?? normalizeProcessFileRef(path, this.requireEnv().vaultPath);
     if (!this.actionFileExists(ref)) return;
-    const link = withNativeMessageTooltip(container.createEl("span", {
+    const link = withNativeMessageTooltip(container.createSpan({
       cls: "codex-action-open-note",
       text: this.copy().details.openFullNote,
       attr: {
@@ -3996,7 +3996,7 @@ export class CodexMessageListRenderer {
         attr: { title: this.copy().details.cannotOpenPath(file.displayPath) }
       }));
     }
-    const link = withNativeMessageTooltip(container.createEl("span", {
+    const link = withNativeMessageTooltip(container.createSpan({
       cls: `codex-process-file-link codex-process-file-link-${file.kind} ${extraClass}`.trim(),
       text: displayLabel,
       attr: {

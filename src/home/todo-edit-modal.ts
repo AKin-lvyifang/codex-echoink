@@ -112,12 +112,12 @@ export class EchoInkTodoFormModal extends Modal {
       peopleBox.empty();
       for (const name of this.peopleNames) {
         const tag = peopleBox.createDiv({ cls: "echoink-people-tag" });
-        tag.createEl("span", {
+        tag.createSpan({
           cls: `echoink-todo-avatar echoink-todo-avatar-sm echoink-todo-avatar-c${personColorIndex(name, TODO_AVATAR_PALETTE_SIZE)}`,
           text: personInitial(name),
           attr: { "aria-hidden": "true" }
         });
-        tag.createEl("span", { cls: "echoink-people-tag-name", text: name });
+        tag.createSpan({ cls: "echoink-people-tag-name", text: name });
         const remove = createOriginButton(tag, {
           cls: "echoink-people-tag-remove is-icon",
           attr: { "aria-label": this.t(`移除 ${name}`, `Remove ${name}`) }

@@ -169,7 +169,7 @@ function parseFrontmatter(text: string): VaultSkillFrontmatter {
       continue;
     }
     if (key in data && typeof data[key] === "string") {
-      (data[key] as string) = value;
+      data[key] = value;
     }
   }
   return data;

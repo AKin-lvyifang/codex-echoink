@@ -59,7 +59,7 @@ export class ReviewPreviewView extends ItemView {
         title: this.htmlPath,
         sandbox: "allow-same-origin"
       }
-    }) as HTMLIFrameElement;
+    });
     const pathTooltip = attachNativeTooltip(frame, this.htmlPath); this.pathTooltip = pathTooltip;
     const absolute = path.join(this.plugin.getVaultPath(), this.htmlPath);
     const html = await fsp.readFile(absolute, "utf8").catch(() => "");

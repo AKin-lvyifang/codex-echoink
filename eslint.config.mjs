@@ -37,9 +37,13 @@ export default defineConfig(
       },
     },
     rules: {
+      "import/no-extraneous-dependencies": "error",
+      "obsidianmd/commands/no-plugin-name-in-command-name": "error",
+      "obsidianmd/prefer-file-manager-trash-file": "error",
       "eslint-comments/no-restricted-disable": [
         "error",
         "obsidianmd/*",
+        "import/no-extraneous-dependencies",
         "no-eval",
         "no-implied-eval",
         "@typescript-eslint/no-implied-eval",

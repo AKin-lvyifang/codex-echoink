@@ -21,8 +21,8 @@ export function renderTodoStatistics(
   const history = container.createEl("section", { cls: "history-panel todo-history-panel" });
   const heading = history.createDiv({ cls: "panel-heading" });
   const title = heading.createEl("h3");
-  setIcon(title.createEl("span", { attr: { "aria-hidden": "true" } }), "calendar-days");
-  title.createEl("span", { text: zh ? "完成记录" : "Completion history" });
+  setIcon(title.createSpan({ attr: { "aria-hidden": "true" } }), "calendar-days");
+  title.createSpan({ text: zh ? "完成记录" : "Completion history" });
   renderActivityHeatmap(history, heading, container, {
     days: stats.activity, thresholds: [3, 6], zh, stateKey: "todoStatistics", app,
     title: zh ? "每日完成待办数" : "Daily completed to-dos",
