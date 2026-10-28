@@ -236,6 +236,8 @@ export interface ChatMessage {
   citations?: KnowledgeBaseCitationSummary;
   /** True only when a settled `/ask` source snapshot was projected. */
   askSourceAttribution?: true;
+  /** Reading-time source facts remain intact when final permission was revoked. */
+  knowledgeVerificationSkipped?: "knowledge_permission_revoked";
   /** Display-only primary Memory ids and titles; never Memory bodies or prompts. */
   personalMemorySources?: readonly PersonalMemorySourceReference[];
   /** Session-owned identities only; original Memory content stays in its repository. */

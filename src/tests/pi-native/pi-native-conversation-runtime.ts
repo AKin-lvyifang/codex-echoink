@@ -1,3 +1,6 @@
+import { runOutputContinuationProjectionTests } from "./output-continuation-projection";
+import { runPiKnowledgeResilienceTests } from "./knowledge-resilience";
+import { resolveAnswerMarkdown } from "../../ui/codex-view/answer-copy";
 import { TFolder } from "obsidian";
 import { createGenerationRuntimePort } from "../../plugin/generation-production";
 import type { GenerationRuntimePort } from "../../generation/runtime";
@@ -688,7 +691,137 @@ export async function runPiSubmissionCancellationTests(): Promise<void> {
   console.log("PASS submission lifecycle: initialization, ask/chat preflight read18, before_agent_start, handle cancellation and listener isolation");
 }
 
+export async function runOutputContinuationRuntimeTests(): Promise<void> {
+  const failures: unknown[] = [];
+  const run = async (name: string, test: () => Promise<void>) => {
+    try { await test(); console.log(`PASS output/Knowledge runtime: ${name}`); }
+    catch (error) { failures.push(error); console.error(`FAIL output/Knowledge runtime: ${name}`, error); }
+  };
+  await run("more than three progressing continuations settle once and reopen as one answer", async () => {
+    await withFixture(["continued-report"], async f => {
+      const id = "continued-report";
+      await f.runtime.createConversation({ conversationId: id, title: "Report", cwd: f.root });
+      await f.runtime.activateConversation(id);
+      const handle = await f.submit({ conversationId: id, text: "请改写以下报告", submittedAt: 1 });
+      const events: PiChatRuntimeEvent[] = [];
+      f.runtime.subscribeProductRun(handle.productRunId, event => { events.push(event); });
+      const session = f.latestSession();
+      session.finishResilientResponse("第一段。", "length");
+      for (let index = 1; index <= 5; index++) {
+        await waitForTestCondition(() => session.continuationMessages.length === index);
+        session.finishResilientResponse(index === 5 ? "结尾。" : `续写${index}。`, index === 5 ? "stop" : "length");
+      }
+      const result = await handle.result;
+      assert.equal(result.terminalState, "completed");
+      assert.equal(session.promptTexts.length, 1, "internal continuation must not append a user prompt");
+      assert.equal(events.filter(event => event.type === "agent_settled").length, 1);
+      assert.equal(events.filter(event => event.type === "product_run_settled").length, 1);
+      const answers = (await f.runtime.readProjection(id)).messages.filter(message => message.role === "assistant" && message.itemType === "assistant");
+      assert.deepEqual(answers.map(message => message.text), ["第一段。续写1。续写2。续写3。续写4。结尾。"]);
+      assert.equal(await resolveAnswerMarkdown(answers[0], async () => "unexpected raw store"), answers[0].text);
+      await f.runtime.recordAnswerSave(id, answers[0].id, "outputs/完整回答.md");
+      assert.equal((await f.runtime.readProjection(id)).messages.find(message => message.text === answers[0].text)?.savedNotePath, "outputs/完整回答.md");
+      assert.equal(session.sessionManager.getEntries().filter(entry => entry.type === "message" && entry.message.role === "user").length, 1);
+      f.runtime.releaseProductRun(handle.productRunId);
+      await f.runtime.releaseConversation(id);
+      const reopened = await f.runtime.activateConversation(id);
+      assert.deepEqual(reopened.messages.filter(message => message.role === "assistant" && message.itemType === "assistant").map(message => message.text), answers.map(message => message.text));
+      const derived = await f.runtime.deriveConversation({ sourceConversationId: id, targetConversationId: "continued-report-derived",
+        anchorEntryId: piEntryIdFromProjectedMessageId(answers[0].id)!, title: "Derived report" });
+      assert.deepEqual(derived.projection.messages.filter(message => message.role === "assistant" && message.itemType === "assistant").map(message => message.text), answers.map(message => message.text));
+    });
+  });
+  await run("two empty or duplicate continuations stay incomplete even after empty stop", async () => {
+    await withFixture(["empty-continuation"], async f => {
+      const handle = await f.submit({ conversationId: "empty-continuation", text: "请改写以下内容", submittedAt: 1 });
+      const session = f.latestSession();
+      session.finishResilientResponse("已写正文。", "length");
+      await waitForTestCondition(() => session.continuationMessages.length === 1);
+      session.finishResilientResponse("已写正文。", "stop");
+      await waitForTestCondition(() => session.continuationMessages.length === 2);
+      session.finishResilientResponse("", "stop");
+      const result = await handle.result;
+      assert.equal(result.terminalState, "failed");
+      assert.equal(result.error, "provider_output_limit_reached");
+      const partial = (await f.runtime.readProjection(handle.conversationId)).messages.find(message => message.text === "已写正文。");
+      assert.equal(partial?.title, "回答未完成");
+      assert.equal(partial?.status, "failed");
+    });
+  });
+  await run("compaction during a continuation keeps the entire answer and hidden controls", async () => {
+    await withFixture(["compact-continuation"], async f => {
+      const handle = await f.submit({ conversationId: "compact-continuation", text: "请改写以下长内容", submittedAt: 1 });
+      const session = f.latestSession();
+      session.finishResilientResponse("压缩前正文。", "length");
+      await waitForTestCondition(() => session.continuationMessages.length === 1);
+      session.sessionManager.appendCompaction("保留报告任务与已经完成的步骤", handle.userEntryId, 60_000);
+      session.finishResilientResponse("压缩后结尾。", "stop");
+      assert.equal((await handle.result).terminalState, "completed");
+      assert.ok((await f.runtime.readProjection(handle.conversationId)).messages.some(message => message.text === "压缩前正文。压缩后结尾。"));
+      assert.ok(!(await f.runtime.readProjection(handle.conversationId)).messages.some(message => message.text.includes("Continue the unfinished assistant")));
+    });
+  });
+  await run("cancel during continuation preserves text and terminates", async () => {
+    await withFixture(["cancel-continuation"], async f => {
+      const handle = await f.submit({ conversationId: "cancel-continuation", text: "请改写以下内容", submittedAt: 1 });
+      const session = f.latestSession();
+      session.finishResilientResponse("保留正文。", "length");
+      await waitForTestCondition(() => session.continuationMessages.length === 1);
+      await f.runtime.abort(handle.conversationId);
+      assert.equal((await handle.result).terminalState, "cancelled");
+      assert.ok((await f.runtime.readProjection(handle.conversationId)).messages.some(message => message.text === "保留正文。"));
+    });
+  });
+  await run("a real provider failure during continuation keeps its cause in the live final projection", async () => {
+    await withFixture(["auth-continuation"], async f => {
+      const handle = await f.submit({ conversationId: "auth-continuation", text: "请改写以下内容", submittedAt: 1 });
+      const session = f.latestSession();
+      session.finishResilientResponse("已生成正文。", "length");
+      await waitForTestCondition(() => session.continuationMessages.length === 1);
+      session.finishFailed("provider_auth_failed");
+      assert.equal((await handle.result).terminalState, "failed");
+      const answer = (await f.runtime.readProjection(handle.conversationId)).messages.find(message => message.text === "已生成正文。");
+      assert.equal(answer?.title, "回答失败");
+      assert.doesNotMatch(answer?.details ?? "", /达到输出上限/u);
+    });
+  });
+  await run("lazy rewrite search workflow is idempotent and records search-only references", async () => {
+    const reference = { referenceId: `knowledge-reference:${"b".repeat(64)}`, vaultRelativePath: "wiki/search.md", title: "Search", excerpt: "actual search excerpt", contentRevision: `sha256:${"c".repeat(64)}`, lineStart: 1, lineEnd: 1 };
+    const usages: any[] = []; let verifications = 0;
+    await withFixture(["lazy-search"], async f => {
+      const handle = await f.submit({ conversationId: "lazy-search", text: "请改写以下内容，先 knowledge_search", submittedAt: 1 });
+      assert.equal(f.currentKnowledgeTurn(), null);
+      await Promise.all([f.ensureKnowledgeReadWorkflow(), f.ensureKnowledgeReadWorkflow()]);
+      assert.equal(f.currentKnowledgeTurn()?.kind, "chat");
+      const session = f.latestSession();
+      session.finishTool("search-only", "knowledge_search", { details: { type: "echoink.knowledge-references.v1", schemaVersion: 1, references: [reference], status: "completed" } }, false);
+      session.finishSuccessful("根据检索原文回答。");
+      assert.equal((await handle.result).terminalState, "completed");
+      assert.equal(verifications, 1);
+      assert.deepEqual(usages.map(use => use.event.referenceIds), [[reference.referenceId]]);
+    }, { knowledge: { verifyAskReferences: async input => { verifications++; assert.deepEqual(input.references, [reference]); return { status: "valid", references: input.references }; }, recordUsage: async input => { usages.push(input); } } as PiKnowledgeRuntimePort });
+  });
+  await run("permission-revoked recheck persists a skipped verdict and still settles", async () => {
+    const reference = { referenceId: `knowledge-reference:${"d".repeat(64)}`, vaultRelativePath: "wiki/revoked.md", title: "Revoked", excerpt: "snapshot", contentRevision: `sha256:${"e".repeat(64)}`, lineStart: 1, lineEnd: 1, verificationStatus: "local_revision_verified" as const };
+    await withFixture(["revoked-verify"], async f => {
+      const handle = await f.submit({ conversationId: "revoked-verify", text: "请检查个人资料", submittedAt: 1 });
+      f.latestSession().finishSuccessful("已根据授权时的原文回答。");
+      assert.equal((await handle.result).terminalState, "completed");
+      const entries = f.latestSession().sessionManager.getEntries();
+      assert.ok(entries.some(entry => entry.type === "custom" && entry.customType === "echoink.knowledge-verification.v1"));
+      const projection = await f.runtime.readProjection(handle.conversationId);
+      assert.equal(projection.messages.find(message => message.text === "已根据授权时的原文回答。")?.knowledgeVerificationSkipped, "knowledge_permission_revoked");
+      f.runtime.releaseProductRun(handle.productRunId); await f.runtime.releaseConversation(handle.conversationId);
+      assert.equal((await f.runtime.activateConversation(handle.conversationId)).messages.find(message => message.text === "已根据授权时的原文回答。")?.knowledgeVerificationSkipped, "knowledge_permission_revoked");
+    }, { knowledge: { retrieveChat: async () => ({ status: "ready", references: [reference], providerResourceText: "snapshot", retrieval: { elapsedMs: 1, total: 1, returned: 1, remaining: 0, hasMore: false, exhausted: true } }), verifyAskReferences: async input => ({ status: "verification_skipped", reason: "knowledge_permission_revoked", references: input.references }), recordUsage: async () => undefined } as PiKnowledgeRuntimePort });
+  });
+  if (failures.length) throw new AggregateError(failures, "Output continuation and Knowledge runtime regressions failed");
+}
+
 export async function runPiNativeConversationRuntimeTests(): Promise<void> {
+  await runOutputContinuationProjectionTests();
+  await runPiKnowledgeResilienceTests();
+  await runOutputContinuationRuntimeTests();
   await runBufferedModelProgressTests();
   await runPiSubmissionCancellationTests();
   await assertWorkspacePermissionsAndLateSources();
@@ -5847,6 +5980,7 @@ interface RuntimeFixture {
   }>): void;
   currentMemoryTurn(): Readonly<PiNativeMemoryTurnContext> | null;
   currentKnowledgeTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
+  ensureKnowledgeReadWorkflow(): Promise<void>;
   currentMaintenanceCommand: NonNullable<PiNativeAgentSessionFactoryInput["currentMaintenanceCommand"]>;
   currentSkillTurn(): Readonly<PiNativeSkillTurnContext> | null;
   currentGenerationContext(): ReturnType<NonNullable<PiNativeAgentSessionFactoryInput["currentGenerationContext"]>>;
@@ -5890,6 +6024,7 @@ async function withFixture(
     (() => Readonly<PiNativeMemoryTurnContext> | null) | null = null;
   let currentKnowledgeTurnReader:
     (() => Readonly<PiNativeKnowledgeTurnContext> | null) | null = null;
+  let ensureKnowledgeReadWorkflow: (() => Promise<void>) | undefined;
   let currentMaintenanceCommandReader: PiNativeAgentSessionFactoryInput["currentMaintenanceCommand"];
   let currentSkillTurnReader:
     (() => Readonly<PiNativeSkillTurnContext> | null) | null = null;
@@ -5935,6 +6070,7 @@ async function withFixture(
     createAgentSession: async (input) => {
       currentMemoryTurnReader = input.currentMemoryTurnContext ?? null;
       currentKnowledgeTurnReader = input.currentKnowledgeTurnContext ?? null;
+      ensureKnowledgeReadWorkflow = input.ensureKnowledgeReadWorkflow;
       currentMaintenanceCommandReader = input.currentMaintenanceCommand;
       currentSkillTurnReader = input.currentSkillTurnContext ?? null;
       currentGenerationReader = input.currentGenerationContext;
@@ -6021,6 +6157,10 @@ async function withFixture(
       },
       currentMemoryTurn: () => currentMemoryTurnReader?.() ?? null,
       currentKnowledgeTurn: () => currentKnowledgeTurnReader?.() ?? null,
+      ensureKnowledgeReadWorkflow: async () => {
+        assert.ok(ensureKnowledgeReadWorkflow, "runtime must supply lazy Knowledge workflow initialization");
+        await ensureKnowledgeReadWorkflow();
+      },
       currentMaintenanceCommand: async (options) => {
         assert.ok(currentMaintenanceCommandReader);
         return await currentMaintenanceCommandReader(options);
@@ -6060,6 +6200,7 @@ async function withFixture(
 }
 
 class ControlledAgentSession {
+  readonly continuationMessages: Array<{ customType: string; content: string; display: boolean }> = [];
   readonly promptTexts: string[] = [];
   readonly promptImages: ImageContent[][] = [];
   readonly model: Model<Api> = {
@@ -6241,6 +6382,33 @@ class ControlledAgentSession {
     this.isStreaming = false;
     this.resolvePrompt = null;
     this.rejectPrompt = null;
+    resolve();
+  }
+
+  sendCustomMessage(message: { customType: string; content: string; display: boolean }, options?: { triggerTurn?: boolean }): Promise<void> {
+    assert.equal(options?.triggerTurn, true);
+    assert.equal(message.display, false);
+    assert.equal(this.isStreaming, false);
+    this.continuationMessages.push(structuredClone(message));
+    this.sessionManager.appendCustomMessageEntry(message.customType, message.content, false);
+    this.promptSequence++;
+    this.isStreaming = true;
+    const flight = new Promise<void>((resolve, reject) => { this.resolvePrompt = resolve; this.rejectPrompt = reject; });
+    this.idlePromise = flight.catch(() => undefined);
+    return flight;
+  }
+
+  finishResilientResponse(text: string, stopReason: AssistantMessage["stopReason"]): void {
+    const resolve = this.resolvePrompt;
+    assert.ok(resolve, "expected a pending model response");
+    const message = { ...assistantMessage(text, 300_000 + this.promptSequence), stopReason };
+    this.emit({ type: "message_start", message });
+    this.sessionManager.appendMessage(message);
+    this.emit({ type: "message_end", message });
+    this.isStreaming = false;
+    this.resolvePrompt = null;
+    this.rejectPrompt = null;
+    this.emit({ type: "agent_settled" });
     resolve();
   }
 

@@ -957,9 +957,13 @@ export default class CodexForObsidianPlugin extends Plugin {
         const handle = await bundle.runtime.submit(request);
         void handle.result.then(async (result) => {
           if (result.terminalState === "completed") {
-            await this.usageStore?.recordCompletedTurn(result.productRunId, result.settledAt ?? result.updatedAt);
+            try {
+              await this.usageStore?.recordCompletedTurn(result.productRunId, result.settledAt ?? result.updatedAt);
+            } catch (error) {
+              console.error("EchoInk conversation usage could not be recorded", error);
+            }
           }
-        }).catch((error) => console.error("EchoInk conversation usage could not be recorded", error));
+        }, (error) => console.error("EchoInk conversation run could not settle", error));
         this.piRunConversations.set(
           handle.productRunId,
           handle.conversationId

@@ -1,4 +1,5 @@
 import { knowledgeMaintenanceBatchPrompt } from "../../knowledge-base/initializer";
+import { isPiConversationPersistenceError } from "../../harness/pi-native/pi-conversation-persistence-error";
 import { Platform } from "obsidian";
 import { annotationFixture } from "../selection-annotations";
 import { attachTestConversationRunService } from "../conversation-run-host";
@@ -103,6 +104,7 @@ async function startChatTurn(...args: Parameters<typeof runChatTurn>): ReturnTyp
 }
 
 export async function runPiNativeTurnRunnerTests(): Promise<void> {
+  await runConversationFinalizationErrorTests();
   await runTurnWatchdogProgressTests();
   await runProjectionSaveFailureTests();
   localAttachmentClassificationUsesMimeOrExtension();
@@ -132,6 +134,37 @@ export async function runPiNativeTurnRunnerTests(): Promise<void> {
   await maintainScopeIsResolvedBeforeProviderSubmit();
   await queuedTurnsKeepExactProviderModelAndRetainUnavailableHead();
   await concurrentViewRunsRemainIndependent();
+}
+
+export async function runConversationFinalizationErrorTests(): Promise<void> {
+  const persistence = Object.assign(new Error("readback failed"), { name: "PiSessionDurabilityError", code: "pi_session_readback_mismatch" });
+  const wrapped = new AggregateError([new Error("outer", { cause: persistence })], "settlement failed");
+  assert.equal(isPiConversationPersistenceError(wrapped), true);
+  assert.equal(isPiConversationPersistenceError(new Error("agent_capability_knowledge_denied")), false);
+  for (const [error, saved] of [[new Error("agent_capability_knowledge_denied"), false], [wrapped, true]] as const) {
+    const session = piSessionShell("conversation-turn-runner");
+    const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+    const result = deferred<Readonly<PiProductRunRecord>>(); let subscribed = false;
+    const plugin = { settings, getVaultPath: () => "/fixture", saveSettings: async () => undefined,
+      submitPiChat: async () => ({ productRunId: "product-run-turn-runner", conversationId: session.id, piSessionId: session.piSessionId!, userEntryId: "entry-user", result: result.promise }),
+      subscribePiRun: () => { subscribed = true; return { unsubscribe() {} }; },
+      subscribePiAgentApproval: () => ({ unsubscribe() {} }), piAgentApprovalBinding: () => null,
+      readPiConversationProjection: async () => durableProjection(session, "completed"),
+      releasePiProductionRun() {}, releasePiConversationIfInactive: async () => false, abortPiConversation: async () => undefined
+    };
+    const service = attachTestConversationRunService(plugin); const provider = settings.apiProviders[0];
+    openTestNoticeMessages.length = 0;
+    try {
+      const flight = service.run({ id: "failure-kind", sessionId: session.id, text: "hello", attachments: [], skill: null, kind: "chat", createdAt: 1,
+        turnOptions: { providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false } });
+      await waitFor(() => subscribed); result.reject(error);
+      assert.equal(await flight, "failed");
+      assert.equal(openTestNoticeMessages.length, 1);
+      assert.equal(openTestNoticeMessages[0].includes("记录保存失败"), saved);
+      assert.ok(session.messages.some(message => message.role === "assistant" && message.status === "completed"));
+    } finally { await service.dispose(); }
+  }
+  console.log("PASS conversation finalization: typed persistence errors, permission failure, one Notice, answer retained");
 }
 
 export async function runTurnWatchdogProgressTests(): Promise<void> {
@@ -166,7 +199,8 @@ export async function runTurnWatchdogProgressTests(): Promise<void> {
       assert.equal(await f.result, "cancelled");
       assert.ok(openTestNoticeMessages.includes("Agent 已经 5 分钟没有任何进展，已停止。可以点继续重试。"));
     }],
-    ["approval waiting does not consume the idle budget", async (f, clock) => {
+    ["approval waiting during a continuation does not consume the idle budget", async (f, clock) => {
+      await f.emit({ type: "output_continuation", messageKey: "approval-continuation", text: "等待审批前已保留的正文。", status: "running" });
       await clock.advance(200_000);
       const state = f.service.runs.get(f.session.id)!;
       setTurnWatchdogWaiting(state, true);

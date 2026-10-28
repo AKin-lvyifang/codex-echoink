@@ -1,4 +1,5 @@
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
+import { isPiConversationPersistenceError } from "../../harness/pi-native/pi-conversation-persistence-error";
 import { freezeWorkbenchTaskSource } from "../../home/workbench-context";
 import { isPdfReadingIntent } from "../../pdf-reading/intent";
 import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
@@ -1270,14 +1271,12 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
         )
         : item.piUserEntryAccepted
           ? uiText(view,
-            session.messages.some(message => message.role === "assistant" && message.runId === handle?.productRunId
-              && message.itemType === "assistant" && message.status === "completed" && message.text.trim())
+            isPiConversationPersistenceError(error)
               ? "回答已生成，但记录保存失败。已有内容已保留，无需重新发送。"
-              : "消息已受理，但本轮未能完成。请查看运行记录后继续。",
-            session.messages.some(message => message.role === "assistant" && message.runId === handle?.productRunId
-              && message.itemType === "assistant" && message.status === "completed" && message.text.trim())
+              : `本轮收尾未能完成，已有内容已保留：${message}`,
+            isPiConversationPersistenceError(error)
               ? "The answer was generated, but its records could not be saved. Your content was kept; do not resend."
-              : "The message was accepted, but the turn could not finish. Check its run records before continuing.")
+              : `This turn could not finish finalizing. Your content was kept: ${message}`)
         : rawMessage === PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE
         ? message
         : uiText(

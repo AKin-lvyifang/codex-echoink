@@ -35,6 +35,7 @@ import {
 import {
   clampMaxTokensToContext
 } from "@earendil-works/pi-ai/api/simple-options";
+import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import {
   ModelRuntime,
   SessionManager,
@@ -128,6 +129,7 @@ import {
   PiProviderProtocolTransport,
 } from "../harness/pi/pi-provider-protocol-adapter";
 import { preventProviderRetryAfterPartial, providerFailureText } from "../harness/pi/provider-failure";
+import { validProviderHistory } from "../harness/pi/provider-stream-codec";
 import { estimateUsageInputTokens } from "../harness/usage/token-estimator";
 import type { UsageRequestEvent } from "../harness/usage/usage-stream";
 import {
@@ -287,6 +289,7 @@ export async function runProviderSettingsBehaviorTests(): Promise<void> {
   assertPresetRequestMappings();
   assertAnthropicProviderContract();
   assertQwenProviderContract();
+  await assertProviderOutputLimitContract();
   await assertQwenTokenPlanTransportContract();
   await assertPiAgentSessionPartialAwareRetryContract();
   await assertProviderModelDiscoveryRequestContract();
@@ -6569,6 +6572,166 @@ function assertQwenProviderContract(): void {
   } as never), "qwen");
 }
 
+async function assertProviderOutputLimitContract(): Promise<void> {
+  const model = createPiProviderModelDefinition({
+    providerId: "deepseek",
+    apiProtocol: "openai-completions",
+    baseUrl: "https://api.deepseek.com/v1",
+    modelRef: "fixture-output-limit",
+    reasoning: true
+  });
+  const assistant = (
+    stopReason: AssistantMessage["stopReason"],
+    content: AssistantMessage["content"]
+  ): AssistantMessage => ({
+    ...fixtureAssistantMessage(model), stopReason, content
+  });
+  const toolCall = (id: string) => ({
+    type: "toolCall" as const, id, name: "note_read", arguments: {}
+  });
+  const toolResult = (id: string, isError = false): Context["messages"][number] => ({
+    role: "toolResult", toolCallId: id, toolName: "note_read",
+    content: [{ type: "text", text: `${id} result` }], isError, timestamp: 1
+  });
+  const priorAssistant = assistant("toolUse", [{
+    type: "thinking", thinking: "COMPLETE_REASONING", thinkingSignature: "reasoning_content"
+  }, toolCall("prior-complete")]);
+  const priorResult = toolResult("prior-complete");
+  const user = { role: "user" as const, content: "Continue", timestamp: 2 };
+  const execution = (context: Context, selectedModel = model) => ({
+    runId: "length-run", conversationId: "length-conversation",
+    turnId: "length-turn", correlationId: "length-correlation",
+    provider: {
+      providerId: selectedModel.provider, apiProtocol: "openai-completions" as const,
+      authMode: "api-key" as const, baseUrl: selectedModel.baseUrl,
+      modelRef: selectedModel.id
+    },
+    model: selectedModel, context,
+    options: { maxTokens: 64, temperature: 0, cacheRetention: "none" as const, maxRetries: 0 as const, timeoutMs: 1_000 }
+  });
+  const sseEvent = (delta: Record<string, unknown>, finishReason: string | null = null) =>
+    `data: ${JSON.stringify({ id: "length-response", model: model.id, choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
+  const lengthBody = sseEvent({ reasoning_content: "LENGTH_REASONING" })
+    + sseEvent({ content: "保留已经生成的正文" })
+    + sseEvent({ tool_calls: [{ index: 0, id: "length-complete-json", type: "function", function: { name: "note_read", arguments: "{}" } }] })
+    + sseEvent({ tool_calls: [{ index: 1, id: "length-partial-json", type: "function", function: { name: "note_read", arguments: '{"path":' } }] }, "length")
+    + "data: [DONE]\n\n";
+  const failures: unknown[] = [];
+  const check = async (name: string, test: () => void | Promise<void>) => {
+    try {
+      await test();
+      console.log(`PASS output limit: ${name}`);
+    } catch (error) {
+      failures.push(error);
+      console.error(`FAIL output limit: ${name}`, error);
+    }
+  };
+  for (const kind of ["qwen", "loopback"] as const) {
+    await check(`${kind} returns length with body and no executable calls`, async () => {
+      let requests = 0;
+      const respond = async () => {
+        requests += 1;
+        return { status: 200, headers: { "content-type": "text/event-stream" }, body: lengthBody };
+      };
+      const adapter = kind === "qwen"
+        ? createQwenTokenPlanOpenAICompletionsAdapter(respond)
+        : createLoopbackOpenAICompletionsAdapter(respond);
+      const selectedModel = {
+        ...model, provider: kind === "qwen" ? "qwen-token-plan-cn" : model.provider,
+        baseUrl: kind === "qwen" ? QWEN_TOKEN_PLAN_API_BASE_URL : "http://127.0.0.1:11434/v1"
+      };
+      const output = await adapter.stream(selectedModel, { messages: [user] }, { apiKey: "fixture-key", maxTokens: 64 }).result();
+      assert.equal(output.stopReason, "length");
+      assert.equal(output.errorMessage, undefined);
+      assert.deepEqual(output.content.map(block => block.type), ["thinking", "text"]);
+      assert.deepEqual(output.content[1], { type: "text", text: "保留已经生成的正文" });
+      assert.equal(requests, 1, "the adapter never continues a truncated response itself");
+    });
+  }
+  await check("history keeps partial body, discards truncated reasoning/calls/results and preserves complete signatures", () => {
+    const truncated = assistant("length", [{
+      type: "thinking", thinking: "LENGTH_REASONING", thinkingSignature: "reasoning_content"
+    }, {
+      type: "text", text: "LENGTH_BODY", textSignature: "incomplete-item"
+    }, toolCall("length-complete-json"), toolCall("length-partial-json")]);
+    const messages = [priorAssistant, priorResult, truncated,
+      toolResult("length-complete-json", true), toolResult("length-partial-json", true), user];
+    const snapshot = structuredClone(messages);
+    for (const selectedModel of [model, { ...model, id: "other-model" }]) {
+      const history = validProviderHistory(messages, selectedModel);
+      assert.equal(history.length, 4);
+      assert.deepEqual(history[1], priorResult);
+      assert.deepEqual(history[2], { ...truncated, content: [{ type: "text", text: "LENGTH_BODY" }] });
+      assert.doesNotMatch(JSON.stringify(history), /LENGTH_REASONING|length-complete-json|length-partial-json|incomplete-item|No result provided/u);
+      if (selectedModel === model) assert.deepEqual(history[0], priorAssistant);
+    }
+    assert.deepEqual(messages, snapshot, "history projection does not mutate the stored transcript");
+    const reasoningOnly = validProviderHistory([
+      assistant("length", [{ type: "thinking", thinking: "LENGTH_REASONING" }, toolCall("unanswered-length")]), user
+    ], model);
+    assert.deepEqual(reasoningOnly, [user], "a thinking-only truncation must not become an empty assistant or synthetic tool result");
+  });
+  await check("native OpenAI SDK through transport leaves continuation to runtime", async () => {
+    const originalFetch = globalThis.fetch;
+    let requests = 0;
+    let executions = 0;
+    let toolEvents = 0;
+    const payloads: Record<string, any>[] = [];
+    globalThis.fetch = async (_input, init) => {
+      requests += 1;
+      payloads.push(JSON.parse(String(init?.body)));
+      return new Response(requests === 1 ? lengthBody : sseEvent({ content: "UNEXPECTED_INTERNAL_CONTINUATION" }, "stop") + "data: [DONE]\n\n", {
+        status: 200, headers: { "content-type": "text/event-stream" }
+      });
+    };
+    try {
+      const transport = new PiProviderProtocolTransport({
+        authorityId: "length-authority", storeSetId: "length-store", resolveAuthToken: () => "fixture-key"
+      });
+      const messages = await runAgentLoop([user], {
+        systemPrompt: "Test output limit", messages: [priorAssistant, priorResult],
+        tools: [{
+          name: "note_read", label: "Read note", description: "Fixture tool",
+          parameters: { type: "object", properties: {} } as never,
+          execute: async () => { executions += 1; return { content: [], details: {} }; }
+        }]
+      }, {
+        model, convertToLlm: messages => messages as Context["messages"], maxRetries: 0
+      }, event => { if (event.type === "tool_execution_start") toolEvents += 1; }, undefined,
+      (selectedModel, context) => transport.stream(execution(context, selectedModel)));
+      assert.equal(requests, 1, "Pi must stop before its internal truncated-tool recovery request");
+      assert.equal(executions, 0);
+      assert.equal(toolEvents, 0, "no synthetic failed tool receipts are created for discarded calls");
+      const result = messages.at(-1);
+      assert.equal(result?.role, "assistant");
+      if (result?.role !== "assistant") throw new Error("assistant missing");
+      assert.equal(result.stopReason, "length");
+      assert.deepEqual(result.content.map(block => block.type), ["thinking", "text"]);
+      assert.equal(payloads[0]?.messages.find((message: Record<string, any>) => message.role === "assistant")?.reasoning_content, "COMPLETE_REASONING", "same-model DeepSeek reasoning signature remains replayable");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+  await check("legacy output-limit error becomes a normal length terminal", async () => {
+    const message = { ...assistant("error", [{ type: "text", text: "LEGACY_BODY" }, toolCall("legacy-partial")]), errorMessage: "provider_output_limit_reached" };
+    const run = () => {
+      const stream = createAssistantMessageEventStream();
+      stream.push({ type: "error", reason: "error", error: message });
+      return stream;
+    };
+    const transport = new PiProviderProtocolTransport({
+      authorityId: "legacy-length-authority", storeSetId: "legacy-length-store", resolveAuthToken: () => "fixture-key",
+      dispatcher: new PiProviderProtocolDispatcher({ "openai-completions": { stream: run, streamSimple: run } })
+    });
+    const result = await (await transport.stream(execution({ messages: [user] }))).result();
+    assert.equal(result.stopReason, "length");
+    assert.equal(result.errorMessage, undefined);
+    assert.deepEqual(result.content, [{ type: "text", text: "LEGACY_BODY" }]);
+    assert.equal(message.content.length, 2, "normalization does not mutate the provider message");
+  });
+  if (failures.length) throw new AggregateError(failures, "Provider output-limit contract failed");
+}
+
 async function assertQwenTokenPlanTransportContract(): Promise<void> {
   const transportInput = {
     providerId: "qwen-token-plan" as const,
@@ -6803,11 +6966,9 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
   const lengthWithoutDone = await runQwenBody(
     completionEvent("达到长度", "length")
   );
-  assert.equal(lengthWithoutDone.stopReason, "error");
-  assert.equal(
-    lengthWithoutDone.errorMessage,
-    "provider_output_limit_reached"
-  );
+  assert.equal(lengthWithoutDone.stopReason, "length");
+  assert.equal(lengthWithoutDone.errorMessage, undefined);
+  assert.deepEqual(lengthWithoutDone.content, [{ type: "text", text: "达到长度" }]);
 
   const toolWithoutDone = await runQwenBody(
     toolCompletionEvent("tool_calls")
@@ -6823,12 +6984,9 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
   const lengthAfterToolCall = await runQwenBody(
     toolCompletionEvent("length")
   );
-  assert.equal(lengthAfterToolCall.stopReason, "error");
-  assert.equal(
-    lengthAfterToolCall.errorMessage,
-    "provider_output_limit_reached"
-  );
-  assert.equal(lengthAfterToolCall.content[0]?.type, "toolCall");
+  assert.equal(lengthAfterToolCall.stopReason, "length");
+  assert.equal(lengthAfterToolCall.errorMessage, undefined);
+  assert.deepEqual(lengthAfterToolCall.content, []);
 
   const filteredAfterToolCall = await runQwenBody(
     toolCompletionEvent("content_filter")
@@ -7441,15 +7599,16 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
   const projectedHistory = JSON.stringify(historyPayload.messages);
   assert.doesNotMatch(
     projectedHistory,
-    /FAILED_|ABORTED_|LENGTH_|ORPHAN_/u,
-    "failed, aborted/length and orphaned Tool history must not reach Provider payloads"
+    /FAILED_|ABORTED_|LENGTH_TOOL_|ORPHAN_/u,
+    "failed, aborted, truncated Tool history and orphaned Tool results must not reach Provider payloads"
   );
+  assert.match(projectedHistory, /LENGTH_ASSISTANT_CANARY/u);
   assert.match(projectedHistory, /VALID_TOOL_(?:PATH|RESULT)_CANARY/u);
   assert.match(projectedHistory, /SYNTHETIC_TOOL_PATH_CANARY/u);
   assert.match(projectedHistory, /No result provided/u);
   assert.deepEqual(
     historyPayload.messages.map((message: { role: string }) => message.role),
-    ["user", "assistant", "tool", "assistant", "tool", "user"]
+    ["user", "assistant", "assistant", "tool", "assistant", "tool", "user"]
   );
 
   const reasoningPayloads: Record<string, any>[] = [];
@@ -11409,7 +11568,11 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
 
 
 Platform.isDesktopApp = false;
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-retry") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-output-limit") {
+  await assertProviderOutputLimitContract();
+  await assertQwenTokenPlanTransportContract();
+  console.log("PASS output limit: existing Qwen transport, history and failure contracts");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-retry") {
   await assertPiAgentSessionPartialAwareRetryContract();
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "settings-save-resilience") {
   await runSettingsSaveResilienceTests();

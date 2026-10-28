@@ -250,6 +250,11 @@ export type PiKnowledgeReferenceVerificationResult =
       references: readonly Readonly<PiKnowledgeReference>[];
     }>
   | Readonly<{
+      status: "verification_skipped";
+      reason: "knowledge_permission_revoked";
+      references: readonly Readonly<PiKnowledgeReference>[];
+    }>
+  | Readonly<{
       status: "source_changed";
       fixedResponse: "来源已变化，请重新执行";
       changedReferenceIds: readonly string[];
@@ -534,6 +539,13 @@ interface PiChatRuntimeEventBase {
 
 export type PiChatRuntimeEvent =
   | (PiChatRuntimeEventBase & { type: "model_progress" })
+  | (PiChatRuntimeEventBase & {
+      type: "output_continuation";
+      messageKey: string;
+      text: string;
+      entryId?: string;
+      status: "running" | "completed" | "failed" | "cancelled";
+    })
   | (PiChatRuntimeEventBase & {
       type: "reasoning_summary";
       summary: Readonly<EchoInkReasoningSummarySnapshot>;
