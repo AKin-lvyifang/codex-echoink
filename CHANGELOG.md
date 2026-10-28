@@ -1,5 +1,63 @@
 # Changelog
 
+## 2.8.7 - 2026-10-28
+<!-- release-type: feat -->
+### 2.8.7 · 工作台直接开工
+
+![EchoInk 2.8.7：工作台直接开工](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.8.7/assets/releases/echoink-agent-2.8.7-release.png)
+
+### 中文
+
+类型：新功能
+
+#### 更新内容
+
+- **电脑端工作台重新整理。** 日记、待办、财务、知识库、英文日记和 PDF 精读入口集中在页头，入门卡片带你找到第一件可做的事。会话卡片支持右键操作，常用按钮补上图标；新会话的短标题也能正常生成。
+- **签到记录跟随账号保存。** 登录后主动点击签到，记录由服务端保存；打开工作台或收到 AI 回答不会替你签到。
+- **联网搜索新增 DeepSeek。** 可以在 Tavily 与 DeepSeek 之间选择，两家的 Key 分别保存，聊天仍由当前模型回答。切换搜索服务不会自动改用另一家。
+- **会话运行记录可以导出，也可以主动上报问题。** 从会话的「…」菜单打开，先查看内容，再决定是否上传到 echoink.cn。报告包含对话、读到的笔记片段和运行日志；已识别的密钥会隐藏，仍请检查预览。只导出会在笔记库内保存文件，不上传。
+- **回答中断后更容易接着做。** 回答被截断时会尝试续写；工具调用失败或任务中断时显示原因和恢复入口。知识库能力未开启时，提示你先去开启；修正部分自定义模型默认未启用工具调用的问题。
+- **减少保存失败和任务误中断。** 改进设置保存失败后的处理，修复任务仍在推进却被当作空闲而打断的问题。遇到保存失败或任务异常时，可以从提示直接上报。
+- **设置更容易找到和修改。** 电脑端精简设置布局，手机和平板可在当前设置行选择部分选项；按钮与帮助提示统一使用 Obsidian 原生悬停提示，页面文案和返回入口也更清楚。
+- **修正部分云盘环境的会话文件读取判断。** Windows + Google Drive DriveFS 的实机兼容仍待确认；移动端继续按 README 所列的 Beta 范围提供能力。
+
+#### 如何使用
+
+打开工作台，从常用模块或入门卡片进入；检查输入内容后再发送。需要 DeepSeek 搜索时，在 EchoInk 设置的「联网搜索」中选择 DeepSeek、填写对应 API Key 后开启。连接测试会执行一次真实搜索，费用由所选搜索服务收取。
+
+遇到会话问题时，打开会话的「…」菜单，选择「导出运行记录」或「上报问题」。上传前展开预览，确认其中的对话和笔记内容可以提供给作者排查。报告保存与删除说明见 [README 隐私说明](https://github.com/AKin-lvyifang/codex-echoink/blob/2.8.7/README_CN.md#隐私与数据)。
+
+#### 下载与升级
+
+需要 **Obsidian 1.11.4 及以上**。升级前请备份 Vault 与插件数据。可以在 Obsidian 社区插件中检查更新，或从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.7) 下载 **main.js、manifest.json、styles.css**，放入 `.obsidian/plugins/codex-echoink/` 后重新启用插件。模型与搜索服务的费用由对应服务商另行收取。
+
+### English
+
+**2.8.7 · Start work from the workbench**
+
+Type: New
+
+#### What's new
+
+- **A reorganized desktop workbench.** Journal, tasks, finance, knowledge, English diary, and PDF reading are grouped in the header, with starter cards to help you find a first task. Session cards support context-menu actions, common buttons have icons, and short titles for new conversations generate correctly.
+- **Check-ins are saved with your account.** Sign in and explicitly check in to save the record on the server. Opening the workbench or receiving an AI answer does not check you in.
+- **DeepSeek is now an option for web search.** Choose Tavily or DeepSeek, with a separate saved key for each. Your selected chat model still writes the answer. Switching search services does not silently fall back to the other service.
+- **Export session run records or voluntarily report a problem.** Open the session's **…** menu, review the contents, then decide whether to upload to echoink.cn. Reports include conversations, note excerpts read by the agent, and run logs. Recognized secrets are hidden, but please review the preview. Exporting alone saves a file in your vault without uploading it.
+- **Continue more easily after an interruption.** Truncated answers can be continued. Failed tool calls and interrupted tasks show a reason and recovery actions. If knowledge access is disabled, the message directs you to enable it. Fixed tool calling being disabled by default for some custom models.
+- **Fewer save failures and false idle interruptions.** Improved handling of failed settings saves and fixed active tasks being interrupted as idle. Save-failure and task-error prompts also provide a problem-reporting action.
+- **Clearer settings and navigation.** Desktop settings have a simpler layout. Some phone and tablet options can be selected within the current settings row. Buttons and help controls use native Obsidian hover tooltips, with clearer page wording and return actions.
+- **Corrected a session-file read check that affected some cloud drives.** Compatibility with Windows and Google Drive DriveFS still needs device verification. Mobile features remain within the Beta scope described in the README.
+
+#### How to use
+
+Open the workbench and choose a module or starter card. Review the input before sending. To use DeepSeek search, select it under **Web search** in EchoInk settings, enter its API key, and enable search. Connection tests perform a real search and are billed by the selected search service.
+
+For a session problem, open its **…** menu and choose **Export run records** or **Report a problem**. Expand the preview before uploading and confirm that the conversations and notes can be shared with the author for troubleshooting. See the [README privacy information](https://github.com/AKin-lvyifang/codex-echoink/blob/2.8.7/README.md#privacy-and-data) for report retention and deletion.
+
+#### Download and upgrade
+
+Requires **Obsidian 1.11.4 or later**. Back up your vault and plugin data before upgrading. Check for updates in Obsidian's community plugins, or download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.7) into `.obsidian/plugins/codex-echoink/`, then re-enable the plugin. Model and search services bill usage separately.
+
 ## 2.8.6 - 2026-10-27
 <!-- release-type: feat -->
 ### 2.8.6 · 笔记哪里都能 @ 管家

@@ -63,7 +63,7 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 - Provider API Key 与 OpenAI Codex Beta 登录凭据保存在当前 Vault 的插件设置中，请在可信设备和 Vault 中配置。
 - 你选择的模型服务会接收当前 AI 请求所需的提示词、笔记、附件、记忆和工具结果。模型服务可能要求独立账号并另行收费；图片输入需要支持视觉的模型。
 - 桌面对话可以选择 Vault 外的本地工作区。文件访问遵循所选权限；“完全访问”会解除工作区边界。Vault 外附件仅在你明确选择、拖入或粘贴时读取。
-- Tavily 联网搜索默认关闭。开启后，搜索词发送至 `api.tavily.com`，返回的摘要与链接交给当前模型。Tavily 需要单独账号和 Key；连接测试也会执行一次 basic 搜索并消耗 1 credit，详见[官方计费说明](https://docs.tavily.com/documentation/api-credits)。
+- 联网搜索默认关闭，可选择 Tavily 或 DeepSeek。开启后，搜索词发送至所选服务的 `api.tavily.com` 或 `api.deepseek.com`，返回的摘要与链接交给当前模型。两家服务分别配置账号和 API Key，费用由所选服务另行收取；连接测试也会发起一次真实搜索。Tavily 的连接测试使用 basic 搜索，消耗 1 credit，详见[官方计费说明](https://docs.tavily.com/documentation/api-credits)；DeepSeek 的查询限制与计费见[搜索文档](https://api-docs.deepseek.com/zh-cn/guides/search/)。
 - 知识检索排除“私有记忆”和插件内部数据目录；这不构成对所有文件工具或第三方服务的全局访问限制。
 - PDF 本地文字提取在设备上进行；使用 MinerU 增强解析时，PDF 会发送给 MinerU，需要独立凭据与第三方额度，留存政策由该服务决定。生成精读或译文所需的提取内容会交给所选模型。
 - 收藏链接使用插件内置抓取，访问你主动提交的页面。
