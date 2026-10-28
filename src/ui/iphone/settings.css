@@ -44,7 +44,7 @@
   border: 1px solid var(--ip-line); border-radius: 9px; box-shadow: none; background: var(--ip-bg); color: var(--ip-ink); font-family: inherit; font-size: max(16px, 1em); line-height: 1.4;
 }
 .echoink-iphone .ip-settings select.ip-settings-input { padding-right: 24px; }
-.echoink-iphone .ip-settings .ip-settings-row:has(> .ip-settings-select-value) { padding-top: 0; padding-bottom: 0; }
+.echoink-iphone .ip-settings .ip-settings-row.has-select-value { padding-top: 0; padding-bottom: 0; }
 .echoink-iphone .ip-settings-select-value { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 60%; }
 .echoink-iphone .ip-settings select.ip-settings-select { appearance: auto; flex: 1 1 auto; width: auto; line-height: 1.5; text-overflow: ellipsis; }
 .echoink-iphone .ip-settings select.ip-settings-select:focus-visible { background: var(--background-modifier-hover); }
@@ -73,7 +73,7 @@
 .echoink-iphone .ip-settings-segments[data-selected="manifesto"] .ip-settings-segment-slider { transform: translateX(200%); }
 .echoink-iphone .ip-settings button.ip-settings-segment { flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 6px 5px; border: 0; border-radius: 7px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: .8em; white-space: nowrap; }
 .echoink-iphone .ip-settings button.ip-settings-segment[aria-pressed="true"] { color: var(--ip-ink); font-weight: 600; }
-.echoink-iphone .ip-settings .ip-settings-row:has(> .ip-settings-segments) { padding-top: 0; padding-bottom: 0; }
+.echoink-iphone .ip-settings .ip-settings-row.has-segments { padding-top: 0; padding-bottom: 0; }
 .echoink-iphone .ip-settings-model-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0 6px; }
 .echoink-iphone .ip-settings-model-head h2 { margin: 0; font-size: .92em; font-weight: 600; }
 .echoink-iphone .ip-settings-model-choices .ip-settings-row { padding-left: 0; padding-right: 0; }

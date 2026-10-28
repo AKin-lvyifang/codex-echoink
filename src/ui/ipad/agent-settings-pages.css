@@ -44,8 +44,8 @@
   .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-actions { flex-wrap: wrap; }
   .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row { flex-wrap: wrap; }
   .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row > .pd-settings-copy { flex-basis: 45%; }
-  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row:has(> .pd-settings-select-value) { flex-wrap: nowrap; }
-  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row:has(> .pd-settings-select-value) > .pd-settings-copy { flex-basis: auto; }
+  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row.has-select-value { flex-wrap: nowrap; }
+  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row.has-select-value > .pd-settings-copy { flex-basis: auto; }
 }
 
 .echoink-ipad.pd-settings .pd-agent-dream-row { padding-top: 0; padding-bottom: 0; }

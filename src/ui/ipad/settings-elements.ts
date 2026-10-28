@@ -35,7 +35,7 @@ export function settingsRow(ctx: IPadSettingsContext, parent: HTMLElement, title
 }
 export function settingsSelect(ctx: IPadSettingsContext, parent: HTMLElement, title: string, choices: readonly (readonly [string, string])[], value: string, change: (value: string) => void, leading?: HTMLElement): HTMLSelectElement {
   const row = settingsRow(ctx, parent, title), control = el(ctx.document, "span", "pd-settings-select-value"), select = el(ctx.document, "select", "pd-settings-input pd-settings-select");
-  select.setAttribute("aria-label", title);
+  row.classList.add("has-select-value"); select.setAttribute("aria-label", title);
   for (const [id, label] of choices) { const option = el(ctx.document, "option", "", label); option.value = id; select.append(option); }
   select.value = value; select.addEventListener("change", () => change(select.value));
   if (leading) control.append(leading); control.append(select); row.append(control); return select;
@@ -58,7 +58,7 @@ export function settingsToggle(ctx: IPadSettingsContext, title: string, checked:
     void Promise.resolve().then(() => change(requested)).then(() => { persisted = requested; }).catch(error => { input.checked = previous; ctx.error(error); }).finally(() => { input.disabled = false; }); }); return input;
 }
 export function settingsSwitch(ctx: IPadSettingsContext, parent: HTMLElement, title: string, checked: boolean, change: (checked: boolean) => void | Promise<unknown>): HTMLInputElement {
-  const row = el(ctx.document, "label", "pd-settings-row"), input = settingsToggle(ctx, title, checked, change);
+  const row = el(ctx.document, "label", "pd-settings-row has-switch-control"), input = settingsToggle(ctx, title, checked, change);
   row.append(el(ctx.document, "span", "pd-settings-copy", title), input); parent.append(row); return input;
 }
 export function settingsError(ctx: IPadSettingsContext): HTMLElement { const error = el(ctx.document, "div", "pd-settings-error"); error.hidden = true; error.setAttribute("role", "alert"); return error; }

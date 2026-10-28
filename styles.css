@@ -29169,7 +29169,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-iphone .ip-styles { display: flex; flex-direction: column; gap: 8px; }
 .echoink-iphone .ip-style-choice { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 12px 14px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
 .echoink-iphone .ip-style-choice:hover,
-.echoink-iphone .ip-style-choice:has(input:checked) { background: var(--ip-soft); }
+.echoink-iphone label.ip-style-choice.is-selected { background: var(--ip-soft); }
 .echoink-iphone .ip-style-choice input[type=radio] { appearance: none; width: 20px; height: 20px; margin: 1px 0 0; flex: 0 0 auto; border: 1.5px solid var(--ip-muted); border-radius: 50%; background: transparent; }
 .echoink-iphone .ip-style-choice input[type=radio]:checked { border-color: var(--ip-accent); background: radial-gradient(circle, var(--ip-accent) 0 4px, transparent 4.5px); }
 .echoink-iphone .ip-style-copy { min-width: 0; }
@@ -29332,7 +29332,7 @@ body[data-echoink-theme] .echoink-iphone {
   border: 1px solid var(--ip-line); border-radius: 9px; box-shadow: none; background: var(--ip-bg); color: var(--ip-ink); font-family: inherit; font-size: max(16px, 1em); line-height: 1.4;
 }
 .echoink-iphone .ip-settings select.ip-settings-input { padding-right: 24px; }
-.echoink-iphone .ip-settings .ip-settings-row:has(> .ip-settings-select-value) { padding-top: 0; padding-bottom: 0; }
+.echoink-iphone .ip-settings .ip-settings-row.has-select-value { padding-top: 0; padding-bottom: 0; }
 .echoink-iphone .ip-settings-select-value { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 60%; }
 .echoink-iphone .ip-settings select.ip-settings-select { appearance: auto; flex: 1 1 auto; width: auto; line-height: 1.5; text-overflow: ellipsis; }
 .echoink-iphone .ip-settings select.ip-settings-select:focus-visible { background: var(--background-modifier-hover); }
@@ -29361,7 +29361,7 @@ body[data-echoink-theme] .echoink-iphone {
 .echoink-iphone .ip-settings-segments[data-selected="manifesto"] .ip-settings-segment-slider { transform: translateX(200%); }
 .echoink-iphone .ip-settings button.ip-settings-segment { flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 6px 5px; border: 0; border-radius: 7px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: .8em; white-space: nowrap; }
 .echoink-iphone .ip-settings button.ip-settings-segment[aria-pressed="true"] { color: var(--ip-ink); font-weight: 600; }
-.echoink-iphone .ip-settings .ip-settings-row:has(> .ip-settings-segments) { padding-top: 0; padding-bottom: 0; }
+.echoink-iphone .ip-settings .ip-settings-row.has-segments { padding-top: 0; padding-bottom: 0; }
 .echoink-iphone .ip-settings-model-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0 6px; }
 .echoink-iphone .ip-settings-model-head h2 { margin: 0; font-size: .92em; font-weight: 600; }
 .echoink-iphone .ip-settings-model-choices .ip-settings-row { padding-left: 0; padding-right: 0; }
@@ -29735,7 +29735,7 @@ body[data-echoink-theme] .echoink-iphone {
 .echoink-iphone .ip-knowledge-default:empty { display: none; }
 .echoink-iphone .ip-knowledge-routes { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
 .echoink-iphone .ip-knowledge-route { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; padding: 14px 12px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
-.echoink-iphone .ip-knowledge-route:has(:checked) { background: var(--ip-soft); }
+.echoink-iphone .ip-knowledge-route.is-selected { background: var(--ip-soft); }
 .echoink-iphone .ip-knowledge-route input { flex: 0 0 20px; width: 20px; height: 20px; margin: 3px 0 0; accent-color: var(--ip-accent); }
 .echoink-iphone .ip-knowledge-route > span { min-width: 0; }
 .echoink-iphone .ip-knowledge-route-title { display: block; font-size: .92em; font-weight: 500; }
@@ -30221,7 +30221,7 @@ body[data-echoink-theme] .echoink-iphone {
 .echoink-ipad .pd-styles { display: flex; flex-direction: column; gap: 8px; }
 .echoink-ipad .pd-style-choice { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 12px 14px; border: 1px solid var(--pd-line); border-radius: 12px; cursor: pointer; }
 .echoink-ipad .pd-style-choice:hover,
-.echoink-ipad .pd-style-choice:has(input:checked) { background: var(--pd-soft); }
+.echoink-ipad label.pd-style-choice.is-selected { background: var(--pd-soft); }
 .echoink-ipad .pd-style-choice input[type=radio] { appearance: none; width: 20px; height: 20px; margin: 1px 0 0; flex: 0 0 auto; border: 1.5px solid var(--pd-muted); border-radius: 50%; background: transparent; }
 .echoink-ipad .pd-style-choice input[type=radio]:checked { border-color: var(--pd-accent); background: radial-gradient(circle, var(--pd-accent) 0 4px, transparent 4.5px); }
 .echoink-ipad .pd-style-copy { min-width: 0; }
@@ -30459,9 +30459,8 @@ body[data-echoink-theme] .echoink-ipad {
 .echoink-ipad.pd-settings .pd-settings-group { overflow: hidden; border: 1px solid var(--pd-settings-line); border-radius: 12px; }
 .echoink-ipad.pd-settings .pd-settings-row { appearance: none; display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 48px; height: auto; margin: 0; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--pd-settings-line); border-radius: 0; background: transparent; color: var(--text-normal); font: inherit; text-align: left; line-height: 1.5; box-shadow: none; }
 .echoink-ipad.pd-settings .pd-settings-row:last-child { border-bottom: 0; }
-.echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-switch),
-.echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-switch-hit),
-.echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-segments) { padding-top: 0; padding-bottom: 0; }
+.echoink-ipad.pd-settings .pd-settings-row.has-switch-control,
+.echoink-ipad.pd-settings .pd-settings-row.has-segments { padding-top: 0; padding-bottom: 0; }
 .echoink-ipad.pd-settings button.pd-settings-row { cursor: pointer; }
 .echoink-ipad.pd-settings button.pd-settings-row:focus-visible,
 .echoink-ipad.pd-settings button.pd-settings-action:focus-visible { outline: none; background: var(--pd-settings-soft); }
@@ -30489,7 +30488,7 @@ body[data-echoink-theme] .echoink-ipad {
 .echoink-ipad.pd-settings .pd-settings-field-label { font-size: .88em; font-weight: 500; }
 .echoink-ipad.pd-settings .pd-settings-input { width: 100%; min-width: 0; min-height: 44px; height: auto; padding: 10px; border: 1px solid var(--pd-settings-line); border-radius: 9px; background: var(--background-primary); color: var(--text-normal); font: inherit; font-size: max(16px, 1em); box-shadow: none; }
 .echoink-ipad.pd-settings .pd-settings-input:focus { outline: none; border-color: var(--pd-settings-line); box-shadow: none; }
-.echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-select-value) { padding-top: 0; padding-bottom: 0; }
+.echoink-ipad.pd-settings .pd-settings-row.has-select-value { padding-top: 0; padding-bottom: 0; }
 .echoink-ipad.pd-settings .pd-settings-select-value { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 60%; }
 .echoink-ipad.pd-settings select.pd-settings-select { appearance: auto; flex: 1 1 auto; width: auto; max-width: 100%; padding-right: 24px; line-height: 1.5; text-overflow: ellipsis; }
 .echoink-ipad.pd-settings select.pd-settings-select:focus-visible { background: var(--pd-settings-soft); }
@@ -30640,8 +30639,8 @@ body[data-echoink-theme] .echoink-ipad {
   .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-actions { flex-wrap: wrap; }
   .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row { flex-wrap: wrap; }
   .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row > .pd-settings-copy { flex-basis: 45%; }
-  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row:has(> .pd-settings-select-value) { flex-wrap: nowrap; }
-  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row:has(> .pd-settings-select-value) > .pd-settings-copy { flex-basis: auto; }
+  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row.has-select-value { flex-wrap: nowrap; }
+  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row.has-select-value > .pd-settings-copy { flex-basis: auto; }
 }
 
 .echoink-ipad.pd-settings .pd-agent-dream-row { padding-top: 0; padding-bottom: 0; }
@@ -30848,9 +30847,9 @@ body[data-echoink-theme] .echoink-ipad {
 .echoink-ipad .pd-todo-checkbox-hit { position: relative; display: grid; place-items: center; width: 44px; min-height: 44px; cursor: pointer; }
 .echoink-ipad .pd-todo-checkbox-hit::before { content: ""; box-sizing: border-box; width: 18px; height: 18px; border: 1.5px solid var(--text-muted); border-radius: 5px; }
 .echoink-ipad .pd-todo-checkbox-hit::after { position: absolute; display: grid; place-items: center; width: 18px; height: 18px; color: var(--pd-on-accent); font-size: 14px; font-weight: 600; line-height: 1; content: none; }
-.echoink-ipad .pd-todo-checkbox-hit:has(input:checked)::before { border-color: var(--pd-accent); background: var(--pd-accent); }
-.echoink-ipad .pd-todo-checkbox-hit:has(input:checked)::after { content: "✓"; }
-.echoink-ipad .pd-todo-checkbox-hit:has(input:focus-visible)::before { outline: 2px solid var(--pd-accent); outline-offset: 3px; }
+.echoink-ipad label.pd-todo-checkbox-hit.is-checked::before { border-color: var(--pd-accent); background: var(--pd-accent); }
+.echoink-ipad label.pd-todo-checkbox-hit.is-checked::after { content: "✓"; }
+.echoink-ipad label.pd-todo-checkbox-hit.has-visible-focus::before { outline: 2px solid var(--pd-accent); outline-offset: 3px; }
 .echoink-ipad .pd-todo-checkbox-hit input { position: absolute; inset: 0; width: 44px; height: 44px; margin: 0; opacity: 0; cursor: pointer; }
 .echoink-ipad .pd-module-check-row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 0; border-bottom: 1px solid var(--background-modifier-border); }
 .echoink-ipad .pd-module-check-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -30934,7 +30933,7 @@ body[data-echoink-theme] .echoink-ipad {
 .echoink-ipad .pd-knowledge-default:empty { display: none; }
 .echoink-ipad .pd-knowledge-routes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .echoink-ipad .pd-knowledge-route { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; padding: 14px 12px; border: 1px solid var(--background-modifier-border); border-radius: 12px; cursor: pointer; }
-.echoink-ipad .pd-knowledge-route:has(:checked) { background: var(--background-modifier-hover); }
+.echoink-ipad .pd-knowledge-route.is-selected { background: var(--background-modifier-hover); }
 .echoink-ipad .pd-knowledge-route input { flex: 0 0 20px; width: 20px; height: 20px; margin: 3px 0 0; accent-color: var(--em-green, var(--interactive-accent)); }
 .echoink-ipad .pd-knowledge-route > span { min-width: 0; }
 .echoink-ipad .pd-knowledge-route-title { display: block; font-size: .92em; font-weight: 500; }

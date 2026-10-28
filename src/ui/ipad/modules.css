@@ -112,9 +112,9 @@
 .echoink-ipad .pd-todo-checkbox-hit { position: relative; display: grid; place-items: center; width: 44px; min-height: 44px; cursor: pointer; }
 .echoink-ipad .pd-todo-checkbox-hit::before { content: ""; box-sizing: border-box; width: 18px; height: 18px; border: 1.5px solid var(--text-muted); border-radius: 5px; }
 .echoink-ipad .pd-todo-checkbox-hit::after { position: absolute; display: grid; place-items: center; width: 18px; height: 18px; color: var(--pd-on-accent); font-size: 14px; font-weight: 600; line-height: 1; content: none; }
-.echoink-ipad .pd-todo-checkbox-hit:has(input:checked)::before { border-color: var(--pd-accent); background: var(--pd-accent); }
-.echoink-ipad .pd-todo-checkbox-hit:has(input:checked)::after { content: "✓"; }
-.echoink-ipad .pd-todo-checkbox-hit:has(input:focus-visible)::before { outline: 2px solid var(--pd-accent); outline-offset: 3px; }
+.echoink-ipad label.pd-todo-checkbox-hit.is-checked::before { border-color: var(--pd-accent); background: var(--pd-accent); }
+.echoink-ipad label.pd-todo-checkbox-hit.is-checked::after { content: "✓"; }
+.echoink-ipad label.pd-todo-checkbox-hit.has-visible-focus::before { outline: 2px solid var(--pd-accent); outline-offset: 3px; }
 .echoink-ipad .pd-todo-checkbox-hit input { position: absolute; inset: 0; width: 44px; height: 44px; margin: 0; opacity: 0; cursor: pointer; }
 .echoink-ipad .pd-module-check-row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 0; border-bottom: 1px solid var(--background-modifier-border); }
 .echoink-ipad .pd-module-check-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }

@@ -122,7 +122,7 @@ export class IPadSettings {
           track.querySelectorAll("button").forEach(control => { control.setAttribute("aria-pressed", String(control === button)); });
           void this.save(current => { const old = current.colorTheme; current.colorTheme = value; return () => { current.colorTheme = old; }; }).catch(error => ctx.error(error)).finally(() => { busy = false; signature = ""; render(); }); }); if (value !== "minimal") decorateProAppearanceChoice(button, track, { zh: settings.settingsLanguage !== "en", allowed: hasPro, upgrade: () => { void ctx.push(this.category("account")); } })(); track.append(button);
       }
-      row.append(track);
+      row.classList.add("has-segments"); row.append(track);
       renderCompanionThemeRecommendation(appearance, settings.settingsLanguage !== "en");
       const language = settingsSelect(ctx, appearance, t(ctx, "界面语言"), [["zh-CN", "简体中文"], ["en", "English"]], settings.settingsLanguage, value => {
         if (busy) { language.value = this.host.settings().settingsLanguage; return; }
@@ -196,7 +196,7 @@ export class IPadSettings {
         }).catch(error => ctx.error(error)); });
         if (!paid || qualified) {
           const control = settingsToggle(ctx, `${t(ctx, "启用")}${t(ctx, label)}`, mobileModuleEnabled(settings, id), async enabled => { await setMobileModuleEnabled(this.host, id, enabled); this.refresh(); });
-          const hit = el(ctx.document, "label", "pd-settings-switch-hit"); hit.append(control); hit.addEventListener("click", event => event.stopPropagation()); row.append(hit);
+          const hit = el(ctx.document, "label", "pd-settings-switch-hit"); hit.append(control); hit.addEventListener("click", event => event.stopPropagation()); row.classList.add("has-switch-control"); row.append(hit);
         } else {
           const membership = settingsAction(ctx, "需要 PRO", () => this.open("account")); row.append(membership);
         }

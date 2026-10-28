@@ -114,9 +114,9 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string): M
     } else capabilities.append(el(ctx.document, "div", "ip-form-empty", "暂无远程 MCP 服务"));
     const styles = el(ctx.document, "div", "ip-styles"); styles.setAttribute("role", "radiogroup"); styles.setAttribute("aria-label", "风格");
     for (const style of AGENT_STYLES) {
-      const row = el(ctx.document, "label", "ip-style-choice"), radio = el(ctx.document, "input", ""); radio.type = "radio"; radio.name = `ip-style-${current.id}`; radio.value = style.id; radio.checked = current.styleId === style.id;
+      const row = el(ctx.document, "label", "ip-style-choice"), radio = el(ctx.document, "input", ""); radio.type = "radio"; radio.name = `ip-style-${current.id}`; radio.value = style.id; radio.checked = current.styleId === style.id; row.classList.toggle("is-selected", radio.checked);
       const copy = el(ctx.document, "span", "ip-style-copy"); copy.append(el(ctx.document, "span", "ip-style-name", style.name), el(ctx.document, "span", "ip-sub", style.responseStructure)); row.append(radio, copy); styles.append(row);
-      radio.addEventListener("change", () => { if (radio.checked) { current.styleId = style.id; changed(); } });
+      radio.addEventListener("change", () => { if (radio.checked) { for (const choice of Array.from(styles.querySelectorAll<HTMLElement>(".ip-style-choice"))) choice.classList.toggle("is-selected", choice.querySelector<HTMLInputElement>("input")!.checked); current.styleId = style.id; changed(); } });
     }
     group("风格").append(styles);
     if (agentId && agentId !== GENERAL_ASSISTANT_ID) {

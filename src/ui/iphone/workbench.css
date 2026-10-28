@@ -161,7 +161,7 @@
 .echoink-iphone .ip-styles { display: flex; flex-direction: column; gap: 8px; }
 .echoink-iphone .ip-style-choice { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 12px 14px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
 .echoink-iphone .ip-style-choice:hover,
-.echoink-iphone .ip-style-choice:has(input:checked) { background: var(--ip-soft); }
+.echoink-iphone label.ip-style-choice.is-selected { background: var(--ip-soft); }
 .echoink-iphone .ip-style-choice input[type=radio] { appearance: none; width: 20px; height: 20px; margin: 1px 0 0; flex: 0 0 auto; border: 1.5px solid var(--ip-muted); border-radius: 50%; background: transparent; }
 .echoink-iphone .ip-style-choice input[type=radio]:checked { border-color: var(--ip-accent); background: radial-gradient(circle, var(--ip-accent) 0 4px, transparent 4.5px); }
 .echoink-iphone .ip-style-copy { min-width: 0; }

@@ -170,7 +170,7 @@
 .echoink-ipad .pd-styles { display: flex; flex-direction: column; gap: 8px; }
 .echoink-ipad .pd-style-choice { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 12px 14px; border: 1px solid var(--pd-line); border-radius: 12px; cursor: pointer; }
 .echoink-ipad .pd-style-choice:hover,
-.echoink-ipad .pd-style-choice:has(input:checked) { background: var(--pd-soft); }
+.echoink-ipad label.pd-style-choice.is-selected { background: var(--pd-soft); }
 .echoink-ipad .pd-style-choice input[type=radio] { appearance: none; width: 20px; height: 20px; margin: 1px 0 0; flex: 0 0 auto; border: 1.5px solid var(--pd-muted); border-radius: 50%; background: transparent; }
 .echoink-ipad .pd-style-choice input[type=radio]:checked { border-color: var(--pd-accent); background: radial-gradient(circle, var(--pd-accent) 0 4px, transparent 4.5px); }
 .echoink-ipad .pd-style-copy { min-width: 0; }
