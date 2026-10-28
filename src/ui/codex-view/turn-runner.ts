@@ -1,3 +1,4 @@
+import { runErrors } from "../../run-reports/recent-errors";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { freezeWorkbenchTaskSource } from "../../home/workbench-context";
 import { isPdfReadingIntent } from "../../pdf-reading/intent";
@@ -624,6 +625,7 @@ export async function startQueuedTurnItemSafely(view: CodexViewTurnContext, item
   try {
     return await view.startQueuedTurnItem(item, source);
   } catch (error) {
+    runErrors.record("desktop.turn.finalization", error, { conversationId: item.sessionId, runId: item.id });
     const message = localizedPiChatErrorMessage(view, error);
     new Notice(uiText(view, `任务收口失败：${message}`, `Task finalization failed: ${message}`));
     return "failed";
@@ -638,6 +640,7 @@ async function startPreparedQueuedTurnItemSafely(
   try {
     return await startPreparedQueuedTurnItem(view, item, source);
   } catch (error) {
+    runErrors.record("desktop.turn.finalization", error, { conversationId: item.sessionId, runId: item.id });
     const message = localizedPiChatErrorMessage(view, error);
     new Notice(uiText(view, `任务收口失败：${message}`, `Task finalization failed: ${message}`));
     return "failed";
@@ -1194,7 +1197,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       committedFinalProjection
     );
 
-    if (settledEvent.terminalState === "failed") {
+    if (settledEvent.terminalState === "failed" && !settledRun.interruption?.retryAttempts) {
       const knownFailure = providerFailureText(settledRun.error);
       new Notice(
         knownFailure
@@ -1208,6 +1211,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     }
     return queuedTurnOutcomeForPiTerminal(settledEvent.terminalState);
   } catch (error) {
+    runErrors.record("desktop.turn", error, { conversationId: session.id, runId: handle?.productRunId });
     view.onPiRunFailure?.(localizedPiChatErrorMessage(view, error));
     if (item.piUserEntryAccepted || piUserEntryWasAccepted(error)) {
       item.piUserEntryAccepted = true;

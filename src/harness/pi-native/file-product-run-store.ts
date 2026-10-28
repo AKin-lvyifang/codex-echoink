@@ -1176,9 +1176,10 @@ function requireAgentRunSnapshot(value: unknown): AgentRunSnapshot {
 
 function requireInterruption(value: unknown): TaskInterruptionRecord {
   const raw = requirePlainObject(value, "productRun.interruption");
-  requireExactKeys(raw, ["at", "reason", "stage"], ["detail"], "productRun.interruption");
+  requireExactKeys(raw, ["at", "reason", "stage"], ["detail", "retryAttempts"], "productRun.interruption");
   if (!TASK_INTERRUPTION_REASONS.includes(raw.reason as TaskInterruptionRecord["reason"])) throw new Error("Invalid task interruption reason");
   if (typeof raw.stage !== "string" || raw.stage.length > 500) throw new Error("Invalid task interruption stage");
   if (raw.detail !== undefined && (typeof raw.detail !== "string" || raw.detail.length > 2000)) throw new Error("Invalid task interruption detail");
-  return { at: requireTimestamp(raw.at, "productRun.interruption.at"), reason: raw.reason as TaskInterruptionRecord["reason"], stage: raw.stage, ...(raw.detail ? { detail: raw.detail } : {}) };
+  if (raw.retryAttempts !== undefined && (typeof raw.retryAttempts !== "number" || !Number.isSafeInteger(raw.retryAttempts) || raw.retryAttempts < 1)) throw new Error("Invalid task interruption retry count");
+  return { at: requireTimestamp(raw.at, "productRun.interruption.at"), reason: raw.reason as TaskInterruptionRecord["reason"], stage: raw.stage, ...(raw.detail ? { detail: raw.detail } : {}), ...(raw.retryAttempts !== undefined ? { retryAttempts: raw.retryAttempts } : {}) };
 }

@@ -1,3 +1,4 @@
+import { runErrors } from "../../run-reports/recent-errors";
 import { Notice } from "obsidian";
 import type { AgentModuleId } from "../../agents/types";
 import { HomeSearchService } from "../../home/home-search";
@@ -124,6 +125,6 @@ export class IPadWorkbench {
     return next;
   }
 
-  private error(error: unknown): void { new Notice(error instanceof Error ? error.message : String(error)); }
+  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(error instanceof Error ? error.message : String(error)); }
   dispose(): void { if (this.closed) return; this.closed = true; this.shell.dispose(); }
 }

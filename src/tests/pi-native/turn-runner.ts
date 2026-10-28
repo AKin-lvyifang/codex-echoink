@@ -164,7 +164,7 @@ export async function runTurnWatchdogProgressTests(): Promise<void> {
       await clock.advance(1);
       assert.equal(f.aborts(), 1);
       assert.equal(await f.result, "cancelled");
-      assert.ok(openTestNoticeMessages.includes("Agent 已经 5 分钟没有任何进展，已停止。可以点继续重试。"));
+      assert.ok(!openTestNoticeMessages.includes("Agent 已经 5 分钟没有任何进展，已停止。可以点继续重试。"), "the persistent interruption card owns this message");
     }],
     ["approval waiting does not consume the idle budget", async (f, clock) => {
       await clock.advance(200_000);
@@ -191,7 +191,8 @@ export async function runTurnWatchdogProgressTests(): Promise<void> {
       f.plugin.settings.settingsLanguage = "en";
       await clock.advance(CHAT_TURN_WATCHDOG_MS);
       await f.result;
-      assert.ok(openTestNoticeMessages.includes("Agent has made no progress for 5 minutes and has stopped. Click Continue to retry."));
+      assert.deepEqual(f.interruptions, ["watchdog"]);
+      assert.ok(!openTestNoticeMessages.some(message => message.includes("no progress")), "do not duplicate the card in a Notice");
     }]
   ];
   const errors: Error[] = [];
@@ -214,6 +215,7 @@ async function watchdogFixture(clock: WatchdogTestClock) {
   const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
   const result = deferred<Readonly<PiProductRunRecord>>();
   let listener: PiChatRuntimeEventListener | null = null; let aborts = 0; let settled = false;
+  const interruptions: string[] = [];
   const identity = { productRunId: "product-run-turn-runner", conversationId: session.id, piSessionId: session.piSessionId! };
   async function finish(terminalState: "completed" | "cancelled" = "completed") {
     if (settled) return; settled = true;
@@ -230,7 +232,7 @@ async function watchdogFixture(clock: WatchdogTestClock) {
     subscribePiAgentApproval: () => ({ unsubscribe() {} }), piAgentApprovalBinding: () => null,
     readPiConversationProjection: async () => durableProjection(session, "completed"),
     releasePiProductionRun() {}, releasePiConversationIfInactive: async () => false,
-    recordTaskInterruption: async () => undefined,
+    recordTaskInterruption: async (_id: string, reason: string) => { interruptions.push(reason); },
     abortPiConversation: async () => { if (!settled) { aborts++; await finish("cancelled"); } }
   };
   const service = attachTestConversationRunService(plugin); const provider = settings.apiProviders[0];
@@ -241,7 +243,7 @@ async function watchdogFixture(clock: WatchdogTestClock) {
   assert.ok(listener, "the production run must subscribe before advancing its clock");
   const failures: string[] = [];
   service.runs.get(session.id)!.context!.onPiRunFailure = message => { failures.push(message); };
-  return { plugin, service, session, result: flight, finish, failures, aborts: () => aborts,
+  return { plugin, service, session, result: flight, finish, failures, interruptions, aborts: () => aborts,
     emit: async (patch: RuntimeEventPatch) => { await emit(listener, { ...runtimeEvent(patch), ...identity }); await clock.advance(0); } };
 }
 
@@ -2565,7 +2567,7 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
   }
 }
 
-async function failedSettlementNoticeMatchesDurableFailureReason():
+async function failedSettlementNoticeMatchesDurableFailureReason(retryExhausted = false):
 Promise<void> {
   const session = piSessionShell("conversation-turn-runner");
   session.piSessionId = "pi-session-turn-runner";
@@ -2685,10 +2687,12 @@ Promise<void> {
     agentSettledAt: 7,
     settledAt: 8,
     error: "provider_sse_json_invalid",
+    ...(retryExhausted ? { interruption: { at: 8, reason: "run_failed" as const, stage: "", retryAttempts: 3, detail: "provider_service_failed" } } : {}),
     createdAt: 2,
     updatedAt: 8
   });
   assert.equal(await turn, "failed");
+  if (retryExhausted) { assert.equal(openTestNoticeMessages.length, 0, "the interruption card replaces the duplicate failure Notice"); return; }
   assert.equal(
     openTestNoticeMessages.at(-1),
     "Provider 返回的流数据格式损坏，回答未完成。"
@@ -2702,6 +2706,7 @@ Promise<void> {
     openTestNoticeMessages.at(-1),
     "top-right Notice and durable answer reason must use the same safe copy"
   );
+  await failedSettlementNoticeMatchesDurableFailureReason(true);
 }
 
 async function pendingSubmitKeepsRunningConversationResidentAcrossSessionSwitch():

@@ -1,3 +1,4 @@
+import { exportDesktopRunReport } from "../run-reports/desktop-ui";
 import { setTurnWatchdogWaiting } from "./turn-watchdog";
 import type { PdfNavigationStart } from "../pdf-reading/types";
 import { GenerationModal } from "../generation/modal";
@@ -457,6 +458,13 @@ export class CodexView extends ItemView {
     this.taskMidnightTimer = window.setTimeout(() => { if (this.viewLifecycleAbortController.signal.aborted) return; this.renderTaskPages(); this.scheduleTaskMidnightRefresh(); }, tomorrow.getTime() - Date.now());
   }
   private showTaskError(message: string): void { this.taskLoadError = message; this.renderTaskPages(); }
+  private async openTaskRunReport(id: string): Promise<void> {
+    try { await this.plugin.openRunReport(id); } catch (error) { new Notice(error instanceof Error ? error.message : "无法打开上报问题"); }
+  }
+  openReportConversationId(): string | undefined {
+    if (this.taskUiMounted) return !this.taskEditor && this.taskNavigation.page.kind === "detail" ? this.taskNavigation.page.taskId : undefined;
+    return this.plugin.settings.activeSessionId || undefined;
+  }
   private renderTaskInterruptionCard(): void {
     const element = this.taskInterruptionEl, entry = this.currentTaskEntry();
     if (!element) return;
@@ -472,7 +480,7 @@ export class CodexView extends ItemView {
       const reason = this.taskResumeErrors.get(id) ?? this.plugin.getTaskResumeError(id) ?? activity.failures[0]?.message ?? "停止";
       renderTaskInterruption(element, { pending, language: this.plugin.settings.settingsLanguage,
         userCopy: activity.taskKind === "upgrade" ? reason : maintenanceFailureText(reason, activity.currentPath, this.plugin.settings.settingsLanguage === "en"),
-        buttonLabel: this.taskText("继续", "Continue"), onResume: () => { void this.resumeInterruptedTask(id, false); } });
+        buttonLabel: this.taskText("继续", "Continue"), onReport: () => this.openTaskRunReport(id), onResume: () => { void this.resumeInterruptedTask(id, false); } });
       return;
     }
     const key = `${entry.taskInterruptedAt ?? 0}:${entry.taskStage ?? ""}`;
@@ -492,7 +500,7 @@ export class CodexView extends ItemView {
     }
     const pending = this.taskSubmitting.has(`resume:${id}`) || this.plugin.isTaskResuming(id);
     renderTaskInterruption(element, { info: record.info, error: pending ? undefined : this.taskResumeErrors.get(id) ?? this.plugin.getTaskResumeError(id) ?? record.error,
-      pending, language: this.plugin.settings.settingsLanguage,
+      pending, language: this.plugin.settings.settingsLanguage, onReport: () => this.openTaskRunReport(id),
       onResume: () => { void this.resumeInterruptedTask(id, false); } });
   }
   private async resumeInterruptedTask(taskId: string, withComposer: boolean): Promise<void> {
@@ -561,7 +569,10 @@ export class CodexView extends ItemView {
       status: entry => { const request = inlineHost?.service.latestForTask(entry.conversationId); return request ? inlineTaskStatus(request, this.plugin.settings.settingsLanguage) : undefined; }
     }, Date.now(), this.plugin.settings.settingsLanguage);
     else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? [], () => this.stopTurn().catch(error => { new Notice(error instanceof Error ? error.message : String(error)); }),
-      inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) } : undefined);
+      inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) } : undefined, {
+        export: async () => exportDesktopRunReport(this.app, this.plugin.getVaultPath(), await this.plugin.captureRunReport(entry.conversationId), this.plugin.settings.settingsLanguage === "en"),
+        report: () => this.plugin.openRunReport(entry.conversationId)
+      });
     else {
       disposeOriginControls(this.taskDetailHeaderEl!); this.taskDetailHeaderEl!.empty();
       this.taskDetailHeaderEl!.createDiv({ cls: "echoink-task-detail-header", text: this.taskText("任务详情", "Task details") });

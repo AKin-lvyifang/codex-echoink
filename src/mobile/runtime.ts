@@ -1,3 +1,5 @@
+import { runErrors } from "../run-reports/recent-errors";
+import { interruptionErrorDetail } from "../agents/task-interruption-copy";
 import { bindVaultBodySearchEvents, type KnowledgeBodySearchPort } from "../knowledge-base/vault-body-search";
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import { Notice, type App } from "obsidian";
@@ -151,9 +153,10 @@ export class MobileRuntime {
     if (this.foregroundRequested && this.shutdownFlight) await (signal ? abortable(this.shutdownFlight, signal) : this.shutdownFlight);
     if (generation !== this.lifecycleGeneration || this.suspended || this.disposed) throw new Error("应用已暂停，请回到前台后显式继续。");
   }
-  private interruptRun(run: ActiveTask, reason: MobileInterruptionReason): void {
+  private interruptRun(run: ActiveTask, reason: MobileInterruptionReason, detail?: string): void {
     if (!run.interruption) {
-      run.interruption = { at: Date.now(), reason, stage: run.stage, ...(run.toolCallTextFailure ? { toolCallTextFailure: run.toolCallTextFailure } : {}) };
+      run.interruption = { at: Date.now(), reason, stage: run.stage, ...(detail ? { detail } : {}),
+        ...(run.toolCallTextFailure ? { toolCallTextFailure: run.toolCallTextFailure } : {}) };
       if (run.agent) run.frozenMessages = structuredClone(run.promptRecorded
         ? [...run.prefix, ...run.agent.state.messages]
         : this.store.getSession(run.taskId)?.messages ?? []);
@@ -484,7 +487,7 @@ export class MobileRuntime {
       await Promise.all(commits);
       if (!run.accepted && controller.signal.aborted && !failed) { failed = true; failure = new Error("已停止，尚未受理的输入已保留。"); }
       if (failed || controller.signal.aborted || saveFailed) {
-        this.interruptRun(run, failed ? "run_failed" : "user_stopped"); this.pausedTasks.add(id);
+        this.interruptRun(run, failed ? "run_failed" : "user_stopped", failed ? interruptionErrorDetail(errorText(failure).split(run.provider.apiKey || "\0").join("[已隐藏]")) : undefined); this.pausedTasks.add(id);
       }
       try {
         if (!run.candidate || run.accepted) await this.store.updateSession(id, task => {
@@ -516,6 +519,7 @@ export class MobileRuntime {
       if (run.candidate && !run.accepted) {
         const cached = this.searches.get(id); cached?.release(); cached?.search.dispose(); this.searches.delete(id); this.pausedTasks.delete(id);
       }
+      if (failed) runErrors.record("mobile.runtime", failure, { conversationId: id, runId: turn.id });
       if (failed) { if (!run.candidate || run.accepted) this.errors.set(id, errorText(failure)); run.admission.reject(failure); run.completion.reject(failure); }
       else { run.admission.resolve(); run.completion.resolve(); }
       if (saveFailed || run.persistenceFailed) run.finished.reject(saveFailed ? persistenceFailure : run.persistenceError);

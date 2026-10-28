@@ -52,7 +52,10 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
       const reopened = new MobileStore(state.adapter, "plugin/mobile", "task-fixture"); await reopened.load();
       const runtime = new MobileRuntime(state.app, reopened, () => state.settings, async () => { throw new Error("no replay"); });
       assert.equal(/本轮没有执行工具/u.test(runtime.stateFor(task.id).error), failed);
-      if (failed) assert.match(reopened.session.runs.at(-1).interruption.toolCallTextFailure, /^model_tool_call_text_/u);
+      if (failed) {
+        assert.match(reopened.session.runs.at(-1).interruption.toolCallTextFailure, /^model_tool_call_text_/u);
+        assert.match(reopened.session.runs.at(-1).interruption.detail, /本轮没有执行工具/u);
+      }
       runtime.dispose(); state.runtime.dispose();
     }
   });

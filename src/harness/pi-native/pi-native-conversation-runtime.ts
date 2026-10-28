@@ -1,3 +1,5 @@
+import { runErrors } from "../../run-reports/recent-errors";
+import { interruptionErrorDetail } from "../../agents/task-interruption-copy";
 import { freezeInlineModelRequest, inlineProposalContextContent, INLINE_PROPOSAL_SYSTEM_PROMPT, parseInlineModelOutput, type InlineModelRequest, type InlineModelOutput } from "../../inline-agent/protocol";
 import { estimateTokenValue } from "../usage/token-estimator";
 import { assertGenerationInputBudget, freezeGenerationRequest, generationModelPrompt, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
@@ -647,6 +649,7 @@ export class PiNativeConversationRuntimeError extends Error {
   ) {
     super(message, options);
     this.name = "PiNativeConversationRuntimeError";
+    runErrors.record("desktop.runtime", this, { code });
     this.piUserEntryAccepted = options?.piUserEntryAccepted === true;
     this.piUserEntryId = options?.piUserEntryId;
   }
@@ -3926,6 +3929,7 @@ export class PiNativeConversationRuntime {
       });
       return inlineProposalResult ? Object.freeze({ ...settled, inlineProposalResult }) : settled;
     } catch (settlementError) {
+      runErrors.record("desktop.runtime.settlement", settlementError, { conversationId: active.catalog.conversationId, runId: execution.productRunId });
       let providerReasoningCloseError: unknown = null;
       try {
         await this.closeRemainingProviderReasoning(
@@ -4244,6 +4248,12 @@ export class PiNativeConversationRuntime {
           steering: event.steering,
           followUp: event.followUp
         });
+        break;
+      case "auto_retry_end":
+        if (!event.success && event.attempt > 0 && !execution.interruption) {
+          execution.interruption = { at: this.now(), reason: "run_failed", stage: taskInterruptionStage(active),
+            retryAttempts: event.attempt, detail: interruptionErrorDetail(event.finalError ?? safeProductRunErrorCode(undefined, active.sessionManager.getEntries())) };
+        }
         break;
       case "agent_end":
         await this.emitRuntimeEvent(active, execution, {
