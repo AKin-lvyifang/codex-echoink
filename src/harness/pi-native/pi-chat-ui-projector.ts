@@ -446,7 +446,7 @@ export class PiChatUiProjector {
     const projectionTime = finiteTime(input.now, durableUpdatedAt);
     for (const run of input.runIdentities ?? []) {
       const text = toolCallTextFailureMessage(run.toolCallTextFailure);
-      if (text) upsertToolCallTextFailure(messages, scope, run.productRunId, text, run.updatedAt ?? projectionTime);
+      if (text) upsertToolCallTextFailure(messages, scope, run.productRunId, run.toolCallTextFailure!, run.updatedAt ?? projectionTime);
     }
     appendRehydratedTerminalMarker(
       messages,
@@ -604,7 +604,7 @@ export class PiChatUiProjector {
         break;
       case "product_run_settled":
         this.projectProductSettlement(view, scope, event.terminalState, event.occurredAt);
-        if (toolCallTextFailureMessage(event.toolCallTextFailure)) upsertToolCallTextFailure(view.messages, scope, event.productRunId, toolCallTextFailureMessage(event.toolCallTextFailure)!, event.occurredAt);
+        if (toolCallTextFailureMessage(event.toolCallTextFailure)) upsertToolCallTextFailure(view.messages, scope, event.productRunId, event.toolCallTextFailure!, event.occurredAt);
         break;
     }
     view.messages = positionReasoningMessages(positionGenerationMessages(dedupeMessages(view.messages), event.productRunId));
@@ -2601,7 +2601,9 @@ function diagnosticFromCustomEntry(
 }
 
 
-function upsertToolCallTextFailure(messages: ChatMessage[], scope: string, runId: string, text: string, at: number): void {
+function upsertToolCallTextFailure(messages: ChatMessage[], scope: string, runId: string, code: string, at: number): void {
+  const text = toolCallTextFailureMessage(code)!;
+  const toolCallTextFailure = code as NonNullable<ChatMessage["toolCallTextFailure"]>;
   const id = terminalMessageId(scope, runId);
   const existing = messages.findIndex(message => message.id === id);
   if (existing >= 0) messages.splice(existing, 1);
@@ -2612,11 +2614,12 @@ function upsertToolCallTextFailure(messages: ChatMessage[], scope: string, runId
       message.status = "failed";
       if (message.itemType === "error") message.title = "回答失败";
       message.details = text;
+      message.toolCallTextFailure = toolCallTextFailure;
       answerIndex = index;
     }
   });
   const marker: ChatMessage = { id, role: "system", itemType: "error", title: "工具未执行", text,
-    status: "failed", runId, turnId: runId, createdAt: at, completedAt: at };
+    status: "failed", toolCallTextFailure, runId, turnId: runId, createdAt: at, completedAt: at };
   messages.splice(answerIndex >= 0 ? answerIndex + 1 : messages.length, 0, marker);
 }
 

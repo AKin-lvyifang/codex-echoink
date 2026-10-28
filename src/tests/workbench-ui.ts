@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { WorkspaceLeaf, TFile } from "obsidian";
 import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, groupWorkbenchTasks, workbenchInlineQuestion } from "../home/workbench-view";
 import { openWorkbenchModule } from "../home/module-navigation";
-import { DEFAULT_SETTINGS } from "../settings/settings";
+import { DEFAULT_SETTINGS, createApiProviderConfig, createApiProviderModelConfig } from "../settings/settings";
+import { toolCallRecoveryGuidance } from "../agents/tool-call-recovery";
 import type { TaskEntry } from "../agents/task-presentation";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchSnapshot } from "../home/workbench-types";
 import type { EchoInkQuestionInteraction } from "../types/conversation-turn";
@@ -38,6 +39,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
   const calls: unknown[][] = [], subscribers = new Set<ConversationRunSubscriber>(), dataSubscribers = new Set<() => void>();
   let tasks: readonly TaskEntry[] = [], failTasks = false, failData = false, hasFocus = true, todoFailure = false;
   let taskReads = 0, dataReads = 0;
+  const guideProvider = createApiProviderConfig("custom", "guide-provider");
+  guideProvider.models = [createApiProviderModelConfig("custom", "guide-model")];
+  let guideMode = "disabled";
   let memoryNotice: VaultMemoryNotice | null = null;
   let memoryError: string | null = null;
   let projectionsInFlight = 0, maxProjectionConcurrency = 0;
@@ -89,7 +93,11 @@ export async function runWorkbenchUiTests(): Promise<void> {
     },
     async setPiConversationTaskMetadata() { calls.push(["metadata-write"]); throw new Error("overview must not mark results read"); },
     async ensurePiRuntimeBundle() { calls.push(["provider"]); throw new Error("overview must not initialize Provider"); },
-    async readTaskInterruption(taskId: string) { return { taskId, reason: "user_stopped", at: now, stage: "真实步骤", uncertainOperations: [] }; },
+    async readTaskInterruption(taskId: string) { return { taskId, reason: "user_stopped", at: now, stage: "真实步骤", uncertainOperations: [],
+      ...(taskId.startsWith("guide-") ? { toolCallTextFailure: guideMode === "enabled" ? "model_tool_call_text_incompatible" as const : "model_tool_call_text_disabled" as const,
+        ...(guideMode === "legacy" ? {} : { providerSettingsId: guideProvider.id, modelId: "guide-model" }) } : {}) }; },
+    taskToolCallRecovery(_id: string, info: any) { return toolCallRecoveryGuidance(info, [guideProvider], "desktop"); },
+    async openRunReport(taskId: string) { calls.push(["report", taskId]); },
     async openTaskDetail(id: string) { calls.push(["detail", id]); },
     async resumeTaskAndOpenDetail(id: string) { calls.push(["resume", id]); await new Promise<void>(resolve => { releaseResume = resolve; }); },
     async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
@@ -257,7 +265,21 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(calls.filter(call => call[0] === "resume").length, 1, "double click only resumes once");
     assert.equal(button("resume-stop"), resume, "pending state preserves the control being used");
     assert.equal(resume.disabled, true); assert.equal(document.activeElement, resume);
+    assert.equal(button("report-stop").disabled, true, "both card actions stay disabled during the shared resume flight");
     releaseResume!(); await tick(); assert.equal(button("resume-stop"), resume); assert.equal(resume.disabled, false);
+    const tasksBeforeGuide = tasks;
+    for (const mode of ["disabled", "enabled", "legacy"]) {
+      guideMode = mode; guideProvider.models[0].toolCalling = mode === "enabled";
+      const id = `guide-${mode}`; tasks = [entry(id, "interrupted")]; await view.refresh(); await tick();
+      const card = content.querySelector<HTMLElement>(`[data-task="${id}"]`)!;
+      assert.deepEqual(Array.from(card.querySelectorAll<HTMLButtonElement>(".wb-task-footer button")).map(node => node.textContent?.trim()), ["上报问题", mode === "disabled" ? "开启工具调用并继续" : "继续"]);
+      assert.equal(card.textContent!.split("本轮没有执行工具").length - 1, 1);
+      assert.equal(card.textContent!.includes("模型设置"), false);
+      if (mode === "legacy") assert.match(card.textContent!, /模型服务 → 对应服务 → 参数 → 对应模型/u);
+    }
+    tasks = tasksBeforeGuide; await view.refresh(); await tick();
+    console.log("PASS desktop task cards: closed/enabled/legacy guide has two buttons and one failure prompt");
+
     await click("answer-wait-a"); assert.ok(calls.some(call => call[0] === "answer"));
     const answers = calls.filter(call => call[0] === "answer").length;
     await click("answer-wait-b"); assert.equal(calls.filter(call => call[0] === "answer").length, answers + 1, "option meaning follows the schema rather than guessing from its label");

@@ -233,6 +233,49 @@ export async function runTaskResumeTests(root: string, createHost: (...args: any
     assert.equal((await plugin.readTaskInterruption("delete-task")).reason, "process_unknown");
     await assert.rejects(plugin.resumeTask("delete-task"), /没有可核对的运行记录/);
     local.productRuns.listReadOnly = actualList;
+    // Exercise the production preflight with a failed target distinct from the global default.
+    const originalSettings = structuredClone(plugin.settings);
+    const targetOptions = f.item("A", "target").turnOptions;
+    const targetProvider = plugin.settings.apiProviders.find((provider: any) => provider.id === targetOptions.providerSettingsId)!;
+    const targetModel = targetProvider.models.find((model: any) => model.id === targetOptions.model)!;
+    targetModel.toolCalling = false; targetModel.capabilityOverrides = { ...targetModel.capabilityOverrides, toolCalling: false };
+    const otherProvider = { ...structuredClone(targetProvider), id: "recovery-global-default" };
+    plugin.settings.apiProviders.push(otherProvider); plugin.settings.activeApiProviderId = otherProvider.id; plugin.settings.defaultModel = targetModel.id;
+    delete plugin.settings.taskWorkspace.replyDrafts.A;
+    const targetRun = (await f.productRuns.listReadOnly("A")).at(-1)!;
+    const failureInfo = { at: Date.now(), reason: "run_failed" as const, stage: "模型回复", toolCallTextFailure: "model_tool_call_text_disabled" as const,
+      providerSettingsId: targetProvider.id, modelId: targetModel.id };
+    await f.productRuns.create({ ...targetRun, productRunId: "tool-guide-target", createdAt: failureInfo.at, updatedAt: failureInfo.at,
+      state: "product_run_settled", terminalState: "failed", settledAt: failureInfo.at, agentSettledAt: failureInfo.at,
+      error: "model_tool_call_text_disabled", toolCallIds: [], interruption: failureInfo });
+    await plugin.setPiConversationTaskMetadata("A", { taskStatus: "interrupted", taskInterruptedAt: failureInfo.at });
+    let activationCount = 0, failSave = true;
+    plugin.activateApiProviderSettings = async (apply: (settings: any) => void) => {
+      activationCount++; const candidate = structuredClone(plugin.settings); apply(candidate);
+      if (failSave) throw new Error("synthetic settings save failed");
+      Object.assign(plugin.settings, candidate);
+    };
+    const beforeRecoverySettings = JSON.stringify(plugin.settings), beforeRecoveryRequests = requests;
+    const foreign = f.item("B", "foreign task input");
+    await assert.rejects(plugin.prepareTaskResume("A", foreign.text, foreign), /不属于当前任务/u);
+    await assert.rejects(plugin.prepareTaskResume("A", "changed text", f.item("A", "frozen text")), /快照不一致/u);
+    assert.equal(activationCount, 0, "invalid frozen inputs are rejected before any capability setting is saved");
+    await assert.rejects(plugin.prepareTaskResume("A"), /synthetic settings save failed/u);
+    assert.equal(JSON.stringify(plugin.settings), beforeRecoverySettings); assert.equal(requests, beforeRecoveryRequests);
+    failSave = false;
+    const recovered = await plugin.prepareTaskResume("A");
+    assert.equal(recovered.turnOptions.providerSettingsId, targetProvider.id);
+    assert.equal(recovered.turnOptions.model, targetModel.id);
+    assert.equal(recovered.text, "上一轮的工具调用只是文字，没有真正执行。请用可用的工具重新执行需要的操作。");
+    const savedProvider = plugin.settings.apiProviders.find((provider: any) => provider.id === targetProvider.id);
+    assert.equal(savedProvider.models.find((model: any) => model.id === targetModel.id).toolCalling, true);
+    assert.equal(savedProvider.models.find((model: any) => model.id === targetModel.id).capabilityOverrides.toolCalling, true);
+    assert.equal(plugin.settings.activeApiProviderId, otherProvider.id); assert.equal(plugin.settings.defaultModel, targetModel.id);
+    assert.equal(plugin.settings.apiProviders.find((provider: any) => provider.id === otherProvider.id).models.find((model: any) => model.id === targetModel.id).toolCalling, false);
+    assert.equal((await plugin.prepareTaskResume("A", "我自己的补充输入")).text, "我自己的补充输入");
+    assert.equal(activationCount, 2, "an already-enabled target is not saved or rebuilt again");
+    Object.assign(plugin.settings, originalSettings);
+    console.log("P4 tool guide: exact nondefault target, failed save stops, two-field activation and default/user text preservation PASS");
     const shutdownRun = f.service.run(f.item("B", "P4-SHARED-SHUTDOWN"));
     await until(() => Boolean(f.service.runs.get("B")?.running));
     const firstShutdown = f.service.dispose("plugin_disabled");

@@ -1,4 +1,5 @@
 import type { TaskResumeSafetySnapshot } from "../plugin/task-resume-safety";
+import type { ToolCallFailureInfo } from "./tool-call-recovery";
 
 export const TASK_INTERRUPTION_REASONS = [
   "app_closed", "user_stopped", "plugin_disabled", "run_failed", "process_unknown", "watchdog"
@@ -6,7 +7,7 @@ export const TASK_INTERRUPTION_REASONS = [
 export type TaskInterruptionReason = typeof TASK_INTERRUPTION_REASONS[number];
 
 /** Saved on the ProductRun. Absence on old runs means the cause was not recorded. */
-export interface TaskInterruptionRecord {
+export interface TaskInterruptionRecord extends ToolCallFailureInfo {
   readonly at: number;
   readonly reason: TaskInterruptionReason;
   readonly stage: string;

@@ -2,6 +2,7 @@ import { setIcon } from "obsidian";
 import type { TaskDraft } from "../../agents/task-workspace";
 import type { MobilePermission } from "../../mobile/store";
 import { selectedModel, supportedProvider } from "../../mobile/settings";
+import { toolCallRecoveryTarget } from "../../agents/tool-call-recovery";
 import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
 import { shellElement } from "../mobile/shell-controls";
 import type { IPadPageContext } from "./workbench-contract";
@@ -85,7 +86,9 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
   let saves: Promise<void> = Promise.resolve();
   const readDraft = (): TaskDraft => {
     if (agentId) return host.store.state.newTaskDrafts[agentId] ?? { text: "", attachments: [] };
-    const task = host.store.getSession(taskId!); return { text: task?.draft ?? "", attachments: [], ...task?.draftContext };
+    const task = host.store.getSession(taskId!);
+    const target = toolCallRecoveryTarget(task?.interruption, host.settings().apiProviders);
+    return { text: task?.draft ?? "", attachments: [], ...(target ? { selectedProviderSettingsId: target.providerSettingsId, selectedModel: target.modelId } : {}), ...task?.draftContext };
   };
   input.value = readDraft().text;
   const showFailure = (failure: unknown) => { if (!disposed) { error.textContent = failureText(failure); error.hidden = false; } };

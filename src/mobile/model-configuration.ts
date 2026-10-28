@@ -4,6 +4,7 @@ import { apiProviderModelsUrl, normalizeApiProviderBaseUrl, type ApiProviderId }
 import { parseProviderModelResponse } from "../settings/provider-model-discovery";
 import { mobileModel, mobileProvider, supportedProvider, type MobileSettings } from "./settings";
 import { mobileGenerateText, type MobileRequest, type MobileUsageObserver } from "./transport";
+import { enableTargetToolCalling, type ToolCallRecoveryTarget } from "../agents/tool-call-recovery";
 
 export const MOBILE_MODEL_GROUPS: readonly { title: string; ids: readonly ApiProviderId[] }[] = [
   { title: "API Key", ids: ["glm", "kimi", "deepseek", "qwen"] },
@@ -143,6 +144,20 @@ export class MobileModelConfiguration {
     });
   }
 
+  /** Explicit task recovery: no connection probe or default-model selection. */
+  enableToolCalling(target: ToolCallRecoveryTarget): Promise<void> {
+    return this.enqueue(async settings => {
+      const provider = settings.apiProviders.find(item => item.id === target.providerSettingsId);
+      const model = provider?.models.find(item => item.id === target.modelId);
+      if (!provider || !model) throw new Error("任务所用模型已不存在，请先检查模型服务设置。");
+      if (model.toolCalling) return;
+      const next = copy(provider);
+      enableTargetToolCalling([next], target);
+      await this.persist(settings, provider.id, next, undefined, true);
+      this.baselines.set(provider.id, copy(next));
+    });
+  }
+
   remove(id: string): Promise<void> {
     const baseline = copy(this.settings().apiProviders.find(provider => provider.id === id) ?? null);
     return this.enqueue(async settings => {
@@ -163,7 +178,7 @@ export class MobileModelConfiguration {
     return pending;
   }
 
-  private async persist(settings: MobileSettings, id: string, provider: ApiProviderConfig | null, selection?: { provider: string; model: string }): Promise<void> {
+  private async persist(settings: MobileSettings, id: string, provider: ApiProviderConfig | null, selection?: { provider: string; model: string }, preserveSelection = false): Promise<void> {
     const index = settings.apiProviders.findIndex(item => item.id === id), previous = index >= 0 ? settings.apiProviders[index] : null;
     const previousSelection = { provider: settings.activeApiProviderId, model: settings.defaultModel };
     const hadProviderMode = Object.hasOwn(settings, "providerMode"), previousMode = settings.providerMode;
@@ -173,12 +188,12 @@ export class MobileModelConfiguration {
     } else if (index >= 0) settings.apiProviders.splice(index, 1);
     const active = settings.apiProviders.find(item => item.id === settings.activeApiProviderId && supportedProvider(item));
     if (selection) { settings.activeApiProviderId = selection.provider; settings.defaultModel = selection.model; }
-    else if (!active?.models.some(model => model.id === settings.defaultModel)) {
+    else if (!preserveSelection && !active?.models.some(model => model.id === settings.defaultModel)) {
       const next = active?.models.length ? active : settings.apiProviders.find(item => supportedProvider(item) && item.models.length);
       settings.activeApiProviderId = next?.id ?? "";
       settings.defaultModel = next?.models.find(model => model.id === next.defaultModelId)?.id ?? next?.models[0]?.id ?? "";
     }
-    settings.providerMode = "api";
+    if (!preserveSelection) settings.providerMode = "api";
     const appliedSelection = { provider: settings.activeApiProviderId, model: settings.defaultModel };
     try { await this.saveSettings(); }
     catch {

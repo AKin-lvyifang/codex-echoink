@@ -578,7 +578,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (!section) return;
     const host = section.lastElementChild as HTMLElement;
     this.syncRows(host, entries, entry => entry.conversationId,
-      entry => JSON.stringify([this.language, entry, this.maintenance.get(entry.conversationId), this.agent(entry), this.summary(entry), this.pending(entry), this.interruptions.get(entry.conversationId), this.interruptionErrors.has(entry.conversationId), !!this.taskError]),
+      entry => JSON.stringify([this.language, entry, this.maintenance.get(entry.conversationId), this.agent(entry), this.summary(entry), this.pending(entry), this.interruptions.get(entry.conversationId), this.plugin.taskToolCallRecovery?.(entry.conversationId, this.interruptions.get(entry.conversationId)), this.interruptionErrors.has(entry.conversationId), !!this.taskError]),
       entry => state === "completed" ? this.completedRow(entry) : this.taskCard(entry));
     host.querySelectorAll<HTMLElement>("[data-started-at]").forEach(time => { time.textContent = this.elapsed(Number(time.dataset.startedAt), now); });
   }
@@ -643,17 +643,23 @@ export class EchoInkWorkbenchView extends ItemView {
     } else { setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: taskStateLabel({ ...entry, taskStatus: state, ...(state !== "waiting" ? { pendingResponse: undefined } : {}) }, this.language) }); }
     body.createSpan({ cls: "wb-task-title", text: title });
     const inline = state === "waiting" ? workbenchInlineQuestion(entry, this.pending(entry)) : undefined;
-    const step = activity && state === "interrupted" ? undefined : activity ? this.summary(entry) : inline ? entry.taskStage : this.summary(entry);
-    if (step && !(state === "interrupted" && step === this.t("没做完", "Not finished"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
+    const recovery = state === "interrupted" ? this.plugin.taskToolCallRecovery?.(entry.conversationId, this.interruptions.get(entry.conversationId)) : undefined;
+    const step = recovery?.message ?? (activity && state === "interrupted" ? undefined : activity ? this.summary(entry) : inline ? entry.taskStage : this.summary(entry));
+    if (step && !(state === "interrupted" && step === this.t("没做完", "Not finished"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity && !recovery ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
     if (activity) renderMaintenanceProgressBar(body, activity);
     if (state === "interrupted") {
       const footer = card.createDiv({ cls: "wb-task-footer" });
       const info = this.interruptions.get(entry.conversationId);
-      footer.createSpan({ cls: "wb-interruption wb-grow", text: activity ? this.summary(entry) : this.interruptionText(entry, info) });
+      const interruptedAt = info?.at ?? entry.taskInterruptedAt ?? entry.updatedAt;
+      footer.createSpan({ cls: "wb-interruption wb-grow", text: recovery ? `${localDateLabel(interruptedAt, Date.now(), this.language)} ${localTaskTime(interruptedAt)}` : activity ? this.summary(entry) : this.interruptionText(entry, info) });
       const key = `resume-${entry.conversationId}`;
-      const resume = this.button(footer, this.busy.has(key) ? this.t("正在核对…", "Checking…") : this.t("继续", "Continue"), key,
-        () => this.runAction(key, async () => { this.selectedTask = entry.conversationId; await this.plugin.resumeTaskAndOpenDetail(entry.conversationId); }), "secondary", "play");
-      resume.classList.add("is-small"); resume.disabled = !!this.taskError || this.busy.has(key); setAmicroButtonPending(resume, this.busy.has(key));
+      const pending = this.busy.has(key) || !!this.plugin.isTaskResuming?.(entry.conversationId);
+      const report = this.button(footer, this.t("上报问题", "Report a problem"), `report-${entry.conversationId}`, () => this.plugin.openRunReport(entry.conversationId), "secondary");
+      report.classList.add("is-small"); report.disabled = pending; report.dataset.action = "report-task";
+      report.dataset.wbBusy = key; report.dataset.wbSource = "tasks";
+      const resume = this.button(footer, pending ? this.t("正在核对…", "Checking…") : recovery?.enable ? this.t("开启工具调用并继续", "Enable tools and continue") : this.t("继续", "Continue"), key,
+        () => this.runAction(key, async () => { this.selectedTask = entry.conversationId; await this.plugin.resumeTaskAndOpenDetail(entry.conversationId); }), "primary");
+      resume.classList.add("is-small"); resume.disabled = !!this.taskError || pending; setAmicroButtonPending(resume, pending);
       resume.dataset.wbMemory = "true"; resume.dataset.wbBusy = key; resume.dataset.wbSource = "tasks"; resume.dataset.wbResume = "true";
     } else if (activity?.taskKind === "upgrade" && state === "running") {
       const footer = card.createDiv({ cls: "wb-task-footer" }), key = `stop-upgrade-${entry.conversationId}`;
@@ -793,12 +799,14 @@ export class EchoInkWorkbenchView extends ItemView {
   private todoKey(todo: ParsedTodoRecord): string { return `todo-${todo.id || `${todo.lineStart}-${todo.title}`}`; }
   private updateActionStates(): void {
     this.field("groups").querySelectorAll<HTMLButtonElement>("[data-wb-busy]").forEach(button => {
-      const pending = this.busy.has(button.dataset.wbBusy!);
+      const taskId = button.closest<HTMLElement>("[data-task]")?.dataset.task;
+      const pending = this.busy.has(button.dataset.wbBusy!) || !!taskId && !!this.plugin.isTaskResuming?.(taskId);
       button.disabled = pending || !!(button.dataset.wbSource === "tasks" ? this.taskError : this.dataError)
         || button.dataset.wbMemory === "true" && !!(this.memoryNotice || this.memoryError);
       setAmicroButtonPending(button, pending);
       if (button.dataset.wbResume) {
-        for (const child of Array.from(button.childNodes)) if (child.nodeType === 3) child.textContent = pending ? this.t("正在核对…", "Checking…") : this.t("继续", "Continue");
+        const recovery = taskId ? this.plugin.taskToolCallRecovery?.(taskId, this.interruptions.get(taskId)) : undefined;
+        for (const child of Array.from(button.childNodes)) if (child.nodeType === 3) child.textContent = pending ? this.t("正在核对…", "Checking…") : recovery?.enable ? this.t("开启工具调用并继续", "Enable tools and continue") : this.t("继续", "Continue");
       }
     });
   }
