@@ -27391,6 +27391,7 @@ body .echoink-run-report-modal .echoink-run-report-actions .echoink-origin-contr
 .echoink-run-report-header-actions { display: flex; align-items: center; }
 .echoink-run-report-menu { display: flex; flex-direction: column; }
 .echoink-run-report-button { position: relative; isolation: isolate; min-height: 44px; padding: 8px 12px; height: auto; border: 0; border-radius: 6px; color: var(--text-normal); background: transparent; box-shadow: none; font: inherit; font-size: .9em; white-space: normal; }
+:is(.echoink-shell-sheet, .echoink-run-report-mobile-modal) button.echoink-run-report-button { background: transparent; border: 0; box-shadow: none; }
 .echoink-run-report-button::before { content: ""; position: absolute; z-index: -1; inset: 6px 0; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-primary); }
 .echoink-run-report-button.is-primary { color: var(--echoink-control-text, var(--background-primary)); }
 .echoink-run-report-button.is-primary::before { background: var(--echoink-control-fill, var(--text-normal)); border-color: transparent; }

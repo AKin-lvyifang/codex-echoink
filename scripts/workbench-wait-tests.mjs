@@ -13,6 +13,7 @@ const bundle = await esbuild.build({
   stdin: { contents: `
     export * from "./src/ui/turn-watchdog";
     export { armTurnWatchdog, clearTurnWatchdog } from "./src/ui/codex-view/turn-lifecycle";
+    export { runErrors } from "./src/run-reports/recent-errors";
     export { ConversationRunService } from "./src/plugin/conversation-run-service";
     export { normalizeEchoInkQuestionPrompts } from "./src/types/conversation-turn";
     export { PiTurnInteractionBroker } from "./src/plugin/pi-turn-interaction-broker";
@@ -53,7 +54,7 @@ await withFakeClock(async clock => {
   let cancelled = 0;
   const host = { running: true, activeRunId: "run-lifecycle", turnWatchdog: null,
     activeRunSession: () => ({ id: "task-lifecycle" }),
-    plugin: { isPiProductionRun: () => true, cancelHarnessRun: async () => { cancelled++; } },
+    plugin: { settings: { settingsLanguage: "zh" }, isPiProductionRun: () => true, cancelHarnessRun: async () => { cancelled++; } },
     pauseQueueForSession() {}, applyStatus() {} };
   host.clearTurnWatchdog = () => api.clearTurnWatchdog(host);
   api.armTurnWatchdog(host);
@@ -69,6 +70,10 @@ await withFakeClock(async clock => {
   api.setTurnWatchdogWaiting(host, false);
   clock.advance(1);
   assert.equal(cancelled, 1, "resuming retains the remaining execution budget");
+  const timeoutError = api.runErrors.snapshot().find(error => error.code === "turn_no_progress_timeout");
+  assert.equal(timeoutError?.conversationId, "task-lifecycle");
+  assert.equal(timeoutError?.runId, "run-lifecycle");
+  assert.match(timeoutError?.message ?? "", /5 分钟没有任何进展/u);
   api.armTurnWatchdog(host, 10);
   api.setTurnWatchdogWaiting(host, true);
   api.clearTurnWatchdog(host);
